@@ -2165,8 +2165,9 @@ fn propagate_inner(
             let group = debruijn_rec(arena, group_body);
 
             let mut outputs = Vec::with_capacity(l2.len());
+            let mut aperture_memo: AHashMap<TreeId, i64> = AHashMap::default();
             for (index, expr) in l2.iter().copied().enumerate() {
-                if aperture(arena, expr) > 0 {
+                if aperture(arena, expr, &mut aperture_memo) > 0 {
                     let idx = i32_from_usize(index, "rec projection index")?;
                     let mut b = SigBuilder::new(arena);
                     outputs.push(b.proj(idx, group));
@@ -2685,10 +2686,13 @@ fn make_mem_sig_proj_list(arena: &mut TreeArena, n: usize) -> Result<Vec<SigId>,
 }
 
 /// Lifts De Bruijn references of input signals by one recursion level.
+///
+/// Results are memoised across all input signals in this call.
 fn lift_signals(arena: &mut TreeArena, inputs: &[SigId]) -> Vec<SigId> {
+    let mut memo: AHashMap<(TreeId, i64), TreeId> = AHashMap::default();
     let mut out = Vec::with_capacity(inputs.len());
     for sig in inputs.iter().copied() {
-        out.push(liftn(arena, sig, 1));
+        out.push(liftn(arena, sig, 1, &mut memo));
     }
     out
 }
@@ -2705,7 +2709,29 @@ fn debruijn_ref(arena: &mut TreeArena, level: i64) -> TreeId {
 }
 
 /// Recursively lifts De Bruijn reference levels starting at `threshold`.
-fn liftn(arena: &mut TreeArena, root: TreeId, threshold: i64) -> TreeId {
+///
+/// Results for each `(root, threshold)` pair are memoised in `memo` so that
+/// shared sub-trees in the signal DAG are only traversed once.
+fn liftn(
+    arena: &mut TreeArena,
+    root: TreeId,
+    threshold: i64,
+    memo: &mut AHashMap<(TreeId, i64), TreeId>,
+) -> TreeId {
+    if let Some(&cached) = memo.get(&(root, threshold)) {
+        return cached;
+    }
+    let result = liftn_inner(arena, root, threshold, memo);
+    memo.insert((root, threshold), result);
+    result
+}
+
+fn liftn_inner(
+    arena: &mut TreeArena,
+    root: TreeId,
+    threshold: i64,
+    memo: &mut AHashMap<(TreeId, i64), TreeId>,
+) -> TreeId {
     if let Some(level) = debruijn_ref_level(arena, root) {
         if level < threshold {
             return root;
@@ -2714,7 +2740,7 @@ fn liftn(arena: &mut TreeArena, root: TreeId, threshold: i64) -> TreeId {
     }
 
     if let Some(body) = debruijn_body(arena, root) {
-        let lifted_body = liftn(arena, body, threshold + 1);
+        let lifted_body = liftn(arena, body, threshold + 1, memo);
         return debruijn_rec(arena, lifted_body);
     }
 
@@ -2725,11 +2751,11 @@ fn liftn(arena: &mut TreeArena, root: TreeId, threshold: i64) -> TreeId {
         return root;
     }
 
-    let original_children = node.children.as_slice();
+    let original_children: Vec<TreeId> = node.children.as_slice().to_vec();
     let mut rebuilt = Vec::with_capacity(original_children.len());
     let mut changed = false;
     for child in original_children.iter().copied() {
-        let lifted = liftn(arena, child, threshold);
+        let lifted = liftn(arena, child, threshold, memo);
         if lifted != child {
             changed = true;
         }
@@ -2743,21 +2769,34 @@ fn liftn(arena: &mut TreeArena, root: TreeId, threshold: i64) -> TreeId {
 }
 
 /// Computes free-recursion aperture used to decide `sigProj` re-emission.
-fn aperture(arena: &TreeArena, root: TreeId) -> i64 {
+///
+/// Results for each `root` are memoised in `memo` so that shared sub-trees in
+/// the signal DAG are only traversed once.
+fn aperture(arena: &TreeArena, root: TreeId, memo: &mut AHashMap<TreeId, i64>) -> i64 {
+    if let Some(&cached) = memo.get(&root) {
+        return cached;
+    }
+    let result = aperture_inner(arena, root, memo);
+    memo.insert(root, result);
+    result
+}
+
+fn aperture_inner(arena: &TreeArena, root: TreeId, memo: &mut AHashMap<TreeId, i64>) -> i64 {
     if let Some(level) = debruijn_ref_level(arena, root) {
         return level;
     }
 
     if let Some(body) = debruijn_body(arena, root) {
-        return aperture(arena, body) - 1;
+        return aperture(arena, body, memo) - 1;
     }
 
     let Some(children) = arena.children(root) else {
         return 0;
     };
+    let children: Vec<TreeId> = children.to_vec();
     let mut max_aperture = 0;
-    for child in children.iter().copied() {
-        max_aperture = max_aperture.max(aperture(arena, child));
+    for child in children {
+        max_aperture = max_aperture.max(aperture(arena, child, memo));
     }
     max_aperture
 }
