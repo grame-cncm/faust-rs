@@ -30,10 +30,16 @@ struct UiCollector {
     /// different group-path context (e.g. a slider that appears in both the body and the
     /// seed of a `fad(…)` call) and to create a cross-context alias rather than a second
     /// `ControlSpec` entry.
-    node_primary_id: AHashMap<BoxId, ControlId>,
     /// Memoisation table for the DAG walk — keyed by `(FlatBoxId, group_path_hash)` to allow
     /// the same structural widget to be registered once per distinct group context.
     visited: AHashMap<(FlatBoxId, u64), UiCollectSummary>,
+    /// First ControlId registered for each widget box, used to alias
+    /// AD-seed re-references (see `register_control`).
+    node_primary_id: AHashMap<BoxId, ControlId>,
+    /// Widget boxes referenced from an AD seed: differentiation parameters.
+    /// Every reference to such a box denotes the same control regardless of
+    /// group context.
+    ad_seed_parameters: AHashSet<BoxId>,
 }
 
 impl UiCollector {
@@ -42,8 +48,9 @@ impl UiCollector {
             builder: UiProgramBuilder::new(),
             controls: Vec::new(),
             control_ids: ControlIds::new(),
-            node_primary_id: AHashMap::new(),
             visited: AHashMap::new(),
+            node_primary_id: AHashMap::new(),
+            ad_seed_parameters: AHashSet::new(),
         }
     }
 
@@ -73,10 +80,12 @@ impl UiCollector {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn register_control(
         &mut self,
         source_node: BoxId,
         context_hash: u64,
+        in_ad_seed: bool,
         kind: ControlKind,
         label: String,
         metadata: UiMetadata,
@@ -88,12 +97,23 @@ impl UiCollector {
         if let Some(&existing_id) = self.control_ids.get(&key) {
             return existing_id;
         }
-        // Cross-context deduplication: if the same source node was already registered under
-        // a different group-path context (e.g. a slider that appears in both the body and
-        // the seed of a `fad(…)` call), reuse its existing ControlId and only add an alias
-        // for the new context key. This prevents duplicate ControlSpec entries for what is
-        // semantically one widget referenced from multiple positions in the box DAG.
-        if let Some(&primary_id) = self.node_primary_id.get(&source_node) {
+        // Cross-context aliasing applies ONLY inside AD seed subtrees: there
+        // the seed re-references a widget the compiler repositioned outside
+        // its original group wrapper (e.g. `fad(*(g), g)` differentiates with
+        // respect to the SAME `g` the body reads), so it must resolve to the
+        // already-registered control.
+        //
+        // Everywhere else the same widget box reached under DIFFERENT explicit
+        // group paths denotes DISTINCT controls — C++ propagation threads the
+        // group path into widget signals, so `par(i, N, vgroup("Op %i",
+        // hslider("g", ...)))` yields N separate controls (each with its own
+        // DSP field), not N aliases of one.
+        if in_ad_seed {
+            self.ad_seed_parameters.insert(source_node);
+        }
+        if (in_ad_seed || self.ad_seed_parameters.contains(&source_node))
+            && let Some(&primary_id) = self.node_primary_id.get(&source_node)
+        {
             self.control_ids.insert(key, primary_id);
             return primary_id;
         }
@@ -107,7 +127,7 @@ impl UiCollector {
             range,
         });
         self.control_ids.insert(key, id);
-        self.node_primary_id.insert(source_node, id);
+        self.node_primary_id.entry(source_node).or_insert(id);
         id
     }
 
@@ -117,13 +137,14 @@ impl UiCollector {
         source_node: BoxId,
         path: &[UiGroupSpec],
         context_hash: u64,
+        in_ad_seed: bool,
         kind: ControlKind,
         label: String,
         metadata: UiMetadata,
         range: Option<ControlRange>,
     ) {
         let order_key = ui::ordering_key_from_label(&label, &metadata);
-        let id = self.register_control(source_node, context_hash, kind, label, metadata, range);
+        let id = self.register_control(source_node, context_hash, in_ad_seed, kind, label, metadata, range);
         self.builder.insert_input_control(path, id, order_key);
     }
 
@@ -133,13 +154,14 @@ impl UiCollector {
         source_node: BoxId,
         path: &[UiGroupSpec],
         context_hash: u64,
+        in_ad_seed: bool,
         kind: ControlKind,
         label: String,
         metadata: UiMetadata,
         range: Option<ControlRange>,
     ) {
         let order_key = ui::ordering_key_from_label(&label, &metadata);
-        let id = self.register_control(source_node, context_hash, kind, label, metadata, range);
+        let id = self.register_control(source_node, context_hash, in_ad_seed, kind, label, metadata, range);
         self.builder.insert_output_control(path, id, order_key);
     }
 
@@ -148,6 +170,7 @@ impl UiCollector {
         source_node: BoxId,
         path: &[UiGroupSpec],
         context_hash: u64,
+        in_ad_seed: bool,
         label: String,
         metadata: UiMetadata,
     ) {
@@ -155,6 +178,7 @@ impl UiCollector {
         let id = self.register_control(
             source_node,
             context_hash,
+            in_ad_seed,
             ControlKind::Soundfile,
             label,
             metadata,
@@ -217,7 +241,7 @@ pub(crate) fn build_ui_program(
     options: &PropagateUiOptions,
 ) -> UiBuildOutput {
     let mut collector = UiCollector::new();
-    let _ = collect_ui_nodes(source_arena, box_tree, &[], &mut collector);
+    let _ = collect_ui_nodes(source_arena, box_tree, &[], false, &mut collector);
     collector.finish(options)
 }
 
@@ -238,6 +262,7 @@ fn collect_ui_nodes(
     source_arena: &TreeArena,
     box_tree: FlatBoxId,
     current_groups: &[UiGroupPathSegment],
+    in_ad_seed: bool,
     collector: &mut UiCollector,
 ) -> UiCollectSummary {
     // DAG deduplication: the flat box tree after `eval` is a structural DAG —
@@ -264,6 +289,7 @@ fn collect_ui_nodes(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
+                in_ad_seed,
                 ControlKind::Button,
                 label,
                 metadata,
@@ -286,6 +312,7 @@ fn collect_ui_nodes(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
+                in_ad_seed,
                 ControlKind::Checkbox,
                 label,
                 metadata,
@@ -310,6 +337,7 @@ fn collect_ui_nodes(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
+                in_ad_seed,
                 ControlKind::VSlider,
                 label,
                 metadata,
@@ -339,6 +367,7 @@ fn collect_ui_nodes(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
+                in_ad_seed,
                 ControlKind::HSlider,
                 label,
                 metadata,
@@ -368,6 +397,7 @@ fn collect_ui_nodes(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
+                in_ad_seed,
                 ControlKind::NumEntry,
                 label,
                 metadata,
@@ -397,6 +427,7 @@ fn collect_ui_nodes(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
+                in_ad_seed,
                 ControlKind::VBargraph,
                 label,
                 metadata,
@@ -426,6 +457,7 @@ fn collect_ui_nodes(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
+                in_ad_seed,
                 ControlKind::HBargraph,
                 label,
                 metadata,
@@ -450,7 +482,8 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.soundfile(box_tree.as_tree_id(), &path, context_hash, label, metadata);
+            collector.soundfile(box_tree.as_tree_id(), &path, context_hash,
+                in_ad_seed, label, metadata);
             UiCollectSummary {
                 has_ui: true,
                 preserve_ancestor_chain: false,
@@ -460,6 +493,7 @@ fn collect_ui_nodes(
             source_arena,
             body,
             current_groups,
+            in_ad_seed,
             collector,
             UiGroupKind::Vertical,
             box_tree.as_tree_id(),
@@ -468,6 +502,7 @@ fn collect_ui_nodes(
             source_arena,
             body,
             current_groups,
+            in_ad_seed,
             collector,
             UiGroupKind::Horizontal,
             box_tree.as_tree_id(),
@@ -476,18 +511,20 @@ fn collect_ui_nodes(
             source_arena,
             body,
             current_groups,
+            in_ad_seed,
             collector,
             UiGroupKind::Tab,
             box_tree.as_tree_id(),
         ),
         FlatNodeKind::ForwardAD { body, seed } => {
-            let body_s = collect_ui_nodes(source_arena, body, current_groups, collector);
+            let body_s = collect_ui_nodes(source_arena, body, current_groups, in_ad_seed, collector);
             // Differentiation seeds are global parameters whose UI position is
             // independent of any group that wraps the surrounding `fad(…)` call.
             // Visiting with an empty context ensures that subsequent references to
             // the same seed node (e.g. in the Rec feedback branch) hit the cache
-            // rather than being registered as duplicate controls.
-            let seed_s = collect_ui_nodes(source_arena, seed, &[], collector);
+            // rather than being registered as duplicate controls. The seed flag
+            // lets re-references of body widgets alias to their primary control.
+            let seed_s = collect_ui_nodes(source_arena, seed, &[], true, collector);
             UiCollectSummary {
                 has_ui: body_s.has_ui || seed_s.has_ui,
                 preserve_ancestor_chain: body_s.preserve_ancestor_chain
@@ -495,10 +532,10 @@ fn collect_ui_nodes(
             }
         }
         FlatNodeKind::ReverseAD { body, seeds } => {
-            let body_s = collect_ui_nodes(source_arena, body, current_groups, collector);
+            let body_s = collect_ui_nodes(source_arena, body, current_groups, in_ad_seed, collector);
             // Same rationale as ForwardAD: seed parameters are registered without
             // the surrounding group context so later references can find them.
-            let seeds_s = collect_ui_nodes(source_arena, seeds, &[], collector);
+            let seeds_s = collect_ui_nodes(source_arena, seeds, &[], true, collector);
             UiCollectSummary {
                 has_ui: body_s.has_ui || seeds_s.has_ui,
                 preserve_ancestor_chain: body_s.preserve_ancestor_chain
@@ -510,15 +547,17 @@ fn collect_ui_nodes(
         | FlatNodeKind::Ondemand(body)
         | FlatNodeKind::Upsampling(body)
         | FlatNodeKind::Downsampling(body) => {
-            collect_ui_nodes(source_arena, body, current_groups, collector)
+            collect_ui_nodes(source_arena, body, current_groups, in_ad_seed, collector)
         }
         FlatNodeKind::Seq(left, right)
         | FlatNodeKind::Par(left, right)
         | FlatNodeKind::Split(left, right)
         | FlatNodeKind::Merge(left, right)
         | FlatNodeKind::Rec(left, right) => {
-            let left_summary = collect_ui_nodes(source_arena, left, current_groups, collector);
-            let right_summary = collect_ui_nodes(source_arena, right, current_groups, collector);
+            let left_summary =
+                collect_ui_nodes(source_arena, left, current_groups, in_ad_seed, collector);
+            let right_summary =
+                collect_ui_nodes(source_arena, right, current_groups, in_ad_seed, collector);
             UiCollectSummary {
                 has_ui: left_summary.has_ui || right_summary.has_ui,
                 preserve_ancestor_chain: left_summary.preserve_ancestor_chain
@@ -552,6 +591,7 @@ fn collect_group_ui(
     source_arena: &TreeArena,
     body: FlatBoxId,
     current_groups: &[UiGroupPathSegment],
+    in_ad_seed: bool,
     collector: &mut UiCollector,
     kind: UiGroupKind,
     group_node: BoxId,
@@ -573,7 +613,7 @@ fn collect_group_ui(
         .ensure_group_path(&path)
         .expect("explicit group path must yield a terminal group");
 
-    let summary = collect_ui_nodes(source_arena, body, &nested_groups, collector);
+    let summary = collect_ui_nodes(source_arena, body, &nested_groups, in_ad_seed, collector);
     let keep_group =
         collector.builder.group_has_children(terminal) || summary.preserve_ancestor_chain;
     if !keep_group && terminal_preexisting.is_none() {
