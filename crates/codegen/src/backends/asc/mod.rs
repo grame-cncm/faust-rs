@@ -170,9 +170,6 @@ pub fn generate_asc_module(
     // are emitted as module-level `export function`s before the class.
     emit_toplevel_functions(store, &mut out, options, &class_name, module.globals)?;
 
-    // Compile-time constant tables become module-level `const`s.
-    emit_static_tables(store, &mut out, options, module.static_decls)?;
-
     let _ = writeln!(out, "export class {class_name} {{");
 
     // ---- fields: DSP struct state + globals (non-function) ----
@@ -183,29 +180,26 @@ pub fn generate_asc_module(
     }
     emit_section_fields(store, &mut out, options, &class_name, module.dsp_struct, 1)?;
     emit_section_fields(store, &mut out, options, &class_name, module.globals, 1)?;
+
+    // Compile-time constant tables become `static` class members so the
+    // qualified `ClassName.table` references resolve, mirroring the C++ asc
+    // backend's class-static table placement (which downstream tooling's
+    // static-field hoisting also expects).
+    emit_static_tables(store, &mut out, options, module.static_decls)?;
     let _ = writeln!(out);
 
-    // ---- DSP API methods ----
-    emit_dsp_contract_methods(
+    // ---- methods, in the C++ produceClass order ----
+    // Downstream tooling extracts method bodies by FIRST textual occurrence of
+    // `name(`, so every instance* DEFINITION must precede the synthesized
+    // instanceInit/init methods that CALL them (mirroring the C++ backend).
+    emit_methods_canonical_order(
+        store,
         &mut out,
-        module.num_inputs,
-        module.num_outputs,
+        options,
         &class_name,
-        &module.name,
+        &module,
         &declared_functions,
-        1,
-    );
-
-    // JSON snapshot for tooling (UI/param extraction), mirroring the C++ asc
-    // backend's getJSON().
-    if let Some(json) = options.json.as_deref() {
-        let _ = writeln!(out, "    getJSON(): string {{");
-        let _ = writeln!(out, "        return \"{}\";", escape_as_string(json));
-        let _ = writeln!(out, "    }}");
-    }
-
-    // ---- declared functions (compute, instance*, etc.) as class methods ----
-    emit_section_methods(store, &mut out, options, &class_name, module.functions, 1)?;
+    )?;
 
     let _ = writeln!(out, "}}");
     Ok(out)
@@ -255,57 +249,156 @@ fn emit_toplevel_functions(
     Ok(())
 }
 
-/// Emits the standard Faust DSP API surface in AssemblyScript form, synthesizing
-/// any methods the FIR module did not declare itself.
-fn emit_dsp_contract_methods(
+/// Emits every class method in the C++ `produceClass` order, pulling declared
+/// FIR functions when present and synthesizing the rest.
+///
+/// Order: info getters, getJSON, metadata/buildUserInterface, classInit,
+/// instanceResetUserInterface, instanceClear, instanceConstants, instanceInit,
+/// init, compute, then any remaining declared functions.
+fn emit_methods_canonical_order(
+    store: &FirStore,
     out: &mut String,
-    num_inputs: usize,
-    num_outputs: usize,
+    options: &AscOptions,
     class_name: &str,
-    module_name: &str,
+    module: &ModuleView,
     declared: &[String],
-    indent: usize,
-) {
-    let tab = "    ".repeat(indent);
+) -> Result<(), CodegenError> {
     let has = |n: &str| declared.iter().any(|d| d == n);
+    let mut emitted: Vec<&str> = Vec::new();
 
-    let _ = writeln!(out, "{tab}getNumInputs(): i32 {{ return {num_inputs}; }}");
-    let _ = writeln!(out, "{tab}getNumOutputs(): i32 {{ return {num_outputs}; }}");
-    let _ = writeln!(out, "{tab}getSampleRate(): i32 {{ return this.fSampleRate; }}");
-    let _ = writeln!(out, "{tab}static classInit(sample_rate: i32): void {{}}");
+    let _ = writeln!(out, "    getSampleRate(): i32 {{");
+    let _ = writeln!(out, "        return this.fSampleRate;");
+    let _ = writeln!(out, "    }}");
+    let _ = writeln!(out, "    getNumInputs(): i32 {{");
+    let _ = writeln!(out, "        return {};", module.num_inputs);
+    let _ = writeln!(out, "    }}");
+    let _ = writeln!(out, "    getNumOutputs(): i32 {{");
+    let _ = writeln!(out, "        return {};", module.num_outputs);
+    let _ = writeln!(out, "    }}");
 
-    if !has("instanceConstants") {
-        let _ = writeln!(out, "{tab}instanceConstants(sample_rate: i32): void {{");
-        let _ = writeln!(out, "{tab}    this.fSampleRate = sample_rate;");
-        let _ = writeln!(out, "{tab}}}");
+    // JSON snapshot for tooling (UI/param extraction), mirroring the C++ asc
+    // backend's getJSON().
+    if let Some(json) = options.json.as_deref() {
+        let _ = writeln!(out, "    getJSON(): string {{");
+        let _ = writeln!(out, "        return \"{}\";", escape_as_string(json));
+        let _ = writeln!(out, "    }}");
     }
-    if !has("instanceResetUserInterface") {
-        let _ = writeln!(out, "{tab}instanceResetUserInterface(): void {{}}");
+
+    for name in ["metadata", "buildUserInterface"] {
+        if has(name) {
+            emit_declared_method(store, out, options, class_name, module.functions, name)?;
+            emitted.push(name);
+        }
     }
-    if !has("instanceClear") {
-        let _ = writeln!(out, "{tab}instanceClear(): void {{}}");
+
+    let _ = writeln!(out, "    static classInit(sample_rate: i32): void {{");
+    let _ = writeln!(out, "    }}");
+
+    for name in [
+        "instanceResetUserInterface",
+        "instanceClear",
+        "instanceConstants",
+    ] {
+        if has(name) {
+            emit_declared_method(store, out, options, class_name, module.functions, name)?;
+            emitted.push(name);
+        } else if name == "instanceConstants" {
+            let _ = writeln!(out, "    instanceConstants(sample_rate: i32): void {{");
+            let _ = writeln!(out, "        this.fSampleRate = sample_rate;");
+            let _ = writeln!(out, "    }}");
+        } else {
+            let _ = writeln!(out, "    {name}(): void {{");
+            let _ = writeln!(out, "    }}");
+        }
     }
-    let _ = writeln!(out, "{tab}instanceInit(sample_rate: i32): void {{");
-    let _ = writeln!(out, "{tab}    this.instanceConstants(sample_rate);");
-    let _ = writeln!(out, "{tab}    this.instanceResetUserInterface();");
-    let _ = writeln!(out, "{tab}    this.instanceClear();");
-    let _ = writeln!(out, "{tab}}}");
-    let _ = writeln!(out, "{tab}init(sample_rate: i32): void {{");
-    let _ = writeln!(out, "{tab}    {class_name}.classInit(sample_rate);");
-    let _ = writeln!(out, "{tab}    this.instanceInit(sample_rate);");
-    let _ = writeln!(out, "{tab}}}");
-    if !has("metadata") {
-        let _ = writeln!(out, "{tab}// metadata: name {module_name}");
-    }
-    if !has("buildUserInterface") {
-        let _ = writeln!(out, "{tab}// ui openbox {module_name}");
-    }
-    if !has("compute") {
+
+    let _ = writeln!(out, "    instanceInit(sample_rate: i32): void {{");
+    let _ = writeln!(out, "        this.instanceConstants(sample_rate);");
+    let _ = writeln!(out, "        this.instanceResetUserInterface();");
+    let _ = writeln!(out, "        this.instanceClear();");
+    let _ = writeln!(out, "    }}");
+    let _ = writeln!(out, "    init(sample_rate: i32): void {{");
+    let _ = writeln!(out, "        {class_name}.classInit(sample_rate);");
+    let _ = writeln!(out, "        this.instanceInit(sample_rate);");
+    let _ = writeln!(out, "    }}");
+
+    if has("compute") {
+        emit_declared_method(store, out, options, class_name, module.functions, "compute")?;
+        emitted.push("compute");
+    } else {
         let _ = writeln!(
             out,
-            "{tab}compute(count: i32, inputs: Array<Array<{FAUST_FLOAT}>>, outputs: Array<Array<{FAUST_FLOAT}>>): void {{}}"
+            "    compute(count: i32, inputs: Array<Array<{FAUST_FLOAT}>>, outputs: Array<Array<{FAUST_FLOAT}>>): void {{"
         );
+        let _ = writeln!(out, "    }}");
     }
+
+    // Remaining declared functions in original order.
+    let FirMatch::Block(items) = match_fir(store, module.functions) else {
+        return Err(invalid_section("functions", module.functions, store));
+    };
+    for item in items {
+        if let FirMatch::DeclareFun {
+            name, typ, args, body, ..
+        } = match_fir(store, item)
+        {
+            if emitted.iter().any(|done| *done == name) {
+                continue;
+            }
+            emit_declare_fun(
+                store,
+                out,
+                options,
+                class_name,
+                DeclareFunView {
+                    name: &name,
+                    typ: &typ,
+                    named_args: &args,
+                    body,
+                },
+                1,
+                /* as_method = */ true,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Emits one declared FIR function (by name) as a class method.
+fn emit_declared_method(
+    store: &FirStore,
+    out: &mut String,
+    options: &AscOptions,
+    class_name: &str,
+    functions: FirId,
+    method: &str,
+) -> Result<(), CodegenError> {
+    let FirMatch::Block(items) = match_fir(store, functions) else {
+        return Err(invalid_section("functions", functions, store));
+    };
+    for item in items {
+        if let FirMatch::DeclareFun {
+            name, typ, args, body, ..
+        } = match_fir(store, item)
+            && name == method
+        {
+            return emit_declare_fun(
+                store,
+                out,
+                options,
+                class_name,
+                DeclareFunView {
+                    name: &name,
+                    typ: &typ,
+                    named_args: &args,
+                    body,
+                },
+                1,
+                /* as_method = */ true,
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Collects declared function names to decide which DSP API stubs to synthesize.
@@ -344,42 +437,6 @@ fn emit_section_fields(
             }
             // functions / struct-type decls are emitted elsewhere or ignored here
             _ => {}
-        }
-    }
-    Ok(())
-}
-
-/// Emits a module section as class methods (`DeclareFun` only).
-fn emit_section_methods(
-    store: &FirStore,
-    out: &mut String,
-    options: &AscOptions,
-    class_name: &str,
-    section_id: FirId,
-    indent: usize,
-) -> Result<(), CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, section_id) else {
-        return Err(invalid_section("functions", section_id, store));
-    };
-    for item in items {
-        if let FirMatch::DeclareFun {
-            name, typ, args, body, ..
-        } = match_fir(store, item)
-        {
-            emit_declare_fun(
-                store,
-                out,
-                options,
-                class_name,
-                DeclareFunView {
-                    name: &name,
-                    typ: &typ,
-                    named_args: &args,
-                    body,
-                },
-                indent,
-                /* as_method = */ true,
-            )?;
         }
     }
     Ok(())
@@ -784,34 +841,34 @@ fn emit_member_decl(typ: &FirType, name: &str, options: &AscOptions) -> String {
 
 /// Maps a bare FIR math/function name to the AssemblyScript spelling.
 ///
-/// Mirrors the C++ asc backend's `gMathLibTable`: 32-bit (`*f`) intrinsics map to
-/// `Mathf.*`, double versions to `Math.*`, `abs`/`fabs` to `Math.abs`, and the
-/// min/max helpers to AssemblyScript's generic `min<T>`/`max<T>`.
+/// FAUST_FLOAT is f32 here (single precision), so unsuffixed float math names
+/// mean f32 — exactly how the C++ backend resolves them by real type. C++
+/// narrows doubles implicitly, AssemblyScript does not, so emitting the f64
+/// variants produces AS200 errors at every `f32` assignment (and would be
+/// numerically unfaithful to single-precision Faust anyway). The reference
+/// C++ asc backend output uses `Mathf.*` / `min<f32>` exclusively in single
+/// precision.
 fn map_fun_name(name: &str) -> String {
     match name {
-        "abs" | "fabs" => return "Math.abs".to_owned(),
-        "fabsf" => return "Mathf.abs".to_owned(),
+        "abs" | "fabs" | "fabsf" => return "Mathf.abs".to_owned(),
         "min_i" => return "min<i32>".to_owned(),
         "max_i" => return "max<i32>".to_owned(),
-        // single-precision min/max (Faust `*f` spelling) -> generic f32 helpers
-        "min_f" | "fminf" => return "min<f32>".to_owned(),
-        "max_f" | "fmaxf" => return "max<f32>".to_owned(),
-        // double-precision min/max -> generic f64 helpers
-        "min_" | "fmin" => return "min<f64>".to_owned(),
-        "max_" | "fmax" => return "max<f64>".to_owned(),
+        "min_f" | "fminf" | "min_" | "fmin" => return "min<f32>".to_owned(),
+        "max_f" | "fmaxf" | "max_" | "fmax" => return "max<f32>".to_owned(),
         // fmod has no Math helper; AssemblyScript uses the `%` operator instead,
-        // but as a call site we fall back to the f64/f32 remainder helpers.
+        // but as a call site we fall back to the remainder helper.
         "fmod" | "fmodf" => return "_fmod".to_owned(),
         _ => {}
     }
-    // float (32-bit) intrinsics -> Mathf.*, double -> Math.*
+    // Both the `*f`-suffixed and unsuffixed spellings resolve to the f32
+    // intrinsics (FAUST_FLOAT = f32).
     if let Some(stripped) = name.strip_suffix('f')
         && let Some(op) = FirMathOp::from_symbol(stripped)
     {
         return format!("Mathf.{}", op.symbol());
     }
     if let Some(op) = FirMathOp::from_symbol(name) {
-        return format!("Math.{}", op.symbol());
+        return format!("Mathf.{}", op.symbol());
     }
     name.to_owned()
 }
@@ -863,7 +920,7 @@ fn emit_type(typ: &FirType, options: &AscOptions) -> String {
     }
 }
 
-/// Emits `DeclareTable(Static)` nodes as module-level `const` StaticArrays.
+/// Emits `DeclareTable(Static)` nodes as `static` class-member StaticArrays.
 fn emit_static_tables(
     store: &FirStore,
     out: &mut String,
@@ -880,7 +937,7 @@ fn emit_static_tables(
             if values.is_empty() {
                 let _ = writeln!(
                     out,
-                    "const {name}: StaticArray<{ty}> = new StaticArray<{ty}>(0);"
+                    "    static {name}: StaticArray<{ty}> = new StaticArray<{ty}>(0);"
                 );
             } else {
                 let mut elems = Vec::with_capacity(values.len());
@@ -889,7 +946,7 @@ fn emit_static_tables(
                 }
                 let _ = writeln!(
                     out,
-                    "const {name}: StaticArray<{ty}> = StaticArray.fromArray<{ty}>([{}]);",
+                    "    static {name}: StaticArray<{ty}> = StaticArray.fromArray<{ty}>([{}]);",
                     elems.join(", ")
                 );
             }
@@ -1046,8 +1103,10 @@ mod tests {
         let out = generate_asc_module(&store, module, &AscOptions::default())
             .expect("module should generate");
         assert!(out.contains("export class mydsp {"));
-        assert!(out.contains("getNumInputs(): i32 { return 1; }"));
-        assert!(out.contains("getNumOutputs(): i32 { return 2; }"));
+        assert!(out.contains("getNumInputs(): i32 {"));
+        assert!(out.contains("        return 1;"));
+        assert!(out.contains("getNumOutputs(): i32 {"));
+        assert!(out.contains("        return 2;"));
         assert!(out.contains("compute(count: i32, inputs: Array<Array<f32>>, outputs: Array<Array<f32>>): void"));
         assert!(out.contains("// Language: AssemblyScript"));
     }

@@ -658,3 +658,25 @@ fn compiler_generate_aux_files_emits_assemblyscript_for_lang_asc() {
     assert!(text.contains("export class Probe"));
     assert!(text.contains("compute(count: i32"));
 }
+
+#[test]
+fn identical_widgets_under_distinct_groups_stay_distinct() {
+    // Regression: the same widget box reached under DIFFERENT interpolated
+    // group labels must produce distinct controls (C++ threads the group
+    // path into widget signals). A box-id-only UI dedupe collapses all three
+    // sliders into one (observed as DX7 operators losing their parameter
+    // groups).
+    let compiler = Compiler::new();
+    let json = compiler
+        .compile_source_to_json(
+            "lbl.dsp",
+            "process = par(i, 3, vgroup(\"Op %i\", hslider(\"g\", 0, 0, 1, 0.1))) :> _;",
+        )
+        .expect("compiles");
+    for address in ["/lbl/Op 0/g", "/lbl/Op 1/g", "/lbl/Op 2/g"] {
+        assert!(
+            json.contains(&format!("\"address\": \"{address}\"")),
+            "missing widget address {address} in JSON:\n{json}"
+        );
+    }
+}
