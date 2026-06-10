@@ -708,3 +708,49 @@ fn ui_children_sort_lexicographically_by_raw_label() {
         "expected Aa, b, a, zz order in JSON:\n{json}"
     );
 }
+
+#[test]
+fn replicated_widgets_wire_distinct_dsp_fields() {
+    // Regression for the widget-identity collapse: UI extraction listed every
+    // replicated control, but the SIGNAL path aliased same-box widgets across
+    // group contexts to one control — a DX7 voice wired only 34 of 147
+    // parameters (envelopes stuck at init values; a piano patch degenerated
+    // into a percussive thump). UI-level assertions cannot catch this, so
+    // check the generated code: three group instances must produce three
+    // DSP fields, like the C++ compiler.
+    let compiler = Compiler::new();
+    let cpp = compiler
+        .compile_source_to_cpp(
+            "rep.dsp",
+            "process = par(i, 3, vgroup(\"Op %i\", hslider(\"g\", 0, 0, 1, 0.1))) :> _;",
+            &codegen::backends::cpp::CppOptions::default(),
+        )
+        .expect("compiles");
+    for field in ["fHslider0", "fHslider1", "fHslider2"] {
+        assert!(
+            cpp.contains(&format!("FAUSTFLOAT {field};")),
+            "missing DSP field {field} — replicated widgets collapsed:\n{cpp}"
+        );
+    }
+}
+
+#[test]
+fn ad_seed_references_unify_to_one_control() {
+    // Counterpart guard: a widget referenced from a `fad(...)` SEED is a
+    // differentiation parameter — every reference (body and seed, in any
+    // group context) must resolve to the SAME control, even though the body
+    // reference sits inside a group and the seed is walked context-free.
+    let compiler = Compiler::new();
+    let cpp = compiler
+        .compile_source_to_cpp(
+            "seed.dsp",
+            "g = hslider(\"g\", 0.5, 0, 1, 0.01);\nprocess = +~vgroup(\"fb\", fad(*(g), g));",
+            &codegen::backends::cpp::CppOptions::default(),
+        )
+        .expect("compiles");
+    assert!(cpp.contains("FAUSTFLOAT fHslider0;"));
+    assert!(
+        !cpp.contains("FAUSTFLOAT fHslider1;"),
+        "fad seed reference forked into a second control:\n{cpp}"
+    );
+}
