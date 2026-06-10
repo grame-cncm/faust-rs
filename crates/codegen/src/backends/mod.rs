@@ -22,6 +22,7 @@
 
 pub(crate) mod faust_api;
 
+pub mod asc;
 pub mod c;
 pub mod cmajor;
 pub mod codebox;

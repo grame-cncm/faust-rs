@@ -22,6 +22,7 @@ use codegen::backends::interp::{
     FbcCppOptions, InterpOptions, generate_cpp_from_fbc, generate_interp_module, read_fbc,
     write_fbc,
 };
+use codegen::backends::asc::{AscOptions, generate_asc_module};
 use codegen::backends::julia::{JuliaOptions, JuliaRealType, generate_julia_module};
 use codegen::backends::wasm::{WasmOptions, generate_wasm_module};
 use codegen::fixtures::backend_test_fixtures;
@@ -41,7 +42,7 @@ use super::timer::CompilationTimer;
 pub fn print_global_usage_and_exit() -> ! {
     eprintln!("Usage:");
     eprintln!(
-        "  cargo run -p compiler -- -lang c|cpp|fir|julia|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]"
+        "  cargo run -p compiler -- -lang asc|c|cpp|fir|julia|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]"
     );
     eprintln!("                           [--no-fir-verify] [--fir-verify-strict]");
     eprintln!("  cargo run -p compiler -- --golden <input.dsp>");
@@ -181,6 +182,7 @@ pub fn cli_lang_name(lang: CliLang) -> &'static str {
         CliLang::Fir => "fir",
         CliLang::Interp => "interp",
         CliLang::Cranelift => "cranelift",
+        CliLang::Asc => "asc",
         CliLang::Julia => "julia",
         CliLang::Wasm => "wasm",
         CliLang::Wast => "wast",
@@ -644,7 +646,12 @@ pub fn run_main() {
         || matches!(
             cli.lang,
             Some(
-                CliLang::Fir | CliLang::Interp | CliLang::Cranelift | CliLang::Wasm | CliLang::Wast
+                CliLang::Fir
+                    | CliLang::Interp
+                    | CliLang::Cranelift
+                    | CliLang::Wasm
+                    | CliLang::Wast
+                    | CliLang::Asc
             )
         ))
         && cli.architecture.is_some()
@@ -840,6 +847,39 @@ pub fn run_main() {
                 }
                 Err(err) => {
                     eprintln!("WAST fixture codegen failed: {err}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+
+        if matches!(cli.lang, Some(CliLang::Asc)) {
+            let options = AscOptions {
+                class_name: selected_class_name(&cli),
+                ..AscOptions::default()
+            };
+            match generate_asc_module(&store, module, &options) {
+                Ok(asc) => {
+                    emit_output(&asc, cli.output.as_ref());
+                    if cli.dump_json {
+                        let output = require_companion_output_path(&cli);
+                        let compile_options = compile_options_json_string(Some("asc"), cli.double);
+                        match compile_fixture_to_json_text(
+                            &store,
+                            module,
+                            compile_options,
+                            cli.double,
+                        ) {
+                            Ok(json) => emit_json_companion_output(&json, output),
+                            Err(err) => {
+                                eprintln!("JSON fixture generation failed: {err}");
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    eprintln!("AssemblyScript fixture codegen failed: {err}");
                     std::process::exit(1);
                 }
             }
@@ -1427,6 +1467,57 @@ pub fn run_main() {
             }
             Err(err) => {
                 eprintln!("Cranelift FIR pipeline failed: {err}");
+                print_structured_diagnostics(&err, cli.error_format, cli.error_verbosity);
+                std::process::exit(1);
+            }
+        }
+        timer.total();
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Asc)) {
+        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let result = if cli.import_dir.is_empty() {
+            compiler.compile_file_default_to_fir_with_lane(
+                input_path,
+                selected_codegen_lane(&cli).into_compiler_lane(),
+            )
+        } else {
+            compiler.compile_file_to_fir_with_lane(
+                input_path,
+                &cli.import_dir,
+                selected_codegen_lane(&cli).into_compiler_lane(),
+            )
+        };
+        timer.phase("asc-codegen");
+
+        match result {
+            Ok(out) => {
+                let options = AscOptions {
+                    class_name: selected_class_name(&cli),
+                    ..AscOptions::default()
+                };
+                match generate_asc_module(&out.store, out.module, &options) {
+                    Ok(asc) => {
+                        emit_output(&asc, cli.output.as_ref());
+                        if cli.dump_json {
+                            emit_cli_json_companion_for_backend(
+                                &compiler,
+                                &cli,
+                                input_path,
+                                CliLang::Asc,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("AssemblyScript codegen failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("AssemblyScript pipeline failed: {err}");
                 print_structured_diagnostics(&err, cli.error_format, cli.error_verbosity);
                 std::process::exit(1);
             }
