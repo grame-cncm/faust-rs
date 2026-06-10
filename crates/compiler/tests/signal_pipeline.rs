@@ -1468,6 +1468,9 @@ fn corpus_relative_group_label_rebases_explicit_group_to_parent() {
         "rep_63_ui_relative_group_rebase",
     );
     assert_eq!(root_children.len(), 2);
+    // Root-forest order keeps insertion order (the `../` rebase is a Rust-side
+    // extension with no C++ reference; lexicographic ordering applies only to
+    // children within a group).
     assert!(expect_ui_group(&out, root_children[0], UiGroupKind::Horizontal, "Foo").is_empty());
     let bar_children = expect_ui_group(&out, root_children[1], UiGroupKind::Vertical, "Bar");
     assert_eq!(bar_children.len(), 1);
@@ -1489,6 +1492,9 @@ fn corpus_relative_group_label_clamps_navigation_at_root() {
         "rep_64_ui_relative_group_root_clamp",
     );
     assert_eq!(root_children.len(), 2);
+    // Root-forest order keeps insertion order (the `../` rebase is a Rust-side
+    // extension with no C++ reference; lexicographic ordering applies only to
+    // children within a group).
     assert!(expect_ui_group(&out, root_children[0], UiGroupKind::Horizontal, "Foo").is_empty());
     let bar_children = expect_ui_group(&out, root_children[1], UiGroupKind::Vertical, "Bar");
     assert_eq!(bar_children.len(), 1);

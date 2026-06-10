@@ -348,9 +348,9 @@ fn ui_program_builder_merges_group_paths_and_preserves_leaf_order() {
             metadata: Vec::new(),
         },
     ];
-    builder.insert_input_control(&path, 0, i64::MAX);
-    builder.insert_output_control(&path, 1, i64::MAX);
-    builder.insert_soundfile(&path, 2, i64::MAX);
+    builder.insert_input_control(&path, 0, String::new());
+    builder.insert_output_control(&path, 1, String::new());
+    builder.insert_soundfile(&path, 2, String::new());
 
     let (arena, roots) = builder.finish();
     assert_eq!(roots.len(), 1);
@@ -412,7 +412,7 @@ fn ui_program_builder_can_drop_empty_group_placeholders() {
     let bar_id = builder
         .ensure_group_path(&bar)
         .expect("terminal Bar placeholder should exist");
-    builder.insert_input_control(&bar, 0, i64::MAX);
+    builder.insert_input_control(&bar, 0, String::new());
 
     assert!(builder.group_has_children(foo_id));
     assert!(builder.group_has_children(bar_id));

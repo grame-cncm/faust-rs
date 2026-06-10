@@ -54,7 +54,7 @@ use tree_ffi::{
 pub use tree_ffi::{SOperator, SType};
 use ui::{
     ControlKind, ControlRange, ControlSpec, UiBuilder, UiProgram, UiProgramBuilder, UiRootOrigin,
-    ordering_key_from_metadata, split_label_metadata,
+    ordering_key_from_label, split_label_metadata,
 };
 
 /// FIR package exported from box/signal handles for backend FFI constructors.
@@ -170,7 +170,7 @@ pub fn signal_only_root_ui(ctx: &BoxContext, module_name: &str) -> UiProgram {
     let mut builder = UiProgramBuilder::new();
     for control in ctx.signal_controls() {
         let (label, metadata) = control_label_and_metadata(ctx, control);
-        let order_key = ordering_key_from_metadata(&metadata);
+        let order_key = ordering_key_from_label(&label, &metadata);
         controls.push(ControlSpec {
             id: control.id,
             kind: control_kind(control.kind),

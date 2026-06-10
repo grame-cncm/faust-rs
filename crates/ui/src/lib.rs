@@ -163,16 +163,22 @@ pub enum ControlKind {
 /// deterministic ordering, trimmed keys/values, and duplicate coalescing.
 pub type UiMetadata = Vec<(String, String)>;
 
-/// Extracts the numeric ordering key from widget/group metadata.
+/// Builds the C++-parity ordering key for one widget/group: the label with
+/// its numeric ordering prefix restored (`[n] label`).
 ///
-/// Faust labels encode display order as a bare integer key, e.g. `[0:]`,
-/// `[1:]`. The C++ compiler uses this to sort items within a group; faust-rs
-/// must do the same to produce matching JSON output.
-pub fn ordering_key_from_metadata(metadata: &UiMetadata) -> i64 {
-    metadata
-        .iter()
-        .find_map(|(key, _)| key.parse::<i64>().ok())
-        .unwrap_or(i64::MAX)
+/// The C++ compiler sequences each group's children by plain byte-wise
+/// comparison of the RAW label — the `[n] ` prefix included — so `"[10]"`
+/// sorts before `"[2]"`, and unnumbered labels interleave by their own
+/// spelling (verified against C++ faust JSON output). The numeric prefix is
+/// parsed into a digits-only metadata key with an empty value during label
+/// splitting, so it can be reconstructed here for ordering purposes.
+pub fn ordering_key_from_label(label: &str, metadata: &UiMetadata) -> String {
+    for (key, value) in metadata {
+        if value.is_empty() && !key.is_empty() && key.bytes().all(|byte| byte.is_ascii_digit()) {
+            return format!("[{key}] {label}");
+        }
+    }
+    label.to_owned()
 }
 
 /// Numeric range metadata for slider-like controls.
@@ -577,7 +583,7 @@ impl<'a> UiBuilder<'a> {
 enum UiDraftNode {
     Group {
         spec: UiGroupSpec,
-        children: Vec<(i64, usize)>, // (order_key, node_id)
+        children: Vec<(String, usize)>, // (order_key, node_id)
     },
     InputControl(ControlId),
     OutputControl(ControlId),
@@ -664,7 +670,7 @@ impl UiProgramBuilder {
         &mut self,
         path: &[UiGroupSpec],
         control: ControlId,
-        order_key: i64,
+        order_key: String,
     ) {
         self.insert_leaf(path, UiDraftNode::InputControl(control), order_key);
     }
@@ -674,13 +680,18 @@ impl UiProgramBuilder {
         &mut self,
         path: &[UiGroupSpec],
         control: ControlId,
-        order_key: i64,
+        order_key: String,
     ) {
         self.insert_leaf(path, UiDraftNode::OutputControl(control), order_key);
     }
 
     /// Inserts one soundfile control under the provided canonical group path.
-    pub fn insert_soundfile(&mut self, path: &[UiGroupSpec], control: ControlId, order_key: i64) {
+    pub fn insert_soundfile(
+        &mut self,
+        path: &[UiGroupSpec],
+        control: ControlId,
+        order_key: String,
+    ) {
         self.insert_leaf(path, UiDraftNode::Soundfile(control), order_key);
     }
 
@@ -697,7 +708,7 @@ impl UiProgramBuilder {
         (arena, roots)
     }
 
-    fn insert_leaf(&mut self, path: &[UiGroupSpec], leaf: UiDraftNode, order_key: i64) {
+    fn insert_leaf(&mut self, path: &[UiGroupSpec], leaf: UiDraftNode, order_key: String) {
         let parent = self.ensure_group_path(path);
         let id = self.push_node(leaf);
         self.insert_child_sorted(parent, order_key, id);
@@ -707,7 +718,7 @@ impl UiProgramBuilder {
         if let Some(existing) = self.find_child_group(parent, &spec) {
             return existing;
         }
-        let order_key = ordering_key_from_metadata(&spec.metadata);
+        let order_key = ordering_key_from_label(&spec.label, &spec.metadata);
         let id = self.push_node(UiDraftNode::Group {
             spec,
             children: Vec::new(),
@@ -769,11 +780,11 @@ impl UiProgramBuilder {
     /// Inserts `child_id` into `parent`'s children list keeping the list
     /// sorted by `order_key`. Items with equal keys are appended after
     /// existing items with the same key (stable / insertion-order tiebreak).
-    fn insert_child_sorted(&mut self, parent: Option<usize>, order_key: i64, child_id: usize) {
+    fn insert_child_sorted(&mut self, parent: Option<usize>, order_key: String, child_id: usize) {
         match parent {
             Some(id) => {
                 if let UiDraftNode::Group { children, .. } = &mut self.nodes[id] {
-                    let pos = children.partition_point(|(k, _)| *k <= order_key);
+                    let pos = children.partition_point(|(k, _)| k.as_str() <= order_key.as_str());
                     children.insert(pos, (order_key, child_id));
                 } else {
                     panic!("parent must be a group");

@@ -680,3 +680,31 @@ fn identical_widgets_under_distinct_groups_stay_distinct() {
         );
     }
 }
+
+#[test]
+fn ui_children_sort_lexicographically_by_raw_label() {
+    // C++ parity: group children are ordered by the RAW label including the
+    // "[n] " ordering prefix, using plain byte-wise comparison ("[10]" sorts
+    // before "[2]"; unnumbered labels interleave by their own spelling).
+    // Reference: C++ faust JSON for this exact source.
+    let compiler = Compiler::new();
+    let json = compiler
+        .compile_source_to_json(
+            "ord.dsp",
+            "process = hgroup(\"top\", hslider(\"[10] b\",0,0,1,0.1) + hslider(\"[2] a\",0,0,1,0.1) + hslider(\"zz\",0,0,1,0.1) + hslider(\"Aa\",0,0,1,0.1));",
+        )
+        .expect("compiles");
+    let order: Vec<usize> = [
+        "\"label\": \"Aa\"",
+        "\"label\": \"b\"",
+        "\"label\": \"a\"",
+        "\"label\": \"zz\"",
+    ]
+    .iter()
+    .map(|needle| json.find(needle).expect("label present"))
+    .collect();
+    assert!(
+        order.windows(2).all(|pair| pair[0] < pair[1]),
+        "expected Aa, b, a, zz order in JSON:\n{json}"
+    );
+}

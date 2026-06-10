@@ -664,6 +664,9 @@ fn propagate_with_ui_rebases_explicit_group_label_to_parent() {
     assert_eq!(out.ui.root_origin, UiRootOrigin::Synthesized);
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Vertical, "");
     assert_eq!(root_children.len(), 2);
+    // Root-forest order keeps insertion order (the `../` rebase is a Rust-side
+    // extension with no C++ reference; lexicographic ordering applies only to
+    // children within a group).
     assert!(expect_ui_group(&out.ui, root_children[0], UiGroupKind::Horizontal, "Foo").is_empty());
     let bar_children = expect_ui_group(&out.ui, root_children[1], UiGroupKind::Vertical, "Bar");
     assert_eq!(bar_children.len(), 1);
@@ -698,6 +701,9 @@ fn propagate_with_ui_clamps_relative_group_label_navigation_at_root() {
     assert_eq!(out.ui.root_origin, UiRootOrigin::Synthesized);
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Vertical, "");
     assert_eq!(root_children.len(), 2);
+    // Root-forest order keeps insertion order (the `../` rebase is a Rust-side
+    // extension with no C++ reference; lexicographic ordering applies only to
+    // children within a group).
     assert!(expect_ui_group(&out.ui, root_children[0], UiGroupKind::Horizontal, "Foo").is_empty());
     let bar_children = expect_ui_group(&out.ui, root_children[1], UiGroupKind::Vertical, "Bar");
     assert_eq!(bar_children.len(), 1);
