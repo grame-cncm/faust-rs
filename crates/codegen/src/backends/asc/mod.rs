@@ -39,6 +39,12 @@ pub struct AscOptions {
     pub quad_type_name: String,
     /// AssemblyScript spelling used for FIR `FixedPoint` values.
     pub fixed_type_name: String,
+    /// Optional JSON description embedded as a `getJSON(): string` method.
+    ///
+    /// Mirrors the C++ asc backend, whose `getJSON()` snapshot is what
+    /// downstream tooling (UI/param extraction, impulse runners) parses for
+    /// inputs/outputs and the UI tree.
+    pub json: Option<String>,
 }
 
 impl Default for AscOptions {
@@ -47,6 +53,7 @@ impl Default for AscOptions {
             class_name: Some("mydsp".to_owned()),
             quad_type_name: "f64".to_owned(),
             fixed_type_name: "f32".to_owned(),
+            json: None,
         }
     }
 }
@@ -188,6 +195,14 @@ pub fn generate_asc_module(
         &declared_functions,
         1,
     );
+
+    // JSON snapshot for tooling (UI/param extraction), mirroring the C++ asc
+    // backend's getJSON().
+    if let Some(json) = options.json.as_deref() {
+        let _ = writeln!(out, "    getJSON(): string {{");
+        let _ = writeln!(out, "        return \"{}\";", escape_as_string(json));
+        let _ = writeln!(out, "    }}");
+    }
 
     // ---- declared functions (compute, instance*, etc.) as class methods ----
     emit_section_methods(store, &mut out, options, &class_name, module.functions, 1)?;
@@ -945,6 +960,23 @@ fn block_stores_var(store: &FirStore, block: FirId, name: &str) -> bool {
     items.iter().any(|id| {
         matches!(match_fir(store, *id), FirMatch::StoreVar { name: v, .. } if v == name)
     })
+}
+
+/// Escapes arbitrary text for embedding inside an AssemblyScript double-quoted
+/// string literal (used by the `getJSON()` snapshot).
+fn escape_as_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 16);
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 fn trim_float(value: f64) -> String {

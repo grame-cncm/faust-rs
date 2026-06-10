@@ -63,6 +63,15 @@ pub(crate) fn build_faustwasm_compiler_module(
     if options.release {
         cargo.arg("--release");
     }
+    // The Rust default wasm shadow stack is 1 MiB, which deep evaluator /
+    // propagation recursion overflows on large real-world DSPs (for example
+    // master_me-class mastering chains). Match a desktop-like 16 MiB stack.
+    let mut rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
+    if !rustflags.is_empty() {
+        rustflags.push(' ');
+    }
+    rustflags.push_str("-C link-arg=-zstack-size=16777216");
+    cargo.env("RUSTFLAGS", rustflags);
 
     let status = cargo.status()?;
     if !status.success() {

@@ -95,6 +95,28 @@ fn collect_library_sources_from_roots(
 fn collect_library_sources(root: &Path) -> Result<Vec<(String, String)>, std::io::Error> {
     let mut files = Vec::new();
     collect_library_files(root, root, &mut files)?;
+    // Mirror the C++ faust wasmlib packaging, which flattens
+    // `libraries/*.lib`, `libraries/dx7/*.lib`, and `libraries/old/*.lib`
+    // into one directory: alias dx7/ and old/ entries under their bare file
+    // names so for example `library("dx7.lib")` (used by stdfaust's `dx`
+    // environment) resolves. Top-level names win on collision; other
+    // subdirectories (for example `unsupported/`) are intentionally not
+    // flattened.
+    let mut aliases: Vec<(String, String)> = Vec::new();
+    for (logical, source) in &files {
+        let Some((dir, bare)) = logical.split_once('/') else {
+            continue;
+        };
+        if !matches!(dir, "dx7" | "old") || bare.contains('/') {
+            continue;
+        }
+        if !files.iter().any(|(existing, _)| existing == bare)
+            && !aliases.iter().any(|(existing, _)| existing == bare)
+        {
+            aliases.push((bare.to_owned(), source.clone()));
+        }
+    }
+    files.extend(aliases);
     files.sort_by(|(left, _), (right, _)| left.cmp(right));
     Ok(files)
 }

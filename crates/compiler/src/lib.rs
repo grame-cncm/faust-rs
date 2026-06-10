@@ -1652,8 +1652,31 @@ impl Compiler {
         let class_name = arg_value("-cn").unwrap_or_else(|| {
             sanitize_cpp_ident(source_name_to_class(&request.source_name).as_str())
         });
+
+        // Strict C++-style JSON snapshot, embedded as getJSON() in the output —
+        // downstream tooling parses it for inputs/outputs and the UI tree
+        // (mirrors the C++ asc backend's getJSON()).
+        let json = build_strict_json_description(
+            &lowered.store,
+            lowered.module,
+            StrictJsonContext {
+                filename: source_name_to_filename(&request.source_name),
+                include_pathnames: Vec::new(),
+                library_list: Vec::new(),
+                top_level_meta: json_meta_entries_from_snapshot(&signals.compilation_metadata),
+                compile_options: compile_options_json_string(
+                    Some("asc"),
+                    self.real_type == RealType::Float64,
+                ),
+                double_precision: self.real_type == RealType::Float64,
+            },
+        )
+        .ok()
+        .map(|json| json.render());
+
         let options = AscOptions {
             class_name: Some(class_name.clone()),
+            json,
             ..AscOptions::default()
         };
         let asc = generate_asc_module(&lowered.store, lowered.module, &options)
