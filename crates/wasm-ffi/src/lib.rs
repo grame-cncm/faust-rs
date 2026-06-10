@@ -176,6 +176,22 @@ impl ResultRegistryText {
 /// without a host filesystem.
 /// Build a `VirtualSourceMap` from the embedded stdlib bundle extended with
 /// any `--virtual-source name=base64` entries found in `argv`.
+/// Builds the compiler for one helper request, honoring `-pn <name>`
+/// (process entry-point selection — e.g. `-pn effect` compiles the
+/// `effect =` declaration, matching the C++ compiler's option).
+fn compiler_with_process_name_from_argv(argv: &[String]) -> Compiler {
+    let process_name = argv
+        .iter()
+        .position(|arg| arg == "-pn")
+        .and_then(|position| argv.get(position + 1))
+        .cloned();
+    let compiler = Compiler::new();
+    match process_name {
+        Some(process_name) => compiler.with_process_name(process_name),
+        None => compiler,
+    }
+}
+
 fn virtual_sources_from_argv(argv: &[String]) -> VirtualSourceMap {
     let mut vsources = embedded_standard_library_sources();
     let mut i = 0;
@@ -798,8 +814,8 @@ pub unsafe extern "C" fn faust_wasm_generate_aux_files(
         Ok(args) => args,
         Err(_) => return 0,
     };
-    let compiler = Compiler::new();
     let argv = split_faustwasm_args(args);
+    let compiler = compiler_with_process_name_from_argv(&argv);
     match compiler.generate_aux_files(&compiler::GenerateAuxFilesRequest {
         source_name: name.to_owned(),
         source: source.to_owned(),
@@ -859,8 +875,8 @@ pub unsafe extern "C" fn faust_wasm_generate_aux_files_json(
             Ok(args) => args,
             Err(error) => return store_text_result(StoredTextResult::Err(error)),
         };
-        let compiler = Compiler::new();
         let argv = split_faustwasm_args(args);
+        let compiler = compiler_with_process_name_from_argv(&argv);
         match compiler.generate_aux_files(&compiler::GenerateAuxFilesRequest {
             source_name: name.to_owned(),
             source: source.to_owned(),

@@ -53,6 +53,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use boxes::{BoxId, BoxMatch, dump_box, match_box};
+use codegen::backends::asc::{AscOptions, generate_asc_module};
 use codegen::backends::c::{COptions, CodegenError as CCodegenError, generate_c_module};
 use codegen::backends::cpp::{CodegenError, CppOptions, generate_cpp_module};
 use codegen::backends::interp::{
@@ -1487,6 +1488,9 @@ impl Compiler {
     ///
     /// Mirrors: `generateAuxFilesFromString` / `generateAuxFilesFromFile`
     /// (C++ Faust API).
+    ///
+    /// Additionally, faustwasm-style transpile requests using `-lang asc`
+    /// produce one AssemblyScript source artifact (honoring `-cn` and `-o`).
     pub fn generate_aux_files(
         &self,
         request: &GenerateAuxFilesRequest,
@@ -1494,6 +1498,14 @@ impl Compiler {
         let argv: Vec<String> = request.args.split_whitespace().map(str::to_owned).collect();
         let search_paths = parse_search_paths_from_argv(&argv);
         let double = argv.iter().any(|a| a == "-double");
+
+        // faustwasm-style transpile request: `-lang asc` produces one
+        // AssemblyScript source artifact instead of the flag-driven outputs.
+        if let Some(position) = argv.iter().position(|arg| arg == "-lang")
+            && argv.get(position + 1).map(String::as_str) == Some("asc")
+        {
+            return self.generate_asc_aux_file(request, &argv, &search_paths);
+        }
 
         let wants_cpp = argv.iter().any(|a| a == "-cpp");
         let wants_c = argv.iter().any(|a| a == "-c");
@@ -1597,6 +1609,62 @@ impl Compiler {
         }
 
         Ok(artifacts)
+    }
+
+    /// Generates the AssemblyScript source artifact for a `-lang asc`
+    /// `generateAuxFiles` request (`-cn` selects the class name, `-o` the
+    /// artifact path; `request.virtual_sources` supplies in-memory libraries).
+    fn generate_asc_aux_file(
+        &self,
+        request: &GenerateAuxFilesRequest,
+        argv: &[String],
+        search_paths: &[PathBuf],
+    ) -> Result<Vec<AuxFileArtifact>, FaustwasmServiceError> {
+        let arg_value = |flag: &str| {
+            argv.iter()
+                .position(|arg| arg == flag)
+                .and_then(|position| argv.get(position + 1))
+                .cloned()
+        };
+        let signals = self
+            .compile_source_to_signals_with_import_context(
+                &request.source_name,
+                &request.source,
+                search_paths,
+                &request.virtual_sources,
+            )
+            .map_err(|error| FaustwasmServiceError::invalid_argument(error.to_string()))?;
+        let lowered = lower_signals_to_fir(
+            &request.source_name,
+            &signals,
+            SignalFirLane::TransformFastLane,
+            self.fir_verify,
+            self.real_type,
+            self.max_copy_delay,
+            self.delay_line_threshold,
+        )
+        .map_err(|error| {
+            FaustwasmServiceError::invalid_argument(
+                lower_fir_error_to_compiler(&request.source_name, error).to_string(),
+            )
+        })?;
+
+        let class_name = arg_value("-cn").unwrap_or_else(|| {
+            sanitize_cpp_ident(source_name_to_class(&request.source_name).as_str())
+        });
+        let options = AscOptions {
+            class_name: Some(class_name.clone()),
+            ..AscOptions::default()
+        };
+        let asc = generate_asc_module(&lowered.store, lowered.module, &options)
+            .map_err(|error| FaustwasmServiceError::invalid_argument(error.to_string()))?;
+
+        let path = arg_value("-o").unwrap_or_else(|| format!("{class_name}.ts"));
+        Ok(vec![AuxFileArtifact {
+            path,
+            content: asc.into_bytes(),
+            binary: false,
+        }])
     }
 
     /// Parses + evaluates + propagates one file with default import search path,

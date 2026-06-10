@@ -639,3 +639,22 @@ fn compiler_generate_aux_files_cpp_flag_produces_cpp_artifact() {
     assert_eq!(artifacts[0].path, "zero.cpp");
     assert!(!artifacts[0].binary);
 }
+
+#[test]
+fn compiler_generate_aux_files_emits_assemblyscript_for_lang_asc() {
+    let compiler = Compiler::new();
+    let files = compiler
+        .generate_aux_files(&GenerateAuxFilesRequest {
+            source_name: "gain.dsp".to_owned(),
+            source: "process = _ * 0.5;".to_owned(),
+            args: "-lang asc -cn Probe -o /Probe.ts".to_owned(),
+            virtual_sources: VirtualSourceMap::default(),
+        })
+        .expect("asc aux-file generation should succeed");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "/Probe.ts");
+    assert!(!files[0].binary);
+    let text = String::from_utf8(files[0].content.clone()).expect("utf-8 asc source");
+    assert!(text.contains("export class Probe"));
+    assert!(text.contains("compute(count: i32"));
+}
