@@ -73,7 +73,12 @@ pub enum ChildList {
     /// Two children, inline.
     Two([TreeId; 2]),
     /// Three or more children on heap.
-    Many(Box<[TreeId]>),
+    ///
+    /// Stored as `Arc<[TreeId]>` so the single allocation made when a node is
+    /// first interned is shared with the hash-cons key in
+    /// [`TreeArena::intern`] (one allocation per new arity-`>= 3` node instead
+    /// of two).
+    Many(Arc<[TreeId]>),
 }
 
 impl ChildList {
@@ -98,7 +103,7 @@ impl ChildList {
     /// Creates a generic arity list (`>= 0`) from heap-backed storage.
     #[must_use]
     pub fn many(children: Vec<TreeId>) -> Self {
-        Self::Many(children.into_boxed_slice())
+        Self::Many(children.into())
     }
 
     /// Number of children.
@@ -144,7 +149,7 @@ impl ChildList {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct NodeKey {
     kind: NodeKind,
-    children: Vec<TreeId>,
+    children: Arc<[TreeId]>,
 }
 
 /// Bidirectional `&str ↔ u32` interner.
@@ -356,9 +361,13 @@ impl TreeArena {
                 id
             }
             _ => {
+                // Allocate the children slice once and share it (refcounted)
+                // between the hash-cons key and the stored node, so a new
+                // arity-`>= 3` node costs one heap allocation rather than two.
+                let children: Arc<[TreeId]> = Arc::from(children);
                 let key = NodeKey {
                     kind,
-                    children: children.to_vec(),
+                    children: Arc::clone(&children),
                 };
                 if let Some(id) = self.interner_n.get(&key) {
                     return *id;
@@ -366,7 +375,7 @@ impl TreeArena {
                 let id = TreeId(self.nodes.len() as u32);
                 self.nodes.push(TreeNode {
                     kind: key.kind.clone(),
-                    children: ChildList::many(key.children.clone()),
+                    children: ChildList::Many(children),
                 });
                 self.interner_n.insert(key, id);
                 id

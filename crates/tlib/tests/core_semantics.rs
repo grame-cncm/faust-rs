@@ -23,6 +23,45 @@ fn interning_reuses_structurally_identical_nodes() {
     assert_eq!(seq1, seq2);
 }
 
+/// Structural non-regression for the arity-`>= 3` intern path.
+///
+/// This path stores children as a single `Arc<[TreeId]>` shared between the
+/// hash-cons key and the stored node. The test guards that hash-consing still
+/// deduplicates structurally identical high-arity nodes, that children round
+/// trip unchanged, and that differing children still produce distinct nodes.
+#[test]
+fn interning_high_arity_nodes_shares_and_dedups_children() {
+    let mut arena = TreeArena::new();
+    let seq_tag = arena.intern_tag("seq");
+
+    // Build two structurally identical arity-4 nodes from independently
+    // interned (but equal) children.
+    let first: Vec<_> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|s| arena.symbol(*s))
+        .collect();
+    let second: Vec<_> = ["a", "b", "c", "d"]
+        .iter()
+        .map(|s| arena.symbol(*s))
+        .collect();
+    assert_eq!(first, second, "equal symbols must intern to equal ids");
+
+    let node1 = arena.intern(NodeKind::Tag(seq_tag), &first);
+    let node2 = arena.intern(NodeKind::Tag(seq_tag), &second);
+    assert_eq!(
+        node1, node2,
+        "structurally identical arity-4 nodes must share an id"
+    );
+
+    // Children must round trip exactly through the shared storage.
+    assert_eq!(arena.children(node1), Some(first.as_slice()));
+
+    // A differing child list must produce a distinct node.
+    let e = arena.symbol("e");
+    let other = arena.intern(NodeKind::Tag(seq_tag), &[first[0], first[1], first[2], e]);
+    assert_ne!(node1, other, "differing children must not be deduplicated");
+}
+
 #[test]
 fn list_operations_preserve_head_and_tail_order() {
     let mut arena = TreeArena::new();
