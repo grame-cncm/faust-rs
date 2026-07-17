@@ -1,0 +1,48 @@
+#
+# Test the faust-rs Rust backend against the reference.
+#
+# faust-rs generates Rust source (`-lang rust -double -cn mydsp`), the
+# `archs/impulserust.rs` architecture is appended (host `Meta`/`UI` traits,
+# soundfile fixture, scalar impulse-pass driver mirroring
+# `tools/impulsewasm.js`), the result is compiled with `rustc -O` and run.
+# Like the interpreter/Cranelift/WASM runners it reproduces only the scalar
+# impulse pass (the first 15000 reference frames) and is compared with
+# `filesCompare -part`.
+#
+# Run from this directory:  make -f Make.rust
+#
+
+include common.mk
+
+outdir ?= rust
+ARCH_RUST ?= archs/impulserust.rs
+RUSTC ?= rustc
+RUSTFLAGS_IMPULSE ?= --edition 2021 -O
+
+# Build everything except the documented known failures for this backend.
+allnames  := $(dspfiles:dsp/%.dsp=%)
+testnames := $(filter-out $(call known_fail_for,$(outdir)),$(allnames))
+listfiles := $(testnames:%=ir/$(outdir)/%.ir)
+
+.PHONY: all
+.DELETE_ON_ERROR:
+
+all: $(COMPARE) ir/$(outdir)/.dir build/$(outdir)/.dir $(listfiles)
+
+ir/$(outdir)/.dir:
+	mkdir -p ir/$(outdir)
+	touch $@
+
+build/$(outdir)/.dir:
+	mkdir -p build/$(outdir)
+	touch $@
+
+$(COMPARE): tools/filesCompare.cpp
+	$(CXX) -O2 -std=c++11 $< -o $@
+
+ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir $(ARCH_RUST) | ir/$(outdir)/.dir build/$(outdir)/.dir
+	$(FAUST_RS) -lang rust -double -cn mydsp -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.rs
+	cat build/$(outdir)/$*.rs $(ARCH_RUST) > build/$(outdir)/$*_main.rs
+	$(RUSTC) $(RUSTFLAGS_IMPULSE) build/$(outdir)/$*_main.rs -o build/$(outdir)/$*
+	./build/$(outdir)/$* -n $(SCALARFRAMES) > $@
+	$(COMPARE) $@ reference/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)

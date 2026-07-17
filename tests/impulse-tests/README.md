@@ -35,6 +35,11 @@ See the design write-up in
    - `make assemblyscript` — the faust-rs AssemblyScript backend is compiled
      with `asc`, executed through Node's native WebAssembly runtime, and
      compared on the scalar prefix with `filesCompare -part`.
+   - `make rust` — the faust-rs Rust backend output is appended to the
+     `archs/impulserust.rs` architecture (host `Meta`/`UI` traits + the shared
+     impulse/soundfile fixture), compiled natively with `rustc -O`, and
+     compared on the scalar prefix with `filesCompare -part` in 64-bit
+     (`-double`).
 
 ## Requirements
 
@@ -46,6 +51,7 @@ See the design write-up in
   `CPP_TESTS`, `FAUST_ARCH`, `FAUST_CPP`, `FAUSTLIBS`.
 - `c++` and the Faust standard libraries (default `/usr/local/share/faust`).
 - Node.js for the WASM and AssemblyScript impulse runners.
+- `rustc` (already required to build the workspace) for the Rust backend gate.
 - `asc` (AssemblyScript compiler) on `PATH`, or `ASC=/path/to/asc`.
 
 ## Usage
@@ -60,9 +66,10 @@ make c             # check the C backend
 make cranelift     # check the Cranelift JIT backend (64-bit)
 make wasm          # check the WASM backend (64-bit scalar prefix)
 make assemblyscript # check the AssemblyScript backend (scalar prefix)
+make rust          # check the Rust backend (scalar prefix, rustc)
 make bench         # compare C++ Faust and faust-rs performance with faustbench -single
 make compile-bench # compare C++ Faust and faust-rs compile time
-make all           # cpp + c + interp + cranelift
+make all           # cpp + c + interp + cranelift + wasm + assemblyscript + rust
 make -k -j8 cpp    # parallel, keep going past failures
 make help          # list targets and variables
 make clean         # remove ir/ and build/
@@ -85,10 +92,12 @@ There is no `reference` rebuild on every run: delete `reference/` (or
 | `Make.cranelift` | faust-rs Cranelift JIT backend (scalar prefix, 64-bit, `-part`) |
 | `Make.wasm` | faust-rs WASM backend (scalar prefix, 64-bit, Node WebAssembly, `-part`) |
 | `Make.assemblyscript` | faust-rs AssemblyScript backend (scalar prefix, `asc` + Node WebAssembly, `-part`) |
+| `Make.rust` | faust-rs Rust backend (scalar prefix, `rustc`, `-part`) |
 | `Make.bench` | generated-code performance comparison with `faustbench -single` |
 | `tools/filesCompare.cpp` | the comparator |
 | `tools/impulsewasm.js` | Node WebAssembly scalar impulse runner |
 | `tools/impulseasc.js` | AssemblyScript/Node scalar impulse runner |
+| `archs/impulserust.rs` | Rust scalar impulse architecture (host traits + fixture + driver) |
 | `reference/`, `ir/`, `build/` | generated, gitignored |
 
 ## Status
@@ -103,6 +112,7 @@ Raw sweep over the 93 DSPs at the default `2e-06` tolerance:
 | Cranelift JIT (scalar prefix, `-part`, 64-bit) | **92** | 0 | 1 (`subcontainer1`) |
 | WASM (scalar prefix, `-part`, 64-bit, Node) | **92** | 0 | 1 (`subcontainer1`) |
 | AssemblyScript (scalar prefix, `-part`, `asc` + Node) | **92** | 0 | 1 (`subcontainer1`) |
+| Rust (scalar prefix, `-part`, `rustc`) | **92** | 0 | 1 (`subcontainer1`) |
 
 The C++ backend reproduces the full 60000-frame reference exactly on 92/93 DSPs,
 so the remaining mismatches are backend-specific divergences the harness
@@ -110,9 +120,9 @@ pinpoints. Each was classified by its *max* delta and either given a per-DSP
 tolerance (bounded rounding) or listed as a known failure (real gap) in
 [`known.mk`](known.mk) / [`KNOWN_FAILURES.md`](KNOWN_FAILURES.md). With those
 applied, the aggregate targets are **green gates**: `make cpp` (92), `make c`
-(92), `make cranelift` (92), `make interp` (92), `make wasm` (92), and
-`make assemblyscript` (92) build and pass; excluded cases are documented in
-`known.mk` to fix later.
+(92), `make cranelift` (92), `make interp` (92), `make wasm` (92),
+`make assemblyscript` (92), and `make rust` (92) build and pass; excluded cases
+are documented in `known.mk` to fix later.
 
 ## Performance Bench
 

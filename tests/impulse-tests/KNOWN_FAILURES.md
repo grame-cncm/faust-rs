@@ -31,8 +31,8 @@ When a divergence is fixed, remove the entry so the gate re-covers it.
 | `noiseabs` | 1e-5 | 3e-6 | poly pass | C backend |
 | `comb_bug_exp` | 1e-3 | 1.1e-4 | poly pass | C backend |
 
-## C / C++ / interpreter / Cranelift / WASM / AssemblyScript exclusions
+## C / C++ / interpreter / Cranelift / WASM / AssemblyScript / Rust exclusions
 
 No backend-specific exclusions remain for C, C++, interpreter, Cranelift, WASM,
-or AssemblyScript. Only the shared `subcontainer1` compile gap is excluded for
-those gates.
+AssemblyScript, or Rust. Only the shared `subcontainer1` compile gap is
+excluded for those gates.

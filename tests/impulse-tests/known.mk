@@ -67,6 +67,11 @@ KNOWN_FAIL_wasm :=
 # fixture through imported soundfile helpers.
 KNOWN_FAIL_assemblyscript :=
 
+# --- Rust backend (scalar prefix through rustc) ------------------------------
+# Generated source is appended to archs/impulserust.rs (host Meta/UI traits +
+# the shared impulse/soundfile fixture) and compiled natively with rustc.
+KNOWN_FAIL_rust :=
+
 # Tolerance to apply when a per-DSP override exists, else the global `precision`.
 dsp_precision = $(if $(PRECISION_$1),$(PRECISION_$1),$(precision))
 # Names excluded for a given backend outdir.
