@@ -24,6 +24,7 @@ use codegen::backends::interp::{
     write_fbc,
 };
 use codegen::backends::julia::{JuliaOptions, JuliaRealType, generate_julia_module};
+use codegen::backends::rust::{RustOptions, RustRealType, generate_rust_module};
 use codegen::backends::wasm::{WasmOptions, generate_wasm_module};
 use codegen::fixtures::backend_test_fixtures;
 use compiler::{
@@ -42,7 +43,7 @@ use super::timer::CompilationTimer;
 pub fn print_global_usage_and_exit() -> ! {
     eprintln!("Usage:");
     eprintln!(
-        "  cargo run -p compiler -- -lang asc|c|cpp|fir|julia|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]"
+        "  cargo run -p compiler -- -lang asc|c|cpp|fir|julia|rust|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]"
     );
     eprintln!("                           [--no-fir-verify] [--fir-verify-strict]");
     eprintln!("  cargo run -p compiler -- --golden <input.dsp>");
@@ -202,6 +203,7 @@ pub fn cli_lang_name(lang: CliLang) -> &'static str {
         CliLang::Cranelift => "cranelift",
         CliLang::Asc => "asc",
         CliLang::Julia => "julia",
+        CliLang::Rust => "rust",
         CliLang::Wasm => "wasm",
         CliLang::Wast => "wast",
     }
@@ -326,6 +328,16 @@ pub fn selected_julia_real_type(cli: &CliArgs) -> JuliaRealType {
         JuliaRealType::Float64
     } else {
         JuliaRealType::Float32
+    }
+}
+
+/// Maps CLI precision switches to the Rust backend's `FaustFloat` alias,
+/// mirroring [`selected_real_type`] for the Rust code generator.
+pub fn selected_rust_real_type(cli: &CliArgs) -> RustRealType {
+    if cli.double {
+        RustRealType::Float64
+    } else {
+        RustRealType::Float32
     }
 }
 
@@ -674,6 +686,7 @@ pub fn run_main() {
                     | CliLang::Wasm
                     | CliLang::Wast
                     | CliLang::Asc
+                    | CliLang::Rust
             )
         ))
         && cli.architecture.is_some()
@@ -938,6 +951,39 @@ pub fn run_main() {
                 }
                 Err(err) => {
                     eprintln!("Julia fixture codegen failed: {err}");
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
+
+        if matches!(cli.lang, Some(CliLang::Rust)) {
+            let options = RustOptions {
+                class_name: selected_class_name(&cli),
+                faust_float_type: selected_rust_real_type(&cli),
+            };
+            match generate_rust_module(&store, module, &options) {
+                Ok(rust) => {
+                    emit_output(&rust, cli.output.as_ref());
+                    if cli.dump_json {
+                        let output = require_companion_output_path(&cli);
+                        let compile_options = compile_options_json_string(Some("rust"), cli.double);
+                        match compile_fixture_to_json_text(
+                            &store,
+                            module,
+                            compile_options,
+                            cli.double,
+                        ) {
+                            Ok(json) => emit_json_companion_output(&json, output),
+                            Err(err) => {
+                                eprintln!("JSON fixture generation failed: {err}");
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Rust fixture codegen failed: {err}");
                     std::process::exit(1);
                 }
             }
@@ -1588,6 +1634,57 @@ pub fn run_main() {
             }
             Err(err) => {
                 eprintln!("Julia pipeline failed: {err}");
+                print_structured_diagnostics(&err, cli.error_format, cli.error_verbosity);
+                std::process::exit(1);
+            }
+        }
+        timer.total();
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Rust)) {
+        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let result = if cli.import_dir.is_empty() {
+            compiler.compile_file_default_to_fir_with_lane(
+                input_path,
+                selected_codegen_lane(&cli).into_compiler_lane(),
+            )
+        } else {
+            compiler.compile_file_to_fir_with_lane(
+                input_path,
+                &cli.import_dir,
+                selected_codegen_lane(&cli).into_compiler_lane(),
+            )
+        };
+        timer.phase("rust-codegen");
+
+        match result {
+            Ok(out) => {
+                let options = RustOptions {
+                    class_name: selected_class_name(&cli),
+                    faust_float_type: selected_rust_real_type(&cli),
+                };
+                match generate_rust_module(&out.store, out.module, &options) {
+                    Ok(rust) => {
+                        emit_output(&rust, cli.output.as_ref());
+                        if cli.dump_json {
+                            emit_cli_json_companion_for_backend(
+                                &compiler,
+                                &cli,
+                                input_path,
+                                CliLang::Rust,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("Rust codegen failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Rust pipeline failed: {err}");
                 print_structured_diagnostics(&err, cli.error_format, cli.error_verbosity);
                 std::process::exit(1);
             }

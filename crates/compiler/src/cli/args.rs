@@ -25,6 +25,8 @@ pub enum CliLang {
     Interp,
     #[value(alias = "jl")]
     Julia,
+    #[value(alias = "rs")]
+    Rust,
     Wasm,
     #[value(alias = "wat")]
     Wast,
@@ -108,10 +110,10 @@ pub struct CliArgs {
     /// Emit strict C++-style JSON description.
     #[arg(long = "json", action = ArgAction::SetTrue)]
     pub dump_json: bool,
-    /// Select backend language (Faust-style): `-lang asc`, `-lang c`, `-lang cpp`, `-lang cranelift`, `-lang fir`, `-lang interp`, `-lang julia`, `-lang wasm`, or `-lang wast`.
+    /// Select backend language (Faust-style): `-lang asc`, `-lang c`, `-lang cpp`, `-lang cranelift`, `-lang fir`, `-lang interp`, `-lang julia`, `-lang rust`, `-lang wasm`, or `-lang wast`.
     ///
     /// This option is equivalent to `--dump-c` / `--dump-cpp` / `--dump-fir`
-    /// / `--dump-interp` / `--dump-cranelift` / `-lang asc` / `-lang julia` / `-lang wasm` / `-lang wast`.
+    /// / `--dump-interp` / `--dump-cranelift` / `-lang asc` / `-lang julia` / `-lang rust` / `-lang wasm` / `-lang wast`.
     #[arg(long = "lang", value_enum, allow_hyphen_values = true)]
     pub lang: Option<CliLang>,
     /// Print version information and exit.
