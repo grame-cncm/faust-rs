@@ -1124,18 +1124,8 @@ fn emit_value(
         | FirMatch::FixedPointArray { values, .. } => {
             Ok(format_array(values.iter().map(|v| trim_float(*v))))
         }
-        FirMatch::LoadVar {
-            name, access: _, ..
-        }
-        | FirMatch::LoadVarAddress {
-            name, access: _, ..
-        } => Ok(name),
-        FirMatch::LoadTable {
-            name,
-            index,
-            access: _,
-            ..
-        } => {
+        FirMatch::LoadVar { name, .. } | FirMatch::LoadVarAddress { name, .. } => Ok(name),
+        FirMatch::LoadTable { name, index, .. } => {
             let index = emit_value(store, options, index)?;
             Ok(format!("{name}[{index}]"))
         }

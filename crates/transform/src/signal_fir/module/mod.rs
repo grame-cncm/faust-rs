@@ -267,11 +267,7 @@ fn classify_reverse_time_outputs(arena: &TreeArena, signals: &[SigId]) -> Vec<bo
         // classifier never sees it as a root; it will be lowered inline by the
         // forward slice instead.
         if let SigMatch::Proj(index, group) = match_sig(arena, sig)
-            && let SigMatch::BlockReverseAD {
-                primal_count,
-                policy: _,
-                ..
-            } = match_sig(arena, group)
+            && let SigMatch::BlockReverseAD { primal_count, .. } = match_sig(arena, group)
         {
             let pc = usize::try_from(primal_count).unwrap_or(0);
             let idx = usize::try_from(index).unwrap_or(0);
