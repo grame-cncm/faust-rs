@@ -1,0 +1,15 @@
+# Standalone example project — the empty [workspace] table keeps it out of the
+# faust-rs workspace so it builds independently with plain `cargo run`.
+[workspace]
+
+[package]
+name = "dx7-piano"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dx7-piano"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
