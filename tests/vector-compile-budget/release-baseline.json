@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "profile": {
+    "vec_size": 32,
+    "loop_variant": 0,
+    "scheduling_strategy": 0,
+    "max_vector_to_scalar_ratio_milli": 4000,
+    "fixed_noise_margin_ms": 2000
+  },
+  "cases": [
+    {
+      "name": "APF",
+      "path": "tests/impulse-tests/dsp/APF.dsp",
+      "scalar_max_ms": 10000,
+      "vector_max_ms": 20000
+    },
+    {
+      "name": "karplus",
+      "path": "tests/impulse-tests/dsp/karplus.dsp",
+      "scalar_max_ms": 15000,
+      "vector_max_ms": 30000
+    },
+    {
+      "name": "cubic_distortion",
+      "path": "tests/impulse-tests/dsp/cubic_distortion.dsp",
+      "scalar_max_ms": 15000,
+      "vector_max_ms": 30000
+    },
+    {
+      "name": "spectral_level",
+      "path": "tests/impulse-tests/dsp/spectral_level.dsp",
+      "scalar_max_ms": 20000,
+      "vector_max_ms": 40000
+    },
+    {
+      "name": "reverb_designer",
+      "path": "tests/impulse-tests/dsp/reverb_designer.dsp",
+      "scalar_max_ms": 45000,
+      "vector_max_ms": 90000
+    }
+  ]
+}

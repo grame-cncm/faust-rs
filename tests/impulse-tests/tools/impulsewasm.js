@@ -18,7 +18,7 @@ const MAX_CHAN = 64;
 const MAX_SOUNDFILE_PARTS = 256;
 
 function usage() {
-  console.error("usage: impulsewasm.js <file.dsp> [-n <frames>] [-I <dir>]... [-single|-double]");
+  console.error("usage: impulsewasm.js <file.dsp> [-n <frames>] [-I <dir>]... [-single|-double] [-vec [-vs <n>] [-lv <n>]] [-ss <n>]");
 }
 
 function parseArgs(argv) {
@@ -26,6 +26,8 @@ function parseArgs(argv) {
   let frames = DEFAULT_FRAMES;
   let doublePrecision = false;
   const importDirs = [];
+  // Compiler-mode flags forwarded verbatim to faust-rs.
+  const compilerArgs = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "-n") {
@@ -41,6 +43,15 @@ function parseArgs(argv) {
       doublePrecision = true;
     } else if (arg === "-single") {
       doublePrecision = false;
+    } else if (arg === "-vec") {
+      compilerArgs.push("-vec");
+    } else if (arg === "-vs" || arg === "-lv" || arg === "-ss" || arg === "--scheduling-strategy") {
+      i += 1;
+      if (i >= argv.length) throw new Error(`${arg} requires a value`);
+      if ((arg === "-ss" || arg === "--scheduling-strategy") && !/^\d+$/.test(argv[i])) {
+        throw new Error(`invalid scheduling strategy: ${argv[i]}`);
+      }
+      compilerArgs.push(arg, argv[i]);
     } else if (arg.startsWith("-")) {
       throw new Error(`unknown option: ${arg}`);
     } else if (input === null) {
@@ -50,7 +61,7 @@ function parseArgs(argv) {
     }
   }
   if (input === null) throw new Error("missing DSP input");
-  return { input, frames, doublePrecision, importDirs };
+  return { input, frames, doublePrecision, importDirs, compilerArgs };
 }
 
 function normalize(value) {
@@ -213,9 +224,12 @@ function mathImports() {
   };
 }
 
-function compileWasm(faustRs, input, importDirs, doublePrecision, tmpDir) {
+function compileWasm(faustRs, input, importDirs, doublePrecision, compilerArgs, tmpDir) {
   const wasmPath = path.join(tmpDir, `${path.basename(input, ".dsp")}.wasm`);
-  const args = ["-lang", "wasm", doublePrecision ? "-double" : "-single", input, "-o", wasmPath];
+  const timeout = process.env.FAUST_RS_TIMEOUT_SECONDS || "600";
+  if (!/^[1-9]\d*$/.test(timeout)) throw new Error(`invalid FAUST_RS_TIMEOUT_SECONDS: ${timeout}`);
+  const args = ["-lang", "wasm", doublePrecision ? "-double" : "-single", "--timeout", timeout, input, "-o", wasmPath];
+  args.push(...compilerArgs);
   for (const dir of importDirs) args.push("-I", dir);
   const result = spawnSync(faustRs, args, { encoding: "utf8" });
   if (result.status !== 0) {
@@ -226,11 +240,11 @@ function compileWasm(faustRs, input, importDirs, doublePrecision, tmpDir) {
 }
 
 async function run() {
-  const { input, frames, doublePrecision, importDirs } = parseArgs(process.argv.slice(2));
+  const { input, frames, doublePrecision, importDirs, compilerArgs } = parseArgs(process.argv.slice(2));
   const faustRs = process.env.FAUST_RS || path.join("..", "..", "target", "release", "faust-rs");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "faust-rs-impulse-wasm-"));
   try {
-    const { wasmPath, jsonPath } = compileWasm(faustRs, input, importDirs, doublePrecision, tmpDir);
+    const { wasmPath, jsonPath } = compileWasm(faustRs, input, importDirs, doublePrecision, compilerArgs, tmpDir);
     const json = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
     const wasmBytes = fs.readFileSync(wasmPath);
     const module = await WebAssembly.compile(wasmBytes);

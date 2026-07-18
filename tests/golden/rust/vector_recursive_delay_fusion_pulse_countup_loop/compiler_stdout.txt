@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=vector_recursive_delay_fusion_pulse_countup_loop.dsp
+bytes=75
+lines=2
+fnv1a64=ced8f1d9530f8f27

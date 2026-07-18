@@ -726,6 +726,15 @@ impl<'a> TypeAnnotator<'a> {
                 Ok(samp_cast(tx).promote_interval(itv))
             }
             SigMatch::Clocked(_, x) => self.infer(x),
+            // The clock-env token is an opaque annotation (first child of
+            // `Clocked`), never a signal operand: `Clocked(_, x)` above only
+            // infers `x`. Reaching it here means a traversal leaked it into
+            // signal position — fail loudly instead of guessing a type
+            // (roadmap P0: no silent state for the clocked machinery).
+            SigMatch::ClockEnvToken(id) => Err(TypeError(format!(
+                "clock-env token #{id} reached type inference in signal position; \
+                 it must stay an opaque annotation of Clocked(env, y)"
+            ))),
 
             // C++: type each sub for side effects, then return
             //   makeSimpleType(kReal, kSamp, kExec, kScal, kNum, interval(-1, 1))
@@ -879,6 +888,14 @@ impl<'a> TypeAnnotator<'a> {
     ) -> Result<(), TypeError> {
         if !visited.insert(sig) {
             return Ok(());
+        }
+
+        // `Clocked(env, y)`: the clock-env child is an opaque annotation
+        // (nil or a `SIGCLOCKENV` token), never a signal — skip it entirely
+        // instead of walking its children generically (roadmap P0.1).
+        if let SigMatch::Clocked(_, y) = match_sig(self.arena, sig) {
+            self.infer(sig)?;
+            return self.populate_reachable_types(y, visited);
         }
 
         self.infer(sig)?;

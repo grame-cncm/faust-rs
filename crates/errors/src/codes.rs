@@ -49,6 +49,8 @@ pub const PROP_UNSUPPORTED_BOX: DiagnosticCode = DiagnosticCode("FRS-PROP-0001")
 pub const PROP_ARITY_MISMATCH: DiagnosticCode = DiagnosticCode("FRS-PROP-0002");
 /// Recursion/projection contract mismatch in propagate.
 pub const PROP_RECURSION_MISMATCH: DiagnosticCode = DiagnosticCode("FRS-PROP-0003");
+/// Automatic differentiation reached a clock-domain boundary it cannot cross.
+pub const PROP_AD_CLOCK_BOUNDARY: DiagnosticCode = DiagnosticCode("FRS-PROP-0004");
 /// Generic propagate failure fallback code.
 pub const PROP_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-PROP-0099");
 
@@ -64,6 +66,11 @@ pub const SFIR_UNSUPPORTED_SIGNAL_NODE: DiagnosticCode = DiagnosticCode("FRS-SFI
 pub const SFIR_UNSUPPORTED_BINOP: DiagnosticCode = DiagnosticCode("FRS-SFIR-0005");
 /// Input index out of range in signal->FIR lowering.
 pub const SFIR_INPUT_INDEX_OUT_OF_RANGE: DiagnosticCode = DiagnosticCode("FRS-SFIR-0006");
+/// Clocked node (`ondemand`/`upsampling`/`downsampling` machinery) reached
+/// signal->FIR lowering before the clock-domain back half is ported.
+pub const SFIR_CLOCKED_NOT_LOWERED: DiagnosticCode = DiagnosticCode("FRS-SFIR-0007");
+/// Clock-environment inference / hierarchical-graph validation failed.
+pub const SFIR_CLOCK_ANALYSIS: DiagnosticCode = DiagnosticCode("FRS-SFIR-0008");
 
 /// FIR verifier error diagnostic (details in notes: `fir_code=...`).
 pub const FIR_VERIFY_ERROR: DiagnosticCode = DiagnosticCode("FRS-FIR-0001");
@@ -100,6 +107,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         PROP_UNSUPPORTED_BOX,
         PROP_ARITY_MISMATCH,
         PROP_RECURSION_MISMATCH,
+        PROP_AD_CLOCK_BOUNDARY,
         PROP_GENERIC_FAILURE,
         SFIR_INVALID_OPTIONS,
         SFIR_EMPTY_SIGNAL_LIST,
@@ -107,6 +115,8 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         SFIR_UNSUPPORTED_SIGNAL_NODE,
         SFIR_UNSUPPORTED_BINOP,
         SFIR_INPUT_INDEX_OUT_OF_RANGE,
+        SFIR_CLOCKED_NOT_LOWERED,
+        SFIR_CLOCK_ANALYSIS,
         FIR_VERIFY_ERROR,
         FIR_VERIFY_WARNING,
         COMP_PARSE_FAILED,

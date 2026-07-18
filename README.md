@@ -105,6 +105,32 @@ faust-rs -lang cpp foo.dsp -o foo.cpp
 faust-rs -lang interp foo.dsp -o foo.fbc
 ```
 
+Scheduling and vector code generation:
+
+```bash
+# Select a scheduling strategy in scalar or vector mode.
+faust-rs -ss 0 foo.dsp                    # depth-first (default)
+faust-rs --scheduling-strategy 1 foo.dsp  # breadth-first
+faust-rs -ss 2 foo.dsp                    # special/interleaved
+faust-rs -ss 3 foo.dsp                    # reverse breadth-first
+
+# Request checked vector lowering with 64-sample chunks.
+faust-rs -vec -vs 64 -lv 0 foo.dsp
+faust-rs -vec -vs 64 -lv 1 foo.dsp
+```
+
+`-ss` accepts non-negative integers: `0`, `1`, and `2` select the strategies
+shown above, while `3` and greater select reverse breadth-first. Missing,
+negative, and non-integer values are hard errors; this is deliberately stricter
+than the C++ compiler's `atoi` fallback. `-vec` defaults to `-vs 32 -lv 0`;
+the supported loop variants are `-lv 0` (constant-trip main loop plus scalar
+remainder) and `-lv 1` (runtime-bounded chunk loop).
+
+faust-rs deliberately applies the same default `-ss 0` depth-first policy in
+both scalar and vector modes. This differs from the C++ vector default, which
+uses `CodeLoop::sortGraph`; `-ss 3` is the closest faust-rs match for that C++
+levelization policy.
+
 Built-in FIR backend fixtures (for backend debugging / bring-up):
 
 ```bash

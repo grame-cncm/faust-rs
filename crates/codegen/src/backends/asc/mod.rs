@@ -28,7 +28,7 @@ use fir::{
     AccessType, FirBinOp, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir,
 };
 
-use crate::backends::faust_api;
+use crate::backends::{faust_api, purity::is_obviously_side_effect_free_value};
 
 pub const BACKEND_NAME: &str = "asc";
 
@@ -589,6 +589,14 @@ fn emit_stmt(
                 if let Some(init) = init {
                     let init = emit_value(store, options, class_name, init)?;
                     let _ = write!(out, " = {init}");
+                } else if let FirType::Array(inner, size) = &typ
+                    && *size > 0
+                {
+                    let _ = write!(
+                        out,
+                        " = new StaticArray<{}>({size})",
+                        emit_type(inner, options)
+                    );
                 }
                 let _ = writeln!(out, ";");
             }
@@ -638,6 +646,9 @@ fn emit_stmt(
             Ok(())
         }
         FirMatch::Drop(value) => {
+            if is_obviously_side_effect_free_value(store, value) {
+                return Ok(());
+            }
             let value = emit_value(store, options, class_name, value)?;
             let _ = writeln!(out, "{tab}{value};");
             Ok(())
@@ -1336,12 +1347,37 @@ fn escape_as_string(value: &str) -> String {
     out
 }
 
+/// Formats one `f64` as an AssemblyScript floating literal.
+///
+/// Special values use the AssemblyScript/TypeScript global spellings (`NaN`,
+/// `Infinity`, `-Infinity`); without this special-casing, Rust's `Display`
+/// output plus the `.0` suffix produced invalid literals such as `inf.0` or
+/// `NaN.0` (the same bug class fixed for c/cpp in commit `2b615948` and never
+/// ported here — see the C-family plan §5). Negative zero normalizes to
+/// `"0.0"`, matching every other textual backend and upstream constant
+/// folding. Deliberately *not* shared with `c_family::trim_float`: the
+/// special-value spellings genuinely differ (C `NAN`/`INFINITY` macros vs
+/// AssemblyScript globals).
 fn trim_float(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() {
+            "-Infinity".to_owned()
+        } else {
+            "Infinity".to_owned()
+        };
+    }
     let mut text = format!("{value}");
     if !text.contains(['.', 'e', 'E']) {
         text.push_str(".0");
     }
-    text
+    if text == "-0.0" {
+        "0.0".to_owned()
+    } else {
+        text
+    }
 }
 
 fn format_array(values: impl Iterator<Item = String>) -> String {
@@ -1378,7 +1414,57 @@ pub fn backend_id() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fir::FirBuilder;
+    use fir::{FirBuilder, FirType};
+
+    #[test]
+    fn pure_drop_is_elided_but_foreign_call_drop_is_retained() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let one = b.float32(1.0);
+        let pure = b.drop_(one);
+        let foreign = b.fun_call("foreign", &[], FirType::Float32);
+        let effectful = b.drop_(foreign);
+        let mut out = String::new();
+
+        emit_stmt(
+            &store,
+            &mut out,
+            &AscOptions::default(),
+            "mydsp",
+            pure,
+            0,
+            Phase::Body,
+        )
+        .expect("pure drop should emit");
+        assert!(out.is_empty());
+
+        emit_stmt(
+            &store,
+            &mut out,
+            &AscOptions::default(),
+            "mydsp",
+            effectful,
+            0,
+            Phase::Body,
+        )
+        .expect("effectful drop should emit");
+        assert!(out.contains("foreign()"));
+    }
+
+    #[test]
+    /// Regression for the C-family plan §5 finding: special values must use
+    /// the AssemblyScript global spellings — the previous formatter emitted
+    /// invalid literals (`inf.0`, `NaN.0`) for any constant folding to
+    /// NaN/infinity, and `-0.0` for negative zero (every other textual
+    /// backend normalizes it).
+    fn trim_float_spells_assemblyscript_special_values() {
+        assert_eq!(trim_float(f64::NAN), "NaN");
+        assert_eq!(trim_float(f64::INFINITY), "Infinity");
+        assert_eq!(trim_float(f64::NEG_INFINITY), "-Infinity");
+        assert_eq!(trim_float(-0.0), "0.0");
+        assert_eq!(trim_float(0.5), "0.5");
+        assert_eq!(trim_float(3.0), "3.0");
+    }
 
     #[test]
     fn rejects_non_module_root() {
@@ -1434,6 +1520,55 @@ mod tests {
         assert!(out.contains(
             "compute(count: i32, inputs: Array<StaticArray<f64>>, outputs: Array<StaticArray<f64>>): void"
         ));
+    }
+
+    #[test]
+    fn initializes_local_static_array_buffers() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let dsp_struct = b.block(&[]);
+        let globals = b.block(&[]);
+        let vbuf = b.declare_var(
+            "vbuf0",
+            FirType::Array(Box::new(FirType::FaustFloat), 32),
+            AccessType::Stack,
+            None,
+        );
+        let body = b.block(&[vbuf]);
+        let args = [
+            NamedType {
+                name: "dsp".to_owned(),
+                typ: FirType::Ptr(Box::new(FirType::Obj)),
+            },
+            NamedType {
+                name: "count".to_owned(),
+                typ: FirType::Int32,
+            },
+            NamedType {
+                name: "inputs".to_owned(),
+                typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+            },
+            NamedType {
+                name: "outputs".to_owned(),
+                typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+            },
+        ];
+        let compute = b.declare_fun(
+            "compute",
+            FirType::Fun {
+                args: args.iter().map(|arg| arg.typ.clone()).collect(),
+                ret: Box::new(FirType::Void),
+            },
+            &args,
+            Some(body),
+            false,
+        );
+        let functions = b.block(&[compute]);
+        let static_decls = b.block(&[]);
+        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let out = generate_asc_module(&store, module, &AscOptions::default())
+            .expect("module should generate");
+        assert!(out.contains("let vbuf0: StaticArray<f32> = new StaticArray<f32>(32);"));
     }
 
     #[test]

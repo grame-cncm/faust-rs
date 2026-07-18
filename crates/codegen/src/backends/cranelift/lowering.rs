@@ -4,7 +4,10 @@
 //! expressions, statements, stack slots, and struct-field access. Unsupported
 //! shapes are filtered by `subset` before this lowering path is used.
 
+use cranelift_frontend::Variable;
+
 use super::*;
+use crate::backends::purity::is_obviously_side_effect_free_value;
 
 /// Lowered expression value tracked in the local Cranelift lowering environment.
 ///
@@ -55,6 +58,29 @@ impl LoweredExpr {
             Self::Scalar(_) => None,
         }
     }
+}
+
+/// One compute-local name binding.
+///
+/// FIR stack/loop locals carry C mutable-variable semantics: a local may be
+/// written inside one loop body and read after the loop, as the lockstep
+/// register-carry shape does with its per-sample state locals persisted at the
+/// chunk tail. A raw CLIF `Value` cannot cross a block boundary without a
+/// block parameter, so every FIR local is backed by a builder SSA `Variable`
+/// (`def_var`/`use_var`) and the SSA constructor inserts parameters where flow
+/// demands them. Function arguments stay direct entry-block values: they are
+/// immutable and dominate the whole body by construction.
+#[derive(Clone, Copy, Debug)]
+enum LocalBinding {
+    /// Immutable entry-block function argument.
+    Entry(LoweredExpr),
+    /// FIR stack/loop local backed by a builder SSA variable.
+    Ssa {
+        var: Variable,
+        clif_ty: Type,
+        is_ptr: bool,
+        pointee: Option<FirTypeRef>,
+    },
 }
 
 /// Lightweight FIR type classifier used in local lowering metadata.
@@ -156,8 +182,10 @@ pub(crate) struct ComputeLowering<'a, 'b, 'c> {
     pub(crate) struct_layout: &'a StructLayoutPlan,
     /// Native pointer width (`I32` on 32-bit targets, `I64` on 64-bit).
     pub(crate) ptr_ty: Type,
-    /// Local FIR variable → CLIF value mapping (built up during lowering).
-    vars: HashMap<String, LoweredExpr>,
+    /// Local FIR variable → binding mapping (built up during lowering).
+    vars: HashMap<String, LocalBinding>,
+    /// Monotonic index for fresh builder SSA variables.
+    next_var: u32,
     /// Cache of already-imported host function refs keyed by signature string.
     ///
     /// Cranelift requires explicit `declare_function` + `declare_func_in_func`
@@ -221,9 +249,119 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
 
     /// Returns the CLIF `dsp*` base pointer argument from the local environment.
     fn dsp_base_ptr(&self) -> Result<Value, LoweringError> {
-        self.vars.get("dsp").and_then(|v| v.ptr()).ok_or_else(|| {
-            LoweringError::Unsupported("missing `dsp` base pointer argument".to_string())
-        })
+        match self.vars.get("dsp") {
+            Some(LocalBinding::Entry(expr)) => expr.ptr().ok_or_else(|| {
+                LoweringError::Unsupported("`dsp` argument is not a pointer".to_string())
+            }),
+            _ => Err(LoweringError::Unsupported(
+                "missing `dsp` base pointer argument".to_string(),
+            )),
+        }
+    }
+
+    /// CLIF storage type of one FIR local declaration.
+    ///
+    /// Scalars use their canonical width; every pointer-shaped declaration
+    /// (explicit pointers, stack arrays, object-like refs) is held as one
+    /// native pointer.
+    fn local_clif_type(&self, typ: &FirType) -> Type {
+        match self.canon_real(typ) {
+            FirType::Int32 => types::I32,
+            FirType::Int64 => types::I64,
+            FirType::Bool => types::I8,
+            FirType::Float32 => types::F32,
+            FirType::Float64 => types::F64,
+            _ => self.ptr_ty,
+        }
+    }
+
+    /// Converts a value to a local's declared CLIF type with C assignment
+    /// semantics.
+    ///
+    /// FIR `StoreVar` may assign a differently typed value to a local, exactly
+    /// as a C assignment converts to the declared type; SSA variables reject
+    /// that silently retyped rebinding, so the conversion must be explicit.
+    /// Int/float mixing stays an error: FIR carries explicit casts for it.
+    fn coerce_to_local_type(&mut self, value: Value, to: Type) -> Result<Value, LoweringError> {
+        let from = self.fb.func.dfg.value_type(value);
+        if from == to {
+            return Ok(value);
+        }
+        let coerced = match (from, to) {
+            (types::I8, types::I32) | (types::I8, types::I64) => self.fb.ins().uextend(to, value),
+            (types::I32, types::I64) => self.fb.ins().sextend(to, value),
+            (types::I64, types::I32) | (types::I64, types::I8) | (types::I32, types::I8) => {
+                self.fb.ins().ireduce(to, value)
+            }
+            (types::F32, types::F64) => self.fb.ins().fpromote(to, value),
+            (types::F64, types::F32) => self.fb.ins().fdemote(to, value),
+            _ => {
+                return Err(LoweringError::Unsupported(format!(
+                    "cannot assign {from} value to {to} local"
+                )));
+            }
+        };
+        Ok(coerced)
+    }
+
+    /// Binds `name` to a fresh SSA variable of the declared type, defined with
+    /// `expr`'s value converted to it.
+    ///
+    /// Returns the displaced binding so loop lowerings can shadow their
+    /// induction variable and restore the outer binding afterwards.
+    fn bind_ssa_local(
+        &mut self,
+        name: &str,
+        expr: LoweredExpr,
+        clif_ty: Type,
+    ) -> Result<Option<LocalBinding>, LoweringError> {
+        let (value, is_ptr, pointee) = match expr {
+            LoweredExpr::Scalar(value) => (value, false, None),
+            LoweredExpr::Ptr { value, pointee } => (value, true, pointee),
+        };
+        let value = self.coerce_to_local_type(value, clif_ty)?;
+        let var = Variable::from_u32(self.next_var);
+        self.next_var += 1;
+        self.fb.declare_var(var, clif_ty);
+        self.fb.def_var(var, value);
+        Ok(self.vars.insert(
+            name.to_string(),
+            LocalBinding::Ssa {
+                var,
+                clif_ty,
+                is_ptr,
+                pointee,
+            },
+        ))
+    }
+
+    /// Reads the current value of a bound name, if any.
+    fn read_local(&mut self, name: &str) -> Option<LoweredExpr> {
+        match self.vars.get(name).copied()? {
+            LocalBinding::Entry(expr) => Some(expr),
+            LocalBinding::Ssa {
+                var,
+                is_ptr,
+                pointee,
+                ..
+            } => {
+                let value = self.fb.use_var(var);
+                Some(if is_ptr {
+                    LoweredExpr::Ptr { value, pointee }
+                } else {
+                    LoweredExpr::Scalar(value)
+                })
+            }
+        }
+    }
+
+    /// Reads a bound name that must denote a pointer.
+    fn read_local_ptr(&mut self, name: &str, what: &str) -> Result<Value, LoweringError> {
+        let expr = self
+            .read_local(name)
+            .ok_or_else(|| LoweringError::Unsupported(format!("{what} `{name}` not found")))?;
+        expr.ptr()
+            .ok_or_else(|| LoweringError::Unsupported(format!("{what} `{name}` is not a pointer")))
     }
 
     /// Looks up a named `dsp*` field in the backend struct layout contract.
@@ -316,6 +454,36 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 value: self.fb.ins().iconst(self.ptr_ty, 0),
                 pointee: Some(FirTypeRef::from_fir_type(inner)),
             }),
+            FirType::Array(inner, len) if *len > 0 => {
+                let elem_ty = self.fir_type_to_clif(inner)?;
+                let elem_size = elem_ty.bytes();
+                let len = u32::try_from(*len).map_err(|_| {
+                    LoweringError::Unsupported(format!(
+                        "Cranelift local array length does not fit in u32: {len}"
+                    ))
+                })?;
+                let size = elem_size.checked_mul(len).ok_or_else(|| {
+                    LoweringError::Unsupported(
+                        "Cranelift local array stack-slot size overflow".to_string(),
+                    )
+                })?;
+                let align_shift = match elem_size {
+                    8 => 3,
+                    4 => 2,
+                    2 => 1,
+                    _ => 0,
+                };
+                let slot = self.fb.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    size,
+                    align_shift,
+                ));
+                let value = self.fb.ins().stack_addr(self.ptr_ty, slot, 0);
+                Ok(LoweredExpr::Ptr {
+                    value,
+                    pointee: Some(FirTypeRef::from_fir_type(inner)),
+                })
+            }
             FirType::Obj | FirType::UI | FirType::Meta | FirType::Sound => Ok(LoweredExpr::Ptr {
                 value: self.fb.ins().iconst(self.ptr_ty, 0),
                 pointee: None,
@@ -359,7 +527,8 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                     },
                     (_, other) => other,
                 };
-                self.vars.insert(name, stored);
+                let clif_ty = self.local_clif_type(&typ);
+                let _ = self.bind_ssa_local(&name, stored, clif_ty)?;
                 Ok(())
             }
             FirMatch::DeclareVar {
@@ -375,7 +544,8 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 init: None,
             } => {
                 let init_v = self.default_lowered_value_for_type(&typ)?;
-                self.vars.insert(name, init_v);
+                let clif_ty = self.local_clif_type(&typ);
+                let _ = self.bind_ssa_local(&name, init_v, clif_ty)?;
                 Ok(())
             }
             FirMatch::Label(_) => Ok(()),
@@ -437,6 +607,9 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                     .to_string(),
             )),
             FirMatch::Drop(value) => {
+                if is_obviously_side_effect_free_value(self.store, value) {
+                    return Ok(());
+                }
                 let _ = self.lower_expr(value, None)?;
                 Ok(())
             }
@@ -486,7 +659,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         self.fb.ins().brif(cond, body_block, &[], exit, &[]);
 
         self.fb.switch_to_block(body_block);
-        let prev = self.vars.insert(var.clone(), LoweredExpr::Scalar(i_val));
+        let prev = self.bind_ssa_local(&var, LoweredExpr::Scalar(i_val), types::I32)?;
         self.lower_stmt(body)?;
         if !is_return_terminated(self.fb) {
             let next = if is_reverse {
@@ -518,7 +691,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         index: FirId,
         value: FirId,
     ) -> Result<(), LoweringError> {
-        let alias = self.vars.get(name).copied().ok_or_else(|| {
+        let alias = self.read_local(name).ok_or_else(|| {
             LoweringError::Unsupported(format!("stack pointer alias `{name}` not found"))
         })?;
         let base_ptr = alias.ptr().ok_or_else(|| {
@@ -664,17 +837,17 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     /// traffic because stack locals in the current subset are modelled as SSA
     /// values/pointers in the lowering environment.
     fn lower_store_var_local(&mut self, name: &str, value: FirId) -> Result<(), LoweringError> {
-        let prev = self.vars.get(name).copied().ok_or_else(|| {
+        let binding = self.vars.get(name).copied().ok_or_else(|| {
             LoweringError::Unsupported(format!("local variable `{name}` not found"))
         })?;
-        let new_value = match prev {
-            LoweredExpr::Scalar(_) => LoweredExpr::Scalar(self.lower_expr(value, None)?.value()),
-            LoweredExpr::Ptr { pointee, .. } => {
-                let v = self.lower_expr(value, None)?.value();
-                LoweredExpr::Ptr { value: v, pointee }
-            }
+        let LocalBinding::Ssa { var, clif_ty, .. } = binding else {
+            return Err(LoweringError::Unsupported(format!(
+                "function argument `{name}` is not assignable"
+            )));
         };
-        self.vars.insert(name.to_string(), new_value);
+        let new_value = self.lower_expr(value, None)?.value();
+        let new_value = self.coerce_to_local_type(new_value, clif_ty)?;
+        self.fb.def_var(var, new_value);
         Ok(())
     }
 
@@ -826,7 +999,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
 
         self.fb.switch_to_block(header);
         let i_val = self.fb.block_params(header)[0];
-        let prev = self.vars.insert(var.clone(), LoweredExpr::Scalar(i_val));
+        let prev = self.bind_ssa_local(&var, LoweredExpr::Scalar(i_val), types::I32)?;
         let end_v = self.lower_expr(end, Some(&FirType::Int32))?.value();
         let cc = if is_reverse {
             IntCC::SignedGreaterThan
@@ -957,7 +1130,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 let coerced = self.coerce_value_to_fir_type(raw, &typ)?;
                 Ok(LoweredExpr::Scalar(coerced))
             }
-            FirMatch::LoadVar { name, .. } => self.vars.get(&name).copied().ok_or_else(|| {
+            FirMatch::LoadVar { name, .. } => self.read_local(&name).ok_or_else(|| {
                 LoweringError::Unsupported(format!("load of unknown variable `{name}`"))
             }),
             FirMatch::LoadTable {
@@ -966,7 +1139,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 index,
                 typ,
             } => {
-                let alias = self.vars.get(&name).copied().ok_or_else(|| {
+                let alias = self.read_local(&name).ok_or_else(|| {
                     LoweringError::Unsupported(format!("stack table base `{name}` not found"))
                 })?;
                 let base_ptr = alias.ptr().ok_or_else(|| {
@@ -1001,11 +1174,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 index,
                 typ,
             } => {
-                let base_ptr = self.vars.get(&name).and_then(|v| v.ptr()).ok_or_else(|| {
-                    LoweringError::Unsupported(format!(
-                        "function-arg table base `{name}` not found"
-                    ))
-                })?;
+                let base_ptr = self.read_local_ptr(&name, "function-arg table base")?;
                 let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
                 let elem_ty = self.fir_type_to_clif(&typ)?;
                 let addr = self.indexed_addr(base_ptr, index_v, i64::from(self.ptr_ty.bytes()));
@@ -1783,7 +1952,7 @@ pub(crate) fn try_lower_function_body(
             },
             _ => LoweredExpr::Scalar(value),
         };
-        vars.insert(arg.name.clone(), lowered);
+        vars.insert(arg.name.clone(), LocalBinding::Entry(lowered));
     }
 
     let mut lowering = ComputeLowering {
@@ -1793,6 +1962,7 @@ pub(crate) fn try_lower_function_body(
         struct_layout: cx.struct_layout,
         ptr_ty: cx.ptr_ty,
         vars,
+        next_var: 0,
         import_refs: HashMap::new(),
         static_data_ids: cx.static_data_ids,
         extern_data_ids: cx.extern_data_ids,

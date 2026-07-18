@@ -290,8 +290,15 @@ pub(crate) fn declare_jit_function(
     let compute_clif_text = ctx.func.display().to_string();
 
     jit.define_function(func_id, &mut ctx).map_err(|e| {
+        // `ModuleError`'s `Display` collapses verifier failures to the bare
+        // "Verifier errors" heading, and the FFI error buffer truncates long
+        // messages, so the instruction-level detail would otherwise be
+        // unreachable. Debug-format the error and offer a full-function dump.
+        if let Ok(dump) = std::env::var("FAUST_RS_CLIF_DUMP") {
+            let _ = std::fs::write(&dump, format!("{e:?}\n{}", ctx.func.display()));
+        }
         CraneliftBackendError::jit_failure(format!(
-            "define_function `{function_symbol_name}` failed: {e}\nCLIF:\n{}",
+            "define_function `{function_symbol_name}` failed: {e:?}\nCLIF:\n{}",
             ctx.func.display()
         ))
     })?;

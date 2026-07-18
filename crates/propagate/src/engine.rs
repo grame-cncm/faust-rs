@@ -864,7 +864,19 @@ fn propagate_clocked_wrapper(
     }
 
     let clock_env = ctx.clock_env;
-    let clock_env2 = make_clock_env(arena, clock_env, wrapper_node.as_tree_id(), inputs);
+    let domain_kind = match kind {
+        ClockedWrapperKind::Ondemand => ClockDomainKind::OnDemand,
+        ClockedWrapperKind::Upsampling => ClockDomainKind::Upsampling,
+        ClockedWrapperKind::Downsampling => ClockDomainKind::Downsampling,
+    };
+    let (domain_id, clock_env2) = make_clock_env(
+        arena,
+        ctx,
+        domain_kind,
+        wrapper_node.as_tree_id(),
+        clock,
+        tail,
+    );
     let x1: Vec<_> = {
         let mut b = SigBuilder::new(arena);
         tail.iter().copied().map(|sig| b.temp_var(sig)).collect()
@@ -883,9 +895,12 @@ fn propagate_clocked_wrapper(
             .collect()
     };
     let parent_clock_env = ctx.clock_env;
+    let parent_clock_domain = ctx.clock_domain;
     ctx.clock_env = clock_env2;
+    ctx.clock_domain = Some(domain_id);
     let y0 = propagate_in_slot_env(arena, body, &x2, ctx)?;
     ctx.clock_env = parent_clock_env;
+    ctx.clock_domain = parent_clock_domain;
 
     let y1: Vec<_> = {
         let mut b = SigBuilder::new(arena);
@@ -1078,23 +1093,33 @@ pub(crate) fn list_length(arena: &TreeArena, mut list: TreeId) -> Option<usize> 
     Some(len)
 }
 
-/// Builds the adapted Rust clock-environment payload threaded through clocked wrappers.
+/// Allocates one fresh clock-domain instance and returns its opaque in-graph token.
 ///
-/// C++ stores `(parent, slotenv, path, box, inputs...)` as a tree list. Rust
-/// currently mirrors the same child ordering but leaves `slotenv` and `path`
-/// empty because `crates/propagate` has not yet ported those lookup layers.
+/// C++ stores `(parent, slotenv, path, box, inputs...)` as a tree list, where
+/// `slotenv` + `path` provide instance uniqueness. Rust replaces that cons
+/// tuple with a [`ClockDomainTable`] side arena (roadmap P0.2, plan §5.3):
+/// each call allocates a fresh [`ClockDomain`] entry — the id is the
+/// uniqueness token — and only the `SIGCLOCKENV` leaf carrying that id is
+/// embedded in the signal graph. Two structurally identical wrapper instances
+/// therefore always get distinct domains, closing the C++ de Bruijn collision
+/// class (plan §3.4) by construction.
 fn make_clock_env(
     arena: &mut TreeArena,
-    parent: TreeId,
+    ctx: &mut PropagateContext<'_>,
+    kind: ClockDomainKind,
     box_node: TreeId,
+    clock: SigId,
     inputs: &[SigId],
-) -> TreeId {
-    let nil = arena.nil();
-    let input_list = vec_to_list(arena, inputs);
-    let tail3 = arena.cons(box_node, input_list);
-    let tail2 = arena.cons(nil, tail3);
-    let tail1 = arena.cons(nil, tail2);
-    arena.cons(parent, tail1)
+) -> (ClockDomainId, SigId) {
+    let domain_id = ctx.clock_domains.alloc(ClockDomain {
+        parent: ctx.clock_domain,
+        kind,
+        clock,
+        wrapper_box: box_node,
+        inputs: inputs.to_vec(),
+    });
+    let token = SigBuilder::new(arena).clock_env_token(domain_id.as_u32());
+    (domain_id, token)
 }
 
 /// Flattens a route specification encoded as nested `par(...)` pairs into integer endpoints.
@@ -1218,7 +1243,16 @@ pub(crate) struct PropagateContext<'a> {
     pub(crate) control_ids: &'a ControlIds,
     pub(crate) slot_env: &'a mut SlotEnv,
     pub(crate) memo: &'a mut PropagateMemo,
+    /// Side table of clock-domain instances allocated by clocked wrappers
+    /// during this propagation run (roadmap P0.2).
+    pub(crate) clock_domains: &'a mut ClockDomainTable,
+    /// Current clock environment as an in-graph value: `nil` at the top-level
+    /// rate, otherwise the opaque `SIGCLOCKENV` token of `clock_domain`.
     pub(crate) clock_env: TreeId,
+    /// Current clock-domain id (`None` at the top-level rate). Mirrors
+    /// `clock_env`; kept separately so allocation can record the parent
+    /// without re-decoding the token.
+    pub(crate) clock_domain: Option<ClockDomainId>,
     /// When `true`, `ForwardAD` nodes act as transparent wrappers (no signal
     /// expansion).  Set while propagating Rec branches so that FAD expansion
     /// is deferred until after the recursive group is fully built.

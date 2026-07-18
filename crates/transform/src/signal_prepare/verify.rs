@@ -240,6 +240,41 @@ fn verify_prepared_signal(
             sym_group_arities,
             reachable_typed_nodes,
         )?,
+        // `Clocked(env, y)`: the first child is an opaque clock-environment
+        // annotation (nil at the top-level rate or a `SIGCLOCKENV` token into
+        // the propagation-owned clock-domain table), NOT a signal. Visiting it
+        // as a signal is exactly the P0.1 bug: the env is not a signal node,
+        // carries no type annotation, and must never enter the typed
+        // reachability set. Only the wrapped signal `y` is verified.
+        SigMatch::Clocked(env, y) => {
+            let env_is_opaque =
+                arena.is_nil(env) || matches!(match_sig(arena, env), SigMatch::ClockEnvToken(_));
+            if !env_is_opaque {
+                return Err(SignalPrepareError::Validation(format!(
+                    "prepared Clocked signal {} carries a malformed clock-env child {} \
+                     (expected nil or a SIGCLOCKENV token)",
+                    sig.as_u32(),
+                    env.as_u32()
+                )));
+            }
+            verify_prepared_signal(
+                arena,
+                ui,
+                y,
+                visited,
+                sym_group_arities,
+                reachable_typed_nodes,
+            )?;
+        }
+        // A clock-env token reached directly in signal position is a
+        // structural error: it is only legal as the first child of `Clocked`.
+        SigMatch::ClockEnvToken(id) => {
+            return Err(SignalPrepareError::Validation(format!(
+                "clock-env token #{id} (node {}) reached signal position; \
+                 it is only legal as the opaque first child of Clocked(env, y)",
+                sig.as_u32()
+            )));
+        }
         SigMatch::Delay(x, y)
         | SigMatch::Prefix(x, y)
         | SigMatch::RdTbl(x, y)
@@ -253,8 +288,7 @@ fn verify_prepared_signal(
         | SigMatch::Enable(x, y)
         | SigMatch::Control(x, y)
         | SigMatch::Seq(x, y)
-        | SigMatch::ZeroPad(x, y)
-        | SigMatch::Clocked(x, y) => {
+        | SigMatch::ZeroPad(x, y) => {
             verify_prepared_signal(
                 arena,
                 ui,

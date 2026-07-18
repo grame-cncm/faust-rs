@@ -24,6 +24,24 @@ fn wasm_scaffold_emits_valid_module_for_passthrough_fixture() {
 }
 
 #[test]
+fn wasm_compute_lowers_local_array_buffers() {
+    let (store, module) = build_local_array_buffer_module();
+    let out = generate_wasm_module(&store, module, &WasmOptions::default())
+        .expect("WASM backend should lower stack-local array buffers");
+
+    Validator::new()
+        .validate_all(&out.wasm_binary)
+        .expect("generated module with local array should validate");
+    let vbuf = out
+        .memory_layout
+        .local_offsets
+        .get("vbuf0")
+        .expect("local array should be reserved in memory layout");
+    assert_eq!(vbuf.size, 128);
+    assert!(vbuf.offset < out.memory_layout.io_zone_offset);
+}
+
+#[test]
 fn wasm_json_description_renders_stable_scaffold_shape() {
     let json = WasmJsonDescription {
         name: "passthrough".to_owned(),
@@ -547,7 +565,10 @@ fn wasm_compute_lowers_control_flow_statements() {
             >= 2
     );
     assert!(ops.iter().any(|op| matches!(op, Operator::Else)));
-    assert!(ops.iter().any(|op| matches!(op, Operator::Drop)));
+    // The fixture's two Drop roots contain only an input load and its negation.
+    // Since commit a29954d8, all active backends elide such structurally pure
+    // roots; calls and unknown FIR values remain conservatively effectful.
+    assert!(!ops.iter().any(|op| matches!(op, Operator::Drop)));
     assert!(ops.iter().any(|op| matches!(op, Operator::I32Eq)));
 }
 
@@ -1254,6 +1275,74 @@ fn build_labeled_passthrough_module() -> (FirStore, FirId) {
         1,
         1,
         "labeled_passthrough",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+    );
+    (store, module)
+}
+
+fn build_local_array_buffer_module() -> (FirStore, FirId) {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+
+    let dsp_struct = b.block(&[]);
+    let globals = b.block(&[]);
+    let static_decls = b.block(&[]);
+
+    let out_chan = b.int32(0);
+    let ptr_ty = FirType::Ptr(Box::new(FirType::FaustFloat));
+    let out_ptr = b.load_table("outputs", AccessType::FunArgs, out_chan, ptr_ty.clone());
+    let out_alias = b.declare_var("output0", ptr_ty, AccessType::Stack, Some(out_ptr));
+    let vbuf = b.declare_var(
+        "vbuf0",
+        FirType::Array(Box::new(FirType::FaustFloat), 32),
+        AccessType::Stack,
+        None,
+    );
+    let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+    let value = b.float32(0.25);
+    let store_vbuf = b.store_table("vbuf0", AccessType::Stack, i0, value);
+    let read_vbuf = b.load_table("vbuf0", AccessType::Stack, i0, FirType::FaustFloat);
+    let write_out = b.store_table("output0", AccessType::Stack, i0, read_vbuf);
+    let loop_body = b.block(&[store_vbuf, write_out]);
+    let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
+    let compute_body = b.block(&[out_alias, vbuf, sample_loop]);
+    let args = [
+        NamedType {
+            name: "dsp".to_owned(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        },
+        NamedType {
+            name: "count".to_owned(),
+            typ: FirType::Int32,
+        },
+        NamedType {
+            name: "inputs".to_owned(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+        NamedType {
+            name: "outputs".to_owned(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+    ];
+    let compute = b.declare_fun(
+        "compute",
+        FirType::Fun {
+            args: args.iter().map(|arg| arg.typ.clone()).collect(),
+            ret: Box::new(FirType::Void),
+        },
+        &args,
+        Some(compute_body),
+        false,
+    );
+    let functions = b.block(&[compute]);
+    let module = b.module(
+        0,
+        1,
+        "local_array_buffer",
         dsp_struct,
         globals,
         functions,

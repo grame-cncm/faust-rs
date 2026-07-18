@@ -41,7 +41,7 @@ $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
 ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir $(ARCH_RUST) | ir/$(outdir)/.dir build/$(outdir)/.dir
-	$(FAUST_RS) -lang rust -double -cn mydsp -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.rs
+	$(FAUST_RS) -lang rust -double $(COMPILER_OPTS) -cn mydsp -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.rs
 	cat build/$(outdir)/$*.rs $(ARCH_RUST) > build/$(outdir)/$*_main.rs
 	$(RUSTC) $(RUSTFLAGS_IMPULSE) build/$(outdir)/$*_main.rs -o build/$(outdir)/$*
 	./build/$(outdir)/$* -n $(SCALARFRAMES) > $@

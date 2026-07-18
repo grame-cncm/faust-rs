@@ -18,6 +18,39 @@ fn corpus_path(file: &str) -> PathBuf {
         .join(file)
 }
 
+fn impulse_dsp_path(file: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("tests")
+        .join("impulse-tests")
+        .join("dsp")
+        .join(file)
+}
+
+/// Compiles one full-library impulse fixture on an explicit test stack.
+///
+/// The library expansion is intentionally exercised here; the larger stack is
+/// a test-runner accommodation, not a compiler execution requirement.
+fn compile_impulse_cpp(file: &str) -> String {
+    let file = file.to_owned();
+    std::thread::Builder::new()
+        .name(format!("{file}-load-cse"))
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || {
+            Compiler::new()
+                .compile_file_default_to_cpp_with_lane(
+                    &impulse_dsp_path(&file),
+                    &codegen::backends::cpp::CppOptions::default(),
+                    SignalFirLane::TransformFastLane,
+                )
+                .unwrap_or_else(|error| panic!("{file} scalar C++ compilation failed: {error}"))
+        })
+        .expect("impulse load-CSE test thread must start")
+        .join()
+        .expect("impulse load-CSE test thread must not panic")
+}
+
 #[test]
 fn dump_cpp_fastlane_compiles_fixture() {
     let compiler = Compiler::new();
@@ -507,6 +540,46 @@ fn fastlane_compiles_sine_phasor_fixture() {
         "ui_interface->openVerticalBox(ui_interface->uiInterface, \"rep_38_sine_phasor\");"
     ));
     assert!(fast_c.contains("ui_interface->closeBox(ui_interface->uiInterface);"));
+}
+
+#[test]
+fn scalar_cpp_reuses_non_aliasing_recursive_state_load_without_hiding_shift() {
+    let cpp = compile_impulse_cpp("APF.dsp");
+    let compute = cpp
+        .find("void compute(")
+        .map(|start| &cpp[start..])
+        .unwrap_or_else(|| panic!("APF generated no compute method:\n{cpp}"));
+
+    assert!(
+        compute.contains("float fTemp0 = fRec204[1];"),
+        "the first recursive-state load remains materialized:\n{compute}"
+    );
+    assert!(
+        !compute.contains("float fTemp1 = fRec204[1];"),
+        "the duplicate direct state load must reuse fTemp0:\n{compute}"
+    );
+    assert!(
+        compute.contains("fRec204[2] = fTemp0;") && compute.contains("fRec204[1] = fRec204[0];"),
+        "the required ordered recursive history shift must remain explicit and reuse the proven prior state:\n{compute}"
+    );
+}
+
+#[test]
+fn scalar_cpp_reuses_karplus_state_load_across_unrelated_scalar_store() {
+    let cpp = compile_impulse_cpp("karplus.dsp");
+    let compute = cpp
+        .find("void compute(")
+        .map(|start| &cpp[start..])
+        .unwrap_or_else(|| panic!("Karplus generated no compute method:\n{cpp}"));
+
+    assert!(
+        compute.contains("float fTemp0 = fRec214[1];") && compute.contains("fRec214[2] = fTemp0;"),
+        "an unrelated scalar state store must not invalidate the table-load proof:\n{compute}"
+    );
+    assert!(
+        compute.contains("fRec205 = fRecCur205;") && compute.contains("fRec214[1] = fRec214[0];"),
+        "Karplus scalar and recursive state commits must remain explicit:\n{compute}"
+    );
 }
 
 #[test]

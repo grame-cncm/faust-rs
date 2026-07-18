@@ -1,6 +1,6 @@
 # Compare C++ Faust and faust-rs on the impulse DSP corpus.
 #
-# This file exposes two independent benchmark targets:
+# This file exposes three independent benchmark targets:
 #
 #   bench
 #       Measures generated DSP throughput with `faustbench -single`.
@@ -11,6 +11,13 @@
 #       (`-lang cpp -double`) on the same DSP list. Lower seconds is better.
 #       Results are written to COMPILE_BENCH_CSV.
 #
+#   vec-bench
+#       Measures faust-rs C++ generated-code throughput for scalar, `-vec
+#       -lv 0`, and `-vec -lv 1`, each crossed with `-ss 0..3`, restricted to
+#       DSPs certified in every checked precision/vector/scheduling mode.
+#       Detailed and per-DSP winning configurations are written to
+#       VEC_BENCH_CSV and VEC_BENCH_SUMMARY_CSV.
+#
 # Both targets iterate over `testnames`, i.e. all `dsp/*.dsp` inputs except the
 # DSPs listed as known C++ backend failures in known.mk. They are intentionally
 # not correctness gates: failures are reported in the CSV and logs, and the run
@@ -19,11 +26,13 @@
 # Run from this directory:
 #
 #   make -f Make.bench bench
+#   make -f Make.bench vec-bench
 #   make -f Make.bench compile-bench
 #
 # Or through the aggregate Makefile:
 #
 #   make bench
+#   make vec-bench
 #   make compile-bench
 #
 # Relevant knobs come from common.mk:
@@ -34,6 +43,11 @@
 #   BENCH_OPTIONS      options passed to faustbench, defaulting to -double.
 #   BENCH_WARN_MIN     warning threshold for generated-code regressions.
 #   BENCH_CSV          output CSV for `bench`.
+#   VEC_BENCH_OPTIONS  options shared by the 12 vector/scheduling measurements.
+#   VEC_BENCH_WARN_MIN warning threshold when vector code is slower than scalar.
+#   VEC_BENCH_CSV      detailed output CSV for `vec-bench`.
+#   VEC_BENCH_SUMMARY_CSV per-DSP winning configuration output CSV.
+#   VEC_BENCH_AGGREGATE_CSV corpus aggregate for each mode/strategy pair.
 #   COMPILE_BENCH_CSV  output CSV for `compile-bench`.
 #
 
@@ -41,6 +55,8 @@ include common.mk
 
 allnames  := $(dspfiles:dsp/%.dsp=%)
 testnames := $(filter-out $(call known_fail_for,cpp),$(allnames))
+vector_allnames := $(vector_certified_dspfiles:dsp/%.dsp=%)
+vector_testnames := $(filter-out $(call known_fail_for,cpp),$(vector_allnames))
 
 # Keep all generated benchmark artifacts under build/bench:
 #   cpp-bin/, rs-bin/       temporary command wrappers used by faustbench
@@ -61,10 +77,12 @@ faust_cpp_abs := $(shell command -v $(FAUST_CPP) 2>/dev/null || printf '%s' "$(F
 faust_rs_abs := $(abspath $(FAUST_RS))
 cxx_abs := $(shell command -v $(CXX) 2>/dev/null || printf '%s' "$(CXX)")
 
-.PHONY: bench compile-bench force
+.PHONY: bench vec-bench compile-bench force
 .DELETE_ON_ERROR:
 
 bench: $(BENCH_CSV)
+
+vec-bench: $(VEC_BENCH_CSV)
 
 compile-bench: $(COMPILE_BENCH_CSV)
 
@@ -126,6 +144,97 @@ $(BENCH_CSV): force | $(cppbindir)/faust $(cppbindir)/uname $(rsbindir)/faust $(
 		fi; \
 	done; \
 	printf '[bench] summary: total=%s better=%s worse=%s failed=%s csv=%s\n' "$$total" "$$better" "$$worse" "$$failed" "$@"
+
+# C++ backend scalar/vector/scheduling runtime benchmark.
+#
+# Every row uses the same faust-rs binary, native C++ compiler, flags,
+# precision, buffer size, and DSP source. Only `-vec`, `-lv`, and `-ss` vary.
+# `speedup_vs_scalar_ss0_pct` compares all strategies against one canonical
+# baseline. `speedup_vs_scalar_same_ss_pct` isolates vectorization while keeping
+# scheduling fixed.
+#
+# This developer benchmark is intentionally non-gating. Missing measurements
+# are marked `failed`; slow vector configurations are reported and warned above
+# VEC_BENCH_WARN_MIN, but machine noise does not become a correctness failure.
+$(VEC_BENCH_CSV): force | $(rsbindir)/faust $(rsbindir)/uname $(benchdir)/cxx $(logdir)/.dir
+	@set -e; \
+	if [ -z "$(vector_testnames)" ]; then printf '[vec-bench][failed] certified DSP list is empty or missing: %s\n' "$(VECTOR_CERTIFIED_LIST)" >&2; exit 1; fi; \
+	mkdir -p "$$(dirname "$@")" "$$(dirname "$(VEC_BENCH_SUMMARY_CSV)")" "$$(dirname "$(VEC_BENCH_AGGREGATE_CSV)")"; \
+	printf 'dsp,mode,ss,mbytes_sec,speedup_vs_scalar_ss0_pct,speedup_vs_scalar_same_ss_pct,status\n' > "$@"; \
+	printf 'dsp,baseline_mbytes_sec,fastest_mode,fastest_ss,fastest_mbytes_sec,best_speedup_pct,valid_combinations,status\n' > "$(VEC_BENCH_SUMMARY_CSV)"; \
+	bench_value() { \
+		dsp="$$1"; \
+		log="$$2"; \
+		shift 2; \
+		CXX="$(cxx_wrapper_abs)" CXXFLAGS="$${CXXFLAGS:--Ofast -fbracket-depth=512}" PATH="$(rsbindir_abs):$$PATH" $(FAUSTBENCH) $(VEC_BENCH_OPTIONS) "$$@" -I dsp -I $(FAUSTLIBS) "$$dsp" > "$$log" 2>&1 || return 1; \
+		sed -nE 's/^Best value is : ([0-9.]+) MBytes\/sec.*/\1/p' "$$log" | tail -1; \
+	}; \
+	percent_gain() { \
+		LC_ALL=C awk -v value="$$1" -v base="$$2" 'BEGIN { if (base == 0) { print "inf"; } else { printf "%.2f", (value - base) / base * 100; } }'; \
+	}; \
+	scalar_wins=0; vec0_wins=0; vec1_wins=0; partial=0; \
+	for name in $(vector_testnames); do \
+		dsp="dsp/$$name.dsp"; \
+		printf '[vec-bench] %s\n' "$$name"; \
+		scalar0=""; scalar1=""; scalar2=""; scalar3=""; \
+		for ss in 0 1 2 3; do \
+			step=$$((ss + 1)); \
+			printf '[vec-bench][run] %s [%s/12] scalar -ss %s\n' "$$name" "$$step" "$$ss"; \
+			log="$(logdir)/$$name.scalar.ss$$ss.log"; \
+			value="$$(bench_value "$$dsp" "$$log" -ss "$$ss" || true)"; \
+			if [ -n "$$value" ]; then \
+				printf '[vec-bench][done] %s [%s/12] scalar -ss %s: %s MBytes/sec\n' "$$name" "$$step" "$$ss" "$$value"; \
+			else \
+				printf '[vec-bench][failed] %s [%s/12] scalar -ss %s (log: %s)\n' "$$name" "$$step" "$$ss" "$$log" >&2; \
+			fi; \
+			case "$$ss" in 0) scalar0="$$value";; 1) scalar1="$$value";; 2) scalar2="$$value";; 3) scalar3="$$value";; esac; \
+		done; \
+		scalar_for_ss() { \
+			case "$$1" in 0) printf '%s' "$$scalar0";; 1) printf '%s' "$$scalar1";; 2) printf '%s' "$$scalar2";; 3) printf '%s' "$$scalar3";; esac; \
+		}; \
+		baseline="$$scalar0"; fastest_value=""; fastest_mode=""; fastest_ss=""; valid=0; \
+		for mode in scalar vec0 vec1; do \
+			for ss in 0 1 2 3; do \
+				same_scalar="$$(scalar_for_ss "$$ss")"; \
+				if [ "$$mode" = scalar ]; then \
+					value="$$same_scalar"; \
+				else \
+					lv=$${mode#vec}; \
+					if [ "$$mode" = vec0 ]; then step=$$((ss + 5)); else step=$$((ss + 9)); fi; \
+					printf '[vec-bench][run] %s [%s/12] %s -ss %s\n' "$$name" "$$step" "$$mode" "$$ss"; \
+					log="$(logdir)/$$name.$$mode.ss$$ss.log"; \
+					value="$$(bench_value "$$dsp" "$$log" -vec -lv "$$lv" -ss "$$ss" || true)"; \
+				fi; \
+				if [ -z "$$value" ]; then \
+					if [ "$$mode" != scalar ]; then printf '[vec-bench][failed] %s [%s/12] %s -ss %s (log: %s)\n' "$$name" "$$step" "$$mode" "$$ss" "$$log" >&2; fi; \
+					printf '%s,%s,%s,,,,failed\n' "$$name" "$$mode" "$$ss" >> "$@"; \
+					continue; \
+				fi; \
+				if [ "$$mode" != scalar ]; then printf '[vec-bench][done] %s [%s/12] %s -ss %s: %s MBytes/sec\n' "$$name" "$$step" "$$mode" "$$ss" "$$value"; fi; \
+				valid=$$((valid + 1)); baseline_gain=""; same_gain=""; \
+				if [ -n "$$baseline" ]; then baseline_gain="$$(percent_gain "$$value" "$$baseline")"; fi; \
+				if [ "$$mode" != scalar ] && [ -n "$$same_scalar" ]; then \
+					same_gain="$$(percent_gain "$$value" "$$same_scalar")"; \
+					if LC_ALL=C awk -v gain="$$same_gain" -v min="$(VEC_BENCH_WARN_MIN)" 'BEGIN { exit !(gain <= -min) }'; then \
+						printf '[vec-bench][warn] %s %s -ss %s is %s%% slower than scalar -ss %s\n' "$$name" "$$mode" "$$ss" "$${same_gain#-}" "$$ss" >&2; \
+					fi; \
+				fi; \
+				printf '%s,%s,%s,%s,%s,%s,ok\n' "$$name" "$$mode" "$$ss" "$$value" "$$baseline_gain" "$$same_gain" >> "$@"; \
+				if [ -z "$$fastest_value" ] || LC_ALL=C awk -v value="$$value" -v best="$$fastest_value" 'BEGIN { exit !(value > best) }'; then \
+					fastest_value="$$value"; fastest_mode="$$mode"; fastest_ss="$$ss"; \
+				fi; \
+			done; \
+		done; \
+		status=complete; \
+		if [ "$$valid" -ne 12 ]; then status=partial; partial=$$((partial + 1)); fi; \
+		best_gain=""; \
+		if [ -n "$$baseline" ] && [ -n "$$fastest_value" ]; then best_gain="$$(percent_gain "$$fastest_value" "$$baseline")"; fi; \
+		printf '%s,%s,%s,%s,%s,%s,%s,%s\n' "$$name" "$$baseline" "$$fastest_mode" "$$fastest_ss" "$$fastest_value" "$$best_gain" "$$valid" "$$status" >> "$(VEC_BENCH_SUMMARY_CSV)"; \
+		case "$$fastest_mode" in scalar) scalar_wins=$$((scalar_wins + 1));; vec0) vec0_wins=$$((vec0_wins + 1));; vec1) vec1_wins=$$((vec1_wins + 1));; esac; \
+		printf '[vec-bench][best] %s %s -ss %s: %s MBytes/sec (%s%% vs scalar -ss 0)\n' "$$name" "$$fastest_mode" "$$fastest_ss" "$$fastest_value" "$$best_gain"; \
+	done; \
+	LC_ALL=C awk -F, 'BEGIN { OFS=","; print "mode,ss,successful_dsps,mean_speedup_vs_scalar_ss0_pct,geomean_speedup_vs_scalar_ss0_pct,wins_vs_scalar_ss0,mean_speedup_vs_scalar_same_ss_pct" } NR > 1 && $$7 == "ok" { scalar_key=$$1 SUBSEP $$3; if ($$2 == "scalar") scalar[scalar_key]=$$4; if ($$2 == "scalar" && $$3 == 0) baseline[$$1]=$$4; key=$$2 SUBSEP $$3; if (baseline[$$1] > 0) { delta=($$4-baseline[$$1])/baseline[$$1]*100; count[key]++; sum[key]+=delta; logsum[key]+=log($$4/baseline[$$1]); if (delta > 0) wins[key]++ } if ($$2 != "scalar" && scalar[scalar_key] > 0) { same_count[key]++; same_sum[key]+=($$4-scalar[scalar_key])/scalar[scalar_key]*100 } } END { modes[1]="scalar"; modes[2]="vec0"; modes[3]="vec1"; for (m=1; m<=3; m++) for (ss=0; ss<=3; ss++) { key=modes[m] SUBSEP ss; if (count[key]) { mean=sprintf("%.2f", sum[key]/count[key]); geo=sprintf("%.2f", (exp(logsum[key]/count[key])-1)*100) } else { mean=""; geo="" } if (same_count[key]) same=sprintf("%.2f", same_sum[key]/same_count[key]); else same=""; print modes[m],ss,count[key]+0,mean,geo,wins[key]+0,same } }' "$@" > "$(VEC_BENCH_AGGREGATE_CSV)"; \
+	printf '[vec-bench] summary: scalar-wins=%s vec0-wins=%s vec1-wins=%s partial=%s csv=%s winners=%s aggregate=%s\n' "$$scalar_wins" "$$vec0_wins" "$$vec1_wins" "$$partial" "$@" "$(VEC_BENCH_SUMMARY_CSV)" "$(VEC_BENCH_AGGREGATE_CSV)"
 
 # Compiler-time benchmark.
 #

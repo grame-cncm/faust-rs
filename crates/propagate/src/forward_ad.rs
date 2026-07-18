@@ -461,6 +461,21 @@ struct ForwardADTransform<'a> {
     diff_seed_index: AHashMap<SigId, SmallVec<[usize; 2]>>,
     cache: AHashMap<SigId, Dual>,
     debruijn_depth: i64,
+    /// First clock-boundary violation encountered during the sweep, if any.
+    ///
+    /// `transform` is infallible by design (it returns `Dual`s and relies on
+    /// the cache for cycle-breaking), so boundary violations are recorded here
+    /// and surfaced by [`generate_fad_signals_multi`] once the sweep finishes.
+    /// Roadmap P0.4: a boundary must be a loud error, never a silent zero
+    /// tangent.
+    boundary_error: Option<PropagateError>,
+    /// FAD Phase B (roadmap P5) "augment once" memo: original clocked-wrapper
+    /// node (`OnDemand`/`Upsampling`/`Downsampling`) → its augmented twin whose
+    /// payload carries the interleaved primal + tangent held-output lanes. Every
+    /// `Seq(OD, y)` consumer routes through the *same* augmented block so a
+    /// stateful body executes once per fire (cohabitation §6.1 "one block, not
+    /// two").
+    od_aug_cache: AHashMap<SigId, SigId>,
 }
 
 impl<'a> ForwardADTransform<'a> {
@@ -471,6 +486,8 @@ impl<'a> ForwardADTransform<'a> {
             diff_seeds: diff_seeds.to_vec(),
             cache: AHashMap::new(),
             debruijn_depth: 0,
+            boundary_error: None,
+            od_aug_cache: AHashMap::new(),
         }
     }
 
@@ -1072,6 +1089,58 @@ impl<'a> ForwardADTransform<'a> {
                 self.zero_tangent(sig)
             }
             SigMatch::FFun(ff, largs) => self.transform_ffun(sig, ff, largs),
+            // ── FAD Phase B (roadmap P5), boundary wrappers ──
+            // Differentiation commutes with every boundary operator as long as
+            // the clock does not depend on the seed (cohabitation §5): the
+            // clock/clock-env child is opaque and never traversed, the value
+            // child carries the tangent. These pass-through rules are the
+            // wrapper half of the §6 dual-rule table; the block-augmentation
+            // half (`Seq`/`OnDemand`/`Upsampling`/`Downsampling` → `OD_aug`)
+            // is still staged below.
+            SigMatch::TempVar(u) => {
+                self.unary_chain(u, |b, p| b.temp_var(p), |b, _p, tx| b.temp_var(tx))
+            }
+            SigMatch::PermVar(u) => {
+                self.unary_chain(u, |b, p| b.perm_var(p), |b, _p, tx| b.perm_var(tx))
+            }
+            SigMatch::Clocked(c, u) => self.unary_chain(
+                u,
+                move |b, p| b.clocked(c, p),
+                move |b, _p, tx| b.clocked(c, tx),
+            ),
+            SigMatch::ZeroPad(u, h) => self.unary_chain(
+                u,
+                move |b, p| b.zero_pad(p, h),
+                move |b, _p, tx| b.zero_pad(tx, h),
+            ),
+            // ── Block augmentation (the P5 core) ──
+            // `Seq(OD, y)` → `{ Seq(OD_aug, y), Seq(OD_aug, y') }` where
+            // `OD_aug` interleaves the primal + tangent held-output lanes in the
+            // block payload, built once per source block (§6). The wrapper glue
+            // inside `y` (`PermVar`/`Clocked`/`TempVar`) is handled by the rules
+            // above; this arm augments the block itself and routes the value.
+            SigMatch::Seq(od, y) => self.transform_seq(od, y),
+            // A bare wrapper node reached *outside* a `Seq` is not a shape the
+            // clock-domain lowering emits; keep it a loud error rather than a
+            // silent zero tangent (roadmap P0.4, cohabitation §4).
+            SigMatch::ClockEnvToken(_)
+            | SigMatch::OnDemand(_)
+            | SigMatch::Upsampling(_)
+            | SigMatch::Downsampling(_) => {
+                let kind = match match_sig(self.arena, sig) {
+                    SigMatch::ClockEnvToken(_) => "clock-env token",
+                    SigMatch::OnDemand(_) => "ondemand",
+                    SigMatch::Upsampling(_) => "upsampling",
+                    _ => "downsampling",
+                };
+                if self.boundary_error.is_none() {
+                    self.boundary_error =
+                        Some(PropagateError::FadUnsupportedNode { node: sig, kind });
+                }
+                // Keep the sweep total: the placeholder Dual is never
+                // observable because the entry point fails afterwards.
+                self.zero_tangent(sig)
+            }
             _ => self.zero_tangent(sig),
         }
     }
@@ -1315,6 +1384,75 @@ impl<'a> ForwardADTransform<'a> {
         }
     }
 
+    /// FAD Phase B (roadmap P5): differentiates `Seq(OD, y)`, the clock-domain
+    /// wrapper's per-output node. The block `OD` is augmented **once** so its
+    /// payload also carries the tangent held-outputs, and both the primal value
+    /// `y` and each tangent lane `y'` are re-sequenced through the *same*
+    /// augmented block (cohabitation §6, "one block, not two").
+    fn transform_seq(&mut self, od: SigId, y: SigId) -> Dual {
+        let Some(od_aug) = self.augment_block(od) else {
+            if self.boundary_error.is_none() {
+                self.boundary_error = Some(PropagateError::FadUnsupportedNode {
+                    node: od,
+                    kind: "clocked sequencing (Seq) around a non-wrapper block",
+                });
+            }
+            // Placeholder primal; the entry point fails on `boundary_error`
+            // before any dual is observable.
+            let seq = SigBuilder::new(self.arena).seq(od, y);
+            return self.zero_tangent(seq);
+        };
+        let y_dual = self.transform(y);
+        let mut b = SigBuilder::new(self.arena);
+        let primal = b.seq(od_aug, y_dual.primal);
+        let tangents = y_dual
+            .tangents
+            .into_iter()
+            .map(|t| b.seq(od_aug, t))
+            .collect::<SmallVec<[SigId; 2]>>();
+        Dual { primal, tangents }
+    }
+
+    /// Augments a clocked-wrapper block (`OnDemand`/`Upsampling`/`Downsampling`)
+    /// so its payload carries the interleaved `[primal, tangent₀, …]` held-output
+    /// lanes. Memoized per source node so every `Seq` consumer shares one block.
+    ///
+    /// Payload layout: `[clock, lane₀, lane₀', …, lane₁, lane₁', …]` — the first
+    /// child is the (opaque, never differentiated) clock; each subsequent held
+    /// lane is expanded to its primal followed by one tangent per seed. Returns
+    /// `None` if `od` is not a clocked wrapper.
+    fn augment_block(&mut self, od: SigId) -> Option<SigId> {
+        if let Some(&aug) = self.od_aug_cache.get(&od) {
+            return Some(aug);
+        }
+        // `.to_vec()` releases the arena borrow before the mutable `transform`.
+        let (kind, payload): (&str, Vec<SigId>) = match match_sig(self.arena, od) {
+            SigMatch::OnDemand(lanes) => ("od", lanes.to_vec()),
+            SigMatch::Upsampling(lanes) => ("us", lanes.to_vec()),
+            SigMatch::Downsampling(lanes) => ("ds", lanes.to_vec()),
+            _ => return None,
+        };
+        let (&clock, held) = payload.split_first()?;
+        let mut new_payload =
+            Vec::with_capacity(1 + held.len() * self.bundle_lane_count() as usize);
+        new_payload.push(clock);
+        for &lane in held {
+            let d = self.transform(lane);
+            new_payload.push(d.primal);
+            new_payload.extend(d.tangents);
+        }
+        let aug = {
+            let mut b = SigBuilder::new(self.arena);
+            match kind {
+                "od" => b.on_demand(&new_payload),
+                "us" => b.upsampling(&new_payload),
+                _ => b.downsampling(&new_payload),
+            }
+        };
+        self.od_aug_cache.insert(od, aug);
+        Some(aug)
+    }
+
     /// Differentiates a binary operator.
     ///
     /// The primal is always rebuilt from the operands' primals. The tangent
@@ -1446,6 +1584,12 @@ pub(super) fn generate_fad_signals_multi(
         .iter()
         .map(|&sig| fad.transform(sig))
         .collect::<Vec<_>>();
+    // Roadmap P0.4: surface the first clock-boundary violation recorded by
+    // the sweep. This must happen before any dual is returned so no caller
+    // can observe the silently-zero placeholder tangents.
+    if let Some(err) = fad.boundary_error.take() {
+        return Err(err);
+    }
 
     let mut result = Vec::with_capacity(outputs.len() * (1 + seeds.len()));
     for dual in duals {
@@ -1647,6 +1791,78 @@ mod tests {
         assert_eq!(result[2], zero, "ds0/ds1 must be 0.0");
         assert_eq!(result[4], zero, "ds1/ds0 must be 0.0");
         assert_eq!(result[5], one, "ds1/ds1 must be 1.0");
+    }
+
+    /// FAD Phase B (roadmap P5): the boundary *wrapper* rules commute with
+    /// d/ds — `wrapper(s·x)' = wrapper(x)` — and must succeed (no
+    /// FRS-PROP-0004). Only the value child is differentiated; the
+    /// clock/clock-env child is opaque. The block-augmentation rules
+    /// (`Seq`/`OnDemand`/…) are still staged and keep erroring.
+    #[test]
+    fn fad_phase_b_wrapper_boundaries_pass_through() {
+        let mut arena = TreeArena::new();
+        let s = SigBuilder::new(&mut arena).real(3.0);
+        let x = SigBuilder::new(&mut arena).input(0);
+        // A seed-dependent value so the tangent is non-trivial.
+        let sx = SigBuilder::new(&mut arena).mul(s, x);
+
+        // TempVar(u)' = TempVar(u')
+        let tv = SigBuilder::new(&mut arena).temp_var(sx);
+        let out = generate_fad_signals_multi(&mut arena, &[tv], &[s])
+            .expect("FAD across a TempVar boundary must succeed");
+        assert_eq!(out.len(), 2, "bundle is [primal, tangent]");
+        assert!(matches!(match_sig(&arena, out[0]), SigMatch::TempVar(_)));
+        assert!(
+            matches!(match_sig(&arena, out[1]), SigMatch::TempVar(_)),
+            "TempVar tangent must stay wrapped, not collapse to zero"
+        );
+
+        // PermVar(u)' = PermVar(u')
+        let pv = SigBuilder::new(&mut arena).perm_var(sx);
+        let out = generate_fad_signals_multi(&mut arena, &[pv], &[s])
+            .expect("FAD across a PermVar boundary must succeed");
+        assert!(matches!(match_sig(&arena, out[1]), SigMatch::PermVar(_)));
+
+        // Clocked(c, u)' = Clocked(c, u') — the clock-env child is opaque.
+        let env = SigBuilder::new(&mut arena).clock_env_token(0);
+        let ck = SigBuilder::new(&mut arena).clocked(env, sx);
+        let out = generate_fad_signals_multi(&mut arena, &[ck], &[s])
+            .expect("FAD across a Clocked boundary must succeed");
+        let SigMatch::Clocked(t_env, _) = match_sig(&arena, out[1]) else {
+            panic!("Clocked tangent must stay a Clocked wrapper");
+        };
+        assert_eq!(t_env, env, "the clock-env child must be preserved verbatim");
+
+        // ZeroPad(u, H)' = ZeroPad(u', H)
+        let h = SigBuilder::new(&mut arena).real(1.0);
+        let zp = SigBuilder::new(&mut arena).zero_pad(sx, h);
+        let out = generate_fad_signals_multi(&mut arena, &[zp], &[s])
+            .expect("FAD across a ZeroPad boundary must succeed");
+        let SigMatch::ZeroPad(_, t_h) = match_sig(&arena, out[1]) else {
+            panic!("ZeroPad tangent must stay a ZeroPad wrapper");
+        };
+        assert_eq!(t_h, h, "the clock/H child must be preserved verbatim");
+    }
+
+    /// Block augmentation is driven from `Seq(OD, y)` (the shape the clock-domain
+    /// lowering emits). A **bare** `OnDemand` reached *outside* a `Seq` is not a
+    /// shape lowering produces, so it stays a loud error (never a silent zero
+    /// tangent) — the defensive guard.
+    #[test]
+    fn fad_phase_b_bare_wrapper_outside_seq_still_errors() {
+        let mut arena = TreeArena::new();
+        let s = SigBuilder::new(&mut arena).real(3.0);
+        let x = SigBuilder::new(&mut arena).input(0);
+        let sx = SigBuilder::new(&mut arena).mul(s, x);
+        let env = SigBuilder::new(&mut arena).clock_env_token(0);
+        let clock = SigBuilder::new(&mut arena).clocked(env, s);
+        let od = SigBuilder::new(&mut arena).on_demand(&[clock, sx]);
+        let err = generate_fad_signals_multi(&mut arena, &[od], &[s])
+            .expect_err("bare OnDemand outside a Seq must error (defensive)");
+        assert!(
+            matches!(err, PropagateError::FadUnsupportedNode { .. }),
+            "expected FadUnsupportedNode, got {err:?}"
+        );
     }
 
     /// `Proj(0, REC([s, c]))` with seed `s` must rewrite to:

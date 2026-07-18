@@ -54,7 +54,7 @@ impl<'a> SignalToFirLower<'a> {
                 let mut b = FirBuilder::new(&mut self.store);
                 b.store_var(idx_name.clone(), AccessType::Struct, next)
             };
-            self.sample_phases.post_output.push(update);
+            self.regions.current_phases_mut().post_output.push(update);
         }
         let index = {
             let mut b = FirBuilder::new(&mut self.store);
@@ -117,7 +117,8 @@ impl<'a> SignalToFirLower<'a> {
         let widx = self.lower_signal(widx)?;
         let index = self.normalized_table_index(widx, table_len);
         let mut b = FirBuilder::new(&mut self.store);
-        self.sample_phases
+        self.regions
+            .current_phases_mut()
             .immediate
             .push(b.store_table(table_name, access, index, wsig_value));
         Ok(wsig_value)

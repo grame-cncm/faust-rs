@@ -27,8 +27,8 @@
 //!
 //! - **`ref_counts`**: how many parent nodes reference each [`SigId`].  A node
 //!   with `ref_count >= 2` is *shared* and benefits from being materialized into
-//!   a named variable (`fConst*` / `fSlow*`) so the expression is computed only
-//!   once.
+//!   a named variable (`fConst*` / `fSlow*` / `fTemp*`) so the expression is
+//!   computed only once.
 //! - **`has_higher_parent`**: nodes that sit at a *variability boundary* — i.e.
 //!   at least one parent has strictly higher variability.  Even a single-use
 //!   node at a boundary must be materialized, otherwise it would be inlined into
@@ -87,7 +87,7 @@
 //!     match variability_of(sig) {            // impl on SignalToFirLower
 //!         Konst => materialize_in_bucket(Constants, konst_escapes.contains(sig))
 //!         Block => materialize_in_bucket(Control)
-//!         _     => inline
+//!         Samp  => materialize in the selected scalar schedule
 //!     }
 //! }
 //! ```

@@ -69,6 +69,8 @@ pub struct FieldLayout {
 pub struct WasmMemoryLayout {
     /// Byte offset for each struct/static-table field, keyed by FIR variable name.
     pub field_offsets: BTreeMap<String, FieldLayout>,
+    /// Byte offset for stack-local array buffers reserved inside each DSP instance.
+    pub local_offsets: BTreeMap<String, FieldLayout>,
     /// Total runtime prefix size in bytes before the I/O zone.
     pub struct_size: u32,
     /// Offset where static tables begin.
@@ -89,6 +91,7 @@ impl WasmMemoryLayout {
     pub fn scaffold(pages: u32, total_bytes: u32) -> Self {
         Self {
             field_offsets: BTreeMap::new(),
+            local_offsets: BTreeMap::new(),
             struct_size: 0,
             tables_offset: 0,
             io_zone_offset: 0,
@@ -120,6 +123,7 @@ impl WasmMemoryLayout {
             dsp_struct,
             globals,
             static_decls,
+            functions,
             num_inputs,
             num_outputs,
             ..
@@ -317,6 +321,24 @@ impl WasmMemoryLayout {
             }
         }
 
+        let function_items = expect_block(store, functions, "module functions")?;
+        let mut local_offsets = BTreeMap::new();
+        collect_local_stack_arrays(store, &function_items, &mut local_offsets, audio_slot)?;
+        for field in local_offsets.values_mut() {
+            let align = match field.typ {
+                WasmValType::I32 | WasmValType::F32 => 4,
+                WasmValType::F64 => 8,
+            };
+            let offset = align_up(runtime_offset, align);
+            field.offset = offset;
+            runtime_offset = offset.checked_add(field.size).ok_or_else(|| {
+                WasmBackendError::new(
+                    WasmBackendErrorCode::MemoryLayoutOverflow,
+                    "WASM runtime layout size overflow while placing local array buffer",
+                )
+            })?;
+        }
+
         let struct_size = align_up(runtime_offset, audio_slot);
         let io_zone_offset = struct_size;
         let channels = u32::try_from(num_inputs + num_outputs).map_err(|_| {
@@ -365,6 +387,7 @@ impl WasmMemoryLayout {
 
         Ok(Self {
             field_offsets,
+            local_offsets,
             struct_size,
             tables_offset,
             io_zone_offset,
@@ -401,6 +424,91 @@ fn expect_block(store: &FirStore, id: FirId, label: &str) -> Result<Vec<FirId>, 
             format!("WASM layout expects {label} to be a FIR Block, got {other:?}"),
         )),
     }
+}
+
+fn collect_local_stack_arrays(
+    store: &FirStore,
+    function_items: &[FirId],
+    out: &mut BTreeMap<String, FieldLayout>,
+    audio_slot: u32,
+) -> Result<(), WasmBackendError> {
+    for item in function_items {
+        if let FirMatch::DeclareFun {
+            body: Some(body), ..
+        } = match_fir(store, *item)
+        {
+            collect_local_stack_arrays_in_stmt(store, body, out, audio_slot)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_local_stack_arrays_in_stmt(
+    store: &FirStore,
+    id: FirId,
+    out: &mut BTreeMap<String, FieldLayout>,
+    audio_slot: u32,
+) -> Result<(), WasmBackendError> {
+    match match_fir(store, id) {
+        FirMatch::Block(items) => {
+            for item in items {
+                collect_local_stack_arrays_in_stmt(store, item, out, audio_slot)?;
+            }
+        }
+        FirMatch::DeclareVar {
+            name,
+            typ: FirType::Array(inner, len),
+            access: AccessType::Stack,
+            ..
+        } if len > 0 => {
+            if let std::collections::btree_map::Entry::Vacant(entry) = out.entry(name) {
+                let (val_type, elem_size) = fir_type_storage(*inner, audio_slot)?;
+                let len = u32::try_from(len).map_err(|_| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM local array length does not fit in u32",
+                    )
+                })?;
+                let size = elem_size.checked_mul(len).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM local array byte size overflow",
+                    )
+                })?;
+                entry.insert(FieldLayout {
+                    offset: 0,
+                    typ: val_type,
+                    size,
+                });
+            }
+        }
+        FirMatch::SimpleForLoop { body, .. }
+        | FirMatch::ForLoop { body, .. }
+        | FirMatch::WhileLoop { body, .. }
+        | FirMatch::Control { stmt: body, .. } => {
+            collect_local_stack_arrays_in_stmt(store, body, out, audio_slot)?;
+        }
+        FirMatch::If {
+            then_block,
+            else_block,
+            ..
+        } => {
+            collect_local_stack_arrays_in_stmt(store, then_block, out, audio_slot)?;
+            if let Some(else_block) = else_block {
+                collect_local_stack_arrays_in_stmt(store, else_block, out, audio_slot)?;
+            }
+        }
+        FirMatch::Switch { cases, default, .. } => {
+            for (_, case_stmt) in cases {
+                collect_local_stack_arrays_in_stmt(store, case_stmt, out, audio_slot)?;
+            }
+            if let Some(default_stmt) = default {
+                collect_local_stack_arrays_in_stmt(store, default_stmt, out, audio_slot)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Returns the storage kind and aligned slot width used for one FIR field.

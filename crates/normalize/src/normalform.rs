@@ -579,10 +579,15 @@ impl<'a> SignalPromoter<'a> {
                 self.promote_clocked_family(&items, |b, items| b.downsampling(items))?
             }
             SigMatch::Clocked(clock_env, value) => {
-                let clock_env = self.promote(clock_env)?;
+                // The clock-env child is an opaque annotation (nil at the
+                // top-level rate or a `SIGCLOCKENV` token), never a signal:
+                // pass it through untouched (roadmap P0.1).
                 let value = self.promote(value)?;
                 SigBuilder::new(self.arena).clocked(clock_env, value)
             }
+            // Opaque clock-env token: keep as-is; only reachable through
+            // the generic list walk when a clock env is shared as a child.
+            SigMatch::ClockEnvToken(_) => sig,
         };
         Ok(promoted)
     }

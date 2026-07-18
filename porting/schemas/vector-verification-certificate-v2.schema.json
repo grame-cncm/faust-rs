@@ -1,0 +1,1546 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faust-rs.invalid/schemas/vector-verification-certificate-v2.schema.json",
+  "title": "faust-rs vector verification certificate v2",
+  "description": "Canonical interchange boundary between faust-rs certificate producers and independent Rust/Lean verifiers. Structural validity is not semantic acceptance.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/decorationCertificate"
+    },
+    {
+      "$ref": "#/$defs/scheduleCertificate"
+    },
+    {
+      "$ref": "#/$defs/vectorPlanCertificate"
+    },
+    {
+      "$ref": "#/$defs/routedFirCertificate"
+    },
+    {
+      "$ref": "#/$defs/verificationResult"
+    }
+  ],
+  "$defs": {
+    "uint53": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "positiveUint53": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "stableName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "git_commit"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "git_commit": {
+          "$ref": "#/$defs/gitCommit"
+        }
+      }
+    },
+    "program": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "source_sha256"
+      ],
+      "properties": {
+        "case_id": {
+          "description": "Repository-relative, forward-slash-separated case identity. Absolute paths and parent components are semantically forbidden.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^/].*$"
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "signalType": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "int"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "real"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "components"
+          ],
+          "properties": {
+            "kind": {
+              "const": "tuple"
+            },
+            "components": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/signalType"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "firType": {
+      "type": "string",
+      "enum": [
+        "int32",
+        "int64",
+        "float32",
+        "float64",
+        "faust_float"
+      ]
+    },
+    "resource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "state",
+                "table",
+                "ui"
+              ]
+            },
+            "id": {
+              "$ref": "#/$defs/uint53"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "channel"
+          ],
+          "properties": {
+            "kind": {
+              "const": "output"
+            },
+            "channel": {
+              "$ref": "#/$defs/uint53"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "const": "foreign"
+            },
+            "name": {
+              "$ref": "#/$defs/stableName"
+            }
+          }
+        }
+      ]
+    },
+    "effect": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "resource"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "read",
+                "write"
+              ]
+            },
+            "resource": {
+              "$ref": "#/$defs/resource"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name",
+            "purity"
+          ],
+          "properties": {
+            "kind": {
+              "const": "foreign_call"
+            },
+            "name": {
+              "$ref": "#/$defs/stableName"
+            },
+            "purity": {
+              "enum": [
+                "pure",
+                "impure",
+                "unknown"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "analysisSignalRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signal_id",
+        "value_type",
+        "rate",
+        "vectorability",
+        "clock_id",
+        "effects",
+        "execution_condition_id",
+        "max_delay",
+        "delay_read",
+        "recursive_projection",
+        "multiple_occurrences",
+        "very_simple"
+      ],
+      "properties": {
+        "signal_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "value_type": {
+          "$ref": "#/$defs/signalType"
+        },
+        "rate": {
+          "enum": [
+            "konst",
+            "block",
+            "samp"
+          ]
+        },
+        "vectorability": {
+          "enum": [
+            "vect",
+            "scal",
+            "true_scal"
+          ]
+        },
+        "clock_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "effects": {
+          "description": "Conservative effects in semantic source order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/effect"
+          }
+        },
+        "execution_condition_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "max_delay": {
+          "$ref": "#/$defs/uint53"
+        },
+        "delay_read": {
+          "type": "boolean"
+        },
+        "recursive_projection": {
+          "type": "boolean"
+        },
+        "multiple_occurrences": {
+          "type": "boolean"
+        },
+        "very_simple": {
+          "type": "boolean"
+        }
+      }
+    },
+    "analysisDependencyEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumer",
+        "dependency",
+        "kind"
+      ],
+      "properties": {
+        "consumer": {
+          "$ref": "#/$defs/uint53"
+        },
+        "dependency": {
+          "$ref": "#/$defs/uint53"
+        },
+        "kind": {
+          "enum": [
+            "immediate",
+            "delayed",
+            "control",
+            "clock_boundary",
+            "effect"
+          ]
+        },
+        "delay": {
+          "$ref": "#/$defs/positiveUint53"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "delayed"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "delay"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "delay"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "decorationSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signals",
+        "dependencies"
+      ],
+      "properties": {
+        "signals": {
+          "description": "Exact reachable prepared-signal set ordered by ascending signal_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/analysisSignalRecord"
+          }
+        },
+        "dependencies": {
+          "description": "Set-like array ordered by (consumer, dependency, kind, delay).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/analysisDependencyEdge"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "decorationCertificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "producer",
+        "program",
+        "decorations",
+        "decoration_hash"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "artifact_kind": {
+          "const": "decoration_certificate"
+        },
+        "producer": {
+          "$ref": "#/$defs/producer"
+        },
+        "program": {
+          "$ref": "#/$defs/program"
+        },
+        "decorations": {
+          "$ref": "#/$defs/decorationSnapshot"
+        },
+        "decoration_hash": {
+          "description": "SHA-256 of canonical JSON decorations.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "dependencyEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumer",
+        "dependency",
+        "kind"
+      ],
+      "properties": {
+        "consumer": {
+          "$ref": "#/$defs/uint53"
+        },
+        "dependency": {
+          "$ref": "#/$defs/uint53"
+        },
+        "kind": {
+          "enum": [
+            "data",
+            "effect",
+            "control"
+          ]
+        }
+      }
+    },
+    "dataEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumer",
+        "dependency",
+        "kind"
+      ],
+      "properties": {
+        "consumer": {
+          "$ref": "#/$defs/uint53"
+        },
+        "dependency": {
+          "$ref": "#/$defs/uint53"
+        },
+        "kind": {
+          "const": "data"
+        }
+      }
+    },
+    "effectEdge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumer",
+        "dependency",
+        "kind"
+      ],
+      "properties": {
+        "consumer": {
+          "$ref": "#/$defs/uint53"
+        },
+        "dependency": {
+          "$ref": "#/$defs/uint53"
+        },
+        "kind": {
+          "const": "effect"
+        }
+      }
+    },
+    "graphSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "nodes": {
+          "description": "Set-like array; semantic verifier requires unique ascending ids.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        },
+        "edges": {
+          "description": "Set-like array; semantic verifier requires unique (consumer, dependency, kind) ascending order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dependencyEdge"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "strategy": {
+      "type": "string",
+      "enum": [
+        "depth_first",
+        "breadth_first",
+        "special",
+        "reverse_breadth_first"
+      ]
+    },
+    "scheduleScope": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "scalar_control"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "region_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "scalar_region"
+            },
+            "region_id": {
+              "$ref": "#/$defs/uint53"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "epoch_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "vector_epoch"
+            },
+            "epoch_id": {
+              "$ref": "#/$defs/uint53"
+            }
+          }
+        }
+      ]
+    },
+    "scheduleCertificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "producer",
+        "program",
+        "graph",
+        "graph_hash",
+        "scope",
+        "strategy",
+        "node_count",
+        "ordered_nodes"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "artifact_kind": {
+          "const": "schedule_certificate"
+        },
+        "producer": {
+          "$ref": "#/$defs/producer"
+        },
+        "program": {
+          "$ref": "#/$defs/program"
+        },
+        "graph": {
+          "$ref": "#/$defs/graphSnapshot"
+        },
+        "graph_hash": {
+          "description": "SHA-256 of canonical JSON object containing only graph.nodes and graph.edges.",
+          "$ref": "#/$defs/sha256"
+        },
+        "scope": {
+          "$ref": "#/$defs/scheduleScope"
+        },
+        "strategy": {
+          "$ref": "#/$defs/strategy"
+        },
+        "node_count": {
+          "$ref": "#/$defs/uint53"
+        },
+        "ordered_nodes": {
+          "description": "Execution order. The semantic verifier requires an exact duplicate-free permutation of graph.nodes.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "placement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "control",
+                "inline"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "loop_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "owned"
+            },
+            "loop_id": {
+              "$ref": "#/$defs/uint53"
+            }
+          }
+        }
+      ]
+    },
+    "signalRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signal_id",
+        "value_type",
+        "rate",
+        "vectorability",
+        "clock_id",
+        "effects",
+        "placement",
+        "duplicable"
+      ],
+      "properties": {
+        "signal_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "value_type": {
+          "$ref": "#/$defs/signalType"
+        },
+        "rate": {
+          "enum": [
+            "konst",
+            "block",
+            "samp"
+          ]
+        },
+        "vectorability": {
+          "enum": [
+            "vect",
+            "scal",
+            "true_scal"
+          ]
+        },
+        "clock_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "effects": {
+          "description": "Semantic source order; not a set-like array.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/effect"
+          }
+        },
+        "placement": {
+          "$ref": "#/$defs/placement"
+        },
+        "duplicable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "loopKind": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "vectorizable"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "group_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "recursive"
+            },
+            "group_id": {
+              "$ref": "#/$defs/uint53"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "clock_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "island"
+            },
+            "clock_id": {
+              "$ref": "#/$defs/uint53"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "width"
+          ],
+          "properties": {
+            "kind": {
+              "const": "lockstep"
+            },
+            "width": {
+              "$ref": "#/$defs/positiveUint53"
+            }
+          }
+        }
+      ]
+    },
+    "loopRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "loop_id",
+        "stable_name",
+        "kind",
+        "roots",
+        "epoch_id"
+      ],
+      "properties": {
+        "loop_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "stable_name": {
+          "$ref": "#/$defs/stableName"
+        },
+        "kind": {
+          "$ref": "#/$defs/loopKind"
+        },
+        "roots": {
+          "description": "Deterministic materialization/source order; semantic verifier requires unique signal ids owned by this loop.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        },
+        "epoch_id": {
+          "$ref": "#/$defs/uint53"
+        }
+      }
+    },
+    "epochRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "epoch_id",
+        "rank",
+        "loops"
+      ],
+      "properties": {
+        "epoch_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "rank": {
+          "$ref": "#/$defs/uint53"
+        },
+        "loops": {
+          "description": "Set-like array; semantic verifier requires unique ascending loop ids.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "transportRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transport_id",
+        "stable_name",
+        "signal_id",
+        "producer_loop",
+        "consumer_loop",
+        "element_type",
+        "length",
+        "layout"
+      ],
+      "properties": {
+        "transport_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "stable_name": {
+          "$ref": "#/$defs/stableName"
+        },
+        "signal_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "producer_loop": {
+          "$ref": "#/$defs/uint53"
+        },
+        "consumer_loop": {
+          "$ref": "#/$defs/uint53"
+        },
+        "element_type": {
+          "$ref": "#/$defs/signalType"
+        },
+        "length": {
+          "$ref": "#/$defs/positiveUint53"
+        },
+        "layout": {
+          "oneOf": [
+            {
+              "const": "planar"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["interleaved"],
+              "properties": {
+                "interleaved": {
+                  "$ref": "#/$defs/positiveUint53"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "isoLeafMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["representative_signal_id", "lane_signal_id"],
+      "properties": {
+        "representative_signal_id": { "$ref": "#/$defs/uint53" },
+        "lane_signal_id": { "$ref": "#/$defs/uint53" }
+      }
+    },
+    "isoRootWitness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["representative_root", "lane_root", "shape_hash", "leaf_mapping"],
+      "properties": {
+        "representative_root": { "$ref": "#/$defs/uint53" },
+        "lane_root": { "$ref": "#/$defs/uint53" },
+        "shape_hash": { "$ref": "#/$defs/positiveUint53" },
+        "leaf_mapping": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/isoLeafMapping" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "lockstepLaneRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["loop_id", "recursion_group", "roots"],
+      "properties": {
+        "loop_id": { "$ref": "#/$defs/uint53" },
+        "recursion_group": { "$ref": "#/$defs/uint53" },
+        "roots": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/isoRootWitness" }
+        }
+      }
+    },
+    "lockstepBundleRecord": {
+      "$comment": "The independent verifier rechecks graph incomparability, effect commutation, epoch/clock agreement, and prepared-signal shape equality.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundle_id", "representative_loop_id", "member_loop_ids", "lanes"],
+      "properties": {
+        "bundle_id": { "$ref": "#/$defs/uint53" },
+        "representative_loop_id": { "$ref": "#/$defs/uint53" },
+        "member_loop_ids": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/uint53" },
+          "uniqueItems": true
+        },
+        "lanes": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/lockstepLaneRecord" }
+        }
+      }
+    },
+    "fusedSerialGroupRecord": {
+      "$comment": "JSON Schema validates only finite shape and local identities. max_delay, recursive_projection, DepKind::Delayed, recursion-group membership for every coupled recursive owner, and clock-domain joins are independently reconstructed by the Rust verify_fused_serial_groups L2 checker from the accepted decoration certificate.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "group_id",
+        "owner_loop_id",
+        "member_loop_ids",
+        "recursive_carrier_signal_id",
+        "delayed_read_signal_ids",
+        "state_write_signal_ids",
+        "internal_transport_ids",
+        "output_or_transport_roots"
+      ],
+      "properties": {
+        "group_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "owner_loop_id": {
+          "description": "Canonical recursive owner used to identify the fused component; other coupled recursive owners may appear in member_loop_ids.",
+          "$ref": "#/$defs/uint53"
+        },
+        "member_loop_ids": {
+          "description": "Non-empty set-like array ordered by ascending loop id; includes owner_loop_id.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        },
+        "recursive_carrier_signal_id": {
+          "description": "Canonical delayed recursive carrier owned by owner_loop_id; other carriers are covered by state_write_signal_ids.",
+          "$ref": "#/$defs/uint53"
+        },
+        "delayed_read_signal_ids": {
+          "description": "Non-empty set-like array ordered by ascending signal id.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        },
+        "state_write_signal_ids": {
+          "description": "Non-empty set-like array ordered by ascending signal id; covers the recursive projections of every recursive member loop.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        },
+        "internal_transport_ids": {
+          "description": "Set-like array ordered by ascending transport id. These plan transports are rematerialized inside the fused serial iteration.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        },
+        "output_or_transport_roots": {
+          "description": "Non-empty set-like array ordered by ascending signal id.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "vecSafeWitness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "loop_id",
+        "witness_kind"
+      ],
+      "properties": {
+        "loop_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "witness_kind": {
+          "enum": [
+            "pointwise",
+            "serial_state_internal",
+            "proven_intrinsic"
+          ]
+        }
+      }
+    },
+    "vectorPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "vec_size",
+        "signals",
+        "loops",
+        "epochs",
+        "transports",
+        "data_edges",
+        "effect_edges",
+        "vec_safe_witnesses",
+        "fused_serial_groups",
+        "lockstep_bundles"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "vec_size": {
+          "$ref": "#/$defs/positiveUint53"
+        },
+        "signals": {
+          "description": "Set-like array ordered by ascending signal_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/signalRecord"
+          }
+        },
+        "loops": {
+          "description": "Set-like array ordered by ascending loop_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/loopRecord"
+          }
+        },
+        "epochs": {
+          "description": "Set-like array ordered by ascending (rank, epoch_id).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/epochRecord"
+          }
+        },
+        "transports": {
+          "description": "Set-like array ordered by ascending transport_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/transportRecord"
+          }
+        },
+        "data_edges": {
+          "description": "Set-like array ordered by ascending (consumer, dependency, kind).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dataEdge"
+          },
+          "uniqueItems": true
+        },
+        "effect_edges": {
+          "description": "Set-like array ordered by ascending (consumer, dependency, kind).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/effectEdge"
+          },
+          "uniqueItems": true
+        },
+        "vec_safe_witnesses": {
+          "description": "Set-like array ordered by ascending loop_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/vecSafeWitness"
+          }
+        },
+        "fused_serial_groups": {
+          "description": "Set-like array ordered by ascending group_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fusedSerialGroupRecord"
+          },
+          "uniqueItems": true
+        },
+        "lockstep_bundles": {
+          "description": "Set-like array ordered by ascending bundle_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lockstepBundleRecord"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "vectorPlanCertificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "producer",
+        "program",
+        "decoration_hash",
+        "plan",
+        "plan_hash"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "artifact_kind": {
+          "const": "vector_plan_certificate"
+        },
+        "producer": {
+          "$ref": "#/$defs/producer"
+        },
+        "program": {
+          "$ref": "#/$defs/program"
+        },
+        "decoration_hash": {
+          "description": "Accepted DecorationCertificate subject hash from which this plan was built.",
+          "$ref": "#/$defs/sha256"
+        },
+        "plan": {
+          "$ref": "#/$defs/vectorPlan"
+        },
+        "plan_hash": {
+          "description": "SHA-256 of canonical JSON plan projection. The projection excludes schedules and all strategy choices.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "regionKind": {
+      "type": "string",
+      "enum": [
+        "control",
+        "loop"
+      ]
+    },
+    "regionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "region_id",
+        "kind",
+        "stable_name"
+      ],
+      "properties": {
+        "region_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "kind": {
+          "$ref": "#/$defs/regionKind"
+        },
+        "stable_name": {
+          "$ref": "#/$defs/stableName"
+        },
+        "loop_id": {
+          "$ref": "#/$defs/uint53"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "loop"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "loop_id"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "loop_id"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "firValueRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fir_id",
+        "signal_id",
+        "region_id",
+        "fir_type"
+      ],
+      "properties": {
+        "fir_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "signal_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "region_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "fir_type": {
+          "$ref": "#/$defs/firType"
+        }
+      }
+    },
+    "transportAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transport_id",
+        "access",
+        "region_id",
+        "fir_type",
+        "index_expression_hash"
+      ],
+      "properties": {
+        "transport_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "access": {
+          "enum": [
+            "store",
+            "load"
+          ]
+        },
+        "region_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "fir_type": {
+          "$ref": "#/$defs/firType"
+        },
+        "index_expression_hash": {
+          "description": "Hash of normalized FIR index expression; producer store and consumer loads must agree.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "emittedEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect_id",
+        "region_id",
+        "statement_id",
+        "effect"
+      ],
+      "properties": {
+        "effect_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "region_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "statement_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "effect": {
+          "$ref": "#/$defs/effect"
+        }
+      }
+    },
+    "epochBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "epoch_id",
+        "ordered_regions"
+      ],
+      "properties": {
+        "epoch_id": {
+          "$ref": "#/$defs/uint53"
+        },
+        "ordered_regions": {
+          "description": "Semantic execution order selected by the certified epoch schedule.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uint53"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "routedFir": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "regions",
+        "values",
+        "transport_accesses",
+        "emitted_effects",
+        "epoch_bodies"
+      ],
+      "properties": {
+        "regions": {
+          "description": "Set-like array ordered by ascending region_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/regionRecord"
+          }
+        },
+        "values": {
+          "description": "Set-like array ordered by ascending fir_id.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/firValueRecord"
+          }
+        },
+        "transport_accesses": {
+          "description": "Semantic emission order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/transportAccess"
+          }
+        },
+        "emitted_effects": {
+          "description": "Semantic emission order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/emittedEffect"
+          }
+        },
+        "epoch_bodies": {
+          "description": "Fixed ascending epoch-rank order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/epochBody"
+          }
+        }
+      }
+    },
+    "routedFirCertificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "producer",
+        "program",
+        "plan_hash",
+        "routed_fir",
+        "routed_fir_hash"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "artifact_kind": {
+          "const": "routed_fir_certificate"
+        },
+        "producer": {
+          "$ref": "#/$defs/producer"
+        },
+        "program": {
+          "$ref": "#/$defs/program"
+        },
+        "plan_hash": {
+          "$ref": "#/$defs/sha256"
+        },
+        "routed_fir": {
+          "$ref": "#/$defs/routedFir"
+        },
+        "routed_fir_hash": {
+          "description": "SHA-256 of canonical JSON projection containing plan_hash and routed_fir fields.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{2,63}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "path": {
+          "description": "JSON Pointer locating the rejected field when available.",
+          "type": "string",
+          "maxLength": 2048
+        }
+      }
+    },
+    "verificationResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "artifact_kind",
+        "producer",
+        "program",
+        "target_artifact_kind",
+        "target_subject_hash",
+        "verifier",
+        "status",
+        "diagnostics"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "artifact_kind": {
+          "const": "verification_result"
+        },
+        "producer": {
+          "$ref": "#/$defs/producer"
+        },
+        "program": {
+          "$ref": "#/$defs/program"
+        },
+        "target_artifact_kind": {
+          "enum": [
+            "decoration_certificate",
+            "schedule_certificate",
+            "vector_plan_certificate",
+            "routed_fir_certificate"
+          ]
+        },
+        "target_subject_hash": {
+          "description": "decoration_hash, graph_hash, plan_hash, or routed_fir_hash according to target_artifact_kind.",
+          "$ref": "#/$defs/sha256"
+        },
+        "verifier": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "implementation",
+            "version"
+          ],
+          "properties": {
+            "implementation": {
+              "enum": [
+                "rust",
+                "lean"
+              ]
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "status": {
+          "enum": [
+            "accepted",
+            "rejected"
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "diagnostics": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "diagnostics": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

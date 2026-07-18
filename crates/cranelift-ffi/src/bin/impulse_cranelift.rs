@@ -5,7 +5,7 @@
 //! scalar impulse pass (SR 44100, block 64, impulse on frame 0), emitting the
 //! reference `.ir` text format with the same `normalize()` zero-clamp.
 //!
-//! Usage: `impulse_cranelift <file.dsp> [-n <frames>] [-I <dir>]...`
+//! Usage: `impulse_cranelift <file.dsp> [-n <frames>] [-I <dir>]... [-ss <n>]`
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::path::PathBuf;
@@ -51,14 +51,21 @@ struct Options {
     frames: usize,
     double: bool,
     import_dirs: Vec<String>,
+    /// Compiler-mode flags forwarded to the FFI factory argv.
+    compiler_argv: Vec<String>,
 }
 
 fn parse_args() -> Result<Options, String> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
     let mut dsp: Option<String> = None;
     let mut frames = DEFAULT_FRAMES;
     let mut double = false;
     let mut import_dirs = Vec::new();
-    let mut args = std::env::args().skip(1);
+    let mut compiler_argv = Vec::new();
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-double" => double = true,
@@ -71,6 +78,25 @@ fn parse_args() -> Result<Options, String> {
                     .map_err(|e| format!("bad -n value: {e}"))?;
             }
             "-I" => import_dirs.push(args.next().ok_or("missing value after -I")?),
+            "-vec" => compiler_argv.push("-vec".to_owned()),
+            "-vs" => {
+                compiler_argv.push("-vs".to_owned());
+                compiler_argv.push(args.next().ok_or("missing value after -vs")?);
+            }
+            "-lv" => {
+                compiler_argv.push("-lv".to_owned());
+                compiler_argv.push(args.next().ok_or("missing value after -lv")?);
+            }
+            "-ss" | "--scheduling-strategy" => {
+                let value = args
+                    .next()
+                    .ok_or("missing value after scheduling-strategy option")?;
+                value
+                    .parse::<u32>()
+                    .map_err(|e| format!("bad scheduling-strategy value: {e}"))?;
+                compiler_argv.push("-ss".to_owned());
+                compiler_argv.push(value);
+            }
             other if other.starts_with('-') => return Err(format!("unknown option: {other}")),
             other => {
                 if dsp.is_some() {
@@ -85,6 +111,7 @@ fn parse_args() -> Result<Options, String> {
         frames,
         double,
         import_dirs,
+        compiler_argv,
     })
 }
 
@@ -105,6 +132,9 @@ fn run() -> Result<String, String> {
     let mut argv_storage: Vec<CString> = Vec::new();
     if options.double {
         argv_storage.push(CString::new("-double").map_err(|e| e.to_string())?);
+    }
+    for opt in &options.compiler_argv {
+        argv_storage.push(CString::new(opt.as_str()).map_err(|e| e.to_string())?);
     }
     for dir in &search {
         argv_storage.push(CString::new("-I").map_err(|e| e.to_string())?);
@@ -424,7 +454,25 @@ impl TestSoundfile {
 
 #[cfg(test)]
 mod tests {
-    use super::{TestSoundfile, soundfile_part_count};
+    use super::{TestSoundfile, parse_args_from, soundfile_part_count};
+
+    fn parse(args: &[&str]) -> Result<super::Options, String> {
+        parse_args_from(args.iter().map(|arg| (*arg).to_owned()))
+    }
+
+    #[test]
+    fn scheduling_strategy_is_normalized_for_the_ffi_factory() {
+        let options = parse(&["test.dsp", "-vec", "-lv", "1", "--scheduling-strategy", "3"])
+            .expect("parse options");
+        assert_eq!(options.compiler_argv, ["-vec", "-lv", "1", "-ss", "3"]);
+    }
+
+    #[test]
+    fn malformed_scheduling_strategy_is_rejected_before_factory_creation() {
+        assert!(parse(&["test.dsp", "-ss"]).is_err());
+        assert!(parse(&["test.dsp", "-ss", "-1"]).is_err());
+        assert!(parse(&["test.dsp", "-ss", "abc"]).is_err());
+    }
 
     #[test]
     fn soundfile_part_count_follows_sound_ui_menu_urls() {

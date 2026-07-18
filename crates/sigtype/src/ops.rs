@@ -289,8 +289,12 @@ pub fn check_int_param(t: &SigType) -> Result<(), TypeError> {
     check_init(t)
 }
 
-/// Assert that the delay amount has a bounded non-negative interval and return
-/// the ceiling as `i32`.
+/// Assert that the delay amount has a bounded, non-negative upper bound and
+/// return its C++-compatible rounded upper bound as `i32`.
+///
+/// Unlike C++, faust-rs deliberately accepts an interval whose lower bound is
+/// negative when its upper bound is non-negative. Existing scalar variable-
+/// delay lowering clamps the runtime index and relies on this adapted contract.
 ///
 /// # C++ source
 /// `int checkDelayInterval(Type t)`
@@ -307,11 +311,11 @@ pub fn check_delay_interval(t: &SigType) -> Result<i32, TypeError> {
     }
     if itv.hi() < 0.0 {
         return Err(TypeError(format!(
-            "delay amount must be non-negative, got hi={}",
+            "delay amount must have a non-negative upper bound, got hi={}",
             itv.hi()
         )));
     }
-    Ok(interval::saturated_int_cast(itv.hi()))
+    Ok(interval::saturated_int_cast(itv.hi() + 0.5))
 }
 
 fn variability_name(v: Variability) -> &'static str {
@@ -409,6 +413,45 @@ mod tests {
             interval::Interval::new(f64::NEG_INFINITY, f64::INFINITY, -24),
         );
         assert!(check_delay_interval(&t).is_err());
+    }
+
+    #[test]
+    fn check_delay_interval_accepts_negative_lower_bound_with_nonnegative_hi() {
+        let t = make_simple(
+            Nature::Int,
+            Variability::Block,
+            Computability::Init,
+            Vectorability::Vect,
+            Boolean::Num,
+            interval::Interval::new(-1.0, 1000.0, 0),
+        );
+        assert_eq!(check_delay_interval(&t), Ok(1000));
+    }
+
+    #[test]
+    fn check_delay_interval_rounds_like_cpp() {
+        let t = make_simple(
+            Nature::Real,
+            Variability::Block,
+            Computability::Init,
+            Vectorability::Vect,
+            Boolean::Num,
+            interval::Interval::new(0.0, 3.6, -1),
+        );
+        assert_eq!(check_delay_interval(&t), Ok(4));
+    }
+
+    #[test]
+    fn check_delay_interval_saturates_rounded_i32_overflow() {
+        let t = make_simple(
+            Nature::Real,
+            Variability::Block,
+            Computability::Init,
+            Vectorability::Vect,
+            Boolean::Num,
+            interval::Interval::new(0.0, f64::from(i32::MAX) - 0.25, -2),
+        );
+        assert_eq!(check_delay_interval(&t), Ok(i32::MAX));
     }
 
     #[test]

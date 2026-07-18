@@ -5,6 +5,7 @@
 //! by strict validation and progress reports.
 
 use super::*;
+use crate::backends::purity::is_obviously_side_effect_free_value;
 
 /// Fast pre-check: returns `true` when the current subset matcher accepts the
 /// FIR `compute` body, `false` when the backend should fall back to a stub.
@@ -214,6 +215,7 @@ pub(crate) fn subset_stmt_gap_reason(
             .or_else(|| {
                 subset_expr_gap_reason(store, value, extern_data_symbols, extern_function_symbols)
             }),
+        FirMatch::Drop(v) if is_obviously_side_effect_free_value(store, v) => None,
         FirMatch::Drop(v) => {
             subset_expr_gap_reason(store, v, extern_data_symbols, extern_function_symbols)
         }

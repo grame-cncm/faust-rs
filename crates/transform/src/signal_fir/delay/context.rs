@@ -11,7 +11,6 @@ use signals::SigId;
 
 use crate::signal_prepare::SimpleSigType;
 
-use super::circular_pow2::GlobalCircularCursor;
 use super::{SignalFirError, SignalFirErrorCode};
 
 // ─── DelayFirCtx ─────────────────────────────────────────────────────────────
@@ -72,14 +71,6 @@ impl<'a> DelayFirCtx<'a> {
                 format!("missing prepared type for signal {}", carried.as_u32()),
             )),
         }
-    }
-
-    /// Declares the `fIOTA` circular-buffer position counter, idempotent.
-    ///
-    /// Sets `*uses_iota = true`, emits the struct declaration, and registers a
-    /// `instanceClear` assignment `fIOTA = 0`.
-    pub(crate) fn ensure_iota(&mut self) {
-        GlobalCircularCursor.ensure_state(self);
     }
 
     /// Generates a fresh loop-variable name using the shared monotonic counter.

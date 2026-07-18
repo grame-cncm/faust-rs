@@ -81,6 +81,7 @@
 //! | FIR-T01  | E | Table index is not integer |
 //! | FIR-T02  | E | `StoreTable` value type mismatch |
 //! | FIR-T03  | W | `LoadTable` / `StoreTable` on non-table declaration |
+//! | FIR-T04  | E | `LoadTable` / `StoreTable` name has no declaration at all |
 //! | FIR-SF01 | W | Soundfile access refers to a non-`Sound` struct field |
 //! | FIR-MA01 | W | Unary math op called with wrong arity |
 //! | FIR-MA02 | W | Binary math op called with wrong arity |
@@ -1918,6 +1919,50 @@ impl<'s> VerifyCtx<'s> {
         }
     }
 
+    /// Resolves one table access to its declared element type.
+    ///
+    /// FIR-T04 (error): the name has no declaration at all - not in the scope
+    /// stack, not a global, and not a DSP-struct field. An access to a name no
+    /// declaration backs cannot compile in any backend, so silence here lets an
+    /// invalid module through behind a green report. FIR-T03 (warning): the
+    /// name is declared but not as a table or indexable container.
+    fn table_access_elem_type(
+        &mut self,
+        id: FirId,
+        name: &str,
+        access: AccessType,
+        what: &str,
+    ) -> Option<FirType> {
+        let declared = match access {
+            AccessType::Struct => self
+                .symbols
+                .struct_field_types
+                .get(name)
+                .cloned()
+                .map(|typ| (typ, false)),
+            _ => self
+                .resolve(name, access)
+                .map(|entry| (entry.typ, entry.is_table)),
+        };
+        let Some((typ, is_table)) = declared else {
+            self.error("FIR-T04", format!("{what} '{name}' has no declaration"), id);
+            return None;
+        };
+        let elem = if is_table {
+            Some(typ.clone())
+        } else {
+            self.is_indexable_container_type(&typ)
+        };
+        if elem.is_none() {
+            self.warn(
+                "FIR-T03",
+                format!("{what} '{name}' refers to a non-table declaration"),
+                id,
+            );
+        }
+        elem
+    }
+
     /// Validates `LoadTable` index typing and declaration/table consistency.
     fn check_load_table_types(
         &mut self,
@@ -1936,34 +1981,18 @@ impl<'s> VerifyCtx<'s> {
                 id,
             );
         }
-        if access != AccessType::Struct
-            && let Some(entry) = self.resolve(name, access)
+        if let Some(expected_elem_type) = self.table_access_elem_type(id, name, access, "LoadTable")
+            && expected_elem_type != *declared_elem_type
         {
-            let effective_elem_type = if entry.is_table {
-                Some(entry.typ.clone())
-            } else {
-                self.is_indexable_container_type(&entry.typ)
-            };
-            if effective_elem_type.is_none() {
-                self.warn(
-                    "FIR-T03",
-                    format!("LoadTable '{name}' refers to a non-table declaration"),
-                    id,
-                );
-            }
-            if let Some(expected_elem_type) = effective_elem_type
-                && expected_elem_type != *declared_elem_type
-            {
-                self.warn(
-                    "FIR-T03",
-                    format!(
-                        "LoadTable '{name}' element type {declared_elem_type:?} differs from \
-                         declaration {:?}",
-                        expected_elem_type
-                    ),
-                    id,
-                );
-            }
+            self.warn(
+                "FIR-T03",
+                format!(
+                    "LoadTable '{name}' element type {declared_elem_type:?} differs from \
+                     declaration {:?}",
+                    expected_elem_type
+                ),
+                id,
+            );
         }
     }
 
@@ -1985,35 +2014,19 @@ impl<'s> VerifyCtx<'s> {
                 id,
             );
         }
-        if access == AccessType::Struct {
-            return;
-        }
-        if let Some(entry) = self.resolve(name, access) {
-            let effective_elem_type = if entry.is_table {
-                Some(entry.typ.clone())
-            } else {
-                self.is_indexable_container_type(&entry.typ)
-            };
-            if effective_elem_type.is_none() {
-                self.warn(
-                    "FIR-T03",
-                    format!("StoreTable '{name}' refers to a non-table declaration"),
-                    id,
-                );
-            }
-            if let Some(val_ty) = self.infer_value_type(value) {
-                let expected_elem_type = effective_elem_type.unwrap_or(entry.typ);
-                if val_ty != expected_elem_type {
-                    self.error(
-                        "FIR-T02",
-                        format!(
-                            "StoreTable value type {val_ty:?} does not match element type {:?}",
-                            expected_elem_type
-                        ),
-                        id,
-                    );
-                }
-            }
+        if let Some(expected_elem_type) =
+            self.table_access_elem_type(id, name, access, "StoreTable")
+            && let Some(val_ty) = self.infer_value_type(value)
+            && val_ty != expected_elem_type
+        {
+            self.error(
+                "FIR-T02",
+                format!(
+                    "StoreTable value type {val_ty:?} does not match element type {:?}",
+                    expected_elem_type
+                ),
+                id,
+            );
         }
     }
 

@@ -132,6 +132,7 @@ const SIG_OD_TAG: &str = "SIGOD";
 const SIG_US_TAG: &str = "SIGUS";
 const SIG_DS_TAG: &str = "SIGDS";
 const SIG_CLOCKED_TAG: &str = "SIGCLOCKED";
+const SIG_CLOCKENV_TAG: &str = "SIGCLOCKENV";
 const SIG_REC_TAG: &str = "SIGREC";
 const SIG_REVERSE_TIME_REC_TAG: &str = "SIGREVERSETIMEREC";
 const SIG_FIR_TAG: &str = "SIGFIR";
@@ -1087,6 +1088,24 @@ impl<'a> SigBuilder<'a> {
     }
 
     #[must_use]
+    /// Builds one opaque clock-environment token leaf and returns its `SigId`.
+    ///
+    /// The token identifies one *instance* of a clocked wrapper
+    /// (`ondemand` / `upsampling` / `downsampling`) by an integer id into the
+    /// propagation-owned `ClockDomain` side table (roadmap P0.2). It replaces
+    /// the C++ `(parent, slotenv, path, box, inputs...)` cons tuple: identity
+    /// comes from the allocated id, so two structurally identical wrapper
+    /// instances can never collide through hash-consing.
+    ///
+    /// The token is **not a signal**: it only ever appears as the first child
+    /// of `Clocked(env, y)` and must be treated as an opaque annotation by
+    /// every signal traversal.
+    pub fn clock_env_token(&mut self, domain_id: u32) -> SigId {
+        let id_node = self.arena.int(i64::from(domain_id));
+        intern_tag(self.arena, SIG_CLOCKENV_TAG, &[id_node])
+    }
+
+    #[must_use]
     /// Builds the C++ `sigDoubleClocked(inside, outside, y)` nested shape.
     pub fn double_clocked(
         &mut self,
@@ -1193,6 +1212,11 @@ pub enum SigMatch<'a> {
     Upsampling(&'a [SigId]),
     Downsampling(&'a [SigId]),
     Clocked(SigId, SigId),
+    /// Opaque clock-environment token (`SIGCLOCKENV`), first child of
+    /// `Clocked(env, y)`. Carries the integer id of the propagation-owned
+    /// `ClockDomain` side-table entry. Not a signal: traversals must never
+    /// recurse into or past it.
+    ClockEnvToken(u32),
 }
 
 /// Decodes one `SigId` into a canonical [`SigMatch`] shape.
@@ -1349,6 +1373,13 @@ pub fn match_sig<'a>(arena: &'a TreeArena, id: SigId) -> SigMatch<'a> {
                 (SIG_US_TAG, sigsubs) => SigMatch::Upsampling(sigsubs),
                 (SIG_DS_TAG, sigsubs) => SigMatch::Downsampling(sigsubs),
                 (SIG_CLOCKED_TAG, [clock, y]) => SigMatch::Clocked(*clock, *y),
+                (SIG_CLOCKENV_TAG, [id]) => match arena.kind(*id) {
+                    Some(NodeKind::Int(value)) => match u32::try_from(*value) {
+                        Ok(value) => SigMatch::ClockEnvToken(value),
+                        Err(_) => SigMatch::Unknown,
+                    },
+                    _ => SigMatch::Unknown,
+                },
                 _ => SigMatch::Unknown,
             }
         }

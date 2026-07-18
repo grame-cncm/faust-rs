@@ -709,6 +709,96 @@ pub(crate) fn interp_trace_diff_opt_levels_cases(
     Ok(())
 }
 
+/// Representative checked-vector corpus cases for the interpreter optimizer
+/// metamorphic gate. They cover delayed recursion, structural recursion,
+/// checked prefix state, and the vector UI lifecycle respectively.
+const VECTOR_INTERP_OPT_CASES: &[&str] = &[
+    "tests/corpus/vector_lockstep_pair.dsp",
+    "tests/impulse-tests/dsp/APF.dsp",
+    "tests/impulse-tests/dsp/capture.dsp",
+    "tests/impulse-tests/dsp/prefix.dsp",
+    "tests/impulse-tests/dsp/UITester.dsp",
+];
+
+/// Compares interpreter `opt_level=0` and maximum optimization for a compact
+/// vector subset across both loop variants and every scheduling strategy.
+///
+/// This is intentionally separate from the scalar runtime-trace snapshots:
+/// the guard requires the checked vector module to remain certified before its
+/// optimized and unoptimized bytecode executions are compared.
+pub(crate) fn vector_interp_opt_check(
+    mut args: impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(option) = args.next() {
+        return Err(format!("unknown vector-interp-opt-check option: {option}").into());
+    }
+    let defaults = InterpTraceBatchOptions::default();
+    let mut compared = 0usize;
+    for relative in VECTOR_INTERP_OPT_CASES {
+        let case = workspace_root().join(relative);
+        for loop_variant in [0_u8, 1] {
+            for scheduling_strategy in [
+                compiler::SchedulingStrategy::DepthFirst,
+                compiler::SchedulingStrategy::BreadthFirst,
+                compiler::SchedulingStrategy::Special,
+                compiler::SchedulingStrategy::ReverseBreadthFirst,
+            ] {
+                let base = InterpTraceDumpOptions {
+                    case: case.clone(),
+                    scenario: TraceScenario::Impulse,
+                    lane: TraceLane::Fast,
+                    sample_rate: defaults.sample_rate,
+                    block_size: defaults.block_size,
+                    num_blocks: defaults.num_blocks,
+                    strict_fir_types: false,
+                    out: None,
+                };
+                let compute_mode = compiler::ComputeMode::Vector {
+                    vec_size: compiler::ComputeMode::DEFAULT_VEC_SIZE,
+                    loop_variant,
+                };
+                let unoptimized = run_interp_trace_case_with_configuration(
+                    &base,
+                    0,
+                    compute_mode,
+                    scheduling_strategy,
+                    true,
+                )?;
+                let optimized = run_interp_trace_case_with_configuration(
+                    &base,
+                    codegen::backends::interp::MAX_OPT_LEVEL.into(),
+                    compute_mode,
+                    scheduling_strategy,
+                    true,
+                )?;
+                if let Err(mismatch) = compare_runtime_traces(
+                    &unoptimized,
+                    &optimized,
+                    TraceCompareTolerances::default(),
+                ) {
+                    return Err(format!(
+                        "vector interp opt-level diff failed for {} [-lv {} {:?}]: mismatch {:?}",
+                        case.display(),
+                        loop_variant,
+                        scheduling_strategy,
+                        mismatch
+                    )
+                    .into());
+                }
+                println!(
+                    "match {} [-lv {} {:?}] (checked vector interp opt_level=0 vs max)",
+                    case.display(),
+                    loop_variant,
+                    scheduling_strategy
+                );
+                compared += 1;
+            }
+        }
+    }
+    println!("vector-interp-opt-check: {compared} checked vector trace(s) matched");
+    Ok(())
+}
+
 /// Parses shared batch options for `interp-trace-gen` and `interp-trace-check`.
 pub(crate) fn parse_interp_trace_batch_options(
     args: &mut impl Iterator<Item = String>,
@@ -823,14 +913,47 @@ pub(crate) fn run_interp_trace_case_with_opt_level(
     options: &InterpTraceDumpOptions,
     opt_level: i32,
 ) -> Result<RuntimeTrace, Box<dyn std::error::Error>> {
-    let compiler = compiler::Compiler::new().with_fir_verify_options(compiler::FirVerifyOptions {
-        enabled: true,
-        strict: false,
-    });
+    run_interp_trace_case_with_configuration(
+        options,
+        opt_level,
+        compiler::ComputeMode::Scalar,
+        compiler::SchedulingStrategy::DepthFirst,
+        false,
+    )
+}
+
+fn run_interp_trace_case_with_configuration(
+    options: &InterpTraceDumpOptions,
+    opt_level: i32,
+    compute_mode: compiler::ComputeMode,
+    scheduling_strategy: compiler::SchedulingStrategy,
+    require_checked_vector: bool,
+) -> Result<RuntimeTrace, Box<dyn std::error::Error>> {
+    let compiler = compiler::Compiler::new()
+        .with_fir_verify_options(compiler::FirVerifyOptions {
+            enabled: true,
+            strict: false,
+        })
+        .with_compute_mode(compute_mode)
+        .with_scheduling_strategy(scheduling_strategy);
 
     let signals = compiler.compile_file_default_to_signals(&options.case)?;
     let fir = compiler
         .compile_file_default_to_fir_with_lane(&options.case, options.lane.to_signal_fir_lane())?;
+    if require_checked_vector
+        && (fir.vector_pipeline_status != compiler::VectorPipelineStatus::Certified
+            || fir.vector_effective_mode != compiler::VectorEffectiveMode::CertifiedVector
+            || fir.vector_pipeline_detail.is_some())
+    {
+        return Err(format!(
+            "{} did not retain checked vector FIR: status={:?}, effective={:?}, detail={}",
+            options.case.display(),
+            fir.vector_pipeline_status,
+            fir.vector_effective_mode,
+            fir.vector_pipeline_detail.as_deref().unwrap_or("-")
+        )
+        .into());
+    }
     if options.strict_fir_types {
         enforce_strict_fir_type_diagnostics(&fir.store, fir.module, &options.case)?;
     }
@@ -1399,6 +1522,9 @@ pub(crate) fn render_rust_cpp_output(input: &Path) -> Result<String, compiler::C
 pub(crate) fn golden_gen_rust() -> Result<(), Box<dyn std::error::Error>> {
     let files = corpus_files()?;
     for file in files {
+        if !is_rust_golden_eligible(&file) {
+            continue;
+        }
         let case = case_name(&file)?;
         let output = golden_file_for_ref(&case, GoldenRef::Rust);
         if let Some(parent) = output.parent() {

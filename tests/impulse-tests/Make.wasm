@@ -32,5 +32,5 @@ $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
 ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir | ir/$(outdir)/.dir
-	FAUST_RS=$(FAUST_RS) $(RUNNER_WASM) $< -double -I dsp -n $(SCALARFRAMES) > $@ || (rm -f $@; false)
+	FAUST_RS=$(FAUST_RS) $(RUNNER_WASM) $< -double $(COMPILER_OPTS) -I dsp -n $(SCALARFRAMES) > $@ || (rm -f $@; false)
 	$(COMPARE) $@ reference/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)

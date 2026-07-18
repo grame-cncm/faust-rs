@@ -389,11 +389,185 @@ fn compile_module_lowers_supported_foreign_fun_subset_call() {
     assert!(compiled.compute_body_lowered());
 }
 
+/// The lockstep register-carry shape: a Stack scalar written once per sample
+/// inside the loop and persisted to a struct field after it. Before locals
+/// were backed by builder SSA variables, the tail read returned the last
+/// in-loop CLIF value and `define_function` failed SSA dominance verification.
+fn build_cross_block_local_module() -> (fir::FirStore, FirId) {
+    let mut store = fir::FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+
+    let globals = b.block(&[]);
+    let state_field = b.declare_var("fState", FirType::Float64, AccessType::Struct, None);
+    let dsp_struct = b.block(&[state_field]);
+
+    let zero = b.float64(0.0);
+    let local_decl = b.declare_var(
+        "vlock_local",
+        FirType::Float64,
+        AccessType::Stack,
+        Some(zero),
+    );
+    let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+    let carried = b.cast(FirType::Float64, i0);
+    let write_local = b.store_var("vlock_local", AccessType::Stack, carried);
+    let loop_body = b.block(&[write_local]);
+    let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
+    let tail_read = b.load_var("vlock_local", AccessType::Stack, FirType::Float64);
+    let persist = b.store_var("fState", AccessType::Struct, tail_read);
+    let compute_body = b.block(&[local_decl, sample_loop, persist]);
+    let compute_args = [
+        NamedType {
+            name: "dsp".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        },
+        NamedType {
+            name: "count".to_string(),
+            typ: FirType::Int32,
+        },
+        NamedType {
+            name: "inputs".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+        NamedType {
+            name: "outputs".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+    ];
+    let compute = b.declare_fun(
+        "compute",
+        FirType::Fun {
+            args: vec![
+                FirType::Ptr(Box::new(FirType::Obj)),
+                FirType::Int32,
+                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+            ],
+            ret: Box::new(FirType::Void),
+        },
+        &compute_args,
+        Some(compute_body),
+        false,
+    );
+    let functions = b.block(&[compute]);
+    let static_decls = b.block(&[]);
+    let module = b.module(
+        0,
+        0,
+        "cross_block_local",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+    );
+    (store, module)
+}
+
+#[test]
+/// A `StoreVar` may assign a differently typed value to a local, as a C
+/// assignment converts to the declared type; the SSA variable's declared type
+/// must not reject it. This is the `grain3`/`gate_compressor` shape that
+/// panicked (`declared type of variable ... doesn't match type of value`)
+/// when bindings first became SSA variables without assignment coercion.
+fn compile_module_coerces_retyped_local_assignment() {
+    let mut store = fir::FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+
+    let globals = b.block(&[]);
+    let state_field = b.declare_var("iState", FirType::Int32, AccessType::Struct, None);
+    let dsp_struct = b.block(&[state_field]);
+
+    let zero = b.int32(0);
+    let local_decl = b.declare_var("iGate", FirType::Int32, AccessType::Stack, Some(zero));
+    let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+    let five = b.int32(5);
+    let gate = b.binop(FirBinOp::Lt, i0, five, FirType::Bool);
+    let write_local = b.store_var("iGate", AccessType::Stack, gate);
+    let loop_body = b.block(&[write_local]);
+    let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
+    let tail_read = b.load_var("iGate", AccessType::Stack, FirType::Int32);
+    let persist = b.store_var("iState", AccessType::Struct, tail_read);
+    let compute_body = b.block(&[local_decl, sample_loop, persist]);
+    let compute_args = [
+        NamedType {
+            name: "dsp".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        },
+        NamedType {
+            name: "count".to_string(),
+            typ: FirType::Int32,
+        },
+        NamedType {
+            name: "inputs".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+        NamedType {
+            name: "outputs".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+    ];
+    let compute = b.declare_fun(
+        "compute",
+        FirType::Fun {
+            args: vec![
+                FirType::Ptr(Box::new(FirType::Obj)),
+                FirType::Int32,
+                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+            ],
+            ret: Box::new(FirType::Void),
+        },
+        &compute_args,
+        Some(compute_body),
+        false,
+    );
+    let functions = b.block(&[compute]);
+    let static_decls = b.block(&[]);
+    let module = b.module(
+        0,
+        0,
+        "retyped_local",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+    );
+    let options = CraneliftOptions {
+        fail_on_subset_gap: true,
+        ..CraneliftOptions::default()
+    };
+    let compiled = generate_cranelift_module(&store, module, &options)
+        .expect("a retyped local assignment must coerce, not panic");
+    assert!(compiled.compute_body_lowered());
+}
+
+#[test]
+fn compile_module_lowers_a_cross_block_stack_local() {
+    let (store, module) = build_cross_block_local_module();
+    let options = CraneliftOptions {
+        fail_on_subset_gap: true,
+        ..CraneliftOptions::default()
+    };
+    let compiled = generate_cranelift_module(&store, module, &options)
+        .expect("a loop-written local read after the loop must pass SSA verification");
+    assert!(compiled.compute_body_lowered());
+}
+
 #[test]
 fn compile_module_lowers_loop_local_declare_var() {
     let (store, module) = build_loop_local_declare_var_module();
     let compiled = generate_cranelift_module(&store, module, &CraneliftOptions::default())
         .expect("loop-local DeclareVar should lower");
+    assert!(compiled.compute_body_lowered());
+}
+
+#[test]
+fn compile_module_lowers_stack_local_array_buffer() {
+    let (store, module) = build_stack_local_array_buffer_module();
+    let compiled = generate_cranelift_module(&store, module, &CraneliftOptions::default())
+        .expect("stack-local array buffer should lower");
     assert!(compiled.compute_body_lowered());
 }
 
@@ -1467,6 +1641,74 @@ fn build_struct_array_var_subset_module() -> (fir::FirStore, FirId) {
         0,
         0,
         "struct_array_var_subset",
+        dsp_struct,
+        globals,
+        functions,
+        sd,
+    );
+    (store, module)
+}
+
+fn build_stack_local_array_buffer_module() -> (fir::FirStore, FirId) {
+    let mut store = fir::FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+
+    let globals = b.block(&[]);
+    let dsp_struct = b.block(&[]);
+
+    let out_chan = b.int32(0);
+    let out_ptr_ty = FirType::Ptr(Box::new(FirType::FaustFloat));
+    let out_ptr = b.load_table("outputs", AccessType::FunArgs, out_chan, out_ptr_ty.clone());
+    let out_alias = b.declare_var("output0", out_ptr_ty, AccessType::Stack, Some(out_ptr));
+    let vbuf = b.declare_var(
+        "vbuf0",
+        FirType::Array(Box::new(FirType::FaustFloat), 32),
+        AccessType::Stack,
+        None,
+    );
+    let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+    let value = b.float32(0.25);
+    let store_vbuf = b.store_table("vbuf0", AccessType::Stack, i0, value);
+    let read_vbuf = b.load_table("vbuf0", AccessType::Stack, i0, FirType::FaustFloat);
+    let store_out = b.store_table("output0", AccessType::Stack, i0, read_vbuf);
+    let loop_body = b.block(&[store_vbuf, store_out]);
+    let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
+    let compute_body = b.block(&[out_alias, vbuf, sample_loop]);
+    let compute_args = [
+        NamedType {
+            name: "dsp".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        },
+        NamedType {
+            name: "count".to_string(),
+            typ: FirType::Int32,
+        },
+        NamedType {
+            name: "inputs".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+        NamedType {
+            name: "outputs".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+    ];
+    let compute = b.declare_fun(
+        "compute",
+        FirType::Fun {
+            args: compute_args.iter().map(|arg| arg.typ.clone()).collect(),
+            ret: Box::new(FirType::Void),
+        },
+        &compute_args,
+        Some(compute_body),
+        false,
+    );
+    let functions = b.block(&[compute]);
+    let sd = b.block(&[]);
+    let module = b.module(
+        0,
+        1,
+        "stack_local_array_buffer",
         dsp_struct,
         globals,
         functions,

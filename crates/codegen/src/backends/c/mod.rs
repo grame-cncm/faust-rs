@@ -25,11 +25,31 @@
 
 use std::fmt::Write as _;
 
-use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
+use fir::{AccessType, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
+use crate::backends::c_family::{self, CFamilySyntax, EmitMode, StructInit, TableInit};
 use crate::backends::faust_api;
 
 pub const BACKEND_NAME: &str = "c";
+
+/// C spellings for the shared C-family emission core.
+const SYNTAX: CFamilySyntax = CFamilySyntax {
+    bool_type: "int",
+    ui_type: "UIGlue*",
+    meta_type: "MetaGlue*",
+    static_table_keywords: "static const",
+    bool_true: "1",
+    bool_false: "0",
+    null_value: "NULL",
+    ui_glue_arg: "ui_interface->uiInterface, ",
+    ui_glue_solo: "ui_interface->uiInterface",
+    faustfloat_cast_open: "(FAUSTFLOAT)",
+    faustfloat_cast_close: "",
+    switch_default_break: true,
+    bitcast_open: "*((",
+    bitcast_mid: "*)&",
+    bitcast_close: ")",
+};
 
 /// C backend options for module-first emission.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,7 +94,6 @@ pub enum CodegenErrorCode {
 }
 
 impl CodegenErrorCode {
-    /// Returns the stable machine-readable error code string.
     /// Stable textual code used in diagnostics and tests.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -133,45 +152,6 @@ struct ModuleView {
     num_inputs: usize,
     num_outputs: usize,
     static_decls: FirId,
-}
-
-/// One state field initialization that must be replayed during DSP lifecycle
-/// emission.
-///
-/// The C backend emits declarations in the struct definition first, then uses
-/// this decoded view to synthesize `instanceConstants` / reset code with stable
-/// ordering.
-#[derive(Debug, Clone)]
-struct StructInit {
-    name: String,
-    typ: FirType,
-    init: FirId,
-}
-
-/// One table declaration plus its initializer payload.
-///
-/// Table lowering is split from scalar storage because the C backend may need
-/// dedicated helper syntax for array declarations and per-element initialization.
-#[derive(Clone, Debug)]
-struct TableInit {
-    name: String,
-    access: AccessType,
-    elem_type: FirType,
-    values: Vec<FirId>,
-}
-
-/// Rendering mode for expression/statement emission.
-///
-/// `Compute` enables compute-loop specific conventions such as sample-indexed
-/// table accesses and output-store formatting. `Metadata` and `Ui` preserve
-/// the C++ split between `m->declare(...)` in `metadata()` and
-/// `ui_interface->declare(...)` in `buildUserInterface()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EmitMode {
-    Default,
-    Metadata,
-    Ui,
-    Compute,
 }
 
 /// Normalized function declaration extracted from FIR before textual emission.
@@ -751,75 +731,45 @@ fn emit_compute_body(
     emit_block_with_mode(store, out, options, body, indent, &mut mode)
 }
 
+/// Builds this backend's stable error for a malformed state section, used by
+/// the shared initializer collectors.
+fn invalid_struct_section(store: &FirStore, section: FirId) -> CodegenError {
+    CodegenError::new(
+        CodegenErrorCode::InvalidModuleSection,
+        format!(
+            "struct section must be a FIR block, got {:?} at node {}",
+            match_fir(store, section),
+            section.as_u32()
+        ),
+    )
+}
+
 /// Collects scalar struct/global initializers used by reset lifecycle methods.
+///
+/// Shared with the `cpp` backend via
+/// [`c_family::collect_struct_initializers`].
 fn collect_struct_initializers(
     store: &FirStore,
     dsp_struct: FirId,
     globals: FirId,
 ) -> Result<Vec<StructInit>, CodegenError> {
-    let mut out = Vec::new();
-    for section in [dsp_struct, globals] {
-        let FirMatch::Block(items) = match_fir(store, section) else {
-            return Err(CodegenError::new(
-                CodegenErrorCode::InvalidModuleSection,
-                format!(
-                    "struct section must be a FIR block, got {:?} at node {}",
-                    match_fir(store, section),
-                    section.as_u32()
-                ),
-            ));
-        };
-        for item in items {
-            if let FirMatch::DeclareVar {
-                name,
-                typ,
-                init: Some(init),
-                ..
-            } = match_fir(store, item)
-            {
-                out.push(StructInit { name, typ, init });
-            }
-        }
-    }
-    Ok(out)
+    c_family::collect_struct_initializers(store, dsp_struct, globals, |section| {
+        invalid_struct_section(store, section)
+    })
 }
 
 /// Collects table initializers from FIR state declarations.
+///
+/// Shared with the `cpp` backend via
+/// [`c_family::collect_table_initializers`].
 fn collect_table_initializers(
     store: &FirStore,
     dsp_struct: FirId,
     globals: FirId,
 ) -> Result<Vec<TableInit>, CodegenError> {
-    let mut out = Vec::new();
-    for section in [dsp_struct, globals] {
-        let FirMatch::Block(items) = match_fir(store, section) else {
-            return Err(CodegenError::new(
-                CodegenErrorCode::InvalidModuleSection,
-                format!(
-                    "struct section must be a FIR block, got {:?} at node {}",
-                    match_fir(store, section),
-                    section.as_u32()
-                ),
-            ));
-        };
-        for item in items {
-            if let FirMatch::DeclareTable {
-                name,
-                access,
-                elem_type,
-                values,
-            } = match_fir(store, item)
-            {
-                out.push(TableInit {
-                    name,
-                    access,
-                    elem_type,
-                    values,
-                });
-            }
-        }
-    }
-    Ok(out)
+    c_family::collect_table_initializers(store, dsp_struct, globals, |section| {
+        invalid_struct_section(store, section)
+    })
 }
 
 /// Extracts all body-bearing helper/function definitions from the module.
@@ -893,6 +843,27 @@ fn emit_block_with_mode(
 }
 
 /// Emits one FIR statement into C syntax.
+/// Renders the increment of a non-reverse `ForLoop` in C style
+/// (`i = i + step`; the `cpp` backend spells this `i += step`).
+fn c_for_loop_step(var: &str, step: &str) -> String {
+    format!("{var} = {var} + {step}")
+}
+
+/// Renders the increment of a non-reverse `SimpleForLoop` in C style
+/// (`i = i + 1`; the `cpp` backend spells this `++i`).
+fn c_simple_loop_increment(var: &str) -> String {
+    format!("{var} = {var} + 1")
+}
+
+/// Emits one FIR statement into generated C text.
+///
+/// The arms shared with the `cpp` backend live in
+/// [`c_family::emit_stmt_common`] — including `Control`/`WhileLoop`, which
+/// this backend previously had no arms for and hard-failed on (DRIFT 7 in
+/// the C-family plan §2.7). Only the C-specific arms remain here:
+/// `AddMetaDeclare` (the C `MetaGlue` interface threads an explicit
+/// `m->metaInterface` handle and always passes a zone argument) and `Label`
+/// (rendered as a comment; the `cpp` backend drops labels silently).
 fn emit_stmt(
     store: &FirStore,
     out: &mut String,
@@ -901,257 +872,32 @@ fn emit_stmt(
     indent: usize,
     mode: &mut EmitMode,
 ) -> Result<(), CodegenError> {
+    let ctx = c_family::CFamilyStmtCtx {
+        syntax: &SYNTAX,
+        var_ref: emit_var_ref,
+        for_loop_step: c_for_loop_step,
+        simple_loop_increment: c_simple_loop_increment,
+        render_named_type: &|typ, name| emit_named_type(typ, name, options),
+        render_type: &|typ| emit_type(typ, options),
+        render_value: &|value| emit_value(store, options, value),
+        emit_block: &|out, block, indent, mode| {
+            emit_block_with_mode(store, out, options, block, indent, mode)
+        },
+        emit_stmt: &|out, stmt, indent, mode| emit_stmt(store, out, options, stmt, indent, mode),
+    };
+    if let Some(result) = c_family::emit_stmt_common(store, out, &ctx, stmt, indent, mode) {
+        return result;
+    }
     let tab = "    ".repeat(indent);
     match match_fir(store, stmt) {
-        FirMatch::DeclareVar {
-            name,
-            typ,
-            access: _,
-            init,
-        } => {
-            let _ = write!(out, "{tab}{}", emit_named_type(&typ, &name, options));
-            if let Some(init) = init {
-                let init = emit_value(store, options, init)?;
-                let _ = write!(out, " = {init}");
-            }
-            let _ = writeln!(out, ";");
-            Ok(())
-        }
-        FirMatch::DeclareTable {
-            name,
-            elem_type,
-            values,
-            ..
-        } => {
-            let mut rendered = Vec::with_capacity(values.len());
-            for value in &values {
-                rendered.push(emit_value(store, options, *value)?);
-            }
-            let _ = writeln!(
-                out,
-                "{tab}{} {}[{}] = {{{}}};",
-                emit_type(&elem_type, options),
-                name,
-                values.len(),
-                rendered.join(", ")
-            );
-            Ok(())
-        }
-        FirMatch::StoreVar {
-            name,
-            access,
-            value,
-        } => {
-            let value = emit_value(store, options, value)?;
-            let target = emit_var_ref(&name, access);
-            let _ = writeln!(out, "{tab}{target} = {value};");
-            Ok(())
-        }
-        FirMatch::StoreTable {
-            name,
-            access,
-            index,
-            value,
-        } => {
-            let index = emit_value(store, options, index)?;
-            let value = emit_value(store, options, value)?;
-            let target = emit_var_ref(&name, access);
-            let _ = writeln!(out, "{tab}{target}[{index}] = {value};");
-            Ok(())
-        }
-        FirMatch::Drop(value) => {
-            let value = emit_value(store, options, value)?;
-            let _ = mode;
-            let _ = writeln!(out, "{tab}(void)({value});");
-            Ok(())
-        }
-        FirMatch::Return(value) => {
-            if let Some(value) = value {
-                let value = emit_value(store, options, value)?;
-                let _ = writeln!(out, "{tab}return {value};");
-            } else {
-                let _ = writeln!(out, "{tab}return;");
-            }
-            Ok(())
-        }
-        FirMatch::Block(_) => emit_block_with_mode(store, out, options, stmt, indent, mode),
-        FirMatch::If {
-            cond,
-            then_block,
-            else_block,
-        } => {
-            let cond = emit_value(store, options, cond)?;
-            let _ = writeln!(out, "{tab}if ({cond}) {{");
-            emit_block_with_mode(store, out, options, then_block, indent + 1, mode)?;
-            let _ = writeln!(out, "{tab}}}");
-            if let Some(else_block) = else_block {
-                let _ = writeln!(out, "{tab}else {{");
-                emit_block_with_mode(store, out, options, else_block, indent + 1, mode)?;
-                let _ = writeln!(out, "{tab}}}");
-            }
-            Ok(())
-        }
-        FirMatch::Switch {
-            cond,
-            ref cases,
-            default,
-        } => {
-            let cond = emit_value(store, options, cond)?;
-            let _ = writeln!(out, "{tab}switch ({cond}) {{");
-            for (value, block) in cases {
-                let _ = writeln!(out, "{tab}case {value}: {{");
-                emit_block_with_mode(store, out, options, *block, indent + 1, mode)?;
-                let _ = writeln!(out, "{tab}    break;");
-                let _ = writeln!(out, "{tab}}}");
-            }
-            if let Some(default) = default {
-                let _ = writeln!(out, "{tab}default: {{");
-                emit_block_with_mode(store, out, options, default, indent + 1, mode)?;
-                let _ = writeln!(out, "{tab}    break;");
-                let _ = writeln!(out, "{tab}}}");
-            }
-            let _ = writeln!(out, "{tab}}}");
-            Ok(())
-        }
-        FirMatch::ForLoop {
-            var,
-            init,
-            end,
-            step,
-            body,
-            is_reverse,
-        } => {
-            // init is a DeclareVar(kLoop) per FIR contract; extract its value.
-            let init_val =
-                if let FirMatch::DeclareVar { init: Some(v), .. } = match_fir(store, init) {
-                    emit_value(store, options, v)?
-                } else {
-                    emit_value(store, options, init)?
-                };
-            let end = emit_value(store, options, end)?;
-            let step = emit_value(store, options, step)?;
-            if is_reverse {
-                let _ = writeln!(
-                    out,
-                    "{tab}for (int {var} = {init_val}; {var} > {end}; {var} = {var} + {step}) {{"
-                );
-            } else {
-                let _ = writeln!(
-                    out,
-                    "{tab}for (int {var} = {init_val}; {var} < {end}; {var} = {var} + {step}) {{"
-                );
-            }
-            emit_block_with_mode(store, out, options, body, indent + 1, mode)?;
-            let _ = writeln!(out, "{tab}}}");
-            Ok(())
-        }
-        FirMatch::SimpleForLoop {
-            var,
-            upper,
-            body,
-            is_reverse,
-        } => {
-            let upper = emit_value(store, options, upper)?;
-            if is_reverse {
-                let _ = writeln!(
-                    out,
-                    "{tab}for (int {var} = ({upper}) - 1; {var} >= 0; {var} = {var} - 1) {{"
-                );
-            } else {
-                let _ = writeln!(
-                    out,
-                    "{tab}for (int {var} = 0; {var} < {upper}; {var} = {var} + 1) {{"
-                );
-            }
-            emit_block_with_mode(store, out, options, body, indent + 1, mode)?;
-            let _ = writeln!(out, "{tab}}}");
-            Ok(())
-        }
-        FirMatch::OpenBox { typ, label } => {
-            let api = match typ {
-                fir::UiBoxType::Vertical => "openVerticalBox",
-                fir::UiBoxType::Horizontal => "openHorizontalBox",
-                fir::UiBoxType::Tab => "openTabBox",
-            };
-            let _ = writeln!(
-                out,
-                "{tab}ui_interface->{api}(ui_interface->uiInterface, {});",
-                c_string_literal(&label)
-            );
-            Ok(())
-        }
-        FirMatch::CloseBox => {
-            let _ = writeln!(
-                out,
-                "{tab}ui_interface->closeBox(ui_interface->uiInterface);"
-            );
-            Ok(())
-        }
-        FirMatch::AddButton { typ, label, var } => {
-            let api = match typ {
-                fir::ButtonType::Button => "addButton",
-                fir::ButtonType::Checkbox => "addCheckButton",
-            };
-            let _ = writeln!(
-                out,
-                "{tab}ui_interface->{api}(ui_interface->uiInterface, {}, &dsp->{var});",
-                c_string_literal(&label)
-            );
-            Ok(())
-        }
-        FirMatch::AddSlider {
-            typ,
-            label,
-            var,
-            init,
-            lo,
-            hi,
-            step,
-        } => {
-            let api = match typ {
-                fir::SliderType::Horizontal => "addHorizontalSlider",
-                fir::SliderType::Vertical => "addVerticalSlider",
-                fir::SliderType::NumEntry => "addNumEntry",
-            };
-            let _ = writeln!(
-                out,
-                "{tab}ui_interface->{api}(ui_interface->uiInterface, {}, &dsp->{var}, (FAUSTFLOAT){}, (FAUSTFLOAT){}, (FAUSTFLOAT){}, (FAUSTFLOAT){});",
-                c_string_literal(&label),
-                trim_float(init),
-                trim_float(lo),
-                trim_float(hi),
-                trim_float(step),
-            );
-            Ok(())
-        }
-        FirMatch::AddBargraph {
-            typ,
-            label,
-            var,
-            lo,
-            hi,
-        } => {
-            let api = match typ {
-                fir::BargraphType::Horizontal => "addHorizontalBargraph",
-                fir::BargraphType::Vertical => "addVerticalBargraph",
-            };
-            let _ = writeln!(
-                out,
-                "{tab}ui_interface->{api}(ui_interface->uiInterface, {}, &dsp->{var}, (FAUSTFLOAT){}, (FAUSTFLOAT){});",
-                c_string_literal(&label),
-                trim_float(lo),
-                trim_float(hi)
-            );
-            Ok(())
-        }
         FirMatch::AddMetaDeclare { var, key, value } => {
+            let zone = if var == "0" {
+                "0".to_owned()
+            } else {
+                format!("&dsp->{var}")
+            };
             match mode {
                 EmitMode::Ui => {
-                    let zone = if var == "0" {
-                        "0".to_owned()
-                    } else {
-                        format!("&dsp->{var}")
-                    };
                     let _ = writeln!(
                         out,
                         "{tab}ui_interface->declare(ui_interface->uiInterface, {zone}, {}, {});",
@@ -1160,11 +906,6 @@ fn emit_stmt(
                     );
                 }
                 EmitMode::Default | EmitMode::Metadata | EmitMode::Compute => {
-                    let zone = if var == "0" {
-                        "0".to_owned()
-                    } else {
-                        format!("&dsp->{var}")
-                    };
                     let _ = writeln!(
                         out,
                         "{tab}m->declare(m->metaInterface, {zone}, {}, {});",
@@ -1173,19 +914,6 @@ fn emit_stmt(
                     );
                 }
             }
-            Ok(())
-        }
-        FirMatch::AddSoundfile { label, url, var } => {
-            let _ = writeln!(
-                out,
-                "{tab}ui_interface->addSoundfile(ui_interface->uiInterface, {}, {}, &dsp->{var});",
-                c_string_literal(&label),
-                c_string_literal(&url)
-            );
-            Ok(())
-        }
-        FirMatch::NullStatement => {
-            let _ = writeln!(out, "{tab};");
             Ok(())
         }
         FirMatch::Label(label) => {
@@ -1197,124 +925,39 @@ fn emit_stmt(
 }
 
 /// Emits one FIR value expression into a C expression string.
+///
+/// All arms shared with the `cpp` backend live in
+/// [`c_family::emit_value_common`] — including `Bitcast`, which this backend
+/// previously had no arm for and hard-failed on (DRIFT 2 closure, C-family
+/// plan §2.2). It renders as `*((T*)&v)` from the [`SYNTAX`] leaves: the
+/// corrected spelling of what upstream C's `BitcastInst` visitor evidently
+/// intends — upstream's own `-ftz 2` C output is garbled/uncompilable text
+/// (`*((int*(&v ...`, a known-broken TODO in `c_instructions.hh`), so the
+/// oracle here is the upstream *C++* form transposed to a C-style pointer
+/// cast. This backend has no language-only value arms today.
 fn emit_value(store: &FirStore, options: &COptions, value: FirId) -> Result<String, CodegenError> {
-    match match_fir(store, value) {
-        FirMatch::Int32 { value, .. } => Ok(value.to_string()),
-        FirMatch::Int64 { value, .. } => Ok(value.to_string()),
-        FirMatch::Float32 { value, .. } => Ok(format_float32(f64::from(value))),
-        FirMatch::Float64 { value, .. } => Ok(trim_float(value)),
-        FirMatch::Bool { value, .. } => Ok(if value { "1" } else { "0" }.to_owned()),
-        FirMatch::LoadVar { name, access, .. } | FirMatch::LoadVarAddress { name, access, .. } => {
-            Ok(emit_var_ref(&name, access))
-        }
-        FirMatch::LoadTable {
-            name,
-            access,
-            index,
-            ..
-        } => {
-            let index = emit_value(store, options, index)?;
-            Ok(format!("{}[{index}]", emit_var_ref(&name, access)))
-        }
-        FirMatch::TeeVar {
-            name,
-            access,
-            value,
-            ..
-        } => {
-            let value = emit_value(store, options, value)?;
-            Ok(format!("({} = {value})", emit_var_ref(&name, access)))
-        }
-        FirMatch::BinOp { op, lhs, rhs, .. } => {
-            let lhs = emit_value(store, options, lhs)?;
-            let rhs = emit_value(store, options, rhs)?;
-            Ok(emit_binop_expr(op, &lhs, &rhs))
-        }
-        FirMatch::Neg { value, .. } => {
-            let value = emit_value(store, options, value)?;
-            Ok(format!("(-{value})"))
-        }
-        FirMatch::Cast { typ, value } => {
-            let value = emit_value(store, options, value)?;
-            Ok(format!("(({})({value}))", emit_type(&typ, options)))
-        }
-        FirMatch::Select2 {
-            cond,
-            then_value,
-            else_value,
-            ..
-        } => {
-            let cond = emit_value(store, options, cond)?;
-            let then_value = emit_value(store, options, then_value)?;
-            let else_value = emit_value(store, options, else_value)?;
-            Ok(format!("({cond} ? {then_value} : {else_value})"))
-        }
-        FirMatch::FunCall { name, args, .. } => {
-            let mut rendered = Vec::with_capacity(args.len());
-            for arg in args {
-                rendered.push(emit_value(store, options, arg)?);
-            }
-            let c_name = match name.as_str() {
-                "min_i" => "faustmini",
-                "max_i" => "faustmaxi",
-                _ => name.strip_prefix("std::").unwrap_or(name.as_str()),
-            };
-            Ok(format!("{c_name}({})", rendered.join(", ")))
-        }
-        FirMatch::NullValue { .. } => Ok("NULL".to_owned()),
-        FirMatch::LoadSoundfileLength { var, part } => {
-            let part = emit_value(store, options, part)?;
-            Ok(format!("dsp->{var}->fLength[{part}]"))
-        }
-        FirMatch::LoadSoundfileRate { var, part } => {
-            let part = emit_value(store, options, part)?;
-            Ok(format!("dsp->{var}->fSR[{part}]"))
-        }
-        FirMatch::LoadSoundfileBuffer {
-            var,
-            chan,
-            part,
-            idx,
-            ..
-        } => {
-            let chan = emit_value(store, options, chan)?;
-            let part = emit_value(store, options, part)?;
-            let idx = emit_value(store, options, idx)?;
-            Ok(format!(
-                "((FAUSTFLOAT**)dsp->{var}->fBuffers)[{chan}][dsp->{var}->fOffset[{part}] + {idx}]"
-            ))
-        }
-        _ => Err(unsupported_node("value", value, store)),
+    let ctx = c_family::CFamilyValueCtx {
+        syntax: &SYNTAX,
+        var_ref: emit_var_ref,
+        fun_name: emit_c_fun_name,
+        render_type: &|typ| emit_type(typ, options),
+        recurse: &|nested| emit_value(store, options, nested),
+    };
+    if let Some(result) = c_family::emit_value_common(store, &ctx, value) {
+        return result;
     }
+    Err(unsupported_node("value", value, store))
 }
 
-/// Maps one FIR binary operator to its C token spelling.
-fn emit_binop(op: FirBinOp) -> &'static str {
-    match op {
-        FirBinOp::Add => "+",
-        FirBinOp::Sub => "-",
-        FirBinOp::Mul => "*",
-        FirBinOp::Div => "/",
-        FirBinOp::Rem => "%",
-        FirBinOp::And => "&",
-        FirBinOp::Or => "|",
-        FirBinOp::Xor => "^",
-        FirBinOp::Lsh => "<<",
-        FirBinOp::ARsh => ">>",
-        FirBinOp::LRsh => ">>",
-        FirBinOp::Eq => "==",
-        FirBinOp::Ne => "!=",
-        FirBinOp::Lt => "<",
-        FirBinOp::Le => "<=",
-        FirBinOp::Gt => ">",
-        FirBinOp::Ge => ">=",
-    }
-}
-
-fn emit_binop_expr(op: FirBinOp, lhs: &str, rhs: &str) -> String {
-    match op {
-        FirBinOp::LRsh => format!("((int32_t)(((uint32_t)({lhs})) >> ({rhs})))"),
-        _ => format!("({lhs} {} {rhs})", emit_binop(op)),
+/// Maps bare FIR math names to the C symbol spelling.
+///
+/// `min_i`/`max_i` become the `faustmini`/`faustmaxi` helper macros, and any
+/// `std::` prefix left by shared lowering is stripped (C has no namespaces).
+fn emit_c_fun_name(name: &str) -> String {
+    match name {
+        "min_i" => "faustmini".to_owned(),
+        "max_i" => "faustmaxi".to_owned(),
+        _ => name.strip_prefix("std::").unwrap_or(name).to_owned(),
     }
 }
 
@@ -1327,36 +970,17 @@ fn emit_var_ref(name: &str, access: AccessType) -> String {
 }
 
 /// Renders a FIR type into the current C backend spelling.
+///
+/// Shared with the `cpp` backend via [`c_family::emit_type`]: the C-specific
+/// leaves (`int` for `Bool`, `UIGlue*`/`MetaGlue*`) come from [`SYNTAX`], the
+/// configurable `Quad`/`FixedPoint` spellings from `options`.
 fn emit_type(typ: &FirType, options: &COptions) -> String {
-    match typ {
-        FirType::Int32 => "int".to_owned(),
-        FirType::Int64 => "long long".to_owned(),
-        FirType::Float32 => "float".to_owned(),
-        FirType::Float64 => "double".to_owned(),
-        FirType::FaustFloat => "FAUSTFLOAT".to_owned(),
-        FirType::Quad => options.quad_type_name.clone(),
-        FirType::FixedPoint => options.fixed_type_name.clone(),
-        FirType::Bool => "int".to_owned(),
-        FirType::Void => "void".to_owned(),
-        FirType::Obj => "void*".to_owned(),
-        // FIR handle kinds are already pointer-shaped at the type-model level.
-        // `Ptr(UI)` would therefore become `UIGlue**`.
-        FirType::Sound => "Soundfile*".to_owned(),
-        FirType::UI => "UIGlue*".to_owned(),
-        FirType::Meta => "MetaGlue*".to_owned(),
-        FirType::Ptr(inner) => format!("{}*", emit_type(inner, options)),
-        FirType::Array(inner, size) => format!("{}[{size}]", emit_type(inner, options)),
-        FirType::Vector(inner, lanes) => format!("Vec<{},{lanes}>", emit_type(inner, options)),
-        FirType::Struct(name, _fields) => name.clone(),
-        FirType::Fun { args, ret } => {
-            let args = args
-                .iter()
-                .map(|arg| emit_type(arg, options))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{}({args})", emit_type(ret, options))
-        }
-    }
+    c_family::emit_type(
+        typ,
+        &SYNTAX,
+        &options.quad_type_name,
+        &options.fixed_type_name,
+    )
 }
 
 fn emit_named_type(typ: &FirType, name: &str, options: &COptions) -> String {
@@ -1377,41 +1001,25 @@ fn emit_type_base_and_suffix(typ: &FirType, options: &COptions, suffix: &mut Str
 
 /// Emits `DeclareTable(AccessType::Static)` nodes as `static const` arrays
 /// with inline initializers, placed before the struct definition.
+///
+/// Shared with the `cpp` backend via [`c_family::emit_static_tables`]; the
+/// C-specific `static const` keyword order comes from [`SYNTAX`], element
+/// values render through this backend's [`emit_value`].
 fn emit_static_tables(
     store: &FirStore,
     out: &mut String,
     options: &COptions,
     block: FirId,
 ) -> Result<(), CodegenError> {
-    let FirMatch::Block(stmts) = match_fir(store, block) else {
-        return Ok(());
-    };
-    for stmt in stmts {
-        if let FirMatch::DeclareTable {
-            name,
-            elem_type,
-            values,
-            ..
-        } = match_fir(store, stmt)
-        {
-            let type_str = emit_type(&elem_type, options);
-            let n = values.len();
-            if n == 0 {
-                let _ = writeln!(out, "static const {type_str} {name}[0] = {{}};");
-            } else {
-                let _ = write!(out, "static const {type_str} {name}[{n}] = {{");
-                for (i, v) in values.iter().enumerate() {
-                    if i > 0 {
-                        let _ = write!(out, ", ");
-                    }
-                    let rendered = emit_value(store, options, *v)?;
-                    let _ = write!(out, "{rendered}");
-                }
-                let _ = writeln!(out, "}};");
-            }
-        }
-    }
-    Ok(())
+    c_family::emit_static_tables(
+        store,
+        out,
+        &SYNTAX,
+        &options.quad_type_name,
+        &options.fixed_type_name,
+        block,
+        |value| emit_value(store, options, value),
+    )
 }
 
 /// Decodes the FIR module header expected by the C emitter.
@@ -1459,53 +1067,63 @@ fn unsupported_node(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
     )
 }
 
-/// Formats a floating-point literal with stable C syntax.
-fn trim_float(value: f64) -> String {
-    if value.is_nan() {
-        return "NAN".to_owned();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            "-INFINITY".to_owned()
-        } else {
-            "INFINITY".to_owned()
-        };
-    }
-    let mut s = format!("{value}");
-    if !s.contains(['.', 'e', 'E']) {
-        s.push_str(".0");
-    }
-    if s == "-0.0" { "0.0".to_owned() } else { s }
-}
-
-fn format_float32(value: f64) -> String {
-    if !value.is_finite() {
-        return trim_float(value);
-    }
-    format!("{}f", trim_float(value))
-}
-
 /// Escapes a Rust string into a C string literal.
+///
+/// Shared with the `cpp` backend via [`c_family::string_literal`] (this
+/// backend's escape table — `\\`, `"`, `\n`, `\r`, `\t` — was the reference
+/// the shared version was unified on).
 fn c_string_literal(input: &str) -> String {
-    let escaped = input
-        .chars()
-        .flat_map(|c| match c {
-            '\\' => "\\\\".chars().collect::<Vec<_>>(),
-            '"' => "\\\"".chars().collect::<Vec<_>>(),
-            '\n' => "\\n".chars().collect::<Vec<_>>(),
-            '\r' => "\\r".chars().collect::<Vec<_>>(),
-            '\t' => "\\t".chars().collect::<Vec<_>>(),
-            _ => vec![c],
-        })
-        .collect::<String>();
-    format!("\"{escaped}\"")
+    c_family::string_literal(input)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{COptions, generate_c_module};
+    use super::{COptions, EmitMode, emit_stmt, generate_c_module};
     use crate::fixtures::build_sine_phasor_test_module;
     use fir::{FirBuilder, FirStore, FirType, NamedType};
+
+    #[test]
+    /// DRIFT 7 regression (C-family plan §2.7): `Control` and `WhileLoop`
+    /// statements — previously handled only by the `cpp` backend — must
+    /// render through the shared statement core instead of hard-failing.
+    fn control_and_while_loop_statements_render() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let cond = b.int32(1);
+        let inner_value = b.int32(2);
+        let inner = b.drop_(inner_value);
+        let control = b.control(cond, inner);
+        let body = b.block(&[inner]);
+        let while_loop = b.while_loop(cond, body);
+
+        let options = COptions::default();
+        let mut out = String::new();
+        let mut mode = EmitMode::Default;
+        emit_stmt(&store, &mut out, &options, control, 1, &mut mode).expect("Control renders");
+        assert_eq!(out, "    if (1) {\n    }\n");
+
+        let mut out = String::new();
+        emit_stmt(&store, &mut out, &options, while_loop, 1, &mut mode).expect("WhileLoop renders");
+        assert_eq!(out, "    while (1) {\n    }\n");
+    }
+
+    #[test]
+    /// DRIFT 2 regression (C-family plan §2.2): `Bitcast` — previously a
+    /// hard error in this backend — renders as `*((T*)&v)`. Upstream C's own
+    /// `BitcastInst` visitor emits garbled, uncompilable text (a known-broken
+    /// TODO in `c_instructions.hh`), so the oracle is the upstream C++
+    /// `-ftz 2` form (`*reinterpret_cast<int*>(&v)`) transposed to a C-style
+    /// pointer cast — the spelling the upstream visitor evidently intends.
+    fn bitcast_renders_c_pointer_cast_form() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let operand = b.load_var("fTemp0", fir::AccessType::Stack, FirType::Float32);
+        let bitcast = b.bitcast(FirType::Int32, operand);
+
+        let options = COptions::default();
+        let rendered = super::emit_value(&store, &options, bitcast).expect("Bitcast renders");
+        assert_eq!(rendered, "*((int*)&fTemp0)");
+    }
 
     #[test]
     fn emits_c_module_with_dsp_struct_ui_and_compute_loop() {
@@ -1668,7 +1286,7 @@ mod tests {
     #[test]
     fn double_literal_format_preserves_grain_prng_scale_precision() {
         assert_eq!(
-            super::trim_float(1.0 / 2147483647.0),
+            crate::backends::c_family::trim_float(1.0 / 2147483647.0),
             "0.0000000004656612875245797",
             "C backend double literals must preserve enough precision for grain/table DSPs"
         );

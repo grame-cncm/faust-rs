@@ -239,13 +239,10 @@ impl<'a> SignalToFirLower<'a> {
     /// Expects symbolic recursion payloads (`SYMREC` / `SYMREF`) — the normal
     /// fast-lane input form produced by `signal_prepare`.
     ///
-    /// **Deferred body evaluation**: on the first `SIGPROJ` encountered for a
-    /// group, this method allocates 2-slot arrays for all output bodies, pushes
-    /// the group onto `recursion_stack`, lowers every body signal (emitting
-    /// stores into the sample loop immediate phase), then pops the stack.  Subsequent
-    /// `SIGPROJ` nodes for the same group skip body evaluation entirely (the
-    /// `scheduled_state_updates` dedup guard keyed by `group` SigId ensures
-    /// exactly one body-lowering pass per sample).
+    /// **Scheduled body evaluation**: a delayed `Proj(SYMREF)` may allocate the
+    /// group's carriers before the owning `Proj(SYMREC)` is reached. Body
+    /// expressions themselves follow the global same-tick schedule. The owning
+    /// projection emits the simultaneous carrier updates exactly once.
     ///
     /// **Fast path** (active reference inside a body being lowered): when the
     /// canonical recursion-carrier resolver finds the group on the stack, the
@@ -267,46 +264,50 @@ impl<'a> SignalToFirLower<'a> {
         if let Some(rec_ref) =
             resolve_active_recursion_carrier(self.arena, &self.recursion, group, index_usize)?
         {
-            let real_ty = self.signal_fir_type(node)?;
-            let current_index = if rec_ref.strategy == RecursionStorageStrategy::ExactShift {
-                self.lower_int32_const(0)
-            } else if rec_ref.strategy == RecursionStorageStrategy::Circular {
-                self.global_circular_current_index(rec_ref.info.size)
-            } else {
-                self.lower_int32_const(0)
-            };
-            let mut recursion_ctx = RecursionLoweringCtx {
-                store: &mut self.store,
-                immediate_statements: &mut self.sample_phases.immediate,
-                post_output_statements: &mut self.sample_phases.post_output,
-                next_loop_var_id: &mut self.name_gen.next_loop_var_id,
-            };
-            return Ok(recursion_ctx.load_feedback_carrier(&rec_ref.info, current_index, real_ty));
+            return self.load_recursion_carrier_storage(node, &rec_ref);
         }
 
-        // ── Fast path: already materialized scalar carrier current value ──
-        if let Some(current_value) = self.load_scalar_recursion_current_value(group, index_usize)? {
-            return Ok(current_value);
+        let canonical_group = self.recursion.canonical_group(self.arena, group);
+        let is_symbolic_reference = match_sym_ref(self.arena, group).is_some();
+
+        // C++ permits a delayed recursive reference to appear before the
+        // owning projection in the schedule. Reserve all group carriers now,
+        // but do not emit the current-sample body update yet.
+        if is_symbolic_reference {
+            let canonical_group = canonical_group.ok_or_else(|| {
+                SignalFirError::new(
+                    SignalFirErrorCode::UnsupportedSignalNode,
+                    format!(
+                        "unbound symbolic recursion reference in projection {}",
+                        node.as_u32()
+                    ),
+                )
+            })?;
+            let _ = self.ensure_recursion_group_carriers(canonical_group)?;
+            let rec_ref = self
+                .recursion
+                .resolve_materialized_carrier(self.arena, canonical_group, index_usize)
+                .expect("registered symbolic group must have an allocated carrier");
+            return self.load_recursion_carrier_storage(node, &rec_ref);
         }
 
-        // ── Fast path: already materialized array-backed carrier ──
-        if let Some(rec_ref) =
-            self.recursion
-                .resolve_materialized_carrier(self.arena, group, index_usize)
-        {
-            let real_ty = self.signal_fir_type(node)?;
-            let current_index = if rec_ref.strategy == RecursionStorageStrategy::ExactShift {
-                self.lower_int32_const(0)
-            } else {
-                self.global_circular_current_index(rec_ref.info.size)
-            };
-            let mut recursion_ctx = RecursionLoweringCtx {
-                store: &mut self.store,
-                immediate_statements: &mut self.sample_phases.immediate,
-                post_output_statements: &mut self.sample_phases.post_output,
-                next_loop_var_id: &mut self.name_gen.next_loop_var_id,
-            };
-            return Ok(recursion_ctx.load_feedback_carrier(&rec_ref.info, current_index, real_ty));
+        // A preallocated top-level carrier is not a completed projection: the
+        // body update still has to be emitted. Reuse is valid only after that
+        // group has been scheduled in the current sample.
+        let group_is_scheduled = canonical_group
+            .is_some_and(|canonical| self.recursion.scheduled_groups.contains(&canonical));
+        if group_is_scheduled {
+            if let Some(current_value) =
+                self.load_scalar_recursion_current_value(group, index_usize)?
+            {
+                return Ok(current_value);
+            }
+            if let Some(rec_ref) =
+                self.recursion
+                    .resolve_materialized_carrier(self.arena, group, index_usize)
+            {
+                return self.load_recursion_carrier_storage(node, &rec_ref);
+            }
         }
 
         // ── Fast path: SigBlockReverseAD carrier ──
@@ -360,40 +361,7 @@ impl<'a> SignalToFirLower<'a> {
             canonical_index,
         } = decode_group_projection(self.arena, node, index, group)?;
 
-        // ── Allocate recursion arrays for ALL bodies ──
-        //
-        // Each output slot gets its own array keyed by `(group, index)` in the
-        // recursion state, intentionally separate from `state_name_by_node` so
-        // that a `lower_delay_state` call inside the body expression never
-        // aliases the group's output carrier.
-        let mut body_infos = Vec::with_capacity(bodies.len());
-        for body in &bodies {
-            let state_ty = self.signal_fir_type(*body)?;
-            let init = match state_ty {
-                FirType::Int32 => self.lower_int32_const(0),
-                FirType::Float32 | FirType::Float64 | FirType::FaustFloat => self.float_const(0.0),
-                other => {
-                    return Err(SignalFirError::new(
-                        SignalFirErrorCode::UnsupportedSignalNode,
-                        format!("unsupported recursive state type in Step 2C.2: {other:?}"),
-                    ));
-                }
-            };
-            body_infos.push((state_ty, init));
-        }
-        let group_arrays = {
-            let mut ctx = RecursionAllocCtx {
-                arena: self.arena,
-                delay: &self.delay,
-                store: &mut self.store,
-                struct_declarations: &mut self.sections.struct_declarations,
-                clear_statements: &mut self.sections.clear_statements,
-                clear_init_seen: &mut self.sections.clear_init_seen,
-                next_loop_var_id: &mut self.name_gen.next_loop_var_id,
-                recursion: &mut self.recursion,
-            };
-            ctx.allocate_group_arrays(group, &body_infos)?
-        };
+        let (_, _, group_arrays) = self.ensure_recursion_group_carriers(group)?;
 
         // ── Push group context, lower ALL bodies, emit stores ──
         // Use recursion-owned scheduling so each group's body pass runs only once.
@@ -443,17 +411,18 @@ impl<'a> SignalToFirLower<'a> {
                                 Some(*body_value),
                             )
                         };
-                        this.sample_phases.immediate.push(declare);
+                        this.regions.current_phases_mut().immediate.push(declare);
                         *body_value = {
                             let mut b = FirBuilder::new(&mut this.store);
                             b.load_var(name, AccessType::Stack, typ)
                         };
                     }
                 }
+                let phases = this.regions.current_phases_mut();
                 let mut recursion_ctx = RecursionLoweringCtx {
                     store: &mut this.store,
-                    immediate_statements: &mut this.sample_phases.immediate,
-                    post_output_statements: &mut this.sample_phases.post_output,
+                    immediate_statements: &mut phases.immediate,
+                    post_output_statements: &mut phases.post_output,
                     next_loop_var_id: &mut this.name_gen.next_loop_var_id,
                 };
                 recursion_ctx.emit_group_body_updates(
@@ -475,7 +444,10 @@ impl<'a> SignalToFirLower<'a> {
                             let mut b = FirBuilder::new(&mut this.store);
                             b.store_var(info.name.clone(), AccessType::Struct, current_value)
                         };
-                        this.sample_phases.post_output.push(store_state);
+                        this.regions
+                            .current_phases_mut()
+                            .post_output
+                            .push(store_state);
                     }
                 }
                 Ok(())
@@ -502,10 +474,11 @@ impl<'a> SignalToFirLower<'a> {
         } else {
             self.global_circular_current_index(info.size)
         };
+        let phases = self.regions.current_phases_mut();
         let mut recursion_ctx = RecursionLoweringCtx {
             store: &mut self.store,
-            immediate_statements: &mut self.sample_phases.immediate,
-            post_output_statements: &mut self.sample_phases.post_output,
+            immediate_statements: &mut phases.immediate,
+            post_output_statements: &mut phases.post_output,
             next_loop_var_id: &mut self.name_gen.next_loop_var_id,
         };
         let current_index = recursion_ctx.current_index_for_carrier(info, zero, circular_index);
@@ -516,6 +489,74 @@ impl<'a> SignalToFirLower<'a> {
             info.typ, out_ty
         );
         Ok(out)
+    }
+
+    /// Allocates all carriers for one symbolic group without lowering its
+    /// body. This is the Rust equivalent of C++ reserving a vector-name
+    /// property from a delayed access before `generateRecProj` runs.
+    pub(super) fn ensure_recursion_group_carriers(
+        &mut self,
+        group: SigId,
+    ) -> Result<(SigId, Vec<SigId>, Vec<RecArrayInfo>), SignalFirError> {
+        let (var, bodies) = decode_symbolic_group_bodies(self.arena, group).ok_or_else(|| {
+            SignalFirError::new(
+                SignalFirErrorCode::UnsupportedSignalNode,
+                format!("expected symbolic recursion group {}", group.as_u32()),
+            )
+        })?;
+        let mut body_infos = Vec::with_capacity(bodies.len());
+        for body in &bodies {
+            let state_ty = self.signal_fir_type(*body)?;
+            let init = match state_ty {
+                FirType::Int32 => self.lower_int32_const(0),
+                FirType::Float32 | FirType::Float64 | FirType::FaustFloat => self.float_const(0.0),
+                other => {
+                    return Err(SignalFirError::new(
+                        SignalFirErrorCode::UnsupportedSignalNode,
+                        format!("unsupported recursive state type in Step 2C.2: {other:?}"),
+                    ));
+                }
+            };
+            body_infos.push((state_ty, init));
+        }
+        let arrays = {
+            let mut ctx = RecursionAllocCtx {
+                arena: self.arena,
+                delay: &self.delay,
+                store: &mut self.store,
+                struct_declarations: &mut self.sections.struct_declarations,
+                clear_statements: &mut self.sections.clear_statements,
+                clear_init_seen: &mut self.sections.clear_init_seen,
+                next_loop_var_id: &mut self.name_gen.next_loop_var_id,
+                recursion: &mut self.recursion,
+            };
+            ctx.allocate_group_arrays(group, &body_infos)?
+        };
+        Ok((var, bodies, arrays))
+    }
+
+    fn load_recursion_carrier_storage(
+        &mut self,
+        node: SigId,
+        rec_ref: &RecursionCarrierRef,
+    ) -> Result<FirId, SignalFirError> {
+        let real_ty = self.signal_fir_type(node)?;
+        let current_index = match rec_ref.strategy {
+            RecursionStorageStrategy::ExactShift | RecursionStorageStrategy::SingleScalar => {
+                self.lower_int32_const(0)
+            }
+            RecursionStorageStrategy::Circular => {
+                self.global_circular_current_index(rec_ref.info.size)
+            }
+        };
+        let phases = self.regions.current_phases_mut();
+        let mut recursion_ctx = RecursionLoweringCtx {
+            store: &mut self.store,
+            immediate_statements: &mut phases.immediate,
+            post_output_statements: &mut phases.post_output,
+            next_loop_var_id: &mut self.name_gen.next_loop_var_id,
+        };
+        Ok(recursion_ctx.load_feedback_carrier(&rec_ref.info, current_index, real_ty))
     }
 }
 
@@ -528,7 +569,7 @@ impl<'a> SignalToFirLower<'a> {
 /// distinct from the optional backend-specific `SignalBool2IntPromotion` pass:
 /// the fast-lane does not rely on that pass and must preserve the standard
 /// signal semantics directly. Bitwise operators also produce `Int32`.
-fn map_binop(op: BinOp, real_ty: FirType) -> Option<(FirBinOp, FirType)> {
+pub(in crate::signal_fir) fn map_binop(op: BinOp, real_ty: FirType) -> Option<(FirBinOp, FirType)> {
     match op {
         // Arithmetic operators: result is the internal real type.
         BinOp::Add => Some((FirBinOp::Add, real_ty)),

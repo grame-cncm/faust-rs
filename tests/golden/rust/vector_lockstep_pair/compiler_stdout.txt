@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=vector_lockstep_pair.dsp
+bytes=210
+lines=4
+fnv1a64=1f203b7e307f4603

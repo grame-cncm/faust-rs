@@ -22,6 +22,7 @@ use super::{
     delay::{DelayManager, DelayOptions, plan_delays},
     siggen::interpret_generator_for_test,
 };
+use crate::schedule::SchedulingStrategy;
 use fir::{AccessType, FirBinOp, FirMatch, FirType, match_fir};
 use signals::{BinOp, BlockRevPolicy, SigBuilder};
 
@@ -631,7 +632,10 @@ fn bargraph_emits_runtime_zone_store_in_compute() {
 }
 
 #[test]
-fn unsupported_signal_family_returns_typed_error_code() {
+fn clocked_signal_family_returns_dedicated_error_code() {
+    // Roadmap P0.1: the clocked family no longer falls into the generic
+    // `FRS-SFIR-0004` bucket — it gets the dedicated `ClockedNotLowered`
+    // rejection until the clock-domain lowering (P1-P3) lands.
     let mut arena = TreeArena::new();
     let sig0 = {
         let mut b = SigBuilder::new(&mut arena);
@@ -641,8 +645,8 @@ fn unsupported_signal_family_returns_typed_error_code() {
     let err = compile_fastlane_without_ui(&arena, &[sig0], 1, 1, &SignalFirOptions::default())
         .expect_err("upsampling is outside current lowering slice");
 
-    assert_eq!(err.code(), SignalFirErrorCode::UnsupportedSignalNode);
-    assert_eq!(err.code().as_str(), "FRS-SFIR-0004");
+    assert_eq!(err.code(), SignalFirErrorCode::ClockedNotLowered);
+    assert_eq!(err.code().as_str(), "FRS-SFIR-0007");
 }
 
 #[test]
@@ -4050,6 +4054,11 @@ enum LoweringCoverage {
     ViaParent,
     /// Falls through to `other => UnsupportedSignalNode`.
     Unsupported,
+    /// Has its own arm in `lower_signal` that returns the dedicated
+    /// `ClockedNotLowered` (`FRS-SFIR-0007`) rejection: clocked machinery
+    /// accepted by `signal_prepare` but awaiting the clock-domain back half
+    /// (roadmap P1–P3).
+    ClockedRejection,
 }
 
 /// Exhaustive classification of every `SigMatch` constructor against the
@@ -4061,7 +4070,7 @@ enum LoweringCoverage {
 /// `Unsupported` arm is the executable record of the W8 gap (families that
 /// `signal_prepare::verify` accepts but `lower_signal` does not handle).
 fn lowering_coverage(m: &SigMatch<'_>) -> LoweringCoverage {
-    use LoweringCoverage::{Direct, Unsupported, ViaParent};
+    use LoweringCoverage::{ClockedRejection, Direct, Unsupported, ViaParent};
     match m {
         SigMatch::Int(_)
         | SigMatch::Real(_)
@@ -4124,17 +4133,21 @@ fn lowering_coverage(m: &SigMatch<'_>) -> LoweringCoverage {
         // Reverse-mode-AD carriers: no top-level arm; lowered through `Proj`.
         SigMatch::BlockReverseAD { .. } | SigMatch::ReverseTimeRec(_) => ViaParent,
 
-        // Accepted by `verify` but with no `lower_signal` arm — the W8 gap.
-        SigMatch::Gen(_)
-        | SigMatch::AssertBounds(..)
-        | SigMatch::TempVar(_)
+        // Clocked machinery: dedicated structured rejection until the
+        // clock-domain lowering (roadmap P1-P3) lands.
+        SigMatch::TempVar(_)
         | SigMatch::PermVar(_)
         | SigMatch::Seq(..)
         | SigMatch::ZeroPad(..)
         | SigMatch::Clocked(..)
+        | SigMatch::ClockEnvToken(_)
         | SigMatch::OnDemand(_)
         | SigMatch::Upsampling(_)
-        | SigMatch::Downsampling(_)
+        | SigMatch::Downsampling(_) => ClockedRejection,
+
+        // Accepted by `verify` but with no `lower_signal` arm — the W8 gap.
+        SigMatch::Gen(_)
+        | SigMatch::AssertBounds(..)
         | SigMatch::Fir(_)
         | SigMatch::Iir(_)
         // Pre-preparation / legacy forms that `verify` itself also rejects.
@@ -4204,4 +4217,49 @@ fn fastlane_rejects_unsupported_family_with_typed_error() {
     let err = compile_fastlane_without_ui(&arena, &[sig], 0, 1, &SignalFirOptions::default())
         .expect_err("an unsupported signal family must not silently compile");
     assert_eq!(err.code(), SignalFirErrorCode::UnsupportedSignalNode);
+}
+
+// ─── P2: `-ss` / `--scheduling-strategy` option plumbing ──────────────────────
+//
+// Vectorization port plan phase P2 threads `SchedulingStrategy` into
+// `SignalFirOptions` without activating scheduling. These tests only check
+// that the field is present, defaults to `DepthFirst` (matching `-ss 0` in
+// scalar and vector modes alike), and round-trips through struct-update
+// syntax like every other option in this struct.
+
+#[test]
+fn signal_fir_options_default_scheduling_strategy_is_depth_first() {
+    assert_eq!(
+        SignalFirOptions::default().scheduling_strategy,
+        SchedulingStrategy::DepthFirst
+    );
+}
+
+#[test]
+fn signal_fir_options_scheduling_strategy_is_independent_of_compute_mode() {
+    use super::ComputeMode;
+
+    // Selecting a non-default scheduling strategy must not perturb the
+    // (still separate) compute-mode default, and vice versa.
+    let options = SignalFirOptions {
+        scheduling_strategy: SchedulingStrategy::ReverseBreadthFirst,
+        ..SignalFirOptions::default()
+    };
+    assert_eq!(
+        options.scheduling_strategy,
+        SchedulingStrategy::ReverseBreadthFirst
+    );
+    assert_eq!(options.compute_mode, ComputeMode::Scalar);
+
+    let vector_options = SignalFirOptions {
+        compute_mode: ComputeMode::Vector {
+            vec_size: 64,
+            loop_variant: 1,
+        },
+        ..SignalFirOptions::default()
+    };
+    assert_eq!(
+        vector_options.scheduling_strategy,
+        SchedulingStrategy::DepthFirst
+    );
 }

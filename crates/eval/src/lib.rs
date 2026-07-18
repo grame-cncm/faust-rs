@@ -1375,37 +1375,45 @@ fn eval_loaded_source_value(
                     current_file: source_context.current_file().map(Path::to_path_buf),
                     search_paths: source_context.search_paths().to_vec(),
                 })?;
+            let float_size = match source_context.sample_precision {
+                SamplePrecision::Float32 => 1,
+                SamplePrecision::Float64 => 2,
+            };
             let parse = match source_context.metadata_store() {
                 Some(metadata_store) => {
                     if let Some(source) = source_context.virtual_sources().get(&resolved_path) {
-                        parser::parse_program_with_imports_and_metadata(
+                        parser::parse_program_with_imports_and_precision_and_metadata(
                             source,
                             &resolved_path.to_string_lossy(),
                             source_context.search_paths(),
                             source_context.virtual_sources(),
                             metadata_store.clone(),
+                            float_size,
                         )
                     } else {
-                        parser::parse_file_with_imports_and_metadata(
+                        parser::parse_file_with_imports_and_precision_and_metadata(
                             &resolved_path,
                             source_context.search_paths(),
                             metadata_store.clone(),
+                            float_size,
                         )
                     }
                 }
                 None => {
                     if let Some(source) = source_context.virtual_sources().get(&resolved_path) {
-                        parser::parse_program_with_imports_and_metadata(
+                        parser::parse_program_with_imports_and_precision_and_metadata(
                             source,
                             &resolved_path.to_string_lossy(),
                             source_context.search_paths(),
                             source_context.virtual_sources(),
                             parser::CompilationMetadataStore::new(&resolved_path.to_string_lossy()),
+                            float_size,
                         )
                     } else {
-                        parser::parse_file_with_imports(
+                        parser::parse_file_with_imports_and_precision(
                             &resolved_path,
                             source_context.search_paths(),
+                            float_size,
                         )
                     }
                 }

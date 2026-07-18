@@ -1,0 +1,36 @@
+Hierarchical schedule of signals
+Constant and Control Signals:
+Audio Signals
+	%0 : 0	// NKCVN interval(0,0,0) max delay: 0
+
+	%1 : 99	// RKCVN interval(99,99,-26) max delay: 0
+
+	%2 : Input(0)	// RSEVN interval(-1,1,-24)
+	%3 : Input(1)	// RSEVN interval(-1,1,-24)
+	%4 : Input(2)	// RSEVN interval(-1,1,-24)
+	%5 : 99	// NKCVN interval(99,99,0) max delay: 0
+
+	%6 : sigClocked(sample,%2)	// RSEVN interval(-1,1,-24) max delay: 0
+	%7 : sigClocked(sample,%3)	// RSEVN interval(-1,1,-24) max delay: 0
+	%8 : sigClocked(sample,%4)	// RSEVN interval(-1,1,-24) max delay: 0
+	%9 : SigBinOp(2,%1,%6)	// RSEVN interval(-99,99,-50) max delay: 0
+
+	%10 : SigBinOp(2,%1,%8)	// RSEVN interval(-99,99,-50) max delay: 0
+
+	%11 : SigIntCast(%9)	// NSEVN interval(-99,99,0) max delay: 0
+
+	%12 : SigIntCast(%10)	// NSEVN interval(-99,99,0) max delay: 0
+
+	%13 : sigClocked(sample,%11)	// NSEVN interval(-99,99,0) max delay: 0
+	%14 : sigClocked(sample,%12)	// NSEVN interval(-99,99,0) max delay: 0
+	%15 : min(%13,%5)	// NSEVN interval(-99,99,0) max delay: 0
+
+	%16 : min(%14,%5)	// NSEVN interval(-99,99,0) max delay: 0
+
+	%17 : max(%0,%15)	// NSEVN interval(0,99,0) max delay: 0
+
+	%18 : max(%0,%16)	// NSEVN interval(0,99,0) max delay: 0
+
+	%19 : SigRDTbl(SigWRTbl[100,SigGen[0],max[0,min[SigClocked[nil,SigIntCast[SigBinOp[2,99,SigClocked[nil,SigInput[0]]]]],99]],SigClocked[nil,SigInput[1]]],%18)	// RSEVN interval(-1,1,-24) max delay: 0
+
+Hierarchical schedule DOT graph written to: table_rw-phs.dot

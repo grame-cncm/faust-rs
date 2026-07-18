@@ -20,7 +20,7 @@
 //!
 //! Usage:
 //! ```text
-//! impulse-runner <file.dsp> [-double] [-n <frames>] [-I <dir>]...
+//! impulse-runner <file.dsp> [-double] [-n <frames>] [-I <dir>]... [-ss <n>]
 //! ```
 //! The `.ir` text is written to stdout (the Makefile redirects it to a file).
 
@@ -30,7 +30,9 @@ use std::process::ExitCode;
 use codegen::backends::interp::{
     FbcDspInstance, FbcOpcode, FbcReal, InterpOptions, Soundfile, generate_interp_module,
 };
-use compiler::{Compiler, FirVerifyOptions, RealType, SignalFirLane};
+use compiler::{
+    Compiler, ComputeMode, FirVerifyOptions, RealType, SchedulingStrategy, SignalFirLane,
+};
 use fir::{FirId, FirStore};
 
 /// Reference protocol constants (mirrors `controlTools.h`).
@@ -46,6 +48,8 @@ struct Options {
     double: bool,
     frames: usize,
     import_dirs: Vec<PathBuf>,
+    compute_mode: ComputeMode,
+    scheduling_strategy: SchedulingStrategy,
 }
 
 fn main() -> ExitCode {
@@ -73,6 +77,8 @@ fn real_main() -> Result<String, String> {
 
     let compiler = Compiler::new()
         .with_real_type(real_type)
+        .with_compute_mode(options.compute_mode)
+        .with_scheduling_strategy(options.scheduling_strategy)
         .with_fir_verify_options(FirVerifyOptions {
             enabled: true,
             strict: false,
@@ -96,12 +102,23 @@ fn real_main() -> Result<String, String> {
 /// Parses argv into [`Options`], accepting the Faust-style flags the Makefile
 /// passes through (`-double`, `-I <dir>`), plus the runner-specific `-n`.
 fn parse_args() -> Result<Options, String> {
+    parse_args_from(std::env::args().skip(1))
+}
+
+fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
     let mut dsp: Option<PathBuf> = None;
     let mut double = false;
     let mut frames = DEFAULT_FRAMES;
     let mut import_dirs = Vec::new();
+    // Vector-mode flags, mirroring the faust-rs CLI (`-vec`, `-vs N`, `-lv N`).
+    // Accumulated separately so their order does not matter; folded into a
+    // `ComputeMode` at the end.
+    let mut vec_mode = false;
+    let mut vec_size = ComputeMode::DEFAULT_VEC_SIZE;
+    let mut loop_variant = 0u8;
+    let mut scheduling_strategy = SchedulingStrategy::DepthFirst;
 
-    let mut args = std::env::args().skip(1);
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-double" => double = true,
@@ -116,11 +133,31 @@ fn parse_args() -> Result<Options, String> {
                 let value = args.next().ok_or("missing value after -I")?;
                 import_dirs.push(PathBuf::from(value));
             }
-            // Accept and ignore other Faust options the Makefile may pass so the
-            // runner can be a near drop-in for the C++ `impulseinterp` binary.
+            "-vec" => vec_mode = true,
+            "-vs" => {
+                let value = args.next().ok_or("missing value after -vs")?;
+                vec_size = value
+                    .parse::<u32>()
+                    .map_err(|e| format!("bad -vs value: {e}"))?;
+            }
+            "-lv" => {
+                let value = args.next().ok_or("missing value after -lv")?;
+                loop_variant = value
+                    .parse::<u8>()
+                    .map_err(|e| format!("bad -lv value: {e}"))?;
+            }
+            "-ss" | "--scheduling-strategy" => {
+                let value = args
+                    .next()
+                    .ok_or("missing value after scheduling-strategy option")?;
+                let value = value
+                    .parse::<u32>()
+                    .map_err(|e| format!("bad scheduling-strategy value: {e}"))?;
+                scheduling_strategy = SchedulingStrategy::decode(value);
+            }
+            // Reject unknown flags loudly: an option taking an argument we do not
+            // model would desync parsing.
             other if other.starts_with('-') => {
-                // Options taking an argument we do not model would desync parsing;
-                // none are passed today, so reject unknown flags loudly instead.
                 return Err(format!("unknown option: {other}"));
             }
             other => {
@@ -132,11 +169,22 @@ fn parse_args() -> Result<Options, String> {
         }
     }
 
+    let compute_mode = if vec_mode {
+        ComputeMode::Vector {
+            vec_size,
+            loop_variant,
+        }
+    } else {
+        ComputeMode::Scalar
+    };
+
     Ok(Options {
         dsp: dsp.ok_or("missing <file.dsp> argument")?,
         double,
         frames,
         import_dirs,
+        compute_mode,
+        scheduling_strategy,
     })
 }
 
@@ -295,7 +343,46 @@ fn _reference_protocol_note(_: &Path) {}
 
 #[cfg(test)]
 mod tests {
-    use super::soundfile_part_count;
+    use super::{ComputeMode, SchedulingStrategy, parse_args_from, soundfile_part_count};
+
+    fn parse(args: &[&str]) -> Result<super::Options, String> {
+        parse_args_from(args.iter().map(|arg| (*arg).to_owned()))
+    }
+
+    #[test]
+    fn scheduling_strategy_is_independent_from_compute_mode() {
+        let scalar = parse(&["test.dsp", "-ss", "1"]).expect("parse scalar options");
+        assert_eq!(scalar.compute_mode, ComputeMode::Scalar);
+        assert_eq!(scalar.scheduling_strategy, SchedulingStrategy::BreadthFirst);
+
+        let vector = parse(&[
+            "test.dsp",
+            "-vec",
+            "-lv",
+            "1",
+            "--scheduling-strategy",
+            "42",
+        ])
+        .expect("parse vector options");
+        assert_eq!(
+            vector.compute_mode,
+            ComputeMode::Vector {
+                vec_size: ComputeMode::DEFAULT_VEC_SIZE,
+                loop_variant: 1,
+            }
+        );
+        assert_eq!(
+            vector.scheduling_strategy,
+            SchedulingStrategy::ReverseBreadthFirst
+        );
+    }
+
+    #[test]
+    fn malformed_scheduling_strategy_is_rejected_before_compilation() {
+        assert!(parse(&["test.dsp", "-ss"]).is_err());
+        assert!(parse(&["test.dsp", "-ss", "-1"]).is_err());
+        assert!(parse(&["test.dsp", "-ss", "abc"]).is_err());
+    }
 
     #[test]
     fn soundfile_part_count_follows_sound_ui_menu_urls() {

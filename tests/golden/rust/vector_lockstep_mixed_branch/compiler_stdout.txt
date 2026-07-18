@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=vector_lockstep_mixed_branch.dsp
+bytes=313
+lines=6
+fnv1a64=935bc49d9b4767fa

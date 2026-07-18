@@ -47,12 +47,15 @@ pub fn propagate_typed_with_ui_options(
     let ui = build_ui_program(arena, box_tree, ui_options);
     let mut slot_env = SlotEnv::new();
     let mut memo = PropagateMemo::default();
+    let mut clock_domains = ClockDomainTable::new();
     let mut ctx = PropagateContext {
         cache,
         control_ids: &ui.control_ids,
         slot_env: &mut slot_env,
         memo: &mut memo,
+        clock_domains: &mut clock_domains,
         clock_env: arena.nil(),
+        clock_domain: None,
         suppress_fad: false,
         pending_fad_seeds: Vec::new(),
         current_groups: Vec::new(),
@@ -61,6 +64,7 @@ pub fn propagate_typed_with_ui_options(
     Ok(PropagateOutput {
         signals,
         ui: ui.program,
+        clock_domains,
     })
 }
 

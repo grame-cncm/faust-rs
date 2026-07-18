@@ -1,0 +1,91 @@
+declare name "Faust Frame-Rate Interleave Library";
+declare version "1.0.0";
+declare author "faust-rs";
+declare license "MIT/LGPL-3.0";
+
+//========================[ Frame-Rate Interleave Library ]=====================
+// `interleave.lib` turns any *spatial* (per-frame, stateless-or-locally-
+// clocked) operator `FX` into a *frame-rate* streaming operator: one
+// application of `FX` per hop of `N` samples instead of one per sample. It is
+// the clocking harness that makes STFT / phase-vocoder / differentiable
+// spectral loss expressible in pure Faust, on top of the `ondemand` block.
+//
+// Its official prefix is `il`.
+//
+// Semantics and the locking N=2 unrolled table:
+//   porting/interleave-spectral-primitive-2026-07-07-en.md
+// The definitions here are mirrored (hermetically) by the `INTERLEAVE_PRELUDE`
+// in crates/compiler/tests/ondemand_pipeline.rs — keep the two in sync.
+//==============================================================================
+
+//---------`(il.)frame_clock`----------
+// Boolean periodic clock of period `N` and phase `N-1`: fires (outputs 1) at
+// instants `t = N-1, 2N-1, 3N-1, …` — exactly when a fresh window of `N`
+// samples has just been filled. Zero otherwise.
+//
+// #### Usage
+// ```
+// frame_clock(N) : _
+// ```
+//------------------------------------------------------------------------------
+frame_clock(N) = ((+(1) : %(N)) ~ _) == 0;
+
+//---------`(il.)frame_clock_hop`----------
+// Overlapping variant: fires every `hop` samples (period `hop`, phase
+// `hop-1`). With `hop < N` the windows exposed by `serialize_in(N)` overlap
+// and `serialize_out` performs overlap-add. The COLA condition on the
+// analysis window is the caller's responsibility.
+//------------------------------------------------------------------------------
+frame_clock_hop(N, hop) = ((+(1) : %(hop)) ~ _) == 0;
+
+//---------`(il.)serialize_in`----------
+// Splits one stream into the `N` contiguous taps of the current window: at a
+// fire tick `t = kN-1`, line `i` carries `x((k-1)N + i)`. Operates at the full
+// (outer) rate, before the `ondemand` block.
+//
+// #### Usage
+// ```
+// _ : serialize_in(N) : si.bus(N)
+// ```
+//------------------------------------------------------------------------------
+serialize_in(N) = _ <: par(i, N, @(N-1-i));
+
+//---------`(il.)up0`----------
+// Zero-stuff upsampling (`↑₀`, option A): passes `y` through on fire ticks
+// (`H != 0`) and emits 0 otherwise. This is the temporal demultiplex that
+// `serialize_out` delays and sums.
+//------------------------------------------------------------------------------
+up0(H, y) = y * (H != 0);
+
+//---------`(il.)serialize_out`----------
+// Reconstructs one temporal stream from the `N` held frame lanes: line `j` is
+// zero-stuffed by the clock, delayed by `@(j)`, and all lanes are summed
+// (overlap-add). `H` must be the same clock that drove the block.
+//------------------------------------------------------------------------------
+serialize_out(N, H) = par(j, N, up0(H) : @(j)) :> _;
+
+//---------`(il.)interleave`----------
+// Runs the frame operator `FX` (an `N`-in `N`-out spatial circuit) once per
+// hop of `N` samples. `interleave(N, si.bus(N))` is the identity up to a
+// constant latency of `N-1` samples (for `N=2`, exactly `mem`).
+//
+// #### Usage
+// ```
+// _ : interleave(N, FX) : _        // FX : N -> N, applied per frame
+// ```
+//------------------------------------------------------------------------------
+interleave(N, FX) = serialize_in(N) : od : serialize_out(N, frame_clock(N))
+with {
+    od = (frame_clock(N), par(i, N, _)) : ondemand(FX);
+};
+
+//---------`(il.)interleave_hop`----------
+// Overlapping (overlap-add) variant: hop `hop < N`. The window width stays
+// `N`; consecutive frames overlap by `N - hop` samples and are summed on
+// output. Provide a COLA analysis window inside `FX` (or around this call).
+//------------------------------------------------------------------------------
+interleave_hop(N, hop, FX) =
+    serialize_in(N) : od : serialize_out(N, frame_clock_hop(N, hop))
+with {
+    od = (frame_clock_hop(N, hop), par(i, N, _)) : ondemand(FX);
+};

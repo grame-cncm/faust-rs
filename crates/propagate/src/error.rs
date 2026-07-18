@@ -81,6 +81,19 @@ pub enum PropagateError {
         node: TreeId,
         kind: &'static str,
     },
+    /// `fad` reached a clock-domain boundary node
+    /// (`Seq`/`Clocked`/`TempVar`/`PermVar`/`ZeroPad`/`OnDemand`/
+    /// `Upsampling`/`Downsampling`) it cannot differentiate yet.
+    ///
+    /// Roadmap P0.4: this replaces the silent `zero_tangent` fallback — a
+    /// learning loop across an `ondemand` boundary must fail loudly instead of
+    /// compiling gradients that are silently zero (the "correctness cliff" of
+    /// `porting/ondemand-fad-rad-cohabitation-2026-06-10-en.md` §4). Phase B
+    /// (roadmap P5) relaxes this by implementing the boundary dual rules.
+    FadUnsupportedNode {
+        node: TreeId,
+        kind: &'static str,
+    },
 }
 
 impl Display for PropagateError {
@@ -179,6 +192,14 @@ impl Display for PropagateError {
             Self::RadUnsupportedNode { node, kind } => write!(
                 f,
                 "rad cannot differentiate signal node {} ({kind})",
+                node.as_u32()
+            ),
+            Self::FadUnsupportedNode { node, kind } => write!(
+                f,
+                "fad cannot yet differentiate across an ondemand/upsampling/downsampling \
+                 clock boundary: signal node {} ({kind}); keep the whole differentiated \
+                 expression inside one clock domain (FAD Phase A) until boundary \
+                 crossing (Phase B) lands",
                 node.as_u32()
             ),
         }
@@ -495,6 +516,20 @@ impl IntoDiagnostic for PropagateError {
                             .with_note("cause: rad does not differentiate through soundfile content or accessors")
                             .with_help("treat soundfile reads as constants in the differentiated expression");
                     }
+                    "ondemand"
+                    | "upsampling"
+                    | "downsampling"
+                    | "clocked wrapper"
+                    | "clocked sequencing (Seq)"
+                    | "clock-domain boundary variable (TempVar/PermVar/ZeroPad)" => {
+                        diag = diag
+                            .with_note(
+                                "cause: rad reached ondemand/upsampling/downsampling clock-domain machinery; reverse mode across a clock boundary requires the clock-aware tape (roadmap P8)",
+                            )
+                            .with_help(
+                                "keep the whole differentiated expression inside one clock domain, or use fad(...) once FAD Phase B (boundary crossing) lands",
+                            );
+                    }
                     _ => {
                         diag = diag
                             .with_note(format!(
@@ -507,6 +542,25 @@ impl IntoDiagnostic for PropagateError {
                 }
                 diag
             }
+            Self::FadUnsupportedNode { kind, .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Propagate,
+                codes::PROP_AD_CLOCK_BOUNDARY,
+                message,
+            )
+            .with_note(format!(
+                "cause: fad reached the clock-domain construct `{kind}`; differentiating \
+                 across an ondemand/upsampling/downsampling boundary is not implemented yet"
+            ))
+            .with_note(
+                "rule: tangents would be silently zero across the boundary, so propagation \
+                 rejects the program instead (FAD Phase A supports differentiation strictly \
+                 inside one clock domain)",
+            )
+            .with_help(
+                "move the whole differentiated expression inside the clocked block \
+                 (e.g. ondemand(fad(...)) instead of fad(ondemand(...), ...))",
+            ),
         }
     }
 }

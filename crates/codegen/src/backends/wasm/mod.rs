@@ -43,6 +43,8 @@
 
 use fir::{AccessType, FirId, FirMatch, FirMathOp, FirStore, FirType, match_fir};
 use std::collections::HashMap;
+
+use crate::backends::purity::is_obviously_side_effect_free_value;
 use wasm_encoder::{
     BlockType, CodeSection, ConstExpr, DataSection, EntityType, ExportKind, ExportSection,
     Function, FunctionSection, ImportSection, Instruction, MemArg, MemorySection, MemoryType,
@@ -793,8 +795,18 @@ fn function_index_for_body(func: WasmFunc, imported_function_count: u32) -> u32 
 /// One lowered local variable bound to a concrete WASM local index.
 #[derive(Clone, Debug)]
 struct WasmLocal {
-    index: u32,
+    storage: WasmLocalStorage,
     typ: FirType,
+}
+
+#[derive(Clone, Debug)]
+enum WasmLocalStorage {
+    Local(u32),
+    Memory {
+        offset: u32,
+        elem_type: FirType,
+        storage_type: ValType,
+    },
 }
 
 /// Partial `compute` subset lowerer for the current WASM bring-up phase.
@@ -896,15 +908,33 @@ fn lower_function_subset(
 
     let mut local_map = HashMap::with_capacity(local_specs.len());
     let mut wasm_locals = Vec::with_capacity(local_specs.len());
-    for (next_local, (name, typ)) in (param_count..).zip(local_specs) {
+    let mut next_local = param_count;
+    for (name, typ) in local_specs {
+        let storage = if let FirType::Array(inner, _) = &typ {
+            let field = memory_layout.local_offsets.get(&name).ok_or_else(|| {
+                WasmBackendError::new(
+                    WasmBackendErrorCode::UnsupportedFirNode,
+                    format!("WASM local array buffer `{name}` is missing from memory layout"),
+                )
+            })?;
+            WasmLocalStorage::Memory {
+                offset: field.offset,
+                elem_type: (**inner).clone(),
+                storage_type: wasm_val_type_for_field(field),
+            }
+        } else {
+            let index = next_local;
+            next_local += 1;
+            wasm_locals.push((1, wasm_val_type_for_fir(&typ, options)?));
+            WasmLocalStorage::Local(index)
+        };
         local_map.insert(
             name,
             WasmLocal {
-                index: next_local,
+                storage,
                 typ: typ.clone(),
             },
         );
-        wasm_locals.push((1, wasm_val_type_for_fir(&typ, options)?));
     }
 
     let mut function = Function::new(wasm_locals);
@@ -944,6 +974,12 @@ fn collect_compute_locals(
             name,
             typ,
             access: AccessType::Stack,
+            ..
+        }
+        | FirMatch::DeclareVar {
+            name,
+            typ,
+            access: AccessType::Loop,
             ..
         } => {
             if !out.iter().any(|(known, _)| known == &name) {
@@ -1047,17 +1083,29 @@ impl ComputeSubsetLowerer<'_> {
             FirMatch::Block(_) => self.lower_block_into(id, function),
             FirMatch::DeclareVar {
                 name,
-                access: AccessType::Stack,
+                access: AccessType::Stack | AccessType::Loop,
                 init,
                 ..
             } => {
                 let local = self.local(&name)?.clone();
+                if matches!(local.storage, WasmLocalStorage::Memory { .. }) {
+                    if init.is_some() {
+                        return Err(WasmBackendError::new(
+                            WasmBackendErrorCode::UnsupportedFirNode,
+                            format!("WASM local array `{name}` does not support inline init yet"),
+                        ));
+                    }
+                    return Ok(());
+                }
+                let WasmLocalStorage::Local(index) = local.storage else {
+                    unreachable!("memory local handled above");
+                };
                 if let Some(init) = init {
                     self.lower_expr(init, function)?;
                 } else {
                     self.emit_default_value(&local.typ, function)?;
                 }
-                function.instruction(&Instruction::LocalSet(local.index));
+                function.instruction(&Instruction::LocalSet(index));
                 Ok(())
             }
             FirMatch::SimpleForLoop {
@@ -1109,6 +1157,9 @@ impl ComputeSubsetLowerer<'_> {
                 default,
             } => self.lower_switch_stmt(cond, &cases, default, function),
             FirMatch::Drop(value) => {
+                if is_obviously_side_effect_free_value(self.store, value) {
+                    return Ok(());
+                }
                 self.lower_expr(value, function)?;
                 function.instruction(&Instruction::Drop);
                 Ok(())
@@ -1131,19 +1182,25 @@ impl ComputeSubsetLowerer<'_> {
         function: &mut Function,
     ) -> Result<(), WasmBackendError> {
         let local = self.local(&var)?.clone();
+        let WasmLocalStorage::Local(index) = local.storage else {
+            return Err(WasmBackendError::new(
+                WasmBackendErrorCode::UnsupportedFirNode,
+                format!("WASM loop variable `{var}` is not a scalar local"),
+            ));
+        };
         function.instruction(&Instruction::I32Const(0));
-        function.instruction(&Instruction::LocalSet(local.index));
+        function.instruction(&Instruction::LocalSet(index));
         function.instruction(&Instruction::Block(BlockType::Empty));
         function.instruction(&Instruction::Loop(BlockType::Empty));
-        function.instruction(&Instruction::LocalGet(local.index));
+        function.instruction(&Instruction::LocalGet(index));
         self.lower_expr(upper, function)?;
         function.instruction(&Instruction::I32GeS);
         function.instruction(&Instruction::BrIf(1));
         self.lower_block_into(body, function)?;
-        function.instruction(&Instruction::LocalGet(local.index));
+        function.instruction(&Instruction::LocalGet(index));
         function.instruction(&Instruction::I32Const(1));
         function.instruction(&Instruction::I32Add);
-        function.instruction(&Instruction::LocalSet(local.index));
+        function.instruction(&Instruction::LocalSet(index));
         function.instruction(&Instruction::Br(0));
         function.instruction(&Instruction::End);
         function.instruction(&Instruction::End);
@@ -1163,6 +1220,12 @@ impl ComputeSubsetLowerer<'_> {
         function: &mut Function,
     ) -> Result<(), WasmBackendError> {
         let local = self.local(&var)?.clone();
+        let WasmLocalStorage::Local(index) = local.storage else {
+            return Err(WasmBackendError::new(
+                WasmBackendErrorCode::UnsupportedFirNode,
+                format!("WASM loop variable `{var}` is not a scalar local"),
+            ));
+        };
         // init is a DeclareVar(kLoop) per FIR contract; extract its value.
         let init_val =
             if let FirMatch::DeclareVar { init: Some(v), .. } = match_fir(self.store, init) {
@@ -1171,10 +1234,10 @@ impl ComputeSubsetLowerer<'_> {
                 init
             };
         self.lower_expr(init_val, function)?;
-        function.instruction(&Instruction::LocalSet(local.index));
+        function.instruction(&Instruction::LocalSet(index));
         function.instruction(&Instruction::Block(BlockType::Empty));
         function.instruction(&Instruction::Loop(BlockType::Empty));
-        function.instruction(&Instruction::LocalGet(local.index));
+        function.instruction(&Instruction::LocalGet(index));
         self.lower_expr(end, function)?;
         function.instruction(if is_reverse {
             &Instruction::I32LeS
@@ -1183,10 +1246,10 @@ impl ComputeSubsetLowerer<'_> {
         });
         function.instruction(&Instruction::BrIf(1));
         self.lower_block_into(body, function)?;
-        function.instruction(&Instruction::LocalGet(local.index));
+        function.instruction(&Instruction::LocalGet(index));
         self.lower_expr(step, function)?;
         function.instruction(&Instruction::I32Add);
-        function.instruction(&Instruction::LocalSet(local.index));
+        function.instruction(&Instruction::LocalSet(index));
         function.instruction(&Instruction::Br(0));
         function.instruction(&Instruction::End);
         function.instruction(&Instruction::End);
@@ -1221,13 +1284,42 @@ impl ComputeSubsetLowerer<'_> {
         value: FirId,
         function: &mut Function,
     ) -> Result<(), WasmBackendError> {
-        let local = self.local(name)?;
-        let elem_type = stack_alias_pointee(&local.typ)?;
-        function.instruction(&Instruction::LocalGet(local.index));
-        self.lower_index_offset(index, &elem_type, function)?;
-        function.instruction(&Instruction::I32Add);
+        let local = self.local(name)?.clone();
+        let (elem_type, storage_type) = match &local.storage {
+            WasmLocalStorage::Local(local_index) => {
+                let elem_type = stack_alias_pointee(&local.typ)?;
+                function.instruction(&Instruction::LocalGet(*local_index));
+                self.lower_index_offset(index, &elem_type, function)?;
+                function.instruction(&Instruction::I32Add);
+                let storage_type = wasm_val_type_for_fir(&elem_type, self.options)?;
+                (elem_type, storage_type)
+            }
+            WasmLocalStorage::Memory {
+                offset,
+                elem_type,
+                storage_type,
+            } => {
+                function.instruction(&Instruction::LocalGet(0));
+                function.instruction(&Instruction::I32Const(*offset as i32));
+                function.instruction(&Instruction::I32Add);
+                self.lower_index_offset(index, elem_type, function)?;
+                function.instruction(&Instruction::I32Add);
+                (elem_type.clone(), *storage_type)
+            }
+        };
         self.lower_expr(value, function)?;
-        function.instruction(&store_instruction_for_type(&elem_type, self.options)?);
+        let value_type = self.store.value_type(value).ok_or_else(|| {
+            WasmBackendError::new(
+                WasmBackendErrorCode::UnsupportedFirNode,
+                format!("missing value type for stack table store `{name}`"),
+            )
+        })?;
+        self.emit_cast_if_needed(&value_type, storage_type, function)?;
+        if matches!(local.storage, WasmLocalStorage::Local(_)) {
+            function.instruction(&store_instruction_for_type(&elem_type, self.options)?);
+        } else {
+            function.instruction(&store_instruction_for_valtype(storage_type)?);
+        }
         Ok(())
     }
 
@@ -1263,8 +1355,14 @@ impl ComputeSubsetLowerer<'_> {
         function: &mut Function,
     ) -> Result<(), WasmBackendError> {
         let local = self.local(name)?.clone();
+        let WasmLocalStorage::Local(index) = local.storage else {
+            return Err(WasmBackendError::new(
+                WasmBackendErrorCode::UnsupportedFirNode,
+                format!("WASM local array `{name}` cannot be assigned as a scalar"),
+            ));
+        };
         self.lower_expr(value, function)?;
-        function.instruction(&Instruction::LocalSet(local.index));
+        function.instruction(&Instruction::LocalSet(index));
         Ok(())
     }
 
@@ -1418,8 +1516,16 @@ impl ComputeSubsetLowerer<'_> {
                 ..
             } => {
                 let local = self.local(&name)?;
-                function.instruction(&Instruction::LocalGet(local.index));
-                Ok(())
+                match local.storage {
+                    WasmLocalStorage::Local(index) => {
+                        function.instruction(&Instruction::LocalGet(index));
+                        Ok(())
+                    }
+                    WasmLocalStorage::Memory { .. } => Err(WasmBackendError::new(
+                        WasmBackendErrorCode::UnsupportedFirNode,
+                        format!("WASM local array `{name}` cannot be loaded as a scalar"),
+                    )),
+                }
             }
             FirMatch::LoadVar {
                 name,
@@ -1478,12 +1584,33 @@ impl ComputeSubsetLowerer<'_> {
                 index,
                 typ,
             } => {
-                let local = self.local(&name)?;
-                let elem_type = stack_alias_pointee(&local.typ)?;
-                function.instruction(&Instruction::LocalGet(local.index));
-                self.lower_index_offset(index, &elem_type, function)?;
-                function.instruction(&Instruction::I32Add);
-                function.instruction(&load_instruction_for_type(&typ, self.options)?);
+                let local = self.local(&name)?.clone();
+                match &local.storage {
+                    WasmLocalStorage::Local(local_index) => {
+                        let elem_type = stack_alias_pointee(&local.typ)?;
+                        function.instruction(&Instruction::LocalGet(*local_index));
+                        self.lower_index_offset(index, &elem_type, function)?;
+                        function.instruction(&Instruction::I32Add);
+                        function.instruction(&load_instruction_for_type(&typ, self.options)?);
+                    }
+                    WasmLocalStorage::Memory {
+                        offset,
+                        elem_type,
+                        storage_type,
+                    } => {
+                        function.instruction(&Instruction::LocalGet(0));
+                        function.instruction(&Instruction::I32Const(*offset as i32));
+                        function.instruction(&Instruction::I32Add);
+                        self.lower_index_offset(index, elem_type, function)?;
+                        function.instruction(&Instruction::I32Add);
+                        function.instruction(&load_instruction_for_valtype(*storage_type)?);
+                        self.emit_cast_if_needed(
+                            elem_type,
+                            wasm_val_type_for_fir(&typ, self.options)?,
+                            function,
+                        )?;
+                    }
+                }
                 Ok(())
             }
             FirMatch::LoadTable {
@@ -2154,6 +2281,13 @@ fn fir_children(store: &FirStore, id: FirId) -> Vec<FirId> {
         FirMatch::StoreTable { index, value, .. } => vec![index, value],
         FirMatch::LoadTable { index, .. } => vec![index],
         FirMatch::SimpleForLoop { upper, body, .. } => vec![upper, body],
+        FirMatch::ForLoop {
+            init,
+            end,
+            step,
+            body,
+            ..
+        } => vec![init, end, step, body],
         FirMatch::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
         FirMatch::Cast { value, .. } => vec![value],
         FirMatch::Neg { value, .. } => vec![value],

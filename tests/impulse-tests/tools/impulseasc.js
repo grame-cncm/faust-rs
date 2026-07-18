@@ -20,6 +20,8 @@ function parseArgs(argv) {
   let frames = DEFAULT_FRAMES;
   let doublePrecision = false;
   const importDirs = [];
+  // Compiler-mode flags forwarded verbatim to faust-rs.
+  const compilerArgs = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "-n") {
@@ -35,6 +37,15 @@ function parseArgs(argv) {
       doublePrecision = true;
     } else if (arg === "-single") {
       doublePrecision = false;
+    } else if (arg === "-vec") {
+      compilerArgs.push("-vec");
+    } else if (arg === "-vs" || arg === "-lv" || arg === "-ss" || arg === "--scheduling-strategy") {
+      i += 1;
+      if (i >= argv.length) throw new Error(`${arg} requires a value`);
+      if ((arg === "-ss" || arg === "--scheduling-strategy") && !/^\d+$/.test(argv[i])) {
+        throw new Error(`invalid scheduling strategy: ${argv[i]}`);
+      }
+      compilerArgs.push(arg, argv[i]);
     } else if (arg.startsWith("-")) {
       throw new Error(`unknown option: ${arg}`);
     } else if (input === null) {
@@ -44,7 +55,7 @@ function parseArgs(argv) {
     }
   }
   if (input === null) throw new Error("missing DSP input");
-  return { input, frames, importDirs, doublePrecision };
+  return { input, frames, importDirs, doublePrecision, compilerArgs };
 }
 
 function normalize(value) {
@@ -144,9 +155,12 @@ function createSoundfileHost(soundfiles) {
   };
 }
 
-function compileAsc(faustRs, input, importDirs, tmpDir, doublePrecision) {
+function compileAsc(faustRs, input, importDirs, tmpDir, doublePrecision, compilerArgs) {
   const ascPath = path.join(tmpDir, `${path.basename(input, ".dsp")}.ts`);
-  const args = ["-lang", "asc", doublePrecision ? "-double" : "-single", "--json", input, "-o", ascPath];
+  const timeout = process.env.FAUST_RS_TIMEOUT_SECONDS || "600";
+  if (!/^[1-9]\d*$/.test(timeout)) throw new Error(`invalid FAUST_RS_TIMEOUT_SECONDS: ${timeout}`);
+  const args = ["-lang", "asc", doublePrecision ? "-double" : "-single", "--timeout", timeout, "--json", input, "-o", ascPath];
+  args.push(...compilerArgs);
   for (const dir of importDirs) args.push("-I", dir);
   const result = spawnSync(faustRs, args, { encoding: "utf8" });
   if (result.status !== 0) {
@@ -237,12 +251,12 @@ function compileWrapper(ascBin, ascPath, wasmPath) {
 }
 
 async function run() {
-  const { input, frames, importDirs, doublePrecision } = parseArgs(process.argv.slice(2));
+  const { input, frames, importDirs, doublePrecision, compilerArgs } = parseArgs(process.argv.slice(2));
   const faustRs = process.env.FAUST_RS || path.join("..", "..", "target", "release", "faust-rs");
   const ascBin = process.env.ASC || "asc";
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "faust-rs-impulse-asc-"));
   try {
-    const { ascPath, jsonPath } = compileAsc(faustRs, input, importDirs, tmpDir, doublePrecision);
+    const { ascPath, jsonPath } = compileAsc(faustRs, input, importDirs, tmpDir, doublePrecision, compilerArgs);
     const json = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
     const soundfiles = collectItems(json.ui)
       .filter((item) => item.type === "soundfile")

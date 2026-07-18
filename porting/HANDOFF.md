@@ -1,98 +1,101 @@
 # Session Handoff
 
-Date: 2026-06-09
+Date: 2026-07-16
 
 ## Repo State
 
-- Branch: `autodiff2`
-- HEAD: `6aa549cd472660a9189ce1d0acc4e0da2db24f9f`
+- Branch: `ondemand-vec-fad-synthesis`
+- HEAD: the commit containing this handoff.
 
 Recent commits (most recent first):
 
-- `6aa549cd` Add libfaust export verification
-- `4367a107` Add Signal C++ API header
-- `736c567c` Add Signal C API header
-- `4f258950` Add Signal normal form and source helpers
-- `c9d3b3ca` Add Signal foreign constructors
-- `c59ee151` Add Signal structural predicates
-- `8b407464` Add Signal recursion constructors
-- `ba381fd0` Add Signal table soundfile and UI constructors
+- `this commit` Complete lockstep SIMD remediation gates
+- `c7db2ee8` Align Wasm pure-drop regression expectation
+- `09d8798b` Attribute mixed lockstep SIMD to its source region
+- `6cd34879` Carry lockstep delay-one state in registers
+- `a85da004` Compact lockstep event certificates
+- `08b04a8f` Reject scalar fallback in lockstep SIMD gate
+- `a1ceeb87` Plan lockstep SIMD remediation
 
 ## Working Tree
 
-- Tracked changes:
-  - none after the latest committed step
-- Untracked local files/directories:
-  - many pre-existing local scratch files remain untracked at the repository
-    root; they were left untouched
+- Tracked changes: final plan, journal, and handoff updates belong to this
+  commit.
+- Many unrelated pre-existing untracked scratch files remain untouched. The
+  untracked `rad_lti_recursive_multi_output1` corpus/golden files and
+  `vector_lockstep_simd_quad1.dsp` are not part of this task.
 
-## Current Goal(s)
+## Current Goal
 
-- Execute `porting/libfaust-box-signal-api-parity-plan-2026-06-09-en.md`.
-- Keep documentation, journal entries, and commits split per completed step.
+- Section 8 and the lockstep SIMD remediation plan are complete.
 
 ## What Changed This Session
 
-- Planned and committed the libfaust Box/Signal parity roadmap.
-- Generated Box and Signal API matrices under `porting/generated/`.
-- Extracted shared tree FFI context support into `tree-ffi`.
-- Completed Box API parity fixes for right shift, `exp10`, soundfile wrappers,
-  Box-to-Signal arrays, and Box source generation contracts.
-- Added the maintained Signal FFI surface, including constructors, recursion,
-  predicates, foreign nodes, normal-form helpers, source generation, and C/C++
-  headers.
-- Added `cargo run -p xtask -- libfaust-export-check` to build `faust-ffi`,
-  compare exported symbols against maintained headers, and syntax-check C/C++
-  clients.
+- Added vector-plan schema v2 lockstep bundles, lane isomorphism witnesses,
+  transport layout, and independent rejecting checks.
+- Added automatic exact-instance detection under `-vec`, one scheduler unit,
+  stable logical lane/state ownership, and sample-interleaved event ordering.
+- Added one physical FIR sample loop per bundle while preserving lane IEEE
+  operation order, contraction policy, and planar external I/O.
+- Added accepted width-two/width-four corpus cases, a rejected near-isomorphic
+  case, Rust goldens, bit-exact integration tests, and optimizer parity.
+- Added three profitability-oriented recursive cases, including two where the
+  bundle is only one DSP subgraph, plus a Clang optimized-LLVM SIMD gate.
+- Added compact two-sample event evidence so default `-vs 32` remains certified.
+- Added checked register-carried delay-one state and row-transposed lockstep FIR
+  assembly; unsupported state shapes remain array-backed.
+- Attributed native vector operations through Clang line tables to the exact
+  generated lockstep source loop, excluding separate mixed-DSP loops.
+- Corrected the stale Wasm pure-`Drop` test exposed by the final workspace run.
 
-## Decisions / Constraints (important for resume)
+## Decisions / Constraints
 
-- `tree-ffi` owns shared C tree handle encoding and the process-global
-  `TreeFfiContext`.
-- Signal recursion uses Rust's canonical external `SIGREC(body)` shape; `CisRec`
-  reports a deterministic adapted mapping.
-- Signal doc-table predicate wrappers currently return deterministic false until
-  Rust has explicit doc-table IR nodes.
-- Header wrappers stay thin over the C ABI; no separate C++ object model was
-  introduced.
-- `JOURNAL.md` remains an index; detailed entries stay in
-  `porting/journal/YYYY-MM-DD.md` with newest commit first inside the day file.
+- Lockstep is automatic under `-vec`; there is no new CLI flag.
+- Logical loop and recursion-group ids remain stable. One bundle is one
+  scheduler node and one physical sample loop.
+- Unsupported shapes and existing fused-delay slices fail closed. External
+  `compute` buffers and chunk transports remain planar.
+- The C++ compiler has no corresponding pass; Rustdoc records the adapted
+  source provenance and invariants instead of claiming a 1:1 source port.
 
 ## Validation Run
 
-- `cargo run -p xtask -- libfaust-export-check` -> passed; 269 header symbols
-  exported by `target/debug/libfaust.dylib`
-- `cargo fmt --all` -> passed
-- `cargo clippy --workspace --all-targets -- -D warnings` -> passed
-- `cargo test --workspace --all-targets` -> passed
+- `cargo test -p transform --lib` -> 367 passed.
+- `cargo test -p compiler --test vector_mode` -> 27 passed.
+- `cargo test -p xtask --all-targets` -> 35 passed.
+- `cargo run -p xtask -- vector-interp-opt-check` -> 40 traces matched.
+- `cargo run -p xtask -- golden-check` -> tracked Rust golden corpus passed; an
+  unrelated untracked DSP without a golden was temporarily excluded and then
+  restored unchanged.
+- `cargo run -p xtask -- lockstep-simd-check` -> 14 lockstep-attributed
+  four-wide LLVM FP operations for each complex case; module totals 14/30/22.
+- `cargo build --release -p impulse-runner` -> release harness rebuilt.
+- `make -B -j8 interp-vec0 interp-vec1 -C tests/impulse-tests` -> 92 expected
+  DSPs passed for each variant; documented `subcontainer1` exclusion only.
+- `cargo clippy --workspace --all-targets -- -D warnings` -> passed.
+- `cargo test --workspace --all-targets` -> codegen passes after the Wasm fix,
+  then stops at the unrelated `p3_shadow_mode` assertion described below.
 
 ## Open Issues / Blockers
 
-- None for the planned Box/Signal API parity work items in this session.
-- Longer-term parity work still needs differential tests against the C++ libfaust
-  behavior for representative Box/Signal construction and source-generation
-  cases.
+- The repository-wide test gate currently stops in the unrelated existing
+  `recursive_apf_compute_body_reflects_all_four_cpp_schedules` assertion. It
+  observes three distinct scalar recursive APF C++ forms where the test expects
+  four; lockstep does not participate in scalar scheduling.
+- Wider recognition of recursive loops already owned by a fused-delay slice is
+  a conservative future optimization, not a correctness gap.
 
-## Next Steps (ordered)
+## Next Steps
 
-1. Consider wiring `cargo run -p xtask -- libfaust-export-check` into CI next to
-   existing golden/API guardrails.
-2. Add C++ differential tests for selected Box and Signal wrapper cases once the
-   reference fixture strategy is settled.
-3. Continue toward runtime/source-generation parity beyond the maintained
-   libfaust Box/Signal API surface.
+1. Resolve or update the unrelated recursive APF scheduling-distinctness
+   assertion before claiming the complete workspace test gate is green.
+2. Consider composing fused-delay slices into lane-level lockstep units only
+   with an extended certificate and equivalent mutation tests.
 
 ## Useful Commands to Resume
 
-- `cargo run -p xtask -- libfaust-export-check`
-- `cargo run -p xtask -- libfaust-api-matrix --cpp-root /Users/letz/Developpements/RUST/faust --out porting/generated`
-- `cargo fmt --all`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace --all-targets`
-- `git status --short`
-
-## Notes
-
-- The plan file is
-  `porting/libfaust-box-signal-api-parity-plan-2026-06-09-en.md`.
-- The day journal is `porting/journal/2026-06-09.md`.
+- `cargo test -p compiler --test vector_mode lockstep -- --nocapture`
+- `cargo run -p xtask -- vector-interp-opt-check`
+- `cargo run -p xtask -- lockstep-simd-check`
+- `make -j8 interp-vec0 interp-vec1 -C tests/impulse-tests`
+- `cargo run -p xtask -- golden-check`

@@ -46,7 +46,7 @@ $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
 ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir | ir/$(outdir)/.dir build/$(outdir)/.dir
-	$(FAUST_RS) -lang $(lang) -double -a $(ARCH) -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.cpp
+	$(FAUST_RS) -lang $(lang) -double $(COMPILER_OPTS) -a $(ARCH) -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.cpp
 	$(CXX) $(CXXFLAGS) build/$(outdir)/$*.cpp -o build/$(outdir)/$*
 	./build/$(outdir)/$* -n $(NFRAMES) > $@
 	$(COMPARE) $@ reference/$*.ir $(call dsp_precision,$*) || (rm -f $@; false)

@@ -40,7 +40,7 @@ use std::fmt::Write as _;
 
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
-use crate::backends::faust_api;
+use crate::backends::{faust_api, purity::is_obviously_side_effect_free_value};
 
 pub const BACKEND_NAME: &str = "julia";
 
@@ -902,6 +902,9 @@ fn emit_stmt(
             Ok(())
         }
         FirMatch::Drop(value) => {
+            if is_obviously_side_effect_free_value(store, value) {
+                return Ok(());
+            }
             let value = emit_value(store, value)?;
             let _ = writeln!(out, "{tab}_ = {value}");
             Ok(())
@@ -1680,9 +1683,30 @@ fn julia_string_literal(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodegenErrorCode, JuliaOptions, JuliaRealType, emit_cast, generate_julia_module};
+    use super::{
+        CodegenErrorCode, EmitMode, JuliaOptions, JuliaRealType, emit_cast, emit_stmt,
+        generate_julia_module,
+    };
     use crate::fixtures::build_sine_phasor_test_module;
-    use fir::{FirBuilder, FirStore};
+    use fir::{FirBuilder, FirStore, FirType};
+
+    #[test]
+    fn pure_drop_is_elided_but_foreign_call_drop_is_retained() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let one = b.float32(1.0);
+        let pure = b.drop_(one);
+        let foreign = b.fun_call("foreign", &[], FirType::Float32);
+        let effectful = b.drop_(foreign);
+        let mut out = String::new();
+        let mut mode = EmitMode::Default;
+
+        emit_stmt(&store, &mut out, pure, 0, &mut mode).expect("pure drop should emit");
+        assert!(out.is_empty());
+
+        emit_stmt(&store, &mut out, effectful, 0, &mut mode).expect("effectful drop should emit");
+        assert!(out.contains("_ = foreign()"));
+    }
 
     #[test]
     fn emits_julia_module_with_dsp_struct_ui_and_compute_loop() {

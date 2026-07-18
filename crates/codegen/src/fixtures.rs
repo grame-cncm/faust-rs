@@ -479,6 +479,15 @@ pub fn build_gain_bias_ui_meta_test_module() -> (FirStore, FirId) {
 /// Note:
 /// - The fixture uses an explicit FIR table and write index to expose backend
 ///   table/state lowering directly.
+/// - The delay read is captured into an explicit temp-variable statement
+///   (`tmpRead`) *before* the overwriting store to `fDelay`. FIR expressions
+///   evaluate where they are textually embedded, not at their Rust-builder
+///   construction point: an earlier version referenced the raw `load_table`
+///   result directly from `write_out` (the *second* statement in the loop
+///   body, after `write_delay`, the first), so the read re-evaluated against
+///   the already-overwritten slot and the fixture was a silent passthrough
+///   (`output == input`, no delay at all). See
+///   `interp_delay_by_4_semantics_hold` below for the regression guard.
 #[must_use]
 pub fn build_table_state_delay_test_module() -> (FirStore, FirId) {
     let mut store = FirStore::new();
@@ -502,8 +511,16 @@ pub fn build_table_state_delay_test_module() -> (FirStore, FirId) {
     let x = b.load_table("input0", AccessType::Stack, i0, FirType::FaustFloat);
     let idx = b.load_var("fWriteIdx", AccessType::Struct, FirType::Int32);
     let read = b.load_table("fDelay", AccessType::Struct, idx, FirType::FaustFloat);
+    // Materialize the read before the overwrite below.
+    let capture_read = b.declare_var(
+        "tmpRead",
+        FirType::FaustFloat,
+        AccessType::Stack,
+        Some(read),
+    );
     let write_delay = b.store_table("fDelay", AccessType::Struct, idx, x);
-    let write_out = b.store_table("output0", AccessType::Stack, i0, read);
+    let read_captured = b.load_var("tmpRead", AccessType::Stack, FirType::FaustFloat);
+    let write_out = b.store_table("output0", AccessType::Stack, i0, read_captured);
     let one_i = b.int32(1);
     let idx_plus = b.binop(FirBinOp::Add, idx, one_i, FirType::Int32);
     let four_i = b.int32(4);
@@ -511,7 +528,7 @@ pub fn build_table_state_delay_test_module() -> (FirStore, FirId) {
     let zero_i = b.int32(0);
     let wrap = b.select2(ge_wrap, zero_i, idx_plus, FirType::Int32);
     let store_idx = b.store_var("fWriteIdx", AccessType::Struct, wrap);
-    let loop_body = b.block(&[write_delay, write_out, store_idx]);
+    let loop_body = b.block(&[capture_read, write_delay, write_out, store_idx]);
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[in_alias, out_alias, sample_loop]);
     let compute = declare_compute_fn(&mut b, compute_body);
@@ -880,7 +897,10 @@ pub fn build_ir_coverage_test_module() -> (FirStore, FirId) {
 mod tests {
     use fir::{FirMatch, match_fir};
 
-    use super::{backend_test_fixtures, build_sine_phasor_test_module};
+    use super::{
+        backend_test_fixtures, build_sine_phasor_test_module, build_table_state_delay_test_module,
+    };
+    use crate::backends::interp::{FbcDspInstance, InterpOptions, generate_interp_module};
 
     #[test]
     fn sine_fixture_is_still_exposed() {
@@ -897,5 +917,40 @@ mod tests {
                 other => panic!("fixture {name} did not produce a module root: {other:?}"),
             }
         }
+    }
+
+    /// Regression guard for the read-before-write ordering bug: executes
+    /// `table_state_delay` through the interpreter and asserts genuine
+    /// delay-by-4 semantics (`output[i] == 0` for `i < 4`, `output[i] ==
+    /// input[i - 4]` for `i >= 4`), not the passthrough (`output ==
+    /// input`) an earlier, incorrectly ordered version of this fixture
+    /// silently produced.
+    #[test]
+    fn interp_delay_by_4_semantics_hold() {
+        let (store, module) = build_table_state_delay_test_module();
+        let options = InterpOptions {
+            opt_level: 0,
+            module_name: None,
+        };
+        let mut factory = generate_interp_module::<f32>(&store, module, &options)
+            .expect("interp codegen should succeed");
+        let mut instance = FbcDspInstance::new(&mut factory);
+        instance.init(44_100);
+
+        let input: Vec<f32> = (1..=10).map(|i| i as f32).collect();
+        let mut output = vec![0.0f32; 10];
+        {
+            let in_refs: [&[f32]; 1] = [&input[..]];
+            let mut out_refs: [&mut [f32]; 1] = [&mut output[..]];
+            instance
+                .try_compute(10, &in_refs, &mut out_refs)
+                .expect("compute should succeed");
+        }
+
+        let expected = [0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        assert_eq!(
+            output, expected,
+            "table_state_delay must produce genuine delay-by-4 output, not a passthrough"
+        );
     }
 }

@@ -142,6 +142,29 @@ fn eval_error_fixtures_expose_source_labels_and_readable_context() {
 
 #[test]
 fn diverging_recursive_case_reports_eval_error_instead_of_aborting() {
+    // This test deliberately drives unbounded recursion and relies on the
+    // *default* eval budget (1024) tripping before the 64 MiB thread stack
+    // overflows. A raised ambient `FAUST_RS_DEFAULT_EVAL_MAX_DEPTH` explicitly
+    // opts into real OS-stack overflow (documented in
+    // `crates/eval/src/loop_detector.rs`): the budget then no longer protects
+    // this stack, so the process would SIGABRT here. Skip gracefully in that
+    // case rather than aborting the whole test binary — the raised budget is a
+    // user choice for compiling deep programs (e.g. large FFTs), not a
+    // regression. Run the suite with the variable unset for full coverage.
+    const TEST_STACK_SAFE_MAX_DEPTH: usize = 1_024;
+    if let Some(raised) = std::env::var("FAUST_RS_DEFAULT_EVAL_MAX_DEPTH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&d| d > TEST_STACK_SAFE_MAX_DEPTH)
+    {
+        eprintln!(
+            "skipping diverging_recursive_case: FAUST_RS_DEFAULT_EVAL_MAX_DEPTH={raised} \
+             exceeds the {TEST_STACK_SAFE_MAX_DEPTH}-frame budget this test's 64 MiB stack \
+             is sized for (unset it to run this case)"
+        );
+        return;
+    }
+
     let source = r#"
 fact(1) = 1;
 fact(n) = n * fact(n-1);

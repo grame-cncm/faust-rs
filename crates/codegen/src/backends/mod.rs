@@ -3,8 +3,10 @@
 //! # Organization
 //! - Implemented backends:
 //!   - [`c`], [`cpp`]
-//! - Shared signature-validation helper:
-//!   - internal `faust_api` module
+//! - Shared helpers:
+//!   - internal `faust_api` module (DSP API signature validation)
+//!   - internal `c_family` module (syntax-parameterless emission shared by
+//!     `c`/`cpp`; see `porting/c-family-emitter-core-plan-2026-07-04-en.md`)
 //! - Scaffolded backends (planned parity targets):
 //!   - `cranelift`, `cmajor`, `codebox`, `csharp`, `dlang`, `interp`, `jax`, `jsfx`,
 //!     `julia`, `llvm`, `rust`, `sdf3`, `vhdl`, `wasm`.
@@ -20,7 +22,9 @@
 //! - Implemented backends expose `adapted` APIs (parity-driven behavior with
 //!   Rust-native options/results).
 
+pub(crate) mod c_family;
 pub(crate) mod faust_api;
+pub(crate) mod purity;
 
 pub mod asc;
 pub mod c;

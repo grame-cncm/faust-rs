@@ -18,12 +18,14 @@ fn fir_module_sine_phasor_with_freq_and_gain_sliders_generates_cpp() {
     assert!(cpp.contains("FAUSTFLOAT fGain = 0.2;"));
     assert!(cpp.contains("double fPhase = 0.0;"));
     assert!(cpp.contains("void buildUserInterface(UI* ui_interface)"));
+    // Slider numeric arguments are FAUSTFLOAT(...)-wrapped, matching the
+    // upstream C++ compiler's `cast2FAUSTFLOAT` (C-family plan §2.5, DRIFT 5).
     assert!(cpp.contains(
-        "ui_interface->addHorizontalSlider(\"freq\", &fFreq, 440.0, 20.0, 3000.0, 1.0);"
+        "ui_interface->addHorizontalSlider(\"freq\", &fFreq, FAUSTFLOAT(440.0), FAUSTFLOAT(20.0), FAUSTFLOAT(3000.0), FAUSTFLOAT(1.0));"
     ));
-    assert!(
-        cpp.contains("ui_interface->addHorizontalSlider(\"gain\", &fGain, 0.2, 0.0, 1.0, 0.001);")
-    );
+    assert!(cpp.contains(
+        "ui_interface->addHorizontalSlider(\"gain\", &fGain, FAUSTFLOAT(0.2), FAUSTFLOAT(0.0), FAUSTFLOAT(1.0), FAUSTFLOAT(0.001));"
+    ));
     assert!(cpp.contains(
         "void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs)"
     ));

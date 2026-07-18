@@ -13,7 +13,11 @@
 //! All other submodules in `module/` provide `impl SignalToFirLower` methods
 //! that are invoked from the orchestration logic here.
 
+use ahash::AHashMap;
+
 use super::*;
+use crate::signal_fir::ComputeMode;
+use crate::signal_fir::loop_graph::LoopKind;
 
 /// RAD reverse-time scheduling state, populated post-construction in `build_module`.
 #[derive(Default)]
@@ -30,6 +34,278 @@ pub(super) struct RadReverseState {
     pub(super) forward_output_by_sig_key: HashMap<String, usize>,
     /// True while lowering the reverse-time sample-loop slice.
     pub(super) lowering_reverse_loop: bool,
+}
+
+/// Emits one sample-loop slice's statements. Scalar mode — and any reverse-time
+/// loop — stays a single `for (i0 = 0; i0 < count; i0++)`. Vector mode (`-vec`)
+/// restructures a forward slice into a chunk driver (roadmap P6, V5 / S-D):
+///
+/// - a **`Vectorizable`** (state-free) slice is chunked whole;
+/// - a **`Recursive`** slice is *split* when possible (vector doc §5 S-D): its
+///   state-free tail is hoisted into a second, vectorizable inner loop fed by
+///   chunk buffers, leaving only the recursive core serial — otherwise it stays
+///   one plain serial loop (chunking a loop-carried body as one block is pure
+///   overhead the C compiler cannot vectorize);
+/// - a **`Island`** (clocked scalar domain) stays a plain serial loop.
+///
+/// The chunk driver has two layouts, selected by `-lv` (`loop_variant`, as Faust
+/// C++), both bit-exact vs scalar (the inner loop keeps the *global* sample index
+/// `i0`, no I/O rebasing):
+///
+/// ```text
+/// -lv 1 "simple"                       -lv 0 "fastest" (default)
+/// for (vindex=0; vindex<count; +=vs) { int vlimit = count - count % vs;
+///   int vend = min(vindex+vs, count);  for (vindex=0; vindex<vlimit; +=vs)
+///   for (i0=vindex; i0<vend; i0++)…      for (i0=vindex; i0<vindex+vs; i0++)…  // const trip
+/// }                                    int vindex = vlimit;                     // remainder
+///                                      for (i0=vindex; i0<count; i0++)…
+/// ```
+///
+/// The fastest variant's constant inner trip count (`vindex + vs`) is what lets
+/// the C compiler fully unroll / SIMD the (vectorizable) inner loops; the simple
+/// variant's runtime `min` bound is easier to read but vectorizes less well.
+/// Reverse-time loops force scalar mode (chunking would change the implicit TBPTT
+/// window from `count` to `vec_size`, vector doc §5).
+///
+/// Returns the slice's statements: for the split path, the chunk-buffer
+/// declarations followed by the chunk driver; otherwise one loop.
+fn emit_sample_loop(
+    store: &mut FirStore,
+    exec: &[FirId],
+    is_reverse: bool,
+    kind: LoopKind,
+    compute_mode: ComputeMode,
+) -> Vec<FirId> {
+    let (vec_size, variant) = match compute_mode {
+        // Reverse-time and scalar mode: one plain serial loop.
+        ComputeMode::Vector {
+            vec_size,
+            loop_variant,
+        } if !is_reverse => (vec_size.max(1), loop_variant),
+        _ => return vec![plain_sample_loop(store, exec, is_reverse)],
+    };
+    let vs = i32::try_from(vec_size).unwrap_or(i32::MAX);
+
+    match kind {
+        // State-free slice: chunk the whole body (one inner loop per chunk).
+        LoopKind::Vectorizable => build_chunk_driver(store, &[exec.to_vec()], vs, variant),
+        // Recursive slice: split off the state-free tail when possible.
+        LoopKind::Recursive => match split_bodies(store, exec, vec_size) {
+            Some((serial_body, tail_body, buf_decls)) => {
+                let mut out = buf_decls;
+                out.extend(build_chunk_driver(
+                    store,
+                    &[serial_body, tail_body],
+                    vs,
+                    variant,
+                ));
+                out
+            }
+            None => vec![plain_sample_loop(store, exec, false)],
+        },
+        // Clocked scalar island (vector doc §6 D1): plain serial loop.
+        LoopKind::Island => vec![plain_sample_loop(store, exec, false)],
+    }
+}
+
+/// A single `for (i0 = 0; i0 < count; i0++) { <exec> }` (scalar / reverse / the
+/// non-splittable-recursive and island fallbacks).
+fn plain_sample_loop(store: &mut FirStore, exec: &[FirId], is_reverse: bool) -> FirId {
+    let mut b = FirBuilder::new(store);
+    let upper = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let body = b.block(exec);
+    b.simple_for_loop("i0", upper, body, is_reverse)
+}
+
+/// Splits a recursive slice into `(serial core + buffer stores, rewritten tail,
+/// chunk-buffer declarations)` (vector doc §5 S-D), or `None` when the body is
+/// not splittable (→ one plain serial loop). The serial core buffers each
+/// boundary carrier into `vbufN[i0 - vindex]`; the tail reads it back.
+///
+/// Bit-exact: the serial core runs the whole chunk first (state evolves exactly
+/// as in the fused loop), then the tail reads the buffered values at the same
+/// global `i0`.
+fn split_bodies(
+    store: &mut FirStore,
+    exec: &[FirId],
+    vec_size: u32,
+) -> Option<(Vec<FirId>, Vec<FirId>, Vec<FirId>)> {
+    use crate::signal_fir::loop_graph::{ChunkBuffer, partition_recursive_body, rewrite_var_loads};
+
+    let part = partition_recursive_body(store, exec)?;
+
+    // A chunk buffer per boundary temp (deterministic vbufN numbering).
+    let buffers: Vec<ChunkBuffer> = part
+        .boundary
+        .iter()
+        .enumerate()
+        .map(|(i, (_, ty))| {
+            ChunkBuffer::new(u32::try_from(i).unwrap_or(u32::MAX), ty.clone(), vec_size)
+        })
+        .collect();
+    let buf_decls: Vec<FirId> = buffers.iter().map(|buf| buf.declare(store)).collect();
+
+    // Serial inner body = serial core + `vbufN[i0 - vindex] = temp`.
+    let mut serial_body = part.serial.clone();
+    for (buf, (name, ty)) in buffers.iter().zip(&part.boundary) {
+        let val = FirBuilder::new(store).load_var(name.clone(), AccessType::Stack, ty.clone());
+        serial_body.push(buf.store(store, val));
+    }
+
+    // Tail inner body = tail statements with boundary reads → buffer loads.
+    let mut repl = AHashMap::new();
+    for (buf, (name, _)) in buffers.iter().zip(&part.boundary) {
+        let load = buf.load(store);
+        repl.insert(name.clone(), load);
+    }
+    let tail_body: Vec<FirId> = part
+        .vectorizable
+        .iter()
+        .map(|&s| rewrite_var_loads(store, s, &repl))
+        .collect::<Option<_>>()?;
+
+    Some((serial_body, tail_body, buf_decls))
+}
+
+/// Builds the chunk driver wrapping one inner loop per `body` (in order), in the
+/// requested loop variant (`-lv`). Returns the driver's top-level statements.
+fn build_chunk_driver(
+    store: &mut FirStore,
+    bodies: &[Vec<FirId>],
+    vs: i32,
+    loop_variant: u8,
+) -> Vec<FirId> {
+    if loop_variant == 1 {
+        vec![build_simple_driver(store, bodies, vs)]
+    } else {
+        build_fastest_driver(store, bodies, vs)
+    }
+}
+
+/// One `for (i0 = start; i0 < bound; i0++) { body }` per `body`, in order. Each
+/// loop reads the global `i0`; `start`/`bound` are shared interned expressions.
+fn chunk_inner_loops(
+    store: &mut FirStore,
+    bodies: &[Vec<FirId>],
+    start: FirId,
+    bound: FirId,
+) -> Vec<FirId> {
+    bodies
+        .iter()
+        .map(|body| {
+            let mut b = FirBuilder::new(store);
+            let init = b.declare_var("i0", FirType::Int32, AccessType::Loop, Some(start));
+            let step = b.int32(1);
+            let blk = b.block(body);
+            b.for_loop("i0", init, bound, step, blk, false)
+        })
+        .collect()
+}
+
+/// `-lv 1` "simple": one outer loop with a runtime `vend = min(vindex+vs, count)`.
+fn build_simple_driver(store: &mut FirStore, bodies: &[Vec<FirId>], vs: i32) -> FirId {
+    // vend = (vindex + vs < count) ? vindex + vs : count.
+    let (vend_decl, start, bound) = {
+        let mut b = FirBuilder::new(store);
+        let vindex_r = b.load_var("vindex", AccessType::Loop, FirType::Int32);
+        let vsz = b.int32(vs);
+        let next = b.binop(FirBinOp::Add, vindex_r, vsz, FirType::Int32);
+        let count_hi = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+        let cond = b.binop(FirBinOp::Lt, next, count_hi, FirType::Int32);
+        let vend_val = b.select2(cond, next, count_hi, FirType::Int32);
+        let vend_decl = b.declare_var("vend", FirType::Int32, AccessType::Stack, Some(vend_val));
+        let start = b.load_var("vindex", AccessType::Loop, FirType::Int32);
+        let bound = b.load_var("vend", AccessType::Stack, FirType::Int32);
+        (vend_decl, start, bound)
+    };
+    let mut outer_stmts = vec![vend_decl];
+    outer_stmts.extend(chunk_inner_loops(store, bodies, start, bound));
+
+    let mut b = FirBuilder::new(store);
+    let outer_body = b.block(&outer_stmts);
+    let zero = b.int32(0);
+    let vindex_init = b.declare_var("vindex", FirType::Int32, AccessType::Loop, Some(zero));
+    let count_end = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let vsz_step = b.int32(vs);
+    b.for_loop(
+        "vindex",
+        vindex_init,
+        count_end,
+        vsz_step,
+        outer_body,
+        false,
+    )
+}
+
+/// `-lv 0` "fastest": a constant-trip main loop over `[0, vlimit)` (inner bound
+/// `vindex + vs`, so the C compiler proves the trip count) plus a scalar remainder
+/// over `[vlimit, count)`, where `vlimit = count - count % vs`.
+///
+/// Both loops are wrapped in an `if` guard so an *empty* range is never entered:
+/// the main loop is skipped when `count < vs` (`vlimit == 0`), the remainder when
+/// `vs` divides `count` (`vlimit == count`). This matters because the interpreter
+/// runs a loop body once before its first condition check (a `do/while`), so an
+/// empty chunk would read past the block; the C `for` would be fine, but the guard
+/// keeps both backends identical.
+///
+/// `vlimit` is an inline reused expression, not a named variable, so multiple
+/// sample-loop slices never collide, and the remainder's `int vindex = vlimit`
+/// (needed for `vbufN[i0 - vindex]`) is scoped inside its `if` block.
+fn build_fastest_driver(store: &mut FirStore, bodies: &[Vec<FirId>], vs: i32) -> Vec<FirId> {
+    // vlimit = count - count % vs, a reusable interned expression.
+    let vlimit = {
+        let mut b = FirBuilder::new(store);
+        let count1 = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+        let vsz1 = b.int32(vs);
+        let rem = b.binop(FirBinOp::Rem, count1, vsz1, FirType::Int32);
+        let count2 = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+        b.binop(FirBinOp::Sub, count2, rem, FirType::Int32)
+    };
+
+    // Main loop: for (vindex = 0; vindex < vlimit; vindex += vs), inner bound
+    // vindex + vs (constant trip count), guarded by `vlimit > 0`.
+    let (start_m, bound_m) = {
+        let mut b = FirBuilder::new(store);
+        let start_m = b.load_var("vindex", AccessType::Loop, FirType::Int32);
+        let vindex_b = b.load_var("vindex", AccessType::Loop, FirType::Int32);
+        let vsz_b = b.int32(vs);
+        let bound_m = b.binop(FirBinOp::Add, vindex_b, vsz_b, FirType::Int32);
+        (start_m, bound_m)
+    };
+    let main_stmts = chunk_inner_loops(store, bodies, start_m, bound_m);
+    let main_guarded = {
+        let mut b = FirBuilder::new(store);
+        let main_body = b.block(&main_stmts);
+        let zero = b.int32(0);
+        let vindex_init = b.declare_var("vindex", FirType::Int32, AccessType::Loop, Some(zero));
+        let vsz_step = b.int32(vs);
+        let main_loop = b.for_loop("vindex", vindex_init, vlimit, vsz_step, main_body, false);
+        let zero_c = b.int32(0);
+        let cond = b.binop(FirBinOp::Gt, vlimit, zero_c, FirType::Int32);
+        let then_blk = b.block(&[main_loop]);
+        b.if_(cond, then_blk, None)
+    };
+
+    // Remainder: if (vlimit < count) { int vindex = vlimit; for i0=vindex..count }
+    let (start_r, bound_r) = {
+        let mut b = FirBuilder::new(store);
+        let start_r = b.load_var("vindex", AccessType::Loop, FirType::Int32);
+        let bound_r = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+        (start_r, bound_r)
+    };
+    let rem_inner = chunk_inner_loops(store, bodies, start_r, bound_r);
+    let rem_guarded = {
+        let mut b = FirBuilder::new(store);
+        let vindex_decl = b.declare_var("vindex", FirType::Int32, AccessType::Loop, Some(vlimit));
+        let mut rem_stmts = vec![vindex_decl];
+        rem_stmts.extend(rem_inner);
+        let rem_body = b.block(&rem_stmts);
+        let count_hi = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+        let cond = b.binop(FirBinOp::Lt, vlimit, count_hi, FirType::Int32);
+        b.if_(cond, rem_body, None)
+    };
+
+    vec![main_guarded, rem_guarded]
 }
 
 /// Lowers a prepared signal forest into a complete FIR module.
@@ -119,17 +395,20 @@ pub(super) struct RadReverseState {
 ///   variable delay sizing via [`sigtype::check_delay_interval`].
 /// - `real_ty` – internal computation type (`Float32` or `Float64`).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_module(
+pub(crate) fn build_module<'a>(
     plan: &SignalFirPlan,
     module_name: &str,
-    arena: &TreeArena,
+    arena: &'a TreeArena,
     signals: &[SigId],
-    ui: &UiProgram,
-    types: &HashMap<SigId, SimpleSigType>,
-    sig_types: &HashMap<SigId, SigType>,
+    ui: &'a UiProgram,
+    types: &'a HashMap<SigId, SimpleSigType>,
+    sig_types: &'a HashMap<SigId, SigType>,
     real_ty: FirType,
     max_copy_delay: u32,
     delay_line_threshold: u32,
+    compute_mode: ComputeMode,
+    clocked: Option<clocked::ClockedPlan<'a>>,
+    scalar_schedule: Option<&crate::hgraph::Hsched>,
 ) -> Result<SignalFirOutput, SignalFirError> {
     let delay_opts = DelayOptions {
         max_copy_delay,
@@ -148,8 +427,16 @@ pub(crate) fn build_module(
         placement,
         delay_opts,
     );
+    lower.clocked = clocked.map(clocked::ClockedState::new);
+    lower.scalar_schedule = scalar_schedule.cloned();
+    lower.fixed_ad_internal_signals = fixed_ad_internal_signals(lower.arena, signals);
+    lower.register_symbolic_recursion_groups(signals)?;
+    if lower.clocked.is_some() && lower.scalar_schedule.is_some() {
+        lower.prepare_clocked_payload_schedule(signals);
+    }
     lower.ensure_sample_rate_var();
     lower.prepare_delay_lines(signals)?;
+    lower.assign_clocked_delay_cursors()?;
     let reverse_time_outputs = classify_reverse_time_outputs(lower.arena, signals);
     lower.rad_reverse.forward_output_by_sig = signals
         .iter()
@@ -181,6 +468,7 @@ pub(crate) fn build_module(
     let has_forward_outputs = reverse_time_outputs.iter().any(|is_reverse| !*is_reverse);
     let has_reverse_outputs = reverse_time_outputs.iter().any(|is_reverse| *is_reverse);
     if has_reverse_outputs {
+        lower.scalar_schedule = None;
         // Readable structural fallback keys are only needed when the RAD
         // reverse-time loop must reconnect a delayed value to a forward output.
         lower.rad_reverse.forward_output_by_sig_key = signals
@@ -192,6 +480,15 @@ pub(crate) fn build_module(
             .collect();
     }
     let mut sample_loops = Vec::new();
+
+    // Reverse AD owns a fixed forward/reverse epoch split and is deliberately
+    // outside P3's flat same-tick Hgraph. P6 keeps that driver authoritative.
+    // Every ordinary scalar forward program, including clock islands, is
+    // previsited through the selected hierarchical schedule.
+    if !has_reverse_outputs {
+        lower.lower_scheduled_graph(crate::hgraph::GraphKey::Control)?;
+        lower.lower_scheduled_graph(crate::hgraph::GraphKey::Top)?;
+    }
 
     if has_forward_outputs {
         // Forward loop slice.  This is not necessarily "primal only": when a
@@ -207,12 +504,17 @@ pub(crate) fn build_module(
                 lower.lower_output_signal(signal_index, *sig, plan.num_outputs)?;
             }
         }
+        lower.finalize_global_cursor();
         let delay_sample_end = lower
             .delay
             .emit_sample_end_updates(&mut lower.store, lower.uses_iota);
-        lower.sample_phases.sample_end.extend(delay_sample_end);
-        sample_loops.push((false, lower.sample_phases.flattened()));
-        lower.reset_sample_loop_state();
+        lower
+            .regions
+            .current_phases_mut()
+            .sample_end
+            .extend(delay_sample_end);
+        sample_loops.push((false, lower.regions.current_flattened()));
+        lower.reset_sample_loop_state(region::RegionKind::ReverseSampleLoop);
     }
 
     if has_reverse_outputs {
@@ -230,13 +532,18 @@ pub(crate) fn build_module(
         }
         lower.rad_reverse.lowering_reverse_loop = false;
         if !has_forward_outputs {
+            lower.finalize_global_cursor();
             let delay_sample_end = lower
                 .delay
                 .emit_sample_end_updates(&mut lower.store, lower.uses_iota);
-            lower.sample_phases.sample_end.extend(delay_sample_end);
+            lower
+                .regions
+                .current_phases_mut()
+                .sample_end
+                .extend(delay_sample_end);
         }
-        sample_loops.push((true, lower.sample_phases.flattened()));
-        lower.reset_sample_loop_state();
+        sample_loops.push((true, lower.regions.current_flattened()));
+        lower.reset_sample_loop_state(region::RegionKind::SampleLoop);
     }
     for index in 0..plan.num_outputs {
         let mut b = FirBuilder::new(&mut lower.store);
@@ -273,22 +580,18 @@ pub(crate) fn build_module(
     {
         use crate::signal_fir::cse;
 
-        let rc = cse::count_fir_value_uses(&lower.store, &lower.sections.constants_statements);
         cse::materialize_shared_values(
             &mut lower.store,
             &mut lower.sections.constants_statements,
-            &rc,
             "fConst",
             lower.name_gen.fconst_counter,
             "iConst",
             lower.name_gen.iconst_counter,
         );
 
-        let rc = cse::count_fir_value_uses(&lower.store, &lower.sections.control_statements);
         cse::materialize_shared_values(
             &mut lower.store,
             &mut lower.sections.control_statements,
-            &rc,
             "fSlow",
             lower.name_gen.fslow_counter,
             "iSlow",
@@ -296,16 +599,19 @@ pub(crate) fn build_module(
         );
 
         for (_, sample_loop_statements) in &mut sample_loops {
-            let rc = cse::count_fir_value_uses(&lower.store, sample_loop_statements);
             cse::materialize_shared_values(
                 &mut lower.store,
                 sample_loop_statements,
-                &rc,
                 "fTemp",
-                0,
+                lower.name_gen.ftemp_counter,
                 "iTemp",
-                0,
+                lower.name_gen.itemp_counter,
             );
+            // The ordinary CSE pass creates the stable `fTemp*` declarations
+            // that the state-aware pass may reuse. Keeping this ordering means
+            // the latter only removes a proven-redundant direct table read; it
+            // never changes scalar scheduling or synthesizes a new temporary.
+            cse::reuse_straight_line_scalar_loads(&mut lower.store, sample_loop_statements);
         }
     }
 
@@ -432,19 +738,54 @@ pub(crate) fn build_module(
     };
 
     let compute_statements = {
-        let mut all = Vec::new();
-        all.extend(lower.sections.control_statements.iter().copied());
+        use crate::signal_fir::loop_graph::{LoopGraph, LoopKind, slice_has_persistent_state};
+
+        // Route the per-sample slices through the loop graph (roadmap P6, V4/V5b).
+        // One loop node per non-empty slice, classified `Recursive` when the
+        // slice writes cross-sample state (a recursion carrier / delay line) and
+        // `Vectorizable` otherwise. Emitted in insertion order via
+        // `topological_order`. Scalar mode ignores the kind and stays one loop
+        // per slice — bit-identical to the previous inline emission (the 190
+        // goldens are the guarantee). Vector mode chunks only `Vectorizable`
+        // slices (a fully-recursive slice cannot auto-vectorize as one block, so
+        // chunking it is pure overhead); per-statement separation of a recursive
+        // core from its vectorizable pre/post parts is a later slice.
+        let mut graph = LoopGraph::new();
         for (is_reverse, sample_loop_statements) in &sample_loops {
             if sample_loop_statements.is_empty() {
                 continue;
             }
-            let sample_loop = {
-                let mut b = FirBuilder::new(&mut lower.store);
-                let upper = b.load_var("count", AccessType::FunArgs, FirType::Int32);
-                let body = b.block(sample_loop_statements);
-                b.simple_for_loop("i0", upper, body, *is_reverse)
+            let kind = if slice_has_persistent_state(&lower.store, sample_loop_statements) {
+                LoopKind::Recursive
+            } else {
+                LoopKind::Vectorizable
             };
-            all.push(sample_loop);
+            let id = graph.add_loop(kind, *is_reverse);
+            graph
+                .node_mut(id)
+                .exec
+                .extend(sample_loop_statements.iter().copied());
+        }
+        let order = graph
+            .topological_order()
+            .expect("scalar sample loop graph has no dependency edges, so no cycle");
+
+        let mut all = Vec::new();
+        all.extend(lower.sections.control_statements.iter().copied());
+        for id in order {
+            let node = graph.node(id);
+            let is_reverse = node.is_reverse;
+            let kind = node.kind;
+            let pre = node.pre.clone();
+            let exec = node.exec.clone();
+            let post = node.post.clone();
+            all.extend(pre);
+            if !exec.is_empty() {
+                let sample_loop =
+                    emit_sample_loop(&mut lower.store, &exec, is_reverse, kind, compute_mode);
+                all.extend(sample_loop);
+            }
+            all.extend(post);
         }
         all
     };
@@ -616,5 +957,13 @@ pub(crate) fn build_module(
     Ok(SignalFirOutput {
         store: lower.store,
         module,
+        emission_order: lower.emission_order,
+        // Filled in by `compile_fastlane_inner`, which owns the causality
+        // gate's `Hgraph`/`Hsched`; `build_module` has no schedule to
+        // compare against.
+        shadow_report: None,
+        vector_pipeline_status: super::super::VectorPipelineStatus::NotRequested,
+        vector_effective_mode: super::super::VectorEffectiveMode::Scalar,
+        vector_pipeline_detail: None,
     })
 }

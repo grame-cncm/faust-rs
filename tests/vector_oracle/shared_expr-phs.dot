@@ -1,0 +1,30 @@
+digraph signal_schedule {
+  rankdir=TB;
+  node [fontname="Arial"];
+  edge [fontname="Arial"];
+
+  subgraph cluster_constants {
+    label="Constant and Control Signals";
+    style=filled;
+    fillcolor=lightblue;
+    fontsize=14;
+  }
+
+  subgraph cluster_audio {
+    label="Audio Signals";
+    style=filled;
+    fillcolor=lightgreen;
+    fontsize=14;
+    node0 [label=<<font color="gray">0:</font> Input(0)> shape=ellipse fillcolor=yellow style=filled];
+    node1 [label=<<font color="gray">1:</font> sigClocked(sample,...)> shape=box fillcolor=orange style=filled];
+    node2 [label=<<font color="gray">2:</font> 0.5> shape=ellipse fillcolor=white style=filled];
+    node3 [label=<<font color="gray">3:</font> *(0.5, ...)> shape=ellipse fillcolor=white style=filled];
+    node4 [label=<<font color="gray">4:</font> 1> shape=ellipse fillcolor=white style=filled];
+    node5 [label=<<font color="gray">5:</font> SigSum(1, ...)> shape=ellipse fillcolor=white style=filled];
+  }
+
+  // Dependencies
+  node1 -> node0;
+  node3 -> node1;
+  node5 -> node3;
+}

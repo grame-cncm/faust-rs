@@ -102,7 +102,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use fir::{
     AccessType, BargraphType, ButtonType, FirBinOp, FirBuilder, FirId, FirMathOp, FirStore,
-    FirType, NamedType, SliderRange, SliderType, UiBoxType,
+    FirType, NamedType, SliderType,
 };
 use signals::{
     BinOp, SigId, SigMatch,
@@ -117,7 +117,7 @@ use tlib::{
     NodeKind, TreeArena, TreeId, list_to_vec, match_sym_rec, match_sym_ref, tree_to_int,
     tree_to_str,
 };
-use ui::{ControlId, ControlKind, UiGroupKind, UiMatch, UiProgram, match_ui};
+use ui::{ControlId, ControlKind, UiProgram};
 
 use sigtype::{SigType, Variability};
 
@@ -126,8 +126,9 @@ use crate::signal_prepare::SimpleSigType;
 use super::SignalFirOutput;
 use super::block_reverse_ad::{collect_bra_postorder, collect_tape_needed_values};
 use super::delay::{
-    DelayFirCtx, DelayLineInfo, DelayLoweringCtx, DelayManager, DelayOptions, GlobalCircularCursor,
-    delay_size_for_amount, emit_delay1_for_line, emit_fixed_delay_for_line, plan_delays,
+    DelayFirCtx, DelayLineInfo, DelayLoweringCtx, DelayManager, DelayOptions, DomainCounters,
+    GlobalCircularCursor, cursor_current_index, cursor_delayed_index, delay_size_for_amount,
+    emit_delay1_for_line, emit_fixed_delay_for_line, plan_delays,
 };
 use super::error::{SignalFirError, SignalFirErrorCode};
 use super::placement::{Bucket, analyze_signal_sharing, is_trivial_fir};
@@ -135,53 +136,26 @@ use super::planner::SignalFirPlan;
 use super::recursion::{
     RecArrayInfo, RecursionAllocCtx, RecursionCarrierRef, RecursionCurrentValueBinding,
     RecursionDelayRef, RecursionGroupProjection, RecursionLoweringCtx, RecursionState,
-    RecursionStorageStrategy, decode_group_projection, match_recursion_delay_key,
-    resolve_active_recursion_carrier,
+    RecursionStorageStrategy, decode_group_projection, decode_symbolic_group_bodies,
+    match_recursion_delay_key, resolve_active_recursion_carrier,
 };
 use super::siggen::interpret_generator;
 
 mod arithmetic;
+pub(in crate::signal_fir) use arithmetic::map_binop;
 mod bra;
 mod build;
+mod clocked;
 mod core_lowering;
 mod rad_formula_builder;
+mod region;
 mod setup;
 mod state;
 mod tables;
 mod ui_lowering;
 pub(super) use build::build_module;
+pub(super) use clocked::ClockedPlan;
 use rad_formula_builder::FirRadFormulaBuilder;
-
-/// Explicit execution phases inside one sample-loop iteration.
-///
-/// The sample body is assembled in this fixed order:
-///
-/// 1. `immediate`: ordinary per-sample work and writes that must happen before
-///    outputs are finalized
-/// 2. `post_output`: updates that must observe the current sample's outputs
-///    before shifting/finalizing state
-/// 3. `sample_end`: generic subsystem maintenance such as delay counter bumps
-#[derive(Default)]
-struct SamplePhases {
-    immediate: Vec<FirId>,
-    post_output: Vec<FirId>,
-    sample_end: Vec<FirId>,
-}
-
-impl SamplePhases {
-    /// Concatenates the three lifecycle phases into a single statement list,
-    /// preserving execution order: `immediate`, then `post_output`, then
-    /// `sample_end`.
-    fn flattened(&self) -> Vec<FirId> {
-        let mut all = Vec::with_capacity(
-            self.immediate.len() + self.post_output.len() + self.sample_end.len(),
-        );
-        all.extend(self.immediate.iter().copied());
-        all.extend(self.post_output.iter().copied());
-        all.extend(self.sample_end.iter().copied());
-        all
-    }
-}
 
 /// Maximum number of samples that can be stored in a BRA forward tape array.
 ///
@@ -208,7 +182,7 @@ const _: () = assert!(MAX_BRA_TAPE_BLOCK_SIZE.is_power_of_two());
 /// Deterministic prototype emission order for math helper functions.
 ///
 /// Keeping this order stable avoids noisy golden diffs in generated FIR/C/C++.
-const MATH_PROTO_ORDER: &[FirMathOp] = &[
+pub(super) const MATH_PROTO_ORDER: &[FirMathOp] = &[
     FirMathOp::Pow,
     FirMathOp::Min,
     FirMathOp::Max,
@@ -233,7 +207,7 @@ const MATH_PROTO_ORDER: &[FirMathOp] = &[
 ];
 
 /// Deterministic prototype emission order for polymorphic integer helper calls.
-const INT_FUN_PROTO_ORDER: &[&str] = &["abs", "min_i", "max_i"];
+pub(super) const INT_FUN_PROTO_ORDER: &[&str] = &["abs", "min_i", "max_i"];
 
 /// Flags, per output signal, whether it must be computed in the reverse sample loop.
 ///
@@ -307,6 +281,42 @@ fn classify_reverse_time_outputs(arena: &TreeArena, signals: &[SigId]) -> Vec<bo
         .collect()
 }
 
+/// Collects signals that can only be lowered while an explicit reverse-AD
+/// carrier owns the current epoch context. The carrier's projection remains a
+/// normal scheduled node and expands this set as one fixed unit.
+fn fixed_ad_internal_signals(arena: &TreeArena, signals: &[SigId]) -> HashSet<SigId> {
+    let mut stack = signals.to_vec();
+    let mut visited = HashSet::new();
+    let mut internal = HashSet::new();
+    while let Some(sig) = stack.pop() {
+        if !visited.insert(sig) {
+            continue;
+        }
+        if matches!(
+            match_sig(arena, sig),
+            SigMatch::BlockReverseAD { .. } | SigMatch::ReverseTimeRec(_)
+        ) {
+            collect_descendants(arena, arena.children(sig).unwrap_or(&[]), &mut internal);
+        }
+        if let Some(children) = arena.children(sig) {
+            stack.extend(children.iter().copied());
+        }
+    }
+    internal
+}
+
+fn collect_descendants(arena: &TreeArena, roots: &[SigId], output: &mut HashSet<SigId>) {
+    let mut stack = roots.to_vec();
+    while let Some(sig) = stack.pop() {
+        if !output.insert(sig) {
+            continue;
+        }
+        if let Some(children) = arena.children(sig) {
+            stack.extend(children.iter().copied());
+        }
+    }
+}
+
 /// Stateful lowering engine that converts a propagated signal forest into FIR.
 ///
 /// Stateful rather than purely recursive because the FIR output has multiple
@@ -355,12 +365,22 @@ struct SignalToFirLower<'a> {
     real_ty: FirType,
     /// FIR node store being built; owned by this lowerer and returned in the output.
     store: FirStore,
-    /// Memoization cache: maps a `SigId` to its already-lowered `FirId` for DAG sharing.
-    cache: HashMap<SigId, FirId>,
+    /// Region-scoped memoization cache for legal DAG sharing.
+    cache: region::RegionCache,
     /// FIR statement buckets for each Faust lifecycle section.
     sections: state::ModuleSections,
-    /// Explicit per-sample execution phases for the `compute` sample loop.
-    sample_phases: SamplePhases,
+    /// Compute-region tree: per-loop regions carrying the phased statement
+    /// lists of `compute` (roadmap P2 — see `region.rs` for the design note).
+    regions: region::RegionTree,
+    /// Clocked-lowering state, present only for programs with clocked
+    /// wrappers (roadmap P3 — see `clocked.rs`).
+    clocked: Option<clocked::ClockedState<'a>>,
+    /// Temporarily disables ancestor-domain redirection while lowering the
+    /// payload of a `Clocked(env, value)` annotation. C++ emits that payload
+    /// in the guarded block that consumes it.
+    suppress_clocked_redirect: bool,
+    /// Per-clock-domain `IOTA`/`DSCounter` field registry (roadmap P2.3).
+    domain_counters: DomainCounters,
     /// Maps each signal node to its generated state-variable name.
     state_name_by_node: HashMap<SigId, String>,
     /// Owned recursion-group state: canonical carriers plus active-group stack.
@@ -392,6 +412,22 @@ struct SignalToFirLower<'a> {
     rad_reverse: build::RadReverseState,
     /// Grouped BRA (Block Reverse AD) lowering state.
     bra: bra::BraState,
+    /// First-lowering order, recorded at the sole cache-insertion site and
+    /// exported as the P3 schedule-conformance trace.
+    emission_order: Vec<SigId>,
+    /// Deduplicates the first-lowering trace across sibling regions and loop
+    /// slices without widening the lexical memoization scopes.
+    emission_seen: HashSet<SigId>,
+    /// Selected scalar schedule. Present only on the authoritative scalar
+    /// forward path; vector planning schedules its completed loop graph
+    /// instead, and reverse AD keeps its fixed epoch driver.
+    scalar_schedule: Option<crate::hgraph::Hsched>,
+    /// Signals whose first materialization must occur inside a guarded hold
+    /// payload even when clock inference assigns them an ancestor domain.
+    /// `TempVar` sources are excluded because they are explicit outer reads.
+    clocked_payload_signals: HashSet<SigId>,
+    /// Signals expanded only inside their owning reverse-AD carrier context.
+    fixed_ad_internal_signals: HashSet<SigId>,
 }
 
 /// One extern prototype recovered from a Faust `FFUN(...)` descriptor.

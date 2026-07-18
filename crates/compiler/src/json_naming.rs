@@ -54,6 +54,8 @@ pub(crate) fn signal_fir_diagnostic(error: &SignalFirError) -> Diagnostic {
         SignalFirErrorCode::UnsupportedSignalNode => errors::codes::SFIR_UNSUPPORTED_SIGNAL_NODE,
         SignalFirErrorCode::UnsupportedBinOp => errors::codes::SFIR_UNSUPPORTED_BINOP,
         SignalFirErrorCode::InputIndexOutOfRange => errors::codes::SFIR_INPUT_INDEX_OUT_OF_RANGE,
+        SignalFirErrorCode::ClockedNotLowered => errors::codes::SFIR_CLOCKED_NOT_LOWERED,
+        SignalFirErrorCode::ClockAnalysis => errors::codes::SFIR_CLOCK_ANALYSIS,
     };
     Diagnostic::new(
         errors::Severity::Error,

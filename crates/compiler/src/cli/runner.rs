@@ -28,7 +28,8 @@ use codegen::backends::rust::{RustOptions, RustRealType, generate_rust_module};
 use codegen::backends::wasm::{WasmOptions, generate_wasm_module};
 use codegen::fixtures::backend_test_fixtures;
 use compiler::{
-    Compiler, FaustInstallPaths, FirVerifyOptions, RealType, compile_options_json_string,
+    Compiler, ComputeMode, FaustInstallPaths, FirVerifyOptions, RealType, SchedulingStrategy,
+    compile_options_json_string,
     enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
     golden_snapshot_from_file,
 };
@@ -321,6 +322,26 @@ pub fn selected_real_type(cli: &CliArgs) -> RealType {
     }
 }
 
+/// Maps the `-vec`/`-vs`/`-lv` switches to a [`ComputeMode`] (roadmap P6, V1).
+pub fn selected_compute_mode(cli: &CliArgs) -> ComputeMode {
+    if cli.vec {
+        ComputeMode::Vector {
+            vec_size: cli.vs,
+            loop_variant: cli.lv,
+        }
+    } else {
+        ComputeMode::Scalar
+    }
+}
+
+/// Maps `-ss`/`--scheduling-strategy` to a [`SchedulingStrategy`] (vectorization
+/// port plan P2). Reuses [`SchedulingStrategy::decode`]'s total `0/1/2/n>=3`
+/// split; `clap`'s `u32` parsing already rejects missing, non-integer, and
+/// negative values before this function ever runs.
+pub fn selected_scheduling_strategy(cli: &CliArgs) -> SchedulingStrategy {
+    SchedulingStrategy::decode(cli.scheduling_strategy)
+}
+
 /// Maps CLI precision switches to the Julia backend's real type, mirroring
 /// [`selected_real_type`] for the Julia code generator.
 pub fn selected_julia_real_type(cli: &CliArgs) -> JuliaRealType {
@@ -351,7 +372,9 @@ pub fn compiler_from_cli(
         .with_process_name(cli.process_name.clone())
         .with_real_type(selected_real_type(cli))
         .with_mcd(cli.mcd)
-        .with_dlt(cli.dlt);
+        .with_dlt(cli.dlt)
+        .with_compute_mode(selected_compute_mode(cli))
+        .with_scheduling_strategy(selected_scheduling_strategy(cli));
     if let Some(flag) = cancel {
         compiler = compiler.with_cancel(flag);
     }

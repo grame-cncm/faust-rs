@@ -77,6 +77,16 @@ Guidelines for contributors and coding agents working on `faust-rs`.
   include a parity check between unoptimized and optimized execution
   (`opt_level=0` vs `opt_level=max`) on a representative subset to detect
   optimization-induced semantic drift.
+- Assurance is tiered. Standard testing (unit + differential-vs-C++ + golden
+  parity) is the default level for all porting work. Reserve the heavier
+  producer/checker methodology described in
+  `porting/lean-rust-certified-porting-plan-2026-07-11-en.md` — where a phase
+  emits a canonical certificate that a small independent checker (in Rust,
+  cross-checked by the Lean specification) must accept before the next phase runs
+  — for phases whose output is a finite structural artifact consumed downstream
+  and whose errors would be silent, such as scheduling, vector planning, and FIR
+  routing. Do not apply it to ordinary steps, and never describe a lower assurance
+  level as a proof of a higher one.
 - Document known gaps and temporary scaffolding in `JOURNAL.md`.
 - Follow the canonical pipeline described in the plan:
   - `parse -> boxes -> eval -> propagate -> normalize -> type/interval -> transform -> fir -> backend`

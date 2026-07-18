@@ -1362,7 +1362,21 @@ pub fn parse_program_with_metadata(
     source_file: &str,
     metadata_store: CompilationMetadataStore,
 ) -> ParseOutput {
-    parse_program_with_origins(input, source_file, None, metadata_store)
+    parse_program_with_precision_and_metadata(input, source_file, 1, metadata_store)
+}
+
+/// Parses one in-memory source using the selected Faust precision variant.
+///
+/// `float_size` follows the C++ parser convention: `1=single`, `2=double`,
+/// `3=quad`, `4=fixed`.  The value is applied while parsing so definitions
+/// guarded by `singleprecision`/`doubleprecision` are selected correctly.
+pub fn parse_program_with_precision_and_metadata(
+    input: &str,
+    source_file: &str,
+    float_size: u8,
+    metadata_store: CompilationMetadataStore,
+) -> ParseOutput {
+    parse_program_with_origins_and_precision(input, source_file, None, metadata_store, float_size)
 }
 
 /// Parses one in-memory source and expands imports structurally from the parsed
@@ -1381,9 +1395,30 @@ pub fn parse_program_with_imports_and_metadata(
     virtual_sources: &VirtualSourceMap,
     metadata_store: CompilationMetadataStore,
 ) -> Result<ParseOutput, SourceReaderError> {
+    parse_program_with_imports_and_precision_and_metadata(
+        input,
+        source_file,
+        search_paths,
+        virtual_sources,
+        metadata_store,
+        1,
+    )
+}
+
+/// Parses an in-memory source bundle using the selected Faust precision
+/// variant while expanding imports structurally.
+pub fn parse_program_with_imports_and_precision_and_metadata(
+    input: &str,
+    source_file: &str,
+    search_paths: &[std::path::PathBuf],
+    virtual_sources: &VirtualSourceMap,
+    metadata_store: CompilationMetadataStore,
+    float_size: u8,
+) -> Result<ParseOutput, SourceReaderError> {
     let bundle = virtual_sources.with_source(PathBuf::from(source_file), input.to_owned());
     let reader = SourceReader::with_virtual_sources(search_paths.to_vec(), bundle);
-    StructuralImportExpander::new(reader, metadata_store).parse_entry(Path::new(source_file))
+    StructuralImportExpander::new(reader, metadata_store, float_size)
+        .parse_entry(Path::new(source_file))
 }
 
 /// Reads a source file, parses each imported file as its own unit, then expands
@@ -1409,6 +1444,25 @@ pub fn parse_file_with_imports(
     )
 }
 
+/// Reads and expands a file using the selected Faust precision variant.
+pub fn parse_file_with_imports_and_precision(
+    path: &std::path::Path,
+    search_paths: &[std::path::PathBuf],
+    float_size: u8,
+) -> Result<ParseOutput, SourceReaderError> {
+    parse_file_with_imports_and_precision_and_metadata(
+        path,
+        search_paths,
+        CompilationMetadataStore::new(
+            &path
+                .canonicalize()
+                .unwrap_or_else(|_| path.to_path_buf())
+                .to_string_lossy(),
+        ),
+        float_size,
+    )
+}
+
 /// Reads a source file, parses imported files as separate parse units, then
 /// expands import-file nodes structurally using the provided shared top-level
 /// metadata store.
@@ -1422,24 +1476,37 @@ pub fn parse_file_with_imports_and_metadata(
     search_paths: &[std::path::PathBuf],
     metadata_store: CompilationMetadataStore,
 ) -> Result<ParseOutput, SourceReaderError> {
+    parse_file_with_imports_and_precision_and_metadata(path, search_paths, metadata_store, 1)
+}
+
+/// Reads and expands a file using the selected Faust precision variant.
+pub fn parse_file_with_imports_and_precision_and_metadata(
+    path: &std::path::Path,
+    search_paths: &[std::path::PathBuf],
+    metadata_store: CompilationMetadataStore,
+    float_size: u8,
+) -> Result<ParseOutput, SourceReaderError> {
     let reader = SourceReader::new(search_paths.to_vec());
-    StructuralImportExpander::new(reader, metadata_store).parse_entry(path)
+    StructuralImportExpander::new(reader, metadata_store, float_size).parse_entry(path)
 }
 /// Parses one in-memory source while preserving external line origins.
-fn parse_program_with_origins(
+fn parse_program_with_origins_and_precision(
     input: &str,
     source_file: &str,
     source_origins: Option<Vec<SourceLineOrigin>>,
     metadata_store: CompilationMetadataStore,
+    float_size: u8,
 ) -> ParseOutput {
     let lexerdef = lexerdef();
     let lexer = lexerdef.lexer(input);
-    let state = RefCell::new(ParseState::new_with_origins_and_metadata(
+    let mut parse_state = ParseState::new_with_origins_and_metadata(
         source_file,
         input,
         source_origins,
         metadata_store,
-    ));
+    );
+    parse_state.ctx.set_float_size(float_size);
+    let state = RefCell::new(parse_state);
     let (root, errors) = faustparser_y::parse(&lexer, &state);
     let mut state = state.into_inner();
 
@@ -1510,15 +1577,17 @@ struct StructuralImportExpander {
     metadata_store: CompilationMetadataStore,
     used_files: Vec<PathBuf>,
     active_stack: HashSet<PathBuf>,
+    float_size: u8,
 }
 
 impl StructuralImportExpander {
-    fn new(reader: SourceReader, metadata_store: CompilationMetadataStore) -> Self {
+    fn new(reader: SourceReader, metadata_store: CompilationMetadataStore, float_size: u8) -> Self {
         Self {
             reader,
             metadata_store,
             used_files: Vec::new(),
             active_stack: HashSet::new(),
+            float_size,
         }
     }
 
@@ -1533,8 +1602,13 @@ impl StructuralImportExpander {
 
         let source = self.reader.read_source_unit(resolved)?;
         let source_name = resolved.to_string_lossy().into_owned();
-        let mut output =
-            parse_program_with_origins(&source, &source_name, None, self.metadata_store.clone());
+        let mut output = parse_program_with_origins_and_precision(
+            &source,
+            &source_name,
+            None,
+            self.metadata_store.clone(),
+            self.float_size,
+        );
         let mut expanded_in_scope = HashSet::new();
         self.expand_imports_in_output(&mut output, resolved, &mut expanded_in_scope)?;
         output.used_files = self.used_files;
@@ -1760,11 +1834,12 @@ impl StructuralImportExpander {
     fn parse_single_source_file(&self, resolved: &Path) -> Result<ParseOutput, SourceReaderError> {
         let source = self.reader.read_source_unit(resolved)?;
         let source_name = resolved.to_string_lossy().into_owned();
-        Ok(parse_program_with_origins(
+        Ok(parse_program_with_origins_and_precision(
             &source,
             &source_name,
             None,
             self.metadata_store.clone(),
+            self.float_size,
         ))
     }
 

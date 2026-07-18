@@ -529,7 +529,7 @@ impl<'a> SignalToFirLower<'a> {
                     let mut b = FirBuilder::new(&mut self.store);
                     b.store_var(carry_name.clone(), AccessType::Struct, y_bar)
                 };
-                self.sample_phases.post_output.push(carry_store);
+                self.regions.current_phases_mut().post_output.push(carry_store);
                 if !is_recursive_feedback {
                     let carry_load = {
                         let rt = self.real_ty();
@@ -581,7 +581,7 @@ impl<'a> SignalToFirLower<'a> {
                         let mut b = FirBuilder::new(&mut self.store);
                         b.store_table(carry_name, AccessType::Struct, slot, y_bar)
                     };
-                    self.sample_phases.post_output.push(carry_store);
+                    self.regions.current_phases_mut().post_output.push(carry_store);
                     Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty);
                 }
             }
@@ -605,7 +605,7 @@ impl<'a> SignalToFirLower<'a> {
                     let mut b = FirBuilder::new(&mut self.store);
                     b.store_var(carry_name, AccessType::Struct, y_bar)
                 };
-                self.sample_phases.post_output.push(carry_store);
+                self.regions.current_phases_mut().post_output.push(carry_store);
                 Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty.clone());
                 // Conditional init contribution: y_bar when i0 == 0, else 0.
                 let i0 = {
@@ -887,7 +887,7 @@ impl<'a> SignalToFirLower<'a> {
                 let mut b = FirBuilder::new(&mut self.store);
                 b.store_table(tape_name.clone(), AccessType::Struct, idx, v_fir)
             };
-            self.sample_phases.immediate.push(store_stmt);
+            self.regions.current_phases_mut().immediate.push(store_stmt);
             self.bra.tape_store_var.insert(v, tape_name);
         }
         Ok(())

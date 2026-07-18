@@ -10,6 +10,21 @@ use super::*;
 // Golden snapshot workflows
 // ---------------------------------------------------------------------------
 
+/// Returns `false` for corpus fixtures that cannot be golden-checked because
+/// they import the repo-root `interleave.lib` (the spectral FFT-on-`ondemand`
+/// examples). The golden import search path is `tests/corpus` +
+/// `/usr/local/share/faust` (see `default_import_search_paths`), which does not
+/// include the repository root, so `library("interleave.lib")` never resolves.
+/// These examples are exercised by the runtime tests
+/// (`crates/compiler/tests/interleave_fft.rs`, the impulse-runner effect
+/// checks) instead of by golden snapshots.
+pub(crate) fn is_rust_golden_eligible(source_path: &Path) -> bool {
+    match fs::read_to_string(source_path) {
+        Ok(text) => !text.contains("interleave.lib"),
+        Err(_) => true,
+    }
+}
+
 /// Enumerates the corpus/golden pairs checked by `golden-check`.
 ///
 /// Rust references enumerate directly from `tests/corpus`, while C++ references
@@ -23,6 +38,9 @@ pub(crate) fn golden_cases_for_check(
         GoldenRef::Rust => {
             let mut cases = Vec::new();
             for file in corpus_files()? {
+                if !is_rust_golden_eligible(&file) {
+                    continue;
+                }
                 cases.push((case_name(&file)?, file));
             }
             Ok(cases)

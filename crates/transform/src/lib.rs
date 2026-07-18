@@ -21,6 +21,9 @@
 //! - `signal_fir` public entry points are `adapted`: parity-driven behavior with
 //!   Rust typed errors/options.
 
+pub mod clk_env;
+pub mod hgraph;
+pub mod schedule;
 pub mod signal_fir;
 pub mod signal_prepare;
 

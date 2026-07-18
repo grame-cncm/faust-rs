@@ -20,6 +20,20 @@ pub enum SignalFirErrorCode {
     UnsupportedBinOp,
     /// Signal input index is invalid for the declared DSP input arity.
     InputIndexOutOfRange,
+    /// Encountered a clocked node (`ondemand` / `upsampling` / `downsampling`
+    /// machinery) that the FIR fast-lane cannot lower yet.
+    ///
+    /// This is a deliberate, structured rejection (roadmap P0.1): the front
+    /// half of the clock-domain port (propagation + `signal_prepare`) accepts
+    /// clocked graphs, while the back half (clock inference, guarded blocks,
+    /// per-domain local time — roadmap P1–P3) has not landed. Distinct from
+    /// [`Self::UnsupportedSignalNode`] so callers and tests can tell "not
+    /// ported yet by design" apart from "unexpected node".
+    ClockedNotLowered,
+    /// Clock-environment inference or hierarchical-graph validation failed
+    /// on a clocked program (ill-clocked graph: incomparable domains,
+    /// annotation violations, instantaneous cycles inside a domain, …).
+    ClockAnalysis,
 }
 
 impl SignalFirErrorCode {
@@ -33,6 +47,8 @@ impl SignalFirErrorCode {
             Self::UnsupportedSignalNode => "FRS-SFIR-0004",
             Self::UnsupportedBinOp => "FRS-SFIR-0005",
             Self::InputIndexOutOfRange => "FRS-SFIR-0006",
+            Self::ClockedNotLowered => "FRS-SFIR-0007",
+            Self::ClockAnalysis => "FRS-SFIR-0008",
         }
     }
 }

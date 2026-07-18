@@ -56,13 +56,7 @@ impl<'a> SignalToFirLower<'a> {
                 ),
             ));
         }
-        let var = self.ui_control_var_name(
-            control,
-            match typ {
-                ButtonType::Button => "fButton",
-                ButtonType::Checkbox => "fCheckbox",
-            },
-        );
+        let var = super::super::vector_ui::zone_name(expected_kind, control);
         let init = self.float_const(0.0);
         self.ensure_named_struct_var(&var, FirType::FaustFloat, Some(init));
         self.ui.ui_controls.insert(control, var.clone());
@@ -124,7 +118,8 @@ impl<'a> SignalToFirLower<'a> {
             .expect("bargraph variable should exist after declaration");
         let mut b = FirBuilder::new(&mut self.store);
         let faust_value = b.cast(FirType::FaustFloat, value);
-        self.sample_phases
+        self.regions
+            .current_phases_mut()
             .immediate
             .push(b.store_var(var, AccessType::Struct, faust_value));
         Ok(value)
@@ -212,11 +207,6 @@ impl<'a> SignalToFirLower<'a> {
         }
     }
 
-    /// Stable generated UI zone variable naming policy.
-    pub(super) fn ui_control_var_name(&self, control: ControlId, prefix: &str) -> String {
-        format!("{prefix}{control}")
-    }
-
     /// Looks up the `ControlSpec` for `control`, returning an error if missing.
     pub(super) fn control_spec(
         &self,
@@ -246,40 +236,6 @@ impl<'a> SignalToFirLower<'a> {
         })
     }
 
-    /// Emits `addMetaDeclare(var, key, value)` calls for each metadata pair.
-    pub(super) fn emit_ui_metadata_for_target(&mut self, var: &str, metadata: &[(String, String)]) {
-        for (key, value) in metadata {
-            let mut b = FirBuilder::new(&mut self.store);
-            self.ui
-                .ui_statements
-                .push(b.add_meta_declare(var, key.clone(), value.clone()));
-        }
-    }
-
-    /// Looks up one metadata value by key for the given control, if present.
-    pub(super) fn control_metadata_value(
-        &self,
-        control: ControlId,
-        key: &str,
-    ) -> Result<Option<String>, SignalFirError> {
-        Ok(self
-            .control_spec(control)?
-            .metadata
-            .iter()
-            .find_map(|(entry_key, entry_value)| (entry_key == key).then(|| entry_value.clone())))
-    }
-
-    /// Emits `addMetaDeclare` calls for every metadata entry attached to `control`.
-    pub(super) fn emit_control_ui_metadata(
-        &mut self,
-        control: ControlId,
-        var: &str,
-    ) -> Result<(), SignalFirError> {
-        let metadata = self.control_spec(control)?.metadata.clone();
-        self.emit_ui_metadata_for_target(var, &metadata);
-        Ok(())
-    }
-
     /// Declares the `FaustFloat` struct zone variable for a slider or numentry, idempotent.
     pub(super) fn ensure_slider_zone(
         &mut self,
@@ -304,14 +260,7 @@ impl<'a> SignalToFirLower<'a> {
                 ),
             ));
         }
-        let var = self.ui_control_var_name(
-            control,
-            match typ {
-                SliderType::Horizontal => "fHslider",
-                SliderType::Vertical => "fVslider",
-                SliderType::NumEntry => "fEntry",
-            },
-        );
+        let var = super::super::vector_ui::zone_name(expected_kind, control);
         let range = self.control_range(
             control,
             match typ {
@@ -349,13 +298,7 @@ impl<'a> SignalToFirLower<'a> {
                 ),
             ));
         }
-        let var = self.ui_control_var_name(
-            control,
-            match typ {
-                BargraphType::Horizontal => "fHbargraph",
-                BargraphType::Vertical => "fVbargraph",
-            },
-        );
+        let var = super::super::vector_ui::zone_name(expected_kind, control);
         let init = self.float_const(0.0);
         self.ensure_named_struct_var(&var, FirType::FaustFloat, Some(init));
         self.ui.ui_controls.insert(control, var.clone());
@@ -381,7 +324,7 @@ impl<'a> SignalToFirLower<'a> {
                 ),
             ));
         }
-        let var = format!("fSound{control}");
+        let var = super::super::vector_ui::zone_name(ControlKind::Soundfile, control);
         self.ensure_named_struct_var(&var, FirType::Sound, None);
         self.ui.soundfiles.insert(control, var.clone());
         Ok(var)
@@ -395,175 +338,50 @@ impl<'a> SignalToFirLower<'a> {
             self.ui.ui_statements.clear();
             return Ok(());
         }
-        self.ui.ui_statements.clear();
-        self.emit_ui_node(self.ui_program.root)
-    }
-
-    /// Recursively emits FIR UI calls for one UI tree node.
-    ///
-    /// Dispatches on group containers (open/close box), input controls
-    /// (button, checkbox, slider, numentry), output controls (bargraph),
-    /// and soundfile declarations.
-    pub(super) fn emit_ui_node(&mut self, node: ui::UiId) -> Result<(), SignalFirError> {
-        match match_ui(&self.ui_program.arena, node) {
-            UiMatch::Group {
-                kind,
-                label,
-                metadata,
-                children,
-            } => {
-                let typ = match kind {
-                    UiGroupKind::Vertical => UiBoxType::Vertical,
-                    UiGroupKind::Horizontal => UiBoxType::Horizontal,
-                    UiGroupKind::Tab => UiBoxType::Tab,
-                };
-                self.emit_ui_metadata_for_target("0", &metadata);
-                let mut b = FirBuilder::new(&mut self.store);
-                self.ui.ui_statements.push(b.open_box(typ, label));
-                for child in children {
-                    self.emit_ui_node(child)?;
+        let mut zones = std::collections::BTreeMap::new();
+        let controls = self
+            .ui_program
+            .controls
+            .iter()
+            .map(|spec| (spec.id, spec.kind))
+            .collect::<Vec<_>>();
+        for (control, kind) in controls {
+            match kind {
+                ControlKind::Button => {
+                    self.ensure_button_zone(control, ButtonType::Button)?;
                 }
-                let mut b = FirBuilder::new(&mut self.store);
-                self.ui.ui_statements.push(b.close_box());
-                Ok(())
-            }
-            UiMatch::InputControl(control) => {
-                let spec = self.control_spec(control)?;
-                let kind = spec.kind;
-                let label = spec.label.clone();
-                match kind {
-                    ControlKind::Button => {
-                        let var = self.ensure_button_zone(control, ButtonType::Button)?;
-                        self.emit_control_ui_metadata(control, &var)?;
-                        let mut b = FirBuilder::new(&mut self.store);
-                        self.ui
-                            .ui_statements
-                            .push(b.add_button(ButtonType::Button, label, var));
-                    }
-                    ControlKind::Checkbox => {
-                        let var = self.ensure_button_zone(control, ButtonType::Checkbox)?;
-                        self.emit_control_ui_metadata(control, &var)?;
-                        let mut b = FirBuilder::new(&mut self.store);
-                        self.ui
-                            .ui_statements
-                            .push(b.add_button(ButtonType::Checkbox, label, var));
-                    }
-                    ControlKind::VSlider => {
-                        let range = self.control_range(control, "vslider")?;
-                        let var = self.ensure_slider_zone(control, SliderType::Vertical)?;
-                        self.emit_control_ui_metadata(control, &var)?;
-                        let mut b = FirBuilder::new(&mut self.store);
-                        self.ui.ui_statements.push(b.add_slider(
-                            SliderType::Vertical,
-                            label,
-                            var,
-                            SliderRange {
-                                init: range.init,
-                                lo: range.min,
-                                hi: range.max,
-                                step: range.step,
-                            },
-                        ));
-                    }
-                    ControlKind::HSlider => {
-                        let range = self.control_range(control, "hslider")?;
-                        let var = self.ensure_slider_zone(control, SliderType::Horizontal)?;
-                        self.emit_control_ui_metadata(control, &var)?;
-                        let mut b = FirBuilder::new(&mut self.store);
-                        self.ui.ui_statements.push(b.add_slider(
-                            SliderType::Horizontal,
-                            label,
-                            var,
-                            SliderRange {
-                                init: range.init,
-                                lo: range.min,
-                                hi: range.max,
-                                step: range.step,
-                            },
-                        ));
-                    }
-                    ControlKind::NumEntry => {
-                        let range = self.control_range(control, "numentry")?;
-                        let var = self.ensure_slider_zone(control, SliderType::NumEntry)?;
-                        self.emit_control_ui_metadata(control, &var)?;
-                        let mut b = FirBuilder::new(&mut self.store);
-                        self.ui.ui_statements.push(b.add_slider(
-                            SliderType::NumEntry,
-                            label,
-                            var,
-                            SliderRange {
-                                init: range.init,
-                                lo: range.min,
-                                hi: range.max,
-                                step: range.step,
-                            },
-                        ));
-                    }
-                    other => {
-                        return Err(SignalFirError::new(
-                            SignalFirErrorCode::UnsupportedSignalNode,
-                            format!("input UI leaf points to non-input control kind {other:?}"),
-                        ));
-                    }
+                ControlKind::Checkbox => {
+                    self.ensure_button_zone(control, ButtonType::Checkbox)?;
                 }
-                Ok(())
-            }
-            UiMatch::OutputControl(control) => {
-                let spec = self.control_spec(control)?;
-                let kind = spec.kind;
-                let label = spec.label.clone();
-                match kind {
-                    ControlKind::VBargraph => {
-                        let range = self.control_range(control, "vbargraph")?;
-                        let var = self.ensure_bargraph_zone(control, BargraphType::Vertical)?;
-                        self.emit_control_ui_metadata(control, &var)?;
-                        let mut b = FirBuilder::new(&mut self.store);
-                        self.ui.ui_statements.push(b.add_bargraph(
-                            BargraphType::Vertical,
-                            label,
-                            var,
-                            range.min,
-                            range.max,
-                        ));
-                    }
-                    ControlKind::HBargraph => {
-                        let range = self.control_range(control, "hbargraph")?;
-                        let var = self.ensure_bargraph_zone(control, BargraphType::Horizontal)?;
-                        self.emit_control_ui_metadata(control, &var)?;
-                        let mut b = FirBuilder::new(&mut self.store);
-                        self.ui.ui_statements.push(b.add_bargraph(
-                            BargraphType::Horizontal,
-                            label,
-                            var,
-                            range.min,
-                            range.max,
-                        ));
-                    }
-                    other => {
-                        return Err(SignalFirError::new(
-                            SignalFirErrorCode::UnsupportedSignalNode,
-                            format!("output UI leaf points to non-bargraph control kind {other:?}"),
-                        ));
-                    }
+                ControlKind::VSlider => {
+                    self.ensure_slider_zone(control, SliderType::Vertical)?;
                 }
-                Ok(())
+                ControlKind::HSlider => {
+                    self.ensure_slider_zone(control, SliderType::Horizontal)?;
+                }
+                ControlKind::NumEntry => {
+                    self.ensure_slider_zone(control, SliderType::NumEntry)?;
+                }
+                ControlKind::VBargraph => {
+                    self.ensure_bargraph_zone(control, BargraphType::Vertical)?;
+                }
+                ControlKind::HBargraph => {
+                    self.ensure_bargraph_zone(control, BargraphType::Horizontal)?;
+                }
+                ControlKind::Soundfile => {
+                    self.ensure_soundfile_zone(control)?;
+                }
             }
-            UiMatch::Soundfile(control) => {
-                let label = self.control_spec(control)?.label.clone();
-                let url = self
-                    .control_metadata_value(control, "url")?
-                    .unwrap_or_default();
-                let var = self.ensure_soundfile_zone(control)?;
-                let mut b = FirBuilder::new(&mut self.store);
-                self.ui
-                    .ui_statements
-                    .push(b.add_soundfile_with_url(label, url, var));
-                Ok(())
-            }
-            UiMatch::Unknown => Err(SignalFirError::new(
-                SignalFirErrorCode::UnsupportedSignalNode,
-                "malformed UiProgram node".to_owned(),
-            )),
+            let zone = super::super::vector_ui::control_zone(self.ui_program, control).map_err(
+                |detail| SignalFirError::new(SignalFirErrorCode::UnsupportedSignalNode, detail),
+            )?;
+            zones.insert(control, zone);
         }
+        self.ui.ui_statements =
+            super::super::vector_ui::build_ui_statements(self.ui_program, &zones, &mut self.store)
+                .map_err(|detail| {
+                    SignalFirError::new(SignalFirErrorCode::UnsupportedSignalNode, detail)
+                })?;
+        Ok(())
     }
 }

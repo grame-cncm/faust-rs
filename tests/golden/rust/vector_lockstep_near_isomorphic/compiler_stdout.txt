@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=vector_lockstep_near_isomorphic.dsp
+bytes=218
+lines=5
+fnv1a64=a1ecd98a6df9253e

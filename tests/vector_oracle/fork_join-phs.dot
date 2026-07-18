@@ -1,0 +1,40 @@
+digraph signal_schedule {
+  rankdir=TB;
+  node [fontname="Arial"];
+  edge [fontname="Arial"];
+
+  subgraph cluster_constants {
+    label="Constant and Control Signals";
+    style=filled;
+    fillcolor=lightblue;
+    fontsize=14;
+  }
+
+  subgraph cluster_audio {
+    label="Audio Signals";
+    style=filled;
+    fillcolor=lightgreen;
+    fontsize=14;
+    node0 [label=<<font color="gray">0:</font> Input(0)> shape=ellipse fillcolor=yellow style=filled];
+    node1 [label=<<font color="gray">1:</font> sigClocked(sample,...)> shape=box fillcolor=orange style=filled];
+    node2 [label=<<font color="gray">2:</font> 0.25> shape=ellipse fillcolor=white style=filled];
+    node3 [label=<<font color="gray">3:</font> *(0.25, ...)> shape=ellipse fillcolor=white style=filled];
+    node4 [label=<<font color="gray">4:</font> 0.5> shape=ellipse fillcolor=white style=filled];
+    node5 [label=<<font color="gray">5:</font> cos(...)> shape=ellipse fillcolor=white style=filled];
+    node6 [label=<<font color="gray">6:</font> *(0.5, ...)> shape=ellipse fillcolor=white style=filled];
+    node7 [label=<<font color="gray">7:</font> 3> shape=ellipse fillcolor=white style=filled];
+    node8 [label=<<font color="gray">8:</font> *(3, ...)> shape=ellipse fillcolor=white style=filled];
+    node9 [label=<<font color="gray">9:</font> sin(...)> shape=ellipse fillcolor=white style=filled];
+    node10 [label=<<font color="gray">10:</font> SigSum(...)> shape=ellipse fillcolor=white style=filled];
+  }
+
+  // Dependencies
+  node1 -> node0;
+  node3 -> node1;
+  node5 -> node3;
+  node6 -> node1;
+  node8 -> node5;
+  node9 -> node6;
+  node10 -> node9;
+  node10 -> node8;
+}

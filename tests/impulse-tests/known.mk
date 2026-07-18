@@ -72,7 +72,31 @@ KNOWN_FAIL_assemblyscript :=
 # the shared impulse/soundfile fixture) and compiled natively with rustc.
 KNOWN_FAIL_rust :=
 
+# --- mode/scheduling variants ------------------------------------------------
+# Variant outdirs inherit their base backend's known failures. Any divergence
+# specific to one mode/strategy can be added as KNOWN_FAIL_<outdir>, for example
+# KNOWN_FAIL_cpp-vec0-ss2.
+KNOWN_FAIL_cpp-vec0 :=
+KNOWN_FAIL_cpp-vec1 :=
+KNOWN_FAIL_c-vec0 :=
+KNOWN_FAIL_c-vec1 :=
+KNOWN_FAIL_interp-vec0 :=
+KNOWN_FAIL_interp-vec1 :=
+KNOWN_FAIL_cranelift-vec0 :=
+KNOWN_FAIL_cranelift-vec1 :=
+KNOWN_FAIL_wasm-vec0 :=
+KNOWN_FAIL_wasm-vec1 :=
+KNOWN_FAIL_assemblyscript-vec0 :=
+KNOWN_FAIL_assemblyscript-vec1 :=
+KNOWN_FAIL_rust-vec0 :=
+KNOWN_FAIL_rust-vec1 :=
+
 # Tolerance to apply when a per-DSP override exists, else the global `precision`.
 dsp_precision = $(if $(PRECISION_$1),$(PRECISION_$1),$(precision))
-# Names excluded for a given backend outdir.
-known_fail_for = $(KNOWN_FAIL_all) $(KNOWN_FAIL_$1)
+# Strip the scheduling suffix before the vector suffix:
+# `cpp-vec0-ss2` -> `cpp-vec0` -> `cpp`.
+without_ss = $(patsubst %-ss0,%,$(patsubst %-ss1,%,$(patsubst %-ss2,%,$(patsubst %-ss3,%,$1))))
+base_backend = $(patsubst %-vec0,%,$(patsubst %-vec1,%,$(call without_ss,$1)))
+# Names excluded for a given backend outdir. Every variant inherits its base
+# backend's known failures plus any exact outdir-specific list.
+known_fail_for = $(KNOWN_FAIL_all) $(KNOWN_FAIL_$(call base_backend,$1)) $(KNOWN_FAIL_$1)

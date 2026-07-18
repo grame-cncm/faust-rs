@@ -24,6 +24,10 @@ pub(super) struct NameGen {
     pub(super) fslow_counter: u32,
     /// Monotonic counter for `iSlow*` block-rate integer variable names.
     pub(super) islow_counter: u32,
+    /// Monotonic counter for scheduled `fTemp*` sample-rate variables.
+    pub(super) ftemp_counter: u32,
+    /// Monotonic counter for scheduled `iTemp*` sample-rate variables.
+    pub(super) itemp_counter: u32,
 }
 
 /// Read-only placement analysis results, computed once before lowering begins.
@@ -80,9 +84,12 @@ impl<'a> SignalToFirLower<'a> {
             num_inputs,
             real_ty,
             store: FirStore::new(),
-            cache: HashMap::new(),
+            cache: region::RegionCache::new(),
             sections: state::ModuleSections::default(),
-            sample_phases: SamplePhases::default(),
+            regions: region::RegionTree::new(region::RegionKind::SampleLoop),
+            clocked: None,
+            suppress_clocked_redirect: false,
+            domain_counters: DomainCounters::default(),
             state_name_by_node: HashMap::new(),
             recursion: RecursionState::default(),
             scheduled_state_updates: HashSet::new(),
@@ -95,7 +102,48 @@ impl<'a> SignalToFirLower<'a> {
             placement,
             rad_reverse: build::RadReverseState::default(),
             bra: bra::BraState::default(),
+            emission_order: Vec::new(),
+            emission_seen: HashSet::new(),
+            scalar_schedule: None,
+            clocked_payload_signals: HashSet::new(),
+            fixed_ad_internal_signals: HashSet::new(),
         }
+    }
+
+    /// Registers every symbolic recursion binder before scheduled lowering.
+    ///
+    /// C++ uses `Tree` identity and vector-name properties for this binding.
+    /// Rust records it explicitly so a delayed `Proj(SYMREF)` can reserve the
+    /// owning carrier before `Proj(SYMREC)` emits the group update.
+    pub(super) fn register_symbolic_recursion_groups(
+        &mut self,
+        outputs: &[SigId],
+    ) -> Result<(), SignalFirError> {
+        let mut stack = outputs.to_vec();
+        let mut visited = HashSet::new();
+        while let Some(sig) = stack.pop() {
+            if !visited.insert(sig) {
+                continue;
+            }
+            if let Some((var, _)) = match_sym_rec(self.arena, sig)
+                && let Some(previous) = self.recursion.register_group(var, sig)
+                && previous != sig
+            {
+                return Err(SignalFirError::new(
+                    SignalFirErrorCode::UnsupportedSignalNode,
+                    format!(
+                        "symbolic recursion variable {} belongs to both groups {} and {}",
+                        var.as_u32(),
+                        previous.as_u32(),
+                        sig.as_u32()
+                    ),
+                ));
+            }
+            if let Some(children) = self.arena.children(sig) {
+                stack.extend(children.iter().copied());
+            }
+        }
+        Ok(())
     }
 
     /// Ensures the canonical DSP sample-rate field is present in the FIR struct.
@@ -357,6 +405,36 @@ impl<'a> SignalToFirLower<'a> {
 
         let mut b = FirBuilder::new(&mut self.store);
         b.load_var(name, access, typ)
+    }
+
+    /// Materializes one shared sample-rate signal at its selected schedule
+    /// position.
+    ///
+    /// C++ provenance: `InstructionsCompiler::CS` visits `Hsched` and
+    /// `generateCacheCode` immediately delegates multi-occurrence sample
+    /// signals to `generateVariableStore`. Performing this before FIR CSE is
+    /// what makes `-ss` observable in the generated sample loop while keeping
+    /// the signal semantics unchanged.
+    pub(super) fn materialize_scheduled_sample(&mut self, value: FirId) -> FirId {
+        let typ = self
+            .store
+            .value_type(value)
+            .unwrap_or_else(|| self.real_ty());
+        let name = if typ == FirType::Int32 {
+            let counter = self.name_gen.itemp_counter;
+            self.name_gen.itemp_counter += 1;
+            format!("iTemp{counter}")
+        } else {
+            let counter = self.name_gen.ftemp_counter;
+            self.name_gen.ftemp_counter += 1;
+            format!("fTemp{counter}")
+        };
+        let mut b = FirBuilder::new(&mut self.store);
+        self.regions
+            .current_phases_mut()
+            .immediate
+            .push(b.declare_var(name.clone(), typ.clone(), AccessType::Stack, Some(value)));
+        b.load_var(name, AccessType::Stack, typ)
     }
 
     /// Returns the reduced prepared signal type attached to one signal node.

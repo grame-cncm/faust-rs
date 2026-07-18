@@ -29,6 +29,8 @@ cargo run -p xtask
   from DOT files.
 - `wasm32-unknown-unknown` target when running
   `build-faustwasm-compiler-module`.
+- Clang C++ when running `lockstep-simd-check` (override `clang++` with
+  `CLANGXX`).
 
 Useful setup commands:
 
@@ -62,6 +64,48 @@ dot -V
 | `c-fastlane-diff-report` | Write C fast-lane diff report |
 | `backend-full-corpus-diff-report` | Write full corpus diff for all backends |
 | `table-fastlane-diff-report` | Write table fast-lane diff report |
+| `vector-coverage-merge` | Validate and merge `count_vector_corpus` JSON reports into the checked vector-coverage baseline |
+| `vector-coverage-check` | Recompile every baseline-certified mode/DSP pair and require checked vector chunk-driver structure |
+| `vector-compile-budget-check` | Measure the versioned release scalar/vector compile-time basket and reject unexplained regressions |
+| `vector-interp-opt-check` | Compare interpreter `opt_level=0` and max optimization on representative checked-vector cases |
+| `lockstep-simd-check` | Require Clang to emit four-wide LLVM floating-point operations for complex lockstep corpus cases |
+
+## Vector Coverage Retention
+
+The checked vector coverage baseline is
+`tests/vector-coverage/corpus-baseline.json`. It contains all float/double,
+`-lv 0/1`, and `-ss 0..3` results, including each fallback reason. Generate
+the sixteen input reports with the compiler diagnostic example, then merge them:
+
+```bash
+cargo run -p compiler --example count_vector_corpus -- 0 0 --precision=f32 --json > /tmp/vector-f32-lv0-ss0.json
+# Repeat for both precisions, -lv 0/1, and -ss 0..3.
+cargo run -p xtask -- vector-coverage-merge --reports /tmp/vector-reports
+```
+
+`vector-coverage-check` validates the baseline is complete, checks its
+universally certified benchmark list, recompiles every claimed certified pair,
+and requires `Certified` status, `CertifiedVector` effective mode, no fallback
+detail, and the canonical `vindex`/`vcount` chunk driver. It checks up to four
+modes concurrently while preserving deterministic mode-ordered reporting. Each
+worker owns its compiler instances and an explicit 16 MiB stack for the
+compiler's recursive traversals, and every mode/DSP pair still receives the same
+fail-closed checks. The Ubuntu CI job installs the Faust standard libraries
+before running this check.
+
+```bash
+cargo run -p xtask -- vector-coverage-check
+cargo run -p xtask -- vector-interp-opt-check
+cargo run -p xtask -- lockstep-simd-check
+```
+
+`vector-compile-budget-check` warms each basket entry before measuring scalar
+and vector compilation, then applies versioned absolute ceilings and a
+noise-tolerant vector/scalar ratio. It must run with release optimizations:
+
+```bash
+cargo run --release -p xtask -- vector-compile-budget-check
+```
 
 ## Environment Variables
 
@@ -69,6 +113,7 @@ dot -V
 |---|---|---|
 | `FAUST_CPP_BIN` | `golden-gen-cpp`, `interp-trace-dump-cppfbc`, `interp-trace-gen-cppfbc` | Path to the reference C++ `faust` binary |
 | `GOLDEN_REF` | `golden-check` | `rust` (default) or `cpp` |
+| `CLANGXX` | `lockstep-simd-check` | Clang C++ executable used to emit optimized LLVM IR (default: `clang++`) |
 
 ## Design Invariants
 

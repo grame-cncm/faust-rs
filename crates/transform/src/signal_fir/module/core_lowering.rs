@@ -11,6 +11,51 @@
 use super::*;
 
 impl<'a> SignalToFirLower<'a> {
+    /// Lowers every node owned by one hierarchical graph in the accepted
+    /// dependencies-first order. Recursive calls remain responsible for
+    /// expression construction, while the previsit fixes the order in which
+    /// independent nodes first enter the region-local caches and statements.
+    pub(super) fn lower_scheduled_graph(
+        &mut self,
+        key: crate::hgraph::GraphKey,
+    ) -> Result<(), SignalFirError> {
+        let schedule = self
+            .scalar_schedule
+            .as_ref()
+            .and_then(|schedule| schedule.schedule(key))
+            .unwrap_or(&[])
+            .to_vec();
+        for sig in schedule {
+            if self.fixed_ad_internal_signals.contains(&sig)
+                || matches!(
+                    match_sig(self.arena, sig),
+                    SigMatch::BlockReverseAD { .. } | SigMatch::ReverseTimeRec(_)
+                )
+            {
+                continue;
+            }
+            if matches!(
+                key,
+                crate::hgraph::GraphKey::Control | crate::hgraph::GraphKey::Top
+            ) && self.clocked_payload_signals.contains(&sig)
+            {
+                continue;
+            }
+            if matches!(key, crate::hgraph::GraphKey::Wrapper(_))
+                && self.clocked_payload_signals.contains(&sig)
+            {
+                let payload = match match_sig(self.arena, sig) {
+                    SigMatch::Clocked(_, payload) => payload,
+                    _ => sig,
+                };
+                let _ = self.lower_clocked_payload(payload)?;
+            } else {
+                let _ = self.lower_signal(sig)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Central dispatcher: lowers one signal node to a FIR value expression.
     ///
     /// Results are memoized in [`Self::cache`] for DAG sharing.  As a side
@@ -21,8 +66,22 @@ impl<'a> SignalToFirLower<'a> {
     ///
     /// Returns a typed `FRS-SFIR-*` error for unsupported signal families.
     pub(super) fn lower_signal(&mut self, sig: SigId) -> Result<FirId, SignalFirError> {
-        if let Some(id) = self.cache.get(&sig).copied() {
+        if let Some(id) = self.cache.get_at(self.regions.effective_depth(), sig) {
             return Ok(id);
+        }
+
+        // P3 clocked emission: a signal computed in a strict-ancestor clock
+        // domain must have its statements placed in the ancestor's region,
+        // even while a guarded block is open (see `clocked.rs`). The
+        // recursive re-entry cannot loop: with the redirection installed,
+        // the effective domain equals the signal's domain.
+        if !self.suppress_clocked_redirect
+            && let Some(depth) = self.clocked_redirect_target(sig)
+        {
+            let previous = self.regions.set_redirect(Some(depth));
+            let result = self.lower_signal(sig);
+            self.regions.set_redirect(previous);
+            return result;
         }
 
         let lowered = match match_sig(self.arena, sig) {
@@ -126,6 +185,68 @@ impl<'a> SignalToFirLower<'a> {
             SigMatch::SoundfileBuffer(sf, chan, part, ridx) => {
                 self.lower_soundfile_buffer(sig, sf, chan, part, ridx)?
             }
+            // Clocked machinery under an active clocked-lowering state
+            // (roadmap P3, boolean-ondemand slice — see `clocked.rs`):
+            // `Seq(od, y)` compiles the block then reads the hold;
+            // `Clocked`/`TempVar` are annotations/snapshots (passthrough);
+            // `PermVar` reads its registered hold field; `OnDemand` emits
+            // the guarded block.
+            SigMatch::Seq(x, y) if self.clocked.is_some() => {
+                let _ = self.lower_signal(x)?;
+                self.lower_signal(y)?
+            }
+            SigMatch::Clocked(_, inner) if self.clocked.is_some() => self.lower_signal(inner)?,
+            SigMatch::TempVar(inner) if self.clocked.is_some() => {
+                if self.suppress_clocked_redirect {
+                    self.lower_clocked_temp_var(inner)?
+                } else {
+                    self.lower_signal(inner)?
+                }
+            }
+            SigMatch::PermVar(_) if self.clocked.is_some() => self.lower_perm_var_read(sig)?,
+            SigMatch::ZeroPad(value, _) if self.clocked.is_some() => {
+                self.lower_zero_pad_clocked(sig, value)?
+            }
+            SigMatch::OnDemand(_) | SigMatch::Upsampling(_) | SigMatch::Downsampling(_)
+                if self.clocked.is_some() =>
+            {
+                self.ensure_guarded_block(sig)?
+            }
+            // Clocked machinery (`ondemand` / `upsampling` / `downsampling`
+            // wrappers and their glue nodes): accepted by propagation and
+            // `signal_prepare`, but the guarded-block lowering (roadmap
+            // P1–P3) has not landed. Reject with the dedicated structured
+            // code so no clocked program falls into the generic
+            // `FRS-SFIR-0004` bucket or panics (roadmap P0.1).
+            SigMatch::OnDemand(_)
+            | SigMatch::Upsampling(_)
+            | SigMatch::Downsampling(_)
+            | SigMatch::Clocked(_, _)
+            | SigMatch::ClockEnvToken(_)
+            | SigMatch::Seq(_, _)
+            | SigMatch::TempVar(_)
+            | SigMatch::PermVar(_)
+            | SigMatch::ZeroPad(_, _) => {
+                let construct = match match_sig(self.arena, sig) {
+                    SigMatch::OnDemand(_) => "ondemand",
+                    SigMatch::Upsampling(_) => "upsampling",
+                    SigMatch::Downsampling(_) => "downsampling",
+                    SigMatch::Clocked(_, _) => "clocked wrapper",
+                    SigMatch::ClockEnvToken(_) => "clock-env token",
+                    SigMatch::Seq(_, _) => "clocked sequencing (Seq)",
+                    SigMatch::TempVar(_) => "clock-boundary input (TempVar)",
+                    SigMatch::PermVar(_) => "clock-boundary output (PermVar)",
+                    _ => "zero-padded upsampling input (ZeroPad)",
+                };
+                return Err(SignalFirError::new(
+                    SignalFirErrorCode::ClockedNotLowered,
+                    format!(
+                        "{construct} is not lowered to FIR yet: the clock-domain \
+                         back half (inference, guarded blocks, per-domain local \
+                         time — roadmap P1–P3) has not been ported"
+                    ),
+                ));
+            }
             other => {
                 return Err(SignalFirError::new(
                     SignalFirErrorCode::UnsupportedSignalNode,
@@ -143,7 +264,7 @@ impl<'a> SignalToFirLower<'a> {
         // rate are hoisted into the appropriate execution-tier bucket:
         //   Konst → constants_statements (instanceConstants, once at init)
         //   Block → control_statements   (compute preamble, once per call)
-        //   Samp  → stays inline in the sample loop (no action needed)
+        //   Samp  → shared nodes are materialized at their Hsched position
         //
         // To avoid creating unnecessary temporaries for intermediate
         // sub-expressions, only nodes referenced ≥ 2 times in the signal
@@ -193,6 +314,9 @@ impl<'a> SignalToFirLower<'a> {
                 Some(Variability::Block) => {
                     self.materialize_in_bucket(sig, lowered, Bucket::Control)
                 }
+                Some(Variability::Samp) if self.scalar_schedule.is_some() => {
+                    self.materialize_scheduled_sample(lowered)
+                }
                 _ => lowered,
             }
         } else {
@@ -200,7 +324,14 @@ impl<'a> SignalToFirLower<'a> {
         };
 
         if !self.is_recursive_projection(sig) {
-            self.cache.insert(sig, lowered);
+            // First materialization of `sig`: the sole cache-insertion site
+            // and therefore the exact P3 conformance trace compared with the
+            // selected Hsched (`crate::signal_fir::shadow`).
+            self.cache
+                .insert_at(self.regions.effective_depth(), sig, lowered);
+            if self.emission_seen.insert(sig) {
+                self.emission_order.push(sig);
+            }
         }
         Ok(lowered)
     }
@@ -209,7 +340,7 @@ impl<'a> SignalToFirLower<'a> {
     /// accumulator.
     ///
     /// The caller controls which sample loop is active by clearing
-    /// [`Self::sample_phases`] between forward and reverse scheduling slices.
+    /// the current compute region between forward and reverse scheduling slices.
     /// Output signals are cast at the external FaustFloat boundary and stored
     /// into `outputN[i0]`; non-output surplus signals are evaluated and dropped.
     pub(super) fn lower_output_signal(
@@ -226,22 +357,28 @@ impl<'a> SignalToFirLower<'a> {
                 value = b.cast(FirType::FaustFloat, value);
             }
             let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
-            self.sample_phases.immediate.push(b.store_table(
-                format!("output{signal_index}"),
-                AccessType::Stack,
-                i0,
-                value,
-            ));
+            self.regions
+                .current_phases_mut()
+                .immediate
+                .push(b.store_table(
+                    format!("output{signal_index}"),
+                    AccessType::Stack,
+                    i0,
+                    value,
+                ));
         } else {
             let mut b = FirBuilder::new(&mut self.store);
-            self.sample_phases.immediate.push(b.drop_(value));
+            self.regions
+                .current_phases_mut()
+                .immediate
+                .push(b.drop_(value));
         }
         Ok(())
     }
 
     /// Clears per-loop scheduling state before building another sample loop.
-    pub(super) fn reset_sample_loop_state(&mut self) {
-        self.sample_phases = SamplePhases::default();
+    pub(super) fn reset_sample_loop_state(&mut self, next_kind: region::RegionKind) {
+        self.regions.begin_sibling(next_kind);
         self.scheduled_state_updates.clear();
         self.recursion.scheduled_groups.clear();
     }
@@ -594,15 +731,16 @@ impl<'a> SignalToFirLower<'a> {
             }
         }
 
-        let line = self.delay_line_info(value)?;
+        let line = self.delay_line_info_for_current_region(value)?;
         let current = self.lower_signal(value)?;
         let read_ty = self.signal_fir_type(node)?;
         let amount_value = self.lower_signal(amount)?;
         let schedule_write = self.delay.schedule_delay_write(value);
+        let phases = self.regions.current_phases_mut();
         let mut delay_ctx = DelayLoweringCtx {
             store: &mut self.store,
-            immediate_statements: &mut self.sample_phases.immediate,
-            post_output_statements: &mut self.sample_phases.post_output,
+            immediate_statements: &mut phases.immediate,
+            post_output_statements: &mut phases.post_output,
             next_loop_var_id: &mut self.name_gen.next_loop_var_id,
         };
         Ok(emit_fixed_delay_for_line(
@@ -704,12 +842,10 @@ impl<'a> SignalToFirLower<'a> {
             let next = self.lower_signal(value)?;
             let write_index = self.global_circular_current_index(2);
             let mut b = FirBuilder::new(&mut self.store);
-            self.sample_phases.immediate.push(b.store_table(
-                name,
-                AccessType::Struct,
-                write_index,
-                next,
-            ));
+            self.regions
+                .current_phases_mut()
+                .immediate
+                .push(b.store_table(name, AccessType::Struct, write_index, next));
         }
         Ok(out)
     }
@@ -799,14 +935,15 @@ impl<'a> SignalToFirLower<'a> {
         node: SigId,
         value: SigId,
     ) -> Result<FirId, SignalFirError> {
-        let line = self.delay_line_info(value)?;
+        let line = self.delay_line_info_for_current_region(value)?;
         let read_ty = self.signal_fir_type(node)?;
         let current = self.lower_signal(value)?;
         let schedule_write = self.delay.schedule_delay_write(value);
+        let phases = self.regions.current_phases_mut();
         let mut delay_ctx = DelayLoweringCtx {
             store: &mut self.store,
-            immediate_statements: &mut self.sample_phases.immediate,
-            post_output_statements: &mut self.sample_phases.post_output,
+            immediate_statements: &mut phases.immediate,
+            post_output_statements: &mut phases.post_output,
             next_loop_var_id: &mut self.name_gen.next_loop_var_id,
         };
         Ok(emit_delay1_for_line(

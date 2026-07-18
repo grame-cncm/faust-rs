@@ -319,12 +319,52 @@ impl<'a> ReverseADTransform<'a> {
                     kind: "soundfile",
                 });
             }
+            // Clock-domain machinery (`ondemand` / `upsampling` /
+            // `downsampling` wrappers and their glue): reverse mode across a
+            // boundary needs the clock-aware tape (roadmap P8) or the LPTV
+            // transpose for constant rates. Name the construct so users see
+            // *why* the program is rejected (roadmap P0.4), instead of the
+            // generic "other".
+            SigMatch::Seq(_, _) => {
+                return Err(PropagateError::RadUnsupportedNode {
+                    node: sig,
+                    kind: "clocked sequencing (Seq)",
+                });
+            }
+            SigMatch::Clocked(_, _) | SigMatch::ClockEnvToken(_) => {
+                return Err(PropagateError::RadUnsupportedNode {
+                    node: sig,
+                    kind: "clocked wrapper",
+                });
+            }
+            SigMatch::TempVar(_) | SigMatch::PermVar(_) | SigMatch::ZeroPad(_, _) => {
+                return Err(PropagateError::RadUnsupportedNode {
+                    node: sig,
+                    kind: "clock-domain boundary variable (TempVar/PermVar/ZeroPad)",
+                });
+            }
+            SigMatch::OnDemand(_) => {
+                return Err(PropagateError::RadUnsupportedNode {
+                    node: sig,
+                    kind: "ondemand",
+                });
+            }
+            SigMatch::Upsampling(_) => {
+                return Err(PropagateError::RadUnsupportedNode {
+                    node: sig,
+                    kind: "upsampling",
+                });
+            }
+            SigMatch::Downsampling(_) => {
+                return Err(PropagateError::RadUnsupportedNode {
+                    node: sig,
+                    kind: "downsampling",
+                });
+            }
             // Catch-all: every other signal family is opaque to RAD in
             // phase B. This includes representation-level casts, integer
-            // rounding, foreign constants/variables, generators, and
-            // signal-pipeline glue (Seq/ZeroPad/OnDemand/Upsampling/
-            // Downsampling). Reject loudly rather than silently dropping
-            // a gradient.
+            // rounding, foreign constants/variables, and generators.
+            // Reject loudly rather than silently dropping a gradient.
             _ => {
                 return Err(PropagateError::RadUnsupportedNode {
                     node: sig,

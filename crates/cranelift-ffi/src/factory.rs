@@ -24,8 +24,9 @@ use codegen::backends::cranelift::{
     CraneliftOptLevel, CraneliftOptions, JitDspModule, generate_cranelift_module,
 };
 use compiler::{
-    AuxFileArtifact, Compiler as FaustCompiler, ExpandDspRequest, GenerateAuxFilesRequest,
-    RealType, SignalFirLane, default_import_search_paths,
+    AuxFileArtifact, Compiler as FaustCompiler, ComputeMode, ExpandDspRequest,
+    GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane,
+    default_import_search_paths,
 };
 use fir::{FirMatch, match_fir};
 use utils::{
@@ -790,6 +791,51 @@ fn build_scaffold_factory_from_file(
     )
 }
 
+/// Canonical `-ss <n>` token for one decoded [`SchedulingStrategy`], used only
+/// for factory cache identity (see [`canonicalize_cache_identity_argv`]).
+fn canonical_scheduling_strategy_token(strategy: SchedulingStrategy) -> &'static str {
+    match strategy {
+        SchedulingStrategy::DepthFirst => "0",
+        SchedulingStrategy::BreadthFirst => "1",
+        SchedulingStrategy::Special => "2",
+        SchedulingStrategy::ReverseBreadthFirst => "3",
+    }
+}
+
+/// Rewrites the `-ss <n>` value token in `argv` to its canonical decoded form
+/// for factory cache identity (`compile_options`/`sha_key`) purposes only.
+///
+/// `SchedulingStrategy::decode` maps every `n >= 3` to the same
+/// `ReverseBreadthFirst` strategy, so `-ss 3` and `-ss 42` must contribute the
+/// same cache identity even though their raw argv tokens differ — otherwise
+/// two factories that will compile and behave identically would land in
+/// different cache slots. Every other token, and a malformed/missing `-ss`
+/// value (left for [`parse_ffi_compile_args`] to reject during actual
+/// compilation), passes through unchanged, so cache identity for every other
+/// option is byte-identical to the pre-`-ss` behavior.
+fn canonicalize_cache_identity_argv(argv: &[String]) -> Vec<String> {
+    let mut out = Vec::with_capacity(argv.len());
+    let mut i = 0;
+    while i < argv.len() {
+        out.push(argv[i].clone());
+        if argv[i] == "-ss"
+            && let Some(value) = argv.get(i + 1)
+        {
+            if let Ok(n) = value.parse::<u32>() {
+                out.push(
+                    canonical_scheduling_strategy_token(SchedulingStrategy::decode(n)).to_owned(),
+                );
+            } else {
+                out.push(value.clone());
+            }
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Shared factory object builder.
 ///
 /// This is the point where FIR-derived runtime metadata, cache identity, JSON
@@ -812,20 +858,24 @@ fn build_scaffold_factory_common(
     let compute_body_lowered = jit
         .as_ref()
         .is_some_and(codegen::backends::cranelift::JitDspModule::compute_body_lowered);
-    let compile_options = if argv.is_empty() {
+    // `-ss`'s raw numeric token is canonicalized (see
+    // `canonicalize_cache_identity_argv`) before it contributes to cache
+    // identity; `compile_argv` below still stores the caller's raw argv.
+    let identity_argv = canonicalize_cache_identity_argv(argv);
+    let compile_options = if identity_argv.is_empty() {
         format!(
             "opt_level={opt_level}; compute_body_lowered={compute_body_lowered}; foreign_functions={foreign_function_fingerprint}"
         )
     } else {
         format!(
             "opt_level={opt_level}; compute_body_lowered={compute_body_lowered}; argv={}; foreign_functions={foreign_function_fingerprint}",
-            argv.join(" ")
+            identity_argv.join(" ")
         )
     };
     let sha_key = format!(
         "cranelift:{}:{}:{}:{}",
         opt_level,
-        argv.join("\x1f"),
+        identity_argv.join("\x1f"),
         foreign_function_fingerprint,
         semantic_fingerprint
     );
@@ -877,19 +927,38 @@ struct CompiledCraneliftFactory {
 }
 
 /// Runs the real compiler pipeline to FIR, then compiles one Cranelift JIT module.
+/// Builds a [`FaustCompiler`] configured from the shared FFI argv subset:
+/// `-double` selects the real type, `-vec`/`-vs`/`-lv` select the compute mode,
+/// `-ss` selects the scheduling strategy (vectorization port plan phase P2:
+/// plumbing only — the strategy is stored but not yet acted on).
+/// Returns the compiler plus the parsed `double` flag (needed by the JIT).
+fn compiler_from_argv(argv: &[String]) -> (FaustCompiler, bool) {
+    let parsed = parse_ffi_compile_args(argv).unwrap_or_default();
+    let compute_mode = if parsed.vec_mode {
+        ComputeMode::Vector {
+            vec_size: parsed.vec_size,
+            loop_variant: parsed.loop_variant,
+        }
+    } else {
+        ComputeMode::Scalar
+    };
+    let compiler = FaustCompiler::new()
+        .with_real_type(if parsed.double {
+            RealType::Float64
+        } else {
+            RealType::Float32
+        })
+        .with_compute_mode(compute_mode)
+        .with_scheduling_strategy(SchedulingStrategy::decode(parsed.scheduling_strategy));
+    (compiler, parsed.double)
+}
+
 fn preflight_compile_file_to_cranelift(
     path: &Path,
     argv: &[String],
     opt_level: c_int,
 ) -> Result<CompiledCraneliftFactory, String> {
-    let double = parse_ffi_compile_args(argv)
-        .map(|a| a.double)
-        .unwrap_or(false);
-    let compiler = FaustCompiler::new().with_real_type(if double {
-        RealType::Float64
-    } else {
-        RealType::Float32
-    });
+    let (compiler, double) = compiler_from_argv(argv);
     let search_paths = collect_search_paths_for_file(path, argv);
     let fir = compiler
         .compile_file_to_fir_with_lane(path, &search_paths, SignalFirLane::TransformFastLane)
@@ -920,14 +989,7 @@ fn preflight_compile_source_to_cranelift(
     opt_level: c_int,
     argv: &[String],
 ) -> Result<CompiledCraneliftFactory, String> {
-    let double = parse_ffi_compile_args(argv)
-        .map(|a| a.double)
-        .unwrap_or(false);
-    let compiler = FaustCompiler::new().with_real_type(if double {
-        RealType::Float64
-    } else {
-        RealType::Float32
-    });
+    let (compiler, double) = compiler_from_argv(argv);
     let fir = compiler
         .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
         .map_err(|e| e.to_string())?;
@@ -1516,16 +1578,16 @@ mod tests {
     use std::ffi::CStr;
 
     use super::{
-        clearCCraneliftForeignFunctions, createCCraneliftDSPFactoryFromBoxes,
-        createCCraneliftDSPFactoryFromFile, createCCraneliftDSPFactoryFromSignals,
-        createCCraneliftDSPFactoryFromString, deleteAllCCraneliftDSPFactories,
-        deleteCCraneliftDSPFactory, factory_status, freeCMemory, getAllCCraneliftDSPFactories,
-        getCCraneliftDSPFactoryCompileOptions, getCCraneliftDSPFactoryFromSHAKey,
-        getCCraneliftDSPFactoryJSON, getCCraneliftDSPFactoryName, getCCraneliftDSPFactorySHAKey,
-        getCLibFaustVersion, readCCraneliftDSPFactoryFromBitcode,
-        readCCraneliftDSPFactoryFromBitcodeFile, registerCCraneliftForeignFunction,
-        unregisterCCraneliftForeignFunction, writeCCraneliftDSPFactoryToBitcode,
-        writeCCraneliftDSPFactoryToBitcodeFile,
+        canonicalize_cache_identity_argv, clearCCraneliftForeignFunctions,
+        createCCraneliftDSPFactoryFromBoxes, createCCraneliftDSPFactoryFromFile,
+        createCCraneliftDSPFactoryFromSignals, createCCraneliftDSPFactoryFromString,
+        deleteAllCCraneliftDSPFactories, deleteCCraneliftDSPFactory, factory_status, freeCMemory,
+        getAllCCraneliftDSPFactories, getCCraneliftDSPFactoryCompileOptions,
+        getCCraneliftDSPFactoryFromSHAKey, getCCraneliftDSPFactoryJSON,
+        getCCraneliftDSPFactoryName, getCCraneliftDSPFactorySHAKey, getCLibFaustVersion,
+        readCCraneliftDSPFactoryFromBitcode, readCCraneliftDSPFactoryFromBitcodeFile,
+        registerCCraneliftForeignFunction, unregisterCCraneliftForeignFunction,
+        writeCCraneliftDSPFactoryToBitcode, writeCCraneliftDSPFactoryToBitcodeFile,
     };
 
     extern "C" fn ffi_test_foreign_gain(x: f32) -> f32 {
@@ -1594,6 +1656,90 @@ mod tests {
             freeCMemory(json_ptr.cast());
             freeCMemory(opts_ptr.cast());
             assert!(deleteCCraneliftDSPFactory(factory));
+        }
+    }
+
+    #[test]
+    fn cache_identity_canonicalizes_ss_value_only() {
+        // `-ss 0` vs `-ss 1` decode to different strategies: distinct tokens.
+        let depth_first = canonicalize_cache_identity_argv(&["-ss".to_owned(), "0".to_owned()]);
+        let breadth_first = canonicalize_cache_identity_argv(&["-ss".to_owned(), "1".to_owned()]);
+        assert_ne!(depth_first, breadth_first);
+
+        // `-ss 3` and `-ss 42` both decode to `ReverseBreadthFirst`: identical
+        // canonical token, even though the raw argv strings differ.
+        let three = canonicalize_cache_identity_argv(&["-ss".to_owned(), "3".to_owned()]);
+        let forty_two = canonicalize_cache_identity_argv(&["-ss".to_owned(), "42".to_owned()]);
+        assert_eq!(three, forty_two);
+        assert_eq!(three, vec!["-ss".to_owned(), "3".to_owned()]);
+
+        // Every other token passes through unchanged.
+        let mixed = canonicalize_cache_identity_argv(&[
+            "-vec".to_owned(),
+            "-ss".to_owned(),
+            "42".to_owned(),
+            "-vs".to_owned(),
+            "64".to_owned(),
+        ]);
+        assert_eq!(
+            mixed,
+            vec![
+                "-vec".to_owned(),
+                "-ss".to_owned(),
+                "3".to_owned(),
+                "-vs".to_owned(),
+                "64".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ss_scheduling_strategy_changes_factory_cache_identity_canonically() {
+        let _guard = crate::test_serial_guard();
+        super::clear_registered_foreign_functions();
+        let name = c"ss_cache_identity_test";
+        let src = c"process = _;";
+
+        let build = |ss_value: &std::ffi::CStr| unsafe {
+            let mut err = [0_i8; 4096];
+            let flag = c"-ss";
+            let argv = [flag.as_ptr(), ss_value.as_ptr()];
+            let factory = createCCraneliftDSPFactoryFromString(
+                name.as_ptr(),
+                src.as_ptr(),
+                2,
+                argv.as_ptr(),
+                err.as_mut_ptr(),
+                0,
+            );
+            assert!(
+                !factory.is_null(),
+                "factory build failed: {}",
+                CStr::from_ptr(err.as_ptr()).to_string_lossy()
+            );
+            factory
+        };
+
+        let f_ss0 = build(c"0");
+        let f_ss1 = build(c"1");
+        let f_ss3 = build(c"3");
+        let f_ss42 = build(c"42");
+
+        unsafe {
+            // `-ss 0` (DepthFirst) vs `-ss 1` (BreadthFirst): distinct cache identity.
+            assert_ne!((*f_ss0).sha_key, (*f_ss1).sha_key);
+            assert_ne!((*f_ss0).compile_options, (*f_ss1).compile_options);
+
+            // `-ss 3` and `-ss 42` both decode to ReverseBreadthFirst: identical
+            // cache identity, proving the canonical enum value — not the raw
+            // argv token — drives the identity.
+            assert_eq!((*f_ss3).sha_key, (*f_ss42).sha_key);
+            assert_eq!((*f_ss3).compile_options, (*f_ss42).compile_options);
+
+            deleteCCraneliftDSPFactory(f_ss0);
+            deleteCCraneliftDSPFactory(f_ss1);
+            deleteCCraneliftDSPFactory(f_ss3);
+            deleteCCraneliftDSPFactory(f_ss42);
         }
     }
 

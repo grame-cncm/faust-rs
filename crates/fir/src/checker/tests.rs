@@ -528,6 +528,110 @@ fn functions_registered_in_symbols() {
 
 /// Build a single-function module with the given body statements.
 /// The function has signature `(x: Int32) -> Void` with param `x`.
+/// Builds a DSP-struct block declaring exactly `fields`.
+fn struct_fields(store: &mut FirStore, fields: &[(&str, FirType)]) -> FirId {
+    let mut b = FirBuilder::new(store);
+    let declarations = fields
+        .iter()
+        .map(|(name, typ)| b.declare_var(*name, typ.clone(), AccessType::Struct, None))
+        .collect::<Vec<_>>();
+    b.block(&declarations)
+}
+
+// A store into a table no declaration backs cannot compile in any backend;
+// this is the exact shape a mid-implementation vector module emitted behind a
+// green report before FIR-T04 existed.
+#[test]
+fn t04_undeclared_struct_store_table_is_an_error() {
+    let mut store = FirStore::new();
+    let (index, value) = {
+        let mut b = FirBuilder::new(&mut store);
+        (b.int32(0), b.float64(1.0))
+    };
+    let write =
+        FirBuilder::new(&mut store).store_table("fVecMutTbl55", AccessType::Struct, index, value);
+    let empty = struct_fields(&mut store, &[]);
+    let module_id = module_with_struct_and_body(&mut store, empty, &[write]);
+    let report = verify_fir_module(&store, module_id);
+    assert!(report.has_errors());
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "FIR-T04" && d.message.contains("fVecMutTbl55")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn t04_undeclared_stack_load_table_is_an_error() {
+    let mut store = FirStore::new();
+    let index = FirBuilder::new(&mut store).int32(0);
+    let load = FirBuilder::new(&mut store).load_table(
+        "vstate_tmp",
+        AccessType::Stack,
+        index,
+        FirType::Float64,
+    );
+    let drop = FirBuilder::new(&mut store).drop_(load);
+    let empty = struct_fields(&mut store, &[]);
+    let module_id = module_with_struct_and_body(&mut store, empty, &[drop]);
+    let report = verify_fir_module(&store, module_id);
+    assert!(report.has_errors());
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "FIR-T04"),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn t04_declared_struct_array_store_is_accepted() {
+    let mut store = FirStore::new();
+    let (index, value) = {
+        let mut b = FirBuilder::new(&mut store);
+        (b.int32(0), b.float64(1.0))
+    };
+    let write =
+        FirBuilder::new(&mut store).store_table("fVecMutTbl55", AccessType::Struct, index, value);
+    let fields = struct_fields(
+        &mut store,
+        &[(
+            "fVecMutTbl55",
+            FirType::Array(Box::new(FirType::Float64), 8),
+        )],
+    );
+    let module_id = module_with_struct_and_body(&mut store, fields, &[write]);
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.code, "FIR-T03" | "FIR-T04")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn t03_struct_scalar_field_store_warns_without_t04() {
+    let mut store = FirStore::new();
+    let (index, value) = {
+        let mut b = FirBuilder::new(&mut store);
+        (b.int32(0), b.float64(1.0))
+    };
+    let write = FirBuilder::new(&mut store).store_table("fGain", AccessType::Struct, index, value);
+    let fields = struct_fields(&mut store, &[("fGain", FirType::Float64)]);
+    let module_id = module_with_struct_and_body(&mut store, fields, &[write]);
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "FIR-T03"),
+        "{report:?}"
+    );
+    assert!(
+        !report.diagnostics.iter().any(|d| d.code == "FIR-T04"),
+        "{report:?}"
+    );
+}
+
 fn module_with_body(store: &mut FirStore, stmts: &[FirId]) -> FirId {
     let body = FirBuilder::new(store).block(stmts);
     let mut b = FirBuilder::new(store);

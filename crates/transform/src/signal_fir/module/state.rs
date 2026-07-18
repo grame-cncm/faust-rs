@@ -52,8 +52,8 @@ impl<'a> SignalToFirLower<'a> {
     /// - `Delay1(Delay1(Proj(i, group)))` → delay chain `2`
     ///
     /// Pure state-based resolution lives in `recursion.rs`; this wrapper only
-    /// falls back to `lower_proj(...)` when a top-level `SYMREC` group still
-    /// needs to be materialized in the current lowering pass.
+    /// allocates missing carrier storage. Recursion-body computation remains
+    /// controlled by the global signal schedule.
     pub(super) fn resolve_recursion_delay_ref(
         &mut self,
         value: SigId,
@@ -80,10 +80,13 @@ impl<'a> SignalToFirLower<'a> {
     /// the materialized top-level recursion group (`SYMREC`).
     ///
     /// Pure active/materialized lookup lives in `recursion.rs`; this wrapper
-    /// only performs top-level materialization when needed.
+    /// only performs allocation-only materialization when needed. In
+    /// particular, it must not emit recursion-body stores: delayed edges do not
+    /// constrain the C++ loop DAG, so a delay read may be lowered before the
+    /// corresponding projection node.
     pub(super) fn resolve_recursion_carrier(
         &mut self,
-        proj_node: SigId,
+        _proj_node: SigId,
         index: i32,
         group: SigId,
     ) -> Result<Option<RecursionCarrierRef>, SignalFirError> {
@@ -99,15 +102,20 @@ impl<'a> SignalToFirLower<'a> {
         {
             return Ok(Some(info));
         }
-        if match_sym_rec(self.arena, group).is_none() {
+        let Some(canonical_group) = self.recursion.canonical_group(self.arena, group) else {
+            return Ok(None);
+        };
+        if match_sym_rec(self.arena, canonical_group).is_none() {
             return Ok(None);
         }
 
-        // Ensure the group's recursion arrays and body stores are scheduled,
-        // then read back the canonical carrier metadata allocated by `lower_proj`.
-        let _ = self.lower_proj(proj_node, index, group)?;
+        // Reserve the canonical carrier name and storage without compiling the
+        // recurrence body. This mirrors C++ `ensureVectorNameProperty`: delayed
+        // reads may reserve a carrier before the scheduled projection computes
+        // and stores its next value.
+        let _ = self.ensure_recursion_group_carriers(canonical_group)?;
         self.recursion
-            .resolve_carrier(self.arena, group, index_usize)
+            .resolve_carrier(self.arena, canonical_group, index_usize)
     }
 
     /// Declares a stack-local current-sample binding for one scalar recursion
@@ -130,12 +138,15 @@ impl<'a> SignalToFirLower<'a> {
             format!("{prefix}{}_{}", group.as_u32(), index)
         };
         let mut b = FirBuilder::new(&mut self.store);
-        self.sample_phases.immediate.push(b.declare_var(
-            name.clone(),
-            info.typ.clone(),
-            AccessType::Stack,
-            Some(value),
-        ));
+        self.regions
+            .current_phases_mut()
+            .immediate
+            .push(b.declare_var(
+                name.clone(),
+                info.typ.clone(),
+                AccessType::Stack,
+                Some(value),
+            ));
         self.recursion.set_current_value_binding(
             group,
             index,
@@ -238,6 +249,7 @@ impl<'a> SignalToFirLower<'a> {
     }
 
     /// Declares the shared global circular cursor state (`fIOTA`), idempotent.
+    ///
     pub(super) fn ensure_global_circular_cursor(&mut self) {
         let mut ctx = DelayFirCtx {
             store: &mut self.store,
@@ -252,16 +264,41 @@ impl<'a> SignalToFirLower<'a> {
         GlobalCircularCursor.ensure_state(&mut ctx);
     }
 
-    /// Returns the masked current write index for the shared global cursor.
-    pub(super) fn global_circular_current_index(&mut self, size: usize) -> FirId {
-        self.ensure_global_circular_cursor();
-        GlobalCircularCursor.current_index(&mut self.store, size)
+    /// Declares/advances the global `fIOTA` cursor iff some planned delay
+    /// line still uses it (roadmap P3 slice 4). Run after
+    /// `assign_clocked_delay_cursors` so in-domain `CircularPow2` lines that
+    /// moved to a per-domain `fIOTA_d<i>` cursor no longer force a dead global
+    /// field + advance.
+    pub(super) fn finalize_global_cursor(&mut self) {
+        if !self.delay.global_circular_carriers().is_empty() {
+            self.ensure_global_circular_cursor();
+        }
     }
 
-    /// Returns the masked delayed read index for the shared global cursor.
+    /// Returns the masked current write index for a circular structure lowered
+    /// in the current append-target region.
+    ///
+    /// At the top rate this is the shared `fIOTA`; inside a guarded clocked
+    /// block it is the effective domain's per-domain `fIOTA_d<i>` cursor
+    /// (roadmap P3 slice 4), so circular recursion carriers and delay-states
+    /// inside a block advance in fire time.
+    pub(super) fn global_circular_current_index(&mut self, size: usize) -> FirId {
+        let cursor = self.active_circular_cursor_name();
+        if cursor == "fIOTA" {
+            self.ensure_global_circular_cursor();
+        }
+        cursor_current_index(&mut self.store, &cursor, size)
+    }
+
+    /// Returns the masked delayed read index for a circular structure lowered
+    /// in the current append-target region (see
+    /// [`Self::global_circular_current_index`]).
     pub(super) fn global_circular_delayed_index(&mut self, amount: FirId, size: usize) -> FirId {
-        self.ensure_global_circular_cursor();
-        GlobalCircularCursor.delayed_index(&mut self.store, amount, size)
+        let cursor = self.active_circular_cursor_name();
+        if cursor == "fIOTA" {
+            self.ensure_global_circular_cursor();
+        }
+        cursor_delayed_index(&mut self.store, &cursor, amount, size)
     }
 
     /// Runs `f` with one recursion group pushed onto the active recursion stack.

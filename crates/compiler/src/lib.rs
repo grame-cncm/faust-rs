@@ -84,10 +84,11 @@ use propagate::{ArityCache, BoxArity, PropagateError, PropagateUiOptions};
 use signals::SigId;
 use sigtype::TypeAnnotator;
 use tlib::NodeKind;
-pub use transform::signal_fir::RealType;
-use transform::signal_fir::{
-    SignalFirError, SignalFirErrorCode, SignalFirOptions, compile_signals_to_fir_fastlane_with_ui,
+pub use transform::schedule::SchedulingStrategy;
+pub use transform::signal_fir::{
+    ComputeMode, RealType, VectorEffectiveMode, VectorFallbackReason, VectorPipelineStatus,
 };
+use transform::signal_fir::{SignalFirError, SignalFirErrorCode, SignalFirOptions};
 use ui::UiProgram;
 
 /// Parse + eval + propagate output package.
@@ -134,6 +135,12 @@ pub struct SignalCompileOutput {
     /// box, the result `BoxId` is recorded with the definition's string name.
     /// Used by the SVG draw module to label and fold named sub-diagrams.
     pub def_names: std::collections::HashMap<boxes::BoxId, String>,
+    /// Clock-domain instances allocated by `ondemand` / `upsampling` /
+    /// `downsampling` wrappers during propagation (roadmap P0.2).
+    ///
+    /// Empty for programs without clocked wrappers. In-graph `SIGCLOCKENV`
+    /// tokens index into this table.
+    pub clock_domains: propagate::ClockDomainTable,
 }
 
 impl SignalCompileOutput {
@@ -157,6 +164,12 @@ pub struct FirCompileOutput {
     pub store: FirStore,
     /// FIR module root id.
     pub module: FirId,
+    /// Checked signal-level vector activation or named fallback status.
+    pub vector_pipeline_status: VectorPipelineStatus,
+    /// Effective scalar or checked-vector compute shape in the returned FIR.
+    pub vector_effective_mode: VectorEffectiveMode,
+    /// Complete first-failure diagnostic when vector selection fell back.
+    pub vector_pipeline_detail: Option<String>,
 }
 
 /// Request payload for the artifact-centric WASM compile service used by the
@@ -370,6 +383,17 @@ pub struct Compiler {
     /// Delay above which the if-based wrapping strategy is used.
     /// Mirrors Faust `-dlt N`. Default: `u32::MAX` (disabled).
     delay_line_threshold: u32,
+    /// Codegen strategy for `compute()`: scalar (default) or vector mode
+    /// (`-vec`/`-vs`/`-lv`). Roadmap P6 (V1 plumbing only — `Vector` still
+    /// lowers as `Scalar` until the `LoopGraph` slices land).
+    compute_mode: ComputeMode,
+    /// Signal/loop dependency scheduling policy (`-ss` /
+    /// `--scheduling-strategy`). Vectorization port plan phase P2: plumbing
+    /// only — stored and threaded through to [`SignalFirOptions`], but no
+    /// compile path invokes [`transform::schedule::schedule`] yet.
+    /// Independent of [`ComputeMode`]; defaults to
+    /// [`SchedulingStrategy::DepthFirst`] in scalar and vector modes alike.
+    scheduling_strategy: SchedulingStrategy,
     /// Optional cooperative cancellation flag.
     ///
     /// When set, the evaluator checks this flag on every recursive call and
@@ -394,6 +418,13 @@ pub enum SignalFirLane {
     TransformFastLane,
 }
 
+fn parser_float_size(real_type: RealType) -> u8 {
+    match real_type {
+        RealType::Float32 => 1,
+        RealType::Float64 => 2,
+    }
+}
+
 impl WasmArtifactBundle {
     /// Repackages a compiled [`WasmModule`] into the public artifact bundle,
     /// pairing its binary and JSON with the formatted `compile_options` string.
@@ -416,6 +447,8 @@ impl Compiler {
             real_type: RealType::default(),
             max_copy_delay: 16,
             delay_line_threshold: u32::MAX,
+            compute_mode: ComputeMode::Scalar,
+            scheduling_strategy: SchedulingStrategy::DepthFirst,
             cancel: None,
             timing_sink: None,
         }
@@ -467,6 +500,31 @@ impl Compiler {
         self
     }
 
+    /// Selects the `compute()` codegen strategy (`-vec` / scalar).
+    ///
+    /// Roadmap P6 (V1). Vector mode is currently plumbing-only: selecting it
+    /// records the option but still emits scalar code until the `LoopGraph`
+    /// lowering (V2+) lands.
+    #[must_use]
+    pub fn with_compute_mode(mut self, mode: ComputeMode) -> Self {
+        self.compute_mode = mode;
+        self
+    }
+
+    /// Selects the signal/loop dependency scheduling strategy (`-ss` /
+    /// `--scheduling-strategy`).
+    ///
+    /// Scalar lowering applies the strategy to the hierarchical signal DAG;
+    /// vector lowering applies the same strategy to each completed loop-DAG
+    /// epoch. Fixed reverse-AD epochs remain outside this pluggable order.
+    /// Independent of [`ComputeMode`]: selecting `-vec` does not change the
+    /// default or decode a second scheduling option.
+    #[must_use]
+    pub fn with_scheduling_strategy(mut self, strategy: SchedulingStrategy) -> Self {
+        self.scheduling_strategy = strategy;
+        self
+    }
+
     /// Returns a compiler facade with a cooperative cancellation flag.
     ///
     /// The caller retains an `Arc<AtomicBool>` clone and can set it to `true`
@@ -510,6 +568,8 @@ impl Compiler {
             real_type: self.real_type,
             max_copy_delay: self.max_copy_delay,
             delay_line_threshold: self.delay_line_threshold,
+            compute_mode: self.compute_mode,
+            scheduling_strategy: self.scheduling_strategy,
             timing_sink: self.timing_sink.clone(),
         }
     }
@@ -531,6 +591,8 @@ impl Compiler {
             self.real_type,
             self.max_copy_delay,
             self.delay_line_threshold,
+            self.compute_mode,
+            self.scheduling_strategy,
         )
         .map_err(|error| lower_fir_error_to_compiler(source, error))
     }
@@ -549,7 +611,14 @@ impl Compiler {
         source_name: &str,
         source: &str,
     ) -> Result<ParseOutput, CompilerError> {
-        let output = self.time_phase("parser", || parser::parse_program(source, source_name));
+        let output = self.time_phase("parser", || {
+            parser::parse_program_with_precision_and_metadata(
+                source,
+                source_name,
+                parser_float_size(self.real_type),
+                parser::CompilationMetadataStore::new(source_name),
+            )
+        });
         ensure_parse_success(source_name, output)
     }
 
@@ -569,7 +638,11 @@ impl Compiler {
         let import_search_paths = merge_import_search_paths(path, search_paths);
         let output = self
             .time_phase("parser", || {
-                parser::parse_file_with_imports(path, &import_search_paths)
+                parser::parse_file_with_imports_and_precision(
+                    path,
+                    &import_search_paths,
+                    parser_float_size(self.real_type),
+                )
             })
             .map_err(CompilerError::Import)?;
         ensure_parse_success(&path.display().to_string(), output)
@@ -634,25 +707,31 @@ impl Compiler {
             ensure_parse_success(
                 source_name,
                 self.time_phase("parser", || {
-                    parser::parse_program_with_metadata(source, source_name, metadata_store.clone())
+                    parser::parse_program_with_precision_and_metadata(
+                        source,
+                        source_name,
+                        parser_float_size(self.real_type),
+                        metadata_store.clone(),
+                    )
                 }),
             )?
         } else {
             ensure_parse_success(
                 source_name,
                 self.time_phase("parser", || {
-                    parser::parse_program_with_imports_and_metadata(
+                    parser::parse_program_with_imports_and_precision_and_metadata(
                         source,
                         source_name,
                         search_paths,
                         virtual_sources,
                         metadata_store.clone(),
+                        parser_float_size(self.real_type),
                     )
                 })
                 .map_err(CompilerError::Import)?,
             )?
         };
-        let eval_source_context = if search_paths.is_empty() && virtual_sources.is_empty() {
+        let mut eval_source_context = if search_paths.is_empty() && virtual_sources.is_empty() {
             eval::EvalSourceContext::memory_with_metadata(metadata_store)
         } else {
             eval::EvalSourceContext::memory_with_search_paths_metadata_and_virtual_sources(
@@ -660,6 +739,10 @@ impl Compiler {
                 virtual_sources.clone(),
                 metadata_store,
             )
+        };
+        eval_source_context.sample_precision = match self.real_type {
+            RealType::Float32 => eval::SamplePrecision::Float32,
+            RealType::Float64 => eval::SamplePrecision::Float64,
         };
         self.pipeline_to_signals(source_name, output, Some(eval_source_context))
     }
@@ -685,19 +768,24 @@ impl Compiler {
         let output = ensure_parse_success(
             &path.display().to_string(),
             self.time_phase("parser", || {
-                parser::parse_file_with_imports_and_metadata(
+                parser::parse_file_with_imports_and_precision_and_metadata(
                     path,
                     &import_search_paths,
                     metadata_store.clone(),
+                    parser_float_size(self.real_type),
                 )
             })
             .map_err(CompilerError::Import)?,
         )?;
-        let eval_source_context = eval::EvalSourceContext::for_file_with_metadata(
+        let mut eval_source_context = eval::EvalSourceContext::for_file_with_metadata(
             path,
             &import_search_paths,
             metadata_store,
         );
+        eval_source_context.sample_precision = match self.real_type {
+            RealType::Float32 => eval::SamplePrecision::Float32,
+            RealType::Float64 => eval::SamplePrecision::Float64,
+        };
         self.pipeline_to_signals(
             &path.display().to_string(),
             output,
@@ -1864,6 +1952,7 @@ impl Compiler {
             signals: propagated.signals,
             ui: propagated.ui,
             def_names: eval_stats.def_names,
+            clock_domains: propagated.clock_domains,
         })
     }
 }

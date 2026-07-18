@@ -1,0 +1,52 @@
+digraph signal_schedule {
+  rankdir=TB;
+  node [fontname="Arial"];
+  edge [fontname="Arial"];
+
+  subgraph cluster_constants {
+    label="Constant and Control Signals";
+    style=filled;
+    fillcolor=lightblue;
+    fontsize=14;
+  }
+
+  subgraph cluster_audio {
+    label="Audio Signals";
+    style=filled;
+    fillcolor=lightgreen;
+    fontsize=14;
+    node0 [label=<<font color="gray">0:</font> 1> shape=ellipse fillcolor=white style=filled];
+    node1 [label=<<font color="gray">1:</font> SigDelay(1, ...)> shape=ellipse fillcolor=white style=filled];
+    node2 [label=<<font color="gray">2:</font> SigDelay(1, ...)> shape=ellipse fillcolor=white style=filled];
+    node3 [label=<<font color="gray">3:</font> Input(0)> shape=ellipse fillcolor=yellow style=filled];
+    node4 [label=<<font color="gray">4:</font> 0.5> shape=ellipse fillcolor=white style=filled];
+    node5 [label=<<font color="gray">5:</font> 0.9> shape=ellipse fillcolor=white style=filled];
+    node6 [label=<<font color="gray">6:</font> *(0.5, ...)> shape=ellipse fillcolor=white style=filled];
+    node7 [label=<<font color="gray">7:</font> *(0.9, ...)> shape=ellipse fillcolor=white style=filled];
+    node8 [label=<<font color="gray">8:</font> sigClocked(sample,...)> shape=box fillcolor=orange style=filled];
+    node9 [label=<<font color="gray">9:</font> SigSum(...)> shape=ellipse fillcolor=white style=filled];
+    node10 [label=<<font color="gray">10:</font> SigSum(...)> shape=ellipse fillcolor=white style=filled];
+    node11 [label=<<font color="gray">11:</font> letrec WS1(0)> shape=ellipse fillcolor=white style=filled];
+    node12 [label=<<font color="gray">12:</font> letrec WS0(0)> shape=ellipse fillcolor=white style=filled];
+    node13 [label=<<font color="gray">13:</font> sigClocked(sample,...)> shape=box fillcolor=orange style=filled];
+    node14 [label=<<font color="gray">14:</font> sigClocked(sample,...)> shape=box fillcolor=orange style=filled];
+    node15 [label=<<font color="gray">15:</font> SigSum(...)> shape=ellipse fillcolor=white style=filled];
+  }
+
+  // Dependencies
+  node1 -> node13;
+  node2 -> node14;
+  node6 -> node1;
+  node7 -> node2;
+  node8 -> node3;
+  node9 -> node8;
+  node9 -> node6;
+  node10 -> node8;
+  node10 -> node7;
+  node11 -> node9;
+  node12 -> node10;
+  node13 -> node11;
+  node14 -> node12;
+  node15 -> node14;
+  node15 -> node13;
+}

@@ -31,5 +31,5 @@ $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
 ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir | ir/$(outdir)/.dir
-	$(RUNNER_CRANELIFT) $< -double -I dsp -n $(SCALARFRAMES) > $@ || (rm -f $@; false)
+	$(RUNNER_CRANELIFT) $< -double $(COMPILER_OPTS) -I dsp -n $(SCALARFRAMES) > $@ || (rm -f $@; false)
 	$(COMPARE) $@ reference/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)

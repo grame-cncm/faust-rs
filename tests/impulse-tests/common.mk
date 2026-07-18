@@ -44,6 +44,13 @@ SCALARFRAMES ?= 15000
 # filesCompare tolerance override (empty -> default 2e-06).
 precision ?=
 
+# Compatibility alias retained for the original vector-only targets.
+VECOPTS ?=
+# Extra faust-rs / runner options injected into every backend invocation.
+# P7 scheduling targets use this for scalar `-ss N` and vector
+# `-vec -lv N -ss M` combinations. Command-line VECOPTS still propagates.
+COMPILER_OPTS ?= $(VECOPTS)
+
 # --- performance benchmark --------------------------------------------------
 # `faustbench` invokes a `faust` binary found on PATH, so Make.bench creates
 # temporary PATH wrappers around FAUST_CPP and FAUST_RS.
@@ -51,9 +58,17 @@ FAUSTBENCH ?= faustbench -single
 BENCH_OPTIONS ?= -double
 BENCH_WARN_MIN ?= 5
 BENCH_CSV ?= build/bench/summary.csv
+VEC_BENCH_OPTIONS ?= $(BENCH_OPTIONS)
+VEC_BENCH_WARN_MIN ?= 5
+VEC_BENCH_CSV ?= build/bench/vector-scheduling.csv
+VEC_BENCH_SUMMARY_CSV ?= build/bench/vector-scheduling-summary.csv
+VEC_BENCH_AGGREGATE_CSV ?= build/bench/vector-scheduling-aggregate.csv
 COMPILE_BENCH_CSV ?= build/bench/compile-summary.csv
 
 dspfiles := $(wildcard dsp/*.dsp)
+VECTOR_CERTIFIED_LIST := ../vector-coverage/certified-dspfiles.txt
+vector_certified_repo_files := $(shell sed -n '/\.dsp$$/p' $(VECTOR_CERTIFIED_LIST) 2>/dev/null)
+vector_certified_dspfiles := $(patsubst tests/impulse-tests/%,%,$(vector_certified_repo_files))
 
 # Per-DSP tolerance overrides and known-failure lists.
 include known.mk

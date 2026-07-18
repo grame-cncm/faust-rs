@@ -176,6 +176,12 @@ pub(super) struct RecursionState {
     /// Maps `(group_id, body_index)` to the recursion array allocated for that
     /// output slot of a recursion group.
     pub(super) rec_array_by_group_index: HashMap<(u32, usize), RecArrayInfo>,
+    /// Resolves a symbolic recursion variable to its owning `SYMREC` group.
+    ///
+    /// C++ uses `Tree` identity and vector-name properties for this binding.
+    /// Rust records it explicitly so a scheduled `Proj(SYMREF)` can reserve or
+    /// read the owning carrier before `Proj(SYMREC)` emits the group update.
+    pub(super) group_by_var: HashMap<u32, SigId>,
     /// `group.as_u32()` values for groups that are `ReverseTimeRec` (LTI
     /// adjoint) wrappers.
     ///
@@ -200,6 +206,25 @@ pub(super) struct RecursionState {
 }
 
 impl RecursionState {
+    /// Registers one symbolic recursion binder before scheduled lowering.
+    pub(super) fn register_group(&mut self, var: SigId, group: SigId) -> Option<SigId> {
+        self.group_by_var.insert(var.as_u32(), group)
+    }
+
+    /// Resolves either a `SYMREC` group or a `SYMREF` variable to the owning
+    /// canonical group used as the carrier-map key.
+    pub(super) fn canonical_group(&self, arena: &TreeArena, group: SigId) -> Option<SigId> {
+        if match_sym_rec(arena, group).is_some() {
+            return Some(group);
+        }
+        if let SigMatch::ReverseTimeRec(body) = match_sig(arena, group)
+            && match_sym_rec(arena, body).is_some()
+        {
+            return Some(group);
+        }
+        match_sym_ref(arena, group).and_then(|var| self.group_by_var.get(&var.as_u32()).copied())
+    }
+
     /// Returns the already materialized carrier metadata for one recursion
     /// output slot, if that slot has been allocated.
     pub(super) fn carrier_info(&self, group: SigId, index: usize) -> Option<RecArrayInfo> {
@@ -244,6 +269,7 @@ impl RecursionState {
         group: SigId,
         index: usize,
     ) -> Option<RecursionCurrentValueBinding> {
+        let group = self.canonical_group(arena, group)?;
         let canonical_index = canonical_group_index(arena, group, index)?;
         self.current_value_by_group_index
             .get(&(group.as_u32(), canonical_index))
@@ -263,6 +289,7 @@ impl RecursionState {
         group: SigId,
         index: usize,
     ) -> Option<RecursionCarrierRef> {
+        let group = self.canonical_group(arena, group)?;
         let canonical_index = canonical_group_index(arena, group, index)?;
         self.carrier_info(group, canonical_index)
             .map(RecursionCarrierRef::new)
@@ -751,17 +778,24 @@ pub(super) fn resolve_active_recursion_carrier(
     let Some(var) = match_sym_ref(arena, group) else {
         return Ok(None);
     };
-    let depth = state
+    let Some(depth) = state
         .recursion_vars
         .iter()
         .rposition(|bound| *bound == var)
         .map(|slot| state.recursion_vars.len() - slot)
-        .ok_or_else(|| {
-            SignalFirError::new(
-                SignalFirErrorCode::UnsupportedSignalNode,
-                format!("unbound symbolic recursion variable {}", var.as_u32()),
-            )
-        })?;
+    else {
+        // Under global C++-style scheduling a recurrence descendant can be
+        // visited outside the old lexical body-lowering stack. A registered
+        // binder is therefore materialized through `group_by_var`; only a
+        // genuinely unknown symbolic reference is an error.
+        if state.group_by_var.contains_key(&var.as_u32()) {
+            return Ok(None);
+        }
+        return Err(SignalFirError::new(
+            SignalFirErrorCode::UnsupportedSignalNode,
+            format!("unbound symbolic recursion variable {}", var.as_u32()),
+        ));
+    };
     let group_arrays = &state.recursion_stack[state.recursion_stack.len() - depth];
     let canonical_index = if group_arrays.len() == 1 {
         0

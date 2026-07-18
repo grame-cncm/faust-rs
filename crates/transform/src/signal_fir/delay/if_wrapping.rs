@@ -73,7 +73,7 @@ pub(super) fn bump_if_wrapping_counter(
 }
 
 /// Emits the end-of-sample counter advance for one `IfWrapping` delay line.
-pub(super) fn emit_if_wrapping_advance(
+pub(crate) fn emit_if_wrapping_advance(
     store: &mut FirStore,
     counter_name: &str,
     size: usize,

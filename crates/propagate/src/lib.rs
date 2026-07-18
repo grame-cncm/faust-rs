@@ -121,10 +121,13 @@ use ui::{
     normalize_widget_label_path, split_label_metadata,
 };
 
+pub mod clock_domain;
 mod forward_ad;
 mod reverse_ad;
 pub mod stateful_rad;
 pub mod transpose_ad;
+
+pub use clock_domain::{ClockDomain, ClockDomainId, ClockDomainKind, ClockDomainTable};
 
 /// Memoization cache for [`box_arity_typed`] results, keyed by validated flat boxes.
 pub type ArityCache = AHashMap<FlatBoxId, Result<BoxArity, PropagateError>>;
@@ -187,6 +190,12 @@ pub struct PropagateOutput {
     /// backend-local UI reconstruction heuristic: signals carry only control
     /// references, while grouped layout and metadata are owned here.
     pub ui: UiProgram,
+    /// Clock-domain instances allocated by `ondemand` / `upsampling` /
+    /// `downsampling` wrappers during this propagation run (roadmap P0.2).
+    ///
+    /// Empty for programs without clocked wrappers. In-graph `SIGCLOCKENV`
+    /// tokens index into this table via [`ClockDomainId::from_u32`].
+    pub clock_domains: ClockDomainTable,
 }
 
 /// Canonical grouped-UI construction policy applied during propagation.

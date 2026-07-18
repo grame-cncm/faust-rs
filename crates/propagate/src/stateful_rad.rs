@@ -824,6 +824,9 @@ impl LinearityAnalyzer {
             // route it back into the LTI bridge.
             SigMatch::BlockReverseAD { .. } => ExprClass::nonlinear(),
             SigMatch::Unknown => ExprClass::time_varying(),
+            // Opaque clock-env token: never a signal operand; classify
+            // conservatively if it is ever reached through a malformed tree.
+            SigMatch::ClockEnvToken(_) => ExprClass::time_varying(),
         }
     }
 

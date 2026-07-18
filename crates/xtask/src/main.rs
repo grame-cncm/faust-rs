@@ -27,6 +27,7 @@
 //!   - parser parity report
 //!   - corpus status report
 //!   - backend diff reports
+//!   - P7 executable backend scheduling matrix report
 //!
 //! # Design invariants
 //! - Deterministic corpus file ordering.
@@ -79,6 +80,12 @@ Usage:
   cargo run -p xtask -- table-fastlane-diff-report
   cargo run -p xtask -- libfaust-api-matrix [--cpp-root /path/to/faust] [--out porting/generated]
   cargo run -p xtask -- libfaust-export-check
+  cargo run -p xtask -- p7-matrix-report [--artifact-root tests/impulse-tests/ir] [--out porting/generated/p7-executable-backend-matrix-2026-07-14-en.md]
+  cargo run -p xtask -- vector-coverage-merge --reports <dir> [--out tests/vector-coverage/corpus-baseline.json] [--certified-list tests/vector-coverage/certified-dspfiles.txt]
+  cargo run -p xtask -- vector-coverage-check [--baseline tests/vector-coverage/corpus-baseline.json]
+  cargo run -p xtask -- vector-interp-opt-check
+  cargo run --release -p xtask -- vector-compile-budget-check [--baseline tests/vector-compile-budget/release-baseline.json]
+  cargo run -p xtask -- lockstep-simd-check
 \nEnvironment for golden-gen-cpp:
   FAUST_CPP_BIN   Path to reference C++ faust binary
 \nEnvironment for golden-check:
@@ -164,6 +171,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "table-fastlane-diff-report" => table_fastlane_diff_report()?,
         "libfaust-api-matrix" => libfaust_api_matrix(args)?,
         "libfaust-export-check" => libfaust_export_check()?,
+        "p7-matrix-report" => p7_matrix_report(args)?,
+        "vector-coverage-merge" => vector_coverage_merge(args)?,
+        "vector-coverage-check" => vector_coverage_check(args)?,
+        "vector-interp-opt-check" => vector_interp_opt_check(args)?,
+        "vector-compile-budget-check" => vector_compile_budget_check(args)?,
+        "lockstep-simd-check" => lockstep_simd_check(args)?,
         _ => {
             print!("{USAGE}");
         }
@@ -178,9 +191,13 @@ mod fir_dump;
 mod golden;
 mod libfaust_api_matrix;
 mod libfaust_export_check;
+mod lockstep_simd;
+mod p7_matrix;
 mod reports;
 mod runtime_trace;
 mod shared;
+mod vector_compile_budget;
+mod vector_coverage;
 mod wasm;
 
 pub(crate) use backend_align::*;
@@ -189,9 +206,13 @@ pub(crate) use fir_dump::*;
 pub(crate) use golden::*;
 pub(crate) use libfaust_api_matrix::*;
 pub(crate) use libfaust_export_check::*;
+pub(crate) use lockstep_simd::*;
+pub(crate) use p7_matrix::*;
 pub(crate) use reports::*;
 pub(crate) use runtime_trace::*;
 pub(crate) use shared::*;
+pub(crate) use vector_compile_budget::*;
+pub(crate) use vector_coverage::*;
 pub(crate) use wasm::*;
 
 #[cfg(test)]

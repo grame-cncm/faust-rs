@@ -70,3 +70,31 @@ jobs:
       - name: Backend alignment smoke (PR only)
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest'
         run: cargo run -p xtask -- backend-align-smoke --skip-golden
+
+  vector_retention:
+    name: Checked vector retention (Ubuntu)
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Faust standard libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y faust
+
+      - name: Checked vector coverage retention
+        run: cargo run -p xtask -- vector-coverage-check
+
+      - name: Checked vector interpreter optimization parity
+        run: cargo run -p xtask -- vector-interp-opt-check
+
+      - name: Release vector compilation cost budget
+        run: cargo run --release -p xtask -- vector-compile-budget-check

@@ -1,0 +1,12 @@
+Hierarchical schedule of signals
+Constant and Control Signals:
+Audio Signals
+	%0 : Input(0)	// RSEVN interval(-1,1,-24)
+	%1 : 4	// NKCVN interval(4,4,0) max delay: 0
+
+	%2 : SigDelay(%3,%1)	// RSEVN interval(-1,1,-24) max delay: 0
+
+	%3 : sigClocked(sample,%0)	// RSEVN interval(-1,1,-24) max delay: 4
+	%4 : SigSum(%3,%2)	// RSEVN interval(-2,2,-24) max delay: 0
+
+Hierarchical schedule DOT graph written to: short_delay-phs.dot
