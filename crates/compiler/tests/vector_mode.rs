@@ -14,6 +14,27 @@ use compiler::{
     VectorFallbackReason, VectorPipelineStatus,
 };
 
+/// Explicit search paths for hermetic library resolution.
+///
+/// The default compiler search paths only find the Faust standard libraries on
+/// machines with a local Faust installation (e.g. `/usr/local/share/faust`).
+/// CI runners have none, so tests resolve imports against the vendored
+/// `tests/faust-libraries/` subset plus the input file's own directory.
+fn hermetic_search_paths(input: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(parent) = input.parent() {
+        paths.push(parent.to_path_buf());
+    }
+    paths.push(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("tests")
+            .join("faust-libraries"),
+    );
+    paths
+}
+
 // A read-only `rdtable` whose index is block-invariant (a UI slider rather than
 // an input sample). The invariant index splits the program into two loops, so
 // the generator and the read can be fissioned into opposite orders; a
@@ -95,8 +116,9 @@ fn run_channels_with_strategy(
     let fbc = Compiler::new()
         .with_compute_mode(mode)
         .with_scheduling_strategy(strategy)
-        .compile_file_default_to_interp_with_lane(
+        .compile_file_to_interp_with_lane(
             &path,
+            &hermetic_search_paths(&path),
             &InterpOptions::default(),
             SignalFirLane::TransformFastLane,
         )
@@ -181,7 +203,11 @@ fn scalar_mode_does_not_run_vector_certification() {
         let result = Compiler::new()
             .with_compute_mode(ComputeMode::Scalar)
             .with_scheduling_strategy(strategy)
-            .compile_file_default_to_fir_with_lane(&path, SignalFirLane::TransformFastLane);
+            .compile_file_to_fir_with_lane(
+                &path,
+                &hermetic_search_paths(&path),
+                SignalFirLane::TransformFastLane,
+            );
         let output =
             result.unwrap_or_else(|error| panic!("scalar FIR under {strategy:?}: {error}"));
         assert_eq!(
@@ -261,7 +287,11 @@ fn assert_vector_pipeline_certified(name: &str, source: &str, vec_size: u32) {
                     loop_variant,
                 })
                 .with_scheduling_strategy(strategy)
-                .compile_file_default_to_fir_with_lane(&path, SignalFirLane::TransformFastLane);
+                .compile_file_to_fir_with_lane(
+                    &path,
+                    &hermetic_search_paths(&path),
+                    SignalFirLane::TransformFastLane,
+                );
             let _ = std::fs::remove_file(&path);
             let output = result.unwrap_or_else(|error| {
                 panic!("{name} vector FIR (-lv {loop_variant}, {strategy:?}): {error}")
@@ -387,8 +417,9 @@ fn recursive_short_delay_cpp_has_one_fused_read_compute_write_loop() {
             loop_variant: 1,
         })
         .with_scheduling_strategy(SchedulingStrategy::ReverseBreadthFirst)
-        .compile_file_default_to_cpp_with_lane(
+        .compile_file_to_cpp_with_lane(
             &path,
+            &hermetic_search_paths(&path),
             &codegen::backends::cpp::CppOptions::default(),
             SignalFirLane::TransformFastLane,
         )
@@ -555,8 +586,9 @@ fn lockstep_corpus_cpp_has_expected_physical_sample_loops() {
                 vec_size: 24,
                 loop_variant: 1,
             })
-            .compile_file_default_to_cpp_with_lane(
+            .compile_file_to_cpp_with_lane(
                 &path,
+                &hermetic_search_paths(&path),
                 &codegen::backends::cpp::CppOptions::default(),
                 SignalFirLane::TransformFastLane,
             )
@@ -734,7 +766,11 @@ fn phase2_plan_accepts_multi_projection_recursion_and_table_value_transports() {
             for name in ["APF.dsp", "pow.dsp"] {
                 let path = corpus.join(name);
                 let output = compiler
-                    .compile_file_default_to_fir_with_lane(&path, SignalFirLane::TransformFastLane)
+                    .compile_file_to_fir_with_lane(
+                        &path,
+                        &hermetic_search_paths(&path),
+                        SignalFirLane::TransformFastLane,
+                    )
                     .unwrap_or_else(|error| panic!("{name} vector FIR: {error}"));
                 assert_ne!(
                     output.vector_pipeline_status,
@@ -763,7 +799,11 @@ fn phase3_state_plan_accepts_temporal_slow_values_and_special_state_cells() {
             for name in ["echo_bug.dsp", "norm3.dsp", "prefix.dsp", "waveform1.dsp"] {
                 let path = corpus.join(name);
                 let output = compiler
-                    .compile_file_default_to_fir_with_lane(&path, SignalFirLane::TransformFastLane)
+                    .compile_file_to_fir_with_lane(
+                        &path,
+                        &hermetic_search_paths(&path),
+                        SignalFirLane::TransformFastLane,
+                    )
                     .unwrap_or_else(|error| panic!("{name} vector FIR: {error}"));
                 assert_ne!(
                     output.vector_pipeline_status,

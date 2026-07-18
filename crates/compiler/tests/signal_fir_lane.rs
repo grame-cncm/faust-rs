@@ -28,6 +28,20 @@ fn impulse_dsp_path(file: &str) -> PathBuf {
         .join(file)
 }
 
+/// Vendored Faust standard-library subset for hermetic library-importing tests.
+///
+/// The impulse fixtures import legacy libraries (`music.lib`, `math.lib`, ...)
+/// that the default search paths only find on machines with a Faust install
+/// (e.g. `/usr/local/share/faust`). CI runners have none, so library-importing
+/// tests resolve against `tests/faust-libraries/` explicitly.
+fn vendored_faust_libraries() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("tests")
+        .join("faust-libraries")
+}
+
 /// Compiles one full-library impulse fixture on an explicit test stack.
 ///
 /// The library expansion is intentionally exercised here; the larger stack is
@@ -38,9 +52,17 @@ fn compile_impulse_cpp(file: &str) -> String {
         .name(format!("{file}-load-cse"))
         .stack_size(32 * 1024 * 1024)
         .spawn(move || {
+            let search_paths = vec![
+                impulse_dsp_path(&file)
+                    .parent()
+                    .expect("impulse DSP path has a parent directory")
+                    .to_path_buf(),
+                vendored_faust_libraries(),
+            ];
             Compiler::new()
-                .compile_file_default_to_cpp_with_lane(
+                .compile_file_to_cpp_with_lane(
                     &impulse_dsp_path(&file),
+                    &search_paths,
                     &codegen::backends::cpp::CppOptions::default(),
                     SignalFirLane::TransformFastLane,
                 )
