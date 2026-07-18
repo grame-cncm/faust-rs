@@ -491,7 +491,7 @@ fn emit_rust_api(
 
     let _ = writeln!(
         out,
-        "#[allow(non_snake_case, dead_code, unused_variables, unused_mut, unused_parens, clippy::all)]"
+        "#[allow(non_snake_case, dead_code, unused_variables, unused_mut, unused_parens, unused_assignments, clippy::all)]"
     );
     let _ = writeln!(out, "impl {class_name} {{");
 
@@ -798,7 +798,7 @@ fn emit_helper_function(
     };
     let _ = writeln!(
         out,
-        "#[allow(non_snake_case, dead_code, unused_variables, unused_mut, unused_parens, clippy::all)]"
+        "#[allow(non_snake_case, dead_code, unused_variables, unused_mut, unused_parens, unused_assignments, clippy::all)]"
     );
     if matches!(ret, FirType::Void) {
         let _ = writeln!(out, "fn {}({params}) {{", decl.name);
