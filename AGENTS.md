@@ -30,6 +30,12 @@ Guidelines for contributors and coding agents working on `faust-rs`.
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `cargo test --workspace --all-targets`
 - Avoid introducing `unsafe` unless strictly required and documented.
+- Tests must be self-contained: they must not depend on a locally installed
+  Faust (e.g. `/usr/local/share/faust`), and copies of the Faust standard
+  libraries must not be committed to the repository. When a test needs
+  library-style DSP behavior, write a compact test-local Faust definition
+  inline and compile it with the `compile_source_to_*` APIs (see
+  `crates/compiler/tests/signal_fir_lane.rs` for the pattern).
 
 ## 4. CI Expectations
 
@@ -61,6 +67,15 @@ Guidelines for contributors and coding agents working on `faust-rs`.
 - Public API migration is parity-driven, not blindly signature-driven:
   - internal Rust crate APIs may be adapted for idiomatic ownership/types/error handling,
   - external compatibility surfaces (CLI + C/C++ API tiers) target stable behavior and compatibility contracts.
+- When a backend also exists in C++ Faust, the **generated code must expose the
+  same public contract** as the C++ Faust output for that language, so existing
+  architectures and projects keep working unchanged. Example: the Rust backend
+  emits the host-supplied `F32`/`F64`/`FaustFloat` types, `ParamIndex`-based
+  parameter access, and the `FaustDsp` trait expected by
+  `faust2jackrust -source` / `faust2portaudiorust -source` projects (contract
+  documented in the `crates/codegen/src/backends/rust/mod.rs` module header).
+  Validate contract-affecting emitter changes by building generated output
+  inside such projects.
 - For each touched public API, document mapping status (`1:1`, `adapted`, or `deferred`) with rationale and compatibility impact in the relevant `porting/` phase document or `JOURNAL.md`.
 - For representation-level adaptations (`adapted`) versus C++ data layout:
   - keep semantically coupled data co-localized with the owning node/instruction by default (avoid index-based side tables unless explicitly justified),
@@ -161,6 +176,11 @@ From `porting/faust-rust-recursion-model-note-en.md`:
 
 ## 11. Commit and Documentation Hygiene
 
+- Keep the Git history **linear**: no merge commits. When a branch falls
+  behind `main`, update it with `git rebase` (never `git merge`), so it is
+  always possible to step back through history cleanly.
+- Pull requests must be submitted in rebase form: a linear series of commits
+  on top of the current `main`.
 - Make small, coherent commits.
 - Update `README.md` when user-facing build/run instructions change.
 - Update `JOURNAL.md` for notable architecture, CI, or process changes.
