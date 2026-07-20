@@ -483,7 +483,12 @@ impl<'a> SignalToFirLower<'a> {
         let init_name = format!("{name}Init");
         let init_decl = {
             let mut b = FirBuilder::new(&mut self.store);
-            b.declare_table(init_name.clone(), AccessType::Static, elem_ty.clone(), values)
+            b.declare_table(
+                init_name.clone(),
+                AccessType::Static,
+                elem_ty.clone(),
+                values,
+            )
         };
         self.sections.static_declarations.push(init_decl);
 

@@ -265,12 +265,7 @@ impl<'a> SignalToFirLower<'a> {
             &generated,
         );
         self.sections.struct_declarations.push(decl);
-        self.register_constant_table_init(
-            name.clone(),
-            AccessType::Struct,
-            elem_ty,
-            &generated,
-        );
+        self.register_constant_table_init(name.clone(), AccessType::Struct, elem_ty, &generated);
         self.ui.waveform_tables.insert(sig, name.clone());
         self.ui.waveform_table_len.insert(sig, size);
         self.ui.table_access_by_sig.insert(sig, AccessType::Struct);
