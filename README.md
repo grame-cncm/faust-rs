@@ -1,5 +1,9 @@
 # faust-rs
 
+> ⚠️ **Experimental — work in progress.** faust-rs is a research port of the
+> Faust compiler to Rust. It is not ready for production use, and its APIs and
+> behavior may change at any time.
+
 Rust workspace for the Faust compiler port.
 
 [![CI](https://github.com/sletz/faust-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sletz/faust-rs/actions/workflows/ci.yml)
