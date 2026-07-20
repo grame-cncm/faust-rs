@@ -108,6 +108,14 @@ fn write_canonical_kind(store: &FirStore, kind: &NodeKind, out: &mut String) {
     }
 }
 
+/// Visual indentation is capped at this depth. Otherwise a chain whose depth
+/// is linear in program size (`Cons` list spines, deep recursion) would emit
+/// `depth` indentation bytes on every line, making the whole dump Θ(depth²) in
+/// size — a 100k-deep tree builds a multi-gigabyte string. Nodes deeper than
+/// the cap reuse the capped indent and print their exact depth numerically, so
+/// the dump stays O(n) without losing depth information.
+const MAX_DUMP_INDENT: usize = 40;
+
 // Iterative for the same stack-depth reason as `fingerprint_node`.
 fn dump_node(
     store: &FirStore,
@@ -118,9 +126,13 @@ fn dump_node(
 ) {
     let mut stack = vec![(root, depth)];
     while let Some((id, depth)) = stack.pop() {
-        let indent = "  ".repeat(depth);
         let node = match_fir(store, id);
-        let _ = writeln!(out, "{indent}#{} {:?}", id.as_u32(), node);
+        let indent = "  ".repeat(depth.min(MAX_DUMP_INDENT));
+        if depth <= MAX_DUMP_INDENT {
+            let _ = writeln!(out, "{indent}#{} {:?}", id.as_u32(), node);
+        } else {
+            let _ = writeln!(out, "{indent}[depth {depth}] #{} {:?}", id.as_u32(), node);
+        }
         if !seen.insert(id) {
             continue;
         }
