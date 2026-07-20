@@ -33,6 +33,12 @@ jobs:
     name: Lint and test (${{ matrix.os }})
     needs: check
     runs-on: ${{ matrix.os }}
+    env:
+      # The vector-mode regression corpus imports `stdfaust.lib`; the compiler
+      # resolves it from FAUST_LIB_PATH first. Point it at the pinned Faust
+      # standard-library checkout added below. Unlike `apt-get install faust`,
+      # a git checkout works on all three runner OSes.
+      FAUST_LIB_PATH: ${{ github.workspace }}/faustlibraries
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +54,13 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      - name: Check out the Faust standard libraries
+        uses: actions/checkout@v4
+        with:
+          repository: grame-cncm/faustlibraries
+          ref: ecf2fdc238148c44c18352102333a1229ca7a8d3
+          path: faustlibraries
 
       - name: Check formatting
         run: cargo fmt --all -- --check
