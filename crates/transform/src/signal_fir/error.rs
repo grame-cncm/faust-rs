@@ -38,6 +38,11 @@ pub enum SignalFirErrorCode {
     /// `-os`: neither the `control` nor the `frame` entry point supplies a
     /// block count (C++ `generateFVar` rejects `fFullCount` the same way).
     ForeignCountInExecutionMode,
+    /// The program contains a block-sensitive operation (`BlockReverseAD` or
+    /// `ReverseTimeRec`) whose semantics are defined relative to the block
+    /// boundary, so it has no one-sample meaning under `-os` (execution
+    /// options port, decision D2).
+    BlockSensitiveOneSample,
 }
 
 impl SignalFirErrorCode {
@@ -54,6 +59,7 @@ impl SignalFirErrorCode {
             Self::ClockedNotLowered => "FRS-SFIR-0007",
             Self::ClockAnalysis => "FRS-SFIR-0008",
             Self::ForeignCountInExecutionMode => "FRS-SFIR-0009",
+            Self::BlockSensitiveOneSample => "FRS-SFIR-0010",
         }
     }
 }

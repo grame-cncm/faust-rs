@@ -70,6 +70,7 @@ mod delay;
 mod error;
 mod loop_graph;
 mod module;
+mod one_sample;
 mod placement;
 mod planner;
 pub mod pv_slice;
@@ -600,6 +601,19 @@ fn compile_fastlane_inner(
             )
         })
     })?;
+
+    // Execution-options port D2: `-os` has no meaning for block-sensitive
+    // reverse-AD carriers (block-scoped tape/carry state, reverse-order
+    // block traversal). Reject with a typed diagnostic instead of inventing
+    // a persistent one-sample semantics (plan §3.5).
+    if options.processing_api.is_one_sample()
+        && one_sample::contains_block_sensitive_operation(prepared.arena(), prepared.outputs())
+    {
+        return Err(SignalFirError::new(
+            SignalFirErrorCode::BlockSensitiveOneSample,
+            "'-os' is not supported for programs containing block reverse-mode              AD (BlockReverseAD/ReverseTimeRec): their semantics require the              block boundary",
+        ));
+    }
 
     // P3: build the hierarchical dependency graph, orient conflicting effects
     // independently of strategy, and schedule every prepared scalar forest.

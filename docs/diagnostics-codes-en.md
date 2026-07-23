@@ -193,6 +193,7 @@ below).
 | `FRS-SFIR-0007` | `transform` | Clocked node (`ondemand`/`upsampling`/`downsampling`) reached signal→FIR lowering before the clock-domain back half is ported. | `crates/compiler/src/json_naming.rs:57` |
 | `FRS-SFIR-0008` | `transform` | Clock-environment inference / hierarchical-graph validation failed. | `crates/compiler/src/json_naming.rs:58` |
 | `FRS-SFIR-0009` | `transform` | Foreign runtime variable `count` accessed under `-ec`/`-os` (no block count exists in `control`/`frame`). | `crates/compiler/src/json_naming.rs:59` |
+| `FRS-SFIR-0010` | `transform` | Block-sensitive reverse-AD operation (`BlockReverseAD`/`ReverseTimeRec`) under `-os`: block-boundary semantics have no one-sample meaning (D2). | `crates/compiler/src/json_naming.rs:62` |
 
 ## The no-bundle fallback (`code: null`)
 

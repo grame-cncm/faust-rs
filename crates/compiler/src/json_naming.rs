@@ -59,6 +59,9 @@ pub(crate) fn signal_fir_diagnostic(error: &SignalFirError) -> Diagnostic {
         SignalFirErrorCode::ForeignCountInExecutionMode => {
             errors::codes::SFIR_FOREIGN_COUNT_IN_EXECUTION_MODE
         }
+        SignalFirErrorCode::BlockSensitiveOneSample => {
+            errors::codes::SFIR_BLOCK_SENSITIVE_ONE_SAMPLE
+        }
     };
     // `error.to_string()` renders as "[<the SFIR code>] <message>", and the
     // `Diagnostic` already carries the code, so using Display here printed it
