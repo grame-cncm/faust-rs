@@ -1471,6 +1471,7 @@ fn rust_case_status_inner(compiler: &compiler::Compiler, input: &Path) -> CaseSt
                 compiler::CompilerError::Propagate { .. } => ("propagate", err.to_string()),
                 compiler::CompilerError::Type { .. } => ("type", err.to_string()),
                 compiler::CompilerError::Transform { .. } => ("transform", err.to_string()),
+                compiler::CompilerError::ExecutionOptions { .. } => ("options", err.to_string()),
                 compiler::CompilerError::FirVerify { .. } => ("fir", err.to_string()),
                 compiler::CompilerError::Codegen { .. } => ("codegen", err.to_string()),
                 compiler::CompilerError::CodegenC { .. } => ("codegen", err.to_string()),

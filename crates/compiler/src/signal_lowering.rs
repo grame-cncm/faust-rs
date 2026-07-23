@@ -15,6 +15,8 @@
 
 use super::*;
 
+use crate::execution::{ExecutionOptionsError, validate_execution_options};
+
 // ─── Signal-to-FIR lower errors ───────────────────────────────────────────────
 
 /// Generic lower-to-backend error for backends that follow the
@@ -24,6 +26,9 @@ use super::*;
 /// Specialised as [`LowerToCppError`] and [`LowerToCError`].
 #[derive(Debug)]
 pub(crate) enum LowerError<E> {
+    /// Execution-option request rejected by the capability model before
+    /// any parsing or lowering work.
+    ExecutionOptions(ExecutionOptionsError),
     /// Fast-lane signal-to-FIR lowering failed.
     Transform(SignalFirError),
     /// Optional FIR verification rejected the lowered module.
@@ -45,6 +50,8 @@ pub(crate) type LowerToAscError = LowerError<AscCodegenError>;
 
 #[derive(Debug)]
 pub(crate) enum LowerToInterpError {
+    /// Execution-option request rejected by the capability model.
+    ExecutionOptions(ExecutionOptionsError),
     /// Fast-lane signal-to-FIR lowering failed.
     Transform(SignalFirError),
     /// Optional FIR verification rejected the lowered module.
@@ -57,6 +64,8 @@ pub(crate) enum LowerToInterpError {
 
 #[derive(Debug)]
 pub(crate) enum LowerToFirError {
+    /// Execution-option request rejected by the capability model.
+    ExecutionOptions(ExecutionOptionsError),
     /// Fast-lane signal-to-FIR lowering failed.
     Transform(SignalFirError),
     /// Optional FIR verification rejected the lowered module.
@@ -130,6 +139,13 @@ pub(crate) fn lower_signals_to_cpp(
     options: &CppOptions,
     ctx: SignalLoweringContext,
 ) -> Result<String, LowerToCppError> {
+    validate_execution_options(
+        "cpp",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )
+    .map_err(LowerError::ExecutionOptions)?;
     let _ = ctx.lane;
     lower_signals_to_cpp_transform_fastlane(source_name, output, options, &ctx)
 }
@@ -141,6 +157,13 @@ pub(crate) fn lower_signals_to_c(
     options: &COptions,
     ctx: SignalLoweringContext,
 ) -> Result<String, LowerToCError> {
+    validate_execution_options(
+        "c",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )
+    .map_err(LowerError::ExecutionOptions)?;
     let _ = ctx.lane;
     lower_signals_to_c_transform_fastlane(source_name, output, options, &ctx)
 }
@@ -152,6 +175,13 @@ pub(crate) fn lower_signals_to_julia(
     options: &JuliaOptions,
     ctx: SignalLoweringContext,
 ) -> Result<String, LowerToJuliaError> {
+    validate_execution_options(
+        "julia",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )
+    .map_err(LowerError::ExecutionOptions)?;
     let _ = ctx.lane;
     lower_signals_to_julia_transform_fastlane(source_name, output, options, &ctx)
 }
@@ -163,6 +193,13 @@ pub(crate) fn lower_signals_to_asc(
     options: &AscOptions,
     ctx: SignalLoweringContext,
 ) -> Result<String, LowerToAscError> {
+    validate_execution_options(
+        "asc",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )
+    .map_err(LowerError::ExecutionOptions)?;
     let _ = ctx.lane;
     lower_signals_to_asc_transform_fastlane(source_name, output, options, &ctx)
 }
@@ -174,6 +211,13 @@ pub(crate) fn lower_signals_to_rust(
     options: &RustOptions,
     ctx: SignalLoweringContext,
 ) -> Result<String, LowerToRustError> {
+    validate_execution_options(
+        "rust",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )
+    .map_err(LowerError::ExecutionOptions)?;
     let _ = ctx.lane;
     lower_signals_to_rust_transform_fastlane(source_name, output, options, &ctx)
 }
@@ -185,6 +229,13 @@ pub(crate) fn lower_signals_to_interp(
     options: &InterpOptions,
     ctx: SignalLoweringContext,
 ) -> Result<String, LowerToInterpError> {
+    validate_execution_options(
+        "interp",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )
+    .map_err(LowerToInterpError::ExecutionOptions)?;
     let _ = ctx.lane;
     lower_signals_to_interp_transform_fastlane(source_name, output, options, &ctx)
 }
@@ -274,6 +325,8 @@ pub(crate) fn lower_signals_to_fir(
     control_rate_mode: ControlRateMode,
     processing_api: ProcessingApi,
 ) -> Result<FirCompileOutput, LowerToFirError> {
+    validate_execution_options("fir", control_rate_mode, processing_api, compute_mode)
+        .map_err(LowerToFirError::ExecutionOptions)?;
     let module_name = sanitize_cpp_ident(source_name_to_class(source_name).as_str());
     let lowered = lower_signals_to_fir_transform_fastlane(
         output,

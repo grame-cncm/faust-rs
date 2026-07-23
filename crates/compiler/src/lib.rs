@@ -38,6 +38,8 @@ mod json_naming;
 mod paths;
 mod signal_lowering;
 
+pub mod execution;
+
 use box_preview::*;
 use diagnostics::*;
 use error_mapping::*;
@@ -2216,6 +2218,13 @@ pub enum CompilerError {
         error: Box<str>,
         diagnostics: DiagnosticBundle,
     },
+    /// Execution-option request (`-ec`/`-os`) rejected by the backend
+    /// capability model before any parsing or lowering work.
+    ExecutionOptions {
+        source: Box<str>,
+        error: crate::execution::ExecutionOptionsError,
+        diagnostics: DiagnosticBundle,
+    },
     /// Transform stage failed while lowering signals to FIR.
     Transform {
         source: Box<str>,
@@ -2287,6 +2296,9 @@ impl std::fmt::Display for CompilerError {
                 "parse failed for {source}: errors={parse_errors}, recoveries={recoveries}, diagnostics={}",
                 diagnostics.len()
             ),
+            Self::ExecutionOptions { source, error, .. } => {
+                write!(f, "execution options rejected for {source}: {error}")
+            }
             Self::Eval { source, error, .. } => {
                 write!(f, "evaluation failed for {source}: {error}")
             }
@@ -2431,6 +2443,7 @@ impl CompilerError {
             Self::Propagate { diagnostics, .. } => Some(diagnostics),
             Self::Type { diagnostics, .. } => Some(diagnostics),
             Self::Transform { diagnostics, .. } => Some(diagnostics),
+            Self::ExecutionOptions { diagnostics, .. } => Some(diagnostics),
             Self::FirVerify { diagnostics, .. } => Some(diagnostics),
             Self::Import(_, diagnostics) => Some(diagnostics),
             Self::Codegen { diagnostics, .. } => Some(diagnostics),
