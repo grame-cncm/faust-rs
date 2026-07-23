@@ -73,6 +73,8 @@ pub const SFIR_CLOCKED_NOT_LOWERED: DiagnosticCode = DiagnosticCode("FRS-SFIR-00
 pub const SFIR_CLOCK_ANALYSIS: DiagnosticCode = DiagnosticCode("FRS-SFIR-0008");
 /// The foreign runtime variable `count` was accessed under `-ec` or `-os`.
 pub const SFIR_FOREIGN_COUNT_IN_EXECUTION_MODE: DiagnosticCode = DiagnosticCode("FRS-SFIR-0009");
+/// Block-sensitive reverse-AD operation under `-os` (no one-sample meaning).
+pub const SFIR_BLOCK_SENSITIVE_ONE_SAMPLE: DiagnosticCode = DiagnosticCode("FRS-SFIR-0010");
 
 /// FIR verifier error diagnostic (details in notes: `fir_code=...`).
 pub const FIR_VERIFY_ERROR: DiagnosticCode = DiagnosticCode("FRS-FIR-0001");
@@ -150,6 +152,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         SFIR_CLOCKED_NOT_LOWERED,
         SFIR_CLOCK_ANALYSIS,
         SFIR_FOREIGN_COUNT_IN_EXECUTION_MODE,
+        SFIR_BLOCK_SENSITIVE_ONE_SAMPLE,
         FIR_VERIFY_ERROR,
         FIR_VERIFY_WARNING,
         COMP_TYPE_FAILED,
