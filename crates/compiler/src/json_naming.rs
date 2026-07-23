@@ -56,6 +56,9 @@ pub(crate) fn signal_fir_diagnostic(error: &SignalFirError) -> Diagnostic {
         SignalFirErrorCode::InputIndexOutOfRange => errors::codes::SFIR_INPUT_INDEX_OUT_OF_RANGE,
         SignalFirErrorCode::ClockedNotLowered => errors::codes::SFIR_CLOCKED_NOT_LOWERED,
         SignalFirErrorCode::ClockAnalysis => errors::codes::SFIR_CLOCK_ANALYSIS,
+        SignalFirErrorCode::ForeignCountInExecutionMode => {
+            errors::codes::SFIR_FOREIGN_COUNT_IN_EXECUTION_MODE
+        }
     };
     // `error.to_string()` renders as "[<the SFIR code>] <message>", and the
     // `Diagnostic` already carries the code, so using Display here printed it

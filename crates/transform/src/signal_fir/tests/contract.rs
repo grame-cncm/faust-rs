@@ -363,6 +363,36 @@ fn delay_prefix_select_and_cast_nodes_are_supported() {
         .expect("Step 2B.2 should support delay/prefix/select/casts slice");
 }
 #[test]
+fn foreign_var_count_is_rejected_under_execution_options() {
+    // C++ `generateFVar` rejects `fFullCount` when gOneSample || gExtControl:
+    // neither `control` nor `frame` supplies a block count (execution-options
+    // port plan §3.5).
+    use crate::signal_fir::{ControlRateMode, ProcessingApi};
+
+    for (control, api) in [
+        (ControlRateMode::External, ProcessingApi::Block),
+        (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
+        (ControlRateMode::External, ProcessingApi::OneSample),
+    ] {
+        let mut arena = TreeArena::new();
+        let sig0 = {
+            let ty = arena.int(0);
+            let name = arena.symbol("count");
+            let file = arena.symbol("<math.h>");
+            SigBuilder::new(&mut arena).fvar(ty, name, file)
+        };
+        let options = SignalFirOptions {
+            control_rate_mode: control,
+            processing_api: api,
+            ..SignalFirOptions::default()
+        };
+        let err = compile_fastlane_without_ui(&arena, &[sig0], 0, 1, &options)
+            .expect_err("foreign `count` must be rejected under -ec/-os");
+        assert_eq!(err.code().as_str(), "FRS-SFIR-0009", "{control:?} {api:?}");
+    }
+}
+
+#[test]
 fn foreign_var_count_lowers_to_compute_funarg() {
     let mut arena = TreeArena::new();
     let sig0 = {
