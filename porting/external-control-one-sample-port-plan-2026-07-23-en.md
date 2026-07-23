@@ -387,7 +387,7 @@ extensions.
 | Interp/FBC | no | no | no | Reject initially; versioned runtime/API work needed |
 | Cranelift JIT | no | no | no | Reject until multi-entry lifecycle ABI is complete |
 | WebAssembly/WAST | no | no | no | Reject; current WebAudio/block ABI has no contract |
-| AssemblyScript | no | no | no | Reject; current host contract is block-oriented |
+| AssemblyScript | no | no | no | Reject in the initial port; planned one-sample follow-up (§5.7) |
 | Julia | no | no | no | Reject; current `compute!` contract is block-oriented |
 
 `*` The pinned C++ CLI accepts `-os -lang fir` but rejects
@@ -465,6 +465,39 @@ Both current generated-source contracts and their integration tests are
 block-oriented. C++ Faust does not accept these flag/backend pairs. Reject them
 with a capability diagnostic rather than emitting functions unused by the
 host.
+
+For Julia this is the end state until a concrete host contract exists.
+
+For AssemblyScript the rejection is an initial-port sequencing decision, not
+an end state. A one-sample AssemblyScript target is a planned follow-up once
+C, C++, and Rust land, for these reasons:
+
+- A concrete downstream host already consumes one-sample AssemblyScript
+  today: the wasm-music `MidiVoice` engine (`noteon`/`noteoff`/`nextframe`
+  per voice, per-sample mixing across voices). It currently obtains the
+  control/sample split by post-processing the block `-lang asc` output
+  (stripping the `count` loop and separating `fSlow`/`iSlow` control code
+  from the per-sample body) — exactly the fragile late text transformation
+  §4.6 rules out. A native target removes that layer.
+- The useful shape for such hosts is the combined `-ec -os` mode: `-os`
+  without `-ec` recomputes control values every frame (§2.4), which
+  per-sample voice engines cannot afford. Plans for the AssemblyScript
+  target should treat `-ec -os` as the primary supported combination.
+- The block `compute` contract must remain the default; the one-sample
+  target is additive (a second execution shape under the §4.2 capability
+  model, `explicit` for one-sample and external control), not a
+  replacement.
+
+Unlike C/C++/Rust, C++ Faust has no `-os` AssemblyScript reference, so this
+is a new public contract decision (an `adapted` extension in the API-mapping
+vocabulary), not a parity port: the `frame`/`control` AssemblyScript
+signatures and their host-integration story must be designed and approved
+explicitly. The §4.2 capability descriptor and the Phase 2 FIR execution
+contract already provide everything such a backend must consume; no
+additional FIR work is expected beyond what C/C++/Rust require.
+
+Until that follow-up is approved and implemented, both flags stay rejected
+for AssemblyScript with the same capability diagnostic as Julia.
 
 ### 5.8 Future/scaffolded backends
 
