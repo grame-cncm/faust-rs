@@ -1352,3 +1352,61 @@ fn code_registry_matches_frozen_table() {
          in the registry but undocumented: {extra_in_registry:?})."
     );
 }
+
+#[test]
+fn cli_parse_accepts_execution_option_flags_and_spellings() {
+    // Long forms and both C++ `-ec` spellings (plan §2.1).
+    for argv in [
+        ["faust-rs", "--ec", "foo.dsp"],
+        ["faust-rs", "--external-control", "foo.dsp"],
+        ["faust-rs", "--ext-control", "foo.dsp"],
+    ] {
+        let cli = CliArgs::parse_from(argv);
+        assert!(cli.external_control, "{argv:?}");
+        assert!(!cli.one_sample, "{argv:?}");
+    }
+    for argv in [
+        ["faust-rs", "--os", "foo.dsp"],
+        ["faust-rs", "--one-sample", "foo.dsp"],
+    ] {
+        let cli = CliArgs::parse_from(argv);
+        assert!(cli.one_sample, "{argv:?}");
+        assert!(!cli.external_control, "{argv:?}");
+    }
+    let cli = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
+    assert!(!cli.external_control);
+    assert!(!cli.one_sample);
+}
+
+#[test]
+fn normalize_legacy_args_maps_single_dash_execution_options() {
+    let args = ["faust-rs", "-ec", "-os", "foo.dsp"]
+        .into_iter()
+        .map(str::to_owned);
+    let normalized = normalize_legacy_args(args);
+    assert_eq!(normalized, ["faust-rs", "--ec", "--os", "foo.dsp"]);
+}
+
+#[test]
+fn selected_execution_options_map_cli_flags() {
+    use compiler::{ControlRateMode, ProcessingApi};
+
+    let cli = CliArgs::parse_from(["faust-rs", "--ec", "--os", "foo.dsp"]);
+    assert_eq!(
+        super::runner::selected_control_rate_mode(&cli),
+        ControlRateMode::External
+    );
+    assert_eq!(
+        super::runner::selected_processing_api(&cli),
+        ProcessingApi::OneSample
+    );
+    let cli = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
+    assert_eq!(
+        super::runner::selected_control_rate_mode(&cli),
+        ControlRateMode::InlinePerBlock
+    );
+    assert_eq!(
+        super::runner::selected_processing_api(&cli),
+        ProcessingApi::Block
+    );
+}
