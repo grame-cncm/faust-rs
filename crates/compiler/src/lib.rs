@@ -90,7 +90,8 @@ use sigtype::TypeAnnotator;
 use tlib::NodeKind;
 pub use transform::schedule::SchedulingStrategy;
 pub use transform::signal_fir::{
-    ComputeMode, RealType, VectorEffectiveMode, VectorFallbackReason, VectorPipelineStatus,
+    ComputeMode, ControlRateMode, ProcessingApi, RealType, VectorEffectiveMode,
+    VectorFallbackReason, VectorPipelineStatus,
 };
 use transform::signal_fir::{SignalFirError, SignalFirErrorCode, SignalFirOptions};
 use ui::UiProgram;
@@ -398,6 +399,14 @@ pub struct Compiler {
     /// Independent of [`ComputeMode`]; defaults to
     /// [`SchedulingStrategy::DepthFirst`] in scalar and vector modes alike.
     scheduling_strategy: SchedulingStrategy,
+    /// Control-rate evaluation scheduling (`-ec` / `--external-control`).
+    /// Execution-options port plan phase 1: stored and threaded through to
+    /// [`SignalFirOptions`]; the default reproduces the classic contract.
+    control_rate_mode: ControlRateMode,
+    /// Public processing-API shape (`-os` / `--one-sample`). Execution-options
+    /// port plan phase 1: stored and threaded through to
+    /// [`SignalFirOptions`]; the default reproduces the classic contract.
+    processing_api: ProcessingApi,
     /// Optional cooperative cancellation flag.
     ///
     /// When set, the evaluator checks this flag on every recursive call and
@@ -453,6 +462,8 @@ impl Compiler {
             delay_line_threshold: u32::MAX,
             compute_mode: ComputeMode::Scalar,
             scheduling_strategy: SchedulingStrategy::DepthFirst,
+            control_rate_mode: ControlRateMode::InlinePerBlock,
+            processing_api: ProcessingApi::Block,
             cancel: None,
             timing_sink: None,
         }
@@ -515,6 +526,28 @@ impl Compiler {
         self
     }
 
+    /// Selects the control-rate evaluation scheduling (`-ec`).
+    ///
+    /// [`ControlRateMode::External`] moves block-rate control work into a
+    /// separate `control` entry point that the host schedules explicitly.
+    /// Subject to per-backend capability validation at compile time.
+    #[must_use]
+    pub fn with_control_rate_mode(mut self, mode: ControlRateMode) -> Self {
+        self.control_rate_mode = mode;
+        self
+    }
+
+    /// Selects the public processing-API shape (`-os`).
+    ///
+    /// [`ProcessingApi::OneSample`] requests the flat-array `frame` entry
+    /// point with an empty canonical `compute`. Rejected in vector mode and
+    /// subject to per-backend capability validation at compile time.
+    #[must_use]
+    pub fn with_processing_api(mut self, api: ProcessingApi) -> Self {
+        self.processing_api = api;
+        self
+    }
+
     /// Selects the signal/loop dependency scheduling strategy (`-ss` /
     /// `--scheduling-strategy`).
     ///
@@ -574,6 +607,8 @@ impl Compiler {
             delay_line_threshold: self.delay_line_threshold,
             compute_mode: self.compute_mode,
             scheduling_strategy: self.scheduling_strategy,
+            control_rate_mode: self.control_rate_mode,
+            processing_api: self.processing_api,
             timing_sink: self.timing_sink.clone(),
         }
     }
@@ -597,6 +632,8 @@ impl Compiler {
             self.delay_line_threshold,
             self.compute_mode,
             self.scheduling_strategy,
+            self.control_rate_mode,
+            self.processing_api,
         )
         .map_err(|error| lower_fir_error_to_compiler(source, error))
     }
