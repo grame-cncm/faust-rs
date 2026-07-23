@@ -28,8 +28,8 @@ use codegen::backends::rust::{RustOptions, RustRealType, generate_rust_module};
 use codegen::backends::wasm::{WasmOptions, generate_wasm_module};
 use codegen::fixtures::backend_test_fixtures;
 use compiler::{
-    Compiler, CompilerError, ComputeMode, FaustInstallPaths, FirVerifyOptions, RealType,
-    SchedulingStrategy, compile_options_json_string,
+    Compiler, CompilerError, ComputeMode, ControlRateMode, FaustInstallPaths, FirVerifyOptions,
+    ProcessingApi, RealType, SchedulingStrategy, compile_options_json_string,
     enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
     golden_snapshot_from_file,
 };
@@ -370,6 +370,24 @@ pub fn selected_rust_real_type(cli: &CliArgs) -> RustRealType {
     }
 }
 
+/// Maps `-ec` to a [`ControlRateMode`].
+pub fn selected_control_rate_mode(cli: &CliArgs) -> ControlRateMode {
+    if cli.external_control {
+        ControlRateMode::External
+    } else {
+        ControlRateMode::InlinePerBlock
+    }
+}
+
+/// Maps `-os` to a [`ProcessingApi`].
+pub fn selected_processing_api(cli: &CliArgs) -> ProcessingApi {
+    if cli.one_sample {
+        ProcessingApi::OneSample
+    } else {
+        ProcessingApi::Block
+    }
+}
+
 /// Builds one configured [`Compiler`] instance from parsed CLI arguments.
 pub fn compiler_from_cli(
     cli: &CliArgs,
@@ -382,7 +400,9 @@ pub fn compiler_from_cli(
         .with_mcd(cli.mcd)
         .with_dlt(cli.dlt)
         .with_compute_mode(selected_compute_mode(cli))
-        .with_scheduling_strategy(selected_scheduling_strategy(cli));
+        .with_scheduling_strategy(selected_scheduling_strategy(cli))
+        .with_control_rate_mode(selected_control_rate_mode(cli))
+        .with_processing_api(selected_processing_api(cli));
     if let Some(flag) = cancel {
         compiler = compiler.with_cancel(flag);
     }
@@ -661,6 +681,30 @@ pub fn run_main() {
         }
         emit_output(&render_fir_fixture_list(), cli.output.as_ref());
         return;
+    }
+
+    // Execution-option validation happens before any parsing or lowering
+    // (plan §4.2): when `-lang` names the backend, consult the capability
+    // table now; backend paths selected without `-lang` are enforced by the
+    // same validation at the lowering dispatch.
+    if cli.external_control || cli.one_sample {
+        if let Some(lang) = cli.lang {
+            if let Err(error) = compiler::execution::validate_execution_options(
+                cli_lang_name(lang),
+                selected_control_rate_mode(&cli),
+                selected_processing_api(&cli),
+                selected_compute_mode(&cli),
+            ) {
+                eprintln!("ERROR : {error}");
+                std::process::exit(1);
+            }
+        } else if cli.one_sample && cli.vec {
+            eprintln!(
+                "ERROR : {}",
+                compiler::execution::ExecutionOptionsError::OneSampleWithVectorMode
+            );
+            std::process::exit(1);
+        }
     }
 
     let backend_mode_count = [

@@ -262,6 +262,24 @@ pub struct CliArgs {
     /// silently falling back to `0`.
     #[arg(long = "scheduling-strategy", default_value_t = 0)]
     pub scheduling_strategy: u32,
+    /// External control (`-ec` / `--external-control`, as Faust C++; the
+    /// legacy `--ext-control` spelling is also accepted): emit control-rate
+    /// computations in a separate `control` entry point scheduled by the
+    /// host instead of inline at the start of each block. Subject to
+    /// per-backend capability validation.
+    #[arg(
+        long = "ec",
+        alias = "external-control",
+        alias = "ext-control",
+        action = ArgAction::SetTrue
+    )]
+    pub external_control: bool,
+    /// One-sample processing (`-os` / `--one-sample`, as Faust C++): emit a
+    /// one-sample `frame(inputs, outputs)` entry point over flat channel
+    /// arrays; the canonical block `compute` is kept but emitted empty.
+    /// Scalar mode only; subject to per-backend capability validation.
+    #[arg(long = "os", alias = "one-sample", action = ArgAction::SetTrue)]
+    pub one_sample: bool,
     /// Display compilation phases timing information (`-time`).
     #[arg(long = "compilation-time", action = ArgAction::SetTrue)]
     pub compilation_time: bool,
@@ -400,6 +418,14 @@ pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<Stri
             if let Some(value) = it.next() {
                 normalized.push(value);
             }
+            continue;
+        }
+        if arg == "-ec" {
+            normalized.push("--ec".to_owned());
+            continue;
+        }
+        if arg == "-os" {
+            normalized.push("--os".to_owned());
             continue;
         }
         if arg == "-time" {
