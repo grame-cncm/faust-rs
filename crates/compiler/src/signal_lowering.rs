@@ -110,6 +110,12 @@ pub(crate) struct SignalLoweringContext {
     /// only, threaded through to [`SignalFirOptions`] without activating
     /// scheduling.
     pub(crate) scheduling_strategy: SchedulingStrategy,
+    /// Control-rate evaluation scheduling (`-ec`). Execution-options port
+    /// plan phase 1: plumbing only; defaults reproduce the classic contract.
+    pub(crate) control_rate_mode: ControlRateMode,
+    /// Public processing-API shape (`-os`). Execution-options port plan
+    /// phase 1: plumbing only; defaults reproduce the classic contract.
+    pub(crate) processing_api: ProcessingApi,
     /// Optional per-phase timing callback; `None` disables timing.
     pub(crate) timing_sink: Option<TimingSink>,
 }
@@ -204,6 +210,8 @@ pub(crate) fn lower_signals_to_interp_transform_fastlane(
             ctx.delay_line_threshold,
             ctx.compute_mode,
             ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
             timing_sink,
         )
     })
@@ -263,6 +271,8 @@ pub(crate) fn lower_signals_to_fir(
     delay_line_threshold: u32,
     compute_mode: ComputeMode,
     scheduling_strategy: SchedulingStrategy,
+    control_rate_mode: ControlRateMode,
+    processing_api: ProcessingApi,
 ) -> Result<FirCompileOutput, LowerToFirError> {
     let module_name = sanitize_cpp_ident(source_name_to_class(source_name).as_str());
     let lowered = lower_signals_to_fir_transform_fastlane(
@@ -273,6 +283,8 @@ pub(crate) fn lower_signals_to_fir(
         delay_line_threshold,
         compute_mode,
         scheduling_strategy,
+        control_rate_mode,
+        processing_api,
     )
     .map_err(LowerToFirError::Transform)?;
     maybe_verify_fir_module(&lowered, fir_verify).map_err(LowerToFirError::Verify)?;
@@ -287,6 +299,7 @@ pub(crate) fn resolve_module_name(class_name: Option<&str>, _source_name: &str) 
 }
 
 /// Transform fast-lane FIR lowering used by native backends and FIR dumps.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn lower_signals_to_fir_transform_fastlane(
     output: &SignalCompileOutput,
     module_name: String,
@@ -295,6 +308,8 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane(
     delay_line_threshold: u32,
     compute_mode: ComputeMode,
     scheduling_strategy: SchedulingStrategy,
+    control_rate_mode: ControlRateMode,
+    processing_api: ProcessingApi,
 ) -> Result<FirCompileOutput, SignalFirError> {
     lower_signals_to_fir_transform_fastlane_with_timing(
         output,
@@ -304,6 +319,8 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane(
         delay_line_threshold,
         compute_mode,
         scheduling_strategy,
+        control_rate_mode,
+        processing_api,
         None,
     )
 }
@@ -321,6 +338,8 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane_with_timing(
     delay_line_threshold: u32,
     compute_mode: ComputeMode,
     scheduling_strategy: SchedulingStrategy,
+    control_rate_mode: ControlRateMode,
+    processing_api: ProcessingApi,
     timing_sink: Option<&TimingSink>,
 ) -> Result<FirCompileOutput, SignalFirError> {
     let signal_fir_options = SignalFirOptions {
@@ -330,6 +349,8 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane_with_timing(
         delay_line_threshold,
         compute_mode,
         scheduling_strategy,
+        control_rate_mode,
+        processing_api,
     };
     let lowered = transform::signal_fir::compile_signals_to_fir_fastlane_clocked_with_timing(
         &output.parse.state.arena,
@@ -372,6 +393,8 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
             ctx.delay_line_threshold,
             ctx.compute_mode,
             ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
             timing_sink,
         )
     })
@@ -404,6 +427,8 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
             ctx.delay_line_threshold,
             ctx.compute_mode,
             ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
             timing_sink,
         )
     })
@@ -436,6 +461,8 @@ pub(crate) fn lower_signals_to_julia_transform_fastlane(
             ctx.delay_line_threshold,
             ctx.compute_mode,
             ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
             timing_sink,
         )
     })
@@ -476,6 +503,8 @@ pub(crate) fn lower_signals_to_rust_transform_fastlane(
             ctx.delay_line_threshold,
             ctx.compute_mode,
             ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
             timing_sink,
         )
     })
@@ -516,6 +545,8 @@ pub(crate) fn lower_signals_to_asc_transform_fastlane(
             ctx.delay_line_threshold,
             ctx.compute_mode,
             ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
             timing_sink,
         )
     })

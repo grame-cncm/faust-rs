@@ -173,6 +173,63 @@ impl ComputeMode {
     }
 }
 
+/// Control-rate evaluation scheduling (`-ec` / `--external-control`), as an
+/// execution dimension orthogonal to [`ComputeMode`] and [`ProcessingApi`].
+///
+/// Mirrors C++ Faust `gExtControl`: with [`ControlRateMode::External`],
+/// block-rate control computations move out of the block/frame entry point
+/// into a separate public `control` entry point that the host schedules
+/// explicitly. Their results are promoted from stack locals to DSP-owned
+/// storage so sample-rate code can load them across the function boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ControlRateMode {
+    /// Control-rate work runs inline at the start of each block (or of each
+    /// frame in one-sample mode). This is the classic Faust contract and the
+    /// default.
+    #[default]
+    InlinePerBlock,
+    /// Control-rate work is emitted in a separate `control` entry point.
+    /// Neither initialization, `compute`, nor `frame` invokes it implicitly;
+    /// previously stored control values stay unchanged until the host calls
+    /// `control`.
+    External,
+}
+
+impl ControlRateMode {
+    /// Whether control-rate evaluation is externally scheduled (`-ec`).
+    #[must_use]
+    pub fn is_external(self) -> bool {
+        matches!(self, Self::External)
+    }
+}
+
+/// Public processing-API shape (`-os` / `--one-sample`), as an execution
+/// dimension orthogonal to [`ComputeMode`] and [`ControlRateMode`].
+///
+/// Mirrors C++ Faust `gOneSample`: with [`ProcessingApi::OneSample`], the
+/// module exposes a `frame(inputs, outputs)` entry point over flat channel
+/// arrays — no block count, no sample loop — and the canonical block
+/// `compute` is emitted empty (it never delegates to `frame`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProcessingApi {
+    /// Block processing through the canonical
+    /// `compute(count, inputs, outputs)` entry point. The default.
+    #[default]
+    Block,
+    /// One-sample processing through `frame(inputs, outputs)`; the canonical
+    /// `compute` is kept but emitted empty. Rejected in vector mode, matching
+    /// the C++ contract.
+    OneSample,
+}
+
+impl ProcessingApi {
+    /// Whether the one-sample `frame` API is requested (`-os`).
+    #[must_use]
+    pub fn is_one_sample(self) -> bool {
+        matches!(self, Self::OneSample)
+    }
+}
+
 /// Stable reason why a requested vector compile used scalar lowering instead
 /// of the independently checked signal-level pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -301,6 +358,14 @@ pub struct SignalFirOptions {
     /// scalar lowering applies it to hierarchical signal regions and the
     /// checked vector path applies it to every induced loop epoch.
     pub scheduling_strategy: SchedulingStrategy,
+    /// Control-rate evaluation scheduling (`-ec`), orthogonal to
+    /// [`ComputeMode`] and [`ProcessingApi`]. Default: inline per block,
+    /// which reproduces the classic contract byte-for-byte.
+    pub control_rate_mode: ControlRateMode,
+    /// Public processing-API shape (`-os`), orthogonal to [`ComputeMode`]
+    /// and [`ControlRateMode`]. Default: block `compute`, which reproduces
+    /// the classic contract byte-for-byte.
+    pub processing_api: ProcessingApi,
 }
 
 /// Optional observer for internal signal-to-FIR compilation stages.
@@ -319,6 +384,8 @@ impl Default for SignalFirOptions {
             delay_line_threshold: u32::MAX,
             compute_mode: ComputeMode::Scalar,
             scheduling_strategy: SchedulingStrategy::DepthFirst,
+            control_rate_mode: ControlRateMode::InlinePerBlock,
+            processing_api: ProcessingApi::Block,
         }
     }
 }
