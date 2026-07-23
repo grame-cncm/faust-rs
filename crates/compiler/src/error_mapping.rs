@@ -18,8 +18,28 @@ use super::*;
 ///
 /// This keeps the backend-specific lower pipeline internal while exposing one
 /// stable facade error surface to callers.
+/// Maps a capability-model rejection into the facade error surface with a
+/// stable `FRS-EXEC-*` diagnostic bundle.
+pub(crate) fn execution_error_to_compiler(
+    source: &str,
+    backend: &str,
+    error: crate::execution::ExecutionOptionsError,
+) -> CompilerError {
+    CompilerError::ExecutionOptions {
+        source: source.into(),
+        diagnostics: CompilerError::codegen_diagnostics(
+            source,
+            backend,
+            error.code(),
+            &error.to_string(),
+        ),
+        error,
+    }
+}
+
 pub(crate) fn lower_cpp_error_to_compiler(source: &str, error: LowerToCppError) -> CompilerError {
     match error {
+        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "cpp", error),
         LowerError::Transform(error) => transform_error_to_compiler(source, error),
         LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
         LowerError::Codegen(error) => CompilerError::Codegen {
@@ -41,6 +61,7 @@ pub(crate) fn lower_cpp_error_to_compiler(source: &str, error: LowerToCppError) 
 /// variant so callers never need to depend on the internal lower-pipeline types.
 pub(crate) fn lower_c_error_to_compiler(source: &str, error: LowerToCError) -> CompilerError {
     match error {
+        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "c", error),
         LowerError::Transform(error) => transform_error_to_compiler(source, error),
         LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
         LowerError::Codegen(error) => CompilerError::CodegenC {
@@ -62,6 +83,7 @@ pub(crate) fn lower_julia_error_to_compiler(
     error: LowerToJuliaError,
 ) -> CompilerError {
     match error {
+        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "julia", error),
         LowerError::Transform(error) => transform_error_to_compiler(source, error),
         LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
         LowerError::Codegen(error) => CompilerError::CodegenJulia {
@@ -80,6 +102,7 @@ pub(crate) fn lower_julia_error_to_compiler(
 /// Maps a `LowerToAscError` into a `CompilerError`, attaching the source name.
 pub(crate) fn lower_asc_error_to_compiler(source: &str, error: LowerToAscError) -> CompilerError {
     match error {
+        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "asc", error),
         LowerError::Transform(error) => transform_error_to_compiler(source, error),
         LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
         LowerError::Codegen(error) => CompilerError::CodegenAsc {
@@ -98,6 +121,7 @@ pub(crate) fn lower_asc_error_to_compiler(source: &str, error: LowerToAscError) 
 /// Maps a `LowerToRustError` into a `CompilerError`, attaching the source name.
 pub(crate) fn lower_rust_error_to_compiler(source: &str, error: LowerToRustError) -> CompilerError {
     match error {
+        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "rust", error),
         LowerError::Transform(error) => transform_error_to_compiler(source, error),
         LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
         LowerError::Codegen(error) => CompilerError::CodegenRust {
@@ -123,6 +147,9 @@ pub(crate) fn lower_interp_error_to_compiler(
     error: LowerToInterpError,
 ) -> CompilerError {
     match error {
+        LowerToInterpError::ExecutionOptions(error) => {
+            execution_error_to_compiler(source, "interp", error)
+        }
         LowerToInterpError::Transform(error) => transform_error_to_compiler(source, error),
         LowerToInterpError::Verify(report) => fir_verify_error_to_compiler(source, report),
         LowerToInterpError::Codegen(error) => CompilerError::CodegenInterp {
@@ -154,6 +181,9 @@ pub(crate) fn lower_interp_error_to_compiler(
 /// Maps a `LowerToFirError` into a `CompilerError`, attaching the source name.
 pub(crate) fn lower_fir_error_to_compiler(source: &str, error: LowerToFirError) -> CompilerError {
     match error {
+        LowerToFirError::ExecutionOptions(error) => {
+            execution_error_to_compiler(source, "fir", error)
+        }
         LowerToFirError::Transform(error) => transform_error_to_compiler(source, error),
         LowerToFirError::Verify(report) => fir_verify_error_to_compiler(source, report),
     }
