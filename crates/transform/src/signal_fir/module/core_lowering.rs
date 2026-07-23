@@ -477,6 +477,12 @@ impl<'a> SignalToFirLower<'a> {
         let mut b = FirBuilder::new(&mut self.store);
 
         if name == "count" {
+            if self.control_rate_mode.is_external() || self.processing_api.is_one_sample() {
+                return Err(SignalFirError::new(
+                    SignalFirErrorCode::ForeignCountInExecutionMode,
+                    "accessing foreign variable 'count' is not allowed in this compilation mode",
+                ));
+            }
             return Ok(b.load_var(name, AccessType::FunArgs, typ));
         }
 

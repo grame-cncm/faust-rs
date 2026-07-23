@@ -192,6 +192,7 @@ below).
 | `FRS-SFIR-0006` | `transform` | Input index out of range in signal→FIR lowering. | `crates/compiler/src/json_naming.rs:56` |
 | `FRS-SFIR-0007` | `transform` | Clocked node (`ondemand`/`upsampling`/`downsampling`) reached signal→FIR lowering before the clock-domain back half is ported. | `crates/compiler/src/json_naming.rs:57` |
 | `FRS-SFIR-0008` | `transform` | Clock-environment inference / hierarchical-graph validation failed. | `crates/compiler/src/json_naming.rs:58` |
+| `FRS-SFIR-0009` | `transform` | Foreign runtime variable `count` accessed under `-ec`/`-os` (no block count exists in `control`/`frame`). | `crates/compiler/src/json_naming.rs:59` |
 
 ## The no-bundle fallback (`code: null`)
 

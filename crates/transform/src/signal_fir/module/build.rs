@@ -44,6 +44,7 @@ use crate::signal_fir::module::dump_sig_readable;
 use crate::signal_fir::module::fixed_ad_internal_signals;
 use crate::signal_fir::placement::analyze_signal_sharing;
 use crate::signal_fir::planner::SignalFirPlan;
+use crate::signal_fir::{ControlRateMode, ProcessingApi};
 use crate::signal_prepare::SimpleSigType;
 
 /// RAD reverse-time scheduling state, populated post-construction in `build_module`.
@@ -434,6 +435,8 @@ pub(crate) fn build_module<'a>(
     max_copy_delay: u32,
     delay_line_threshold: u32,
     compute_mode: ComputeMode,
+    control_rate_mode: ControlRateMode,
+    processing_api: ProcessingApi,
     clocked: Option<clocked::ClockedPlan<'a>>,
     scalar_schedule: Option<&crate::hgraph::Hsched>,
 ) -> Result<SignalFirOutput, SignalFirError> {
@@ -454,6 +457,8 @@ pub(crate) fn build_module<'a>(
         placement,
         delay_opts,
     );
+    lower.control_rate_mode = control_rate_mode;
+    lower.processing_api = processing_api;
     lower.clocked = clocked.map(clocked::ClockedState::new);
     lower.scalar_schedule = scalar_schedule.cloned();
     lower.fixed_ad_internal_signals = fixed_ad_internal_signals(lower.arena, signals);

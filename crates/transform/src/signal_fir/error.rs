@@ -34,6 +34,10 @@ pub enum SignalFirErrorCode {
     /// on a clocked program (ill-clocked graph: incomparable domains,
     /// annotation violations, instantaneous cycles inside a domain, …).
     ClockAnalysis,
+    /// The foreign runtime variable `count` was accessed under `-ec` or
+    /// `-os`: neither the `control` nor the `frame` entry point supplies a
+    /// block count (C++ `generateFVar` rejects `fFullCount` the same way).
+    ForeignCountInExecutionMode,
 }
 
 impl SignalFirErrorCode {
@@ -49,6 +53,7 @@ impl SignalFirErrorCode {
             Self::InputIndexOutOfRange => "FRS-SFIR-0006",
             Self::ClockedNotLowered => "FRS-SFIR-0007",
             Self::ClockAnalysis => "FRS-SFIR-0008",
+            Self::ForeignCountInExecutionMode => "FRS-SFIR-0009",
         }
     }
 }

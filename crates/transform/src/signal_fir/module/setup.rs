@@ -44,6 +44,7 @@ use crate::signal_fir::module::rad_binary_contributions;
 use crate::signal_fir::module::rad_unary_contribution;
 use crate::signal_fir::placement::Bucket;
 use crate::signal_fir::recursion::RecursionState;
+use crate::signal_fir::{ControlRateMode, ProcessingApi};
 use crate::signal_prepare::SimpleSigType;
 
 /// Monotonic counters for all generated variable names.
@@ -125,6 +126,8 @@ impl<'a> SignalToFirLower<'a> {
             clocked: None,
             suppress_clocked_redirect: false,
             domain_counters: DomainCounters::default(),
+            control_rate_mode: ControlRateMode::InlinePerBlock,
+            processing_api: ProcessingApi::Block,
             state_name_by_node: HashMap::new(),
             recursion: RecursionState::default(),
             scheduled_state_updates: HashSet::new(),
