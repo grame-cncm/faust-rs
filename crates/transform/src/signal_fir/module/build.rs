@@ -17,6 +17,7 @@ use ahash::AHashMap;
 
 use super::region;
 use super::setup;
+use super::state;
 use crate::signal_fir::ComputeMode;
 use crate::signal_fir::FirId;
 use crate::signal_fir::FirStore;
@@ -483,18 +484,15 @@ pub(crate) fn build_module<'a>(
 
     {
         let mut b = FirBuilder::new(&mut lower.store);
-        lower
-            .sections
-            .control_statements
-            .push(b.label("signal_fir_fastlane_step2a: executable base slice"));
-        lower.sections.control_statements.push(b.label(format!(
+        let label = b.label("signal_fir_fastlane_step2a: executable base slice");
+        lower.sections.push_compute_preamble(label);
+        let label = b.label(format!(
             "io: inputs={} outputs={}",
             plan.num_inputs, plan.num_outputs
-        )));
-        lower
-            .sections
-            .control_statements
-            .push(b.label(format!("signals: {}", plan.signal_count)));
+        ));
+        lower.sections.push_compute_preamble(label);
+        let label = b.label(format!("signals: {}", plan.signal_count));
+        lower.sections.push_compute_preamble(label);
     }
 
     let has_forward_outputs = reverse_time_outputs.iter().any(|is_reverse| !*is_reverse);
@@ -582,12 +580,13 @@ pub(crate) fn build_module<'a>(
         let chan = b.int32(i32::try_from(index).expect("validated output index fits i32"));
         let ptr_ty = FirType::Ptr(Box::new(FirType::FaustFloat));
         let load_chan_ptr = b.load_table("outputs", AccessType::FunArgs, chan, ptr_ty.clone());
-        lower.sections.control_statements.push(b.declare_var(
+        let decl = b.declare_var(
             format!("output{index}"),
             ptr_ty,
             AccessType::Stack,
             Some(load_chan_ptr),
-        ));
+        );
+        lower.sections.push_compute_preamble(decl);
     }
     if has_reverse_outputs {
         lower.emit_reverse_time_rec_compute_resets();
@@ -621,14 +620,40 @@ pub(crate) fn build_module<'a>(
             lower.name_gen.iconst_counter,
         );
 
+        // CSE operates on the flat statement list; re-derive the ownership
+        // tags afterwards. Statements that survive keep their tag; newly
+        // inserted declarations are shared fSlow/iSlow values, which are
+        // control-rate by construction, hence externalizable.
+        let prior_ownership: HashMap<FirId, state::ControlOwnership> = lower
+            .sections
+            .control_statements
+            .iter()
+            .map(|entry| (entry.statement, entry.ownership))
+            .collect();
+        let mut flat: Vec<FirId> = lower
+            .sections
+            .control_statements
+            .iter()
+            .map(|entry| entry.statement)
+            .collect();
         cse::materialize_shared_values(
             &mut lower.store,
-            &mut lower.sections.control_statements,
+            &mut flat,
             "fSlow",
             lower.name_gen.fslow_counter,
             "iSlow",
             lower.name_gen.islow_counter,
         );
+        lower.sections.control_statements = flat
+            .into_iter()
+            .map(|statement| state::ControlStatement {
+                ownership: prior_ownership
+                    .get(&statement)
+                    .copied()
+                    .unwrap_or(state::ControlOwnership::Externalizable),
+                statement,
+            })
+            .collect();
 
         for (_, sample_loop_statements) in &mut sample_loops {
             cse::materialize_shared_values(
@@ -803,7 +828,13 @@ pub(crate) fn build_module<'a>(
             .expect("scalar sample loop graph has no dependency edges, so no cycle");
 
         let mut all = Vec::new();
-        all.extend(lower.sections.control_statements.iter().copied());
+        all.extend(
+            lower
+                .sections
+                .control_statements
+                .iter()
+                .map(|entry| entry.statement),
+        );
         for id in order {
             let node = graph.node(id);
             let is_reverse = node.is_reverse;

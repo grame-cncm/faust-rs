@@ -32,6 +32,27 @@ use crate::signal_fir::recursion::RecursionCurrentValueBinding;
 use crate::signal_fir::recursion::RecursionDelayRef;
 use crate::signal_fir::recursion::match_recursion_delay_key;
 
+/// Execution ownership of one `compute`-preamble statement (plan §4.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ControlOwnership {
+    /// Control-rate computation or effect: moves to the `control` entry
+    /// point (with DSP-state promotion) under external control.
+    Externalizable,
+    /// Block-compute plumbing — channel-pointer aliases, diagnostic labels,
+    /// per-compute resets (including BRA carry state). Stays in the block
+    /// entry point in every execution mode.
+    ComputePreamble,
+}
+
+/// One tagged `compute`-preamble statement.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ControlStatement {
+    /// Which entry point owns this statement under external control.
+    pub(super) ownership: ControlOwnership,
+    /// The FIR statement.
+    pub(super) statement: FirId,
+}
+
 /// The FIR statement buckets for each Faust lifecycle section.
 #[derive(Default)]
 pub(super) struct ModuleSections {
@@ -50,14 +71,43 @@ pub(super) struct ModuleSections {
     pub(super) reset_statements: Vec<FirId>,
     /// `instanceClear` body: delay-line and recursion-state zero-init loops.
     pub(super) clear_statements: Vec<FirId>,
-    /// `compute` preamble: channel-pointer aliases and diagnostic labels.
-    pub(super) control_statements: Vec<FirId>,
+    /// `compute`-preamble statements, each tagged with its execution
+    /// ownership (execution-options port plan §4.3).
+    ///
+    /// One interleaved list, not two: slow-value declarations, I/O aliases,
+    /// and per-compute resets are pushed in lowering-encounter order, and
+    /// classic block emission must reproduce that exact order. The tag is
+    /// what later phases use to split the section by semantics —
+    /// externalizable control-rate work versus block plumbing that must
+    /// never leave `compute` (`-ec` would otherwise move I/O aliases or
+    /// per-compute resets into `control`).
+    pub(super) control_statements: Vec<ControlStatement>,
     /// Dedup guard for named struct-var declarations (prevents double-emit).
     pub(super) named_struct_vars: HashSet<String>,
     /// Dedup guard for `instanceResetUserInterface` assignments.
     pub(super) reset_init_seen: HashSet<String>,
     /// Dedup guard for `instanceClear` assignments and loops.
     pub(super) clear_init_seen: HashSet<String>,
+}
+
+impl ModuleSections {
+    /// Pushes one externalizable control-rate statement (slow values,
+    /// control-rate effects): owned by `control` under external control.
+    pub(super) fn push_externalizable_control(&mut self, statement: FirId) {
+        self.control_statements.push(ControlStatement {
+            ownership: ControlOwnership::Externalizable,
+            statement,
+        });
+    }
+
+    /// Pushes one block-plumbing statement (I/O aliases, diagnostic labels,
+    /// per-compute resets): never leaves the block entry point.
+    pub(super) fn push_compute_preamble(&mut self, statement: FirId) {
+        self.control_statements.push(ControlStatement {
+            ownership: ControlOwnership::ComputePreamble,
+            statement,
+        });
+    }
 }
 
 impl<'a> SignalToFirLower<'a> {

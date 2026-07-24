@@ -439,12 +439,8 @@ impl<'a> SignalToFirLower<'a> {
             }
             Bucket::Control => {
                 let mut b = FirBuilder::new(&mut self.store);
-                self.sections.control_statements.push(b.declare_var(
-                    &name,
-                    typ.clone(),
-                    AccessType::Stack,
-                    Some(value),
-                ));
+                let decl = b.declare_var(&name, typ.clone(), AccessType::Stack, Some(value));
+                self.sections.push_externalizable_control(decl);
             }
         }
 

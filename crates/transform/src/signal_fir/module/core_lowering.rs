@@ -634,12 +634,13 @@ impl<'a> SignalToFirLower<'a> {
             let chan = b.int32(i32::try_from(index).expect("validated input index fits i32"));
             let ptr_ty = FirType::Ptr(Box::new(FirType::FaustFloat));
             let load_chan_ptr = b.load_table("inputs", AccessType::FunArgs, chan, ptr_ty.clone());
-            self.sections.control_statements.push(b.declare_var(
+            let decl = b.declare_var(
                 alias.clone(),
                 ptr_ty,
                 AccessType::Stack,
                 Some(load_chan_ptr),
-            ));
+            );
+            self.sections.push_compute_preamble(decl);
             self.input_ptr_aliases.insert(index, alias.clone());
             alias
         };
