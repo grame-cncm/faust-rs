@@ -9,6 +9,7 @@
 use codegen::backends::c::COptions;
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::julia::JuliaOptions;
+use codegen::backends::rust::RustOptions;
 use compiler::{Compiler, ComputeMode, ControlRateMode, ProcessingApi};
 
 const SLIDER_GAIN: &str = r#"process = _ * hslider("gain",0.5,0,1,0.01);"#;
@@ -96,6 +97,51 @@ fn c_shapes_match_the_reference_contract() {
         after[brace + 1..close].trim().is_empty(),
         "one-sample compute must be empty"
     );
+}
+
+fn compile_rust(control: ControlRateMode, api: ProcessingApi) -> String {
+    let compiler = Compiler::new()
+        .with_control_rate_mode(control)
+        .with_processing_api(api);
+    compiler
+        .compile_source_to_rust(
+            "exec_options_test.dsp",
+            SLIDER_GAIN,
+            &RustOptions::default(),
+        )
+        .expect("rust compilation must succeed")
+}
+
+#[test]
+fn rust_shapes_match_the_d3_contract() {
+    // D3: public inherent methods; the FaustDsp trait stays unchanged.
+    let ec = compile_rust(ControlRateMode::External, ProcessingApi::Block);
+    assert!(ec.contains("pub fn control(&mut self)"));
+    assert!(!ec.contains("pub fn frame("));
+    assert!(ec.contains("impl FaustDsp for mydsp"));
+
+    let ecos = compile_rust(ControlRateMode::External, ProcessingApi::OneSample);
+    assert!(ecos.contains("pub fn control(&mut self)"));
+    assert!(
+        ecos.contains("pub fn frame(&mut self, inputs: &[FaustFloat], outputs: &mut [FaustFloat])")
+    );
+    // Canonical compute kept, empty, parameters underscored.
+    let compute_pos = ecos
+        .find("pub fn compute(&mut self, _count: usize")
+        .expect("empty canonical compute retained with underscored params");
+    let after = &ecos[compute_pos..];
+    let brace = after.find('{').expect("compute body");
+    let close = after.find('}').expect("compute close");
+    assert!(
+        after[brace + 1..close].trim().is_empty(),
+        "one-sample compute must be empty"
+    );
+    // The host-facing trait surface is untouched (D3): the trait impl still
+    // declares the canonical block compute and no frame/control.
+    let trait_impl = &ecos[ecos.find("impl FaustDsp for mydsp").expect("trait impl")..];
+    assert!(trait_impl.contains("fn compute(&mut self, count: i32"));
+    assert!(!trait_impl.contains("fn frame"));
+    assert!(!trait_impl.contains("fn control"));
 }
 
 #[test]

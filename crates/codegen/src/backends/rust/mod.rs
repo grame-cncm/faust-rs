@@ -700,6 +700,13 @@ fn emit_rust_api(
         .map_or_else(UiStats::default, |body| collect_ui_stats(store, body));
     emit_parameter_accessors(out, &ui_stats.params, &ui_stats.soundfile_vars);
 
+    // Execution entry points precede the canonical compute (§2.3).
+    if let Some(f) = declared_functions.iter().find(|f| f.name == "control") {
+        emit_named_method(store, out, options, state_types, f)?;
+    }
+    if let Some(f) = declared_functions.iter().find(|f| f.name == "frame") {
+        emit_named_method(store, out, options, state_types, f)?;
+    }
     if let Some(f) = declared_functions.iter().find(|f| f.name == "compute") {
         emit_named_method(store, out, options, state_types, f)?;
     } else {
@@ -724,6 +731,8 @@ fn emit_rust_api(
                 | "instanceClear"
                 | "buildUserInterface"
                 | "compute"
+                | "control"
+                | "frame"
         ) {
             continue;
         }
@@ -944,11 +953,34 @@ fn emit_named_method(
             "pub fn compute(&mut self, count: usize, inputs: &[impl AsRef<[FaustFloat]>], outputs: &mut [impl AsMut<[FaustFloat]>])"
                 .to_owned()
         }
+        // Execution-options port §5.2 / D3: public inherent methods; the
+        // host-facing FaustDsp trait stays unchanged. `frame` takes flat
+        // channel slices — the `adapted` counterpart of the reference's
+        // `&[&FaustFloat]` shape, consistent with this backend's existing
+        // AsRef/AsMut block-compute adaptation.
+        "control" => "pub fn control(&mut self)".to_owned(),
+        "frame" => {
+            "pub fn frame(&mut self, inputs: &[FaustFloat], outputs: &mut [FaustFloat])".to_owned()
+        }
         other => format!("pub fn {other}(&mut self)"),
     };
     let body = decl
         .body
         .expect("emit_named_method called with prototype-only DeclareFunView");
+    let empty_compute = decl.name == "compute"
+        && matches!(match_fir(store, body), FirMatch::Block(ref stmts) if stmts.is_empty());
+    if empty_compute {
+        // One-sample mode (§2.3): the canonical block compute is kept but
+        // emitted empty and never delegates to `frame`. Underscore the
+        // parameters so the generated source compiles warning-free.
+        let _ = writeln!(
+            out,
+            "    pub fn compute(&mut self, _count: usize, _inputs: &[impl AsRef<[FaustFloat]>], _outputs: &mut [impl AsMut<[FaustFloat]>]) {{"
+        );
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out);
+        return Ok(());
+    }
     if decl.name == "compute" {
         // Vector transport temporaries retain explicit neutral initializers so
         // every legal FIR control-flow path has a value. In common vector
