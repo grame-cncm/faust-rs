@@ -266,9 +266,16 @@ pub fn validate_execution_options(
     if wants_os && compute_mode.is_vector() {
         return Err(ExecutionOptionsError::OneSampleWithVectorMode);
     }
-    // Accepted by the table, but the lowering phases have not landed yet:
-    // fail with a stable diagnostic instead of silently emitting the classic
-    // block output. Removed per backend as phases 2-4 land.
+    // Accepted by the table, but the lowering phases have not landed yet
+    // for every backend: fail with a stable diagnostic instead of silently
+    // emitting the classic block output. Entries are removed from this list
+    // as phases 3-4 land per backend. The FIR text backend is already
+    // complete: it dumps the verified module, which represents all four
+    // execution shapes since phase 2.
+    const LOWERING_LANDED: &[&str] = &["fir"];
+    if LOWERING_LANDED.contains(&backend) {
+        return Ok(());
+    }
     let options = match (wants_ec, wants_os) {
         (true, true) => "-ec -os",
         (true, false) => "-ec",
@@ -378,8 +385,22 @@ mod tests {
     }
 
     #[test]
+    fn fir_backend_accepts_all_execution_shapes() {
+        for (control, api) in [
+            (ControlRateMode::External, ProcessingApi::Block),
+            (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
+            (ControlRateMode::External, ProcessingApi::OneSample),
+        ] {
+            assert_eq!(
+                validate_execution_options("fir", control, api, ComputeMode::Scalar),
+                Ok(())
+            );
+        }
+    }
+
+    #[test]
     fn accepted_combinations_hit_the_implementation_gate_for_now() {
-        for backend in ["c", "cpp", "rust", "fir"] {
+        for backend in ["c", "cpp", "rust"] {
             for (control, api, options) in [
                 (ControlRateMode::External, ProcessingApi::Block, "-ec"),
                 (
