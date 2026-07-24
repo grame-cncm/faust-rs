@@ -384,16 +384,21 @@ impl<'a> SignalToFirLower<'a> {
             if needs_output_cast {
                 value = b.cast(FirType::FaustFloat, value);
             }
-            let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
-            self.regions
-                .current_phases_mut()
-                .immediate
-                .push(b.store_table(
+            if self.processing_api.is_one_sample() {
+                let chan =
+                    b.int32(i32::try_from(signal_index).expect("validated output index fits i32"));
+                let store = b.store_table("outputs", AccessType::FunArgs, chan, value);
+                self.regions.current_phases_mut().immediate.push(store);
+            } else {
+                let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+                let store = b.store_table(
                     format!("output{signal_index}"),
                     AccessType::Stack,
                     i0,
                     value,
-                ));
+                );
+                self.regions.current_phases_mut().immediate.push(store);
+            }
         } else {
             let mut b = FirBuilder::new(&mut self.store);
             self.regions
@@ -624,6 +629,17 @@ impl<'a> SignalToFirLower<'a> {
                     self.num_inputs
                 ),
             ));
+        }
+
+        // One-sample mode (§4.6): `frame` receives flat channel arrays, so
+        // the sample read is a direct `inputs[channel]` load — no block
+        // pointer alias, no sample index.
+        if self.processing_api.is_one_sample() {
+            let real_ty = self.real_ty();
+            let mut b = FirBuilder::new(&mut self.store);
+            let chan = b.int32(i32::try_from(index).expect("validated input index fits i32"));
+            let raw = b.load_table("inputs", AccessType::FunArgs, chan, FirType::FaustFloat);
+            return Ok(b.cast(real_ty, raw));
         }
 
         let alias = if let Some(alias) = self.input_ptr_aliases.get(&index) {

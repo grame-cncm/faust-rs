@@ -22,6 +22,7 @@ mod fixtures;
 mod contract;
 mod coverage;
 mod delays;
+mod execution;
 mod placement;
 mod recursion;
 mod reverse_ad;

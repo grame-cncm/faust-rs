@@ -414,6 +414,11 @@ impl<'a> SignalToFirLower<'a> {
         let n = self.next_materialized_counter(prefix);
         let access = match bucket {
             Bucket::Constants if self.konst_escapes(sig) => AccessType::Struct,
+            // Execution-options port §4.4: under external control the store
+            // moves to `control`, so the value must live in DSP-owned storage
+            // for sample-rate code to read it across the function boundary —
+            // the same escape promotion the Konst arm above already applies.
+            Bucket::Control if self.control_rate_mode.is_external() => AccessType::Struct,
             Bucket::Constants | Bucket::Control => AccessType::Stack,
         };
         let name = format!("{prefix}{n}");
@@ -436,6 +441,12 @@ impl<'a> SignalToFirLower<'a> {
                     AccessType::Stack,
                     Some(value),
                 ));
+            }
+            Bucket::Control if access == AccessType::Struct => {
+                self.ensure_named_struct_var(&name, typ.clone(), None);
+                let mut b = FirBuilder::new(&mut self.store);
+                let store = b.store_var(&name, AccessType::Struct, value);
+                self.sections.push_externalizable_control(store);
             }
             Bucket::Control => {
                 let mut b = FirBuilder::new(&mut self.store);
