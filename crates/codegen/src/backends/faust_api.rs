@@ -108,6 +108,24 @@ fn expected_signature(name: &str) -> Option<(Vec<FirType>, FirType, &'static str
             FirType::Void,
             "void compute(dsp, int, FAUSTFLOAT**, FAUSTFLOAT**)",
         )),
+        // Execution-options port plan §4.5: optional execution entry points.
+        // `control` performs the externally scheduled control-rate work;
+        // `frame` processes exactly one sample over flat channel arrays —
+        // no block count, no per-channel pointer table.
+        "control" => Some((
+            vec![FirType::Ptr(Box::new(FirType::Obj))],
+            FirType::Void,
+            "void control(dsp)",
+        )),
+        "frame" => Some((
+            vec![
+                FirType::Ptr(Box::new(FirType::Obj)),
+                FirType::Ptr(Box::new(FirType::FaustFloat)),
+                FirType::Ptr(Box::new(FirType::FaustFloat)),
+            ],
+            FirType::Void,
+            "void frame(dsp, FAUSTFLOAT*, FAUSTFLOAT*)",
+        )),
         _ => None,
     }
 }
