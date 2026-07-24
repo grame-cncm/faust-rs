@@ -2,6 +2,7 @@
 //! `mod tests` block; test names unchanged).
 
 use crate::signal_fir::ControlRateMode;
+use fir::FirId;
 use fir::{AccessType, FirBuilder, FirStore, FirType};
 
 use super::check::{
@@ -541,6 +542,8 @@ fn final_checker_rejects_forged_output_coverage() {
                 table_declarations: &[],
                 ui: &ui::UiProgram::empty(),
                 plan: &empty_ui_plan(),
+                external_control_statements: &[],
+                control_state_fields: &[],
             },
         ),
         Err(VectorModuleFailure {
@@ -585,6 +588,8 @@ fn final_checker_rejects_forged_static_declaration_coverage() {
                 table_declarations: &[],
                 ui: &ui::UiProgram::empty(),
                 plan: &empty_ui_plan(),
+                external_control_statements: &[],
+                control_state_fields: &[],
             },
         ),
         Err(VectorModuleFailure {
@@ -592,4 +597,208 @@ fn final_checker_rejects_forged_static_declaration_coverage() {
             ..
         })
     ));
+}
+
+// ══ Execution-options port phase 5 — promoted control-event certificate ═══
+
+fn slider_ui() -> ui::UiProgram {
+    let mut arena = TreeArena::new();
+    let leaf = {
+        let mut b = ui::UiBuilder::new(&mut arena);
+        b.input_control(0)
+    };
+    let root = ui::UiBuilder::new(&mut arena).vgroup("", &[leaf]);
+    ui::UiProgram {
+        arena,
+        root,
+        controls: vec![ui::ControlSpec {
+            id: 0,
+            kind: ui::ControlKind::HSlider,
+            label: "gain".to_owned(),
+            metadata: ui::UiMetadata::default(),
+            range: Some(ui::ControlRange {
+                init: 0.5,
+                min: 0.0,
+                max: 1.0,
+                step: 0.01,
+            }),
+        }],
+        root_origin: ui::UiRootOrigin::Synthesized,
+        emit_ui: true,
+    }
+}
+
+fn slider_gain_fixture(ui_program: &ui::UiProgram) -> VerifiedPreparedSignals {
+    let mut arena = TreeArena::new();
+    let roots = {
+        let mut builder = SigBuilder::new(&mut arena);
+        let input = builder.input(0);
+        let gain = builder.hslider(0);
+        let scaled = builder.binop(signals::BinOp::Mul, input, gain);
+        vec![builder.output(0, scaled)]
+    };
+    prepare_signals_for_fir_verified(&arena, &roots, ui_program)
+        .expect("prepare slider gain fixture")
+}
+
+#[test]
+fn external_control_certificate_rejects_corrupted_promoted_events() {
+    let ui_program = slider_ui();
+    let prepared = slider_gain_fixture(&ui_program);
+    let domains = ClockDomainTable::new();
+    let mut context = module_context(
+        &domains,
+        &ui_program,
+        "mydsp",
+        0,
+        SchedulingStrategy::DepthFirst,
+    );
+    context.control_rate_mode = ControlRateMode::External;
+    let mut built = build_verified_vector_module_with_evidence(&prepared, &context)
+        .expect("verified -ec vector module with evidence");
+    assert!(
+        !built.external_control_statements.is_empty(),
+        "-ec must externalize at least the snapshot store"
+    );
+    let ui_fir = build_vector_ui_fir(&ui_program, &FirType::Float32, &mut built.output.store)
+        .expect("slider UI evidence");
+    let base = |external_control_statements: &[FirId],
+                control_state_fields: &[(String, FirType)],
+                store: &FirStore|
+     -> Result<(), VectorModuleFailure> {
+        verify_final_module(
+            store,
+            built.output.module,
+            &FinalModuleExpectations {
+                assembly: &built.assembly,
+                output_stores: &built.output_stores,
+                ui_fir: &ui_fir,
+                static_declarations: &[],
+                table_declarations: &[],
+                ui: &ui_program,
+                plan: &empty_ui_plan(),
+                external_control_statements,
+                control_state_fields,
+            },
+        )
+    };
+
+    // Happy path: the exact promoted-event lists pass.
+    base(
+        &built.external_control_statements,
+        &built.control_state_fields,
+        &built.output.store,
+    )
+    .expect("exact promoted control events must verify");
+
+    // Missing event: dropping the last externalized statement is rejected.
+    let missing = &built.external_control_statements[..built.external_control_statements.len() - 1];
+    assert!(matches!(
+        base(missing, &built.control_state_fields, &built.output.store),
+        Err(VectorModuleFailure {
+            reason: VectorFallbackReason::ModuleVerification,
+            ..
+        })
+    ));
+
+    // Duplicated event: repeating a promoted store is rejected.
+    let mut duplicated = built.external_control_statements.clone();
+    duplicated.push(duplicated[duplicated.len() - 1]);
+    assert!(matches!(
+        base(
+            &duplicated,
+            &built.control_state_fields,
+            &built.output.store
+        ),
+        Err(VectorModuleFailure {
+            reason: VectorFallbackReason::ModuleVerification,
+            ..
+        })
+    ));
+
+    // Misattributed field: a promoted field name that the struct never
+    // declares is rejected.
+    let mut misattributed = built.control_state_fields.clone();
+    misattributed[0].0 = "fSlowForged".to_owned();
+    assert!(matches!(
+        base(
+            &built.external_control_statements,
+            &misattributed,
+            &built.output.store
+        ),
+        Err(VectorModuleFailure {
+            reason: VectorFallbackReason::ModuleVerification,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn classic_vector_module_must_not_emit_control() {
+    let prepared = pure_fixture();
+    let domains = ClockDomainTable::new();
+    let ui_program = ui::UiProgram::empty();
+    let built = build_verified_vector_module_with_evidence(
+        &prepared,
+        &module_context(
+            &domains,
+            &ui_program,
+            "mydsp",
+            0,
+            SchedulingStrategy::DepthFirst,
+        ),
+    )
+    .expect("classic verified module");
+    assert!(built.external_control_statements.is_empty());
+    assert!(built.control_state_fields.is_empty());
+}
+
+#[test]
+fn external_control_externalizes_non_ui_control_values_too() {
+    // Control-region values that are not UI zones (here the real constant
+    // 0.5 placed in the plan's control region) are externalized as well:
+    // their statements move to `control` and the certified module verifies.
+    let prepared = pure_fixture();
+    let domains = ClockDomainTable::new();
+    let ui_program = ui::UiProgram::empty();
+    let mut context = module_context(
+        &domains,
+        &ui_program,
+        "mydsp",
+        0,
+        SchedulingStrategy::DepthFirst,
+    );
+    context.control_rate_mode = ControlRateMode::External;
+    let built = build_verified_vector_module_with_evidence(&prepared, &context)
+        .expect("-ec vector module with non-UI control values");
+    assert!(!built.external_control_statements.is_empty());
+}
+
+#[test]
+fn external_control_without_any_control_values_emits_no_control_function() {
+    // A pure passthrough has no control-rate values at all: nothing is
+    // externalized under -ec, no `control` function is emitted, and the
+    // classic-coherence guard does not fire.
+    let mut arena = TreeArena::new();
+    let roots = {
+        let mut builder = SigBuilder::new(&mut arena);
+        let input = builder.input(0);
+        vec![builder.output(0, input)]
+    };
+    let prepared = prepare_signals_for_fir_verified(&arena, &roots, &ui::UiProgram::empty())
+        .expect("prepare passthrough fixture");
+    let domains = ClockDomainTable::new();
+    let ui_program = ui::UiProgram::empty();
+    let mut context = module_context(
+        &domains,
+        &ui_program,
+        "mydsp",
+        0,
+        SchedulingStrategy::DepthFirst,
+    );
+    context.control_rate_mode = ControlRateMode::External;
+    let built = build_verified_vector_module_with_evidence(&prepared, &context)
+        .expect("controls-free -ec vector module");
+    assert!(built.external_control_statements.is_empty());
+    assert!(built.control_state_fields.is_empty());
 }
