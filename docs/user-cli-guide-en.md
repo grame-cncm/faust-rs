@@ -203,6 +203,31 @@ Use double-precision internal DSP arithmetic (`-double` compatibility).
 
 Tune fast-lane delay lowering thresholds (`-mcd` / `-dlt` compatibility).
 
+### `-ec, --external-control` and `-os, --one-sample`
+
+Execution options ported from C++ Faust (the legacy `--ext-control`
+spelling is also accepted):
+
+- `-ec` moves control-rate computations out of the block entry point into a
+  separate `control` function that the host schedules explicitly. Slow
+  values are promoted to DSP state; neither initialization, `compute`, nor
+  `frame` calls `control` implicitly, and previously stored values stay
+  unchanged until the host calls it.
+- `-os` emits a one-sample `frame(inputs, outputs)` entry point over flat
+  channel arrays — no block count, no sample loop. The canonical block
+  `compute` is kept but emitted empty. Scalar mode only (`-os` with `-vec`
+  is an error). Without `-ec`, control values are recomputed every frame.
+- `-ec -os` combines both: one `control()` call followed by any number of
+  `frame()` calls is the intended host schedule.
+
+Supported backends: `c`, `cpp`, `rust`, and `fir` (the `-ec` FIR
+combination is a faust-rs diagnostic extension). Other backends reject the
+flags with a stable capability diagnostic (FRS-EXEC-*). Programs using the
+foreign runtime variable `count` or block reverse-mode AD
+(`BlockReverseAD`/`ReverseTimeRec` under `-os`) are rejected with typed
+errors (FRS-SFIR-0009/0010). `-ec` also works in vector mode (`-ec -vec`),
+where promoted control events are certificate-checked.
+
 ### `--no-fir-verify` and `--fir-verify-strict`
 
 Control FIR verification before FIR dump / codegen.
