@@ -36,10 +36,12 @@ fn scaffolding_drop_sweep_removes_only_pure_block_roots() {
     let mut b = FirBuilder::new(&mut store);
     let one = b.float32(1.0);
     let pure = b.binop(crate::FirBinOp::Add, one, one, FirType::Float32);
+    let pure_math = b.math_call(crate::FirMathOp::Pow, &[one, one], FirType::Float32);
     let foreign = b.fun_call("observable", &[], FirType::Void);
     let pure_drop = b.drop_(pure);
+    let pure_math_drop = b.drop_(pure_math);
     let foreign_drop = b.drop_(foreign);
-    let body = b.block(&[pure_drop, foreign_drop]);
+    let body = b.block(&[pure_drop, pure_math_drop, foreign_drop]);
     let function = fun(&mut b, "compute", &[], FirType::Void, Some(body), false);
     let globals = b.block(&[]);
     let functions = b.block(&[function]);

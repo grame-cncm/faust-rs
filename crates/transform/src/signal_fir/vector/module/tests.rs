@@ -27,6 +27,24 @@ use super::super::verify::{
     Placement, Rate, SignalRecord, VECTOR_PLAN_SCHEMA_VERSION, ValueType, Vectorability,
 };
 
+#[test]
+fn final_materialization_removes_pure_drops_but_retains_foreign_calls() {
+    let mut store = FirStore::new();
+    let (pure_drop, foreign_drop) = {
+        let mut builder = FirBuilder::new(&mut store);
+        let base = builder.float32(2.0);
+        let exponent = builder.float32(3.0);
+        let pure_math = builder.math_call(fir::FirMathOp::Pow, &[base, exponent], FirType::Float32);
+        let foreign = builder.fun_call("observable", &[], FirType::Float32);
+        (builder.drop_(pure_math), builder.drop_(foreign))
+    };
+    let mut statements = vec![pure_drop, foreign_drop];
+
+    remove_pure_drop_roots(&store, &mut statements);
+
+    assert_eq!(statements, vec![foreign_drop]);
+}
+
 /// A plan claiming no UI writes, for fixtures whose programs have no UI.
 fn empty_ui_plan() -> VectorPlan {
     VectorPlan {
@@ -388,7 +406,15 @@ fn final_module_covers_lifecycle_outputs_and_both_chunk_drivers() {
                 output.vector_pipeline_status,
                 VectorPipelineStatus::Certified
             );
-            assert!(!verify_fir_module(&output.store, output.module).has_errors());
+            let report = verify_fir_module(&output.store, output.module);
+            assert!(!report.has_errors());
+            assert!(
+                !report
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == "FIR-D01"),
+                "certified vector FIR retained a pure Drop root: {report:?}"
+            );
         }
     }
 }

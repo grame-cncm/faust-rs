@@ -1312,6 +1312,28 @@ fn fc01_call_undeclared_function() {
 }
 
 #[test]
+fn d01_warns_for_dropped_pure_math_but_not_foreign_call() {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let base = b.float32(2.0);
+    let exponent = b.float32(3.0);
+    let pow = b.math_call(FirMathOp::Pow, &[base, exponent], FirType::Float32);
+    let pure_drop = b.drop_(pow);
+    let foreign = b.fun_call("observable", &[], FirType::Float32);
+    let foreign_drop = b.drop_(foreign);
+    let module_id = module_with_body(&mut store, &[pure_drop, foreign_drop]);
+
+    let report = verify_fir_module(&store, module_id);
+    let pure_drop_diagnostics = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "FIR-D01")
+        .collect::<Vec<_>>();
+    assert_eq!(pure_drop_diagnostics.len(), 1, "{report:?}");
+    assert_eq!(pure_drop_diagnostics[0].node, pure_drop);
+}
+
+#[test]
 fn fc02_fc03_call_arity_and_arg_type_mismatch() {
     let mut store = FirStore::new();
     let mut b = FirBuilder::new(&mut store);

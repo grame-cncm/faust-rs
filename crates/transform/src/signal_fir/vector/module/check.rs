@@ -298,9 +298,17 @@ pub(super) fn verify_final_module(
         plan,
     } = *expected;
     let report = verify_fir_module(store, module);
-    if report.has_errors() {
+    let has_dead_pure_drop = report
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "FIR-D01");
+    if report.has_errors() || has_dead_pure_drop {
         let detail = report
-            .errors()
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.severity == fir::checker::Severity::Error || diagnostic.code == "FIR-D01"
+            })
             .map(|diagnostic| format!("{} {}", diagnostic.code, diagnostic.message))
             .collect::<Vec<_>>()
             .join("; ");

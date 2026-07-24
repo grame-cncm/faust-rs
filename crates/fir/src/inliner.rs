@@ -33,7 +33,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::{
-    AccessType, FirBuilder, FirId, FirMatch, FirStore, FirType, NamedType, SliderRange, match_fir,
+    AccessType, FirBuilder, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, SliderRange,
+    match_fir,
 };
 
 const RESERVED_DSP_API_FUNCTIONS: &[&str] = &[
@@ -1989,7 +1990,14 @@ pub fn sweep_scaffolding_drop_roots(src_store: &FirStore, module: FirId) -> (Fir
     (dst_store, module)
 }
 
-fn is_obviously_side_effect_free_value(store: &FirStore, value: FirId) -> bool {
+/// Returns whether evaluating `value` has no observable side effect.
+///
+/// This predicate is deliberately conservative: ordinary foreign calls are
+/// retained, while FIR's canonical math calls are pure when all arguments are
+/// pure. It is shared by FIR canonicalization, verification, and vector-root
+/// materialization so all three agree on when a [`FirMatch::Drop`] is dead.
+#[must_use]
+pub fn is_obviously_side_effect_free_value(store: &FirStore, value: FirId) -> bool {
     match match_fir(store, value) {
         FirMatch::Int32 { .. }
         | FirMatch::Int64 { .. }
@@ -2026,6 +2034,12 @@ fn is_obviously_side_effect_free_value(store: &FirStore, value: FirId) -> bool {
             is_obviously_side_effect_free_value(store, cond)
                 && is_obviously_side_effect_free_value(store, then_value)
                 && is_obviously_side_effect_free_value(store, else_value)
+        }
+        FirMatch::FunCall { name, args, .. } => {
+            FirMathOp::from_symbol(&name).is_some()
+                && args
+                    .iter()
+                    .all(|&arg| is_obviously_side_effect_free_value(store, arg))
         }
         _ => false,
     }

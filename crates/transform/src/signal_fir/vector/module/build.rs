@@ -30,7 +30,8 @@ use crate::signal_fir::{
     ComputeMode, SignalFirOutput, VectorEffectiveMode, VectorFallbackReason, VectorPipelineStatus,
 };
 use crate::signal_prepare::VerifiedPreparedSignals;
-use fir::{FirId, FirType};
+use fir::inliner::is_obviously_side_effect_free_value;
+use fir::{FirId, FirMatch, FirStore, FirType, match_fir};
 use propagate::ClockDomainTable;
 
 /// Runs the complete checked vector path for the supported P6.5 subset and
@@ -204,6 +205,10 @@ pub(super) fn build_verified_vector_module_with_evidence(
         },
     )?;
     trace_stage("output-materialization");
+    remove_pure_drop_roots(program.store(), &mut control_statements);
+    for input in &mut loop_inputs {
+        remove_pure_drop_roots(program.store(), &mut input.statements);
+    }
     let assembly = assemble_vector_fir(
         &routed,
         Some(&state_plan),
@@ -272,6 +277,18 @@ pub(super) fn build_verified_vector_module_with_evidence(
         output_stores,
     })
 }
+
+/// Removes the pure `Drop` roots used to seed CSE after the checked lowering
+/// evidence and concrete output stores have consumed them.
+pub(super) fn remove_pure_drop_roots(store: &FirStore, statements: &mut Vec<FirId>) {
+    statements.retain(|&statement| {
+        !matches!(
+            match_fir(store, statement),
+            FirMatch::Drop(value) if is_obviously_side_effect_free_value(store, value)
+        )
+    });
+}
+
 pub(super) fn reject_cross_loop_delay_read_transports(
     decorations: &VerifiedDecorationCertificate,
     plan: &VectorPlan,

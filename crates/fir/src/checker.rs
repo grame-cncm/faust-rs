@@ -88,6 +88,7 @@
 //! | FIR-MA03 | W | Floating-point math op called with integer-like argument |
 //! | FIR-MA04 | W | `abs` / `fabs` int-vs-float distinction warning |
 //! | FIR-V01  | E | `Void`-typed expression used where a material value is required |
+//! | FIR-D01  | W | `Drop` discards a side-effect-free value |
 //!
 //! ## Deferred / partial
 //! - **SC06/SC08** — naturally enforced by scope-stack pop; SC01 fires for any
@@ -103,6 +104,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::inliner::is_obviously_side_effect_free_value;
 use crate::{
     AccessType, FirBinOp, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, child_ids,
     match_fir,
@@ -2077,6 +2079,13 @@ impl<'s> VerifyCtx<'s> {
         }
     }
 
+    /// Warns when a `Drop` evaluates a value with no observable side effect.
+    fn check_pure_drop(&mut self, id: FirId, value: FirId) {
+        if is_obviously_side_effect_free_value(self.store, value) {
+            self.warn("FIR-D01", "Drop discards a side-effect-free expression", id);
+        }
+    }
+
     // ── Statement traversal ───────────────────────────────────────────────────
 
     /// Traverses one statement node and dispatches statement-level checks.
@@ -2131,6 +2140,7 @@ impl<'s> VerifyCtx<'s> {
             FirMatch::Drop(val) => {
                 self.check_value(val);
                 self.check_fun_call_drop_use(id, val);
+                self.check_pure_drop(id, val);
             }
             FirMatch::Return(val) => self.check_return(id, val),
             FirMatch::If {
