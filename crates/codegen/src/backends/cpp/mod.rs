@@ -814,12 +814,21 @@ fn emit_declare_fun(
         params_override = Some(
             "int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs".to_owned(),
         );
+    } else if decl.name == "frame" {
+        params_override =
+            Some("FAUSTFLOAT* RESTRICT inputs, FAUSTFLOAT* RESTRICT outputs".to_owned());
     }
     if let Some(override_params) = params_override {
         params = override_params;
     }
     let is_dsp_api = is_dsp_api_method(decl.name);
-    let method_prefix = if is_dsp_api { "virtual " } else { "" };
+    // The pinned reference emits `void control()` as a plain method but
+    // `frame`/`compute` as virtual (cpp_code_container.cpp at 8eebea429).
+    let method_prefix = if is_dsp_api && decl.name != "control" {
+        "virtual "
+    } else {
+        ""
+    };
     let inline = if decl.is_inline { "inline " } else { "" };
     // Prototype-only (no body): emit a forward declaration / pure-virtual signature.
     let Some(body) = decl.body else {
@@ -902,6 +911,8 @@ fn is_dsp_api_method(name: &str) -> bool {
             | "instanceClear"
             | "buildUserInterface"
             | "compute"
+            | "control"
+            | "frame"
     )
 }
 

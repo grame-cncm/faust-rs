@@ -570,6 +570,13 @@ fn emit_c_api(
         let _ = writeln!(out);
     }
 
+    // Execution entry points precede the canonical compute (§2.3).
+    if let Some(f) = declared_functions.iter().find(|f| f.name == "control") {
+        emit_named_fun(store, out, options, class_name, f)?;
+    }
+    if let Some(f) = declared_functions.iter().find(|f| f.name == "frame") {
+        emit_named_fun(store, out, options, class_name, f)?;
+    }
     if let Some(f) = declared_functions.iter().find(|f| f.name == "compute") {
         emit_named_fun(store, out, options, class_name, f)?;
     } else {
@@ -594,6 +601,8 @@ fn emit_c_api(
                 | "instanceClear"
                 | "buildUserInterface"
                 | "compute"
+                | "control"
+                | "frame"
         ) {
             continue;
         }
@@ -651,6 +660,13 @@ fn emit_named_fun(
         }
         "compute" => format!(
             "void compute{class_name}({class_name}* dsp, int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs)"
+        ),
+        // Execution-options port §5.1; shapes mirror the pinned reference:
+        // `void controlmydsp(mydsp* dsp)` and
+        // `void framemydsp(mydsp* dsp, FAUSTFLOAT* RESTRICT inputs, ...)`.
+        "control" => format!("void control{class_name}({class_name}* dsp)"),
+        "frame" => format!(
+            "void frame{class_name}({class_name}* dsp, FAUSTFLOAT* RESTRICT inputs, FAUSTFLOAT* RESTRICT outputs)"
         ),
         _ => format!(
             "{} {}{class_name}({class_name}* dsp)",

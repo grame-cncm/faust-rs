@@ -269,11 +269,15 @@ pub fn validate_execution_options(
     // Accepted by the table, but the lowering phases have not landed yet
     // for every backend: fail with a stable diagnostic instead of silently
     // emitting the classic block output. Entries are removed from this list
-    // as phases 3-4 land per backend. The FIR text backend is already
-    // complete: it dumps the verified module, which represents all four
-    // execution shapes since phase 2.
-    const LOWERING_LANDED: &[&str] = &["fir"];
-    if LOWERING_LANDED.contains(&backend) {
+    // as phases 3-4 land per backend. The FIR text backend dumps the
+    // verified module (complete since phase 2); the C and C++ emitters
+    // landed in phase 3.
+    //
+    // Vector external control (`-ec -vec`) is phase 5: the vector producer
+    // does not represent the control split yet, so the gate stays for every
+    // backend until the certificate chain covers promoted control events.
+    const SCALAR_LOWERING_LANDED: &[&str] = &["fir", "cpp", "c"];
+    if !compute_mode.is_vector() && SCALAR_LOWERING_LANDED.contains(&backend) {
         return Ok(());
     }
     let options = match (wants_ec, wants_os) {
@@ -385,6 +389,23 @@ mod tests {
     }
 
     #[test]
+    fn scalar_landed_backends_accept_all_execution_shapes() {
+        for backend in ["fir", "cpp", "c"] {
+            for (control, api) in [
+                (ControlRateMode::External, ProcessingApi::Block),
+                (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
+                (ControlRateMode::External, ProcessingApi::OneSample),
+            ] {
+                assert_eq!(
+                    validate_execution_options(backend, control, api, ComputeMode::Scalar),
+                    Ok(()),
+                    "{backend}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn fir_backend_accepts_all_execution_shapes() {
         for (control, api) in [
             (ControlRateMode::External, ProcessingApi::Block),
@@ -400,7 +421,7 @@ mod tests {
 
     #[test]
     fn accepted_combinations_hit_the_implementation_gate_for_now() {
-        for backend in ["c", "cpp", "rust"] {
+        for backend in ["rust"] {
             for (control, api, options) in [
                 (ControlRateMode::External, ProcessingApi::Block, "-ec"),
                 (
@@ -423,20 +444,24 @@ mod tests {
     }
 
     #[test]
-    fn external_control_stays_accepted_by_the_table_in_vector_mode() {
-        // `-ec -vec` is a valid target combination (plan phase 5); today it
-        // stops at the implementation gate, not at a capability rejection.
-        let err = validate_execution_options(
-            "cpp",
-            ControlRateMode::External,
-            ProcessingApi::Block,
-            ComputeMode::Vector {
-                vec_size: 32,
-                loop_variant: 0,
-            },
-        )
-        .unwrap_err();
-        assert_eq!(err.code(), "FRS-EXEC-UNIMPLEMENTED");
+    fn external_control_stays_gated_in_vector_mode_until_phase_5() {
+        // `-ec -vec` is a valid target combination (plan phase 5). The
+        // vector producer does not represent the control split yet, so even
+        // scalar-landed backends stop at the implementation gate — a silent
+        // classic-vector emission would ignore the flag.
+        for backend in ["cpp", "c", "fir", "rust"] {
+            let err = validate_execution_options(
+                backend,
+                ControlRateMode::External,
+                ProcessingApi::Block,
+                ComputeMode::Vector {
+                    vec_size: 32,
+                    loop_variant: 0,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(err.code(), "FRS-EXEC-UNIMPLEMENTED", "{backend}");
+        }
     }
 
     #[test]
