@@ -276,7 +276,9 @@ pub fn validate_execution_options(
     // Vector external control (`-ec -vec`) is phase 5: the vector producer
     // does not represent the control split yet, so the gate stays for every
     // backend until the certificate chain covers promoted control events.
-    const SCALAR_LOWERING_LANDED: &[&str] = &["fir", "cpp", "c"];
+    // Scalar lowering has landed for every capability-accepting backend
+    // (fir: phase 2 module dump; c/cpp: phase 3; rust: phase 4).
+    const SCALAR_LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust"];
     if !compute_mode.is_vector() && SCALAR_LOWERING_LANDED.contains(&backend) {
         return Ok(());
     }
@@ -420,8 +422,28 @@ mod tests {
     }
 
     #[test]
+    fn scalar_accepting_backends_no_longer_hit_the_gate() {
+        for backend in ["c", "cpp", "rust", "fir"] {
+            assert_eq!(
+                validate_execution_options(
+                    backend,
+                    ControlRateMode::External,
+                    ProcessingApi::OneSample,
+                    ComputeMode::Scalar,
+                ),
+                Ok(()),
+                "{backend}"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::never_loop)]
     fn accepted_combinations_hit_the_implementation_gate_for_now() {
-        for backend in ["rust"] {
+        // Empty since phase 4: every capability-accepting backend has its
+        // scalar lowering landed. The loop shape is kept so the next backend
+        // family (e.g. a future asc one-sample target) can re-enter the gate.
+        for backend in [] as [&str; 0] {
             for (control, api, options) in [
                 (ControlRateMode::External, ProcessingApi::Block, "-ec"),
                 (
