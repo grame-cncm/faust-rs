@@ -351,6 +351,13 @@ faust-rs -ss 3 foo.dsp                    # reverse breadth-first
 # Request checked vector lowering with 64-sample chunks.
 faust-rs -vec -vs 64 -lv 0 foo.dsp
 faust-rs -vec -vs 64 -lv 1 foo.dsp
+
+# Execution options (c/cpp/rust/fir backends): external control and
+# one-sample processing, as C++ Faust.
+faust-rs -ec foo.dsp            # separate host-scheduled control() function
+faust-rs -os foo.dsp            # one-sample frame(inputs, outputs) API
+faust-rs -ec -os foo.dsp        # control() once, then frame() per sample
+faust-rs -ec -vec foo.dsp       # external control with vector compute
 ```
 
 `-ss` accepts non-negative integers: `0`, `1`, and `2` select the strategies

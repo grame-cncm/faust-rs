@@ -1,122 +1,100 @@
 # Session Handoff
 
-Date: 2026-07-20
+Date: 2026-07-24
 
 ## Repo State
 
-- Branch: `transform-cleanup` (linear on top of `main` @ `86be9426`).
-- HEAD: see `git log` — R0 through R9 of
-  `porting/transform-cleanup-documentation-factorization-plan-2026-07-19-en.md`
-  are complete and committed (one milestone per commit, §4.8 guards listed
-  in the R6/R7 commit messages).
-- Working tree: clean (plus untracked local `tests/impulse-tests/node_modules`
-  etc. for the asc gate).
+- Branch: `external-control-one-sample` (linear on top of `main`).
+- Executing `porting/external-control-one-sample-port-plan-2026-07-23-en.md`
+  (D1-D3 approved; the plan's §5.7 AssemblyScript amendment was merged via
+  PR #11, so the asc one-sample follow-up is officially reserved).
 
 ## Plan progress
 
-| Phase | State | Commits |
-|---|---|---|
-| R0 freeze | done | `ab14a1ed` |
-| R1 docs rewrite | done (2 parts) | `0c53de09`, `deebe3d7` |
-| R2 test splits | done (3 parts) | `6c49e1c5`, `559a79cd`, `c1fd79f3` |
-| R3 namespace | done | `b643fdd7`, `0c829798` |
-| R4.4 walker + R4.2p1 | done | `7d527c96`, `37271bce` |
-| R5 analysis/verify/plan splits | done | `a1a98c79`, `f51e0068`, `246b9702` |
-| R6 state/clock_ad/route/lower splits | done | `35ca7be2`, `5168eec6`, `1c4dd3ad`, `4632db74` |
-| R7 events/assemble/module splits | done | `3fac3536`, `c489c3b2`, `55629619` |
-| R8 explicit scalar imports | done | `51eadfd9` |
-| R9 structure-check, 798→0 docs, warn(missing_docs) | done | `81c6689d`, `a62b2509` |
+| Phase | State |
+|---|---|
+| 0 — baselines, reference toolchain | done |
+| 1 — typed options, capability table, CLI, count/D2 diagnostics | done |
+| 2 — FIR execution contract (tagged sections, control/frame, promotion, one-sample lowering) | done |
+| 3 — C, C++, FIR emitters + differentials | done |
+| 4 — Rust backend (D3 inherent methods) | done |
+| 5 — vector external control + promoted-control-event certificate | done |
+| 6 — hardening/docs | in progress (CLI guide + README done; coverage rerun pending) |
 
-Every split milestone: transform lib tests green, clippy (+1.97.0, = CI
-stable) clean, byte-identity arbiter 319/319 identical / 0 defects.
-Coverage gate (1,536 certified mode/DSP pairs) green at R5.3, R6.2 and the
-R6.3–R7.3 batch (see journal). §4.8: `reject_unadopted_stateful_reads`
-now has rejection tests through BOTH the producer path and the standalone
-checker entry (`clock_ad/tests.rs`).
+Follow-up reserved by plan §5.7: the AssemblyScript one-sample target
+(`-ec -os` as primary combination, additive to the block contract; an
+`adapted` contract decision to design explicitly).
 
-## Architecture after the cleanup
+## Key mechanisms (where things live)
 
-Each vector stage is a directory with physically separated producer and
-checker files plus a shared vocabulary module:
+- Options: `ControlRateMode`/`ProcessingApi` next to `ComputeMode`
+  (transform::signal_fir), carried by SignalFirOptions/Compiler.
+- Capability model: `compiler::execution` (single declarative table;
+  FRS-EXEC-* diagnostics; `-os -vec` always rejected).
+- Scalar split: tagged `ControlStatement { ownership, statement }` list in
+  `signal_fir/module/state.rs`; promotion generalizes the konst-escape
+  path (`materialize_in_bucket`); assembly in `module/build.rs`.
+- One-sample: direct channel I/O in `module/core_lowering.rs`; empty
+  canonical compute; `frame` before compute in the functions block.
+- FIR contract: faust_api reserves `control(dsp)` /
+  `frame(dsp, FAUSTFLOAT*, FAUSTFLOAT*)`; fir checker rules FIR-F08/F09.
+- Vector `-ec`: UI snapshots + struct-promoted control roots
+  (`vector/lower/signal.rs`, CSE Struct mode in `signal_fir/cse.rs`),
+  `control` emission in `vector/module/lifecycle.rs`, certificate rules in
+  `vector/module/check.rs` (`verify_external_control`) with corruption
+  tests in `vector/module/tests.rs`.
+- D2 classifier: `signal_fir/one_sample.rs` (FRS-SFIR-0010); foreign
+  `count` rejection in `lower_fvar` (FRS-SFIR-0009).
 
-- `analysis/{conditions,dependencies,effects,uses}.rs`
-- `verify/{model,error,check,fused_groups,checker_reachability}.rs`
-- `plan/{model? (in mod), build,fusion,producer_reachability}.rs`
-- `state/{model,build,check,simulation}.rs`
-- `clock_ad/{model,build,check,simulation}.rs`
-- `route/{model,session,check}.rs`
-- `lower/{program,signal,tables,check}.rs`
-- `events/{model,produce,check}.rs`   ← assurance boundary
-- `assemble/{model,materialize,check}.rs`
-- `module/{build,outputs,lifecycle,check}.rs`
+## Reference toolchains
 
-Intentionally retained duplication (plan §3.2 — do NOT merge; module
-headers repeat this in place): events `producer_*` vs
-`independently_*`/`checker_required_*`/`independent_checked_sample_count`;
-assemble materializers vs `independently_expected_clock_cursor` /
-`state_cursor_advance_matches` / shape matchers; plan
-`producer_reachability` vs verify `checker_reachability`. clock_ad/state
-checkers re-derive through the same derivation functions (pre-existing
-architecture, preserved as-is).
+- Pinned dev reference: `../faust` @ `8eebea429`
+  (`master-dev-ocpp-od-fir-2-FIR19`), built at `../faust/build/bin/faust`.
+  CAVEATS recorded in the journal: its own `-ec -os` output does not
+  compile for recursive DSPs (reported upstream:
+  https://github.com/grame-cncm/faust/issues/1277 — sletz: does not happen
+  on official master-dev; branch is experimental), its `-vec` is disabled
+  unconditionally, and its `-os` Rust output looks self-inconsistent
+  (unverified; check with a real cargo build before reporting).
+- Behavioral oracle for `-ec -vec`: stable Faust 2.83.1
+  (`/opt/homebrew/bin/faust`).
 
-## Byte-identity arbiter (R0.5)
+## Validation status (latest)
 
-- Frozen worktree: `/Users/peter/git/faust-rs-baseline-worktrees/r0-freeze`
-  (commit `86be9426`, release compiler built).
-- Script: `/Users/peter/git/faust-rs-baseline-worktrees/compare-emissions.sh`
-  (outside the repo; 3-emission recheck for new diffs).
-- **Defect FIXED (2026-07-20, post-cleanup follow-up):** the intermittent
-  run-to-run nondeterminism of scalar emission on delay-heavy DSPs was
-  root-caused to `HashMap` iteration order in the delay subsystem
-  (`DelayPlan.lines` driving struct-field/clear-loop allocation order,
-  `DelayManager.delay_lines` driving maintenance emission) and fixed by
-  converting those collections to `BTreeMap`/`BTreeSet`
-  (`porting/scalar-emission-determinism-plan-2026-07-20-en.md`). The
-  determinism invariant is now enforced in-repo by
-  `cargo run -p xtask -- emission-determinism` (396-case matrix, empty
-  allowlist `tests/impulse-tests/emission-determinism-allowlist.txt`);
-  the external frozen-list workflow is obsolete for determinism checking.
-- Environment: Faust libs via gitignored symlink
-  `target/share/faust -> <faust install>/share/faust` in both trees
-  (`/opt/homebrew/...` on ARM, `/usr/local/...` on Intel).
-- The baseline worktree is still in place; remove it only after the final
-  battery is accepted (`git worktree remove`).
+- Every commit: fmt, clippy workspace 0, workspace tests, golden 196.
+- vector_mode oracle 36/36 at phases 4-5.
+- Runtime differentials (external harness in the session scratchpad):
+  scalar `-ec`/`-os`/`-ec -os` bit-exact vs block AND vs pinned reference
+  (stateless case; recursive case arbitrated by the internal block-vs-frame
+  oracle); Rust `control+frame×N` bit-exact (rustc -D warnings);
+  `-ec -vec` bit-exact vs classic vector, scalar, and stable 2.83.1.
+- Architecture projects (AGENTS.md): block and `-ec -os` Rust outputs pass
+  `cargo check` inside a real `faust2jackrust -source` project; the jack
+  LINK step is blocked locally (universal libjack without arm64 slice) —
+  environment limitation, recorded.
+- Golden-of-new-shapes decision: the golden harness snapshots default
+  emission only (per-case option plumbing does not exist); the emitted
+  `-ec`/`-os` shapes are locked by `crates/compiler/tests/execution_options.rs`
+  and the transform structural tests instead (adapted, recorded).
 
-## New quality gates (R9)
+## Commands
 
 ```bash
-cargo run -p xtask -- structure-check                 # layout contract
-cargo rustdoc -p transform --lib -- -D missing-docs   # docs completeness
+cargo test -p transform --lib                      # 403 tests
+cargo test -p compiler --test execution_options    # shape locks
+cargo test -p compiler --test vector_mode          # 36 oracle tests
+cargo run -q -p xtask -- golden-check              # 196 OK
+cargo run -q -p xtask -- vector-coverage-check     # 1,536 pairs expected
 ```
 
-`#![warn(missing_docs)]` is active in `crates/transform/src/lib.rs`;
-rustdoc is fully silent (0 warnings, all categories).
+## Next steps
 
-## Deferred / not done (recorded, intentional)
-
-- R4 remainder: `index_unique_by` extraction (55 sites use the
-  `(x.id, x) → BTreeMap` idiom with differing admission semantics — plan
-  R4.3 same-policy rule not met); `ValueType→FIR` conversion stayed
-  per-stage (route/lower/assemble each own a variant with different
-  admission).
-- R8.2: no extra split of `bra.rs`/`build.rs`/`core_lowering.rs`
-  (explicit imports revealed no independent responsibility).
-- R8.4: 63 scalar panic/expect sites surveyed — all documented local
-  invariant assertions, none cross-phase, none converted.
-- pv_slice retained (its retirement gate was not run).
-
-## Validation commands
-
-```bash
-cargo test -p transform --lib                       # quick loop (387)
-/Users/peter/git/faust-rs-baseline-worktrees/compare-emissions.sh
-cargo run -q -p xtask -- golden-check               # 196 OK
-cargo run -q -p xtask -- vector-coverage-check      # 1,536 pairs, ~1.5-2 h
-cargo run --release -p xtask -- vector-compile-budget-check
-make -C tests/impulse-tests backend-matrix-smoke    # delete ir/ first!
-cargo test -p compiler --test vector_mode           # 35 oracle tests
-```
-
-Impulse-harness traps: delete `tests/impulse-tests/ir/<mode>/` before runs
-(cached `.ir` reports green), and check the `filesCompare` invocation count
-matches the DSP count.
+1. Finish phase 6: coverage rerun result, journal, this handoff.
+2. AssemblyScript one-sample target (plan §5.7): design the asc
+   `frame`/`control` contract (flat channel arrays; `-ec -os` primary),
+   wire the capability table (`explicit` for asc), implement the emitter
+   on the phase-2 FIR contract, differential against the wasm-music
+   MidiVoice host expectations.
+3. Optional upstream: verify the pinned reference's Rust `-os` output with
+   a real cargo build; if broken, report as a sibling of issue #1277
+   (noting sletz's triage: the branch is experimental).
