@@ -119,11 +119,16 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         combined: ExecutionCapability::Unsupported,
         canonical_compute_required: true,
     },
+    // Plan §5.7 (merged amendment): the AssemblyScript one-sample target.
+    // An `adapted` faust-rs contract decision — C++ Faust has no `-os`
+    // AssemblyScript reference; the emitted shapes mirror the c/cpp/rust
+    // contract over flat StaticArray channels, additive to the block
+    // `compute` default.
     BackendExecutionCaps {
         backend: "asc",
-        external_control: ExecutionCapability::Unsupported,
-        one_sample: ExecutionCapability::Unsupported,
-        combined: ExecutionCapability::Unsupported,
+        external_control: ExecutionCapability::Explicit,
+        one_sample: ExecutionCapability::Explicit,
+        combined: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     BackendExecutionCaps {
@@ -278,7 +283,7 @@ pub fn validate_execution_options(
     // control landed in phase 5 with the promoted-control-event certificate
     // (`-os -vec` was already rejected above, so reaching here in vector
     // mode means `-ec -vec`).
-    const LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust"];
+    const LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust", "asc"];
     if LOWERING_LANDED.contains(&backend) {
         return Ok(());
     }
@@ -339,7 +344,7 @@ mod tests {
 
     #[test]
     fn unsupported_backends_reject_each_flag_with_stable_codes() {
-        for backend in ["interp", "cranelift", "wasm", "wast", "asc", "julia"] {
+        for backend in ["interp", "cranelift", "wasm", "wast", "julia"] {
             let os = validate_execution_options(
                 backend,
                 ControlRateMode::InlinePerBlock,
@@ -392,7 +397,7 @@ mod tests {
 
     #[test]
     fn scalar_landed_backends_accept_all_execution_shapes() {
-        for backend in ["fir", "cpp", "c"] {
+        for backend in ["fir", "cpp", "c", "asc"] {
             for (control, api) in [
                 (ControlRateMode::External, ProcessingApi::Block),
                 (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
@@ -423,7 +428,7 @@ mod tests {
 
     #[test]
     fn scalar_accepting_backends_no_longer_hit_the_gate() {
-        for backend in ["c", "cpp", "rust", "fir"] {
+        for backend in ["c", "cpp", "rust", "fir", "asc"] {
             assert_eq!(
                 validate_execution_options(
                     backend,
@@ -487,7 +492,7 @@ mod tests {
     #[test]
     fn diagnostic_messages_list_backends_from_the_table() {
         let err = validate_execution_options(
-            "asc",
+            "julia",
             ControlRateMode::InlinePerBlock,
             ProcessingApi::OneSample,
             ComputeMode::Scalar,
@@ -495,7 +500,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "'-os' option can only be used with 'c', 'cpp', 'rust', 'fir' backends (got 'asc')"
+            "'-os' option can only be used with 'c', 'cpp', 'rust', 'fir', 'asc' backends (got 'julia')"
         );
     }
 }

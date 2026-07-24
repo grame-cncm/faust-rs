@@ -423,6 +423,13 @@ fn emit_methods_canonical_order(
     let _ = writeln!(out, "        this.instanceInit(sample_rate);");
     let _ = writeln!(out, "    }}");
 
+    // Execution entry points precede the canonical compute (§2.3).
+    for name in ["control", "frame"] {
+        if has(name) {
+            emit_declared_method(store, out, options, class_name, module.functions, name)?;
+            emitted.push(name);
+        }
+    }
     if has("compute") {
         emit_declared_method(store, out, options, class_name, module.functions, "compute")?;
         emitted.push("compute");
@@ -901,6 +908,12 @@ fn emit_declare_fun(
         format!(
             "count: i32, inputs: Array<StaticArray<{real_type}>>, outputs: Array<StaticArray<{real_type}>>"
         )
+    } else if decl.name == "frame" {
+        // One-sample entry point: flat channel arrays, the `adapted`
+        // AssemblyScript counterpart of C's `FAUSTFLOAT*` (plan §5.7),
+        // consistent with the StaticArray channel style of `compute`.
+        let real_type = faust_float_type(options);
+        format!("inputs: StaticArray<{real_type}>, outputs: StaticArray<{real_type}>")
     } else {
         params
     };
@@ -1304,6 +1317,8 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
 }
 
 fn is_dsp_api_method(name: &str) -> bool {
+    // `control`/`frame` are the execution-options entry points (plan §5.7:
+    // the AssemblyScript one-sample target).
     matches!(
         name,
         "metadata"
@@ -1312,6 +1327,8 @@ fn is_dsp_api_method(name: &str) -> bool {
             | "instanceClear"
             | "buildUserInterface"
             | "compute"
+            | "control"
+            | "frame"
     )
 }
 

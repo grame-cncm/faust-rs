@@ -6,6 +6,7 @@
 //! the external differential harness; these tests lock the emitted
 //! signatures and shapes so regressions surface in `cargo test`.
 
+use codegen::backends::asc::AscOptions;
 use codegen::backends::c::COptions;
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::julia::JuliaOptions;
@@ -142,6 +143,39 @@ fn rust_shapes_match_the_d3_contract() {
     assert!(trait_impl.contains("fn compute(&mut self, count: i32"));
     assert!(!trait_impl.contains("fn frame"));
     assert!(!trait_impl.contains("fn control"));
+}
+
+fn compile_asc(control: ControlRateMode, api: ProcessingApi) -> String {
+    let compiler = Compiler::new()
+        .with_control_rate_mode(control)
+        .with_processing_api(api);
+    compiler
+        .compile_source_to_asc("exec_options_test.dsp", SLIDER_GAIN, &AscOptions::default())
+        .expect("asc compilation must succeed")
+}
+
+#[test]
+fn asc_shapes_match_the_one_sample_contract() {
+    // Plan §5.7 (merged amendment): the AssemblyScript one-sample target.
+    // Flat StaticArray channels, additive to the block compute contract.
+    let ecos = compile_asc(ControlRateMode::External, ProcessingApi::OneSample);
+    assert!(ecos.contains("control(): void {"));
+    assert!(ecos.contains("frame(inputs: StaticArray<f32>, outputs: StaticArray<f32>): void {"));
+    let compute_pos = ecos
+        .find("compute(count: i32, inputs: Array<StaticArray<f32>>")
+        .expect("canonical block compute retained");
+    let after = &ecos[compute_pos..];
+    let brace = after.find('{').expect("compute body");
+    let close = after.find('}').expect("compute close");
+    assert!(
+        after[brace + 1..close].trim().is_empty(),
+        "one-sample compute must be empty"
+    );
+
+    // Classic asc output keeps its block contract untouched.
+    let classic = compile_asc(ControlRateMode::InlinePerBlock, ProcessingApi::Block);
+    assert!(!classic.contains("control(): void {"));
+    assert!(!classic.contains("frame(inputs:"));
 }
 
 #[test]
