@@ -250,7 +250,8 @@ pub(super) fn build_verified_vector_module_with_evidence(
     let static_declarations = program.static_declarations().to_vec();
     let table_declarations = program.table_declarations().to_vec();
     let table_init_statements = program.table_init_statements().to_vec();
-    let external_control_statements = program.external_control_statements().to_vec();
+    let mut external_control_statements = program.external_control_statements().to_vec();
+    remove_pure_drop_roots(program.store(), &mut external_control_statements);
     let control_state_fields = program.control_state_fields().to_vec();
     let module_context = FinalModuleContext {
         module_name,

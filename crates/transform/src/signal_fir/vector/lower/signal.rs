@@ -1999,7 +1999,7 @@ pub(super) fn materialize_region_roots_promoted(
 ) -> Result<PromotedRegionRoots, PureVectorLowerError> {
     let mut builder = FirBuilder::new(store);
     let mut statements: Vec<FirId> = values.iter().map(|&value| builder.drop_(value)).collect();
-    let fields = materialize_shared_values_promoted(
+    let mut fields = materialize_shared_values_promoted(
         store,
         &mut statements,
         "fVecControlTemp",
@@ -2007,17 +2007,68 @@ pub(super) fn materialize_region_roots_promoted(
         "iVecControlTemp",
         0,
     );
-    let rewritten = statements
+    let mut field_names = fields
         .iter()
-        .filter_map(|statement| match match_fir(store, *statement) {
-            FirMatch::Drop(value) => Some(value),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+        .map(|(name, _)| name.clone())
+        .collect::<BTreeSet<_>>();
+    let mut float_counter = next_promoted_counter(&field_names, "fVecControlTemp");
+    let mut int_counter = next_promoted_counter(&field_names, "iVecControlTemp");
+    let mut rewritten = Vec::with_capacity(values.len());
+    let mut promoted_statements = Vec::with_capacity(statements.len());
+    for statement in statements {
+        let FirMatch::Drop(value) = match_fir(store, statement) else {
+            promoted_statements.push(statement);
+            continue;
+        };
+        if let FirMatch::LoadVar {
+            name,
+            access: AccessType::Struct,
+            ..
+        } = match_fir(store, value)
+            && field_names.contains(&name)
+        {
+            // CSE already emitted the corresponding struct store. Retain the
+            // Drop temporarily because the independent body checker uses it
+            // as root evidence; final module materialization removes it.
+            promoted_statements.push(statement);
+            rewritten.push(value);
+            continue;
+        }
+        let typ = store
+            .value_type(value)
+            .ok_or(PureVectorLowerError::CseRootCoverage { region })?;
+        let (prefix, counter) = if matches!(typ, FirType::Int32 | FirType::Int64 | FirType::Bool) {
+            ("iVecControlTemp", &mut int_counter)
+        } else {
+            ("fVecControlTemp", &mut float_counter)
+        };
+        let name = loop {
+            let candidate = format!("{prefix}{counter}");
+            *counter += 1;
+            if field_names.insert(candidate.clone()) {
+                break candidate;
+            }
+        };
+        fields.push((name.clone(), typ.clone()));
+        let store_root = FirBuilder::new(store).store_var(&name, AccessType::Struct, value);
+        let load_root = FirBuilder::new(store).load_var(name, AccessType::Struct, typ);
+        let evidence_root = FirBuilder::new(store).drop_(load_root);
+        promoted_statements.push(store_root);
+        promoted_statements.push(evidence_root);
+        rewritten.push(load_root);
+    }
     if rewritten.len() != values.len() {
         return Err(PureVectorLowerError::CseRootCoverage { region });
     }
-    Ok((statements, rewritten, fields))
+    Ok((promoted_statements, rewritten, fields))
+}
+
+fn next_promoted_counter(names: &BTreeSet<String>, prefix: &str) -> u32 {
+    names
+        .iter()
+        .filter_map(|name| name.strip_prefix(prefix)?.parse::<u32>().ok())
+        .max()
+        .map_or(0, |value| value.saturating_add(1))
 }
 pub(super) fn materialize_region_roots_with_prefix(
     store: &mut FirStore,

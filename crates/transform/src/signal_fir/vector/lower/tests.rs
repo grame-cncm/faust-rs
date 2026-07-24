@@ -11,6 +11,7 @@ use crate::clk_env::annotate;
 use crate::signal_fir::decoration_verify::{CanonicalSigType, certify_decorations};
 use crate::signal_fir::vector::plan::VerifiedVectorPlan;
 use crate::signal_fir::vector::plan::verified_vector_plan_for_test;
+use crate::signal_fir::vector::route::VectorRegion;
 use crate::signal_fir::vector::verify::{
     EpochRecord, LoopEdge, LoopKind, LoopRecord, Rate, TransportRecord, VecSafeWitness, VectorPlan,
     Vectorability, WitnessKind,
@@ -336,6 +337,41 @@ fn fused_scalar_transport_load_evidence_survives_cse_rebuilding() {
         &store,
         &[wrong],
         expected
+    ));
+}
+
+#[test]
+fn external_control_promotes_a_trivial_root_before_final_drop_cleanup() {
+    let mut store = FirStore::new();
+    let value = FirBuilder::new(&mut store).float32(0.5);
+
+    let (statements, rewritten, fields) =
+        materialize_region_roots_promoted(&mut store, &[value], VectorRegion::Control).unwrap();
+
+    assert_eq!(
+        fields,
+        vec![("fVecControlTemp0".to_owned(), FirType::Float32)]
+    );
+    assert_eq!(statements.len(), 2);
+    assert!(matches!(
+        match_fir(&store, statements[0]),
+        FirMatch::StoreVar {
+            ref name,
+            access: AccessType::Struct,
+            value: stored,
+        } if name == "fVecControlTemp0" && stored == value
+    ));
+    assert!(matches!(
+        match_fir(&store, rewritten[0]),
+        FirMatch::LoadVar {
+            ref name,
+            access: AccessType::Struct,
+            typ: FirType::Float32,
+        } if name == "fVecControlTemp0"
+    ));
+    assert!(matches!(
+        match_fir(&store, statements[1]),
+        FirMatch::Drop(value) if value == rewritten[0]
     ));
 }
 
