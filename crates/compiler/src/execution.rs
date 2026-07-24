@@ -273,13 +273,13 @@ pub fn validate_execution_options(
     // verified module (complete since phase 2); the C and C++ emitters
     // landed in phase 3.
     //
-    // Vector external control (`-ec -vec`) is phase 5: the vector producer
-    // does not represent the control split yet, so the gate stays for every
-    // backend until the certificate chain covers promoted control events.
-    // Scalar lowering has landed for every capability-accepting backend
-    // (fir: phase 2 module dump; c/cpp: phase 3; rust: phase 4).
-    const SCALAR_LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust"];
-    if !compute_mode.is_vector() && SCALAR_LOWERING_LANDED.contains(&backend) {
+    // Lowering status per backend: scalar landed in phases 2-4
+    // (fir: module dump; c/cpp: phase 3; rust: phase 4); vector external
+    // control landed in phase 5 with the promoted-control-event certificate
+    // (`-os -vec` was already rejected above, so reaching here in vector
+    // mode means `-ec -vec`).
+    const LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust"];
+    if LOWERING_LANDED.contains(&backend) {
         return Ok(());
     }
     let options = match (wants_ec, wants_os) {
@@ -466,23 +466,21 @@ mod tests {
     }
 
     #[test]
-    fn external_control_stays_gated_in_vector_mode_until_phase_5() {
-        // `-ec -vec` is a valid target combination (plan phase 5). The
-        // vector producer does not represent the control split yet, so even
-        // scalar-landed backends stop at the implementation gate — a silent
-        // classic-vector emission would ignore the flag.
+    fn external_control_is_accepted_in_vector_mode_since_phase_5() {
         for backend in ["cpp", "c", "fir", "rust"] {
-            let err = validate_execution_options(
-                backend,
-                ControlRateMode::External,
-                ProcessingApi::Block,
-                ComputeMode::Vector {
-                    vec_size: 32,
-                    loop_variant: 0,
-                },
-            )
-            .unwrap_err();
-            assert_eq!(err.code(), "FRS-EXEC-UNIMPLEMENTED", "{backend}");
+            assert_eq!(
+                validate_execution_options(
+                    backend,
+                    ControlRateMode::External,
+                    ProcessingApi::Block,
+                    ComputeMode::Vector {
+                        vec_size: 32,
+                        loop_variant: 0,
+                    },
+                ),
+                Ok(()),
+                "{backend}"
+            );
         }
     }
 

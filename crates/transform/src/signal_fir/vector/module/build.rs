@@ -54,10 +54,22 @@ pub(crate) fn build_verified_vector_module(
     context: &VectorModuleContext<'_>,
 ) -> Result<SignalFirOutput, VectorModuleFailure> {
     let built = build_verified_vector_module_with_evidence(prepared, context)?;
+    // Phase 5 evidence coherence: classic mode must not carry any
+    // external-control evidence. (Under external control an empty list is
+    // legitimate: a program with no control-rate values externalizes
+    // nothing and emits no `control` function.)
+    if !context.control_rate_mode.is_external()
+        && (!built.external_control_statements.is_empty() || !built.control_state_fields.is_empty())
+    {
+        return Err(module_shape(
+            "classic mode must not carry external-control evidence",
+        ));
+    }
     let BuiltVectorModule {
         output,
         assembly,
         output_stores,
+        ..
     } = built;
     if assembly.schema_version != crate::signal_fir::vector::assemble::VECTOR_FIR_ASSEMBLY_VERSION
         || output_stores.len() != context.num_outputs
@@ -70,6 +82,10 @@ pub(super) struct BuiltVectorModule {
     pub(super) output: SignalFirOutput,
     pub(super) assembly: VectorFirAssembly,
     pub(super) output_stores: Vec<FirId>,
+    /// Externalized control statements (`control` body) under `-ec`.
+    pub(super) external_control_statements: Vec<FirId>,
+    /// DSP struct fields created by external-control promotion.
+    pub(super) control_state_fields: Vec<(String, FirType)>,
 }
 pub(super) fn build_verified_vector_module_with_evidence(
     prepared: &VerifiedPreparedSignals,
@@ -262,6 +278,8 @@ pub(super) fn build_verified_vector_module_with_evidence(
             table_declarations: &table_declarations,
             ui,
             plan: routed.plan(),
+            external_control_statements: &external_control_statements,
+            control_state_fields: &control_state_fields,
         },
     )?;
     trace_stage("module-assembly-verification");
@@ -278,6 +296,8 @@ pub(super) fn build_verified_vector_module_with_evidence(
         },
         assembly,
         output_stores,
+        external_control_statements,
+        control_state_fields,
     })
 }
 pub(super) fn reject_cross_loop_delay_read_transports(

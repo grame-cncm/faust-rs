@@ -8,6 +8,7 @@ use crate::signal_fir::vector::analysis::EffectAtom;
 use crate::signal_fir::vector::assemble::{VectorFirAssembly, fir_reachable};
 use crate::signal_fir::vector::ui::VectorUiFir;
 use crate::signal_fir::vector::verify::VectorPlan;
+use fir::AccessType;
 use fir::checker::verify_fir_module;
 use fir::{FirId, FirMatch, FirStore, FirType, match_fir};
 use std::collections::{BTreeMap, BTreeSet};
@@ -282,6 +283,13 @@ pub(super) struct FinalModuleExpectations<'a> {
     pub(super) table_declarations: &'a [FirId],
     pub(super) ui: &'a ui::UiProgram,
     pub(super) plan: &'a VectorPlan,
+    /// Expected `control(dsp)` body under external control (plan phase 5):
+    /// the exact externalized statement list, in order. Empty in classic
+    /// mode, where `control` must be absent.
+    pub(super) external_control_statements: &'a [FirId],
+    /// DSP struct fields created by external-control promotion; each must
+    /// be declared in the struct and stored exactly once, in `control`.
+    pub(super) control_state_fields: &'a [(String, FirType)],
 }
 pub(super) fn verify_final_module(
     store: &FirStore,
@@ -296,6 +304,8 @@ pub(super) fn verify_final_module(
         table_declarations,
         ui,
         plan,
+        external_control_statements,
+        control_state_fields,
     } = *expected;
     let report = verify_fir_module(store, module);
     if report.has_errors() {
@@ -418,7 +428,108 @@ pub(super) fn verify_final_module(
             return Err(module_shape("compute does not cover every output store"));
         }
     }
+    verify_external_control(
+        store,
+        &bodies,
+        compute,
+        &fields,
+        external_control_statements,
+        control_state_fields,
+    )?;
     Ok(())
+}
+
+/// Plan phase 5 checker extension: verifies the promoted external-control
+/// events. Under external control the `control(dsp)` body must be exactly
+/// the externalized statement list (no missing, duplicated, or reordered
+/// promoted store), every promoted field must be declared in the DSP struct
+/// and written in `control` only, and `compute` must neither observe a UI
+/// input zone directly nor write any promoted field. In classic mode the
+/// `control` function must be absent.
+fn verify_external_control(
+    store: &FirStore,
+    bodies: &BTreeMap<String, FirId>,
+    compute: FirId,
+    struct_fields: &[FirId],
+    external_control_statements: &[FirId],
+    control_state_fields: &[(String, FirType)],
+) -> Result<(), VectorModuleFailure> {
+    if external_control_statements.is_empty() {
+        if bodies.contains_key("control") {
+            return Err(module_shape(
+                "control function emitted without externalized control statements",
+            ));
+        }
+        return Ok(());
+    }
+    let Some(&control) = bodies.get("control") else {
+        return Err(module_shape(
+            "external control requested but no control function was emitted",
+        ));
+    };
+    if match_fir(store, control) != FirMatch::Block(external_control_statements.to_vec()) {
+        return Err(module_shape(
+            "control does not contain the exact externalized statement list",
+        ));
+    }
+    // Promoted fields: declared in the struct; written exactly once inside
+    // control; never written by compute.
+    let declared: BTreeSet<String> = struct_fields
+        .iter()
+        .filter_map(|field| match match_fir(store, *field) {
+            FirMatch::DeclareVar { name, .. } => Some(name),
+            _ => None,
+        })
+        .collect();
+    let control_nodes = collect_reachable(store, control);
+    let compute_nodes = collect_reachable(store, compute);
+    for (name, _) in control_state_fields {
+        if !declared.contains(name) {
+            return Err(module_shape(format!(
+                "promoted control field {name} missing from the DSP struct"
+            )));
+        }
+        let stores_in_control = control_nodes
+            .iter()
+            .filter(|id| {
+                matches!(
+                    match_fir(store, **id),
+                    FirMatch::StoreVar { name: ref n, access: AccessType::Struct, .. } if n == name
+                )
+            })
+            .count();
+        if stores_in_control != 1 {
+            return Err(module_shape(format!(
+                "promoted control field {name} must be stored exactly once in control, found {stores_in_control}"
+            )));
+        }
+        if compute_nodes.iter().any(|id| {
+            matches!(
+                match_fir(store, *id),
+                FirMatch::StoreVar { name: ref n, access: AccessType::Struct, .. } if n == name
+            )
+        }) {
+            return Err(module_shape(format!(
+                "promoted control field {name} is written by compute"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Collects every FIR node reachable from `root` (statement edges included).
+fn collect_reachable(store: &FirStore, root: FirId) -> Vec<FirId> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = stack.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        out.push(id);
+        stack.extend(fir::fir_match_children(store, id));
+    }
+    out
 }
 pub(super) fn contains_statement(store: &FirStore, root: FirId, target: FirId) -> bool {
     if root == target {
