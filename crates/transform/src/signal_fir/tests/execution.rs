@@ -219,3 +219,69 @@ fn combined_mode_splits_control_from_frame() {
     )));
     assert_no_scope_errors(&out.store, out.module);
 }
+
+#[test]
+fn vector_external_control_promotes_snapshots_and_emits_control() {
+    // Plan phase 5: -ec -vec. The certified vector pipeline must emit a
+    // `control(dsp)` function holding the UI snapshot stores, and compute
+    // must read the promoted DSP state instead of the host-mutated zones.
+    use crate::signal_fir::ComputeMode;
+
+    let options = SignalFirOptions {
+        compute_mode: ComputeMode::Vector {
+            vec_size: 32,
+            loop_variant: 0,
+        },
+        control_rate_mode: ControlRateMode::External,
+        ..SignalFirOptions::default()
+    };
+    let out = compile_slider_gain(&options);
+    assert_eq!(
+        out.vector_pipeline_status,
+        crate::signal_fir::VectorPipelineStatus::Certified,
+        "the -ec vector path must stay certified: {:?}",
+        out.vector_pipeline_detail
+    );
+    let funs = function_bodies(&out.store, out.module);
+    let control = body_of(&funs, "control").expect("-ec -vec must emit a control function");
+    let compute = body_of(&funs, "compute").expect("compute body");
+    // The snapshot store lives in control (fSlow0 = cast(fHslider0)).
+    assert!(contains_slow_struct_store(&out.store, control));
+    // Compute must not read the UI zone directly anymore: every zone read
+    // goes through the promoted snapshot.
+    let compute_nodes = reachable(&out.store, compute);
+    assert!(
+        compute_nodes.iter().all(|id| !matches!(
+            match_fir(&out.store, *id),
+            FirMatch::LoadVar { ref name, .. } if name.starts_with("fHslider")
+        )),
+        "compute must not observe UI zones under external control"
+    );
+    assert!(compute_nodes.iter().any(|id| matches!(
+        match_fir(&out.store, *id),
+        FirMatch::LoadVar { ref name, access: AccessType::Struct, .. }
+            if name.starts_with("fSlow") || name.starts_with("fVecControlTemp")
+    )));
+    assert_no_scope_errors(&out.store, out.module);
+}
+
+#[test]
+fn vector_classic_mode_is_unchanged_by_the_ec_machinery() {
+    use crate::signal_fir::ComputeMode;
+
+    let options = SignalFirOptions {
+        compute_mode: ComputeMode::Vector {
+            vec_size: 32,
+            loop_variant: 0,
+        },
+        ..SignalFirOptions::default()
+    };
+    let out = compile_slider_gain(&options);
+    assert_eq!(
+        out.vector_pipeline_status,
+        crate::signal_fir::VectorPipelineStatus::Certified
+    );
+    let funs = function_bodies(&out.store, out.module);
+    assert!(body_of(&funs, "control").is_none());
+    assert_no_scope_errors(&out.store, out.module);
+}

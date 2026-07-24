@@ -1,6 +1,7 @@
 //! Tests for `vector::module` (relocated from the former inline
 //! `mod tests` block; test names unchanged).
 
+use crate::signal_fir::ControlRateMode;
 use fir::{AccessType, FirBuilder, FirStore, FirType};
 
 use super::check::{
@@ -382,6 +383,7 @@ fn module_context<'a>(
             loop_variant,
         },
         strategy,
+        control_rate_mode: ControlRateMode::InlinePerBlock,
     }
 }
 
