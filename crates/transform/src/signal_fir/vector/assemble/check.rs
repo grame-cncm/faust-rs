@@ -237,8 +237,16 @@ pub(super) fn state_cursor_advance_matches(
 /// Top-rate members must be the exact body of one physical sample loop, with
 /// state setup/commit outside it. Nonzero-clock members must be consecutive in
 /// one exact island and have no escaped pre/post action. In both forms, every
-/// recorded delayed read, state write, and fused scalar transport must occur
-/// inside the selected body.
+/// recorded state write and fused scalar transport store must occur inside the
+/// selected body, and no recorded delayed read or transport load may occur
+/// outside it.
+///
+/// Reads are stated as an escape rule rather than a presence rule because they
+/// are pure values: when nothing consumes one, dead pure root removal deletes
+/// it from the assembled FIR entirely. An eliminated read cannot escape the
+/// body, so absence from the whole assembly is accepted while any surviving
+/// occurrence outside the body is still rejected. Writes stay presence rules —
+/// they are statements and that cleanup never removes them.
 pub(super) fn verify_assembled_fused_serial_groups(
     routed: &VerifiedRoutedFir,
     state_plan: Option<&VerifiedVectorStatePlan>,
@@ -262,6 +270,10 @@ pub(super) fn verify_assembled_fused_serial_groups(
         .iter()
         .map(|signal| (signal.signal_id, signal))
         .collect::<BTreeMap<_, _>>();
+    // Built on first use only: the escape question is asked only for delayed
+    // reads that are already absent from their physical body, which is the
+    // dead-read case rather than the common one.
+    let mut assembled_nodes: Option<BTreeSet<FirId>> = None;
 
     for group in &routed.plan().fused_serial_groups {
         let reject = || VectorFirAssemblyError::FusedGroupShape {
@@ -382,8 +394,15 @@ pub(super) fn verify_assembled_fused_serial_groups(
                         && matches!(definition.region, VectorRegion::Loop(loop_id) if group.member_loop_ids.contains(&loop_id))
                 })
                 .collect::<Vec<_>>();
-            if definitions.len() != 1 || !body_nodes.contains(&definitions[0].value) {
+            let [definition] = definitions.as_slice() else {
                 return Err(reject());
+            };
+            if !body_nodes.contains(&definition.value) {
+                let assembled = assembled_nodes
+                    .get_or_insert_with(|| fir_reachable(store, assembly.top_level_statement));
+                if assembled.contains(&definition.value) {
+                    return Err(reject());
+                }
             }
         }
 
@@ -460,11 +479,21 @@ pub(super) fn verify_assembled_fused_serial_groups(
                 || transport
                     .store
                     .is_none_or(|statement| !body_nodes.contains(&statement))
-                || transport
-                    .load
-                    .is_none_or(|value| !body_nodes.contains(&value))
             {
                 return Err(reject());
+            }
+            // The load is a pure value and follows the delayed-read rule: an
+            // unconsumed one is removed with the dead pure roots, so only a
+            // surviving load outside the physical body is an escape.
+            let Some(load) = transport.load else {
+                return Err(reject());
+            };
+            if !body_nodes.contains(&load) {
+                let assembled = assembled_nodes
+                    .get_or_insert_with(|| fir_reachable(store, assembly.top_level_statement));
+                if assembled.contains(&load) {
+                    return Err(reject());
+                }
             }
         }
     }

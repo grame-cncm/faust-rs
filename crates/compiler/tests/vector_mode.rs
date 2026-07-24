@@ -917,6 +917,56 @@ fn phase3_state_plan_accepts_temporal_slow_values_and_special_state_cells() {
         .expect("phase-3 test thread");
 }
 
+/// Dead pure roots are removed before FIR assembly, so a fused serial group's
+/// delayed reads and scalar transport loads can disappear when nothing consumes
+/// them. Both corpus shapes below hit that case: they must stay fully certified
+/// rather than falling back once the reads are gone.
+#[test]
+fn fused_serial_groups_survive_dead_pure_root_removal() {
+    std::thread::Builder::new()
+        .name("fused-group-dead-root-corpus".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let compiler = Compiler::new().with_compute_mode(ComputeMode::Vector {
+                vec_size: 32,
+                loop_variant: 0,
+            });
+            let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/impulse-tests/dsp");
+            // echo_bug loses a delayed read of its own delay line; phaser_flanger
+            // loses the load side of a fused scalar transport.
+            for name in ["echo_bug.dsp", "phaser_flanger.dsp"] {
+                let path = corpus.join(name);
+                let output = compiler
+                    .compile_file_default_to_fir_with_lane(&path, SignalFirLane::TransformFastLane)
+                    .unwrap_or_else(|error| panic!("{name} vector FIR: {error}"));
+                assert_eq!(
+                    output.vector_pipeline_status,
+                    VectorPipelineStatus::Certified,
+                    "{name}: {:?}",
+                    output.vector_pipeline_detail
+                );
+                assert_eq!(
+                    output.vector_effective_mode,
+                    VectorEffectiveMode::CertifiedVector,
+                    "{name} must keep the certified vector structure"
+                );
+            }
+            // echo_bug is self-contained, so the restored vector structure can
+            // also be held to the bit-exactness oracle. phaser_flanger needs the
+            // installed libraries and stays a certification-only case here.
+            assert_channels_bit_exact(
+                "echo_bug.dsp",
+                include_str!("../../../tests/impulse-tests/dsp/echo_bug.dsp"),
+                std::slice::from_ref(&ramp(67)),
+                32,
+            );
+        })
+        .expect("spawn large-stack fused-group test")
+        .join()
+        .expect("fused-group test thread");
+}
+
 #[test]
 fn vector_copy_delay_loops_reach_c_family_backends() {
     let source = include_str!("../../../tests/impulse-tests/dsp/noiseabs.dsp");

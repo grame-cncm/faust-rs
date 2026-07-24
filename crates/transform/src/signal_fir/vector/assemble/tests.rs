@@ -675,6 +675,16 @@ fn nests_clock_loop_and_materializes_held_transport_lifetime() {
         Err(VectorFirAssemblyError::FusedGroupShape { group_id: 0 })
     ));
 
+    // Tolerating an eliminated delayed read must not tolerate a relocated one:
+    // the read stays reachable from the assembled top level while the physical
+    // body no longer holds it, which is an escape and not dead-code removal.
+    let mut forged = assembly.clone();
+    forged.islands[0].statement = FirBuilder::new(&mut store).int32(0);
+    assert!(matches!(
+        verify_assembled_fused_serial_groups(&routed, Some(&state), &forged, &store),
+        Err(VectorFirAssemblyError::FusedGroupShape { group_id: 0 })
+    ));
+
     let mut forged = assembly.clone();
     forged.clock_output_stores[0].owner_loop_id = 99;
     assert!(matches!(
