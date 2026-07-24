@@ -8,10 +8,13 @@ use super::check::{verify_plan_prepared_boundary, verify_pure_vector_bodies};
 use super::program::*;
 use super::tables::mutable_table_name;
 use crate::schedule::SchedulingStrategy;
+use crate::signal_fir::ControlRateMode;
 use crate::signal_fir::module::map_binop;
 use crate::signal_fir::vector::analysis::wrtbl_is_readonly;
 use crate::signal_fir::vector::clock_ad::{ClockGuard, VerifiedVectorClockAdPlan};
-use crate::signal_fir::vector::cse::materialize_shared_values;
+use crate::signal_fir::vector::cse::{
+    materialize_shared_values, materialize_shared_values_promoted,
+};
 use crate::signal_fir::vector::plan::VerifiedVectorPlan;
 use crate::signal_fir::vector::recursion::{decode_group_projection, decode_symbolic_group_bodies};
 use crate::signal_fir::vector::route::{
@@ -63,6 +66,16 @@ struct PureVectorLowerer<'a> {
     state_plan: Option<&'a VerifiedVectorStatePlan>,
     ui_stores: BTreeMap<LowerScope, Vec<FirId>>,
     upsampling_domains: BTreeMap<u64, u64>,
+    /// Control-rate evaluation scheduling (`-ec`), plan phase 5.
+    control_rate_mode: ControlRateMode,
+    /// Per-zone UI snapshot names under `-ec` (zone name → snapshot field).
+    ui_snapshots: BTreeMap<String, String>,
+    /// Snapshot stores emitted into `control` under `-ec`.
+    snapshot_stores: Vec<FirId>,
+    /// DSP struct fields created by `-ec` promotion.
+    promoted_control_fields: Vec<(String, FirType)>,
+    /// Counter for `fSlow` snapshot names.
+    snapshot_counter: u32,
 }
 /// Lowers actual effect-free prepared signals into P4.4 vector regions.
 ///
@@ -82,6 +95,7 @@ pub fn lower_pure_vector_program(
         strategy,
         real_type,
         num_inputs,
+        control_rate_mode: ControlRateMode::InlinePerBlock,
     };
     lower_vector_program_impl(prepared, verified_plan, None, None, &context)
 }
@@ -201,6 +215,11 @@ pub(super) fn lower_vector_program_impl<'a>(
         state_plan,
         ui_stores: BTreeMap::new(),
         upsampling_domains,
+        control_rate_mode: context.control_rate_mode,
+        ui_snapshots: BTreeMap::new(),
+        snapshot_stores: Vec::new(),
+        promoted_control_fields: Vec::new(),
+        snapshot_counter: 0,
     };
 
     let mut control_cache = BTreeMap::new();
@@ -224,8 +243,22 @@ pub(super) fn lower_vector_program_impl<'a>(
         }
     }
     trace_stage("control-lowering");
-    let (mut control_statements, rewritten_control_values) =
-        materialize_region_roots(&mut lowerer.store, &control_values, VectorRegion::Control)?;
+    // Phase 5: under external control the shared control-root temporaries are
+    // promoted to DSP struct fields (their stores move to `control`, while
+    // vector transport fills in `compute` read them back), mirroring the
+    // scalar konst-escape promotion (§4.4). Classic mode keeps stack locals.
+    let external_control = lowerer.control_rate_mode.is_external();
+    let (mut control_statements, rewritten_control_values) = if external_control {
+        let (statements, rewritten, fields) = materialize_region_roots_promoted(
+            &mut lowerer.store,
+            &control_values,
+            VectorRegion::Control,
+        )?;
+        lowerer.promoted_control_fields.extend(fields);
+        (statements, rewritten)
+    } else {
+        materialize_region_roots(&mut lowerer.store, &control_values, VectorRegion::Control)?
+    };
     control_statements.extend(
         lowerer
             .ui_stores
@@ -319,7 +352,19 @@ pub(super) fn lower_vector_program_impl<'a>(
     }
     trace_stage("loop-lowering");
 
-    control_statements.splice(0..0, lowerer.input_declarations.iter().copied());
+    // Phase 5 split: under external control the externalizable statements
+    // (UI snapshots first, then promoted control roots and control-scope UI
+    // stores) form the `control` body; only the input channel aliases stay
+    // in the compute preamble. Classic mode keeps the single interleaved
+    // list with the aliases spliced in front, byte-identical to before.
+    let (control_statements, external_control_statements) = if external_control {
+        let mut external = lowerer.snapshot_stores.clone();
+        external.extend(control_statements.iter().copied());
+        (lowerer.input_declarations.clone(), external)
+    } else {
+        control_statements.splice(0..0, lowerer.input_declarations.iter().copied());
+        (control_statements, Vec::new())
+    };
     let routed = lowerer.session.finish(&lowerer.store)?;
     if timing_enabled {
         for transport in &verified_plan.plan().transports {
@@ -332,11 +377,16 @@ pub(super) fn lower_vector_program_impl<'a>(
             );
         }
     }
+    let verified_control_section: Vec<FirId> = external_control_statements
+        .iter()
+        .chain(control_statements.iter())
+        .copied()
+        .collect();
     verify_pure_vector_bodies(
         verified_plan.plan(),
         &routed,
         &transport_declarations,
-        &control_statements,
+        &verified_control_section,
         &regions,
         state_plan,
         &lowerer.store,
@@ -350,6 +400,8 @@ pub(super) fn lower_vector_program_impl<'a>(
         mutable_tables: lowerer.mutable_tables,
         transport_declarations,
         control_statements,
+        external_control_statements,
+        control_state_fields: lowerer.promoted_control_fields,
         regions,
         routed,
         math_ops: lowerer.math_ops,
@@ -889,6 +941,32 @@ impl PureVectorLowerer<'_> {
                     zone.kind
                 ),
             });
+        }
+        // Execution-options port phase 5: under external control, compute
+        // must not observe host-mutated UI zones directly. Each zone read
+        // goes through a promoted snapshot field written once per `control`
+        // invocation; the classic mode keeps the direct zone read inline.
+        if self.control_rate_mode.is_external() {
+            let snapshot = if let Some(existing) = self.ui_snapshots.get(&zone.name) {
+                existing.clone()
+            } else {
+                let name = format!("fSlow{}", self.snapshot_counter);
+                self.snapshot_counter += 1;
+                let mut b = FirBuilder::new(&mut self.store);
+                let raw = b.load_var(zone.name.clone(), AccessType::Struct, FirType::FaustFloat);
+                let cast = b.cast(self.real_type.clone(), raw);
+                let store = b.store_var(&name, AccessType::Struct, cast);
+                self.snapshot_stores.push(store);
+                self.promoted_control_fields
+                    .push((name.clone(), self.real_type.clone()));
+                self.ui_snapshots.insert(zone.name.clone(), name.clone());
+                name
+            };
+            return Ok(FirBuilder::new(&mut self.store).load_var(
+                snapshot,
+                AccessType::Struct,
+                self.real_type.clone(),
+            ));
         }
         let raw = FirBuilder::new(&mut self.store).load_var(
             zone.name,
@@ -1903,6 +1981,43 @@ pub(super) fn materialize_region_roots(
         "fVecControlTemp",
         "iVecControlTemp",
     )
+}
+
+/// Result of [`materialize_region_roots_promoted`]: the materialized
+/// statement list, the rewritten root values, and the promoted struct
+/// fields.
+pub(super) type PromotedRegionRoots = (Vec<FirId>, Vec<FirId>, Vec<(String, FirType)>);
+
+/// `-ec` variant of [`materialize_region_roots`]: shared temporaries become
+/// DSP struct fields written in place (plan phase 5, vector control-root
+/// promotion), so their stores can move to `control` while compute-side
+/// consumers load them across the function boundary.
+pub(super) fn materialize_region_roots_promoted(
+    store: &mut FirStore,
+    values: &[FirId],
+    region: VectorRegion,
+) -> Result<PromotedRegionRoots, PureVectorLowerError> {
+    let mut builder = FirBuilder::new(store);
+    let mut statements: Vec<FirId> = values.iter().map(|&value| builder.drop_(value)).collect();
+    let fields = materialize_shared_values_promoted(
+        store,
+        &mut statements,
+        "fVecControlTemp",
+        0,
+        "iVecControlTemp",
+        0,
+    );
+    let rewritten = statements
+        .iter()
+        .filter_map(|statement| match match_fir(store, *statement) {
+            FirMatch::Drop(value) => Some(value),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if rewritten.len() != values.len() {
+        return Err(PureVectorLowerError::CseRootCoverage { region });
+    }
+    Ok((statements, rewritten, fields))
 }
 pub(super) fn materialize_region_roots_with_prefix(
     store: &mut FirStore,

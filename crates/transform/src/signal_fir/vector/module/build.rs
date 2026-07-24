@@ -10,6 +10,7 @@ use super::lifecycle::{FinalModuleContext, assemble_module};
 use super::model::VectorModuleFailure;
 use super::outputs::{OutputMaterialization, materialize_outputs};
 use crate::schedule::SchedulingStrategy;
+use crate::signal_fir::ControlRateMode;
 use crate::signal_fir::vector::analysis::DepKind;
 use crate::signal_fir::vector::assemble::{
     VectorFirAssembly, VectorLoopFirInput, assemble_vector_fir,
@@ -45,6 +46,8 @@ pub(crate) struct VectorModuleContext<'a> {
     pub max_copy_delay: u32,
     pub compute_mode: ComputeMode,
     pub strategy: SchedulingStrategy,
+    /// Control-rate evaluation scheduling (`-ec`), plan phase 5.
+    pub control_rate_mode: ControlRateMode,
 }
 pub(crate) fn build_verified_vector_module(
     prepared: &VerifiedPreparedSignals,
@@ -159,6 +162,7 @@ pub(super) fn build_verified_vector_module_with_evidence(
             strategy,
             real_type: real_type.clone(),
             num_inputs,
+            control_rate_mode: context.control_rate_mode,
         },
     )
     .map_err(|error| {
@@ -225,6 +229,8 @@ pub(super) fn build_verified_vector_module_with_evidence(
     let static_declarations = program.static_declarations().to_vec();
     let table_declarations = program.table_declarations().to_vec();
     let table_init_statements = program.table_init_statements().to_vec();
+    let external_control_statements = program.external_control_statements().to_vec();
+    let control_state_fields = program.control_state_fields().to_vec();
     let module_context = FinalModuleContext {
         module_name,
         num_inputs,
@@ -241,6 +247,8 @@ pub(super) fn build_verified_vector_module_with_evidence(
         control_output_stores: &control_output_stores,
         ui_fir: &ui_fir,
         static_declarations: &static_declarations,
+        external_control_statements: &external_control_statements,
+        control_state_fields: &control_state_fields,
     };
     let module = assemble_module(program.store_mut(), &module_context)?;
     verify_final_module(

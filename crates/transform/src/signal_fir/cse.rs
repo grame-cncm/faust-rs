@@ -26,6 +26,13 @@ struct RewriteState<'a> {
     ref_counts: &'a HashMap<FirId, usize>,
     materialized: HashMap<FirId, (String, FirType)>,
     temp_decls: Vec<FirId>,
+    /// Storage class for materialized temporaries. `Stack` is the classic
+    /// behavior; `Struct` promotes each temporary to a DSP field written in
+    /// place (execution-options port §4.4, vector control-root promotion:
+    /// the value must be readable across the control/compute boundary).
+    access: AccessType,
+    /// Struct fields created by `Struct`-mode materialization.
+    promoted_fields: Vec<(String, FirType)>,
 }
 
 // ─── Reference counting ─────────────────────────────────────────────────────
@@ -612,7 +619,47 @@ pub(super) fn materialize_shared_values(
         int_prefix,
         int_counter: int_start_counter,
     };
-    materialize_scope(store, statements, &mut counters);
+    let mut unused = Vec::new();
+    materialize_scope(
+        store,
+        statements,
+        &mut counters,
+        AccessType::Stack,
+        &mut unused,
+    );
+}
+
+/// `Struct`-promoting variant of [`materialize_shared_values`] for the
+/// top scope only (nested bodies keep stack temporaries): each materialized
+/// temporary becomes a DSP struct field written in place, and the created
+/// `(name, type)` pairs are returned so the module can declare them.
+///
+/// Execution-options port §4.4 / phase 5: external control moves these
+/// statements into `control`, so compute-side consumers (vector transport
+/// fills, loop bodies) must read the values through DSP-owned storage.
+pub(super) fn materialize_shared_values_promoted(
+    store: &mut FirStore,
+    statements: &mut Vec<FirId>,
+    float_prefix: &str,
+    float_start_counter: u32,
+    int_prefix: &str,
+    int_start_counter: u32,
+) -> Vec<(String, FirType)> {
+    let mut counters = TypedCounters {
+        float_prefix,
+        float_counter: float_start_counter,
+        int_prefix,
+        int_counter: int_start_counter,
+    };
+    let mut promoted = Vec::new();
+    materialize_scope(
+        store,
+        statements,
+        &mut counters,
+        AccessType::Struct,
+        &mut promoted,
+    );
+    promoted
 }
 
 /// CSE-materializes one execution scope (a flat statement list), recursing into
@@ -621,6 +668,8 @@ fn materialize_scope(
     store: &mut FirStore,
     statements: &mut Vec<FirId>,
     counters: &mut TypedCounters<'_>,
+    access: AccessType,
+    promoted_fields: &mut Vec<(String, FirType)>,
 ) {
     // Reference counts are computed over *this* scope only: `value_children_of`
     // does not descend into nested bodies, so a node shared inside a guarded
@@ -631,6 +680,8 @@ fn materialize_scope(
         ref_counts: &ref_counts,
         materialized: HashMap::new(),
         temp_decls: Vec::new(),
+        access,
+        promoted_fields: Vec::new(),
     };
     let mut result = Vec::with_capacity(statements.len());
 
@@ -644,6 +695,7 @@ fn materialize_scope(
     }
 
     *statements = result;
+    promoted_fields.append(&mut state.promoted_fields);
 }
 
 /// Recurses CSE into a nested body (a `Block` or a single statement), returning
@@ -657,14 +709,16 @@ fn rewrite_scope_body(
 ) -> FirId {
     match match_fir(store, body) {
         FirMatch::Block(mut stmts) => {
-            materialize_scope(store, &mut stmts, counters);
+            let mut unused = Vec::new();
+            materialize_scope(store, &mut stmts, counters, AccessType::Stack, &mut unused);
             FirBuilder::new(store).block(&stmts)
         }
         // A single (non-block) statement as its own one-element scope. If CSE
         // adds a declaration, the body must become a block to hold it.
         _ => {
             let mut stmts = vec![body];
-            materialize_scope(store, &mut stmts, counters);
+            let mut unused = Vec::new();
+            materialize_scope(store, &mut stmts, counters, AccessType::Stack, &mut unused);
             if stmts.len() == 1 {
                 stmts[0]
             } else {
@@ -803,7 +857,7 @@ fn rewrite_value(
 ) -> FirId {
     // Already materialized → return LoadVar reference.
     if let Some((name, typ)) = state.materialized.get(&node).cloned() {
-        return FirBuilder::new(store).load_var(name, AccessType::Stack, typ);
+        return FirBuilder::new(store).load_var(name, state.access, typ);
     }
 
     // Rewrite children first (bottom-up).
@@ -815,16 +869,21 @@ fn rewrite_value(
         let (prefix, counter) = typed_prefix_for(&typ, counters);
         let name = format!("{prefix}{counter}");
         *counter += 1;
-        let decl = FirBuilder::new(store).declare_var(
-            &name,
-            typ.clone(),
-            AccessType::Stack,
-            Some(rewritten),
-        );
+        let decl = if state.access == AccessType::Struct {
+            state.promoted_fields.push((name.clone(), typ.clone()));
+            FirBuilder::new(store).store_var(&name, AccessType::Struct, rewritten)
+        } else {
+            FirBuilder::new(store).declare_var(
+                &name,
+                typ.clone(),
+                AccessType::Stack,
+                Some(rewritten),
+            )
+        };
         state.temp_decls.push(decl);
 
         state.materialized.insert(node, (name.clone(), typ.clone()));
-        return FirBuilder::new(store).load_var(name, AccessType::Stack, typ);
+        return FirBuilder::new(store).load_var(name, state.access, typ);
     }
 
     rewritten

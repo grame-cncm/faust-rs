@@ -23,6 +23,11 @@ pub(super) struct FinalModuleContext<'a> {
     pub(super) control_output_stores: &'a [FirId],
     pub(super) ui_fir: &'a VectorUiFir,
     pub(super) static_declarations: &'a [FirId],
+    /// Externalizable control statements: the `control(dsp)` body under
+    /// `-ec` (plan phase 5). Empty in classic mode.
+    pub(super) external_control_statements: &'a [FirId],
+    /// DSP struct fields created by external-control promotion.
+    pub(super) control_state_fields: &'a [(String, FirType)],
 }
 pub(super) fn assemble_module(
     store: &mut FirStore,
@@ -158,19 +163,42 @@ pub(super) fn assemble_module(
         false,
     );
 
+    // Execution-options port phase 5: emit `control(dsp)` when externalized
+    // control statements exist. The host owns its scheduling; compute never
+    // calls it implicitly (§2.3).
+    let control = (!context.external_control_statements.is_empty()).then(|| {
+        let control_body = FirBuilder::new(store).block(context.external_control_statements);
+        FirBuilder::new(store).declare_fun(
+            "control",
+            FirType::Fun {
+                args: vec![dsp_arg_type.clone()],
+                ret: Box::new(FirType::Void),
+            },
+            std::slice::from_ref(&dsp_arg),
+            Some(control_body),
+            false,
+        )
+    });
     let globals = build_prototypes(store, real_type, math_ops, int_helpers);
-    let functions = FirBuilder::new(store).block(&[
+    let mut function_items = vec![
         metadata,
         instance_constants,
         instance_reset_ui,
         instance_clear,
         build_ui,
-        compute,
-    ]);
+    ];
+    function_items.extend(control);
+    function_items.push(compute);
+    let functions = FirBuilder::new(store).block(&function_items);
     let sample_rate_field =
         FirBuilder::new(store).declare_var("fSampleRate", FirType::Int32, AccessType::Struct, None);
     let mut fields = vec![sample_rate_field];
     fields.extend(ui_fir.struct_declarations.iter().copied());
+    for (name, typ) in context.control_state_fields {
+        let decl =
+            FirBuilder::new(store).declare_var(name.clone(), typ.clone(), AccessType::Struct, None);
+        fields.push(decl);
+    }
     fields.extend(assembly.state_declarations.iter().copied());
     fields.extend(table_declarations.iter().copied());
     let dsp_struct = FirBuilder::new(store).block(&fields);

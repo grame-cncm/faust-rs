@@ -784,6 +784,7 @@ fn compile_fastlane_inner(
                     max_copy_delay: options.max_copy_delay,
                     compute_mode: options.compute_mode,
                     strategy: options.scheduling_strategy,
+                    control_rate_mode: options.control_rate_mode,
                 },
             )
         }) {
