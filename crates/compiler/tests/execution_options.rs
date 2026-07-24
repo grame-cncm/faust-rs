@@ -179,6 +179,46 @@ fn asc_shapes_match_the_one_sample_contract() {
 }
 
 #[test]
+fn faustwasm_aux_files_honor_execution_flags_in_argv() {
+    // The faustwasm `generateAuxFiles` surface receives its options as one
+    // raw argv string; `-ec`/`-os` (and the `--` spellings) must configure
+    // the derived compiler instead of being silently ignored.
+    use compiler::GenerateAuxFilesRequest;
+
+    for flags in ["--ec --os", "-ec -os", "--external-control --one-sample"] {
+        let request = GenerateAuxFilesRequest {
+            source_name: "exec_options_test.dsp".to_owned(),
+            source: SLIDER_GAIN.to_owned(),
+            args: format!("-lang asc -cn ExecTest {flags} -o /exec.out.ts"),
+            ..GenerateAuxFilesRequest::default()
+        };
+        let artifacts = Compiler::new()
+            .generate_aux_files(&request)
+            .expect("asc aux generation must succeed");
+        let asc = String::from_utf8(artifacts[0].content.clone()).expect("utf-8");
+        assert!(asc.contains("control(): void {"), "flags {flags}: {asc}");
+        assert!(
+            asc.contains("frame(inputs: StaticArray<f32>, outputs: StaticArray<f32>): void {"),
+            "flags {flags}"
+        );
+    }
+
+    // Without the flags the classic block contract is untouched.
+    let request = GenerateAuxFilesRequest {
+        source_name: "exec_options_test.dsp".to_owned(),
+        source: SLIDER_GAIN.to_owned(),
+        args: "-lang asc -cn ExecTest -o /exec.out.ts".to_owned(),
+        ..GenerateAuxFilesRequest::default()
+    };
+    let artifacts = Compiler::new()
+        .generate_aux_files(&request)
+        .expect("classic asc aux generation must succeed");
+    let asc = String::from_utf8(artifacts[0].content.clone()).expect("utf-8");
+    assert!(!asc.contains("control(): void {"));
+    assert!(!asc.contains("frame(inputs:"));
+}
+
+#[test]
 fn unsupported_backends_and_vector_mode_still_reject() {
     // -os stays a hard error in vector mode whatever the backend.
     let compiler = Compiler::new()

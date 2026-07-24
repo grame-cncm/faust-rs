@@ -374,6 +374,7 @@ pub struct FirVerifyOptions {
 ///
 /// Current canonical flow:
 /// `parse -> eval -> propagate -> (optional signal->FIR lowering) -> codegen`.
+#[derive(Clone)]
 pub struct Compiler {
     fir_verify: FirVerifyOptions,
     entrypoint_name: Box<str>,
@@ -1674,6 +1675,22 @@ impl Compiler {
     ///
     /// Additionally, faustwasm-style transpile requests using `-lang asc`
     /// produce one AssemblyScript source artifact (honoring `-cn` and `-o`).
+    /// Returns a derived compiler with the execution-option flags found in a
+    /// faustwasm-style argv applied (`-ec`/`--ec`/`--external-control`/
+    /// `--ext-control` and `-os`/`--os`/`--one-sample`), matching the CLI
+    /// flag spellings.
+    fn with_execution_options_from_argv(&self, argv: &[String]) -> Compiler {
+        let has = |names: &[&str]| argv.iter().any(|arg| names.contains(&arg.as_str()));
+        let mut compiler = self.clone();
+        if has(&["-ec", "--ec", "--external-control", "--ext-control"]) {
+            compiler = compiler.with_control_rate_mode(ControlRateMode::External);
+        }
+        if has(&["-os", "--os", "--one-sample"]) {
+            compiler = compiler.with_processing_api(ProcessingApi::OneSample);
+        }
+        compiler
+    }
+
     pub fn generate_aux_files(
         &self,
         request: &GenerateAuxFilesRequest,
@@ -1682,12 +1699,17 @@ impl Compiler {
         let search_paths = parse_search_paths_from_argv(&argv);
         let double = argv.iter().any(|a| a == "-double");
 
+        // Execution options travel in the same argv string; a derived
+        // compiler applies them so downstream compile calls validate them
+        // instead of silently ignoring the flags.
+        let compiler = self.with_execution_options_from_argv(&argv);
+
         // faustwasm-style transpile request: `-lang asc` produces one
         // AssemblyScript source artifact instead of the flag-driven outputs.
         if let Some(position) = argv.iter().position(|arg| arg == "-lang")
             && argv.get(position + 1).map(String::as_str) == Some("asc")
         {
-            return self.generate_asc_aux_file(request, &argv, &search_paths);
+            return compiler.generate_asc_aux_file(request, &argv, &search_paths);
         }
 
         let wants_cpp = argv.iter().any(|a| a == "-cpp");
@@ -1703,7 +1725,7 @@ impl Compiler {
             .unwrap_or("process");
 
         if wants_cpp {
-            let cpp = self
+            let cpp = compiler
                 .compile_source_to_cpp(
                     &request.source_name,
                     &request.source,
@@ -1718,7 +1740,7 @@ impl Compiler {
         }
 
         if wants_c {
-            let c = self
+            let c = compiler
                 .compile_source_to_c(&request.source_name, &request.source, &COptions::default())
                 .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
             artifacts.push(AuxFileArtifact {
@@ -1733,7 +1755,7 @@ impl Compiler {
                 double_precision: double,
                 ..Default::default()
             };
-            let wasm = self
+            let wasm = compiler
                 .compile_source_to_wasm(&request.source_name, &request.source, &opts)
                 .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
             artifacts.push(AuxFileArtifact {
@@ -1747,7 +1769,7 @@ impl Compiler {
                 binary: false,
             });
         } else if wants_json {
-            let json = self
+            let json = compiler
                 .compile_source_to_json(&request.source_name, &request.source)
                 .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
             artifacts.push(AuxFileArtifact {
@@ -1758,7 +1780,7 @@ impl Compiler {
         }
 
         if wants_svg {
-            let signals = self
+            let signals = compiler
                 .compile_source_to_signals_with_import_context(
                     &request.source_name,
                     &request.source,
