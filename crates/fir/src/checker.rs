@@ -35,6 +35,8 @@
 //! | FIR-F05 | W | `compute` return type is not `Void` |
 //! | FIR-F06 | W | `compute` parameter count is not 4 |
 //! | FIR-F07 | W | Function has no body (prototype/extern declaration) |
+//! | FIR-F08 | W | `frame` is declared but the canonical `compute` body is not empty |
+//! | FIR-F09 | W | `control`/`frame` body references the block `count` argument |
 //!
 //! ## Phase 2 — per-function scope analysis
 //! | Code | Sev | Check |
@@ -208,6 +210,8 @@ pub struct FunctionSig {
     pub return_type: FirType,
     /// `true` when the function has no body (prototype / extern declaration).
     pub is_extern: bool,
+    /// Body statement id, when the function has one.
+    pub body: Option<FirId>,
 }
 
 /// Symbol tables populated during Phase 1 (module-level pass).
@@ -1070,6 +1074,56 @@ impl<'s> VerifyCtx<'s> {
                 );
             }
         }
+
+        self.check_execution_entry_points();
+    }
+
+    /// Execution-options port plan §4.5: when the optional `control`/`frame`
+    /// entry points are declared, enforce their structural contract.
+    ///
+    /// - `frame` processes exactly one sample, so the canonical block
+    ///   `compute` must be emitted empty (FIR-F08): the reference compiler
+    ///   never makes `compute` delegate to `frame`.
+    /// - Neither `control` nor `frame` receives a block count, so their
+    ///   bodies must not reference the `count` argument (FIR-F09).
+    fn check_execution_entry_points(&mut self) {
+        let frame_declared = self.symbols.functions.contains_key("frame");
+        if frame_declared
+            && let Some(compute) = self.symbols.functions.get("compute")
+            && let Some(body) = compute.body
+            && !matches!(match_fir(self.store, body), FirMatch::Block(stmts) if stmts.is_empty())
+        {
+            self.warn(
+                "FIR-F08",
+                "'frame' is declared but the canonical 'compute' body is not empty".to_owned(),
+                body,
+            );
+        }
+        for name in ["control", "frame"] {
+            let Some(body) = self.symbols.functions.get(name).and_then(|f| f.body) else {
+                continue;
+            };
+            let mut stack = vec![body];
+            let mut visited = HashSet::new();
+            while let Some(id) = stack.pop() {
+                if !visited.insert(id) {
+                    continue;
+                }
+                if matches!(
+                    match_fir(self.store, id),
+                    FirMatch::LoadVar { name: ref var, access: AccessType::FunArgs, .. }
+                        if var == "count"
+                ) {
+                    self.warn(
+                        "FIR-F09",
+                        format!("'{name}' body references the block 'count' argument"),
+                        id,
+                    );
+                    break;
+                }
+                stack.extend(crate::matcher::fir_match_children(self.store, id));
+            }
+        }
     }
 
     /// Validates one `DeclareFun` signature and stores it in `symbols.functions`.
@@ -1165,6 +1219,7 @@ impl<'s> VerifyCtx<'s> {
                 params: params_list,
                 return_type: *ret.clone(),
                 is_extern,
+                body,
             });
     }
 
