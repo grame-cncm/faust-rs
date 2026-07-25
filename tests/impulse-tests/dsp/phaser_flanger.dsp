@@ -1,15 +1,13 @@
-ol = library("oscillator.lib");
-fl = library("filter.lib");
-el = library("effect.lib");
+dl = library("demos.lib");
 
-//process = ol.sawtooth_demo <: 
-//  el.flanger_demo : el.phaser2_demo :> fl.spectral_level_demo <: _,_;
+//process = dl.sawtooth_demo <:
+//  dl.flanger_demo : dl.phaser2_demo :> dl.spectral_level_demo <: _,_;
 
-fx_stack = 
- vgroup("[1]", ol.sawtooth_demo) <:
- vgroup("[2]", el.flanger_demo) : 
- vgroup("[3]", el.phaser2_demo);
+fx_stack =
+ vgroup("[1]", dl.sawtooth_demo) <:
+ vgroup("[2]", dl.flanger_demo) :
+ vgroup("[3]", dl.phaser2_demo);
 
-level_viewer(x,y) = attach(x,vgroup("[4]", fl.spectral_level_demo(x+y))),y;
+level_viewer(x,y) = attach(x,vgroup("[4]", dl.spectral_level_demo(x+y))),y;
 
 process = fx_stack : level_viewer;
