@@ -750,6 +750,38 @@ fn compiler_generate_aux_files_cpp_flag_produces_cpp_artifact() {
 }
 
 #[test]
+fn compiler_generate_aux_files_applies_long_double_flag_to_the_wasm_backend() {
+    // `--double` is the CLI-normalized spelling of `-double`. It must reach
+    // the WASM backend options too, not only the internal real type, or the
+    // emitted module would compute in double while its JSON advertises
+    // single precision.
+    let json_of = |args: &str| {
+        let artifacts = Compiler::new()
+            .generate_aux_files(&GenerateAuxFilesRequest {
+                source_name: "zero.dsp".to_owned(),
+                source: "process = 0;".to_owned(),
+                args: args.to_owned(),
+                ..Default::default()
+            })
+            .unwrap_or_else(|e| panic!("generate_aux_files({args}) must succeed: {e}"));
+        let json = artifacts
+            .into_iter()
+            .find(|a| a.path == "zero.json")
+            .expect("wasm companion json");
+        String::from_utf8(json.content).expect("json must be utf-8")
+    };
+
+    assert!(json_of("-wasm").contains("-single"));
+    for spelling in ["-wasm -double", "-wasm --double"] {
+        let json = json_of(spelling);
+        assert!(
+            json.contains("-double") && !json.contains("-single"),
+            "{spelling} must select double precision:\n{json}"
+        );
+    }
+}
+
+#[test]
 fn compiler_generate_aux_files_emits_assemblyscript_for_lang_asc() {
     let compiler = Compiler::new();
     let files = compiler

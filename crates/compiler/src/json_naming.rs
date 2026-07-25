@@ -320,6 +320,27 @@ pub(crate) fn json_meta_entries_from_snapshot(
     out
 }
 
+/// Returns the value following the first occurrence of any of `names` in a
+/// whitespace-tokenized argv slice, e.g. `argv_value(argv, &["-cn"])` on
+/// `["-cn", "Probe"]` returns `Some("Probe")`.
+pub(crate) fn argv_value<'a>(argv: &'a [String], names: &[&str]) -> Option<&'a str> {
+    argv.iter()
+        .position(|arg| names.contains(&arg.as_str()))
+        .and_then(|position| argv.get(position + 1))
+        .map(String::as_str)
+}
+
+/// Like [`argv_value`], parsed as `T`. Returns `None` for a missing flag and
+/// for an unparsable value alike: a hand-parsed argv string decodes on a
+/// best-effort basis, since — unlike the CLI's `clap` parsing — these
+/// helpers have no channel for reporting a hard error to the caller.
+pub(crate) fn argv_value_parsed<T: std::str::FromStr>(
+    argv: &[String],
+    names: &[&str],
+) -> Option<T> {
+    argv_value(argv, names).and_then(|v| v.parse().ok())
+}
+
 /// Extracts `-I <path>` search paths from a whitespace-tokenized argv slice.
 pub(crate) fn parse_search_paths_from_argv(argv: &[String]) -> Vec<PathBuf> {
     let mut paths = Vec::new();

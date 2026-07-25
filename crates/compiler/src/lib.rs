@@ -1675,13 +1675,44 @@ impl Compiler {
     ///
     /// Additionally, faustwasm-style transpile requests using `-lang asc`
     /// produce one AssemblyScript source artifact (honoring `-cn` and `-o`).
-    /// Returns a derived compiler with the execution-option flags found in a
-    /// faustwasm-style argv applied (`-ec`/`--ec`/`--external-control`/
-    /// `--ext-control` and `-os`/`--os`/`--one-sample`), matching the CLI
-    /// flag spellings.
+    /// Returns a derived compiler with the compilation options found in the
+    /// raw argv string applied.
+    ///
+    /// Reads the same flag spellings as the `faust-rs` CLI
+    /// (`crates/compiler/src/cli/args.rs`) and selects the same [`RealType`],
+    /// [`ComputeMode`], [`SchedulingStrategy`], [`ControlRateMode`] and
+    /// [`ProcessingApi`] that `cli::runner::compiler_from_cli` would build for
+    /// those flags: `-double`, `-mcd N`/`-dlt N`, `-vec` (+ `-vs N`/`-lv N`),
+    /// `-ss N`/`--scheduling-strategy N`, `-ec` and `-os`.
+    ///
+    /// These are plain Faust CLI flags rather than a dialect belonging to any
+    /// one caller, which is why decoding them here — instead of only in the
+    /// CLI — keeps the aux-file surface from silently ignoring options its
+    /// callers legitimately pass.
     fn with_execution_options_from_argv(&self, argv: &[String]) -> Compiler {
         let has = |names: &[&str]| argv.iter().any(|arg| names.contains(&arg.as_str()));
         let mut compiler = self.clone();
+        if has(&["-double", "--double"]) {
+            compiler = compiler.with_real_type(RealType::Float64);
+        }
+        if let Some(n) = argv_value_parsed(argv, &["-mcd", "--mcd"]) {
+            compiler = compiler.with_mcd(n);
+        }
+        if let Some(n) = argv_value_parsed(argv, &["-dlt", "--dlt"]) {
+            compiler = compiler.with_dlt(n);
+        }
+        if has(&["-vec", "--vec"]) {
+            let vec_size =
+                argv_value_parsed(argv, &["-vs", "--vs"]).unwrap_or(ComputeMode::DEFAULT_VEC_SIZE);
+            let loop_variant = argv_value_parsed(argv, &["-lv", "--lv"]).unwrap_or(0u8);
+            compiler = compiler.with_compute_mode(ComputeMode::Vector {
+                vec_size,
+                loop_variant,
+            });
+        }
+        if let Some(n) = argv_value_parsed(argv, &["-ss", "--scheduling-strategy"]) {
+            compiler = compiler.with_scheduling_strategy(SchedulingStrategy::decode(n));
+        }
         if has(&["-ec", "--ec", "--external-control", "--ext-control"]) {
             compiler = compiler.with_control_rate_mode(ControlRateMode::External);
         }
@@ -1697,7 +1728,6 @@ impl Compiler {
     ) -> Result<Vec<AuxFileArtifact>, FaustwasmServiceError> {
         let argv: Vec<String> = request.args.split_whitespace().map(str::to_owned).collect();
         let search_paths = parse_search_paths_from_argv(&argv);
-        let double = argv.iter().any(|a| a == "-double");
 
         // Execution options travel in the same argv string; a derived
         // compiler applies them so downstream compile calls validate them
@@ -1752,7 +1782,7 @@ impl Compiler {
 
         if wants_wasm {
             let opts = WasmOptions {
-                double_precision: double,
+                double_precision: compiler.real_type == RealType::Float64,
                 ..Default::default()
             };
             let wasm = compiler
@@ -1825,12 +1855,6 @@ impl Compiler {
         argv: &[String],
         search_paths: &[PathBuf],
     ) -> Result<Vec<AuxFileArtifact>, FaustwasmServiceError> {
-        let arg_value = |flag: &str| {
-            argv.iter()
-                .position(|arg| arg == flag)
-                .and_then(|position| argv.get(position + 1))
-                .cloned()
-        };
         let signals = self
             .compile_source_to_signals_with_import_context(
                 &request.source_name,
@@ -1847,9 +1871,10 @@ impl Compiler {
             )
             .map_err(|error| FaustwasmServiceError::invalid_argument(error.to_string()))?;
 
-        let class_name = arg_value("-cn").unwrap_or_else(|| {
-            sanitize_cpp_ident(source_name_to_class(&request.source_name).as_str())
-        });
+        let class_name = argv_value(argv, &["-cn"]).map_or_else(
+            || sanitize_cpp_ident(source_name_to_class(&request.source_name).as_str()),
+            str::to_owned,
+        );
 
         // Strict C++-style JSON snapshot, embedded as getJSON() in the output —
         // downstream tooling parses it for inputs/outputs and the UI tree
@@ -1881,7 +1906,8 @@ impl Compiler {
         let asc = generate_asc_module(&lowered.store, lowered.module, &options)
             .map_err(|error| FaustwasmServiceError::invalid_argument(error.to_string()))?;
 
-        let path = arg_value("-o").unwrap_or_else(|| format!("{class_name}.ts"));
+        let path =
+            argv_value(argv, &["-o"]).map_or_else(|| format!("{class_name}.ts"), str::to_owned);
         Ok(vec![AuxFileArtifact {
             path,
             content: asc.into_bytes(),

@@ -243,3 +243,68 @@ fn unsupported_backends_and_vector_mode_still_reject() {
         .expect_err("-os julia must fail");
     assert!(err.to_string().contains("'-os' option"), "{err}");
 }
+
+#[test]
+fn faustwasm_aux_files_honor_mcd_dlt_vec_ss_in_argv() {
+    // Same rationale as `faustwasm_aux_files_honor_execution_flags_in_argv`,
+    // for the delay-strategy and scheduling flags: `-mcd`/`-dlt`/`-vec`/`-ss`
+    // must configure the derived compiler, not be silently dropped.
+    use compiler::GenerateAuxFilesRequest;
+
+    // `mem` (delay 1) uses the Shift strategy by default (mcd 16): no
+    // `fIOTA`-masked read/write for it. `@(2205)` is far above mcd, so it
+    // always goes through the circular fIOTA strategy.
+    const DELAY_SOURCE: &str = "process = _ <: _,(mem : @(2205) : *(0.35)) : +;";
+
+    let cpp_of = |args: &str| {
+        let artifacts = Compiler::new()
+            .generate_aux_files(&GenerateAuxFilesRequest {
+                source_name: "exec_options_test.dsp".to_owned(),
+                source: DELAY_SOURCE.to_owned(),
+                args: args.to_owned(),
+                ..GenerateAuxFilesRequest::default()
+            })
+            .unwrap_or_else(|e| panic!("generate_aux_files({args}) must succeed: {e}"));
+        String::from_utf8(artifacts[0].content.clone()).expect("utf-8 cpp")
+    };
+
+    // Default `-mcd` (16): delay 1 stays on the Shift strategy.
+    let default_mcd = cpp_of("-cpp");
+    assert!(!default_mcd.contains("[(fIOTA & 1)]"));
+
+    // `-mcd 0`: even delay 1 must go through the fIOTA-masked strategy.
+    let mcd0 = cpp_of("-cpp -mcd 0");
+    assert!(
+        mcd0.contains("[(fIOTA & 1)]"),
+        "-mcd 0 must force delay 1 off the Shift strategy:\n{mcd0}"
+    );
+
+    // Default `-dlt` (disabled): the 2205 delay line stays circular-pow2.
+    assert!(!default_mcd.contains("fIdx"));
+
+    // `-dlt 8`: the 2205 delay line (well above 8) must switch to the
+    // if-based wrapping strategy, using a per-line `fIdx` counter.
+    let dlt8 = cpp_of("-cpp -dlt 8");
+    assert!(
+        dlt8.contains("fIdx"),
+        "-dlt 8 must switch the long delay line to IfWrapping:\n{dlt8}"
+    );
+
+    // `-vec`: vector mode rejects `-os` regardless of backend (mirrors
+    // `unsupported_backends_and_vector_mode_still_reject`); this only
+    // triggers if `-vec` actually reached `ComputeMode::Vector`.
+    let err = Compiler::new()
+        .generate_aux_files(&GenerateAuxFilesRequest {
+            source_name: "exec_options_test.dsp".to_owned(),
+            source: SLIDER_GAIN.to_owned(),
+            args: "-cpp -vec -os".to_owned(),
+            ..GenerateAuxFilesRequest::default()
+        })
+        .expect_err("-vec -os must fail through generate_aux_files");
+    assert!(err.to_string().contains("scalar mode"), "{err}");
+
+    // `-ss`: every documented decode bucket (0/1/2/n>=3) must still compile.
+    for ss in ["0", "1", "2", "3", "42"] {
+        cpp_of(&format!("-cpp -ss {ss}"));
+    }
+}
