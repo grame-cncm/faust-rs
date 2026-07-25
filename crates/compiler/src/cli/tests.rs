@@ -80,9 +80,10 @@ fn vec_flags_map_to_compute_mode() {
 
 // ── `-ss` / `--scheduling-strategy` (vectorization port plan P2) ─────────────
 //
-// P2 is plumbing-only: these tests check parsing, defaulting, legacy `-ss`
-// normalization, and `SchedulingStrategy::decode` mapping — not that
-// scheduling is active (no compiled-output assertions here).
+// Scope: these tests check parsing, defaulting, legacy `-ss` normalization,
+// and `SchedulingStrategy::decode` mapping only. That the decoded strategy
+// actually reorders emitted statements is covered by the transform-level
+// scheduling tests, not here (no compiled-output assertions in this file).
 
 #[test]
 fn scheduling_strategy_flag_decodes_all_documented_values() {

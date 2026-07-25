@@ -236,8 +236,10 @@ pub struct CliArgs {
     /// Vector mode (`-vec`): restructure `compute()` into an outer chunk loop
     /// so the C compiler can auto-vectorize the inner loops (SIMD).
     ///
-    /// Roadmap P6 (V1): plumbing only — selecting it records the option but
-    /// still emits scalar code until the `LoopGraph` lowering (V2+) lands.
+    /// Selection is checked: a program shape the vector pipeline cannot
+    /// certify falls back to scalar lowering instead of emitting unverified
+    /// code, and certified vector output is bit-exact against scalar output
+    /// for the same program. Use `-vs`/`-lv` to size and shape the chunk loop.
     #[arg(long = "vec", action = ArgAction::SetTrue)]
     pub vec: bool,
     /// Vector size for `-vec` (`-vs N`). Default: 32.

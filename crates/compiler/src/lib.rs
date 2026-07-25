@@ -18,7 +18,11 @@
 //! - Provide one orchestrator type ([`Compiler`]) for file-based compilation.
 //! - Aggregate typed stage errors into one top-level [`CompilerError`] surface.
 //! - Provide test/golden-oriented helper outputs (box dump, signal dump, FIR dump).
-//! - Route backend generation to C/C++ emitters with consistent options.
+//! - Route backend generation, with consistent options, to every emitter whose
+//!   result is source text or bytes: C++, C, Rust, Julia, AssemblyScript,
+//!   interpreter `.fbc`, WASM, and the JSON description. JIT backends
+//!   (Cranelift) stop at the FIR dump and are driven by their own consumer,
+//!   which owns the lifetime of the generated runtime objects.
 //!
 //! # API mapping status
 //! - External facade API is `adapted`: it targets behavior compatibility with
@@ -180,7 +184,7 @@ pub struct FirCompileOutput {
 }
 
 /// Request payload for the artifact-centric WASM compile service used by the
-/// planned `faustwasm` Rust integration.
+/// `faustwasm` Rust integration.
 ///
 /// # Role
 /// This request intentionally avoids the historical C++ `cfactory` model.
@@ -264,10 +268,11 @@ pub struct WasmArtifactBundle {
     pub compile_options: String,
 }
 
-/// Auxiliary file payload planned for future `generateAuxFiles` support in the
-/// Rust `faustwasm` service surface.
+/// One auxiliary file produced by [`Compiler::generate_aux_files`].
 ///
-/// Mapping status: `deferred`.
+/// Mapping status: `adapted` — the C++ API writes the files to disk, while
+/// this surface returns them in memory so wasm32 hosts without a writable
+/// filesystem can consume them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuxFileArtifact {
     /// Logical relative output path.
@@ -278,20 +283,41 @@ pub struct AuxFileArtifact {
     pub binary: bool,
 }
 
-/// Request payload reserved for future `expandDSP(...)` parity support.
+impl AuxFileArtifact {
+    /// One generated text file, named `<stem>.<extension>`.
+    fn text(stem: &str, extension: &str, content: String) -> Self {
+        Self {
+            path: format!("{stem}.{extension}"),
+            content: content.into_bytes(),
+            binary: false,
+        }
+    }
+
+    /// One generated binary file, named `<stem>.<extension>`.
+    fn binary(stem: &str, extension: &str, content: Vec<u8>) -> Self {
+        Self {
+            path: format!("{stem}.{extension}"),
+            content,
+            binary: true,
+        }
+    }
+}
+
+/// Request payload for [`Compiler::expand_dsp`].
 ///
-/// Mapping status: `deferred`.
+/// Mapping status: `adapted` — see that method for the one behavioral gap
+/// (no box→DSP serializer yet, so the expansion returns the input verbatim).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpandDspRequest {
     /// Logical source name reported in diagnostics.
     pub source_name: String,
     /// Faust DSP source text to expand.
     pub source: String,
-    /// Raw argument string as passed by `faustwasm`.
+    /// Raw Faust-CLI-style argument string; only `-I <dir>` is read here.
     pub args: String,
 }
 
-/// Request payload for `generateAuxFiles(...)`.
+/// Request payload for [`Compiler::generate_aux_files`].
 ///
 /// Mapping status: `adapted`.
 #[derive(Debug, Clone, Default)]
@@ -300,7 +326,9 @@ pub struct GenerateAuxFilesRequest {
     pub source_name: String,
     /// Faust DSP source text used to generate the outputs.
     pub source: String,
-    /// Raw argument string as passed by `faustwasm`.
+    /// Raw Faust-CLI-style argument string selecting the outputs and the
+    /// compilation options; see [`Compiler::generate_aux_files`] for the
+    /// flags that are read.
     pub args: String,
     /// Optional in-memory library sources (e.g. embedded standard library
     /// bundle from the `wasm-ffi` build).  When non-empty these take
@@ -309,8 +337,14 @@ pub struct GenerateAuxFilesRequest {
     pub virtual_sources: VirtualSourceMap,
 }
 
-/// Structured error returned by the `faustwasm`-oriented compiler service
-/// methods when the requested helper surface is not implemented yet.
+/// Structured error returned by the helper-service methods of this facade
+/// ([`Compiler::get_faustwasm_info`], [`Compiler::expand_dsp`],
+/// [`Compiler::generate_aux_files`]).
+///
+/// These methods carry a service-shaped error instead of [`CompilerError`]
+/// because their callers are host bindings (the `wasm-ffi` exports, and
+/// through them `faustwasm`) that propagate a code plus a message rather
+/// than a typed stage error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FaustwasmServiceError {
     /// Stable machine-readable reason code.
@@ -319,32 +353,38 @@ pub struct FaustwasmServiceError {
     pub message: String,
 }
 
-/// Stable error codes for the `faustwasm` helper-service surface.
+/// Stable error codes for the helper-service surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaustwasmServiceErrorCode {
-    /// The requested operation/key exists conceptually but is not implemented
-    /// yet in the Rust service layer.
+    /// The request could not be fulfilled: either the DSP failed to compile
+    /// (the common case — the message carries the rendered diagnostic), or
+    /// the requested operation is recognized but not implemented yet.
     Unsupported,
     /// The caller passed an unknown query key.
     InvalidArgument,
 }
 
 impl FaustwasmServiceError {
-    /// Builds an error tagged [`FaustwasmServiceErrorCode::Unsupported`] for a
-    /// query that is recognized but not yet implemented in the Rust service.
-    fn unsupported(message: impl Into<String>) -> Self {
+    /// Builds an error tagged [`FaustwasmServiceErrorCode::Unsupported`].
+    ///
+    /// Takes any [`Display`](std::fmt::Display) value so a fallible stage can
+    /// be mapped without a closure: `.map_err(FaustwasmServiceError::unsupported)?`
+    /// works for [`CompilerError`], backend codegen errors, and `draw` errors
+    /// alike. Every compile failure on this surface renders through here, so
+    /// one rendered diagnostic shape reaches the host for all of them.
+    fn unsupported(message: impl std::fmt::Display) -> Self {
         Self {
             code: FaustwasmServiceErrorCode::Unsupported,
-            message: message.into(),
+            message: message.to_string(),
         }
     }
 
     /// Builds an error tagged [`FaustwasmServiceErrorCode::InvalidArgument`] for
     /// an unknown query key.
-    fn invalid_argument(message: impl Into<String>) -> Self {
+    fn invalid_argument(message: impl std::fmt::Display) -> Self {
         Self {
             code: FaustwasmServiceErrorCode::InvalidArgument,
-            message: message.into(),
+            message: message.to_string(),
         }
     }
 }
@@ -392,23 +432,31 @@ pub struct Compiler {
     /// Mirrors Faust `-dlt N`. Default: `u32::MAX` (disabled).
     delay_line_threshold: u32,
     /// Codegen strategy for `compute()`: scalar (default) or vector mode
-    /// (`-vec`/`-vs`/`-lv`). Roadmap P6 (V1 plumbing only — `Vector` still
-    /// lowers as `Scalar` until the `LoopGraph` slices land).
+    /// (`-vec`/`-vs`/`-lv`).
+    ///
+    /// `Vector` runs the checked vector pipeline, which either certifies the
+    /// chunked-loop module or fails closed to scalar lowering; the outcome is
+    /// reported per compilation through [`FirCompileOutput`]'s
+    /// [`VectorPipelineStatus`] / [`VectorEffectiveMode`], so a caller never
+    /// has to guess which shape was emitted.
     compute_mode: ComputeMode,
     /// Signal/loop dependency scheduling policy (`-ss` /
-    /// `--scheduling-strategy`). Vectorization port plan phase P2: plumbing
-    /// only — stored and threaded through to [`SignalFirOptions`], but no
-    /// compile path invokes [`transform::schedule::schedule`] yet.
+    /// `--scheduling-strategy`), threaded through to [`SignalFirOptions`] and
+    /// applied to the lowered dependency graph — the four documented values
+    /// generally emit different (equivalent) statement orders.
+    ///
     /// Independent of [`ComputeMode`]; defaults to
     /// [`SchedulingStrategy::DepthFirst`] in scalar and vector modes alike.
     scheduling_strategy: SchedulingStrategy,
-    /// Control-rate evaluation scheduling (`-ec` / `--external-control`).
-    /// Execution-options port plan phase 1: stored and threaded through to
-    /// [`SignalFirOptions`]; the default reproduces the classic contract.
+    /// Control-rate evaluation scheduling (`-ec` / `--external-control`):
+    /// [`ControlRateMode::External`] emits a separate `control` entry point.
+    /// The default reproduces the classic inline-per-block contract.
     control_rate_mode: ControlRateMode,
-    /// Public processing-API shape (`-os` / `--one-sample`). Execution-options
-    /// port plan phase 1: stored and threaded through to
-    /// [`SignalFirOptions`]; the default reproduces the classic contract.
+    /// Public processing-API shape (`-os` / `--one-sample`):
+    /// [`ProcessingApi::OneSample`] emits a `frame` entry point and keeps the
+    /// canonical block `compute` empty. Scalar mode only, and subject to
+    /// per-backend capability validation. The default reproduces the classic
+    /// block contract.
     processing_api: ProcessingApi,
     /// Optional cooperative cancellation flag.
     ///
@@ -520,9 +568,13 @@ impl Compiler {
 
     /// Selects the `compute()` codegen strategy (`-vec` / scalar).
     ///
-    /// Roadmap P6 (V1). Vector mode is currently plumbing-only: selecting it
-    /// records the option but still emits scalar code until the `LoopGraph`
-    /// lowering (V2+) lands.
+    /// [`ComputeMode::Vector`] restructures `compute` into an outer chunk loop
+    /// (`-vs` size, `-lv` driver variant). Selection is checked, not blind: a
+    /// shape the vector pipeline cannot certify falls back to scalar lowering
+    /// rather than emitting unverified code, and either way the result is
+    /// bit-exact against scalar output for the same program. Inspect
+    /// [`FirCompileOutput::vector_effective_mode`] to see which shape was
+    /// emitted.
     #[must_use]
     pub fn with_compute_mode(mut self, mode: ComputeMode) -> Self {
         self.compute_mode = mode;
@@ -1069,8 +1121,8 @@ impl Compiler {
     /// Compiles one in-memory DSP source into an owned artifact bundle
     /// containing both the WASM bytes and the companion JSON.
     ///
-    /// This is the pure-Rust compile-service entry point intended for the
-    /// future `faustwasm` embedded-compiler mode. The returned
+    /// This is the pure-Rust compile-service entry point behind the
+    /// `faustwasm` embedded-compiler mode. The returned
     /// [`WasmArtifactBundle`] avoids any explicit compiler-side object lifetime
     /// and can be cached directly by higher-level hosts.
     ///
@@ -1658,37 +1710,33 @@ impl Compiler {
             &search_paths,
         )
         .map(|_| request.source.clone())
-        .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))
+        .map_err(FaustwasmServiceError::unsupported)
     }
 
-    /// Generate auxiliary output files from a Faust DSP source.
-    ///
-    /// Inspects `request.args` for output-format flags (`-cpp`, `-c`, `-wasm`,
-    /// `-json`, `-svg`) and returns one [`AuxFileArtifact`] per generated file.
-    /// When no output flag is present an empty list is returned (no error).
-    ///
-    /// SVG generation writes to a temporary directory and collects all produced
-    /// `.svg` files into the result.  The other formats are emitted in memory.
-    ///
-    /// Mirrors: `generateAuxFilesFromString` / `generateAuxFilesFromFile`
-    /// (C++ Faust API).
-    ///
-    /// Additionally, faustwasm-style transpile requests using `-lang asc`
-    /// produce one AssemblyScript source artifact (honoring `-cn` and `-o`).
-    /// Returns a derived compiler with the compilation options found in the
+    /// Returns a copy of this compiler with the compilation options found in a
     /// raw argv string applied.
     ///
     /// Reads the same flag spellings as the `faust-rs` CLI
-    /// (`crates/compiler/src/cli/args.rs`) and selects the same [`RealType`],
-    /// [`ComputeMode`], [`SchedulingStrategy`], [`ControlRateMode`] and
-    /// [`ProcessingApi`] that `cli::runner::compiler_from_cli` would build for
-    /// those flags: `-double`, `-mcd N`/`-dlt N`, `-vec` (+ `-vs N`/`-lv N`),
-    /// `-ss N`/`--scheduling-strategy N`, `-ec` and `-os`.
+    /// (`crates/compiler/src/cli/args.rs`), and selects the same [`RealType`],
+    /// [`ComputeMode`], [`SchedulingStrategy`], [`ControlRateMode`], and
+    /// [`ProcessingApi`] that [`cli::runner::compiler_from_cli`] would build
+    /// for those flags:
+    ///
+    /// | flag | effect |
+    /// |------|--------|
+    /// | `-double` | double-precision internal DSP computation |
+    /// | `-mcd N` / `-dlt N` | delay-line strategy thresholds |
+    /// | `-vec` (+ `-vs N`, `-lv N`) | vector `compute` shape |
+    /// | `-ss N` / `--scheduling-strategy N` | statement scheduling order |
+    /// | `-ec` / `--external-control` | separate `control` entry point |
+    /// | `-os` / `--one-sample` | `frame` entry point |
     ///
     /// These are plain Faust CLI flags rather than a dialect belonging to any
     /// one caller, which is why decoding them here — instead of only in the
-    /// CLI — keeps the aux-file surface from silently ignoring options its
-    /// callers legitimately pass.
+    /// CLI — keeps [`Compiler::generate_aux_files`] from silently ignoring
+    /// options its callers legitimately pass.
+    ///
+    /// [`cli::runner::compiler_from_cli`]: ../compiler/cli/runner/fn.compiler_from_cli.html
     fn with_execution_options_from_argv(&self, argv: &[String]) -> Compiler {
         let has = |names: &[&str]| argv.iter().any(|arg| names.contains(&arg.as_str()));
         let mut compiler = self.clone();
@@ -1722,6 +1770,28 @@ impl Compiler {
         compiler
     }
 
+    /// Generate auxiliary output files from a Faust DSP source.
+    ///
+    /// Inspects `request.args` for output-format flags and returns one
+    /// [`AuxFileArtifact`] per generated file, all emitted in memory. When no
+    /// output flag is present an empty list is returned (no error).
+    ///
+    /// | flag | artifacts |
+    /// |------|-----------|
+    /// | `-cpp` / `-c` | `<stem>.cpp` / `<stem>.c` |
+    /// | `-wasm` | `<stem>.wasm` plus its matched `<stem>.json` |
+    /// | `-json` | `<stem>.json` (redundant under `-wasm`, see below) |
+    /// | `-svg` | `process.svg` plus one file per folded sub-diagram |
+    /// | `-lang asc` | one AssemblyScript source, see [`Compiler::generate_asc_aux_file`] |
+    ///
+    /// `request.args` also carries the compilation options applied to every
+    /// output; [`Compiler::with_execution_options_from_argv`] lists them.
+    ///
+    /// Mirrors: `generateAuxFilesFromString` / `generateAuxFilesFromFile`
+    /// (C++ Faust API). Two deliberate deviations: the artifacts are returned
+    /// instead of written to disk (so wasm32 hosts without a writable
+    /// filesystem can consume them), and `-lang asc` is an extension of this
+    /// surface with no C++ counterpart.
     pub fn generate_aux_files(
         &self,
         request: &GenerateAuxFilesRequest,
@@ -1729,111 +1799,90 @@ impl Compiler {
         let argv: Vec<String> = request.args.split_whitespace().map(str::to_owned).collect();
         let search_paths = parse_search_paths_from_argv(&argv);
 
-        // Execution options travel in the same argv string; a derived
+        // Compilation options travel in the same argv string; a derived
         // compiler applies them so downstream compile calls validate them
         // instead of silently ignoring the flags.
         let compiler = self.with_execution_options_from_argv(&argv);
 
-        // faustwasm-style transpile request: `-lang asc` produces one
-        // AssemblyScript source artifact instead of the flag-driven outputs.
-        if let Some(position) = argv.iter().position(|arg| arg == "-lang")
-            && argv.get(position + 1).map(String::as_str) == Some("asc")
-        {
+        // `-lang asc` transpile request: produces one AssemblyScript source
+        // artifact instead of the flag-driven outputs.
+        if argv_value(&argv, &["-lang"]) == Some("asc") {
             return compiler.generate_asc_aux_file(request, &argv, &search_paths);
         }
 
-        let wants_cpp = argv.iter().any(|a| a == "-cpp");
-        let wants_c = argv.iter().any(|a| a == "-c");
-        let wants_wasm = argv.iter().any(|a| a == "-wasm");
-        let wants_json = argv.iter().any(|a| a == "-json");
-        let wants_svg = argv.iter().any(|a| a == "-svg");
-
-        let mut artifacts: Vec<AuxFileArtifact> = Vec::new();
-        let stem = std::path::Path::new(&request.source_name)
+        let wants = |flag: &str| argv.iter().any(|arg| arg == flag);
+        let name = request.source_name.as_str();
+        let source = request.source.as_str();
+        let stem = std::path::Path::new(name)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("process");
 
-        if wants_cpp {
+        let mut artifacts: Vec<AuxFileArtifact> = Vec::new();
+
+        if wants("-cpp") {
             let cpp = compiler
-                .compile_source_to_cpp(
-                    &request.source_name,
-                    &request.source,
-                    &CppOptions::default(),
-                )
-                .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
-            artifacts.push(AuxFileArtifact {
-                path: format!("{stem}.cpp"),
-                content: cpp.into_bytes(),
-                binary: false,
-            });
+                .compile_source_to_cpp(name, source, &CppOptions::default())
+                .map_err(FaustwasmServiceError::unsupported)?;
+            artifacts.push(AuxFileArtifact::text(stem, "cpp", cpp));
         }
 
-        if wants_c {
+        if wants("-c") {
             let c = compiler
-                .compile_source_to_c(&request.source_name, &request.source, &COptions::default())
-                .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
-            artifacts.push(AuxFileArtifact {
-                path: format!("{stem}.c"),
-                content: c.into_bytes(),
-                binary: false,
-            });
+                .compile_source_to_c(name, source, &COptions::default())
+                .map_err(FaustwasmServiceError::unsupported)?;
+            artifacts.push(AuxFileArtifact::text(stem, "c", c));
         }
 
-        if wants_wasm {
-            let opts = WasmOptions {
+        if wants("-wasm") {
+            // The module and its JSON description are a matched pair (see
+            // `WasmArtifactBundle`'s ABI contract), so `-wasm` emits both.
+            let options = WasmOptions {
                 double_precision: compiler.real_type == RealType::Float64,
                 ..Default::default()
             };
             let wasm = compiler
-                .compile_source_to_wasm(&request.source_name, &request.source, &opts)
-                .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
-            artifacts.push(AuxFileArtifact {
-                path: format!("{stem}.wasm"),
-                content: wasm.wasm_binary,
-                binary: true,
-            });
-            artifacts.push(AuxFileArtifact {
-                path: format!("{stem}.json"),
-                content: wasm.dsp_json.into_bytes(),
-                binary: false,
-            });
-        } else if wants_json {
-            let json = compiler
-                .compile_source_to_json(&request.source_name, &request.source)
-                .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
-            artifacts.push(AuxFileArtifact {
-                path: format!("{stem}.json"),
-                content: json.into_bytes(),
-                binary: false,
-            });
+                .compile_source_to_wasm(name, source, &options)
+                .map_err(FaustwasmServiceError::unsupported)?;
+            artifacts.push(AuxFileArtifact::binary(stem, "wasm", wasm.wasm_binary));
+            artifacts.push(AuxFileArtifact::text(stem, "json", wasm.dsp_json));
         }
 
-        if wants_svg {
+        // Under `-wasm` the companion JSON above already occupies
+        // `<stem>.json` and is the description matched to the emitted module,
+        // so `-json` stands down rather than adding a second artifact at the
+        // same path.
+        if wants("-json") && !wants("-wasm") {
+            let json = compiler
+                .compile_source_to_json(name, source)
+                .map_err(FaustwasmServiceError::unsupported)?;
+            artifacts.push(AuxFileArtifact::text(stem, "json", json));
+        }
+
+        if wants("-svg") {
             let signals = compiler
                 .compile_source_to_signals_with_import_context(
-                    &request.source_name,
-                    &request.source,
+                    name,
+                    source,
                     &search_paths,
                     &request.virtual_sources,
                 )
-                .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
-            let draw_config = draw::DrawConfig::default();
-            // Use "process" as the diagram name so the root SVG file is
-            // always process.svg, matching the C++ compiler convention and
-            // the faustwasm FaustSvgDiagrams.from(...) expectation.
-            // draw_schema_to_memory avoids any filesystem access so this
+                .map_err(FaustwasmServiceError::unsupported)?;
+            // Name the diagram "process" so the root file is always
+            // process.svg, matching the C++ compiler convention and the
+            // faustwasm `FaustSvgDiagrams.from(...)` expectation.
+            // draw_schema_to_memory avoids any filesystem access, so this
             // path is safe on wasm32-unknown-unknown targets.
-            let svg_pairs = draw::draw_schema_to_memory(
+            let svg_files = draw::draw_schema_to_memory(
                 &signals.parse.state.arena,
                 signals.process_box,
                 "process",
-                &draw_config,
+                &draw::DrawConfig::default(),
                 &signals.def_names,
             )
-            .map_err(|e| FaustwasmServiceError::unsupported(e.to_string()))?;
+            .map_err(FaustwasmServiceError::unsupported)?;
             artifacts.extend(
-                svg_pairs
+                svg_files
                     .into_iter()
                     .map(|(path, content)| AuxFileArtifact {
                         path,
@@ -1847,14 +1896,26 @@ impl Compiler {
     }
 
     /// Generates the AssemblyScript source artifact for a `-lang asc`
-    /// `generateAuxFiles` request (`-cn` selects the class name, `-o` the
-    /// artifact path; `request.virtual_sources` supplies in-memory libraries).
+    /// [`Compiler::generate_aux_files`] request: `-cn` selects the class name
+    /// (default: derived from the source name), `-o` the artifact path
+    /// (default: `<class name>.ts`), and `request.virtual_sources` supplies
+    /// in-memory libraries.
+    ///
+    /// Called on the derived compiler, so the compilation options from the
+    /// argv are already applied. It stays a dedicated function rather than
+    /// another output branch of the caller because, unlike the flag-driven
+    /// cpp/c/wasm/json outputs, it does not go through a
+    /// `compile_source_to_*` wrapper: it lowers to FIR itself so it can embed
+    /// a hand-built strict JSON snapshot as `getJSON()` in the generated
+    /// class, and it names its single output from `-cn`/`-o` instead of the
+    /// shared `<stem>.<extension>` scheme.
     fn generate_asc_aux_file(
         &self,
         request: &GenerateAuxFilesRequest,
         argv: &[String],
         search_paths: &[PathBuf],
     ) -> Result<Vec<AuxFileArtifact>, FaustwasmServiceError> {
+        let double_precision = self.real_type == RealType::Float64;
         let signals = self
             .compile_source_to_signals_with_import_context(
                 &request.source_name,
@@ -1862,14 +1923,14 @@ impl Compiler {
                 search_paths,
                 &request.virtual_sources,
             )
-            .map_err(|error| FaustwasmServiceError::invalid_argument(error.to_string()))?;
+            .map_err(FaustwasmServiceError::unsupported)?;
         let lowered = self
             .lower_to_fir(
                 &request.source_name,
                 &signals,
                 SignalFirLane::TransformFastLane,
             )
-            .map_err(|error| FaustwasmServiceError::invalid_argument(error.to_string()))?;
+            .map_err(FaustwasmServiceError::unsupported)?;
 
         let class_name = argv_value(argv, &["-cn"]).map_or_else(
             || sanitize_cpp_ident(source_name_to_class(&request.source_name).as_str()),
@@ -1887,11 +1948,8 @@ impl Compiler {
                 include_pathnames: Vec::new(),
                 library_list: Vec::new(),
                 top_level_meta: json_meta_entries_from_snapshot(&signals.compilation_metadata),
-                compile_options: compile_options_json_string(
-                    Some("asc"),
-                    self.real_type == RealType::Float64,
-                ),
-                double_precision: self.real_type == RealType::Float64,
+                compile_options: compile_options_json_string(Some("asc"), double_precision),
+                double_precision,
             },
         )
         .ok()
@@ -1899,12 +1957,12 @@ impl Compiler {
 
         let options = AscOptions {
             class_name: Some(class_name.clone()),
-            double_precision: self.real_type == RealType::Float64,
+            double_precision,
             json,
             ..AscOptions::default()
         };
         let asc = generate_asc_module(&lowered.store, lowered.module, &options)
-            .map_err(|error| FaustwasmServiceError::invalid_argument(error.to_string()))?;
+            .map_err(FaustwasmServiceError::unsupported)?;
 
         let path =
             argv_value(argv, &["-o"]).map_or_else(|| format!("{class_name}.ts"), str::to_owned);

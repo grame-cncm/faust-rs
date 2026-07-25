@@ -191,12 +191,12 @@ fn resolve_ui_root_label_falls_back_to_source_stem() {
 
 // ── Compiler::with_scheduling_strategy (vectorization port plan P2) ──────────
 //
-// P2 threads `-ss` / `--scheduling-strategy` through the `Compiler` builder
-// into `SignalLoweringContext` (and, from there, into `SignalFirOptions`;
-// see `transform::signal_fir::tests::signal_fir_options_default_scheduling_strategy_is_depth_first`
-// for the receiving end). Scheduling stays behaviorally inactive: these tests
-// only check that the selected strategy reaches the lowering context, not
-// that it changes any compiled output.
+// `-ss` / `--scheduling-strategy` travels through the `Compiler` builder into
+// `SignalLoweringContext` (and, from there, into `SignalFirOptions`; see
+// `transform::signal_fir::tests::signal_fir_options_default_scheduling_strategy_is_depth_first`
+// for the receiving end). Scope: these tests check only that the selected
+// strategy reaches the lowering context. That it then reorders emitted
+// statements is covered by the transform-level scheduling tests.
 
 #[test]
 fn compiler_default_scheduling_strategy_is_depth_first() {
@@ -747,6 +747,38 @@ fn compiler_generate_aux_files_cpp_flag_produces_cpp_artifact() {
     assert_eq!(artifacts.len(), 1);
     assert_eq!(artifacts[0].path, "zero.cpp");
     assert!(!artifacts[0].binary);
+}
+
+#[test]
+fn compiler_generate_aux_files_never_emits_two_artifacts_at_one_path() {
+    // Every requested output owns a distinct path. `-wasm` already emits the
+    // companion `<stem>.json` matched to the module, so combining it with
+    // `-json` must NOT produce a second `zero.json`: a host writing the
+    // artifacts out in order would otherwise silently overwrite one file.
+    let artifacts = Compiler::new()
+        .generate_aux_files(&GenerateAuxFilesRequest {
+            source_name: "zero.dsp".to_owned(),
+            source: "process = 0;".to_owned(),
+            args: "-cpp -c -wasm -json".to_owned(),
+            ..Default::default()
+        })
+        .expect("generate_aux_files with every output flag should succeed");
+
+    let mut paths: Vec<&str> = artifacts.iter().map(|a| a.path.as_str()).collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["zero.c", "zero.cpp", "zero.json", "zero.wasm"]);
+
+    // The one JSON present is the wasm companion, so it must describe a wasm
+    // build rather than the standalone strict-JSON output.
+    let json = artifacts
+        .iter()
+        .find(|a| a.path == "zero.json")
+        .expect("json artifact");
+    let text = std::str::from_utf8(&json.content).expect("json must be utf-8");
+    assert!(
+        text.contains("\"compile_options\": \"-lang wasm"),
+        "expected the wasm companion JSON, got:\n{text}"
+    );
 }
 
 #[test]

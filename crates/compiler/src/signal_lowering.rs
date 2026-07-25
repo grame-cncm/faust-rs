@@ -112,18 +112,19 @@ pub(crate) struct SignalLoweringContext {
     pub(crate) max_copy_delay: u32,
     /// Delay-line count threshold above which the lowerer switches strategy.
     pub(crate) delay_line_threshold: u32,
-    /// `compute()` codegen strategy (scalar / vector). Roadmap P6 (V1 plumbing).
+    /// `compute()` codegen strategy: scalar, or the checked vector pipeline
+    /// (`-vec`) that falls back to scalar for shapes it cannot certify.
     pub(crate) compute_mode: ComputeMode,
     /// Signal/loop dependency scheduling policy (`-ss` /
-    /// `--scheduling-strategy`). Vectorization port plan phase P2: plumbing
-    /// only, threaded through to [`SignalFirOptions`] without activating
-    /// scheduling.
+    /// `--scheduling-strategy`) applied to the lowered dependency graph.
     pub(crate) scheduling_strategy: SchedulingStrategy,
-    /// Control-rate evaluation scheduling (`-ec`). Execution-options port
-    /// plan phase 1: plumbing only; defaults reproduce the classic contract.
+    /// Control-rate evaluation scheduling (`-ec`): whether block-rate work is
+    /// emitted inline or in a separate `control` entry point. The default
+    /// reproduces the classic contract.
     pub(crate) control_rate_mode: ControlRateMode,
-    /// Public processing-API shape (`-os`). Execution-options port plan
-    /// phase 1: plumbing only; defaults reproduce the classic contract.
+    /// Public processing-API shape (`-os`): whether a one-sample `frame` entry
+    /// point is emitted alongside an empty canonical `compute`. The default
+    /// reproduces the classic contract.
     pub(crate) processing_api: ProcessingApi,
     /// Optional per-phase timing callback; `None` disables timing.
     pub(crate) timing_sink: Option<TimingSink>,
