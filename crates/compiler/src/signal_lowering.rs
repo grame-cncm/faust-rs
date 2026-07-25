@@ -38,7 +38,7 @@ pub(crate) enum LowerError<E> {
 }
 
 /// Lower error for the C++ backend.
-pub(crate) type LowerToCppError = LowerError<CodegenError>;
+pub(crate) type LowerToCppError = LowerError<CppCodegenError>;
 /// Lower error for the C backend.
 pub(crate) type LowerToCError = LowerError<CCodegenError>;
 /// Lower error for the Julia backend.

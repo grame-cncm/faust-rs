@@ -42,7 +42,7 @@ pub(crate) fn lower_cpp_error_to_compiler(source: &str, error: LowerToCppError) 
         LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "cpp", error),
         LowerError::Transform(error) => transform_error_to_compiler(source, error),
         LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
-        LowerError::Codegen(error) => CompilerError::Codegen {
+        LowerError::Codegen(error) => CompilerError::CodegenCpp {
             source: source.into(),
             diagnostics: CompilerError::codegen_diagnostics(
                 source,

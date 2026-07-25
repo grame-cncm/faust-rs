@@ -61,7 +61,7 @@ use std::time::{Duration, Instant};
 use boxes::{BoxId, BoxMatch, dump_box, match_box};
 use codegen::backends::asc::{AscOptions, CodegenError as AscCodegenError, generate_asc_module};
 use codegen::backends::c::{COptions, CodegenError as CCodegenError, generate_c_module};
-use codegen::backends::cpp::{CodegenError, CppOptions, generate_cpp_module};
+use codegen::backends::cpp::{CodegenError as CppCodegenError, CppOptions, generate_cpp_module};
 use codegen::backends::interp::{
     CodegenError as InterpCodegenError, CodegenErrorCode as InterpCodegenErrorCode, FbcDspFactory,
     FbcReal, InterpOptions, generate_interp_module, write_fbc,
@@ -2380,9 +2380,9 @@ pub enum CompilerError {
         diagnostics: DiagnosticBundle,
     },
     /// C++ backend emission failed from FIR.
-    Codegen {
+    CodegenCpp {
         source: Box<str>,
-        error: CodegenError,
+        error: CppCodegenError,
         diagnostics: DiagnosticBundle,
     },
     /// C backend emission failed from FIR.
@@ -2463,7 +2463,7 @@ impl std::fmt::Display for CompilerError {
                 if *strict { " (strict mode)" } else { "" },
                 diagnostics.len()
             ),
-            Self::Codegen { source, error, .. } => {
+            Self::CodegenCpp { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
             Self::CodegenC { source, error, .. } => {
@@ -2588,7 +2588,7 @@ impl CompilerError {
             Self::ExecutionOptions { diagnostics, .. } => Some(diagnostics),
             Self::FirVerify { diagnostics, .. } => Some(diagnostics),
             Self::Import(_, diagnostics) => Some(diagnostics),
-            Self::Codegen { diagnostics, .. } => Some(diagnostics),
+            Self::CodegenCpp { diagnostics, .. } => Some(diagnostics),
             Self::CodegenC { diagnostics, .. } => Some(diagnostics),
             Self::CodegenJulia { diagnostics, .. } => Some(diagnostics),
             Self::CodegenAsc { diagnostics, .. } => Some(diagnostics),
