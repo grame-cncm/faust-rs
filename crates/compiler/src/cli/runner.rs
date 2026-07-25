@@ -16,8 +16,7 @@ use codegen::backends::c::generate_c_module;
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::cpp::generate_cpp_module;
 use codegen::backends::cranelift::{
-    CraneliftOptions, StructFieldKind, diagnose_cranelift_compute_subset_gap,
-    generate_cranelift_module,
+    CraneliftOptions, diagnose_cranelift_compute_subset_gap, generate_cranelift_module,
 };
 use codegen::backends::interp::{
     FbcCppOptions, InterpOptions, generate_cpp_from_fbc, generate_interp_module, read_fbc,
@@ -264,48 +263,14 @@ pub fn wrap_backend_with_architecture(generated: &str, cli: &CliArgs) -> String 
 }
 
 /// Renders a short Cranelift backend status report for the CLI.
+///
+/// Delegates to the facade renderer so the FIR-fixture path below and
+/// [`Compiler::compile_file_default_to_cranelift_report`] cannot drift apart.
 pub fn render_cranelift_report(
     compiled: &codegen::backends::cranelift::JitDspModule,
     subset_gap: Option<&str>,
 ) -> String {
-    let layout = compiled.struct_layout();
-    let mut out = String::new();
-    out.push_str("backend: cranelift (experimental)\n");
-    out.push_str(&format!("module: {}\n", compiled.module_name()));
-    out.push_str(&format!(
-        "compute_symbol: {}\n",
-        compiled.compute_symbol_name()
-    ));
-    out.push_str(&format!(
-        "compute_entry_addr: 0x{:x}\n",
-        compiled.compute_entry_addr()
-    ));
-    out.push_str(&format!(
-        "compute_body_lowered: {}\n",
-        compiled.compute_body_lowered()
-    ));
-    if let Some(reason) = subset_gap {
-        out.push_str(&format!("subset_gap: {reason}\n"));
-    }
-    out.push_str(&format!(
-        "dsp_struct_layout: size={} align={} fields={}\n",
-        layout.size_bytes(),
-        layout.align_bytes(),
-        layout.fields().len()
-    ));
-    for field in layout.fields() {
-        let kind = match &field.kind {
-            StructFieldKind::Scalar(typ) => format!("scalar:{typ:?}"),
-            StructFieldKind::Table { elem_type, len } => {
-                format!("table:{elem_type:?}[{len}]")
-            }
-        };
-        out.push_str(&format!(
-            "  - {} @{} size={} align={} {}\n",
-            field.name, field.offset_bytes, field.size_bytes, field.align_bytes, kind
-        ));
-    }
-    out
+    compiler::render_cranelift_module_report(compiled, subset_gap)
 }
 
 /// Maps CLI backend selection to the signal->FIR lane used internally.
@@ -1624,38 +1589,22 @@ pub fn run_main() {
     if cli.dump_cranelift || matches!(cli.lang, Some(CliLang::Cranelift)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let lane = selected_codegen_lane(&cli).into_compiler_lane();
+        let options = CraneliftOptions::default();
         let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_fir_with_lane(
-                input_path,
-                selected_codegen_lane(&cli).into_compiler_lane(),
-            )
+            compiler.compile_file_default_to_cranelift_report_with_lane(input_path, &options, lane)
         } else {
-            compiler.compile_file_to_fir_with_lane(
+            compiler.compile_file_to_cranelift_report_with_lane(
                 input_path,
                 &cli.import_dir,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                &options,
+                lane,
             )
         };
-        timer.phase("FIR");
+        timer.phase("cranelift-codegen");
 
         match result {
-            Ok(out) => {
-                let subset_gap = diagnose_cranelift_compute_subset_gap(&out.store, out.module)
-                    .map_err(|err| err.to_string());
-                let compiled = match generate_cranelift_module(
-                    &out.store,
-                    out.module,
-                    &CraneliftOptions::default(),
-                ) {
-                    Ok(compiled) => compiled,
-                    Err(err) => {
-                        eprintln!("Cranelift pipeline failed: {err}");
-                        std::process::exit(1);
-                    }
-                };
-                timer.phase("cranelift-codegen");
-                let rendered =
-                    render_cranelift_report(&compiled, subset_gap.ok().flatten().as_deref());
+            Ok(rendered) => {
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
                     emit_cli_json_companion_for_backend(

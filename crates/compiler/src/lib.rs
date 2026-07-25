@@ -18,11 +18,12 @@
 //! - Provide one orchestrator type ([`Compiler`]) for file-based compilation.
 //! - Aggregate typed stage errors into one top-level [`CompilerError`] surface.
 //! - Provide test/golden-oriented helper outputs (box dump, signal dump, FIR dump).
-//! - Route backend generation, with consistent options, to every emitter whose
-//!   result is source text or bytes: C++, C, Rust, Julia, AssemblyScript,
-//!   interpreter `.fbc`, WASM, and the JSON description. JIT backends
-//!   (Cranelift) stop at the FIR dump and are driven by their own consumer,
-//!   which owns the lifetime of the generated runtime objects.
+//! - Route backend generation, with consistent options, to every emitter:
+//!   C++, C, Rust, Julia, AssemblyScript, interpreter `.fbc`, WASM, the JSON
+//!   description, and the Cranelift JIT status report. Every entry point
+//!   returns source text or bytes; a caller that needs to *run* JIT-compiled
+//!   code must own the generated module itself and so lowers through the FIR
+//!   entry points instead (see `crates/cranelift-ffi`).
 //!
 //! # API mapping status
 //! - External facade API is `adapted`: it targets behavior compatibility with
@@ -50,6 +51,7 @@ use error_mapping::*;
 pub use golden::*;
 pub use json_naming::*;
 pub use paths::*;
+pub use signal_lowering::render_cranelift_module_report;
 use signal_lowering::*;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -62,6 +64,10 @@ use boxes::{BoxId, BoxMatch, dump_box, match_box};
 use codegen::backends::asc::{AscOptions, CodegenError as AscCodegenError, generate_asc_module};
 use codegen::backends::c::{COptions, CodegenError as CCodegenError, generate_c_module};
 use codegen::backends::cpp::{CodegenError as CppCodegenError, CppOptions, generate_cpp_module};
+use codegen::backends::cranelift::{
+    CraneliftBackendError, CraneliftOptions, JitDspModule, StructFieldKind,
+    diagnose_cranelift_compute_subset_gap, generate_cranelift_module,
+};
 use codegen::backends::interp::{
     CodegenError as InterpCodegenError, CodegenErrorCode as InterpCodegenErrorCode, FbcDspFactory,
     FbcReal, InterpOptions, generate_interp_module, write_fbc,
@@ -1446,6 +1452,115 @@ impl Compiler {
         self.compile_file_to_interp_with_lane(path, &[], options, lane)
     }
 
+    // ── Cranelift JIT backend (status report) ─────────────────────────────────────
+    //
+    // The odd backend out, in one specific way: `generate_cranelift_module`
+    // returns a live `JitDspModule` (executable memory, entry-point
+    // addresses), which cannot be handed back as `String` like every other
+    // group here — the caller would have to own its runtime lifetime.
+    //
+    // So what these entry points return is the backend *status report*: the
+    // shape of the compiled module (symbol names, entry address, `dsp` struct
+    // layout), rendered as text after the JIT module is dropped. That is the
+    // same split as the interpreter, whose facade entry points return
+    // serialized `.fbc` text rather than a live `FbcDspFactory`.
+    //
+    // Callers that need to *run* the compiled code must own the module and
+    // therefore bypass the facade, lowering through the FIR group below and
+    // calling `generate_cranelift_module` themselves — see
+    // `crates/cranelift-ffi`.
+
+    /// Parses + evaluates + propagates one source, JIT-compiles it with the
+    /// Cranelift backend, and returns the backend status report using the
+    /// transform fast lane.
+    pub fn compile_source_to_cranelift_report(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &CraneliftOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_source_to_cranelift_report_with_lane(
+            source_name,
+            source,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one source, JIT-compiles it with the
+    /// Cranelift backend, and returns the backend status report using the
+    /// selected signal->FIR lowering lane.
+    pub fn compile_source_to_cranelift_report_with_lane(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &CraneliftOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals = self.compile_source_to_signals(source_name, source)?;
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_cranelift_report(source_name, &signals, options, ctx)
+            .map_err(|e| lower_cranelift_error_to_compiler(source_name, e))
+    }
+
+    /// Parses + evaluates + propagates one file, then returns the Cranelift
+    /// backend status report using the transform fast lane.
+    pub fn compile_file_to_cranelift_report(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        options: &CraneliftOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_cranelift_report_with_lane(
+            path,
+            search_paths,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one file, then returns the Cranelift
+    /// backend status report using the selected signal->FIR lowering lane.
+    pub fn compile_file_to_cranelift_report_with_lane(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        options: &CraneliftOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals = self.compile_file_to_signals(path, search_paths)?;
+        let source = path.display().to_string();
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_cranelift_report(&source, &signals, options, ctx)
+            .map_err(|e| lower_cranelift_error_to_compiler(&source, e))
+    }
+
+    /// Parses + evaluates + propagates one file with default import search
+    /// path, then returns the Cranelift backend status report.
+    pub fn compile_file_default_to_cranelift_report(
+        &self,
+        path: &Path,
+        options: &CraneliftOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_default_to_cranelift_report_with_lane(
+            path,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one file with default import search
+    /// path, then returns the Cranelift backend status report using the
+    /// selected lane.
+    pub fn compile_file_default_to_cranelift_report_with_lane(
+        &self,
+        path: &Path,
+        options: &CraneliftOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_cranelift_report_with_lane(path, &[], options, lane)
+    }
+
     // ── FIR module dump ───────────────────────────────────────────────────────────
 
     /// Parses + evaluates + propagates one source, then lowers to FIR using
@@ -2415,6 +2530,12 @@ pub enum CompilerError {
         error: InterpCodegenError,
         diagnostics: DiagnosticBundle,
     },
+    /// Cranelift JIT backend emission failed from FIR.
+    CodegenCranelift {
+        source: Box<str>,
+        error: CraneliftBackendError,
+        diagnostics: DiagnosticBundle,
+    },
     /// WASM backend emission failed from FIR.
     CodegenWasm {
         source: Box<str>,
@@ -2479,6 +2600,9 @@ impl std::fmt::Display for CompilerError {
                 write!(f, "code generation failed for {source}: {error}")
             }
             Self::CodegenInterp { source, error, .. } => {
+                write!(f, "code generation failed for {source}: {error}")
+            }
+            Self::CodegenCranelift { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
             Self::CodegenWasm { source, error, .. } => {
@@ -2594,6 +2718,7 @@ impl CompilerError {
             Self::CodegenAsc { diagnostics, .. } => Some(diagnostics),
             Self::CodegenRust { diagnostics, .. } => Some(diagnostics),
             Self::CodegenInterp { diagnostics, .. } => Some(diagnostics),
+            Self::CodegenCranelift { diagnostics, .. } => Some(diagnostics),
             Self::CodegenWasm { diagnostics, .. } => Some(diagnostics),
             Self::MissingRoot { diagnostics, .. } => Some(diagnostics),
         }

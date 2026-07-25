@@ -142,6 +142,29 @@ pub(crate) fn lower_rust_error_to_compiler(source: &str, error: LowerToRustError
 /// The serialization failure arm is normalized into the interpreter backend
 /// error surface so CLI and library callers do not need a fourth dedicated
 /// interpreter-specific error branch.
+pub(crate) fn lower_cranelift_error_to_compiler(
+    source: &str,
+    error: LowerToCraneliftError,
+) -> CompilerError {
+    match error {
+        LowerToCraneliftError::ExecutionOptions(error) => {
+            execution_error_to_compiler(source, "cranelift", error)
+        }
+        LowerToCraneliftError::Transform(error) => transform_error_to_compiler(source, error),
+        LowerToCraneliftError::Verify(report) => fir_verify_error_to_compiler(source, report),
+        LowerToCraneliftError::Codegen(error) => CompilerError::CodegenCranelift {
+            source: source.into(),
+            diagnostics: CompilerError::codegen_diagnostics(
+                source,
+                "cranelift",
+                error.code.as_str(),
+                &error.message,
+            ),
+            error,
+        },
+    }
+}
+
 pub(crate) fn lower_interp_error_to_compiler(
     source: &str,
     error: LowerToInterpError,

@@ -87,7 +87,7 @@ pub enum CraneliftBackendErrorCode {
 
 impl CraneliftBackendErrorCode {
     /// Returns the stable machine-readable error code string.
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::NotImplemented => "FRS-CGEN-CLIF-0001",
             Self::UnsupportedModuleShape => "FRS-CGEN-CLIF-0002",

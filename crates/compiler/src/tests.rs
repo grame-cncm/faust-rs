@@ -702,6 +702,42 @@ fn compiler_expand_dsp_fails_for_invalid_source() {
 }
 
 #[test]
+fn compiler_cranelift_report_matches_the_cli_contract() {
+    // The facade entry point must reproduce the report the CLI has always
+    // printed for `--lang cranelift`, including the module name derived from
+    // the source (NOT the "mydsp" class-name default) — the FIR dump and the
+    // report name the same module, so the two must agree.
+    let compiler = Compiler::new();
+    let report = compiler
+        .compile_source_to_cranelift_report(
+            "gain.dsp",
+            "process = _ * 0.5;",
+            &codegen::backends::cranelift::CraneliftOptions::default(),
+        )
+        .expect("cranelift report generation should succeed");
+
+    assert!(report.starts_with("backend: cranelift (experimental)\n"));
+    assert!(report.contains("\nmodule: gain\n"), "{report}");
+    assert!(
+        report.contains("\ncompute_symbol: gain::compute\n"),
+        "{report}"
+    );
+    assert!(report.contains("\ncompute_entry_addr: 0x"), "{report}");
+    assert!(report.contains("\ndsp_struct_layout: "), "{report}");
+
+    // A DSP source that does not compile surfaces as a normal CompilerError,
+    // not a panic out of the JIT layer.
+    let err = compiler
+        .compile_source_to_cranelift_report(
+            "bad.dsp",
+            "process = undefined_thing;",
+            &codegen::backends::cranelift::CraneliftOptions::default(),
+        )
+        .expect_err("an undefined symbol must fail the cranelift report");
+    assert!(err.to_string().contains("undefined symbol"), "{err}");
+}
+
+#[test]
 fn compiler_generate_aux_files_no_flags_returns_empty() {
     let compiler = Compiler::new();
     let artifacts = compiler

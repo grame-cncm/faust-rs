@@ -62,6 +62,23 @@ pub(crate) enum LowerToInterpError {
     Serialize(String),
 }
 
+/// Lowering error surface for the Cranelift backend report.
+///
+/// Not a [`LowerError<CraneliftBackendError>`]: the subset-gap diagnosis and
+/// the JIT emission are two fallible backend steps, and both fold into the
+/// single `Codegen` variant here.
+#[derive(Debug)]
+pub(crate) enum LowerToCraneliftError {
+    /// Execution-option request rejected by the capability model.
+    ExecutionOptions(ExecutionOptionsError),
+    /// Fast-lane signal-to-FIR lowering failed.
+    Transform(SignalFirError),
+    /// Optional FIR verification rejected the lowered module.
+    Verify(FirVerifyReport),
+    /// Cranelift JIT emission (or its subset diagnosis) failed.
+    Codegen(CraneliftBackendError),
+}
+
 #[derive(Debug)]
 pub(crate) enum LowerToFirError {
     /// Execution-option request rejected by the capability model.
@@ -296,6 +313,114 @@ pub(crate) fn lower_signals_to_interp_transform_fastlane(
             .map_err(LowerToInterpError::Serialize)
         }
     }
+}
+
+/// Lowers propagated signals to FIR, JIT-compiles them with the Cranelift
+/// backend, and renders the resulting module as a text status report.
+///
+/// The `JitDspModule` is dropped before returning: the report is a snapshot of
+/// its shape (symbol names, entry address, `dsp` struct layout), never a
+/// handle to the finalized code. Callers that need to *run* the compiled DSP
+/// must own the module themselves and so cannot go through this function —
+/// see `crates/cranelift-ffi`.
+pub(crate) fn lower_signals_to_cranelift_report(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &CraneliftOptions,
+    ctx: SignalLoweringContext,
+) -> Result<String, LowerToCraneliftError> {
+    validate_execution_options(
+        "cranelift",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )
+    .map_err(LowerToCraneliftError::ExecutionOptions)?;
+    // Same derivation as `lower_signals_to_fir`, not `resolve_module_name`
+    // (which is the class-name path and defaults to "mydsp"): the report names
+    // the FIR module, so it must match what the FIR dump would show for the
+    // same input.
+    let module_name = sanitize_cpp_ident(source_name_to_class(source_name).as_str());
+    let timing_sink = ctx.timing_sink.as_ref();
+    let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
+        lower_signals_to_fir_transform_fastlane_with_timing(
+            output,
+            module_name,
+            ctx.real_type,
+            ctx.max_copy_delay,
+            ctx.delay_line_threshold,
+            ctx.compute_mode,
+            ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
+            timing_sink,
+        )
+    })
+    .map_err(LowerToCraneliftError::Transform)?;
+    time_phase_with_sink(timing_sink, "fir-verify", || {
+        maybe_verify_fir_module(&lowered, ctx.fir_verify)
+    })
+    .map_err(LowerToCraneliftError::Verify)?;
+
+    // A subset gap is a lowering *limitation* to report, not a failure: the
+    // module still compiles, with an unlowered compute body. Only a hard
+    // backend error stops the report.
+    let subset_gap = diagnose_cranelift_compute_subset_gap(&lowered.store, lowered.module)
+        .map_err(LowerToCraneliftError::Codegen)?;
+    let compiled = time_phase_with_sink(timing_sink, "cranelift-codegen", || {
+        generate_cranelift_module(&lowered.store, lowered.module, options)
+    })
+    .map_err(LowerToCraneliftError::Codegen)?;
+    Ok(render_cranelift_module_report(
+        &compiled,
+        subset_gap.as_deref(),
+    ))
+}
+
+/// Renders a compiled Cranelift module as the backend status report.
+///
+/// Shape and field order are the CLI's long-standing `--lang cranelift`
+/// output, kept byte-for-byte so the facade entry points and the CLI cannot
+/// drift apart.
+pub fn render_cranelift_module_report(compiled: &JitDspModule, subset_gap: Option<&str>) -> String {
+    let layout = compiled.struct_layout();
+    let mut out = String::new();
+    out.push_str("backend: cranelift (experimental)\n");
+    out.push_str(&format!("module: {}\n", compiled.module_name()));
+    out.push_str(&format!(
+        "compute_symbol: {}\n",
+        compiled.compute_symbol_name()
+    ));
+    out.push_str(&format!(
+        "compute_entry_addr: 0x{:x}\n",
+        compiled.compute_entry_addr()
+    ));
+    out.push_str(&format!(
+        "compute_body_lowered: {}\n",
+        compiled.compute_body_lowered()
+    ));
+    if let Some(reason) = subset_gap {
+        out.push_str(&format!("subset_gap: {reason}\n"));
+    }
+    out.push_str(&format!(
+        "dsp_struct_layout: size={} align={} fields={}\n",
+        layout.size_bytes(),
+        layout.align_bytes(),
+        layout.fields().len()
+    ));
+    for field in layout.fields() {
+        let kind = match &field.kind {
+            StructFieldKind::Scalar(typ) => format!("scalar:{typ:?}"),
+            StructFieldKind::Table { elem_type, len } => {
+                format!("table:{elem_type:?}[{len}]")
+            }
+        };
+        out.push_str(&format!(
+            "  - {} @{} size={} align={} {}\n",
+            field.name, field.offset_bytes, field.size_bytes, field.align_bytes, kind
+        ));
+    }
+    out
 }
 
 /// Serializes a [`FbcDspFactory`] to `.fbc` text format.
