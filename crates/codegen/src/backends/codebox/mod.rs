@@ -32,6 +32,8 @@
 //! supplies the body of `compute()`. Selecting that lowering is the caller's
 //! job; this module reports what it finds.
 
+pub mod eval;
+
 use std::fmt::Write as _;
 
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
@@ -426,6 +428,35 @@ fn emit_stmt(
             for item in items {
                 emit_stmt(store, out, options, item, indent, phase)?;
             }
+            Ok(())
+        }
+
+        FirMatch::ForLoop {
+            var,
+            init,
+            end,
+            step,
+            body,
+            is_reverse,
+        } => {
+            let counter = codebox_var_name(&var);
+            // `init` is either a declaration carrying the start value or the
+            // value itself, as in the other text backends.
+            let start = match match_fir(store, init) {
+                FirMatch::DeclareVar { init: Some(v), .. } => emit_value(store, options, v)?,
+                _ => emit_value(store, options, init)?,
+            };
+            let end = emit_value(store, options, end)?;
+            let step = emit_value(store, options, step)?;
+            // Codebox has no `+=`, and integer arithmetic goes through the
+            // wrapping helper, so the step is spelled out.
+            let comparison = if is_reverse { ">" } else { "<" };
+            let _ = writeln!(
+                out,
+                "{tab}for (let {counter} : Int = {start}; ({counter} {comparison} {end}); {counter} = iadd({counter}, {step})) {{"
+            );
+            emit_stmt_or_block(store, out, options, body, indent + 1, Phase::Body)?;
+            let _ = writeln!(out, "{tab}}}");
             Ok(())
         }
 

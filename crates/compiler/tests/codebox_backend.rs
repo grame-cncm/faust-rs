@@ -216,3 +216,115 @@ fn dump_for_eyeball_comparison() {
         println!("=== {name} ===\n{}", codebox(name, src));
     }
 }
+
+// ── Numeric verification against the interpreter ─────────────────────────────
+//
+// The primary oracle of the port plan (§5.2 layer 2). Text cannot arbitrate:
+// our lowering legitimately differs from C++'s, so a text comparison proves
+// nothing and a snapshot of our own output only detects change. Running the
+// emitted codebox and comparing it sample-for-sample against the interpreter —
+// which the impulse suite validates against the genuine C++ reference — is what
+// shows the emission is *correct*.
+//
+// Both backends consume the same FIR module, so this isolates the codebox
+// emission from the lowering.
+
+use codegen::backends::codebox::eval::Program;
+use codegen::backends::interp::{FbcDspInstance, InterpOptions, generate_interp_module};
+
+/// Runs `frames` samples of `source` through both the interpreter and the
+/// emitted codebox, and asserts they agree bit-for-bit in f64.
+fn assert_codebox_matches_interpreter(source_name: &str, source: &str, frames: usize) {
+    let compiler = Compiler::new()
+        .with_control_rate_mode(ControlRateMode::External)
+        .with_processing_api(ProcessingApi::OneSample);
+    let fir = compiler
+        .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
+        .expect("FIR lowering must succeed");
+
+    let text = generate_codebox_module(&fir.store, fir.module, &CodeboxOptions::default())
+        .expect("codebox emission must succeed");
+    let mut program = Program::parse(&text)
+        .unwrap_or_else(|e| panic!("the emitted codebox must parse: {e}\n{text}"));
+    program.dspsetup(44100.0).expect("dspsetup must run");
+
+    // The interpreter needs its own lowering of the same source, in the block
+    // shape it supports.
+    let block_compiler = Compiler::new();
+    let block_fir = block_compiler
+        .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
+        .expect("block FIR lowering must succeed");
+    let mut factory = generate_interp_module::<f64>(
+        &block_fir.store,
+        block_fir.module,
+        &InterpOptions {
+            opt_level: 0,
+            module_name: None,
+        },
+    )
+    .expect("interp codegen must succeed");
+    let mut instance = FbcDspInstance::new(&mut factory);
+    instance.init(44100);
+
+    let num_inputs = instance.get_num_inputs() as usize;
+    let num_outputs = instance.get_num_outputs() as usize;
+    assert_eq!(
+        program.compute_arity(),
+        num_inputs,
+        "codebox compute arity must match the DSP input count\n{text}"
+    );
+
+    // An impulse followed by silence, the same excitation the impulse suite uses.
+    for frame in 0..frames {
+        let sample = if frame == 0 { 1.0f64 } else { 0.0f64 };
+        let inputs: Vec<f64> = vec![sample; num_inputs];
+
+        let in_bufs: Vec<Vec<f64>> = inputs.iter().map(|v| vec![*v]).collect();
+        let mut out_bufs: Vec<Vec<f64>> = vec![vec![0.0]; num_outputs];
+        {
+            let in_refs: Vec<&[f64]> = in_bufs.iter().map(Vec::as_slice).collect();
+            let mut out_refs: Vec<&mut [f64]> =
+                out_bufs.iter_mut().map(Vec::as_mut_slice).collect();
+            instance
+                .try_compute(1, &in_refs, &mut out_refs)
+                .expect("interpreter compute must succeed");
+        }
+        let expected: Vec<f64> = out_bufs.iter().map(|c| c[0]).collect();
+
+        let got = program
+            .compute(&[], &inputs)
+            .unwrap_or_else(|e| panic!("codebox evaluation failed at frame {frame}: {e}\n{text}"));
+
+        assert_eq!(
+            got.len(),
+            expected.len(),
+            "output count differs at frame {frame}\n{text}"
+        );
+        for (channel, (a, b)) in got.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (a - b).abs() < 1e-9,
+                "frame {frame} channel {channel}: codebox {a} vs interpreter {b}\n{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn numeric_passthrough_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("id.dsp", "process = _;", 64);
+}
+
+#[test]
+fn numeric_arithmetic_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("arith.dsp", "process = _ , _ : + : *(0.5);", 64);
+}
+
+#[test]
+fn numeric_recursion_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("rec.dsp", "process = + ~ *(0.5);", 256);
+}
+
+#[test]
+fn numeric_delay_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("del.dsp", "process = _ : @(7);", 256);
+}
