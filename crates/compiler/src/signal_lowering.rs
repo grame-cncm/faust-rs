@@ -47,6 +47,8 @@ pub(crate) type LowerToJuliaError = LowerError<JuliaCodegenError>;
 pub(crate) type LowerToRustError = LowerError<RustCodegenError>;
 /// Lowering error surface for the AssemblyScript backend.
 pub(crate) type LowerToAscError = LowerError<AscCodegenError>;
+/// Lowering error surface for the codebox (RNBO) backend.
+pub(crate) type LowerToCodeboxError = LowerError<CodeboxCodegenError>;
 
 #[derive(Debug)]
 pub(crate) enum LowerToInterpError {
@@ -441,6 +443,38 @@ pub(crate) fn lower_signals_to_asc(
     )
 }
 
+/// Dispatches codebox lowering through the selected signal->FIR lane, after
+/// forcing the two execution modes the target imposes.
+///
+/// Unlike every other dispatcher, this one *overrides* the caller's request
+/// instead of merely validating it. RNBO calls the generated code once per
+/// sample and sets controls through `@param` identifiers, so external control
+/// and the one-sample API are not modes codebox can be put into — they are
+/// what codebox is. The capability table records both as `Intrinsic`,
+/// meaning "accepted, and output-invariant"; this override is what makes that
+/// second half true, for the CLI and for programmatic callers alike.
+///
+/// Vector mode is the one request that cannot be absorbed this way, so it is
+/// rejected by name — see the `vector` column in [`crate::execution`].
+/// Validation runs on the *forced* modes, which is why it is called here
+/// rather than through `lower_signals_with_validation`.
+pub(crate) fn lower_signals_to_codebox(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &CodeboxOptions,
+    mut ctx: SignalLoweringContext,
+) -> Result<String, LowerToCodeboxError> {
+    ctx.control_rate_mode = ControlRateMode::External;
+    ctx.processing_api = ProcessingApi::OneSample;
+    validate_execution_options(
+        "codebox",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )?;
+    lower_signals_to_codebox_transform_fastlane(source_name, output, options, &ctx)
+}
+
 /// Dispatches rust lowering through the selected signal->FIR lane.
 pub(crate) fn lower_signals_to_rust(
     source_name: &str,
@@ -783,6 +817,46 @@ pub(crate) fn lower_signals_to_asc_transform_fastlane(
     codegen_options.double_precision = ctx.real_type == RealType::Float64;
     time_phase_with_sink(timing_sink, "asc-codegen", || {
         generate_asc_module(&lowered.store, lowered.module, &codegen_options)
+    })
+    .map_err(LowerError::Codegen)
+}
+
+/// Lowers signals to FIR and emits codebox text.
+///
+/// Takes `ctx` with the modes already forced by [`lower_signals_to_codebox`];
+/// there is no `class_name` to resolve, because a codebox file is flat and
+/// names no class.
+pub(crate) fn lower_signals_to_codebox_transform_fastlane(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &CodeboxOptions,
+    ctx: &SignalLoweringContext,
+) -> Result<String, LowerToCodeboxError> {
+    let module_name = resolve_module_name(None, source_name);
+    let timing_sink = ctx.timing_sink.as_ref();
+    let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
+        lower_signals_to_fir_transform_fastlane_with_timing(
+            output,
+            module_name,
+            ctx.real_type,
+            ctx.max_copy_delay,
+            ctx.delay_line_threshold,
+            ctx.compute_mode,
+            ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
+            timing_sink,
+        )
+    })
+    .map_err(LowerError::Transform)?;
+    time_phase_with_sink(timing_sink, "fir-verify", || {
+        maybe_verify_fir_module(&lowered, ctx.fir_verify)
+    })
+    .map_err(LowerError::Verify)?;
+    let mut codegen_options = options.clone();
+    codegen_options.double_precision = ctx.real_type == RealType::Float64;
+    time_phase_with_sink(timing_sink, "codebox-codegen", || {
+        generate_codebox_module(&lowered.store, lowered.module, &codegen_options)
     })
     .map_err(LowerError::Codegen)
 }

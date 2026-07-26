@@ -199,10 +199,26 @@ pub fn cli_lang_name(lang: CliLang) -> &'static str {
         CliLang::Interp => "interp",
         CliLang::Cranelift => "cranelift",
         CliLang::Asc => "asc",
+        CliLang::Codebox => "codebox",
+        CliLang::CodeboxTest => "codebox-test",
         CliLang::Julia => "julia",
         CliLang::Rust => "rust",
         CliLang::Wasm => "wasm",
         CliLang::Wast => "wast",
+    }
+}
+
+/// Maps a [`CliLang`] to the backend identifier the capability table is keyed
+/// by ([`compiler::execution::backend_execution_caps`]).
+///
+/// Almost always the `-lang` token itself, but not always: `codebox-test` is a
+/// second spelling of the codebox backend that changes parameter naming and
+/// nothing else, so it must resolve to the same row. Looking a row up under
+/// `codebox-test` would fail closed and reject a perfectly valid command line.
+pub fn cli_backend_id(lang: CliLang) -> &'static str {
+    match lang {
+        CliLang::CodeboxTest => "codebox",
+        other => cli_lang_name(other),
     }
 }
 

@@ -458,6 +458,98 @@ impl Compiler {
         self.compile_file_to_asc_with_lane(path, &[], options, lane)
     }
 
+    // ── Codebox backend (RNBO) ────────────────────────────────────────────────────
+
+    /// Parses + evaluates + propagates one source, then emits codebox text.
+    ///
+    /// Codebox imposes external control and the one-sample processing API;
+    /// `lower_signals_to_codebox` forces both, so this backend ignores
+    /// `-ec`/`-os` rather than requiring them. Vector mode is rejected.
+    pub fn compile_source_to_codebox(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &CodeboxOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_source_to_codebox_with_lane(
+            source_name,
+            source,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one source, then emits codebox text
+    /// using the selected signal->FIR lowering lane.
+    pub fn compile_source_to_codebox_with_lane(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &CodeboxOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals = self.compile_source_to_signals(source_name, source)?;
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_codebox(source_name, &signals, options, ctx)
+            .map_err(|e| lower_codebox_error_to_compiler(source_name, e))
+    }
+
+    /// Parses + evaluates + propagates one file, then emits codebox text.
+    pub fn compile_file_to_codebox(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        options: &CodeboxOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_codebox_with_lane(
+            path,
+            search_paths,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one file, then emits codebox text using
+    /// the selected signal->FIR lowering lane.
+    pub fn compile_file_to_codebox_with_lane(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        options: &CodeboxOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals = self.compile_file_to_signals(path, search_paths)?;
+        let source = path.display().to_string();
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_codebox(&source, &signals, options, ctx)
+            .map_err(|e| lower_codebox_error_to_compiler(&source, e))
+    }
+
+    /// Parses + evaluates + propagates one file with default import search path,
+    /// then emits codebox text.
+    pub fn compile_file_default_to_codebox(
+        &self,
+        path: &Path,
+        options: &CodeboxOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_default_to_codebox_with_lane(
+            path,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one file with default import search path,
+    /// then emits codebox text using the selected signal->FIR lowering lane.
+    pub fn compile_file_default_to_codebox_with_lane(
+        &self,
+        path: &Path,
+        options: &CodeboxOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_codebox_with_lane(path, &[], options, lane)
+    }
+
     // ── Interpreter backend (`.fbc` bytecode) ─────────────────────────────────────
 
     /// Parses + evaluates + propagates one source, then emits `.fbc` bytecode

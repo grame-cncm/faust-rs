@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, ValueEnum};
 use compiler::{Compiler, FaustInstallPaths};
 use errors::{Diagnostic, DiagnosticBundle, DiagnosticCode, Severity, SourceSpan, Stage};
 use serde_json::Value;
@@ -217,15 +217,48 @@ fn normalize_legacy_args_maps_dash_pn_to_process_name() {
     );
 }
 
+/// The `-lang` tokens must be exactly this set, in alphabetical order.
+///
+/// Read from the value enum rather than from the rendered help, which was the
+/// previous shape of this test: documenting a single `CliLang` variant makes
+/// clap switch from a one-line `possible values: …` to a bulleted list with
+/// per-variant help, and the test broke on that purely cosmetic change. The
+/// accepted tokens are the contract; clap's layout is not.
+///
+/// Aliases are deliberately not listed — `c99`, `cxx`, `rs` and friends are
+/// compatibility spellings, and `to_possible_value` reports only the canonical
+/// name a user sees in the help.
 #[test]
-fn cli_help_lists_lang_possible_values_alphabetically() {
-    let help = CliArgs::command().render_long_help().to_string();
-    assert!(
-        help.contains(
-            "possible values: asc, c, cpp, cranelift, fir, interp, julia, rust, wasm, wast"
-        ),
-        "{help}"
+fn cli_lang_tokens_are_the_expected_set_in_alphabetical_order() {
+    let listed: Vec<String> = CliLang::value_variants()
+        .iter()
+        .map(|lang| {
+            lang.to_possible_value()
+                .expect("no -lang variant is hidden")
+                .get_name()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            "asc",
+            "c",
+            "codebox",
+            "codebox-test",
+            "cpp",
+            "cranelift",
+            "fir",
+            "interp",
+            "julia",
+            "rust",
+            "wasm",
+            "wast",
+        ]
     );
+    let mut sorted = listed.clone();
+    sorted.sort();
+    assert_eq!(listed, sorted, "the -lang values must stay alphabetical");
 }
 
 #[test]

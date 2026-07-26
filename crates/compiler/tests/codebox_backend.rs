@@ -11,7 +11,7 @@
 //! verification arrives with the evaluator layer.
 
 use codegen::backends::codebox::{CodeboxOptions, CodegenErrorCode, generate_codebox_module};
-use compiler::{Compiler, ControlRateMode, ProcessingApi, RealType, SignalFirLane};
+use compiler::{Compiler, ComputeMode, ControlRateMode, ProcessingApi, RealType, SignalFirLane};
 
 /// Compiles one source to codebox, through the lowering the backend expects.
 fn codebox(source_name: &str, source: &str) -> String {
@@ -700,4 +700,107 @@ fn numeric_math_calls_match_the_interpreter() {
 #[test]
 fn numeric_bargraph_dsp_matches_the_interpreter() {
     assert_codebox_matches_interpreter("bar.dsp", BARGRAPH_DSP, 32);
+}
+
+// ── C5: facade wiring ────────────────────────────────────────────────────────
+//
+// Everything above builds the FIR module by hand, with the lowering the
+// backend expects already selected. These tests go through the facade instead,
+// which is where the "codebox imposes its own execution modes" contract lives.
+
+/// The four execution shapes must produce byte-identical output, because
+/// `lower_signals_to_codebox` forces external control and one-sample whatever
+/// was asked. This is what `ExecutionCapability::Intrinsic` claims in the
+/// capability table; without this test the claim is unchecked.
+#[test]
+fn the_facade_forces_the_execution_modes_codebox_imposes() {
+    let source = "process = _ * hslider(\"g\", 0.5, 0, 1, 0.01) : @(3);";
+    let shapes = [
+        (ControlRateMode::InlinePerBlock, ProcessingApi::Block),
+        (ControlRateMode::External, ProcessingApi::Block),
+        (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
+        (ControlRateMode::External, ProcessingApi::OneSample),
+    ];
+    let outputs: Vec<String> = shapes
+        .iter()
+        .map(|&(control, api)| {
+            Compiler::new()
+                .with_control_rate_mode(control)
+                .with_processing_api(api)
+                .compile_source_to_codebox("f.dsp", source, &CodeboxOptions::default())
+                .expect("codebox must accept every execution shape")
+        })
+        .collect();
+    for (index, text) in outputs.iter().enumerate().skip(1) {
+        assert_eq!(
+            *text, outputs[0],
+            "shape {:?} produced different output from the default",
+            shapes[index]
+        );
+    }
+    // Not vacuous: the shared output really is the one-sample shape, so the
+    // assertion above is not just four copies of block-processing code.
+    assert!(
+        outputs[0].contains("function compute(i0) {"),
+        "{}",
+        outputs[0]
+    );
+    assert!(
+        outputs[0].contains("function control() {"),
+        "{}",
+        outputs[0]
+    );
+}
+
+/// Vector mode is the one request codebox cannot absorb, so it is refused by
+/// name rather than silently downgraded to the scalar output above.
+#[test]
+fn the_facade_rejects_vector_mode_by_name() {
+    let err = Compiler::new()
+        .with_compute_mode(ComputeMode::Vector {
+            vec_size: 32,
+            loop_variant: 0,
+        })
+        .compile_source_to_codebox("f.dsp", "process = _;", &CodeboxOptions::default())
+        .expect_err("codebox must reject vector mode");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("'-vec'") && rendered.contains("codebox"),
+        "the diagnostic must name both the flag and the backend: {rendered}"
+    );
+}
+
+/// `-double` reaches the emitter through the facade's real type, not through a
+/// separately parsed flag — the drift that bit the wasm backend before.
+#[test]
+fn the_facade_derives_literal_precision_from_the_real_type() {
+    let source = "process = _ * 0.5;";
+    let single = Compiler::new()
+        .compile_source_to_codebox("f.dsp", source, &CodeboxOptions::default())
+        .expect("emission must succeed");
+    let double = Compiler::new()
+        .with_real_type(RealType::Float64)
+        .compile_source_to_codebox("f.dsp", source, &CodeboxOptions::default())
+        .expect("emission must succeed");
+    assert!(single.contains("0.5f"), "{single}");
+    assert!(!double.contains("0.5f"), "{double}");
+    assert!(double.contains("0.5"), "{double}");
+}
+
+/// `test_labels` survives the trip through the facade: it is the only thing
+/// separating `-lang codebox` from `-lang codebox-test`.
+#[test]
+fn the_facade_forwards_the_test_label_option() {
+    let options = CodeboxOptions {
+        test_labels: true,
+        ..CodeboxOptions::default()
+    };
+    let text = Compiler::new()
+        .compile_source_to_codebox(
+            "f.dsp",
+            "process = _ * hslider(\"g\", 0.5, 0, 1, 0.01);",
+            &options,
+        )
+        .expect("emission must succeed");
+    assert!(text.contains("RB_hslider_g"), "{text}");
 }

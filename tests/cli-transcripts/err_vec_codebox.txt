@@ -1,0 +1,2 @@
+ERROR : '-vec' option cannot be used with the 'codebox' backend, which emits one sample at a time
+EXIT=1

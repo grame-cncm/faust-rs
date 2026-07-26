@@ -1,0 +1,39 @@
+// Code generated with faust-rs
+// Additional functions
+// Params
+@param({min: 0.0f, max: 1.0f}) RB_hslider_g = 0.5f;
+// Globals
+// Fields
+@state fSampleRate_cb : Int = 0;
+@state fHslider0_cb : number = 0;
+@state fSlow0_cb : number = 0;
+@state fUpdated : Int = 0;
+// Init
+function dspsetup() {
+	fUpdated = true;
+	fHslider0_cb = 0.5f;
+	fSampleRate_cb = samplerate();
+}
+// Control
+function control() {
+	fSlow0_cb = fHslider0_cb;
+}
+// Update parameters
+function update(RB_hslider_g) {
+	fUpdated = int(fUpdated) | (RB_hslider_g != fHslider0_cb); fHslider0_cb = RB_hslider_g;
+	if (fUpdated) { fUpdated = false; control(); }
+}
+// Compute one frame
+function compute(i0) {
+	let input0_cb : number = i0;
+	let output0_cb : number = 0;
+	output0_cb = (fSlow0_cb * input0_cb);
+	return [output0_cb];
+}
+// Update parameters
+update(RB_hslider_g);
+// Compute one frame
+outputs = compute(in1);
+// Write the outputs: audio ones and bargraph as additional audio signals
+out1 = outputs[0];
+EXIT=0

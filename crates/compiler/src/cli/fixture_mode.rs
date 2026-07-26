@@ -6,6 +6,7 @@
 use codegen::backends::asc::{AscOptions, generate_asc_module};
 use codegen::backends::c::COptions;
 use codegen::backends::c::generate_c_module;
+use codegen::backends::codebox::{CodeboxOptions, generate_codebox_module};
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::cpp::generate_cpp_module;
 use codegen::backends::cranelift::{
@@ -163,6 +164,31 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             }
             Err(err) => {
                 eprintln!("AssemblyScript fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if let Some(lang @ (CliLang::Codebox | CliLang::CodeboxTest)) = cli.lang {
+        // Unlike the source path, nothing here can force the lowering: the FIR
+        // module arrives already lowered from the fixture file. So the shape is
+        // not imposed but *checked* — a fixture lowered for block processing
+        // has no `frame` function, and the emitter says so with
+        // `FRS-CGEN-CBOX-0002` rather than emitting something plausible.
+        let options = CodeboxOptions {
+            double_precision: cli.double,
+            test_labels: lang == CliLang::CodeboxTest,
+        };
+        match generate_codebox_module(&store, module, &options) {
+            Ok(codebox) => {
+                emit_output(&codebox, cli.output.as_ref());
+                if cli.dump_json {
+                    emit_fixture_json_companion(cli, &store, module, "codebox");
+                }
+            }
+            Err(err) => {
+                eprintln!("Codebox fixture codegen failed: {err}");
                 std::process::exit(1);
             }
         }

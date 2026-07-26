@@ -16,6 +16,16 @@ pub enum CliLang {
     Asc,
     #[value(alias = "c99")]
     C,
+    /// RNBO codebox. Emits one sample at a time with external control,
+    /// whether or not `-ec`/`-os` were passed; rejects `-vec`.
+    Codebox,
+    /// RNBO codebox with `RB_`-prefixed parameter names.
+    ///
+    /// A separate `-lang` value rather than a modifier flag, matching C++
+    /// Faust. The prefix is what lets `rnbo-dsp.h` recover the Faust UI from a
+    /// round-tripped patch, so it is the spelling used for manual validation.
+    #[value(name = "codebox-test")]
+    CodeboxTest,
     #[value(alias = "cxx", alias = "c++")]
     Cpp,
     #[value(alias = "clif")]
@@ -120,10 +130,12 @@ pub struct CliArgs {
     /// Emit strict C++-style JSON description.
     #[arg(long = "json", action = ArgAction::SetTrue)]
     pub dump_json: bool,
-    /// Select backend language (Faust-style): `-lang asc`, `-lang c`, `-lang cpp`, `-lang cranelift`, `-lang fir`, `-lang interp`, `-lang julia`, `-lang rust`, `-lang wasm`, or `-lang wast`.
+    /// Select backend language (Faust-style), e.g. `-lang cpp`.
     ///
-    /// This option is equivalent to `--dump-c` / `--dump-cpp` / `--dump-fir`
-    /// / `--dump-interp` / `--dump-cranelift` / `-lang asc` / `-lang julia` / `-lang rust` / `-lang wasm` / `-lang wast`.
+    /// For the backends that also have a dedicated flag, `-lang c`,
+    /// `-lang cpp`, `-lang fir`, `-lang interp` and `-lang cranelift` are
+    /// equivalent to `--dump-c`, `--dump-cpp`, `--dump-fir`, `--dump-interp`
+    /// and `--dump-cranelift`. The rest are reachable only through `-lang`.
     #[arg(long = "lang", value_enum, allow_hyphen_values = true)]
     pub lang: Option<CliLang>,
     /// Print version information and exit.

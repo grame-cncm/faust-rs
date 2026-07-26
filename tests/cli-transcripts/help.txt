@@ -51,11 +51,23 @@ Options:
           Emit strict C++-style JSON description
 
       --lang <LANG>
-          Select backend language (Faust-style): `-lang asc`, `-lang c`, `-lang cpp`, `-lang cranelift`, `-lang fir`, `-lang interp`, `-lang julia`, `-lang rust`, `-lang wasm`, or `-lang wast`.
+          Select backend language (Faust-style), e.g. `-lang cpp`.
           
-          This option is equivalent to `--dump-c` / `--dump-cpp` / `--dump-fir` / `--dump-interp` / `--dump-cranelift` / `-lang asc` / `-lang julia` / `-lang rust` / `-lang wasm` / `-lang wast`.
-          
-          [possible values: asc, c, cpp, cranelift, fir, interp, julia, rust, wasm, wast]
+          For the backends that also have a dedicated flag, `-lang c`, `-lang cpp`, `-lang fir`, `-lang interp` and `-lang cranelift` are equivalent to `--dump-c`, `--dump-cpp`, `--dump-fir`, `--dump-interp` and `--dump-cranelift`. The rest are reachable only through `-lang`.
+
+          Possible values:
+          - asc
+          - c
+          - codebox:      RNBO codebox. Emits one sample at a time with external control, whether or not `-ec`/`-os` were passed; rejects `-vec`
+          - codebox-test: RNBO codebox with `RB_`-prefixed parameter names
+          - cpp
+          - cranelift
+          - fir
+          - interp
+          - julia
+          - rust
+          - wasm
+          - wast
 
   -v, --version
           Print version information and exit

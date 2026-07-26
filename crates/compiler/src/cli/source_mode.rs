@@ -6,6 +6,7 @@
 use boxes::dump_box;
 use codegen::backends::asc::AscOptions;
 use codegen::backends::c::COptions;
+use codegen::backends::codebox::CodeboxOptions;
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::cranelift::CraneliftOptions;
 use codegen::backends::interp::{FbcCppOptions, InterpOptions, generate_cpp_from_fbc, read_fbc};
@@ -403,6 +404,36 @@ pub(crate) fn run_source_mode(
                 }
             }
             Err(err) => report_pipeline_failure("AssemblyScript pipeline failed", &err, cli),
+        }
+        timer.total();
+        return;
+    }
+
+    if let Some(lang @ (CliLang::Codebox | CliLang::CodeboxTest)) = cli.lang {
+        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
+        // No `class_name`: a codebox file is flat and declares no class, so
+        // `-cn` has nothing to name here.
+        let options = CodeboxOptions {
+            double_precision: cli.double,
+            test_labels: lang == CliLang::CodeboxTest,
+        };
+        let result = compiler.compile_file_to_codebox_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
+        timer.phase("codebox-codegen");
+
+        match result {
+            Ok(codebox) => {
+                emit_output(&codebox, cli.output.as_ref());
+                if cli.dump_json {
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, lang);
+                }
+            }
+            Err(err) => report_pipeline_failure("Codebox pipeline failed", &err, cli),
         }
         timer.total();
         return;

@@ -92,10 +92,13 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
     // (plan §4.2): when `-lang` names the backend, consult the capability
     // table now; backend paths selected without `-lang` are enforced by the
     // same validation at the lowering dispatch.
-    if cli.external_control || cli.one_sample {
+    //
+    // `cli.vec` is part of the trigger because a backend may reject `-vec` on
+    // its own, with neither `-ec` nor `-os` in play (codebox does).
+    if cli.external_control || cli.one_sample || cli.vec {
         if let Some(lang) = cli.lang {
             if let Err(error) = compiler::execution::validate_execution_options(
-                cli_lang_name(lang),
+                cli_backend_id(lang),
                 selected_control_rate_mode(cli),
                 selected_processing_api(cli),
                 selected_compute_mode(cli),

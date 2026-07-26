@@ -263,19 +263,76 @@ a deliberate change also does, so it cannot arbitrate. `trunc` versus `floor`
 differs only on negative values, so the mutation needs a DSP that produces
 them.
 
-### C5 — CLI and capability wiring
+### C5 — CLI and capability wiring — **done**
 
-`CliLang::Codebox` (`-lang codebox`, alias `codebox-test`), the
-`BACKEND_CAPS` row in `crates/compiler/src/execution.rs`, the facade entry
-points in `crates/compiler/src/emitters.rs` following the established six-point
-convention, and the CLI transcript snapshot regenerated.
+`CliLang::Codebox` and `CliLang::CodeboxTest` (two `-lang` values, as in C++
+Faust, not one value plus a modifier flag), the `BACKEND_CAPS` row in
+`crates/compiler/src/execution.rs`, the six facade entry points in
+`crates/compiler/src/emitters.rs`, and the CLI transcript snapshot regenerated
+(148 modes).
 
-Note on capabilities: codebox *requires* external control and one-sample and
-*forbids* vector mode. That is not the current shape of the table, where `-ec`
-and `-os` are opt-in per backend. Either the table grows a "forced" state, or
-the codebox lowering path sets both modes itself and rejects a conflicting
-request. Decide in C5 and record which, because a silently ignored `-vec` here
-would emit plausible-looking wrong code.
+#### The capability decision, and what was chosen
+
+The open question was: codebox *requires* external control and one-sample and
+*forbids* vector mode, which is not the shape of a table where `-ec` and `-os`
+are opt-in per backend.
+
+**No "forced" state was added.** `ExecutionCapability::Intrinsic` already meant
+exactly this — "the backend's native contract already has a tick/control split;
+the flag is accepted as an output-invariant compatibility alias" — and codebox
+is the case it was written for. RNBO calls the generated code once per sample
+and sets controls through `@param` identifiers, so both modes are what codebox
+*is*, not modes it can be put into. So:
+
+- both dimensions are `Intrinsic` in the row;
+- `lower_signals_to_codebox` **forces** `ControlRateMode::External` and
+  `ProcessingApi::OneSample` into the lowering context before validating, which
+  is what makes the "output-invariant" half of `Intrinsic` true rather than
+  merely asserted. This is the one dispatcher that overrides its caller instead
+  of only validating, and it is documented as such at the call site.
+
+`-vec` could not be absorbed the same way, so the table grew a `vector` column.
+Reusing `OneSampleWithVectorMode` was rejected: its message blames `-os`, which
+a caller writing `-lang codebox -vec` never typed. The new
+`FRS-EXEC-VEC-BACKEND` names the backend instead. Every pre-existing row is
+`Explicit`, which preserves their behaviour exactly and claims nothing about
+whether their emitter has a certified vector lane.
+
+Two consequences worth recording:
+
+- `validate_execution_options` now checks the vector column **before** the
+  `-ec`/`-os` early return, since a backend can reject `-vec` with neither flag
+  in play. The CLI guard in `validate_cli_arguments` was widened to `cli.vec`
+  for the same reason.
+- `codebox-test` must resolve to the `codebox` capability row, so
+  `cli_backend_id` was split from `cli_lang_name`. Looking a row up under the
+  `-test` spelling fails closed and would reject a valid command line — a
+  transcript run (`ec_codebox_test`) pins this.
+
+#### Rejecting mutations
+
+| Mutation | Rejected by |
+| --- | --- |
+| drop the two forcing assignments in `lower_signals_to_codebox` | `the_facade_forces_the_execution_modes_codebox_imposes` + the precision test |
+| codebox row `vector: Unsupported` → `Explicit` | the execution unit test + `the_facade_rejects_vector_mode_by_name` |
+| `cli_backend_id` no longer maps `CodeboxTest` → `codebox` | 3 CLI transcripts (`*_ec_codebox_test`) |
+
+#### Two help-text tests were repaired, not weakened
+
+Documenting a `CliLang` variant makes clap switch `--lang` from a one-line
+`[possible values: …]` to a bulleted list with per-variant help. Two tests
+parsed the one-line form:
+
+- the CLI unit test now reads `CliLang::value_variants()` directly, which is
+  the actual contract (the accepted tokens), not clap's layout;
+- `backend_class_name_contract` still has to parse help — it runs the binary —
+  so it now anchors on the `--lang` section and handles both renderings. Its
+  previous version searched the whole help for the first `possible values: `
+  and silently picked up `--error-format`'s `human, json`. Its own
+  `values.len() >= 5` assertion is what caught this.
+
+Codebox itself opts out of the class-name contract by construction: a codebox
+file is flat and declares no class, so `-cn` has nothing to name.
 
 ## 5. How to test the backend
 

@@ -38,29 +38,68 @@ fn bin() -> PathBuf {
 }
 
 /// Reads the `-lang` values straight from the CLI help text.
+///
+/// Clap has two renderings for a value enum and switches between them on its
+/// own: a one-line `[possible values: a, b, c]` when no variant carries help,
+/// and a `Possible values:` block of `- name` / `- name: description` lines as
+/// soon as one does. Both are parsed here, anchored on the `--lang` section —
+/// an earlier version searched the whole help for the first
+/// `possible values: ` and silently picked up `--error-format`'s `human, json`
+/// the day a `-lang` variant gained a doc comment.
 fn lang_values() -> Vec<String> {
     let help = Command::new(bin())
         .arg("--help")
         .output()
         .expect("faust-rs --help must run");
     let text = String::from_utf8_lossy(&help.stdout);
-    let marker = "possible values: ";
-    let start = text
-        .find(marker)
-        .unwrap_or_else(|| panic!("`--help` must list `-lang` possible values"))
-        + marker.len();
-    let end = start
-        + text[start..]
-            .find(']')
-            .unwrap_or_else(|| panic!("unterminated possible-values list in `--help`"));
-    let values: Vec<String> = text[start..end]
-        .split(',')
-        .map(|v| v.trim().to_owned())
-        .filter(|v| !v.is_empty())
-        .collect();
+    let section: String = text
+        .lines()
+        .skip_while(|line| !line.contains("--lang <LANG>"))
+        .skip(1)
+        // Stop at the next option, so a later option's list cannot be read.
+        .take_while(|line| {
+            !line.trim_start().starts_with('-') || line.trim_start().starts_with("- ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !section.is_empty(),
+        "`--help` must document `--lang <LANG>`:\n{text}"
+    );
+
+    let inline = section.find("possible values: ").map(|start| {
+        let start = start + "possible values: ".len();
+        let end = start
+            + section[start..]
+                .find(']')
+                .unwrap_or_else(|| panic!("unterminated possible-values list:\n{section}"));
+        section[start..end]
+            .split(',')
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty())
+            .collect::<Vec<String>>()
+    });
+    let values = inline.unwrap_or_else(|| {
+        section
+            .lines()
+            .skip_while(|line| !line.trim().eq_ignore_ascii_case("possible values:"))
+            .skip(1)
+            .map_while(|line| {
+                let token = line.trim().strip_prefix("- ")?;
+                // A variant carrying help renders as `name: description`.
+                Some(
+                    token
+                        .split_once(':')
+                        .map_or(token, |(name, _)| name)
+                        .trim()
+                        .to_owned(),
+                )
+            })
+            .collect()
+    });
     assert!(
         values.len() >= 5,
-        "expected the real `-lang` list, parsed: {values:?}"
+        "expected the real `-lang` list, parsed: {values:?}\nfrom:\n{section}"
     );
     values
 }

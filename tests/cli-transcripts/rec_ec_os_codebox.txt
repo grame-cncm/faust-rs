@@ -1,0 +1,41 @@
+// Code generated with faust-rs
+// Additional functions
+// Params
+// Globals
+// Fields
+@state fSampleRate_cb : Int = 0;
+@state fRec40_cb = new FixedFloatArray(4);
+@state fUpdated : Int = 0;
+// Init
+function dspsetup() {
+	fUpdated = true;
+	for (let lRec0_cb : Int = 0; (lRec0_cb < 4); lRec0_cb = iadd(lRec0_cb, 1)) {
+		fRec40_cb[lRec0_cb] = 0.0f;
+	}
+	fSampleRate_cb = samplerate();
+}
+// Control
+function control() {
+}
+// Update parameters
+function update() {
+	if (fUpdated) { fUpdated = false; control(); }
+}
+// Compute one frame
+function compute(i0) {
+	let input0_cb : number = i0;
+	let output0_cb : number = 0;
+	fRec40_cb[0] = (input0_cb + (0.5f * fRec40_cb[1]));
+	output0_cb = fRec40_cb[3];
+	for (let jRec1_cb : Int = 3; (jRec1_cb > 0); jRec1_cb = iadd(jRec1_cb, -1)) {
+		fRec40_cb[jRec1_cb] = fRec40_cb[(jRec1_cb - 1)];
+	}
+	return [output0_cb];
+}
+// Update parameters
+update();
+// Compute one frame
+outputs = compute(in1);
+// Write the outputs: audio ones and bargraph as additional audio signals
+out1 = outputs[0];
+EXIT=0

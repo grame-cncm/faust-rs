@@ -118,6 +118,21 @@ pub(crate) fn lower_asc_error_to_compiler(source: &str, error: LowerToAscError) 
     })
 }
 
+/// Maps a `LowerToCodeboxError` into a [`CompilerError`], attaching the source
+/// name.
+pub(crate) fn lower_codebox_error_to_compiler(
+    source: &str,
+    error: LowerToCodeboxError,
+) -> CompilerError {
+    lower_error_to_compiler(source, "codebox", error, |source, error, diagnostics| {
+        CompilerError::CodegenCodebox {
+            source,
+            error,
+            diagnostics,
+        }
+    })
+}
+
 /// Maps a `LowerToRustError` into a [`CompilerError`], attaching the source name.
 pub(crate) fn lower_rust_error_to_compiler(source: &str, error: LowerToRustError) -> CompilerError {
     lower_error_to_compiler(source, "rust", error, |source, error, diagnostics| {

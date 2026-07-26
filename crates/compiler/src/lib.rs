@@ -71,6 +71,9 @@ use std::time::{Duration, Instant};
 use boxes::{BoxId, BoxMatch, dump_box, match_box};
 use codegen::backends::asc::{AscOptions, CodegenError as AscCodegenError, generate_asc_module};
 use codegen::backends::c::{COptions, CodegenError as CCodegenError, generate_c_module};
+use codegen::backends::codebox::{
+    CodeboxOptions, CodegenError as CodeboxCodegenError, generate_codebox_module,
+};
 use codegen::backends::cpp::{CodegenError as CppCodegenError, CppOptions, generate_cpp_module};
 use codegen::backends::cranelift::{
     CraneliftBackendError, CraneliftOptions, JitDspModule, StructFieldKind,
@@ -1260,6 +1263,15 @@ pub enum CompilerError {
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
+    /// Codebox (RNBO) backend emission failed from FIR.
+    CodegenCodebox {
+        /// Program provenance; see the shared field convention.
+        source: Box<str>,
+        /// Typed error from the stage that failed.
+        error: CodeboxCodegenError,
+        /// Rendered diagnostics for this failure.
+        diagnostics: DiagnosticBundle,
+    },
     /// Rust backend emission failed from FIR.
     CodegenRust {
         /// Program provenance; see the shared field convention.
@@ -1348,6 +1360,9 @@ impl std::fmt::Display for CompilerError {
                 write!(f, "code generation failed for {source}: {error}")
             }
             Self::CodegenAsc { source, error, .. } => {
+                write!(f, "code generation failed for {source}: {error}")
+            }
+            Self::CodegenCodebox { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
             Self::CodegenRust { source, error, .. } => {
@@ -1470,6 +1485,7 @@ impl CompilerError {
             Self::CodegenC { diagnostics, .. } => Some(diagnostics),
             Self::CodegenJulia { diagnostics, .. } => Some(diagnostics),
             Self::CodegenAsc { diagnostics, .. } => Some(diagnostics),
+            Self::CodegenCodebox { diagnostics, .. } => Some(diagnostics),
             Self::CodegenRust { diagnostics, .. } => Some(diagnostics),
             Self::CodegenInterp { diagnostics, .. } => Some(diagnostics),
             Self::CodegenCranelift { diagnostics, .. } => Some(diagnostics),

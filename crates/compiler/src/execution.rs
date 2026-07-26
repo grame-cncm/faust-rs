@@ -15,6 +15,10 @@
 //! backend as the approved D1 diagnostic extension. `-os` is rejected in
 //! vector mode; unsupported backends must fail with a stable diagnostic
 //! rather than silently ignoring a flag.
+//!
+//! The table also carries a `vector` column, so that a backend whose output is
+//! inherently per-sample (codebox) can refuse `-vec` by name instead of
+//! emitting scalar code under a flag that asked for something else.
 
 use std::fmt;
 
@@ -51,20 +55,30 @@ pub struct BackendExecutionCaps {
     pub one_sample: ExecutionCapability,
     /// Combined `-ec -os` support.
     pub combined: ExecutionCapability,
+    /// `-vec` support.
+    ///
+    /// `Explicit` here means only "validation does not reject `-vec` for this
+    /// backend", which is what every pre-codebox row did. It is not a claim
+    /// that the emitter has a certified vector lane — that is the scheduling
+    /// and vectorization stream's business. `Unsupported` is the load-bearing
+    /// value: it is how a backend whose output shape is inherently per-sample
+    /// refuses the flag instead of silently emitting scalar code.
+    pub vector: ExecutionCapability,
     /// Whether the backend must keep emitting the canonical block `compute`
     /// entry point (empty in one-sample mode) so the ordinary DSP interface
     /// stays satisfied.
     pub canonical_compute_required: bool,
 }
 
-/// One row per active `-lang` backend. Scaffolded backends (cmajor, codebox,
-/// …) get rows when they become active, initialized from plan §5.8.
+/// One row per active `-lang` backend. Scaffolded backends (cmajor, …) get
+/// rows when they become active, initialized from plan §5.8.
 const BACKEND_CAPS: &[BackendExecutionCaps] = &[
     BackendExecutionCaps {
         backend: "c",
         external_control: ExecutionCapability::Explicit,
         one_sample: ExecutionCapability::Explicit,
         combined: ExecutionCapability::Explicit,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     BackendExecutionCaps {
@@ -72,6 +86,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Explicit,
         one_sample: ExecutionCapability::Explicit,
         combined: ExecutionCapability::Explicit,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     BackendExecutionCaps {
@@ -79,6 +94,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Explicit,
         one_sample: ExecutionCapability::Explicit,
         combined: ExecutionCapability::Explicit,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     // `-ec` for FIR text is the approved D1 diagnostic extension: FIR is the
@@ -89,6 +105,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Explicit,
         one_sample: ExecutionCapability::Explicit,
         combined: ExecutionCapability::Explicit,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     BackendExecutionCaps {
@@ -96,6 +113,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Unsupported,
         one_sample: ExecutionCapability::Unsupported,
         combined: ExecutionCapability::Unsupported,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     BackendExecutionCaps {
@@ -103,6 +121,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Unsupported,
         one_sample: ExecutionCapability::Unsupported,
         combined: ExecutionCapability::Unsupported,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     BackendExecutionCaps {
@@ -110,6 +129,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Unsupported,
         one_sample: ExecutionCapability::Unsupported,
         combined: ExecutionCapability::Unsupported,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     BackendExecutionCaps {
@@ -117,6 +137,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Unsupported,
         one_sample: ExecutionCapability::Unsupported,
         combined: ExecutionCapability::Unsupported,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     // Plan §5.7 (merged amendment): the AssemblyScript one-sample target.
@@ -129,6 +150,7 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Explicit,
         one_sample: ExecutionCapability::Explicit,
         combined: ExecutionCapability::Explicit,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
     },
     BackendExecutionCaps {
@@ -136,7 +158,28 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         external_control: ExecutionCapability::Unsupported,
         one_sample: ExecutionCapability::Unsupported,
         combined: ExecutionCapability::Unsupported,
+        vector: ExecutionCapability::Explicit,
         canonical_compute_required: true,
+    },
+    // Codebox is the one row where the execution options are not a choice.
+    // RNBO calls the generated code once per sample and sets controls through
+    // `@param` identifiers, so external control and the one-sample API are the
+    // target's own contract, not a mode it can be put into. `Intrinsic` says
+    // exactly that: passing `-ec`/`-os` or omitting them produces identical
+    // output, because `lower_signals_to_codebox` forces both regardless.
+    //
+    // `-vec` is therefore `Unsupported` rather than ignored. There is no block
+    // loop to vectorize, so accepting the flag would emit per-sample code that
+    // silently is not what was asked for.
+    BackendExecutionCaps {
+        backend: "codebox",
+        external_control: ExecutionCapability::Intrinsic,
+        one_sample: ExecutionCapability::Intrinsic,
+        combined: ExecutionCapability::Intrinsic,
+        vector: ExecutionCapability::Unsupported,
+        // No canonical block `compute`: a codebox file has no DSP class to
+        // satisfy, only RNBO's per-sample entry point.
+        canonical_compute_required: false,
     },
 ];
 
@@ -144,7 +187,8 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
 ///
 /// Identifiers match the primary `-lang` value (`"c"`, `"cpp"`, `"rust"`,
 /// `"fir"`, `"interp"`, `"cranelift"`, `"wasm"`, `"wast"`, `"asc"`,
-/// `"julia"`). Unknown identifiers return `None` so callers fail closed.
+/// `"julia"`, `"codebox"`). Unknown identifiers return `None` so callers fail
+/// closed.
 #[must_use]
 pub fn backend_execution_caps(backend: &str) -> Option<&'static BackendExecutionCaps> {
     BACKEND_CAPS.iter().find(|caps| caps.backend == backend)
@@ -187,6 +231,16 @@ pub enum ExecutionOptionsError {
     },
     /// `-os` requested together with vector mode (plan §2.1: scalar only).
     OneSampleWithVectorMode,
+    /// `-vec` requested for a backend whose capability is `Unsupported`.
+    ///
+    /// Distinct from [`Self::OneSampleWithVectorMode`], which is the general
+    /// scalar-only rule for `-os`. This one fires for a backend that has no
+    /// block loop at all, and so must name the backend rather than blame a
+    /// `-os` the caller may never have typed.
+    VectorModeUnsupportedBackend {
+        /// The rejected backend identifier.
+        backend: String,
+    },
     /// The combination is accepted by the capability table but its lowering
     /// has not landed yet (execution-options port phases 2+). Emitting the
     /// classic block output would silently ignore the flag, which the plan
@@ -207,6 +261,7 @@ impl ExecutionOptionsError {
             Self::OneSampleUnsupportedBackend { .. } => "FRS-EXEC-OS-BACKEND",
             Self::ExternalControlUnsupportedBackend { .. } => "FRS-EXEC-EC-BACKEND",
             Self::OneSampleWithVectorMode => "FRS-EXEC-OS-VECTOR",
+            Self::VectorModeUnsupportedBackend { .. } => "FRS-EXEC-VEC-BACKEND",
             Self::NotYetImplemented { .. } => "FRS-EXEC-UNIMPLEMENTED",
         }
     }
@@ -228,6 +283,11 @@ impl fmt::Display for ExecutionOptionsError {
             Self::OneSampleWithVectorMode => {
                 write!(f, "'-os' option can only be used in scalar mode")
             }
+            Self::VectorModeUnsupportedBackend { backend } => write!(
+                f,
+                "'-vec' option cannot be used with the '{backend}' backend, \
+                 which emits one sample at a time"
+            ),
             Self::NotYetImplemented { backend, options } => write!(
                 f,
                 "'{options}' is accepted for the '{backend}' backend but its lowering \
@@ -253,11 +313,18 @@ pub fn validate_execution_options(
 ) -> Result<(), ExecutionOptionsError> {
     let wants_ec = control_rate_mode.is_external();
     let wants_os = processing_api.is_one_sample();
+    // Unknown backend identifiers fail closed as unsupported.
+    let caps = backend_execution_caps(backend);
+    // Checked before the `-ec`/`-os` early return below: a backend can reject
+    // `-vec` on its own, without either of those flags being in play.
+    if compute_mode.is_vector() && !caps.is_some_and(|caps| caps.vector.is_supported()) {
+        return Err(ExecutionOptionsError::VectorModeUnsupportedBackend {
+            backend: backend.to_owned(),
+        });
+    }
     if !wants_ec && !wants_os {
         return Ok(());
     }
-    // Unknown backend identifiers fail closed as unsupported.
-    let caps = backend_execution_caps(backend);
     if wants_os && !caps.is_some_and(|caps| caps.one_sample.is_supported()) {
         return Err(ExecutionOptionsError::OneSampleUnsupportedBackend {
             backend: backend.to_owned(),
@@ -283,7 +350,7 @@ pub fn validate_execution_options(
     // control landed in phase 5 with the promoted-control-event certificate
     // (`-os -vec` was already rejected above, so reaching here in vector
     // mode means `-ec -vec`).
-    const LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust", "asc"];
+    const LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust", "asc", "codebox"];
     if LOWERING_LANDED.contains(&backend) {
         return Ok(());
     }
@@ -303,7 +370,7 @@ pub fn validate_execution_options(
 mod tests {
     use super::*;
 
-    const ALL_BACKENDS: [&str; 10] = [
+    const ALL_BACKENDS: [&str; 11] = [
         "c",
         "cpp",
         "rust",
@@ -314,6 +381,7 @@ mod tests {
         "wast",
         "asc",
         "julia",
+        "codebox",
     ];
 
     #[test]
@@ -393,6 +461,71 @@ mod tests {
             err.to_string(),
             "'-os' option can only be used in scalar mode"
         );
+    }
+
+    /// Codebox's execution options are intrinsic, so every shape — including
+    /// the default one, where neither flag was typed — must be accepted. It is
+    /// `lower_signals_to_codebox` that then forces both, which is what makes
+    /// the four cases produce identical output.
+    #[test]
+    fn codebox_accepts_every_execution_shape_because_both_are_intrinsic() {
+        for (control, api) in [
+            (ControlRateMode::InlinePerBlock, ProcessingApi::Block),
+            (ControlRateMode::External, ProcessingApi::Block),
+            (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
+            (ControlRateMode::External, ProcessingApi::OneSample),
+        ] {
+            assert_eq!(
+                validate_execution_options("codebox", control, api, ComputeMode::Scalar),
+                Ok(()),
+                "{control:?} / {api:?}"
+            );
+        }
+    }
+
+    /// The whole point of the `vector` column: `-vec` must be refused by name,
+    /// not silently downgraded to scalar output. Checked without `-ec`/`-os`
+    /// too, since that path used to return early before any backend lookup.
+    #[test]
+    fn codebox_rejects_vector_mode_by_name_with_or_without_the_other_flags() {
+        let vector = ComputeMode::Vector {
+            vec_size: 32,
+            loop_variant: 0,
+        };
+        for (control, api) in [
+            (ControlRateMode::InlinePerBlock, ProcessingApi::Block),
+            (ControlRateMode::External, ProcessingApi::Block),
+        ] {
+            let err = validate_execution_options("codebox", control, api, vector).unwrap_err();
+            assert_eq!(err.code(), "FRS-EXEC-VEC-BACKEND", "{control:?} / {api:?}");
+            assert_eq!(
+                err.to_string(),
+                "'-vec' option cannot be used with the 'codebox' backend, \
+                 which emits one sample at a time"
+            );
+        }
+    }
+
+    /// Every other backend keeps accepting `-vec`: the new column must not have
+    /// quietly tightened validation for the ten pre-existing rows.
+    #[test]
+    fn the_vector_column_leaves_every_other_backend_untouched() {
+        let vector = ComputeMode::Vector {
+            vec_size: 32,
+            loop_variant: 0,
+        };
+        for backend in ALL_BACKENDS.iter().filter(|b| **b != "codebox") {
+            assert_eq!(
+                validate_execution_options(
+                    backend,
+                    ControlRateMode::InlinePerBlock,
+                    ProcessingApi::Block,
+                    vector,
+                ),
+                Ok(()),
+                "{backend}"
+            );
+        }
     }
 
     #[test]
@@ -500,7 +633,8 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "'-os' option can only be used with 'c', 'cpp', 'rust', 'fir', 'asc' backends (got 'julia')"
+            "'-os' option can only be used with 'c', 'cpp', 'rust', 'fir', 'asc', 'codebox' \
+             backends (got 'julia')"
         );
     }
 }

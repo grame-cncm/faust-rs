@@ -43,12 +43,14 @@ const INPUTS: [(&str, &str); 3] = [
 ];
 
 /// Backends reachable through `--lang`.
-const LANGS: [&str; 10] = [
+const LANGS: [&str; 12] = [
     "cpp",
     "c",
     "rust",
     "julia",
     "asc",
+    "codebox",
+    "codebox-test",
     "interp",
     "cranelift",
     "wasm",
@@ -73,17 +75,25 @@ const DUMP_FLAGS: [&str; 12] = [
 ];
 
 /// Option combinations worth pinning because they cross backend boundaries.
-const OPTION_RUNS: [(&str, &[&str]); 5] = [
+const OPTION_RUNS: [(&str, &[&str]); 8] = [
     ("double_cpp", &["--lang", "cpp", "-double"]),
     ("vec_cpp", &["--lang", "cpp", "-vec", "-vs", "8"]),
     ("ec_os_cpp", &["--lang", "cpp", "-ec", "-os"]),
     ("ss3_cpp", &["--lang", "cpp", "-ss", "3"]),
     ("cn_cpp", &["--lang", "cpp", "-cn", "Custom"]),
+    // Codebox forces external control and one-sample, so these two must record
+    // byte-identical output to the plain `--lang codebox` run above.
+    ("ec_os_codebox", &["--lang", "codebox", "-ec", "-os"]),
+    ("double_codebox", &["--lang", "codebox", "-double"]),
+    // `codebox-test` must resolve to the `codebox` capability row: looking
+    // one up under the `-test` spelling fails closed and would reject this
+    // perfectly valid command line.
+    ("ec_codebox_test", &["--lang", "codebox-test", "-ec"]),
 ];
 
 /// Invalid command lines. Which message wins is part of the contract, because
 /// the order of the checks in `validate_cli_arguments` decides it.
-const ERROR_RUNS: [(&str, &[&str]); 8] = [
+const ERROR_RUNS: [(&str, &[&str]); 9] = [
     ("err_no_input", &["--lang", "cpp"]),
     ("err_two_modes", &["--dump-cpp", "--dump-c", "INPUT"]),
     ("err_empty_cn", &["--lang", "cpp", "-cn", "", "INPUT"]),
@@ -97,6 +107,9 @@ const ERROR_RUNS: [(&str, &[&str]); 8] = [
     ),
     ("err_bad_ss", &["--lang", "cpp", "-ss", "abc", "INPUT"]),
     ("err_os_vec", &["--lang", "cpp", "-os", "-vec", "INPUT"]),
+    // `-vec` alone, with neither `-ec` nor `-os`: the path that used to return
+    // Ok before any backend lookup happened.
+    ("err_vec_codebox", &["--lang", "codebox", "-vec", "INPUT"]),
     (
         "err_nofirverify",
         &["--lang", "cpp", "--no-fir-verify", "--check", "INPUT"],
