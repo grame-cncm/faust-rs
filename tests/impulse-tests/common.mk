@@ -65,7 +65,20 @@ VEC_BENCH_SUMMARY_CSV ?= build/bench/vector-scheduling-summary.csv
 VEC_BENCH_AGGREGATE_CSV ?= build/bench/vector-scheduling-aggregate.csv
 COMPILE_BENCH_CSV ?= build/bench/compile-summary.csv
 
-dspfiles := $(wildcard dsp/*.dsp)
+# Which DSP set is under test, and where its reference responses live.
+#
+# The default pair (`dsp/` + `reference/`) is the ordinary suite, whose
+# reference is produced by the genuine C++ Faust compiler (`Make.ref`).
+#
+# The pair exists because not every faust-rs program *has* a C++ Faust
+# reference: `rad` and `fad` are faust-rs primitives, and C++ Faust rejects
+# them with `undefined symbol : rad`. Those programs live in `dsp-rad/` and
+# take their reference from the faust-rs interpreter instead (`Make.ref-rad`),
+# which every backend lane then compares against unchanged.
+dspdir ?= dsp
+refdir ?= reference
+
+dspfiles := $(wildcard $(dspdir)/*.dsp)
 VECTOR_CERTIFIED_LIST := ../vector-coverage/certified-dspfiles.txt
 vector_certified_repo_files := $(shell sed -n '/\.dsp$$/p' $(VECTOR_CERTIFIED_LIST) 2>/dev/null)
 vector_certified_dspfiles := $(patsubst tests/impulse-tests/%,%,$(vector_certified_repo_files))

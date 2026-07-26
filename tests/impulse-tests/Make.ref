@@ -10,15 +10,15 @@
 
 include common.mk
 
-reffiles := $(patsubst dsp/%.dsp,reference/%.ir,$(dspfiles))
+reffiles := $(patsubst $(dspdir)/%.dsp,$(refdir)/%.ir,$(dspfiles))
 
 .PHONY: reference
 .DELETE_ON_ERROR:
 
-reference: $(COMPARE) reference/.dir build/ref/.dir $(reffiles)
+reference: $(COMPARE) $(refdir)/.dir build/ref/.dir $(reffiles)
 
-reference/.dir:
-	mkdir -p reference
+$(refdir)/.dir:
+	mkdir -p $(refdir)
 	touch $@
 
 build/ref/.dir:
@@ -30,8 +30,8 @@ $(COMPARE): tools/filesCompare.cpp
 
 # Compile the DSP with the reference C++ compiler + 4-pass architecture, build
 # the native binary, then run it to capture the 60000-frame response.
-reference/%.ir: dsp/%.dsp | reference/.dir build/ref/.dir
-	$(FAUST_CPP) -lang cpp -double -i -a $(IMPULSE_ARCH) -I dsp -I $(FAUSTLIBS) $< -o build/ref/$*.cpp
+$(refdir)/%.ir: $(dspdir)/%.dsp | $(refdir)/.dir build/ref/.dir
+	$(FAUST_CPP) -lang cpp -double -i -a $(IMPULSE_ARCH) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/ref/$*.cpp
 	$(CXX) $(CXXFLAGS) build/ref/$*.cpp -o build/ref/$*
 	./build/ref/$* -n $(NFRAMES) > $@
 	@echo "reference $*"

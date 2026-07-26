@@ -159,10 +159,58 @@ Backends and how each can be run in-process:
 - **asc, wasm/wast** — a WASM runtime can execute the module in-process;
 - **julia** — external toolchain.
 
-## 6. Order of work
+## 6. Outcome
 
-1. §3 — the WASM `SimpleForLoop` reverse fix. Small, bounded, and it unblocks
-   the WASM half of §5.
-2. §5 — numeric RAD validation across backends.
+Both remediations landed the same day.
 
-Neither depends on the other except that §5 cannot cover WASM until §3 lands.
+### §3 — the WASM fix
+
+`lower_simple_for` now takes `is_reverse` and emits the descending form; both
+pattern matches accept either direction. All 5 previously rejected programs
+compile, and their gradients match the interpreter sample for sample.
+
+### §5 — the RAD lane
+
+Built as a second lane of the existing impulse-tests harness rather than a new
+harness. `common.mk` grew `dspdir`/`refdir`, so every backend Makefile serves
+both lanes unchanged; the RAD lane is `dsp-rad/` (symlinks into
+`tests/corpus/`) plus `reference-rad/` from `Make.ref-rad`.
+
+Result — 28 programs × 7 backends, all matching the interpreter:
+
+| Backend | Result |
+| --- | --- |
+| cpp, c, rust, julia, wasm, asc, cranelift | 28/28 |
+
+`rad-interp` deliberately has no target: it would compare the reference against
+itself.
+
+### What the lane found on its first run
+
+Julia failed one program, `rad_tbptt_softclip_drive`, with "non-finite DSP
+output" at frame 0. The cause is not RAD-specific and not confined to this
+program:
+
+**`min`/`max` were mapped to Julia's own, which propagate NaN. Faust's `min`
+and `max` are C's `fmin`/`fmax`, which absorb a NaN operand and return the
+other.**
+
+```
+Julia:  min(10.0, NaN) = NaN         C:  fmin(10.0, NaN) = 10.0
+```
+
+That program divides by `abs(fTemp3)`, legitimately `0` on the first frame. The
+resulting NaN is absorbed by the next `fmax(0.01, fmin(10.0, …))` on every
+C-family backend; on Julia it poisoned the recursion permanently. Fixed with
+`faust_fmin`/`faust_fmax` helpers in the preamble. Integer `min_i`/`max_i` stay
+mapped to Julia's own, since no NaN is representable there.
+
+The ordinary 133-program Julia suite is unchanged (132 pass, `subcontainer1`
+being a declared `KNOWN_FAIL_all`), so the fix is additive.
+
+### Rejecting mutation
+
+Making the reverse `SimpleForLoop` start at `0` instead of `upper - 1` — a
+loop that still compiles and still runs, just in the wrong direction — takes
+`rad-wasm` from 28/28 to 5/28, with the differences on the gradient lane. The
+lane detects a wrong reverse loop, not merely a missing one.

@@ -995,7 +995,7 @@ fn collect_compute_locals(
         FirMatch::SimpleForLoop {
             var,
             body,
-            is_reverse: false,
+            is_reverse: false | true,
             ..
         } => {
             if !out.iter().any(|(known, _)| known == &var) {
@@ -1117,8 +1117,8 @@ impl ComputeSubsetLowerer<'_> {
                 var,
                 upper,
                 body,
-                is_reverse: false,
-            } => self.lower_simple_for(var, upper, body, function),
+                is_reverse,
+            } => self.lower_simple_for(var, upper, body, is_reverse, function),
             FirMatch::ForLoop {
                 var,
                 init,
@@ -1175,12 +1175,28 @@ impl ComputeSubsetLowerer<'_> {
         }
     }
 
-    /// Lowers a canonical `for (i = 0; i < upper; ++i)` loop shape.
+    /// Lowers the canonical `SimpleForLoop` shape, ascending or descending.
+    ///
+    /// Forward is `for (i = 0; i < upper; ++i)`; reverse is
+    /// `for (i = upper - 1; i >= 0; --i)`. Both mirror what the C-family
+    /// backends render for this same FIR node (`c_family.rs`), which is the
+    /// readable statement of the contract.
+    ///
+    /// The reverse form is not decorative: RAD's reverse-time loop — the
+    /// backwards walk that accumulates cotangents over the block — is always a
+    /// `SimpleForLoop`, never the general `ForLoop` this backend already
+    /// handled in both directions. Until this took `is_reverse`, every
+    /// recursive-LTI `rad` program was rejected with `FRS-CGEN-WASM-0003`.
+    ///
+    /// `upper` is evaluated once in the initialiser for the reverse form and
+    /// once per iteration as the exit test for the forward one, matching the C
+    /// rendering in both cases.
     fn lower_simple_for(
         &mut self,
         var: String,
         upper: FirId,
         body: FirId,
+        is_reverse: bool,
         function: &mut Function,
     ) -> Result<(), WasmBackendError> {
         let local = self.local(&var)?.clone();
@@ -1190,18 +1206,36 @@ impl ComputeSubsetLowerer<'_> {
                 format!("WASM loop variable `{var}` is not a scalar local"),
             ));
         };
-        function.instruction(&Instruction::I32Const(0));
+        // Initialiser: `upper - 1` descending, `0` ascending.
+        if is_reverse {
+            self.lower_expr(upper, function)?;
+            function.instruction(&Instruction::I32Const(1));
+            function.instruction(&Instruction::I32Sub);
+        } else {
+            function.instruction(&Instruction::I32Const(0));
+        }
         function.instruction(&Instruction::LocalSet(index));
         function.instruction(&Instruction::Block(BlockType::Empty));
         function.instruction(&Instruction::Loop(BlockType::Empty));
+        // Exit test, branching out when the loop is done: `i < 0` descending,
+        // `i >= upper` ascending.
         function.instruction(&Instruction::LocalGet(index));
-        self.lower_expr(upper, function)?;
-        function.instruction(&Instruction::I32GeS);
+        if is_reverse {
+            function.instruction(&Instruction::I32Const(0));
+            function.instruction(&Instruction::I32LtS);
+        } else {
+            self.lower_expr(upper, function)?;
+            function.instruction(&Instruction::I32GeS);
+        }
         function.instruction(&Instruction::BrIf(1));
         self.lower_block_into(body, function)?;
         function.instruction(&Instruction::LocalGet(index));
         function.instruction(&Instruction::I32Const(1));
-        function.instruction(&Instruction::I32Add);
+        function.instruction(if is_reverse {
+            &Instruction::I32Sub
+        } else {
+            &Instruction::I32Add
+        });
         function.instruction(&Instruction::LocalSet(index));
         function.instruction(&Instruction::Br(0));
         function.instruction(&Instruction::End);

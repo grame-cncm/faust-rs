@@ -31,7 +31,7 @@ EXECOPTS ?=
 EXECCFGS ?=
 
 # Build everything except the documented known failures for this backend.
-allnames  := $(dspfiles:dsp/%.dsp=%)
+allnames  := $(dspfiles:$(dspdir)/%.dsp=%)
 testnames := $(filter-out $(call known_fail_for,$(outdir)),$(allnames))
 listfiles := $(testnames:%=ir/$(outdir)/%.ir)
 
@@ -51,9 +51,9 @@ build/$(outdir)/.dir:
 $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
-ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir $(ARCH_RUST) | ir/$(outdir)/.dir build/$(outdir)/.dir
-	$(FAUST_RS) -lang rust -double -cn mydsp $(EXECOPTS) $(COMPILER_OPTS) -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.rs
+ir/$(outdir)/%.ir: $(dspdir)/%.dsp $(refdir)/%.ir $(ARCH_RUST) | ir/$(outdir)/.dir build/$(outdir)/.dir
+	$(FAUST_RS) -lang rust -double -cn mydsp $(EXECOPTS) $(COMPILER_OPTS) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.rs
 	cat $(ARCH_RUST) build/$(outdir)/$*.rs > build/$(outdir)/$*_main.rs
 	RUST_MIN_STACK=$(RUSTC_STACK) $(RUSTC) $(RUSTFLAGS_IMPULSE) $(EXECCFGS) build/$(outdir)/$*_main.rs -o build/$(outdir)/$*
 	./build/$(outdir)/$* -n $(SCALARFRAMES) > $@
-	$(COMPARE) $@ reference/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)
+	$(COMPARE) $@ $(refdir)/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)

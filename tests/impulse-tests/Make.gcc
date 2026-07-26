@@ -25,7 +25,7 @@ ARCH := $(IMPULSE_ARCH)
 endif
 
 # Build everything except the documented known failures for this backend.
-allnames  := $(dspfiles:dsp/%.dsp=%)
+allnames  := $(dspfiles:$(dspdir)/%.dsp=%)
 testnames := $(filter-out $(call known_fail_for,$(outdir)),$(allnames))
 listfiles := $(testnames:%=ir/$(outdir)/%.ir)
 
@@ -45,8 +45,23 @@ build/$(outdir)/.dir:
 $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
-ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir | ir/$(outdir)/.dir build/$(outdir)/.dir
-	$(FAUST_RS) -lang $(lang) -double $(COMPILER_OPTS) -a $(ARCH) -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.cpp
+# How the produced response is checked against the reference.
+#
+# The default is a full equality check: this architecture emits all four
+# reference passes, so the two files have the same length and every frame must
+# agree.
+#
+# The RAD lane overrides it, because there the reference comes from the
+# faust-rs interpreter and covers the scalar impulse pass only, while this
+# architecture still emits four passes. `filesCompare` iterates over the length
+# of its *first* argument, so the shorter file has to come first — that is what
+# `-part` means. The check is then "every reference frame matches the produced
+# output at the same index", which is the strongest statement a 15000-frame
+# reference supports.
+COMPARE_ARGS ?= $@ $(refdir)/$*.ir $(call dsp_precision,$*)
+
+ir/$(outdir)/%.ir: $(dspdir)/%.dsp $(refdir)/%.ir | ir/$(outdir)/.dir build/$(outdir)/.dir
+	$(FAUST_RS) -lang $(lang) -double $(COMPILER_OPTS) -a $(ARCH) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.cpp
 	$(CXX) $(CXXFLAGS) build/$(outdir)/$*.cpp -o build/$(outdir)/$*
 	./build/$(outdir)/$* -n $(NFRAMES) > $@
-	$(COMPARE) $@ reference/$*.ir $(call dsp_precision,$*) || (rm -f $@; false)
+	$(COMPARE) $(COMPARE_ARGS) || (rm -f $@; false)

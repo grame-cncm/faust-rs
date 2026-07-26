@@ -1,0 +1,57 @@
+#
+# Build the reference impulse responses for programs C++ Faust cannot compile.
+#
+# `Make.ref` produces the ordinary oracle with the genuine C++ Faust compiler.
+# That is impossible here: `rad` and `fad` are faust-rs primitives, and C++
+# Faust rejects them outright (`ERROR : undefined symbol : rad`). So this lane
+# takes its reference from the **faust-rs interpreter** instead.
+#
+# Why the interpreter is a sound oracle for these programs, despite being part
+# of the system under test:
+#
+#   - on the non-AD subset it is validated against the genuine C++ reference by
+#     the ordinary suite, so its runtime is not self-certified;
+#   - on `rad` specifically it is checked two independent ways in
+#     `crates/compiler/tests/rad_runtime.rs` — every gradient lane against the
+#     matching FAD tangent lane, and again against central finite differences
+#     of the primal. Those are the two checks that would have to fail together
+#     and consistently for a wrong reference to look right.
+#
+# What this lane therefore establishes is *backend agreement*: that cpp, c,
+# rust, julia, wasm, asc and cranelift compute the same gradients the
+# interpreter does. It does not re-establish that the gradients are correct;
+# `rad_runtime.rs` does that, once, for the interpreter.
+#
+# Only the scalar impulse pass is produced (`SCALARFRAMES`), because the
+# interpreter runtime has no polyphonic/MIDI wrapper — same restriction as
+# `Make.interp`. Every backend lane compares with `filesCompare -part`, which
+# is already how they consume a prefix reference.
+#
+# Run from this directory:  make -f Make.ref-rad reference
+#
+
+# Set before the include: `common.mk` defaults these with `?=` and computes
+# `dspfiles` from `dspdir` immediately, so a later assignment would be ignored
+# and this lane would silently rebuild the ordinary suite's reference.
+dspdir ?= dsp-rad
+refdir ?= reference-rad
+
+include common.mk
+
+reffiles := $(patsubst $(dspdir)/%.dsp,$(refdir)/%.ir,$(dspfiles))
+
+.PHONY: reference
+.DELETE_ON_ERROR:
+
+reference: $(COMPARE) $(refdir)/.dir $(reffiles)
+
+$(refdir)/.dir:
+	mkdir -p $(refdir)
+	touch $@
+
+$(COMPARE): tools/filesCompare.cpp
+	$(CXX) -O2 -std=c++11 $< -o $@
+
+$(refdir)/%.ir: $(dspdir)/%.dsp | $(refdir)/.dir
+	$(RUNNER) $< -double -I $(dspdir) -n $(SCALARFRAMES) > $@ || (rm -f $@; false)
+	@echo "reference-rad $*"

@@ -308,6 +308,25 @@ fn emit_julia_header(out: &mut String, real_type: JuliaRealType) {
         out,
         "remainder(x, y) = rem(x, y, Base.Rounding.RoundNearest)"
     );
+    // Faust's `min`/`max` are C's `fmin`/`fmax`, which *absorb* a NaN operand
+    // and return the other one. Julia's `min`/`max` propagate it instead, so
+    // mapping them directly made this backend diverge from every other one as
+    // soon as a NaN reached a min/max — permanently, since the NaN then feeds
+    // the next sample through the recursion.
+    //
+    // Not a theoretical edge case: `rad_tbptt_softclip_drive` divides by
+    // `abs(fTemp3)`, which is legitimately 0 on the first frame, and the
+    // resulting NaN is absorbed by the very next `fmax(0.01, fmin(10.0, …))`
+    // on every C-family backend. On Julia it poisoned the whole run
+    // ("non-finite DSP output" at frame 0).
+    let _ = writeln!(
+        out,
+        "faust_fmin(x, y) = isnan(x) ? y : (isnan(y) ? x : min(x, y))"
+    );
+    let _ = writeln!(
+        out,
+        "faust_fmax(x, y) = isnan(x) ? y : (isnan(y) ? x : max(x, y))"
+    );
     let _ = writeln!(out);
 }
 
@@ -1207,8 +1226,14 @@ fn emit_value(store: &FirStore, value: FirId) -> Result<String, CodegenError> {
                 rendered.push(emit_value(store, arg)?);
             }
             let jl_name = match name.as_str() {
-                "min_i" | "fmin" | "std::fmin" => "min",
-                "max_i" | "fmax" | "std::fmax" => "max",
+                // Integer min/max: no NaN is representable, so Julia's own are
+                // exact. The float ones go through the NaN-absorbing helpers
+                // emitted in the preamble, because Faust's semantics are C's
+                // `fmin`/`fmax`, not Julia's `min`/`max`.
+                "min_i" => "min",
+                "max_i" => "max",
+                "fmin" | "std::fmin" => "faust_fmin",
+                "fmax" | "std::fmax" => "faust_fmax",
                 "std::fabs" | "fabs" => "abs",
                 _ => name.strip_prefix("std::").unwrap_or(name.as_str()),
             };

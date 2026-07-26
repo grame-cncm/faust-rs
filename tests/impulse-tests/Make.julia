@@ -12,7 +12,7 @@ ARCH_JULIA ?= archs/impulsejulia.jl
 ARCH_JULIA_TAIL ?= archs/runimpulsejulia.jl
 JULIA ?= julia
 
-allnames := $(dspfiles:dsp/%.dsp=%)
+allnames := $(dspfiles:$(dspdir)/%.dsp=%)
 testnames := $(filter-out $(call known_fail_for,$(outdir)),$(allnames))
 listfiles := $(testnames:%=ir/$(outdir)/%.ir)
 
@@ -32,8 +32,8 @@ build/$(outdir)/.dir:
 $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
-ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir $(ARCH_JULIA) $(ARCH_JULIA_TAIL) | ir/$(outdir)/.dir build/$(outdir)/.dir
-	$(FAUST_RS) -lang julia -double -cn mydsp $(COMPILER_OPTS) -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.jl
+ir/$(outdir)/%.ir: $(dspdir)/%.dsp $(refdir)/%.ir $(ARCH_JULIA) $(ARCH_JULIA_TAIL) | ir/$(outdir)/.dir build/$(outdir)/.dir
+	$(FAUST_RS) -lang julia -double -cn mydsp $(COMPILER_OPTS) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.jl
 	cat $(ARCH_JULIA) build/$(outdir)/$*.jl $(ARCH_JULIA_TAIL) > build/$(outdir)/$*_main.jl
 	$(JULIA) build/$(outdir)/$*_main.jl > $@
-	$(COMPARE) $@ reference/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)
+	$(COMPARE) $@ $(refdir)/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)

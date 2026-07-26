@@ -1,0 +1,1 @@
+../../corpus/rad_rdtbl_index_basic.dsp

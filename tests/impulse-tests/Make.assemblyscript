@@ -15,7 +15,7 @@ outdir ?= assemblyscript
 RUNNER_ASSEMBLYSCRIPT ?= node tools/impulseasc.js
 
 # Build everything except the documented known failures for this backend.
-allnames  := $(dspfiles:dsp/%.dsp=%)
+allnames  := $(dspfiles:$(dspdir)/%.dsp=%)
 testnames := $(filter-out $(call known_fail_for,$(outdir)),$(allnames))
 listfiles := $(testnames:%=ir/$(outdir)/%.ir)
 
@@ -31,6 +31,6 @@ ir/$(outdir)/.dir:
 $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
-ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir | ir/$(outdir)/.dir
-	FAUST_RS=$(FAUST_RS) $(RUNNER_ASSEMBLYSCRIPT) $< -double $(COMPILER_OPTS) -I dsp -n $(SCALARFRAMES) > $@ || (rm -f $@; false)
-	$(COMPARE) $@ reference/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)
+ir/$(outdir)/%.ir: $(dspdir)/%.dsp $(refdir)/%.ir | ir/$(outdir)/.dir
+	FAUST_RS=$(FAUST_RS) $(RUNNER_ASSEMBLYSCRIPT) $< -double $(COMPILER_OPTS) -I $(dspdir) -n $(SCALARFRAMES) > $@ || (rm -f $@; false)
+	$(COMPARE) $@ $(refdir)/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)

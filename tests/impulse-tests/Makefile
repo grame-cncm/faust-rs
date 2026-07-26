@@ -101,6 +101,57 @@ $(eval $(call DEFINE_SCHEDULE_TARGETS,julia,Make.julia,))
 reference:
 	$(MAKE) -f Make.ref reference
 
+# ── RAD lane ─────────────────────────────────────────────────────────────────
+#
+# `rad` and `fad` are faust-rs primitives; C++ Faust rejects them with
+# `undefined symbol : rad`, so these programs have no C++ oracle. The lane
+# takes its reference from the faust-rs interpreter (`Make.ref-rad`, which
+# documents why that is sound) and then checks that every other backend
+# computes the same gradients.
+#
+# `rad-reference` must be built first, like `reference` for the ordinary suite.
+
+RAD_DIRS := dspdir=dsp-rad refdir=reference-rad
+
+# The C++ architecture emits all four reference passes while the reference
+# covers the scalar one only, so the shorter file goes first — see the
+# COMPARE_ARGS comment in Make.gcc.
+RAD_COMPARE_PREFIX := COMPARE_ARGS='$$(refdir)/$$*.ir $$@ -part $$(call dsp_precision,$$*)'
+
+.PHONY: rad-reference rad-interp rad-cpp rad-c rad-rust rad-julia rad-wasm \
+        rad-assemblyscript rad-cranelift all-rad
+
+rad-reference:
+	$(MAKE) -f Make.ref-rad reference
+
+rad-interp:
+	$(MAKE) -f Make.interp all outdir=rad-interp $(RAD_DIRS)
+
+rad-cpp:
+	$(MAKE) -f Make.gcc all outdir=rad-cpp lang=cpp $(RAD_DIRS) $(RAD_COMPARE_PREFIX)
+
+rad-c:
+	$(MAKE) -f Make.gcc all outdir=rad-c lang=c $(RAD_DIRS) $(RAD_COMPARE_PREFIX)
+
+rad-rust:
+	$(MAKE) -f Make.rust all outdir=rad-rust $(RAD_DIRS)
+
+rad-julia:
+	$(MAKE) -f Make.julia all outdir=rad-julia $(RAD_DIRS)
+
+rad-wasm:
+	$(MAKE) -f Make.wasm all outdir=rad-wasm $(RAD_DIRS)
+
+rad-assemblyscript:
+	$(MAKE) -f Make.assemblyscript all outdir=rad-assemblyscript $(RAD_DIRS)
+
+rad-cranelift:
+	$(MAKE) -f Make.cranelift all outdir=rad-cranelift $(RAD_DIRS)
+
+# Every backend that emits RAD code. `rad-interp` is deliberately absent: it
+# would compare the reference against itself and prove nothing.
+all-rad: rad-cpp rad-c rad-rust rad-julia rad-wasm rad-assemblyscript rad-cranelift
+
 interp:
 	$(MAKE) -f Make.interp all outdir=interp
 
@@ -244,6 +295,9 @@ help:
 	@echo "  all-vec-ss     : -lv 0/1 x -ss 0..3 across all eight backends"
 	@echo "  <backend>-ec/-os/-ec-os: check the execution options (cpp/c/rust only)"
 	@echo "  all-execopts   : the nine execution-option shapes (self-contained arch)"
+	@echo "  rad-reference  : build the RAD lane reference (faust-rs interpreter)"
+	@echo "  rad-<backend>  : check RAD gradients against that reference"
+	@echo "  all-rad        : every backend that emits RAD code (needs rad-reference)"
 	@echo "  backend-matrix : all-ss + all-vec-ss (full configured corpus)"
 	@echo "  backend-matrix-smoke: backend-matrix on BACKEND_MATRIX_SMOKE_DSPFILES"
 	@echo "  backend-matrix-full : clean matrix outputs, run full matrix, write audited report"

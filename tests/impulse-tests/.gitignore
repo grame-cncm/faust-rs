@@ -2,6 +2,7 @@
 /ir/
 /build/
 /reference/
+/reference-rad/
 # Compiled comparator
 /tools/filesCompare
 /tools/filesCompare.exe
