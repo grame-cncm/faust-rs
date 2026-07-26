@@ -18,6 +18,30 @@ make reference CPP_TESTS=/path/to/faust/tests/impulse-tests \
                FAUST_CPP=/path/to/faust/build/bin/faust
 ```
 
-faust-rs-native architectures (a self-contained scalar/poly impulse harness that
-removes the C++ Faust dependency) are tracked as a future phase in the porting
-plan.
+## Self-contained files (execution options)
+
+The `-ec` / `-os` targets are the exception, and they are fully self-contained:
+
+- `faust_minimal.h` — a faust-rs-owned reimplementation of the architecture
+  surface the generated scalar code needs (`dsp`, `UI`, `Meta`, the `Soundfile`
+  layout, and the suite's synthetic soundfile fixture). Not a copy of the C++
+  Faust headers.
+- `faust_minimal_cglue.h` — the `UIGlue` / `MetaGlue` layouts the C backend emits
+  calls against, plus adapters onto the C++ interfaces above.
+- `impulseexecopts_driver.h` — the scalar impulse driver, shared.
+- `impulseexecopts.cpp` — C++ front-end (the generated class is used directly).
+- `impulseexecopts_c.cpp` — C front-end (a wrapper class forwards to the
+  generated C functions, as `impulsearch2.cpp` does for the classic target).
+
+They exist because the reference architecture only ever calls
+`compute(count, ...)`: it cannot drive `control()` (`-ec`) or `frame()` (`-os`),
+so it would measure silence or uninitialized slow values and blame the compiler.
+Being self-contained is a side benefit — verified by building these targets with
+`FAUST_ARCH` and `CPP_TESTS` pointed at nonexistent paths.
+
+Generating `reference/*.ir` still needs the C++ Faust compiler, as it does for
+every other target: the oracle is unchanged.
+
+Extending this to a full self-contained *poly/MIDI* harness (which is what would
+remove the C++ Faust dependency from the classic `cpp`/`c` targets) remains a
+future phase in the porting plan.

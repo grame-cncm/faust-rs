@@ -35,7 +35,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 bench vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts bench vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -44,6 +44,16 @@ all-vec0: cpp-vec0 c-vec0 interp-vec0 cranelift-vec0 wasm-vec0 assemblyscript-ve
 all-vec1: cpp-vec1 c-vec1 interp-vec1 cranelift-vec1 wasm-vec1 assemblyscript-vec1 rust-vec1 julia-vec1
 
 all-vec: all-vec0 all-vec1
+
+# Execution options (`-ec`, `-os`, and both) on every backend whose capability
+# table marks them Explicit and that has a runnable impulse target: cpp, c and
+# rust. interp/cranelift/wasm/wast/julia are Unsupported, and `fir` is a text
+# dump with no runtime, so there is nothing to run there.
+#
+# Each shape is compared against the SAME classic `reference/*.ir` as every
+# other target: switching execution options must not move the impulse response
+# by one bit.
+all-execopts: cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os
 
 all-ss: $(SCALAR_SS_TARGETS)
 
@@ -109,6 +119,15 @@ cpp-vec0:
 cpp-vec1:
 	$(MAKE) -f Make.gcc all outdir=cpp-vec1 lang=cpp VECOPTS="-vec -lv 1"
 
+cpp-ec:
+	$(MAKE) -f Make.execopts all outdir=cpp-ec lang=cpp EXECOPTS="-ec" EXECDEFS="-DIMPULSE_EC"
+
+cpp-os:
+	$(MAKE) -f Make.execopts all outdir=cpp-os lang=cpp EXECOPTS="-os" EXECDEFS="-DIMPULSE_OS"
+
+cpp-ec-os:
+	$(MAKE) -f Make.execopts all outdir=cpp-ec-os lang=cpp EXECOPTS="-ec -os" EXECDEFS="-DIMPULSE_EC -DIMPULSE_OS"
+
 c:
 	$(MAKE) -f Make.gcc all outdir=c lang=c
 
@@ -117,6 +136,15 @@ c-vec0:
 
 c-vec1:
 	$(MAKE) -f Make.gcc all outdir=c-vec1 lang=c VECOPTS="-vec -lv 1"
+
+c-ec:
+	$(MAKE) -f Make.execopts all outdir=c-ec lang=c EXECOPTS="-ec" EXECDEFS="-DIMPULSE_EC"
+
+c-os:
+	$(MAKE) -f Make.execopts all outdir=c-os lang=c EXECOPTS="-os" EXECDEFS="-DIMPULSE_OS"
+
+c-ec-os:
+	$(MAKE) -f Make.execopts all outdir=c-ec-os lang=c EXECOPTS="-ec -os" EXECDEFS="-DIMPULSE_EC -DIMPULSE_OS"
 
 cranelift:
 	$(MAKE) -f Make.cranelift all outdir=cranelift
@@ -144,6 +172,15 @@ rust-vec0:
 
 rust-vec1:
 	$(MAKE) -f Make.rust all outdir=rust-vec1 VECOPTS="-vec -lv 1"
+
+rust-ec:
+	$(MAKE) -f Make.rust all outdir=rust-ec EXECOPTS="-ec" EXECCFGS="--cfg impulse_ec"
+
+rust-os:
+	$(MAKE) -f Make.rust all outdir=rust-os EXECOPTS="-os" EXECCFGS="--cfg impulse_os"
+
+rust-ec-os:
+	$(MAKE) -f Make.rust all outdir=rust-ec-os EXECOPTS="-ec -os" EXECCFGS="--cfg impulse_ec --cfg impulse_os"
 
 julia:
 	$(MAKE) -f Make.julia all outdir=julia
@@ -205,6 +242,8 @@ help:
 	@echo "  <backend>-vecL-ssN: check -vec -lv L crossed with -ss N"
 	@echo "  all-ss         : scalar -ss 0..3 across all eight backends"
 	@echo "  all-vec-ss     : -lv 0/1 x -ss 0..3 across all eight backends"
+	@echo "  <backend>-ec/-os/-ec-os: check the execution options (cpp/c/rust only)"
+	@echo "  all-execopts   : the nine execution-option shapes (self-contained arch)"
 	@echo "  backend-matrix : all-ss + all-vec-ss (full configured corpus)"
 	@echo "  backend-matrix-smoke: backend-matrix on BACKEND_MATRIX_SMOKE_DSPFILES"
 	@echo "  backend-matrix-full : clean matrix outputs, run full matrix, write audited report"

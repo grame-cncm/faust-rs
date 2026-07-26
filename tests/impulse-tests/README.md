@@ -49,6 +49,29 @@ See the design write-up in
      vector loop variant `L` with scheduling strategy `N`. `make all-ss` runs
      scalar `-ss 0..3`, `make all-vec-ss` runs `-lv 0/1 x -ss 0..3`, and
      `make backend-matrix` runs all 96 backend/mode/strategy combinations.
+   - `make <backend>-ec` / `-os` / `-ec-os` — the execution options, for the
+     backends whose capability table marks them Explicit and that have a
+     runnable impulse target: `cpp`, `c` and `rust`. `make all-execopts` runs
+     all nine. These need their own driver, because the reference architecture
+     only ever calls `compute(count, ...)`: under `-ec` the block-rate work
+     lives in a separate `control()`, and under `-os` the canonical `compute` is
+     deliberately empty while the sample body sits in `frame()`. A driver that
+     ignored those entry points would measure silence, or uninitialized slow
+     values, and blame the compiler for it.
+
+     Each shape is compared against the **same** classic `reference/*.ir` as
+     every other target, on the scalar prefix. That is the property worth
+     checking: selecting an execution option must not move the impulse response
+     by one bit. `crates/compiler/tests/execution_options.rs` already locks the
+     emitted *signatures*; these targets are what checks the numbers.
+
+     Unlike the classic `cpp`/`c` targets, they are **self-contained**: the
+     architecture surface they need lives in `archs/faust_minimal.h` and
+     `archs/faust_minimal_cglue.h`, so they build with no C++ Faust
+     `architecture/` tree — verified by running them with `FAUST_ARCH` and
+     `CPP_TESTS` pointed at nonexistent paths. Producing `reference/*.ir` in the
+     first place still needs the C++ oracle, exactly as for every other
+     target.
 
 ## Requirements
 

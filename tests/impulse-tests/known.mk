@@ -95,12 +95,37 @@ KNOWN_FAIL_rust-vec1 :=
 KNOWN_FAIL_julia-vec0 :=
 KNOWN_FAIL_julia-vec1 :=
 
+# Execution-option variants (`-ec`, `-os`, both). They inherit their base
+# backend's list through `base_backend`; entries here are divergences specific to
+# an execution-option shape.
+#
+# `bs` is not a divergence but a deliberate compiler rejection: it reads the
+# foreign variable `count`, which the execution options forbid
+# (`FRS-SFIR-0009`, "accessing foreign variable 'count' is not allowed in this
+# compilation mode"). Excluded from the gate rather than silenced, so the
+# rejection stays observable with `make ir/cpp-ec/bs.ir`.
+KNOWN_FAIL_cpp-ec := bs
+KNOWN_FAIL_cpp-os := bs
+KNOWN_FAIL_cpp-ec-os := bs
+KNOWN_FAIL_c-ec := bs
+KNOWN_FAIL_c-os := bs
+KNOWN_FAIL_c-ec-os := bs
+KNOWN_FAIL_rust-ec := bs
+KNOWN_FAIL_rust-os := bs
+KNOWN_FAIL_rust-ec-os := bs
+
 # Tolerance to apply when a per-DSP override exists, else the global `precision`.
 dsp_precision = $(if $(PRECISION_$1),$(PRECISION_$1),$(precision))
 # Strip the scheduling suffix before the vector suffix:
 # `cpp-vec0-ss2` -> `cpp-vec0` -> `cpp`.
 without_ss = $(patsubst %-ss0,%,$(patsubst %-ss1,%,$(patsubst %-ss2,%,$(patsubst %-ss3,%,$1))))
-base_backend = $(patsubst %-vec0,%,$(patsubst %-vec1,%,$(call without_ss,$1)))
+# Execution-option suffixes: `cpp-ec-os` -> `cpp`, `cpp-ec` -> `cpp`,
+# `cpp-os` -> `cpp`. `make` expands the innermost `patsubst` first, so `-os` is
+# stripped before `-ec`; `cpp-ec-os` therefore passes through `cpp-ec` and lands
+# on `cpp` either way. Verified for every outdir in use, including the existing
+# `-vecN` / `-ssN` variants, which these rules must leave untouched.
+without_exec = $(patsubst %-ec-os,%,$(patsubst %-ec,%,$(patsubst %-os,%,$1)))
+base_backend = $(patsubst %-vec0,%,$(patsubst %-vec1,%,$(call without_ss,$(call without_exec,$1))))
 # Names excluded for a given backend outdir. Every variant inherits its base
 # backend's known failures plus any exact outdir-specific list.
 known_fail_for = $(KNOWN_FAIL_all) $(KNOWN_FAIL_$(call base_backend,$1)) $(KNOWN_FAIL_$1)

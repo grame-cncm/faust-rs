@@ -1,0 +1,74 @@
+#
+# Test the -ec / -os execution options on a native faust-rs backend (C or C++).
+#
+# faust-rs generates C/C++ source wrapped in `archs/impulseexecopts.cpp`, a
+# scalar impulse driver that calls whichever entry points the selected shape
+# provides. The regular `Make.gcc` architecture cannot be used here: it only
+# calls `compute(count, ...)`, so `-os` output (whose canonical `compute` is
+# deliberately empty) would be silence and `-ec` output would read
+# uninitialized slow values.
+#
+# The comparison is against the SAME reference as every other target — the
+# classic 4-pass `reference/*.ir`, scalar prefix, `filesCompare -part`. That is
+# the property worth checking: switching execution options must not change the
+# impulse response by one bit.
+#
+# Run from this directory, via the top-level Makefile:
+#   make cpp-ec / cpp-os / cpp-ec-os / c-ec / c-os / c-ec-os
+#
+# Or directly:
+#   make -f Make.execopts all lang=cpp outdir=cpp-ec EXECOPTS="-ec" \
+#        EXECDEFS="-DIMPULSE_EC"
+#
+
+include common.mk
+
+lang ?= cpp
+outdir ?= $(lang)-execopts
+# The C backend emits a flat C API, not a class, so it needs the wrapper
+# front-end — the same split the reference makes between `impulsearch.cpp` and
+# `impulsearch2.cpp`. Both share `archs/impulseexecopts_driver.h`.
+ifeq ($(lang),c)
+ARCH_EXECOPTS ?= archs/impulseexecopts_c.cpp
+else
+ARCH_EXECOPTS ?= archs/impulseexecopts.cpp
+endif
+
+# The compiler flags and the driver macros must agree: `-ec` needs the driver to
+# call `control()`, `-os` needs it to call `frame()`. A mismatch silently tests
+# the wrong thing, so the top-level Makefile sets both together.
+EXECOPTS ?=
+EXECDEFS ?=
+
+# These targets are self-contained: the architecture surface they need lives in
+# `archs/faust_minimal*.h`, so unlike `common.mk`'s CXXFLAGS they do NOT include
+# the C++ Faust `architecture/` tree. Keeping FAUST_ARCH out is deliberate — it
+# is what makes `-ec`/`-os` runnable without a C++ Faust checkout.
+CXXFLAGS_EXECOPTS ?= -O3 -Iarchs -pthread -std=c++11
+
+allnames  := $(dspfiles:dsp/%.dsp=%)
+testnames := $(filter-out $(call known_fail_for,$(outdir)),$(allnames))
+listfiles := $(testnames:%=ir/$(outdir)/%.ir)
+
+.PHONY: all
+.DELETE_ON_ERROR:
+
+all: $(COMPARE) ir/$(outdir)/.dir build/$(outdir)/.dir $(listfiles)
+
+ir/$(outdir)/.dir:
+	mkdir -p ir/$(outdir)
+	touch $@
+
+build/$(outdir)/.dir:
+	mkdir -p build/$(outdir)
+	touch $@
+
+$(COMPARE): tools/filesCompare.cpp
+	$(CXX) -O2 -std=c++11 $< -o $@
+
+ir/$(outdir)/%.ir: dsp/%.dsp reference/%.ir $(ARCH_EXECOPTS) archs/impulseexecopts_driver.h | ir/$(outdir)/.dir build/$(outdir)/.dir
+	$(FAUST_RS) -lang $(lang) -double $(EXECOPTS) $(COMPILER_OPTS) -a $(ARCH_EXECOPTS) \
+	    -I dsp -I $(FAUSTLIBS) $< -o build/$(outdir)/$*.cpp
+	$(CXX) $(CXXFLAGS_EXECOPTS) $(EXECDEFS) build/$(outdir)/$*.cpp -o build/$(outdir)/$*
+	./build/$(outdir)/$* -n $(SCALARFRAMES) > $@
+	$(COMPARE) $@ reference/$*.ir -part $(call dsp_precision,$*) || (rm -f $@; false)

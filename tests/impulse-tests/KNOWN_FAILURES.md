@@ -18,6 +18,16 @@ When a divergence is fixed, remove the entry so the gate re-covers it.
 |---|---|---|
 | `subcontainer1` | all | faust-rs sub-container codegen gap (does not compile) |
 
+## Deliberate rejections under the execution options
+
+Not divergences: the compiler refuses these on purpose, and the entry keeps the
+refusal observable (`make ir/cpp-ec/bs.ir` reproduces it) instead of silencing
+it.
+
+| DSP | Backends | Cause |
+|---|---|---|
+| `bs` | `*-ec`, `*-os`, `*-ec-os` | reads the foreign variable `count`, which the execution options forbid (`FRS-SFIR-0009`) |
+
 ## Tolerance overrides (bounded rounding)
 
 | DSP | Tol | Max \|Δ\| | Where | Note |

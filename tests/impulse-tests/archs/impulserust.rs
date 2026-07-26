@@ -250,6 +250,33 @@ fn run() {
         for param in buttons.params {
             dsp.set_param(param, button);
         }
+        // Which entry points to drive depends on the execution options the DSP
+        // was compiled with. Selected by `--cfg` so one architecture can host
+        // all four shapes; the emitted impulse response must be identical in
+        // each, which is exactly what the `rust-ec` / `rust-os` / `rust-ec-os`
+        // targets check against the same reference as the classic target.
+        //
+        // Under `-ec` the block-rate work lives in `control()`; skipping it
+        // reads uninitialized slow values. Under `-os` the canonical `compute`
+        // is deliberately empty and the sample body is in `frame()`; calling
+        // only `compute` would emit silence.
+        #[cfg(impulse_ec)]
+        dsp.control();
+        #[cfg(impulse_os)]
+        {
+            let mut frame_in = vec![0.0 as FaustFloat; num_inputs.max(1)];
+            let mut frame_out = vec![0.0 as FaustFloat; num_outputs.max(1)];
+            for frame in 0..n {
+                for (channel, buf) in in_bufs.iter().enumerate() {
+                    frame_in[channel] = buf[frame];
+                }
+                dsp.frame(&frame_in, &mut frame_out);
+                for (channel, buf) in out_bufs.iter_mut().enumerate() {
+                    buf[frame] = frame_out[channel];
+                }
+            }
+        }
+        #[cfg(not(impulse_os))]
         {
             let inputs: Vec<&[FaustFloat]> = in_bufs.iter().map(|b| b.as_slice()).collect();
             let mut outputs: Vec<&mut [FaustFloat]> =
