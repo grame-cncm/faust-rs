@@ -1,0 +1,21 @@
+#54 Module { num_inputs: 1, num_outputs: 1, name: "passthrough", dsp_struct: TreeId(49), globals: TreeId(49), functions: TreeId(51), static_decls: TreeId(49) }
+  #49 Block([])
+  #49 Block([])
+  #51 Block([TreeId(48)])
+    #48 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(28)), is_inline: false }
+      #28 Block([TreeId(12), TreeId(14), TreeId(24)])
+        #12 DeclareVar { name: "input0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(8)) }
+          #8 LoadTable { name: "inputs", access: FunArgs, index: TreeId(3), typ: Ptr(FaustFloat) }
+            #3 Int32 { value: 0, typ: Int32 }
+        #14 DeclareVar { name: "output0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(10)) }
+          #10 LoadTable { name: "outputs", access: FunArgs, index: TreeId(3), typ: Ptr(FaustFloat) }
+            #3 Int32 { value: 0, typ: Int32 }
+        #24 SimpleForLoop { var: "i0", upper: TreeId(16), body: TreeId(23), is_reverse: false }
+          #16 LoadVar { name: "count", access: FunArgs, typ: Int32 }
+          #23 Block([TreeId(21)])
+            #21 StoreTable { name: "output0", access: Stack, index: TreeId(19), value: TreeId(20) }
+              #19 LoadVar { name: "i0", access: Loop, typ: Int32 }
+              #20 LoadTable { name: "input0", access: Stack, index: TreeId(19), typ: FaustFloat }
+                #19 LoadVar { name: "i0", access: Loop, typ: Int32 }
+  #49 Block([])
+EXIT=0

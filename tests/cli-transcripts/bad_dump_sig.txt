@@ -1,0 +1,17 @@
+Signal pipeline failed: evaluation failed for target/cli-transcript-inputs/bad.dsp: undefined symbol `undefined_thing`
+/Users/letz/Developpements/RUST/faust-rs/target/cli-transcript-inputs/bad.dsp:1:11: error [FRS-EVAL-0002] undefined symbol `undefined_thing`
+  1 | process = undefined_thing;
+    |           ^^^^^^^^^^^^^^^ definition site
+  = note: cause: unresolved identifier in current lexical scope
+  = note: rule: referenced identifier must be present in visible lexical scope
+  = note: computed: `undefined_thing` is not present in current visible scope
+  = note: scope.local=process
+  = note: scope.visible=process
+  = note: scope.top_level=process
+  = note: expr=undefined_thing
+  = note: error originates from definition 'process'
+  = note: binding_trace=process
+  = help: define the symbol in scope or fix the identifier name
+  = help: template: undefined_thing = ...; // define before use
+  = help: for top-level aliases: define target before first use
+EXIT=1

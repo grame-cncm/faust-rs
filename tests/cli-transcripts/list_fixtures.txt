@@ -1,0 +1,10 @@
+Built-in FIR fixtures:
+- sine_phasor
+- heavy_bench
+- passthrough
+- gain_bias_ui_meta
+- table_state_delay
+- control_flow
+- math_intrinsics
+- ir_coverage
+EXIT=0

@@ -1,0 +1,156 @@
+/* ------------------------------------------------------------
+name: "mydsp"
+Code generated with Faust (https://faust.grame.fr)
+------------------------------------------------------------ */
+
+#ifndef  __mydsp_H__
+#define  __mydsp_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS mydsp
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+
+class mydsp : public dsp {
+private:
+    int fSampleRate;
+    float vstate_s19_perm[4];
+    float vstate_s41_perm[4];
+public:
+    mydsp() {
+    }
+
+    mydsp(const mydsp&) = default;
+
+    virtual ~mydsp() = default;
+
+    mydsp& operator=(const mydsp&) = default;
+
+    virtual int getNumInputs() {
+        return 1;
+    }
+    virtual int getNumOutputs() {
+        return 1;
+    }
+    static void classInit(int sample_rate) {
+        (void)sample_rate;
+    }
+    virtual int getSampleRate() {
+        return fSampleRate;
+    }
+    virtual void init(int sample_rate) {
+        classInit(sample_rate);
+        instanceInit(sample_rate);
+    }
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    virtual mydsp* clone() {
+        return new mydsp(*this);
+    }
+    virtual void metadata(Meta* m) {
+        (void)m;
+        m->declare("filename", "mydsp.dsp");
+        m->declare("name", "mydsp");
+    }
+    virtual void instanceConstants(int sample_rate) {
+        fSampleRate = sample_rate;
+    }
+    virtual void instanceResetUserInterface() {
+    }
+    virtual void instanceClear() {
+        for (int vclear = 0; vclear < 4; ++vclear) {
+            vstate_s19_perm[vclear] = 0.0f;
+        }
+        for (int vclear = 0; vclear < 4; ++vclear) {
+            vstate_s41_perm[vclear] = 0.0f;
+        }
+    }
+    virtual void buildUserInterface(UI* ui_interface) {
+        ui_interface->openVerticalBox("rec");
+        ui_interface->closeBox();
+    }
+    virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+        FAUSTFLOAT* input0 = inputs[0];
+        FAUSTFLOAT* output0 = outputs[0];
+        float vstate_s19_tmp[12];
+        float vstate_s41_tmp[12];
+        if ((count - (count % 8)) > 0) {
+            for (int vindex = 0; vindex < (count - (count % 8)); vindex += 8) {
+                int vcount = 8;
+                for (int vdelay_copy = 0; vdelay_copy < 4; ++vdelay_copy) {
+                    vstate_s19_tmp[vdelay_copy] = vstate_s19_perm[vdelay_copy];
+                }
+                for (int vdelay_copy = 0; vdelay_copy < 4; ++vdelay_copy) {
+                    vstate_s41_tmp[vdelay_copy] = vstate_s41_perm[vdelay_copy];
+                }
+                for (int i0 = vindex; i0 < (vindex + vcount); i0 += 1) {
+                    float fVecL1Temp0 = (0.5f * vstate_s19_tmp[((4 + (i0 - vindex)) - 1)]);
+                    float fVecL1Temp1 = (((float)(input0[i0])) + fVecL1Temp0);
+                    float vrec_g40_p0_next = fVecL1Temp1;
+                    vstate_s19_tmp[(4 + (i0 - vindex))] = vrec_g40_p0_next;
+                    vstate_s41_tmp[(4 + (i0 - vindex))] = vrec_g40_p0_next;
+                }
+                for (int i0 = vindex; i0 < (vindex + vcount); i0 += 1) {
+                    output0[i0] = ((FAUSTFLOAT)(vstate_s41_tmp[((4 + (i0 - vindex)) - 3)]));
+                }
+                for (int vdelay_copy = 0; vdelay_copy < 4; ++vdelay_copy) {
+                    vstate_s19_perm[vdelay_copy] = vstate_s19_tmp[(vcount + vdelay_copy)];
+                }
+                for (int vdelay_copy = 0; vdelay_copy < 4; ++vdelay_copy) {
+                    vstate_s41_perm[vdelay_copy] = vstate_s41_tmp[(vcount + vdelay_copy)];
+                }
+            }
+        }
+        if ((count - (count % 8)) < count) {
+            int vindex = (count - (count % 8));
+            int vcount = (count - (count - (count % 8)));
+            for (int vdelay_copy = 0; vdelay_copy < 4; ++vdelay_copy) {
+                vstate_s19_tmp[vdelay_copy] = vstate_s19_perm[vdelay_copy];
+            }
+            for (int vdelay_copy = 0; vdelay_copy < 4; ++vdelay_copy) {
+                vstate_s41_tmp[vdelay_copy] = vstate_s41_perm[vdelay_copy];
+            }
+            for (int i0 = vindex; i0 < (vindex + vcount); i0 += 1) {
+                float fVecL1Temp0 = (0.5f * vstate_s19_tmp[((4 + (i0 - vindex)) - 1)]);
+                float fVecL1Temp1 = (((float)(input0[i0])) + fVecL1Temp0);
+                float vrec_g40_p0_next = fVecL1Temp1;
+                vstate_s19_tmp[(4 + (i0 - vindex))] = vrec_g40_p0_next;
+                vstate_s41_tmp[(4 + (i0 - vindex))] = vrec_g40_p0_next;
+            }
+            for (int i0 = vindex; i0 < (vindex + vcount); i0 += 1) {
+                output0[i0] = ((FAUSTFLOAT)(vstate_s41_tmp[((4 + (i0 - vindex)) - 3)]));
+            }
+            for (int vdelay_copy = 0; vdelay_copy < 4; ++vdelay_copy) {
+                vstate_s19_perm[vdelay_copy] = vstate_s19_tmp[(vcount + vdelay_copy)];
+            }
+            for (int vdelay_copy = 0; vdelay_copy < 4; ++vdelay_copy) {
+                vstate_s41_perm[vdelay_copy] = vstate_s41_tmp[(vcount + vdelay_copy)];
+            }
+        }
+    }
+};
+
+#endif
+EXIT=0

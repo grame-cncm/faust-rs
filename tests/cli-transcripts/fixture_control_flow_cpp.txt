@@ -1,0 +1,121 @@
+/* ------------------------------------------------------------
+name: "control_flow"
+Code generated with Faust (https://faust.grame.fr)
+------------------------------------------------------------ */
+
+#ifndef  __control_flow_H__
+#define  __control_flow_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS control_flow
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+
+class control_flow : public dsp {
+private:
+    int fSampleRate;
+    int fMode = 1;
+public:
+    control_flow() {
+    }
+
+    control_flow(const control_flow&) = default;
+
+    virtual ~control_flow() = default;
+
+    control_flow& operator=(const control_flow&) = default;
+
+    virtual int getNumInputs() {
+        return 1;
+    }
+    virtual int getNumOutputs() {
+        return 1;
+    }
+    static void classInit(int sample_rate) {
+        (void)sample_rate;
+    }
+    virtual int getSampleRate() {
+        return fSampleRate;
+    }
+    virtual void instanceConstants(int sample_rate) {
+        fSampleRate = sample_rate;
+    }
+    virtual void instanceResetUserInterface() {
+        fMode = (int)(1);
+    }
+    virtual void instanceClear() {
+    }
+    virtual void init(int sample_rate) {
+        classInit(sample_rate);
+        instanceInit(sample_rate);
+    }
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    virtual control_flow* clone() {
+        return new control_flow(*this);
+    }
+    virtual void metadata(Meta* m) {
+        (void)m;
+        m->declare("filename", "control_flow.dsp");
+        m->declare("name", "control_flow");
+    }
+    virtual void buildUserInterface(UI* ui_interface) {
+        ui_interface->openVerticalBox("control_flow");
+        ui_interface->closeBox();
+    }
+    virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+        FAUSTFLOAT* input0 = inputs[0];
+        FAUSTFLOAT* output0 = outputs[0];
+        int acc = 0;
+        for (int i0 = 0; i0 < count; ++i0) {
+            acc = (acc + fMode);
+            if (input0[i0] > 0.0) {
+                fMode = ((input0[i0] > 0.0) ? 1 : 2);
+            }
+            if (input0[i0] > 0.0) {
+                (void)(input0[i0]);
+            }
+            else {
+                (void)((-input0[i0]));
+            }
+            switch (fMode) {
+            case 0: {
+                output0[i0] = input0[i0];
+                break;
+            }
+            case 1: {
+                output0[i0] = (-input0[i0]);
+                break;
+            }
+            default: {
+                output0[i0] = std::fabs(((double)(input0[i0])));
+            }
+            }
+        }
+    }
+};
+
+#endif
+EXIT=0

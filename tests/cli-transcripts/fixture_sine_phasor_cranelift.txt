@@ -1,0 +1,10 @@
+backend: cranelift (experimental)
+module: mydsp
+compute_symbol: mydsp::compute
+compute_entry_addr: 0xNORMALIZED
+compute_body_lowered: true
+dsp_struct_layout: size=16 align=8 fields=3
+  - fFreq @0 size=4 align=4 scalar:FaustFloat
+  - fGain @4 size=4 align=4 scalar:FaustFloat
+  - fPhase @8 size=8 align=8 scalar:Float64
+EXIT=0

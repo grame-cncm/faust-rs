@@ -1,0 +1,6 @@
+faust-rs-golden-v1
+source=target/cli-transcript-inputs/rec.dsp
+bytes=33
+lines=1
+fnv1a64=bed32fb56b430cfc
+EXIT=0

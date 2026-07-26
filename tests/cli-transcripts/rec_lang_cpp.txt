@@ -1,0 +1,104 @@
+/* ------------------------------------------------------------
+name: "mydsp"
+Code generated with Faust (https://faust.grame.fr)
+------------------------------------------------------------ */
+
+#ifndef  __mydsp_H__
+#define  __mydsp_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS mydsp
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+
+class mydsp : public dsp {
+private:
+    int fSampleRate;
+    float fRec40[4];
+public:
+    mydsp() {
+    }
+
+    mydsp(const mydsp&) = default;
+
+    virtual ~mydsp() = default;
+
+    mydsp& operator=(const mydsp&) = default;
+
+    virtual int getNumInputs() {
+        return 1;
+    }
+    virtual int getNumOutputs() {
+        return 1;
+    }
+    static void classInit(int sample_rate) {
+        (void)sample_rate;
+    }
+    virtual int getSampleRate() {
+        return fSampleRate;
+    }
+    virtual void init(int sample_rate) {
+        classInit(sample_rate);
+        instanceInit(sample_rate);
+    }
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    virtual mydsp* clone() {
+        return new mydsp(*this);
+    }
+    virtual void metadata(Meta* m) {
+        (void)m;
+        m->declare("filename", "mydsp.dsp");
+        m->declare("name", "mydsp");
+    }
+    virtual void instanceConstants(int sample_rate) {
+        fSampleRate = sample_rate;
+    }
+    virtual void instanceResetUserInterface() {
+    }
+    virtual void instanceClear() {
+        for (int lRec0 = 0; lRec0 < 4; ++lRec0) {
+            fRec40[lRec0] = 0.0f;
+        }
+    }
+    virtual void buildUserInterface(UI* ui_interface) {
+        ui_interface->openVerticalBox("rec");
+        ui_interface->closeBox();
+    }
+    virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+        FAUSTFLOAT* input0 = inputs[0];
+        FAUSTFLOAT* output0 = outputs[0];
+        for (int i0 = 0; i0 < count; ++i0) {
+            fRec40[0] = (((float)(input0[i0])) + (0.5f * fRec40[1]));
+            output0[i0] = ((FAUSTFLOAT)(fRec40[3]));
+            for (int jRec1 = 3; jRec1 > 0; jRec1 = jRec1 + -1) {
+                fRec40[jRec1] = fRec40[(jRec1 - 1)];
+            }
+        }
+    }
+};
+
+#endif
+EXIT=0

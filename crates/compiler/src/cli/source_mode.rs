@@ -83,11 +83,7 @@ pub(crate) fn run_source_mode(
     if cli.parse {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default(input_path)
-        } else {
-            compiler.compile_file(input_path, &cli.import_dir)
-        };
+        let result = compiler.compile_file(input_path, &cli.import_dir);
         timer.phase("parse");
 
         match result {
@@ -108,11 +104,7 @@ pub(crate) fn run_source_mode(
     if cli.dump_box {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default(input_path)
-        } else {
-            compiler.compile_file(input_path, &cli.import_dir)
-        };
+        let result = compiler.compile_file(input_path, &cli.import_dir);
         timer.phase("parse");
 
         match result {
@@ -135,11 +127,7 @@ pub(crate) fn run_source_mode(
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // Use eval+propagate to get the evaluated process box (post-eval form).
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_signals(input_path)
-        } else {
-            compiler.compile_file_to_signals(input_path, &cli.import_dir)
-        };
+        let result = compiler.compile_file_to_signals(input_path, &cli.import_dir);
         timer.phase("eval");
 
         match result {
@@ -187,11 +175,7 @@ pub(crate) fn run_source_mode(
     if cli.dump_sig {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_signals(input_path)
-        } else {
-            compiler.compile_file_to_signals(input_path, &cli.import_dir)
-        };
+        let result = compiler.compile_file_to_signals(input_path, &cli.import_dir);
         timer.phase("signals");
 
         match result {
@@ -226,18 +210,11 @@ pub(crate) fn run_source_mode(
             .with_process_name(cli.process_name.clone())
             .with_real_type(selected_real_type(cli))
             .with_cancel(std::sync::Arc::clone(cancel));
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_fir_with_lane(
-                input_path,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_fir_with_lane(
-                input_path,
-                &cli.import_dir,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_fir_with_lane(
+            input_path,
+            &cli.import_dir,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("FIR");
 
         match result {
@@ -268,18 +245,11 @@ pub(crate) fn run_source_mode(
         // disables the built-in verify to report it manually.
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_fir_with_lane(
-                input_path,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_fir_with_lane(
-                input_path,
-                &cli.import_dir,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_fir_with_lane(
+            input_path,
+            &cli.import_dir,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("check");
 
         match result {
@@ -293,18 +263,11 @@ pub(crate) fn run_source_mode(
     if cli.dump_fir || matches!(cli.lang, Some(CliLang::Fir)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_fir_with_lane(
-                input_path,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_fir_with_lane(
-                input_path,
-                &cli.import_dir,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_fir_with_lane(
+            input_path,
+            &cli.import_dir,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("FIR");
 
         match result {
@@ -327,20 +290,12 @@ pub(crate) fn run_source_mode(
     if cli.dump_json && cli.lang.is_none() {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_json_with_lane_and_compile_options(
-                input_path,
-                selected_codegen_lane(cli).into_compiler_lane(),
-                compile_options_json_string(None, cli.double),
-            )
-        } else {
-            compiler.compile_file_to_json_with_compile_options(
-                input_path,
-                &cli.import_dir,
-                selected_codegen_lane(cli).into_compiler_lane(),
-                compile_options_json_string(None, cli.double),
-            )
-        };
+        let result = compiler.compile_file_to_json_with_compile_options(
+            input_path,
+            &cli.import_dir,
+            selected_codegen_lane(cli).into_compiler_lane(),
+            compile_options_json_string(None, cli.double),
+        );
         timer.phase("json");
 
         match result {
@@ -360,20 +315,12 @@ pub(crate) fn run_source_mode(
             module_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
             ..InterpOptions::default()
         };
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_interp_with_lane(
-                input_path,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_interp_with_lane(
-                input_path,
-                &cli.import_dir,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_interp_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("interp");
 
         match result {
@@ -399,16 +346,12 @@ pub(crate) fn run_source_mode(
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let lane = selected_codegen_lane(cli).into_compiler_lane();
         let options = CraneliftOptions::default();
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_cranelift_report_with_lane(input_path, &options, lane)
-        } else {
-            compiler.compile_file_to_cranelift_report_with_lane(
-                input_path,
-                &cli.import_dir,
-                &options,
-                lane,
-            )
-        };
+        let result = compiler.compile_file_to_cranelift_report_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            lane,
+        );
         timer.phase("cranelift-codegen");
 
         match result {
@@ -444,20 +387,12 @@ pub(crate) fn run_source_mode(
             double_precision: cli.double,
             ..AscOptions::default()
         };
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_asc_with_lane(
-                input_path,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_asc_with_lane(
-                input_path,
-                &cli.import_dir,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_asc_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("asc-codegen");
 
         match result {
@@ -480,20 +415,12 @@ pub(crate) fn run_source_mode(
             class_name: selected_class_name(cli),
             real_type: selected_julia_real_type(cli),
         };
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_julia_with_lane(
-                input_path,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_julia_with_lane(
-                input_path,
-                &cli.import_dir,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_julia_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("julia-codegen");
 
         match result {
@@ -513,18 +440,11 @@ pub(crate) fn run_source_mode(
     if matches!(cli.lang, Some(CliLang::Rust)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_fir_with_lane(
-                input_path,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_fir_with_lane(
-                input_path,
-                &cli.import_dir,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_fir_with_lane(
+            input_path,
+            &cli.import_dir,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("rust-codegen");
 
         match result {
@@ -564,20 +484,12 @@ pub(crate) fn run_source_mode(
             double_precision: cli.double,
             ..WasmOptions::default()
         };
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_wasm_with_lane(
-                input_path,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_wasm_with_lane(
-                input_path,
-                &cli.import_dir,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_wasm_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("wasm-codegen");
 
         match result {
@@ -602,20 +514,12 @@ pub(crate) fn run_source_mode(
             double_precision: cli.double,
             ..WasmOptions::default()
         };
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_wasm_with_lane(
-                input_path,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_wasm_with_lane(
-                input_path,
-                &cli.import_dir,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_wasm_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("wast-codegen");
 
         match result {
@@ -640,20 +544,12 @@ pub(crate) fn run_source_mode(
             super_class_name: selected_super_class_name(cli),
             ..CppOptions::default()
         };
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_cpp_with_lane(
-                input_path,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_cpp_with_lane(
-                input_path,
-                &cli.import_dir,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_cpp_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("cpp-codegen");
 
         match result {
@@ -701,20 +597,12 @@ pub(crate) fn run_source_mode(
             class_name: selected_class_name(cli),
             ..COptions::default()
         };
-        let result = if cli.import_dir.is_empty() {
-            compiler.compile_file_default_to_c_with_lane(
-                input_path,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        } else {
-            compiler.compile_file_to_c_with_lane(
-                input_path,
-                &cli.import_dir,
-                &options,
-                selected_codegen_lane(cli).into_compiler_lane(),
-            )
-        };
+        let result = compiler.compile_file_to_c_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
         timer.phase("c-codegen");
 
         match result {

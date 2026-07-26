@@ -1,0 +1,2 @@
+--class-name cannot be empty
+EXIT=2

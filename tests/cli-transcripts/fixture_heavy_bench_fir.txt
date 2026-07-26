@@ -1,0 +1,265 @@
+#295 Module { num_inputs: 1, num_outputs: 1, name: "heavy_bench", dsp_struct: TreeId(278), globals: TreeId(291), functions: TreeId(293), static_decls: TreeId(278) }
+  #278 Block([])
+  #291 Block([TreeId(7), TreeId(9), TreeId(11), TreeId(13), TreeId(15), TreeId(17), TreeId(19), TreeId(21), TreeId(23), TreeId(25), TreeId(27), TreeId(29)])
+    #7 DeclareVar { name: "s0", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #9 DeclareVar { name: "s1", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #11 DeclareVar { name: "s2", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #13 DeclareVar { name: "s3", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #15 DeclareVar { name: "s4", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #17 DeclareVar { name: "s5", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #19 DeclareVar { name: "s6", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #21 DeclareVar { name: "s7", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #23 DeclareVar { name: "s8", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #25 DeclareVar { name: "s9", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #27 DeclareVar { name: "s10", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+    #29 DeclareVar { name: "s11", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float32 { value: 0.0, typ: Float32 }
+  #293 Block([TreeId(277)])
+    #277 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(257)), is_inline: false }
+      #257 Block([TreeId(39), TreeId(41), TreeId(253)])
+        #39 DeclareVar { name: "input0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(35)) }
+          #35 LoadTable { name: "inputs", access: FunArgs, index: TreeId(31), typ: Ptr(FaustFloat) }
+            #31 Int32 { value: 0, typ: Int32 }
+        #41 DeclareVar { name: "output0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(37)) }
+          #37 LoadTable { name: "outputs", access: FunArgs, index: TreeId(31), typ: Ptr(FaustFloat) }
+            #31 Int32 { value: 0, typ: Int32 }
+        #253 SimpleForLoop { var: "i0", upper: TreeId(43), body: TreeId(252), is_reverse: false }
+          #43 LoadVar { name: "count", access: FunArgs, typ: Int32 }
+          #252 Block([TreeId(49), TreeId(66), TreeId(67), TreeId(80), TreeId(81), TreeId(94), TreeId(95), TreeId(108), TreeId(109), TreeId(122), TreeId(123), TreeId(136), TreeId(137), TreeId(150), TreeId(151), TreeId(164), TreeId(165), TreeId(178), TreeId(179), TreeId(192), TreeId(193), TreeId(206), TreeId(207), TreeId(220), TreeId(221), TreeId(225)])
+            #49 DeclareVar { name: "acc", typ: FaustFloat, access: Stack, init: Some(TreeId(47)) }
+              #47 LoadTable { name: "input0", access: Stack, index: TreeId(46), typ: FaustFloat }
+                #46 LoadVar { name: "i0", access: Loop, typ: Int32 }
+            #66 StoreVar { name: "s0", access: Struct, value: TreeId(65) }
+              #65 BinOp { op: Mul, lhs: TreeId(62), rhs: TreeId(64), typ: FaustFloat }
+                #62 BinOp { op: Sub, lhs: TreeId(56), rhs: TreeId(61), typ: FaustFloat }
+                  #56 BinOp { op: Mul, lhs: TreeId(52), rhs: TreeId(54), typ: FaustFloat }
+                    #52 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(50), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #50 LoadVar { name: "s0", access: Struct, typ: FaustFloat }
+                    #54 Float32 { value: 0.62, typ: Float32 }
+                  #61 BinOp { op: Mul, lhs: TreeId(58), rhs: TreeId(60), typ: FaustFloat }
+                    #58 BinOp { op: Mul, lhs: TreeId(57), rhs: TreeId(56), typ: FaustFloat }
+                      #57 BinOp { op: Mul, lhs: TreeId(56), rhs: TreeId(56), typ: FaustFloat }
+                        #56 BinOp { op: Mul, lhs: TreeId(52), rhs: TreeId(54), typ: FaustFloat }
+                        #56 BinOp { op: Mul, lhs: TreeId(52), rhs: TreeId(54), typ: FaustFloat }
+                      #56 BinOp { op: Mul, lhs: TreeId(52), rhs: TreeId(54), typ: FaustFloat }
+                    #60 Float32 { value: 0.05, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #67 StoreVar { name: "acc", access: Stack, value: TreeId(65) }
+              #65 BinOp { op: Mul, lhs: TreeId(62), rhs: TreeId(64), typ: FaustFloat }
+            #80 StoreVar { name: "s1", access: Struct, value: TreeId(79) }
+              #79 BinOp { op: Mul, lhs: TreeId(78), rhs: TreeId(64), typ: FaustFloat }
+                #78 BinOp { op: Sub, lhs: TreeId(72), rhs: TreeId(77), typ: FaustFloat }
+                  #72 BinOp { op: Mul, lhs: TreeId(69), rhs: TreeId(71), typ: FaustFloat }
+                    #69 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(68), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #68 LoadVar { name: "s1", access: Struct, typ: FaustFloat }
+                    #71 Float32 { value: 0.633, typ: Float32 }
+                  #77 BinOp { op: Mul, lhs: TreeId(74), rhs: TreeId(76), typ: FaustFloat }
+                    #74 BinOp { op: Mul, lhs: TreeId(73), rhs: TreeId(72), typ: FaustFloat }
+                      #73 BinOp { op: Mul, lhs: TreeId(72), rhs: TreeId(72), typ: FaustFloat }
+                        #72 BinOp { op: Mul, lhs: TreeId(69), rhs: TreeId(71), typ: FaustFloat }
+                        #72 BinOp { op: Mul, lhs: TreeId(69), rhs: TreeId(71), typ: FaustFloat }
+                      #72 BinOp { op: Mul, lhs: TreeId(69), rhs: TreeId(71), typ: FaustFloat }
+                    #76 Float32 { value: 0.054, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #81 StoreVar { name: "acc", access: Stack, value: TreeId(79) }
+              #79 BinOp { op: Mul, lhs: TreeId(78), rhs: TreeId(64), typ: FaustFloat }
+            #94 StoreVar { name: "s2", access: Struct, value: TreeId(93) }
+              #93 BinOp { op: Mul, lhs: TreeId(92), rhs: TreeId(64), typ: FaustFloat }
+                #92 BinOp { op: Sub, lhs: TreeId(86), rhs: TreeId(91), typ: FaustFloat }
+                  #86 BinOp { op: Mul, lhs: TreeId(83), rhs: TreeId(85), typ: FaustFloat }
+                    #83 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(82), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #82 LoadVar { name: "s2", access: Struct, typ: FaustFloat }
+                    #85 Float32 { value: 0.646, typ: Float32 }
+                  #91 BinOp { op: Mul, lhs: TreeId(88), rhs: TreeId(90), typ: FaustFloat }
+                    #88 BinOp { op: Mul, lhs: TreeId(87), rhs: TreeId(86), typ: FaustFloat }
+                      #87 BinOp { op: Mul, lhs: TreeId(86), rhs: TreeId(86), typ: FaustFloat }
+                        #86 BinOp { op: Mul, lhs: TreeId(83), rhs: TreeId(85), typ: FaustFloat }
+                        #86 BinOp { op: Mul, lhs: TreeId(83), rhs: TreeId(85), typ: FaustFloat }
+                      #86 BinOp { op: Mul, lhs: TreeId(83), rhs: TreeId(85), typ: FaustFloat }
+                    #90 Float32 { value: 0.058, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #95 StoreVar { name: "acc", access: Stack, value: TreeId(93) }
+              #93 BinOp { op: Mul, lhs: TreeId(92), rhs: TreeId(64), typ: FaustFloat }
+            #108 StoreVar { name: "s3", access: Struct, value: TreeId(107) }
+              #107 BinOp { op: Mul, lhs: TreeId(106), rhs: TreeId(64), typ: FaustFloat }
+                #106 BinOp { op: Sub, lhs: TreeId(100), rhs: TreeId(105), typ: FaustFloat }
+                  #100 BinOp { op: Mul, lhs: TreeId(97), rhs: TreeId(99), typ: FaustFloat }
+                    #97 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(96), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #96 LoadVar { name: "s3", access: Struct, typ: FaustFloat }
+                    #99 Float32 { value: 0.659, typ: Float32 }
+                  #105 BinOp { op: Mul, lhs: TreeId(102), rhs: TreeId(104), typ: FaustFloat }
+                    #102 BinOp { op: Mul, lhs: TreeId(101), rhs: TreeId(100), typ: FaustFloat }
+                      #101 BinOp { op: Mul, lhs: TreeId(100), rhs: TreeId(100), typ: FaustFloat }
+                        #100 BinOp { op: Mul, lhs: TreeId(97), rhs: TreeId(99), typ: FaustFloat }
+                        #100 BinOp { op: Mul, lhs: TreeId(97), rhs: TreeId(99), typ: FaustFloat }
+                      #100 BinOp { op: Mul, lhs: TreeId(97), rhs: TreeId(99), typ: FaustFloat }
+                    #104 Float32 { value: 0.062, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #109 StoreVar { name: "acc", access: Stack, value: TreeId(107) }
+              #107 BinOp { op: Mul, lhs: TreeId(106), rhs: TreeId(64), typ: FaustFloat }
+            #122 StoreVar { name: "s4", access: Struct, value: TreeId(121) }
+              #121 BinOp { op: Mul, lhs: TreeId(120), rhs: TreeId(64), typ: FaustFloat }
+                #120 BinOp { op: Sub, lhs: TreeId(114), rhs: TreeId(119), typ: FaustFloat }
+                  #114 BinOp { op: Mul, lhs: TreeId(111), rhs: TreeId(113), typ: FaustFloat }
+                    #111 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(110), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #110 LoadVar { name: "s4", access: Struct, typ: FaustFloat }
+                    #113 Float32 { value: 0.672, typ: Float32 }
+                  #119 BinOp { op: Mul, lhs: TreeId(116), rhs: TreeId(118), typ: FaustFloat }
+                    #116 BinOp { op: Mul, lhs: TreeId(115), rhs: TreeId(114), typ: FaustFloat }
+                      #115 BinOp { op: Mul, lhs: TreeId(114), rhs: TreeId(114), typ: FaustFloat }
+                        #114 BinOp { op: Mul, lhs: TreeId(111), rhs: TreeId(113), typ: FaustFloat }
+                        #114 BinOp { op: Mul, lhs: TreeId(111), rhs: TreeId(113), typ: FaustFloat }
+                      #114 BinOp { op: Mul, lhs: TreeId(111), rhs: TreeId(113), typ: FaustFloat }
+                    #118 Float32 { value: 0.066, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #123 StoreVar { name: "acc", access: Stack, value: TreeId(121) }
+              #121 BinOp { op: Mul, lhs: TreeId(120), rhs: TreeId(64), typ: FaustFloat }
+            #136 StoreVar { name: "s5", access: Struct, value: TreeId(135) }
+              #135 BinOp { op: Mul, lhs: TreeId(134), rhs: TreeId(64), typ: FaustFloat }
+                #134 BinOp { op: Sub, lhs: TreeId(128), rhs: TreeId(133), typ: FaustFloat }
+                  #128 BinOp { op: Mul, lhs: TreeId(125), rhs: TreeId(127), typ: FaustFloat }
+                    #125 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(124), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #124 LoadVar { name: "s5", access: Struct, typ: FaustFloat }
+                    #127 Float32 { value: 0.685, typ: Float32 }
+                  #133 BinOp { op: Mul, lhs: TreeId(130), rhs: TreeId(132), typ: FaustFloat }
+                    #130 BinOp { op: Mul, lhs: TreeId(129), rhs: TreeId(128), typ: FaustFloat }
+                      #129 BinOp { op: Mul, lhs: TreeId(128), rhs: TreeId(128), typ: FaustFloat }
+                        #128 BinOp { op: Mul, lhs: TreeId(125), rhs: TreeId(127), typ: FaustFloat }
+                        #128 BinOp { op: Mul, lhs: TreeId(125), rhs: TreeId(127), typ: FaustFloat }
+                      #128 BinOp { op: Mul, lhs: TreeId(125), rhs: TreeId(127), typ: FaustFloat }
+                    #132 Float32 { value: 0.07, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #137 StoreVar { name: "acc", access: Stack, value: TreeId(135) }
+              #135 BinOp { op: Mul, lhs: TreeId(134), rhs: TreeId(64), typ: FaustFloat }
+            #150 StoreVar { name: "s6", access: Struct, value: TreeId(149) }
+              #149 BinOp { op: Mul, lhs: TreeId(148), rhs: TreeId(64), typ: FaustFloat }
+                #148 BinOp { op: Sub, lhs: TreeId(142), rhs: TreeId(147), typ: FaustFloat }
+                  #142 BinOp { op: Mul, lhs: TreeId(139), rhs: TreeId(141), typ: FaustFloat }
+                    #139 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(138), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #138 LoadVar { name: "s6", access: Struct, typ: FaustFloat }
+                    #141 Float32 { value: 0.698, typ: Float32 }
+                  #147 BinOp { op: Mul, lhs: TreeId(144), rhs: TreeId(146), typ: FaustFloat }
+                    #144 BinOp { op: Mul, lhs: TreeId(143), rhs: TreeId(142), typ: FaustFloat }
+                      #143 BinOp { op: Mul, lhs: TreeId(142), rhs: TreeId(142), typ: FaustFloat }
+                        #142 BinOp { op: Mul, lhs: TreeId(139), rhs: TreeId(141), typ: FaustFloat }
+                        #142 BinOp { op: Mul, lhs: TreeId(139), rhs: TreeId(141), typ: FaustFloat }
+                      #142 BinOp { op: Mul, lhs: TreeId(139), rhs: TreeId(141), typ: FaustFloat }
+                    #146 Float32 { value: 0.074, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #151 StoreVar { name: "acc", access: Stack, value: TreeId(149) }
+              #149 BinOp { op: Mul, lhs: TreeId(148), rhs: TreeId(64), typ: FaustFloat }
+            #164 StoreVar { name: "s7", access: Struct, value: TreeId(163) }
+              #163 BinOp { op: Mul, lhs: TreeId(162), rhs: TreeId(64), typ: FaustFloat }
+                #162 BinOp { op: Sub, lhs: TreeId(156), rhs: TreeId(161), typ: FaustFloat }
+                  #156 BinOp { op: Mul, lhs: TreeId(153), rhs: TreeId(155), typ: FaustFloat }
+                    #153 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(152), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #152 LoadVar { name: "s7", access: Struct, typ: FaustFloat }
+                    #155 Float32 { value: 0.711, typ: Float32 }
+                  #161 BinOp { op: Mul, lhs: TreeId(158), rhs: TreeId(160), typ: FaustFloat }
+                    #158 BinOp { op: Mul, lhs: TreeId(157), rhs: TreeId(156), typ: FaustFloat }
+                      #157 BinOp { op: Mul, lhs: TreeId(156), rhs: TreeId(156), typ: FaustFloat }
+                        #156 BinOp { op: Mul, lhs: TreeId(153), rhs: TreeId(155), typ: FaustFloat }
+                        #156 BinOp { op: Mul, lhs: TreeId(153), rhs: TreeId(155), typ: FaustFloat }
+                      #156 BinOp { op: Mul, lhs: TreeId(153), rhs: TreeId(155), typ: FaustFloat }
+                    #160 Float32 { value: 0.078, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #165 StoreVar { name: "acc", access: Stack, value: TreeId(163) }
+              #163 BinOp { op: Mul, lhs: TreeId(162), rhs: TreeId(64), typ: FaustFloat }
+            #178 StoreVar { name: "s8", access: Struct, value: TreeId(177) }
+              #177 BinOp { op: Mul, lhs: TreeId(176), rhs: TreeId(64), typ: FaustFloat }
+                #176 BinOp { op: Sub, lhs: TreeId(170), rhs: TreeId(175), typ: FaustFloat }
+                  #170 BinOp { op: Mul, lhs: TreeId(167), rhs: TreeId(169), typ: FaustFloat }
+                    #167 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(166), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #166 LoadVar { name: "s8", access: Struct, typ: FaustFloat }
+                    #169 Float32 { value: 0.724, typ: Float32 }
+                  #175 BinOp { op: Mul, lhs: TreeId(172), rhs: TreeId(174), typ: FaustFloat }
+                    #172 BinOp { op: Mul, lhs: TreeId(171), rhs: TreeId(170), typ: FaustFloat }
+                      #171 BinOp { op: Mul, lhs: TreeId(170), rhs: TreeId(170), typ: FaustFloat }
+                        #170 BinOp { op: Mul, lhs: TreeId(167), rhs: TreeId(169), typ: FaustFloat }
+                        #170 BinOp { op: Mul, lhs: TreeId(167), rhs: TreeId(169), typ: FaustFloat }
+                      #170 BinOp { op: Mul, lhs: TreeId(167), rhs: TreeId(169), typ: FaustFloat }
+                    #174 Float32 { value: 0.082, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #179 StoreVar { name: "acc", access: Stack, value: TreeId(177) }
+              #177 BinOp { op: Mul, lhs: TreeId(176), rhs: TreeId(64), typ: FaustFloat }
+            #192 StoreVar { name: "s9", access: Struct, value: TreeId(191) }
+              #191 BinOp { op: Mul, lhs: TreeId(190), rhs: TreeId(64), typ: FaustFloat }
+                #190 BinOp { op: Sub, lhs: TreeId(184), rhs: TreeId(189), typ: FaustFloat }
+                  #184 BinOp { op: Mul, lhs: TreeId(181), rhs: TreeId(183), typ: FaustFloat }
+                    #181 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(180), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #180 LoadVar { name: "s9", access: Struct, typ: FaustFloat }
+                    #183 Float32 { value: 0.737, typ: Float32 }
+                  #189 BinOp { op: Mul, lhs: TreeId(186), rhs: TreeId(188), typ: FaustFloat }
+                    #186 BinOp { op: Mul, lhs: TreeId(185), rhs: TreeId(184), typ: FaustFloat }
+                      #185 BinOp { op: Mul, lhs: TreeId(184), rhs: TreeId(184), typ: FaustFloat }
+                        #184 BinOp { op: Mul, lhs: TreeId(181), rhs: TreeId(183), typ: FaustFloat }
+                        #184 BinOp { op: Mul, lhs: TreeId(181), rhs: TreeId(183), typ: FaustFloat }
+                      #184 BinOp { op: Mul, lhs: TreeId(181), rhs: TreeId(183), typ: FaustFloat }
+                    #188 Float32 { value: 0.086, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #193 StoreVar { name: "acc", access: Stack, value: TreeId(191) }
+              #191 BinOp { op: Mul, lhs: TreeId(190), rhs: TreeId(64), typ: FaustFloat }
+            #206 StoreVar { name: "s10", access: Struct, value: TreeId(205) }
+              #205 BinOp { op: Mul, lhs: TreeId(204), rhs: TreeId(64), typ: FaustFloat }
+                #204 BinOp { op: Sub, lhs: TreeId(198), rhs: TreeId(203), typ: FaustFloat }
+                  #198 BinOp { op: Mul, lhs: TreeId(195), rhs: TreeId(197), typ: FaustFloat }
+                    #195 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(194), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #194 LoadVar { name: "s10", access: Struct, typ: FaustFloat }
+                    #197 Float32 { value: 0.75, typ: Float32 }
+                  #203 BinOp { op: Mul, lhs: TreeId(200), rhs: TreeId(202), typ: FaustFloat }
+                    #200 BinOp { op: Mul, lhs: TreeId(199), rhs: TreeId(198), typ: FaustFloat }
+                      #199 BinOp { op: Mul, lhs: TreeId(198), rhs: TreeId(198), typ: FaustFloat }
+                        #198 BinOp { op: Mul, lhs: TreeId(195), rhs: TreeId(197), typ: FaustFloat }
+                        #198 BinOp { op: Mul, lhs: TreeId(195), rhs: TreeId(197), typ: FaustFloat }
+                      #198 BinOp { op: Mul, lhs: TreeId(195), rhs: TreeId(197), typ: FaustFloat }
+                    #202 Float32 { value: 0.09, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #207 StoreVar { name: "acc", access: Stack, value: TreeId(205) }
+              #205 BinOp { op: Mul, lhs: TreeId(204), rhs: TreeId(64), typ: FaustFloat }
+            #220 StoreVar { name: "s11", access: Struct, value: TreeId(219) }
+              #219 BinOp { op: Mul, lhs: TreeId(218), rhs: TreeId(64), typ: FaustFloat }
+                #218 BinOp { op: Sub, lhs: TreeId(212), rhs: TreeId(217), typ: FaustFloat }
+                  #212 BinOp { op: Mul, lhs: TreeId(209), rhs: TreeId(211), typ: FaustFloat }
+                    #209 BinOp { op: Add, lhs: TreeId(51), rhs: TreeId(208), typ: FaustFloat }
+                      #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                      #208 LoadVar { name: "s11", access: Struct, typ: FaustFloat }
+                    #211 Float32 { value: 0.763, typ: Float32 }
+                  #217 BinOp { op: Mul, lhs: TreeId(214), rhs: TreeId(216), typ: FaustFloat }
+                    #214 BinOp { op: Mul, lhs: TreeId(213), rhs: TreeId(212), typ: FaustFloat }
+                      #213 BinOp { op: Mul, lhs: TreeId(212), rhs: TreeId(212), typ: FaustFloat }
+                        #212 BinOp { op: Mul, lhs: TreeId(209), rhs: TreeId(211), typ: FaustFloat }
+                        #212 BinOp { op: Mul, lhs: TreeId(209), rhs: TreeId(211), typ: FaustFloat }
+                      #212 BinOp { op: Mul, lhs: TreeId(209), rhs: TreeId(211), typ: FaustFloat }
+                    #216 Float32 { value: 0.094, typ: Float32 }
+                #64 Float32 { value: 0.97, typ: Float32 }
+            #221 StoreVar { name: "acc", access: Stack, value: TreeId(219) }
+              #219 BinOp { op: Mul, lhs: TreeId(218), rhs: TreeId(64), typ: FaustFloat }
+            #225 StoreTable { name: "output0", access: Stack, index: TreeId(46), value: TreeId(224) }
+              #46 LoadVar { name: "i0", access: Loop, typ: Int32 }
+              #224 BinOp { op: Mul, lhs: TreeId(51), rhs: TreeId(223), typ: FaustFloat }
+                #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
+                #223 Float32 { value: 0.083333336, typ: Float32 }
+  #278 Block([])
+EXIT=0

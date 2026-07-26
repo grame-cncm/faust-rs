@@ -1,0 +1,134 @@
+// Code generated with faust-rs (https://faust.grame.fr)
+// Language: AssemblyScript (experimental)
+// name: mydsp
+
+function _fmodf(a: f32, b: f32): f32 {
+  return a % b;
+}
+
+function _remainderf(a: f32, b: f32): f32 {
+  return a - _rintf(a / b) * b;
+}
+
+function _rintf(x: f32): f32 {
+  let floor: f32 = Mathf.floor(x);
+  let frac: f32 = x - floor;
+  if (frac < 0.5) return floor;
+  if (frac > 0.5) return floor + 1.0;
+  let i: i32 = <i32>floor;
+  return (i & 1) == 0 ? floor : floor + 1.0;
+}
+
+function _exp10f(x: f32): f32 {
+  return Mathf.pow(10.0, x);
+}
+
+function _isnanf(x: f32): i32 {
+  return isNaN<f32>(x) ? 1 : 0;
+}
+
+function _isinff(x: f32): i32 {
+  return isFinite<f32>(x) ? 0 : (isNaN<f32>(x) ? 0 : 1);
+}
+
+function _copysignf(a: f32, b: f32): f32 {
+  let sign: bool = b < 0.0 || (b == 0.0 && 1.0 / b < 0.0);
+  return sign ? -Mathf.abs(a) : Mathf.abs(a);
+}
+
+function _fmod(a: f64, b: f64): f64 {
+  return a % b;
+}
+
+function _remainder(a: f64, b: f64): f64 {
+  return a - _rint(a / b) * b;
+}
+
+function _rint(x: f64): f64 {
+  let floor: f64 = Math.floor(x);
+  let frac: f64 = x - floor;
+  if (frac < 0.5) return floor;
+  if (frac > 0.5) return floor + 1.0;
+  let i: i64 = <i64>floor;
+  return (i & 1) == 0 ? floor : floor + 1.0;
+}
+
+function _exp10(x: f64): f64 {
+  return Math.pow(10.0, x);
+}
+
+function _isnan(x: f64): i32 {
+  return isNaN<f64>(x) ? 1 : 0;
+}
+
+function _isinf(x: f64): i32 {
+  return isFinite<f64>(x) ? 0 : (isNaN<f64>(x) ? 0 : 1);
+}
+
+function _copysign(a: f64, b: f64): f64 {
+  let sign: bool = b < 0.0 || (b == 0.0 && 1.0 / b < 0.0);
+  return sign ? -Math.abs(a) : Math.abs(a);
+}
+
+@external("env", "_soundfileLength")
+declare function _soundfileLength(slot: i32, part: i32): i32;
+
+@external("env", "_soundfileRate")
+declare function _soundfileRate(slot: i32, part: i32): i32;
+
+@external("env", "_soundfileBuffer")
+declare function _soundfileBuffer(slot: i32, chan: i32, part: i32, idx: i32): f64;
+
+export class mydsp {
+    fSampleRate: i32;
+    fRec40: StaticArray<f32> = new StaticArray<f32>(4);
+
+    getSampleRate(): i32 {
+        return this.fSampleRate;
+    }
+    getNumInputs(): i32 {
+        return 1;
+    }
+    getNumOutputs(): i32 {
+        return 1;
+    }
+    metadata(m: usize): void {
+    }
+    buildUserInterface(ui_interface: usize): void {
+        // ui openbox rec
+        // ui closebox
+    }
+    static classInit(sample_rate: i32): void {
+    }
+    instanceResetUserInterface(): void {
+    }
+    instanceClear(): void {
+        for (let lRec0: i32 = 0; lRec0 < <i32>(4); lRec0 = lRec0 + 1) {
+            this.fRec40[lRec0] = 0.0;
+        }
+    }
+    instanceConstants(sample_rate: i32): void {
+        this.fSampleRate = sample_rate;
+    }
+    instanceInit(sample_rate: i32): void {
+        this.instanceConstants(sample_rate);
+        this.instanceResetUserInterface();
+        this.instanceClear();
+    }
+    init(sample_rate: i32): void {
+        mydsp.classInit(sample_rate);
+        this.instanceInit(sample_rate);
+    }
+    compute(count: i32, inputs: Array<StaticArray<f32>>, outputs: Array<StaticArray<f32>>): void {
+        let input0: StaticArray<f32> = inputs[<i32>(0)];
+        let output0: StaticArray<f32> = outputs[<i32>(0)];
+        for (let i0: i32 = 0; i0 < count; i0 = i0 + 1) {
+            this.fRec40[<i32>(0)] = (<f32>(input0[i0]) + (0.5 * this.fRec40[<i32>(1)]));
+            output0[i0] = <f32>(this.fRec40[<i32>(3)]);
+            for (let jRec1: i32 = <i32>(3); jRec1 > <i32>(0); jRec1 = jRec1 + <i32>(-1)) {
+                this.fRec40[jRec1] = this.fRec40[(jRec1 - <i32>(1))];
+            }
+        }
+    }
+}
+EXIT=0

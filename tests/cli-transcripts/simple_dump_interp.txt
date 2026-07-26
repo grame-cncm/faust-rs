@@ -1,0 +1,61 @@
+interpreter_dsp_factory float
+file_version 9
+Faust version 2.85.0-rust
+compile_options 
+name mydsp
+sha_key 
+opt_level 0
+inputs 1 outputs 1
+int_heap_size 3 real_heap_size 2 sr_offset 0 count_offset 2 iota_offset 0
+meta_block
+block_size 0
+user_interface_block
+block_size 3
+opcode 280 kOpenVerticalBox offset -1 label "simple" key "" value "" init 0 min 0 max 0 step 0
+opcode 286 kAddHorizontalSlider offset 0 label "g" key "" value "" init 0.5 min 0 max 1 step 0.01
+opcode 283 kCloseBox offset -1 label "" key "" value "" init 0 min 0 max 0 step 0
+static_init_block
+block_size 1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+constants_block
+block_size 3
+opcode 3 kLoadInt int 0 real 0 offset1 0 offset2 0
+opcode 7 kStoreInt int 0 real 0 offset1 0 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+reset_ui
+block_size 3
+opcode 0 kRealValue int 0 real 0.5 offset1 -1 offset2 -1
+opcode 6 kStoreReal int 0 real 0 offset1 0 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+clear_block
+block_size 1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+control_block
+block_size 3
+opcode 2 kLoadReal int 0 real 0 offset1 0 offset2 0
+opcode 6 kStoreReal int 0 real 0 offset1 1 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+dsp_block
+block_size 2
+opcode 274 kLoop int 1 real 0 offset1 0 offset2 0
+block_size 2
+opcode 9 kStoreIntValue int 0 real 0 offset1 1 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+block_size 15
+opcode 3 kLoadInt int 0 real 0 offset1 1 offset2 0
+opcode 24 kLoadInput int 0 real 0 offset1 0 offset2 0
+opcode 2 kLoadReal int 0 real 0 offset1 1 offset2 0
+opcode 36 kMultReal int 0 real 0 offset1 -1 offset2 -1
+opcode 3 kLoadInt int 0 real 0 offset1 1 offset2 0
+opcode 25 kStoreOutput int 0 real 0 offset1 0 offset2 0
+opcode 3 kLoadInt int 0 real 0 offset1 1 offset2 0
+opcode 1 kInt32Value int 1 real 0 offset1 -1 offset2 -1
+opcode 33 kAddInt int 0 real 0 offset1 -1 offset2 -1
+opcode 7 kStoreInt int 0 real 0 offset1 1 offset2 0
+opcode 3 kLoadInt int 0 real 0 offset1 2 offset2 0
+opcode 3 kLoadInt int 0 real 0 offset1 1 offset2 0
+opcode 46 kLTInt int 0 real 0 offset1 -1 offset2 -1
+opcode 279 kCondBranch int 0 real 0 offset1 0 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+EXIT=0

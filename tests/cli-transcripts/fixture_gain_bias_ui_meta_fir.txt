@@ -1,0 +1,62 @@
+#156 Module { num_inputs: 1, num_outputs: 1, name: "gain_bias_ui_meta", dsp_struct: TreeId(144), globals: TreeId(149), functions: TreeId(154), static_decls: TreeId(144) }
+  #144 Block([])
+  #149 Block([TreeId(11), TreeId(13), TreeId(15), TreeId(17)])
+    #11 DeclareVar { name: "fGain", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float64 { value: 0.5, typ: Float64 }
+    #13 DeclareVar { name: "fBias", typ: FaustFloat, access: Struct, init: Some(TreeId(5)) }
+      #5 Float64 { value: 0.0, typ: Float64 }
+    #15 DeclareVar { name: "fGate", typ: FaustFloat, access: Struct, init: Some(TreeId(7)) }
+      #7 Float64 { value: 1.0, typ: Float64 }
+    #17 DeclareVar { name: "fLevel", typ: FaustFloat, access: Struct, init: Some(TreeId(5)) }
+      #5 Float64 { value: 0.0, typ: Float64 }
+  #154 Block([TreeId(55), TreeId(75), TreeId(87), TreeId(143)])
+    #55 DeclareFun { name: "buildUserInterface", typ: Fun { args: [Ptr(Obj), UI], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "ui_interface", typ: UI }], body: Some(TreeId(40)), is_inline: false }
+      #40 Block([TreeId(20), TreeId(22), TreeId(26), TreeId(30), TreeId(32), TreeId(33)])
+        #20 OpenBox { typ: Vertical, label: "GainBias" }
+        #22 AddButton { typ: Checkbox, label: "gate", var: "fGate" }
+        #26 AddSlider { typ: Horizontal, label: "gain", var: "fGain", init: 0.5, lo: 0.0, hi: 2.0, step: 0.001 }
+        #30 AddSlider { typ: NumEntry, label: "bias", var: "fBias", init: 0.0, lo: -1.0, hi: 1.0, step: 0.001 }
+        #32 AddBargraph { typ: Horizontal, label: "level", var: "fLevel", lo: 0.0, hi: 1.0 }
+        #33 CloseBox
+    #75 DeclareFun { name: "metadata", typ: Fun { args: [Ptr(Obj), Meta], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "m", typ: Meta }], body: Some(TreeId(65)), is_inline: false }
+      #65 Block([TreeId(59), TreeId(62)])
+        #59 AddMetaDeclare { var: "0", key: "name", value: "gain-bias-ui-meta" }
+        #62 AddMetaDeclare { var: "0", key: "author", value: "faust-rs" }
+    #87 DeclareFun { name: "instanceResetUserInterface", typ: Fun { args: [Ptr(Obj)], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }], body: Some(TreeId(82)), is_inline: false }
+      #82 Block([TreeId(76), TreeId(77), TreeId(78)])
+        #76 StoreVar { name: "fGain", access: Struct, value: TreeId(3) }
+          #3 Float64 { value: 0.5, typ: Float64 }
+        #77 StoreVar { name: "fBias", access: Struct, value: TreeId(5) }
+          #5 Float64 { value: 0.0, typ: Float64 }
+        #78 StoreVar { name: "fGate", access: Struct, value: TreeId(7) }
+          #7 Float64 { value: 1.0, typ: Float64 }
+    #143 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(128)), is_inline: false }
+      #128 Block([TreeId(97), TreeId(99), TreeId(124)])
+        #97 DeclareVar { name: "input0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(93)) }
+          #93 LoadTable { name: "inputs", access: FunArgs, index: TreeId(89), typ: Ptr(FaustFloat) }
+            #89 Int32 { value: 0, typ: Int32 }
+        #99 DeclareVar { name: "output0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(95)) }
+          #95 LoadTable { name: "outputs", access: FunArgs, index: TreeId(89), typ: Ptr(FaustFloat) }
+            #89 Int32 { value: 0, typ: Int32 }
+        #124 SimpleForLoop { var: "i0", upper: TreeId(101), body: TreeId(123), is_reverse: false }
+          #101 LoadVar { name: "count", access: FunArgs, typ: Int32 }
+          #123 Block([TreeId(119), TreeId(120)])
+            #119 StoreVar { name: "fLevel", access: Struct, value: TreeId(118) }
+              #118 FunCall { name: "fabs", args: [TreeId(115)], typ: Float64 }
+                #115 Cast { typ: Float64, value: TreeId(114) }
+                  #114 BinOp { op: Add, lhs: TreeId(113), rhs: TreeId(107), typ: FaustFloat }
+                    #113 BinOp { op: Mul, lhs: TreeId(112), rhs: TreeId(106), typ: FaustFloat }
+                      #112 Select2 { cond: TreeId(111), then_value: TreeId(105), else_value: TreeId(5), typ: FaustFloat }
+                        #111 BinOp { op: Gt, lhs: TreeId(108), rhs: TreeId(5), typ: Bool }
+                          #108 LoadVar { name: "fGate", access: Struct, typ: FaustFloat }
+                          #5 Float64 { value: 0.0, typ: Float64 }
+                        #105 LoadTable { name: "input0", access: Stack, index: TreeId(104), typ: FaustFloat }
+                          #104 LoadVar { name: "i0", access: Loop, typ: Int32 }
+                        #5 Float64 { value: 0.0, typ: Float64 }
+                      #106 LoadVar { name: "fGain", access: Struct, typ: FaustFloat }
+                    #107 LoadVar { name: "fBias", access: Struct, typ: FaustFloat }
+            #120 StoreTable { name: "output0", access: Stack, index: TreeId(104), value: TreeId(114) }
+              #104 LoadVar { name: "i0", access: Loop, typ: Int32 }
+              #114 BinOp { op: Add, lhs: TreeId(113), rhs: TreeId(107), typ: FaustFloat }
+  #144 Block([])
+EXIT=0

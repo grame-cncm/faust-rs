@@ -1,0 +1,2 @@
+--signal-fir-lane is only valid with --dump-cpp/--dump-c/--dump-fir/--dump-fir-verify/--dump-cranelift
+EXIT=2

@@ -1,0 +1,191 @@
+Cranelift fixture codegen failed: [FRS-CGEN-CLIF-0004] define_function `control_flow::compute` failed: Compilation(Verifier(VerifierErrors([VerifierError { location: inst27, context: Some("v32 = fcmp.f32 gt v30, v31  ; v31 = 0.0"), message: "arg 1 (v31) has type f64, expected f32" }, VerifierError { location: inst40, context: Some("v46 = fcmp.f32 gt v44, v45  ; v45 = 0.0"), message: "arg 1 (v45) has type f64, expected f32" }, VerifierError { location: inst57, context: Some("v62 = fcmp.f32 gt v60, v61  ; v61 = 0.0"), message: "arg 1 (v61) has type f64, expected f32" }])))
+CLIF:
+function u0:0(i64, i32, i64, i64) apple_aarch64 {
+    sig0 = (f64) -> f64 apple_aarch64
+    fn0 = u0:1 sig0
+
+block0(v0: i64, v1: i32, v2: i64, v3: i64):
+    v4 = iconst.i32 0
+    v5 = uextend.i64 v4  ; v4 = 0
+    v6 = iconst.i64 8
+    v7 = imul v5, v6  ; v6 = 8
+    v8 = iadd v2, v7
+    v9 = load.i64 v8
+    v133 -> v9
+    v25 -> v133
+    v138 -> v133
+    v38 -> v25
+    v54 -> v25
+    v67 -> v25
+    v74 -> v25
+    v87 -> v25
+    v101 -> v25
+    v105 -> v25
+    v118 -> v25
+    v10 = iconst.i32 0
+    v11 = uextend.i64 v10  ; v10 = 0
+    v12 = iconst.i64 8
+    v13 = imul v11, v12  ; v12 = 8
+    v14 = iadd v3, v13
+    v15 = load.i64 v14
+    v134 -> v15
+    v99 -> v134
+    v139 -> v134
+    v85 -> v99
+    v97 -> v99
+    v98 -> v99
+    v103 -> v99
+    v116 -> v99
+    v16 = iconst.i32 0
+    v17 = iconst.i32 0
+    v18 = iconst.i32 1
+    jump block1(v17, v16)  ; v17 = 0, v16 = 0
+
+block1(v19: i32, v132: i32):
+    v39 -> v19
+    v55 -> v19
+    v68 -> v19
+    v75 -> v19
+    v86 -> v19
+    v100 -> v19
+    v104 -> v19
+    v117 -> v19
+    v21 -> v132
+    v20 = icmp slt v19, v1
+    brif v20, block2, block3
+
+block2:
+    v22 = iadd_imm.i64 v0, 0
+    v23 = load.i32 v22
+    v24 = iadd.i32 v21, v23
+    v135 -> v24
+    v136 -> v24
+    v137 -> v24
+    v26 = uextend.i64 v19
+    v27 = iconst.i64 4
+    v28 = imul v26, v27  ; v27 = 4
+    v29 = iadd.i64 v25, v28
+    v30 = load.f32 v29
+    v31 = f64const 0.0
+    v32 = fcmp gt v30, v31  ; v31 = 0.0
+    v33 = iconst.i8 1
+    v34 = iconst.i8 0
+    v35 = select v32, v33, v34  ; v33 = 1, v34 = 0
+    v36 = icmp_imm ne v35, 0
+    brif v36, block4, block5
+
+block4:
+    v37 = iadd_imm.i64 v0, 0
+    v40 = uextend.i64 v39
+    v41 = iconst.i64 4
+    v42 = imul v40, v41  ; v41 = 4
+    v43 = iadd.i64 v38, v42
+    v44 = load.f32 v43
+    v45 = f64const 0.0
+    v46 = fcmp gt v44, v45  ; v45 = 0.0
+    v47 = iconst.i8 1
+    v48 = iconst.i8 0
+    v49 = select v46, v47, v48  ; v47 = 1, v48 = 0
+    v50 = iconst.i32 1
+    v51 = iconst.i32 2
+    v52 = icmp_imm ne v49, 0
+    v53 = select v52, v50, v51  ; v50 = 1, v51 = 2
+    store v53, v37
+    jump block6
+
+block5:
+    jump block6
+
+block6:
+    v56 = uextend.i64 v19
+    v57 = iconst.i64 4
+    v58 = imul v56, v57  ; v57 = 4
+    v59 = iadd.i64 v25, v58
+    v60 = load.f32 v59
+    v61 = f64const 0.0
+    v62 = fcmp gt v60, v61  ; v61 = 0.0
+    v63 = iconst.i8 1
+    v64 = iconst.i8 0
+    v65 = select v62, v63, v64  ; v63 = 1, v64 = 0
+    v66 = icmp_imm ne v65, 0
+    brif v66, block7, block8
+
+block7:
+    v69 = uextend.i64 v68
+    v70 = iconst.i64 4
+    v71 = imul v69, v70  ; v70 = 4
+    v72 = iadd.i64 v67, v71
+    v73 = load.f32 v72
+    jump block9
+
+block8:
+    v76 = uextend.i64 v75
+    v77 = iconst.i64 4
+    v78 = imul v76, v77  ; v77 = 4
+    v79 = iadd.i64 v74, v78
+    v80 = load.f32 v79
+    v81 = fneg v80
+    jump block9
+
+block9:
+    v82 = iadd_imm.i64 v0, 0
+    v83 = load.i32 v82
+    v84 = icmp_imm eq v83, 0
+    brif v84, block12, block13
+
+block12:
+    v88 = uextend.i64 v86
+    v89 = iconst.i64 4
+    v90 = imul v88, v89  ; v89 = 4
+    v91 = iadd.i64 v87, v90
+    v92 = load.f32 v91
+    v93 = uextend.i64 v86
+    v94 = iconst.i64 4
+    v95 = imul v93, v94  ; v94 = 4
+    v96 = iadd.i64 v85, v95
+    store v92, v96
+    jump block10
+
+block13:
+    v102 = icmp_imm.i32 eq v83, 1
+    brif v102, block14, block11
+
+block14:
+    v106 = uextend.i64 v104
+    v107 = iconst.i64 4
+    v108 = imul v106, v107  ; v107 = 4
+    v109 = iadd.i64 v105, v108
+    v110 = load.f32 v109
+    v111 = fneg v110
+    v112 = uextend.i64 v104
+    v113 = iconst.i64 4
+    v114 = imul v112, v113  ; v113 = 4
+    v115 = iadd.i64 v103, v114
+    store v111, v115
+    jump block10
+
+block11:
+    v119 = uextend.i64 v117
+    v120 = iconst.i64 4
+    v121 = imul v119, v120  ; v120 = 4
+    v122 = iadd.i64 v118, v121
+    v123 = load.f32 v122
+    v124 = fpromote.f64 v123
+    v125 = call fn0(v124)
+    v126 = fdemote.f32 v125
+    v127 = uextend.i64 v117
+    v128 = iconst.i64 4
+    v129 = imul v127, v128  ; v128 = 4
+    v130 = iadd.i64 v116, v129
+    store v126, v130
+    jump block10
+
+block10:
+    v131 = iadd.i32 v19, v18  ; v18 = 1
+    jump block1(v131, v24)
+
+block3:
+    return
+}
+
+EXIT=1

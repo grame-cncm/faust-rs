@@ -1,0 +1,229 @@
+Command-line arguments for the compiler binary.
+
+Legacy mode flags are intentionally kept (`--parse`, `--dump-box`, etc.) to avoid breaking existing scripts while benefiting from robust `clap` parsing and help generation. Parsed CLI arguments for the `compiler` binary.
+
+Usage: faust-rs [OPTIONS] [INPUT]
+
+Arguments:
+  [INPUT]
+          Optional DSP input file (required by operational modes)
+
+Options:
+      --golden
+          Generate the golden snapshot output for one DSP file
+
+      --parse
+          Parse one DSP file and print parser status
+
+      --dump-box
+          Parse and dump box IR
+
+      --dump-sig
+          Compile to signals and dump signal IR
+
+      --dump-cpp
+          Compile to C++ and print generated code
+
+      --dump-cpp-from-fbc
+          Read interpreter `.fbc` text and emit self-contained native C++
+
+      --dump-c
+          Compile to C and print generated code
+
+      --dump-fir
+          Compile to FIR and dump FIR IR
+
+      --dump-fir-verify
+          Run FIR verifier and dump the verification report (no codegen)
+
+      --check
+          Run the full front-end (parse → eval → propagate → type) plus FIR verification, with no codegen; exit 0 with no errors, 1 otherwise.
+          
+          Unlike `--dump-fir-verify`, this mode prints no dump text: under `--error-format json` it always emits a diagnostics payload, with an empty `diagnostics` array on success, so success and failure share one schema (part of the P0 "clean machine channel" plan, see `porting/mcp-server-analysis-and-plan-2026-07-21-en.md`).
+
+      --dump-interp
+          Compile to interpreter bytecode and print `.fbc` text
+
+      --dump-cranelift
+          Compile through the experimental Cranelift backend and print a backend report
+
+      --json
+          Emit strict C++-style JSON description
+
+      --lang <LANG>
+          Select backend language (Faust-style): `-lang asc`, `-lang c`, `-lang cpp`, `-lang cranelift`, `-lang fir`, `-lang interp`, `-lang julia`, `-lang rust`, `-lang wasm`, or `-lang wast`.
+          
+          This option is equivalent to `--dump-c` / `--dump-cpp` / `--dump-fir` / `--dump-interp` / `--dump-cranelift` / `-lang asc` / `-lang julia` / `-lang rust` / `-lang wasm` / `-lang wast`.
+          
+          [possible values: asc, c, cpp, cranelift, fir, interp, julia, rust, wasm, wast]
+
+  -v, --version
+          Print version information and exit
+
+      --libdir
+          Print directory containing libfaust libraries and exit
+
+      --includedir
+          Print directory containing Faust headers and exit
+
+      --archdir
+          Print directory containing Faust architecture files and exit
+
+      --dspdir
+          Print directory containing Faust DSP libraries and exit
+
+      --pathslist
+          Print architecture and DSP library search paths and exit
+
+      --help-error-format
+          Print dedicated help for diagnostic output formats and exit
+
+      --list-fir-fixtures
+          List built-in FIR fixtures available for backend debugging and exit
+
+      --fir-fixture <FIR_FIXTURE>
+          Use a built-in FIR fixture instead of compiling a DSP input file.
+          
+          This is intended for backend debugging / bring-up. Combine with `-lang fir|c|cpp|interp|cranelift` (or corresponding `--dump-*` flags).
+
+  -o, --output <OUTPUT>
+          Optional output file. When omitted, generated text is written to stdout
+
+      --class-name <CLASS_NAME>
+          Specify the DSP class name used instead of `mydsp` (`-cn <name>`, `--class-name <name>`)
+
+      --super-class-name <SUPER_CLASS_NAME>
+          Specify the DSP superclass name used instead of `dsp` (`-scn <name>`, `--super-class-name <name>`)
+
+      --cpp-class-name <CPP_CLASS_NAME>
+          Override generated C++ class name for `--dump-cpp-from-fbc`.
+          
+          This applies only to `.fbc` -> native C++ emission, distinct from DSP generation `-cn/--class-name`.
+
+  -I, --import-dir <IMPORT_DIR>
+          Extra import search directories
+
+      --process-name <PROCESS_NAME>
+          Specify the top-level DSP entry-point name instead of `process` (`-pn <name>`, `--process-name <name>`)
+          
+          [default: process]
+
+  -a, --architecture <ARCHITECTURE>
+          Wrapper architecture file (`-a` compatibility)
+
+  -A, --architecture-dir <ARCHITECTURE_DIR>
+          Additional architecture search directories
+
+  -i, --inline-architecture-files
+          Inline `#include <faust/...>` architecture files
+
+      --error-format <ERROR_FORMAT>
+          Diagnostic output format
+          
+          [default: human]
+          [possible values: human, json]
+
+      --error-verbosity <ERROR_VERBOSITY>
+          Diagnostic verbosity level
+          
+          [default: standard]
+          [possible values: standard, debug]
+
+      --signal-fir-lane <SIGNAL_FIR_LANE>
+          Signal->FIR compilation lane
+          
+          [possible values: fast]
+
+      --no-fir-verify
+          Disable FIR verification before codegen / FIR dump
+
+      --fir-verify-strict
+          Treat FIR verifier warnings as fatal
+
+      --double
+          Use double-precision (64-bit) floating-point for internal DSP computation.
+          
+          By default, single-precision (32-bit) `float` is used for internal calculations while the external DSP interface (`FAUSTFLOAT` audio buffers and UI zones) always stays at the type declared by the architecture file.  Passing `--double` switches internal arithmetic to `double`, matching the `-double` option of the reference Faust compiler.
+
+      --mcd <MCD>
+          Maximum delay (in samples) below which the shift/copy strategy is used instead of a circular ring buffer (`-mcd N`).
+          
+          Delays ≤ `mcd` use a statically-shifted array (no `fIOTA`). Default: 16.
+          
+          [default: 16]
+
+      --dlt <DLT>
+          Delay-line threshold above which the if-based wrapping strategy is used instead of the default power-of-two circular buffer (`-dlt N`).
+          
+          Delays > `dlt` use an exact-size buffer with a per-line counter variable. Default: disabled (all delays above `mcd` use circular-pow2).
+          
+          [default: 4294967295]
+
+      --vec
+          Vector mode (`-vec`): restructure `compute()` into an outer chunk loop so the C compiler can auto-vectorize the inner loops (SIMD).
+          
+          Selection is checked: a program shape the vector pipeline cannot certify falls back to scalar lowering instead of emitting unverified code, and certified vector output is bit-exact against scalar output for the same program. Use `-vs`/`-lv` to size and shape the chunk loop.
+
+      --vs <VS>
+          Vector size for `-vec` (`-vs N`). Default: 32
+          
+          [default: 32]
+
+      --lv <LV>
+          Vector loop variant for `-vec` (`-lv 0|1`, as Faust C++): 0 = fastest (default) — a constant-trip main loop over `count - count % vs` plus a scalar remainder, the autovectorization-friendly form; 1 = simple — a single loop with a runtime `min(vindex + vs, count)` bound
+          
+          [default: 0]
+
+      --scheduling-strategy <SCHEDULING_STRATEGY>
+          Signal/loop dependency scheduling strategy (`-ss N`, as Faust C++): `0` = depth-first (default), `1` = breadth-first, `2` = special (interleaved), `n >= 3` = reverse breadth-first. Decoded through [`compiler::SchedulingStrategy::decode`].
+          
+          Independent of `-vec`/`-vs`/`-lv`: it drives the scalar control/signal schedule and the checked vector loop schedule.
+          
+          `adapted` API mapping vs C++ `atoi`: a missing value, a non-integer value, or a negative value is a hard parse error here instead of silently falling back to `0`.
+          
+          [default: 0]
+
+      --ec
+          External control (`-ec` / `--external-control`, as Faust C++; the legacy `--ext-control` spelling is also accepted): emit control-rate computations in a separate `control` entry point scheduled by the host instead of inline at the start of each block. Subject to per-backend capability validation
+
+      --os
+          One-sample processing (`-os` / `--one-sample`, as Faust C++): emit a one-sample `frame(inputs, outputs)` entry point over flat channel arrays; the canonical block `compute` is kept but emitted empty. Scalar mode only; subject to per-backend capability validation
+
+      --compilation-time
+          Display compilation phases timing information (`-time`)
+
+      --timeout <TIMEOUT>
+          Maximum compilation time in seconds (default: 120)
+          
+          [default: 120]
+
+      --svg
+          Generate SVG block-diagram files in `<name>-svg/` (`-svg`)
+
+      --shadow-blur
+          SVG: add Gaussian drop-shadow to boxes (`-blur`)
+
+      --scaled-svg
+          SVG: emit a viewBox-only (responsive) header instead of fixed mm size (`-sc`)
+
+      --draw-route-frame
+          SVG: draw a visible frame around route boxes (`-drf`)
+
+      --max-name-size <MAX_NAME_SIZE>
+          SVG: maximum label length before truncation (default 40) (`-mns N`)
+          
+          [default: 40]
+
+      --fold <FOLD>
+          SVG: fold diagrams with complexity above N into separate files (0 = off, default 25) (`-f N`)
+          
+          [default: 25]
+
+      --fold-complexity <FOLD_COMPLEXITY>
+          SVG: minimum per-expression complexity to trigger folding (default 2) (`-fc N`)
+          
+          [default: 2]
+
+  -h, --help
+          Print help (see a summary with '-h')
+EXIT=0

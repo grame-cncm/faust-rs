@@ -1,0 +1,19 @@
+backend: cranelift (experimental)
+module: heavy_bench
+compute_symbol: heavy_bench::compute
+compute_entry_addr: 0xNORMALIZED
+compute_body_lowered: true
+dsp_struct_layout: size=48 align=4 fields=12
+  - s0 @0 size=4 align=4 scalar:FaustFloat
+  - s1 @4 size=4 align=4 scalar:FaustFloat
+  - s2 @8 size=4 align=4 scalar:FaustFloat
+  - s3 @12 size=4 align=4 scalar:FaustFloat
+  - s4 @16 size=4 align=4 scalar:FaustFloat
+  - s5 @20 size=4 align=4 scalar:FaustFloat
+  - s6 @24 size=4 align=4 scalar:FaustFloat
+  - s7 @28 size=4 align=4 scalar:FaustFloat
+  - s8 @32 size=4 align=4 scalar:FaustFloat
+  - s9 @36 size=4 align=4 scalar:FaustFloat
+  - s10 @40 size=4 align=4 scalar:FaustFloat
+  - s11 @44 size=4 align=4 scalar:FaustFloat
+EXIT=0

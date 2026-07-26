@@ -1,0 +1,50 @@
+#143 Module { num_inputs: 1, num_outputs: 1, name: "simple", dsp_struct: TreeId(10), globals: TreeId(11), functions: TreeId(142), static_decls: TreeId(11) }
+  #10 Block([TreeId(4), TreeId(7)])
+    #4 DeclareVar { name: "fSampleRate", typ: Int32, access: Struct, init: None }
+    #7 DeclareVar { name: "fHslider0", typ: FaustFloat, access: Struct, init: None }
+  #11 Block([])
+  #142 Block([TreeId(27), TreeId(41), TreeId(52), TreeId(54), TreeId(77), TreeId(135)])
+    #27 DeclareFun { name: "metadata", typ: Fun { args: [Ptr(Obj), Meta], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "m", typ: Meta }], body: Some(TreeId(11)), is_inline: false }
+      #11 Block([])
+    #41 DeclareFun { name: "instanceConstants", typ: Fun { args: [Ptr(Obj), Int32], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "sample_rate", typ: Int32 }], body: Some(TreeId(33)), is_inline: false }
+      #33 Block([TreeId(31)])
+        #31 StoreVar { name: "fSampleRate", access: Struct, value: TreeId(30) }
+          #30 LoadVar { name: "sample_rate", access: FunArgs, typ: Int32 }
+    #52 DeclareFun { name: "instanceResetUserInterface", typ: Fun { args: [Ptr(Obj)], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }], body: Some(TreeId(47)), is_inline: false }
+      #47 Block([TreeId(45)])
+        #45 StoreVar { name: "fHslider0", access: Struct, value: TreeId(44) }
+          #44 Float32 { value: 0.5, typ: Float32 }
+    #54 DeclareFun { name: "instanceClear", typ: Fun { args: [Ptr(Obj)], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }], body: Some(TreeId(11)), is_inline: false }
+      #11 Block([])
+    #77 DeclareFun { name: "buildUserInterface", typ: Fun { args: [Ptr(Obj), UI], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "ui_interface", typ: UI }], body: Some(TreeId(67)), is_inline: false }
+      #67 Block([TreeId(56), TreeId(62), TreeId(63)])
+        #56 OpenBox { typ: Vertical, label: "simple" }
+        #62 AddSlider { typ: Horizontal, label: "g", var: "fHslider0", init: 0.5, lo: 0.0, hi: 1.0, step: 0.01 }
+        #63 CloseBox
+    #135 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(120)), is_inline: false }
+      #120 Block([TreeId(79), TreeId(81), TreeId(83), TreeId(87), TreeId(93), TreeId(97), TreeId(112)])
+        #79 Label("signal_fir_fastlane_step2a: executable base slice")
+        #81 Label("io: inputs=1 outputs=1")
+        #83 Label("signals: 1")
+        #87 DeclareVar { name: "fSlow0", typ: Float32, access: Stack, init: Some(TreeId(85)) }
+          #85 Cast { typ: Float32, value: TreeId(84) }
+            #84 LoadVar { name: "fHslider0", access: Struct, typ: FaustFloat }
+        #93 DeclareVar { name: "input0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(91)) }
+          #91 LoadTable { name: "inputs", access: FunArgs, index: TreeId(88), typ: Ptr(FaustFloat) }
+            #88 Int32 { value: 0, typ: Int32 }
+        #97 DeclareVar { name: "output0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(95)) }
+          #95 LoadTable { name: "outputs", access: FunArgs, index: TreeId(88), typ: Ptr(FaustFloat) }
+            #88 Int32 { value: 0, typ: Int32 }
+        #112 SimpleForLoop { var: "i0", upper: TreeId(99), body: TreeId(111), is_reverse: false }
+          #99 LoadVar { name: "count", access: FunArgs, typ: Int32 }
+          #111 Block([TreeId(109)])
+            #109 StoreTable { name: "output0", access: Stack, index: TreeId(102), value: TreeId(108) }
+              #102 LoadVar { name: "i0", access: Loop, typ: Int32 }
+              #108 Cast { typ: FaustFloat, value: TreeId(107) }
+                #107 BinOp { op: Mul, lhs: TreeId(103), rhs: TreeId(105), typ: Float32 }
+                  #103 LoadVar { name: "fSlow0", access: Stack, typ: Float32 }
+                  #105 Cast { typ: Float32, value: TreeId(104) }
+                    #104 LoadTable { name: "input0", access: Stack, index: TreeId(102), typ: FaustFloat }
+                      #102 LoadVar { name: "i0", access: Loop, typ: Int32 }
+  #11 Block([])
+EXIT=0

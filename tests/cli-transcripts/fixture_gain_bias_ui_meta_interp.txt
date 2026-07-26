@@ -1,0 +1,94 @@
+interpreter_dsp_factory float
+file_version 9
+Faust version 2.85.0-rust
+compile_options 
+name gain_bias_ui_meta
+sha_key 
+opt_level 0
+inputs 1 outputs 1
+int_heap_size 3 real_heap_size 4 sr_offset 2 count_offset 1 iota_offset 0
+meta_block
+block_size 0
+user_interface_block
+block_size 8
+opcode 280 kOpenVerticalBox offset -1 label "GainBias" key "" value "" init 0 min 0 max 0 step 0
+opcode 285 kAddCheckButton offset 2 label "gate" key "" value "" init 0 min 0 max 0 step 0
+opcode 286 kAddHorizontalSlider offset 0 label "gain" key "" value "" init 0.5 min 0 max 2 step 0.001
+opcode 288 kAddNumEntry offset 1 label "bias" key "" value "" init 0 min -1 max 1 step 0.001
+opcode 290 kAddHorizontalBargraph offset 3 label "level" key "" value "" init 0 min 0 max 1 step 0
+opcode 283 kCloseBox offset -1 label "" key "" value "" init 0 min 0 max 0 step 0
+opcode 292 kDeclare offset -1 label "" key "name" value "gain-bias-ui-meta" init 0 min 0 max 0 step 0
+opcode 292 kDeclare offset -1 label "" key "author" value "faust-rs" init 0 min 0 max 0 step 0
+static_init_block
+block_size 1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+constants_block
+block_size 1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+reset_ui
+block_size 7
+opcode 0 kRealValue int 0 real 0.5 offset1 -1 offset2 -1
+opcode 6 kStoreReal int 0 real 0 offset1 0 offset2 0
+opcode 0 kRealValue int 0 real 0 offset1 -1 offset2 -1
+opcode 6 kStoreReal int 0 real 0 offset1 1 offset2 0
+opcode 0 kRealValue int 0 real 1 offset1 -1 offset2 -1
+opcode 6 kStoreReal int 0 real 0 offset1 2 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+clear_block
+block_size 1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+control_block
+block_size 1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+dsp_block
+block_size 2
+opcode 274 kLoop int 1 real 0 offset1 0 offset2 0
+block_size 2
+opcode 9 kStoreIntValue int 0 real 0 offset1 0 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+block_size 29
+opcode 2 kLoadReal int 0 real 0 offset1 1 offset2 0
+opcode 2 kLoadReal int 0 real 0 offset1 0 offset2 0
+opcode 0 kRealValue int 0 real 0 offset1 -1 offset2 -1
+opcode 2 kLoadReal int 0 real 0 offset1 2 offset2 0
+opcode 51 kGTReal int 0 real 0 offset1 -1 offset2 -1
+opcode 277 kSelectReal int 0 real 0 offset1 0 offset2 0
+block_size 3
+opcode 3 kLoadInt int 0 real 0 offset1 0 offset2 0
+opcode 24 kLoadInput int 0 real 0 offset1 0 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+block_size 2
+opcode 0 kRealValue int 0 real 0 offset1 -1 offset2 -1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+opcode 36 kMultReal int 0 real 0 offset1 -1 offset2 -1
+opcode 32 kAddReal int 0 real 0 offset1 -1 offset2 -1
+opcode 190 kAbsf int 0 real 0 offset1 -1 offset2 -1
+opcode 6 kStoreReal int 0 real 0 offset1 3 offset2 0
+opcode 2 kLoadReal int 0 real 0 offset1 1 offset2 0
+opcode 2 kLoadReal int 0 real 0 offset1 0 offset2 0
+opcode 0 kRealValue int 0 real 0 offset1 -1 offset2 -1
+opcode 2 kLoadReal int 0 real 0 offset1 2 offset2 0
+opcode 51 kGTReal int 0 real 0 offset1 -1 offset2 -1
+opcode 277 kSelectReal int 0 real 0 offset1 0 offset2 0
+block_size 3
+opcode 3 kLoadInt int 0 real 0 offset1 0 offset2 0
+opcode 24 kLoadInput int 0 real 0 offset1 0 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+block_size 2
+opcode 0 kRealValue int 0 real 0 offset1 -1 offset2 -1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+opcode 36 kMultReal int 0 real 0 offset1 -1 offset2 -1
+opcode 32 kAddReal int 0 real 0 offset1 -1 offset2 -1
+opcode 3 kLoadInt int 0 real 0 offset1 0 offset2 0
+opcode 25 kStoreOutput int 0 real 0 offset1 0 offset2 0
+opcode 3 kLoadInt int 0 real 0 offset1 0 offset2 0
+opcode 1 kInt32Value int 1 real 0 offset1 -1 offset2 -1
+opcode 33 kAddInt int 0 real 0 offset1 -1 offset2 -1
+opcode 7 kStoreInt int 0 real 0 offset1 0 offset2 0
+opcode 3 kLoadInt int 0 real 0 offset1 1 offset2 0
+opcode 3 kLoadInt int 0 real 0 offset1 0 offset2 0
+opcode 46 kLTInt int 0 real 0 offset1 -1 offset2 -1
+opcode 279 kCondBranch int 0 real 0 offset1 0 offset2 0
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+opcode 275 kReturn int 0 real 0 offset1 -1 offset2 -1
+EXIT=0

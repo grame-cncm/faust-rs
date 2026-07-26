@@ -1,0 +1,9 @@
+backend: cranelift (experimental)
+module: simple
+compute_symbol: simple::compute
+compute_entry_addr: 0xNORMALIZED
+compute_body_lowered: true
+dsp_struct_layout: size=8 align=4 fields=2
+  - fSampleRate @0 size=4 align=4 scalar:Int32
+  - fHslider0 @4 size=4 align=4 scalar:FaustFloat
+EXIT=0

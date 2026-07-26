@@ -1,0 +1,112 @@
+#ifndef  __passthrough_H__
+#define  __passthrough_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+#include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS passthrough
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+static inline int faustmini(int a, int b) { return (a < b) ? a : b; }
+static inline int faustmaxi(int a, int b) { return (a > b) ? a : b; }
+
+
+typedef struct {
+    int fSampleRate;
+} passthrough;
+
+passthrough* newpassthrough() {
+    passthrough* dsp = (passthrough*)calloc(1, sizeof(passthrough));
+    return dsp;
+}
+
+void deletepassthrough(passthrough* dsp) {
+    free(dsp);
+}
+
+void metadatapassthrough(MetaGlue* m) {
+    m->declare(m->metaInterface, "faust-rs", "module-first c backend prototype");
+}
+
+int getSampleRatepassthrough(passthrough* RESTRICT dsp) {
+    return dsp->fSampleRate;
+}
+
+int getNumInputspassthrough(passthrough* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+int getNumOutputspassthrough(passthrough* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+void classInitpassthrough(int sample_rate) {
+    (void)sample_rate;
+}
+
+void instanceConstantspassthrough(passthrough* dsp, int sample_rate) {
+    dsp->fSampleRate = sample_rate;
+}
+
+void instanceResetUserInterfacepassthrough(passthrough* dsp) {
+    (void)dsp;
+}
+
+void instanceClearpassthrough(passthrough* dsp) {
+    (void)dsp;
+}
+
+void instanceInitpassthrough(passthrough* dsp, int sample_rate) {
+    instanceConstantspassthrough(dsp, sample_rate);
+    instanceResetUserInterfacepassthrough(dsp);
+    instanceClearpassthrough(dsp);
+}
+
+void initpassthrough(passthrough* dsp, int sample_rate) {
+    classInitpassthrough(sample_rate);
+    instanceInitpassthrough(dsp, sample_rate);
+}
+
+void buildUserInterfacepassthrough(passthrough* dsp, UIGlue* ui_interface) {
+    (void)dsp;
+    (void)ui_interface;
+}
+
+void computepassthrough(passthrough* dsp, int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 < count; i0 = i0 + 1) {
+        output0[i0] = input0[i0];
+    }
+}
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+EXIT=0

@@ -1,0 +1,2 @@
+C fixture codegen failed: [FRS-CGEN-C-0003] unsupported FIR statement node DeclareBufferIterators { name1: "it0", name2: "it1", channels: 2, typ: FaustFloat, mutable: true, chunk: false } at 40
+EXIT=1

@@ -1,0 +1,124 @@
+#ifndef  __gain_bias_ui_meta_H__
+#define  __gain_bias_ui_meta_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+#include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS gain_bias_ui_meta
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+static inline int faustmini(int a, int b) { return (a < b) ? a : b; }
+static inline int faustmaxi(int a, int b) { return (a > b) ? a : b; }
+
+
+typedef struct {
+    FAUSTFLOAT fGain;
+    FAUSTFLOAT fBias;
+    FAUSTFLOAT fGate;
+    FAUSTFLOAT fLevel;
+    int fSampleRate;
+} gain_bias_ui_meta;
+
+gain_bias_ui_meta* newgain_bias_ui_meta() {
+    gain_bias_ui_meta* dsp = (gain_bias_ui_meta*)calloc(1, sizeof(gain_bias_ui_meta));
+    return dsp;
+}
+
+void deletegain_bias_ui_meta(gain_bias_ui_meta* dsp) {
+    free(dsp);
+}
+
+void metadatagain_bias_ui_meta(MetaGlue* m) {
+    m->declare(m->metaInterface, 0, "name", "gain-bias-ui-meta");
+    m->declare(m->metaInterface, 0, "author", "faust-rs");
+}
+
+int getSampleRategain_bias_ui_meta(gain_bias_ui_meta* RESTRICT dsp) {
+    return dsp->fSampleRate;
+}
+
+int getNumInputsgain_bias_ui_meta(gain_bias_ui_meta* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+int getNumOutputsgain_bias_ui_meta(gain_bias_ui_meta* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+void classInitgain_bias_ui_meta(int sample_rate) {
+    (void)sample_rate;
+}
+
+void instanceConstantsgain_bias_ui_meta(gain_bias_ui_meta* dsp, int sample_rate) {
+    dsp->fSampleRate = sample_rate;
+}
+
+void instanceResetUserInterfacegain_bias_ui_meta(gain_bias_ui_meta* dsp) {
+    dsp->fGain = 0.5;
+    dsp->fBias = 0.0;
+    dsp->fGate = 1.0;
+}
+
+void instanceCleargain_bias_ui_meta(gain_bias_ui_meta* dsp) {
+    (void)dsp;
+}
+
+void instanceInitgain_bias_ui_meta(gain_bias_ui_meta* dsp, int sample_rate) {
+    instanceConstantsgain_bias_ui_meta(dsp, sample_rate);
+    instanceResetUserInterfacegain_bias_ui_meta(dsp);
+    instanceCleargain_bias_ui_meta(dsp);
+}
+
+void initgain_bias_ui_meta(gain_bias_ui_meta* dsp, int sample_rate) {
+    classInitgain_bias_ui_meta(sample_rate);
+    instanceInitgain_bias_ui_meta(dsp, sample_rate);
+}
+
+void buildUserInterfacegain_bias_ui_meta(gain_bias_ui_meta* dsp, UIGlue* ui_interface) {
+    ui_interface->openVerticalBox(ui_interface->uiInterface, "GainBias");
+    ui_interface->addCheckButton(ui_interface->uiInterface, "gate", &dsp->fGate);
+    ui_interface->addHorizontalSlider(ui_interface->uiInterface, "gain", &dsp->fGain, (FAUSTFLOAT)0.5, (FAUSTFLOAT)0.0, (FAUSTFLOAT)2.0, (FAUSTFLOAT)0.001);
+    ui_interface->addNumEntry(ui_interface->uiInterface, "bias", &dsp->fBias, (FAUSTFLOAT)0.0, (FAUSTFLOAT)-1.0, (FAUSTFLOAT)1.0, (FAUSTFLOAT)0.001);
+    ui_interface->addHorizontalBargraph(ui_interface->uiInterface, "level", &dsp->fLevel, (FAUSTFLOAT)0.0, (FAUSTFLOAT)1.0);
+    ui_interface->closeBox(ui_interface->uiInterface);
+}
+
+void computegain_bias_ui_meta(gain_bias_ui_meta* dsp, int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 < count; i0 = i0 + 1) {
+        dsp->fLevel = fabs(((double)(((((dsp->fGate > 0.0) ? input0[i0] : 0.0) * dsp->fGain) + dsp->fBias))));
+        output0[i0] = ((((dsp->fGate > 0.0) ? input0[i0] : 0.0) * dsp->fGain) + dsp->fBias);
+    }
+}
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+EXIT=0

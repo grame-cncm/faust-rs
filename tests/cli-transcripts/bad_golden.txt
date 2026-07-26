@@ -1,0 +1,6 @@
+faust-rs-golden-v1
+source=target/cli-transcript-inputs/bad.dsp
+bytes=27
+lines=1
+fnv1a64=231b5c65f842c67b
+EXIT=0

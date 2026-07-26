@@ -1,0 +1,2 @@
+C++ fixture codegen failed: [FRS-CGEN-CPP-0003] unsupported FIR statement node DeclareStructType { typ: Struct("coverage_dsp", [FaustFloat]) } at 125
+EXIT=1

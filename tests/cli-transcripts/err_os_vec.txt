@@ -1,0 +1,2 @@
+ERROR : '-os' option can only be used in scalar mode
+EXIT=1

@@ -1,0 +1,104 @@
+/* ------------------------------------------------------------
+name: "mydsp"
+Code generated with Faust (https://faust.grame.fr)
+------------------------------------------------------------ */
+
+#ifndef  __mydsp_H__
+#define  __mydsp_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS mydsp
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+
+class mydsp : public dsp {
+private:
+    int fSampleRate;
+    FAUSTFLOAT fFreq = 440.0;
+    FAUSTFLOAT fGain = 0.2;
+    double fPhase = 0.0;
+public:
+    mydsp() {
+    }
+
+    mydsp(const mydsp&) = default;
+
+    virtual ~mydsp() = default;
+
+    mydsp& operator=(const mydsp&) = default;
+
+    virtual int getNumInputs() {
+        return 0;
+    }
+    virtual int getNumOutputs() {
+        return 1;
+    }
+    static void classInit(int sample_rate) {
+        (void)sample_rate;
+    }
+    virtual int getSampleRate() {
+        return fSampleRate;
+    }
+    virtual void instanceConstants(int sample_rate) {
+        fSampleRate = sample_rate;
+    }
+    virtual void instanceResetUserInterface() {
+        fFreq = (FAUSTFLOAT)(440.0);
+        fGain = (FAUSTFLOAT)(0.2);
+        fPhase = (double)(0.0);
+    }
+    virtual void instanceClear() {
+    }
+    virtual void init(int sample_rate) {
+        classInit(sample_rate);
+        instanceInit(sample_rate);
+    }
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    virtual mydsp* clone() {
+        return new mydsp(*this);
+    }
+    virtual void metadata(Meta* m) {
+        (void)m;
+        m->declare("filename", "mydsp.dsp");
+        m->declare("name", "mydsp");
+    }
+    virtual void buildUserInterface(UI* ui_interface) {
+        ui_interface->openVerticalBox("Oscillator");
+        ui_interface->addHorizontalSlider("freq", &fFreq, FAUSTFLOAT(440.0), FAUSTFLOAT(20.0), FAUSTFLOAT(3000.0), FAUSTFLOAT(1.0));
+        ui_interface->addHorizontalSlider("gain", &fGain, FAUSTFLOAT(0.2), FAUSTFLOAT(0.0), FAUSTFLOAT(1.0), FAUSTFLOAT(0.001));
+        ui_interface->closeBox();
+    }
+    virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+        FAUSTFLOAT* output0 = outputs[0];
+        for (int i0 = 0; i0 < count; ++i0) {
+            fPhase = (((fPhase + (fFreq / 48000.0)) >= 1.0) ? ((fPhase + (fFreq / 48000.0)) - 1.0) : (fPhase + (fFreq / 48000.0)));
+            output0[i0] = (fGain * std::sin((6.283185307179586 * (((fPhase + (fFreq / 48000.0)) >= 1.0) ? ((fPhase + (fFreq / 48000.0)) - 1.0) : (fPhase + (fFreq / 48000.0))))));
+        }
+    }
+};
+
+#endif
+EXIT=0

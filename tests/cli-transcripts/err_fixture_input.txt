@@ -1,0 +1,2 @@
+--fir-fixture is incompatible with a DSP input file
+EXIT=2

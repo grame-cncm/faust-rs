@@ -1,0 +1,2 @@
+Cranelift fixture codegen failed: [FRS-CGEN-CLIF-0002] unsupported globals entry for Cranelift dsp* layout: DeclareStructType { typ: Struct("coverage_dsp", [FaustFloat]) }
+EXIT=1

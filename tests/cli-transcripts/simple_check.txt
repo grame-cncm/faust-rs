@@ -1,0 +1,2 @@
+Check OK: 0 diagnostics
+EXIT=0

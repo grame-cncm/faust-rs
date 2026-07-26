@@ -1,0 +1,7 @@
+backend: cranelift (experimental)
+module: passthrough
+compute_symbol: passthrough::compute
+compute_entry_addr: 0xNORMALIZED
+compute_body_lowered: true
+dsp_struct_layout: size=0 align=1 fields=0
+EXIT=0

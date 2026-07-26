@@ -1,0 +1,94 @@
+Cranelift fixture codegen failed: [FRS-CGEN-CLIF-0004] define_function `gain_bias_ui_meta::compute` failed: Compilation(Verifier(VerifierErrors([VerifierError { location: inst21, context: Some("v24 = fcmp.f32 gt v22, v23  ; v23 = 0.0"), message: "arg 1 (v23) has type f64, expected f32" }, VerifierError { location: inst47, context: Some("v51 = fcmp.f32 gt v49, v50  ; v50 = 0.0"), message: "arg 1 (v50) has type f64, expected f32" }])))
+CLIF:
+function u0:0(i64, i32, i64, i64) apple_aarch64 {
+    sig0 = (f64) -> f64 apple_aarch64
+    fn0 = u0:1 sig0
+
+block0(v0: i64, v1: i32, v2: i64, v3: i64):
+    v4 = iconst.i32 0
+    v5 = uextend.i64 v4  ; v4 = 0
+    v6 = iconst.i64 8
+    v7 = imul v5, v6  ; v6 = 8
+    v8 = iadd v2, v7
+    v9 = load.i64 v8
+    v75 -> v9
+    v28 -> v75
+    v10 = iconst.i32 0
+    v11 = uextend.i64 v10  ; v10 = 0
+    v12 = iconst.i64 8
+    v13 = imul v11, v12  ; v12 = 8
+    v14 = iadd v3, v13
+    v15 = load.i64 v14
+    v76 -> v15
+    v47 -> v76
+    v16 = iconst.i32 0
+    v17 = iconst.i32 1
+    jump block1(v16)  ; v16 = 0
+
+block1(v18: i32):
+    v19 = icmp slt v18, v1
+    brif v19, block2, block3
+
+block2:
+    v20 = iadd_imm.i64 v0, 12
+    v21 = iadd_imm.i64 v0, 8
+    v22 = load.f32 v21
+    v23 = f64const 0.0
+    v24 = fcmp gt v22, v23  ; v23 = 0.0
+    v25 = iconst.i8 1
+    v26 = iconst.i8 0
+    v27 = select v24, v25, v26  ; v25 = 1, v26 = 0
+    v29 = uextend.i64 v18
+    v30 = iconst.i64 4
+    v31 = imul v29, v30  ; v30 = 4
+    v32 = iadd.i64 v28, v31
+    v33 = load.f32 v32
+    v34 = f64const 0.0
+    v35 = fdemote.f32 v34  ; v34 = 0.0
+    v36 = icmp_imm ne v27, 0
+    v37 = select v36, v33, v35
+    v38 = iadd_imm.i64 v0, 0
+    v39 = load.f32 v38
+    v40 = fmul v37, v39
+    v41 = iadd_imm.i64 v0, 4
+    v42 = load.f32 v41
+    v43 = fadd v40, v42
+    v44 = fpromote.f64 v43
+    v45 = call fn0(v44)
+    v46 = fdemote.f32 v45
+    store v46, v20
+    v48 = iadd_imm.i64 v0, 8
+    v49 = load.f32 v48
+    v50 = f64const 0.0
+    v51 = fcmp gt v49, v50  ; v50 = 0.0
+    v52 = iconst.i8 1
+    v53 = iconst.i8 0
+    v54 = select v51, v52, v53  ; v52 = 1, v53 = 0
+    v55 = uextend.i64 v18
+    v56 = iconst.i64 4
+    v57 = imul v55, v56  ; v56 = 4
+    v58 = iadd.i64 v28, v57
+    v59 = load.f32 v58
+    v60 = f64const 0.0
+    v61 = fdemote.f32 v60  ; v60 = 0.0
+    v62 = icmp_imm ne v54, 0
+    v63 = select v62, v59, v61
+    v64 = iadd_imm.i64 v0, 0
+    v65 = load.f32 v64
+    v66 = fmul v63, v65
+    v67 = iadd_imm.i64 v0, 4
+    v68 = load.f32 v67
+    v69 = fadd v66, v68
+    v70 = uextend.i64 v18
+    v71 = iconst.i64 4
+    v72 = imul v70, v71  ; v71 = 4
+    v73 = iadd.i64 v47, v72
+    store v69, v73
+    v74 = iadd.i32 v18, v17  ; v17 = 1
+    jump block1(v74)
+
+block3:
+    return
+}
+
+EXIT=1

@@ -1,0 +1,54 @@
+#137 Module { num_inputs: 1, num_outputs: 1, name: "ir_coverage", dsp_struct: TreeId(127), globals: TreeId(131), functions: TreeId(134), static_decls: TreeId(135) }
+  #127 Block([TreeId(125)])
+    #125 DeclareStructType { typ: Struct("coverage_dsp", [FaustFloat]) }
+  #131 Block([TreeId(16), TreeId(22), TreeId(33)])
+    #16 DeclareVar { name: "fTmp", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float64 { value: 0.0, typ: Float64 }
+    #22 DeclareTable { name: "fTable", access: Struct, elem_type: Float32, values: [TreeId(6), TreeId(8), TreeId(10), TreeId(12)] }
+      #6 Float32 { value: 0.0, typ: Float32 }
+      #8 Float32 { value: 1.0, typ: Float32 }
+      #10 Float32 { value: 2.0, typ: Float32 }
+      #12 Float32 { value: 3.0, typ: Float32 }
+    #33 DeclareFun { name: "pow", typ: Fun { args: [Float64, Float64], ret: Float64 }, args: [NamedType { name: "x", typ: Float64 }, NamedType { name: "y", typ: Float64 }], body: None, is_inline: false }
+  #134 Block([TreeId(76), TreeId(121)])
+    #76 DeclareFun { name: "coverageHelper", typ: Fun { args: [], ret: Void }, args: [], body: Some(TreeId(72)), is_inline: false }
+      #72 Block([TreeId(35), TreeId(36), TreeId(40), TreeId(44), TreeId(47), TreeId(51), TreeId(56), TreeId(61), TreeId(62)])
+        #35 Label("coverage-start")
+        #36 NullStatement
+        #40 DeclareBufferIterators { name1: "it0", name2: "it1", channels: 2, typ: FaustFloat, mutable: true, chunk: false }
+        #44 DeclareVar { name: "tmp", typ: Int32, access: Stack, init: Some(TreeId(42)) }
+          #42 Int32 { value: 1, typ: Int32 }
+        #47 Drop(TreeId(46))
+          #46 LoadVarAddress { name: "fTmp", access: Struct, typ: Ptr(FaustFloat) }
+        #51 Drop(TreeId(50))
+          #50 TeeVar { name: "tmp", access: Stack, value: TreeId(49), typ: Int32 }
+            #49 BinOp { op: Add, lhs: TreeId(48), rhs: TreeId(42), typ: Int32 }
+              #48 LoadVar { name: "tmp", access: Stack, typ: Int32 }
+              #42 Int32 { value: 1, typ: Int32 }
+        #56 Drop(TreeId(55))
+          #55 Bitcast { typ: Int32, value: TreeId(54) }
+            #54 Cast { typ: Float32, value: TreeId(53) }
+              #53 Float64 { value: 1.0, typ: Float64 }
+        #61 IteratorForLoop { iterators: ["it0", "it1"], is_reverse: false, body: TreeId(58) }
+          #58 Block([TreeId(36)])
+            #36 NullStatement
+        #62 Return(None)
+    #121 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(102)), is_inline: false }
+      #102 Block([TreeId(84), TreeId(86), TreeId(98)])
+        #84 DeclareVar { name: "input0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(80)) }
+          #80 LoadTable { name: "inputs", access: FunArgs, index: TreeId(77), typ: Ptr(FaustFloat) }
+            #77 Int32 { value: 0, typ: Int32 }
+        #86 DeclareVar { name: "output0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(82)) }
+          #82 LoadTable { name: "outputs", access: FunArgs, index: TreeId(77), typ: Ptr(FaustFloat) }
+            #77 Int32 { value: 0, typ: Int32 }
+        #98 SimpleForLoop { var: "i0", upper: TreeId(88), body: TreeId(97), is_reverse: false }
+          #88 LoadVar { name: "count", access: FunArgs, typ: Int32 }
+          #97 Block([TreeId(95)])
+            #95 StoreTable { name: "output0", access: Stack, index: TreeId(91), value: TreeId(94) }
+              #91 LoadVar { name: "i0", access: Loop, typ: Int32 }
+              #94 BinOp { op: Add, lhs: TreeId(92), rhs: TreeId(93), typ: FaustFloat }
+                #92 LoadTable { name: "input0", access: Stack, index: TreeId(91), typ: FaustFloat }
+                  #91 LoadVar { name: "i0", access: Loop, typ: Int32 }
+                #93 LoadVar { name: "fTmp", access: Struct, typ: FaustFloat }
+  #135 Block([])
+EXIT=0

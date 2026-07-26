@@ -1,0 +1,121 @@
+#ifndef  __table_state_delay_H__
+#define  __table_state_delay_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+#include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS table_state_delay
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+static inline int faustmini(int a, int b) { return (a < b) ? a : b; }
+static inline int faustmaxi(int a, int b) { return (a > b) ? a : b; }
+
+
+typedef struct {
+    int fWriteIdx;
+    FAUSTFLOAT fDelay[4];
+    int fSampleRate;
+} table_state_delay;
+
+table_state_delay* newtable_state_delay() {
+    table_state_delay* dsp = (table_state_delay*)calloc(1, sizeof(table_state_delay));
+    return dsp;
+}
+
+void deletetable_state_delay(table_state_delay* dsp) {
+    free(dsp);
+}
+
+void metadatatable_state_delay(MetaGlue* m) {
+    m->declare(m->metaInterface, "faust-rs", "module-first c backend prototype");
+}
+
+int getSampleRatetable_state_delay(table_state_delay* RESTRICT dsp) {
+    return dsp->fSampleRate;
+}
+
+int getNumInputstable_state_delay(table_state_delay* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+int getNumOutputstable_state_delay(table_state_delay* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+void classInittable_state_delay(int sample_rate) {
+    (void)sample_rate;
+}
+
+void instanceConstantstable_state_delay(table_state_delay* dsp, int sample_rate) {
+    dsp->fSampleRate = sample_rate;
+}
+
+void instanceResetUserInterfacetable_state_delay(table_state_delay* dsp) {
+    dsp->fWriteIdx = (int)(0);
+    dsp->fDelay[0] = (FAUSTFLOAT)(0.0f);
+    dsp->fDelay[1] = (FAUSTFLOAT)(0.0f);
+    dsp->fDelay[2] = (FAUSTFLOAT)(0.0f);
+    dsp->fDelay[3] = (FAUSTFLOAT)(0.0f);
+}
+
+void instanceCleartable_state_delay(table_state_delay* dsp) {
+    (void)dsp;
+}
+
+void instanceInittable_state_delay(table_state_delay* dsp, int sample_rate) {
+    instanceConstantstable_state_delay(dsp, sample_rate);
+    instanceResetUserInterfacetable_state_delay(dsp);
+    instanceCleartable_state_delay(dsp);
+}
+
+void inittable_state_delay(table_state_delay* dsp, int sample_rate) {
+    classInittable_state_delay(sample_rate);
+    instanceInittable_state_delay(dsp, sample_rate);
+}
+
+void buildUserInterfacetable_state_delay(table_state_delay* dsp, UIGlue* ui_interface) {
+    (void)dsp;
+    (void)ui_interface;
+}
+
+void computetable_state_delay(table_state_delay* dsp, int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 < count; i0 = i0 + 1) {
+        FAUSTFLOAT tmpRead = dsp->fDelay[dsp->fWriteIdx];
+        dsp->fDelay[dsp->fWriteIdx] = input0[i0];
+        output0[i0] = tmpRead;
+        dsp->fWriteIdx = (((dsp->fWriteIdx + 1) >= 4) ? 0 : (dsp->fWriteIdx + 1));
+    }
+}
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+EXIT=0

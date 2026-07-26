@@ -1,0 +1,150 @@
+/* ------------------------------------------------------------
+Code generated with Faust Rust backend (faust-rs)
+Compilation options: -lang rust
+------------------------------------------------------------ */
+
+
+#[cfg(not(target_arch = "wasm32"))]
+mod ffi {
+    use core::ffi::c_float;
+
+    #[cfg_attr(not(target_os = "windows"), link(name = "m"))]
+    unsafe extern "C" {
+        pub fn remainderf(from: c_float, to: c_float) -> c_float;
+        pub fn rintf(val: c_float) -> c_float;
+    }
+}
+
+fn remainder_f32(from: f32, to: f32) -> f32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe { ffi::remainderf(from, to) }
+    #[cfg(target_arch = "wasm32")]
+    libm::remainderf(from, to)
+}
+
+fn rint_f32(val: f32) -> f32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    unsafe { ffi::rintf(val) }
+    #[cfg(target_arch = "wasm32")]
+    libm::rintf(val)
+}
+
+#[repr(C)]
+pub struct mydsp {
+    fSampleRate: i32,
+    fHslider0: FaustFloat,
+}
+
+pub const FAUST_INPUTS: usize = 1;
+pub const FAUST_OUTPUTS: usize = 1;
+pub const FAUST_ACTIVES: usize = 1;
+pub const FAUST_PASSIVES: usize = 0;
+
+impl mydsp {
+    pub fn new() -> mydsp {
+        mydsp {
+            fSampleRate: 0,
+            fHslider0: 0.0 as FaustFloat,
+        }
+    }
+
+    pub fn metadata(&self, m: &mut dyn Meta) {
+    }
+
+    pub fn get_sample_rate(&self) -> i32 {
+        self.fSampleRate
+    }
+
+    pub fn get_num_inputs(&self) -> i32 {
+        FAUST_INPUTS as i32
+    }
+
+    pub fn get_num_outputs(&self) -> i32 {
+        FAUST_OUTPUTS as i32
+    }
+
+    pub fn class_init(sample_rate: i32) {
+    }
+
+    pub fn instance_constants(&mut self, sample_rate: i32) {
+        self.fSampleRate = sample_rate;
+    }
+
+    pub fn instance_reset_params(&mut self) {
+        self.fHslider0 = ((0.5f32) as FaustFloat);
+    }
+
+    pub fn instance_clear(&mut self) {
+    }
+
+    pub fn instance_init(&mut self, sample_rate: i32) {
+        self.instance_constants(sample_rate);
+        self.instance_reset_params();
+        self.instance_clear();
+    }
+
+    pub fn init(&mut self, sample_rate: i32) {
+        Self::class_init(sample_rate);
+        self.instance_init(sample_rate);
+    }
+
+    pub fn build_user_interface(&self, ui_interface: &mut dyn UI<FaustFloat>) {
+        Self::build_user_interface_static(ui_interface);
+    }
+
+    pub fn build_user_interface_static(ui_interface: &mut dyn UI<FaustFloat>) {
+        ui_interface.open_vertical_box("simple");
+        ui_interface.add_horizontal_slider("g", ParamIndex(0), 0.5 as FaustFloat, 0.0 as FaustFloat, 1.0 as FaustFloat, 0.01 as FaustFloat);
+        ui_interface.close_box();
+    }
+
+    pub fn get_param(&self, param: ParamIndex) -> Option<FaustFloat> {
+        match param.0 {
+            0 => Some(self.fHslider0),
+            _ => None,
+        }
+    }
+
+    pub fn set_param(&mut self, param: ParamIndex, value: FaustFloat) {
+        match param.0 {
+            0 => { self.fHslider0 = value },
+            _ => {},
+        }
+    }
+
+    #[allow(unused_assignments)]
+    pub fn compute(&mut self, count: usize, inputs: &[impl AsRef<[FaustFloat]>], outputs: &mut [impl AsMut<[FaustFloat]>]) {
+        let count: i32 = i32::try_from(count).expect("DSP block length exceeds i32::MAX");
+        // signal_fir_fastlane_step2a: executable base slice
+        // io: inputs=1 outputs=1
+        // signals: 1
+        let fSlow0: f32 = ((self.fHslider0) as f32);
+        let input0 = inputs[0].as_ref();
+        let mut outputs_iter = outputs.iter_mut();
+        let output0 = outputs_iter.nth(0).expect("missing output channel").as_mut();
+        for i0 in 0..count {
+            output0[(i0) as usize] = (((fSlow0 * ((input0[(i0) as usize]) as f32))) as FaustFloat);
+        }
+    }
+
+}
+impl FaustDsp for mydsp {
+    type T = FaustFloat;
+    fn new() -> Self where Self: Sized { Self::new() }
+    fn metadata(&self, m: &mut dyn Meta) { self.metadata(m) }
+    fn get_sample_rate(&self) -> i32 { self.get_sample_rate() }
+    fn get_num_inputs(&self) -> i32 { self.get_num_inputs() }
+    fn get_num_outputs(&self) -> i32 { self.get_num_outputs() }
+    fn class_init(sample_rate: i32) where Self: Sized { Self::class_init(sample_rate); }
+    fn instance_reset_params(&mut self) { self.instance_reset_params() }
+    fn instance_clear(&mut self) { self.instance_clear() }
+    fn instance_constants(&mut self, sample_rate: i32) { self.instance_constants(sample_rate) }
+    fn instance_init(&mut self, sample_rate: i32) { self.instance_init(sample_rate) }
+    fn init(&mut self, sample_rate: i32) { self.init(sample_rate) }
+    fn build_user_interface(&self, ui: &mut dyn UI<Self::T>) { self.build_user_interface(ui) }
+    fn build_user_interface_static(ui: &mut dyn UI<Self::T>) where Self: Sized { Self::build_user_interface_static(ui); }
+    fn get_param(&self, param: ParamIndex) -> Option<Self::T> { self.get_param(param) }
+    fn set_param(&mut self, param: ParamIndex, value: Self::T) { self.set_param(param, value) }
+    fn compute(&mut self, count: i32, inputs: &[&[Self::T]], outputs: &mut [&mut [Self::T]]) { self.compute(usize::try_from(count).expect("DSP block length must be non-negative"), inputs, outputs) }
+}
+EXIT=0

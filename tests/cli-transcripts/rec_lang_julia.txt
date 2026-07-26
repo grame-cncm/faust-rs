@@ -1,0 +1,87 @@
+#=
+Code generated with faust-rs
+Compilation options: -lang julia
+=#
+
+using StaticArrays
+
+const REAL = Float32
+pow(x, y) = x ^ y
+rint(x) = round(x, Base.Rounding.RoundNearest)
+fmod(x, y) = rem(x, y)
+atan2(y, x) = atan(y, x)
+faust_wrap_int32(x) = reinterpret(Int32, UInt32(mod(trunc(Int64, x), 0x100000000)))
+remainder(x, y) = rem(x, y, Base.Rounding.RoundNearest)
+
+mutable struct mydsp{T} <: dsp
+	fSampleRate::Int32
+	fRec40::MVector{4, Float32}
+
+	function mydsp{T}() where {T}
+		dsp = new{T}()
+		dsp.fSampleRate = faust_wrap_int32(0)
+		dsp.fRec40 = MVector{4, Float32}(MVector{4, Float32}(undef))
+		return dsp
+	end
+end
+
+function metadata!(dsp::mydsp{T}, m::FMeta) where {T}
+end
+
+getSampleRate(dsp::mydsp{T}) where {T} = dsp.fSampleRate
+getNumInputs(dsp::mydsp{T}) where {T} = Int32(1)
+getNumOutputs(dsp::mydsp{T}) where {T} = Int32(1)
+
+function classInit!(dsp::mydsp{T}, sample_rate::Int32) where {T}
+	nothing
+end
+
+function instanceConstants!(dsp::mydsp{T}, sample_rate::Int32) where {T}
+	dsp.fSampleRate = sample_rate
+end
+
+function instanceResetUserInterface!(dsp::mydsp{T}) where {T}
+end
+
+function instanceClear!(dsp::mydsp{T}) where {T}
+	for lRec0 in 0:((4) - 1)
+		dsp.fRec40[(lRec0) + 1] = REAL(0.0)
+	end
+end
+
+function instanceInit!(dsp::mydsp{T}, sample_rate::Int32) where {T}
+	instanceConstants!(dsp, sample_rate)
+	instanceResetUserInterface!(dsp)
+	instanceClear!(dsp)
+end
+
+function init!(dsp::mydsp{T}, sample_rate::Int32) where {T}
+	classInit!(dsp, sample_rate)
+	instanceInit!(dsp, sample_rate)
+end
+
+getJSON(dsp::mydsp{T}) where {T} = "{}"
+
+function buildUserInterface!(dsp::mydsp{T}, ui_interface::UI) where {T}
+	openVerticalBox!(ui_interface, "rec")
+	closeBox!(ui_interface)
+end
+
+function compute!(dsp::mydsp{T}, count::Int32, inputs::AbstractMatrix{FAUSTFLOAT}, outputs::AbstractMatrix{FAUSTFLOAT}) where {T}
+	# signal_fir_fastlane_step2a: executable base slice
+	# io: inputs=1 outputs=1
+	# signals: 1
+	input0 = (@view inputs[:, (0) + 1])
+	output0 = (@view outputs[:, (0) + 1])
+	for i0 in 0:((count) - 1)
+		dsp.fRec40[(0) + 1] = (T(input0[(i0) + 1]) + (REAL(0.5) * dsp.fRec40[(1) + 1]))
+		output0[(i0) + 1] = FAUSTFLOAT(dsp.fRec40[(3) + 1])
+		jRec1 = 3
+		while jRec1 > 0
+			dsp.fRec40[(jRec1) + 1] = dsp.fRec40[((jRec1 - 1)) + 1]
+			jRec1 = jRec1 + -1
+		end
+	end
+end
+
+EXIT=0

@@ -1,0 +1,160 @@
+#ifndef  __heavy_bench_H__
+#define  __heavy_bench_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+#include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS heavy_bench
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+static inline int faustmini(int a, int b) { return (a < b) ? a : b; }
+static inline int faustmaxi(int a, int b) { return (a > b) ? a : b; }
+
+
+typedef struct {
+    FAUSTFLOAT s0;
+    FAUSTFLOAT s1;
+    FAUSTFLOAT s2;
+    FAUSTFLOAT s3;
+    FAUSTFLOAT s4;
+    FAUSTFLOAT s5;
+    FAUSTFLOAT s6;
+    FAUSTFLOAT s7;
+    FAUSTFLOAT s8;
+    FAUSTFLOAT s9;
+    FAUSTFLOAT s10;
+    FAUSTFLOAT s11;
+    int fSampleRate;
+} heavy_bench;
+
+heavy_bench* newheavy_bench() {
+    heavy_bench* dsp = (heavy_bench*)calloc(1, sizeof(heavy_bench));
+    return dsp;
+}
+
+void deleteheavy_bench(heavy_bench* dsp) {
+    free(dsp);
+}
+
+void metadataheavy_bench(MetaGlue* m) {
+    m->declare(m->metaInterface, "faust-rs", "module-first c backend prototype");
+}
+
+int getSampleRateheavy_bench(heavy_bench* RESTRICT dsp) {
+    return dsp->fSampleRate;
+}
+
+int getNumInputsheavy_bench(heavy_bench* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+int getNumOutputsheavy_bench(heavy_bench* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+void classInitheavy_bench(int sample_rate) {
+    (void)sample_rate;
+}
+
+void instanceConstantsheavy_bench(heavy_bench* dsp, int sample_rate) {
+    dsp->fSampleRate = sample_rate;
+}
+
+void instanceResetUserInterfaceheavy_bench(heavy_bench* dsp) {
+    dsp->s0 = (FAUSTFLOAT)(0.0f);
+    dsp->s1 = (FAUSTFLOAT)(0.0f);
+    dsp->s2 = (FAUSTFLOAT)(0.0f);
+    dsp->s3 = (FAUSTFLOAT)(0.0f);
+    dsp->s4 = (FAUSTFLOAT)(0.0f);
+    dsp->s5 = (FAUSTFLOAT)(0.0f);
+    dsp->s6 = (FAUSTFLOAT)(0.0f);
+    dsp->s7 = (FAUSTFLOAT)(0.0f);
+    dsp->s8 = (FAUSTFLOAT)(0.0f);
+    dsp->s9 = (FAUSTFLOAT)(0.0f);
+    dsp->s10 = (FAUSTFLOAT)(0.0f);
+    dsp->s11 = (FAUSTFLOAT)(0.0f);
+}
+
+void instanceClearheavy_bench(heavy_bench* dsp) {
+    (void)dsp;
+}
+
+void instanceInitheavy_bench(heavy_bench* dsp, int sample_rate) {
+    instanceConstantsheavy_bench(dsp, sample_rate);
+    instanceResetUserInterfaceheavy_bench(dsp);
+    instanceClearheavy_bench(dsp);
+}
+
+void initheavy_bench(heavy_bench* dsp, int sample_rate) {
+    classInitheavy_bench(sample_rate);
+    instanceInitheavy_bench(dsp, sample_rate);
+}
+
+void buildUserInterfaceheavy_bench(heavy_bench* dsp, UIGlue* ui_interface) {
+    (void)dsp;
+    (void)ui_interface;
+}
+
+void computeheavy_bench(heavy_bench* dsp, int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    for (int i0 = 0; i0 < count; i0 = i0 + 1) {
+        FAUSTFLOAT acc = input0[i0];
+        dsp->s0 = ((((acc + dsp->s0) * 0.6200000047683716f) - (((((acc + dsp->s0) * 0.6200000047683716f) * ((acc + dsp->s0) * 0.6200000047683716f)) * ((acc + dsp->s0) * 0.6200000047683716f)) * 0.05000000074505806f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s0) * 0.6200000047683716f) - (((((acc + dsp->s0) * 0.6200000047683716f) * ((acc + dsp->s0) * 0.6200000047683716f)) * ((acc + dsp->s0) * 0.6200000047683716f)) * 0.05000000074505806f)) * 0.9700000286102295f);
+        dsp->s1 = ((((acc + dsp->s1) * 0.6330000162124634f) - (((((acc + dsp->s1) * 0.6330000162124634f) * ((acc + dsp->s1) * 0.6330000162124634f)) * ((acc + dsp->s1) * 0.6330000162124634f)) * 0.05400000140070915f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s1) * 0.6330000162124634f) - (((((acc + dsp->s1) * 0.6330000162124634f) * ((acc + dsp->s1) * 0.6330000162124634f)) * ((acc + dsp->s1) * 0.6330000162124634f)) * 0.05400000140070915f)) * 0.9700000286102295f);
+        dsp->s2 = ((((acc + dsp->s2) * 0.6460000276565552f) - (((((acc + dsp->s2) * 0.6460000276565552f) * ((acc + dsp->s2) * 0.6460000276565552f)) * ((acc + dsp->s2) * 0.6460000276565552f)) * 0.057999998331069946f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s2) * 0.6460000276565552f) - (((((acc + dsp->s2) * 0.6460000276565552f) * ((acc + dsp->s2) * 0.6460000276565552f)) * ((acc + dsp->s2) * 0.6460000276565552f)) * 0.057999998331069946f)) * 0.9700000286102295f);
+        dsp->s3 = ((((acc + dsp->s3) * 0.6589999794960022f) - (((((acc + dsp->s3) * 0.6589999794960022f) * ((acc + dsp->s3) * 0.6589999794960022f)) * ((acc + dsp->s3) * 0.6589999794960022f)) * 0.06199999898672104f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s3) * 0.6589999794960022f) - (((((acc + dsp->s3) * 0.6589999794960022f) * ((acc + dsp->s3) * 0.6589999794960022f)) * ((acc + dsp->s3) * 0.6589999794960022f)) * 0.06199999898672104f)) * 0.9700000286102295f);
+        dsp->s4 = ((((acc + dsp->s4) * 0.671999990940094f) - (((((acc + dsp->s4) * 0.671999990940094f) * ((acc + dsp->s4) * 0.671999990940094f)) * ((acc + dsp->s4) * 0.671999990940094f)) * 0.06599999964237213f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s4) * 0.671999990940094f) - (((((acc + dsp->s4) * 0.671999990940094f) * ((acc + dsp->s4) * 0.671999990940094f)) * ((acc + dsp->s4) * 0.671999990940094f)) * 0.06599999964237213f)) * 0.9700000286102295f);
+        dsp->s5 = ((((acc + dsp->s5) * 0.6850000023841858f) - (((((acc + dsp->s5) * 0.6850000023841858f) * ((acc + dsp->s5) * 0.6850000023841858f)) * ((acc + dsp->s5) * 0.6850000023841858f)) * 0.07000000029802322f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s5) * 0.6850000023841858f) - (((((acc + dsp->s5) * 0.6850000023841858f) * ((acc + dsp->s5) * 0.6850000023841858f)) * ((acc + dsp->s5) * 0.6850000023841858f)) * 0.07000000029802322f)) * 0.9700000286102295f);
+        dsp->s6 = ((((acc + dsp->s6) * 0.6980000138282776f) - (((((acc + dsp->s6) * 0.6980000138282776f) * ((acc + dsp->s6) * 0.6980000138282776f)) * ((acc + dsp->s6) * 0.6980000138282776f)) * 0.07400000095367432f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s6) * 0.6980000138282776f) - (((((acc + dsp->s6) * 0.6980000138282776f) * ((acc + dsp->s6) * 0.6980000138282776f)) * ((acc + dsp->s6) * 0.6980000138282776f)) * 0.07400000095367432f)) * 0.9700000286102295f);
+        dsp->s7 = ((((acc + dsp->s7) * 0.7110000252723694f) - (((((acc + dsp->s7) * 0.7110000252723694f) * ((acc + dsp->s7) * 0.7110000252723694f)) * ((acc + dsp->s7) * 0.7110000252723694f)) * 0.07800000160932541f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s7) * 0.7110000252723694f) - (((((acc + dsp->s7) * 0.7110000252723694f) * ((acc + dsp->s7) * 0.7110000252723694f)) * ((acc + dsp->s7) * 0.7110000252723694f)) * 0.07800000160932541f)) * 0.9700000286102295f);
+        dsp->s8 = ((((acc + dsp->s8) * 0.7239999771118164f) - (((((acc + dsp->s8) * 0.7239999771118164f) * ((acc + dsp->s8) * 0.7239999771118164f)) * ((acc + dsp->s8) * 0.7239999771118164f)) * 0.0820000022649765f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s8) * 0.7239999771118164f) - (((((acc + dsp->s8) * 0.7239999771118164f) * ((acc + dsp->s8) * 0.7239999771118164f)) * ((acc + dsp->s8) * 0.7239999771118164f)) * 0.0820000022649765f)) * 0.9700000286102295f);
+        dsp->s9 = ((((acc + dsp->s9) * 0.7369999885559082f) - (((((acc + dsp->s9) * 0.7369999885559082f) * ((acc + dsp->s9) * 0.7369999885559082f)) * ((acc + dsp->s9) * 0.7369999885559082f)) * 0.0860000029206276f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s9) * 0.7369999885559082f) - (((((acc + dsp->s9) * 0.7369999885559082f) * ((acc + dsp->s9) * 0.7369999885559082f)) * ((acc + dsp->s9) * 0.7369999885559082f)) * 0.0860000029206276f)) * 0.9700000286102295f);
+        dsp->s10 = ((((acc + dsp->s10) * 0.75f) - (((((acc + dsp->s10) * 0.75f) * ((acc + dsp->s10) * 0.75f)) * ((acc + dsp->s10) * 0.75f)) * 0.09000000357627869f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s10) * 0.75f) - (((((acc + dsp->s10) * 0.75f) * ((acc + dsp->s10) * 0.75f)) * ((acc + dsp->s10) * 0.75f)) * 0.09000000357627869f)) * 0.9700000286102295f);
+        dsp->s11 = ((((acc + dsp->s11) * 0.7630000114440918f) - (((((acc + dsp->s11) * 0.7630000114440918f) * ((acc + dsp->s11) * 0.7630000114440918f)) * ((acc + dsp->s11) * 0.7630000114440918f)) * 0.09399999678134918f)) * 0.9700000286102295f);
+        acc = ((((acc + dsp->s11) * 0.7630000114440918f) - (((((acc + dsp->s11) * 0.7630000114440918f) * ((acc + dsp->s11) * 0.7630000114440918f)) * ((acc + dsp->s11) * 0.7630000114440918f)) * 0.09399999678134918f)) * 0.9700000286102295f);
+        output0[i0] = (acc * 0.0833333358168602f);
+    }
+}
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+EXIT=0

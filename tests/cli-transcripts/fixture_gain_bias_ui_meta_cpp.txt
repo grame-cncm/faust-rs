@@ -1,0 +1,107 @@
+/* ------------------------------------------------------------
+name: "gain_bias_ui_meta"
+Code generated with Faust (https://faust.grame.fr)
+------------------------------------------------------------ */
+
+#ifndef  __gain_bias_ui_meta_H__
+#define  __gain_bias_ui_meta_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS gain_bias_ui_meta
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+
+class gain_bias_ui_meta : public dsp {
+private:
+    int fSampleRate;
+    FAUSTFLOAT fGain = 0.5;
+    FAUSTFLOAT fBias = 0.0;
+    FAUSTFLOAT fGate = 1.0;
+    FAUSTFLOAT fLevel = 0.0;
+public:
+    gain_bias_ui_meta() {
+    }
+
+    gain_bias_ui_meta(const gain_bias_ui_meta&) = default;
+
+    virtual ~gain_bias_ui_meta() = default;
+
+    gain_bias_ui_meta& operator=(const gain_bias_ui_meta&) = default;
+
+    virtual int getNumInputs() {
+        return 1;
+    }
+    virtual int getNumOutputs() {
+        return 1;
+    }
+    static void classInit(int sample_rate) {
+        (void)sample_rate;
+    }
+    virtual int getSampleRate() {
+        return fSampleRate;
+    }
+    virtual void instanceConstants(int sample_rate) {
+        fSampleRate = sample_rate;
+    }
+    virtual void instanceClear() {
+    }
+    virtual void init(int sample_rate) {
+        classInit(sample_rate);
+        instanceInit(sample_rate);
+    }
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    virtual gain_bias_ui_meta* clone() {
+        return new gain_bias_ui_meta(*this);
+    }
+    virtual void buildUserInterface(UI* ui_interface) {
+        ui_interface->openVerticalBox("GainBias");
+        ui_interface->addCheckButton("gate", &fGate);
+        ui_interface->addHorizontalSlider("gain", &fGain, FAUSTFLOAT(0.5), FAUSTFLOAT(0.0), FAUSTFLOAT(2.0), FAUSTFLOAT(0.001));
+        ui_interface->addNumEntry("bias", &fBias, FAUSTFLOAT(0.0), FAUSTFLOAT(-1.0), FAUSTFLOAT(1.0), FAUSTFLOAT(0.001));
+        ui_interface->addHorizontalBargraph("level", &fLevel, FAUSTFLOAT(0.0), FAUSTFLOAT(1.0));
+        ui_interface->closeBox();
+    }
+    virtual void metadata(Meta* m) {
+        m->declare("name", "gain-bias-ui-meta");
+        m->declare("author", "faust-rs");
+    }
+    virtual void instanceResetUserInterface() {
+        fGain = 0.5;
+        fBias = 0.0;
+        fGate = 1.0;
+    }
+    virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+        FAUSTFLOAT* input0 = inputs[0];
+        FAUSTFLOAT* output0 = outputs[0];
+        for (int i0 = 0; i0 < count; ++i0) {
+            fLevel = std::fabs(((double)(((((fGate > 0.0) ? input0[i0] : 0.0) * fGain) + fBias))));
+            output0[i0] = ((((fGate > 0.0) ? input0[i0] : 0.0) * fGain) + fBias);
+        }
+    }
+};
+
+#endif
+EXIT=0

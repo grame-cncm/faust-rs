@@ -1,0 +1,47 @@
+#116 Module { num_inputs: 0, num_outputs: 1, name: "mydsp", dsp_struct: TreeId(107), globals: TreeId(111), functions: TreeId(114), static_decls: TreeId(107) }
+  #107 Block([])
+  #111 Block([TreeId(11), TreeId(13), TreeId(15)])
+    #11 DeclareVar { name: "fFreq", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
+      #3 Float64 { value: 440.0, typ: Float64 }
+    #13 DeclareVar { name: "fGain", typ: FaustFloat, access: Struct, init: Some(TreeId(5)) }
+      #5 Float64 { value: 0.2, typ: Float64 }
+    #15 DeclareVar { name: "fPhase", typ: Float64, access: Struct, init: Some(TreeId(7)) }
+      #7 Float64 { value: 0.0, typ: Float64 }
+  #114 Block([TreeId(47), TreeId(106)])
+    #47 DeclareFun { name: "buildUserInterface", typ: Fun { args: [Ptr(Obj), UI], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "ui_interface", typ: UI }], body: Some(TreeId(32)), is_inline: false }
+      #32 Block([TreeId(18), TreeId(23), TreeId(26), TreeId(27)])
+        #18 OpenBox { typ: Vertical, label: "Oscillator" }
+        #23 AddSlider { typ: Horizontal, label: "freq", var: "fFreq", init: 440.0, lo: 20.0, hi: 3000.0, step: 1.0 }
+        #26 AddSlider { typ: Horizontal, label: "gain", var: "fGain", init: 0.2, lo: 0.0, hi: 1.0, step: 0.001 }
+        #27 CloseBox
+    #106 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(90)), is_inline: false }
+      #90 Block([TreeId(77), TreeId(87)])
+        #77 DeclareVar { name: "output0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(75)) }
+          #75 LoadTable { name: "outputs", access: FunArgs, index: TreeId(72), typ: Ptr(FaustFloat) }
+            #72 Int32 { value: 0, typ: Int32 }
+        #87 SimpleForLoop { var: "i0", upper: TreeId(83), body: TreeId(86), is_reverse: false }
+          #83 LoadVar { name: "count", access: FunArgs, typ: Int32 }
+          #86 Block([TreeId(64), TreeId(81)])
+            #64 StoreVar { name: "fPhase", access: Struct, value: TreeId(63) }
+              #63 Select2 { cond: TreeId(62), then_value: TreeId(59), else_value: TreeId(58), typ: Float64 }
+                #62 BinOp { op: Ge, lhs: TreeId(58), rhs: TreeId(53), typ: Bool }
+                  #58 BinOp { op: Add, lhs: TreeId(50), rhs: TreeId(57), typ: Float64 }
+                    #50 LoadVar { name: "fPhase", access: Struct, typ: Float64 }
+                    #57 BinOp { op: Div, lhs: TreeId(48), rhs: TreeId(52), typ: Float64 }
+                      #48 LoadVar { name: "fFreq", access: Struct, typ: FaustFloat }
+                      #52 Float64 { value: 48000.0, typ: Float64 }
+                  #53 Float64 { value: 1.0, typ: Float64 }
+                #59 BinOp { op: Sub, lhs: TreeId(58), rhs: TreeId(53), typ: Float64 }
+                  #58 BinOp { op: Add, lhs: TreeId(50), rhs: TreeId(57), typ: Float64 }
+                  #53 Float64 { value: 1.0, typ: Float64 }
+                #58 BinOp { op: Add, lhs: TreeId(50), rhs: TreeId(57), typ: Float64 }
+            #81 StoreTable { name: "output0", access: Stack, index: TreeId(80), value: TreeId(70) }
+              #80 LoadVar { name: "i0", access: Loop, typ: Int32 }
+              #70 BinOp { op: Mul, lhs: TreeId(49), rhs: TreeId(69), typ: Float64 }
+                #49 LoadVar { name: "fGain", access: Struct, typ: FaustFloat }
+                #69 FunCall { name: "sin", args: [TreeId(66)], typ: Float64 }
+                  #66 BinOp { op: Mul, lhs: TreeId(55), rhs: TreeId(63), typ: Float64 }
+                    #55 Float64 { value: 6.283185307179586, typ: Float64 }
+                    #63 Select2 { cond: TreeId(62), then_value: TreeId(59), else_value: TreeId(58), typ: Float64 }
+  #107 Block([])
+EXIT=0

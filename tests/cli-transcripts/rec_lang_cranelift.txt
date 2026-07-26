@@ -1,0 +1,9 @@
+backend: cranelift (experimental)
+module: rec
+compute_symbol: rec::compute
+compute_entry_addr: 0xNORMALIZED
+compute_body_lowered: true
+dsp_struct_layout: size=20 align=4 fields=2
+  - fSampleRate @0 size=4 align=4 scalar:Int32
+  - fRec40 @4 size=16 align=4 table:Float32[4]
+EXIT=0

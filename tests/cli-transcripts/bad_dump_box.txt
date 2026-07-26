@@ -1,0 +1,2 @@
+cons(cons(BOXIDENT(sym("process")), cons(nil, BOXIDENT(sym("undefined_thing")))), nil)
+EXIT=0

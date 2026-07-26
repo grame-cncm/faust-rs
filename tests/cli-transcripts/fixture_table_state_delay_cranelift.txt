@@ -1,0 +1,9 @@
+backend: cranelift (experimental)
+module: table_state_delay
+compute_symbol: table_state_delay::compute
+compute_entry_addr: 0xNORMALIZED
+compute_body_lowered: true
+dsp_struct_layout: size=20 align=4 fields=2
+  - fWriteIdx @0 size=4 align=4 scalar:Int32
+  - fDelay @4 size=16 align=4 table:FaustFloat[4]
+EXIT=0

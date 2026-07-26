@@ -1,0 +1,2 @@
+cons(cons(BOXIDENT(sym("process")), cons(nil, BOXSEQ(BOXWIRE(), BOXSEQ(BOXREC(BOXADD(), BOXAPPL(BOXMUL(), cons(float_bits(0x3fe0000000000000), nil))), BOXAPPL(BOXDELAY(), cons(int(3), nil)))))), nil)
+EXIT=0

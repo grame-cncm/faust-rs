@@ -1,0 +1,137 @@
+#ifndef  __control_flow_H__
+#define  __control_flow_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+#include <math.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS control_flow
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+static inline int faustmini(int a, int b) { return (a < b) ? a : b; }
+static inline int faustmaxi(int a, int b) { return (a > b) ? a : b; }
+
+
+typedef struct {
+    int fMode;
+    int fSampleRate;
+} control_flow;
+
+control_flow* newcontrol_flow() {
+    control_flow* dsp = (control_flow*)calloc(1, sizeof(control_flow));
+    return dsp;
+}
+
+void deletecontrol_flow(control_flow* dsp) {
+    free(dsp);
+}
+
+void metadatacontrol_flow(MetaGlue* m) {
+    m->declare(m->metaInterface, "faust-rs", "module-first c backend prototype");
+}
+
+int getSampleRatecontrol_flow(control_flow* RESTRICT dsp) {
+    return dsp->fSampleRate;
+}
+
+int getNumInputscontrol_flow(control_flow* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+int getNumOutputscontrol_flow(control_flow* RESTRICT dsp) {
+    (void)dsp;
+    return 1;
+}
+
+void classInitcontrol_flow(int sample_rate) {
+    (void)sample_rate;
+}
+
+void instanceConstantscontrol_flow(control_flow* dsp, int sample_rate) {
+    dsp->fSampleRate = sample_rate;
+}
+
+void instanceResetUserInterfacecontrol_flow(control_flow* dsp) {
+    dsp->fMode = (int)(1);
+}
+
+void instanceClearcontrol_flow(control_flow* dsp) {
+    (void)dsp;
+}
+
+void instanceInitcontrol_flow(control_flow* dsp, int sample_rate) {
+    instanceConstantscontrol_flow(dsp, sample_rate);
+    instanceResetUserInterfacecontrol_flow(dsp);
+    instanceClearcontrol_flow(dsp);
+}
+
+void initcontrol_flow(control_flow* dsp, int sample_rate) {
+    classInitcontrol_flow(sample_rate);
+    instanceInitcontrol_flow(dsp, sample_rate);
+}
+
+void buildUserInterfacecontrol_flow(control_flow* dsp, UIGlue* ui_interface) {
+    (void)dsp;
+    (void)ui_interface;
+}
+
+void computecontrol_flow(control_flow* dsp, int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+    FAUSTFLOAT* input0 = inputs[0];
+    FAUSTFLOAT* output0 = outputs[0];
+    int acc = 0;
+    for (int i0 = 0; i0 < count; i0 = i0 + 1) {
+        acc = (acc + dsp->fMode);
+        if (input0[i0] > 0.0) {
+            dsp->fMode = ((input0[i0] > 0.0) ? 1 : 2);
+        }
+        if (input0[i0] > 0.0) {
+            (void)(input0[i0]);
+        }
+        else {
+            (void)((-input0[i0]));
+        }
+        switch (dsp->fMode) {
+        case 0: {
+            output0[i0] = input0[i0];
+            break;
+        }
+        case 1: {
+            output0[i0] = (-input0[i0]);
+            break;
+        }
+        default: {
+            output0[i0] = fabs(((double)(input0[i0])));
+            break;
+        }
+        }
+    }
+}
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+EXIT=0

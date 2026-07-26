@@ -1,0 +1,106 @@
+/* ------------------------------------------------------------
+name: "table_state_delay"
+Code generated with Faust (https://faust.grame.fr)
+------------------------------------------------------------ */
+
+#ifndef  __table_state_delay_H__
+#define  __table_state_delay_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS table_state_delay
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+
+class table_state_delay : public dsp {
+private:
+    int fSampleRate;
+    int fWriteIdx = 0;
+    FAUSTFLOAT fDelay[4];
+public:
+    table_state_delay() {
+    }
+
+    table_state_delay(const table_state_delay&) = default;
+
+    virtual ~table_state_delay() = default;
+
+    table_state_delay& operator=(const table_state_delay&) = default;
+
+    virtual int getNumInputs() {
+        return 1;
+    }
+    virtual int getNumOutputs() {
+        return 1;
+    }
+    static void classInit(int sample_rate) {
+        (void)sample_rate;
+    }
+    virtual int getSampleRate() {
+        return fSampleRate;
+    }
+    virtual void instanceConstants(int sample_rate) {
+        fSampleRate = sample_rate;
+    }
+    virtual void instanceResetUserInterface() {
+        fWriteIdx = (int)(0);
+        fDelay[0] = (FAUSTFLOAT)(0.0f);
+        fDelay[1] = (FAUSTFLOAT)(0.0f);
+        fDelay[2] = (FAUSTFLOAT)(0.0f);
+        fDelay[3] = (FAUSTFLOAT)(0.0f);
+    }
+    virtual void instanceClear() {
+    }
+    virtual void init(int sample_rate) {
+        classInit(sample_rate);
+        instanceInit(sample_rate);
+    }
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    virtual table_state_delay* clone() {
+        return new table_state_delay(*this);
+    }
+    virtual void metadata(Meta* m) {
+        (void)m;
+        m->declare("filename", "table_state_delay.dsp");
+        m->declare("name", "table_state_delay");
+    }
+    virtual void buildUserInterface(UI* ui_interface) {
+        ui_interface->openVerticalBox("table_state_delay");
+        ui_interface->closeBox();
+    }
+    virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+        FAUSTFLOAT* input0 = inputs[0];
+        FAUSTFLOAT* output0 = outputs[0];
+        for (int i0 = 0; i0 < count; ++i0) {
+            FAUSTFLOAT tmpRead = fDelay[fWriteIdx];
+            fDelay[fWriteIdx] = input0[i0];
+            output0[i0] = tmpRead;
+            fWriteIdx = (((fWriteIdx + 1) >= 4) ? 0 : (fWriteIdx + 1));
+        }
+    }
+};
+
+#endif
+EXIT=0

@@ -1,0 +1,6 @@
+FIR verify: errors=0 warnings=4 strict=false status=OK
+- warning [FIR-M07] expected DSP API function 'classInit' is not declared [node=157]
+- warning [FIR-M07] expected DSP API function 'instanceInit' is not declared [node=157]
+- warning [FIR-M07] expected DSP API function 'init' is not declared [node=157]
+- warning [FIR-M07] expected DSP API function 'getSampleRate' is not declared [node=157]
+EXIT=0

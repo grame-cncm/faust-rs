@@ -1,0 +1,145 @@
+/* ------------------------------------------------------------
+name: "heavy_bench"
+Code generated with Faust (https://faust.grame.fr)
+------------------------------------------------------------ */
+
+#ifndef  __heavy_bench_H__
+#define  __heavy_bench_H__
+
+#ifndef FAUSTFLOAT
+#define FAUSTFLOAT float
+#endif
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+
+#ifndef FAUSTCLASS
+#define FAUSTCLASS heavy_bench
+#endif
+
+#ifdef __APPLE__
+#define exp10f __exp10f
+#define exp10 __exp10
+#endif
+
+#if defined(_WIN32)
+#define RESTRICT __restrict
+#else
+#define RESTRICT __restrict__
+#endif
+
+
+class heavy_bench : public dsp {
+private:
+    int fSampleRate;
+    FAUSTFLOAT s0 = 0.0f;
+    FAUSTFLOAT s1 = 0.0f;
+    FAUSTFLOAT s2 = 0.0f;
+    FAUSTFLOAT s3 = 0.0f;
+    FAUSTFLOAT s4 = 0.0f;
+    FAUSTFLOAT s5 = 0.0f;
+    FAUSTFLOAT s6 = 0.0f;
+    FAUSTFLOAT s7 = 0.0f;
+    FAUSTFLOAT s8 = 0.0f;
+    FAUSTFLOAT s9 = 0.0f;
+    FAUSTFLOAT s10 = 0.0f;
+    FAUSTFLOAT s11 = 0.0f;
+public:
+    heavy_bench() {
+    }
+
+    heavy_bench(const heavy_bench&) = default;
+
+    virtual ~heavy_bench() = default;
+
+    heavy_bench& operator=(const heavy_bench&) = default;
+
+    virtual int getNumInputs() {
+        return 1;
+    }
+    virtual int getNumOutputs() {
+        return 1;
+    }
+    static void classInit(int sample_rate) {
+        (void)sample_rate;
+    }
+    virtual int getSampleRate() {
+        return fSampleRate;
+    }
+    virtual void instanceConstants(int sample_rate) {
+        fSampleRate = sample_rate;
+    }
+    virtual void instanceResetUserInterface() {
+        s0 = (FAUSTFLOAT)(0.0f);
+        s1 = (FAUSTFLOAT)(0.0f);
+        s2 = (FAUSTFLOAT)(0.0f);
+        s3 = (FAUSTFLOAT)(0.0f);
+        s4 = (FAUSTFLOAT)(0.0f);
+        s5 = (FAUSTFLOAT)(0.0f);
+        s6 = (FAUSTFLOAT)(0.0f);
+        s7 = (FAUSTFLOAT)(0.0f);
+        s8 = (FAUSTFLOAT)(0.0f);
+        s9 = (FAUSTFLOAT)(0.0f);
+        s10 = (FAUSTFLOAT)(0.0f);
+        s11 = (FAUSTFLOAT)(0.0f);
+    }
+    virtual void instanceClear() {
+    }
+    virtual void init(int sample_rate) {
+        classInit(sample_rate);
+        instanceInit(sample_rate);
+    }
+    virtual void instanceInit(int sample_rate) {
+        instanceConstants(sample_rate);
+        instanceResetUserInterface();
+        instanceClear();
+    }
+    virtual heavy_bench* clone() {
+        return new heavy_bench(*this);
+    }
+    virtual void metadata(Meta* m) {
+        (void)m;
+        m->declare("filename", "heavy_bench.dsp");
+        m->declare("name", "heavy_bench");
+    }
+    virtual void buildUserInterface(UI* ui_interface) {
+        ui_interface->openVerticalBox("heavy_bench");
+        ui_interface->closeBox();
+    }
+    virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {
+        FAUSTFLOAT* input0 = inputs[0];
+        FAUSTFLOAT* output0 = outputs[0];
+        for (int i0 = 0; i0 < count; ++i0) {
+            FAUSTFLOAT acc = input0[i0];
+            s0 = ((((acc + s0) * 0.6200000047683716f) - (((((acc + s0) * 0.6200000047683716f) * ((acc + s0) * 0.6200000047683716f)) * ((acc + s0) * 0.6200000047683716f)) * 0.05000000074505806f)) * 0.9700000286102295f);
+            acc = ((((acc + s0) * 0.6200000047683716f) - (((((acc + s0) * 0.6200000047683716f) * ((acc + s0) * 0.6200000047683716f)) * ((acc + s0) * 0.6200000047683716f)) * 0.05000000074505806f)) * 0.9700000286102295f);
+            s1 = ((((acc + s1) * 0.6330000162124634f) - (((((acc + s1) * 0.6330000162124634f) * ((acc + s1) * 0.6330000162124634f)) * ((acc + s1) * 0.6330000162124634f)) * 0.05400000140070915f)) * 0.9700000286102295f);
+            acc = ((((acc + s1) * 0.6330000162124634f) - (((((acc + s1) * 0.6330000162124634f) * ((acc + s1) * 0.6330000162124634f)) * ((acc + s1) * 0.6330000162124634f)) * 0.05400000140070915f)) * 0.9700000286102295f);
+            s2 = ((((acc + s2) * 0.6460000276565552f) - (((((acc + s2) * 0.6460000276565552f) * ((acc + s2) * 0.6460000276565552f)) * ((acc + s2) * 0.6460000276565552f)) * 0.057999998331069946f)) * 0.9700000286102295f);
+            acc = ((((acc + s2) * 0.6460000276565552f) - (((((acc + s2) * 0.6460000276565552f) * ((acc + s2) * 0.6460000276565552f)) * ((acc + s2) * 0.6460000276565552f)) * 0.057999998331069946f)) * 0.9700000286102295f);
+            s3 = ((((acc + s3) * 0.6589999794960022f) - (((((acc + s3) * 0.6589999794960022f) * ((acc + s3) * 0.6589999794960022f)) * ((acc + s3) * 0.6589999794960022f)) * 0.06199999898672104f)) * 0.9700000286102295f);
+            acc = ((((acc + s3) * 0.6589999794960022f) - (((((acc + s3) * 0.6589999794960022f) * ((acc + s3) * 0.6589999794960022f)) * ((acc + s3) * 0.6589999794960022f)) * 0.06199999898672104f)) * 0.9700000286102295f);
+            s4 = ((((acc + s4) * 0.671999990940094f) - (((((acc + s4) * 0.671999990940094f) * ((acc + s4) * 0.671999990940094f)) * ((acc + s4) * 0.671999990940094f)) * 0.06599999964237213f)) * 0.9700000286102295f);
+            acc = ((((acc + s4) * 0.671999990940094f) - (((((acc + s4) * 0.671999990940094f) * ((acc + s4) * 0.671999990940094f)) * ((acc + s4) * 0.671999990940094f)) * 0.06599999964237213f)) * 0.9700000286102295f);
+            s5 = ((((acc + s5) * 0.6850000023841858f) - (((((acc + s5) * 0.6850000023841858f) * ((acc + s5) * 0.6850000023841858f)) * ((acc + s5) * 0.6850000023841858f)) * 0.07000000029802322f)) * 0.9700000286102295f);
+            acc = ((((acc + s5) * 0.6850000023841858f) - (((((acc + s5) * 0.6850000023841858f) * ((acc + s5) * 0.6850000023841858f)) * ((acc + s5) * 0.6850000023841858f)) * 0.07000000029802322f)) * 0.9700000286102295f);
+            s6 = ((((acc + s6) * 0.6980000138282776f) - (((((acc + s6) * 0.6980000138282776f) * ((acc + s6) * 0.6980000138282776f)) * ((acc + s6) * 0.6980000138282776f)) * 0.07400000095367432f)) * 0.9700000286102295f);
+            acc = ((((acc + s6) * 0.6980000138282776f) - (((((acc + s6) * 0.6980000138282776f) * ((acc + s6) * 0.6980000138282776f)) * ((acc + s6) * 0.6980000138282776f)) * 0.07400000095367432f)) * 0.9700000286102295f);
+            s7 = ((((acc + s7) * 0.7110000252723694f) - (((((acc + s7) * 0.7110000252723694f) * ((acc + s7) * 0.7110000252723694f)) * ((acc + s7) * 0.7110000252723694f)) * 0.07800000160932541f)) * 0.9700000286102295f);
+            acc = ((((acc + s7) * 0.7110000252723694f) - (((((acc + s7) * 0.7110000252723694f) * ((acc + s7) * 0.7110000252723694f)) * ((acc + s7) * 0.7110000252723694f)) * 0.07800000160932541f)) * 0.9700000286102295f);
+            s8 = ((((acc + s8) * 0.7239999771118164f) - (((((acc + s8) * 0.7239999771118164f) * ((acc + s8) * 0.7239999771118164f)) * ((acc + s8) * 0.7239999771118164f)) * 0.0820000022649765f)) * 0.9700000286102295f);
+            acc = ((((acc + s8) * 0.7239999771118164f) - (((((acc + s8) * 0.7239999771118164f) * ((acc + s8) * 0.7239999771118164f)) * ((acc + s8) * 0.7239999771118164f)) * 0.0820000022649765f)) * 0.9700000286102295f);
+            s9 = ((((acc + s9) * 0.7369999885559082f) - (((((acc + s9) * 0.7369999885559082f) * ((acc + s9) * 0.7369999885559082f)) * ((acc + s9) * 0.7369999885559082f)) * 0.0860000029206276f)) * 0.9700000286102295f);
+            acc = ((((acc + s9) * 0.7369999885559082f) - (((((acc + s9) * 0.7369999885559082f) * ((acc + s9) * 0.7369999885559082f)) * ((acc + s9) * 0.7369999885559082f)) * 0.0860000029206276f)) * 0.9700000286102295f);
+            s10 = ((((acc + s10) * 0.75f) - (((((acc + s10) * 0.75f) * ((acc + s10) * 0.75f)) * ((acc + s10) * 0.75f)) * 0.09000000357627869f)) * 0.9700000286102295f);
+            acc = ((((acc + s10) * 0.75f) - (((((acc + s10) * 0.75f) * ((acc + s10) * 0.75f)) * ((acc + s10) * 0.75f)) * 0.09000000357627869f)) * 0.9700000286102295f);
+            s11 = ((((acc + s11) * 0.7630000114440918f) - (((((acc + s11) * 0.7630000114440918f) * ((acc + s11) * 0.7630000114440918f)) * ((acc + s11) * 0.7630000114440918f)) * 0.09399999678134918f)) * 0.9700000286102295f);
+            acc = ((((acc + s11) * 0.7630000114440918f) - (((((acc + s11) * 0.7630000114440918f) * ((acc + s11) * 0.7630000114440918f)) * ((acc + s11) * 0.7630000114440918f)) * 0.09399999678134918f)) * 0.9700000286102295f);
+            output0[i0] = (acc * 0.0833333358168602f);
+        }
+    }
+};
+
+#endif
+EXIT=0

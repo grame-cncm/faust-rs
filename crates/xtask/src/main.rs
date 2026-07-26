@@ -89,6 +89,8 @@ Usage:
   cargo run --release -p xtask -- vector-compile-budget-check [--baseline tests/vector-compile-budget/release-baseline.json]
   cargo run -p xtask -- lockstep-simd-check
   cargo run -p xtask -- structure-check
+  cargo run -p xtask -- cli-transcript-gen
+  cargo run -p xtask -- cli-transcript-check
   cargo run -p xtask -- emission-determinism [--passes N] [--allowlist FILE] [--write-unstable FILE] [--case STEM]...
 \nEnvironment for golden-gen-cpp:
   FAUST_CPP_BIN   Path to reference C++ faust binary
@@ -181,6 +183,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "vector-coverage-merge" => vector_coverage_merge(args)?,
         "vector-coverage-check" => vector_coverage_check(args)?,
         "structure-check" => structure_check()?,
+        "cli-transcript-gen" => cli_transcript_gen()?,
+        "cli-transcript-check" => cli_transcript_check()?,
         "vector-interp-opt-check" => vector_interp_opt_check(args)?,
         "vector-compile-budget-check" => vector_compile_budget_check(args)?,
         "lockstep-simd-check" => lockstep_simd_check(args)?,
@@ -194,6 +198,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 mod backend_align;
+mod cli_transcript;
 mod code_graphs;
 mod corpus_status_query;
 mod emission_determinism;
@@ -212,6 +217,7 @@ mod vector_coverage;
 mod wasm;
 
 pub(crate) use backend_align::*;
+pub(crate) use cli_transcript::*;
 pub(crate) use code_graphs::*;
 pub(crate) use corpus_status_query::*;
 pub(crate) use emission_determinism::*;

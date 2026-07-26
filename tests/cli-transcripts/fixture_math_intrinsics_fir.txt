@@ -1,0 +1,38 @@
+#89 Module { num_inputs: 1, num_outputs: 1, name: "math_intrinsics", dsp_struct: TreeId(84), globals: TreeId(84), functions: TreeId(86), static_decls: TreeId(84) }
+  #84 Block([])
+  #84 Block([])
+  #86 Block([TreeId(83)])
+    #83 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(63)), is_inline: false }
+      #63 Block([TreeId(12), TreeId(14), TreeId(59)])
+        #12 DeclareVar { name: "input0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(8)) }
+          #8 LoadTable { name: "inputs", access: FunArgs, index: TreeId(3), typ: Ptr(FaustFloat) }
+            #3 Int32 { value: 0, typ: Int32 }
+        #14 DeclareVar { name: "output0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(10)) }
+          #10 LoadTable { name: "outputs", access: FunArgs, index: TreeId(3), typ: Ptr(FaustFloat) }
+            #3 Int32 { value: 0, typ: Int32 }
+        #59 SimpleForLoop { var: "i0", upper: TreeId(16), body: TreeId(58), is_reverse: false }
+          #16 LoadVar { name: "count", access: FunArgs, typ: Int32 }
+          #58 Block([TreeId(56)])
+            #56 StoreTable { name: "output0", access: Stack, index: TreeId(19), value: TreeId(55) }
+              #19 LoadVar { name: "i0", access: Loop, typ: Int32 }
+              #55 BinOp { op: Add, lhs: TreeId(53), rhs: TreeId(54), typ: Float64 }
+                #53 BinOp { op: Mul, lhs: TreeId(47), rhs: TreeId(31), typ: Float64 }
+                  #47 FunCall { name: "fmax", args: [TreeId(41), TreeId(43)], typ: Float64 }
+                    #41 FunCall { name: "fmin", args: [TreeId(35), TreeId(37)], typ: Float64 }
+                      #35 FunCall { name: "pow", args: [TreeId(25), TreeId(31)], typ: Float64 }
+                        #25 FunCall { name: "fabs", args: [TreeId(22)], typ: Float64 }
+                          #22 Cast { typ: Float64, value: TreeId(20) }
+                            #20 LoadTable { name: "input0", access: Stack, index: TreeId(19), typ: FaustFloat }
+                              #19 LoadVar { name: "i0", access: Loop, typ: Int32 }
+                        #31 Float64 { value: 0.5, typ: Float64 }
+                      #37 Float64 { value: 1.0, typ: Float64 }
+                    #43 Float64 { value: -1.0, typ: Float64 }
+                  #31 Float64 { value: 0.5, typ: Float64 }
+                #54 Neg { value: TreeId(51), typ: Float64 }
+                  #51 FunCall { name: "atan2", args: [TreeId(27), TreeId(29)], typ: Float64 }
+                    #27 FunCall { name: "sin", args: [TreeId(22)], typ: Float64 }
+                      #22 Cast { typ: Float64, value: TreeId(20) }
+                    #29 FunCall { name: "cos", args: [TreeId(22)], typ: Float64 }
+                      #22 Cast { typ: Float64, value: TreeId(20) }
+  #84 Block([])
+EXIT=0

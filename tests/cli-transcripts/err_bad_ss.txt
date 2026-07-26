@@ -1,0 +1,4 @@
+error: invalid value 'abc' for '--scheduling-strategy <SCHEDULING_STRATEGY>': invalid digit found in string
+
+For more information, try '--help'.
+EXIT=2

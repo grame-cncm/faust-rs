@@ -54,15 +54,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         }
         emit_output(&rendered, cli.output.as_ref());
         if cli.dump_json {
-            let output = require_companion_output_path(cli);
-            let compile_options = compile_options_json_string(Some("fir"), cli.double);
-            match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
-                Ok(json) => emit_json_companion_output(&json, output),
-                Err(err) => {
-                    eprintln!("JSON fixture generation failed: {err}");
-                    std::process::exit(1);
-                }
-            }
+            emit_fixture_json_companion(cli, &store, module, "fir");
         }
         return;
     }
@@ -72,16 +64,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             Ok(fbc_text) => {
                 emit_output(&fbc_text, cli.output.as_ref());
                 if cli.dump_json {
-                    let output = require_companion_output_path(cli);
-                    let compile_options = compile_options_json_string(Some("interp"), cli.double);
-                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
-                    {
-                        Ok(json) => emit_json_companion_output(&json, output),
-                        Err(err) => {
-                            eprintln!("JSON fixture generation failed: {err}");
-                            std::process::exit(1);
-                        }
-                    }
+                    emit_fixture_json_companion(cli, &store, module, "interp");
                 }
             }
             Err(err) => {
@@ -106,15 +89,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         let rendered = render_cranelift_report(&compiled, subset_gap.ok().flatten().as_deref());
         emit_output(&rendered, cli.output.as_ref());
         if cli.dump_json {
-            let output = require_companion_output_path(cli);
-            let compile_options = compile_options_json_string(Some("cranelift"), cli.double);
-            match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
-                Ok(json) => emit_json_companion_output(&json, output),
-                Err(err) => {
-                    eprintln!("JSON fixture generation failed: {err}");
-                    std::process::exit(1);
-                }
-            }
+            emit_fixture_json_companion(cli, &store, module, "cranelift");
         }
         return;
     }
@@ -157,16 +132,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
                 let wast = render_wast_output(&wasm.wasm_binary);
                 emit_output(&wast, cli.output.as_ref());
                 if cli.dump_json {
-                    let output = require_companion_output_path(cli);
-                    let compile_options = compile_options_json_string(Some("wast"), cli.double);
-                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
-                    {
-                        Ok(json) => emit_json_companion_output(&json, output),
-                        Err(err) => {
-                            eprintln!("JSON fixture generation failed: {err}");
-                            std::process::exit(1);
-                        }
-                    }
+                    emit_fixture_json_companion(cli, &store, module, "wast");
                 }
             }
             Err(err) => {
@@ -192,16 +158,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             Ok(asc) => {
                 emit_output(&asc, cli.output.as_ref());
                 if cli.dump_json {
-                    let output = require_companion_output_path(cli);
-                    let compile_options = compile_options_json_string(Some("asc"), cli.double);
-                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
-                    {
-                        Ok(json) => emit_json_companion_output(&json, output),
-                        Err(err) => {
-                            eprintln!("JSON fixture generation failed: {err}");
-                            std::process::exit(1);
-                        }
-                    }
+                    emit_fixture_json_companion(cli, &store, module, "asc");
                 }
             }
             Err(err) => {
@@ -222,16 +179,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
                 let rendered = wrap_backend_with_architecture(&julia, cli);
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
-                    let output = require_companion_output_path(cli);
-                    let compile_options = compile_options_json_string(Some("julia"), cli.double);
-                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
-                    {
-                        Ok(json) => emit_json_companion_output(&json, output),
-                        Err(err) => {
-                            eprintln!("JSON fixture generation failed: {err}");
-                            std::process::exit(1);
-                        }
-                    }
+                    emit_fixture_json_companion(cli, &store, module, "julia");
                 }
             }
             Err(err) => {
@@ -251,16 +199,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             Ok(rust) => {
                 emit_output(&rust, cli.output.as_ref());
                 if cli.dump_json {
-                    let output = require_companion_output_path(cli);
-                    let compile_options = compile_options_json_string(Some("rust"), cli.double);
-                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
-                    {
-                        Ok(json) => emit_json_companion_output(&json, output),
-                        Err(err) => {
-                            eprintln!("JSON fixture generation failed: {err}");
-                            std::process::exit(1);
-                        }
-                    }
+                    emit_fixture_json_companion(cli, &store, module, "rust");
                 }
             }
             Err(err) => {
@@ -325,16 +264,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
                 };
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
-                    let output = require_companion_output_path(cli);
-                    let compile_options = compile_options_json_string(Some("cpp"), cli.double);
-                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
-                    {
-                        Ok(json) => emit_json_companion_output(&json, output),
-                        Err(err) => {
-                            eprintln!("JSON fixture generation failed: {err}");
-                            std::process::exit(1);
-                        }
-                    }
+                    emit_fixture_json_companion(cli, &store, module, "cpp");
                 }
             }
             Err(err) => {
@@ -376,16 +306,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
                 };
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
-                    let output = require_companion_output_path(cli);
-                    let compile_options = compile_options_json_string(Some("c"), cli.double);
-                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
-                    {
-                        Ok(json) => emit_json_companion_output(&json, output),
-                        Err(err) => {
-                            eprintln!("JSON fixture generation failed: {err}");
-                            std::process::exit(1);
-                        }
-                    }
+                    emit_fixture_json_companion(cli, &store, module, "c");
                 }
             }
             Err(err) => {
@@ -397,4 +318,31 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     }
 
     print_global_usage_and_exit();
+}
+
+/// Emits the `--json` companion for a fixture-mode run.
+///
+/// The counterpart of [`emit_cli_json_companion_for_backend`] for this ladder:
+/// the JSON is rebuilt from the already-lowered fixture module instead of by
+/// compiling a source file, so `backend` only names the emission in the
+/// `compile_options` provenance string.
+///
+/// Two companion sites deliberately do NOT go through here: the WASM branch
+/// emits the module and its matched JSON together, and the standalone `--json`
+/// branch already holds the rendered text.
+fn emit_fixture_json_companion(
+    cli: &CliArgs,
+    store: &fir::FirStore,
+    module: fir::FirId,
+    backend: &str,
+) {
+    let output = require_companion_output_path(cli);
+    let compile_options = compile_options_json_string(Some(backend), cli.double);
+    match compile_fixture_to_json_text(store, module, compile_options, cli.double) {
+        Ok(json) => emit_json_companion_output(&json, output),
+        Err(err) => {
+            eprintln!("JSON fixture generation failed: {err}");
+            std::process::exit(1);
+        }
+    }
 }
