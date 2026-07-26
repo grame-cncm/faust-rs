@@ -598,16 +598,49 @@ pub fn render_fir_verify_report(store: &fir::FirStore, module: fir::FirId, stric
 pub fn run_main() {
     let args = normalize_legacy_args(std::env::args());
     let cli = CliArgs::parse_from(args);
-    if cli.version {
-        println!("{}", render_version_text());
+
+    if handle_early_exit_modes(&cli) {
         return;
     }
-    maybe_print_error_format_help(cli.help_error_format);
-    if let Some(info) = render_directory_info(&cli, &FaustInstallPaths::from_environment()) {
-        print!("{info}");
+    let cancel = spawn_timeout_watchdog(&cli);
+    if handle_fixture_listing(&cli) {
+        return;
+    }
+    let Some(mode_count) = validate_cli_arguments(&cli) else {
+        return;
+    };
+
+    if let Some(fixture_name) = cli.fir_fixture.as_deref() {
+        run_fir_fixture_mode(&cli, fixture_name, mode_count);
         return;
     }
 
+    let Some(input_path) = cli.input.as_ref() else {
+        print_global_usage_and_exit();
+    };
+    run_source_mode(&cli, input_path, &cancel, mode_count);
+}
+
+/// Handles the flags that print information and exit before any compilation:
+/// `--version`, `--help-error-format`, and the directory queries.
+///
+/// Returns `true` when one of them ran, meaning the caller must return.
+fn handle_early_exit_modes(cli: &CliArgs) -> bool {
+    if cli.version {
+        println!("{}", render_version_text());
+        return true;
+    }
+    maybe_print_error_format_help(cli.help_error_format);
+    if let Some(info) = render_directory_info(cli, &FaustInstallPaths::from_environment()) {
+        print!("{info}");
+        return true;
+    }
+    false
+}
+
+/// Arms the cooperative cancellation flag and, when `--timeout` is non-zero,
+/// the CLI watchdog thread that enforces it.
+fn spawn_timeout_watchdog(cli: &CliArgs) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
     // Cooperative cancellation flag + CLI watchdog.
     //
     // Two-pronged timeout approach:
@@ -638,16 +671,33 @@ pub fn run_main() {
             });
         }
     }
+    cancel
+}
 
+/// Handles `--list-fir-fixtures`. Returns `true` when it ran.
+fn handle_fixture_listing(cli: &CliArgs) -> bool {
     if cli.list_fir_fixtures {
         if cli.fir_fixture.is_some() || cli.input.is_some() {
             eprintln!("--list-fir-fixtures does not accept --fir-fixture or input file");
             std::process::exit(2);
         }
         emit_output(&render_fir_fixture_list(), cli.output.as_ref());
-        return;
+        return true;
     }
+    false
+}
 
+/// Rejects every unusable command line before any compilation starts, and
+/// returns how many output modes were selected.
+///
+/// `None` means the run is already over: the "no mode, no input" case prints
+/// the scaffold banner and there is nothing left to compile. A count of zero
+/// means "no explicit mode", so the caller falls back to the default C++
+/// emission.
+///
+/// Every rejection here exits with status 2, so the order of the checks decides
+/// which message a doubly-invalid command line reports — keep it stable.
+fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
     // Execution-option validation happens before any parsing or lowering
     // (plan §4.2): when `-lang` names the backend, consult the capability
     // table now; backend paths selected without `-lang` are enforced by the
@@ -656,9 +706,9 @@ pub fn run_main() {
         if let Some(lang) = cli.lang {
             if let Err(error) = compiler::execution::validate_execution_options(
                 cli_lang_name(lang),
-                selected_control_rate_mode(&cli),
-                selected_processing_api(&cli),
-                selected_compute_mode(&cli),
+                selected_control_rate_mode(cli),
+                selected_processing_api(cli),
+                selected_compute_mode(cli),
             ) {
                 eprintln!("ERROR : {error}");
                 std::process::exit(1);
@@ -705,7 +755,7 @@ pub fn run_main() {
 
     if mode_count == 0 && cli.input.is_none() && cli.fir_fixture.is_none() {
         println!("faust-rs compiler scaffold v{}", Compiler::version());
-        return;
+        return None;
     }
     if mode_count == 0 {
         // Default compile mode: C++ backend, aligned with Faust CLI behavior.
@@ -816,414 +866,392 @@ pub fn run_main() {
             std::process::exit(2);
         }
     }
+    Some(mode_count)
+}
 
-    if let Some(fixture_name) = cli.fir_fixture.as_deref() {
-        let Some(build_fixture) = find_fir_fixture(fixture_name) else {
-            eprintln!("Unknown FIR fixture: {fixture_name}");
-            eprintln!("{}", render_fir_fixture_list());
-            std::process::exit(2);
-        };
-        let (store, module) = build_fixture();
+/// Runs the `--fir-fixture` mode: the FIR module comes from a built-in fixture
+/// instead of a compiled DSP source, then goes through the same per-backend
+/// emission ladder.
+fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count: usize) {
+    let Some(build_fixture) = find_fir_fixture(fixture_name) else {
+        eprintln!("Unknown FIR fixture: {fixture_name}");
+        eprintln!("{}", render_fir_fixture_list());
+        std::process::exit(2);
+    };
+    let (store, module) = build_fixture();
 
-        if cli.dump_fir_verify {
-            let rendered = render_fir_verify_report(&store, module, cli.fir_verify_strict);
-            let report = verify_fir_module(&store, module);
-            let fatal = report.has_errors()
-                || (cli.fir_verify_strict && report.warnings().next().is_some());
-            emit_output(&rendered, cli.output.as_ref());
-            if fatal {
-                std::process::exit(1);
-            }
-            return;
+    if cli.dump_fir_verify {
+        let rendered = render_fir_verify_report(&store, module, cli.fir_verify_strict);
+        let report = verify_fir_module(&store, module);
+        let fatal =
+            report.has_errors() || (cli.fir_verify_strict && report.warnings().next().is_some());
+        emit_output(&rendered, cli.output.as_ref());
+        if fatal {
+            std::process::exit(1);
         }
+        return;
+    }
 
-        if cli.dump_fir || matches!(cli.lang, Some(CliLang::Fir)) {
-            let mut rendered = dump_fir(&store, module);
-            if !rendered.ends_with('\n') {
-                rendered.push('\n');
-            }
-            emit_output(&rendered, cli.output.as_ref());
-            if cli.dump_json {
-                let output = require_companion_output_path(&cli);
-                let compile_options = compile_options_json_string(Some("fir"), cli.double);
-                match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
-                    Ok(json) => emit_json_companion_output(&json, output),
-                    Err(err) => {
-                        eprintln!("JSON fixture generation failed: {err}");
-                        std::process::exit(1);
-                    }
-                }
-            }
-            return;
+    if cli.dump_fir || matches!(cli.lang, Some(CliLang::Fir)) {
+        let mut rendered = dump_fir(&store, module);
+        if !rendered.ends_with('\n') {
+            rendered.push('\n');
         }
-
-        if cli.dump_interp || matches!(cli.lang, Some(CliLang::Interp)) {
-            match compile_fixture_to_interp_text(&store, module, &InterpOptions::default()) {
-                Ok(fbc_text) => {
-                    emit_output(&fbc_text, cli.output.as_ref());
-                    if cli.dump_json {
-                        let output = require_companion_output_path(&cli);
-                        let compile_options =
-                            compile_options_json_string(Some("interp"), cli.double);
-                        match compile_fixture_to_json_text(
-                            &store,
-                            module,
-                            compile_options,
-                            cli.double,
-                        ) {
-                            Ok(json) => emit_json_companion_output(&json, output),
-                            Err(err) => {
-                                eprintln!("JSON fixture generation failed: {err}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    eprintln!("Interp fixture codegen failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-
-        if cli.dump_cranelift || matches!(cli.lang, Some(CliLang::Cranelift)) {
-            let subset_gap = diagnose_cranelift_compute_subset_gap(&store, module)
-                .map_err(|err| err.to_string());
-            let compiled =
-                match generate_cranelift_module(&store, module, &CraneliftOptions::default()) {
-                    Ok(compiled) => compiled,
-                    Err(err) => {
-                        eprintln!("Cranelift fixture codegen failed: {err}");
-                        std::process::exit(1);
-                    }
-                };
-            let rendered = render_cranelift_report(&compiled, subset_gap.ok().flatten().as_deref());
-            emit_output(&rendered, cli.output.as_ref());
-            if cli.dump_json {
-                let output = require_companion_output_path(&cli);
-                let compile_options = compile_options_json_string(Some("cranelift"), cli.double);
-                match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
-                    Ok(json) => emit_json_companion_output(&json, output),
-                    Err(err) => {
-                        eprintln!("JSON fixture generation failed: {err}");
-                        std::process::exit(1);
-                    }
-                }
-            }
-            return;
-        }
-
-        if matches!(cli.lang, Some(CliLang::Wasm)) {
-            match generate_wasm_module(
-                &store,
-                module,
-                &WasmOptions {
-                    double_precision: cli.double,
-                    ..WasmOptions::default()
-                },
-            ) {
-                Ok(wasm) => {
-                    if cli.dump_json {
-                        let output = require_companion_output_path(&cli);
-                        emit_wasm_output(&wasm.wasm_binary, &wasm.dsp_json, Some(output));
-                    } else {
-                        emit_binary_output(&wasm.wasm_binary, cli.output.as_ref());
-                    }
-                }
-                Err(err) => {
-                    eprintln!("WASM fixture codegen failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-
-        if matches!(cli.lang, Some(CliLang::Wast)) {
-            match generate_wasm_module(
-                &store,
-                module,
-                &WasmOptions {
-                    double_precision: cli.double,
-                    ..WasmOptions::default()
-                },
-            ) {
-                Ok(wasm) => {
-                    let wast = render_wast_output(&wasm.wasm_binary);
-                    emit_output(&wast, cli.output.as_ref());
-                    if cli.dump_json {
-                        let output = require_companion_output_path(&cli);
-                        let compile_options = compile_options_json_string(Some("wast"), cli.double);
-                        match compile_fixture_to_json_text(
-                            &store,
-                            module,
-                            compile_options,
-                            cli.double,
-                        ) {
-                            Ok(json) => emit_json_companion_output(&json, output),
-                            Err(err) => {
-                                eprintln!("JSON fixture generation failed: {err}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    eprintln!("WAST fixture codegen failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-
-        if matches!(cli.lang, Some(CliLang::Asc)) {
-            let options = AscOptions {
-                // Default to `mydsp` like every other backend. Passing `None`
-                // here made the generator fall back to the FIR module name,
-                // which on this path carries the source file stem — so
-                // `-lang asc foo.dsp` emitted `class foo` while `-lang cpp`,
-                // `-lang julia` and `-lang rust` all emitted `mydsp`.
-                class_name: selected_class_name(&cli).or_else(|| Some("mydsp".to_owned())),
-                double_precision: cli.double,
-                ..AscOptions::default()
-            };
-            match generate_asc_module(&store, module, &options) {
-                Ok(asc) => {
-                    emit_output(&asc, cli.output.as_ref());
-                    if cli.dump_json {
-                        let output = require_companion_output_path(&cli);
-                        let compile_options = compile_options_json_string(Some("asc"), cli.double);
-                        match compile_fixture_to_json_text(
-                            &store,
-                            module,
-                            compile_options,
-                            cli.double,
-                        ) {
-                            Ok(json) => emit_json_companion_output(&json, output),
-                            Err(err) => {
-                                eprintln!("JSON fixture generation failed: {err}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    eprintln!("AssemblyScript fixture codegen failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-
-        if matches!(cli.lang, Some(CliLang::Julia)) {
-            let options = JuliaOptions {
-                class_name: selected_class_name(&cli),
-                real_type: selected_julia_real_type(&cli),
-            };
-            match generate_julia_module(&store, module, &options) {
-                Ok(julia) => {
-                    let rendered = wrap_backend_with_architecture(&julia, &cli);
-                    emit_output(&rendered, cli.output.as_ref());
-                    if cli.dump_json {
-                        let output = require_companion_output_path(&cli);
-                        let compile_options =
-                            compile_options_json_string(Some("julia"), cli.double);
-                        match compile_fixture_to_json_text(
-                            &store,
-                            module,
-                            compile_options,
-                            cli.double,
-                        ) {
-                            Ok(json) => emit_json_companion_output(&json, output),
-                            Err(err) => {
-                                eprintln!("JSON fixture generation failed: {err}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    eprintln!("Julia fixture codegen failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-
-        if matches!(cli.lang, Some(CliLang::Rust)) {
-            let options = RustOptions {
-                class_name: selected_class_name(&cli).or_else(|| Some("mydsp".to_owned())),
-                faust_float_type: selected_rust_real_type(&cli),
-            };
-            match generate_rust_module(&store, module, &options) {
-                Ok(rust) => {
-                    emit_output(&rust, cli.output.as_ref());
-                    if cli.dump_json {
-                        let output = require_companion_output_path(&cli);
-                        let compile_options = compile_options_json_string(Some("rust"), cli.double);
-                        match compile_fixture_to_json_text(
-                            &store,
-                            module,
-                            compile_options,
-                            cli.double,
-                        ) {
-                            Ok(json) => emit_json_companion_output(&json, output),
-                            Err(err) => {
-                                eprintln!("JSON fixture generation failed: {err}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    eprintln!("Rust fixture codegen failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-
+        emit_output(&rendered, cli.output.as_ref());
         if cli.dump_json {
-            let compile_options =
-                compile_options_json_string(cli.lang.map(cli_lang_name), cli.double);
+            let output = require_companion_output_path(cli);
+            let compile_options = compile_options_json_string(Some("fir"), cli.double);
             match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
-                Ok(json) => {
-                    if cli.lang.is_some() {
-                        let output = require_companion_output_path(&cli);
-                        emit_json_companion_output(&json, output);
-                    } else {
-                        emit_output(&json, cli.output.as_ref());
-                    }
-                }
+                Ok(json) => emit_json_companion_output(&json, output),
                 Err(err) => {
                     eprintln!("JSON fixture generation failed: {err}");
                     std::process::exit(1);
                 }
             }
-            return;
         }
-
-        if cli.dump_cpp || matches!(cli.lang, Some(CliLang::Cpp)) || mode_count == 0 {
-            let options = CppOptions {
-                class_name: selected_class_name(&cli),
-                super_class_name: selected_super_class_name(&cli),
-                ..CppOptions::default()
-            };
-            match generate_cpp_module(&store, module, &options) {
-                Ok(cpp) => {
-                    let rendered = if let Some(architecture_file) = cli.architecture.as_ref() {
-                        let mut options = EnrobageOptions::new(architecture_file.clone());
-                        options.architecture_dirs = cli.architecture_dir.clone();
-                        options.inline_arch_files = cli.inline_architecture_files;
-                        if let Some(class_name) = selected_class_name(&cli) {
-                            options.class_name = class_name;
-                        }
-                        if let Some(super_class_name) = selected_super_class_name(&cli) {
-                            options.super_class_name = super_class_name;
-                        }
-                        let wrapped = match wrap_cpp_with_architecture(&cpp, &options) {
-                            Ok(wrapped) => wrapped,
-                            Err(err) => {
-                                eprintln!("Architecture wrapping failed: {err}");
-                                std::process::exit(1);
-                            }
-                        };
-                        if let Some(err) = wrapped.recoverable_error.as_deref() {
-                            eprintln!("{err}");
-                            std::process::exit(1);
-                        }
-                        wrapped.code
-                    } else {
-                        cpp
-                    };
-                    emit_output(&rendered, cli.output.as_ref());
-                    if cli.dump_json {
-                        let output = require_companion_output_path(&cli);
-                        let compile_options = compile_options_json_string(Some("cpp"), cli.double);
-                        match compile_fixture_to_json_text(
-                            &store,
-                            module,
-                            compile_options,
-                            cli.double,
-                        ) {
-                            Ok(json) => emit_json_companion_output(&json, output),
-                            Err(err) => {
-                                eprintln!("JSON fixture generation failed: {err}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    eprintln!("C++ fixture codegen failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-
-        if cli.dump_c || matches!(cli.lang, Some(CliLang::C)) {
-            let options = COptions {
-                class_name: selected_class_name(&cli),
-                ..COptions::default()
-            };
-            match generate_c_module(&store, module, &options) {
-                Ok(c_code) => {
-                    let rendered = if let Some(architecture_file) = cli.architecture.as_ref() {
-                        let mut options = EnrobageOptions::new(architecture_file.clone());
-                        options.architecture_dirs = cli.architecture_dir.clone();
-                        options.inline_arch_files = cli.inline_architecture_files;
-                        if let Some(class_name) = selected_class_name(&cli) {
-                            options.class_name = class_name;
-                        }
-                        let wrapped = match wrap_cpp_with_architecture(&c_code, &options) {
-                            Ok(wrapped) => wrapped,
-                            Err(err) => {
-                                eprintln!("Architecture wrapping failed: {err}");
-                                std::process::exit(1);
-                            }
-                        };
-                        if let Some(err) = wrapped.recoverable_error.as_deref() {
-                            eprintln!("{err}");
-                            std::process::exit(1);
-                        }
-                        wrapped.code
-                    } else {
-                        c_code
-                    };
-                    emit_output(&rendered, cli.output.as_ref());
-                    if cli.dump_json {
-                        let output = require_companion_output_path(&cli);
-                        let compile_options = compile_options_json_string(Some("c"), cli.double);
-                        match compile_fixture_to_json_text(
-                            &store,
-                            module,
-                            compile_options,
-                            cli.double,
-                        ) {
-                            Ok(json) => emit_json_companion_output(&json, output),
-                            Err(err) => {
-                                eprintln!("JSON fixture generation failed: {err}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Err(err) => {
-                    eprintln!("C fixture codegen failed: {err}");
-                    std::process::exit(1);
-                }
-            }
-            return;
-        }
-
-        print_global_usage_and_exit();
+        return;
     }
 
-    let Some(input_path) = cli.input.as_ref() else {
-        print_global_usage_and_exit();
-    };
+    if cli.dump_interp || matches!(cli.lang, Some(CliLang::Interp)) {
+        match compile_fixture_to_interp_text(&store, module, &InterpOptions::default()) {
+            Ok(fbc_text) => {
+                emit_output(&fbc_text, cli.output.as_ref());
+                if cli.dump_json {
+                    let output = require_companion_output_path(cli);
+                    let compile_options = compile_options_json_string(Some("interp"), cli.double);
+                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
+                    {
+                        Ok(json) => emit_json_companion_output(&json, output),
+                        Err(err) => {
+                            eprintln!("JSON fixture generation failed: {err}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Interp fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
 
+    if cli.dump_cranelift || matches!(cli.lang, Some(CliLang::Cranelift)) {
+        let subset_gap =
+            diagnose_cranelift_compute_subset_gap(&store, module).map_err(|err| err.to_string());
+        let compiled = match generate_cranelift_module(&store, module, &CraneliftOptions::default())
+        {
+            Ok(compiled) => compiled,
+            Err(err) => {
+                eprintln!("Cranelift fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        };
+        let rendered = render_cranelift_report(&compiled, subset_gap.ok().flatten().as_deref());
+        emit_output(&rendered, cli.output.as_ref());
+        if cli.dump_json {
+            let output = require_companion_output_path(cli);
+            let compile_options = compile_options_json_string(Some("cranelift"), cli.double);
+            match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
+                Ok(json) => emit_json_companion_output(&json, output),
+                Err(err) => {
+                    eprintln!("JSON fixture generation failed: {err}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Wasm)) {
+        match generate_wasm_module(
+            &store,
+            module,
+            &WasmOptions {
+                double_precision: cli.double,
+                ..WasmOptions::default()
+            },
+        ) {
+            Ok(wasm) => {
+                if cli.dump_json {
+                    let output = require_companion_output_path(cli);
+                    emit_wasm_output(&wasm.wasm_binary, &wasm.dsp_json, Some(output));
+                } else {
+                    emit_binary_output(&wasm.wasm_binary, cli.output.as_ref());
+                }
+            }
+            Err(err) => {
+                eprintln!("WASM fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Wast)) {
+        match generate_wasm_module(
+            &store,
+            module,
+            &WasmOptions {
+                double_precision: cli.double,
+                ..WasmOptions::default()
+            },
+        ) {
+            Ok(wasm) => {
+                let wast = render_wast_output(&wasm.wasm_binary);
+                emit_output(&wast, cli.output.as_ref());
+                if cli.dump_json {
+                    let output = require_companion_output_path(cli);
+                    let compile_options = compile_options_json_string(Some("wast"), cli.double);
+                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
+                    {
+                        Ok(json) => emit_json_companion_output(&json, output),
+                        Err(err) => {
+                            eprintln!("JSON fixture generation failed: {err}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("WAST fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Asc)) {
+        let options = AscOptions {
+            // Default to `mydsp` like every other backend. Passing `None`
+            // here made the generator fall back to the FIR module name,
+            // which on this path carries the source file stem — so
+            // `-lang asc foo.dsp` emitted `class foo` while `-lang cpp`,
+            // `-lang julia` and `-lang rust` all emitted `mydsp`.
+            class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
+            double_precision: cli.double,
+            ..AscOptions::default()
+        };
+        match generate_asc_module(&store, module, &options) {
+            Ok(asc) => {
+                emit_output(&asc, cli.output.as_ref());
+                if cli.dump_json {
+                    let output = require_companion_output_path(cli);
+                    let compile_options = compile_options_json_string(Some("asc"), cli.double);
+                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
+                    {
+                        Ok(json) => emit_json_companion_output(&json, output),
+                        Err(err) => {
+                            eprintln!("JSON fixture generation failed: {err}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("AssemblyScript fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Julia)) {
+        let options = JuliaOptions {
+            class_name: selected_class_name(cli),
+            real_type: selected_julia_real_type(cli),
+        };
+        match generate_julia_module(&store, module, &options) {
+            Ok(julia) => {
+                let rendered = wrap_backend_with_architecture(&julia, cli);
+                emit_output(&rendered, cli.output.as_ref());
+                if cli.dump_json {
+                    let output = require_companion_output_path(cli);
+                    let compile_options = compile_options_json_string(Some("julia"), cli.double);
+                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
+                    {
+                        Ok(json) => emit_json_companion_output(&json, output),
+                        Err(err) => {
+                            eprintln!("JSON fixture generation failed: {err}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Julia fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Rust)) {
+        let options = RustOptions {
+            class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
+            faust_float_type: selected_rust_real_type(cli),
+        };
+        match generate_rust_module(&store, module, &options) {
+            Ok(rust) => {
+                emit_output(&rust, cli.output.as_ref());
+                if cli.dump_json {
+                    let output = require_companion_output_path(cli);
+                    let compile_options = compile_options_json_string(Some("rust"), cli.double);
+                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
+                    {
+                        Ok(json) => emit_json_companion_output(&json, output),
+                        Err(err) => {
+                            eprintln!("JSON fixture generation failed: {err}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("Rust fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if cli.dump_json {
+        let compile_options = compile_options_json_string(cli.lang.map(cli_lang_name), cli.double);
+        match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
+            Ok(json) => {
+                if cli.lang.is_some() {
+                    let output = require_companion_output_path(cli);
+                    emit_json_companion_output(&json, output);
+                } else {
+                    emit_output(&json, cli.output.as_ref());
+                }
+            }
+            Err(err) => {
+                eprintln!("JSON fixture generation failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if cli.dump_cpp || matches!(cli.lang, Some(CliLang::Cpp)) || mode_count == 0 {
+        let options = CppOptions {
+            class_name: selected_class_name(cli),
+            super_class_name: selected_super_class_name(cli),
+            ..CppOptions::default()
+        };
+        match generate_cpp_module(&store, module, &options) {
+            Ok(cpp) => {
+                let rendered = if let Some(architecture_file) = cli.architecture.as_ref() {
+                    let mut options = EnrobageOptions::new(architecture_file.clone());
+                    options.architecture_dirs = cli.architecture_dir.clone();
+                    options.inline_arch_files = cli.inline_architecture_files;
+                    if let Some(class_name) = selected_class_name(cli) {
+                        options.class_name = class_name;
+                    }
+                    if let Some(super_class_name) = selected_super_class_name(cli) {
+                        options.super_class_name = super_class_name;
+                    }
+                    let wrapped = match wrap_cpp_with_architecture(&cpp, &options) {
+                        Ok(wrapped) => wrapped,
+                        Err(err) => {
+                            eprintln!("Architecture wrapping failed: {err}");
+                            std::process::exit(1);
+                        }
+                    };
+                    if let Some(err) = wrapped.recoverable_error.as_deref() {
+                        eprintln!("{err}");
+                        std::process::exit(1);
+                    }
+                    wrapped.code
+                } else {
+                    cpp
+                };
+                emit_output(&rendered, cli.output.as_ref());
+                if cli.dump_json {
+                    let output = require_companion_output_path(cli);
+                    let compile_options = compile_options_json_string(Some("cpp"), cli.double);
+                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
+                    {
+                        Ok(json) => emit_json_companion_output(&json, output),
+                        Err(err) => {
+                            eprintln!("JSON fixture generation failed: {err}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("C++ fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if cli.dump_c || matches!(cli.lang, Some(CliLang::C)) {
+        let options = COptions {
+            class_name: selected_class_name(cli),
+            ..COptions::default()
+        };
+        match generate_c_module(&store, module, &options) {
+            Ok(c_code) => {
+                let rendered = if let Some(architecture_file) = cli.architecture.as_ref() {
+                    let mut options = EnrobageOptions::new(architecture_file.clone());
+                    options.architecture_dirs = cli.architecture_dir.clone();
+                    options.inline_arch_files = cli.inline_architecture_files;
+                    if let Some(class_name) = selected_class_name(cli) {
+                        options.class_name = class_name;
+                    }
+                    let wrapped = match wrap_cpp_with_architecture(&c_code, &options) {
+                        Ok(wrapped) => wrapped,
+                        Err(err) => {
+                            eprintln!("Architecture wrapping failed: {err}");
+                            std::process::exit(1);
+                        }
+                    };
+                    if let Some(err) = wrapped.recoverable_error.as_deref() {
+                        eprintln!("{err}");
+                        std::process::exit(1);
+                    }
+                    wrapped.code
+                } else {
+                    c_code
+                };
+                emit_output(&rendered, cli.output.as_ref());
+                if cli.dump_json {
+                    let output = require_companion_output_path(cli);
+                    let compile_options = compile_options_json_string(Some("c"), cli.double);
+                    match compile_fixture_to_json_text(&store, module, compile_options, cli.double)
+                    {
+                        Ok(json) => emit_json_companion_output(&json, output),
+                        Err(err) => {
+                            eprintln!("JSON fixture generation failed: {err}");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!("C fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    print_global_usage_and_exit();
+}
+
+/// Runs the normal mode: compile the DSP source at `input_path` and emit
+/// whatever the selected output mode asks for.
+fn run_source_mode(
+    cli: &CliArgs,
+    input_path: &std::path::Path,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    mode_count: usize,
+) {
     if cli.dump_cpp_from_fbc {
         let text = match std::fs::read_to_string(input_path) {
             Ok(t) => t,
@@ -1274,7 +1302,7 @@ pub fn run_main() {
 
     if cli.parse {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default(input_path)
         } else {
@@ -1291,7 +1319,7 @@ pub fn run_main() {
                     out.state.ctx.recovery_count()
                 );
             }
-            Err(err) => report_pipeline_failure("Parse failed", &err, &cli),
+            Err(err) => report_pipeline_failure("Parse failed", &err, cli),
         }
         timer.total();
         return;
@@ -1299,7 +1327,7 @@ pub fn run_main() {
 
     if cli.dump_box {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default(input_path)
         } else {
@@ -1317,7 +1345,7 @@ pub fn run_main() {
                 timer.phase("dump-box");
                 emit_output(&rendered, cli.output.as_ref());
             }
-            Err(err) => report_pipeline_failure("Parse failed", &err, &cli),
+            Err(err) => report_pipeline_failure("Parse failed", &err, cli),
         }
         timer.total();
         return;
@@ -1325,7 +1353,7 @@ pub fn run_main() {
 
     if cli.svg {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // Use eval+propagate to get the evaluated process box (post-eval form).
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_signals(input_path)
@@ -1370,7 +1398,7 @@ pub fn run_main() {
                 timer.phase("svg-render");
                 eprintln!("SVG written to {}", dir.display());
             }
-            Err(err) => report_pipeline_failure("SVG: compile failed", &err, &cli),
+            Err(err) => report_pipeline_failure("SVG: compile failed", &err, cli),
         }
         timer.total();
         return;
@@ -1378,7 +1406,7 @@ pub fn run_main() {
 
     if cli.dump_sig {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_signals(input_path)
         } else {
@@ -1402,7 +1430,7 @@ pub fn run_main() {
                 rendered.push('\n');
                 emit_output(&rendered, cli.output.as_ref());
             }
-            Err(err) => report_pipeline_failure("Signal pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("Signal pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1416,18 +1444,18 @@ pub fn run_main() {
                 strict: false,
             })
             .with_process_name(cli.process_name.clone())
-            .with_real_type(selected_real_type(&cli))
-            .with_cancel(std::sync::Arc::clone(&cancel));
+            .with_real_type(selected_real_type(cli))
+            .with_cancel(std::sync::Arc::clone(cancel));
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_fir_with_lane(
                 input_path,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_fir_with_lane(
                 input_path,
                 &cli.import_dir,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("FIR");
@@ -1445,7 +1473,7 @@ pub fn run_main() {
                     std::process::exit(1);
                 }
             }
-            Err(err) => report_pipeline_failure("FIR pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("FIR pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1459,24 +1487,24 @@ pub fn run_main() {
         // always actually runs here -- unlike `--dump-fir-verify`, which
         // disables the built-in verify to report it manually.
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_fir_with_lane(
                 input_path,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_fir_with_lane(
                 input_path,
                 &cli.import_dir,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("check");
 
         match result {
             Ok(_) => emit_check_success(cli.error_format, cli.error_verbosity),
-            Err(err) => report_pipeline_failure("Check failed", &err, &cli),
+            Err(err) => report_pipeline_failure("Check failed", &err, cli),
         }
         timer.total();
         return;
@@ -1484,17 +1512,17 @@ pub fn run_main() {
 
     if cli.dump_fir || matches!(cli.lang, Some(CliLang::Fir)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_fir_with_lane(
                 input_path,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_fir_with_lane(
                 input_path,
                 &cli.import_dir,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("FIR");
@@ -1507,10 +1535,10 @@ pub fn run_main() {
                 }
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
-                    emit_cli_json_companion_for_backend(&compiler, &cli, input_path, CliLang::Fir);
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, CliLang::Fir);
                 }
             }
-            Err(err) => report_pipeline_failure("FIR pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("FIR pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1518,18 +1546,18 @@ pub fn run_main() {
 
     if cli.dump_json && cli.lang.is_none() {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_json_with_lane_and_compile_options(
                 input_path,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
                 compile_options_json_string(None, cli.double),
             )
         } else {
             compiler.compile_file_to_json_with_compile_options(
                 input_path,
                 &cli.import_dir,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
                 compile_options_json_string(None, cli.double),
             )
         };
@@ -1537,7 +1565,7 @@ pub fn run_main() {
 
         match result {
             Ok(json) => emit_output(&json, cli.output.as_ref()),
-            Err(err) => report_pipeline_failure("JSON pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("JSON pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1545,25 +1573,25 @@ pub fn run_main() {
 
     if cli.dump_interp || matches!(cli.lang, Some(CliLang::Interp)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // Honor `-cn`/`--class-name` like every other textual backend; this
         // used to be a hardcoded default, so the flag was silently ignored.
         let options = InterpOptions {
-            module_name: selected_class_name(&cli).or_else(|| Some("mydsp".to_owned())),
+            module_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
             ..InterpOptions::default()
         };
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_interp_with_lane(
                 input_path,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_interp_with_lane(
                 input_path,
                 &cli.import_dir,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("interp");
@@ -1574,13 +1602,13 @@ pub fn run_main() {
                 if cli.dump_json {
                     emit_cli_json_companion_for_backend(
                         &compiler,
-                        &cli,
+                        cli,
                         input_path,
                         CliLang::Interp,
                     );
                 }
             }
-            Err(err) => report_pipeline_failure("Interp pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("Interp pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1588,8 +1616,8 @@ pub fn run_main() {
 
     if cli.dump_cranelift || matches!(cli.lang, Some(CliLang::Cranelift)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
-        let lane = selected_codegen_lane(&cli).into_compiler_lane();
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
+        let lane = selected_codegen_lane(cli).into_compiler_lane();
         let options = CraneliftOptions::default();
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_cranelift_report_with_lane(input_path, &options, lane)
@@ -1609,13 +1637,13 @@ pub fn run_main() {
                 if cli.dump_json {
                     emit_cli_json_companion_for_backend(
                         &compiler,
-                        &cli,
+                        cli,
                         input_path,
                         CliLang::Cranelift,
                     );
                 }
             }
-            Err(err) => report_pipeline_failure("Cranelift FIR pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("Cranelift FIR pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1623,7 +1651,7 @@ pub fn run_main() {
 
     if matches!(cli.lang, Some(CliLang::Asc)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // Route through the facade helper, exactly like the Julia branch below.
         // The previous code lowered to FIR generically and called
         // `generate_asc_module` directly, which named the FIR module after the
@@ -1632,7 +1660,7 @@ pub fn run_main() {
         // Sharing one route makes CLI and facade output identical by
         // construction rather than by convention.
         let options = AscOptions {
-            class_name: selected_class_name(&cli).or_else(|| Some("mydsp".to_owned())),
+            class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
             double_precision: cli.double,
             ..AscOptions::default()
         };
@@ -1640,14 +1668,14 @@ pub fn run_main() {
             compiler.compile_file_default_to_asc_with_lane(
                 input_path,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_asc_with_lane(
                 input_path,
                 &cli.import_dir,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("asc-codegen");
@@ -1656,10 +1684,10 @@ pub fn run_main() {
             Ok(asc) => {
                 emit_output(&asc, cli.output.as_ref());
                 if cli.dump_json {
-                    emit_cli_json_companion_for_backend(&compiler, &cli, input_path, CliLang::Asc);
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, CliLang::Asc);
                 }
             }
-            Err(err) => report_pipeline_failure("AssemblyScript pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("AssemblyScript pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1667,41 +1695,36 @@ pub fn run_main() {
 
     if matches!(cli.lang, Some(CliLang::Julia)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = JuliaOptions {
-            class_name: selected_class_name(&cli),
-            real_type: selected_julia_real_type(&cli),
+            class_name: selected_class_name(cli),
+            real_type: selected_julia_real_type(cli),
         };
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_julia_with_lane(
                 input_path,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_julia_with_lane(
                 input_path,
                 &cli.import_dir,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("julia-codegen");
 
         match result {
             Ok(julia) => {
-                let rendered = wrap_backend_with_architecture(&julia, &cli);
+                let rendered = wrap_backend_with_architecture(&julia, cli);
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
-                    emit_cli_json_companion_for_backend(
-                        &compiler,
-                        &cli,
-                        input_path,
-                        CliLang::Julia,
-                    );
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, CliLang::Julia);
                 }
             }
-            Err(err) => report_pipeline_failure("Julia pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("Julia pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1709,17 +1732,17 @@ pub fn run_main() {
 
     if matches!(cli.lang, Some(CliLang::Rust)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_fir_with_lane(
                 input_path,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_fir_with_lane(
                 input_path,
                 &cli.import_dir,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("rust-codegen");
@@ -1727,8 +1750,8 @@ pub fn run_main() {
         match result {
             Ok(out) => {
                 let options = RustOptions {
-                    class_name: selected_class_name(&cli).or_else(|| Some("mydsp".to_owned())),
-                    faust_float_type: selected_rust_real_type(&cli),
+                    class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
+                    faust_float_type: selected_rust_real_type(cli),
                 };
                 match generate_rust_module(&out.store, out.module, &options) {
                     Ok(rust) => {
@@ -1736,7 +1759,7 @@ pub fn run_main() {
                         if cli.dump_json {
                             emit_cli_json_companion_for_backend(
                                 &compiler,
-                                &cli,
+                                cli,
                                 input_path,
                                 CliLang::Rust,
                             );
@@ -1748,7 +1771,7 @@ pub fn run_main() {
                     }
                 }
             }
-            Err(err) => report_pipeline_failure("Rust pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("Rust pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1756,7 +1779,7 @@ pub fn run_main() {
 
     if matches!(cli.lang, Some(CliLang::Wasm)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = WasmOptions {
             double_precision: cli.double,
             ..WasmOptions::default()
@@ -1765,14 +1788,14 @@ pub fn run_main() {
             compiler.compile_file_default_to_wasm_with_lane(
                 input_path,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_wasm_with_lane(
                 input_path,
                 &cli.import_dir,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("wasm-codegen");
@@ -1780,13 +1803,13 @@ pub fn run_main() {
         match result {
             Ok(wasm) => {
                 if cli.dump_json {
-                    let output = require_companion_output_path(&cli);
+                    let output = require_companion_output_path(cli);
                     emit_wasm_output(&wasm.wasm_binary, &wasm.dsp_json, Some(output));
                 } else {
                     emit_wasm_output(&wasm.wasm_binary, &wasm.dsp_json, cli.output.as_ref());
                 }
             }
-            Err(err) => report_pipeline_failure("WASM pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("WASM pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1794,7 +1817,7 @@ pub fn run_main() {
 
     if matches!(cli.lang, Some(CliLang::Wast)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = WasmOptions {
             double_precision: cli.double,
             ..WasmOptions::default()
@@ -1803,14 +1826,14 @@ pub fn run_main() {
             compiler.compile_file_default_to_wasm_with_lane(
                 input_path,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_wasm_with_lane(
                 input_path,
                 &cli.import_dir,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("wast-codegen");
@@ -1820,10 +1843,10 @@ pub fn run_main() {
                 let wast = render_wast_output(&wasm.wasm_binary);
                 emit_output(&wast, cli.output.as_ref());
                 if cli.dump_json {
-                    emit_cli_json_companion_for_backend(&compiler, &cli, input_path, CliLang::Wast);
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, CliLang::Wast);
                 }
             }
-            Err(err) => report_pipeline_failure("WAST pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("WAST pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1831,24 +1854,24 @@ pub fn run_main() {
 
     if cli.dump_cpp || matches!(cli.lang, Some(CliLang::Cpp)) || mode_count == 0 {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = CppOptions {
-            class_name: selected_class_name(&cli),
-            super_class_name: selected_super_class_name(&cli),
+            class_name: selected_class_name(cli),
+            super_class_name: selected_super_class_name(cli),
             ..CppOptions::default()
         };
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_cpp_with_lane(
                 input_path,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_cpp_with_lane(
                 input_path,
                 &cli.import_dir,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("cpp-codegen");
@@ -1859,10 +1882,10 @@ pub fn run_main() {
                     let mut options = EnrobageOptions::new(architecture_file.clone());
                     options.architecture_dirs = cli.architecture_dir.clone();
                     options.inline_arch_files = cli.inline_architecture_files;
-                    if let Some(class_name) = selected_class_name(&cli) {
+                    if let Some(class_name) = selected_class_name(cli) {
                         options.class_name = class_name;
                     }
-                    if let Some(super_class_name) = selected_super_class_name(&cli) {
+                    if let Some(super_class_name) = selected_super_class_name(cli) {
                         options.super_class_name = super_class_name;
                     }
                     let wrapped = match wrap_cpp_with_architecture(&cpp, &options) {
@@ -1882,10 +1905,10 @@ pub fn run_main() {
                 };
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
-                    emit_cli_json_companion_for_backend(&compiler, &cli, input_path, CliLang::Cpp);
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, CliLang::Cpp);
                 }
             }
-            Err(err) => report_pipeline_failure("C++ pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("C++ pipeline failed", &err, cli),
         }
         timer.total();
         return;
@@ -1893,23 +1916,23 @@ pub fn run_main() {
 
     if cli.dump_c || matches!(cli.lang, Some(CliLang::C)) {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
-        let compiler = compiler_from_cli(&cli, Some(std::sync::Arc::clone(&cancel)));
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = COptions {
-            class_name: selected_class_name(&cli),
+            class_name: selected_class_name(cli),
             ..COptions::default()
         };
         let result = if cli.import_dir.is_empty() {
             compiler.compile_file_default_to_c_with_lane(
                 input_path,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         } else {
             compiler.compile_file_to_c_with_lane(
                 input_path,
                 &cli.import_dir,
                 &options,
-                selected_codegen_lane(&cli).into_compiler_lane(),
+                selected_codegen_lane(cli).into_compiler_lane(),
             )
         };
         timer.phase("c-codegen");
@@ -1920,7 +1943,7 @@ pub fn run_main() {
                     let mut options = EnrobageOptions::new(architecture_file.clone());
                     options.architecture_dirs = cli.architecture_dir.clone();
                     options.inline_arch_files = cli.inline_architecture_files;
-                    if let Some(class_name) = selected_class_name(&cli) {
+                    if let Some(class_name) = selected_class_name(cli) {
                         options.class_name = class_name;
                     }
                     let wrapped = match wrap_cpp_with_architecture(&c_code, &options) {
@@ -1940,10 +1963,10 @@ pub fn run_main() {
                 };
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
-                    emit_cli_json_companion_for_backend(&compiler, &cli, input_path, CliLang::C);
+                    emit_cli_json_companion_for_backend(&compiler, cli, input_path, CliLang::C);
                 }
             }
-            Err(err) => report_pipeline_failure("C pipeline failed", &err, &cli),
+            Err(err) => report_pipeline_failure("C pipeline failed", &err, cli),
         }
         timer.total();
         return;
