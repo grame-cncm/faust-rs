@@ -34,6 +34,7 @@
 
 pub mod eval;
 
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
@@ -51,6 +52,14 @@ pub struct CodeboxOptions {
     /// spelling — the same thing `-double` does in the C++ backend, and nothing
     /// more.
     pub double_precision: bool,
+    /// Emit `RB_<widget>_<name>` parameter names instead of plain ones.
+    ///
+    /// This is the `-lang codebox-test` convention, and it is what makes the
+    /// manual RNBO validation possible at all: `architecture/faust/dsp/
+    /// rnbo-dsp.h` recovers the Faust UI by prefix-matching RNBO parameter
+    /// names and by nothing else, so without it a round-tripped patch exposes
+    /// no controls.
+    pub test_labels: bool,
 }
 
 /// Stable error codes for this backend.
@@ -142,8 +151,10 @@ pub fn generate_codebox_module(
 
     let _ = writeln!(out, "// Code generated with faust-rs");
     let _ = writeln!(out, "// Additional functions");
-    // Params come from the UI, in phase C2.
+
+    let params = collect_params(store, view.functions, options)?;
     let _ = writeln!(out, "// Params");
+    emit_params(&mut out, &params, options);
 
     let _ = writeln!(out, "// Globals");
     for stmt in block_items(store, view.globals) {
@@ -165,11 +176,201 @@ pub fn generate_codebox_module(
 
     emit_dspsetup(store, &mut out, options, &view)?;
     emit_control(store, &mut out, options, &view)?;
-    emit_update(&mut out);
+    emit_update(&mut out, &params);
     emit_compute(store, &mut out, options, &view)?;
-    emit_top_level(&mut out, &view);
+    emit_top_level(&mut out, &view, &params);
 
     Ok(out)
+}
+
+/// One control the emitted module exposes as an RNBO `@param`.
+struct Param {
+    /// Codebox identifier: the short name, possibly prefixed.
+    name: String,
+    /// The FIR variable holding the value inside the DSP.
+    zone: String,
+    /// Range and initial value, or `None` for a button/checkbox — those carry a
+    /// hardcoded `0.`/`1.` range in the reference, not a computed one.
+    range: Option<(f64, f64, f64)>,
+}
+
+/// Walks `buildUserInterface` and collects the controls, in UI order.
+///
+/// Bargraphs are deliberately skipped: codebox cannot send them back as control
+/// values, so they become extra audio outputs instead (phase C3).
+fn collect_params(
+    store: &FirStore,
+    functions: FirId,
+    options: &CodeboxOptions,
+) -> Result<Vec<Param>, CodegenError> {
+    let Some(body) = find_function_body(store, functions, "buildUserInterface") else {
+        return Ok(Vec::new());
+    };
+
+    // First pass: addresses, so short names can be computed once every widget is
+    // known — a short name is the shortest address suffix no other widget
+    // shares, so it cannot be decided widget by widget.
+    let mut path: Vec<String> = Vec::new();
+    let mut collected: Vec<(String, Param)> = Vec::new();
+    collect_params_in(store, body, &mut path, &mut collected)?;
+
+    let addresses: Vec<String> = collected
+        .iter()
+        .map(|(address, _)| address.clone())
+        .collect();
+    let short_names = crate::shortname::compute_short_names(&addresses);
+
+    // Two widgets sharing an address would share a `@param` identifier, which is
+    // not valid codebox: `update` would declare the same argument twice. Faust
+    // rejects duplicate addresses upstream, so this is unreachable through the
+    // normal path — but the C++ backend does *not* check and emits the
+    // duplicate, so refusing here is a deliberate divergence rather than an
+    // oversight.
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for address in &addresses {
+        if !seen.insert(address.as_str()) {
+            return Err(CodegenError::new(
+                CodegenErrorCode::Unsupported,
+                format!(
+                    "two controls share the address `{address}`, which would emit \
+                     the same codebox @param twice"
+                ),
+            ));
+        }
+    }
+
+    Ok(collected
+        .into_iter()
+        .map(|(address, mut param)| {
+            let short = short_names
+                .get(&address)
+                .cloned()
+                .unwrap_or_else(|| param.name.clone());
+            param.name = decorate_param_name(&short, &param, options);
+            param
+        })
+        .collect())
+}
+
+/// Recursive half of [`collect_params`], tracking the enclosing group path.
+fn collect_params_in(
+    store: &FirStore,
+    block: FirId,
+    path: &mut Vec<String>,
+    out: &mut Vec<(String, Param)>,
+) -> Result<(), CodegenError> {
+    for stmt in block_items(store, block) {
+        match match_fir(store, stmt) {
+            FirMatch::OpenBox { label, .. } => path.push(label),
+            FirMatch::CloseBox => {
+                path.pop();
+            }
+            FirMatch::AddButton { typ, label, var } => {
+                out.push((
+                    ui_address(path, &label),
+                    Param {
+                        name: widget_prefix_button(typ).to_owned(),
+                        zone: var,
+                        range: None,
+                    },
+                ));
+            }
+            FirMatch::AddSlider {
+                typ,
+                label,
+                var,
+                init,
+                lo,
+                hi,
+                ..
+            } => {
+                out.push((
+                    ui_address(path, &label),
+                    Param {
+                        name: widget_prefix_slider(typ).to_owned(),
+                        zone: var,
+                        range: Some((init, lo, hi)),
+                    },
+                ));
+            }
+            FirMatch::AddSoundfile { label, .. } => {
+                return Err(CodegenError::new(
+                    CodegenErrorCode::Unsupported,
+                    format!("soundfile '{label}' is not available in codebox"),
+                ));
+            }
+            FirMatch::Block(_) => collect_params_in(store, stmt, path, out)?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Builds the `/dsp/group/label` address a short name is derived from.
+fn ui_address(path: &[String], label: &str) -> String {
+    let mut address = String::new();
+    for segment in path {
+        address.push('/');
+        address.push_str(segment);
+    }
+    address.push('/');
+    address.push_str(label);
+    address
+}
+
+/// The `RB_*` prefix `rnbo-dsp.h` matches on, per widget kind.
+fn widget_prefix_button(typ: fir::ButtonType) -> &'static str {
+    match typ {
+        fir::ButtonType::Button => "RB_button_",
+        fir::ButtonType::Checkbox => "RB_checkbox_",
+    }
+}
+
+fn widget_prefix_slider(typ: fir::SliderType) -> &'static str {
+    match typ {
+        fir::SliderType::Horizontal => "RB_hslider_",
+        fir::SliderType::Vertical => "RB_vslider_",
+        fir::SliderType::NumEntry => "RB_nentry_",
+    }
+}
+
+/// Applies the label convention to a short name.
+///
+/// In test mode the widget-kind prefix is what lets `rnbo-dsp.h` rebuild the
+/// Faust UI. Otherwise a leading digit gets `cb_`, because codebox identifiers
+/// cannot start with one.
+fn decorate_param_name(short: &str, param: &Param, options: &CodeboxOptions) -> String {
+    if options.test_labels {
+        format!("{}{short}", param.name)
+    } else if short.starts_with(|c: char| c.is_ascii_digit()) {
+        format!("cb_{short}")
+    } else {
+        short.to_owned()
+    }
+}
+
+/// Emits the `@param` declarations.
+fn emit_params(out: &mut String, params: &[Param], options: &CodeboxOptions) {
+    for param in params {
+        match param.range {
+            Some((init, lo, hi)) => {
+                let _ = writeln!(
+                    out,
+                    "@param({{min: {}, max: {}}}) {} = {};",
+                    float_literal(lo, options),
+                    float_literal(hi, options),
+                    param.name,
+                    float_literal(init, options)
+                );
+            }
+            None => {
+                // Buttons and checkboxes carry a hardcoded range in the
+                // reference, spelled `0.`/`1.` rather than through the float
+                // formatter. Reproduced rather than normalised.
+                let _ = writeln!(out, "@param({{min: 0., max: 1.}}) {} = 0.;", param.name);
+            }
+        }
+    }
 }
 
 /// Emits `dspsetup()`, the single init entry point RNBO calls on start and on
@@ -277,15 +478,26 @@ fn emit_control(
     Ok(())
 }
 
-/// Emits `update()`.
+/// Emits `update(params…)`.
 ///
-/// C1 emits the skeleton only: the per-parameter dirty checks and the argument
-/// list come from the UI in phase C2. The `fUpdated` protocol is already right —
-/// `control()` runs once after any parameter moved — there is simply nothing to
-/// watch yet.
-fn emit_update(out: &mut String) {
+/// RNBO writes parameters whenever it likes, so the DSP has to notice. Each
+/// parameter is compared with the zone holding its previous value; if any moved,
+/// `control()` runs once for the whole block rather than once per parameter.
+/// The `int(fUpdated)` cast is the reference's, and is kept: codebox tolerates
+/// the `Int`-declared flag being assigned `true`, and reproducing the spelling
+/// keeps a by-eye comparison readable.
+fn emit_update(out: &mut String, params: &[Param]) {
     let _ = writeln!(out, "// Update parameters");
-    let _ = writeln!(out, "function update() {{");
+    let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+    let _ = writeln!(out, "function update({}) {{", names.join(","));
+    for param in params {
+        let zone = codebox_var_name(&param.zone);
+        let name = &param.name;
+        let _ = writeln!(
+            out,
+            "\tfUpdated = int(fUpdated) | ({name} != {zone}); {zone} = {name};"
+        );
+    }
     let _ = writeln!(out, "\tif (fUpdated) {{ fUpdated = false; control(); }}");
     let _ = writeln!(out, "}}");
 }
@@ -326,9 +538,10 @@ fn emit_compute(
 }
 
 /// Emits the file-scope wiring RNBO evaluates once per sample.
-fn emit_top_level(out: &mut String, view: &ModuleView) {
+fn emit_top_level(out: &mut String, view: &ModuleView, params: &[Param]) {
     let _ = writeln!(out, "// Update parameters");
-    let _ = writeln!(out, "update();");
+    let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+    let _ = writeln!(out, "update({});", names.join(","));
     let _ = writeln!(out, "// Compute one frame");
     let ins: Vec<String> = (0..view.num_inputs)
         .map(|i| format!("in{}", i + 1))
@@ -764,16 +977,43 @@ fn emit_type(typ: &FirType) -> &'static str {
 
 /// Formats a float literal, with the `f` suffix the reference uses in single
 /// precision.
+///
+/// In single precision the value is rendered through `f32` first. FIR carries
+/// signal constants as `f64` even for a single-precision DSP, so printing the
+/// `f64` directly turns `0.3` into `0.30000001192092896f` — technically the same
+/// number after the compiler narrows it, but unreadable, and it would drown a
+/// by-eye comparison against the reference in noise.
 fn float_literal(value: f64, options: &CodeboxOptions) -> String {
-    let mut text = if value.is_finite() && value == value.trunc() {
-        format!("{value:.1}")
+    let mut text = if options.double_precision {
+        format_finite(value)
     } else {
-        format!("{value}")
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "single precision emits f32 literals by definition"
+        )]
+        let narrowed = value as f32;
+        // `f32`'s own Display gives the shortest text that round-trips as f32,
+        // which is why the narrowing has to happen before formatting rather
+        // than after.
+        if narrowed.is_finite() && narrowed == narrowed.trunc() {
+            format!("{narrowed:.1}")
+        } else {
+            format!("{narrowed}")
+        }
     };
     if !options.double_precision {
         text.push('f');
     }
     text
+}
+
+/// Renders a number with a decimal point, so codebox reads it as a float.
+fn format_finite(value: f64) -> String {
+    if value.is_finite() && value == value.trunc() {
+        format!("{value:.1}")
+    } else {
+        format!("{value}")
+    }
 }
 
 /// Returns the items of a FIR block, or an empty list for anything else.

@@ -142,6 +142,8 @@ pub struct Program {
     top_level: Vec<Stmt>,
     /// Persistent state, surviving between `compute` calls.
     state: HashMap<String, Value>,
+    /// `@param` names, in declaration order.
+    params: Vec<String>,
     sample_rate: f64,
 }
 
@@ -180,16 +182,20 @@ impl Program {
     /// Returns [`EvalError`] when evaluation fails, or when the top level does
     /// not produce the expected `outN` values.
     pub fn compute(&mut self, params: &[f64], inputs: &[f64]) -> Result<Vec<f64>, EvalError> {
-        let names = self.parameter_names();
-        if names.len() != params.len() {
-            return Err(EvalError::new(format!(
-                "expected {} parameter value(s), got {}",
-                names.len(),
-                params.len()
-            )));
-        }
-        for (name, value) in names.iter().zip(params.iter()) {
-            self.state.insert(name.clone(), Value::Num(*value));
+        // An empty slice leaves the parameters at their declared defaults,
+        // which is what a host that has written nothing yet would do.
+        if !params.is_empty() {
+            let names = self.params.clone();
+            if names.len() != params.len() {
+                return Err(EvalError::new(format!(
+                    "expected {} parameter value(s), got {}",
+                    names.len(),
+                    params.len()
+                )));
+            }
+            for (name, value) in names.iter().zip(params.iter()) {
+                self.state.insert(name.clone(), Value::Num(*value));
+            }
         }
 
         // RNBO's implicit audio inlets, 1-based.
@@ -235,13 +241,10 @@ impl Program {
             .map_or(0, |(args, _)| args.len())
     }
 
-    /// Names of `update`'s parameters, in declaration order.
+    /// `@param` names, in declaration order.
     #[must_use]
     pub fn parameter_names(&self) -> Vec<String> {
-        self.functions
-            .get("update")
-            .map(|(args, _)| args.clone())
-            .unwrap_or_default()
+        self.params.clone()
     }
 
     fn call_void(&mut self, name: &str, args: &[Value]) -> Result<(), EvalError> {
@@ -582,6 +585,7 @@ impl Parser {
         let mut functions = HashMap::new();
         let mut top_level = Vec::new();
         let mut state = HashMap::new();
+        let mut params: Vec<String> = Vec::new();
 
         while self.peek().is_some() {
             if self.peek() == Some("function") {
@@ -593,7 +597,8 @@ impl Parser {
                 // `top_level` would re-run it every sample and wipe whatever
                 // `dspsetup` initialised — which is exactly what happened before
                 // this distinction existed.
-                let is_declaration = matches!(self.peek(), Some("@state" | "let"));
+                let is_declaration = matches!(self.peek(), Some("@state" | "let" | "@param"));
+                let is_param = self.peek() == Some("@param");
                 let stmt = self.parse_stmt()?;
                 match &stmt {
                     Stmt::DeclareArray { name, size } => {
@@ -601,9 +606,23 @@ impl Parser {
                     }
                     Stmt::Assign {
                         target: LValue::Var(name),
-                        ..
+                        value,
                     } => {
-                        state.insert(name.clone(), Value::Num(0.0));
+                        // A parameter's declared value is what it holds until
+                        // the host writes one, so it is evaluated here; other
+                        // declarations are zeroed and filled by `dspsetup`.
+                        let initial = if is_param {
+                            match value {
+                                Expr::Num(v) => Value::Num(*v),
+                                _ => Value::Num(0.0),
+                            }
+                        } else {
+                            Value::Num(0.0)
+                        };
+                        if is_param {
+                            params.push(name.clone());
+                        }
+                        state.insert(name.clone(), initial);
                         if !is_declaration {
                             top_level.push(stmt);
                         }
@@ -617,6 +636,7 @@ impl Parser {
             functions,
             top_level,
             state,
+            params,
             sample_rate: 44100.0,
         })
     }
@@ -654,6 +674,12 @@ impl Parser {
     fn parse_stmt(&mut self) -> Result<Stmt, EvalError> {
         // Storage keywords carry no runtime meaning here; the emitter has
         // already decided what persists, and the evaluator keys state by name.
+        // `@param({min: …, max: …}) name = init;` — the range is host metadata,
+        // but the initial value is what a parameter holds until the host writes
+        // one, so it must reach the state map.
+        if self.eat("@param") {
+            self.skip_balanced_parens();
+        }
         let _ = self.eat("@state");
         let _ = self.eat("let");
 
@@ -788,6 +814,22 @@ impl Parser {
         let value = self.parse_expr()?;
         let _ = self.eat(";");
         Ok(Stmt::Assign { target, value })
+    }
+
+    /// Skips a balanced `( … )` group, used for `@param`'s metadata.
+    fn skip_balanced_parens(&mut self) {
+        if !self.eat("(") {
+            return;
+        }
+        let mut depth = 1;
+        while depth > 0 {
+            match self.next().as_deref() {
+                Some("(") => depth += 1,
+                Some(")") => depth -= 1,
+                Some(_) => {}
+                None => return,
+            }
+        }
     }
 
     /// Skips `: Int` / `: number`, which carry no runtime meaning here.

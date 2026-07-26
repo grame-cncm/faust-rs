@@ -11,7 +11,7 @@
 //! verification arrives with the evaluator layer.
 
 use codegen::backends::codebox::{CodeboxOptions, CodegenErrorCode, generate_codebox_module};
-use compiler::{Compiler, ControlRateMode, ProcessingApi, SignalFirLane};
+use compiler::{Compiler, ControlRateMode, ProcessingApi, RealType, SignalFirLane};
 
 /// Compiles one source to codebox, through the lowering the backend expects.
 fn codebox(source_name: &str, source: &str) -> String {
@@ -173,6 +173,7 @@ fn double_precision_only_changes_literal_spelling() {
         "process = _ * 0.5;",
         &CodeboxOptions {
             double_precision: true,
+            test_labels: false,
         },
     );
     assert!(single.contains("0.5f"), "{single}");
@@ -235,22 +236,35 @@ use codegen::backends::interp::{FbcDspInstance, InterpOptions, generate_interp_m
 /// Runs `frames` samples of `source` through both the interpreter and the
 /// emitted codebox, and asserts they agree bit-for-bit in f64.
 fn assert_codebox_matches_interpreter(source_name: &str, source: &str, frames: usize) {
+    // Double precision on both sides, because codebox has a single `number`
+    // type and it is a double. Comparing against a single-precision DSP would
+    // measure the f32→f64 gap rather than the emission: a `0.3f` constant is
+    // 0.30000001192092896 in the DSP and exactly 0.3 in codebox, which shows up
+    // as a ~1e-8 disagreement that no emitter change can remove.
     let compiler = Compiler::new()
+        .with_real_type(RealType::Float64)
         .with_control_rate_mode(ControlRateMode::External)
         .with_processing_api(ProcessingApi::OneSample);
     let fir = compiler
         .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
         .expect("FIR lowering must succeed");
 
-    let text = generate_codebox_module(&fir.store, fir.module, &CodeboxOptions::default())
-        .expect("codebox emission must succeed");
+    let text = generate_codebox_module(
+        &fir.store,
+        fir.module,
+        &CodeboxOptions {
+            double_precision: true,
+            test_labels: false,
+        },
+    )
+    .expect("codebox emission must succeed");
     let mut program = Program::parse(&text)
         .unwrap_or_else(|e| panic!("the emitted codebox must parse: {e}\n{text}"));
     program.dspsetup(44100.0).expect("dspsetup must run");
 
     // The interpreter needs its own lowering of the same source, in the block
     // shape it supports.
-    let block_compiler = Compiler::new();
+    let block_compiler = Compiler::new().with_real_type(RealType::Float64);
     let block_fir = block_compiler
         .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
         .expect("block FIR lowering must succeed");
@@ -327,4 +341,176 @@ fn numeric_recursion_matches_the_interpreter() {
 #[test]
 fn numeric_delay_matches_the_interpreter() {
     assert_codebox_matches_interpreter("del.dsp", "process = _ : @(7);", 256);
+}
+
+/// Dumps a UI-bearing DSP for eyeball comparison against the reference.
+#[test]
+fn dump_ui_for_eyeball_comparison() {
+    let src = "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.01) * checkbox(\"on\") \
+               + button(\"trig\") + nentry(\"num\", 2, 0, 10, 1) \
+               + vslider(\"v\", 0.3, -1, 1, 0.01);";
+    println!("=== plain ===\n{}", codebox("c2ui.dsp", src));
+    println!(
+        "=== codebox-test ===\n{}",
+        codebox_with(
+            "c2ui.dsp",
+            src,
+            &CodeboxOptions {
+                double_precision: false,
+                test_labels: true,
+            }
+        )
+    );
+}
+
+// ── C2: params, control, update ──────────────────────────────────────────────
+
+const UI_DSP: &str = "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.01) * checkbox(\"on\") \
+                      + button(\"trig\") + nentry(\"num\", 2, 0, 10, 1) \
+                      + vslider(\"v\", 0.3, -1, 1, 0.01);";
+
+fn test_labelled(source_name: &str, source: &str) -> String {
+    codebox_with(
+        source_name,
+        source,
+        &CodeboxOptions {
+            double_precision: false,
+            test_labels: true,
+        },
+    )
+}
+
+/// Sliders and numeric entries carry their real range; buttons and checkboxes
+/// carry a hardcoded one, spelled differently. The asymmetry is the
+/// reference's, reproduced rather than normalised.
+#[test]
+fn param_ranges_follow_the_widget_kind() {
+    let text = codebox("ui.dsp", UI_DSP);
+    assert!(
+        text.contains("@param({min: 0.0f, max: 1.0f}) gain = 0.5f;"),
+        "{text}"
+    );
+    assert!(
+        text.contains("@param({min: 0.0f, max: 10.0f}) num = 2.0f;"),
+        "{text}"
+    );
+    assert!(
+        text.contains("@param({min: -1.0f, max: 1.0f}) v = 0.3f;"),
+        "{text}"
+    );
+    assert!(
+        text.contains("@param({min: 0., max: 1.}) on = 0.;"),
+        "{text}"
+    );
+    assert!(
+        text.contains("@param({min: 0., max: 1.}) trig = 0.;"),
+        "{text}"
+    );
+}
+
+/// Every parameter is compared with its zone, and `control()` runs once for the
+/// whole block rather than once per parameter that moved.
+#[test]
+fn update_checks_each_parameter_then_controls_once() {
+    let text = codebox("ui.dsp", UI_DSP);
+    assert!(
+        text.contains("fUpdated = int(fUpdated) | (gain != fHslider0_cb); fHslider0_cb = gain;"),
+        "{text}"
+    );
+    let update = text
+        .split("function update(")
+        .nth(1)
+        .expect("update function");
+    assert_eq!(
+        update.matches("control();").count(),
+        1,
+        "control() must run once per update, not once per parameter:\n{update}"
+    );
+    assert!(
+        update.contains("if (fUpdated) { fUpdated = false; control(); }"),
+        "{update}"
+    );
+}
+
+/// `update`'s argument list, the `@param` names and the top-level call must
+/// agree, or the emitted file does not even parse.
+#[test]
+fn parameter_names_agree_across_the_three_sites() {
+    let text = codebox("ui.dsp", UI_DSP);
+    let params: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("@param("))
+        .filter_map(|l| l.split(") ").nth(1))
+        .filter_map(|l| l.split(' ').next())
+        .collect();
+    assert_eq!(params.len(), 5, "{text}");
+
+    let signature = text
+        .split("function update(")
+        .nth(1)
+        .and_then(|s| s.split(american_paren()).next())
+        .expect("update signature");
+    let call = text
+        .split("\nupdate(")
+        .nth(1)
+        .and_then(|s| s.split(american_paren()).next())
+        .expect("top-level update call");
+    let joined = params.join(",");
+    assert_eq!(
+        signature, joined,
+        "update signature differs from @param names"
+    );
+    assert_eq!(call, joined, "top-level call differs from @param names");
+}
+
+fn american_paren() -> char {
+    ')'
+}
+
+/// The test convention is what lets `rnbo-dsp.h` rebuild the Faust UI, so the
+/// prefixes must match the ones it matches on.
+#[test]
+fn test_labels_carry_the_rnbo_prefixes() {
+    let text = test_labelled("ui.dsp", UI_DSP);
+    for expected in [
+        "RB_hslider_gain",
+        "RB_checkbox_on",
+        "RB_button_trig",
+        "RB_nentry_num",
+        "RB_vslider_v",
+    ] {
+        assert!(text.contains(expected), "missing {expected}\n{text}");
+    }
+    // Plain mode must not carry them.
+    let plain = codebox("ui.dsp", UI_DSP);
+    assert!(!plain.contains("RB_"), "{plain}");
+}
+
+/// Colliding labels are disambiguated by the shared shortname algorithm, which
+/// is `preserved` — so these names *are* comparable with the C++ compiler.
+#[test]
+fn colliding_labels_get_disambiguated_names() {
+    let text = codebox(
+        "coll.dsp",
+        "process = vgroup(\"a\", hslider(\"gain\", 0.5, 0, 1, 0.01)) \
+         + vgroup(\"b\", hslider(\"gain\", 0.2, 0, 1, 0.01));",
+    );
+    assert!(text.contains(" a_gain = "), "{text}");
+    assert!(text.contains(" b_gain = "), "{text}");
+}
+
+/// A label starting with a digit cannot be a codebox identifier.
+#[test]
+fn digit_initial_labels_get_the_cb_prefix() {
+    let text = codebox(
+        "num.dsp",
+        "process = _ * hslider(\"0freq\", 1, 0, 2, 0.01);",
+    );
+    assert!(text.contains(" cb_0freq = "), "{text}");
+}
+
+/// Numeric check with parameters held at their initial values.
+#[test]
+fn numeric_ui_dsp_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("ui.dsp", UI_DSP, 64);
 }
