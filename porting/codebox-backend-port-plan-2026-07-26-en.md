@@ -61,6 +61,19 @@ Two further language quirks that must be reproduced exactly or the numbers move:
 - **`fmod` has no direct equivalent**: it maps to `safemod`.
 - **`sample_rate` is not a field**: the `NamedAddress` named `sample_rate` emits
   `samplerate()`.
+- **`@param` range literals are formatted inconsistently, on purpose.** Sliders
+  and numeric entries go through `checkReal()` and print as `0.0f` / `1.0f`,
+  while buttons and checkboxes have their range hardcoded in
+  `CodeboxParamsVisitor` and print as `0.` / `1.`. Verified on the reference:
+
+  ```
+  @param({min: 0.0f, max: 1.0f}) RB_hslider_gain = 0.5f;
+  @param({min: 0., max: 1.}) RB_checkbox_on = 0.;
+  @param({min: 0., max: 1.}) RB_button_trig = 0.;
+  ```
+
+  Reproduce the asymmetry rather than normalising it, or every UI-bearing DSP
+  fails the text differential on cosmetics.
 
 ## 2. What faust-rs already has
 
@@ -179,6 +192,10 @@ Details worth pinning:
 
 Each phase is one commit, green on its own, with an English journal entry.
 
+Hand-off point: C0–C5 plus §5.2 layer 1 are the deliverable. The manual RNBO
+validation in the C++ architecture (§5.2 layer 3) happens after that, run by
+Stéphane, and its outcome is journalled whether it succeeds or not.
+
 ### C0 — Shared shortname support
 
 Implement the C++ `ShortnameInstVisitor` algorithm once, in `crates/codegen`,
@@ -203,10 +220,16 @@ Verification: emitted text for a handful of DSPs (`process = _;`, a one-pole
 filter, a table read) compared against `faust -lang codebox` output from the
 pinned C++ reference, normalised for the version line.
 
-### C2 — Params, control, update
+### C2 — Params, control, update (including `codebox-test`)
 
 `@param` declarations from the UI nodes via C0's shortnames, `control()` from
 the externalizable statements, `update()` with the dirty-check protocol.
+
+**Both label conventions ship here**: plain `codebox` (digit-initial labels get
+`cb_`) and `codebox-test` (`RB_<widget>_` prefixes). The latter is what makes the
+manual RNBO validation of §5.2 layer 3 possible at all — `rnbo-dsp.h` recovers
+the Faust UI from those prefixes and from nothing else — so it is part of this
+phase's deliverable, not a follow-up.
 
 Verification: same textual differential, on DSPs with sliders, buttons,
 checkboxes and numeric entries, including labels that need `cb_` prefixing and
@@ -308,10 +331,75 @@ Cost estimate: the evaluator is comparable to the `-ec`/`-os` impulse driver
 checkable: run it on the **C++ compiler's** codebox output for the same DSPs and
 require the same numbers.
 
-**Layer 3 — RNBO round-trip (manual, documented).**
-For a handful of DSPs, do the full RNBO export by hand once, run it against
-`rnbo-dsp.h`, and record the outcome in the journal. Not in CI, and honestly
-labelled as a one-off attestation rather than a gate.
+**Layer 3 — RNBO round-trip in the C++ architecture (manual, by the project
+owner).** This layer is *not* mine to run: it needs Max/RNBO. The agreed
+sequencing is therefore:
+
+1. I deliver phases C0–C5 and Layer 1 (the textual differential, green).
+2. Stéphane then attempts the manual validation in the C++ architecture: import
+   the faust-rs-generated codebox into an RNBO patch, export `rnbo_source.cpp`,
+   compile it against `architecture/faust/dsp/rnbo-dsp.h`, and run it.
+3. The outcome is recorded in the journal either way. It is an *attempt*: a
+   failure is information — it would mean our text passes the differential while
+   RNBO still rejects or mis-executes it, which points at something the C++
+   reference output does implicitly and we reproduce only in appearance.
+
+**What the port must therefore deliver for step 2 to be possible at all**, and
+this promotes one item from "nice to have" to a hard requirement:
+
+- **`-lang codebox-test` must work, not just `-lang codebox`.** `rnbo-dsp.h`
+  decodes RNBO parameters back into a Faust `UI` purely by prefix matching on
+  `RB_button_`, `RB_checkbox_`, `RB_hslider_`, `RB_vslider_`, `RB_nentry_`,
+  `RB_hbargraph_`, `RB_vbargraph_` (rnbo-dsp.h:120–170). Without the
+  `codebox-test` label convention there is no way for the wrapper to see any
+  control, so the manual run would produce a DSP with zero parameters and prove
+  nothing. C2 owns this, and it is not optional.
+- **Bargraphs need patch-level wiring that the codebox output cannot provide.**
+  Verified on the reference: with `-lang codebox-test`, a `vbargraph` produces
+  *no* `@param` at all — it appears only in `return [output0_cb, fVbargraph0_cb]`
+  and as an extra `out2 = outputs[1]`. But `rnbo-dsp.h` discovers bargraphs by
+  looking for parameters named `RB_vbargraph_*` / `RB_hbargraph_*`
+  (rnbo-dsp.h:158–168). Nothing emits those.
+
+  The missing link is in the RNBO *patch*, as the C++ header comment says: the
+  extra audio outputs must be sampled with `snapshot~` + `change` and connected
+  to `param` objects carrying those names. So step 2 requires building that
+  wiring by hand, and its ordering — extra channels come after the real outputs,
+  in bargraph declaration order — is the part to get right. A permutation there
+  is invisible to the text differential and shows up as correct-looking values on
+  the wrong channels.
+
+  For a first attempt it is simpler to validate a DSP **without** bargraphs, and
+  treat bargraph round-tripping as a separate exercise.
+- **The emitted file should be usable as-is**: no faust-rs-specific header line
+  or trailing content that RNBO's codebox parser would reject. Worth checking
+  against the reference's exact header shape (§7).
+
+Practical form for step 2, so it is reproducible rather than folkloric:
+
+```bash
+# 1. generate, with the test label convention
+faust-rs -lang codebox-test -o mydsp.codebox mydsp.dsp
+# 2. import mydsp.codebox into a codebox~ object in an RNBO patch, export C++
+#    (Max/RNBO, manual) -> rnbo_source.cpp + rnbo/ headers
+# 3. build against the Faust wrapper and the impulse architecture
+c++ -O3 -I<rnbo-export-dir> -I<faust-arch> \
+    -DFAUSTFLOAT=double impulse_rnbo.cpp -o mydsp_rnbo
+# 4. compare against the same oracle every other backend uses
+./mydsp_rnbo -n 15000 > mydsp.ir
+tools/filesCompare mydsp.ir reference/mydsp.ir -part 2e-06
+```
+
+Note that `rnbo-dsp.h` implements `dsp::compute(count, inputs, outputs)` — a
+block interface — so it plugs into the ordinary impulse architecture rather than
+needing the one-sample driver, even though the codebox body is per-sample. RNBO
+does the block loop.
+
+Because this is a one-off attestation and not a gate, it does not remove the
+need for Layer 2: only an automated numeric check catches a *future* regression.
+If Layer 2 is skipped, the honest statement is that codebox is guarded by text
+parity plus a dated manual attestation, and that a later change can break the
+numbers without any test noticing.
 
 ### 5.3 What must not be claimed
 
