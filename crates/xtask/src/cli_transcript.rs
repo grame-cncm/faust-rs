@@ -10,6 +10,56 @@
 //! cargo run -p xtask -- cli-transcript-check   # compare against it
 //! ```
 //!
+//! When output changes *on purpose*, re-record with `-gen` and let the diff be
+//! reviewed. The snapshot is generated, never hand-edited.
+//!
+//! # This is a local tool, not a CI gate
+//!
+//! 35 of the 148 snapshots embed machine-specific absolute paths, so the
+//! snapshot only reproduces on the machine that recorded it. That is why
+//! `cli-transcript-check` is absent from `.github/workflows/ci.yml`.
+//!
+//! Three distinct sources, none of them a defect:
+//!
+//! 1. **Diagnostics** (29 snapshots, all `bad_*`). `compile_file_to_signals`
+//!    canonicalizes the input path to key the metadata store, and the
+//!    resulting absolute path reaches the rendered diagnostic.
+//! 2. **`include_pathnames` in the JSON description** (4 snapshots).
+//!    `paths.rs` derives an executable-relative `../share/faust`, which under
+//!    a cargo layout is `<repo>/target/share/faust`.
+//! 3. **The wasm binaries** (2 snapshots). They carry that same JSON as a data
+//!    segment, so the path is in the *bytes*.
+//!
+//! Source 3 is what rules out fixing this by rewriting the recorded text: the
+//! data segment's length is LEB128-encoded, so a substitution that changes the
+//! path's length invalidates the prefix, and two machines with different path
+//! lengths produce genuinely different bytes that no post-hoc rule reconciles.
+//!
+//! Note also that `include_pathnames` lists `/usr/local/share/faust` and
+//! `/usr/share/faust`, so even a repo-root rewrite would not make the snapshot
+//! portable to Windows.
+//!
+//! # Staying local is a decision, not a pending fix (2026-07-26)
+//!
+//! A CI-gated variant would need a declared *portable subset*: 113 of the 148
+//! modes carry no machine-specific path. That was considered and **rejected**,
+//! because the 35 excluded modes are all the `bad_*` ones — the error
+//! diagnostics, which is the coverage nothing else in the repo provides. CI
+//! would gain the half that `golden-check` already largely covers and lose the
+//! half that is unique here.
+//!
+//! So this is a refactor tool: run it by hand while reworking the CLI or the
+//! facade, and leave it alone otherwise. Do not wire it into CI without
+//! revisiting that trade-off first.
+//!
+//! Its real failure mode is human, and worth naming: when output changes you
+//! re-record, and a re-record accepted without reading the diff *launders a
+//! regression into an intentional change*. The diff is the check — the
+//! snapshot is only what makes the diff possible.
+//!
+//! If it ever needs strengthening, the weak axis is breadth of programs (three
+//! DSPs), not modes.
+//!
 //! # Two traps this harness is built to avoid
 //!
 //! 1. **Inputs must sit at a path of fixed length.** The source path is

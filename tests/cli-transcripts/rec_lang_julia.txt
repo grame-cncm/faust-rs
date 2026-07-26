@@ -12,6 +12,8 @@ fmod(x, y) = rem(x, y)
 atan2(y, x) = atan(y, x)
 faust_wrap_int32(x) = reinterpret(Int32, UInt32(mod(trunc(Int64, x), 0x100000000)))
 remainder(x, y) = rem(x, y, Base.Rounding.RoundNearest)
+faust_fmin(x, y) = isnan(x) ? y : (isnan(y) ? x : min(x, y))
+faust_fmax(x, y) = isnan(x) ? y : (isnan(y) ? x : max(x, y))
 
 mutable struct mydsp{T} <: dsp
 	fSampleRate::Int32

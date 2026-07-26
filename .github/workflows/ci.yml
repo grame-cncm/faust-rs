@@ -80,6 +80,19 @@ jobs:
       - name: Golden output check
         run: cargo run -p xtask -- golden-check
 
+      # Static source analysis: the production-line threshold, the retired
+      # vector alias paths, and the producer/checker separation. Pure text
+      # analysis, so one runner settles it for all three.
+      #
+      # Its sibling `cli-transcript-check` is deliberately *not* here: 35 of
+      # its 148 snapshots embed machine-specific absolute paths, so it only
+      # reproduces on the machine that recorded it. See the module header of
+      # `crates/xtask/src/cli_transcript.rs` for the three sources and why
+      # post-hoc text normalization cannot reconcile them.
+      - name: Structure check (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo run -p xtask -- structure-check
+
       - name: Backend alignment smoke (PR only)
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest'
         run: cargo run -p xtask -- backend-align-smoke --skip-golden
