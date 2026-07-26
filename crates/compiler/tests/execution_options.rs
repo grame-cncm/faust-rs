@@ -308,3 +308,160 @@ fn faustwasm_aux_files_honor_mcd_dlt_vec_ss_in_argv() {
         cpp_of(&format!("-cpp -ss {ss}"));
     }
 }
+
+// ── The canonical-block-`compute` contract, driven by the capability table ───
+
+/// How to emit one backend under `-ec -os`, and how to recognise what it emits.
+///
+/// Both signature fragments are needed. `block_compute` alone cannot tell a
+/// backend that correctly omits the canonical block entry point from a probe
+/// that is simply looking for the wrong string — so `per_sample` is asserted
+/// present on every backend, which makes a mis-typed probe fail loudly instead
+/// of quietly agreeing with a `canonical_compute_required: false` row.
+struct ComputeProbe {
+    /// Emits this backend's `-ec -os` output.
+    emit: fn() -> String,
+    /// Appears exactly when the canonical *block* `compute` — the one taking a
+    /// sample count and channel arrays — is emitted.
+    block_compute: &'static str,
+    /// Appears exactly when the per-sample entry point is emitted.
+    per_sample: &'static str,
+}
+
+/// Returns the probe for a backend that accepts `-os`.
+///
+/// Panics on an unknown identifier, which is the fail-closed half of the
+/// contract: a new capability row claiming `-os` support cannot reach the test
+/// below without someone stating what its canonical `compute` looks like.
+fn compute_probe(backend: &str) -> ComputeProbe {
+    const ECOS: (ControlRateMode, ProcessingApi) =
+        (ControlRateMode::External, ProcessingApi::OneSample);
+    match backend {
+        "cpp" => ComputeProbe {
+            emit: || compile_cpp(ECOS.0, ECOS.1),
+            block_compute: "virtual void compute(int count",
+            per_sample: "virtual void frame(",
+        },
+        "c" => ComputeProbe {
+            emit: || compile_c(ECOS.0, ECOS.1),
+            block_compute: "void computemydsp(mydsp* dsp, int count",
+            per_sample: "void framemydsp(",
+        },
+        "rust" => ComputeProbe {
+            emit: || compile_rust(ECOS.0, ECOS.1),
+            block_compute: "pub fn compute(&mut self, _count: usize",
+            per_sample: "pub fn frame(&mut self,",
+        },
+        "asc" => ComputeProbe {
+            emit: || compile_asc(ECOS.0, ECOS.1),
+            block_compute: "compute(count: i32, inputs: Array<StaticArray<f32>>",
+            per_sample: "frame(inputs: StaticArray<f32>",
+        },
+        "fir" => ComputeProbe {
+            emit: || compile_fir_text(ECOS.0, ECOS.1),
+            block_compute: r#"DeclareFun { name: "compute""#,
+            per_sample: r#"DeclareFun { name: "frame""#,
+        },
+        "codebox" => ComputeProbe {
+            emit: compile_codebox,
+            // Codebox has no canonical block entry point at all. If it ever
+            // grew one it would have to take a sample count, like every other
+            // backend's does; nothing else in the emitted file mentions one.
+            block_compute: "count",
+            // RNBO's per-sample entry: one argument per input, no count.
+            per_sample: "function compute(i0) {",
+        },
+        unknown => panic!(
+            "backend '{unknown}' has a capability row accepting '-os' but no \
+             canonical-`compute` probe. Add one: state the signature fragment \
+             that appears when it emits the canonical block `compute`, and the \
+             one that appears when it emits the per-sample entry point."
+        ),
+    }
+}
+
+fn compile_fir_text(control: ControlRateMode, api: ProcessingApi) -> String {
+    let out = Compiler::new()
+        .with_control_rate_mode(control)
+        .with_processing_api(api)
+        .compile_source_to_fir_with_lane(
+            "exec_options_test.dsp",
+            SLIDER_GAIN,
+            compiler::SignalFirLane::TransformFastLane,
+        )
+        .expect("fir lowering must succeed");
+    fir::dump_fir(&out.store, out.module)
+}
+
+fn compile_codebox() -> String {
+    // No execution options passed on purpose: codebox forces external control
+    // and one-sample itself, which is what its `Intrinsic` capability means.
+    Compiler::new()
+        .compile_source_to_codebox(
+            "exec_options_test.dsp",
+            SLIDER_GAIN,
+            &codegen::backends::codebox::CodeboxOptions::default(),
+        )
+        .expect("codebox compilation must succeed")
+}
+
+/// `canonical_compute_required` must describe what the backend actually emits.
+///
+/// Until this test existed the field was set on every row and read by nobody:
+/// the contract it describes was enforced only by the four hand-written
+/// per-backend tests above, which name their signatures directly and never
+/// consult the table. A new row could therefore claim
+/// `canonical_compute_required: true` and get no coverage at all.
+///
+/// Driving the loop from [`all_backend_execution_caps`] fixes the direction of
+/// the dependency: the table decides which backends are checked, and
+/// [`compute_probe`] panics on a row it does not know.
+///
+/// Scope: this checks that the entry point is *present or absent* as the row
+/// claims. That it is present *and empty* under `-os` is checked, with exact
+/// signatures, by `cpp_shapes_match_the_reference_contract`,
+/// `c_shapes_match_the_reference_contract`, `rust_shapes_match_the_d3_contract`
+/// and `asc_shapes_match_the_one_sample_contract`.
+#[test]
+fn canonical_compute_matches_every_capability_row() {
+    let mut checked = Vec::new();
+    for caps in compiler::execution::all_backend_execution_caps() {
+        if !caps.one_sample.is_supported() {
+            continue;
+        }
+        let probe = compute_probe(caps.backend);
+        let text = (probe.emit)();
+        assert!(
+            text.contains(probe.per_sample),
+            "`{}` emitted no per-sample entry point matching {:?} — the probe \
+             is wrong or the backend regressed, and either way its \
+             `block_compute` verdict cannot be trusted:\n{text}",
+            caps.backend,
+            probe.per_sample
+        );
+        assert_eq!(
+            text.contains(probe.block_compute),
+            caps.canonical_compute_required,
+            "`{}` disagrees with its capability row: \
+             canonical_compute_required = {}, but {:?} was {} in the output",
+            caps.backend,
+            caps.canonical_compute_required,
+            probe.block_compute,
+            if caps.canonical_compute_required {
+                "absent"
+            } else {
+                "present"
+            }
+        );
+        checked.push(caps.backend);
+    }
+    assert!(
+        checked.contains(&"codebox"),
+        "the only row with canonical_compute_required = false must be covered, \
+         otherwise this test only ever asserts presence: {checked:?}"
+    );
+    assert!(
+        checked.len() >= 5,
+        "expected every `-os` backend to be probed, got {checked:?}"
+    );
+}

@@ -67,6 +67,12 @@ pub struct BackendExecutionCaps {
     /// Whether the backend must keep emitting the canonical block `compute`
     /// entry point (empty in one-sample mode) so the ordinary DSP interface
     /// stays satisfied.
+    ///
+    /// Enforced against the emitted output by
+    /// `canonical_compute_matches_every_capability_row` in
+    /// `crates/compiler/tests/execution_options.rs`, which is driven by this
+    /// table: a row added here with `one_sample` support must state what its
+    /// canonical `compute` looks like, or that test fails closed.
     pub canonical_compute_required: bool,
 }
 
@@ -192,6 +198,18 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
 #[must_use]
 pub fn backend_execution_caps(backend: &str) -> Option<&'static BackendExecutionCaps> {
     BACKEND_CAPS.iter().find(|caps| caps.backend == backend)
+}
+
+/// Every capability row, in table order.
+///
+/// Exposed so contract tests can be *driven by* the table rather than restate
+/// the backend list beside it. That is the difference between a row that is
+/// documentation and a row that is enforced: with this accessor, adding a
+/// backend here obliges the contract tests to account for it, and they fail
+/// closed when they cannot.
+#[must_use]
+pub fn all_backend_execution_caps() -> &'static [BackendExecutionCaps] {
+    BACKEND_CAPS
 }
 
 /// Backends currently accepting `-os`, for diagnostics.
