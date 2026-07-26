@@ -265,12 +265,57 @@ where
         outputs: options.outputs,
         sr_index: options.sr_index,
         meta: merged_meta,
-        ui: parse_ui(
-            store,
-            find_function_body(store, function_items, "buildUserInterface"),
-            &mut resolve_index,
-        )?,
+        ui: {
+            let mut ui = parse_ui(
+                store,
+                find_function_body(store, function_items, "buildUserInterface"),
+                &mut resolve_index,
+            )?;
+            assign_short_names(&mut ui);
+            ui
+        },
     })
+}
+
+/// Fills every widget's `shortname` with its unique short identifier.
+///
+/// A second pass over the finished tree, because a short name cannot be decided
+/// widget by widget: it is the shortest suffix of the address that no other
+/// widget shares, so every address has to be known first. This mirrors the C++
+/// `ShortnameInstVisitor`, which likewise computes the mapping only once the
+/// enclosing box closes and all full paths are known.
+fn assign_short_names(items: &mut [JsonUiItem]) {
+    let mut addresses = Vec::new();
+    collect_addresses(items, &mut addresses);
+    let short_names = crate::shortname::compute_short_names(&addresses);
+    apply_short_names(items, &short_names);
+}
+
+/// Collects widget addresses in UI declaration order.
+fn collect_addresses(items: &[JsonUiItem], out: &mut Vec<String>) {
+    for item in items {
+        match item {
+            JsonUiItem::Group { items, .. } => collect_addresses(items, out),
+            JsonUiItem::Widget(widget) => out.push(widget.address.clone()),
+        }
+    }
+}
+
+/// Writes the computed short names back onto the widgets.
+fn apply_short_names(
+    items: &mut [JsonUiItem],
+    short_names: &std::collections::BTreeMap<String, String>,
+) {
+    for item in items {
+        match item {
+            JsonUiItem::Group { items, .. } => apply_short_names(items, short_names),
+            JsonUiItem::Widget(widget) => {
+                if let Some(short) = short_names.get(&widget.address) {
+                    widget.shortname = short.clone();
+                }
+            }
+        }
+    }
 }
 
 /// Escape one string for inclusion in the hand-written JSON renderer.
@@ -856,7 +901,8 @@ where
     address.push_str(&label);
     Ok(JsonWidget {
         typ,
-        shortname: label.clone(),
+        // Filled by `assign_short_names` once every address is known.
+        shortname: String::new(),
         label,
         varname: var,
         address,
