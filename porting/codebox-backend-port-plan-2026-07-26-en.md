@@ -72,8 +72,9 @@ Two further language quirks that must be reproduced exactly or the numbers move:
   @param({min: 0., max: 1.}) RB_button_trig = 0.;
   ```
 
-  Reproduce the asymmetry rather than normalising it, or every UI-bearing DSP
-  fails the text differential on cosmetics.
+  Reproduce the asymmetry rather than normalising it: it costs nothing and it
+  keeps a by-eye comparison against the reference readable. (Not a gate — see the
+  correction in §5.2.)
 
 ## 2. What faust-rs already has
 
@@ -105,9 +106,10 @@ compiled): the reported compile options contain **`-ec`** but *not* `-os`. So
 external control is genuinely forced, while the one-sample shape comes from
 calling `generateOneSample()` directly rather than from the `-os` option. A
 faust-rs port that sets `ProcessingApi::OneSample` will therefore reach the same
-body, but its `compile_options` provenance string will differ from the C++ one
-unless the flag list is filtered — which matters, because that string is part of
-the emitted header the text differential compares.
+body shape, but its `compile_options` provenance string will differ from the C++
+one. Since §5.2's correction removes byte parity as a goal, that divergence is
+acceptable and needs no flag filtering — just keep the header line out of the
+snapshot's normalisation-sensitive part.
 
 Two pieces genuinely do not exist yet and must be built:
 
@@ -142,8 +144,8 @@ Two pieces genuinely do not exist yet and must be built:
   **codebox backend does not check**, and happily emits two `@param` with the
   same identifier plus `update(…, P3_cbs_my_gain, P3_cbs_my_gain)`. That output
   is not valid codebox. Decide in C2 whether to reproduce it for byte parity or
-  to reject earlier, and record the choice; the text differential will otherwise
-  make the decision silently.
+  to reject earlier, and record the choice. Nothing will decide it for us: the
+  snapshot records whatever we emit, so this one needs an explicit call.
 - **The `codebox-test` label convention.** For testing, labels are prefixed
   `RB_hslider_`, `RB_button_`, `RB_hbargraph_`… so the RNBO wrapper can map
   parameters back onto a Faust UI. Outside test mode, a label starting with a
@@ -216,9 +218,11 @@ declarations with `_cb` suffix, `dspsetup`, `compute` with the one-sample body,
 the top-level wiring. Rejects soundfiles with a typed error, and rejects vector
 mode.
 
-Verification: emitted text for a handful of DSPs (`process = _;`, a one-pole
-filter, a table read) compared against `faust -lang codebox` output from the
-pinned C++ reference, normalised for the version line.
+Verification: the snapshot of §5.2 layer 1 recorded for a handful of DSPs
+(`process = _;`, a recursion, a multi-channel case, a table read), plus a
+by-eye comparison against `faust -lang codebox` on the same DSPs to confirm the
+*syntax* matches — not the structure, which legitimately differs (see the
+correction note in §5.2). Numeric verification arrives with layer 2.
 
 ### C2 — Params, control, update (including `codebox-test`)
 
@@ -231,17 +235,20 @@ manual RNBO validation of §5.2 layer 3 possible at all — `rnbo-dsp.h` recover
 the Faust UI from those prefixes and from nothing else — so it is part of this
 phase's deliverable, not a follow-up.
 
-Verification: same textual differential, on DSPs with sliders, buttons,
-checkboxes and numeric entries, including labels that need `cb_` prefixing and
-labels that collide.
+Verification: snapshot extended to DSPs with sliders, buttons, checkboxes and
+numeric entries, including labels that need `cb_` prefixing and labels that
+collide. Parameter *names* can be compared against the C++ reference as a real
+equality check — they come from the shared shortname algorithm of C0, which is
+`preserved`, unlike the surrounding code structure.
 
 ### C3 — Bargraphs as extra audio outputs
 
 Collect `fHbargraph*` / `fVbargraph*` declarations, append them to `compute`'s
 return list, and extend the top-level `outN` wiring.
 
-Verification: a DSP with two bargraphs must emit `numOutputs + 2` outputs, and
-the textual differential must match the reference.
+Verification: a DSP with two bargraphs must emit `numOutputs + 2` outputs, in
+bargraph declaration order. The output *count* and *order* are comparable
+against the C++ reference; the surrounding code is not.
 
 ### C4 — Language quirks
 
@@ -250,9 +257,11 @@ parenthesisation, `safemod` for `fmod`, `samplerate()` for `sample_rate`, and
 the math-name mapping table (`gPolyMathLibTable`).
 
 Verification: a DSP exercising each quirk, plus a **rejecting mutation** per
-quirk: removing `trunc` must make the numeric test below fail, not just the
-text differential. A quirk that only the text diff catches is a quirk nobody
-will notice when the reference text changes shape.
+quirk — removing `trunc` must make a *numeric* test fail. This is why layer 2
+is not optional: a snapshot notices that the text changed, which is exactly what
+a deliberate change also does, so it cannot arbitrate. `trunc` versus `floor`
+differs only on negative values, so the mutation needs a DSP that produces
+them.
 
 ### C5 — CLI and capability wiring
 
@@ -295,26 +304,56 @@ port is "validated like cpp/c" would be false.
 
 ### 5.2 Three layers this port can actually stand on
 
-**Layer 1 — textual differential against the pinned C++ compiler (primary).**
-For a fixed DSP corpus, `faust -lang codebox` and `faust-rs -lang codebox` must
-produce the same text, modulo the version/options header line. This is a strong
-oracle: codebox output is deterministic text, and the C++ backend is the
-specification. Mechanise it as an `xtask` command in the shape of the existing
-`cli-transcript-check`:
+> **Correction, 2026-07-26.** The first version of this section made a textual
+> differential against the C++ compiler the primary oracle. That was wrong, and
+> it was wrong because of an assumption I never checked: that our FIR lowering
+> produces the same structure as the C++ one. It does not, and it does not have
+> to — the contract with C++ Faust has always been *numerical* equivalence.
+>
+> Measured on `process = + ~ *(0.5);`, C++ lowers the recursion to a two-element
+> shift buffer while faust-rs uses a single scalar:
+>
+> | | emitted loop body |
+> |---|---|
+> | C++ | `fVec0SE[0] = fTemp0SE; … fVec0SE[1] = fVec0SE[0];` |
+> | faust-rs | `fRec36 = fRecCur36;` |
+>
+> And the divergence is not confined to state. On `(_,_:+),(_,_:*)`, which has
+> none, C++ emits `static_cast<float>(x)` where we emit `((float)(x))`.
+>
+> So byte parity with the reference is unreachable, and the layers below are
+> renumbered accordingly: the snapshot cannot prove correctness, only stability,
+> and the numeric evaluator is the only thing that can prove correctness.
+
+**Layer 1 — self-snapshot of our own output (regression detection only).**
+Record faust-rs's own codebox output for a fixed DSP corpus and fail when it
+changes unexpectedly, in the shape of the existing `cli-transcript-check`:
 
 ```
-cargo run -p xtask -- codebox-diff-gen     # record reference output
-cargo run -p xtask -- codebox-diff-check   # compare
+cargo run -p xtask -- codebox-snapshot-gen     # record OUR output
+cargo run -p xtask -- codebox-snapshot-check   # detect changes
 ```
 
-Traps to build in from the start, learned from the impulse-test work:
-- normalise only the version and compile-options lines, nothing else;
+Be precise about what this buys and what it does not. It catches "a refactor
+changed the emitted text", which is genuinely useful during C2–C4. It cannot
+catch "the emitted text is wrong": a snapshot of a wrong output is a green
+snapshot. Never regenerate it to make a failure go away without explaining the
+diff.
+
+The C++ reference output stays useful, but as a **specification read by a human,
+not a target compared by a machine**: it is where the syntax of `@state`,
+`@param`, `iadd`/`imod`, `trunc`, and the literal formatting come from (§1, §7).
+Spot-comparing our output against it by eye during C1–C4 is worth doing; wiring
+that comparison into a gate is not.
+
+Traps to build into the snapshot anyway, learned from the impulse-test work:
 - keep DSP inputs at a fixed path (the source name reaches the output);
-- treat "no reference recorded" as a failure, not a skip.
+- treat "no snapshot recorded" as a failure, not a skip;
+- normalise only our own version line.
 
-**Layer 2 — a codebox interpreter for numeric testing (recommended).**
-Text equality proves we emit what C++ emits; it does not prove either is
-*right*, and it breaks on any upstream cosmetic change. The subset codebox uses
+**Layer 2 — a codebox interpreter for numeric testing (PRIMARY oracle).**
+This is now the only layer that can show the backend is *correct* rather than
+merely unchanged. The subset codebox uses
 is small — `@state`/`let` declarations, assignments, `if`, `for`, arrays, the
 math functions of `gPolyMathLibTable`, and function definitions. A few-hundred
 line evaluator in `crates/codegen/tests/` or a small `xtask` can execute the
@@ -335,7 +374,8 @@ require the same numbers.
 owner).** This layer is *not* mine to run: it needs Max/RNBO. The agreed
 sequencing is therefore:
 
-1. I deliver phases C0–C5 and Layer 1 (the textual differential, green).
+1. I deliver phases C0–C5, the layer 1 snapshot, and — since it is now the only
+   correctness oracle — layer 2.
 2. Stéphane then attempts the manual validation in the C++ architecture: import
    the faust-rs-generated codebox into an RNBO patch, export `rnbo_source.cpp`,
    compile it against `architecture/faust/dsp/rnbo-dsp.h`, and run it.
@@ -366,8 +406,8 @@ this promotes one item from "nice to have" to a hard requirement:
   to `param` objects carrying those names. So step 2 requires building that
   wiring by hand, and its ordering — extra channels come after the real outputs,
   in bargraph declaration order — is the part to get right. A permutation there
-  is invisible to the text differential and shows up as correct-looking values on
-  the wrong channels.
+  is invisible to the snapshot and shows up as correct-looking values on the
+  wrong channels — only the numeric layer or your manual run can catch it.
 
   For a first attempt it is simpler to validate a DSP **without** bargraphs, and
   treat bargraph round-tripping as a separate exercise.
@@ -426,7 +466,11 @@ numbers without any test noticing.
   differential must cover both precisions or half the literal formatting goes
   unchecked.
 
-## 7. Reference output, for anchoring
+## 7. Reference output, as a language specification
+
+Read as *syntax to reproduce*, not as text to match: per the correction in §5.2,
+our lowering legitimately differs in structure, so the value here is the shape of
+the constructs, not the exact statements.
 
 `faust 2.84.3 -lang codebox` on
 `process = _ * hslider("gain", 0.5, 0, 1, 0.01) : + ~ *(0.5);` — the shape C1–C4
