@@ -153,6 +153,7 @@ pub fn generate_codebox_module(
     let _ = writeln!(out, "// Additional functions");
 
     let params = collect_params(store, view.functions, options)?;
+    let bargraphs = collect_bargraphs(store, view.functions);
     let _ = writeln!(out, "// Params");
     emit_params(&mut out, &params, options);
 
@@ -177,8 +178,8 @@ pub fn generate_codebox_module(
     emit_dspsetup(store, &mut out, options, &view)?;
     emit_control(store, &mut out, options, &view)?;
     emit_update(&mut out, &params);
-    emit_compute(store, &mut out, options, &view)?;
-    emit_top_level(&mut out, &view, &params);
+    emit_compute(store, &mut out, options, &view, &bargraphs)?;
+    emit_top_level(&mut out, &view, &params, &bargraphs);
 
     Ok(out)
 }
@@ -196,8 +197,9 @@ struct Param {
 
 /// Walks `buildUserInterface` and collects the controls, in UI order.
 ///
-/// Bargraphs are deliberately skipped: codebox cannot send them back as control
-/// values, so they become extra audio outputs instead (phase C3).
+/// Bargraphs are not controls here: codebox cannot send a value back to the
+/// host as control data, so they leave through [`collect_bargraphs`] as extra
+/// audio channels instead.
 fn collect_params(
     store: &FirStore,
     functions: FirId,
@@ -373,6 +375,35 @@ fn emit_params(out: &mut String, params: &[Param], options: &CodeboxOptions) {
     }
 }
 
+/// Collects the bargraph variables, in UI declaration order.
+///
+/// Codebox has no way to report a value back to the host as control data, so a
+/// bargraph becomes an **extra audio output**, appended after the real ones.
+/// The host is then expected to sample it (`snapshot~` + `change` in the RNBO
+/// patch) and feed a `param` object with it.
+///
+/// Order matters and is not checkable by reading the file: the RNBO patch wires
+/// channel *N* to a named parameter, so a permutation here shows up as
+/// plausible values on the wrong meter.
+fn collect_bargraphs(store: &FirStore, functions: FirId) -> Vec<String> {
+    let Some(body) = find_function_body(store, functions, "buildUserInterface") else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    collect_bargraphs_in(store, body, &mut found);
+    found
+}
+
+fn collect_bargraphs_in(store: &FirStore, block: FirId, out: &mut Vec<String>) {
+    for stmt in block_items(store, block) {
+        match match_fir(store, stmt) {
+            FirMatch::AddBargraph { var, .. } => out.push(codebox_var_name(&var)),
+            FirMatch::Block(_) => collect_bargraphs_in(store, stmt, out),
+            _ => {}
+        }
+    }
+}
+
 /// Emits `dspsetup()`, the single init entry point RNBO calls on start and on
 /// sample-rate change.
 ///
@@ -513,6 +544,7 @@ fn emit_compute(
     out: &mut String,
     options: &CodeboxOptions,
     view: &ModuleView,
+    bargraphs: &[String],
 ) -> Result<(), CodegenError> {
     let _ = writeln!(out, "// Compute one frame");
     let args: Vec<String> = (0..view.num_inputs).map(|i| format!("i{i}")).collect();
@@ -529,16 +561,18 @@ fn emit_compute(
         emit_block_items(store, out, options, body, 1, Phase::Body)?;
     }
 
-    let returned: Vec<String> = (0..view.num_outputs)
+    // Real audio outputs first, then the bargraphs as extra channels.
+    let mut returned: Vec<String> = (0..view.num_outputs)
         .map(|i| format!("output{i}_cb"))
         .collect();
+    returned.extend(bargraphs.iter().cloned());
     let _ = writeln!(out, "\treturn [{}];", returned.join(","));
     let _ = writeln!(out, "}}");
     Ok(())
 }
 
 /// Emits the file-scope wiring RNBO evaluates once per sample.
-fn emit_top_level(out: &mut String, view: &ModuleView, params: &[Param]) {
+fn emit_top_level(out: &mut String, view: &ModuleView, params: &[Param], bargraphs: &[String]) {
     let _ = writeln!(out, "// Update parameters");
     let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
     let _ = writeln!(out, "update({});", names.join(","));
@@ -551,7 +585,7 @@ fn emit_top_level(out: &mut String, view: &ModuleView, params: &[Param]) {
         out,
         "// Write the outputs: audio ones and bargraph as additional audio signals"
     );
-    for index in 0..view.num_outputs {
+    for index in 0..view.num_outputs + bargraphs.len() {
         let _ = writeln!(out, "out{} = outputs[{index}];", index + 1);
     }
 }
@@ -859,16 +893,33 @@ fn emit_value(
         }
 
         // Codebox has a single `number` type, so a float cast is the identity.
-        // Integer casts need `trunc()`, which phase C4 owns.
-        FirMatch::Cast { value, .. } | FirMatch::Bitcast { value, .. } => {
-            emit_value(store, options, value)
+        // An integer cast is not: codebox's own `int()` *floors*, which differs
+        // from C truncation on negative values (`int(-1.5)` gives -2 instead of
+        // -1), so the reference emits `trunc()` and so do we.
+        FirMatch::Cast { typ, value } => {
+            let inner = emit_value(store, options, value)?;
+            if is_integer_type(&typ) {
+                Ok(format!("trunc({inner})"))
+            } else {
+                Ok(inner)
+            }
         }
+        FirMatch::Bitcast { value, .. } => emit_value(store, options, value),
 
-        FirMatch::BinOp { op, lhs, rhs, .. } => {
-            let lhs = emit_value(store, options, lhs)?;
-            let rhs = emit_value(store, options, rhs)?;
+        FirMatch::BinOp { op, lhs, rhs, typ } => {
+            let lhs_text = emit_value(store, options, lhs)?;
+            let rhs_text = emit_value(store, options, rhs)?;
+            // `+`, `*` and `%` on two int32 operands go through the wrapping
+            // helpers: codebox's infix operators work on `number`, so they would
+            // not wrap at 32 bits. Only these three, matching the reference —
+            // `-` and the bitwise operators stay infix.
+            if is_integer_type(&typ)
+                && let Some(helper) = integer_helper(op)
+            {
+                return Ok(format!("{helper}({lhs_text}, {rhs_text})"));
+            }
             // Fully parenthesised: codebox precedence is not C's.
-            Ok(format!("({lhs} {} {rhs})", emit_binop(op)))
+            Ok(format!("({lhs_text} {} {rhs_text})", emit_binop(op)))
         }
 
         FirMatch::Neg { value, .. } => {
@@ -881,7 +932,7 @@ fn emit_value(
             for arg in args {
                 rendered.push(emit_value(store, options, arg)?);
             }
-            Ok(format!("{name}({})", rendered.join(", ")))
+            Ok(format!("{}({})", map_math_name(&name), rendered.join(", ")))
         }
 
         other => Err(CodegenError::new(
@@ -939,10 +990,71 @@ fn io_local(name: &str, index: &str) -> Option<String> {
     }
 }
 
-/// Maps a FIR binary operator to its codebox spelling.
+/// Whether a FIR type is one codebox would treat as an integer.
+fn is_integer_type(typ: &FirType) -> bool {
+    matches!(typ, FirType::Int32 | FirType::Int64)
+}
+
+/// The wrapping helper for an integer operator, when codebox has one.
 ///
-/// Integer `+`, `*` and `%` need the wrapping helpers instead, which phase C4
-/// owns; here every operator is infix.
+/// C++ parity: the `iop` table in `visit(BinopInst*)` — `kRem`, `kAdd` and
+/// `kMul` only.
+fn integer_helper(op: FirBinOp) -> Option<&'static str> {
+    match op {
+        FirBinOp::Add => Some("iadd"),
+        FirBinOp::Mul => Some("imul"),
+        FirBinOp::Rem => Some("imod"),
+        _ => None,
+    }
+}
+
+/// Maps a Faust math function name to the codebox one.
+///
+/// C++ parity: `gPolyMathLibTable`. Two rules beyond dropping the precision
+/// suffix: `fmod` has no codebox equivalent and becomes `safemod` (which
+/// returns 0 rather than NaN for a zero divisor), and the `min`/`max` family
+/// collapses onto the untyped names.
+fn map_math_name(name: &str) -> &str {
+    match name {
+        "fabsf" | "fabs" | "fabsl" | "abs" => "abs",
+        "max_i" | "max_f" | "max_" | "max_l" => "max",
+        "min_i" | "min_f" | "min_" | "min_l" => "min",
+        "fmodf" | "fmod" | "fmodl" => "safemod",
+        "acosf" | "acos" => "acos",
+        "asinf" | "asin" => "asin",
+        "atanf" | "atan" => "atan",
+        "atan2f" | "atan2" => "atan2",
+        "ceilf" | "ceil" => "ceil",
+        "cosf" | "cos" => "cos",
+        "expf" | "exp" => "exp",
+        "exp2f" | "exp2" => "exp2",
+        "exp10f" | "exp10" => "exp10",
+        "floorf" | "floor" => "floor",
+        "logf" | "log" => "log",
+        "log2f" | "log2" => "log2",
+        "log10f" | "log10" => "log10",
+        "powf" | "pow" => "pow",
+        "remainderf" | "remainder" => "remainder",
+        "rintf" | "rint" => "rint",
+        "roundf" | "round" => "round",
+        "sinf" | "sin" => "sin",
+        "sqrtf" | "sqrt" => "sqrt",
+        "tanf" | "tan" => "tan",
+        "acoshf" | "acosh" => "acosh",
+        "asinhf" | "asinh" => "asinh",
+        "atanhf" | "atanh" => "atanh",
+        "coshf" | "cosh" => "cosh",
+        "sinhf" | "sinh" => "sinh",
+        "tanhf" | "tanh" => "tanh",
+        "isnanf" | "isnan" => "isnan",
+        other => other,
+    }
+}
+
+/// Maps a FIR binary operator to its infix codebox spelling.
+///
+/// Integer `+`, `*` and `%` never reach here: [`integer_helper`] intercepts
+/// them, because codebox's infix operators work on `number` and would not wrap.
 fn emit_binop(op: FirBinOp) -> &'static str {
     match op {
         FirBinOp::Add => "+",

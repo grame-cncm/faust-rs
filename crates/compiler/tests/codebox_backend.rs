@@ -231,7 +231,7 @@ fn dump_for_eyeball_comparison() {
 // emission from the lowering.
 
 use codegen::backends::codebox::eval::Program;
-use codegen::backends::interp::{FbcDspInstance, InterpOptions, generate_interp_module};
+use codegen::backends::interp::{FbcDspInstance, FbcOpcode, InterpOptions, generate_interp_module};
 
 /// Runs `frames` samples of `source` through both the interpreter and the
 /// emitted codebox, and asserts they agree bit-for-bit in f64.
@@ -288,6 +288,22 @@ fn assert_codebox_matches_interpreter(source_name: &str, source: &str, frames: u
         "codebox compute arity must match the DSP input count\n{text}"
     );
 
+    // Bargraphs are control zones for the interpreter and extra audio channels
+    // for codebox, so they are compared by reading the interpreter's zones —
+    // not by assuming the counts line up. Their order is part of the contract:
+    // an RNBO patch wires channel N to a named meter.
+    let bargraph_zones: Vec<i32> = instance
+        .ui_instructions()
+        .iter()
+        .filter(|ui| {
+            matches!(
+                ui.opcode,
+                FbcOpcode::AddHorizontalBargraph | FbcOpcode::AddVerticalBargraph
+            )
+        })
+        .map(|ui| ui.offset)
+        .collect();
+
     // An impulse followed by silence, the same excitation the impulse suite uses.
     for frame in 0..frames {
         let sample = if frame == 0 { 1.0f64 } else { 0.0f64 };
@@ -303,7 +319,16 @@ fn assert_codebox_matches_interpreter(source_name: &str, source: &str, frames: u
                 .try_compute(1, &in_refs, &mut out_refs)
                 .expect("interpreter compute must succeed");
         }
-        let expected: Vec<f64> = out_bufs.iter().map(|c| c[0]).collect();
+        // Real audio channels first, then each bargraph's zone, in the order
+        // the emitter appends them.
+        let mut expected: Vec<f64> = out_bufs.iter().map(|c| c[0]).collect();
+        for &offset in &bargraph_zones {
+            expected.push(
+                instance
+                    .get_real_zone(offset)
+                    .expect("bargraph zone must be readable"),
+            );
+        }
 
         let got = program
             .compute(&[], &inputs)
@@ -312,7 +337,10 @@ fn assert_codebox_matches_interpreter(source_name: &str, source: &str, frames: u
         assert_eq!(
             got.len(),
             expected.len(),
-            "output count differs at frame {frame}\n{text}"
+            "channel count differs at frame {frame} \
+             ({} outputs + {} bargraphs expected)\n{text}",
+            num_outputs,
+            bargraph_zones.len()
         );
         for (channel, (a, b)) in got.iter().zip(expected.iter()).enumerate() {
             assert!(
@@ -513,4 +541,163 @@ fn digit_initial_labels_get_the_cb_prefix() {
 #[test]
 fn numeric_ui_dsp_matches_the_interpreter() {
     assert_codebox_matches_interpreter("ui.dsp", UI_DSP, 64);
+}
+
+/// Dumps the delay DSP, whose ring counter is the integer-arithmetic source.
+#[test]
+fn dump_delay_for_eyeball_comparison() {
+    println!("{}", codebox("del.dsp", "process = _ : @(7);"));
+    println!(
+        "--- int arithmetic ---
+{}",
+        codebox("ia.dsp", "process = _ : int : +(3) : *(2) : %(5);")
+    );
+}
+
+/// Dumps the quirk DSP for eyeball comparison against the reference.
+#[test]
+fn dump_quirks_for_eyeball_comparison() {
+    println!(
+        "{}",
+        codebox(
+            "c4q.dsp",
+            "process = (_ : *(3) : int : /(2)) , (_ , 2.5 : fmod) \
+             , (_ : abs : sqrt) , (_ * -1.0);"
+        )
+    );
+}
+
+// ── C3: bargraphs as extra audio outputs ─────────────────────────────────────
+
+const BARGRAPH_DSP: &str =
+    "process = _ <: attach(_, vbargraph(\"lvl\", 0, 1)), hbargraph(\"pk\", 0, 2);";
+
+/// Codebox cannot send a value back as control data, so a bargraph leaves as an
+/// extra audio channel appended after the real outputs.
+#[test]
+fn bargraphs_become_extra_audio_outputs() {
+    let text = codebox("bar.dsp", BARGRAPH_DSP);
+    let ret = text
+        .lines()
+        .find(|l| l.trim_start().starts_with("return ["))
+        .expect("return list");
+    // Two real outputs, then the two bargraph variables, in that order.
+    assert!(ret.contains("output0_cb,output1_cb,"), "{ret}");
+    assert!(ret.contains("bargraph"), "bargraph vars missing from {ret}");
+    // The wiring must expose all four channels.
+    for channel in 1..=4 {
+        assert!(
+            text.contains(&format!("out{channel} = outputs[{}];", channel - 1)),
+            "missing channel {channel}\n{text}"
+        );
+    }
+    assert!(
+        !text.contains("out5 = "),
+        "emitted more channels than outputs + bargraphs:\n{text}"
+    );
+}
+
+/// A bargraph is not a control: it must not appear as a `@param`, or the host
+/// would try to write to a meter.
+#[test]
+fn bargraphs_are_not_params() {
+    let text = codebox("bar.dsp", BARGRAPH_DSP);
+    let params: Vec<&str> = text.lines().filter(|l| l.starts_with("@param(")).collect();
+    assert!(
+        params.is_empty(),
+        "bargraphs leaked into the parameter list: {params:?}"
+    );
+}
+
+// ── C4: language quirks ──────────────────────────────────────────────────────
+
+/// Codebox's own `int()` floors, so an integer cast must use `trunc()`.
+/// The two differ only on negative values, which is why the numeric test below
+/// feeds them.
+#[test]
+fn integer_casts_use_trunc() {
+    let text = codebox("cast.dsp", "process = _ : *(3) : int : /(2);");
+    assert!(text.contains("trunc("), "{text}");
+    assert!(
+        !text.contains("floor("),
+        "an integer cast must not floor:\n{text}"
+    );
+}
+
+/// `fmod` has no codebox equivalent; `safemod` is the documented substitute.
+#[test]
+fn fmod_maps_to_safemod() {
+    let text = codebox("mod.dsp", "process = _ , 2.5 : fmod;");
+    assert!(text.contains("safemod("), "{text}");
+    assert!(!text.contains("fmod("), "{text}");
+}
+
+/// Faust's precision-suffixed math names are not codebox names.
+#[test]
+fn math_names_lose_their_precision_suffix() {
+    let text = codebox("math.dsp", "process = _ : abs : sqrt : log;");
+    assert!(
+        text.contains("sqrt(") && text.contains("abs(") && text.contains("log("),
+        "{text}"
+    );
+    for banned in ["sqrtf(", "fabsf(", "fabs(", "logf("] {
+        assert!(!text.contains(banned), "unmapped name {banned}\n{text}");
+    }
+}
+
+/// Integer `+`, `*` and `%` wrap at 32 bits, which codebox's infix operators —
+/// working on `number` — would not do.
+///
+/// The DSP matters: a delay's ring counter only produces integer arithmetic in
+/// the *loop headers*, which the emitter writes directly, so it exercises
+/// nothing of the operator mapping. Explicit `int` arithmetic is what reaches
+/// it. Found by mutation: dropping the `Add` mapping left every test green
+/// until this DSP was added.
+#[test]
+fn integer_arithmetic_uses_the_wrapping_helpers() {
+    let text = codebox("ia.dsp", "process = _ : int : +(3) : *(2) : %(5);");
+    assert!(text.contains("iadd("), "no iadd:\n{text}");
+    assert!(text.contains("imul("), "no imul:\n{text}");
+    assert!(text.contains("imod("), "no imod:\n{text}");
+}
+
+/// Subtraction and the bitwise operators stay infix: the C++ helper table
+/// covers only `kAdd`, `kMul` and `kRem`.
+#[test]
+fn only_add_mul_and_rem_use_helpers() {
+    let text = codebox("ia.dsp", "process = _ : int : -(3) : &(255);");
+    assert!(
+        !text.contains("isub(") && !text.contains("iand("),
+        "helper used for an operator the reference keeps infix:\n{text}"
+    );
+}
+
+/// The helper path must also be numerically right, not just present.
+#[test]
+fn numeric_integer_arithmetic_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("ia.dsp", "process = _ : int : +(3) : *(2) : %(5);", 32);
+}
+
+// ── Numeric checks for the quirks ────────────────────────────────────────────
+
+/// The quirk that a text comparison cannot arbitrate: `trunc` versus `floor`
+/// differs only on negatives, so this DSP is fed them.
+#[test]
+fn numeric_negative_integer_cast_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("cast.dsp", "process = _ : *(-3.5) : int : /(2);", 32);
+}
+
+#[test]
+fn numeric_fmod_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("mod.dsp", "process = _ , 2.5 : fmod;", 32);
+}
+
+#[test]
+fn numeric_math_calls_match_the_interpreter() {
+    assert_codebox_matches_interpreter("math.dsp", "process = _ : abs : sqrt : exp;", 32);
+}
+
+#[test]
+fn numeric_bargraph_dsp_matches_the_interpreter() {
+    assert_codebox_matches_interpreter("bar.dsp", BARGRAPH_DSP, 32);
 }
