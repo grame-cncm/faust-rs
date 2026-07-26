@@ -52,8 +52,8 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 | `rust` | ✅ Implemented | `generate_rust_module` |
 | `interp::fbc_to_cpp` | ✅ Implemented | `generate_cpp_from_fbc` |
 | `wasm` | 🔧 Bring-up | `generate_wasm_module` |
+| `codebox` | 🔧 Bring-up | `generate_codebox_module` |
 | `cmajor` | 🗂 Scaffolded | — |
-| `codebox` | 🗂 Scaffolded | — |
 | `csharp` | 🗂 Scaffolded | — |
 | `dlang` | 🗂 Scaffolded | — |
 | `jax` | 🗂 Scaffolded | — |
@@ -516,5 +516,5 @@ The following backends expose a stable `backend_id()` identifier and are
 otherwise empty. They reserve a place in the roadmap and prevent accidental
 namespace collisions as parity work proceeds.
 
-`cmajor` · `codebox` · `csharp` · `dlang` · `jax` · `jsfx` · `llvm` · `sdf3`
+`cmajor` · `csharp` · `dlang` · `jax` · `jsfx` · `llvm` · `sdf3`
 · `vhdl`
