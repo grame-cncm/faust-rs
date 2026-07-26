@@ -89,6 +89,24 @@ pub(crate) enum LowerToFirError {
     Verify(FirVerifyReport),
 }
 
+impl<E> From<ExecutionOptionsError> for LowerError<E> {
+    fn from(error: ExecutionOptionsError) -> Self {
+        Self::ExecutionOptions(error)
+    }
+}
+
+impl From<ExecutionOptionsError> for LowerToInterpError {
+    fn from(error: ExecutionOptionsError) -> Self {
+        Self::ExecutionOptions(error)
+    }
+}
+
+impl From<ExecutionOptionsError> for LowerToFirError {
+    fn from(error: ExecutionOptionsError) -> Self {
+        Self::ExecutionOptions(error)
+    }
+}
+
 /// Runs `f`, optionally recording its wall-clock duration in `timing_sink`.
 ///
 /// When `timing_sink` is `None`, the closure is called directly with zero
@@ -118,7 +136,16 @@ pub(crate) fn time_phase_with_sink<T>(
 /// construct one value and pass it to the chosen dispatch function.
 #[derive(Clone)]
 pub(crate) struct SignalLoweringContext {
-    /// Which signal→FIR lowering lane to use (currently only transform fast-lane).
+    /// Which signal→FIR lowering lane the caller selected.
+    ///
+    /// Never read: the transform fast lane is the only route, so every
+    /// dispatcher validates and delegates without consulting it. The field is
+    /// kept because the public entry points do take a lane, and recording it
+    /// here is what makes a second lane a change to the lowering rather than to
+    /// every signature. Before this was explicit, six `let _ = ctx.lane;`
+    /// statements scattered through the dispatchers silenced the same warning
+    /// and hid the fact.
+    #[allow(dead_code)]
     pub(crate) lane: SignalFirLane,
     /// Whether and how strictly to run FIR verification after lowering.
     pub(crate) fir_verify: FirVerifyOptions,
@@ -145,117 +172,6 @@ pub(crate) struct SignalLoweringContext {
     pub(crate) processing_api: ProcessingApi,
     /// Optional per-phase timing callback; `None` disables timing.
     pub(crate) timing_sink: Option<TimingSink>,
-}
-
-/// Dispatches C++ lowering through the selected signal->FIR lane.
-///
-/// The backend itself always consumes FIR; the lane choice controls only how
-/// the intermediate FIR module is produced from the propagated signal list.
-pub(crate) fn lower_signals_to_cpp(
-    source_name: &str,
-    output: &SignalCompileOutput,
-    options: &CppOptions,
-    ctx: SignalLoweringContext,
-) -> Result<String, LowerToCppError> {
-    validate_execution_options(
-        "cpp",
-        ctx.control_rate_mode,
-        ctx.processing_api,
-        ctx.compute_mode,
-    )
-    .map_err(LowerError::ExecutionOptions)?;
-    let _ = ctx.lane;
-    lower_signals_to_cpp_transform_fastlane(source_name, output, options, &ctx)
-}
-
-/// Dispatches C lowering through the selected signal->FIR lane.
-pub(crate) fn lower_signals_to_c(
-    source_name: &str,
-    output: &SignalCompileOutput,
-    options: &COptions,
-    ctx: SignalLoweringContext,
-) -> Result<String, LowerToCError> {
-    validate_execution_options(
-        "c",
-        ctx.control_rate_mode,
-        ctx.processing_api,
-        ctx.compute_mode,
-    )
-    .map_err(LowerError::ExecutionOptions)?;
-    let _ = ctx.lane;
-    lower_signals_to_c_transform_fastlane(source_name, output, options, &ctx)
-}
-
-/// Dispatches Julia lowering through the selected signal->FIR lane.
-pub(crate) fn lower_signals_to_julia(
-    source_name: &str,
-    output: &SignalCompileOutput,
-    options: &JuliaOptions,
-    ctx: SignalLoweringContext,
-) -> Result<String, LowerToJuliaError> {
-    validate_execution_options(
-        "julia",
-        ctx.control_rate_mode,
-        ctx.processing_api,
-        ctx.compute_mode,
-    )
-    .map_err(LowerError::ExecutionOptions)?;
-    let _ = ctx.lane;
-    lower_signals_to_julia_transform_fastlane(source_name, output, options, &ctx)
-}
-
-/// Dispatches AssemblyScript lowering through the selected signal->FIR lane.
-pub(crate) fn lower_signals_to_asc(
-    source_name: &str,
-    output: &SignalCompileOutput,
-    options: &AscOptions,
-    ctx: SignalLoweringContext,
-) -> Result<String, LowerToAscError> {
-    validate_execution_options(
-        "asc",
-        ctx.control_rate_mode,
-        ctx.processing_api,
-        ctx.compute_mode,
-    )
-    .map_err(LowerError::ExecutionOptions)?;
-    let _ = ctx.lane;
-    lower_signals_to_asc_transform_fastlane(source_name, output, options, &ctx)
-}
-
-/// Dispatches Rust lowering through the selected signal->FIR lane.
-pub(crate) fn lower_signals_to_rust(
-    source_name: &str,
-    output: &SignalCompileOutput,
-    options: &RustOptions,
-    ctx: SignalLoweringContext,
-) -> Result<String, LowerToRustError> {
-    validate_execution_options(
-        "rust",
-        ctx.control_rate_mode,
-        ctx.processing_api,
-        ctx.compute_mode,
-    )
-    .map_err(LowerError::ExecutionOptions)?;
-    let _ = ctx.lane;
-    lower_signals_to_rust_transform_fastlane(source_name, output, options, &ctx)
-}
-
-/// Dispatches interpreter lowering through the selected signal->FIR lane.
-pub(crate) fn lower_signals_to_interp(
-    source_name: &str,
-    output: &SignalCompileOutput,
-    options: &InterpOptions,
-    ctx: SignalLoweringContext,
-) -> Result<String, LowerToInterpError> {
-    validate_execution_options(
-        "interp",
-        ctx.control_rate_mode,
-        ctx.processing_api,
-        ctx.compute_mode,
-    )
-    .map_err(LowerToInterpError::ExecutionOptions)?;
-    let _ = ctx.lane;
-    lower_signals_to_interp_transform_fastlane(source_name, output, options, &ctx)
 }
 
 /// Lowers signals through the transform fast lane then serializes an interpreter `.fbc`.
@@ -428,6 +344,135 @@ pub(crate) fn serialize_factory<R: FbcReal>(factory: &FbcDspFactory<R>) -> Resul
     let mut buf = Vec::new();
     write_fbc(factory, &mut buf, false).map_err(|e| e.to_string())?;
     String::from_utf8(buf).map_err(|e| e.to_string())
+}
+
+/// Shared prologue of every backend dispatch: reject an execution-option
+/// request the backend cannot honor, then hand over to the fast-lane
+/// implementation.
+///
+/// `ctx.lane` is deliberately not consulted. The transform fast lane is the
+/// only route today, so these dispatchers exist to validate and delegate, not
+/// to choose — which is why each backend's wrapper below is three lines.
+fn lower_signals_with_validation<O, E>(
+    backend: &'static str,
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &O,
+    ctx: SignalLoweringContext,
+    fastlane: fn(&str, &SignalCompileOutput, &O, &SignalLoweringContext) -> Result<String, E>,
+) -> Result<String, E>
+where
+    E: From<ExecutionOptionsError>,
+{
+    validate_execution_options(
+        backend,
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )?;
+    fastlane(source_name, output, options, &ctx)
+}
+
+/// Dispatches cpp lowering through the selected signal->FIR lane.
+pub(crate) fn lower_signals_to_cpp(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &CppOptions,
+    ctx: SignalLoweringContext,
+) -> Result<String, LowerToCppError> {
+    lower_signals_with_validation(
+        "cpp",
+        source_name,
+        output,
+        options,
+        ctx,
+        lower_signals_to_cpp_transform_fastlane,
+    )
+}
+
+/// Dispatches c lowering through the selected signal->FIR lane.
+pub(crate) fn lower_signals_to_c(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &COptions,
+    ctx: SignalLoweringContext,
+) -> Result<String, LowerToCError> {
+    lower_signals_with_validation(
+        "c",
+        source_name,
+        output,
+        options,
+        ctx,
+        lower_signals_to_c_transform_fastlane,
+    )
+}
+
+/// Dispatches julia lowering through the selected signal->FIR lane.
+pub(crate) fn lower_signals_to_julia(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &JuliaOptions,
+    ctx: SignalLoweringContext,
+) -> Result<String, LowerToJuliaError> {
+    lower_signals_with_validation(
+        "julia",
+        source_name,
+        output,
+        options,
+        ctx,
+        lower_signals_to_julia_transform_fastlane,
+    )
+}
+
+/// Dispatches asc lowering through the selected signal->FIR lane.
+pub(crate) fn lower_signals_to_asc(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &AscOptions,
+    ctx: SignalLoweringContext,
+) -> Result<String, LowerToAscError> {
+    lower_signals_with_validation(
+        "asc",
+        source_name,
+        output,
+        options,
+        ctx,
+        lower_signals_to_asc_transform_fastlane,
+    )
+}
+
+/// Dispatches rust lowering through the selected signal->FIR lane.
+pub(crate) fn lower_signals_to_rust(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &RustOptions,
+    ctx: SignalLoweringContext,
+) -> Result<String, LowerToRustError> {
+    lower_signals_with_validation(
+        "rust",
+        source_name,
+        output,
+        options,
+        ctx,
+        lower_signals_to_rust_transform_fastlane,
+    )
+}
+
+/// Dispatches interp lowering through the selected signal->FIR lane.
+pub(crate) fn lower_signals_to_interp(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &InterpOptions,
+    ctx: SignalLoweringContext,
+) -> Result<String, LowerToInterpError> {
+    lower_signals_with_validation(
+        "interp",
+        source_name,
+        output,
+        options,
+        ctx,
+        lower_signals_to_interp_transform_fastlane,
+    )
 }
 
 /// Lowers propagated signals to FIR without invoking a backend emitter.
