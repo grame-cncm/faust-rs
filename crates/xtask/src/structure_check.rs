@@ -1,4 +1,5 @@
-//! Lightweight structural checks for the `transform` crate (cleanup plan R9.3).
+//! Lightweight structural checks for the `transform` crate (cleanup plan R9.3)
+//! and the line threshold for `compiler` (cleanup plan 2026-07-26, phase P5).
 //!
 //! Deterministic, filesystem-only checks (findings sorted, repo-relative
 //! paths only — never absolute paths):
@@ -6,8 +7,9 @@
 //! 1. no stale legacy internal `vector_*` import paths (R3 migrated the
 //!    workspace to `signal_fir::vector::{...}`; the `pub use` facade
 //!    re-exports in `signal_fir/mod.rs` are the only allowed mention);
-//! 2. no production file above the review threshold
-//!    ([`MAX_PRODUCTION_LINES`] lines, `tests.rs` and `tests/` excluded);
+//! 2. no production file above the review threshold in `crates/transform` or
+//!    `crates/compiler` ([`MAX_PRODUCTION_LINES`] lines, `tests.rs` and
+//!    `tests/` excluded);
 //! 3. no checker file importing a producer entry point (the producer entry
 //!    points listed in [`PRODUCER_ENTRY_POINTS`] must never be callable
 //!    from a `check`/`verify` module), and [`PRODUCER_ENTRY_POINTS`] itself
@@ -88,6 +90,12 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
     }
     let mut files = Vec::new();
     collect_rust_files(root, &mut files)?;
+    // The line threshold also guards `crates/compiler`, whose facade and CLI
+    // runner both crossed it before the 2026-07-26 cleanup. The checks that
+    // follow (legacy vector paths, producer/checker separation) are
+    // transform-specific and skip these files by construction, since none of
+    // their patterns can match outside `signal_fir/vector/`.
+    collect_rust_files(Path::new("crates/compiler/src"), &mut files)?;
     files.sort();
 
     let mut findings: Vec<String> = Vec::new();
