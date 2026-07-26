@@ -33,6 +33,12 @@
 //! - The active signal->FIR lowering route is [`SignalFirLane::TransformFastLane`],
 //!   owned by `crates/transform`.
 
+// Every public item carries documentation, as in `crates/transform`. The
+// workspace CI gate (`cargo clippy --workspace --all-targets -- -D warnings`)
+// turns this into a hard failure, so the surface cannot silently drift back to
+// undocumented.
+#![warn(missing_docs)]
+
 pub mod enrobage;
 
 mod box_preview;
@@ -2432,8 +2438,29 @@ fn collect_library_list(signals: &SignalCompileOutput) -> Vec<String> {
     library_list
 }
 
-/// Compiler facade errors for parser-stage orchestration.
-/// Top-level compiler error surface aggregating all stage failures.
+/// Top-level compiler error surface aggregating every stage failure.
+///
+/// # Shared field convention
+///
+/// Almost every variant carries the same three pieces, so they are documented
+/// once here rather than restated at each field:
+///
+/// - `source` — provenance for messages only: the display path for the
+///   file-based entry points, or the caller-supplied logical source name for
+///   the in-memory ones. It is not a key and not guaranteed to name a file that
+///   exists on disk.
+/// - `error` — the typed error from the stage that failed, kept so callers can
+///   inspect the failure instead of parsing a string. `FirVerify` has no such
+///   field (the verifier reports through the bundle) and carries `strict`
+///   instead.
+/// - `diagnostics` — the rendered [`DiagnosticBundle`] for that same failure.
+///
+/// The invariant that matters: `diagnostics` is *derived from* `error`, so the
+/// two can never describe different failures. Variants whose bundle takes real
+/// work to build expose a constructor ([`CompilerError::import`],
+/// [`CompilerError::missing_root`], [`CompilerError::codegen_wasm`]) — prefer
+/// them over building the variant by hand, which is how the two fields drift
+/// apart.
 #[derive(Debug)]
 pub enum CompilerError {
     /// Import resolution/read failure before parse completion.
@@ -2447,99 +2474,147 @@ pub enum CompilerError {
     ///
     /// Build with [`CompilerError::missing_root`] so the bundle is attached.
     MissingRoot {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Parse failed (`errors` or `recoveries` present).
     Parse {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Number of hard parse errors reported by the parser.
         parse_errors: usize,
+        /// Number of error recoveries the parser performed.
         recoveries: u32,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Eval stage failed while reducing boxes.
     Eval {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: Box<eval::EvalError>,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Propagate stage failed while lowering boxes to signals.
     Propagate {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: PropagateError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Signal type validation failed after propagation.
     Type {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: Box<str>,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Execution-option request (`-ec`/`-os`) rejected by the backend
     /// capability model before any parsing or lowering work.
     ExecutionOptions {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: crate::execution::ExecutionOptionsError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Transform stage failed while lowering signals to FIR.
     Transform {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: SignalFirError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// FIR verifier rejected a lowered FIR module before backend codegen.
     FirVerify {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Whether warnings were fatal (`--fir-verify-strict`).
         strict: bool,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// C++ backend emission failed from FIR.
     CodegenCpp {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: CppCodegenError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// C backend emission failed from FIR.
     CodegenC {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: CCodegenError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Julia backend emission failed from FIR.
     CodegenJulia {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: JuliaCodegenError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// AssemblyScript backend emission failed from FIR.
     CodegenAsc {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: AscCodegenError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Rust backend emission failed from FIR.
     CodegenRust {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: RustCodegenError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Interpreter backend emission failed from FIR.
     CodegenInterp {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: InterpCodegenError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// Cranelift JIT backend emission failed from FIR.
     CodegenCranelift {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: CraneliftBackendError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
     /// WASM backend emission failed from FIR.
     CodegenWasm {
+        /// Program provenance; see the shared field convention.
         source: Box<str>,
+        /// Typed error from the stage that failed.
         error: WasmBackendError,
+        /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
 }
