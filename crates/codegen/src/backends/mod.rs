@@ -2,13 +2,13 @@
 //!
 //! # Organization
 //! - Implemented backends:
-//!   - [`c`], [`cpp`]
+//!   - [`c`], [`codebox`], [`cpp`]
 //! - Shared helpers:
 //!   - internal `faust_api` module (DSP API signature validation)
 //!   - internal `c_family` module (syntax-parameterless emission shared by
 //!     `c`/`cpp`; see `porting/c-family-emitter-core-plan-2026-07-04-en.md`)
 //! - Scaffolded backends (planned parity targets):
-//!   - `cranelift`, `cmajor`, `codebox`, `csharp`, `dlang`, `interp`, `jax`, `jsfx`,
+//!   - `cranelift`, `cmajor`, `csharp`, `dlang`, `interp`, `jax`, `jsfx`,
 //!     `julia`, `llvm`, `rust`, `sdf3`, `vhdl`, `wasm`.
 //!
 //! # Module contract

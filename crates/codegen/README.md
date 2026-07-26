@@ -14,6 +14,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
                                                                 → AssemblyScript source
                                                                 → C source
                                                                 → C++ source
+                                                                → Codebox (RNBO) source
                                                                 → Rust source
                                                                 → .fbc bytecode
                                                                 → native C++ (AOT from .fbc)
@@ -30,6 +31,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 | `backends::asc` | `compiler/generator/asc/` |
 | `backends::c` | `compiler/generator/c/` |
 | `backends::cpp` | `compiler/generator/cpp/` |
+| `backends::codebox` | `compiler/generator/codebox/` |
 | `backends::cranelift` | *(new — no C++ equivalent)* |
 | `backends::interp` | `compiler/generator/interpreter/` |
 | `backends::julia` | `compiler/generator/julia/` |
@@ -52,7 +54,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 | `rust` | ✅ Implemented | `generate_rust_module` |
 | `interp::fbc_to_cpp` | ✅ Implemented | `generate_cpp_from_fbc` |
 | `wasm` | 🔧 Bring-up | `generate_wasm_module` |
-| `codebox` | 🔧 Bring-up | `generate_codebox_module` |
+| `codebox` | 🔧 Implemented; RNBO validation pending | `generate_codebox_module` |
 | `cmajor` | 🗂 Scaffolded | — |
 | `csharp` | 🗂 Scaffolded | — |
 | `dlang` | 🗂 Scaffolded | — |
@@ -479,6 +481,41 @@ cargo run -p compiler -- --lang wasm my.dsp -o mydsp.wasm
 
 # Emit WAST text from the same backend
 cargo run -p compiler -- --lang wast my.dsp -o mydsp.wat
+```
+
+---
+
+### Codebox backend — `backends::codebox`
+
+Emits a flat RNBO `codebox~` source file from a FIR module. The output uses
+`dspsetup`, `control`, `update`, and a per-sample `compute` function; bargraphs
+are appended as extra output channels because codebox cannot report them as
+controls. The compiler facade forces the external-control and one-sample
+lowering modes this target requires, while vector mode is unsupported.
+
+`CodeboxOptions::test_labels` selects the `RB_` parameter-name convention used
+by `-lang codebox-test` and Faust's `rnbo-dsp.h` wrapper. It is intended for
+manual RNBO round-trip validation; RNBO itself is not bundled with the
+workspace.
+
+```rust
+use codegen::backends::codebox::{CodeboxOptions, generate_codebox_module};
+
+let source = generate_codebox_module(&store, root_id, &CodeboxOptions::default())?;
+```
+
+| Item | Description |
+|---|---|
+| `CodeboxOptions` | `double_precision`, `test_labels` |
+| `generate_codebox_module` | `(&FirStore, FirId, &CodeboxOptions) -> Result<String, CodegenError>` |
+| `CodegenError` | Codes `FRS-CGEN-CBOX-0001..0002` |
+| `eval::Program` | Parser/evaluator for the emitted subset, used by numeric backend tests |
+
+CLI entry points live in `compiler`:
+
+```sh
+cargo run -p compiler -- --lang codebox my.dsp -o mydsp.codebox
+cargo run -p compiler -- --lang codebox-test my.dsp -o mydsp.codebox
 ```
 
 ---
