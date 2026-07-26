@@ -265,14 +265,34 @@ fn check_json_fir_family_failure_is_clean() {
 /// backend on purpose: the backends already own a 27-code
 /// `FRS-CGEN-<LANG>-NNNN` taxonomy, carried here as a note exactly as
 /// `FRS-FIR-0002` carries `fir_code=...`.
+///
+/// # Choice of fixture
+///
+/// This test needs a program the WASM backend rejects *at emission*, and the
+/// choice matters more than it looks. It used to use
+/// `err_rad_delay_temporal_unsupported.dsp`, which the backend rejected only
+/// because its RAD reverse-time loop was outside the WASM subset — a gap we
+/// always intended to close, and closing it (2026-07-26) silently removed this
+/// test's premise: the program compiled, exit status became 0, and the test
+/// failed in CI for a reason unrelated to what it checks.
+///
+/// `rep_77_foreign_variable.dsp` is anchored differently. A foreign variable is
+/// a symbol resolved by the host C toolchain; a WASM module has no such thing,
+/// so the rejection is structural rather than a to-do. Prefer that kind of
+/// anchor when a test needs a backend to fail: an unimplemented feature is a
+/// moving target, an impossible one is not.
 #[test]
 fn codegen_backend_failure_is_structured() {
     let output = Command::new(bin_path())
-        .arg(corpus_path("err_rad_delay_temporal_unsupported.dsp"))
+        .arg(corpus_path("rep_77_foreign_variable.dsp"))
         .args(["-lang", "wasm", "--error-format", "json"])
         .output()
         .expect("failed to spawn faust-rs");
-    assert!(!output.status.success(), "expected exit 1");
+    assert!(
+        !output.status.success(),
+        "expected exit 1 — if this program now compiles to WASM, the test needs \
+         a different fixture, not a relaxed assertion (see the doc comment)"
+    );
 
     let stdout = String::from_utf8(output.stdout).expect("stdout must be UTF-8");
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
