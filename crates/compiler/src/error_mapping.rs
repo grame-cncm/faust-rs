@@ -11,6 +11,7 @@
 //! adapter.
 
 use super::*;
+use codegen::backend_error::BackendCodegenError;
 
 // ─── Helpers: error mapping ───────────────────────────────────────────────────
 
@@ -37,111 +38,103 @@ pub(crate) fn execution_error_to_compiler(
     }
 }
 
-pub(crate) fn lower_cpp_error_to_compiler(source: &str, error: LowerToCppError) -> CompilerError {
-    match error {
-        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "cpp", error),
-        LowerError::Transform(error) => transform_error_to_compiler(source, error),
-        LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
-        LowerError::Codegen(error) => CompilerError::CodegenCpp {
-            source: source.into(),
-            diagnostics: CompilerError::codegen_diagnostics(
-                source,
-                "cpp",
-                error.code().as_str(),
-                error.message(),
-            ),
-            error,
-        },
-    }
-}
-
-/// Maps a `LowerToCError` into a `CompilerError`, attaching the source name.
+/// Maps a `LowerError<E>` into a [`CompilerError`], attaching the source name.
 ///
-/// Each backend-specific error variant is mapped to the matching `CompilerError`
-/// variant so callers never need to depend on the internal lower-pipeline types.
-pub(crate) fn lower_c_error_to_compiler(source: &str, error: LowerToCError) -> CompilerError {
+/// Three of the four arms are identical for every backend, so they live here
+/// once. Only the `Codegen` arm needs backend knowledge, and only twice:
+/// `backend` names the emission in the diagnostic bundle, and `wrap` picks the
+/// matching `CompilerError::Codegen*` variant — which stays per-backend so
+/// callers can still match on a concrete backend error type.
+///
+/// The [`BackendCodegenError`] bound is what makes this generic possible: it
+/// hides whether a backend reports its code and message through methods or
+/// through public fields.
+fn lower_error_to_compiler<E: BackendCodegenError>(
+    source: &str,
+    backend: &'static str,
+    error: LowerError<E>,
+    wrap: impl FnOnce(Box<str>, E, DiagnosticBundle) -> CompilerError,
+) -> CompilerError {
     match error {
-        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "c", error),
+        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, backend, error),
         LowerError::Transform(error) => transform_error_to_compiler(source, error),
         LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
-        LowerError::Codegen(error) => CompilerError::CodegenC {
-            source: source.into(),
-            diagnostics: CompilerError::codegen_diagnostics(
+        LowerError::Codegen(error) => {
+            let diagnostics = CompilerError::codegen_diagnostics(
                 source,
-                "c",
-                error.code().as_str(),
-                error.message(),
-            ),
-            error,
-        },
+                backend,
+                error.code_str(),
+                error.message_str(),
+            );
+            wrap(source.into(), error, diagnostics)
+        }
     }
 }
 
-/// Maps a `LowerToJuliaError` into a `CompilerError`, attaching the source name.
+/// Maps a `LowerToCppError` into a [`CompilerError`], attaching the source name.
+pub(crate) fn lower_cpp_error_to_compiler(source: &str, error: LowerToCppError) -> CompilerError {
+    lower_error_to_compiler(source, "cpp", error, |source, error, diagnostics| {
+        CompilerError::CodegenCpp {
+            source,
+            error,
+            diagnostics,
+        }
+    })
+}
+
+/// Maps a `LowerToCError` into a [`CompilerError`], attaching the source name.
+pub(crate) fn lower_c_error_to_compiler(source: &str, error: LowerToCError) -> CompilerError {
+    lower_error_to_compiler(source, "c", error, |source, error, diagnostics| {
+        CompilerError::CodegenC {
+            source,
+            error,
+            diagnostics,
+        }
+    })
+}
+
+/// Maps a `LowerToJuliaError` into a [`CompilerError`], attaching the source name.
 pub(crate) fn lower_julia_error_to_compiler(
     source: &str,
     error: LowerToJuliaError,
 ) -> CompilerError {
-    match error {
-        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "julia", error),
-        LowerError::Transform(error) => transform_error_to_compiler(source, error),
-        LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
-        LowerError::Codegen(error) => CompilerError::CodegenJulia {
-            source: source.into(),
-            diagnostics: CompilerError::codegen_diagnostics(
-                source,
-                "julia",
-                error.code().as_str(),
-                error.message(),
-            ),
+    lower_error_to_compiler(source, "julia", error, |source, error, diagnostics| {
+        CompilerError::CodegenJulia {
+            source,
             error,
-        },
-    }
+            diagnostics,
+        }
+    })
 }
 
-/// Maps a `LowerToAscError` into a `CompilerError`, attaching the source name.
+/// Maps a `LowerToAscError` into a [`CompilerError`], attaching the source name.
 pub(crate) fn lower_asc_error_to_compiler(source: &str, error: LowerToAscError) -> CompilerError {
-    match error {
-        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "asc", error),
-        LowerError::Transform(error) => transform_error_to_compiler(source, error),
-        LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
-        LowerError::Codegen(error) => CompilerError::CodegenAsc {
-            source: source.into(),
-            diagnostics: CompilerError::codegen_diagnostics(
-                source,
-                "asc",
-                error.code().as_str(),
-                error.message(),
-            ),
+    lower_error_to_compiler(source, "asc", error, |source, error, diagnostics| {
+        CompilerError::CodegenAsc {
+            source,
             error,
-        },
-    }
+            diagnostics,
+        }
+    })
 }
 
-/// Maps a `LowerToRustError` into a `CompilerError`, attaching the source name.
+/// Maps a `LowerToRustError` into a [`CompilerError`], attaching the source name.
 pub(crate) fn lower_rust_error_to_compiler(source: &str, error: LowerToRustError) -> CompilerError {
-    match error {
-        LowerError::ExecutionOptions(error) => execution_error_to_compiler(source, "rust", error),
-        LowerError::Transform(error) => transform_error_to_compiler(source, error),
-        LowerError::Verify(report) => fir_verify_error_to_compiler(source, report),
-        LowerError::Codegen(error) => CompilerError::CodegenRust {
-            source: source.into(),
-            diagnostics: CompilerError::codegen_diagnostics(
-                source,
-                "rust",
-                error.code().as_str(),
-                error.message(),
-            ),
+    lower_error_to_compiler(source, "rust", error, |source, error, diagnostics| {
+        CompilerError::CodegenRust {
+            source,
             error,
-        },
-    }
+            diagnostics,
+        }
+    })
 }
 
-/// Maps a `LowerToInterpError` into a `CompilerError`, attaching the source name.
+/// Maps a `LowerToCraneliftError` into a [`CompilerError`], attaching the
+/// source name.
 ///
-/// The serialization failure arm is normalized into the interpreter backend
-/// error surface so CLI and library callers do not need a fourth dedicated
-/// interpreter-specific error branch.
+/// Not routed through `lower_error_to_compiler`: this envelope is not a
+/// `LowerError<E>`, because the subset-gap diagnosis and the JIT emission are
+/// two fallible backend steps folded into one `Codegen` variant.
 pub(crate) fn lower_cranelift_error_to_compiler(
     source: &str,
     error: LowerToCraneliftError,
@@ -165,6 +158,11 @@ pub(crate) fn lower_cranelift_error_to_compiler(
     }
 }
 
+/// Maps a `LowerToInterpError` into a `CompilerError`, attaching the source name.
+///
+/// The serialization failure arm is normalized into the interpreter backend
+/// error surface so CLI and library callers do not need a fourth dedicated
+/// interpreter-specific error branch.
 pub(crate) fn lower_interp_error_to_compiler(
     source: &str,
     error: LowerToInterpError,

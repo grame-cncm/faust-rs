@@ -24,6 +24,7 @@
 //! - Backend option structs and generation entry points are `adapted` APIs:
 //!   they preserve C++ behavior but use Rust ownership/error types.
 
+pub mod backend_error;
 pub mod backends;
 pub mod fixtures;
 pub mod json;
