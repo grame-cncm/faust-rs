@@ -64,6 +64,7 @@ pub(crate) enum LowerToInterpError {
     Serialize(String),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Lowering error surface for the Cranelift backend report.
 ///
 /// Not a [`LowerError<CraneliftBackendError>`]: the subset-gap diagnosis and
@@ -233,6 +234,7 @@ pub(crate) fn lower_signals_to_interp_transform_fastlane(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Lowers propagated signals to FIR, JIT-compiles them with the Cranelift
 /// backend, and renders the resulting module as a text status report.
 ///
@@ -295,6 +297,7 @@ pub(crate) fn lower_signals_to_cranelift_report(
     ))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Renders a compiled Cranelift module as the backend status report.
 ///
 /// Shape and field order are the CLI's long-standing `--lang cranelift`

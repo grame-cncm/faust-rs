@@ -59,6 +59,7 @@ use error_mapping::*;
 pub use golden::*;
 pub use json_naming::*;
 pub use paths::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use signal_lowering::render_cranelift_module_report;
 use signal_lowering::*;
 
@@ -75,6 +76,7 @@ use codegen::backends::codebox::{
     CodeboxOptions, CodegenError as CodeboxCodegenError, generate_codebox_module,
 };
 use codegen::backends::cpp::{CodegenError as CppCodegenError, CppOptions, generate_cpp_module};
+#[cfg(not(target_arch = "wasm32"))]
 use codegen::backends::cranelift::{
     CraneliftBackendError, CraneliftOptions, JitDspModule, StructFieldKind,
     diagnose_cranelift_compute_subset_gap, generate_cranelift_module,
@@ -1290,6 +1292,7 @@ pub enum CompilerError {
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
+    #[cfg(not(target_arch = "wasm32"))]
     /// Cranelift JIT backend emission failed from FIR.
     CodegenCranelift {
         /// Program provenance; see the shared field convention.
@@ -1371,6 +1374,7 @@ impl std::fmt::Display for CompilerError {
             Self::CodegenInterp { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
+            #[cfg(not(target_arch = "wasm32"))]
             Self::CodegenCranelift { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
@@ -1488,6 +1492,7 @@ impl CompilerError {
             Self::CodegenCodebox { diagnostics, .. } => Some(diagnostics),
             Self::CodegenRust { diagnostics, .. } => Some(diagnostics),
             Self::CodegenInterp { diagnostics, .. } => Some(diagnostics),
+            #[cfg(not(target_arch = "wasm32"))]
             Self::CodegenCranelift { diagnostics, .. } => Some(diagnostics),
             Self::CodegenWasm { diagnostics, .. } => Some(diagnostics),
             Self::MissingRoot { diagnostics, .. } => Some(diagnostics),

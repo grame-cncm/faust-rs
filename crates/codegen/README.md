@@ -156,7 +156,9 @@ let cpp_source = generate_cpp_module(&store, root_id, &opts)?;
 
 JIT-compiles a FIR module to native machine code via Cranelift. Prioritizes
 compile-path coverage and diagnosability; falls back to a no-op `compute` stub
-for FIR nodes outside the current lowering subset.
+for FIR nodes outside the current lowering subset. This backend is available
+only on native targets; a WebAssembly-hosted compiler cannot create a native
+JIT.
 
 ```rust
 use codegen::backends::cranelift::{CraneliftOptions, generate_cranelift_module};

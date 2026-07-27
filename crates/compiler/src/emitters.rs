@@ -10,6 +10,7 @@ use crate::*;
 use codegen::backends::asc::AscOptions;
 use codegen::backends::c::COptions;
 use codegen::backends::cpp::CppOptions;
+#[cfg(not(target_arch = "wasm32"))]
 use codegen::backends::cranelift::CraneliftOptions;
 use codegen::backends::interp::InterpOptions;
 use codegen::backends::julia::JuliaOptions;
@@ -658,6 +659,7 @@ impl Compiler {
     // calling `generate_cranelift_module` themselves — see
     // `crates/cranelift-ffi`.
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Parses + evaluates + propagates one source, JIT-compiles it with the
     /// Cranelift backend, and returns the backend status report using the
     /// transform fast lane.
@@ -675,6 +677,7 @@ impl Compiler {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Parses + evaluates + propagates one source, JIT-compiles it with the
     /// Cranelift backend, and returns the backend status report using the
     /// selected signal->FIR lowering lane.
@@ -691,6 +694,7 @@ impl Compiler {
             .map_err(|e| lower_cranelift_error_to_compiler(source_name, e))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Parses + evaluates + propagates one file, then returns the Cranelift
     /// backend status report using the transform fast lane.
     pub fn compile_file_to_cranelift_report(
@@ -707,6 +711,7 @@ impl Compiler {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Parses + evaluates + propagates one file, then returns the Cranelift
     /// backend status report using the selected signal->FIR lowering lane.
     pub fn compile_file_to_cranelift_report_with_lane(
@@ -723,6 +728,7 @@ impl Compiler {
             .map_err(|e| lower_cranelift_error_to_compiler(&source, e))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Parses + evaluates + propagates one file with default import search
     /// path, then returns the Cranelift backend status report.
     pub fn compile_file_default_to_cranelift_report(
@@ -737,6 +743,7 @@ impl Compiler {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     /// Parses + evaluates + propagates one file with default import search
     /// path, then returns the Cranelift backend status report using the
     /// selected lane.

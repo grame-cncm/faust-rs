@@ -94,5 +94,6 @@ The public signal->FIR route is:
   Julia, interpreter bytecode, Cranelift JIT, WASM/JSON artifacts, and strict
   JSON emitters with consistent options. Cranelift is currently a CLI/FFI route
   over the shared FIR lowering rather than a dedicated `Compiler::compile_*`
-  method.
+  method, and is unavailable when `compiler` itself targets `wasm32` because
+  that target cannot host its native JIT.
 - Apply architecture wrapping for C, C++, and Julia output when `-a` is used.

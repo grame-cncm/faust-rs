@@ -144,6 +144,7 @@ pub(crate) fn lower_rust_error_to_compiler(source: &str, error: LowerToRustError
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// Maps a `LowerToCraneliftError` into a [`CompilerError`], attaching the
 /// source name.
 ///
