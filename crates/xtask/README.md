@@ -74,6 +74,7 @@ dot -V
 | `vector-compile-budget-check` | Measure the versioned release scalar/vector compile-time basket and reject unexplained regressions |
 | `vector-interp-opt-check` | Compare interpreter `opt_level=0` and max optimization on representative checked-vector cases |
 | `lockstep-simd-check` | Require Clang to emit four-wide LLVM floating-point operations for complex lockstep corpus cases |
+| `ffi-boundary-check` | Enforce one-way FFI dependency layers and the explicit unsafe-code allowlist |
 | `structure-check` | Validate repository layout, checker isolation, and source-size contracts |
 | `emission-determinism` | Repeat selected compilations and report nondeterministic output |
 

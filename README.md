@@ -540,6 +540,14 @@ concise, factual, and implementation-oriented.
 
 ## Workspace crates
 
+The workspace follows a one-way dependency rule:
+`compiler core <- FFI adapters <- distribution`. Run
+`cargo run -p xtask -- ffi-boundary-check` to verify that no dependency points
+rightward and that unsafe-code opt-ins remain confined to the explicit FFI
+boundary plus the `foreign-call` runtime bridge.
+
+### Compiler core
+
 | Crate | Role |
 |---|---|
 | `tlib` | Hash-consed tree arena, symbols, lists, recursive tree helpers |
@@ -561,15 +569,25 @@ concise, factual, and implementation-oriented.
 | `codegen` | AssemblyScript, C, C++, Codebox (RNBO), Rust, interpreter, Cranelift, WASM, and Julia backend generation |
 | `draw` | SVG block-diagram rendering |
 | `doc` | Documentation/reporting scaffold |
+| `compiler` | Top-level compiler facade and CLI |
+
+### FFI adapters
+
+| Crate | Role |
+|---|---|
 | `ffi-common` | Shared ABI, marshalling, allocation, and factory-cache support for FFI adapters |
 | `tree-ffi` | Shared opaque tree-handle support for Box and Signal C APIs |
-| `compiler` | Top-level compiler facade and CLI |
-| `impulse-runner` | Interpreter-backed scalar impulse-test runner |
-| `xtask` | Developer and CI automation |
-| `interp-ffi` | Interpreter backend C/C++ API |
-| `cranelift-ffi` | Experimental Cranelift backend C/C++ API |
 | `box-ffi` | Box manipulation C/C++ API |
 | `signal-ffi` | Signal manipulation C/C++ API |
+| `interp-ffi` | Interpreter backend C/C++ API |
+| `cranelift-ffi` | Experimental Cranelift backend C/C++ API |
+
+### Distribution and tooling
+
+| Crate | Role |
+|---|---|
+| `impulse-runner` | Interpreter-backed scalar impulse-test runner |
+| `xtask` | Developer and CI automation |
 | `faust-ffi` | Unified `libfaust-rs` distribution crate |
 | `wasm-ffi` | Raw WASM ABI for `faustwasm` embedded compiler mode |
 

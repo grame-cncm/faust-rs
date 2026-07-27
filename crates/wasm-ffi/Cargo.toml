@@ -7,7 +7,7 @@ authors.workspace = true
 build = "build.rs"
 
 [lints.rust]
-unsafe_code = "allow"
+unsafe_code = "allow" # Raw Wasm exports decode host pointers and manage result handles.
 unused_attributes = "warn"
 unused_lifetimes = "warn"
 

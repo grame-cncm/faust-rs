@@ -6,7 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [lints.rust]
-unsafe_code = "allow"
+unsafe_code = "allow" # Exported Signal C API dereferences opaque pointers and C strings.
 unused_attributes = "warn"
 unused_lifetimes = "warn"
 

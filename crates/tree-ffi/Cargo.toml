@@ -6,7 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [lints.rust]
-unsafe_code = "allow"
+unsafe_code = "allow" # Shared opaque tree handles cross the Box/Signal C ABI.
 unused_attributes = "warn"
 unused_lifetimes = "warn"
 

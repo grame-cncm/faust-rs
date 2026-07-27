@@ -88,6 +88,7 @@ Usage:
   cargo run -p xtask -- vector-interp-opt-check
   cargo run --release -p xtask -- vector-compile-budget-check [--baseline tests/vector-compile-budget/release-baseline.json]
   cargo run -p xtask -- lockstep-simd-check
+  cargo run -p xtask -- ffi-boundary-check
   cargo run -p xtask -- structure-check
   cargo run -p xtask -- cli-transcript-gen
   cargo run -p xtask -- cli-transcript-check
@@ -182,6 +183,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "p7-matrix-report" => p7_matrix_report(args)?,
         "vector-coverage-merge" => vector_coverage_merge(args)?,
         "vector-coverage-check" => vector_coverage_check(args)?,
+        "ffi-boundary-check" => ffi_boundary_check()?,
         "structure-check" => structure_check()?,
         "cli-transcript-gen" => cli_transcript_gen()?,
         "cli-transcript-check" => cli_transcript_check()?,
@@ -202,6 +204,7 @@ mod cli_transcript;
 mod code_graphs;
 mod corpus_status_query;
 mod emission_determinism;
+mod ffi_boundary_check;
 mod fir_dump;
 mod golden;
 mod libfaust_api_matrix;
@@ -221,6 +224,7 @@ pub(crate) use cli_transcript::*;
 pub(crate) use code_graphs::*;
 pub(crate) use corpus_status_query::*;
 pub(crate) use emission_determinism::*;
+pub(crate) use ffi_boundary_check::*;
 pub(crate) use fir_dump::*;
 pub(crate) use golden::*;
 pub(crate) use libfaust_api_matrix::*;
