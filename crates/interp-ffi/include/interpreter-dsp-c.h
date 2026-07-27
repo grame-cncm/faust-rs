@@ -158,18 +158,22 @@ interpreter_dsp_factory* createCInterpreterDSPFactoryFromString(
 /* ── Factory — cache management ──────────────────────────────────────────── */
 
 /**
- * Look up a factory in the global cache by SHA key.
+ * Look up a factory in the global cache by SHA key and acquire a reference.
+ * The returned pointer must be released with deleteCInterpreterDSPFactory.
  */
 interpreter_dsp_factory* getCInterpreterDSPFactoryFromSHAKey(const char* sha_key);
 
 /**
- * Delete a factory and remove it from the cache.
- * @return true if the internal allocation was freed
+ * Release one factory reference.
+ * The final release deletes remaining DSP instances, removes the cache entry,
+ * and invalidates all pointers associated with that factory.
+ * @return true only if this was the final reference
  */
 bool deleteCInterpreterDSPFactory(interpreter_dsp_factory* factory);
 
 /**
- * Delete all factories in the global cache.
+ * Delete all factories and remaining DSP instances in the global cache.
+ * All outstanding factory and instance pointers become invalid.
  */
 void deleteAllCInterpreterDSPFactories(void);
 
@@ -218,7 +222,8 @@ void freeCMemory(void* ptr);
 
 /**
  * Create a new DSP instance from a factory.
- * The factory must outlive the instance.
+ * The instance may be deleted manually. Otherwise the cache deletes it when
+ * the final factory reference is released or all factories are deleted.
  */
 interpreter_dsp* createCInterpreterDSPInstance(interpreter_dsp_factory* factory);
 

@@ -174,7 +174,8 @@ class cranelift_dsp;
  * C++ wrapper for the Cranelift DSP factory.
  *
  * Instances are obtained via the free functions below.
- * The factory owns its memory; call deleteCraneliftDSPFactory() to free it.
+ * Each returned wrapper owns one cache reference; release it with
+ * deleteCraneliftDSPFactory().
  */
 class LIBFAUST_API cranelift_dsp_factory : public dsp_factory {
 public:
@@ -414,6 +415,11 @@ inline cranelift_dsp_factory* createCraneliftDSPFactoryFromString(
     return new cranelift_dsp_factory(impl);
 }
 
+/**
+ * Release one factory reference.
+ *
+ * @return true only if this was the final reference
+ */
 inline bool deleteCraneliftDSPFactory(cranelift_dsp_factory* factory)
 {
     if (!factory) {
@@ -424,6 +430,10 @@ inline bool deleteCraneliftDSPFactory(cranelift_dsp_factory* factory)
     return result;
 }
 
+/**
+ * Delete all factories and remaining DSP instances.
+ * All previously returned wrapper payloads become invalid.
+ */
 inline void deleteAllCraneliftDSPFactories()
 {
     deleteAllCCraneliftDSPFactories();

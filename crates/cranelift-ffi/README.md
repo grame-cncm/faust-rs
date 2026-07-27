@@ -22,7 +22,7 @@ What is already implemented:
 
 - executable C ABI
 - factory/instance opaque types
-- minimal factory cache
+- owned, reference-counted factory and DSP-instance cache
 - source factory creation through `compiler -> FIR -> codegen::cranelift`
 - bitcode family scaffold (temporary text format, for API-path validation)
 - FIR-derived native runtime descriptor for state/UI/meta handling
@@ -72,7 +72,7 @@ list V1-deferred families where relevant.
   - opaque factory/instance wrappers
   - re-exports shared `UIGlue` / `MetaGlue`
 - `src/cache.rs`
-  - global factory cache wrappers over `ffi_common::FactoryCache<T>`
+  - global lifecycle wrappers over `ffi_common::FactoryCache<T, I>`
 - `src/factory.rs`
   - Cranelift factory `extern "C"` API
   - compiler/FIR/JIT factory construction
@@ -100,6 +100,18 @@ This crate uses shared backend-agnostic FFI helpers from `crates/ffi-common`:
 
 Cranelift-specific factory/runtime state and backend semantics remain local to
 this crate.
+
+## Factory and instance ownership
+
+- Factory creation and SHA lookup each acquire one cache reference.
+- Repeated creation with the same SHA returns the same pointer and acquires
+  another reference.
+- `deleteCCraneliftDSPFactory` returns `false` while references remain and
+  `true` only for the final release.
+- DSP instances may be deleted manually; final factory release and
+  `deleteAllCCraneliftDSPFactories` delete any remaining instances.
+- `deleteAllCCraneliftDSPFactories` invalidates all outstanding factory and
+  instance pointers regardless of reference count.
 
 ## Factory creation paths
 

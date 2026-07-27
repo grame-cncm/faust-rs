@@ -15,7 +15,7 @@ depend on it.
 |---|---|
 | `abi` | Shared `#[repr(C)]` callback tables and `FAUSTFLOAT` type |
 | `args` | CLI-like compile options accepted at FFI entry points |
-| `factory_cache` | Shared factory-cache mechanism |
+| `factory_cache` | Owned, reference-counted factory and DSP-instance cache |
 | `memory` | Opaque Rust allocation helpers |
 | `strings` | C strings, `argv`, error buffers, and empty `char**` support |
 
@@ -60,8 +60,11 @@ depend on it.
 
 | Item | Description |
 |---|---|
-| `FactoryCache<T>` | Thread-safe SHA-keyed factory cache |
+| `FactoryCache<T, I>` | Thread-safe SHA-keyed owner of factories and their DSP instances |
+| `FactoryHandle<T>` | Typed opaque pointer identity used at backend ABI edges |
+| `FactoryRelease` | `NotFound`, `Retained`, or final `Removed` release result |
 
 The crate re-exports the module APIs at its root to keep the FFI adapter call
-sites compact. Backend-specific ownership and lifecycle wrappers remain in the
-owning backend crate.
+sites compact. Creation and SHA lookup acquire a reference; final release
+drops remaining instances before their parent factory. Backend-specific
+construction and runtime behavior remain in the owning backend crate.

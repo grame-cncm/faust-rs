@@ -1,13 +1,12 @@
-//! Opaque FFI types and allocation helpers.
+//! Opaque FFI types owned by the factory cache.
 //!
 //! `InterpreterDspFactory` and `InterpreterDspInstance` are heap-allocated
 //! Rust objects exposed to C as opaque pointer types.  Ownership rules mirror
 //! the original Faust C API:
-//! - A factory is created by one of the `read/create*Factory` functions and
-//!   deleted by `deleteCInterpreterDSPFactory`.
-//! - An instance is created by `createCInterpreterDSPInstance` and deleted by
-//!   `deleteCInterpreterDSPInstance`.
-//! - The factory **must** outlive all of its instances.
+//! - Factory creation and SHA lookup acquire cache references.
+//! - `deleteCInterpreterDSPFactory` releases one reference; final release
+//!   drops the factory and all remaining instances.
+//! - `deleteCInterpreterDSPInstance` may delete an instance earlier.
 //!
 //! # Float/Double runtime dispatch
 //!
@@ -389,8 +388,8 @@ impl FbcExecutorAny {
 
 /// Opaque DSP factory, exported as `interpreter_dsp_factory*` in C.
 ///
-/// Owns an `FbcDspFactoryAny` (either `f32` or `f64`) on the Rust heap.
-/// Allocated via `alloc_factory`, freed via `free_factory`.
+/// Owns an `FbcDspFactoryAny` (either `f32` or `f64`) inside the global
+/// reference-counted factory cache.
 pub struct InterpreterDspFactory {
     pub(crate) inner: FbcDspFactoryAny,
 }
@@ -398,10 +397,10 @@ pub struct InterpreterDspFactory {
 /// Opaque DSP instance, exported as `interpreter_dsp*` in C.
 ///
 /// Holds a non-owning raw pointer to its parent `InterpreterDspFactory`.
-/// The factory MUST outlive this instance (same contract as the C++ API).
-/// Allocated via `alloc_instance`, freed via `free_instance`.
+/// The factory cache owns this value until manual instance deletion or final
+/// factory deletion, and drops it before dropping the parent factory.
 pub struct InterpreterDspInstance {
-    /// Non-owning pointer to the parent factory (factory outlives instance).
+    /// Non-owning pointer to the parent factory while this instance is alive.
     pub(crate) factory: *const InterpreterDspFactory,
     /// Execution heaps (int + real) — precision matches the factory.
     pub(crate) executor: FbcExecutorAny,
@@ -420,48 +419,6 @@ pub struct InterpreterDspInstance {
 
 // SAFETY: DSP instances are not shared between threads (Faust API contract).
 unsafe impl Send for InterpreterDspInstance {}
-
-// ── Allocation / deallocation helpers ────────────────────────────────────────
-
-/// Boxes an `FbcDspFactoryAny` and returns a raw owning pointer.
-///
-/// The caller is responsible for eventually calling [`free_factory`].
-pub(crate) fn alloc_factory(inner: FbcDspFactoryAny) -> *mut InterpreterDspFactory {
-    ffi_common::alloc_opaque(InterpreterDspFactory { inner })
-}
-
-/// Drops the boxed `InterpreterDspFactory`.
-///
-/// # Safety
-/// `ptr` must be a valid non-null pointer previously returned by [`alloc_factory`],
-/// and must not be used after this call.
-pub(crate) unsafe fn free_factory(ptr: *mut InterpreterDspFactory) {
-    unsafe { ffi_common::free_opaque(ptr) }
-}
-
-/// Boxes a new `InterpreterDspInstance` and returns a raw owning pointer.
-pub(crate) fn alloc_instance(
-    factory: *const InterpreterDspFactory,
-    executor: FbcExecutorAny,
-    soundfile_zones: Vec<*mut c_void>,
-) -> *mut InterpreterDspInstance {
-    ffi_common::alloc_opaque(InterpreterDspInstance {
-        factory,
-        executor,
-        soundfile_zones,
-        initialized: false,
-        cycle: 0,
-    })
-}
-
-/// Drops the boxed `InterpreterDspInstance`.
-///
-/// # Safety
-/// `ptr` must be a valid non-null pointer previously returned by [`alloc_instance`],
-/// and must not be used after this call.
-pub(crate) unsafe fn free_instance(ptr: *mut InterpreterDspInstance) {
-    unsafe { ffi_common::free_opaque(ptr) }
-}
 
 /// Allocates a C string on the Rust heap and returns a raw owning pointer.
 ///

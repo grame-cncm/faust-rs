@@ -11,7 +11,7 @@
 //!
 //! # Modules
 //! - [`types`] — opaque FFI wrapper types, UIGlue, MetaGlue.
-//! - [`cache`] — global factory cache (SHA → pointer map).
+//! - [`cache`] — owned, reference-counted global factory cache.
 //! - [`ui`] — UI / meta dispatch helpers.
 //! - [`factory`] — factory `extern "C"` functions (bitcode I/O, cache ops).
 //! - [`instance`] — instance `extern "C"` functions (lifecycle, compute).
@@ -28,3 +28,13 @@ pub mod factory;
 pub mod instance;
 pub mod types;
 pub mod ui;
+
+#[cfg(test)]
+/// Serializes integration-style tests that exercise process-global FFI state.
+pub(crate) fn test_serial_guard() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("test mutex")
+}

@@ -22,7 +22,7 @@ pub mod strings;
 
 pub use abi::{FfiFaustFloat, MetaGlue, UIGlue};
 pub use args::{FfiCompileArgs, parse_ffi_compile_args};
-pub use factory_cache::FactoryCache;
+pub use factory_cache::{FactoryCache, FactoryHandle, FactoryRelease};
 pub use memory::{alloc_opaque, free_opaque};
 pub use strings::{
     alloc_c_string, decode_c_argv, free_c_memory_c_string_only, free_c_string, null_c_string_array,

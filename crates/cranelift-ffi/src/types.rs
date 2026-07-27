@@ -1,8 +1,8 @@
-//! Opaque FFI types and allocation helpers for `cranelift_dsp`.
+//! Opaque FFI types owned by the Cranelift factory cache.
 //!
 //! This module provides the runtime ownership layer used by exported C ABI
 //! functions:
-//! - heap-owned opaque factory/instance pointers,
+//! - cache-owned opaque factory/instance pointers,
 //! - per-instance aligned `dsp*` state buffers,
 //! - shared callback glue structs (`UIGlue`, `MetaGlue`).
 //!
@@ -169,46 +169,6 @@ impl Drop for DspStateBuffer {
     }
 }
 
-/// Boxes a Cranelift factory and returns an owning raw pointer.
-#[must_use]
-pub(crate) fn alloc_factory(factory: CraneliftDspFactory) -> *mut CraneliftDspFactory {
-    ffi_common::alloc_opaque(factory)
-}
-
-/// Frees a factory pointer previously returned by [`alloc_factory`].
-///
-/// # Safety
-/// `ptr` must be a valid pointer returned by [`alloc_factory`], and must not be
-/// used after this call.
-pub(crate) unsafe fn free_factory(ptr: *mut CraneliftDspFactory) {
-    unsafe { ffi_common::free_opaque(ptr) }
-}
-
-/// Boxes a Cranelift instance and returns an owning raw pointer.
-#[must_use]
-pub(crate) fn alloc_instance(
-    factory: *const CraneliftDspFactory,
-    sample_rate: i32,
-    dsp_state: DspStateBuffer,
-) -> *mut CraneliftDspInstance {
-    ffi_common::alloc_opaque(CraneliftDspInstance {
-        factory,
-        sample_rate,
-        initialized: false,
-        cycle: 0,
-        dsp_state,
-    })
-}
-
-/// Frees an instance pointer previously returned by [`alloc_instance`].
-///
-/// # Safety
-/// `ptr` must be a valid pointer returned by [`alloc_instance`], and must not
-/// be used after this call.
-pub(crate) unsafe fn free_instance(ptr: *mut CraneliftDspInstance) {
-    unsafe { ffi_common::free_opaque(ptr) }
-}
-
 /// Allocates a heap C string that can be returned through the C ABI.
 ///
 /// Embedded NUL bytes are replaced by the textual sequence `\\0`.
@@ -219,49 +179,28 @@ pub(crate) fn alloc_c_string(s: &str) -> *mut c_char {
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::RuntimeDescriptor;
-
     use super::{
-        CraneliftDspFactory, CraneliftDspInstance, DspStateBuffer, MetaGlue, UIGlue,
-        alloc_c_string, alloc_factory, alloc_instance, free_factory, free_instance,
+        CraneliftDspFactory, CraneliftDspInstance, DspStateBuffer, MetaGlue, UIGlue, alloc_c_string,
     };
 
     #[test]
     fn scaffold_types_are_constructible_in_type_system() {
+        fn assert_send<T: Send>() {}
+
         let _ = std::mem::size_of::<CraneliftDspFactory>();
         let _ = std::mem::size_of::<CraneliftDspInstance>();
         let _ = std::mem::size_of::<UIGlue>();
         let _ = std::mem::size_of::<MetaGlue>();
+        assert_send::<CraneliftDspFactory>();
+        assert_send::<CraneliftDspInstance>();
     }
 
     #[test]
-    fn alloc_and_free_helpers_roundtrip() {
-        let factory = alloc_factory(CraneliftDspFactory {
-            name: "n".into(),
-            sha_key: "sha".into(),
-            dsp_code: "process=_;".into(),
-            compile_options: "-vec 0".into(),
-            json: "{}".into(),
-            source_is_faust: true,
-            source_name: "n".into(),
-            compile_argv: vec!["-vec".into()],
-            opt_level: 0,
-            compiled_jit: None,
-            runtime: RuntimeDescriptor::default(),
-            compute_body_lowered: false,
-            num_inputs: 1,
-            num_outputs: 1,
-        });
-        let instance = alloc_instance(
-            factory,
-            48_000,
-            DspStateBuffer::new(32, 8).expect("test allocation"),
-        );
+    fn owned_state_and_c_string_helpers_roundtrip() {
+        let _state = DspStateBuffer::new(32, 8).expect("test allocation");
         let s = alloc_c_string("ok");
         unsafe {
             ffi_common::free_c_string(s);
-            free_instance(instance);
-            free_factory(factory);
         }
     }
 }

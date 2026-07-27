@@ -6,7 +6,8 @@
 //! - dispatch UI/meta callbacks from the native FIR-derived runtime descriptor.
 //!
 //! The design keeps one factory -> multiple instances semantics and isolates all
-//! function pointer invocation in documented `unsafe` boundaries.
+//! function pointer invocation in documented `unsafe` boundaries. Instances are
+//! registered for automatic deletion with their owning cached factory.
 
 use std::ffi::c_void;
 use std::os::raw::c_int;
@@ -14,10 +15,10 @@ use std::os::raw::c_int;
 use codegen::backends::cranelift::{StructFieldKind, StructFieldLayout, StructLayoutPlan};
 use fir::FirType;
 
+use crate::cache::{cache_register_instance, cache_remove_instance};
 use crate::runtime::{RuntimeDescriptor, RuntimeFieldInit, RuntimeUiItem};
 use crate::types::{
     CraneliftDspFactory, CraneliftDspInstance, DspStateBuffer, FaustFloat, MetaGlue, UIGlue,
-    alloc_instance, free_instance,
 };
 
 /// Typed JIT `compute` signature used by the standalone Cranelift runtime.
@@ -41,8 +42,9 @@ fn arity_to_c_int(value: usize) -> c_int {
 /// Create a new Cranelift DSP instance from a factory.
 ///
 /// # Safety
-/// `factory` must be a valid non-null factory pointer that outlives the
-/// returned instance.
+/// `factory` must be a valid non-null factory pointer. The returned instance
+/// remains valid until it is manually deleted, its factory is finally
+/// released, or all factories are cleared.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn createCCraneliftDSPInstance(
     factory: *mut CraneliftDspFactory,
@@ -62,7 +64,16 @@ pub unsafe extern "C" fn createCCraneliftDSPInstance(
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
         };
-        alloc_instance(factory.cast_const(), 0, state)
+        cache_register_instance(
+            factory,
+            CraneliftDspInstance {
+                factory: factory.cast_const(),
+                sample_rate: 0,
+                initialized: false,
+                cycle: 0,
+                dsp_state: state,
+            },
+        )
     }
 }
 
@@ -73,10 +84,8 @@ pub unsafe extern "C" fn createCCraneliftDSPInstance(
 /// [`createCCraneliftDSPInstance`] and must not be used after this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn deleteCCraneliftDSPInstance(dsp: *mut CraneliftDspInstance) {
-    unsafe {
-        if !dsp.is_null() {
-            free_instance(dsp);
-        }
+    if !dsp.is_null() {
+        let _ = cache_remove_instance(dsp);
     }
 }
 
@@ -96,14 +105,16 @@ pub unsafe extern "C" fn cloneCCraneliftDSPInstance(
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
         };
-        let clone = CraneliftDspInstance {
-            factory: (*dsp).factory,
-            sample_rate: (*dsp).sample_rate,
-            initialized: (*dsp).initialized,
-            cycle: (*dsp).cycle,
-            dsp_state: state,
-        };
-        Box::into_raw(Box::new(clone))
+        cache_register_instance(
+            (*dsp).factory.cast_mut(),
+            CraneliftDspInstance {
+                factory: (*dsp).factory,
+                sample_rate: (*dsp).sample_rate,
+                initialized: (*dsp).initialized,
+                cycle: (*dsp).cycle,
+                dsp_state: state,
+            },
+        )
     }
 }
 

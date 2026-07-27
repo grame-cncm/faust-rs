@@ -377,6 +377,14 @@ Deliverables and pass criteria depend on that decision, but must include:
 
 Public API mapping: **deferred** until the lifecycle contract is fixed.
 
+Resolution (2026-07-27): the contract is fixed in
+`porting/ffi-factory-cache-lifecycle-contract-2026-07-27-en.md`. Interpreter
+external lifecycle mapping is **1:1** with the maintained C++ behavior;
+Cranelift adopts the same generic Faust lifecycle as an **adapted** backend
+contract. The internal Rust representation is **adapted** to cache-owned
+values, explicit reference counts, typed pointer identities, and co-located
+instance ownership.
+
 ## 8. Rejected alternatives
 
 ### Merge all FFI APIs into one crate

@@ -117,7 +117,8 @@ class interpreter_dsp;
  * C++ wrapper for the FBC DSP factory.
  *
  * Instances are obtained via the free functions below (readInterpreterDSP...).
- * The factory owns its memory; call deleteInterpreterDSPFactory() to free it.
+ * Each returned wrapper owns one cache reference; release it with
+ * deleteInterpreterDSPFactory().
  */
 class interpreter_dsp_factory : public dsp_factory {
 public:
@@ -430,7 +431,7 @@ inline bool writeInterpreterDSPFactoryToBitcodeFile(
  * Look up a factory in the cache by SHA key.
  *
  * @param sha_key the SHA key
- * @return a (non-owning) factory pointer, or nullptr if not found
+ * @return a newly acquired factory reference, or nullptr if not found
  */
 inline interpreter_dsp_factory* getInterpreterDSPFactoryFromSHAKey(
     const std::string& sha_key)
@@ -441,10 +442,10 @@ inline interpreter_dsp_factory* getInterpreterDSPFactoryFromSHAKey(
 }
 
 /**
- * Delete a factory and remove it from the cache.
+ * Release one factory reference.
  *
  * @param factory the factory to delete
- * @return true if the internal allocation was freed
+ * @return true only if this was the final reference
  */
 inline bool deleteInterpreterDSPFactory(interpreter_dsp_factory* factory) {
     if (!factory) return false;
@@ -454,7 +455,8 @@ inline bool deleteInterpreterDSPFactory(interpreter_dsp_factory* factory) {
 }
 
 /**
- * Delete all factories in the cache.
+ * Delete all factories and remaining DSP instances in the cache.
+ * All previously returned wrapper payloads become invalid.
  */
 inline void deleteAllInterpreterDSPFactories() {
     deleteAllCInterpreterDSPFactories();

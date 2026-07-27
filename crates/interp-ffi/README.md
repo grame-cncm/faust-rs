@@ -52,7 +52,7 @@ Notes:
   - opaque factory/instance FFI wrappers
   - re-exports shared `UIGlue` / `MetaGlue`
 - `src/cache.rs`
-  - global factory cache wrappers over `ffi_common::FactoryCache<T>`
+  - global lifecycle wrappers over `ffi_common::FactoryCache<T, I>`
 - `src/factory.rs`
   - factory `extern "C"` API
   - source/bitcode creation paths
@@ -76,6 +76,18 @@ This crate relies on `crates/ffi-common` for backend-agnostic FFI mechanics:
 
 Backend-specific semantics remain local to this crate (factory/runtime behavior,
 `.fbc` serialization semantics, interpreter execution).
+
+## Factory and instance ownership
+
+- Factory creation and SHA lookup each acquire one cache reference.
+- Repeated creation with the same SHA returns the same pointer and acquires
+  another reference.
+- `deleteCInterpreterDSPFactory` returns `false` while references remain and
+  `true` only for the final release.
+- DSP instances may be deleted manually; final factory release and
+  `deleteAllCInterpreterDSPFactories` delete any remaining instances.
+- `deleteAllCInterpreterDSPFactories` invalidates all outstanding factory and
+  instance pointers regardless of reference count.
 
 ## Factory creation paths
 

@@ -4,8 +4,9 @@
 //! audio computation, UI, and metadata.
 //!
 //! # Lifetime contract
-//! The factory passed to `createCInterpreterDSPInstance` must outlive all
-//! instances created from it.  This mirrors the C++ API contract.
+//! Instances are registered with their factory. They may be deleted manually,
+//! or are invalidated and dropped when the last factory reference is deleted,
+//! matching the maintained C++ API contract.
 //!
 //! # Float/Double dispatch
 //! All operations delegate to `FbcDspFactoryAny` / `FbcExecutorAny` helpers
@@ -19,9 +20,9 @@ use std::os::raw::c_int;
 
 use codegen::backends::interp::Soundfile;
 
+use crate::cache::{cache_register_instance, cache_remove_instance};
 use crate::types::{
     FaustFloat, FbcExecutorAny, InterpreterDspFactory, InterpreterDspInstance, MetaGlue, UIGlue,
-    alloc_instance, free_instance,
 };
 use crate::ui::dispatch_meta;
 
@@ -124,8 +125,9 @@ unsafe fn sync_soundfiles_from_zones(exec: &mut FbcExecutorAny, zones: &[*mut c_
 /// Triggers one-shot factory optimization.
 ///
 /// # Safety
-/// `factory` must be a valid non-null factory pointer that outlives the
-/// returned instance.
+/// `factory` must be a valid non-null factory pointer. The returned instance
+/// remains valid until it is manually deleted, its factory is finally
+/// released, or all factories are cleared.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn createCInterpreterDSPInstance(
     factory: *mut InterpreterDspFactory,
@@ -140,7 +142,16 @@ pub unsafe extern "C" fn createCInterpreterDSPInstance(
         let sf_count = (*factory).inner.soundfile_count();
         let soundfile_zones = vec![std::ptr::null_mut(); sf_count];
         let executor = FbcExecutorAny::new_for_factory(&(*factory).inner);
-        alloc_instance(factory as *const _, executor, soundfile_zones)
+        cache_register_instance(
+            factory,
+            InterpreterDspInstance {
+                factory: factory.cast_const(),
+                executor,
+                soundfile_zones,
+                initialized: false,
+                cycle: 0,
+            },
+        )
     }
 }
 
@@ -151,10 +162,8 @@ pub unsafe extern "C" fn createCInterpreterDSPInstance(
 /// `createCInterpreterDSPInstance`, and must not be used after this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn deleteCInterpreterDSPInstance(dsp: *mut InterpreterDspInstance) {
-    unsafe {
-        if !dsp.is_null() {
-            free_instance(dsp);
-        }
+    if !dsp.is_null() {
+        let _ = cache_remove_instance(dsp);
     }
 }
 
@@ -331,10 +340,16 @@ pub unsafe extern "C" fn cloneCInterpreterDSPInstance(
         // Clone soundfile zones: copy the pointers (same C++ Soundfile* targets).
         let new_soundfile_zones = (*dsp).soundfile_zones.clone();
 
-        let clone = alloc_instance(factory_ptr, new_executor, new_soundfile_zones);
-        (*clone).initialized = (*dsp).initialized;
-        (*clone).cycle = 0;
-        clone
+        cache_register_instance(
+            factory_ptr.cast_mut(),
+            InterpreterDspInstance {
+                factory: factory_ptr,
+                executor: new_executor,
+                soundfile_zones: new_soundfile_zones,
+                initialized: (*dsp).initialized,
+                cycle: 0,
+            },
+        )
     }
 }
 
