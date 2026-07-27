@@ -1,10 +1,23 @@
-# utils
+# ffi-common
 
-Shared FFI utilities for Rust-side Faust backend crates.
+Internal, dependency-light support for Rust-side Faust FFI adapters.
 
 Provides common C ABI types (`UIGlue`, `MetaGlue`), heap allocation helpers,
 error buffer writing, and CLI argument parsing used by `interp-ffi`,
-`cranelift-ffi`, `box-ffi`, and `signal-ffi`.
+`cranelift-ffi`, `box-ffi`, `signal-ffi`, `tree-ffi`, and `wasm-ffi`.
+
+This is not a general-purpose utility crate. Compiler-core crates must not
+depend on it.
+
+## Modules
+
+| Module | Responsibility |
+|---|---|
+| `abi` | Shared `#[repr(C)]` callback tables and `FAUSTFLOAT` type |
+| `args` | CLI-like compile options accepted at FFI entry points |
+| `factory_cache` | Shared factory-cache mechanism |
+| `memory` | Opaque Rust allocation helpers |
+| `strings` | C strings, `argv`, error buffers, and empty `char**` support |
 
 ## Public API
 
@@ -49,9 +62,6 @@ error buffer writing, and CLI argument parsing used by `interp-ffi`,
 |---|---|
 | `FactoryCache<T>` | Thread-safe SHA-keyed factory cache |
 
-### Utilities
-
-| Item | Description |
-|---|---|
-| `CRATE_NAME` | Crate identity string constant |
-| `crate_id()` | Returns `CRATE_NAME` |
+The crate re-exports the module APIs at its root to keep the FFI adapter call
+sites compact. Backend-specific ownership and lifecycle wrappers remain in the
+owning backend crate.

@@ -22,4 +22,4 @@ crate-type = ["cdylib", "rlib"]
 codegen = { path = "../codegen" }
 compiler = { path = "../compiler" }
 parser = { path = "../parser" }
-utils = { path = "../utils" }
+ffi-common = { path = "../ffi-common" }

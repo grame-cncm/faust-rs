@@ -394,7 +394,7 @@ pub unsafe fn export_source_from_signal_array_handle(
     lang: &str,
     argv: &[String],
 ) -> Result<String, String> {
-    let parsed = utils::parse_ffi_compile_args(argv)?;
+    let parsed = ffi_common::parse_ffi_compile_args(argv)?;
     let module_name = parsed
         .module_name
         .clone()
@@ -542,7 +542,7 @@ pub unsafe extern "C" fn freeCMemory(ptr: *mut c_void) {
     }
     let freed_array = with_ctx(|ctx| ctx.free_if_handle_ptr_array(ptr));
     if !freed_array {
-        unsafe { utils::free_c_memory_c_string_only(ptr) }
+        unsafe { ffi_common::free_c_memory_c_string_only(ptr) }
     }
 }
 
@@ -593,7 +593,7 @@ pub extern "C" fn Ctree2str(b: *mut c_void) -> *const c_char {
             );
             return std::ptr::null();
         };
-        utils::alloc_c_string(name) as *const c_char
+        ffi_common::alloc_c_string(name) as *const c_char
     })
 }
 
@@ -617,7 +617,7 @@ pub extern "C" fn CprintBox(box_ptr: *mut c_void, _shared: bool, _max_size: c_in
             return std::ptr::null_mut();
         };
         let dumped = dump_box(&ctx.arena, id);
-        utils::alloc_c_string(&dumped)
+        ffi_common::alloc_c_string(&dumped)
     })
 }
 
@@ -2377,18 +2377,18 @@ pub unsafe extern "C" fn CDSPToBoxes(
     outputs: *mut c_int,
     error_msg: *mut c_char,
 ) -> *mut c_void {
-    let source_name = match unsafe { utils::optional_c_str_arg(name_app, "name_app") } {
+    let source_name = match unsafe { ffi_common::optional_c_str_arg(name_app, "name_app") } {
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
-    let content = match unsafe { utils::required_c_str_arg(dsp_content, "dsp_content") } {
+    let content = match unsafe { ffi_common::required_c_str_arg(dsp_content, "dsp_content") } {
         Ok(s) => s,
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
@@ -2396,7 +2396,7 @@ pub unsafe extern "C" fn CDSPToBoxes(
     let compiled = match compiler.compile_source_to_signals(&source_name, content) {
         Ok(v) => v,
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
             return std::ptr::null_mut();
         }
     };
@@ -2420,7 +2420,9 @@ pub unsafe extern "C" fn CDSPToBoxes(
         ) {
             Some(id) => ctx.encode(id),
             None => {
-                unsafe { utils::write_error_4096(error_msg, "failed to import process box tree") };
+                unsafe {
+                    ffi_common::write_error_4096(error_msg, "failed to import process box tree")
+                };
                 std::ptr::null_mut()
             }
         }
@@ -2478,13 +2480,13 @@ pub unsafe extern "C" fn CboxesToSignals(
 ) -> *mut *mut c_void {
     with_ctx(|ctx| {
         let Some(box_id) = ctx.decode(box_ptr) else {
-            unsafe { utils::write_error_4096(error_msg, "null or unknown box pointer") };
+            unsafe { ffi_common::write_error_4096(error_msg, "null or unknown box pointer") };
             return std::ptr::null_mut();
         };
         let flat = match try_build_flat_box(&ctx.arena, box_id) {
             Ok(flat) => flat,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2492,7 +2494,7 @@ pub unsafe extern "C" fn CboxesToSignals(
         let arity = match box_arity_typed(&ctx.arena, flat, &mut cache) {
             Ok(a) => a,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2500,7 +2502,7 @@ pub unsafe extern "C" fn CboxesToSignals(
         let outputs = match propagate_typed(&mut ctx.arena, flat, &inputs, &mut cache) {
             Ok(sigs) => sigs,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2520,13 +2522,13 @@ pub unsafe extern "C" fn CboxesToSignals2(
 ) -> *mut *mut c_void {
     with_ctx(|ctx| {
         let Some(box_id) = ctx.decode(box_ptr) else {
-            unsafe { utils::write_error_4096(error_msg, "null or unknown box pointer") };
+            unsafe { ffi_common::write_error_4096(error_msg, "null or unknown box pointer") };
             return std::ptr::null_mut();
         };
         let flat = match try_build_flat_box(&ctx.arena, box_id) {
             Ok(flat) => flat,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2534,7 +2536,7 @@ pub unsafe extern "C" fn CboxesToSignals2(
         let arity = match box_arity_typed(&ctx.arena, flat, &mut cache) {
             Ok(a) => a,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2542,7 +2544,7 @@ pub unsafe extern "C" fn CboxesToSignals2(
         let outputs = match propagate_typed(&mut ctx.arena, flat, &inputs, &mut cache) {
             Ok(sigs) => sigs,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2551,7 +2553,7 @@ pub unsafe extern "C" fn CboxesToSignals2(
             match de_bruijn_to_sym(&mut ctx.arena, signal) {
                 Ok(sym) => symbolic.push(sym),
                 Err(e) => {
-                    unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                    unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                     return std::ptr::null_mut();
                 }
             }
@@ -2574,46 +2576,46 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
     argv: *const *const c_char,
     error_msg: *mut c_char,
 ) -> *mut c_char {
-    let name_app = match unsafe { utils::optional_c_str_arg(name_app, "name_app") } {
+    let name_app = match unsafe { ffi_common::optional_c_str_arg(name_app, "name_app") } {
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
-    let lang = match unsafe { utils::required_c_str_arg(lang, "lang") } {
+    let lang = match unsafe { ffi_common::required_c_str_arg(lang, "lang") } {
         Ok(s) => s.to_ascii_lowercase(),
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
-    let argv = match unsafe { utils::decode_c_argv(argc, argv) } {
+    let argv = match unsafe { ffi_common::decode_c_argv(argc, argv) } {
         Ok(v) => v,
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
-    let parsed = match utils::parse_ffi_compile_args(&argv) {
+    let parsed = match ffi_common::parse_ffi_compile_args(&argv) {
         Ok(v) => v,
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
 
     with_ctx(|ctx| {
         let Some(box_id) = ctx.decode(box_ptr) else {
-            unsafe { utils::write_error_4096(error_msg, "null or unknown box pointer") };
+            unsafe { ffi_common::write_error_4096(error_msg, "null or unknown box pointer") };
             return std::ptr::null_mut();
         };
 
         let flat = match try_build_flat_box(&ctx.arena, box_id) {
             Ok(flat) => flat,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2621,7 +2623,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         let arity = match box_arity_typed(&ctx.arena, flat, &mut cache) {
             Ok(a) => a,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2629,7 +2631,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         let signals = match propagate_typed(&mut ctx.arena, flat, &inputs, &mut cache) {
             Ok(sigs) => sigs,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2641,7 +2643,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         let fir = match lower_signal_roots_to_fir(ctx, &signals, &module_name) {
             Ok(v) => v,
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e) };
                 return std::ptr::null_mut();
             }
         };
@@ -2649,9 +2651,9 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         let rendered = render_fir_module_source(&fir, &lang, &module_name);
 
         match rendered {
-            Ok(text) => utils::alloc_c_string(&text),
+            Ok(text) => ffi_common::alloc_c_string(&text),
             Err(e) => {
-                unsafe { utils::write_error_4096(error_msg, &e) };
+                unsafe { ffi_common::write_error_4096(error_msg, &e) };
                 std::ptr::null_mut()
             }
         }

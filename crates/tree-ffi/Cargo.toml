@@ -15,4 +15,4 @@ all = "warn"
 
 [dependencies]
 tlib = { path = "../tlib" }
-utils = { path = "../utils" }
+ffi-common = { path = "../ffi-common" }

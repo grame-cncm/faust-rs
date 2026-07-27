@@ -1,12 +1,12 @@
 [package]
-name = "utils"
+name = "ffi-common"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [lints.rust]
-unsafe_code = "allow" # shared FFI helpers require raw-pointer operations
+unsafe_code = "allow" # shared ABI helpers require raw-pointer operations
 unused_attributes = "warn"
 unused_lifetimes = "warn"
 

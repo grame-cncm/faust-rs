@@ -10,7 +10,7 @@
 use std::sync::LazyLock;
 
 use crate::types::InterpreterDspFactory;
-use utils::FactoryCache;
+use ffi_common::FactoryCache;
 
 static FACTORY_CACHE: LazyLock<FactoryCache<InterpreterDspFactory>> =
     LazyLock::new(FactoryCache::new);

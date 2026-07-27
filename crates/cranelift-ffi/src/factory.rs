@@ -28,11 +28,11 @@ use compiler::{
     GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane,
     default_import_search_paths,
 };
-use fir::{FirMatch, match_fir};
-use utils::{
+use ffi_common::{
     decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only, null_c_string_array,
     optional_c_str_arg, parse_ffi_compile_args, required_c_str_arg, write_error_4096,
 };
+use fir::{FirMatch, match_fir};
 
 use crate::cache::{
     cache_all_sha_keys, cache_drain, cache_insert, cache_lookup, cache_remove_by_ptr, start_mt,

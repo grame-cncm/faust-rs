@@ -5,8 +5,6 @@
 //! `signal-ffi`) are linked as Rust libraries and their exported `extern "C"`
 //! symbols are distributed through this single top-level library.
 
-#![allow(unsafe_code)]
-
 /// Box manipulation C API surface.
 pub use box_ffi as box_api;
 /// Cranelift backend C API surface.

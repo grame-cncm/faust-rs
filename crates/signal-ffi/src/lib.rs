@@ -849,25 +849,25 @@ pub unsafe extern "C" fn CcreateSourceFromSignals(
     argv: *const *const c_char,
     error_msg: *mut c_char,
 ) -> *mut c_char {
-    let name_app = match unsafe { utils::optional_c_str_arg(name_app, "name_app") } {
+    let name_app = match unsafe { ffi_common::optional_c_str_arg(name_app, "name_app") } {
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
-    let lang = match unsafe { utils::required_c_str_arg(lang, "lang") } {
+    let lang = match unsafe { ffi_common::required_c_str_arg(lang, "lang") } {
         Ok(s) => s.to_ascii_lowercase(),
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
-    let argv = match unsafe { utils::decode_c_argv(argc, argv) } {
+    let argv = match unsafe { ffi_common::decode_c_argv(argc, argv) } {
         Ok(v) => v,
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
@@ -880,9 +880,9 @@ pub unsafe extern "C" fn CcreateSourceFromSignals(
             &argv,
         )
     } {
-        Ok(source) => utils::alloc_c_string(&source),
+        Ok(source) => ffi_common::alloc_c_string(&source),
         Err(e) => {
-            unsafe { utils::write_error_4096(error_msg, &e) };
+            unsafe { ffi_common::write_error_4096(error_msg, &e) };
             std::ptr::null_mut()
         }
     }

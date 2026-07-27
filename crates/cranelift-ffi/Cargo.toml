@@ -18,7 +18,7 @@ box_ffi = { package = "box-ffi", path = "../box-ffi", default-features = false }
 codegen = { path = "../codegen" }
 compiler = { path = "../compiler" }
 fir = { path = "../fir" }
-utils = { path = "../utils" }
+ffi-common = { path = "../ffi-common" }
 
 [dev-dependencies]
 interp_ffi = { package = "interp-ffi", path = "../interp-ffi" }

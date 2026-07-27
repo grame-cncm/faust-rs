@@ -22,7 +22,7 @@ crate-type = ["rlib"]
 [dependencies]
 codegen = { path = "../codegen" }
 compiler = { path = "../compiler" }
-utils = { path = "../utils" }
+ffi-common = { path = "../ffi-common" }
 
 # cbindgen is kept for future use when Rust edition 2024 support is added.
 # For now the C header (include/interpreter-dsp-c.h) is maintained manually.

@@ -561,7 +561,7 @@ concise, factual, and implementation-oriented.
 | `codegen` | AssemblyScript, C, C++, Codebox (RNBO), Rust, interpreter, Cranelift, WASM, and Julia backend generation |
 | `draw` | SVG block-diagram rendering |
 | `doc` | Documentation/reporting scaffold |
-| `utils` | Shared FFI utilities |
+| `ffi-common` | Shared ABI, marshalling, allocation, and factory-cache support for FFI adapters |
 | `tree-ffi` | Shared opaque tree-handle support for Box and Signal C APIs |
 | `compiler` | Top-level compiler facade and CLI |
 | `impulse-runner` | Interpreter-backed scalar impulse-test runner |

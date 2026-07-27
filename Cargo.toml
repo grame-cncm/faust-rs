@@ -19,7 +19,7 @@ members = [
   "crates/codegen",
   "crates/draw",
   "crates/doc",
-  "crates/utils",
+  "crates/ffi-common",
   "crates/tree-ffi",
   "crates/compiler",
   "crates/xtask",

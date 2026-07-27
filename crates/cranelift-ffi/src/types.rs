@@ -23,10 +23,10 @@ use crate::runtime::RuntimeDescriptor;
 pub type FaustFloat = f32;
 
 /// Shared UI callback table (`UIGlue`) for Faust C FFI backends.
-pub use utils::UIGlue;
+pub use ffi_common::UIGlue;
 
 /// Shared metadata callback table (`MetaGlue`) for Faust C FFI backends.
-pub use utils::MetaGlue;
+pub use ffi_common::MetaGlue;
 
 /// Opaque Cranelift DSP factory wrapper exported as `cranelift_dsp_factory*`.
 ///
@@ -172,7 +172,7 @@ impl Drop for DspStateBuffer {
 /// Boxes a Cranelift factory and returns an owning raw pointer.
 #[must_use]
 pub(crate) fn alloc_factory(factory: CraneliftDspFactory) -> *mut CraneliftDspFactory {
-    utils::alloc_opaque(factory)
+    ffi_common::alloc_opaque(factory)
 }
 
 /// Frees a factory pointer previously returned by [`alloc_factory`].
@@ -181,7 +181,7 @@ pub(crate) fn alloc_factory(factory: CraneliftDspFactory) -> *mut CraneliftDspFa
 /// `ptr` must be a valid pointer returned by [`alloc_factory`], and must not be
 /// used after this call.
 pub(crate) unsafe fn free_factory(ptr: *mut CraneliftDspFactory) {
-    unsafe { utils::free_opaque(ptr) }
+    unsafe { ffi_common::free_opaque(ptr) }
 }
 
 /// Boxes a Cranelift instance and returns an owning raw pointer.
@@ -191,7 +191,7 @@ pub(crate) fn alloc_instance(
     sample_rate: i32,
     dsp_state: DspStateBuffer,
 ) -> *mut CraneliftDspInstance {
-    utils::alloc_opaque(CraneliftDspInstance {
+    ffi_common::alloc_opaque(CraneliftDspInstance {
         factory,
         sample_rate,
         initialized: false,
@@ -206,7 +206,7 @@ pub(crate) fn alloc_instance(
 /// `ptr` must be a valid pointer returned by [`alloc_instance`], and must not
 /// be used after this call.
 pub(crate) unsafe fn free_instance(ptr: *mut CraneliftDspInstance) {
-    unsafe { utils::free_opaque(ptr) }
+    unsafe { ffi_common::free_opaque(ptr) }
 }
 
 /// Allocates a heap C string that can be returned through the C ABI.
@@ -214,7 +214,7 @@ pub(crate) unsafe fn free_instance(ptr: *mut CraneliftDspInstance) {
 /// Embedded NUL bytes are replaced by the textual sequence `\\0`.
 #[must_use]
 pub(crate) fn alloc_c_string(s: &str) -> *mut c_char {
-    utils::alloc_c_string(s)
+    ffi_common::alloc_c_string(s)
 }
 
 #[cfg(test)]
@@ -259,7 +259,7 @@ mod tests {
         );
         let s = alloc_c_string("ok");
         unsafe {
-            utils::free_c_string(s);
+            ffi_common::free_c_string(s);
             free_instance(instance);
             free_factory(factory);
         }

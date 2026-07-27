@@ -72,7 +72,7 @@ list V1-deferred families where relevant.
   - opaque factory/instance wrappers
   - re-exports shared `UIGlue` / `MetaGlue`
 - `src/cache.rs`
-  - global factory cache wrappers over `utils::FactoryCache<T>`
+  - global factory cache wrappers over `ffi_common::FactoryCache<T>`
 - `src/factory.rs`
   - Cranelift factory `extern "C"` API
   - compiler/FIR/JIT factory construction
@@ -86,7 +86,7 @@ list V1-deferred families where relevant.
 
 ## Shared FFI helpers (factorized)
 
-This crate uses shared backend-agnostic FFI helpers from `crates/utils`:
+This crate uses shared backend-agnostic FFI helpers from `crates/ffi-common`:
 
 - `UIGlue` / `MetaGlue`
 - C string allocation/free helpers

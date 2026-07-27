@@ -225,7 +225,7 @@ fn parse_compile_request(
     let _embedded_root = embedded_standard_library_root();
     let _embedded_roots = embedded_standard_library_roots();
     let argv = split_faustwasm_args(args);
-    let parsed = utils::parse_ffi_compile_args(&argv)?;
+    let parsed = ffi_common::parse_ffi_compile_args(&argv)?;
     let mut request = WasmArtifactRequest::new(name, source);
     request.import_dirs = parsed.search_paths;
     request.virtual_sources = virtual_sources_from_argv(&argv);

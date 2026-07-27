@@ -24,7 +24,7 @@ standalone-capi-globals = []
 [dependencies]
 boxes = { path = "../boxes" }
 tlib = { path = "../tlib" }
-utils = { path = "../utils" }
+ffi-common = { path = "../ffi-common" }
 tree-ffi = { path = "../tree-ffi" }
 compiler = { path = "../compiler" }
 propagate = { path = "../propagate" }

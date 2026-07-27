@@ -5,13 +5,8 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
-[lints.rust]
-unsafe_code = "allow"
-unused_attributes = "warn"
-unused_lifetimes = "warn"
-
-[lints.clippy]
-all = "warn"
+[lints]
+workspace = true
 
 [lib]
 name = "faust_rs"

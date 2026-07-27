@@ -23,4 +23,4 @@ normalize = { path = "../normalize" }
 signals = { path = "../signals" }
 tlib = { path = "../tlib" }
 tree-ffi = { path = "../tree-ffi" }
-utils = { path = "../utils" }
+ffi-common = { path = "../ffi-common" }

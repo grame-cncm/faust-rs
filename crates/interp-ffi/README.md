@@ -52,7 +52,7 @@ Notes:
   - opaque factory/instance FFI wrappers
   - re-exports shared `UIGlue` / `MetaGlue`
 - `src/cache.rs`
-  - global factory cache wrappers over `utils::FactoryCache<T>`
+  - global factory cache wrappers over `ffi_common::FactoryCache<T>`
 - `src/factory.rs`
   - factory `extern "C"` API
   - source/bitcode creation paths
@@ -64,8 +64,7 @@ Notes:
 
 ## Shared FFI helpers (factorized)
 
-This crate now relies on shared utilities from `crates/utils` for backend-agnostic
-FFI mechanics:
+This crate relies on `crates/ffi-common` for backend-agnostic FFI mechanics:
 
 - `UIGlue` / `MetaGlue`
 - C string allocation/free helpers

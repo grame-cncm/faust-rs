@@ -36,10 +36,10 @@ use codegen::backends::interp::{
 pub type FaustFloat = f32;
 
 /// Shared UI callback table (`UIGlue`) for Faust C FFI.
-pub use utils::UIGlue;
+pub use ffi_common::UIGlue;
 
 /// Shared metadata callback table (`MetaGlue`) for Faust C FFI.
-pub use utils::MetaGlue;
+pub use ffi_common::MetaGlue;
 
 // ── Runtime-polymorphic factory ──────────────────────────────────────────────
 
@@ -427,7 +427,7 @@ unsafe impl Send for InterpreterDspInstance {}
 ///
 /// The caller is responsible for eventually calling [`free_factory`].
 pub(crate) fn alloc_factory(inner: FbcDspFactoryAny) -> *mut InterpreterDspFactory {
-    utils::alloc_opaque(InterpreterDspFactory { inner })
+    ffi_common::alloc_opaque(InterpreterDspFactory { inner })
 }
 
 /// Drops the boxed `InterpreterDspFactory`.
@@ -436,7 +436,7 @@ pub(crate) fn alloc_factory(inner: FbcDspFactoryAny) -> *mut InterpreterDspFacto
 /// `ptr` must be a valid non-null pointer previously returned by [`alloc_factory`],
 /// and must not be used after this call.
 pub(crate) unsafe fn free_factory(ptr: *mut InterpreterDspFactory) {
-    unsafe { utils::free_opaque(ptr) }
+    unsafe { ffi_common::free_opaque(ptr) }
 }
 
 /// Boxes a new `InterpreterDspInstance` and returns a raw owning pointer.
@@ -445,7 +445,7 @@ pub(crate) fn alloc_instance(
     executor: FbcExecutorAny,
     soundfile_zones: Vec<*mut c_void>,
 ) -> *mut InterpreterDspInstance {
-    utils::alloc_opaque(InterpreterDspInstance {
+    ffi_common::alloc_opaque(InterpreterDspInstance {
         factory,
         executor,
         soundfile_zones,
@@ -460,14 +460,14 @@ pub(crate) fn alloc_instance(
 /// `ptr` must be a valid non-null pointer previously returned by [`alloc_instance`],
 /// and must not be used after this call.
 pub(crate) unsafe fn free_instance(ptr: *mut InterpreterDspInstance) {
-    unsafe { utils::free_opaque(ptr) }
+    unsafe { ffi_common::free_opaque(ptr) }
 }
 
 /// Allocates a C string on the Rust heap and returns a raw owning pointer.
 ///
 /// The returned pointer must be freed with [`free_c_string`].
 pub(crate) fn alloc_c_string(s: &str) -> *mut c_char {
-    utils::alloc_c_string(s)
+    ffi_common::alloc_c_string(s)
 }
 
 // ── Write helpers (generic, used by factory.rs) ───────────────────────────────

@@ -11,7 +11,7 @@
 use std::sync::LazyLock;
 
 use crate::types::CraneliftDspFactory;
-use utils::FactoryCache;
+use ffi_common::FactoryCache;
 
 static FACTORY_CACHE: LazyLock<FactoryCache<CraneliftDspFactory>> =
     LazyLock::new(FactoryCache::new);
@@ -53,7 +53,7 @@ pub(crate) fn cache_all_sha_keys() -> Vec<String> {
 
 /// Enable multi-thread mode (compatibility flag only in the scaffold).
 ///
-/// The underlying `utils::FactoryCache` keeps this flag for API parity with
+/// The underlying `ffi_common::FactoryCache` keeps this flag for API parity with
 /// the classic Faust C API families, even though the Rust implementation is
 /// already guarded by synchronization primitives.
 #[must_use]

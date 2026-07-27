@@ -339,7 +339,7 @@ pub unsafe fn free_context_or_c_string(ctx: &mut FfiTreeContext, ptr: *mut c_voi
         return;
     }
     if !ctx.free_if_handle_ptr_array(ptr) {
-        unsafe { utils::free_c_memory_c_string_only(ptr) }
+        unsafe { ffi_common::free_c_memory_c_string_only(ptr) }
     }
 }
 

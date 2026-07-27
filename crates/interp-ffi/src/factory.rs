@@ -24,7 +24,7 @@ use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, ExpandDspRequest, GenerateAuxFilesRequest,
     RealType, SignalFirLane, default_import_search_paths,
 };
-use utils::{
+use ffi_common::{
     FfiCompileArgs, decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only,
     null_c_string_array, optional_c_str_arg,
     parse_ffi_compile_args as parse_ffi_compile_args_shared, required_c_str_arg, write_error_4096,
