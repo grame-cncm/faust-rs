@@ -23,7 +23,7 @@ fn json_description_renders_minimal_shape() {
 
     assert_eq!(
         json,
-        "{\n\t\"name\": \"passthrough\",\n\t\"size\": 4,\n\t\"inputs\": 1,\n\t\"outputs\": 2,\n\t\"ui\": []\n}"
+        "{\n\t\"name\": \"passthrough\",\n\t\"size\": 4,\n\t\"inputs\": 1,\n\t\"outputs\": 2,\n\t\"meta\": [],\n\t\"ui\": []\n}"
     );
     assert!(json.contains("\n\t\"ui\": []\n}"));
 }

@@ -110,9 +110,7 @@ impl JsonDescription {
         if let Some(sr_index) = self.sr_index {
             push_pretty_field_u32(&mut out, &mut first, 1, "sr_index", sr_index);
         }
-        if !self.meta.is_empty() {
-            push_pretty_field_meta_array(&mut out, &mut first, 1, "meta", &self.meta);
-        }
+        push_pretty_field_meta_array(&mut out, &mut first, 1, "meta", &self.meta);
         push_pretty_field_ui_array(&mut out, &mut first, 1, "ui", &self.ui);
         out.push('\n');
         out.push('}');
