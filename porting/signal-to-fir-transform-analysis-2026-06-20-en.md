@@ -513,9 +513,13 @@ runtime guard and no compile-time rejection — "the host must not" is the only 
 
 **Update (2026-06-20):** the tape index is now masked (`i0 & (MAX_BRA_TAPE_BLOCK_SIZE - 1)`, a
 power-of-two no-op for the supported block size), so an over-long block wraps *within* the array —
-approximate gradients for the tail — instead of writing out of bounds. The UB is gone; the
-`count ≤ MAX` precondition still governs *exact* gradient correctness, and arbitrary-length support
-remains a larger change (chunked TBPTT or a dynamically sized tape).
+instead of writing out of bounds. The UB is gone, but correctness is not: after one wrap, the
+forward tail overwrites the tape slots needed by the backward prefix. For example, `count = 9000`
+corrupts gradients at samples `0..807`, not the tail that performed the overwrite. The
+`count ≤ MAX` precondition still governs exact gradient correctness, and arbitrary-length support
+remains a larger change (explicit chunked TBPTT or a dynamically sized tape). The seed-liveness,
+dead-tape, and remediation analysis is continued in
+[`rad-bra-tape-safety-liveness-analysis-2026-07-27-en.md`](rad-bra-tape-safety-liveness-analysis-2026-07-27-en.md).
 
 **W6 — Dead/unused analysis surface.**
 - `DelayManager::rec_group_max_delay` is **write-only**: populated by `try_record_rec_delay`
