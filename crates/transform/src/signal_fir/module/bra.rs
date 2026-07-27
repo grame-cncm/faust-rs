@@ -566,6 +566,16 @@ impl<'a> SignalToFirLower<'a> {
                 let _ = (x, y_bar); // Rounding ops: gradient is 0 almost everywhere.
             }
 
+            // ── Attach(value, effect): transparent adjoint ─────────────────
+            //
+            // The forward lowering evaluates `effect` for its side effects and
+            // returns `value`. The attached branch is therefore intentionally
+            // absent from the adjoint graph: replaying or differentiating it
+            // would both duplicate effects and create a spurious gradient.
+            SigMatch::Attach(value, _effect) => {
+                Self::add_to_adjoint(&mut self.store, adj, value, y_bar, real_ty);
+            }
+
             // ── Delay(c, x): anti-causal carry with circular buffer ──────────
             SigMatch::Delay(sig_inner, amount) => {
                 // Forward: y[n] = x[n-c].  Backward: adj[x][n] += adj[y][n+c].

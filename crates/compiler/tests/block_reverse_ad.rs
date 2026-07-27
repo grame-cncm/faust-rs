@@ -1097,6 +1097,36 @@ process = rad(2.0 * x, x);
     }
 }
 
+/// An `attach` inside a temporal RAD body must preserve its metering side
+/// effect in the primal pass while remaining transparent to differentiation.
+///
+/// The attached branch deliberately depends on the seed. If BRA propagated an
+/// adjoint into that branch, the reported gradient would contain a spurious
+/// `+1`. The one-sample delay forces the BlockReverseAD fallback and gives the
+/// canonical TBPTT gradient `[1, ..., 1, 0]`.
+#[test]
+fn fir_bra_attach_ignores_attached_branch_gradient() {
+    let frame_count = BS;
+    let source = r#"
+x = hslider("x", 0.5, 0.0, 1.0, 0.01);
+meter = x : hbargraph("probe", 0.0, 1.0);
+process = rad(attach(x', meter), x);
+"#;
+    let outputs = run_bra_source("fir-bra-attach", source, frame_count);
+    assert_eq!(outputs.len(), 2, "layout: [primal, grad]");
+    for n in 0..frame_count {
+        let expected_primal = if n == 0 { 0.0 } else { 0.5 };
+        let expected_grad = if n + 1 < frame_count { 1.0 } else { 0.0 };
+        assert_close_f32(
+            outputs[0][n],
+            expected_primal,
+            1.0e-5,
+            &format!("primal[{n}]"),
+        );
+        assert_close_f32(outputs[1][n], expected_grad, 1.0e-5, &format!("grad[{n}]"));
+    }
+}
+
 /// `process = rad(x', x)` with `x = hslider("x", 0.5, …)`.
 ///
 /// `x'` is Faust's one-sample delay (`Delay1`).

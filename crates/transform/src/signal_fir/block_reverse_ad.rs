@@ -218,6 +218,13 @@ pub(super) fn collect_bra_postorder(
             collect_bra_postorder(arena, init, visited, order);
             collect_bra_postorder(arena, sig, visited, order);
         }
+        // Attach(value, effect) is transparent to differentiation. The
+        // attached branch is forced by the forward lowering, but it does not
+        // contribute to the adjoint and must not be replayed in the backward
+        // sweep.
+        SigMatch::Attach(value, _effect) => {
+            collect_bra_postorder(arena, value, visited, order);
+        }
         // Proj(slot, Rec(bodies)): recurse into the corresponding body expression.
         //
         // The body expression contains `Delay1(Proj(slot, group))` which
