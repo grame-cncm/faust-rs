@@ -91,7 +91,7 @@ pub unsafe fn decode_c_argv(argc: i32, argv: *const *const c_char) -> Result<Vec
     Ok(result)
 }
 
-/// Decodes a required C string argument as UTF-8.
+/// Decodes a required C string argument into an owned UTF-8 value.
 ///
 /// Error messages follow the common Faust FFI wording pattern:
 /// - `null <label> pointer`
@@ -99,30 +99,32 @@ pub unsafe fn decode_c_argv(argc: i32, argv: *const *const c_char) -> Result<Vec
 ///
 /// # Safety
 /// `ptr` must be null or point to a valid null-terminated C string.
-pub unsafe fn required_c_str_arg<'a>(ptr: *const c_char, label: &str) -> Result<&'a str, String> {
+pub unsafe fn required_c_string_arg(ptr: *const c_char, label: &str) -> Result<String, String> {
     if ptr.is_null() {
         return Err(format!("null {label} pointer"));
     }
     unsafe { CStr::from_ptr(ptr) }
         .to_str()
+        .map(str::to_owned)
         .map_err(|error| format!("invalid UTF-8 in {label}: {error}"))
 }
 
-/// Decodes an optional C string argument as UTF-8.
+/// Decodes an optional C string argument into an owned UTF-8 value.
 ///
 /// Returns `Ok(None)` when `ptr` is null.
 ///
 /// # Safety
 /// `ptr` must be null or point to a valid null-terminated C string.
-pub unsafe fn optional_c_str_arg<'a>(
+pub unsafe fn optional_c_string_arg(
     ptr: *const c_char,
     label: &str,
-) -> Result<Option<&'a str>, String> {
+) -> Result<Option<String>, String> {
     if ptr.is_null() {
         return Ok(None);
     }
     unsafe { CStr::from_ptr(ptr) }
         .to_str()
+        .map(str::to_owned)
         .map(Some)
         .map_err(|error| format!("invalid UTF-8 in {label}: {error}"))
 }
@@ -143,7 +145,7 @@ mod tests {
 
     use super::{
         alloc_c_string, decode_c_argv, free_c_memory_c_string_only, free_c_string,
-        null_c_string_array, optional_c_str_arg, required_c_str_arg, write_error_4096,
+        null_c_string_array, optional_c_string_arg, required_c_string_arg, write_error_4096,
     };
 
     #[test]
@@ -182,14 +184,53 @@ mod tests {
     }
 
     #[test]
-    fn c_str_arg_helpers_decode_required_and_optional() {
+    fn c_string_arg_helpers_return_owned_required_and_optional_values() {
         let string = CString::new("abc").unwrap();
-        let required = unsafe { required_c_str_arg(string.as_ptr(), "filename") }.unwrap();
-        let optional = unsafe { optional_c_str_arg(string.as_ptr(), "name_app") }.unwrap();
-        let none = unsafe { optional_c_str_arg(std::ptr::null(), "name_app") }.unwrap();
+        let required = unsafe { required_c_string_arg(string.as_ptr(), "filename") }.unwrap();
+        let optional = unsafe { optional_c_string_arg(string.as_ptr(), "name_app") }.unwrap();
+        let none = unsafe { optional_c_string_arg(std::ptr::null(), "name_app") }.unwrap();
+        drop(string);
         assert_eq!(required, "abc");
-        assert_eq!(optional, Some("abc"));
+        assert_eq!(optional.as_deref(), Some("abc"));
         assert_eq!(none, None);
+    }
+
+    #[test]
+    fn c_string_arg_helpers_report_null_and_invalid_utf8() {
+        let null_error =
+            unsafe { required_c_string_arg(std::ptr::null(), "filename") }.unwrap_err();
+        assert_eq!(null_error, "null filename pointer");
+
+        let invalid = [0xff_u8, 0];
+        let required_error =
+            unsafe { required_c_string_arg(invalid.as_ptr().cast(), "filename") }.unwrap_err();
+        let optional_error =
+            unsafe { optional_c_string_arg(invalid.as_ptr().cast(), "name_app") }.unwrap_err();
+        assert!(required_error.starts_with("invalid UTF-8 in filename:"));
+        assert!(optional_error.starts_with("invalid UTF-8 in name_app:"));
+    }
+
+    #[test]
+    fn allocated_c_strings_escape_embedded_nul_bytes() {
+        let pointer = alloc_c_string("left\0right");
+        let value = unsafe { CStr::from_ptr(pointer) }.to_str().unwrap();
+        assert_eq!(value, r"left\0right");
+        unsafe {
+            free_c_string(pointer);
+        }
+    }
+
+    #[test]
+    fn error_buffer_truncates_to_4095_bytes_and_terminates() {
+        let mut buffer = [1_i8; 4096];
+        let message = "x".repeat(5000);
+        unsafe {
+            write_error_4096(buffer.as_mut_ptr(), &message);
+        }
+        assert_eq!(buffer[4095], 0);
+        let value = unsafe { CStr::from_ptr(buffer.as_ptr()) }.to_bytes();
+        assert_eq!(value.len(), 4095);
+        assert!(value.iter().all(|byte| *byte == b'x'));
     }
 
     #[test]

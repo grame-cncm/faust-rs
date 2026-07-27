@@ -85,11 +85,47 @@ pub struct MetaGlue {
 
 #[cfg(test)]
 mod tests {
-    use super::{MetaGlue, UIGlue};
+    use std::ffi::c_void;
+    use std::mem::{align_of, offset_of, size_of};
+
+    use super::{FfiFaustFloat, MetaGlue, UIGlue};
+
+    /// Mirrors the pointer-slot assertions compiled from both maintained C
+    /// backend headers by `xtask libfaust-export-check`.
+    #[test]
+    fn ffi_glue_layout_matches_the_c_pointer_slot_contract() {
+        let slot = size_of::<*const c_void>();
+        assert_eq!(size_of::<UIGlue>(), 14 * slot);
+        assert_eq!(align_of::<UIGlue>(), align_of::<*const c_void>());
+        assert_eq!(
+            [
+                offset_of!(UIGlue, ui_interface),
+                offset_of!(UIGlue, open_tab_box),
+                offset_of!(UIGlue, open_horizontal_box),
+                offset_of!(UIGlue, open_vertical_box),
+                offset_of!(UIGlue, close_box),
+                offset_of!(UIGlue, add_button),
+                offset_of!(UIGlue, add_check_button),
+                offset_of!(UIGlue, add_vertical_slider),
+                offset_of!(UIGlue, add_horizontal_slider),
+                offset_of!(UIGlue, add_num_entry),
+                offset_of!(UIGlue, add_horizontal_bargraph),
+                offset_of!(UIGlue, add_vertical_bargraph),
+                offset_of!(UIGlue, add_soundfile),
+                offset_of!(UIGlue, declare),
+            ],
+            std::array::from_fn::<_, 14, _>(|index| index * slot)
+        );
+
+        assert_eq!(size_of::<MetaGlue>(), 2 * slot);
+        assert_eq!(align_of::<MetaGlue>(), align_of::<*const c_void>());
+        assert_eq!(offset_of!(MetaGlue, meta_interface), 0);
+        assert_eq!(offset_of!(MetaGlue, declare), slot);
+    }
 
     #[test]
-    fn ffi_glue_types_are_constructible() {
-        let _ = std::mem::size_of::<UIGlue>();
-        let _ = std::mem::size_of::<MetaGlue>();
+    fn ffi_faust_float_is_the_header_default_float() {
+        assert_eq!(size_of::<FfiFaustFloat>(), size_of::<f32>());
+        assert_eq!(align_of::<FfiFaustFloat>(), align_of::<f32>());
     }
 }

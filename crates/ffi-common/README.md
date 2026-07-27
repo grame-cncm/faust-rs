@@ -46,8 +46,8 @@ depend on it.
 |---|---|
 | `write_error_4096(buf, msg)` | Write error message into a 4096-byte Faust error buffer |
 | `decode_c_argv(argc, argv)` | Decode a C `argv` array into a `Vec<String>` |
-| `required_c_str_arg(ptr, label)` | Extract a required C string argument |
-| `optional_c_str_arg(ptr, label)` | Extract an optional C string argument |
+| `required_c_string_arg(ptr, label)` | Copy a required C string argument into an owned `String` |
+| `optional_c_string_arg(ptr, label)` | Copy an optional C string argument into an owned `Option<String>` |
 
 ### Compile arguments
 

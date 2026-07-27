@@ -2377,7 +2377,7 @@ pub unsafe extern "C" fn CDSPToBoxes(
     outputs: *mut c_int,
     error_msg: *mut c_char,
 ) -> *mut c_void {
-    let source_name = match unsafe { ffi_common::optional_c_str_arg(name_app, "name_app") } {
+    let source_name = match unsafe { ffi_common::optional_c_string_arg(name_app, "name_app") } {
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
@@ -2385,7 +2385,7 @@ pub unsafe extern "C" fn CDSPToBoxes(
             return std::ptr::null_mut();
         }
     };
-    let content = match unsafe { ffi_common::required_c_str_arg(dsp_content, "dsp_content") } {
+    let content = match unsafe { ffi_common::required_c_string_arg(dsp_content, "dsp_content") } {
         Ok(s) => s,
         Err(e) => {
             unsafe { ffi_common::write_error_4096(error_msg, &e) };
@@ -2393,7 +2393,7 @@ pub unsafe extern "C" fn CDSPToBoxes(
         }
     };
     let compiler = Compiler::new();
-    let compiled = match compiler.compile_source_to_signals(&source_name, content) {
+    let compiled = match compiler.compile_source_to_signals(&source_name, &content) {
         Ok(v) => v,
         Err(e) => {
             unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
@@ -2576,7 +2576,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
     argv: *const *const c_char,
     error_msg: *mut c_char,
 ) -> *mut c_char {
-    let name_app = match unsafe { ffi_common::optional_c_str_arg(name_app, "name_app") } {
+    let name_app = match unsafe { ffi_common::optional_c_string_arg(name_app, "name_app") } {
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
@@ -2584,7 +2584,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
             return std::ptr::null_mut();
         }
     };
-    let lang = match unsafe { ffi_common::required_c_str_arg(lang, "lang") } {
+    let lang = match unsafe { ffi_common::required_c_string_arg(lang, "lang") } {
         Ok(s) => s.to_ascii_lowercase(),
         Err(e) => {
             unsafe { ffi_common::write_error_4096(error_msg, &e) };

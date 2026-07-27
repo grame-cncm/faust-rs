@@ -26,8 +26,9 @@ use compiler::{
 };
 use ffi_common::{
     FfiCompileArgs, decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only,
-    null_c_string_array, optional_c_str_arg,
-    parse_ffi_compile_args as parse_ffi_compile_args_shared, required_c_str_arg, write_error_4096,
+    null_c_string_array, optional_c_string_arg,
+    parse_ffi_compile_args as parse_ffi_compile_args_shared, required_c_string_arg,
+    write_error_4096,
 };
 
 use crate::cache::{
@@ -182,14 +183,14 @@ pub unsafe extern "C" fn readCInterpreterDSPFactoryFromBitcodeFile(
     error_msg: *mut c_char,
 ) -> *mut InterpreterDspFactory {
     unsafe {
-        let path = match required_c_str_arg(bit_code_path, "path") {
+        let path = match required_c_string_arg(bit_code_path, "path") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
             }
         };
-        let file = match std::fs::File::open(path) {
+        let file = match std::fs::File::open(&path) {
             Ok(f) => f,
             Err(e) => {
                 write_error(error_msg, &format!("cannot open file '{path}': {e}"));
@@ -228,11 +229,11 @@ pub unsafe extern "C" fn writeCInterpreterDSPFactoryToBitcodeFile(
         if factory.is_null() || bit_code_path.is_null() {
             return false;
         }
-        let path = match required_c_str_arg(bit_code_path, "path") {
+        let path = match required_c_string_arg(bit_code_path, "path") {
             Ok(s) => s,
             Err(_) => return false,
         };
-        let file = match std::fs::File::create(path) {
+        let file = match std::fs::File::create(&path) {
             Ok(f) => f,
             Err(_) => return false,
         };
@@ -257,7 +258,7 @@ pub unsafe extern "C" fn createCInterpreterDSPFactoryFromFile(
     error_msg: *mut c_char,
 ) -> *mut InterpreterDspFactory {
     unsafe {
-        let filename = match required_c_str_arg(filename, "filename") {
+        let filename = match required_c_string_arg(filename, "filename") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -272,7 +273,7 @@ pub unsafe extern "C" fn createCInterpreterDSPFactoryFromFile(
             }
         };
         create_interp_factory_with_argv(&argv, error_msg, |argv| {
-            compile_factory_from_file_fastlane(Path::new(filename), argv)
+            compile_factory_from_file_fastlane(Path::new(&filename), argv)
         })
     }
 }
@@ -296,15 +297,15 @@ pub unsafe extern "C" fn createCInterpreterDSPFactoryFromString(
             write_error(error_msg, "null dsp_content pointer");
             return std::ptr::null_mut();
         }
-        let source_name = match optional_c_str_arg(name_app, "name_app") {
+        let source_name = match optional_c_string_arg(name_app, "name_app") {
             Ok(Some(s)) if !s.is_empty() => s,
-            Ok(_) => "FaustDSP",
+            Ok(_) => "FaustDSP".to_owned(),
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
             }
         };
-        let dsp_content = match required_c_str_arg(dsp_content, "dsp_content") {
+        let dsp_content = match required_c_string_arg(dsp_content, "dsp_content") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -319,7 +320,7 @@ pub unsafe extern "C" fn createCInterpreterDSPFactoryFromString(
             }
         };
         create_interp_factory_with_argv(&argv, error_msg, |argv| {
-            compile_factory_from_string_fastlane(source_name, dsp_content, argv)
+            compile_factory_from_string_fastlane(&source_name, &dsp_content, argv)
         })
     }
 }
@@ -335,11 +336,11 @@ pub unsafe extern "C" fn getCInterpreterDSPFactoryFromSHAKey(
     sha_key: *const c_char,
 ) -> *mut InterpreterDspFactory {
     unsafe {
-        let sha = match required_c_str_arg(sha_key, "sha_key") {
+        let sha = match required_c_string_arg(sha_key, "sha_key") {
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
         };
-        cache_lookup(sha)
+        cache_lookup(&sha)
     }
 }
 
@@ -705,7 +706,7 @@ pub unsafe extern "C" fn expandCInterpreterDSPFromFile(
     error_msg: *mut c_char,
 ) -> *mut c_char {
     unsafe {
-        let filename = match required_c_str_arg(filename, "filename") {
+        let filename = match required_c_string_arg(filename, "filename") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -719,7 +720,7 @@ pub unsafe extern "C" fn expandCInterpreterDSPFromFile(
                 return std::ptr::null_mut();
             }
         };
-        let source = match std::fs::read_to_string(filename) {
+        let source = match std::fs::read_to_string(&filename) {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &format!("cannot read '{filename}': {e}"));
@@ -767,15 +768,15 @@ pub unsafe extern "C" fn expandCInterpreterDSPFromString(
     error_msg: *mut c_char,
 ) -> *mut c_char {
     unsafe {
-        let name_app = match optional_c_str_arg(name_app, "name_app") {
+        let name_app = match optional_c_string_arg(name_app, "name_app") {
             Ok(Some(s)) if !s.is_empty() => s,
-            Ok(_) => "FaustDSP",
+            Ok(_) => "FaustDSP".to_owned(),
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
             }
         };
-        let source = match required_c_str_arg(dsp_content, "dsp_content") {
+        let source = match required_c_string_arg(dsp_content, "dsp_content") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -826,7 +827,7 @@ pub unsafe extern "C" fn generateCInterpreterAuxFilesFromFile(
     error_msg: *mut c_char,
 ) -> bool {
     unsafe {
-        let filename = match required_c_str_arg(filename, "filename") {
+        let filename = match required_c_string_arg(filename, "filename") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -840,7 +841,7 @@ pub unsafe extern "C" fn generateCInterpreterAuxFilesFromFile(
                 return false;
             }
         };
-        let source = match std::fs::read_to_string(filename) {
+        let source = match std::fs::read_to_string(&filename) {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &format!("cannot read '{filename}': {e}"));
@@ -884,15 +885,15 @@ pub unsafe extern "C" fn generateCInterpreterAuxFilesFromString(
     error_msg: *mut c_char,
 ) -> bool {
     unsafe {
-        let name_app = match optional_c_str_arg(name_app, "name_app") {
+        let name_app = match optional_c_string_arg(name_app, "name_app") {
             Ok(Some(s)) if !s.is_empty() => s,
-            Ok(_) => "FaustDSP",
+            Ok(_) => "FaustDSP".to_owned(),
             Err(e) => {
                 write_error(error_msg, &e);
                 return false;
             }
         };
-        let source = match required_c_str_arg(dsp_content, "dsp_content") {
+        let source = match required_c_string_arg(dsp_content, "dsp_content") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);

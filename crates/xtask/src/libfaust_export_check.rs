@@ -3,7 +3,7 @@
 //! The check intentionally exercises the installed shape of the Rust port:
 //! build the unified `faust-ffi` dynamic library, compare exported symbols
 //! against a checked-in baseline and maintained C headers, and syntax-check
-//! tiny C and C++ clients.
+//! tiny C and C++ clients with callback-table layout assertions.
 
 use super::*;
 
@@ -11,7 +11,8 @@ const EXPORT_BASELINE_REL_PATH: &str = "porting/generated/libfaust-rs-exported-s
 
 /// Builds `faust-ffi`, publishes the native `libfaust-rs` artifacts, checks
 /// exported C symbols against the checked-in baseline and local headers, and
-/// syntax-checks tiny C/C++ clients using the maintained wrapper headers.
+/// syntax-checks tiny C/C++ clients using the maintained wrapper headers,
+/// including `UIGlue`, `MetaGlue`, and `FAUSTFLOAT` layout assertions.
 ///
 /// `--bless` refreshes the exported-symbol baseline after the header coverage
 /// check succeeds. Baseline refreshes are explicit because removing an export
@@ -434,11 +435,35 @@ int main(void) {
     let interpreter_c_file = out_dir.join("smoke-interpreter.c");
     fs::write(
         &interpreter_c_file,
-        r#"#include "interpreter-dsp-c.h"
+        r#"#include <stddef.h>
+#include "interpreter-dsp-c.h"
 
 int main(void) {
+    _Static_assert(sizeof(FAUSTFLOAT) == sizeof(float), "FAUSTFLOAT must default to float");
+    _Static_assert(sizeof(UIGlue) == 14 * sizeof(void*), "UIGlue size");
+    _Static_assert(_Alignof(UIGlue) == _Alignof(void*), "UIGlue alignment");
+    _Static_assert(offsetof(UIGlue, ui_interface) == 0 * sizeof(void*), "ui_interface offset");
+    _Static_assert(offsetof(UIGlue, open_tab_box) == 1 * sizeof(void*), "open_tab_box offset");
+    _Static_assert(offsetof(UIGlue, open_horizontal_box) == 2 * sizeof(void*), "open_horizontal_box offset");
+    _Static_assert(offsetof(UIGlue, open_vertical_box) == 3 * sizeof(void*), "open_vertical_box offset");
+    _Static_assert(offsetof(UIGlue, close_box) == 4 * sizeof(void*), "close_box offset");
+    _Static_assert(offsetof(UIGlue, add_button) == 5 * sizeof(void*), "add_button offset");
+    _Static_assert(offsetof(UIGlue, add_check_button) == 6 * sizeof(void*), "add_check_button offset");
+    _Static_assert(offsetof(UIGlue, add_vertical_slider) == 7 * sizeof(void*), "add_vertical_slider offset");
+    _Static_assert(offsetof(UIGlue, add_horizontal_slider) == 8 * sizeof(void*), "add_horizontal_slider offset");
+    _Static_assert(offsetof(UIGlue, add_num_entry) == 9 * sizeof(void*), "add_num_entry offset");
+    _Static_assert(offsetof(UIGlue, add_horizontal_bargraph) == 10 * sizeof(void*), "add_horizontal_bargraph offset");
+    _Static_assert(offsetof(UIGlue, add_vertical_bargraph) == 11 * sizeof(void*), "add_vertical_bargraph offset");
+    _Static_assert(offsetof(UIGlue, add_soundfile) == 12 * sizeof(void*), "add_soundfile offset");
+    _Static_assert(offsetof(UIGlue, declare) == 13 * sizeof(void*), "declare offset");
+    _Static_assert(sizeof(MetaGlue) == 2 * sizeof(void*), "MetaGlue size");
+    _Static_assert(_Alignof(MetaGlue) == _Alignof(void*), "MetaGlue alignment");
+    _Static_assert(offsetof(MetaGlue, meta_interface) == 0, "meta_interface offset");
+    _Static_assert(offsetof(MetaGlue, declare) == sizeof(void*), "meta declare offset");
+    UIGlue ui = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    MetaGlue meta = {0, 0};
     interpreter_dsp_factory* factory = getCInterpreterDSPFactoryFromSHAKey("missing");
-    return factory == 0 ? 0 : 0;
+    return (factory == 0 || ui.ui_interface == 0 || meta.meta_interface == 0) ? 0 : 0;
 }
 "#,
     )?;
@@ -446,11 +471,79 @@ int main(void) {
     let cranelift_c_file = out_dir.join("smoke-cranelift.c");
     fs::write(
         &cranelift_c_file,
-        r#"#include "cranelift-dsp-c.h"
+        r#"#include <stddef.h>
+#include "cranelift-dsp-c.h"
 
 int main(void) {
+    _Static_assert(sizeof(FAUSTFLOAT) == sizeof(float), "FAUSTFLOAT must default to float");
+    _Static_assert(sizeof(UIGlue) == 14 * sizeof(void*), "UIGlue size");
+    _Static_assert(_Alignof(UIGlue) == _Alignof(void*), "UIGlue alignment");
+    _Static_assert(offsetof(UIGlue, ui_interface) == 0 * sizeof(void*), "ui_interface offset");
+    _Static_assert(offsetof(UIGlue, open_tab_box) == 1 * sizeof(void*), "open_tab_box offset");
+    _Static_assert(offsetof(UIGlue, open_horizontal_box) == 2 * sizeof(void*), "open_horizontal_box offset");
+    _Static_assert(offsetof(UIGlue, open_vertical_box) == 3 * sizeof(void*), "open_vertical_box offset");
+    _Static_assert(offsetof(UIGlue, close_box) == 4 * sizeof(void*), "close_box offset");
+    _Static_assert(offsetof(UIGlue, add_button) == 5 * sizeof(void*), "add_button offset");
+    _Static_assert(offsetof(UIGlue, add_check_button) == 6 * sizeof(void*), "add_check_button offset");
+    _Static_assert(offsetof(UIGlue, add_vertical_slider) == 7 * sizeof(void*), "add_vertical_slider offset");
+    _Static_assert(offsetof(UIGlue, add_horizontal_slider) == 8 * sizeof(void*), "add_horizontal_slider offset");
+    _Static_assert(offsetof(UIGlue, add_num_entry) == 9 * sizeof(void*), "add_num_entry offset");
+    _Static_assert(offsetof(UIGlue, add_horizontal_bargraph) == 10 * sizeof(void*), "add_horizontal_bargraph offset");
+    _Static_assert(offsetof(UIGlue, add_vertical_bargraph) == 11 * sizeof(void*), "add_vertical_bargraph offset");
+    _Static_assert(offsetof(UIGlue, add_soundfile) == 12 * sizeof(void*), "add_soundfile offset");
+    _Static_assert(offsetof(UIGlue, declare) == 13 * sizeof(void*), "declare offset");
+    _Static_assert(sizeof(MetaGlue) == 2 * sizeof(void*), "MetaGlue size");
+    _Static_assert(_Alignof(MetaGlue) == _Alignof(void*), "MetaGlue alignment");
+    _Static_assert(offsetof(MetaGlue, meta_interface) == 0, "meta_interface offset");
+    _Static_assert(offsetof(MetaGlue, declare) == sizeof(void*), "meta declare offset");
+    UIGlue ui = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    MetaGlue meta = {0, 0};
     cranelift_dsp_factory* factory = getCCraneliftDSPFactoryFromSHAKey("missing");
-    return factory == 0 ? 0 : 0;
+    return (factory == 0 || ui.ui_interface == 0 || meta.meta_interface == 0) ? 0 : 0;
+}
+"#,
+    )?;
+
+    let interpreter_cpp_file = out_dir.join("smoke-interpreter.cpp");
+    fs::write(
+        &interpreter_cpp_file,
+        r#"#include <cstddef>
+#include "interpreter-dsp-c.h"
+
+static_assert(sizeof(FAUSTFLOAT) == sizeof(float));
+static_assert(sizeof(UIGlue) == 14 * sizeof(void*));
+static_assert(alignof(UIGlue) == alignof(void*));
+static_assert(offsetof(UIGlue, declare) == 13 * sizeof(void*));
+static_assert(sizeof(MetaGlue) == 2 * sizeof(void*));
+static_assert(alignof(MetaGlue) == alignof(void*));
+
+int main() {
+    UIGlue ui{nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    MetaGlue meta{nullptr, nullptr};
+    return (ui.ui_interface == nullptr || meta.meta_interface == nullptr) ? 0 : 0;
+}
+"#,
+    )?;
+
+    let cranelift_cpp_file = out_dir.join("smoke-cranelift.cpp");
+    fs::write(
+        &cranelift_cpp_file,
+        r#"#include <cstddef>
+#include "cranelift-dsp-c.h"
+
+static_assert(sizeof(FAUSTFLOAT) == sizeof(float));
+static_assert(sizeof(UIGlue) == 14 * sizeof(void*));
+static_assert(alignof(UIGlue) == alignof(void*));
+static_assert(offsetof(UIGlue, declare) == 13 * sizeof(void*));
+static_assert(sizeof(MetaGlue) == 2 * sizeof(void*));
+static_assert(alignof(MetaGlue) == alignof(void*));
+
+int main() {
+    UIGlue ui{nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+              nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    MetaGlue meta{nullptr, nullptr};
+    return (ui.ui_interface == nullptr || meta.meta_interface == nullptr) ? 0 : 0;
 }
 "#,
     )?;
@@ -476,6 +569,8 @@ int main() {
     syntax_check_c_like(&interpreter_c_file, "c")?;
     syntax_check_c_like(&cranelift_c_file, "c")?;
     syntax_check_c_like(&cpp_file, "c++")?;
+    syntax_check_c_like(&interpreter_cpp_file, "c++")?;
+    syntax_check_c_like(&cranelift_cpp_file, "c++")?;
     Ok(())
 }
 

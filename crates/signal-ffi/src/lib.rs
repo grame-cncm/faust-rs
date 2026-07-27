@@ -849,7 +849,7 @@ pub unsafe extern "C" fn CcreateSourceFromSignals(
     argv: *const *const c_char,
     error_msg: *mut c_char,
 ) -> *mut c_char {
-    let name_app = match unsafe { ffi_common::optional_c_str_arg(name_app, "name_app") } {
+    let name_app = match unsafe { ffi_common::optional_c_string_arg(name_app, "name_app") } {
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
@@ -857,7 +857,7 @@ pub unsafe extern "C" fn CcreateSourceFromSignals(
             return std::ptr::null_mut();
         }
     };
-    let lang = match unsafe { ffi_common::required_c_str_arg(lang, "lang") } {
+    let lang = match unsafe { ffi_common::required_c_string_arg(lang, "lang") } {
         Ok(s) => s.to_ascii_lowercase(),
         Err(e) => {
             unsafe { ffi_common::write_error_4096(error_msg, &e) };

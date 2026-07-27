@@ -470,7 +470,9 @@ API tests before being treated as final parity.
 surface. It builds and packages `faust-ffi`, extracts dynamic exports from the
 produced `libfaust-rs` library, compares them against the checked-in symbol
 baseline and the Box, Signal, Interpreter, and Cranelift C headers, and
-syntax-checks tiny C11 and C++17 clients using the maintained headers.
+syntax-checks tiny C11 and C++17 clients using the maintained headers. The
+backend clients also assert the `UIGlue`, `MetaGlue`, and default `FAUSTFLOAT`
+layouts and initialize every callback-table field.
 
 ```bash
 cargo run -p xtask -- libfaust-export-check

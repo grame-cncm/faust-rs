@@ -30,7 +30,7 @@ use compiler::{
 };
 use ffi_common::{
     decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only, null_c_string_array,
-    optional_c_str_arg, parse_ffi_compile_args, required_c_str_arg, write_error_4096,
+    optional_c_string_arg, parse_ffi_compile_args, required_c_string_arg, write_error_4096,
 };
 use fir::{FirMatch, match_fir};
 
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromFile(
     opt_level: c_int,
 ) -> *mut CraneliftDspFactory {
     unsafe {
-        let filename = match required_c_str_arg(filename, "filename") {
+        let filename = match required_c_string_arg(filename, "filename") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -184,12 +184,12 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromFile(
         };
         create_cranelift_factory_with_argv(&args, error_msg, |args| {
             let compiled =
-                preflight_compile_file_to_cranelift(Path::new(filename), args, opt_level)?;
-            let dsp_source = std::fs::read_to_string(filename)
+                preflight_compile_file_to_cranelift(Path::new(&filename), args, opt_level)?;
+            let dsp_source = std::fs::read_to_string(&filename)
                 .map_err(|e| format!("cannot read DSP source '{filename}': {e}"))?;
             build_scaffold_factory_from_file(
                 FileFactoryBuildSpec {
-                    filename,
+                    filename: &filename,
                     dsp_source: &dsp_source,
                     argv: args,
                     opt_level,
@@ -219,15 +219,15 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromString(
     opt_level: c_int,
 ) -> *mut CraneliftDspFactory {
     unsafe {
-        let name_app = match optional_c_str_arg(name_app, "name_app") {
+        let name_app = match optional_c_string_arg(name_app, "name_app") {
             Ok(Some(s)) if !s.is_empty() => s,
-            Ok(_) => "FaustDSP",
+            Ok(_) => "FaustDSP".to_owned(),
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
             }
         };
-        let dsp_content = match required_c_str_arg(dsp_content, "dsp_content") {
+        let dsp_content = match required_c_string_arg(dsp_content, "dsp_content") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -243,11 +243,11 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromString(
         };
         create_cranelift_factory_with_argv(&args, error_msg, |args| {
             let compiled =
-                preflight_compile_source_to_cranelift(name_app, dsp_content, opt_level, args)?;
+                preflight_compile_source_to_cranelift(&name_app, &dsp_content, opt_level, args)?;
             build_scaffold_factory_common(
                 FactoryBuildSpec {
-                    name: name_app,
-                    dsp_code: dsp_content,
+                    name: &name_app,
+                    dsp_code: &dsp_content,
                     argv: args,
                     opt_level,
                     foreign_function_fingerprint: &compiled.foreign_function_fingerprint,
@@ -281,9 +281,9 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromSignals(
     opt_level: c_int,
 ) -> *mut CraneliftDspFactory {
     unsafe {
-        let source_name = match optional_c_str_arg(name_app, "name_app") {
+        let source_name = match optional_c_string_arg(name_app, "name_app") {
             Ok(Some(s)) if !s.is_empty() => s,
-            Ok(_) => "FaustDSP",
+            Ok(_) => "FaustDSP".to_owned(),
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
@@ -301,7 +301,7 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromSignals(
             return std::ptr::null_mut();
         }
         create_cranelift_factory_with_argv(&args, error_msg, |args| {
-            let fir = export_fir_from_signal_array_handle(source_name, signals)?;
+            let fir = export_fir_from_signal_array_handle(&source_name, signals)?;
             let fir_dump = fir::dump_fir(&fir.store, fir.module);
             let double = parse_ffi_compile_args(args)
                 .map(|a| a.double)
@@ -310,7 +310,7 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromSignals(
             let foreign_function_fingerprint = foreign_function_registry_fingerprint();
             build_scaffold_factory_common(
                 FactoryBuildSpec {
-                    name: source_name,
+                    name: &source_name,
                     dsp_code: &fir_dump,
                     argv: args,
                     opt_level,
@@ -341,9 +341,9 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromBoxes(
     opt_level: c_int,
 ) -> *mut CraneliftDspFactory {
     unsafe {
-        let source_name = match optional_c_str_arg(name_app, "name_app") {
+        let source_name = match optional_c_string_arg(name_app, "name_app") {
             Ok(Some(s)) if !s.is_empty() => s,
-            Ok(_) => "FaustDSP",
+            Ok(_) => "FaustDSP".to_owned(),
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
@@ -361,7 +361,7 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromBoxes(
             return std::ptr::null_mut();
         }
         create_cranelift_factory_with_argv(&args, error_msg, |args| {
-            let fir = export_fir_from_box_handle(source_name, box_expr)?;
+            let fir = export_fir_from_box_handle(&source_name, box_expr)?;
             let fir_dump = fir::dump_fir(&fir.store, fir.module);
             let double = parse_ffi_compile_args(args)
                 .map(|a| a.double)
@@ -370,7 +370,7 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromBoxes(
             let foreign_function_fingerprint = foreign_function_registry_fingerprint();
             build_scaffold_factory_common(
                 FactoryBuildSpec {
-                    name: source_name,
+                    name: &source_name,
                     dsp_code: &fir_dump,
                     argv: args,
                     opt_level,
@@ -393,11 +393,11 @@ pub unsafe extern "C" fn getCCraneliftDSPFactoryFromSHAKey(
     sha_key: *const c_char,
 ) -> *mut CraneliftDspFactory {
     unsafe {
-        let sha_key = match required_c_str_arg(sha_key, "sha_key") {
+        let sha_key = match required_c_string_arg(sha_key, "sha_key") {
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
         };
-        cache_lookup(sha_key)
+        cache_lookup(&sha_key)
     }
 }
 
@@ -584,14 +584,14 @@ pub unsafe extern "C" fn readCCraneliftDSPFactoryFromBitcode(
     error_msg: *mut c_char,
 ) -> *mut CraneliftDspFactory {
     unsafe {
-        let text = match required_c_str_arg(bit_code, "bitcode") {
+        let text = match required_c_string_arg(bit_code, "bitcode") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
             }
         };
-        match decode_factory_bitcode(text) {
+        match decode_factory_bitcode(&text) {
             Ok(factory) => {
                 let ptr = alloc_factory(factory);
                 cache_insert(&(*ptr).sha_key, ptr);
@@ -637,14 +637,14 @@ pub unsafe extern "C" fn readCCraneliftDSPFactoryFromBitcodeFile(
     error_msg: *mut c_char,
 ) -> *mut CraneliftDspFactory {
     unsafe {
-        let path = match required_c_str_arg(bit_code_path, "path") {
+        let path = match required_c_string_arg(bit_code_path, "path") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
             }
         };
-        let text = match std::fs::read_to_string(path) {
+        let text = match std::fs::read_to_string(&path) {
             Ok(s) => s,
             Err(e) => {
                 write_error(
@@ -681,7 +681,7 @@ pub unsafe extern "C" fn writeCCraneliftDSPFactoryToBitcodeFile(
         if factory.is_null() || bit_code_path.is_null() {
             return false;
         }
-        let path = match required_c_str_arg(bit_code_path, "path") {
+        let path = match required_c_string_arg(bit_code_path, "path") {
             Ok(s) => s,
             Err(_) => return false,
         };
@@ -1304,7 +1304,7 @@ pub unsafe extern "C" fn expandCCraneliftDSPFromFile(
     error_msg: *mut c_char,
 ) -> *mut c_char {
     unsafe {
-        let filename = match required_c_str_arg(filename, "filename") {
+        let filename = match required_c_string_arg(filename, "filename") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -1318,7 +1318,7 @@ pub unsafe extern "C" fn expandCCraneliftDSPFromFile(
                 return std::ptr::null_mut();
             }
         };
-        let source = match std::fs::read_to_string(filename) {
+        let source = match std::fs::read_to_string(&filename) {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &format!("cannot read '{filename}': {e}"));
@@ -1366,15 +1366,15 @@ pub unsafe extern "C" fn expandCCraneliftDSPFromString(
     error_msg: *mut c_char,
 ) -> *mut c_char {
     unsafe {
-        let name_app = match optional_c_str_arg(name_app, "name_app") {
+        let name_app = match optional_c_string_arg(name_app, "name_app") {
             Ok(Some(s)) if !s.is_empty() => s,
-            Ok(_) => "FaustDSP",
+            Ok(_) => "FaustDSP".to_owned(),
             Err(e) => {
                 write_error(error_msg, &e);
                 return std::ptr::null_mut();
             }
         };
-        let source = match required_c_str_arg(dsp_content, "dsp_content") {
+        let source = match required_c_string_arg(dsp_content, "dsp_content") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -1425,7 +1425,7 @@ pub unsafe extern "C" fn generateCCraneliftAuxFilesFromFile(
     error_msg: *mut c_char,
 ) -> bool {
     unsafe {
-        let filename = match required_c_str_arg(filename, "filename") {
+        let filename = match required_c_string_arg(filename, "filename") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
@@ -1439,7 +1439,7 @@ pub unsafe extern "C" fn generateCCraneliftAuxFilesFromFile(
                 return false;
             }
         };
-        let source = match std::fs::read_to_string(filename) {
+        let source = match std::fs::read_to_string(&filename) {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &format!("cannot read '{filename}': {e}"));
@@ -1483,15 +1483,15 @@ pub unsafe extern "C" fn generateCCraneliftAuxFilesFromString(
     error_msg: *mut c_char,
 ) -> bool {
     unsafe {
-        let name_app = match optional_c_str_arg(name_app, "name_app") {
+        let name_app = match optional_c_string_arg(name_app, "name_app") {
             Ok(Some(s)) if !s.is_empty() => s,
-            Ok(_) => "FaustDSP",
+            Ok(_) => "FaustDSP".to_owned(),
             Err(e) => {
                 write_error(error_msg, &e);
                 return false;
             }
         };
-        let source = match required_c_str_arg(dsp_content, "dsp_content") {
+        let source = match required_c_string_arg(dsp_content, "dsp_content") {
             Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &e);
