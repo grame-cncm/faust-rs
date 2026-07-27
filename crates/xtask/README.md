@@ -467,12 +467,22 @@ API tests before being treated as final parity.
 
 `libfaust-export-check` validates the maintained local C/C++ distribution
 surface. It builds and packages `faust-ffi`, extracts dynamic exports from the
-produced `libfaust-rs` library, compares them against the Box and Signal C headers, and
+produced `libfaust-rs` library, compares them against the checked-in symbol
+baseline and the Box, Signal, Interpreter, and Cranelift C headers, and
 syntax-checks tiny C11 and C++17 clients using the maintained headers.
 
 ```bash
 cargo run -p xtask -- libfaust-export-check
 ```
+
+Refresh the symbol baseline only for an intentional ABI change:
+
+```bash
+cargo run -p xtask -- libfaust-export-check --bless
+```
+
+The baseline is stored in
+`porting/generated/libfaust-rs-exported-symbols.txt`.
 
 To publish the C/C++ artifacts directly:
 

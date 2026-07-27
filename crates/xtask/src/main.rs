@@ -81,7 +81,7 @@ Usage:
   cargo run -p xtask -- backend-full-corpus-diff-report
   cargo run -p xtask -- table-fastlane-diff-report
   cargo run -p xtask -- libfaust-api-matrix [--cpp-root /path/to/faust] [--out porting/generated]
-  cargo run -p xtask -- libfaust-export-check
+  cargo run -p xtask -- libfaust-export-check [--bless]
   cargo run -p xtask -- p7-matrix-report [--artifact-root tests/impulse-tests/ir] [--out porting/generated/p7-executable-backend-matrix-2026-07-14-en.md]
   cargo run -p xtask -- vector-coverage-merge --reports <dir> [--out tests/vector-coverage/corpus-baseline.json] [--certified-list tests/vector-coverage/certified-dspfiles.txt]
   cargo run -p xtask -- vector-coverage-check [--baseline tests/vector-coverage/corpus-baseline.json]
@@ -178,7 +178,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "backend-full-corpus-diff-report" => backend_full_corpus_diff_report()?,
         "table-fastlane-diff-report" => table_fastlane_diff_report()?,
         "libfaust-api-matrix" => libfaust_api_matrix(args)?,
-        "libfaust-export-check" => libfaust_export_check()?,
+        "libfaust-export-check" => libfaust_export_check(args)?,
         "p7-matrix-report" => p7_matrix_report(args)?,
         "vector-coverage-merge" => vector_coverage_merge(args)?,
         "vector-coverage-check" => vector_coverage_check(args)?,
