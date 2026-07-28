@@ -26,7 +26,8 @@ use super::args::{
     CliArgs, CliLang, CliSignalFirLane, ErrorFormat, ErrorVerbosity, normalize_legacy_args,
 };
 use super::diagnostics::{
-    format_diagnostics_json, format_diagnostics_json_with_verbosity, print_structured_diagnostics,
+    format_diagnostics_human_with_verbosity, format_diagnostics_json,
+    format_diagnostics_json_with_verbosity, print_structured_diagnostics,
 };
 use super::validate::{
     handle_early_exit_modes, handle_fixture_listing, spawn_timeout_watchdog, validate_cli_arguments,
@@ -567,6 +568,53 @@ pub(crate) fn emit_check_success(format: ErrorFormat, verbosity: ErrorVerbosity)
                 }
             }
         }
+    }
+}
+
+/// Prints the non-blocking semantic warnings for `input_path` under `--warn`.
+///
+/// # Why a separate front-end pass
+///
+/// Warnings are produced by the front end but every output mode returns its own
+/// artifact type (FIR module, generated source, JSON), so surfacing them
+/// in-band would mean threading a diagnostic bundle through each one. Running
+/// the front end once more is confined to this opt-in flag and keeps all modes
+/// behaving identically.
+///
+/// # Stream contract
+///
+/// Warnings always go to stderr, in both formats. On success stdout carries
+/// generated output, and under `--error-format json` it is reserved for the one
+/// diagnostics document the D1 contract promises; a warning must not compete
+/// with either.
+///
+/// A failure here is silent on purpose: the real compilation that follows will
+/// report the same failure through the normal diagnostic path.
+pub(crate) fn report_semantic_warnings(
+    cli: &CliArgs,
+    input_path: &Path,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    if !cli.warn {
+        return;
+    }
+    let compiler =
+        compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel))).with_semantic_warnings(true);
+    let Ok(output) = compiler.compile_file_to_signals(input_path, &cli.import_dir) else {
+        return;
+    };
+    if output.warnings.is_empty() {
+        return;
+    }
+    match cli.error_format {
+        ErrorFormat::Human => eprint!(
+            "{}",
+            format_diagnostics_human_with_verbosity(&output.warnings, cli.error_verbosity)
+        ),
+        ErrorFormat::Json => eprintln!(
+            "{}",
+            format_diagnostics_json_with_verbosity(&output.warnings, cli.error_verbosity)
+        ),
     }
 }
 

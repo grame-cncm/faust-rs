@@ -76,6 +76,13 @@ pub const SFIR_FOREIGN_COUNT_IN_EXECUTION_MODE: DiagnosticCode = DiagnosticCode(
 /// Block-sensitive reverse-AD operation under `-os` (no one-sample meaning).
 pub const SFIR_BLOCK_SENSITIVE_ONE_SAMPLE: DiagnosticCode = DiagnosticCode("FRS-SFIR-0010");
 
+/// Two UI controls claim the same runtime address.
+///
+/// C++ equivalent: `"ERROR : path '<address>' is already used"` raised by
+/// `json_instructions.hh` while serializing the JSON description. Rust checks
+/// the grouped `UiProgram` instead, so the rejection is backend-independent.
+pub const UI_DUPLICATE_PATH: DiagnosticCode = DiagnosticCode("FRS-UI-0001");
+
 /// FIR verifier error diagnostic (details in notes: `fir_code=...`).
 pub const FIR_VERIFY_ERROR: DiagnosticCode = DiagnosticCode("FRS-FIR-0001");
 /// FIR verifier warning diagnostic (details in notes: `fir_code=...`).
@@ -153,6 +160,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         SFIR_CLOCK_ANALYSIS,
         SFIR_FOREIGN_COUNT_IN_EXECUTION_MODE,
         SFIR_BLOCK_SENSITIVE_ONE_SAMPLE,
+        UI_DUPLICATE_PATH,
         FIR_VERIFY_ERROR,
         FIR_VERIFY_WARNING,
         COMP_TYPE_FAILED,

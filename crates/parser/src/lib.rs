@@ -40,6 +40,7 @@ pub mod source_reader;
 
 pub use context::{
     BoxOrigin, BoxOriginId, BoxOriginRole, BoxProvenance, LocatedBox, ParserCtx, SourceLocation,
+    WidgetDeclaration,
 };
 pub use metadata::{CompilationMetadataKey, CompilationMetadataSnapshot, CompilationMetadataStore};
 pub use source_reader::{
@@ -551,9 +552,7 @@ impl ParseState {
 
     /// Emits the parser diagnostic equivalent of C++ `printRedefinitionError`.
     ///
-    /// `variants_rev` stores payloads in parser-list reverse order. Iterate it
-    /// in reverse when printing so diagnostics follow source order, matching
-    /// the C++ message shape:
+    /// C++ folds the conflicting clauses into the message text:
     ///
     /// ```text
     /// multiple definitions of symbol 'foo'
@@ -561,29 +560,66 @@ impl ParseState {
     /// foo = ...;
     /// ```
     ///
-    /// `dump_box` is used for the expression snippets because this parser layer
-    /// only has normalized box nodes at this point; exact pretty-print parity is
-    /// less important than preserving the semantic error boundary.
+    /// The Rust diagnostic keeps the message to one line and moves the clauses
+    /// into a typed `declarations` fact plus one label per declaration site, so
+    /// a reader sees *where* each clause is and a tool does not have to split a
+    /// multi-line message.
+    ///
+    /// `variants_rev` stores payloads in parser-list reverse order, so it is
+    /// iterated in reverse to follow source order. `dump_box` renders the
+    /// clauses because this parser layer only has normalized box nodes at this
+    /// point; exact pretty-print parity matters less than preserving the
+    /// semantic error boundary.
     fn report_zero_arity_redefinition(&mut self, name: TreeId, variants_rev: &[TreeId]) {
         let name_text = self
             .definition_name_key(name)
             .unwrap_or_else(|| "<invalid>".to_owned());
-        let mut message = format!("multiple definitions of symbol '{name_text}'");
+        let mut declarations = Vec::new();
         for payload in variants_rev.iter().rev() {
             let Some((args, body)) = self.definition_payload_parts(*payload) else {
                 continue;
             };
             if self.arena.is_nil(args) {
-                message.push_str(&format!("\n{name_text} = {};", dump_box(&self.arena, body)));
+                declarations.push(format!("{name_text} = {};", dump_box(&self.arena, body)));
             } else {
-                message.push_str(&format!(
-                    "\n{name_text}{} = {};",
+                declarations.push(format!(
+                    "{name_text}{} = {};",
                     dump_box(&self.arena, args),
                     dump_box(&self.arena, body)
                 ));
             }
         }
-        self.ctx.error(&message);
+        let sites = self.declaration_sites(name);
+        self.ctx.error_conflicting_declarations(
+            codes::PARSE_UNEXPECTED_TOKEN,
+            &format!("multiple definitions of symbol '{name_text}'"),
+            "duplicate-definition",
+            &name_text,
+            &sites,
+            &declarations,
+        );
+    }
+
+    /// Returns every recorded definition-side occurrence of one identifier, in
+    /// source order.
+    ///
+    /// Hash-consing gives all occurrences of the same identifier one node, so
+    /// the occurrence list recorded by the grammar actions is what distinguishes
+    /// the participating declaration sites.
+    fn declaration_sites(&self, name: TreeId) -> Vec<SourceLocation> {
+        let mut sites = self
+            .ctx
+            .box_provenance()
+            .origins_for(name)
+            .iter()
+            .filter_map(|id| self.ctx.box_provenance().get(*id))
+            .filter(|origin| origin.role == BoxOriginRole::Definition)
+            .map(|origin| origin.location.clone())
+            .collect::<Vec<_>>();
+        sites.dedup_by(|left, right| {
+            left.file() == right.file() && left.line() == right.line() && left.col() == right.col()
+        });
+        sites
     }
 
     fn make_definition_from_variants(&mut self, name: TreeId, variants_rev: &[TreeId]) -> TreeId {
@@ -1158,6 +1194,26 @@ impl ParseState {
             PrimitiveOp::Delay => self.node_builder().delay(),
             PrimitiveOp::Delay1 => self.node_builder().delay1(),
         }
+    }
+
+    /// Records one written UI widget declaration and returns the widget node
+    /// unchanged.
+    ///
+    /// The cursor is moved to the widget keyword first so the recorded location
+    /// points at `hslider`/`vbargraph`/... rather than at whichever argument
+    /// token the parser last consumed.
+    fn record_widget_declaration<'lexer, 'input: 'lexer>(
+        &mut self,
+        lexer: &'lexer dyn NonStreamingLexer<'input, DefaultLexerTypes<u32>>,
+        keyword: Result<lrlex::DefaultLexeme<u32>, lrlex::DefaultLexeme<u32>>,
+        label: TreeId,
+        node: TreeId,
+    ) -> TreeId {
+        let span = token_span(&keyword);
+        self.update_cursor_from_span(lexer, span);
+        let raw_label = self.string_node_text(label).unwrap_or_default().to_owned();
+        self.ctx.record_widget_declaration(&raw_label);
+        node
     }
 
     fn mark_use_from_token<'lexer, 'input: 'lexer>(
@@ -2459,7 +2515,36 @@ fn parser_ctx_to_bundle(ctx: &ParserCtx) -> DiagnosticBundle {
                     location.end_line(),
                     location.end_col(),
                 );
-                out = out.with_label(Label::new(LabelStyle::Primary, span, "parser location"));
+                out = out.with_label(Label::new(
+                    LabelStyle::Primary,
+                    span,
+                    diag.primary_message.clone(),
+                ));
+            }
+            for site in &diag.related_sites {
+                let span = SourceSpan::new(
+                    site.location.file(),
+                    site.location.line(),
+                    site.location.col(),
+                    site.location.end_line(),
+                    site.location.end_col(),
+                );
+                out = out.with_label(
+                    Label::new(LabelStyle::Secondary, span, site.message.clone())
+                        .with_role(site.role),
+                );
+            }
+            if let Some(detail_code) = &diag.detail_code {
+                out = out.with_detail_code(detail_code.clone());
+            }
+            for (key, value) in &diag.facts {
+                out = out.with_fact(key.clone(), value.clone());
+            }
+            for note in &diag.notes {
+                out = out.with_note(note.clone());
+            }
+            for help in &diag.help {
+                out = out.with_help(help.clone());
             }
             out
         })

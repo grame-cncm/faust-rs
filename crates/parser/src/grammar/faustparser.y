@@ -634,25 +634,46 @@ Primitive -> tlib::TreeId:
           crate::with_state(state, |state| state.node_builder().route($3, $5, $7))
       }
     | BUTTON LPAR UQString RPAR {
-          crate::with_state(state, |state| state.node_builder().button($3))
+          crate::with_state(state, |state| {
+              let node = state.node_builder().button($3);
+              state.record_widget_declaration($lexer, $1, $3, node)
+          })
       }
     | CHECKBOX LPAR UQString RPAR {
-          crate::with_state(state, |state| state.node_builder().checkbox($3))
+          crate::with_state(state, |state| {
+              let node = state.node_builder().checkbox($3);
+              state.record_widget_declaration($lexer, $1, $3, node)
+          })
       }
     | VSLIDER LPAR UQString PAR Argument PAR Argument PAR Argument PAR Argument RPAR {
-          crate::with_state(state, |state| state.node_builder().vslider($3, $5, $7, $9, $11))
+          crate::with_state(state, |state| {
+              let node = state.node_builder().vslider($3, $5, $7, $9, $11);
+              state.record_widget_declaration($lexer, $1, $3, node)
+          })
       }
     | HSLIDER LPAR UQString PAR Argument PAR Argument PAR Argument PAR Argument RPAR {
-          crate::with_state(state, |state| state.node_builder().hslider($3, $5, $7, $9, $11))
+          crate::with_state(state, |state| {
+              let node = state.node_builder().hslider($3, $5, $7, $9, $11);
+              state.record_widget_declaration($lexer, $1, $3, node)
+          })
       }
     | NENTRY LPAR UQString PAR Argument PAR Argument PAR Argument PAR Argument RPAR {
-          crate::with_state(state, |state| state.node_builder().num_entry($3, $5, $7, $9, $11))
+          crate::with_state(state, |state| {
+              let node = state.node_builder().num_entry($3, $5, $7, $9, $11);
+              state.record_widget_declaration($lexer, $1, $3, node)
+          })
       }
     | VBARGRAPH LPAR UQString PAR Argument PAR Argument RPAR {
-          crate::with_state(state, |state| state.node_builder().vbargraph($3, $5, $7))
+          crate::with_state(state, |state| {
+              let node = state.node_builder().vbargraph($3, $5, $7);
+              state.record_widget_declaration($lexer, $1, $3, node)
+          })
       }
     | HBARGRAPH LPAR UQString PAR Argument PAR Argument RPAR {
-          crate::with_state(state, |state| state.node_builder().hbargraph($3, $5, $7))
+          crate::with_state(state, |state| {
+              let node = state.node_builder().hbargraph($3, $5, $7);
+              state.record_widget_declaration($lexer, $1, $3, node)
+          })
       }
     | VGROUP LPAR UQString PAR Expression RPAR {
           crate::with_state(state, |state| state.node_builder().vgroup($3, $5))

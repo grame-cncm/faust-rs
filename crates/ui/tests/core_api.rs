@@ -2,9 +2,10 @@
 
 use tlib::TreeArena;
 use ui::{
-    ControlKind, ControlRange, ControlSpec, UiBuilder, UiGroupKind, UiGroupPathSegment,
-    UiGroupSpec, UiMatch, UiProgram, UiProgramBuilder, UiRootOrigin, canonicalize_group_spec,
-    match_ui, normalize_group_label_navigation, normalize_widget_label_path, split_label_metadata,
+    ControlKind, ControlRange, ControlSpec, DuplicatePathKind, UiBuilder, UiGroupKind,
+    UiGroupPathSegment, UiGroupSpec, UiMatch, UiProgram, UiProgramBuilder, UiRootOrigin,
+    canonicalize_group_spec, find_duplicate_control_paths, match_ui,
+    normalize_group_label_navigation, normalize_widget_label_path, split_label_metadata,
 };
 
 #[test]
@@ -115,6 +116,7 @@ fn ui_program_keeps_root_and_control_registry() {
             max: 1.0,
             step: 1.0,
         }),
+        source_node: None,
     }];
     let program = UiProgram {
         arena,
@@ -179,6 +181,7 @@ fn control_lookup_uses_stable_ids_across_input_output_and_soundfile_controls() {
                 label: "gate".to_owned(),
                 metadata: Vec::new(),
                 range: None,
+                source_node: None,
             },
             ControlSpec {
                 id: 1,
@@ -191,6 +194,7 @@ fn control_lookup_uses_stable_ids_across_input_output_and_soundfile_controls() {
                     max: 6.0,
                     step: 0.0,
                 }),
+                source_node: None,
             },
             ControlSpec {
                 id: 2,
@@ -198,6 +202,7 @@ fn control_lookup_uses_stable_ids_across_input_output_and_soundfile_controls() {
                 label: "sample".to_owned(),
                 metadata: vec![("url".to_owned(), "{'tests/assets/silence.wav'}".to_owned())],
                 range: None,
+                source_node: None,
             },
         ],
         root_origin: UiRootOrigin::Explicit,
@@ -429,4 +434,112 @@ fn ui_program_builder_can_drop_empty_group_placeholders() {
         .expect("empty placeholder should exist");
     assert!(builder.remove_group_if_empty(empty_id));
     assert!(builder.find_group_path(&empty).is_none());
+}
+
+/// Builds a one-group program from `(kind, label)` pairs for path-conflict tests.
+fn program_with_controls(specs: &[(ControlKind, &str)]) -> UiProgram {
+    let mut arena = TreeArena::new();
+    let controls = specs
+        .iter()
+        .enumerate()
+        .map(|(index, (kind, label))| {
+            ControlSpec::synthetic(
+                u32::try_from(index).expect("test control index fits in u32"),
+                *kind,
+                (*label).to_owned(),
+                Vec::new(),
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
+    let root = {
+        let mut b = UiBuilder::new(&mut arena);
+        let nodes = specs
+            .iter()
+            .enumerate()
+            .map(|(index, (kind, _))| {
+                let id = u32::try_from(index).expect("test control index fits in u32");
+                match kind {
+                    ControlKind::VBargraph | ControlKind::HBargraph => b.output_control(id),
+                    ControlKind::Soundfile => b.soundfile(id),
+                    _ => b.input_control(id),
+                }
+            })
+            .collect::<Vec<_>>();
+        b.vgroup("dsp", &nodes)
+    };
+    UiProgram {
+        arena,
+        root,
+        controls,
+        root_origin: UiRootOrigin::Synthesized,
+        emit_ui: true,
+    }
+}
+
+#[test]
+fn two_input_controls_sharing_one_address_conflict() {
+    let program = program_with_controls(&[
+        (ControlKind::HSlider, "gain"),
+        (ControlKind::VSlider, "gain"),
+    ]);
+    let conflicts = find_duplicate_control_paths(&program);
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].address, "/dsp/gain");
+    assert_eq!(conflicts[0].controls, vec![0, 1]);
+    assert_eq!(conflicts[0].kind, DuplicatePathKind::InputConflict);
+}
+
+#[test]
+fn distinct_labels_do_not_conflict() {
+    let program = program_with_controls(&[
+        (ControlKind::HSlider, "gain"),
+        (ControlKind::VSlider, "pan"),
+    ]);
+    assert!(find_duplicate_control_paths(&program).is_empty());
+}
+
+#[test]
+fn bargraphs_sharing_one_address_are_only_ambiguous() {
+    let program = program_with_controls(&[
+        (ControlKind::VBargraph, "level"),
+        (ControlKind::HBargraph, "level"),
+    ]);
+    let conflicts = find_duplicate_control_paths(&program);
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].kind, DuplicatePathKind::BargraphOnly);
+}
+
+#[test]
+fn a_bargraph_and_an_input_control_conflict() {
+    let program = program_with_controls(&[
+        (ControlKind::VBargraph, "level"),
+        (ControlKind::HSlider, "level"),
+    ]);
+    let conflicts = find_duplicate_control_paths(&program);
+    assert_eq!(conflicts[0].kind, DuplicatePathKind::InputConflict);
+}
+
+#[test]
+fn a_soundfile_shares_the_input_namespace() {
+    let program = program_with_controls(&[
+        (ControlKind::Soundfile, "sample"),
+        (ControlKind::HSlider, "sample"),
+    ]);
+    let conflicts = find_duplicate_control_paths(&program);
+    assert_eq!(conflicts[0].kind, DuplicatePathKind::InputConflict);
+}
+
+#[test]
+fn anonymous_controls_are_excluded_until_cpp_naming_is_ported() {
+    let program = program_with_controls(&[(ControlKind::HSlider, ""), (ControlKind::VSlider, "")]);
+    assert!(
+        find_duplicate_control_paths(&program).is_empty(),
+        "C++ renames unlabeled widgets before they can collide"
+    );
+}
+
+#[test]
+fn a_ui_free_program_reports_no_conflict() {
+    assert!(find_duplicate_control_paths(&UiProgram::empty()).is_empty());
 }

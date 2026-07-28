@@ -1436,6 +1436,7 @@ fn documented_frs_codes() -> std::collections::BTreeSet<String> {
         "FRS-SRC-0001",
         "FRS-SRC-0002",
         "FRS-SRC-0003",
+        "FRS-UI-0001",
     ]
     .into_iter()
     .map(str::to_owned)

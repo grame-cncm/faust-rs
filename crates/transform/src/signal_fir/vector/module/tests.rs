@@ -213,6 +213,7 @@ fn ui_write_attribution_must_match_the_emitted_zone_stores() {
         label: "meter".to_owned(),
         metadata: ui::UiMetadata::default(),
         range: None,
+        source_node: None,
     });
     let mut store = FirStore::new();
     let compute = {
@@ -622,6 +623,7 @@ fn slider_ui() -> ui::UiProgram {
                 max: 1.0,
                 step: 0.01,
             }),
+            source_node: None,
         }],
         root_origin: ui::UiRootOrigin::Synthesized,
         emit_ui: true,

@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use diagnostics::{DiagnosticCode, Severity, codes};
+use diagnostics::{DiagnosticCode, DiagnosticValue, LabelRole, Severity, codes};
 use tlib::{PropertyKey, PropertyStore, TreeId};
 
 /// Parser source location equivalent to `(filename, lineno)` in C++ parser globals,
@@ -184,6 +184,21 @@ impl SourceLocation {
     }
 }
 
+/// One additional declaration site attached to a parser diagnostic.
+///
+/// Conflicts such as a redefined symbol are only actionable when every
+/// participating declaration is shown, not just the one the cursor happened to
+/// sit on when the grammar action fired.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ParserRelatedSite {
+    /// Location of the related declaration.
+    pub location: SourceLocation,
+    /// Label text describing this site's role in the conflict.
+    pub message: Box<str>,
+    /// Typed semantic role, independent from [`Self::message`].
+    pub role: LabelRole,
+}
+
 /// One parser diagnostic with optional source location.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ParserDiagnostic {
@@ -195,6 +210,18 @@ pub(crate) struct ParserDiagnostic {
     pub message: Box<str>,
     /// Source location, when available.
     pub location: Option<SourceLocation>,
+    /// Label text for the primary location.
+    pub primary_message: Box<str>,
+    /// Stable pass-local detail code.
+    pub detail_code: Option<Box<str>>,
+    /// Additional labeled declaration sites, in source order.
+    pub related_sites: Vec<ParserRelatedSite>,
+    /// Typed machine facts keyed by stable fact name.
+    pub facts: Vec<(Box<str>, DiagnosticValue)>,
+    /// Additional explanatory notes.
+    pub notes: Vec<Box<str>>,
+    /// Actionable help entries.
+    pub help: Vec<Box<str>>,
 }
 
 /// Parser-local mutable context replacing the parser-relevant subset of `gGlobal`.
@@ -227,6 +254,22 @@ pub struct ParserCtx {
     use_prop_key: PropertyKey,
     box_provenance: BoxProvenance,
     definition_candidate_floor: HashMap<TreeId, usize>,
+    widget_declarations: Vec<WidgetDeclaration>,
+}
+
+/// One user-interface widget as written in source.
+///
+/// Widget boxes are rebuilt during evaluation, so the hash-consed node the UI
+/// builder sees is not the node the grammar produced and box provenance cannot
+/// be followed across that boundary. Recording the written declarations
+/// separately keeps a diagnostic about a control able to name the source it
+/// came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WidgetDeclaration {
+    /// Raw label exactly as written, metadata included.
+    pub raw_label: Box<str>,
+    /// Location of the widget keyword.
+    pub location: SourceLocation,
 }
 
 impl Default for ParserCtx {
@@ -267,6 +310,7 @@ impl ParserCtx {
             def_prop_key,
             use_prop_key,
             box_provenance: BoxProvenance::default(),
+            widget_declarations: Vec::new(),
             definition_candidate_floor: HashMap::new(),
         }
     }
@@ -563,6 +607,23 @@ impl ParserCtx {
         self.set_def_prop_location(sym, loc);
     }
 
+    /// Records one written UI widget declaration at the current cursor.
+    ///
+    /// Called from the grammar with the cursor already moved to the widget
+    /// keyword, so the location covers the construct the programmer would edit.
+    pub fn record_widget_declaration(&mut self, raw_label: &str) {
+        self.widget_declarations.push(WidgetDeclaration {
+            raw_label: raw_label.into(),
+            location: self.cursor.clone(),
+        });
+    }
+
+    /// Returns every written UI widget declaration in parse order.
+    #[must_use]
+    pub fn widget_declarations(&self) -> &[WidgetDeclaration] {
+        &self.widget_declarations
+    }
+
     /// Convenience hook: set usage property from current parser cursor.
     pub fn set_use_prop_at_cursor(&mut self, sym: TreeId) {
         let loc = self.cursor.clone();
@@ -683,6 +744,84 @@ impl ParserCtx {
         self.diagnostics.is_empty()
     }
 
+    /// Records a conflict between several declarations of the same symbol.
+    ///
+    /// `sites` must be in source order. The last one is the declaration that
+    /// introduced the conflict and becomes the primary location; the earlier
+    /// ones stay as labeled context, so the reader sees every participant
+    /// instead of only the token the cursor stopped on.
+    ///
+    /// Emitting nothing when `sites` is empty would lose the error entirely, so
+    /// the cursor remains the fallback location.
+    pub fn error_conflicting_declarations(
+        &mut self,
+        code: DiagnosticCode,
+        message: &str,
+        detail_code: &str,
+        symbol: &str,
+        sites: &[SourceLocation],
+        declarations: &[String],
+    ) {
+        self.parse_error_count = self.parse_error_count.saturating_add(1);
+        let (primary, earlier) = match sites.split_last() {
+            Some((last, rest)) => (Some(last.clone()), rest),
+            None => (Some(self.cursor.clone()), &[][..]),
+        };
+        self.diagnostics.push(ParserDiagnostic {
+            severity: Severity::Error,
+            code,
+            message: message.into(),
+            location: primary,
+            primary_message: "conflicting declaration".into(),
+            detail_code: Some(detail_code.into()),
+            related_sites: earlier
+                .iter()
+                .map(|location| ParserRelatedSite {
+                    location: location.clone(),
+                    message: "previous declaration".into(),
+                    role: LabelRole::ConflictsWith,
+                })
+                .collect(),
+            facts: vec![
+                ("symbol".into(), DiagnosticValue::String(symbol.into())),
+                (
+                    "declaration_sites".into(),
+                    DiagnosticValue::StringList(
+                        sites
+                            .iter()
+                            .map(|location| {
+                                format!(
+                                    "{}:{}:{}",
+                                    location.file(),
+                                    location.line(),
+                                    location.col()
+                                )
+                                .into_boxed_str()
+                            })
+                            .collect(),
+                    ),
+                ),
+                (
+                    "declarations".into(),
+                    DiagnosticValue::StringList(
+                        declarations
+                            .iter()
+                            .map(|text| text.clone().into_boxed_str())
+                            .collect(),
+                    ),
+                ),
+            ],
+            notes: declarations
+                .iter()
+                .map(|text| format!("declaration: {text}").into_boxed_str())
+                .collect(),
+            help: vec![
+                format!("keep one `{symbol} = ...;` clause, or give the clauses distinct patterns")
+                    .into_boxed_str(),
+            ],
+        });
+    }
+
     fn push_diagnostic(
         &mut self,
         severity: Severity,
@@ -695,6 +834,12 @@ impl ParserCtx {
             code,
             message: message.into(),
             location,
+            primary_message: "parser location".into(),
+            detail_code: None,
+            related_sites: Vec::new(),
+            facts: Vec::new(),
+            notes: Vec::new(),
+            help: Vec::new(),
         });
     }
 }

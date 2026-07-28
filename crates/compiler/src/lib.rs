@@ -45,23 +45,27 @@ mod box_preview;
 mod diagnostic_enrichment;
 mod emitters;
 mod error_mapping;
+mod eval_guidance;
 mod golden;
 mod json_naming;
 mod paths;
 mod service;
 mod signal_lowering;
+mod ui_paths;
 
 pub mod execution;
 
 use box_preview::*;
 use diagnostic_enrichment::*;
 use error_mapping::*;
+use eval_guidance::*;
 pub use golden::*;
 pub use json_naming::*;
 pub use paths::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signal_lowering::render_cranelift_module_report;
 use signal_lowering::*;
+use ui_paths::check_ui_control_paths;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
@@ -184,6 +188,13 @@ pub struct SignalCompileOutput {
     /// Empty for programs without clocked wrappers. In-graph `SIGCLOCKENV`
     /// tokens index into this table.
     pub clock_domains: propagate::ClockDomainTable,
+    /// Non-blocking diagnostics produced by a successful compilation.
+    ///
+    /// Empty unless the caller opted in through
+    /// [`Compiler::with_semantic_warnings`]. Warnings never change the
+    /// compilation result: a caller that ignores this field gets exactly the
+    /// behavior it had before the field existed.
+    pub warnings: DiagnosticBundle,
 }
 
 impl SignalCompileOutput {
@@ -451,6 +462,9 @@ pub struct FirVerifyOptions {
 #[derive(Clone)]
 pub struct Compiler {
     fir_verify: FirVerifyOptions,
+    /// Whether a successful compilation reports non-blocking semantic
+    /// observations such as potential out-of-domain math.
+    semantic_warnings: bool,
     entrypoint_name: Box<str>,
     /// Floating-point precision used for internal DSP computation in the
     /// transform fast lane. `Float32` (single precision) is the default;
@@ -551,7 +565,20 @@ impl Compiler {
             processing_api: ProcessingApi::Block,
             cancel: None,
             timing_sink: None,
+            semantic_warnings: false,
         }
+    }
+
+    /// Returns a compiler facade that collects non-blocking semantic warnings.
+    ///
+    /// Off by default, mirroring the C++ policy where the potential
+    /// out-of-domain class is reported only when the caller asks for it. When
+    /// enabled, warnings land in [`SignalCompileOutput::warnings`]; they never
+    /// affect whether compilation succeeds.
+    #[must_use]
+    pub fn with_semantic_warnings(mut self, enabled: bool) -> Self {
+        self.semantic_warnings = enabled;
+        self
     }
 
     /// Returns a compiler facade configured with FIR verifier settings.
@@ -1026,6 +1053,15 @@ impl Compiler {
                     self.entrypoint_name.as_ref(),
                 );
             }
+            // Guidance runs after labeling: a rename edit needs the primary
+            // label that `maybe_add_eval_source_labels` just resolved.
+            diagnostic = add_eval_guidance(
+                diagnostic,
+                &error,
+                &output.state.ctx,
+                &output.state.arena,
+                &source_map,
+            );
             let mut diagnostics =
                 if let eval::EvalError::SourceParseFailure { diagnostics, .. } = &error {
                     let mut preserved = diagnostics.clone();
@@ -1111,19 +1147,28 @@ impl Compiler {
                 )
                 .with_source_map(source_map.clone())
             })?;
-        self.time_phase("signal-type-validation", || {
-            validate_signal_types(
-                source,
-                &output.state.arena,
-                &propagated.signals,
-                &propagated.ui,
-                &propagated.signal_origins,
-                &output.state.ctx,
-                root,
-                ep,
-            )
-        })
-        .map_err(|error| error.with_source_map(source_map))?;
+        self.time_phase("ui-path-check", || {
+            check_ui_control_paths(source, &propagated.ui, &output.state.ctx, &source_map)
+        })?;
+        let mut warnings = self
+            .time_phase("signal-type-validation", || {
+                validate_signal_types(
+                    source,
+                    &output.state.arena,
+                    &propagated.signals,
+                    &propagated.ui,
+                    &propagated.signal_origins,
+                    &output.state.ctx,
+                    root,
+                    ep,
+                )
+            })
+            .map_err(|error| error.with_source_map(source_map.clone()))?;
+        if self.semantic_warnings {
+            warnings.set_source_map(source_map);
+        } else {
+            warnings = DiagnosticBundle::new();
+        }
 
         Ok(SignalCompileOutput {
             compilation_metadata,
@@ -1140,6 +1185,7 @@ impl Compiler {
             ui: propagated.ui,
             def_names: eval_stats.def_names,
             clock_domains: propagated.clock_domains,
+            warnings,
         })
     }
 }
@@ -1237,6 +1283,18 @@ pub enum CompilerError {
         source: Box<str>,
         /// Typed error from the stage that failed.
         error: PropagateError,
+        /// Rendered diagnostics for this failure.
+        diagnostics: DiagnosticBundle,
+    },
+    /// Two or more UI controls claim the same runtime address.
+    ///
+    /// Built by `ui_paths::check_ui_control_paths`, which derives the bundle
+    /// from the same conflict list it stores here so the two cannot disagree.
+    UiLayout {
+        /// Program provenance; see the shared field convention.
+        source: Box<str>,
+        /// Every address claimed more than once, ordered by address.
+        conflicts: Vec<ui::DuplicateControlPath>,
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
@@ -1385,6 +1443,13 @@ impl std::fmt::Display for CompilerError {
             Self::Propagate { source, error, .. } => {
                 write!(f, "propagation failed for {source}: {error}")
             }
+            Self::UiLayout {
+                source, conflicts, ..
+            } => write!(
+                f,
+                "UI layout rejected for {source}: {} duplicated control path(s)",
+                conflicts.len()
+            ),
             Self::Type { source, error, .. } => {
                 write!(f, "type validation failed for {source}: {error}")
             }
@@ -1452,7 +1517,10 @@ impl std::error::Error for CompilerError {
             #[cfg(not(target_arch = "wasm32"))]
             Self::CodegenCranelift { error, .. } => Some(error),
             Self::CodegenWasm { error, .. } => Some(error),
-            Self::MissingRoot { .. } | Self::Parse { .. } | Self::FirVerify { .. } => None,
+            Self::MissingRoot { .. }
+            | Self::Parse { .. }
+            | Self::UiLayout { .. }
+            | Self::FirVerify { .. } => None,
         }
     }
 }
@@ -1466,6 +1534,7 @@ impl CompilerError {
             | Self::Parse { diagnostics, .. }
             | Self::Eval { diagnostics, .. }
             | Self::Propagate { diagnostics, .. }
+            | Self::UiLayout { diagnostics, .. }
             | Self::Type { diagnostics, .. }
             | Self::Transform { diagnostics, .. }
             | Self::ExecutionOptions { diagnostics, .. }
@@ -1590,6 +1659,7 @@ impl CompilerError {
             Self::Parse { diagnostics, .. } => diagnostics,
             Self::Eval { diagnostics, .. } => diagnostics,
             Self::Propagate { diagnostics, .. } => diagnostics,
+            Self::UiLayout { diagnostics, .. } => diagnostics,
             Self::Type { diagnostics, .. } => diagnostics,
             Self::Transform { diagnostics, .. } => diagnostics,
             Self::ExecutionOptions { diagnostics, .. } => diagnostics,

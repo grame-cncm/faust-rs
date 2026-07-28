@@ -176,8 +176,13 @@ pub(crate) fn apply_pattern_matcher_value(
             &mut pm.envs,
         );
         let Some(new_state) = new_state else {
+            // The rejected argument is part of the attempt: it is what the
+            // matcher was dispatching on when every rule died.
+            let mut arguments = pm.rev_param_list.clone();
+            arguments.push(arg);
             return Err(EvalError::PatternMatchFailed {
                 node: pm.original_rules,
+                arguments,
             });
         };
         pm.state = new_state;
@@ -207,6 +212,7 @@ pub(crate) fn apply_pattern_matcher_value(
 
         Err(EvalError::PatternMatchFailed {
             node: pm.original_rules,
+            arguments: pm.rev_param_list.clone(),
         })
     })();
     loop_detector.leave_structural();

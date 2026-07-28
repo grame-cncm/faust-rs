@@ -223,6 +223,17 @@ pub struct CliArgs {
     /// Treat FIR verifier warnings as fatal.
     #[arg(long = "fir-verify-strict", action = ArgAction::SetTrue)]
     pub fir_verify_strict: bool,
+    /// Report non-blocking semantic warnings, such as a math operation whose
+    /// operand may leave its domain at run time.
+    ///
+    /// Covers the class the reference compiler reports under `-wall` / `-me`.
+    /// Off by default: these warnings describe values that only exist at run
+    /// time, so they are advisory and would otherwise be noise on programs that
+    /// clamp their operands in ways interval inference cannot see. Warnings go
+    /// to stderr in the selected `--error-format` and never change the exit
+    /// status.
+    #[arg(long = "warn", action = ArgAction::SetTrue)]
+    pub warn: bool,
     /// Use double-precision (64-bit) floating-point for internal DSP computation.
     ///
     /// By default, single-precision (32-bit) `float` is used for internal

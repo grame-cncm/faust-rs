@@ -176,6 +176,9 @@ pub fn signal_only_root_ui(ctx: &BoxContext, module_name: &str) -> UiProgram {
             label,
             metadata,
             range: control_range(ctx, control),
+            // The signal FFI builds controls from caller-supplied descriptors,
+            // not from a parsed Faust declaration.
+            source_node: None,
         });
         match control.kind {
             FfiSignalControlKind::Button

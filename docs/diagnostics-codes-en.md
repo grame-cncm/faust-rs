@@ -175,6 +175,16 @@ than multiplying near-identical `FRS-*` codes.
 `FRS-COMP-0001`..`0003` are retired; the numbering gap is deliberate (see
 below).
 
+### `FRS-UI-*` — User-interface layout (1 code)
+
+| Code | Stage | Meaning | Raised at |
+|---|---|---|---|
+| `FRS-UI-0001` | `propagate` | Two or more UI controls claim the same runtime address, so they are indistinguishable to every host. Carries typed `ui_path`, `control_count`, and `control_labels` fields, and one label per conflicting declaration. | `crates/compiler/src/ui_paths.rs` |
+
+The C++ compiler raises the equivalent `path '...' is already used` while
+serializing JSON. Rust checks the grouped `UiProgram` right after propagation
+instead, so the same program is rejected regardless of the selected backend.
+
 ### `FRS-FIR-*` — FIR verifier (2 codes)
 
 | Code | Stage | Meaning | Raised at |

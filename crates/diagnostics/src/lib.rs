@@ -349,8 +349,9 @@ impl DiagnosticBundle {
         Self::default()
     }
 
-    /// Appends one diagnostic.
-    pub fn push(&mut self, diagnostic: Diagnostic) {
+    /// Appends one diagnostic, normalizing its note order.
+    pub fn push(&mut self, mut diagnostic: Diagnostic) {
+        normalize_note_order(&mut diagnostic);
         self.diagnostics.push(diagnostic);
     }
 
@@ -370,7 +371,9 @@ impl DiagnosticBundle {
 
     /// Extends this bundle with another sequence of diagnostics.
     pub fn extend(&mut self, diagnostics: impl IntoIterator<Item = Diagnostic>) {
-        self.diagnostics.extend(diagnostics);
+        for diagnostic in diagnostics {
+            self.push(diagnostic);
+        }
     }
 
     /// Returns all diagnostics as a read-only slice.
@@ -403,10 +406,42 @@ impl DiagnosticBundle {
 
 impl From<Vec<Diagnostic>> for DiagnosticBundle {
     fn from(diagnostics: Vec<Diagnostic>) -> Self {
-        Self {
-            diagnostics,
-            source_map: SourceMap::new(),
-        }
+        let mut bundle = Self::new();
+        bundle.extend(diagnostics);
+        bundle
+    }
+}
+
+/// Canonical explanation order shared by every stage.
+///
+/// Producers add notes in whatever order is convenient while building a
+/// diagnostic, which made two stages explaining the same kind of failure read
+/// differently. Ordering once, at the point a diagnostic enters a bundle, gives
+/// every consumer the same shape: what went wrong, which rule says so, what the
+/// compiler computed, then supporting context.
+///
+/// The sort is stable, so notes that share a rank keep the order their producer
+/// chose — the ranks impose a skeleton, not a total order.
+fn normalize_note_order(diagnostic: &mut Diagnostic) {
+    diagnostic
+        .notes
+        .sort_by_key(|note| note_rank(note.as_ref()));
+}
+
+/// Rank of one note in the canonical explanation order.
+fn note_rank(note: &str) -> u8 {
+    if note.starts_with("cause:") {
+        0
+    } else if note.starts_with("rule:") {
+        1
+    } else if note.starts_with("computed:") {
+        2
+    } else if note.starts_with("suggested target:") {
+        3
+    } else {
+        // Context: scopes, binding traces, owning definitions, previews, and
+        // anything a stage adds that the skeleton does not name.
+        4
     }
 }
 

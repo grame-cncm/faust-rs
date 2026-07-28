@@ -33,6 +33,8 @@ pub(crate) fn run_source_mode(
     cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
     mode_count: usize,
 ) {
+    report_semantic_warnings(cli, input_path, cancel);
+
     if cli.dump_cpp_from_fbc {
         let text = match std::fs::read_to_string(input_path) {
             Ok(t) => t,

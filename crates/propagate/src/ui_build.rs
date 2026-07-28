@@ -125,6 +125,7 @@ impl UiCollector {
             label,
             metadata,
             range,
+            source_node: Some(source_node),
         });
         self.control_ids.insert(key, id);
         self.node_primary_id.entry(source_node).or_insert(id);

@@ -174,6 +174,7 @@ mod modulation;
 mod pattern_matcher;
 mod simplify;
 pub(crate) mod source_context;
+pub mod suggestions;
 mod ui_widgets;
 
 use environment::{ClosureValue, EvalCacheKey, EvalValue, PatternMatcherValue};
@@ -192,6 +193,7 @@ pub use environment::Environment;
 pub use error::{EvalError, EvalStats};
 pub use loop_detector::LoopDetector;
 pub use source_context::{EvalSourceContext, SamplePrecision};
+pub use suggestions::{SymbolSuggestion, rank_similar_names, unambiguous_suggestion};
 
 pub const CRATE_NAME: &str = "eval";
 
@@ -676,6 +678,7 @@ fn lower_pattern_matcher_to_symbolic(
         }
         return Err(EvalError::PatternMatchFailed {
             node: pm.original_rules,
+            arguments: pm.rev_param_list.clone(),
         });
     }
     let total = case_expected_arity(arena, pm.original_rules)?;

@@ -129,6 +129,7 @@ fn prepared_signals_verify_rejects_missing_ui_control_reference() {
         label: "button".to_owned(),
         metadata: Vec::new(),
         range: None,
+        source_node: None,
     });
 
     let prepared = prepare_signals_for_fir(&signal_arena, &[output], &ui)

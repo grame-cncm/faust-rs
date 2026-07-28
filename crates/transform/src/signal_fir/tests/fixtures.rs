@@ -189,6 +189,7 @@ pub(super) fn one_control_ui(
             label: label.to_owned(),
             metadata: Vec::new(),
             range,
+            source_node: None,
         }],
         root_origin: UiRootOrigin::Synthesized,
         emit_ui: true,

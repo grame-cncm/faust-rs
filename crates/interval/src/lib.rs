@@ -73,6 +73,16 @@ impl Interval {
         }
     }
 
+    /// Construct an ordered interval usable in a `const` item.
+    ///
+    /// Unlike [`Self::new`], this performs no normalization: callers must pass
+    /// `lo <= hi` and no NaN. It exists for compile-time constants such as the
+    /// domains of `sqrt` or `asin`, where the bounds are written by hand.
+    #[must_use]
+    pub const fn const_new(lo: f64, hi: f64) -> Self {
+        Self { lo, hi, lsb: -24 }
+    }
+
     /// Construct from two bounds and LSB precision.
     ///
     /// Matches C++ `interval(double n, double m, int lsb)`.

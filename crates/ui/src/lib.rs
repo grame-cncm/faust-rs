@@ -213,6 +213,37 @@ pub struct ControlSpec {
     pub metadata: UiMetadata,
     /// Numeric range only for slider-like controls.
     pub range: Option<ControlRange>,
+    /// Box node that declared this control, when propagation recorded one.
+    ///
+    /// Kept so a diagnostic about the control (a duplicated runtime address,
+    /// for instance) can be traced back to the Faust widget the programmer
+    /// wrote. `None` for controls synthesized by tests or FFI bridges that have
+    /// no source declaration.
+    pub source_node: Option<TreeId>,
+}
+
+impl ControlSpec {
+    /// Builds one control specification without a recorded source declaration.
+    ///
+    /// Test fixtures and FFI bridges construct controls that no Faust source
+    /// declares; this keeps them from having to spell `source_node: None`.
+    #[must_use]
+    pub fn synthetic(
+        id: ControlId,
+        kind: ControlKind,
+        label: String,
+        metadata: UiMetadata,
+        range: Option<ControlRange>,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            label,
+            metadata,
+            range,
+            source_node: None,
+        }
+    }
 }
 
 /// Source of the canonical root group stored in [`UiProgram`].
@@ -664,7 +695,7 @@ impl UiProgramBuilder {
     /// Inserts one input control under the provided canonical group path.
     ///
     /// `order_key` is the numeric ordering index extracted from the widget's
-    /// metadata (e.g. `[0:]` → `0`). Use [`ordering_key_from_metadata`] to
+    /// metadata (e.g. `[0:]` → `0`). Use [`ordering_key_from_label`] to
     /// derive it. Items with equal keys are kept in insertion order.
     pub fn insert_input_control(
         &mut self,
@@ -831,6 +862,126 @@ pub enum UiMatch<'a> {
     OutputControl(ControlId),
     Soundfile(ControlId),
     Unknown,
+}
+
+/// How severely one shared runtime address breaks the program.
+///
+/// # Source provenance (C++)
+/// - `compiler/generator/json_instructions.hh`
+/// - `insertInputsPath` / `insertOutputsPath`
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DuplicatePathKind {
+    /// At least one input control is involved, so the program is rejected.
+    ///
+    /// A host writing to that address cannot know which control it drives.
+    InputConflict,
+    /// Only bargraphs share the address, which C++ merely warns about.
+    ///
+    /// Bargraphs are read-only, so several of them reporting under one address
+    /// is ambiguous but not a broken control surface.
+    BargraphOnly,
+}
+
+/// One runtime control address shared by more than one declaration.
+///
+/// # Source provenance (C++)
+/// - `compiler/generator/json_instructions.hh`
+/// - `"ERROR : path '<address>' is already used"`
+///
+/// The C++ compiler discovers the conflict while serializing JSON and reports
+/// only the address. Rust reports every participating control instead, so a
+/// diagnostic can label each declaration and a tool can act on them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DuplicateControlPath {
+    /// Normalized `/group/.../label` runtime address.
+    pub address: String,
+    /// Controls declared at that address, in UI declaration order.
+    pub controls: Vec<ControlId>,
+    /// Whether the conflict is rejecting or merely ambiguous.
+    pub kind: DuplicatePathKind,
+}
+
+/// Finds runtime control addresses claimed by more than one declaration.
+///
+/// The address is the same `/group/.../label` string the JSON description and
+/// every runtime host use as a control key, so two controls sharing one address
+/// are indistinguishable at runtime. This is the Rust detection point, placed
+/// on the `UiProgram` so the check is backend-independent rather than reached
+/// only when JSON happens to be built.
+///
+/// Input controls and bargraphs share one address namespace, matching the C++
+/// cross-check between the two path sets; [`DuplicatePathKind`] records which
+/// of the two C++ outcomes applies.
+///
+/// Anonymous controls are excluded. C++ gives an unlabeled widget a synthesized
+/// unique name (`0x00`, `vbargraph0`, ...) before it ever reaches the path sets,
+/// so unlabeled widgets never collide there. Rust has not ported that naming
+/// yet, which would make every pair of unlabeled widgets in one group look like
+/// a conflict; excluding them keeps this check from rejecting programs C++
+/// accepts. Once anonymous naming lands, the exclusion should go with it.
+///
+/// Results are ordered by address for deterministic diagnostics.
+#[must_use]
+pub fn find_duplicate_control_paths(program: &UiProgram) -> Vec<DuplicateControlPath> {
+    if program.is_empty() {
+        return Vec::new();
+    }
+    let mut claims: BTreeMap<String, Vec<(ControlId, bool)>> = BTreeMap::new();
+    collect_control_addresses(program, program.root, &mut Vec::new(), &mut claims);
+    claims
+        .into_iter()
+        .filter(|(address, claimants)| claimants.len() > 1 && !address.ends_with('/'))
+        .map(|(address, claimants)| DuplicateControlPath {
+            kind: if claimants.iter().all(|(_, is_bargraph)| *is_bargraph) {
+                DuplicatePathKind::BargraphOnly
+            } else {
+                DuplicatePathKind::InputConflict
+            },
+            address,
+            controls: claimants.into_iter().map(|(id, _)| id).collect(),
+        })
+        .collect()
+}
+
+/// Walks the grouped layout accumulating one address per control.
+///
+/// Group labels form the path prefix exactly as they do in the JSON builder:
+/// one leading `/` per segment, then the control label. The recorded flag marks
+/// bargraphs, which decide the conflict kind.
+fn collect_control_addresses(
+    program: &UiProgram,
+    node: UiId,
+    path: &mut Vec<String>,
+    claims: &mut BTreeMap<String, Vec<(ControlId, bool)>>,
+) {
+    let (id, is_bargraph) = match match_ui(&program.arena, node) {
+        UiMatch::Group {
+            label, children, ..
+        } => {
+            path.push(label.to_owned());
+            for child in children {
+                collect_control_addresses(program, child, path, claims);
+            }
+            path.pop();
+            return;
+        }
+        // Soundfiles are written by the host, so they live in the input
+        // namespace alongside sliders and buttons.
+        UiMatch::InputControl(id) | UiMatch::Soundfile(id) => (id, false),
+        UiMatch::OutputControl(id) => (id, true),
+        UiMatch::Unknown => return,
+    };
+    let Some(control) = program.control(id) else {
+        return;
+    };
+    let mut address = String::new();
+    for segment in path.iter() {
+        address.push('/');
+        address.push_str(segment);
+    }
+    address.push('/');
+    address.push_str(&control.label);
+    claims.entry(address).or_default().push((id, is_bargraph));
 }
 
 /// Decodes one UI IR node into its canonical matcher view.

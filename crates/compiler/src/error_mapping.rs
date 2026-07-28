@@ -494,9 +494,9 @@ pub(crate) fn validate_signal_types(
     ctx: &parser::ParserCtx,
     defs_root: BoxId,
     entrypoint_name: &str,
-) -> Result<(), CompilerError> {
+) -> Result<DiagnosticBundle, CompilerError> {
     let mut annotator = TypeAnnotator::new(arena, ui);
-    annotator.annotate(signals).map(|_| ()).map_err(|error| {
+    annotator.annotate(signals).map_err(|error| {
         type_error_to_compiler(
             source,
             error,
@@ -506,7 +506,79 @@ pub(crate) fn validate_signal_types(
             defs_root,
             entrypoint_name,
         )
-    })
+    })?;
+
+    // Inference always records its non-fatal observations; whether they reach
+    // the user is the CLI's decision, not this function's.
+    let mut warnings = DiagnosticBundle::new();
+    for warning in annotator.warnings() {
+        warnings.push(type_warning_to_diagnostic(
+            warning,
+            arena,
+            signal_origins,
+            ctx,
+            defs_root,
+            entrypoint_name,
+        ));
+    }
+    Ok(warnings)
+}
+
+/// Renders one non-fatal inference observation as a warning diagnostic.
+///
+/// Shares the source-labeling and typed-fact vocabulary of
+/// [`type_error_to_compiler`] so a warning and an error about the same rule
+/// read the same way and expose the same machine fields.
+fn type_warning_to_diagnostic(
+    warning: &sigtype::InferenceWarning,
+    arena: &tlib::TreeArena,
+    signal_origins: &propagate::SignalOrigins,
+    ctx: &parser::ParserCtx,
+    defs_root: BoxId,
+    entrypoint_name: &str,
+) -> Diagnostic {
+    let sigtype::InferenceWarning::PotentialMathDomain {
+        signal,
+        operand,
+        operation,
+        actual,
+        required,
+    } = warning;
+
+    let diagnostic = Diagnostic::new(
+        Severity::Warning,
+        Stage::TypeInference,
+        COMP_TYPE_FAILED,
+        warning.message(),
+    )
+    .with_category(DiagnosticCategory::UserCode)
+    .with_detail_code(warning.rule().as_str())
+    .with_note("cause: the operand interval extends outside the operation's domain")
+    .with_note(format!(
+        "rule: {operation} requires its operand to stay within {required}"
+    ))
+    .with_note(format!("computed: inferred operand interval = {actual}"))
+    .with_fact("inference_rule", warning.rule().as_str())
+    .with_fact("operation", operation.clone())
+    .with_fact("expected", required.clone())
+    .with_fact("actual_interval", interval_fact(*actual))
+    .with_fact("potential_runtime_failure", true)
+    .with_debug_fact("signal_id", u64::from(signal.as_u32()))
+    .with_debug_fact("operand_signal_id", u64::from(operand.as_u32()))
+    .with_debug_fact("signal_expr", signals::dump_sig_readable(arena, *signal))
+    .with_help(format!(
+        "constrain the operand to {required}, for example with `max`/`min`, so the domain holds for every sample"
+    ));
+
+    add_signal_source_labels(
+        diagnostic,
+        *signal,
+        signal_origins,
+        ctx,
+        arena,
+        defs_root,
+        entrypoint_name,
+    )
 }
 
 /// Wraps a signal type validation error into the compiler facade error surface.

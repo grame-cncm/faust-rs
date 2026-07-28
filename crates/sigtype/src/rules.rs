@@ -75,6 +75,81 @@ impl InferenceRule {
     }
 }
 
+/// Domain of `sqrt`: negative operands are undefined over the reals.
+const NON_NEGATIVE_DOMAIN: Interval = Interval::const_new(0.0, f64::MAX);
+/// Domain of `log` / `log10`.
+///
+/// The true domain is open at zero. Interval bounds are closed, so zero is
+/// included here and a warning about an operand reaching exactly zero is left
+/// to the error path, which already rejects a constant zero.
+const POSITIVE_DOMAIN: Interval = Interval::const_new(0.0, f64::MAX);
+/// Domain of `asin` / `acos`.
+const UNIT_DOMAIN: Interval = Interval::const_new(-1.0, 1.0);
+
+/// Typed non-fatal observation produced by the type inference pass.
+///
+/// # Source provenance (C++)
+/// - `compiler/extended/sqrtprim.hh` and its siblings
+/// - `"WARNING : potential out of domain in sqrt(...)"`
+///
+/// C++ emits these only when math exceptions are requested. Rust keeps the
+/// same policy: inference always *can* report them, and the compiler facade
+/// decides whether to run the audit that surfaces them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InferenceWarning {
+    /// A math operation may receive an out-of-domain value at run time.
+    ///
+    /// Distinct from [`InferenceError::MathDomain`], which fires when a
+    /// compile-time constant is *provably* outside the domain. Here the operand
+    /// merely straddles the boundary, so whether it is valid depends on values
+    /// that only exist at run time.
+    PotentialMathDomain {
+        /// Operation node whose operand may leave the domain.
+        signal: SigId,
+        /// The operand in question.
+        operand: SigId,
+        /// Stable operation spelling.
+        operation: Box<str>,
+        /// Inferred operand interval.
+        actual: Interval,
+        /// Human-readable mathematical requirement.
+        required: Box<str>,
+    },
+}
+
+impl InferenceWarning {
+    /// Stable rule that produced this observation.
+    #[must_use]
+    pub const fn rule(&self) -> InferenceRule {
+        match self {
+            Self::PotentialMathDomain { .. } => InferenceRule::MathDomain,
+        }
+    }
+
+    /// Primary Signal node the observation is about.
+    #[must_use]
+    pub const fn signal(&self) -> SigId {
+        match self {
+            Self::PotentialMathDomain { signal, .. } => *signal,
+        }
+    }
+
+    /// Human-facing message without an internal Signal dump.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self {
+            Self::PotentialMathDomain {
+                operation,
+                actual,
+                required,
+                ..
+            } => format!(
+                "{operation} may be called outside its mathematical domain: operand interval is {actual}, expected {required}"
+            ),
+        }
+    }
+}
+
 /// Typed failures returned by the type inference pass.
 ///
 /// C++ `sigtyperules.cpp` reports most of these failures by formatting the
@@ -508,6 +583,8 @@ pub struct TypeAnnotator<'a> {
     env: HashMap<SigId, SigType>,
     /// Nodes whose type is currently being computed (cycle guard).
     in_progress: HashSet<SigId>,
+    /// Non-fatal domain observations collected while inferring.
+    warnings: Vec<InferenceWarning>,
 }
 
 impl<'a> TypeAnnotator<'a> {
@@ -519,7 +596,17 @@ impl<'a> TypeAnnotator<'a> {
             ui_program,
             env: HashMap::new(),
             in_progress: HashSet::new(),
+            warnings: Vec::new(),
         }
+    }
+
+    /// Returns the non-fatal observations collected during inference.
+    ///
+    /// Deduplicated and ordered by first occurrence, so repeated inference of a
+    /// shared sub-expression reports one warning rather than one per reference.
+    #[must_use]
+    pub fn warnings(&self) -> &[InferenceWarning] {
+        &self.warnings
     }
 
     /// Annotate all output roots and return the complete `SigId → SigType` map.
@@ -721,19 +808,30 @@ impl<'a> TypeAnnotator<'a> {
                 let itv = interval::ops::arithmetic::abs(tx.interval());
                 Ok(tx.promote_interval(itv))
             }
-            SigMatch::Sqrt(x) => {
-                self.infer_domain_math(sig, x, "sqrt", "[0, +infinity)", interval::ops::math::sqrt)
-            }
+            SigMatch::Sqrt(x) => self.infer_domain_math(
+                sig,
+                x,
+                "sqrt",
+                "[0, +infinity)",
+                NON_NEGATIVE_DOMAIN,
+                interval::ops::math::sqrt,
+            ),
             SigMatch::Exp(x) => self.infer_unary_math(x, interval::ops::math::exp),
             SigMatch::Exp10(x) => self.infer_unary_math(x, interval::ops::math::exp10),
-            SigMatch::Log(x) => {
-                self.infer_domain_math(sig, x, "log", "(0, +infinity)", interval::ops::math::log)
-            }
+            SigMatch::Log(x) => self.infer_domain_math(
+                sig,
+                x,
+                "log",
+                "(0, +infinity)",
+                POSITIVE_DOMAIN,
+                interval::ops::math::log,
+            ),
             SigMatch::Log10(x) => self.infer_domain_math(
                 sig,
                 x,
                 "log10",
                 "(0, +infinity)",
+                POSITIVE_DOMAIN,
                 interval::ops::math::log10,
             ),
             SigMatch::Floor(x) => self.infer_unary_math(x, interval::ops::math::floor),
@@ -743,12 +841,22 @@ impl<'a> TypeAnnotator<'a> {
             SigMatch::Sin(x) => self.infer_unary_math(x, interval::ops::trig::sin),
             SigMatch::Cos(x) => self.infer_unary_math(x, interval::ops::trig::cos),
             SigMatch::Tan(x) => self.infer_unary_math(x, interval::ops::trig::tan),
-            SigMatch::Asin(x) => {
-                self.infer_domain_math(sig, x, "asin", "[-1, 1]", interval::ops::trig::asin)
-            }
-            SigMatch::Acos(x) => {
-                self.infer_domain_math(sig, x, "acos", "[-1, 1]", interval::ops::trig::acos)
-            }
+            SigMatch::Asin(x) => self.infer_domain_math(
+                sig,
+                x,
+                "asin",
+                "[-1, 1]",
+                UNIT_DOMAIN,
+                interval::ops::trig::asin,
+            ),
+            SigMatch::Acos(x) => self.infer_domain_math(
+                sig,
+                x,
+                "acos",
+                "[-1, 1]",
+                UNIT_DOMAIN,
+                interval::ops::trig::acos,
+            ),
             SigMatch::Atan(x) => self.infer_unary_math(x, interval::ops::trig::atan),
 
             SigMatch::Atan2(y, x) => {
@@ -1316,12 +1424,23 @@ impl<'a> TypeAnnotator<'a> {
         Ok(float_cast(tx).promote_interval(itv))
     }
 
+    /// Types one math primitive that is only defined on part of the reals.
+    ///
+    /// `domain` is the closed interval the operation accepts. Three outcomes:
+    ///
+    /// - a compile-time constant entirely outside the domain is an error, since
+    ///   the call can never be valid;
+    /// - an operand that merely straddles the domain boundary is a non-fatal
+    ///   observation, matching the C++ `WARNING : potential out of domain`
+    ///   class;
+    /// - an operand fully inside the domain is silent.
     fn infer_domain_math(
         &mut self,
         signal: SigId,
         operand: SigId,
         operation: &'static str,
         required: &'static str,
+        domain: Interval,
         f: fn(Interval) -> Interval,
     ) -> Result<SigType, InferenceError> {
         let ty = self.infer(operand)?;
@@ -1335,6 +1454,21 @@ impl<'a> TypeAnnotator<'a> {
                 actual: vec![actual],
                 required: required.into(),
             });
+        }
+        if !actual.is_empty() && (actual.lo() < domain.lo() || actual.hi() > domain.hi()) {
+            let warning = InferenceWarning::PotentialMathDomain {
+                signal,
+                operand,
+                operation: operation.into(),
+                actual,
+                required: required.into(),
+            };
+            // Shared sub-expressions are inferred once per reference; keeping
+            // the warning list a set of distinct observations stops one
+            // expression from producing N identical lines.
+            if !self.warnings.contains(&warning) {
+                self.warnings.push(warning);
+            }
         }
         Ok(float_cast(ty).promote_interval(result))
     }

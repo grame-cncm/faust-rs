@@ -131,9 +131,12 @@ Options:
 
       --error-format <ERROR_FORMAT>
           Diagnostic output format
+
+          Possible values:
+          - human
+          - json:  Typed, versioned diagnostics JSON contract
           
           [default: human]
-          [possible values: human, json]
 
       --error-verbosity <ERROR_VERBOSITY>
           Diagnostic verbosity level
@@ -151,6 +154,11 @@ Options:
 
       --fir-verify-strict
           Treat FIR verifier warnings as fatal
+
+      --warn
+          Report non-blocking semantic warnings, such as a math operation whose operand may leave its domain at run time.
+          
+          Covers the class the reference compiler reports under `-wall` / `-me`. Off by default: these warnings describe values that only exist at run time, so they are advisory and would otherwise be noise on programs that clamp their operands in ways interval inference cannot see. Warnings go to stderr in the selected `--error-format` and never change the exit status.
 
       --double
           Use double-precision (64-bit) floating-point for internal DSP computation.

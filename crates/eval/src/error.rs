@@ -7,6 +7,8 @@ use diagnostics::codes;
 use diagnostics::{Diagnostic, DiagnosticBundle, Severity, Stage, ToDiagnostic};
 use tlib::TreeId;
 
+use crate::suggestions::{SymbolSuggestion, rank_similar_names};
+
 /// Performance statistics collected during evaluation.
 ///
 /// Returned by [`eval_process_with_stats`](crate::eval_process_with_stats) alongside the evaluated box tree.
@@ -142,6 +144,12 @@ pub enum EvalError {
     PatternMatchFailed {
         /// Case-rules root node where no rule matched provided arguments.
         node: TreeId,
+        /// Arguments consumed by the matcher, in application order.
+        ///
+        /// These are the already-simplified argument boxes the matcher actually
+        /// dispatched on. They let the compiler facade render a rule/attempt
+        /// trace without exposing evaluator environments or automaton state.
+        arguments: Vec<TreeId>,
     },
     /// Non-closure application received more arguments than the function input arity.
     TooManyArguments {
@@ -248,6 +256,64 @@ pub enum EvalError {
     },
     /// Cooperative cancellation: the external cancel flag was set (e.g., timeout).
     Cancelled,
+}
+
+impl EvalError {
+    /// Ranked near-name candidates for an unresolved identifier.
+    ///
+    /// Candidates are drawn only from the scopes this error already recorded,
+    /// so a suggestion can never name a symbol the programmer cannot reach from
+    /// the failing site. Returns an empty vector for every other variant.
+    ///
+    /// The compiler facade uses this to decide whether a rename edit is safe to
+    /// propose; see [`crate::suggestions::unambiguous_suggestion`].
+    #[must_use]
+    pub fn symbol_suggestions(&self) -> Vec<SymbolSuggestion> {
+        match self {
+            Self::UndefinedSymbol {
+                symbol,
+                local_scope,
+                visible_scope,
+                top_level_scope,
+                ..
+            } => rank_similar_names(
+                symbol,
+                local_scope
+                    .iter()
+                    .chain(visible_scope)
+                    .chain(top_level_scope)
+                    .map(String::as_str),
+            ),
+            Self::MissingProcessDefinition {
+                entrypoint,
+                available_defs,
+                ..
+            } => rank_similar_names(entrypoint, available_defs.iter().map(String::as_str)),
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Attaches ranked near-name guidance without ever widening the visible scope.
+///
+/// Suggestions become a typed `suggested_symbols` fact plus one note. No fix is
+/// created here: an exact rename edit needs the use-site source range, which
+/// only the compiler facade owns.
+fn with_symbol_suggestions(diagnostic: Diagnostic, suggestions: &[SymbolSuggestion]) -> Diagnostic {
+    if suggestions.is_empty() {
+        return diagnostic;
+    }
+    let names = suggestions
+        .iter()
+        .map(|entry| entry.name.clone())
+        .collect::<Vec<_>>();
+    diagnostic
+        .with_note(format!("did you mean: {}?", names.join(", ")))
+        .with_fact("suggested_symbols", names)
+        .with_fact(
+            "suggestion_distance",
+            u64::try_from(suggestions[0].distance).unwrap_or(u64::MAX),
+        )
 }
 
 impl Display for EvalError {
@@ -398,11 +464,14 @@ impl ToDiagnostic for EvalError {
                 entrypoint,
                 available_defs,
                 ..
-            } => Diagnostic::new(
-                Severity::Error,
-                Stage::Eval,
-                codes::EVAL_MISSING_PROCESS,
-                message,
+            } => with_symbol_suggestions(
+                Diagnostic::new(
+                    Severity::Error,
+                    Stage::Eval,
+                    codes::EVAL_MISSING_PROCESS,
+                    message,
+                ),
+                &self.symbol_suggestions(),
             )
             .with_note(format!(
                 "cause: required top-level `{entrypoint}` definition is missing"
@@ -431,11 +500,14 @@ impl ToDiagnostic for EvalError {
                 visible_scope,
                 top_level_scope,
                 ..
-            } => Diagnostic::new(
-                Severity::Error,
-                Stage::Eval,
-                codes::EVAL_UNDEFINED_SYMBOL,
-                message,
+            } => with_symbol_suggestions(
+                Diagnostic::new(
+                    Severity::Error,
+                    Stage::Eval,
+                    codes::EVAL_UNDEFINED_SYMBOL,
+                    message,
+                ),
+                &self.symbol_suggestions(),
             )
             .with_note("cause: unresolved identifier in current lexical scope")
             .with_note("rule: referenced identifier must be present in visible lexical scope")
