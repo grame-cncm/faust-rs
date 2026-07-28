@@ -143,13 +143,7 @@ fn require_checked_vector_status(
 /// Compiles the complex lockstep corpus through vector C++, then asks Clang for
 /// optimized LLVM IR and requires profitable four-wide floating-point SLP
 /// attributed to the generated lockstep source range.
-pub(crate) fn lockstep_simd_check(
-    mut args: impl Iterator<Item = String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(option) = args.next() {
-        return Err(format!("unknown lockstep-simd-check option: {option}").into());
-    }
-
+pub(crate) fn lockstep_simd_check() -> Result<(), Box<dyn std::error::Error>> {
     let root = workspace_root();
     let driver = root.join("tests/bench/faust_cpp_compute_driver.cpp");
     let clang = std::env::var_os("CLANGXX").unwrap_or_else(|| "clang++".into());

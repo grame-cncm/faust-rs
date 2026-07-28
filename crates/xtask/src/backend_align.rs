@@ -45,11 +45,22 @@ pub(crate) struct BackendAlignSmokeOptions {
     skip_fir_dump_scan: bool,
 }
 
+impl From<BackendAlignSmokeArgs> for BackendAlignSmokeOptions {
+    fn from(args: BackendAlignSmokeArgs) -> Self {
+        Self {
+            cases: args.case,
+            strict_fir_types: args.strict_fir_types,
+            skip_golden: args.skip_golden,
+            skip_fir_dump_scan: args.skip_fir_dump_scan,
+        }
+    }
+}
+
 /// Runs the reduced backend-alignment smoke workflow used in CI.
 pub(crate) fn backend_align_smoke(
-    mut args: impl Iterator<Item = String>,
+    args: BackendAlignSmokeArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_backend_align_smoke_options(&mut args)?;
+    let options = BackendAlignSmokeOptions::from(args);
     println!("backend-align-smoke: start");
 
     if !options.skip_golden {
@@ -72,29 +83,21 @@ pub(crate) fn backend_align_smoke(
     interp_trace_diff_opt_levels_cases(&cases, options.strict_fir_types)?;
 
     for case in &cases {
-        let mut trace_check_args = vec![
-            "--case".to_owned(),
-            case.display().to_string(),
-            "--lane".to_owned(),
-            "fast".to_owned(),
-        ];
-        if options.strict_fir_types {
-            trace_check_args.push("--strict-fir-types".to_owned());
-        }
         println!("backend-align-smoke: interp-trace-check {}", case.display());
-        interp_trace_check(trace_check_args.into_iter())?;
+        interp_trace_check(InterpTraceBatchOptions {
+            case: Some(case.clone()),
+            lane: TraceLane::Fast,
+            strict_fir_types: options.strict_fir_types,
+            ..InterpTraceBatchOptions::default()
+        })?;
     }
 
     if !options.skip_fir_dump_scan {
-        let mut scan_args: Vec<String> = Vec::new();
-        for case in backend_align_smoke_fir_cases()? {
-            scan_args.push("--case".to_owned());
-            scan_args.push(case.display().to_string());
-        }
-        scan_args.push("--lane".to_owned());
-        scan_args.push("fast".to_owned());
         println!("backend-align-smoke: fir-dump-scan (fast lane corpus subset)");
-        fir_dump_scan(scan_args.into_iter())?;
+        fir_dump_scan(FirDumpScanOptions {
+            cases: backend_align_smoke_fir_cases()?,
+            lane: TraceLane::Fast,
+        })?;
     } else {
         println!("backend-align-smoke: skip fir-dump-scan");
     }
@@ -107,32 +110,6 @@ pub(crate) fn backend_align_smoke(
         !options.skip_fir_dump_scan
     );
     Ok(())
-}
-
-/// Parses CLI flags for `backend-align-smoke`.
-pub(crate) fn parse_backend_align_smoke_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<BackendAlignSmokeOptions, Box<dyn std::error::Error>> {
-    let mut options = BackendAlignSmokeOptions::default();
-    let iter = args.by_ref();
-    while let Some(arg) = iter.next() {
-        match arg.as_str() {
-            "--case" => {
-                let Some(path) = iter.next() else {
-                    return Err("--case requires a path".into());
-                };
-                options.cases.push(PathBuf::from(path));
-            }
-            "--strict-fir-types" => options.strict_fir_types = true,
-            "--skip-golden" => options.skip_golden = true,
-            "--skip-fir-dump-scan" => options.skip_fir_dump_scan = true,
-            "--help" | "-h" => {
-                return Err("usage: cargo run -p xtask -- backend-align-smoke [--case <tests/runtime_corpus/foo.dsp> ...] [--strict-fir-types] [--skip-golden] [--skip-fir-dump-scan]".into());
-            }
-            other => return Err(format!("unknown backend-align-smoke option: {other}").into()),
-        }
-    }
-    Ok(options)
 }
 
 /// Resolves the runtime corpus subset used by `backend-align-smoke`.
@@ -251,11 +228,21 @@ pub(crate) struct BackendAlignNightlyOptions {
     skip_fir_dump_scan: bool,
 }
 
+impl From<BackendAlignNightlyArgs> for BackendAlignNightlyOptions {
+    fn from(args: BackendAlignNightlyArgs) -> Self {
+        Self {
+            strict_fir_types: args.strict_fir_types,
+            skip_golden: args.skip_golden,
+            skip_fir_dump_scan: args.skip_fir_dump_scan,
+        }
+    }
+}
+
 /// Runs the broader nightly backend-alignment workflow.
 pub(crate) fn backend_align_nightly(
-    mut args: impl Iterator<Item = String>,
+    args: BackendAlignNightlyArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_backend_align_nightly_options(&mut args)?;
+    let options = BackendAlignNightlyOptions::from(args);
     println!("backend-align-nightly: start");
 
     if !options.skip_golden {
@@ -271,16 +258,15 @@ pub(crate) fn backend_align_nightly(
     println!("backend-align-nightly: cranelift-ffi-runtime-diff-smoke");
     run_cranelift_ffi_runtime_diff_smoke()?;
 
-    let mut trace_check_args = vec!["--lane".to_owned(), "fast".to_owned()];
-    if options.strict_fir_types {
-        trace_check_args.push("--strict-fir-types".to_owned());
-    }
     println!("backend-align-nightly: interp-trace-check (all runtime cases, fast lane)");
-    interp_trace_check(trace_check_args.into_iter())?;
+    interp_trace_check(InterpTraceBatchOptions {
+        strict_fir_types: options.strict_fir_types,
+        ..InterpTraceBatchOptions::default()
+    })?;
 
     if !options.skip_fir_dump_scan {
         println!("backend-align-nightly: fir-dump-scan (all corpus cases, fast lane)");
-        fir_dump_scan(["--lane".to_owned(), "fast".to_owned()].into_iter())?;
+        fir_dump_scan(FirDumpScanOptions::default())?;
     } else {
         println!("backend-align-nightly: skip fir-dump-scan");
     }
@@ -290,23 +276,4 @@ pub(crate) fn backend_align_nightly(
         options.strict_fir_types, !options.skip_golden, !options.skip_fir_dump_scan
     );
     Ok(())
-}
-
-/// Parses CLI flags for `backend-align-nightly`.
-pub(crate) fn parse_backend_align_nightly_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<BackendAlignNightlyOptions, Box<dyn std::error::Error>> {
-    let mut options = BackendAlignNightlyOptions::default();
-    for arg in args.by_ref() {
-        match arg.as_str() {
-            "--strict-fir-types" => options.strict_fir_types = true,
-            "--skip-golden" => options.skip_golden = true,
-            "--skip-fir-dump-scan" => options.skip_fir_dump_scan = true,
-            "--help" | "-h" => {
-                return Err("usage: cargo run -p xtask -- backend-align-nightly [--strict-fir-types] [--skip-golden] [--skip-fir-dump-scan]".into());
-            }
-            other => return Err(format!("unknown backend-align-nightly option: {other}").into()),
-        }
-    }
-    Ok(options)
 }

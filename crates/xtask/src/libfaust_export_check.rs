@@ -18,21 +18,8 @@ const EXPORT_BASELINE_REL_PATH: &str = "porting/generated/libfaust-rs-exported-s
 /// check succeeds. Baseline refreshes are explicit because removing an export
 /// is an external ABI change even when no Rust caller observes it.
 pub(crate) fn libfaust_export_check(
-    args: impl Iterator<Item = String>,
+    args: LibfaustExportCheckArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut bless = false;
-    for arg in args {
-        match arg.as_str() {
-            "--bless" => bless = true,
-            other => {
-                return Err(format!(
-                    "usage: cargo run -p xtask -- libfaust-export-check [--bless]\nunknown option: {other}"
-                )
-                .into());
-            }
-        }
-    }
-
     let dynamic_library = build_libfaust_distribution(false)?;
 
     let workspace = workspace_root();
@@ -59,7 +46,7 @@ pub(crate) fn libfaust_export_check(
     }
 
     let baseline_path = workspace.join(EXPORT_BASELINE_REL_PATH);
-    if bless {
+    if args.bless {
         write_export_baseline(&baseline_path, &exported)?;
         let non_header_exports = exported
             .difference(&header_symbols)
@@ -98,7 +85,7 @@ pub(crate) fn libfaust_export_check(
         exported.len(),
         header_symbols.len(),
         EXPORT_BASELINE_REL_PATH,
-        if bless { " refreshed" } else { " matched" }
+        if args.bless { " refreshed" } else { " matched" }
     );
     println!(
         "libfaust-rs export artifact: {}",
@@ -180,21 +167,9 @@ pub(crate) fn build_libfaust_distribution(
 
 /// Parses and runs the explicit native C/C++ distribution workflow.
 pub(crate) fn build_libfaust_distribution_command(
-    args: impl Iterator<Item = String>,
+    args: BuildLibfaustArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut release = false;
-    for arg in args {
-        match arg.as_str() {
-            "--release" => release = true,
-            other => {
-                return Err(format!(
-                    "usage: cargo run -p xtask -- build-libfaust [--release]\nunknown option: {other}"
-                )
-                .into());
-            }
-        }
-    }
-    let dynamic_library = build_libfaust_distribution(release)?;
+    let dynamic_library = build_libfaust_distribution(args.release)?;
     println!(
         "libfaust-rs native distribution ready: {}",
         workspace_relative_path(&dynamic_library)

@@ -26,9 +26,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Corpus directory, relative to the workspace root.
 const CORPUS_ROOT: &str = "tests/impulse-tests/dsp";
 
-/// Minimum number of passes; one pass alone cannot detect nondeterminism.
-const MIN_PASSES: usize = 2;
-
 /// Default number of passes when `--passes` is not given.
 const DEFAULT_PASSES: usize = 2;
 
@@ -68,15 +65,6 @@ const CONFIGS: [EmissionConfig; 3] = [
     },
 ];
 
-/// Parsed `emission-determinism` CLI options.
-#[derive(Debug, Default)]
-struct EmissionDeterminismOptions {
-    passes: Option<usize>,
-    allowlist: Option<PathBuf>,
-    write_unstable: Option<PathBuf>,
-    case_stems: Vec<String>,
-}
-
 /// Outcome of one pass of one (case, config).
 #[derive(Clone, PartialEq, Eq)]
 enum PassOutcome {
@@ -96,19 +84,18 @@ enum CaseVerdict {
 
 /// Runs the `emission-determinism` gate.
 pub(crate) fn emission_determinism(
-    mut args: impl Iterator<Item = String>,
+    options: EmissionDeterminismArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_emission_determinism_options(&mut args)?;
-    let passes = options.passes.unwrap_or(DEFAULT_PASSES).max(MIN_PASSES);
+    let passes = options.passes.unwrap_or(DEFAULT_PASSES);
 
     let root = workspace_root();
     let corpus_dir = root.join(CORPUS_ROOT);
     let mut dsp_paths = collect_dsp_files(&corpus_dir)?;
     dsp_paths.sort();
 
-    if !options.case_stems.is_empty() {
+    if !options.case.is_empty() {
         let wanted = options
-            .case_stems
+            .case
             .iter()
             .map(String::as_str)
             .collect::<BTreeSet<_>>();
@@ -374,50 +361,6 @@ fn parse_allowlist(path: &Path) -> Result<BTreeSet<String>, Box<dyn std::error::
         entries.insert(line.to_owned());
     }
     Ok(entries)
-}
-
-/// Parses `emission-determinism` CLI arguments.
-fn parse_emission_determinism_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<EmissionDeterminismOptions, Box<dyn std::error::Error>> {
-    let mut options = EmissionDeterminismOptions::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--passes" => {
-                let value = required_arg(args, "--passes")?;
-                let passes: usize = value
-                    .parse()
-                    .map_err(|error| format!("invalid --passes value {value:?}: {error}"))?;
-                if passes < MIN_PASSES {
-                    return Err(
-                        format!("--passes must be at least {MIN_PASSES} (got {passes})").into(),
-                    );
-                }
-                options.passes = Some(passes);
-            }
-            "--allowlist" => {
-                options.allowlist = Some(PathBuf::from(required_arg(args, "--allowlist")?));
-            }
-            "--write-unstable" => {
-                options.write_unstable =
-                    Some(PathBuf::from(required_arg(args, "--write-unstable")?));
-            }
-            "--case" => {
-                options.case_stems.push(required_arg(args, "--case")?);
-            }
-            other => return Err(format!("unknown emission-determinism option: {other}").into()),
-        }
-    }
-    Ok(options)
-}
-
-/// Returns the value following a flag, or an error naming the flag.
-fn required_arg(
-    args: &mut impl Iterator<Item = String>,
-    option: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    args.next()
-        .ok_or_else(|| format!("{option} requires a value").into())
 }
 
 #[cfg(test)]

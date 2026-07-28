@@ -5,33 +5,122 @@
 //! export validation helpers.
 
 use super::*;
+use clap::{CommandFactory, Parser};
 
-#[test]
-fn trace_scenario_parse_accepts_known_names() {
-    assert_eq!(TraceScenario::parse("zeros").unwrap(), TraceScenario::Zeros);
-    assert_eq!(
-        TraceScenario::parse("impulse").unwrap(),
-        TraceScenario::Impulse
-    );
-    assert_eq!(TraceScenario::parse("ramp").unwrap(), TraceScenario::Ramp);
-    assert_eq!(TraceScenario::parse("sine").unwrap(), TraceScenario::Sine);
+fn parse_xtask<I, T>(args: I) -> Result<XtaskCli, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    XtaskCli::try_parse_from(
+        std::iter::once(OsString::from("xtask")).chain(args.into_iter().map(Into::into)),
+    )
+}
+
+fn parse_corpus_query<I, T>(args: I) -> Result<CorpusStatusQueryOptions, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    let cli = parse_xtask(
+        std::iter::once(OsString::from("corpus-status-query"))
+            .chain(args.into_iter().map(Into::into)),
+    )?;
+    let XtaskCommand::CorpusStatusQuery(args) = cli.command else {
+        unreachable!("requested corpus-status-query")
+    };
+    Ok(args.into())
 }
 
 #[test]
-fn trace_lane_parse_accepts_fast_aliases() {
-    assert_eq!(TraceLane::parse("fast").unwrap(), TraceLane::Fast);
-    assert_eq!(TraceLane::parse("fast-lane").unwrap(), TraceLane::Fast);
-    assert_eq!(TraceLane::parse("transform").unwrap(), TraceLane::Fast);
+fn clap_definition_is_consistent() {
+    XtaskCli::command().debug_assert();
+}
+
+#[test]
+fn ci_command_names_are_accepted() {
+    for command in [
+        "cpp-backend-diff-report",
+        "golden-check",
+        "ffi-boundary-check",
+        "structure-check",
+        "vector-coverage-check",
+        "vector-interp-opt-check",
+        "vector-compile-budget-check",
+    ] {
+        parse_xtask([command]).unwrap_or_else(|error| panic!("{command}: {error}"));
+    }
+    parse_xtask(["backend-align-smoke", "--skip-golden"]).unwrap();
+}
+
+#[test]
+fn unknown_command_is_a_clap_error() {
+    let error = parse_xtask(["definitely-unknown"]).unwrap_err();
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+}
+
+#[test]
+fn golden_gen_cpp_preserves_hyphenated_passthrough_arguments() {
+    let cli = parse_xtask(["golden-gen-cpp", "--", "-vec", "-I", "some dir"]).unwrap();
+    let XtaskCommand::GoldenGenCpp(args) = cli.command else {
+        unreachable!("requested golden-gen-cpp")
+    };
+    assert_eq!(
+        args.extra_args,
+        [
+            OsString::from("-vec"),
+            OsString::from("-I"),
+            OsString::from("some dir")
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn golden_gen_cpp_passthrough_preserves_non_utf8_arguments() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let opaque = OsString::from_vec(vec![b'-', 0xff, b'x']);
+    let cli = parse_xtask([
+        OsString::from("golden-gen-cpp"),
+        OsString::from("--"),
+        opaque.clone(),
+    ])
+    .unwrap();
+    let XtaskCommand::GoldenGenCpp(args) = cli.command else {
+        unreachable!("requested golden-gen-cpp")
+    };
+    assert_eq!(args.extra_args, [opaque]);
+}
+
+#[test]
+fn trace_scenarios_and_lane_aliases_are_clap_values() {
+    for scenario in ["zeros", "impulse", "ramp", "sine"] {
+        parse_xtask([
+            "interp-trace-dump",
+            "--case",
+            "test.dsp",
+            "--scenario",
+            scenario,
+            "--lane",
+            "transform",
+        ])
+        .unwrap();
+    }
 }
 
 #[test]
 fn parse_interp_trace_dump_defaults_and_required_case() {
-    let mut args = vec![
-        "--case".to_string(),
-        "tests/corpus/rep_31_extended_primitives.dsp".to_string(),
-    ]
-    .into_iter();
-    let opts = parse_interp_trace_dump_options(&mut args).unwrap();
+    let cli = parse_xtask([
+        "interp-trace-dump",
+        "--case",
+        "tests/corpus/rep_31_extended_primitives.dsp",
+    ])
+    .unwrap();
+    let XtaskCommand::InterpTraceDump(args) = cli.command else {
+        unreachable!("requested interp-trace-dump")
+    };
+    let opts = InterpTraceDumpOptions::from(args);
     assert_eq!(opts.scenario, TraceScenario::Zeros);
     assert_eq!(opts.lane, TraceLane::Fast);
     assert_eq!(opts.sample_rate, 48_000);
@@ -42,20 +131,27 @@ fn parse_interp_trace_dump_defaults_and_required_case() {
 
 #[test]
 fn parse_interp_trace_dump_accepts_strict_fir_types_flag() {
-    let mut args = vec![
-        "--case".to_string(),
-        "tests/runtime_corpus/trace_01_passthrough.dsp".to_string(),
-        "--strict-fir-types".to_string(),
-    ]
-    .into_iter();
-    let opts = parse_interp_trace_dump_options(&mut args).unwrap();
+    let cli = parse_xtask([
+        "interp-trace-dump",
+        "--case",
+        "tests/runtime_corpus/trace_01_passthrough.dsp",
+        "--strict-fir-types",
+    ])
+    .unwrap();
+    let XtaskCommand::InterpTraceDump(args) = cli.command else {
+        unreachable!("requested interp-trace-dump")
+    };
+    let opts = InterpTraceDumpOptions::from(args);
     assert!(opts.strict_fir_types);
 }
 
 #[test]
 fn parse_interp_trace_batch_defaults() {
-    let mut args = std::iter::empty::<String>();
-    let opts = parse_interp_trace_batch_options(&mut args).unwrap();
+    let cli = parse_xtask(["interp-trace-gen"]).unwrap();
+    let XtaskCommand::InterpTraceGen(args) = cli.command else {
+        unreachable!("requested interp-trace-gen")
+    };
+    let opts = InterpTraceBatchOptions::from(args);
     assert_eq!(opts.case, None);
     assert_eq!(opts.lane, TraceLane::Fast);
     assert_eq!(opts.sample_rate, 48_000);
@@ -66,8 +162,11 @@ fn parse_interp_trace_batch_defaults() {
 
 #[test]
 fn parse_interp_trace_batch_accepts_strict_fir_types_flag() {
-    let mut args = vec!["--strict-fir-types".to_string()].into_iter();
-    let opts = parse_interp_trace_batch_options(&mut args).unwrap();
+    let cli = parse_xtask(["interp-trace-check", "--strict-fir-types"]).unwrap();
+    let XtaskCommand::InterpTraceCheck(args) = cli.command else {
+        unreachable!("requested interp-trace-check")
+    };
+    let opts = InterpTraceBatchOptions::from(args);
     assert!(opts.strict_fir_types);
 }
 
@@ -204,14 +303,21 @@ fn interp_trace_opt_level_diff_matches_on_passthrough_case() {
 
 #[test]
 fn parse_faustwasm_compiler_module_options_defaults_to_release() {
-    let options = parse_faustwasm_compiler_module_options(std::iter::empty::<String>()).unwrap();
+    let cli = parse_xtask(["build-faustwasm-compiler-module"]).unwrap();
+    let XtaskCommand::BuildFaustwasmCompilerModule(args) = cli.command else {
+        unreachable!("requested build-faustwasm-compiler-module")
+    };
+    let options = FaustwasmCompilerModuleOptions::from(args);
     assert!(options.release);
 }
 
 #[test]
 fn parse_faustwasm_compiler_module_options_accepts_debug_flag() {
-    let options =
-        parse_faustwasm_compiler_module_options(vec!["--debug".to_owned()].into_iter()).unwrap();
+    let cli = parse_xtask(["build-faustwasm-compiler-module", "--debug"]).unwrap();
+    let XtaskCommand::BuildFaustwasmCompilerModule(args) = cli.command else {
+        unreachable!("requested build-faustwasm-compiler-module")
+    };
+    let options = FaustwasmCompilerModuleOptions::from(args);
     assert!(!options.release);
 }
 
@@ -343,8 +449,7 @@ fn verify_wasm_ffi_exports_rejects_missing_exports() {
 
 #[test]
 fn corpus_status_query_options_require_case_or_all() {
-    let mut args = std::iter::empty::<String>();
-    let error = parse_corpus_status_query_options(&mut args)
+    let error = parse_corpus_query(std::iter::empty::<String>())
         .unwrap_err()
         .to_string();
     assert!(error.contains("--case") && error.contains("--all"));
@@ -352,30 +457,23 @@ fn corpus_status_query_options_require_case_or_all() {
 
 #[test]
 fn corpus_status_query_options_reject_case_and_all_together() {
-    let mut args = vec![
-        "--case".to_string(),
-        "tests/corpus/fad_basic.dsp".to_string(),
-        "--all".to_string(),
-    ]
-    .into_iter();
-    let error = parse_corpus_status_query_options(&mut args)
+    let error = parse_corpus_query(["--case", "tests/corpus/fad_basic.dsp", "--all"])
         .unwrap_err()
         .to_string();
-    assert!(error.contains("mutually exclusive"));
+    assert!(error.contains("cannot be used with"));
 }
 
 #[test]
 fn corpus_status_query_options_accept_repeated_case_and_format() {
-    let mut args = vec![
-        "--case".to_string(),
-        "tests/corpus/fad_basic.dsp".to_string(),
-        "--case".to_string(),
-        "tests/corpus/rep_01_passthrough.dsp".to_string(),
-        "--format".to_string(),
-        "human".to_string(),
-    ]
-    .into_iter();
-    let options = parse_corpus_status_query_options(&mut args).unwrap();
+    let options = parse_corpus_query([
+        "--case",
+        "tests/corpus/fad_basic.dsp",
+        "--case",
+        "tests/corpus/rep_01_passthrough.dsp",
+        "--format",
+        "human",
+    ])
+    .unwrap();
     assert_eq!(options.cases.len(), 2);
     assert!(!options.all);
     assert_eq!(options.format, QueryFormat::Human);
@@ -383,13 +481,7 @@ fn corpus_status_query_options_accept_repeated_case_and_format() {
 
 #[test]
 fn corpus_status_query_options_reject_unknown_format() {
-    let mut args = vec![
-        "--all".to_string(),
-        "--format".to_string(),
-        "yaml".to_string(),
-    ]
-    .into_iter();
-    let error = parse_corpus_status_query_options(&mut args)
+    let error = parse_corpus_query(["--all", "--format", "yaml"])
         .unwrap_err()
         .to_string();
     assert!(error.contains("yaml"));
@@ -481,12 +573,7 @@ fn corpus_status_query_json_response_carries_staleness_metadata() {
         eprintln!("skipping: no C++ reference binary available (set FAUST_CPP_BIN)");
         return;
     }
-    let mut args = vec![
-        "--case".to_string(),
-        "tests/corpus/fad_basic.dsp".to_string(),
-    ]
-    .into_iter();
-    let options = parse_corpus_status_query_options(&mut args).unwrap();
+    let options = parse_corpus_query(["--case", "tests/corpus/fad_basic.dsp"]).unwrap();
     let response = run_corpus_status_query(&options).unwrap();
 
     // Round-trip through JSON: the schema must actually parse, not merely
@@ -516,12 +603,7 @@ fn corpus_status_query_classifies_fad_basic_as_expected_divergence() {
         eprintln!("skipping: no C++ reference binary available (set FAUST_CPP_BIN)");
         return;
     }
-    let mut args = vec![
-        "--case".to_string(),
-        "tests/corpus/fad_basic.dsp".to_string(),
-    ]
-    .into_iter();
-    let options = parse_corpus_status_query_options(&mut args).unwrap();
+    let options = parse_corpus_query(["--case", "tests/corpus/fad_basic.dsp"]).unwrap();
     let response = run_corpus_status_query(&options).unwrap();
 
     assert_eq!(response.cases.len(), 1);
@@ -550,7 +632,7 @@ fn corpus_status_query_case_list_compiles_only_requested_cases() {
         args.push("--case".to_string());
         args.push(case.to_string());
     }
-    let options = parse_corpus_status_query_options(&mut args.into_iter()).unwrap();
+    let options = parse_corpus_query(args).unwrap();
     let response = run_corpus_status_query(&options).unwrap();
 
     assert_eq!(response.query_scope, QueryScope::Cases);
@@ -584,7 +666,7 @@ fn corpus_status_query_counts_are_internally_consistent() {
         args.push("--case".to_string());
         args.push(case.to_string());
     }
-    let options = parse_corpus_status_query_options(&mut args.into_iter()).unwrap();
+    let options = parse_corpus_query(args).unwrap();
     let response = run_corpus_status_query(&options).unwrap();
 
     let c = &response.counts;

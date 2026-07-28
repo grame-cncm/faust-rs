@@ -18,14 +18,14 @@ struct CApiSymbol {
 
 /// Generates Box and Signal API parity matrices from the local C++ Faust tree.
 pub(crate) fn libfaust_api_matrix(
-    args: impl Iterator<Item = String>,
+    args: LibfaustApiMatrixArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = LibfaustApiMatrixOptions::parse(args)?;
-    let cpp_root = options
+    let cpp_root = args
         .cpp_root
         .unwrap_or_else(|| PathBuf::from(CPP_SOURCE_ROOT));
-    let out_dir = options
+    let out_dir = args
         .out_dir
+        .map(|path| workspace_root().join(path))
         .unwrap_or_else(|| workspace_root().join(DEFAULT_OUT_DIR));
 
     let header_dir = cpp_root.join("architecture/faust/dsp");
@@ -65,32 +65,6 @@ pub(crate) fn libfaust_api_matrix(
         workspace_relative_path(&out_dir.join("libfaust-signal-c-api-matrix.md"))
     );
     Ok(())
-}
-
-#[derive(Debug, Default)]
-struct LibfaustApiMatrixOptions {
-    cpp_root: Option<PathBuf>,
-    out_dir: Option<PathBuf>,
-}
-
-impl LibfaustApiMatrixOptions {
-    fn parse(mut args: impl Iterator<Item = String>) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut options = Self::default();
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "--cpp-root" => {
-                    let value = args.next().ok_or("--cpp-root requires a path argument")?;
-                    options.cpp_root = Some(PathBuf::from(value));
-                }
-                "--out" => {
-                    let value = args.next().ok_or("--out requires a path argument")?;
-                    options.out_dir = Some(workspace_root().join(value));
-                }
-                other => return Err(format!("unknown libfaust-api-matrix option: {other}").into()),
-            }
-        }
-        Ok(options)
-    }
 }
 
 fn parse_libfaust_api_symbols(header: &str) -> Vec<CApiSymbol> {

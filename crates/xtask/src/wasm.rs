@@ -26,32 +26,21 @@ impl Default for FaustwasmCompilerModuleOptions {
     }
 }
 
-/// Parses flags for the `build-faustwasm-compiler-module` workflow.
-pub(crate) fn parse_faustwasm_compiler_module_options(
-    args: impl Iterator<Item = String>,
-) -> Result<FaustwasmCompilerModuleOptions, Box<dyn std::error::Error>> {
-    let mut options = FaustwasmCompilerModuleOptions::default();
-    for arg in args {
-        match arg.as_str() {
-            "--debug" => options.release = false,
-            other => {
-                return Err(format!(
-                    "usage: cargo run -p xtask -- build-faustwasm-compiler-module [--debug]\nunknown option: {other}"
-                )
-                .into());
-            }
+impl From<FaustwasmCompilerModuleArgs> for FaustwasmCompilerModuleOptions {
+    fn from(args: FaustwasmCompilerModuleArgs) -> Self {
+        Self {
+            release: !args.debug,
         }
     }
-    Ok(options)
 }
 
 /// Builds the raw Rust compiler module consumed by the future embedded
 /// `faustwasm` path and verifies that its exported ABI matches the documented
 /// `wasm-ffi` contract.
 pub(crate) fn build_faustwasm_compiler_module(
-    args: impl Iterator<Item = String>,
+    args: FaustwasmCompilerModuleArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_faustwasm_compiler_module_options(args)?;
+    let options = FaustwasmCompilerModuleOptions::from(args);
     let root = workspace_root();
     let profile = if options.release { "release" } else { "debug" };
 
@@ -170,7 +159,7 @@ pub(crate) fn verify_wasm_ffi_exports(bytes: &[u8]) -> Result<(), Box<dyn std::e
     let mut exported_functions = BTreeSet::new();
     let mut has_memory_export = false;
 
-    for payload in Parser::new(0).parse_all(bytes) {
+    for payload in WasmParser::new(0).parse_all(bytes) {
         match payload? {
             Payload::ExportSection(section) => {
                 for export in section {

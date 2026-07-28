@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+clap.workspace = true
 compiler = { path = "../compiler" }
 codegen = { path = "../codegen" }
 fir = { path = "../fir" }

@@ -39,7 +39,7 @@ struct CompileBudgetCase {
 }
 
 pub(crate) fn vector_compile_budget_check(
-    mut args: impl Iterator<Item = String>,
+    args: VectorCompileBudgetArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if cfg!(debug_assertions) {
         return Err(
@@ -47,15 +47,9 @@ pub(crate) fn vector_compile_budget_check(
                 .into(),
         );
     }
-    let mut baseline_path = workspace_root().join(VECTOR_COMPILE_BUDGET_BASELINE);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--baseline" => baseline_path = PathBuf::from(required_arg(&mut args, "--baseline")?),
-            other => {
-                return Err(format!("unknown vector-compile-budget-check option: {other}").into());
-            }
-        }
-    }
+    let baseline_path = args
+        .baseline
+        .unwrap_or_else(|| workspace_root().join(VECTOR_COMPILE_BUDGET_BASELINE));
     let baseline: CompileBudgetBaseline =
         serde_json::from_str(&fs::read_to_string(&baseline_path)?)?;
     validate_baseline(&baseline)?;
@@ -103,14 +97,6 @@ pub(crate) fn vector_compile_budget_check(
         baseline.cases.len()
     );
     Ok(())
-}
-
-fn required_arg(
-    args: &mut impl Iterator<Item = String>,
-    option: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    args.next()
-        .ok_or_else(|| format!("{option} requires a value").into())
 }
 
 fn validate_baseline(baseline: &CompileBudgetBaseline) -> Result<(), Box<dyn std::error::Error>> {

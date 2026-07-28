@@ -9,8 +9,6 @@ const MODES: [&str; 3] = ["scalar", "vec0", "vec1"];
 const STRATEGIES: [u8; 4] = [0, 1, 2, 3];
 const EXPECTED_SUPPORTED_DSP_COUNT: usize = 92;
 const EXCLUDED_DSP_STEMS: [&str; 1] = ["subcontainer1"];
-const DEFAULT_ARTIFACT_ROOT: &str = "tests/impulse-tests/ir";
-const DEFAULT_REPORT_PATH: &str = "porting/generated/p7-executable-backend-matrix-2026-07-14-en.md";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MatrixCombination {
@@ -36,19 +34,12 @@ struct CombinationSummary {
     sha256: String,
 }
 
-#[derive(Debug)]
-struct ReportOptions {
-    artifact_root: PathBuf,
-    output: PathBuf,
-}
-
 /// Verifies every generated P7 matrix response and writes a deterministic
 /// repository-relative report. This runs only after `p7-matrix` has compared
 /// every response against the C++ oracle successfully.
 pub(crate) fn p7_matrix_report(
-    args: impl Iterator<Item = String>,
+    options: P7MatrixReportArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_options(args)?;
     let root = workspace_root();
     let corpus_root = root.join("tests/impulse-tests/dsp");
     let cases = supported_dsp_stems(&corpus_root)?;
@@ -133,29 +124,6 @@ pub(crate) fn p7_matrix_report(
     fs::write(&output, report)?;
     println!("updated {}", workspace_relative_path(&output));
     Ok(())
-}
-
-fn parse_options(
-    mut args: impl Iterator<Item = String>,
-) -> Result<ReportOptions, Box<dyn std::error::Error>> {
-    let mut artifact_root = PathBuf::from(DEFAULT_ARTIFACT_ROOT);
-    let mut output = PathBuf::from(DEFAULT_REPORT_PATH);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--artifact-root" => {
-                artifact_root =
-                    PathBuf::from(args.next().ok_or("missing value after --artifact-root")?);
-            }
-            "--out" => {
-                output = PathBuf::from(args.next().ok_or("missing value after --out")?);
-            }
-            other => return Err(format!("unknown p7-matrix-report option: {other}").into()),
-        }
-    }
-    Ok(ReportOptions {
-        artifact_root,
-        output,
-    })
 }
 
 fn resolve_from_root(root: &Path, path: &Path) -> PathBuf {

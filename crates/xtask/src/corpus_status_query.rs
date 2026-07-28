@@ -65,45 +65,17 @@ pub(crate) struct CorpusStatusQueryOptions {
     pub(crate) format: QueryFormat,
 }
 
-/// Parses `corpus-status-query` CLI options.
-pub(crate) fn parse_corpus_status_query_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<CorpusStatusQueryOptions, Box<dyn std::error::Error>> {
-    let mut options = CorpusStatusQueryOptions::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--case" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --case".into());
-                };
-                options.cases.push(PathBuf::from(path));
-            }
-            "--all" => options.all = true,
-            "--format" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --format".into());
-                };
-                options.format = match value.as_str() {
-                    "json" => QueryFormat::Json,
-                    "human" => QueryFormat::Human,
-                    other => {
-                        return Err(format!(
-                            "unknown --format value: {other} (expected json|human)"
-                        )
-                        .into());
-                    }
-                };
-            }
-            other => return Err(format!("unknown argument: {other}").into()),
+impl From<CorpusStatusQueryArgs> for CorpusStatusQueryOptions {
+    fn from(args: CorpusStatusQueryArgs) -> Self {
+        Self {
+            cases: args.case,
+            all: args.all,
+            format: match args.format {
+                QueryFormatArg::Json => QueryFormat::Json,
+                QueryFormatArg::Human => QueryFormat::Human,
+            },
         }
     }
-    if options.all && !options.cases.is_empty() {
-        return Err("--all and --case are mutually exclusive".into());
-    }
-    if !options.all && options.cases.is_empty() {
-        return Err("corpus-status-query requires --case <path> (repeatable) or --all".into());
-    }
-    Ok(options)
 }
 
 /// Where the resolved C++ reference binary came from.
@@ -488,9 +460,9 @@ fn render_human(response: &CorpusStatusQueryResponse) -> String {
 
 /// `corpus-status-query` entry point.
 pub(crate) fn corpus_status_query(
-    mut args: impl Iterator<Item = String>,
+    args: CorpusStatusQueryArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_corpus_status_query_options(&mut args)?;
+    let options = CorpusStatusQueryOptions::from(args);
     let response = run_corpus_status_query(&options)?;
     match options.format {
         QueryFormat::Json => println!("{}", serde_json::to_string_pretty(&response)?),

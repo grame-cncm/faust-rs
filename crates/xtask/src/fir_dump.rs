@@ -14,9 +14,9 @@ use super::*;
 #[derive(Debug)]
 pub(crate) struct FirDumpScanOptions {
     /// Explicit compile corpus cases selected with repeated `--case`.
-    cases: Vec<PathBuf>,
+    pub(crate) cases: Vec<PathBuf>,
     /// Signal-to-FIR lane used before rendering `dump_fir`.
-    lane: TraceLane,
+    pub(crate) lane: TraceLane,
 }
 
 impl Default for FirDumpScanOptions {
@@ -32,11 +32,20 @@ impl Default for FirDumpScanOptions {
     }
 }
 
+impl From<FirDumpScanArgs> for FirDumpScanOptions {
+    fn from(args: FirDumpScanArgs) -> Self {
+        Self {
+            cases: args.case,
+            lane: args.lane.into(),
+        }
+    }
+}
+
 /// Scans `dump_fir` output for unexpanded loop-body placeholders.
 pub(crate) fn fir_dump_scan(
-    mut args: impl Iterator<Item = String>,
+    options: impl Into<FirDumpScanOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_fir_dump_scan_options(&mut args)?;
+    let options = options.into();
     let cases = if options.cases.is_empty() {
         corpus_files()?
     } else {
@@ -100,35 +109,6 @@ pub(crate) fn fir_dump_scan(
         loop_nodes_seen
     );
     Ok(())
-}
-
-/// Parses `fir-dump-scan` command-line flags into [`FirDumpScanOptions`].
-pub(crate) fn parse_fir_dump_scan_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<FirDumpScanOptions, Box<dyn std::error::Error>> {
-    let mut options = FirDumpScanOptions::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--case" => {
-                let Some(path) = args.next() else {
-                    return Err("--case requires a path".into());
-                };
-                options.cases.push(PathBuf::from(path));
-            }
-            "--lane" => {
-                let Some(value) = args.next() else {
-                    return Err("--lane requires fast".into());
-                };
-                options.lane = TraceLane::parse(&value)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-            }
-            "--help" | "-h" => {
-                return Err("usage: cargo run -p xtask -- fir-dump-scan [--case <tests/corpus/foo.dsp> ...] [--lane fast]".into());
-            }
-            other => return Err(format!("unknown fir-dump-scan option: {other}").into()),
-        }
-    }
-    Ok(options)
 }
 
 /// Counts loop statements rendered by `dump_fir`.

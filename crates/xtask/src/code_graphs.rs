@@ -79,6 +79,20 @@ impl Default for CodeGraphOptions {
     }
 }
 
+impl From<CodeGraphArgs> for CodeGraphOptions {
+    fn from(args: CodeGraphArgs) -> Self {
+        let mut options = Self {
+            out_dir: args
+                .out_dir
+                .unwrap_or_else(|| PathBuf::from("docs/code-graphs")),
+        };
+        if options.out_dir.is_relative() {
+            options.out_dir = workspace_root().join(&options.out_dir);
+        }
+        options
+    }
+}
+
 /// One public source item found by the lightweight public API scanner.
 ///
 /// This is deliberately a source index, not a semantic model. Rustdoc remains
@@ -97,43 +111,14 @@ pub(crate) struct PublicItem {
     line: usize,
 }
 
-/// Parses flags for the `code-graphs` documentation generator.
-pub(crate) fn parse_code_graph_options(
-    mut args: impl Iterator<Item = String>,
-) -> Result<CodeGraphOptions, Box<dyn std::error::Error>> {
-    let mut options = CodeGraphOptions::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--out-dir" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --out-dir".into());
-                };
-                options.out_dir = PathBuf::from(value);
-            }
-            other => {
-                return Err(format!(
-                    "usage: cargo run -p xtask -- code-graphs [--out-dir <dir>]\nunknown option: {other}"
-                )
-                .into());
-            }
-        }
-    }
-    if options.out_dir.is_relative() {
-        options.out_dir = workspace_root().join(&options.out_dir);
-    }
-    Ok(options)
-}
-
 /// Generates workspace/dependency graphs, IR overview graphs, and a public API
 /// index for developer navigation.
 ///
 /// Output is deterministic for stable `cargo metadata` and stable source file
 /// ordering. SVG generation requires Graphviz `dot`; failing to render one SVG
 /// fails the workflow so checked-in visualizations do not silently go stale.
-pub(crate) fn code_graphs(
-    args: impl Iterator<Item = String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_code_graph_options(args)?;
+pub(crate) fn code_graphs(args: CodeGraphArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let options = CodeGraphOptions::from(args);
     fs::create_dir_all(&options.out_dir)?;
 
     let metadata = load_cargo_metadata()?;

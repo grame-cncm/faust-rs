@@ -34,10 +34,10 @@
 //! - Normalized output text before snapshot comparison.
 //! - Fail-fast behavior when one case diverges to preserve CI signal quality.
 //! - Generated documentation uses repository-relative paths where practical.
-//! - The command surface stays intentionally simple: argument parsing is local to
-//!   each workflow instead of adding a runtime CLI dependency to this helper
-//!   crate.
+//! - Command dispatch and validation are declared once in the typed Clap tree;
+//!   workflow modules receive validated option values.
 
+use clap::Parser;
 use fir::dump_fir;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,56 +48,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::process::Stdio;
-use wasmparser::{ExternalKind, Parser, Payload};
-
-/// Human-readable command summary printed when no command or an unknown command
-/// is provided.
-///
-/// The project intentionally keeps `xtask` argument parsing lightweight. This
-/// string is the canonical short-form help for the dispatcher below; the longer
-/// workflow documentation lives in `crates/xtask/README.md`.
-const USAGE: &str = "\
-Usage:
-  cargo run -p xtask -- golden-check
-  cargo run -p xtask -- golden-check-cpp
-  cargo run -p xtask -- golden-gen-rust
-  cargo run -p xtask -- golden-gen-cpp [-- <extra args passed to FAUST_CPP_BIN>]
-  cargo run -p xtask -- interp-trace-dump --case <tests/corpus/foo.dsp> [--scenario zeros|impulse|ramp|sine] [--lane fast] [--strict-fir-types]
-  cargo run -p xtask -- interp-trace-dump-cppfbc --case <tests/corpus/foo.dsp> [--scenario zeros|impulse|ramp|sine] [--faust-bin /path/to/faust]
-  cargo run -p xtask -- interp-trace-gen-cppfbc [--case <tests/corpus/foo.dsp>] [--scenario zeros|impulse|ramp|sine] [--out-dir <dir>] [--faust-bin /path/to/faust]
-  cargo run -p xtask -- interp-trace-gen [--case <tests/runtime_corpus/foo.dsp>] [--lane fast] [--strict-fir-types]
-  cargo run -p xtask -- interp-trace-check [--case <tests/runtime_corpus/foo.dsp>] [--lane fast] [--strict-fir-types]
-  cargo run -p xtask -- fir-dump-scan [--case <tests/corpus/foo.dsp> ...] [--lane fast]
-  cargo run -p xtask -- build-faustwasm-compiler-module [--debug]
-  cargo run -p xtask -- build-libfaust [--release]
-  cargo run -p xtask -- backend-align-smoke [--case <tests/runtime_corpus/foo.dsp> ...] [--strict-fir-types] [--skip-golden] [--skip-fir-dump-scan]
-  cargo run -p xtask -- backend-align-nightly [--strict-fir-types] [--skip-golden] [--skip-fir-dump-scan]
-  cargo run -p xtask -- code-graphs [--out-dir <dir>]
-  cargo run -p xtask -- parser-parity-report
-  cargo run -p xtask -- corpus-status-report
-  cargo run -p xtask -- corpus-status-query (--case <tests/corpus/foo.dsp> ... | --all) [--format json|human]
-  cargo run -p xtask -- cpp-backend-diff-report
-  cargo run -p xtask -- c-fastlane-diff-report
-  cargo run -p xtask -- backend-full-corpus-diff-report
-  cargo run -p xtask -- table-fastlane-diff-report
-  cargo run -p xtask -- libfaust-api-matrix [--cpp-root /path/to/faust] [--out porting/generated]
-  cargo run -p xtask -- libfaust-export-check [--bless]
-  cargo run -p xtask -- p7-matrix-report [--artifact-root tests/impulse-tests/ir] [--out porting/generated/p7-executable-backend-matrix-2026-07-14-en.md]
-  cargo run -p xtask -- vector-coverage-merge --reports <dir> [--out tests/vector-coverage/corpus-baseline.json] [--certified-list tests/vector-coverage/certified-dspfiles.txt]
-  cargo run -p xtask -- vector-coverage-check [--baseline tests/vector-coverage/corpus-baseline.json]
-  cargo run -p xtask -- vector-interp-opt-check
-  cargo run --release -p xtask -- vector-compile-budget-check [--baseline tests/vector-compile-budget/release-baseline.json]
-  cargo run -p xtask -- lockstep-simd-check
-  cargo run -p xtask -- ffi-boundary-check
-  cargo run -p xtask -- structure-check
-  cargo run -p xtask -- cli-transcript-gen
-  cargo run -p xtask -- cli-transcript-check
-  cargo run -p xtask -- emission-determinism [--passes N] [--allowlist FILE] [--write-unstable FILE] [--case STEM]...
-\nEnvironment for golden-gen-cpp:
-  FAUST_CPP_BIN   Path to reference C++ faust binary
-\nEnvironment for golden-check:
-  GOLDEN_REF      rust (default) or cpp
-";
+use wasmparser::{ExternalKind, Parser as WasmParser, Payload};
 
 /// Local checkout of the reference C++ Faust source tree used by static parser
 /// report generation.
@@ -130,76 +81,71 @@ const TABLE_FASTLANE_DIFF_REPORT_REL_PATH: &str =
 
 /// `xtask` process entry point.
 fn main() {
-    if let Err(err) = run() {
-        eprintln!("xtask error: {err}");
-        std::process::exit(1);
+    let cli = XtaskCli::parse();
+    let exit_code = std::thread::Builder::new()
+        .name("xtask".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            if let Err(err) = run(cli) {
+                eprintln!("xtask error: {err}");
+                1
+            } else {
+                0
+            }
+        })
+        .expect("failed to spawn xtask worker thread")
+        .join()
+        .expect("xtask worker thread panicked");
+    if exit_code != 0 {
+        std::process::exit(exit_code);
     }
 }
 
 /// Dispatches one `xtask` subcommand.
-fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = std::env::args().skip(1);
-    let Some(command) = args.next() else {
-        print!("{USAGE}");
-        return Ok(());
-    };
-
-    match command.as_str() {
-        "golden-check" => golden_check(None)?,
-        "golden-check-cpp" => golden_check(Some(GoldenRef::Cpp))?,
-        "golden-gen-rust" => golden_gen_rust()?,
-        "golden-gen-cpp" => {
-            let mut passthrough: Vec<OsString> = Vec::new();
-            let mut separator_seen = false;
-            for arg in args {
-                if separator_seen {
-                    passthrough.push(OsString::from(arg));
-                } else if arg == "--" {
-                    separator_seen = true;
-                }
-            }
-            golden_gen_cpp(&passthrough)?;
-        }
-        "interp-trace-dump" => interp_trace_dump(args)?,
-        "interp-trace-dump-cppfbc" => interp_trace_dump_cppfbc(args)?,
-        "interp-trace-gen-cppfbc" => interp_trace_gen_cppfbc(args)?,
-        "interp-trace-gen" => interp_trace_gen(args)?,
-        "interp-trace-check" => interp_trace_check(args)?,
-        "fir-dump-scan" => fir_dump_scan(args)?,
-        "build-faustwasm-compiler-module" => build_faustwasm_compiler_module(args)?,
-        "build-libfaust" => build_libfaust_distribution_command(args)?,
-        "backend-align-smoke" => backend_align_smoke(args)?,
-        "backend-align-nightly" => backend_align_nightly(args)?,
-        "code-graphs" => code_graphs(args)?,
-        "parser-parity-report" => parser_parity_report()?,
-        "corpus-status-report" => corpus_status_report()?,
-        "corpus-status-query" => corpus_status_query(args)?,
-        "cpp-backend-diff-report" => cpp_backend_diff_report()?,
-        "c-fastlane-diff-report" => c_fastlane_diff_report()?,
-        "backend-full-corpus-diff-report" => backend_full_corpus_diff_report()?,
-        "table-fastlane-diff-report" => table_fastlane_diff_report()?,
-        "libfaust-api-matrix" => libfaust_api_matrix(args)?,
-        "libfaust-export-check" => libfaust_export_check(args)?,
-        "p7-matrix-report" => p7_matrix_report(args)?,
-        "vector-coverage-merge" => vector_coverage_merge(args)?,
-        "vector-coverage-check" => vector_coverage_check(args)?,
-        "ffi-boundary-check" => ffi_boundary_check()?,
-        "structure-check" => structure_check()?,
-        "cli-transcript-gen" => cli_transcript_gen()?,
-        "cli-transcript-check" => cli_transcript_check()?,
-        "vector-interp-opt-check" => vector_interp_opt_check(args)?,
-        "vector-compile-budget-check" => vector_compile_budget_check(args)?,
-        "lockstep-simd-check" => lockstep_simd_check(args)?,
-        "emission-determinism" => emission_determinism(args)?,
-        _ => {
-            print!("{USAGE}");
-        }
+fn run(cli: XtaskCli) -> Result<(), Box<dyn std::error::Error>> {
+    match cli.command {
+        XtaskCommand::GoldenCheck => golden_check(None)?,
+        XtaskCommand::GoldenCheckCpp => golden_check(Some(GoldenRef::Cpp))?,
+        XtaskCommand::GoldenGenRust => golden_gen_rust()?,
+        XtaskCommand::GoldenGenCpp(args) => golden_gen_cpp(&args.extra_args)?,
+        XtaskCommand::InterpTraceDump(args) => interp_trace_dump(args)?,
+        XtaskCommand::InterpTraceDumpCppfbc(args) => interp_trace_dump_cppfbc(args)?,
+        XtaskCommand::InterpTraceGenCppfbc(args) => interp_trace_gen_cppfbc(args)?,
+        XtaskCommand::InterpTraceGen(args) => interp_trace_gen(args)?,
+        XtaskCommand::InterpTraceCheck(args) => interp_trace_check(args)?,
+        XtaskCommand::FirDumpScan(args) => fir_dump_scan(args)?,
+        XtaskCommand::BuildFaustwasmCompilerModule(args) => build_faustwasm_compiler_module(args)?,
+        XtaskCommand::BuildLibfaust(args) => build_libfaust_distribution_command(args)?,
+        XtaskCommand::BackendAlignSmoke(args) => backend_align_smoke(args)?,
+        XtaskCommand::BackendAlignNightly(args) => backend_align_nightly(args)?,
+        XtaskCommand::CodeGraphs(args) => code_graphs(args)?,
+        XtaskCommand::ParserParityReport => parser_parity_report()?,
+        XtaskCommand::CorpusStatusReport => corpus_status_report()?,
+        XtaskCommand::CorpusStatusQuery(args) => corpus_status_query(args)?,
+        XtaskCommand::CppBackendDiffReport => cpp_backend_diff_report()?,
+        XtaskCommand::CFastlaneDiffReport => c_fastlane_diff_report()?,
+        XtaskCommand::BackendFullCorpusDiffReport => backend_full_corpus_diff_report()?,
+        XtaskCommand::TableFastlaneDiffReport => table_fastlane_diff_report()?,
+        XtaskCommand::LibfaustApiMatrix(args) => libfaust_api_matrix(args)?,
+        XtaskCommand::LibfaustExportCheck(args) => libfaust_export_check(args)?,
+        XtaskCommand::P7MatrixReport(args) => p7_matrix_report(args)?,
+        XtaskCommand::VectorCoverageMerge(args) => vector_coverage_merge(args)?,
+        XtaskCommand::VectorCoverageCheck(args) => vector_coverage_check(args)?,
+        XtaskCommand::VectorInterpOptCheck => vector_interp_opt_check()?,
+        XtaskCommand::VectorCompileBudgetCheck(args) => vector_compile_budget_check(args)?,
+        XtaskCommand::LockstepSimdCheck => lockstep_simd_check()?,
+        XtaskCommand::FfiBoundaryCheck => ffi_boundary_check()?,
+        XtaskCommand::StructureCheck => structure_check()?,
+        XtaskCommand::CliTranscriptGen => cli_transcript_gen()?,
+        XtaskCommand::CliTranscriptCheck => cli_transcript_check()?,
+        XtaskCommand::EmissionDeterminism(args) => emission_determinism(args)?,
     }
 
     Ok(())
 }
 
 mod backend_align;
+mod cli;
 mod cli_transcript;
 mod code_graphs;
 mod corpus_status_query;
@@ -220,6 +166,7 @@ mod vector_coverage;
 mod wasm;
 
 pub(crate) use backend_align::*;
+pub(crate) use cli::*;
 pub(crate) use cli_transcript::*;
 pub(crate) use code_graphs::*;
 pub(crate) use corpus_status_query::*;

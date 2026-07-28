@@ -68,22 +68,15 @@ struct VectorErrorEntry {
 }
 
 pub(crate) fn vector_coverage_merge(
-    mut args: impl Iterator<Item = String>,
+    args: VectorCoverageMergeArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut reports = None;
-    let mut out = workspace_root().join(VECTOR_COVERAGE_BASELINE);
-    let mut certified_list = workspace_root().join(VECTOR_CERTIFIED_LIST);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--reports" => reports = Some(PathBuf::from(required_arg(&mut args, "--reports")?)),
-            "--out" => out = PathBuf::from(required_arg(&mut args, "--out")?),
-            "--certified-list" => {
-                certified_list = PathBuf::from(required_arg(&mut args, "--certified-list")?)
-            }
-            other => return Err(format!("unknown vector-coverage-merge option: {other}").into()),
-        }
-    }
-    let reports = reports.ok_or("vector-coverage-merge requires --reports <directory>")?;
+    let reports = args.reports;
+    let out = args
+        .out
+        .unwrap_or_else(|| workspace_root().join(VECTOR_COVERAGE_BASELINE));
+    let certified_list = args
+        .certified_list
+        .unwrap_or_else(|| workspace_root().join(VECTOR_CERTIFIED_LIST));
     let mut paths = fs::read_dir(&reports)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -135,15 +128,11 @@ pub(crate) fn vector_coverage_merge(
 }
 
 pub(crate) fn vector_coverage_check(
-    mut args: impl Iterator<Item = String>,
+    args: VectorCoverageCheckArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut baseline_path = workspace_root().join(VECTOR_COVERAGE_BASELINE);
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--baseline" => baseline_path = PathBuf::from(required_arg(&mut args, "--baseline")?),
-            other => return Err(format!("unknown vector-coverage-check option: {other}").into()),
-        }
-    }
+    let baseline_path = args
+        .baseline
+        .unwrap_or_else(|| workspace_root().join(VECTOR_COVERAGE_BASELINE));
     let text = fs::read_to_string(&baseline_path)?;
     let baseline: VectorCoverageBaseline = serde_json::from_str(&text)?;
     let corpus = vector_corpus_files()?;
@@ -260,14 +249,6 @@ fn check_vector_retention_mode(
         }
     }
     Ok(report.certified_files.len())
-}
-
-fn required_arg(
-    args: &mut impl Iterator<Item = String>,
-    option: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    args.next()
-        .ok_or_else(|| format!("{option} requires a value").into())
 }
 
 fn real_type(precision: &str) -> Result<RealType, Box<dyn std::error::Error>> {

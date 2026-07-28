@@ -33,17 +33,15 @@ impl TraceScenario {
             Self::Sine => "sine",
         }
     }
+}
 
-    /// Parses a CLI/runtime-trace scenario name.
-    pub(crate) fn parse(s: &str) -> Result<Self, String> {
-        match s {
-            "zeros" => Ok(Self::Zeros),
-            "impulse" => Ok(Self::Impulse),
-            "ramp" => Ok(Self::Ramp),
-            "sine" => Ok(Self::Sine),
-            _ => Err(format!(
-                "unknown scenario '{s}' (expected: zeros|impulse|ramp|sine)"
-            )),
+impl From<TraceScenarioArg> for TraceScenario {
+    fn from(value: TraceScenarioArg) -> Self {
+        match value {
+            TraceScenarioArg::Zeros => Self::Zeros,
+            TraceScenarioArg::Impulse => Self::Impulse,
+            TraceScenarioArg::Ramp => Self::Ramp,
+            TraceScenarioArg::Sine => Self::Sine,
         }
     }
 }
@@ -63,18 +61,18 @@ impl TraceLane {
         }
     }
 
-    /// Parses the accepted CLI aliases for one interpreter lane.
-    pub(crate) fn parse(s: &str) -> Result<Self, String> {
-        match s {
-            "fast" | "fast-lane" | "transform" => Ok(Self::Fast),
-            _ => Err(format!("unknown lane '{s}' (expected: fast)")),
-        }
-    }
-
     /// Maps the CLI/runtime-trace lane to the compiler's signal-to-FIR lane.
     pub(crate) fn to_signal_fir_lane(self) -> compiler::SignalFirLane {
         match self {
             Self::Fast => compiler::SignalFirLane::TransformFastLane,
+        }
+    }
+}
+
+impl From<TraceLaneArg> for TraceLane {
+    fn from(value: TraceLaneArg) -> Self {
+        match value {
+            TraceLaneArg::Fast => Self::Fast,
         }
     }
 }
@@ -249,11 +247,73 @@ impl Default for InterpTraceBatchOptions {
     }
 }
 
+impl From<InterpTraceDumpArgs> for InterpTraceDumpOptions {
+    fn from(args: InterpTraceDumpArgs) -> Self {
+        Self {
+            case: args.case,
+            scenario: args.scenario.into(),
+            lane: args.lane.into(),
+            sample_rate: args.sample_rate,
+            block_size: args.block_size,
+            num_blocks: args.num_blocks,
+            strict_fir_types: args.strict_fir_types,
+            out: args.out,
+        }
+    }
+}
+
+impl From<InterpTraceCppFbcDumpArgs> for InterpTraceCppFbcDumpOptions {
+    fn from(args: InterpTraceCppFbcDumpArgs) -> Self {
+        Self {
+            trace: InterpTraceDumpOptions {
+                case: args.case,
+                scenario: args.scenario.into(),
+                lane: TraceLane::Fast,
+                sample_rate: args.sample_rate,
+                block_size: args.block_size,
+                num_blocks: args.num_blocks,
+                strict_fir_types: false,
+                out: args.out,
+            },
+            faust_bin: args.faust_bin,
+        }
+    }
+}
+
+impl From<InterpTraceCppFbcBatchArgs> for InterpTraceCppFbcBatchOptions {
+    fn from(args: InterpTraceCppFbcBatchArgs) -> Self {
+        Self {
+            case: args.case,
+            scenario: args.scenario.into(),
+            sample_rate: args.sample_rate,
+            block_size: args.block_size,
+            num_blocks: args.num_blocks,
+            out_dir: args
+                .out_dir
+                .unwrap_or_else(|| workspace_root().join("tests/runtime_traces/cppfbc")),
+            faust_bin: args.faust_bin,
+        }
+    }
+}
+
+impl From<InterpTraceBatchArgs> for InterpTraceBatchOptions {
+    fn from(args: InterpTraceBatchArgs) -> Self {
+        Self {
+            case: args.case,
+            lane: args.lane.into(),
+            sample_rate: args.sample_rate,
+            block_size: args.block_size,
+            num_blocks: args.num_blocks,
+            strict_fir_types: args.strict_fir_types,
+        }
+    }
+}
+
 /// Executes one Rust interpreter trace run and writes/prints the JSON payload.
 pub(crate) fn interp_trace_dump(
-    mut args: impl Iterator<Item = String>,
+    args: InterpTraceDumpArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_interp_trace_dump_options(&mut args)?;
+    let options = InterpTraceDumpOptions::from(args);
     let trace = run_interp_trace_case(&options)?;
     let json = render_runtime_trace_json(&trace);
     if let Some(path) = &options.out {
@@ -266,9 +326,9 @@ pub(crate) fn interp_trace_dump(
 
 /// Executes one C++ `.fbc`-backed trace run and writes/prints the JSON payload.
 pub(crate) fn interp_trace_dump_cppfbc(
-    mut args: impl Iterator<Item = String>,
+    args: InterpTraceCppFbcDumpArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_interp_trace_dump_cppfbc_options(&mut args)?;
+    let options = InterpTraceCppFbcDumpOptions::from(args);
     let trace = run_interp_trace_case_from_cpp_fbc(&options)?;
     let json = render_runtime_trace_json(&trace);
     if let Some(path) = &options.trace.out {
@@ -281,9 +341,9 @@ pub(crate) fn interp_trace_dump_cppfbc(
 
 /// Generates C++ `.fbc` trace snapshots for one case or the default corpus.
 pub(crate) fn interp_trace_gen_cppfbc(
-    mut args: impl Iterator<Item = String>,
+    args: InterpTraceCppFbcBatchArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_interp_trace_gen_cppfbc_options(&mut args)?;
+    let options = InterpTraceCppFbcBatchOptions::from(args);
     let mut cases = if let Some(case) = &options.case {
         vec![case.clone()]
     } else {
@@ -331,230 +391,11 @@ pub(crate) fn interp_trace_gen_cppfbc(
     Ok(())
 }
 
-/// Parses CLI options for `interp-trace-dump`.
-pub(crate) fn parse_interp_trace_dump_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<InterpTraceDumpOptions, Box<dyn std::error::Error>> {
-    let mut options = InterpTraceDumpOptions::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--case" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --case".into());
-                };
-                options.case = PathBuf::from(path);
-            }
-            "--scenario" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --scenario".into());
-                };
-                options.scenario = TraceScenario::parse(&value)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            }
-            "--lane" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --lane".into());
-                };
-                options.lane = TraceLane::parse(&value)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            }
-            "--sample-rate" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --sample-rate".into());
-                };
-                options.sample_rate = value.parse::<usize>()?;
-            }
-            "--block-size" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --block-size".into());
-                };
-                options.block_size = value.parse::<usize>()?;
-            }
-            "--num-blocks" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --num-blocks".into());
-                };
-                options.num_blocks = value.parse::<usize>()?;
-            }
-            "--strict-fir-types" => {
-                options.strict_fir_types = true;
-            }
-            "--out" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --out".into());
-                };
-                options.out = Some(PathBuf::from(path));
-            }
-            "--help" | "-h" => {
-                return Err("usage: cargo run -p xtask -- interp-trace-dump --case <path> [--scenario zeros|impulse|ramp|sine] [--lane fast] [--sample-rate N] [--block-size N] [--num-blocks N] [--strict-fir-types] [--out path]".into());
-            }
-            other => {
-                return Err(format!("unknown interp-trace-dump option: {other}").into());
-            }
-        }
-    }
-
-    if options.case.as_os_str().is_empty() {
-        return Err("interp-trace-dump requires --case <path>".into());
-    }
-    if options.block_size == 0 || options.num_blocks == 0 {
-        return Err("block-size and num-blocks must be > 0".into());
-    }
-    Ok(options)
-}
-
-/// Parses CLI options for `interp-trace-dump-cppfbc`.
-///
-/// The lane is fixed to the C++ `.fbc` runtime path, so flags that would alter
-/// FIR-lane semantics are rejected here instead of ignored.
-pub(crate) fn parse_interp_trace_dump_cppfbc_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<InterpTraceCppFbcDumpOptions, Box<dyn std::error::Error>> {
-    let mut options = InterpTraceCppFbcDumpOptions {
-        trace: InterpTraceDumpOptions::default(),
-        faust_bin: None,
-    };
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--case" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --case".into());
-                };
-                options.trace.case = PathBuf::from(path);
-            }
-            "--scenario" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --scenario".into());
-                };
-                options.trace.scenario = TraceScenario::parse(&value)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            }
-            "--faust-bin" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --faust-bin".into());
-                };
-                options.faust_bin = Some(PathBuf::from(path));
-            }
-            "--sample-rate" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --sample-rate".into());
-                };
-                options.trace.sample_rate = value.parse::<usize>()?;
-            }
-            "--block-size" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --block-size".into());
-                };
-                options.trace.block_size = value.parse::<usize>()?;
-            }
-            "--num-blocks" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --num-blocks".into());
-                };
-                options.trace.num_blocks = value.parse::<usize>()?;
-            }
-            "--out" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --out".into());
-                };
-                options.trace.out = Some(PathBuf::from(path));
-            }
-            "--lane" => {
-                return Err(
-                    "--lane is not supported for interp-trace-dump-cppfbc (source is C++ .fbc)"
-                        .into(),
-                );
-            }
-            "--strict-fir-types" => {
-                return Err(
-                    "--strict-fir-types is not applicable to interp-trace-dump-cppfbc".into(),
-                );
-            }
-            "--help" | "-h" => {
-                return Err("usage: cargo run -p xtask -- interp-trace-dump-cppfbc --case <path> [--scenario zeros|impulse|ramp|sine] [--faust-bin /path/to/faust] [--sample-rate N] [--block-size N] [--num-blocks N] [--out path]".into());
-            }
-            other => {
-                return Err(format!("unknown interp-trace-dump-cppfbc option: {other}").into());
-            }
-        }
-    }
-    if options.trace.case.as_os_str().is_empty() {
-        return Err("interp-trace-dump-cppfbc requires --case <path>".into());
-    }
-    if options.trace.block_size == 0 || options.trace.num_blocks == 0 {
-        return Err("block-size and num-blocks must be > 0".into());
-    }
-    options.trace.lane = TraceLane::Fast;
-    Ok(options)
-}
-
-/// Parses CLI options for `interp-trace-gen-cppfbc`.
-pub(crate) fn parse_interp_trace_gen_cppfbc_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<InterpTraceCppFbcBatchOptions, Box<dyn std::error::Error>> {
-    let mut options = InterpTraceCppFbcBatchOptions::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--case" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --case".into());
-                };
-                options.case = Some(PathBuf::from(path));
-            }
-            "--scenario" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --scenario".into());
-                };
-                options.scenario = TraceScenario::parse(&value)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            }
-            "--faust-bin" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --faust-bin".into());
-                };
-                options.faust_bin = Some(PathBuf::from(path));
-            }
-            "--sample-rate" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --sample-rate".into());
-                };
-                options.sample_rate = value.parse::<usize>()?;
-            }
-            "--block-size" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --block-size".into());
-                };
-                options.block_size = value.parse::<usize>()?;
-            }
-            "--num-blocks" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --num-blocks".into());
-                };
-                options.num_blocks = value.parse::<usize>()?;
-            }
-            "--out-dir" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --out-dir".into());
-                };
-                options.out_dir = PathBuf::from(path);
-            }
-            "--help" | "-h" => {
-                return Err("usage: cargo run -p xtask -- interp-trace-gen-cppfbc [--case <path>] [--scenario zeros|impulse|ramp|sine] [--faust-bin /path/to/faust] [--sample-rate N] [--block-size N] [--num-blocks N] [--out-dir <dir>]".into());
-            }
-            other => return Err(format!("unknown interp-trace-gen-cppfbc option: {other}").into()),
-        }
-    }
-    if options.block_size == 0 || options.num_blocks == 0 {
-        return Err("block-size and num-blocks must be > 0".into());
-    }
-    Ok(options)
-}
-
 /// Generates Rust runtime-trace snapshots for the selected runtime corpus cases.
 pub(crate) fn interp_trace_gen(
-    mut args: impl Iterator<Item = String>,
+    options: impl Into<InterpTraceBatchOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_interp_trace_batch_options(&mut args)?;
+    let options = options.into();
     let cases = runtime_trace_cases(&options)?;
     let mut generated = 0usize;
     for case in cases {
@@ -591,9 +432,9 @@ pub(crate) fn interp_trace_gen(
 
 /// Recomputes Rust runtime traces and compares them against checked-in snapshots.
 pub(crate) fn interp_trace_check(
-    mut args: impl Iterator<Item = String>,
+    options: impl Into<InterpTraceBatchOptions>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let options = parse_interp_trace_batch_options(&mut args)?;
+    let options = options.into();
     let tol = TraceCompareTolerances::default();
     let cases = runtime_trace_cases(&options)?;
     let mut checked = 0usize;
@@ -726,12 +567,7 @@ const VECTOR_INTERP_OPT_CASES: &[&str] = &[
 /// This is intentionally separate from the scalar runtime-trace snapshots:
 /// the guard requires the checked vector module to remain certified before its
 /// optimized and unoptimized bytecode executions are compared.
-pub(crate) fn vector_interp_opt_check(
-    mut args: impl Iterator<Item = String>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(option) = args.next() {
-        return Err(format!("unknown vector-interp-opt-check option: {option}").into());
-    }
+pub(crate) fn vector_interp_opt_check() -> Result<(), Box<dyn std::error::Error>> {
     let defaults = InterpTraceBatchOptions::default();
     let mut compared = 0usize;
     for relative in VECTOR_INTERP_OPT_CASES {
@@ -797,59 +633,6 @@ pub(crate) fn vector_interp_opt_check(
     }
     println!("vector-interp-opt-check: {compared} checked vector trace(s) matched");
     Ok(())
-}
-
-/// Parses shared batch options for `interp-trace-gen` and `interp-trace-check`.
-pub(crate) fn parse_interp_trace_batch_options(
-    args: &mut impl Iterator<Item = String>,
-) -> Result<InterpTraceBatchOptions, Box<dyn std::error::Error>> {
-    let mut options = InterpTraceBatchOptions::default();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--case" => {
-                let Some(path) = args.next() else {
-                    return Err("missing value after --case".into());
-                };
-                options.case = Some(PathBuf::from(path));
-            }
-            "--lane" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --lane".into());
-                };
-                options.lane = TraceLane::parse(&value)
-                    .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            }
-            "--sample-rate" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --sample-rate".into());
-                };
-                options.sample_rate = value.parse::<usize>()?;
-            }
-            "--block-size" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --block-size".into());
-                };
-                options.block_size = value.parse::<usize>()?;
-            }
-            "--num-blocks" => {
-                let Some(value) = args.next() else {
-                    return Err("missing value after --num-blocks".into());
-                };
-                options.num_blocks = value.parse::<usize>()?;
-            }
-            "--strict-fir-types" => {
-                options.strict_fir_types = true;
-            }
-            "--help" | "-h" => {
-                return Err("usage: cargo run -p xtask -- interp-trace-gen [--case <path>] [--lane fast] [--sample-rate N] [--block-size N] [--num-blocks N] [--strict-fir-types]".into());
-            }
-            other => return Err(format!("unknown interp-trace batch option: {other}").into()),
-        }
-    }
-    if options.block_size == 0 || options.num_blocks == 0 {
-        return Err("block-size and num-blocks must be > 0".into());
-    }
-    Ok(options)
 }
 
 /// Resolves the case list for a batch runtime-trace workflow.

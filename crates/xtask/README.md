@@ -19,8 +19,12 @@ cargo run -p xtask -- <command> [options]
 Show the command summary:
 
 ```bash
-cargo run -p xtask
+cargo run -p xtask -- --help
 ```
+
+Every subcommand also provides generated option help, for example
+`cargo run -p xtask -- interp-trace-dump --help`. Invalid command lines return
+status 2; help and version requests return status 0.
 
 ## Prerequisites
 
@@ -76,6 +80,8 @@ dot -V
 | `lockstep-simd-check` | Require Clang to emit four-wide LLVM floating-point operations for complex lockstep corpus cases |
 | `ffi-boundary-check` | Enforce one-way FFI dependency layers and the explicit unsafe-code allowlist |
 | `structure-check` | Validate repository layout, checker isolation, and source-size contracts |
+| `cli-transcript-gen` | Record the local compiler CLI differential transcript |
+| `cli-transcript-check` | Compare the compiler CLI against the recorded local transcript |
 | `emission-determinism` | Repeat selected compilations and report nondeterministic output |
 
 ## Vector Coverage Retention
