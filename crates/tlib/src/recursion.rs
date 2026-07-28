@@ -295,7 +295,7 @@ pub fn de_bruijn_to_sym(arena: &mut TreeArena, root: TreeId) -> Result<TreeId, R
 /// de Bruijn recursion sub-term, that drift forks them into two distinct
 /// symbolic recursions. Downstream consumers that compare by `TreeId`
 /// (e.g. seed matching in forward-mode AD) then silently miss the shared
-/// sub-term. This helper routes every root through one [`Converter`] so the
+/// sub-term. This helper routes every root through one internal converter so the
 /// memo and `next_var_index` are shared.
 pub fn de_bruijn_to_sym_many(
     arena: &mut TreeArena,

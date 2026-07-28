@@ -259,35 +259,164 @@ pub(crate) fn fir_verify_error_to_compiler(source: &str, report: FirVerifyReport
 }
 
 /// Runs canonical `sigtype` validation on propagated signals before later stages.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn validate_signal_types(
     source: &str,
     arena: &tlib::TreeArena,
     signals: &[SigId],
     ui: &UiProgram,
+    signal_origins: &propagate::SignalOrigins,
+    ctx: &parser::ParserCtx,
+    defs_root: BoxId,
+    entrypoint_name: &str,
 ) -> Result<(), CompilerError> {
     let mut annotator = TypeAnnotator::new(arena, ui);
-    annotator
-        .annotate(signals)
-        .map(|_| ())
-        .map_err(|error| type_error_to_compiler(source, error))
+    annotator.annotate(signals).map(|_| ()).map_err(|error| {
+        type_error_to_compiler(
+            source,
+            error,
+            arena,
+            signal_origins,
+            ctx,
+            defs_root,
+            entrypoint_name,
+        )
+    })
 }
 
 /// Wraps a signal type validation error into the compiler facade error surface.
-pub(crate) fn type_error_to_compiler(source: &str, error: InferenceError) -> CompilerError {
-    let diagnostic = Diagnostic::new(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn type_error_to_compiler(
+    source: &str,
+    error: InferenceError,
+    arena: &tlib::TreeArena,
+    signal_origins: &propagate::SignalOrigins,
+    ctx: &parser::ParserCtx,
+    defs_root: BoxId,
+    entrypoint_name: &str,
+) -> CompilerError {
+    let mut diagnostic = Diagnostic::new(
         Severity::Error,
-        Stage::Compiler,
+        Stage::TypeInference,
         COMP_TYPE_FAILED,
-        error.0.clone(),
+        error.message(),
     )
     .with_category(DiagnosticCategory::UserCode)
-    .with_detail_code("signal-type-inference")
-    .with_note("stage=sigtype");
+    .with_detail_code(error.rule().as_str())
+    .with_fact("inference_rule", error.rule().as_str());
+
+    if let Some(actual) = error.actual_type() {
+        diagnostic = diagnostic.with_fact("actual_type", actual.to_string());
+    }
+    if let Some(actual) = error.actual_interval() {
+        diagnostic = diagnostic.with_fact("actual_interval", interval_fact(actual));
+    }
+    if let Some((min, max)) = error.required_integer_interval() {
+        diagnostic = diagnostic.with_fact(
+            "required_interval",
+            DiagnosticValue::IntegerRange {
+                min: i64::from(min),
+                max: i64::from(max),
+            },
+        );
+    }
+    if let Some(expected) = error.expected() {
+        diagnostic = diagnostic.with_fact("expected", expected);
+    }
+    let operands = error.operands();
+    if !operands.is_empty() {
+        diagnostic = diagnostic.with_debug_fact(
+            "operand_signal_ids",
+            operands
+                .iter()
+                .map(|sig| sig.as_u32().to_string())
+                .collect::<Vec<_>>(),
+        );
+    }
+    if let Some(signal) = error.signal() {
+        diagnostic = diagnostic
+            .with_debug_fact("signal_id", u64::from(signal.as_u32()))
+            .with_debug_fact("signal_expr", signals::dump_sig_readable(arena, signal));
+        diagnostic = add_signal_source_labels(
+            diagnostic,
+            signal,
+            signal_origins,
+            ctx,
+            arena,
+            defs_root,
+            entrypoint_name,
+        );
+    }
     CompilerError::Type {
         source: source.into(),
-        error,
+        error: Box::new(error),
         diagnostics: bundle_from_diagnostic(diagnostic),
     }
+}
+
+fn interval_fact(interval: interval::Interval) -> DiagnosticValue {
+    let mut fields = std::collections::BTreeMap::new();
+    fields.insert(
+        FactKey::new("min"),
+        DiagnosticValue::Real(interval.lo().to_string().into()),
+    );
+    fields.insert(
+        FactKey::new("max"),
+        DiagnosticValue::Real(interval.hi().to_string().into()),
+    );
+    fields.insert(
+        FactKey::new("lsb"),
+        DiagnosticValue::Integer(i64::from(interval.lsb())),
+    );
+    DiagnosticValue::Object(fields)
+}
+
+fn add_signal_source_labels(
+    mut diagnostic: Diagnostic,
+    signal: SigId,
+    signal_origins: &propagate::SignalOrigins,
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    entrypoint_name: &str,
+) -> Diagnostic {
+    for &box_node in signal_origins.origins_for(signal) {
+        let owner =
+            reachable_owner_definition_name_for_node(arena, defs_root, box_node, entrypoint_name);
+        let exact = owner.as_deref().and_then(|owner| {
+            source_span_for_node_in_definition(ctx, arena, defs_root, box_node, owner)
+        });
+        if let Some(span) = exact {
+            diagnostic = diagnostic.with_label(
+                Label::new(LabelStyle::Primary, span, "source expression")
+                    .with_role(LabelRole::DerivedFrom),
+            );
+            if let Some(owner) = owner
+                && let Some(definition) =
+                    source_span_for_definition_name(ctx, arena, defs_root, &owner)
+            {
+                diagnostic = diagnostic.with_label(
+                    Label::new(LabelStyle::Secondary, definition, "enclosing definition")
+                        .with_role(LabelRole::DefinitionSite),
+                );
+            }
+            return diagnostic;
+        }
+    }
+
+    if let Some(&box_node) = signal_origins.origins_for(signal).first() {
+        return maybe_add_source_label(
+            diagnostic,
+            ctx,
+            arena,
+            defs_root,
+            box_node,
+            reachable_owner_definition_name_for_node(arena, defs_root, box_node, entrypoint_name)
+                .as_deref(),
+            entrypoint_name,
+        );
+    }
+    diagnostic
 }
 
 // ─── DiagCtx: shared pipeline diagnostic enrichment ──────────────────────────

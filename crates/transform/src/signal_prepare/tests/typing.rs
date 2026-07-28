@@ -2,7 +2,9 @@
 //! monolithic `tests.rs`; test names unchanged).
 
 use super::fixtures::*;
-use crate::signal_prepare::{SimpleSigType, prepare_signals_for_fir};
+use crate::signal_prepare::{
+    SimpleSigType, prepare_signals_for_fir, prepare_signals_for_fir_verified_with_origins,
+};
 use signals::{BinOp, SigBuilder, SigMatch, dump_sig_readable, match_sig};
 
 #[test]
@@ -28,6 +30,34 @@ fn prepare_signals_for_fir_records_reduced_numeric_types() {
     assert_eq!(prepared.ty(prepared.outputs[0]), Some(SimpleSigType::Int));
     assert_eq!(prepared.ty(prepared.outputs[1]), Some(SimpleSigType::Int));
     assert_eq!(prepared.ty(prepared.outputs[2]), Some(SimpleSigType::Real));
+}
+
+#[test]
+fn preparation_remaps_and_inherits_signal_origins_across_rewrites() {
+    let mut arena = tlib::TreeArena::new();
+    let output = {
+        let mut builder = signals::SigBuilder::new(&mut arena);
+        let input = builder.input(0);
+        let one = builder.int(1);
+        builder.delay(input, one)
+    };
+    let mut origins = propagate::SignalOrigins::default();
+    origins.record(output, output);
+
+    let prepared = prepare_signals_for_fir_verified_with_origins(
+        &arena,
+        &[output],
+        &ui::UiProgram::empty(),
+        &origins,
+    )
+    .expect("provenance-aware preparation should succeed");
+
+    let prepared_output = prepared.outputs()[0];
+    assert!(matches!(
+        signals::match_sig(prepared.arena(), prepared_output),
+        signals::SigMatch::Delay1(_)
+    ));
+    assert_eq!(prepared.origins().origins_for(prepared_output), &[output]);
 }
 #[test]
 fn prepare_signals_for_fir_keeps_sampling_frequency_in_delay_amounts_after_simplify() {

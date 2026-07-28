@@ -476,7 +476,7 @@ fn division_by_zero_is_a_clean_diagnostic_not_a_panic() {
         !result.success,
         "expected exit 1 on a constant division by zero, matching C++"
     );
-    assert_eq!(first_code(&result), "FRS-SFIR-0004");
+    assert_eq!(first_code(&result), "FRS-COMP-0004");
     assert!(
         first_message(&result).contains("division by 0"),
         "expected the message to name the division by zero, got {}",

@@ -489,6 +489,26 @@ impl TreeArena {
             .collect()
     }
 
+    /// Clones a forest and returns the complete source-to-destination id map.
+    ///
+    /// This variant is intended for side tables such as diagnostic provenance:
+    /// node ids are arena-local, so metadata must be remapped explicitly when
+    /// a transform stages a forest in a private arena. Several source ids may
+    /// map to one destination id when destination hash-consing merges them.
+    #[must_use]
+    pub fn clone_forest_from_with_mapping(
+        &mut self,
+        src: &TreeArena,
+        roots: &[TreeId],
+    ) -> (Vec<TreeId>, HashMap<TreeId, TreeId>) {
+        let mut memo = HashMap::new();
+        let cloned = roots
+            .iter()
+            .map(|root| clone_rec(self, src, *root, &mut memo))
+            .collect();
+        (cloned, memo)
+    }
+
     /// Interns a tag string and returns its numeric tag id.
     ///
     /// This is the low-level API used by IR builders (`BoxBuilder`, `SigBuilder`,

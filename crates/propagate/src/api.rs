@@ -48,6 +48,7 @@ pub fn propagate_typed_with_ui_options(
     let mut slot_env = SlotEnv::new();
     let mut memo = PropagateMemo::default();
     let mut clock_domains = ClockDomainTable::new();
+    let mut signal_origins = SignalOrigins::default();
     let mut ctx = PropagateContext {
         cache,
         control_ids: &ui.control_ids,
@@ -59,10 +60,12 @@ pub fn propagate_typed_with_ui_options(
         suppress_fad: false,
         pending_fad_seeds: Vec::new(),
         current_groups: Vec::new(),
+        signal_origins: &mut signal_origins,
     };
     let signals = propagate_in_slot_env(arena, box_tree, inputs, &mut ctx)?;
     Ok(PropagateOutput {
         signals,
+        signal_origins,
         ui: ui.program,
         clock_domains,
     })

@@ -104,7 +104,7 @@ pub(crate) fn error_model_check() -> Result<(), Box<dyn std::error::Error>> {
         &[
             "fn source(&self)",
             "pub fn diagnostic_bundle(&self)",
-            "error: InferenceError",
+            "error: Box<InferenceError>",
         ],
         &mut findings,
     )?;

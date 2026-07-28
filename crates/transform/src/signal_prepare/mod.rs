@@ -126,6 +126,9 @@ pub struct PreparedSignals {
     /// Full signal type annotation from the `sigtype` type system.
     /// Carries interval bounds, variability, and all other lattice qualifiers.
     sig_types: HashMap<SigId, SigType>,
+    /// Box derivations remapped into the private staging arena and inherited
+    /// by nodes introduced by preparation rewrites.
+    origins: propagate::SignalOrigins,
 }
 
 /// Prepared-signal forest that passed the explicit postcondition verifier.
@@ -181,6 +184,12 @@ impl PreparedSignals {
     pub fn sig_types_map(&self) -> &HashMap<SigId, SigType> {
         &self.sig_types
     }
+
+    /// Returns Box-origin candidates for prepared Signal nodes.
+    #[must_use]
+    pub fn origins(&self) -> &propagate::SignalOrigins {
+        &self.origins
+    }
 }
 
 impl VerifiedPreparedSignals {
@@ -220,6 +229,12 @@ impl VerifiedPreparedSignals {
         self.inner.sig_types_map()
     }
 
+    /// Returns Box-origin candidates for verified prepared Signal nodes.
+    #[must_use]
+    pub fn origins(&self) -> &propagate::SignalOrigins {
+        self.inner.origins()
+    }
+
     /// Releases the verified wrapper and returns the inner prepared forest.
     #[must_use]
     pub fn into_inner(self) -> PreparedSignals {
@@ -234,6 +249,8 @@ pub enum SignalPrepareError {
     Recursion(RecursionError),
     /// Structural type-inference or validation error (e.g. malformed recursion body).
     Typing(String),
+    /// Typed failure returned by the canonical signal type annotator.
+    Inference(sigtype::InferenceError),
     /// Explicit prepared-forest contract validation failed.
     Validation(String),
     /// The signal promotion pass failed (type-driven cast insertion).
@@ -253,6 +270,7 @@ impl fmt::Display for SignalPrepareError {
                 "signal preparation failed during de_bruijn_to_sym: {err}"
             ),
             Self::Typing(msg) => write!(f, "signal preparation typing failed: {msg}"),
+            Self::Inference(err) => write!(f, "signal preparation typing failed: {err}"),
             Self::Validation(msg) => {
                 write!(f, "signal preparation postcondition failed: {msg}")
             }
@@ -266,6 +284,7 @@ impl Error for SignalPrepareError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Recursion(e) => Some(e),
+            Self::Inference(e) => Some(e),
             Self::Promotion(e) => Some(e),
             Self::Typing(_) | Self::Validation(_) | Self::DivisionByZero(_) => None,
         }
@@ -319,7 +338,7 @@ pub fn prepare_signals_for_fir(
     outputs: &[SigId],
     ui: &UiProgram,
 ) -> Result<PreparedSignals, SignalPrepareError> {
-    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui)?;
+    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None)?;
     verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
     prepared.verify(ui)?;
     Ok(prepared)
@@ -332,7 +351,25 @@ pub fn prepare_signals_for_fir_verified(
     outputs: &[SigId],
     ui: &UiProgram,
 ) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
-    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui)?;
+    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None)?;
+    verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
+    prepared.into_verified(ui)
+}
+
+/// Prepares and verifies a Signal forest while preserving Box provenance.
+///
+/// This is the provenance-aware counterpart of
+/// [`prepare_signals_for_fir_verified`]. It remaps arena-local Signal ids
+/// during the staging clone, then conservatively propagates origins through
+/// recursion conversion, promotion, simplification, recursion merging, and
+/// delay canonicalization.
+pub fn prepare_signals_for_fir_verified_with_origins(
+    src_arena: &TreeArena,
+    outputs: &[SigId],
+    ui: &UiProgram,
+    origins: &propagate::SignalOrigins,
+) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
+    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, Some(origins))?;
     verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
     prepared.into_verified(ui)
 }
@@ -352,17 +389,28 @@ struct Staging<'ui> {
     /// Always "fresh for `outputs`" after each [`Self::retype`] call.
     sig_types: HashMap<SigId, SigType>,
     ui: &'ui UiProgram,
+    origins: propagate::SignalOrigins,
 }
 
 impl<'ui> Staging<'ui> {
     /// Initializes staging from a freshly cloned forest.
-    fn new(arena: TreeArena, outputs: Vec<SigId>, ui: &'ui UiProgram) -> Self {
+    fn new(
+        arena: TreeArena,
+        outputs: Vec<SigId>,
+        ui: &'ui UiProgram,
+        origins: propagate::SignalOrigins,
+    ) -> Self {
         Self {
             arena,
             outputs,
             sig_types: HashMap::new(),
             ui,
+            origins,
         }
+    }
+
+    fn inherit_origins(&mut self) {
+        self.origins.inherit_forest(&self.arena, &self.outputs);
     }
 
     /// Refreshes `sig_types` via a full `TypeAnnotator` pass over `outputs`.
@@ -376,19 +424,25 @@ impl<'ui> Staging<'ui> {
 
     /// Pass 2.2: converts de Bruijn recursion to symbolic `SYMREC` / `SYMREF`.
     fn de_bruijn_to_sym(&mut self) -> Result<(), SignalPrepareError> {
+        let before = self.outputs.clone();
         let list = vec_to_list(&mut self.arena, &self.outputs);
         let symbolic_list = tlib::de_bruijn_to_sym(&mut self.arena, list)?;
         self.outputs = list_to_vec(&self.arena, symbolic_list)
             .expect("de_bruijn_to_sym rebuilds a proper cons list");
+        self.origins.inherit_replacements(&before, &self.outputs);
+        self.inherit_origins();
         Ok(())
     }
 
     /// Pass 2.3: canonicalizes unary symbolic recursion projection indices to `0`.
     fn canon_unary_rec(&mut self) -> Result<(), SignalPrepareError> {
+        let before = self.outputs.clone();
         let list = vec_to_list(&mut self.arena, &self.outputs);
         let canonical_list = rewrites::canonicalize_unary_rec_projections(&mut self.arena, list)?;
         self.outputs = list_to_vec(&self.arena, canonical_list)
             .expect("canonicalize_unary_rec_projections rebuilds a proper cons list");
+        self.origins.inherit_replacements(&before, &self.outputs);
+        self.inherit_origins();
         Ok(())
     }
 
@@ -402,8 +456,11 @@ impl<'ui> Staging<'ui> {
 
     /// Pass 2.5: first promotion pass — inserts `SignalPromotion` casts.
     fn promote(&mut self) -> Result<(), SignalPrepareError> {
+        let before = self.outputs.clone();
         self.outputs = promote_signals_fastlane(&mut self.arena, &self.sig_types, &self.outputs)
             .map_err(SignalPrepareError::Promotion)?;
+        self.origins.inherit_replacements(&before, &self.outputs);
+        self.inherit_origins();
         Ok(())
     }
 
@@ -413,22 +470,31 @@ impl<'ui> Staging<'ui> {
     /// C++ reports as a fatal `ERROR : division by 0 in ...` from
     /// `mterm::operator/=`.
     fn simplify(&mut self) -> Result<(), SignalPrepareError> {
+        let before = self.outputs.clone();
         self.outputs = simplify_signals_fastlane(&mut self.arena, &self.sig_types, &self.outputs)
             .map_err(|err| match err {
             NormalFormError::DivisionByZero(msg) => SignalPrepareError::DivisionByZero(msg),
             other => SignalPrepareError::Promotion(other),
         })?;
+        self.origins.inherit_replacements(&before, &self.outputs);
+        self.inherit_origins();
         Ok(())
     }
 
     /// Pass 2.8: merges isomorphic symbolic recursion groups.
     fn merge_iso_rec(&mut self) {
+        let before = self.outputs.clone();
         self.outputs = normalize::merge_isomorphic_symrec_groups(&mut self.arena, &self.outputs);
+        self.origins.inherit_replacements(&before, &self.outputs);
+        self.inherit_origins();
     }
 
     /// Pass 2.11: rewrites every `Delay(x, 1)` to the canonical `Delay1(x)` form.
     fn canon_one_sample_delays(&mut self) -> Result<(), SignalPrepareError> {
+        let before = self.outputs.clone();
         self.outputs = rewrites::canonicalize_one_sample_delays(&mut self.arena, &self.outputs)?;
+        self.origins.inherit_replacements(&before, &self.outputs);
+        self.inherit_origins();
         Ok(())
     }
 
@@ -463,6 +529,7 @@ impl<'ui> Staging<'ui> {
             outputs: self.outputs,
             types,
             sig_types: self.sig_types,
+            origins: self.origins,
         }
     }
 }
@@ -471,11 +538,16 @@ fn prepare_signals_for_fir_unverified(
     src_arena: &TreeArena,
     outputs: &[SigId],
     ui: &UiProgram,
+    source_origins: Option<&propagate::SignalOrigins>,
 ) -> Result<PreparedSignals, SignalPrepareError> {
     // Step 2.1 — clone forest into a fresh private arena.
     let mut arena = TreeArena::new();
-    let cloned_outputs = arena.clone_forest_from(src_arena, outputs);
-    let mut s = Staging::new(arena, cloned_outputs, ui);
+    let (cloned_outputs, node_map) = arena.clone_forest_from_with_mapping(src_arena, outputs);
+    let origins = source_origins.map_or_else(propagate::SignalOrigins::default, |origins| {
+        origins.remap(&node_map)
+    });
+    let mut s = Staging::new(arena, cloned_outputs, ui, origins);
+    s.inherit_origins();
 
     // Step 2.2 — de Bruijn → SYMREC / SYMREF.
     s.de_bruijn_to_sym()?;
@@ -600,7 +672,7 @@ fn infer_full_types(
     let mut annotator = TypeAnnotator::new(arena, ui);
     annotator
         .annotate(outputs)
-        .map_err(|e| SignalPrepareError::Typing(e.0))
+        .map_err(SignalPrepareError::Inference)
 }
 
 /// Reduces canonical `SigType` annotations to the smaller fast-lane domain.

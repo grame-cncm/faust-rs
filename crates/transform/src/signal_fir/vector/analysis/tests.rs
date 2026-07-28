@@ -817,11 +817,11 @@ fn readonly_tables_carry_no_write_effect_while_mutable_tables_keep_one() {
         let mut b = SigBuilder::new(&mut arena);
         let read_index = b.input(0);
         let size = b.int(8);
-        let generator = b.input(1);
+        let generator = b.real(0.0);
         let readonly = b.wrtbl_readonly(size, generator);
         let readonly_read = b.rdtbl(readonly, read_index);
         let mutable_size = b.int(16);
-        let mutable_generator = b.input(2);
+        let mutable_generator = b.real(0.0);
         let write_index = b.input(3);
         let write_value = b.input(4);
         let mutable = b.wrtbl(mutable_size, mutable_generator, write_index, write_value);
@@ -865,7 +865,7 @@ fn effects_use_stable_resources_and_propagate_to_the_root() {
     let mut arena = TreeArena::new();
     let (input, delay, delay_long, table, read, output) = {
         let mut b = SigBuilder::new(&mut arena);
-        let input = b.input(0);
+        let input = b.real(1.0);
         let delay = b.delay1(input);
         let two = b.int(2);
         let delay_long = b.delay(input, two);

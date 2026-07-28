@@ -128,3 +128,25 @@ fn propagate_route_identity_preserves_all_inputs() {
     assert!(matches!(match_sig(&arena, outputs[2]), SigMatch::Input(2)));
     assert!(matches!(match_sig(&arena, outputs[3]), SigMatch::Input(3)));
 }
+
+#[test]
+fn propagation_retains_all_box_origins_for_a_hash_consed_signal() {
+    let mut arena = TreeArena::new();
+    let constant = BoxBuilder::new(&mut arena).int(7);
+    let duplicated = BoxBuilder::new(&mut arena).par(constant, constant);
+    let flat = try_build_flat_box(&arena, duplicated).expect("flat constant pair");
+
+    let output = propagate_typed_with_ui(&mut arena, flat, &[], &mut ArityCache::new())
+        .expect("constant pair should propagate");
+
+    assert_eq!(output.signals.len(), 2);
+    assert_eq!(output.signals[0], output.signals[1]);
+    let origins = output.signal_origins.origins_for(output.signals[0]);
+    assert!(origins.contains(&constant));
+    assert!(origins.contains(&duplicated));
+    assert_eq!(
+        origins.iter().filter(|&&origin| origin == constant).count(),
+        1,
+        "origin sets must remain deduplicated under hash-consing"
+    );
+}

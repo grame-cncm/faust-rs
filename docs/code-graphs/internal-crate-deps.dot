@@ -50,6 +50,7 @@ digraph workspace_crates {
     "compiler" -> "draw";
     "compiler" -> "eval";
     "compiler" -> "fir";
+    "compiler" -> "interval";
     "compiler" -> "parser";
     "compiler" -> "propagate";
     "compiler" -> "signals";

@@ -183,6 +183,14 @@ pub struct BoxArity {
 pub struct PropagateOutput {
     /// Final propagated output signal list (`box_arity.outputs` items).
     pub signals: Vec<SigId>,
+    /// Source-neutral derivation links from generated signals to the Box nodes
+    /// whose propagation produced them.
+    ///
+    /// The table is deliberately external to `TreeArena`: attaching origins to
+    /// hash-consed Signal nodes would make source position part of semantic
+    /// identity and would destroy DAG sharing. A shared `SigId` therefore owns
+    /// an ordered set of candidate Box origins.
+    pub signal_origins: SignalOrigins,
     /// Canonical grouped UI artifact extracted from the same propagated box
     /// tree.
     ///
@@ -196,6 +204,151 @@ pub struct PropagateOutput {
     /// Empty for programs without clocked wrappers. In-graph `SIGCLOCKENV`
     /// tokens index into this table via [`ClockDomainId::from_u32`].
     pub clock_domains: ClockDomainTable,
+}
+
+/// Ordered Box-origin candidates retained for generated Signal nodes.
+///
+/// C++ Faust relies on mutable Tree properties for comparable bookkeeping.
+/// Rust uses this explicit side table so provenance ownership is visible,
+/// testable, and independent from Signal hash-consing. Parser source locations
+/// remain owned by `parser::BoxProvenance`; the compiler facade joins both
+/// tables only when it builds a diagnostic.
+#[derive(Clone, Debug)]
+pub struct SignalOrigins {
+    by_signal: AHashMap<SigId, Vec<BoxId>>,
+}
+
+impl Default for SignalOrigins {
+    fn default() -> Self {
+        Self {
+            by_signal: AHashMap::new(),
+        }
+    }
+}
+
+impl SignalOrigins {
+    /// Records that `signal` was produced while propagating `box_node`.
+    pub fn record(&mut self, signal: SigId, box_node: BoxId) {
+        let origins = self.by_signal.entry(signal).or_default();
+        if !origins.contains(&box_node) {
+            origins.push(box_node);
+        }
+    }
+
+    /// Records the same Box derivation for every signal in one output bus.
+    pub fn record_outputs(&mut self, signals: &[SigId], box_node: BoxId) {
+        for signal in signals {
+            self.record(*signal, box_node);
+        }
+    }
+
+    /// Records a Box origin for newly created nodes reachable from an output
+    /// bus while preserving more specific origins already assigned by child
+    /// propagation calls.
+    pub fn record_derived_forest(&mut self, arena: &TreeArena, signals: &[SigId], box_node: BoxId) {
+        let mut stack = signals.to_vec();
+        let mut visited = std::collections::HashSet::new();
+        while let Some(signal) = stack.pop() {
+            if !visited.insert(signal) {
+                continue;
+            }
+            if self.origins_for(signal).is_empty() {
+                self.record(signal, box_node);
+            }
+            if let Some(children) = arena.children(signal) {
+                stack.extend(children.iter().copied());
+            }
+        }
+        self.record_outputs(signals, box_node);
+    }
+
+    /// Returns candidate Box origins in deterministic propagation order.
+    #[must_use]
+    pub fn origins_for(&self, signal: SigId) -> &[BoxId] {
+        self.by_signal.get(&signal).map_or(&[], Vec::as_slice)
+    }
+
+    /// Propagates all origins from `sources` to a newly derived signal.
+    ///
+    /// Normalization, recursion conversion, and AD rewrites can use this
+    /// operation without depending on parser types.
+    pub fn inherit(&mut self, derived: SigId, sources: &[SigId]) {
+        let inherited = sources
+            .iter()
+            .flat_map(|source| self.origins_for(*source))
+            .copied()
+            .collect::<Vec<_>>();
+        for origin in inherited {
+            self.record(derived, origin);
+        }
+    }
+
+    /// Transfers root provenance across a lane-preserving forest rewrite.
+    ///
+    /// Preparation passes preserve output arity. Pairing old and new roots
+    /// retains the source of an operator even when the replacement node no
+    /// longer contains the old node as a structural child.
+    pub fn inherit_replacements(&mut self, before: &[SigId], after: &[SigId]) {
+        for (source, derived) in before.iter().zip(after) {
+            self.inherit(*derived, &[*source]);
+        }
+    }
+
+    /// Remaps this table after a Signal forest is cloned to another arena.
+    #[must_use]
+    pub fn remap(&self, node_map: &std::collections::HashMap<SigId, SigId>) -> Self {
+        let mut remapped = Self::default();
+        for (source, destination) in node_map {
+            for origin in self.origins_for(*source) {
+                remapped.record(*destination, *origin);
+            }
+        }
+        remapped
+    }
+
+    /// Ensures every reachable derived node inherits origins from its children.
+    ///
+    /// Rewriting passes call this after rebuilding a forest. Existing explicit
+    /// origins win; a newly interned parent receives the ordered union of all
+    /// reachable child origins. This is conservative by design: exact
+    /// occurrence choice remains a diagnostic-time operation.
+    pub fn inherit_forest(&mut self, arena: &TreeArena, roots: &[SigId]) {
+        fn visit(
+            origins: &mut SignalOrigins,
+            arena: &TreeArena,
+            signal: SigId,
+            visited: &mut std::collections::HashSet<SigId>,
+        ) {
+            if !visited.insert(signal) {
+                return;
+            }
+            let children = arena
+                .children(signal)
+                .map_or_else(Vec::new, |children| children.to_vec());
+            for child in &children {
+                visit(origins, arena, *child, visited);
+            }
+            if origins.origins_for(signal).is_empty() {
+                origins.inherit(signal, &children);
+            }
+        }
+        let mut visited = std::collections::HashSet::new();
+        for root in roots {
+            visit(self, arena, *root, &mut visited);
+        }
+    }
+
+    /// Number of Signal identities carrying at least one origin.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.by_signal.len()
+    }
+
+    /// Returns `true` when no signal provenance was recorded.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_signal.is_empty()
+    }
 }
 
 /// Canonical grouped-UI construction policy applied during propagation.

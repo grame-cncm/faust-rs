@@ -75,6 +75,8 @@ pub enum Stage {
     Propagate,
     /// Signal normalization passes.
     Normalize,
+    /// Signal type and interval inference.
+    TypeInference,
     /// Mid-level transform passes.
     Transform,
     /// FIR lowering and FIR-level checks.
@@ -324,9 +326,12 @@ const fn default_category(stage: Stage) -> DiagnosticCategory {
         Stage::SourceReader => DiagnosticCategory::Environment,
         Stage::Compiler => DiagnosticCategory::CompilerBug,
         Stage::Codegen | Stage::Fir | Stage::Transform => DiagnosticCategory::UnsupportedFeature,
-        Stage::Lexer | Stage::Parser | Stage::Eval | Stage::Propagate | Stage::Normalize => {
-            DiagnosticCategory::UserCode
-        }
+        Stage::Lexer
+        | Stage::Parser
+        | Stage::Eval
+        | Stage::Propagate
+        | Stage::Normalize
+        | Stage::TypeInference => DiagnosticCategory::UserCode,
     }
 }
 

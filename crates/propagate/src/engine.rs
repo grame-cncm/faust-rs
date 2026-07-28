@@ -61,6 +61,8 @@ pub(crate) fn propagate_in_slot_env(
             got: outputs.len(),
         });
     }
+    ctx.signal_origins
+        .record_derived_forest(arena, &outputs, box_tree.as_tree_id());
     Ok(outputs)
 }
 
@@ -1305,6 +1307,9 @@ pub(crate) struct PropagateContext<'a> {
     /// Mirrors the `current_groups` stack maintained during UI collection so
     /// that widget control-id lookups use the same context-sensitive key.
     pub(crate) current_groups: Vec<UiGroupPathSegment>,
+    /// Source-neutral Box derivations for every Signal output observed at a
+    /// validated propagation boundary.
+    pub(crate) signal_origins: &'a mut SignalOrigins,
 }
 
 /// Lifts De Bruijn references of input signals by one recursion level.

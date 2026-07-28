@@ -456,6 +456,7 @@ const fn stage_name(stage: Stage) -> &'static str {
         Stage::Eval => "eval",
         Stage::Propagate => "propagate",
         Stage::Normalize => "normalize",
+        Stage::TypeInference => "type_inference",
         Stage::Transform => "transform",
         Stage::Fir => "fir",
         Stage::Codegen => "codegen",

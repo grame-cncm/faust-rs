@@ -262,6 +262,7 @@ dependencies = [
  "draw",
  "eval",
  "fir",
+ "interval",
  "parser",
  "propagate",
  "serde_json",

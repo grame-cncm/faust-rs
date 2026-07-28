@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use compiler::Compiler;
+use compiler::{Compiler, DiagnosticValue, LabelRole, Stage};
 use signals::{SigMatch, match_sig};
 
 fn corpus_path(file: &str) -> PathBuf {
@@ -433,6 +433,11 @@ fn soundfile_part_interval_error_exposes_compiler_type_diagnostic() {
         .expect("type validation bundle should not be empty");
 
     assert_eq!(first.code.0, "FRS-COMP-0004");
+    assert_eq!(first.stage, Stage::TypeInference);
+    assert_eq!(
+        first.detail_code.as_ref().map(|code| code.as_str()),
+        Some("soundfile-part-interval")
+    );
     assert!(
         first.message.contains("out of range soundfile part number"),
         "unexpected message: {}",
@@ -443,6 +448,90 @@ fn soundfile_part_interval_error_exposes_compiler_type_diagnostic() {
         "unexpected message: {}",
         first.message
     );
+    assert!(
+        !first.message.contains("SIG"),
+        "standard message must not expose raw Signal IR: {}",
+        first.message
+    );
+    assert!(matches!(
+        first
+            .facts
+            .iter()
+            .find(|(key, _)| key.as_str() == "required_interval")
+            .map(|(_, value)| value),
+        Some(DiagnosticValue::IntegerRange { min: 0, max: 255 })
+    ));
+    assert!(
+        first
+            .facts
+            .keys()
+            .any(|key| key.as_str() == "actual_interval")
+    );
+    assert!(
+        first.labels.iter().any(|label| matches!(
+            label.role,
+            LabelRole::DerivedFrom | LabelRole::DefinitionSite
+        )),
+        "type diagnostic should point back to Faust source"
+    );
+}
+
+#[test]
+fn invalid_delay_interval_points_to_faust_and_exposes_inferred_type() {
+    let err = Compiler::new()
+        .compile_source_to_signals("delay_interval.dsp", "process = _ : @(-1);")
+        .expect_err("negative delay upper bound must fail type validation");
+    let first = &err.diagnostic_bundle().as_slice()[0];
+
+    assert_eq!(first.stage, Stage::TypeInference);
+    assert_eq!(
+        first.detail_code.as_ref().map(|code| code.as_str()),
+        Some("delay-interval")
+    );
+    assert!(first.facts.keys().any(|key| key.as_str() == "actual_type"));
+    assert!(
+        first
+            .labels
+            .iter()
+            .any(|label| label.span.file.ends_with("delay_interval.dsp")),
+        "delay diagnostic should retain its Faust source"
+    );
+    assert!(!first.message.contains("SIG"));
+}
+
+#[test]
+fn compile_time_math_domain_error_is_typed_and_source_located() {
+    let err = Compiler::new()
+        .compile_source_to_signals("modulo_zero.dsp", "process = _ % 0;")
+        .expect_err("compile-time modulo by zero must fail type validation");
+    let first = &err.diagnostic_bundle().as_slice()[0];
+
+    assert_eq!(first.stage, Stage::TypeInference);
+    assert_eq!(
+        first.detail_code.as_ref().map(|code| code.as_str()),
+        Some("math-domain")
+    );
+    assert!(first.facts.keys().any(|key| key.as_str() == "expected"));
+    assert!(!first.labels.is_empty());
+    assert!(!first.message.contains("SIG"));
+}
+
+#[test]
+fn invalid_table_generator_is_typed_and_source_located() {
+    let err = Compiler::new()
+        .compile_source_to_signals("table_generator.dsp", "process = rdtable(9, +, 4);")
+        .expect_err("sample-time table generator must fail static table validation");
+    let first = &err.diagnostic_bundle().as_slice()[0];
+
+    assert_eq!(first.stage, Stage::TypeInference);
+    assert_eq!(
+        first.detail_code.as_ref().map(|code| code.as_str()),
+        Some("table-construction")
+    );
+    assert!(first.facts.keys().any(|key| key.as_str() == "actual_type"));
+    assert!(first.facts.keys().any(|key| key.as_str() == "expected"));
+    assert!(!first.labels.is_empty());
+    assert!(!first.message.contains("SIG"));
 }
 
 #[test]

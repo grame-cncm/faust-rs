@@ -156,6 +156,12 @@ pub struct SignalCompileOutput {
     ///   `primal outputs + tangent outputs`, so `signals.len()` may be greater
     ///   than `process_arity.outputs`.
     pub signals: Vec<SigId>,
+    /// Box-to-Signal provenance accumulated during propagation.
+    ///
+    /// This remains source-neutral; join it with
+    /// [`parser::ParserCtx::box_provenance`] when rendering a source
+    /// diagnostic.
+    pub signal_origins: propagate::SignalOrigins,
     /// Canonical grouped UI artifact owned after the propagation boundary.
     ///
     /// Downstream FIR lowering/backends must treat this as the source of truth
@@ -1094,6 +1100,10 @@ impl Compiler {
                 &output.state.arena,
                 &propagated.signals,
                 &propagated.ui,
+                &propagated.signal_origins,
+                &output.state.ctx,
+                root,
+                ep,
             )
         })
         .map_err(|error| error.with_source_map(source_map))?;
@@ -1107,6 +1117,7 @@ impl Compiler {
             process_box,
             process_arity,
             signals: propagated.signals,
+            signal_origins: propagated.signal_origins,
             ui: propagated.ui,
             def_names: eval_stats.def_names,
             clock_domains: propagated.clock_domains,
@@ -1215,7 +1226,7 @@ pub enum CompilerError {
         /// Program provenance; see the shared field convention.
         source: Box<str>,
         /// Typed error from the stage that failed.
-        error: InferenceError,
+        error: Box<InferenceError>,
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
@@ -1409,7 +1420,7 @@ impl std::error::Error for CompilerError {
             Self::Import(error, _) => Some(error),
             Self::Eval { error, .. } => Some(error.as_ref()),
             Self::Propagate { error, .. } => Some(error),
-            Self::Type { error, .. } => Some(error),
+            Self::Type { error, .. } => Some(error.as_ref()),
             Self::ExecutionOptions { error, .. } => Some(error),
             Self::Transform { error, .. } => Some(error),
             Self::CodegenCpp { error, .. } => Some(error),

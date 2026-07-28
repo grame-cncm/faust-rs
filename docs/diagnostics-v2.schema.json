@@ -338,6 +338,7 @@
             "eval",
             "propagate",
             "normalize",
+            "type_inference",
             "transform",
             "fir",
             "codegen",

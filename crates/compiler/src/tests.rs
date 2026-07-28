@@ -1010,7 +1010,10 @@ fn compiler_error_source_classification_covers_every_variant() {
     });
     assert_source_is::<InferenceError>(CompilerError::Type {
         source: "type.dsp".into(),
-        error: InferenceError("type failure".to_owned()),
+        error: Box::new(InferenceError::SignalStructure {
+            signal: None,
+            context: "type failure".into(),
+        }),
         diagnostics: empty(),
     });
     assert_source_is::<crate::execution::ExecutionOptionsError>(CompilerError::ExecutionOptions {

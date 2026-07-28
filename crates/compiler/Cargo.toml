@@ -17,6 +17,7 @@ codegen = { path = "../codegen" }
 boxes = { path = "../boxes" }
 eval = { path = "../eval" }
 propagate = { path = "../propagate" }
+interval = { path = "../interval" }
 signals = { path = "../signals" }
 ui = { path = "../ui" }
 fir = { path = "../fir" }
