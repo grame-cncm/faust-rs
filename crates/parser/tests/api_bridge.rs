@@ -8,6 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use boxes::{BoxMatch, dump_box, match_box};
+use diagnostics::SourceKind;
 use parser::{
     CompilationMetadataKey, CompilationMetadataStore, SourceReaderError, VirtualSourceMap,
     parse_file_with_imports, parse_minimal, parse_program, parse_program_with_imports_and_metadata,
@@ -68,6 +69,13 @@ fn bridge_exposes_parse_program() {
         "unexpected parse errors: {:?}",
         out.errors
     );
+    let source = out
+        .diagnostics
+        .source_map()
+        .find_by_name(std::path::Path::new("bridge_program.dsp"))
+        .expect("memory source snapshot should be registered");
+    assert_eq!(source.kind(), SourceKind::Memory);
+    assert_eq!(source.text(), "process = _;");
 }
 
 #[test]
@@ -207,6 +215,15 @@ fn bridge_exposes_file_import_parsing() {
     assert_eq!(
         out.used_files[1],
         lib.canonicalize().expect("lib should canonicalize")
+    );
+    let sources = out.diagnostics.source_map();
+    assert_eq!(sources.len(), 2);
+    assert_eq!(
+        sources
+            .iter()
+            .map(|source| source.kind())
+            .collect::<Vec<_>>(),
+        vec![SourceKind::File, SourceKind::ImportedFile]
     );
 
     fs::remove_dir_all(root).expect("temp root should be removable");
@@ -386,6 +403,19 @@ fn parse_program_with_imports_deduplicates_transitive_virtual_imports() {
             PathBuf::from("osc.lib"),
         ],
         "virtual-source used_files order should follow structural import visitation"
+    );
+    assert_eq!(
+        out.diagnostics
+            .source_map()
+            .iter()
+            .map(|source| source.kind())
+            .collect::<Vec<_>>(),
+        vec![
+            SourceKind::Memory,
+            SourceKind::VirtualLibrary,
+            SourceKind::VirtualLibrary,
+            SourceKind::VirtualLibrary,
+        ]
     );
 }
 

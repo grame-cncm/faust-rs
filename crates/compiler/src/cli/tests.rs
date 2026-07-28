@@ -10,7 +10,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{CommandFactory, Parser, ValueEnum};
 use compiler::{Compiler, FaustInstallPaths};
-use diagnostics::{Diagnostic, DiagnosticBundle, DiagnosticCode, Severity, SourceSpan, Stage};
+use diagnostics::{
+    Diagnostic, DiagnosticBundle, DiagnosticCode, Severity, SourceKind, SourceMapBuilder,
+    SourceSpan, Stage,
+};
 use serde_json::Value;
 use signals::{SigMatch, match_sig};
 
@@ -629,6 +632,50 @@ $TMPFILE:1:13: error [FRS-PROP-0002] split composition mismatch
   = help: make B input count a multiple of A output count
 ";
     assert_eq!(normalized, expected);
+
+    std::fs::remove_file(path).expect("fixture should be removed");
+}
+
+#[test]
+fn diagnostics_human_renderer_uses_the_compiled_snapshot_after_file_changes() {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "faust_rs_diag_snapshot_{}_{}.dsp",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time should move forward")
+            .as_nanos()
+    ));
+    let compiled = "process = missing;\n";
+    std::fs::write(&path, compiled).expect("fixture should be written");
+
+    let mut sources = SourceMapBuilder::new();
+    sources.add(&path, SourceKind::File, compiled);
+    let mut bundle = DiagnosticBundle::new();
+    bundle.set_source_map(sources.finish());
+    bundle.push(
+        Diagnostic::new(
+            Severity::Error,
+            Stage::Eval,
+            DiagnosticCode("FRS-EVAL-0002"),
+            "undefined symbol",
+        )
+        .with_label(diagnostics::Label::new(
+            diagnostics::LabelStyle::Primary,
+            SourceSpan::new(&path, 1, 11, 1, 18),
+            "not found",
+        )),
+    );
+
+    std::fs::write(&path, "process = changed_after_compile;\n").expect("fixture should be changed");
+    let rendered = format_diagnostics_human(&bundle);
+    assert!(rendered.contains("1 | process = missing;"));
+    assert!(!rendered.contains("changed_after_compile"));
+
+    let v1_with_snapshot = format_diagnostics_json(&bundle);
+    bundle.set_source_map(diagnostics::SourceMap::new());
+    assert_eq!(format_diagnostics_json(&bundle), v1_with_snapshot);
 
     std::fs::remove_file(path).expect("fixture should be removed");
 }

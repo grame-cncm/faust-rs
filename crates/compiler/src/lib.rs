@@ -97,7 +97,9 @@ use codegen::json::{
     JsonBuildOptions, JsonDescription, JsonMetaEntry, build_json_description_from_fir,
 };
 pub use diagnostics::{
-    Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, Severity, SourceSpan, Stage,
+    ContentHash, Diagnostic, DiagnosticBundle, DiagnosticCode, HumanPosition, Label, LabelStyle,
+    LspPosition, Severity, SourceCoordinateError, SourceFile, SourceId, SourceKind, SourceMap,
+    SourceMapBuilder, SourceRange, SourceSpan, Stage,
 };
 use diagnostics::{ToDiagnostic, codes::COMP_TYPE_FAILED};
 use fir::{
@@ -949,9 +951,10 @@ impl Compiler {
         mut output: ParseOutput,
         eval_source_context: Option<eval::EvalSourceContext>,
     ) -> Result<SignalCompileOutput, CompilerError> {
-        let root = output
-            .root
-            .ok_or_else(|| CompilerError::missing_root(source))?;
+        let source_map = output.diagnostics.source_map().clone();
+        let root = output.root.ok_or_else(|| {
+            CompilerError::missing_root(source).with_source_map(source_map.clone())
+        })?;
 
         let eval_result = self.time_phase("evaluation", || {
             match (&eval_source_context, &self.cancel) {
@@ -1003,10 +1006,12 @@ impl Compiler {
                     self.entrypoint_name.as_ref(),
                 );
             }
+            let mut diagnostics = bundle_from_diagnostic(diagnostic);
+            diagnostics.set_source_map(source_map.clone());
             CompilerError::Eval {
                 source: source.into(),
                 error: Box::new(error),
-                diagnostics: bundle_from_diagnostic(diagnostic),
+                diagnostics,
             }
         })?;
 
@@ -1025,6 +1030,7 @@ impl Compiler {
                     ep,
                     false,
                 )
+                .with_source_map(source_map.clone())
             })?;
 
         let mut arity_cache = ArityCache::new();
@@ -1042,6 +1048,7 @@ impl Compiler {
                     ep,
                     true,
                 )
+                .with_source_map(source_map.clone())
             })?;
 
         let compilation_metadata = eval_source_context.as_ref().map_or_else(
@@ -1071,6 +1078,7 @@ impl Compiler {
                     ep,
                     true,
                 )
+                .with_source_map(source_map.clone())
             })?;
         self.time_phase("signal-type-validation", || {
             validate_signal_types(
@@ -1079,7 +1087,8 @@ impl Compiler {
                 &propagated.signals,
                 &propagated.ui,
             )
-        })?;
+        })
+        .map_err(|error| error.with_source_map(source_map))?;
 
         Ok(SignalCompileOutput {
             compilation_metadata,
@@ -1411,6 +1420,34 @@ impl std::error::Error for CompilerError {
 }
 
 impl CompilerError {
+    /// Attaches the immutable compilation snapshots to an already classified
+    /// pipeline failure without changing its typed error or v1 JSON fields.
+    fn with_source_map(mut self, source_map: SourceMap) -> Self {
+        let diagnostics = match &mut self {
+            Self::Import(_, diagnostics)
+            | Self::Parse { diagnostics, .. }
+            | Self::Eval { diagnostics, .. }
+            | Self::Propagate { diagnostics, .. }
+            | Self::Type { diagnostics, .. }
+            | Self::Transform { diagnostics, .. }
+            | Self::ExecutionOptions { diagnostics, .. }
+            | Self::CodegenCpp { diagnostics, .. }
+            | Self::CodegenC { diagnostics, .. }
+            | Self::CodegenJulia { diagnostics, .. }
+            | Self::CodegenAsc { diagnostics, .. }
+            | Self::CodegenCodebox { diagnostics, .. }
+            | Self::CodegenRust { diagnostics, .. }
+            | Self::CodegenInterp { diagnostics, .. }
+            | Self::CodegenWasm { diagnostics, .. }
+            | Self::MissingRoot { diagnostics, .. }
+            | Self::FirVerify { diagnostics, .. } => diagnostics,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::CodegenCranelift { diagnostics, .. } => diagnostics,
+        };
+        diagnostics.set_source_map(source_map);
+        self
+    }
+
     /// Builds an [`CompilerError::Import`] with its structured `FRS-SRC-*`
     /// bundle attached.
     #[must_use]

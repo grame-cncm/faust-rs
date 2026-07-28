@@ -28,8 +28,13 @@
 use std::path::PathBuf;
 
 pub mod codes;
+mod source;
 
 pub use codes::all_codes;
+pub use source::{
+    ContentHash, HumanPosition, LspPosition, SourceCoordinateError, SourceFile, SourceId,
+    SourceKind, SourceMap, SourceMapBuilder, SourceRange,
+};
 
 /// Diagnostic severity level.
 ///
@@ -77,9 +82,12 @@ pub enum Stage {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct DiagnosticCode(pub &'static str);
 
-/// File-local source span.
+/// File-local compatibility source span.
 ///
-/// Spans are 1-based and inclusive in the same spirit as Faust diagnostics.
+/// Lines and columns are 1-based. Existing producers treat `end_col` as the
+/// half-open caret boundary. New diagnostics should use canonical
+/// [`SourceRange`] values and convert through [`SourceMap::to_source_span`]
+/// only at v1 compatibility boundaries.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceSpan {
     /// File where this span originates.
@@ -207,6 +215,7 @@ impl Diagnostic {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DiagnosticBundle {
     diagnostics: Vec<Diagnostic>,
+    source_map: SourceMap,
 }
 
 impl DiagnosticBundle {
@@ -219,6 +228,21 @@ impl DiagnosticBundle {
     /// Appends one diagnostic.
     pub fn push(&mut self, diagnostic: Diagnostic) {
         self.diagnostics.push(diagnostic);
+    }
+
+    /// Associates the immutable source snapshots compiled in this session.
+    ///
+    /// This metadata is deliberately absent from the v1 JSON renderer. Human
+    /// renderers may use it to avoid re-reading a file that changed after
+    /// compilation.
+    pub fn set_source_map(&mut self, source_map: SourceMap) {
+        self.source_map = source_map;
+    }
+
+    /// Returns the immutable source snapshots for this compilation.
+    #[must_use]
+    pub fn source_map(&self) -> &SourceMap {
+        &self.source_map
     }
 
     /// Extends this bundle with another sequence of diagnostics.
@@ -256,7 +280,10 @@ impl DiagnosticBundle {
 
 impl From<Vec<Diagnostic>> for DiagnosticBundle {
     fn from(diagnostics: Vec<Diagnostic>) -> Self {
-        Self { diagnostics }
+        Self {
+            diagnostics,
+            source_map: SourceMap::new(),
+        }
     }
 }
 

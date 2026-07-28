@@ -21,7 +21,8 @@ use boxes::{BoxMatch, dump_box, match_box};
 use cfgrammar::Span;
 use diagnostics::codes;
 use diagnostics::{
-    Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, SourceSpan, Stage,
+    Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, SourceKind, SourceMapBuilder,
+    SourceSpan, Stage,
 };
 use lrlex::lrlex_mod;
 use lrlex::{DefaultLexerTypes, LRNonStreamingLexerDef};
@@ -1381,7 +1382,14 @@ pub fn parse_program_with_precision_and_metadata(
     float_size: u8,
     metadata_store: CompilationMetadataStore,
 ) -> ParseOutput {
-    parse_program_with_origins_and_precision(input, source_file, None, metadata_store, float_size)
+    parse_program_with_origins_and_precision(
+        input,
+        source_file,
+        None,
+        metadata_store,
+        float_size,
+        SourceKind::Memory,
+    )
 }
 
 /// Parses one in-memory source and expands imports structurally from the parsed
@@ -1501,6 +1509,7 @@ fn parse_program_with_origins_and_precision(
     source_origins: Option<Vec<SourceLineOrigin>>,
     metadata_store: CompilationMetadataStore,
     float_size: u8,
+    source_kind: SourceKind,
 ) -> ParseOutput {
     let lexerdef = lexerdef();
     let lexer = lexerdef.lexer(input);
@@ -1549,7 +1558,10 @@ fn parse_program_with_origins_and_precision(
         rendered_errors.push(message);
     }
 
-    let diagnostics = parser_ctx_to_bundle(&state.ctx);
+    let mut diagnostics = parser_ctx_to_bundle(&state.ctx);
+    let mut sources = SourceMapBuilder::new();
+    sources.add(source_file, source_kind, input);
+    diagnostics.set_source_map(sources.finish());
 
     ParseOutput {
         root,
@@ -1582,6 +1594,7 @@ struct StructuralImportExpander {
     metadata_store: CompilationMetadataStore,
     used_files: Vec<PathBuf>,
     active_stack: HashSet<PathBuf>,
+    source_map: SourceMapBuilder,
     float_size: u8,
 }
 
@@ -1592,6 +1605,7 @@ impl StructuralImportExpander {
             metadata_store,
             used_files: Vec::new(),
             active_stack: HashSet::new(),
+            source_map: SourceMapBuilder::new(),
             float_size,
         }
     }
@@ -1607,18 +1621,29 @@ impl StructuralImportExpander {
 
         let source = self.reader.read_source_unit(resolved)?;
         let source_name = resolved.to_string_lossy().into_owned();
+        let source_kind = if self.reader.is_virtual_source(resolved) {
+            SourceKind::Memory
+        } else {
+            SourceKind::File
+        };
+        self.source_map
+            .add(resolved.to_path_buf(), source_kind, source.as_str());
         let mut output = parse_program_with_origins_and_precision(
             &source,
             &source_name,
             None,
             self.metadata_store.clone(),
             self.float_size,
+            source_kind,
         );
         let mut expanded_in_scope = HashSet::new();
         self.expand_imports_in_output(&mut output, resolved, &mut expanded_in_scope)?;
         output.used_files = self.used_files;
         output.compilation_metadata = self.metadata_store.snapshot();
         self.active_stack.remove(resolved);
+        output
+            .diagnostics
+            .set_source_map(std::mem::take(&mut self.source_map).finish());
         Ok(output)
     }
 
@@ -1849,15 +1874,26 @@ impl StructuralImportExpander {
         }
     }
 
-    fn parse_single_source_file(&self, resolved: &Path) -> Result<ParseOutput, SourceReaderError> {
+    fn parse_single_source_file(
+        &mut self,
+        resolved: &Path,
+    ) -> Result<ParseOutput, SourceReaderError> {
         let source = self.reader.read_source_unit(resolved)?;
         let source_name = resolved.to_string_lossy().into_owned();
+        let source_kind = if self.reader.is_virtual_source(resolved) {
+            SourceKind::VirtualLibrary
+        } else {
+            SourceKind::ImportedFile
+        };
+        self.source_map
+            .add(resolved.to_path_buf(), source_kind, source.as_str());
         Ok(parse_program_with_origins_and_precision(
             &source,
             &source_name,
             None,
             self.metadata_store.clone(),
             self.float_size,
+            source_kind,
         ))
     }
 

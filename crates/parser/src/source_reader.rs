@@ -388,6 +388,14 @@ impl SourceReader {
         self.read_source_text(path)
     }
 
+    /// Returns whether a resolved path names an immutable virtual source.
+    ///
+    /// The structural import expander uses this only to classify snapshots in
+    /// the shared diagnostic [`diagnostics::SourceMap`].
+    pub(crate) fn is_virtual_source(&self, path: &Path) -> bool {
+        self.virtual_sources.contains(path)
+    }
+
     /// Reads one logical in-memory source and recursively expands imports.
     pub fn read_memory_with_origins(
         &mut self,

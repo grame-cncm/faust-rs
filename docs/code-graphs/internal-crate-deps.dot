@@ -126,4 +126,5 @@ digraph workspace_crates {
     "xtask" -> "codegen";
     "xtask" -> "compiler";
     "xtask" -> "fir";
+    "xtask" -> "tlib";
 }

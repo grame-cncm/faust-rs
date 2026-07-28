@@ -127,10 +127,10 @@ impl Compiler {
     /// | `-wasm` | `<stem>.wasm` plus its matched `<stem>.json` |
     /// | `-json` | `<stem>.json` (redundant under `-wasm`, see below) |
     /// | `-svg` | `process.svg` plus one file per folded sub-diagram |
-    /// | `-lang asc` | one AssemblyScript source, see [`Compiler::generate_asc_aux_file`] |
+    /// | `-lang asc` | one AssemblyScript source, via the internal ASC auxiliary-file generator |
     ///
     /// `request.args` also carries the compilation options applied to every
-    /// output; [`Compiler::with_execution_options_from_argv`] lists them.
+    /// output; the internal execution-option normalizer lists them.
     ///
     /// Mirrors: `generateAuxFilesFromString` / `generateAuxFilesFromFile`
     /// (C++ Faust API). Two deliberate deviations: the artifacts are returned

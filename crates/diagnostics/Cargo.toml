@@ -5,5 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[dependencies]
+sha2 = "0.10"
+unicode-width = "0.2"
+
 [lints]
 workspace = true

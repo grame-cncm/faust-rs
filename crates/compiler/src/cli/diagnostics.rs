@@ -96,7 +96,7 @@ pub fn format_diagnostics_human_with_verbosity(
                 diag.code.0,
                 diag.message
             ));
-            if let Some(line) = source_line(label.span.file.as_path(), label.span.line) {
+            if let Some(line) = source_line(bundle, label.span.file.as_path(), label.span.line) {
                 out.push_str(&format!("  {} | {}\n", label.span.line, line));
                 out.push_str(&format!(
                     "    | {} {}\n",
@@ -222,8 +222,12 @@ fn filtered_notes_for_human(
     out
 }
 
-/// Returns one source line from a file (1-based line number).
-fn source_line(path: &Path, line_number: u32) -> Option<String> {
+/// Returns one source line from the immutable compilation snapshot, falling
+/// back to the filesystem for legacy bundles without a [`diagnostics::SourceMap`].
+fn source_line(bundle: &DiagnosticBundle, path: &Path, line_number: u32) -> Option<String> {
+    if let Some(source) = bundle.source_map().find_by_name(path) {
+        return source.line_text(line_number).map(str::to_owned);
+    }
     let source = std::fs::read_to_string(path).ok()?;
     let idx = usize::try_from(line_number.checked_sub(1)?).ok()?;
     source.lines().nth(idx).map(str::to_owned)
