@@ -15,6 +15,7 @@ standalone-capi-globals = []
 
 [dependencies]
 box_ffi = { package = "box-ffi", path = "../box-ffi", default-features = false }
+clap.workspace = true
 codegen = { path = "../codegen" }
 compiler = { path = "../compiler" }
 fir = { path = "../fir" }

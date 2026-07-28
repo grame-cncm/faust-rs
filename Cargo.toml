@@ -39,6 +39,9 @@ version = "0.5.0"
 license = "LGPL-2.1-or-later"
 authors = ["faust-rs contributors"]
 
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unused_attributes = "warn"

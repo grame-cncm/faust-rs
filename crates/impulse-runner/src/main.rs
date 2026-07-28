@@ -24,9 +24,12 @@
 //! ```
 //! The `.ir` text is written to stdout (the Makefile redirects it to a file).
 
+use std::ffi::OsString;
+use std::iter;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use clap::Parser;
 use codegen::backends::interp::{
     FbcDspInstance, FbcOpcode, FbcReal, InterpOptions, Soundfile, generate_interp_module,
 };
@@ -43,6 +46,7 @@ const BLOCK_SIZE: usize = 64;
 const DEFAULT_FRAMES: usize = 15000;
 
 /// Parsed command-line options.
+#[derive(Debug)]
 struct Options {
     dsp: PathBuf,
     double: bool,
@@ -53,20 +57,29 @@ struct Options {
 }
 
 fn main() -> ExitCode {
+    let options = match parse_args() {
+        Ok(options) => options,
+        Err(error) => {
+            let exit_code = error.exit_code();
+            let _ = error.print();
+            return ExitCode::from(exit_code as u8);
+        }
+    };
+
     // Faust library expansion and structural lowering can recurse deeply even
     // when the final FIR is compact. Match the compiler CLI stack contract so
     // stdfaust-based inputs do not depend on the platform's main-thread stack.
     std::thread::Builder::new()
         .name("impulse-runner".to_owned())
         .stack_size(64 * 1024 * 1024)
-        .spawn(run_main)
+        .spawn(move || run_main(options))
         .expect("failed to spawn impulse-runner thread")
         .join()
         .expect("impulse-runner thread panicked")
 }
 
-fn run_main() -> ExitCode {
-    match real_main() {
+fn run_main(options: Options) -> ExitCode {
+    match real_main(options) {
         Ok(text) => {
             print!("{text}");
             ExitCode::SUCCESS
@@ -78,8 +91,7 @@ fn run_main() -> ExitCode {
     }
 }
 
-fn real_main() -> Result<String, String> {
-    let options = parse_args()?;
+fn real_main(options: Options) -> Result<String, String> {
     let real_type = if options.double {
         RealType::Float64
     } else {
@@ -112,93 +124,97 @@ fn real_main() -> Result<String, String> {
     }
 }
 
-/// Parses argv into [`Options`], accepting the Faust-style flags the Makefile
-/// passes through (`-double`, `-I <dir>`), plus the runner-specific `-n`.
-fn parse_args() -> Result<Options, String> {
-    parse_args_from(std::env::args().skip(1))
+#[derive(Debug, Parser)]
+#[command(
+    name = "impulse-runner",
+    version,
+    about = "Compile a Faust DSP and emit its scalar impulse response",
+    args_override_self = true
+)]
+struct CliArgs {
+    /// Faust DSP source file.
+    #[arg(value_name = "FILE")]
+    dsp: PathBuf,
+
+    /// Compile and execute with double-precision samples.
+    #[arg(long, overrides_with = "single")]
+    double: bool,
+
+    /// Compile and execute with single-precision samples.
+    #[arg(long, overrides_with = "double")]
+    single: bool,
+
+    /// Number of impulse-response frames to emit.
+    #[arg(short = 'n', long = "frames", default_value_t = DEFAULT_FRAMES)]
+    frames: usize,
+
+    /// Add a Faust library import directory.
+    #[arg(short = 'I', long = "import-dir", value_name = "DIR")]
+    import_dirs: Vec<PathBuf>,
+
+    /// Enable vector compilation.
+    #[arg(long = "vectorize")]
+    vectorize: bool,
+
+    /// Vector loop size.
+    #[arg(
+        long = "vector-size",
+        default_value_t = ComputeMode::DEFAULT_VEC_SIZE
+    )]
+    vector_size: u32,
+
+    /// Vector loop variant.
+    #[arg(long = "loop-variant", default_value_t = 0)]
+    loop_variant: u8,
+
+    /// FIR scheduling strategy selector.
+    #[arg(long = "scheduling-strategy", default_value_t = 0)]
+    scheduling_strategy: u32,
 }
 
-fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
-    let mut dsp: Option<PathBuf> = None;
-    let mut double = false;
-    let mut frames = DEFAULT_FRAMES;
-    let mut import_dirs = Vec::new();
-    // Vector-mode flags, mirroring the faust-rs CLI (`-vec`, `-vs N`, `-lv N`).
-    // Accumulated separately so their order does not matter; folded into a
-    // `ComputeMode` at the end.
-    let mut vec_mode = false;
-    let mut vec_size = ComputeMode::DEFAULT_VEC_SIZE;
-    let mut loop_variant = 0u8;
-    let mut scheduling_strategy = SchedulingStrategy::DepthFirst;
+/// Parses argv after mapping the legacy Faust one-dash spellings to the
+/// canonical long options declared by [`CliArgs`].
+fn parse_args() -> Result<Options, clap::Error> {
+    parse_args_from(std::env::args_os().skip(1))
+}
 
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-double" => double = true,
-            "-single" => double = false,
-            "-n" => {
-                let value = args.next().ok_or("missing value after -n")?;
-                frames = value
-                    .parse::<usize>()
-                    .map_err(|e| format!("bad -n value: {e}"))?;
-            }
-            "-I" => {
-                let value = args.next().ok_or("missing value after -I")?;
-                import_dirs.push(PathBuf::from(value));
-            }
-            "-vec" => vec_mode = true,
-            "-vs" => {
-                let value = args.next().ok_or("missing value after -vs")?;
-                vec_size = value
-                    .parse::<u32>()
-                    .map_err(|e| format!("bad -vs value: {e}"))?;
-            }
-            "-lv" => {
-                let value = args.next().ok_or("missing value after -lv")?;
-                loop_variant = value
-                    .parse::<u8>()
-                    .map_err(|e| format!("bad -lv value: {e}"))?;
-            }
-            "-ss" | "--scheduling-strategy" => {
-                let value = args
-                    .next()
-                    .ok_or("missing value after scheduling-strategy option")?;
-                let value = value
-                    .parse::<u32>()
-                    .map_err(|e| format!("bad scheduling-strategy value: {e}"))?;
-                scheduling_strategy = SchedulingStrategy::decode(value);
-            }
-            // Reject unknown flags loudly: an option taking an argument we do not
-            // model would desync parsing.
-            other if other.starts_with('-') => {
-                return Err(format!("unknown option: {other}"));
-            }
-            other => {
-                if dsp.is_some() {
-                    return Err(format!("unexpected extra argument: {other}"));
-                }
-                dsp = Some(PathBuf::from(other));
-            }
-        }
-    }
-
-    let compute_mode = if vec_mode {
+fn parse_args_from<I, T>(args: I) -> Result<Options, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    let normalized = iter::once(OsString::from("impulse-runner"))
+        .chain(args.into_iter().map(Into::into).map(normalize_legacy_arg));
+    let args = CliArgs::try_parse_from(normalized)?;
+    let compute_mode = if args.vectorize {
         ComputeMode::Vector {
-            vec_size,
-            loop_variant,
+            vec_size: args.vector_size,
+            loop_variant: args.loop_variant,
         }
     } else {
         ComputeMode::Scalar
     };
 
     Ok(Options {
-        dsp: dsp.ok_or("missing <file.dsp> argument")?,
-        double,
-        frames,
-        import_dirs,
+        dsp: args.dsp,
+        double: args.double,
+        frames: args.frames,
+        import_dirs: args.import_dirs,
         compute_mode,
-        scheduling_strategy,
+        scheduling_strategy: SchedulingStrategy::decode(args.scheduling_strategy),
     })
+}
+
+fn normalize_legacy_arg(arg: OsString) -> OsString {
+    match arg.to_str() {
+        Some("-double") => OsString::from("--double"),
+        Some("-single") => OsString::from("--single"),
+        Some("-vec") => OsString::from("--vectorize"),
+        Some("-vs") => OsString::from("--vector-size"),
+        Some("-lv") => OsString::from("--loop-variant"),
+        Some("-ss") => OsString::from("--scheduling-strategy"),
+        _ => arg,
+    }
 }
 
 /// Builds the import search path list: explicit `-I` dirs first, then the DSP's
@@ -356,10 +372,12 @@ fn _reference_protocol_note(_: &Path) {}
 
 #[cfg(test)]
 mod tests {
-    use super::{ComputeMode, SchedulingStrategy, parse_args_from, soundfile_part_count};
+    use clap::CommandFactory;
 
-    fn parse(args: &[&str]) -> Result<super::Options, String> {
-        parse_args_from(args.iter().map(|arg| (*arg).to_owned()))
+    use super::{CliArgs, ComputeMode, SchedulingStrategy, parse_args_from, soundfile_part_count};
+
+    fn parse(args: &[&str]) -> Result<super::Options, clap::Error> {
+        parse_args_from(args.iter().copied())
     }
 
     #[test]
@@ -391,10 +409,24 @@ mod tests {
     }
 
     #[test]
+    fn clap_definition_is_consistent() {
+        CliArgs::command().debug_assert();
+    }
+
+    #[test]
     fn malformed_scheduling_strategy_is_rejected_before_compilation() {
         assert!(parse(&["test.dsp", "-ss"]).is_err());
         assert!(parse(&["test.dsp", "-ss", "-1"]).is_err());
         assert!(parse(&["test.dsp", "-ss", "abc"]).is_err());
+    }
+
+    #[test]
+    fn legacy_flags_work_before_the_dsp_and_last_precision_wins() {
+        let options = parse(&["-double", "-I", "lib", "test.dsp", "-single", "-n", "8"])
+            .expect("parse legacy options");
+        assert!(!options.double);
+        assert_eq!(options.frames, 8);
+        assert_eq!(options.import_dirs, [std::path::PathBuf::from("lib")]);
     }
 
     #[test]

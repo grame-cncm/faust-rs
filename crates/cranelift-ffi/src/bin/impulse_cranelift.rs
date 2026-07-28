@@ -7,11 +7,13 @@
 //!
 //! Usage: `impulse_cranelift <file.dsp> [-n <frames>] [-I <dir>]... [-ss <n>]`
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, OsString, c_char, c_int, c_void};
+use std::iter;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::thread;
 
+use clap::Parser;
 use cranelift_ffi::factory::{createCCraneliftDSPFactoryFromFile, deleteCCraneliftDSPFactory};
 use cranelift_ffi::instance::{
     buildUserInterfaceCCraneliftDSPInstance, computeCCraneliftDSPInstance,
@@ -25,12 +27,21 @@ const BLOCK_SIZE: usize = 64;
 const DEFAULT_FRAMES: usize = 15000;
 
 fn main() -> ExitCode {
+    let options = match parse_args() {
+        Ok(options) => options,
+        Err(error) => {
+            let exit_code = error.exit_code();
+            let _ = error.print();
+            return ExitCode::from(exit_code as u8);
+        }
+    };
+
     // Cranelift JIT compilation plus the faust-rs front-end can recurse deeply;
     // run on a large stack like the crate's differential tests do.
     let result = thread::Builder::new()
         .name("impulse-cranelift".to_owned())
         .stack_size(256 * 1024 * 1024)
-        .spawn(run)
+        .spawn(move || run(options))
         .expect("spawn worker thread")
         .join()
         .expect("join worker thread");
@@ -46,6 +57,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[derive(Debug)]
 struct Options {
     dsp: String,
     frames: usize,
@@ -55,69 +67,99 @@ struct Options {
     compiler_argv: Vec<String>,
 }
 
-fn parse_args() -> Result<Options, String> {
-    parse_args_from(std::env::args().skip(1))
+#[derive(Debug, Parser)]
+#[command(
+    name = "impulse-cranelift",
+    version,
+    about = "Compile a Faust DSP with Cranelift and emit its scalar impulse response",
+    args_override_self = true
+)]
+struct CliArgs {
+    /// Faust DSP source file.
+    #[arg(value_name = "FILE")]
+    dsp: String,
+
+    /// Number of impulse-response frames to emit.
+    #[arg(short = 'n', long = "frames", default_value_t = DEFAULT_FRAMES)]
+    frames: usize,
+
+    /// Compile and execute with double-precision samples.
+    #[arg(long, overrides_with = "single")]
+    double: bool,
+
+    /// Compile and execute with single-precision samples.
+    #[arg(long, overrides_with = "double")]
+    single: bool,
+
+    /// Add a Faust library import directory.
+    #[arg(short = 'I', long = "import-dir", value_name = "DIR")]
+    import_dirs: Vec<String>,
+
+    /// Enable vector compilation.
+    #[arg(long = "vectorize")]
+    vectorize: bool,
+
+    /// Vector loop size.
+    #[arg(long = "vector-size")]
+    vector_size: Option<u32>,
+
+    /// Vector loop variant.
+    #[arg(long = "loop-variant")]
+    loop_variant: Option<u8>,
+
+    /// FIR scheduling strategy selector.
+    #[arg(long = "scheduling-strategy")]
+    scheduling_strategy: Option<u32>,
 }
 
-fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
-    let mut dsp: Option<String> = None;
-    let mut frames = DEFAULT_FRAMES;
-    let mut double = false;
-    let mut import_dirs = Vec::new();
+fn parse_args() -> Result<Options, clap::Error> {
+    parse_args_from(std::env::args_os().skip(1))
+}
+
+fn parse_args_from<I, T>(args: I) -> Result<Options, clap::Error>
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    let normalized = iter::once(OsString::from("impulse-cranelift"))
+        .chain(args.into_iter().map(Into::into).map(normalize_legacy_arg));
+    let args = CliArgs::try_parse_from(normalized)?;
     let mut compiler_argv = Vec::new();
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-double" => double = true,
-            "-single" => double = false,
-            "-n" => {
-                frames = args
-                    .next()
-                    .ok_or("missing value after -n")?
-                    .parse::<usize>()
-                    .map_err(|e| format!("bad -n value: {e}"))?;
-            }
-            "-I" => import_dirs.push(args.next().ok_or("missing value after -I")?),
-            "-vec" => compiler_argv.push("-vec".to_owned()),
-            "-vs" => {
-                compiler_argv.push("-vs".to_owned());
-                compiler_argv.push(args.next().ok_or("missing value after -vs")?);
-            }
-            "-lv" => {
-                compiler_argv.push("-lv".to_owned());
-                compiler_argv.push(args.next().ok_or("missing value after -lv")?);
-            }
-            "-ss" | "--scheduling-strategy" => {
-                let value = args
-                    .next()
-                    .ok_or("missing value after scheduling-strategy option")?;
-                value
-                    .parse::<u32>()
-                    .map_err(|e| format!("bad scheduling-strategy value: {e}"))?;
-                compiler_argv.push("-ss".to_owned());
-                compiler_argv.push(value);
-            }
-            other if other.starts_with('-') => return Err(format!("unknown option: {other}")),
-            other => {
-                if dsp.is_some() {
-                    return Err(format!("unexpected extra argument: {other}"));
-                }
-                dsp = Some(other.to_owned());
-            }
-        }
+    if args.vectorize {
+        compiler_argv.push("-vec".to_owned());
     }
+    if let Some(value) = args.vector_size {
+        compiler_argv.extend(["-vs".to_owned(), value.to_string()]);
+    }
+    if let Some(value) = args.loop_variant {
+        compiler_argv.extend(["-lv".to_owned(), value.to_string()]);
+    }
+    if let Some(value) = args.scheduling_strategy {
+        compiler_argv.extend(["-ss".to_owned(), value.to_string()]);
+    }
+
     Ok(Options {
-        dsp: dsp.ok_or("missing <file.dsp> argument")?,
-        frames,
-        double,
-        import_dirs,
+        dsp: args.dsp,
+        frames: args.frames,
+        double: args.double,
+        import_dirs: args.import_dirs,
         compiler_argv,
     })
 }
 
-fn run() -> Result<String, String> {
-    let options = parse_args()?;
+fn normalize_legacy_arg(arg: OsString) -> OsString {
+    match arg.to_str() {
+        Some("-double") => OsString::from("--double"),
+        Some("-single") => OsString::from("--single"),
+        Some("-vec") => OsString::from("--vectorize"),
+        Some("-vs") => OsString::from("--vector-size"),
+        Some("-lv") => OsString::from("--loop-variant"),
+        Some("-ss") => OsString::from("--scheduling-strategy"),
+        _ => arg,
+    }
+}
 
+fn run(options: Options) -> Result<String, String> {
     // Search paths: explicit -I, then the DSP's own dir, then system libs.
     let mut search = options.import_dirs.clone();
     if let Some(parent) = PathBuf::from(&options.dsp).parent()
@@ -454,10 +496,12 @@ impl TestSoundfile {
 
 #[cfg(test)]
 mod tests {
-    use super::{TestSoundfile, parse_args_from, soundfile_part_count};
+    use clap::CommandFactory;
 
-    fn parse(args: &[&str]) -> Result<super::Options, String> {
-        parse_args_from(args.iter().map(|arg| (*arg).to_owned()))
+    use super::{CliArgs, TestSoundfile, parse_args_from, soundfile_part_count};
+
+    fn parse(args: &[&str]) -> Result<super::Options, clap::Error> {
+        parse_args_from(args.iter().copied())
     }
 
     #[test]
@@ -468,10 +512,24 @@ mod tests {
     }
 
     #[test]
+    fn clap_definition_is_consistent() {
+        CliArgs::command().debug_assert();
+    }
+
+    #[test]
     fn malformed_scheduling_strategy_is_rejected_before_factory_creation() {
         assert!(parse(&["test.dsp", "-ss"]).is_err());
         assert!(parse(&["test.dsp", "-ss", "-1"]).is_err());
         assert!(parse(&["test.dsp", "-ss", "abc"]).is_err());
+    }
+
+    #[test]
+    fn legacy_flags_work_before_the_dsp_and_last_precision_wins() {
+        let options = parse(&["-double", "-I", "lib", "test.dsp", "-single", "-n", "8"])
+            .expect("parse legacy options");
+        assert!(!options.double);
+        assert_eq!(options.frames, 8);
+        assert_eq!(options.import_dirs, ["lib"]);
     }
 
     #[test]

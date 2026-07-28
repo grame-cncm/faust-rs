@@ -10,7 +10,7 @@ default = ["backend-wasm"]
 backend-wasm = ["codegen/backend-wasm"]
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap.workspace = true
 errors = { path = "../errors" }
 parser = { path = "../parser" }
 codegen = { path = "../codegen" }
