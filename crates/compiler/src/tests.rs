@@ -1145,3 +1145,25 @@ fn compiler_error_source_classification_covers_every_variant() {
         diagnostics: empty(),
     });
 }
+
+/// `CompilerError` is returned by value from every facade entry point, so its
+/// width is a real cost and `clippy::result_large_err` rejects it past 128
+/// bytes. That check runs per platform, and `PathBuf` is eight bytes wider on
+/// Windows than on Unix — which is how this enum once passed CI on Linux and
+/// macOS while failing on Windows at exactly the threshold.
+///
+/// The bound below leaves headroom for that difference so the failure surfaces
+/// here, on any developer machine, instead of only on one CI runner. If a new
+/// variant trips it, box the payload rather than raising the number: the
+/// diagnostic bundle every variant already carries is the floor, and widening
+/// past it costs every `Result` in the pipeline.
+#[test]
+fn compiler_error_stays_narrow_enough_for_every_platform() {
+    const MAX_BYTES: usize = 112;
+    let actual = std::mem::size_of::<CompilerError>();
+    assert!(
+        actual <= MAX_BYTES,
+        "CompilerError grew to {actual} bytes (budget {MAX_BYTES}); \
+         box the widest variant's payload instead of raising the budget"
+    );
+}

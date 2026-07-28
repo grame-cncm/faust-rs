@@ -1247,7 +1247,11 @@ pub enum CompilerError {
     /// [`SourceReaderError::to_diagnostics`]; build it with
     /// [`CompilerError::import`] rather than constructing the variant directly,
     /// so the bundle and the error can never disagree.
-    Import(SourceReaderError, DiagnosticBundle),
+    ///
+    /// The reader error is boxed because it is by far the widest payload in
+    /// this enum, and `CompilerError` is returned by value from every facade
+    /// entry point — see `compiler_error_stays_narrow_enough_for_every_platform`.
+    Import(Box<SourceReaderError>, DiagnosticBundle),
     /// Parse output did not expose a root node.
     ///
     /// Build with [`CompilerError::missing_root`] so the bundle is attached.
@@ -1501,7 +1505,7 @@ impl std::fmt::Display for CompilerError {
 impl std::error::Error for CompilerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Import(error, _) => Some(error),
+            Self::Import(error, _) => Some(error.as_ref()),
             Self::Eval { error, .. } => Some(error.as_ref()),
             Self::Propagate { error, .. } => Some(error),
             Self::Type { error, .. } => Some(error.as_ref()),
@@ -1560,7 +1564,7 @@ impl CompilerError {
     #[must_use]
     pub fn import(err: SourceReaderError) -> Self {
         let diagnostics = err.to_diagnostics();
-        Self::Import(err, diagnostics)
+        Self::Import(Box::new(err), diagnostics)
     }
 
     /// Builds the `FRS-CODEGEN-0001` bundle for one backend emission failure.
