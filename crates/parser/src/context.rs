@@ -13,6 +13,8 @@
 //! - Waveform values are accumulated in parse order then drained by the corresponding action.
 //! - Parser diagnostics are explicitly scoped to one parser context (no global mutable singleton).
 
+use std::collections::HashMap;
+
 use diagnostics::{DiagnosticCode, Severity, codes};
 use tlib::{PropertyKey, PropertyStore, TreeId};
 
@@ -26,6 +28,104 @@ pub struct SourceLocation {
     col: u32,
     end_line: u32,
     end_col: u32,
+}
+
+/// Stable parser-session identifier for one Box source occurrence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BoxOriginId(u32);
+
+impl BoxOriginId {
+    /// Returns the deterministic zero-based session id.
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+}
+
+/// Parser action that created one Box occurrence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BoxOriginRole {
+    /// Definition-side occurrence.
+    Definition,
+    /// Use-side occurrence.
+    Use,
+}
+
+/// One source occurrence of a hash-consed Box node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoxOrigin {
+    /// Stable parser-session occurrence id.
+    pub id: BoxOriginId,
+    /// Semantic Box identity shared by structurally equal occurrences.
+    pub node: TreeId,
+    /// Exact source location observed by the grammar action.
+    pub location: SourceLocation,
+    /// Definition/use role at the parser boundary.
+    pub role: BoxOriginRole,
+}
+
+/// Exact Box occurrence selected at an ambiguity-sensitive boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LocatedBox {
+    /// Hash-consed semantic Box node.
+    pub node: TreeId,
+    /// Selected source occurrence.
+    pub origin: BoxOriginId,
+}
+
+/// Occurrence-aware provenance retained alongside parser Box nodes.
+///
+/// A semantic node maps to every candidate origin. [`LocatedBox`] selects one
+/// candidate without changing `TreeArena` hash-consing or semantic equality.
+#[derive(Clone, Debug, Default)]
+pub struct BoxProvenance {
+    origins: Vec<BoxOrigin>,
+    by_node: HashMap<TreeId, Vec<BoxOriginId>>,
+}
+
+impl BoxProvenance {
+    fn record(
+        &mut self,
+        node: TreeId,
+        location: SourceLocation,
+        role: BoxOriginRole,
+    ) -> LocatedBox {
+        let raw_id = u32::try_from(self.origins.len()).unwrap_or(u32::MAX);
+        let id = BoxOriginId(raw_id);
+        self.origins.push(BoxOrigin {
+            id,
+            node,
+            location,
+            role,
+        });
+        self.by_node.entry(node).or_default().push(id);
+        LocatedBox { node, origin: id }
+    }
+
+    /// Returns one recorded occurrence by id.
+    #[must_use]
+    pub fn get(&self, id: BoxOriginId) -> Option<&BoxOrigin> {
+        self.origins.get(usize::try_from(id.0).ok()?)
+    }
+
+    /// Returns every candidate origin for one semantic node in parse order.
+    #[must_use]
+    pub fn origins_for(&self, node: TreeId) -> &[BoxOriginId] {
+        self.by_node.get(&node).map_or(&[], Vec::as_slice)
+    }
+
+    /// Returns all occurrences in deterministic parse order.
+    #[must_use]
+    pub fn as_slice(&self) -> &[BoxOrigin] {
+        &self.origins
+    }
+
+    /// Resolves an exact located occurrence and checks its semantic identity.
+    #[must_use]
+    pub fn resolve(&self, located: LocatedBox) -> Option<&BoxOrigin> {
+        self.get(located.origin)
+            .filter(|origin| origin.node == located.node)
+    }
 }
 
 impl SourceLocation {
@@ -125,6 +225,8 @@ pub struct ParserCtx {
     props: PropertyStore<SourceLocation>,
     def_prop_key: PropertyKey,
     use_prop_key: PropertyKey,
+    box_provenance: BoxProvenance,
+    definition_candidate_floor: HashMap<TreeId, usize>,
 }
 
 impl Default for ParserCtx {
@@ -164,6 +266,8 @@ impl ParserCtx {
             props,
             def_prop_key,
             use_prop_key,
+            box_provenance: BoxProvenance::default(),
+            definition_candidate_floor: HashMap::new(),
         }
     }
 
@@ -392,9 +496,7 @@ impl ParserCtx {
     /// intentionally replace earlier ones, matching the property-store behavior
     /// used by the historical parser utilities.
     pub fn set_def_prop(&mut self, sym: TreeId, file: &str, line: u32) {
-        let _ = self
-            .props
-            .set_with_key(sym, self.def_prop_key, SourceLocation::new(file, line));
+        self.set_def_prop_location(sym, SourceLocation::new(file, line));
     }
 
     /// Sets definition property with full source span precision.
@@ -402,24 +504,62 @@ impl ParserCtx {
     /// Rust extends the C++ file/line payload with range information so later
     /// diagnostics can preserve `lrpar` span precision when available.
     pub fn set_def_prop_location(&mut self, sym: TreeId, location: SourceLocation) {
+        self.box_provenance
+            .record(sym, location.clone(), BoxOriginRole::Definition);
         let _ = self.props.set_with_key(sym, self.def_prop_key, location);
     }
 
     /// Equivalent to C++ `setUseProp(sym, file, line)`.
     pub fn set_use_prop(&mut self, sym: TreeId, file: &str, line: u32) {
-        let _ = self
-            .props
-            .set_with_key(sym, self.use_prop_key, SourceLocation::new(file, line));
+        self.set_use_prop_location(sym, SourceLocation::new(file, line));
     }
 
     /// Sets usage property with full source span precision.
     pub fn set_use_prop_location(&mut self, sym: TreeId, location: SourceLocation) {
+        self.box_provenance
+            .record(sym, location.clone(), BoxOriginRole::Use);
         let _ = self.props.set_with_key(sym, self.use_prop_key, location);
+    }
+
+    /// Returns occurrence-aware Box provenance for this parse session.
+    #[must_use]
+    pub fn box_provenance(&self) -> &BoxProvenance {
+        &self.box_provenance
+    }
+
+    /// Imports occurrences whose semantic nodes were cloned into this parse
+    /// arena.
+    pub(crate) fn import_box_provenance(
+        &mut self,
+        source: &ParserCtx,
+        node_map: &HashMap<TreeId, TreeId>,
+    ) {
+        for origin in source.box_provenance.as_slice() {
+            if let Some(&node) = node_map.get(&origin.node) {
+                self.box_provenance
+                    .record(node, origin.location.clone(), origin.role);
+            }
+        }
     }
 
     /// Convenience hook: set definition property from current parser cursor.
     pub fn set_def_prop_at_cursor(&mut self, sym: TreeId) {
-        let loc = self.cursor.clone();
+        let candidates = self.box_provenance.origins_for(sym);
+        let floor = self
+            .definition_candidate_floor
+            .get(&sym)
+            .copied()
+            .unwrap_or(0);
+        let loc = candidates
+            .get(floor..)
+            .and_then(|ids| {
+                ids.iter()
+                    .filter_map(|id| self.box_provenance.get(*id))
+                    .find(|origin| origin.role == BoxOriginRole::Use)
+            })
+            .map_or_else(|| self.cursor.clone(), |origin| origin.location.clone());
+        self.definition_candidate_floor
+            .insert(sym, candidates.len());
         self.set_def_prop_location(sym, loc);
     }
 
@@ -555,8 +695,9 @@ impl ParserCtx {
 
 #[cfg(test)]
 mod tests {
-    use super::ParserCtx;
+    use super::{BoxOriginRole, ParserCtx, SourceLocation};
     use diagnostics::{Severity, codes};
+    use tlib::TreeArena;
 
     #[test]
     fn diagnostic_codes_are_assigned_independently_of_message_wording() {
@@ -578,5 +719,43 @@ mod tests {
         assert_eq!(diagnostics[2].severity, Severity::Warning);
         assert_eq!(diagnostics[3].severity, Severity::Remark);
         assert_eq!(ctx.parse_error_count(), 2);
+    }
+
+    #[test]
+    fn hash_consed_box_keeps_all_origins_and_located_selection() {
+        let mut arena = TreeArena::new();
+        let shared = arena.symbol("same");
+        assert_eq!(shared, arena.symbol("same"));
+
+        let mut ctx = ParserCtx::new();
+        ctx.set_use_prop_location(shared, SourceLocation::new_span("a.dsp", 1, 3, 1, 7));
+        ctx.set_use_prop_location(shared, SourceLocation::new_span("b.dsp", 9, 5, 9, 9));
+
+        let candidates = ctx.box_provenance().origins_for(shared);
+        assert_eq!(candidates.len(), 2);
+        let first = ctx
+            .box_provenance()
+            .resolve(super::LocatedBox {
+                node: shared,
+                origin: candidates[0],
+            })
+            .expect("first exact occurrence should resolve");
+        let second = ctx
+            .box_provenance()
+            .resolve(super::LocatedBox {
+                node: shared,
+                origin: candidates[1],
+            })
+            .expect("second exact occurrence should resolve");
+        assert_eq!(first.location.file(), "a.dsp");
+        assert_eq!(second.location.file(), "b.dsp");
+        assert_eq!(first.role, BoxOriginRole::Use);
+        assert_eq!(second.role, BoxOriginRole::Use);
+
+        assert_eq!(
+            ctx.use_prop(shared).map(SourceLocation::file),
+            Some("b.dsp"),
+            "the compatibility property remains last-write-wins"
+        );
     }
 }

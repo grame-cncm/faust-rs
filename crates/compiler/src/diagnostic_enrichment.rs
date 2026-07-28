@@ -90,17 +90,42 @@ pub(crate) fn maybe_add_source_label(
     entrypoint_name: &str,
 ) -> Diagnostic {
     if let Some(owner) = owner_definition {
+        let exact_span = source_span_for_node_in_definition(ctx, arena, defs_root, node, owner);
         let owner_span = source_span_for_definition_name(ctx, arena, defs_root, owner);
         let call_span =
             source_span_for_entrypoint_binding_target(ctx, arena, defs_root, entrypoint_name)
                 .or_else(|| {
                     source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name)
                 });
-        if let Some(primary_span) = owner_span {
+        if let Some(primary_span) = exact_span.clone().or_else(|| owner_span.clone()) {
             diagnostic = diagnostic.with_label(
-                Label::new(LabelStyle::Primary, primary_span.clone(), "related source")
-                    .with_role(LabelRole::DefinitionSite),
+                Label::new(
+                    LabelStyle::Primary,
+                    primary_span.clone(),
+                    if exact_span.is_some() {
+                        "failing composition"
+                    } else {
+                        "related source"
+                    },
+                )
+                .with_role(if exact_span.is_some() {
+                    LabelRole::Operator
+                } else {
+                    LabelRole::DefinitionSite
+                }),
             );
+            if let Some(definition_span) = owner_span
+                && definition_span != primary_span
+            {
+                diagnostic = diagnostic.with_label(
+                    Label::new(
+                        LabelStyle::Secondary,
+                        definition_span,
+                        "enclosing definition",
+                    )
+                    .with_role(LabelRole::DefinitionSite),
+                );
+            }
             if let Some(secondary_span) = call_span
                 && secondary_span != primary_span
             {
@@ -147,14 +172,40 @@ pub(crate) fn maybe_add_eval_source_labels(
     entrypoint_name: &str,
 ) -> Diagnostic {
     if let Some(owner) = owner_definition {
+        let use_span = source_span_for_node_in_definition(ctx, arena, defs_root, node, owner);
         let origin_span = source_span_for_definition_name(ctx, arena, defs_root, owner);
         let call_span =
             source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name);
-        if let Some(primary_span) = origin_span {
+        if let Some(primary_span) = use_span.clone().or_else(|| origin_span.clone()) {
+            let primary_role = if use_span.is_some() {
+                LabelRole::UseSite
+            } else {
+                LabelRole::DefinitionSite
+            };
             diagnostic = diagnostic.with_label(
-                Label::new(LabelStyle::Primary, primary_span.clone(), "definition site")
-                    .with_role(LabelRole::DefinitionSite),
+                Label::new(
+                    LabelStyle::Primary,
+                    primary_span.clone(),
+                    if use_span.is_some() {
+                        "failing use"
+                    } else {
+                        "definition site"
+                    },
+                )
+                .with_role(primary_role),
             );
+            if let Some(definition_span) = origin_span
+                && definition_span != primary_span
+            {
+                diagnostic = diagnostic.with_label(
+                    Label::new(
+                        LabelStyle::Secondary,
+                        definition_span,
+                        "enclosing definition",
+                    )
+                    .with_role(LabelRole::DefinitionSite),
+                );
+            }
             if let Some(secondary_span) = call_span
                 && secondary_span != primary_span
             {
@@ -195,6 +246,83 @@ pub(crate) fn maybe_add_eval_source_labels(
     diagnostic
 }
 
+/// Selects the exact parser occurrence of `node` inside one top-level
+/// definition when hash-consing gave the semantic node multiple candidates.
+///
+/// Definition identifier locations delimit the lexical region. The function
+/// deliberately returns `None` when zero or multiple candidates remain so a
+/// caller can use a conservative definition-level fallback.
+pub(crate) fn source_span_for_node_in_definition(
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    node: BoxId,
+    owner: &str,
+) -> Option<SourceSpan> {
+    let (owner_name, _) = find_definition_name_and_expr(arena, defs_root, owner)?;
+    let owner_start = ctx
+        .box_provenance()
+        .origins_for(owner_name)
+        .iter()
+        .filter_map(|id| ctx.box_provenance().get(*id))
+        .find(|origin| origin.role == parser::BoxOriginRole::Definition)?
+        .location
+        .clone();
+
+    let mut next_start = None;
+    let mut defs = defs_root;
+    while !arena.is_nil(defs) {
+        let def = arena.hd(defs)?;
+        let name = arena.hd(def)?;
+        for id in ctx.box_provenance().origins_for(name) {
+            let Some(origin) = ctx.box_provenance().get(*id) else {
+                continue;
+            };
+            if origin.role == parser::BoxOriginRole::Definition
+                && origin.location.file() == owner_start.file()
+                && (origin.location.line(), origin.location.col())
+                    > (owner_start.line(), owner_start.col())
+                && next_start
+                    .as_ref()
+                    .is_none_or(|next: &parser::SourceLocation| {
+                        (origin.location.line(), origin.location.col()) < (next.line(), next.col())
+                    })
+            {
+                next_start = Some(origin.location.clone());
+            }
+        }
+        defs = arena.tl(defs)?;
+    }
+
+    let candidates = ctx
+        .box_provenance()
+        .origins_for(node)
+        .iter()
+        .filter_map(|id| ctx.box_provenance().get(*id))
+        .filter(|origin| origin.role == parser::BoxOriginRole::Use)
+        .filter(|origin| origin.location.file() == owner_start.file())
+        .filter(|origin| {
+            (origin.location.line(), origin.location.col())
+                >= (owner_start.line(), owner_start.col())
+        })
+        .filter(|origin| {
+            next_start.as_ref().is_none_or(|next| {
+                (origin.location.line(), origin.location.col()) < (next.line(), next.col())
+            })
+        })
+        .collect::<Vec<_>>();
+    let [origin] = candidates.as_slice() else {
+        return None;
+    };
+    Some(SourceSpan::new(
+        origin.location.file(),
+        origin.location.line(),
+        origin.location.col(),
+        origin.location.end_line(),
+        origin.location.end_col(),
+    ))
+}
+
 // ─── Source span resolution ───────────────────────────────────────────────────
 
 /// Resolves one source span from the node itself, then falls back to labeled descendants.
@@ -230,14 +358,18 @@ pub(crate) fn source_span_from_node_or_descendant(
 
 /// Resolves one source span for a node from parser `use_prop` / `def_prop`.
 pub(crate) fn source_span_for_node(ctx: &parser::ParserCtx, node: BoxId) -> Option<SourceSpan> {
+    if let Some(origin) = ctx
+        .box_provenance()
+        .origins_for(node)
+        .iter()
+        .rev()
+        .filter_map(|id| ctx.box_provenance().get(*id))
+        .find(|origin| origin.role == parser::BoxOriginRole::Use)
+    {
+        return Some(source_span_from_parser_location(&origin.location));
+    }
     let loc = ctx.use_prop(node).or_else(|| ctx.def_prop(node))?;
-    Some(SourceSpan::new(
-        loc.file(),
-        loc.line(),
-        loc.col(),
-        loc.end_line(),
-        loc.end_col(),
-    ))
+    Some(source_span_from_parser_location(loc))
 }
 
 /// Resolves one source span for a definition node, preferring `def_prop`.
@@ -248,14 +380,27 @@ pub(crate) fn source_span_for_definition_node(
     ctx: &parser::ParserCtx,
     node: BoxId,
 ) -> Option<SourceSpan> {
+    if let Some(origin) = ctx
+        .box_provenance()
+        .origins_for(node)
+        .iter()
+        .filter_map(|id| ctx.box_provenance().get(*id))
+        .find(|origin| origin.role == parser::BoxOriginRole::Definition)
+    {
+        return Some(source_span_from_parser_location(&origin.location));
+    }
     let loc = ctx.def_prop(node).or_else(|| ctx.use_prop(node))?;
-    Some(SourceSpan::new(
+    Some(source_span_from_parser_location(loc))
+}
+
+fn source_span_from_parser_location(loc: &parser::SourceLocation) -> SourceSpan {
+    SourceSpan::new(
         loc.file(),
         loc.line(),
         loc.col(),
         loc.end_line(),
         loc.end_col(),
-    ))
+    )
 }
 
 /// Fallback source span for the configured entry-point definition identifier.
@@ -443,6 +588,55 @@ pub(crate) fn owner_definition_name_for_node(
     None
 }
 
+/// Selects the owning definition that is actually reachable from the requested
+/// entry point when one hash-consed node occurs in several definitions.
+///
+/// A breadth-first traversal follows the deterministic definition-reference
+/// graph. This prevents the old structural "first definition containing this
+/// `TreeId`" fallback from blaming an unreachable identical occurrence.
+pub(crate) fn reachable_owner_definition_name_for_node(
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    node: BoxId,
+    entrypoint_name: &str,
+) -> Option<Box<str>> {
+    let mut owners = HashSet::new();
+    let mut defs = defs_root;
+    let mut visited = 0usize;
+    while !arena.is_nil(defs) {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            break;
+        }
+        let def = arena.hd(defs)?;
+        let name = arena.hd(def)?;
+        let args_expr = arena.tl(def)?;
+        let expr = arena.tl(args_expr)?;
+        if (expr == node || subtree_contains_node(arena, expr, node))
+            && let BoxMatch::Ident(name_str) = match_box(arena, name)
+        {
+            owners.insert(Box::<str>::from(name_str));
+        }
+        defs = arena.tl(defs)?;
+    }
+
+    let edges = definition_reference_edges(arena, defs_root);
+    let mut queue = VecDeque::from([Box::<str>::from(entrypoint_name)]);
+    let mut seen = HashSet::new();
+    while let Some(name) = queue.pop_front() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if owners.contains(&name) {
+            return Some(name);
+        }
+        if let Some(next) = edges.get(&name) {
+            queue.extend(next.iter().cloned());
+        }
+    }
+    owner_definition_name_for_node(arena, defs_root, node)
+}
+
 /// Builds one deterministic reference graph between top-level definition names.
 ///
 /// Each edge `A -> B` means definition `A` references identifier `B` somewhere in its expression.
@@ -532,7 +726,7 @@ pub(crate) fn alias_binding_trace_for_node(
     node: BoxId,
     entrypoint_name: &str,
 ) -> Option<String> {
-    let owner = owner_definition_name_for_node(arena, defs_root, node)?;
+    let owner = reachable_owner_definition_name_for_node(arena, defs_root, node, entrypoint_name)?;
     if owner.as_ref() == entrypoint_name {
         return Some(entrypoint_name.to_owned());
     }

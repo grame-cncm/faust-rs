@@ -27,6 +27,25 @@ fn read_corpus(file: &str) -> String {
 }
 
 #[test]
+fn identical_unresolved_nodes_blame_the_reachable_occurrence() {
+    let source = "unused = missing;\nactive = missing;\nprocess = active;\n";
+    let err = Compiler::new()
+        .compile_source_to_signals("reachable_origin.dsp", source)
+        .expect_err("the reachable undefined symbol should fail");
+    let diagnostic = &err.diagnostic_bundle().as_slice()[0];
+    assert_eq!(diagnostic.labels[0].role, compiler::LabelRole::UseSite);
+    assert_eq!(diagnostic.labels[0].span.line, 2);
+    assert_eq!(diagnostic.labels[0].span.col, 10);
+    assert!(
+        diagnostic
+            .facts
+            .iter()
+            .any(|(key, value)| key.as_str() == "owner_definition"
+                && value == &compiler::DiagnosticValue::from("active"))
+    );
+}
+
+#[test]
 fn parse_error_fixture_exposes_frs_parse_code() {
     let compiler = Compiler::new();
     let source = read_corpus("err_01_parse_missing_rhs.dsp");
@@ -265,20 +284,14 @@ fn eval_undefined_symbol_exposes_multi_label_call_and_definition_sites() {
         !first.labels.is_empty(),
         "eval undefined-symbol diagnostics should expose at least one source label"
     );
-    assert_eq!(first.labels[0].message.as_ref(), "definition site");
+    assert_eq!(first.labels[0].message.as_ref(), "failing use");
     assert_eq!(first.labels[0].span.line, 1);
-    if first.labels.len() >= 2 {
-        assert_eq!(first.labels[1].message.as_ref(), "call site");
-        assert_eq!(first.labels[1].span.line, 4);
-    } else {
-        assert!(
-            first
-                .notes
-                .iter()
-                .any(|n| n.as_ref().starts_with("error originates from definition ")),
-            "single-label fallback should still expose owning definition context"
-        );
-    }
+    assert_eq!(first.labels[0].span.col, 14);
+    assert_eq!(first.labels[1].message.as_ref(), "enclosing definition");
+    assert_eq!(first.labels[1].span.line, 1);
+    assert_eq!(first.labels[1].span.col, 1);
+    assert_eq!(first.labels[2].message.as_ref(), "call site");
+    assert_eq!(first.labels[2].span.line, 4);
 }
 
 #[test]

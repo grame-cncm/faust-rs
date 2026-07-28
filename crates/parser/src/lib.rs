@@ -37,7 +37,9 @@ pub mod context;
 pub mod metadata;
 pub mod source_reader;
 
-pub use context::{ParserCtx, SourceLocation};
+pub use context::{
+    BoxOrigin, BoxOriginId, BoxOriginRole, BoxProvenance, LocatedBox, ParserCtx, SourceLocation,
+};
 pub use metadata::{CompilationMetadataKey, CompilationMetadataSnapshot, CompilationMetadataStore};
 pub use source_reader::{
     ExpandedSource, ImportSite, SourceLineOrigin, SourceReader, SourceReaderError, VirtualSourceMap,
@@ -1598,6 +1600,11 @@ struct StructuralImportExpander {
     float_size: u8,
 }
 
+struct ImportExpansionReports<'a> {
+    errors: &'a mut Vec<String>,
+    diagnostics: &'a mut DiagnosticBundle,
+}
+
 impl StructuralImportExpander {
     fn new(reader: SourceReader, metadata_store: CompilationMetadataStore, float_size: u8) -> Self {
         Self {
@@ -1656,13 +1663,17 @@ impl StructuralImportExpander {
         let Some(root) = output.root else {
             return Ok(());
         };
+        let mut reports = ImportExpansionReports {
+            errors: &mut output.errors,
+            diagnostics: &mut output.diagnostics,
+        };
         let expanded = self.expand_definition_list_in_arena(
             &mut output.state.arena,
+            &mut output.state.ctx,
             root,
             current_file,
             expanded_in_scope,
-            &mut output.errors,
-            &mut output.diagnostics,
+            &mut reports,
         )?;
         output.root = Some(expanded);
         output.state.ctx.set_parse_result(expanded);
@@ -1672,11 +1683,11 @@ impl StructuralImportExpander {
     fn expand_definition_list_in_arena(
         &mut self,
         arena: &mut TreeArena,
+        ctx: &mut ParserCtx,
         mut defs: TreeId,
         current_file: &Path,
         expanded_in_scope: &mut HashSet<PathBuf>,
-        errors: &mut Vec<String>,
-        diagnostics: &mut DiagnosticBundle,
+        reports: &mut ImportExpansionReports<'_>,
     ) -> Result<TreeId, SourceReaderError> {
         let mut items = Vec::new();
 
@@ -1725,27 +1736,35 @@ impl StructuralImportExpander {
                                 &resolved_import,
                                 expanded_in_scope,
                             )?;
-                            errors.extend(imported.errors.iter().cloned());
-                            diagnostics.extend(imported.diagnostics.as_slice().iter().cloned());
+                            reports.errors.extend(imported.errors.iter().cloned());
+                            reports
+                                .diagnostics
+                                .extend(imported.diagnostics.as_slice().iter().cloned());
                             if let Some(imported_root) = imported.root {
                                 let mut imported_defs = imported_root;
+                                let mut imported_node_map = std::collections::HashMap::new();
                                 while !imported.state.arena.is_nil(imported_defs) {
                                     let Some(imported_def) = imported.state.arena.hd(imported_defs)
                                     else {
                                         break;
                                     };
-                                    items.push(
-                                        arena.clone_subtree_from(
-                                            &imported.state.arena,
-                                            imported_def,
-                                        ),
+                                    let cloned = arena
+                                        .clone_subtree_from(&imported.state.arena, imported_def);
+                                    map_cloned_subtree_nodes(
+                                        arena,
+                                        cloned,
+                                        &imported.state.arena,
+                                        imported_def,
+                                        &mut imported_node_map,
                                     );
+                                    items.push(cloned);
                                     imported_defs = imported
                                         .state
                                         .arena
                                         .tl(imported_defs)
                                         .unwrap_or_else(|| imported.state.arena.nil());
                                 }
+                                ctx.import_box_provenance(&imported.state.ctx, &imported_node_map);
                             }
                             self.active_stack.remove(&resolved_import);
                         }
@@ -1753,10 +1772,10 @@ impl StructuralImportExpander {
                 }
                 _ => items.push(self.rewrite_nested_imports(
                     arena,
+                    ctx,
                     def,
                     current_file,
-                    errors,
-                    diagnostics,
+                    reports,
                 )?),
             }
 
@@ -1773,15 +1792,14 @@ impl StructuralImportExpander {
     fn rewrite_nested_imports(
         &mut self,
         arena: &mut TreeArena,
+        ctx: &mut ParserCtx,
         id: TreeId,
         current_file: &Path,
-        errors: &mut Vec<String>,
-        diagnostics: &mut DiagnosticBundle,
+        reports: &mut ImportExpansionReports<'_>,
     ) -> Result<TreeId, SourceReaderError> {
         match match_box(arena, id) {
             BoxMatch::WithLocalDef(body, defs) => {
-                let body =
-                    self.rewrite_nested_imports(arena, body, current_file, errors, diagnostics)?;
+                let body = self.rewrite_nested_imports(arena, ctx, body, current_file, reports)?;
                 // Nested local-definition lists need their own duplicate-import
                 // suppression scope. A library imported into one local
                 // environment must not suppress the same library when it is
@@ -1789,48 +1807,46 @@ impl StructuralImportExpander {
                 let mut local_expanded = HashSet::new();
                 let defs = self.expand_definition_list_in_arena(
                     arena,
+                    ctx,
                     defs,
                     current_file,
                     &mut local_expanded,
-                    errors,
-                    diagnostics,
+                    reports,
                 )?;
                 Ok(boxes::BoxBuilder::new(arena).with_local_def(body, defs))
             }
             BoxMatch::ModifLocalDef(body, defs) => {
-                let body =
-                    self.rewrite_nested_imports(arena, body, current_file, errors, diagnostics)?;
+                let body = self.rewrite_nested_imports(arena, ctx, body, current_file, reports)?;
                 let mut local_expanded = HashSet::new();
                 let defs = self.expand_definition_list_in_arena(
                     arena,
+                    ctx,
                     defs,
                     current_file,
                     &mut local_expanded,
-                    errors,
-                    diagnostics,
+                    reports,
                 )?;
                 Ok(boxes::BoxBuilder::new(arena).modif_local_def(body, defs))
             }
             BoxMatch::WithRecDef(body, defs1, defs2) => {
-                let body =
-                    self.rewrite_nested_imports(arena, body, current_file, errors, diagnostics)?;
+                let body = self.rewrite_nested_imports(arena, ctx, body, current_file, reports)?;
                 let mut local_expanded_1 = HashSet::new();
                 let defs1 = self.expand_definition_list_in_arena(
                     arena,
+                    ctx,
                     defs1,
                     current_file,
                     &mut local_expanded_1,
-                    errors,
-                    diagnostics,
+                    reports,
                 )?;
                 let mut local_expanded_2 = HashSet::new();
                 let defs2 = self.expand_definition_list_in_arena(
                     arena,
+                    ctx,
                     defs2,
                     current_file,
                     &mut local_expanded_2,
-                    errors,
-                    diagnostics,
+                    reports,
                 )?;
                 Ok(boxes::BoxBuilder::new(arena).with_rec_def(body, defs1, defs2))
             }
@@ -1845,13 +1861,8 @@ impl StructuralImportExpander {
                 let mut rewritten = Vec::with_capacity(node.children.len());
                 let mut changed = false;
                 for child in node.children.as_slice() {
-                    let rewritten_child = self.rewrite_nested_imports(
-                        arena,
-                        *child,
-                        current_file,
-                        errors,
-                        diagnostics,
-                    )?;
+                    let rewritten_child =
+                        self.rewrite_nested_imports(arena, ctx, *child, current_file, reports)?;
                     changed |= rewritten_child != *child;
                     rewritten.push(rewritten_child);
                 }
@@ -1910,6 +1921,34 @@ fn string_node_text_from_arena(arena: &TreeArena, node: TreeId) -> Option<&str> 
         Some(NodeKind::StringLiteral(value)) => Some(value.as_ref()),
         Some(NodeKind::Symbol(value)) => Some(value.as_ref()),
         _ => None,
+    }
+}
+
+/// Reconstructs the source-to-destination node mapping for one subtree cloned
+/// with `TreeArena::clone_subtree_from`.
+///
+/// Both trees preserve ordered child structure. Destination hash-consing may
+/// map several source ids to one destination id, which is intentional: the
+/// occurrence provenance copied through this map retains their distinct
+/// source locations.
+fn map_cloned_subtree_nodes(
+    destination: &TreeArena,
+    destination_root: TreeId,
+    source: &TreeArena,
+    source_root: TreeId,
+    mapping: &mut std::collections::HashMap<TreeId, TreeId>,
+) {
+    let mut stack = vec![(source_root, destination_root)];
+    while let Some((source_node, destination_node)) = stack.pop() {
+        if mapping.insert(source_node, destination_node).is_some() {
+            continue;
+        }
+        let source_children = source.children(source_node).unwrap_or(&[]);
+        let destination_children = destination.children(destination_node).unwrap_or(&[]);
+        for (&source_child, &destination_child) in source_children.iter().zip(destination_children)
+        {
+            stack.push((source_child, destination_child));
+        }
     }
 }
 

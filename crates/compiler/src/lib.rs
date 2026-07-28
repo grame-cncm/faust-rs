@@ -986,8 +986,14 @@ impl Compiler {
         });
         let (process_box, eval_stats) = eval_result.map_err(|error| {
             let node = eval_error_node(&error);
-            let owner =
-                node.and_then(|n| owner_definition_name_for_node(&output.state.arena, root, n));
+            let owner = node.and_then(|n| {
+                reachable_owner_definition_name_for_node(
+                    &output.state.arena,
+                    root,
+                    n,
+                    self.entrypoint_name.as_ref(),
+                )
+            });
             let mut diagnostic = error.to_diagnostic();
             if let Some(n) = node {
                 diagnostic = enrich_diagnostic_with_node(

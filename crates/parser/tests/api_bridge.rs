@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use boxes::{BoxMatch, dump_box, match_box};
+use boxes::{BoxBuilder, BoxMatch, dump_box, match_box};
 use diagnostics::SourceKind;
 use parser::{
     CompilationMetadataKey, CompilationMetadataStore, SourceReaderError, VirtualSourceMap,
@@ -476,4 +476,63 @@ fn parse_program_with_imports_treats_inline_and_multiline_local_imports_equivale
         ],
         "multiline used_files should include entry then imported local source"
     );
+}
+
+#[test]
+fn repeated_hash_consed_identifier_uses_keep_distinct_parse_occurrences() {
+    let mut output = parse_program(
+        "a = missing;\nb = missing;\nprocess = a,b;\n",
+        "repeated.dsp",
+    );
+    assert!(output.errors.is_empty(), "{:?}", output.errors);
+
+    let shared = BoxBuilder::new(&mut output.state.arena).ident("missing");
+    let ids = output.state.ctx.box_provenance().origins_for(shared);
+    assert_eq!(
+        ids.len(),
+        2,
+        "both syntactic uses must survive hash-consing"
+    );
+    let origins = ids
+        .iter()
+        .map(|id| {
+            output
+                .state
+                .ctx
+                .box_provenance()
+                .get(*id)
+                .expect("recorded occurrence should resolve")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(origins[0].location.line(), 1);
+    assert_eq!(origins[1].location.line(), 2);
+    assert_eq!(origins[0].node, origins[1].node);
+}
+
+#[test]
+fn imported_box_occurrences_are_remapped_into_the_destination_arena() {
+    let bundle =
+        VirtualSourceMap::new([(PathBuf::from("child.lib"), "foo = missing;\n".to_owned())]);
+    let mut output = parse_program_with_imports_and_metadata(
+        "import(\"child.lib\");\nprocess = foo;\n",
+        "main.dsp",
+        &[],
+        &bundle,
+        CompilationMetadataStore::new("main.dsp"),
+    )
+    .expect("virtual import should parse");
+    assert!(output.errors.is_empty(), "{:?}", output.errors);
+
+    let missing = BoxBuilder::new(&mut output.state.arena).ident("missing");
+    let origins = output
+        .state
+        .ctx
+        .box_provenance()
+        .origins_for(missing)
+        .iter()
+        .filter_map(|id| output.state.ctx.box_provenance().get(*id))
+        .collect::<Vec<_>>();
+    assert_eq!(origins.len(), 1);
+    assert_eq!(origins[0].location.file(), "child.lib");
+    assert_eq!(origins[0].location.line(), 1);
 }

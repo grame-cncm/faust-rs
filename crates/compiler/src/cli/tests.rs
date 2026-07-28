@@ -1178,10 +1178,9 @@ fn diagnostics_json_renderer_snapshot_for_eval_undefined_symbol_alias_chain() {
         .collect::<Vec<_>>();
 
     assert_eq!(diag["code"], "FRS-EVAL-0002");
-    assert_eq!(labels[0]["role"], "definition_site");
-    if labels.len() >= 2 {
-        assert_eq!(labels[1]["role"], "call_site");
-    }
+    assert_eq!(labels[0]["role"], "use_site");
+    assert_eq!(labels[1]["role"], "definition_site");
+    assert_eq!(labels[2]["role"], "call_site");
     assert!(
         notes
             .iter()

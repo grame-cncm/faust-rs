@@ -308,7 +308,8 @@ pub(crate) fn make_propagate_compiler_error(
     add_paired: bool,
 ) -> CompilerError {
     let node = propagate_error_node(&error);
-    let owner = node.and_then(|n| owner_definition_name_for_node(arena, root, n));
+    let owner = node
+        .and_then(|n| reachable_owner_definition_name_for_node(arena, root, n, entrypoint_name));
     let mut diagnostic = error.to_diagnostic();
     if let Some(n) = node {
         diagnostic = enrich_diagnostic_with_node(
