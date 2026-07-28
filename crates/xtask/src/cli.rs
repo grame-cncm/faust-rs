@@ -55,10 +55,22 @@ pub(crate) enum XtaskCommand {
     FfiBoundaryCheck,
     CliParserCheck,
     ErrorModelCheck,
+    DiagnosticsProvenanceProbe(DiagnosticsProvenanceProbeArgs),
     StructureCheck,
     CliTranscriptGen,
     CliTranscriptCheck,
     EmissionDeterminism(EmissionDeterminismArgs),
+}
+
+/// Options for comparing provenance storage representations.
+#[derive(Clone, Copy, Debug, Args)]
+pub(crate) struct DiagnosticsProvenanceProbeArgs {
+    /// Number of written source occurrences to simulate.
+    #[arg(long, default_value_t = 250_000, value_parser = positive_usize)]
+    pub(crate) iterations: usize,
+    /// Number of distinct hash-consed semantic nodes shared by the occurrences.
+    #[arg(long, default_value_t = 4_096, value_parser = positive_usize)]
+    pub(crate) semantic_nodes: usize,
 }
 
 /// Extra arguments forwarded verbatim to the reference C++ Faust executable.

@@ -81,6 +81,7 @@ dot -V
 | `ffi-boundary-check` | Enforce one-way FFI dependency layers and the explicit unsafe-code allowlist |
 | `cli-parser-check` | Reject unclassified process parsers and handwritten CLI diagnostics |
 | `error-model-check` | Enforce typed operational-error and structured-diagnostic ownership |
+| `diagnostics-provenance-probe` | Compare origin-set and located-occurrence storage before diagnostics-v2 IR changes |
 | `structure-check` | Validate repository layout, checker isolation, and source-size contracts |
 | `cli-transcript-gen` | Record the local compiler CLI differential transcript |
 | `cli-transcript-check` | Compare the compiler CLI against the recorded local transcript |
@@ -159,6 +160,14 @@ contract, `CompilerError` retains typed sources plus total bundle access, and
 the parser does not regain a parallel severity or message-text classifier.
 The ownership policy is documented in
 `porting/error-diagnostics-separation-analysis-and-porting-plan-2026-07-28-en.md`.
+
+`cargo run -p xtask -- diagnostics-provenance-probe` is the Phase-G0
+measurement harness for compiler diagnostics v2. It reproduces the source
+occurrence loss caused by storing one property per hash-consed `TreeId`, then
+compares dense origin sets with explicit located occurrences. The command is a
+developer probe, not a CI performance gate; its recorded baseline and design
+decision live in
+`porting/compiler-diagnostics-v2-baseline-2026-07-28-en.md`.
 
 ## Golden Snapshots
 

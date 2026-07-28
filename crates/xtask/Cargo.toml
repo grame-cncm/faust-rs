@@ -10,6 +10,7 @@ clap.workspace = true
 compiler = { path = "../compiler" }
 codegen = { path = "../codegen" }
 fir = { path = "../fir" }
+tlib = { path = "../tlib" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

@@ -137,6 +137,7 @@ fn run(cli: XtaskCli) -> Result<(), Box<dyn std::error::Error>> {
         XtaskCommand::FfiBoundaryCheck => ffi_boundary_check()?,
         XtaskCommand::CliParserCheck => cli_parser_check()?,
         XtaskCommand::ErrorModelCheck => error_model_check()?,
+        XtaskCommand::DiagnosticsProvenanceProbe(args) => diagnostics_provenance_probe(args)?,
         XtaskCommand::StructureCheck => structure_check()?,
         XtaskCommand::CliTranscriptGen => cli_transcript_gen()?,
         XtaskCommand::CliTranscriptCheck => cli_transcript_check()?,
@@ -152,6 +153,7 @@ mod cli_parser_check;
 mod cli_transcript;
 mod code_graphs;
 mod corpus_status_query;
+mod diagnostics_provenance;
 mod emission_determinism;
 mod error_model_check;
 mod ffi_boundary_check;
@@ -175,6 +177,7 @@ pub(crate) use cli_parser_check::*;
 pub(crate) use cli_transcript::*;
 pub(crate) use code_graphs::*;
 pub(crate) use corpus_status_query::*;
+pub(crate) use diagnostics_provenance::*;
 pub(crate) use emission_determinism::*;
 pub(crate) use error_model_check::*;
 pub(crate) use ffi_boundary_check::*;

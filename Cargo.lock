@@ -1456,6 +1456,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tlib",
  "wasmparser 0.240.0",
  "wat",
 ]
