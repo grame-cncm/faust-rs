@@ -22,6 +22,7 @@ signals = { path = "../signals" }
 ui = { path = "../ui" }
 fir = { path = "../fir" }
 serde_json = "1"
+unicode-width = "0.2"
 tlib = { path = "../tlib" }
 transform = { path = "../transform" }
 wasmprinter = "0.225"

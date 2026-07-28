@@ -22,10 +22,10 @@ enumerate every code actually present in source is:
 grep -rhoE 'FRS-[A-Z]+-[0-9]+' --include=*.rs crates/ | sort -u
 ```
 
-This currently returns **32 codes** across **9 stage-family namespaces**:
+This currently returns **33 codes** across **10 stage-family namespaces**:
 `FRS-LEX-*` (1), `FRS-PARSE-*` (3), `FRS-SRC-*` (3), `FRS-EVAL-*` (8),
-`FRS-PROP-*` (5), `FRS-COMP-*` (2), `FRS-FIR-*` (2), `FRS-SFIR-*` (8),
-`FRS-CODEGEN-*` (1).
+`FRS-PROP-*` (5), `FRS-COMP-*` (2), `FRS-UI-*` (1), `FRS-FIR-*` (2),
+`FRS-SFIR-*` (8), `FRS-CODEGEN-*` (1).
 
 Backend emitters additionally own a **separate, finer taxonomy** of 27 codes
 shaped `FRS-CGEN-<LANG>-NNNN` (ASC, C, CLIF, CPP, INTERP, JULIA, RUST, WASM).

@@ -271,6 +271,7 @@ dependencies = [
  "tlib",
  "transform",
  "ui",
+ "unicode-width",
  "wasmprinter",
 ]
 

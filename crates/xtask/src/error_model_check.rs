@@ -145,7 +145,11 @@ fn load_metadata(root: &Path) -> Result<Metadata, Box<dyn std::error::Error>> {
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
-fn collect_files(directory: &Path, extension: &str, files: &mut Vec<PathBuf>) -> io::Result<()> {
+pub(crate) fn collect_files(
+    directory: &Path,
+    extension: &str,
+    files: &mut Vec<PathBuf>,
+) -> io::Result<()> {
     for entry in fs::read_dir(directory)? {
         let path = entry?.path();
         if path.is_dir() {

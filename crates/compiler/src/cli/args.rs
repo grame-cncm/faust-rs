@@ -51,12 +51,61 @@ pub enum ErrorFormat {
     Json,
 }
 
+/// How source paths are spelled in rendered human diagnostics.
+///
+/// Only presentation: the JSON channel always reports the compiled source name
+/// verbatim, because a tool resolving a range needs the path the compiler
+/// actually used.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum DiagnosticPathStyle {
+    /// The path exactly as the compiler recorded it.
+    #[default]
+    Absolute,
+    /// Relative to the working directory when that is shorter.
+    ///
+    /// Keeps CI logs and shared transcripts readable without hiding which file
+    /// is meant.
+    Relative,
+    /// File name only.
+    ///
+    /// For sharing a diagnostic without disclosing directory structure.
+    Basename,
+}
+
 /// Diagnostic verbosity level for CLI rendering.
+///
+/// The levels form a ladder of progressive disclosure: each one shows
+/// everything the previous one did, plus more. `Standard` is the contract for
+/// a terminal user — the complete actionable cause and nothing else — while
+/// `Debug` and `Full` add compiler-internal evidence.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum ErrorVerbosity {
+    /// Header, primary location, and the shortest safe fix.
+    ///
+    /// For callers that only route the reader to the failing line.
+    Concise,
+    /// Everything needed to act: all relevant labels, rule and computed facts,
+    /// traces, and fixes.
     #[default]
     Standard,
+    /// Standard plus internal ids and typed debug context.
     Debug,
+    /// Debug plus untruncated traces and related diagnostics.
+    Full,
+}
+
+impl ErrorVerbosity {
+    /// Whether compiler-internal evidence is shown.
+    #[must_use]
+    pub fn shows_internals(self) -> bool {
+        self >= Self::Debug
+    }
+
+    /// Whether traces and related diagnostics are shown untruncated.
+    #[must_use]
+    pub fn shows_everything(self) -> bool {
+        self == Self::Full
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -214,6 +263,13 @@ pub struct CliArgs {
         default_value_t = ErrorVerbosity::Standard
     )]
     pub error_verbosity: ErrorVerbosity,
+    /// How source paths are spelled in human diagnostics.
+    #[arg(
+        long = "diagnostic-paths",
+        value_enum,
+        default_value_t = DiagnosticPathStyle::Absolute
+    )]
+    pub diagnostic_paths: DiagnosticPathStyle,
     /// Signal->FIR compilation lane.
     #[arg(long = "signal-fir-lane", value_enum)]
     pub signal_fir_lane: Option<CliSignalFirLane>,

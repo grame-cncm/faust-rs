@@ -9,7 +9,7 @@
 //!
 //! ## The machine channel contract (D1)
 //!
-//! Under `--error-format json`, [`print_structured_diagnostics`] is the sole
+//! Under `--error-format json`, [`print_bundle`] is the sole
 //! writer of stdout content: it prints exactly one well-formed JSON document,
 //! with no leading or trailing non-JSON bytes, and nothing else on stdout
 //! precedes or follows it for that invocation. Human-readable prefix lines
@@ -22,232 +22,73 @@
 //! mode targets a terminal where stdout is reserved for a dump mode's
 //! generated output (`--dump-cpp`, `--dump-sig`, ...).
 //!
-//! Every [`CompilerError`] variant carries a structured [`DiagnosticBundle`].
+//! Every `compiler::CompilerError` variant carries a structured
+//! [`DiagnosticBundle`].
 //! The total `CompilerError::diagnostic_bundle` accessor therefore keeps both
 //! human and JSON rendering on the stable diagnostic model without a
 //! text-only fallback path.
 //!
 //! See `docs/diagnostics-codes-en.md` for the frozen `FRS-*` code table.
 
-use super::args::{ErrorFormat, ErrorVerbosity};
-use compiler::CompilerError;
+use super::args::{DiagnosticPathStyle, ErrorFormat, ErrorVerbosity};
+use super::human::{self, HumanRenderOptions};
 use diagnostics::{
     Applicability, DiagnosticBundle, DiagnosticCategory, DiagnosticValue, Label, LabelRole,
     LabelStyle, Severity, SourceKind, SourceRange, Stage, TraceKind,
 };
 use serde_json::json;
-use std::path::Path;
 
-/// Prints structured diagnostics according to the selected CLI format.
-///
-/// See the module-level docs for the D1 stdout/stderr contract this
-/// function upholds under `--error-format json`.
-pub fn print_structured_diagnostics(
-    err: &CompilerError,
+/// Prints one bundle with an explicit path style.
+pub fn print_bundle(
+    bundle: &DiagnosticBundle,
     format: ErrorFormat,
     verbosity: ErrorVerbosity,
+    path_style: DiagnosticPathStyle,
 ) {
-    let bundle = err.diagnostic_bundle();
     match format {
-        ErrorFormat::Human => match verbosity {
-            ErrorVerbosity::Standard => eprint!("{}", format_diagnostics_human(bundle)),
-            ErrorVerbosity::Debug => eprint!(
-                "{}",
-                format_diagnostics_human_with_verbosity(bundle, verbosity)
-            ),
-        },
-        ErrorFormat::Json => match verbosity {
-            ErrorVerbosity::Standard => println!("{}", format_diagnostics_json(bundle)),
-            ErrorVerbosity::Debug => println!(
-                "{}",
-                format_diagnostics_json_with_verbosity(bundle, verbosity)
-            ),
-        },
+        ErrorFormat::Human => eprint!(
+            "{}",
+            human::format_bundle(
+                bundle,
+                HumanRenderOptions {
+                    verbosity,
+                    path_style,
+                },
+            )
+        ),
+        ErrorFormat::Json => println!(
+            "{}",
+            format_diagnostics_json_with_verbosity(bundle, verbosity)
+        ),
     }
 }
 
-/// Formats diagnostics in a human-oriented form.
+/// Formats diagnostics in a human-oriented form at the default verbosity.
 ///
-/// When a primary label is available and its source file can be read, this renderer
-/// includes a source snippet line and a caret span.
+/// Test-facing convenience over [`human::format_bundle`]; production callers go
+/// through [`print_bundle`], which also carries the path style.
+#[cfg(test)]
 pub fn format_diagnostics_human(bundle: &DiagnosticBundle) -> String {
-    format_diagnostics_human_with_verbosity(bundle, ErrorVerbosity::Standard)
+    human::format_bundle(bundle, HumanRenderOptions::default())
 }
 
-/// Formats diagnostics in human mode with an explicit verbosity contract.
-///
-/// `Standard` hides low-level internal notes while `Debug` keeps the full note
-/// stream for troubleshooting/benchmark parity workflows.
+/// Formats diagnostics in human mode at an explicit verbosity.
+#[cfg(test)]
 pub fn format_diagnostics_human_with_verbosity(
     bundle: &DiagnosticBundle,
     verbosity: ErrorVerbosity,
 ) -> String {
-    let mut out = String::new();
-    for diag in bundle.as_slice() {
-        let severity = match diag.severity {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-            Severity::Remark => "remark",
-        };
-        if let Some(label) = diag.labels.first() {
-            out.push_str(&format!(
-                "{}:{}:{}: {} [{}] {}\n",
-                label.span.file.display(),
-                label.span.line,
-                label.span.col,
-                severity,
-                diag.code.0,
-                diag.message
-            ));
-            if let Some(line) = source_line(bundle, label.span.file.as_path(), label.span.line) {
-                out.push_str(&format!("  {} | {}\n", label.span.line, line));
-                out.push_str(&format!(
-                    "    | {} {}\n",
-                    caret_span(label.span.col, label.span.end_col),
-                    label.message
-                ));
-            }
-        } else {
-            out.push_str(&format!("{severity} [{}] {}\n", diag.code.0, diag.message));
-        }
-
-        let paired = paired_context_from_notes(&diag.notes);
-        if let Some(ctx) = &paired {
-            out.push_str(&format!("  = note: Here  A = {}\n", ctx.a_expr));
-            if let Some(arity) = &ctx.a_arity {
-                out.push_str(&format!("  = note: has {arity}\n"));
-            }
-            out.push_str(&format!("  = note: while B = {}\n", ctx.b_expr));
-            if let Some(arity) = &ctx.b_arity {
-                out.push_str(&format!("  = note: has {arity}\n"));
-            }
-        }
-
-        for note in filtered_notes_for_human(&diag.notes, paired.is_some(), verbosity) {
-            out.push_str(&format!("  = note: {note}\n"));
-        }
-        for help in &diag.help {
-            out.push_str(&format!("  = help: {help}\n"));
-        }
-    }
-    out
+    human::format_bundle(
+        bundle,
+        HumanRenderOptions {
+            verbosity,
+            ..HumanRenderOptions::default()
+        },
+    )
 }
 
-/// Rendered A/B sub-expressions extracted from a binary composition diagnostic.
-///
-/// Faust composition errors often involve two mismatched signal processes (e.g.
-/// `A : B` where A's output count ≠ B's input count).  `PairedContext` holds
-/// the human-readable rendering of both sides so the CLI can emit a C++-style
-/// "Here A ... / while B ..." message without baking that format into the
-/// structured diagnostic schema.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PairedContext {
-    /// Human-readable rendering of the left-hand (A) sub-expression.
-    a_expr: String,
-    /// Human-readable rendering of the right-hand (B) sub-expression.
-    b_expr: String,
-    /// Signal arity of A (e.g. `"2→1"`), if available.
-    a_arity: Option<String>,
-    /// Signal arity of B (e.g. `"1→2"`), if available.
-    b_arity: Option<String>,
-}
-
-/// Extracts paired composition context (`A`/`B`) from diagnostic notes.
-///
-/// This enables C++-style human rendering (`Here A ... / while B ...`) without
-/// changing the structured diagnostic schema.
-fn paired_context_from_notes(notes: &[Box<str>]) -> Option<PairedContext> {
-    let mut a_expr = None::<String>;
-    let mut b_expr = None::<String>;
-    let mut a_arity = None::<String>;
-    let mut b_arity = None::<String>;
-
-    for note in notes {
-        if let Some(rest) = note.strip_prefix("A arity: ") {
-            a_arity = Some(rest.to_owned());
-            continue;
-        }
-        if let Some(rest) = note.strip_prefix("B arity: ") {
-            b_arity = Some(rest.to_owned());
-            continue;
-        }
-        if let Some(rest) = note.strip_prefix("A ") {
-            if let Some((_, expr)) = rest.split_once(" = ") {
-                a_expr = Some(expr.to_owned());
-            }
-            continue;
-        }
-        if let Some(rest) = note.strip_prefix("B ") {
-            if let Some((_, expr)) = rest.split_once(" = ") {
-                b_expr = Some(expr.to_owned());
-            }
-            continue;
-        }
-    }
-
-    Some(PairedContext {
-        a_expr: a_expr?,
-        b_expr: b_expr?,
-        a_arity,
-        b_arity,
-    })
-}
-
-/// Filters note lines for human rendering.
-///
-/// When paired context exists, low-level `A ...` / `B ...` notes are hidden from
-/// direct printing because they are rendered as condensed C++-style blocks.
-///
-/// Internal machine-oriented notes (`node_id`, `box_expr`) are also hidden in
-/// standard human mode to keep output focused on actionable diagnostics.
-fn filtered_notes_for_human(
-    notes: &[Box<str>],
-    has_paired_context: bool,
-    verbosity: ErrorVerbosity,
-) -> Vec<&str> {
-    let mut out = Vec::new();
-    for note in notes {
-        if matches!(verbosity, ErrorVerbosity::Standard)
-            && (note.starts_with("node_id=") || note.starts_with("box_expr="))
-        {
-            continue;
-        }
-        if has_paired_context
-            && (note.starts_with("A ")
-                || note.starts_with("B ")
-                || note.starts_with("A arity: ")
-                || note.starts_with("B arity: "))
-        {
-            continue;
-        }
-        out.push(note.as_ref());
-    }
-    out
-}
-
-/// Returns one source line from the immutable compilation snapshot, falling
-/// back to the filesystem for legacy bundles without a [`diagnostics::SourceMap`].
-fn source_line(bundle: &DiagnosticBundle, path: &Path, line_number: u32) -> Option<String> {
-    if let Some(source) = bundle.source_map().find_by_name(path) {
-        return source.line_text(line_number).map(str::to_owned);
-    }
-    let source = std::fs::read_to_string(path).ok()?;
-    let idx = usize::try_from(line_number.checked_sub(1)?).ok()?;
-    source.lines().nth(idx).map(str::to_owned)
-}
-
-/// Builds a caret marker string from 1-based `(col, end_col)` bounds.
-fn caret_span(col: u32, end_col: u32) -> String {
-    let start = usize::try_from(col.saturating_sub(1)).unwrap_or(0);
-    let end = usize::try_from(end_col.saturating_sub(1)).unwrap_or(start);
-    let width = end.saturating_sub(start).max(1);
-    format!("{}{}", " ".repeat(start), "^".repeat(width))
-}
-
-/// Formats the typed, versioned machine diagnostics envelope.
-///
-/// This function serializes only typed machine fields. It never classifies
-/// label/note/help prose or extracts facts from string prefixes.
+/// Formats the typed machine envelope at the default verbosity.
+#[cfg(test)]
 pub fn format_diagnostics_json(bundle: &DiagnosticBundle) -> String {
     format_diagnostics_json_with_verbosity(bundle, ErrorVerbosity::Standard)
 }

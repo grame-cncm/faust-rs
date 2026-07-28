@@ -55,6 +55,7 @@ pub(crate) enum XtaskCommand {
     FfiBoundaryCheck,
     CliParserCheck,
     ErrorModelCheck,
+    DiagnosticsQualityCheck,
     DiagnosticsProvenanceProbe(DiagnosticsProvenanceProbeArgs),
     StructureCheck,
     CliTranscriptGen,

@@ -2,6 +2,8 @@ AssemblyScript pipeline failed: evaluation failed for target/cli-transcript-inpu
 /Users/letz/Developpements/RUST/faust-rs/target/cli-transcript-inputs/bad.dsp:1:11: error [FRS-EVAL-0002] undefined symbol `undefined_thing`
   1 | process = undefined_thing;
     |           ^^^^^^^^^^^^^^^ failing use
+    | ^^^^^^^ enclosing definition
+    | ^^^^^^^ call site
   = note: cause: unresolved identifier in current lexical scope
   = note: rule: referenced identifier must be present in visible lexical scope
   = note: computed: `undefined_thing` is not present in current visible scope

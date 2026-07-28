@@ -1561,3 +1561,179 @@ fn selected_execution_options_map_cli_flags() {
         ProcessingApi::Block
     );
 }
+
+// ─── G8: human renderer policy ────────────────────────────────────────────────
+
+/// Builds a bundle over one in-memory source with the given labels.
+fn bundle_over_source(source: &str, labels: Vec<diagnostics::Label>) -> DiagnosticBundle {
+    let mut builder = SourceMapBuilder::new();
+    builder.add(
+        PathBuf::from("mem.dsp"),
+        SourceKind::Memory,
+        source.to_owned(),
+    );
+    let mut diagnostic = Diagnostic::new(
+        Severity::Error,
+        Stage::Eval,
+        DiagnosticCode("FRS-EVAL-0002"),
+        "boom",
+    );
+    for label in labels {
+        diagnostic = diagnostic.with_label(label);
+    }
+    let mut bundle = DiagnosticBundle::new();
+    bundle.push(diagnostic);
+    bundle.set_source_map(builder.finish());
+    bundle
+}
+
+#[test]
+fn human_renderer_shows_secondary_labels_above_concise() {
+    let bundle = bundle_over_source(
+        "process = a;\nb = 1;\n",
+        vec![
+            diagnostics::Label::new(
+                diagnostics::LabelStyle::Primary,
+                SourceSpan::new("mem.dsp", 1, 11, 1, 12),
+                "failing use",
+            ),
+            diagnostics::Label::new(
+                diagnostics::LabelStyle::Secondary,
+                SourceSpan::new("mem.dsp", 2, 1, 2, 2),
+                "related declaration",
+            ),
+        ],
+    );
+
+    let concise = format_diagnostics_human_with_verbosity(&bundle, ErrorVerbosity::Concise);
+    assert!(!concise.contains("related declaration"), "{concise}");
+
+    let standard = format_diagnostics_human(&bundle);
+    assert!(standard.contains("failing use"), "{standard}");
+    assert!(standard.contains("related declaration"), "{standard}");
+}
+
+#[test]
+fn human_renderer_shares_one_snippet_between_labels_on_the_same_line() {
+    let bundle = bundle_over_source(
+        "process = a + a;\n",
+        vec![
+            diagnostics::Label::new(
+                diagnostics::LabelStyle::Primary,
+                SourceSpan::new("mem.dsp", 1, 11, 1, 12),
+                "first",
+            ),
+            diagnostics::Label::new(
+                diagnostics::LabelStyle::Secondary,
+                SourceSpan::new("mem.dsp", 1, 15, 1, 16),
+                "second",
+            ),
+        ],
+    );
+
+    let rendered = format_diagnostics_human(&bundle);
+    assert_eq!(
+        rendered.matches("process = a + a;").count(),
+        1,
+        "the shared source line must be printed once: {rendered}"
+    );
+    assert!(rendered.contains("first"));
+    assert!(rendered.contains("second"));
+}
+
+#[test]
+fn human_renderer_places_carets_by_display_width_on_tabbed_lines() {
+    // One leading tab expands to four columns, so the caret for scalar column
+    // two must sit at display offset four.
+    let bundle = bundle_over_source(
+        "\tprocess = _;\n",
+        vec![diagnostics::Label::new(
+            diagnostics::LabelStyle::Primary,
+            SourceSpan::new("mem.dsp", 1, 2, 1, 9),
+            "here",
+        )],
+    );
+
+    let rendered = format_diagnostics_human(&bundle);
+    let caret_line = rendered
+        .lines()
+        .find(|line| line.contains('^'))
+        .expect("a caret row");
+    let carets = caret_line.find('^').expect("caret offset");
+    let bar = caret_line.find('|').expect("gutter");
+    assert_eq!(carets - bar - 2, 4, "caret misaligned in: {rendered}");
+}
+
+#[test]
+fn human_renderer_marks_a_multi_line_span_with_an_elision() {
+    let bundle = bundle_over_source(
+        "process = (\n  _\n);\n",
+        vec![diagnostics::Label::new(
+            diagnostics::LabelStyle::Primary,
+            SourceSpan::new("mem.dsp", 1, 11, 3, 2),
+            "this group",
+        )],
+    );
+
+    let rendered = format_diagnostics_human(&bundle);
+    assert!(rendered.contains("process = ("), "{rendered}");
+    assert!(rendered.contains("..."), "{rendered}");
+    assert!(rendered.contains(");"), "{rendered}");
+}
+
+#[test]
+fn human_renderer_shows_fixes_with_their_applicability() {
+    let mut bundle = bundle_over_source(
+        "process = a;\n",
+        vec![diagnostics::Label::new(
+            diagnostics::LabelStyle::Primary,
+            SourceSpan::new("mem.dsp", 1, 11, 1, 12),
+            "here",
+        )],
+    );
+    let source_map = bundle.source_map().clone();
+    let mut with_fix = DiagnosticBundle::new();
+    let mut diagnostic = bundle.as_slice()[0].clone();
+    diagnostic = diagnostic.with_fix(SuggestedFix {
+        title: "insert `;`".into(),
+        applicability: Applicability::MachineApplicable,
+        edits: vec![TextEdit {
+            range: SourceRange {
+                source: source_map.iter().next().expect("one source").id(),
+                start: 11,
+                end: 11,
+            },
+            replacement: ";".into(),
+        }],
+        explanation: None,
+    });
+    with_fix.push(diagnostic);
+    with_fix.set_source_map(source_map);
+    bundle = with_fix;
+
+    let rendered = format_diagnostics_human(&bundle);
+    assert!(
+        rendered.contains("= fix (machine-applicable): insert `;`"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn human_renderer_respects_the_selected_path_style() {
+    let bundle = bundle_over_source(
+        "process = a;\n",
+        vec![diagnostics::Label::new(
+            diagnostics::LabelStyle::Primary,
+            SourceSpan::new("some/dir/mem.dsp", 1, 11, 1, 12),
+            "here",
+        )],
+    );
+    let rendered = super::human::format_bundle(
+        &bundle,
+        super::human::HumanRenderOptions {
+            verbosity: ErrorVerbosity::Standard,
+            path_style: super::args::DiagnosticPathStyle::Basename,
+        },
+    );
+    assert!(rendered.starts_with("mem.dsp:1:11:"), "{rendered}");
+}

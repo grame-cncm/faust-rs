@@ -25,10 +25,7 @@ use fir::checker::verify_fir_module;
 use super::args::{
     CliArgs, CliLang, CliSignalFirLane, ErrorFormat, ErrorVerbosity, normalize_legacy_args,
 };
-use super::diagnostics::{
-    format_diagnostics_human_with_verbosity, format_diagnostics_json,
-    format_diagnostics_json_with_verbosity, print_structured_diagnostics,
-};
+use super::diagnostics::{format_diagnostics_json_with_verbosity, print_bundle};
 use super::validate::{
     handle_early_exit_modes, handle_fixture_listing, spawn_timeout_watchdog, validate_cli_arguments,
 };
@@ -528,10 +525,10 @@ pub fn emit_cli_json_companion_for_backend(
 /// `--error-format human` preserves the pre-D1 behavior byte for byte: a
 /// short `"<prefix>: <err>"` line goes to stderr, immediately followed by the
 /// human-rendered diagnostic bundle (also stderr; see
-/// [`print_structured_diagnostics`]).
+/// [`print_bundle`]).
 ///
 /// `--error-format json` suppresses the human prefix line entirely --
-/// [`print_structured_diagnostics`] is the sole writer of stdout content in
+/// [`print_bundle`] is the sole writer of stdout content in
 /// that mode, and it writes exactly one well-formed JSON document with no
 /// leading or trailing non-JSON bytes, which is the contract the P0 phase of
 /// `porting/mcp-server-analysis-and-plan-2026-07-21-en.md` (§1.4.2, Part 4)
@@ -542,7 +539,12 @@ pub(crate) fn report_pipeline_failure(prefix: &str, err: &CompilerError, cli: &C
     if matches!(cli.error_format, ErrorFormat::Human) {
         eprintln!("{prefix}: {err}");
     }
-    print_structured_diagnostics(err, cli.error_format, cli.error_verbosity);
+    print_bundle(
+        err.diagnostic_bundle(),
+        cli.error_format,
+        cli.error_verbosity,
+        cli.diagnostic_paths,
+    );
     std::process::exit(1);
 }
 
@@ -551,23 +553,15 @@ pub(crate) fn report_pipeline_failure(prefix: &str, err: &CompilerError, cli: &C
 /// Human mode prints a one-line `"Check OK: 0 diagnostics"` summary. JSON
 /// mode prints an envelope with an empty `diagnostics` array, deliberately
 /// reusing the exact same renderer as the failure path
-/// ([`print_structured_diagnostics`]) so success and failure share one
+/// ([`print_bundle`]) so success and failure share one
 /// schema -- a consumer never needs a second parser for `--check`.
 pub(crate) fn emit_check_success(format: ErrorFormat, verbosity: ErrorVerbosity) {
     match format {
         ErrorFormat::Human => println!("Check OK: 0 diagnostics"),
-        ErrorFormat::Json => {
-            let empty = DiagnosticBundle::new();
-            match verbosity {
-                ErrorVerbosity::Standard => println!("{}", format_diagnostics_json(&empty)),
-                ErrorVerbosity::Debug => {
-                    println!(
-                        "{}",
-                        format_diagnostics_json_with_verbosity(&empty, verbosity)
-                    )
-                }
-            }
-        }
+        ErrorFormat::Json => println!(
+            "{}",
+            format_diagnostics_json_with_verbosity(&DiagnosticBundle::new(), verbosity)
+        ),
     }
 }
 
@@ -609,7 +603,13 @@ pub(crate) fn report_semantic_warnings(
     match cli.error_format {
         ErrorFormat::Human => eprint!(
             "{}",
-            format_diagnostics_human_with_verbosity(&output.warnings, cli.error_verbosity)
+            super::human::format_bundle(
+                &output.warnings,
+                super::human::HumanRenderOptions {
+                    verbosity: cli.error_verbosity,
+                    path_style: cli.diagnostic_paths,
+                },
+            )
         ),
         ErrorFormat::Json => eprintln!(
             "{}",

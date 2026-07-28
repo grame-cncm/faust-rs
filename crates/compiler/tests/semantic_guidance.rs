@@ -17,10 +17,9 @@ use compiler::{
 
 /// Compiles `source` and returns the diagnostics of the expected failure.
 fn failing_diagnostics(source: &str) -> Vec<Diagnostic> {
-    let error = Compiler::new()
-        .compile_source_to_signals("guidance.dsp", source)
-        .err()
-        .expect("source is expected to fail");
+    let Err(error) = Compiler::new().compile_source_to_signals("guidance.dsp", source) else {
+        panic!("source is expected to fail");
+    };
     error.diagnostic_bundle().as_slice().to_vec()
 }
 
@@ -59,8 +58,7 @@ fn an_unambiguous_suggestion_carries_an_exact_rename_edit() {
 
 #[test]
 fn two_equally_close_candidates_offer_no_edit() {
-    let diagnostics =
-        failing_diagnostics("gaina = 1;\ngainb = 2;\nprocess = gainx;\n");
+    let diagnostics = failing_diagnostics("gaina = 1;\ngainb = 2;\nprocess = gainx;\n");
     assert!(
         diagnostics[0].fixes.is_empty(),
         "an ambiguous rename must not be proposed"
@@ -132,12 +130,10 @@ fn a_redefined_symbol_labels_both_declarations() {
 
 #[test]
 fn two_controls_at_one_ui_address_are_rejected_with_both_sites() {
-    let source =
-        "process = hslider(\"gain\", 0, 0, 1, 0.01) + vslider(\"gain\", 0, 0, 2, 0.01);\n";
-    let error = Compiler::new()
-        .compile_source_to_signals("guidance.dsp", source)
-        .err()
-        .expect("a duplicated UI address must be rejected, as in C++");
+    let source = "process = hslider(\"gain\", 0, 0, 1, 0.01) + vslider(\"gain\", 0, 0, 2, 0.01);\n";
+    let Err(error) = Compiler::new().compile_source_to_signals("guidance.dsp", source) else {
+        panic!("a duplicated UI address must be rejected, as in C++");
+    };
     assert!(matches!(error, CompilerError::UiLayout { .. }));
 
     let diagnostic = &error.diagnostic_bundle().as_slice()[0];

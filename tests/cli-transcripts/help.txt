@@ -140,9 +140,24 @@ Options:
 
       --error-verbosity <ERROR_VERBOSITY>
           Diagnostic verbosity level
+
+          Possible values:
+          - concise:  Header, primary location, and the shortest safe fix
+          - standard: Everything needed to act: all relevant labels, rule and computed facts, traces, and fixes
+          - debug:    Standard plus internal ids and typed debug context
+          - full:     Debug plus untruncated traces and related diagnostics
           
           [default: standard]
-          [possible values: standard, debug]
+
+      --diagnostic-paths <DIAGNOSTIC_PATHS>
+          How source paths are spelled in human diagnostics
+
+          Possible values:
+          - absolute: The path exactly as the compiler recorded it
+          - relative: Relative to the working directory when that is shorter
+          - basename: File name only
+          
+          [default: absolute]
 
       --signal-fir-lane <SIGNAL_FIR_LANE>
           Signal->FIR compilation lane
