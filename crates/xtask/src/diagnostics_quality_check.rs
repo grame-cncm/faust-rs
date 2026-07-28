@@ -17,7 +17,15 @@ use super::*;
 
 const CHECK_SOURCE: &str = "crates/xtask/src/diagnostics_quality_check.rs";
 const SCHEMA: &str = "docs/diagnostics-v2.schema.json";
-const CODE_TABLE: &str = "docs/faust-error-model-en.md";
+/// Documents that must list every declared code.
+///
+/// The user-facing model document and the engineering reference each carry the
+/// full set, for different readers. Checking both is what keeps the reader-
+/// friendly one from quietly falling behind the maintainer one.
+const CODE_TABLES: &[&str] = &[
+    "docs/faust-error-model-en.md",
+    "docs/diagnostics-codes-reference-en.md",
+];
 
 /// Rust enums whose variants are serialized as schema enum values.
 ///
@@ -72,11 +80,16 @@ pub(crate) fn diagnostics_quality_check() -> Result<(), Box<dyn std::error::Erro
     }
 
     let codes = fs::read_to_string(root.join("crates/diagnostics/src/codes.rs"))?;
-    check_code_registry(
-        &codes,
-        &fs::read_to_string(root.join(CODE_TABLE))?,
-        &mut findings,
-    );
+    for (index, table) in CODE_TABLES.iter().enumerate() {
+        check_code_registry(
+            &codes,
+            table,
+            &fs::read_to_string(root.join(table))?,
+            // Registry membership does not depend on the table, so report it once.
+            index == 0,
+            &mut findings,
+        );
+    }
 
     let mut sources = Vec::new();
     collect_files(&root.join("crates"), "rs", &mut sources)?;
@@ -197,9 +210,19 @@ fn camel_to_snake(name: &str) -> String {
 
 /// Requires every declared code to be listed in `all_codes()` and documented.
 ///
+/// `report_registry` exists because this runs once per documentation file while
+/// registry membership is a property of the code alone: reporting it every pass
+/// would duplicate each finding.
+///
 /// A code missing from the registry is invisible to tooling that enumerates
 /// them; a code missing from the table has no published meaning.
-fn check_code_registry(codes: &str, table: &str, findings: &mut Vec<String>) {
+fn check_code_registry(
+    codes: &str,
+    table_path: &str,
+    table: &str,
+    report_registry: bool,
+    findings: &mut Vec<String>,
+) {
     let Some(registry_start) = codes.find("pub fn all_codes()") else {
         findings.push("cannot find `all_codes()` in crates/diagnostics/src/codes.rs".to_owned());
         return;
@@ -221,13 +244,27 @@ fn check_code_registry(codes: &str, table: &str, findings: &mut Vec<String>) {
         else {
             continue;
         };
-        if !registry.contains(name) {
+        if report_registry && !registry.contains(name) {
             findings.push(format!("{name} ({code}) is not listed in `all_codes()`"));
         }
-        if !table.contains(code) {
-            findings.push(format!("{code} is not documented in {CODE_TABLE}"));
+        if !has_table_row(table, code) {
+            findings.push(format!(
+                "{code} has no row in the code table of {table_path}"
+            ));
         }
     }
+}
+
+/// Whether `table` contains a Markdown table row whose first cell is `code`.
+///
+/// A plain substring search would be satisfied by any mention — a code quoted
+/// in an example diagnostic, say — which is how a table can silently lose a row
+/// while still "containing" the code.
+fn has_table_row(table: &str, code: &str) -> bool {
+    let cell = format!("| `{code}` |");
+    table
+        .lines()
+        .any(|line| line.trim_start().starts_with(&cell))
 }
 
 /// Rejects code that derives machine meaning from note text.

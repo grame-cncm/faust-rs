@@ -16,7 +16,7 @@
 //! mode. Two namespaces have no natural corpus fixture:
 //!
 //! - **SRC**: `FRS-SRC-*` codes are unused dead code (see
-//!   `docs/faust-error-model-en.md`); the real-world failure tied to that
+//!   `docs/diagnostics-codes-reference-en.md`); the real-world failure tied to that
 //!   pipeline stage (an unresolved `import`) surfaces through the D1
 //!   no-bundle fallback (`code: null`) instead -- see
 //!   `fixtures/cli_diagnostics/src_missing_import.dsp`.
@@ -351,7 +351,7 @@ fn check_json_propagate_family_failure_is_clean() {
 #[test]
 fn check_json_compiler_type_family_failure_is_clean() {
     // FRS-COMP-0004 (signal type / sigtype validation); the only reachable
-    // FRS-COMP-* code today (see docs/faust-error-model-en.md).
+    // FRS-COMP-* code today (see docs/diagnostics-codes-reference-en.md).
     let result = run_and_assert_clean_json(&corpus_path("rep_74_soundfile_basic.dsp"), &[]);
     assert!(
         !result.success,

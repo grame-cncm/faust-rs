@@ -28,7 +28,7 @@
 //! human and JSON rendering on the stable diagnostic model without a
 //! text-only fallback path.
 //!
-//! See `docs/faust-error-model-en.md` for the frozen `FRS-*` code table.
+//! See `docs/diagnostics-codes-reference-en.md` for the frozen `FRS-*` code table.
 
 use super::args::{DiagnosticPathStyle, ErrorFormat, ErrorVerbosity};
 use super::human::{self, HumanRenderOptions};

@@ -96,7 +96,7 @@ pub const FIR_VERIFY_WARNING: DiagnosticCode = DiagnosticCode("FRS-FIR-0002");
 // Written without the `FRS-` prefix on purpose: the frozen-table checker
 // extracts codes textually from `.rs` source, so spelling them in full here
 // would resurrect them as live codes. The authoritative retirement record is
-// the "Retired codes" table in `docs/faust-error-model-en.md`.
+// the "Retired codes" table in `docs/diagnostics-codes-reference-en.md`.
 //
 // They were declared but never constructed. Parse, eval and propagate each
 // have their own code family (`FRS-PARSE-*`, `FRS-EVAL-*`, `FRS-PROP-*`, with
