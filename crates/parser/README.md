@@ -48,8 +48,7 @@ errors.
 
 | Item | Description |
 |---|---|
-| `ParserDiagnostic` | One parser diagnostic with severity, code, message, location |
-| `DiagnosticSeverity` | `Error` / `Warning` / `Remark` |
+| parser diagnostics | Private pending records with canonical `Severity` and required `DiagnosticCode`; exported parse results use `DiagnosticBundle` |
 | `SourceLocation` | Source cursor position (file, line, col) |
 
 ### Metadata

@@ -21,7 +21,7 @@ use boxes::{BoxMatch, dump_box, match_box};
 use cfgrammar::Span;
 use diagnostics::codes;
 use diagnostics::{
-    Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, Severity, SourceSpan, Stage,
+    Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, SourceSpan, Stage,
 };
 use lrlex::lrlex_mod;
 use lrlex::{DefaultLexerTypes, LRNonStreamingLexerDef};
@@ -36,7 +36,7 @@ pub mod context;
 pub mod metadata;
 pub mod source_reader;
 
-pub use context::{DiagnosticSeverity, ParserCtx, ParserDiagnostic, SourceLocation};
+pub use context::{ParserCtx, SourceLocation};
 pub use metadata::{CompilationMetadataKey, CompilationMetadataSnapshot, CompilationMetadataStore};
 pub use source_reader::{
     ExpandedSource, ImportSite, SourceLineOrigin, SourceReader, SourceReaderError, VirtualSourceMap,
@@ -792,7 +792,8 @@ impl ParseState {
         if raw.bytes().all(|b| b.is_ascii_digit()) {
             self.node_builder().int(i32_wrapping_from_str(raw))
         } else {
-            self.ctx.error("invalid INT literal");
+            self.ctx
+                .error_with_code(codes::PARSE_INVALID_LITERAL, "invalid INT literal");
             self.node_builder().int(0)
         }
     }
@@ -811,7 +812,8 @@ impl ParseState {
         match normalized.parse::<f64>() {
             Ok(value) => self.node_builder().real(value),
             Err(_) => {
-                self.ctx.error("invalid FLOAT literal");
+                self.ctx
+                    .error_with_code(codes::PARSE_INVALID_LITERAL, "invalid FLOAT literal");
                 self.node_builder().real(0.0)
             }
         }
@@ -863,7 +865,8 @@ impl ParseState {
                 self.node_builder().import_file(path_node)
             }
             None => {
-                self.ctx.error("invalid import path literal");
+                self.ctx
+                    .error_with_code(codes::PARSE_INVALID_LITERAL, "invalid import path literal");
                 self.nil()
             }
         }
@@ -1002,7 +1005,8 @@ impl ParseState {
             };
             self.node_builder().int(val)
         } else {
-            self.ctx.error("invalid signed INT literal");
+            self.ctx
+                .error_with_code(codes::PARSE_INVALID_LITERAL, "invalid signed INT literal");
             self.node_builder().int(0)
         }
     }
@@ -1022,7 +1026,8 @@ impl ParseState {
         match normalized.parse::<f64>() {
             Ok(value) => self.node_builder().real(value * sign),
             Err(_) => {
-                self.ctx.error("invalid signed FLOAT literal");
+                self.ctx
+                    .error_with_code(codes::PARSE_INVALID_LITERAL, "invalid signed FLOAT literal");
                 self.node_builder().real(0.0)
             }
         }
@@ -1892,15 +1897,12 @@ fn parser_ctx_to_bundle(ctx: &ParserCtx) -> DiagnosticBundle {
         .diagnostics()
         .iter()
         .map(|diag| {
-            let severity = match diag.severity {
-                DiagnosticSeverity::Error => Severity::Error,
-                DiagnosticSeverity::Warning => Severity::Warning,
-                DiagnosticSeverity::Remark => Severity::Remark,
-            };
-            let code = diag
-                .code
-                .unwrap_or_else(|| parser_code_for_message(diag.message.as_ref(), diag.severity));
-            let mut out = Diagnostic::new(severity, Stage::Parser, code, diag.message.clone());
+            let mut out = Diagnostic::new(
+                diag.severity,
+                Stage::Parser,
+                diag.code,
+                diag.message.clone(),
+            );
             if let Some(location) = &diag.location {
                 let span = SourceSpan::new(
                     location.file(),
@@ -1915,20 +1917,6 @@ fn parser_ctx_to_bundle(ctx: &ParserCtx) -> DiagnosticBundle {
         })
         .collect::<Vec<_>>();
     DiagnosticBundle::from(diagnostics)
-}
-
-/// Chooses a stable parser diagnostic code from one rendered parser message.
-fn parser_code_for_message(message: &str, severity: DiagnosticSeverity) -> DiagnosticCode {
-    if matches!(
-        severity,
-        DiagnosticSeverity::Warning | DiagnosticSeverity::Remark
-    ) {
-        codes::PARSE_RECOVERY
-    } else if message.contains("invalid") && message.contains("literal") {
-        codes::PARSE_INVALID_LITERAL
-    } else {
-        codes::PARSE_UNEXPECTED_TOKEN
-    }
 }
 
 /// Maps lexer/parser engine errors to stable diagnostic codes.

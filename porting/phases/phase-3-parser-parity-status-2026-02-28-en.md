@@ -112,10 +112,11 @@ Priority: High.
 
 ## G3 — Parser diagnostics code granularity is still coarse
 
-Evidence:
-- `parser_code_for_message` currently maps most parser failures into broad
-  families (`PARSE_UNEXPECTED_TOKEN`, `PARSE_RECOVERY`, `PARSE_INVALID_LITERAL`)
-  using string heuristics.
+Status update (2026-07-28):
+- message-text classification has been removed;
+- codes are assigned at parser emission sites;
+- pending parser records use canonical severity/code values and remain private
+  to the parser crate.
 
 Impact:
 - weaker parity and weaker long-term stability for diagnostic-code-level

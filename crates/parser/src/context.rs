@@ -13,7 +13,7 @@
 //! - Waveform values are accumulated in parse order then drained by the corresponding action.
 //! - Parser diagnostics are explicitly scoped to one parser context (no global mutable singleton).
 
-use diagnostics::DiagnosticCode;
+use diagnostics::{DiagnosticCode, Severity, codes};
 use tlib::{PropertyKey, PropertyStore, TreeId};
 
 /// Parser source location equivalent to `(filename, lineno)` in C++ parser globals,
@@ -84,21 +84,13 @@ impl SourceLocation {
     }
 }
 
-/// Diagnostic severity levels used during parsing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiagnosticSeverity {
-    Error,
-    Warning,
-    Remark,
-}
-
 /// One parser diagnostic with optional source location.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ParserDiagnostic {
+pub(crate) struct ParserDiagnostic {
     /// Severity of the diagnostic.
-    pub severity: DiagnosticSeverity,
-    /// Optional stable diagnostic code for CI/tooling use.
-    pub code: Option<DiagnosticCode>,
+    pub severity: Severity,
+    /// Stable diagnostic code assigned at the emission site.
+    pub code: DiagnosticCode,
     /// Human-readable diagnostic message.
     pub message: Box<str>,
     /// Source location, when available.
@@ -483,8 +475,8 @@ impl ParserCtx {
     pub fn error(&mut self, message: &str) {
         self.parse_error_count = self.parse_error_count.saturating_add(1);
         self.push_diagnostic(
-            DiagnosticSeverity::Error,
-            None,
+            Severity::Error,
+            codes::PARSE_UNEXPECTED_TOKEN,
             message,
             Some(self.cursor.clone()),
         );
@@ -493,19 +485,14 @@ impl ParserCtx {
     /// Records a parser error at current cursor location with explicit stable diagnostic code.
     pub fn error_with_code(&mut self, code: DiagnosticCode, message: &str) {
         self.parse_error_count = self.parse_error_count.saturating_add(1);
-        self.push_diagnostic(
-            DiagnosticSeverity::Error,
-            Some(code),
-            message,
-            Some(self.cursor.clone()),
-        );
+        self.push_diagnostic(Severity::Error, code, message, Some(self.cursor.clone()));
     }
 
     /// Records a parser warning at current cursor location.
     pub fn warning(&mut self, message: &str) {
         self.push_diagnostic(
-            DiagnosticSeverity::Warning,
-            None,
+            Severity::Warning,
+            codes::PARSE_RECOVERY,
             message,
             Some(self.cursor.clone()),
         );
@@ -514,8 +501,8 @@ impl ParserCtx {
     /// Records a parser remark at current cursor location.
     pub fn remark(&mut self, message: &str) {
         self.push_diagnostic(
-            DiagnosticSeverity::Remark,
-            None,
+            Severity::Remark,
+            codes::PARSE_RECOVERY,
             message,
             Some(self.cursor.clone()),
         );
@@ -540,7 +527,7 @@ impl ParserCtx {
 
     /// All recorded diagnostics.
     #[must_use]
-    pub fn diagnostics(&self) -> &[ParserDiagnostic] {
+    pub(crate) fn diagnostics(&self) -> &[ParserDiagnostic] {
         &self.diagnostics
     }
 
@@ -552,8 +539,8 @@ impl ParserCtx {
 
     fn push_diagnostic(
         &mut self,
-        severity: DiagnosticSeverity,
-        code: Option<DiagnosticCode>,
+        severity: Severity,
+        code: DiagnosticCode,
         message: &str,
         location: Option<SourceLocation>,
     ) {
@@ -563,5 +550,33 @@ impl ParserCtx {
             message: message.into(),
             location,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ParserCtx;
+    use diagnostics::{Severity, codes};
+
+    #[test]
+    fn diagnostic_codes_are_assigned_independently_of_message_wording() {
+        let mut ctx = ParserCtx::new();
+        ctx.error("invalid literal wording does not classify this error");
+        ctx.error_with_code(
+            codes::PARSE_INVALID_LITERAL,
+            "numeric token cannot be represented",
+        );
+        ctx.warning("recovered after one token");
+        ctx.remark("continuing parse");
+
+        let diagnostics = ctx.diagnostics();
+        assert_eq!(diagnostics[0].code, codes::PARSE_UNEXPECTED_TOKEN);
+        assert_eq!(diagnostics[1].code, codes::PARSE_INVALID_LITERAL);
+        assert_eq!(diagnostics[2].code, codes::PARSE_RECOVERY);
+        assert_eq!(diagnostics[3].code, codes::PARSE_RECOVERY);
+        assert_eq!(diagnostics[0].severity, Severity::Error);
+        assert_eq!(diagnostics[2].severity, Severity::Warning);
+        assert_eq!(diagnostics[3].severity, Severity::Remark);
+        assert_eq!(ctx.parse_error_count(), 2);
     }
 }

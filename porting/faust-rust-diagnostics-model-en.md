@@ -37,7 +37,8 @@ Key observation:
 ### 2.2 Current Rust state (observed)
 
 - `crates/parser-proto/src/context.rs`
-  - `ParserDiagnostic` exists, but location is currently file + line (no explicit range labels).
+  - parser pending diagnostics are private and use canonical severity/code
+    values; exported parse results carry `DiagnosticBundle`.
 - `crates/parser-proto/src/lib.rs`
   - `parse_program` still exposes `errors: Vec<String>` in `ParseOutput`.
 - `crates/compiler/src/lib.rs`
