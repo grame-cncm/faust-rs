@@ -126,6 +126,17 @@ pub struct ImportSite {
     pub col: u32,
 }
 
+/// One directed edge in a detected import cycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportCycleEdge {
+    /// File containing the import directive.
+    pub from: PathBuf,
+    /// Resolved file named by the directive.
+    pub to: PathBuf,
+    /// Location of the import name in `from`, when recoverable.
+    pub site: Option<ImportSite>,
+}
+
 impl ImportSite {
     /// Locates the first `import("<name>");` directive in `text`.
     ///
@@ -186,6 +197,8 @@ pub enum SourceReaderError {
     },
     ImportCycle {
         path: PathBuf,
+        /// Ordered closed cycle. The last edge points back to the first file.
+        cycle: Vec<ImportCycleEdge>,
     },
 }
 
@@ -198,8 +211,21 @@ impl fmt::Display for SourceReaderError {
             Self::UnresolvedImport { name, from, .. } => {
                 write!(f, "cannot resolve import `{name}` from {}", from.display())
             }
-            Self::ImportCycle { path } => {
-                write!(f, "import cycle detected at {}", path.display())
+            Self::ImportCycle { path, cycle } => {
+                write!(f, "import cycle detected at {}", path.display())?;
+                if !cycle.is_empty() {
+                    write!(
+                        f,
+                        ": {}",
+                        cycle
+                            .iter()
+                            .map(|edge| edge.from.display().to_string())
+                            .chain(cycle.last().map(|edge| edge.to.display().to_string()))
+                            .collect::<Vec<_>>()
+                            .join(" -> ")
+                    )?;
+                }
+                Ok(())
             }
         }
     }
@@ -302,14 +328,49 @@ impl SourceReaderError {
                     .with_help("or correct the import name")
             }
 
-            Self::ImportCycle { path } => Diagnostic::new(
-                Severity::Error,
-                Stage::SourceReader,
-                self.code(),
-                format!("import cycle detected at {}", path.display()),
-            )
-            .with_note("a file transitively imports itself")
-            .with_help("break the cycle by removing one of the `import(...)` directives"),
+            Self::ImportCycle { path, cycle } => {
+                let mut diag = Diagnostic::new(
+                    Severity::Error,
+                    Stage::SourceReader,
+                    self.code(),
+                    format!("import cycle detected at {}", path.display()),
+                )
+                .with_detail_code("import-cycle")
+                .with_fact(
+                    "import_cycle",
+                    cycle
+                        .iter()
+                        .map(|edge| edge.from.display().to_string())
+                        .chain(cycle.last().map(|edge| edge.to.display().to_string()))
+                        .collect::<Vec<_>>(),
+                )
+                .with_note("a file transitively imports itself")
+                .with_help("break the cycle by removing one of the `import(...)` directives");
+                for (index, edge) in cycle.iter().enumerate() {
+                    if let Some(site) = edge.site {
+                        let style = if index + 1 == cycle.len() {
+                            LabelStyle::Primary
+                        } else {
+                            LabelStyle::Secondary
+                        };
+                        diag = diag.with_label(
+                            Label::new(
+                                style,
+                                SourceSpan::new(
+                                    edge.from.clone(),
+                                    site.line,
+                                    site.col,
+                                    site.line,
+                                    site.col.saturating_add(1),
+                                ),
+                                format!("imports `{}`", edge.to.display()),
+                            )
+                            .with_role(LabelRole::ImportSite),
+                        );
+                    }
+                }
+                diag
+            }
         };
         bundle.push(diag);
         bundle
@@ -324,6 +385,8 @@ pub struct SourceReader {
     virtual_sources: VirtualSourceMap,
     used_files: Vec<PathBuf>,
     visiting: HashSet<PathBuf>,
+    visit_stack: Vec<PathBuf>,
+    import_edges: Vec<ImportCycleEdge>,
     expanded_files: HashSet<PathBuf>,
 }
 
@@ -347,6 +410,8 @@ impl SourceReader {
             virtual_sources,
             used_files: Vec::new(),
             visiting: HashSet::new(),
+            visit_stack: Vec::new(),
+            import_edges: Vec::new(),
             expanded_files: HashSet::new(),
         }
     }
@@ -450,15 +515,24 @@ impl SourceReader {
         if self.visiting.contains(path) {
             return Err(SourceReaderError::ImportCycle {
                 path: path.to_path_buf(),
+                cycle: import_cycle_from_stack(&self.visit_stack, &self.import_edges, path, None),
             });
         }
 
         self.visiting.insert(path.to_path_buf());
+        self.visit_stack.push(path.to_path_buf());
         if !self.used_files.iter().any(|p| p == path) {
             self.used_files.push(path.to_path_buf());
         }
 
-        let source = self.read_source_text(path)?;
+        let source = match self.read_source_text(path) {
+            Ok(source) => source,
+            Err(error) => {
+                self.visiting.remove(path);
+                self.visit_stack.pop();
+                return Err(error);
+            }
+        };
 
         let mut expanded = String::new();
         let mut line_origins = Vec::new();
@@ -472,13 +546,18 @@ impl SourceReader {
 
             if !line_starts_in_comment && let Some(import_name) = parse_import_line(line) {
                 let from_dir = path.parent();
+                let col = line
+                    .find(&import_name)
+                    .map_or(1, |byte_idx| line[..byte_idx].chars().count() + 1);
+                let site = ImportSite {
+                    line: u32::try_from(line_index + 1).unwrap_or(u32::MAX),
+                    col: u32::try_from(col).unwrap_or(1),
+                };
                 let Some(import_path) = self.resolve_import_from(&import_name, from_dir) else {
                     self.visiting.remove(path);
+                    self.visit_stack.pop();
                     // Report where the directive is and where we looked, so the
                     // diagnostic is actionable instead of just "not found".
-                    let col = line
-                        .find(&import_name)
-                        .map_or(1, |byte_idx| line[..byte_idx].chars().count() + 1);
                     let mut searched: Vec<PathBuf> = Vec::new();
                     if let Some(dir) = from_dir {
                         searched.push(dir.to_path_buf());
@@ -487,15 +566,41 @@ impl SourceReader {
                     return Err(SourceReaderError::UnresolvedImport {
                         name: import_name.into_boxed_str(),
                         from: path.to_path_buf(),
-                        site: Some(ImportSite {
-                            line: u32::try_from(line_index + 1).unwrap_or(u32::MAX),
-                            col: u32::try_from(col).unwrap_or(1),
-                        }),
+                        site: Some(site),
                         searched,
                     });
                 };
                 if !self.expanded_files.contains(&import_path) {
-                    let imported = self.read_file_impl(&import_path)?;
+                    let edge = ImportCycleEdge {
+                        from: path.to_path_buf(),
+                        to: import_path.clone(),
+                        site: Some(site),
+                    };
+                    if self.visiting.contains(&import_path) {
+                        let cycle = import_cycle_from_stack(
+                            &self.visit_stack,
+                            &self.import_edges,
+                            &import_path,
+                            Some(edge),
+                        );
+                        self.visiting.remove(path);
+                        self.visit_stack.pop();
+                        return Err(SourceReaderError::ImportCycle {
+                            path: import_path,
+                            cycle,
+                        });
+                    }
+                    self.import_edges.push(edge);
+                    let imported = self.read_file_impl(&import_path);
+                    self.import_edges.pop();
+                    let imported = match imported {
+                        Ok(imported) => imported,
+                        Err(error) => {
+                            self.visiting.remove(path);
+                            self.visit_stack.pop();
+                            return Err(error);
+                        }
+                    };
                     expanded.push_str(&imported.text);
                     line_origins.extend(imported.line_origins);
                     if !expanded.ends_with('\n') {
@@ -513,6 +618,7 @@ impl SourceReader {
         }
 
         self.visiting.remove(path);
+        self.visit_stack.pop();
 
         let expanded = ExpandedSource {
             text: expanded.into_boxed_str(),
@@ -628,6 +734,23 @@ fn canonicalize_path(path: &Path) -> Result<PathBuf, SourceReaderError> {
         path: path.to_path_buf(),
         message: err.to_string().into_boxed_str(),
     })
+}
+
+pub(crate) fn import_cycle_from_stack(
+    active_paths: &[PathBuf],
+    active_edges: &[ImportCycleEdge],
+    repeated: &Path,
+    closing_edge: Option<ImportCycleEdge>,
+) -> Vec<ImportCycleEdge> {
+    let start = active_paths
+        .iter()
+        .position(|path| path == repeated)
+        .unwrap_or(0);
+    let mut cycle = active_edges.get(start..).unwrap_or_default().to_vec();
+    if let Some(edge) = closing_edge {
+        cycle.push(edge);
+    }
+    cycle
 }
 
 fn normalize_logical_path(path: &Path) -> PathBuf {

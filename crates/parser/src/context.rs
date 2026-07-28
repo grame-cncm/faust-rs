@@ -628,6 +628,12 @@ impl ParserCtx {
         self.push_diagnostic(Severity::Error, code, message, Some(self.cursor.clone()));
     }
 
+    /// Counts an engine-produced parse error whose structured diagnostic is
+    /// assembled directly by the parser facade.
+    pub(crate) fn note_engine_parse_error(&mut self) {
+        self.parse_error_count = self.parse_error_count.saturating_add(1);
+    }
+
     /// Records a parser warning at current cursor location.
     pub fn warning(&mut self, message: &str) {
         self.push_diagnostic(

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use diagnostics::DiagnosticBundle;
 use parser::{CompilationMetadataSnapshot, CompilationMetadataStore, VirtualSourceMap};
 use tlib::{TreeArena, TreeId};
 
@@ -306,5 +307,5 @@ impl Eq for EvalSourceContext {}
 pub(crate) struct CachedLoadedSource {
     pub(crate) root: TreeId,
     pub(crate) arena: TreeArena,
-    pub(crate) parse_errors: Vec<String>,
+    pub(crate) parse_diagnostics: DiagnosticBundle,
 }

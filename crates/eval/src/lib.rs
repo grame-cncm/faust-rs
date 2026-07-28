@@ -1357,11 +1357,11 @@ fn eval_loaded_source_value(
             (
                 path.to_path_buf(),
                 arena.clone_subtree_from(&loaded.arena, loaded.root),
-                loaded.parse_errors.clone(),
+                loaded.parse_diagnostics.clone(),
             )
         })
     });
-    let (resolved_path, cloned_defs, parse_errors) = match cached {
+    let (resolved_path, cloned_defs, parse_diagnostics) = match cached {
         Some(hit) => hit,
         None => {
             let resolved_path = candidate_paths
@@ -1430,25 +1430,25 @@ fn eval_loaded_source_value(
                     node,
                     construct,
                     path: resolved_path.clone(),
-                    errors: parse_output.errors.clone(),
+                    diagnostics: parse_output.diagnostics.clone(),
                 })?;
             let cached_source = CachedLoadedSource {
                 root: loaded_root,
                 arena: parse_output.state.arena,
-                parse_errors: parse_output.errors,
+                parse_diagnostics: parse_output.diagnostics,
             };
             let cloned_defs = arena.clone_subtree_from(&cached_source.arena, cached_source.root);
-            let parse_errors = cached_source.parse_errors.clone();
+            let parse_diagnostics = cached_source.parse_diagnostics.clone();
             source_context.insert_loaded_source(resolved_path.clone(), cached_source);
-            (resolved_path, cloned_defs, parse_errors)
+            (resolved_path, cloned_defs, parse_diagnostics)
         }
     };
-    if !parse_errors.is_empty() {
+    if parse_diagnostics.error_count() != 0 {
         return Err(EvalError::SourceParseFailure {
             node,
             construct,
             path: resolved_path.clone(),
-            errors: parse_errors,
+            diagnostics: parse_diagnostics,
         });
     }
     let mut loaded_env =

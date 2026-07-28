@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use boxes::{BoxBuilder, BoxMatch, dump_box, match_box};
-use diagnostics::SourceKind;
+use diagnostics::{LabelRole, SourceKind};
 use parser::{
     CompilationMetadataKey, CompilationMetadataStore, SourceReaderError, VirtualSourceMap,
     parse_file_with_imports, parse_minimal, parse_program, parse_program_with_imports_and_metadata,
@@ -76,6 +76,62 @@ fn bridge_exposes_parse_program() {
         .expect("memory source snapshot should be registered");
     assert_eq!(source.kind(), SourceKind::Memory);
     assert_eq!(source.text(), "process = _;");
+}
+
+#[test]
+fn parser_recovery_exposes_expected_tokens_and_semicolon_edit() {
+    let out = parse_program("process = _", "missing_semicolon.dsp");
+    let diagnostic = out
+        .diagnostics
+        .as_slice()
+        .iter()
+        .find(|diagnostic| diagnostic.code.0 == "FRS-PARSE-0001")
+        .expect("missing semicolon should produce a parser diagnostic");
+
+    assert_eq!(
+        diagnostic.detail_code.as_ref().map(|code| code.as_str()),
+        Some("unexpected-token")
+    );
+    assert!(
+        diagnostic
+            .facts
+            .keys()
+            .any(|key| key.as_str() == "expected_tokens"),
+        "expected token set must be machine-readable"
+    );
+    assert!(
+        diagnostic.fixes.iter().any(|fix| fix
+            .edits
+            .iter()
+            .any(|edit| edit.replacement.as_ref() == ";")),
+        "an unambiguous missing semicolon should offer an exact edit: {diagnostic:?}"
+    );
+}
+
+#[test]
+fn parser_recovery_links_a_missing_closer_to_its_opening_delimiter() {
+    let out = parse_program("process = (_;", "missing_closer.dsp");
+    let diagnostic = out
+        .diagnostics
+        .as_slice()
+        .iter()
+        .find(|diagnostic| diagnostic.code.0 == "FRS-PARSE-0001")
+        .expect("missing closer should produce a parser diagnostic");
+
+    assert!(
+        diagnostic.fixes.iter().any(|fix| fix
+            .edits
+            .iter()
+            .any(|edit| edit.replacement.as_ref() == ")")),
+        "an unambiguous missing closer should offer an exact edit: {diagnostic:?}"
+    );
+    assert!(
+        diagnostic
+            .labels
+            .iter()
+            .any(|label| label.role == LabelRole::MatchingDelimiter),
+        "the matching opening delimiter should be labeled"
+    );
 }
 
 #[test]
@@ -333,6 +389,48 @@ fn parse_file_with_imports_preserves_imported_file_diagnostic_origin() {
         has_label_on_imported_file,
         "expected at least one parser diagnostic label on imported file {}",
         lib_canonical.display()
+    );
+
+    fs::remove_dir_all(root).expect("temp root should be removable");
+}
+
+#[test]
+fn parse_file_with_imports_reports_the_complete_cycle_and_each_edge() {
+    let root = make_temp_root("complete_import_cycle");
+    let first = root.join("first.dsp");
+    let second = root.join("second.lib");
+    let third = root.join("third.lib");
+    fs::write(&first, "import(\"second.lib\");\nprocess = _;\n").expect("write first");
+    fs::write(&second, "import(\"third.lib\");\n").expect("write second");
+    fs::write(&third, "import(\"first.dsp\");\n").expect("write third");
+
+    let error =
+        parse_file_with_imports(&first, std::slice::from_ref(&root)).expect_err("cycle must fail");
+    let SourceReaderError::ImportCycle { path, cycle } = error else {
+        panic!("expected import cycle");
+    };
+    let first = first.canonicalize().expect("first should canonicalize");
+    let second = second.canonicalize().expect("second should canonicalize");
+    let third = third.canonicalize().expect("third should canonicalize");
+    assert_eq!(path, first);
+    assert_eq!(cycle.len(), 3);
+    assert_eq!((&cycle[0].from, &cycle[0].to), (&first, &second));
+    assert_eq!((&cycle[1].from, &cycle[1].to), (&second, &third));
+    assert_eq!((&cycle[2].from, &cycle[2].to), (&third, &first));
+    assert!(cycle.iter().all(|edge| edge.site.is_some()));
+
+    let bundle = SourceReaderError::ImportCycle {
+        path,
+        cycle: cycle.clone(),
+    }
+    .to_diagnostics();
+    let diagnostic = &bundle.as_slice()[0];
+    assert_eq!(diagnostic.labels.len(), cycle.len());
+    assert!(
+        diagnostic
+            .facts
+            .keys()
+            .any(|key| key.as_str() == "import_cycle")
     );
 
     fs::remove_dir_all(root).expect("temp root should be removable");

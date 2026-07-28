@@ -1026,8 +1026,19 @@ impl Compiler {
                     self.entrypoint_name.as_ref(),
                 );
             }
-            let mut diagnostics = bundle_from_diagnostic(diagnostic);
-            diagnostics.set_source_map(source_map.clone());
+            let mut diagnostics =
+                if let eval::EvalError::SourceParseFailure { diagnostics, .. } = &error {
+                    let mut preserved = diagnostics.clone();
+                    preserved.push(diagnostic);
+                    preserved
+                } else {
+                    let mut bundle = bundle_from_diagnostic(diagnostic);
+                    bundle.set_source_map(source_map.clone());
+                    bundle
+                };
+            if diagnostics.source_map().is_empty() {
+                diagnostics.set_source_map(source_map.clone());
+            }
             CompilerError::Eval {
                 source: source.into(),
                 error: Box::new(error),

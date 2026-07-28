@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
 use diagnostics::codes;
-use diagnostics::{Diagnostic, Severity, Stage, ToDiagnostic};
+use diagnostics::{Diagnostic, DiagnosticBundle, Severity, Stage, ToDiagnostic};
 use tlib::TreeId;
 
 /// Performance statistics collected during evaluation.
@@ -183,7 +183,8 @@ pub enum EvalError {
         node: TreeId,
         construct: &'static str,
         path: PathBuf,
-        errors: Vec<String>,
+        /// Original parser diagnostics, including imported source snapshots.
+        diagnostics: DiagnosticBundle,
     },
     ExpectedClosureValue {
         node: TreeId,
@@ -593,17 +594,19 @@ impl ToDiagnostic for EvalError {
                 message,
             )
             .with_note(format!("source reader failure in `{construct}`: {detail}")),
-            Self::SourceParseFailure { errors, .. } => {
-                let mut diagnostic = Diagnostic::new(
+            Self::SourceParseFailure { diagnostics, .. } => {
+                Diagnostic::new(
                     Severity::Error,
                     Stage::Eval,
                     codes::EVAL_GENERIC_FAILURE,
                     message,
-                );
-                for parse_error in errors {
-                    diagnostic = diagnostic.with_note(format!("loaded parse error: {parse_error}"));
-                }
-                diagnostic
+                )
+                .with_detail_code("nested-source-parse-failure")
+                .with_fact(
+                    "nested_error_count",
+                    u64::try_from(diagnostics.error_count()).unwrap_or(u64::MAX),
+                )
+                .with_note("the original parser diagnostics follow unchanged")
             }
             Self::ExpectedClosureValue { context, .. } => Diagnostic::new(
                 Severity::Error,

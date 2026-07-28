@@ -338,6 +338,34 @@ fn compiler_compile_file_to_signals_loads_component_through_eval_context() {
 }
 
 #[test]
+fn compiler_preserves_parser_diagnostics_from_a_loaded_component() {
+    let root = temp_root("component_parse_diagnostics");
+    let entry = root.join("main.dsp");
+    let child = root.join("child.dsp");
+    fs::write(&entry, "process = component(\"child.dsp\");\n").expect("write entry");
+    fs::write(&child, "process = _\n").expect("write malformed child");
+
+    let error = Compiler::new()
+        .compile_file_default_to_signals(&entry)
+        .expect_err("malformed component must fail");
+    let diagnostics = error.diagnostic_bundle();
+    let child = child.canonicalize().expect("child should canonicalize");
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|diagnostic| diagnostic.code.0 == "FRS-PARSE-0001"
+                && diagnostic
+                    .labels
+                    .iter()
+                    .any(|label| label.span.file == child)),
+        "the original parser code and child-source label must survive: {diagnostics:?}"
+    );
+
+    fs::remove_dir_all(root).expect("temp root should be removable");
+}
+
+#[test]
 fn compiler_compile_file_to_signals_aggregates_component_metadata() {
     let root = temp_root("component_metadata");
     let entry = root.join("main.dsp");
@@ -994,6 +1022,7 @@ fn compiler_error_source_classification_covers_every_variant() {
     let empty = || DiagnosticBundle::new();
     assert_source_is::<SourceReaderError>(CompilerError::import(SourceReaderError::ImportCycle {
         path: PathBuf::from("cycle.dsp"),
+        cycle: Vec::new(),
     }));
     assert_source_is::<eval::EvalError>(CompilerError::Eval {
         source: "eval.dsp".into(),
