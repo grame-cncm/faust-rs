@@ -42,7 +42,7 @@
 pub mod enrobage;
 
 mod box_preview;
-mod diagnostics;
+mod diagnostic_enrichment;
 mod emitters;
 mod error_mapping;
 mod golden;
@@ -54,7 +54,7 @@ mod signal_lowering;
 pub mod execution;
 
 use box_preview::*;
-use diagnostics::*;
+use diagnostic_enrichment::*;
 use error_mapping::*;
 pub use golden::*;
 pub use json_naming::*;
@@ -96,10 +96,10 @@ use codegen::backends::wasm::{WasmBackendError, WasmJsonContext, WasmModule, Was
 use codegen::json::{
     JsonBuildOptions, JsonDescription, JsonMetaEntry, build_json_description_from_fir,
 };
-use errors::codes::COMP_TYPE_FAILED;
-use errors::{
-    Diagnostic, DiagnosticBundle, IntoDiagnostic, Label, LabelStyle, Severity, SourceSpan, Stage,
+pub use diagnostics::{
+    Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, Severity, SourceSpan, Stage,
 };
+use diagnostics::{IntoDiagnostic, codes::COMP_TYPE_FAILED};
 use fir::{
     FirId, FirStore,
     checker::{FirVerifyReport, Severity as FirVerifySeverity, verify_fir_module},
@@ -1417,7 +1417,7 @@ impl CompilerError {
             Diagnostic::new(
                 Severity::Error,
                 Stage::Codegen,
-                errors::codes::CODEGEN_EMISSION_FAILED,
+                diagnostics::codes::CODEGEN_EMISSION_FAILED,
                 format!("{backend} backend code generation failed: {message}"),
             )
             .with_note(format!("backend: {backend}"))
@@ -1454,7 +1454,7 @@ impl CompilerError {
             Diagnostic::new(
                 Severity::Error,
                 Stage::Compiler,
-                errors::codes::COMP_MISSING_ROOT,
+                diagnostics::codes::COMP_MISSING_ROOT,
                 format!("parse returned no root for {source}"),
             )
             .with_note("the parser reported no errors yet exposed no root node")

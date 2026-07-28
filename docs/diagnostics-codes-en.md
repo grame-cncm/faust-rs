@@ -29,7 +29,7 @@ This currently returns **32 codes** across **9 stage-family namespaces**:
 
 Backend emitters additionally own a **separate, finer taxonomy** of 27 codes
 shaped `FRS-CGEN-<LANG>-NNNN` (ASC, C, CLIF, CPP, INTERP, JULIA, RUST, WASM).
-Those are *not* part of this table and do not appear in `errors::codes`: they
+Those are *not* part of this table and do not appear in `diagnostics::codes`: they
 travel inside `FRS-CODEGEN-0001` diagnostics as a `codegen_code=...` note, the
 same way FIR verifier codes travel inside `FRS-FIR-000{1,2}` as `fir_code=...`.
 Note they do not match the extraction regex either (the extra `-<LANG>` segment
@@ -37,7 +37,7 @@ means `FRS-[A-Z]+-[0-9]+` never matches), so they cannot silently leak into the
 frozen set.
 
 Note the family prefix (`LEX`, `PARSE`, ...) is a naming convention only; the
-JSON payload's `"stage"` field comes from the independent `errors::Stage`
+JSON payload's `"stage"` field comes from the independent `diagnostics::Stage`
 enum and does not always equal the family name (e.g. every `FRS-SFIR-*` code
 reports `"stage": "transform"`, not `"stage": "sfir"` — there is no `Sfir`
 `Stage` variant). Both are listed per code below.
@@ -46,11 +46,11 @@ reports `"stage": "transform"`, not `"stage": "sfir"` — there is no `Sfir`
 
 The extraction command above is a textual grep over `.rs` source, not a
 reachability analysis. Building this table required tracing every code from
-its `errors::codes::*` constant to an actual call site, and that surfaced
+its `diagnostics::codes::*` constant to an actual call site, and that surfaced
 real gaps, recorded here rather than papered over:
 
 - **`FRS-SRC-0001`, `FRS-SRC-0002`, `FRS-SRC-0003`** are defined in
-  `crates/errors/src/codes.rs` and listed in `codes::all_codes()`, but no
+  `crates/diagnostics/src/codes.rs` and listed in `codes::all_codes()`, but no
   code anywhere in the workspace ever constructs a `Diagnostic` with them.
 
   **Wired up 2026-07-21.** These were never dead reservations:
@@ -97,7 +97,8 @@ real gaps, recorded here rather than papered over:
   fixtures could, and the eight built-in fixtures
   (`--list-fir-fixtures`) are all valid by construction.
 - **`FRS-EVAL-0100` was removed from this table** (2026-07-21). It never came
-  from `errors::codes`: it was a literal string in `crates/errors/src/lib.rs`'s
+  from `diagnostics::codes`: it was a literal string in
+  `crates/diagnostics/src/lib.rs`'s
   own unit test `bundle_counts_error_severity_only`, picked up only because the
   extraction is textual. Documenting it made the table promise a public code
   that nothing emits. The test now uses a real registered code
@@ -232,10 +233,10 @@ forbids. A gap in the numbering is the correct end state.
   re-runs the extraction grep and diffs it against the set documented above;
   fails on an undocumented new code or a renumbered existing one.
 - `crates/compiler/src/cli/tests.rs::code_registry_matches_frozen_table` —
-  checks that the runtime registry `errors::codes::all_codes()` lists exactly
+  checks that the runtime registry `diagnostics::codes::all_codes()` lists exactly
   the codes documented here, in both directions. Added 2026-07-21 after the two
   were found to have silently diverged (`FRS-EVAL-0006` was emitted but absent
   from the registry).
-- `crates/errors/src/codes.rs`'s own `all_codes_follow_stable_format` /
+- `crates/diagnostics/src/codes.rs`'s own `all_codes_follow_stable_format` /
   `all_codes_are_unique` unit tests check the format/uniqueness invariants of
   the registered set.

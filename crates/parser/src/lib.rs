@@ -19,8 +19,8 @@
 
 use boxes::{BoxMatch, dump_box, match_box};
 use cfgrammar::Span;
-use errors::codes;
-use errors::{
+use diagnostics::codes;
+use diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, Severity, SourceSpan, Stage,
 };
 use lrlex::lrlex_mod;

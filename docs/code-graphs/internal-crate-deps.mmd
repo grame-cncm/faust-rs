@@ -5,43 +5,47 @@ flowchart LR
     crate_codegen["codegen"]
     crate_compiler["compiler"]
     crate_cranelift_ffi["cranelift-ffi"]
+    crate_diagnostics["diagnostics"]
     crate_doc["doc"]
     crate_draw["draw"]
-    crate_errors["errors"]
     crate_eval["eval"]
     crate_faust_ffi["faust-ffi"]
+    crate_ffi_common["ffi-common"]
     crate_fir["fir"]
     crate_foreign_call["foreign-call"]
     crate_graph["graph"]
+    crate_impulse_runner["impulse-runner"]
     crate_interp_ffi["interp-ffi"]
     crate_interval["interval"]
     crate_normalize["normalize"]
     crate_parser["parser"]
     crate_propagate["propagate"]
+    crate_signal_ffi["signal-ffi"]
     crate_signals["signals"]
     crate_sigtype["sigtype"]
     crate_tlib["tlib"]
     crate_transform["transform"]
+    crate_tree_ffi["tree-ffi"]
     crate_ui["ui"]
-    crate_utils["utils"]
     crate_wasm_ffi["wasm-ffi"]
     crate_xtask["xtask"]
     crate_box_ffi --> crate_boxes
     crate_box_ffi --> crate_codegen
     crate_box_ffi --> crate_compiler
+    crate_box_ffi --> crate_ffi_common
     crate_box_ffi --> crate_fir
     crate_box_ffi --> crate_propagate
     crate_box_ffi --> crate_tlib
     crate_box_ffi --> crate_transform
+    crate_box_ffi --> crate_tree_ffi
     crate_box_ffi --> crate_ui
-    crate_box_ffi --> crate_utils
     crate_boxes --> crate_tlib
     crate_codegen --> crate_fir
     crate_codegen --> crate_foreign_call
     crate_compiler --> crate_boxes
     crate_compiler --> crate_codegen
+    crate_compiler --> crate_diagnostics
     crate_compiler --> crate_draw
-    crate_compiler --> crate_errors
     crate_compiler --> crate_eval
     crate_compiler --> crate_fir
     crate_compiler --> crate_parser
@@ -54,13 +58,13 @@ flowchart LR
     crate_cranelift_ffi --> crate_box_ffi
     crate_cranelift_ffi --> crate_codegen
     crate_cranelift_ffi --> crate_compiler
+    crate_cranelift_ffi --> crate_ffi_common
     crate_cranelift_ffi --> crate_fir
     crate_cranelift_ffi --> crate_interp_ffi
-    crate_cranelift_ffi --> crate_utils
     crate_draw --> crate_boxes
     crate_draw --> crate_tlib
     crate_eval --> crate_boxes
-    crate_eval --> crate_errors
+    crate_eval --> crate_diagnostics
     crate_eval --> crate_normalize
     crate_eval --> crate_parser
     crate_eval --> crate_propagate
@@ -69,23 +73,33 @@ flowchart LR
     crate_faust_ffi --> crate_box_ffi
     crate_faust_ffi --> crate_cranelift_ffi
     crate_faust_ffi --> crate_interp_ffi
+    crate_faust_ffi --> crate_signal_ffi
     crate_fir --> crate_tlib
+    crate_impulse_runner --> crate_codegen
+    crate_impulse_runner --> crate_compiler
+    crate_impulse_runner --> crate_fir
     crate_interp_ffi --> crate_codegen
     crate_interp_ffi --> crate_compiler
-    crate_interp_ffi --> crate_utils
+    crate_interp_ffi --> crate_ffi_common
     crate_normalize --> crate_interval
     crate_normalize --> crate_signals
     crate_normalize --> crate_sigtype
     crate_normalize --> crate_tlib
     crate_normalize --> crate_ui
     crate_parser --> crate_boxes
-    crate_parser --> crate_errors
+    crate_parser --> crate_diagnostics
     crate_parser --> crate_tlib
     crate_propagate --> crate_boxes
-    crate_propagate --> crate_errors
+    crate_propagate --> crate_diagnostics
     crate_propagate --> crate_signals
     crate_propagate --> crate_tlib
     crate_propagate --> crate_ui
+    crate_signal_ffi --> crate_box_ffi
+    crate_signal_ffi --> crate_ffi_common
+    crate_signal_ffi --> crate_normalize
+    crate_signal_ffi --> crate_signals
+    crate_signal_ffi --> crate_tlib
+    crate_signal_ffi --> crate_tree_ffi
     crate_signals --> crate_tlib
     crate_signals --> crate_ui
     crate_sigtype --> crate_interval
@@ -93,16 +107,20 @@ flowchart LR
     crate_sigtype --> crate_tlib
     crate_sigtype --> crate_ui
     crate_transform --> crate_fir
+    crate_transform --> crate_interval
     crate_transform --> crate_normalize
+    crate_transform --> crate_propagate
     crate_transform --> crate_signals
     crate_transform --> crate_sigtype
     crate_transform --> crate_tlib
     crate_transform --> crate_ui
+    crate_tree_ffi --> crate_ffi_common
+    crate_tree_ffi --> crate_tlib
     crate_ui --> crate_tlib
     crate_wasm_ffi --> crate_codegen
     crate_wasm_ffi --> crate_compiler
+    crate_wasm_ffi --> crate_ffi_common
     crate_wasm_ffi --> crate_parser
-    crate_wasm_ffi --> crate_utils
     crate_xtask --> crate_codegen
     crate_xtask --> crate_compiler
     crate_xtask --> crate_fir

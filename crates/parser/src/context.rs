@@ -13,7 +13,7 @@
 //! - Waveform values are accumulated in parse order then drained by the corresponding action.
 //! - Parser diagnostics are explicitly scoped to one parser context (no global mutable singleton).
 
-use errors::DiagnosticCode;
+use diagnostics::DiagnosticCode;
 use tlib::{PropertyKey, PropertyStore, TreeId};
 
 /// Parser source location equivalent to `(filename, lineno)` in C++ parser globals,

@@ -1,7 +1,7 @@
 # Faust-rs Diagnostics and Error-Reporting Model
 
 > Scope: define a structured, phase-wide diagnostics model for the Rust port, with semantic parity against C++ behavior and better user-facing feedback quality.
-> Status: planning baseline (to be implemented incrementally across `errors`, `parser`, `eval`, `propagate`, and `compiler`).
+> Status: planning baseline (to be implemented incrementally across `diagnostics`, `parser`, `eval`, `propagate`, and `compiler`).
 
 ---
 
@@ -24,10 +24,11 @@ User-facing motivation is explicit in Faust docs:
 
 ### 2.1 C++ baseline (current compiler)
 
-- `/Users/letz/Developpements/RUST/faust/compiler/errors/errormsg.hh`
-- `/Users/letz/Developpements/RUST/faust/compiler/errors/errormsg.cpp`
-- `/Users/letz/Developpements/RUST/faust/compiler/parser/faustparser.y` (`yyerror`)
-- `/Users/letz/Developpements/RUST/faust/compiler/evaluate/eval.cpp` (`evalerror`, manual throw paths)
+- `compiler/errors/errormsg.hh` in the pinned C++ reference checkout
+- `compiler/errors/errormsg.cpp` in the pinned C++ reference checkout
+- `compiler/parser/faustparser.y` (`yyerror`) in the pinned C++ reference checkout
+- `compiler/evaluate/eval.cpp` (`evalerror`, manual throw paths) in the pinned
+  C++ reference checkout
 
 Key observation:
 - C++ mostly formats string messages and throws exceptions immediately.
@@ -61,9 +62,9 @@ Key observation:
 
 ## 4. Target architecture
 
-### 4.1 Core types in `crates/errors`
+### 4.1 Core types in `crates/diagnostics`
 
-The `errors` crate should own a canonical model similar to:
+The `diagnostics` crate should own a canonical model similar to:
 
 ```rust
 pub enum Severity {
@@ -218,13 +219,13 @@ Required outcomes:
 
 ## 6. Migration plan (deliverables + pass criteria)
 
-### Deliverable A — `errors` crate core model
+### Deliverable A — `diagnostics` crate core model
 
 - Add canonical types (`Diagnostic`, `DiagnosticCode`, `Stage`, `SourceSpan`, bundle).
 - Add unit tests for deterministic formatting and JSON schema stability.
 
 Pass criterion:
-- `errors` crate provides stable public diagnostics API used by at least one consumer crate.
+- `diagnostics` crate provides stable public diagnostics API used by at least one consumer crate.
 
 ### Deliverable B — parser diagnostics parity baseline
 
@@ -490,7 +491,7 @@ Polish phase plan (post-finalization, non-blocking):
 
 ## 7. Test strategy
 
-1. Unit tests in `errors`:
+1. Unit tests in `diagnostics`:
    - code and severity stability,
    - label ordering determinism,
    - renderer output shape.
@@ -550,7 +551,7 @@ The target is stable structured diagnostics with incremental UX improvements.
 This document is normative for diagnostics architecture and must be read with:
 
 - `faust-rust-porting-plan-en.md`
-- `phases/phase-1-fondations-en.md` (errors crate scope)
+- `phases/phase-1-fondations-en.md` (diagnostics crate scope)
 - `phases/phase-3-parser-en.md` (diagnostics/recovery parity)
 - `phases/phase-4-signaux-en.md` (eval/propagate diagnostics integration)
 - `phases/phase-0-gglobal-decomposition-map-en.md` (`gErrorCount`/`gErrorMessage` decomposition)

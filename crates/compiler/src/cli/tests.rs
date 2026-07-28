@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{CommandFactory, Parser, ValueEnum};
 use compiler::{Compiler, FaustInstallPaths};
-use errors::{Diagnostic, DiagnosticBundle, DiagnosticCode, Severity, SourceSpan, Stage};
+use diagnostics::{Diagnostic, DiagnosticBundle, DiagnosticCode, Severity, SourceSpan, Stage};
 use serde_json::Value;
 use signals::{SigMatch, match_sig};
 
@@ -553,8 +553,8 @@ fn diagnostics_human_renderer_keeps_code_and_location() {
             DiagnosticCode("FRS-EVAL-0001"),
             "missing process",
         )
-        .with_label(errors::Label::new(
-            errors::LabelStyle::Primary,
+        .with_label(diagnostics::Label::new(
+            diagnostics::LabelStyle::Primary,
             SourceSpan::new("test.dsp", 3, 7, 3, 12),
             "here",
         )),
@@ -609,8 +609,8 @@ fn diagnostics_human_renderer_snapshot_with_snippet_and_caret() {
             DiagnosticCode("FRS-PROP-0002"),
             "split composition mismatch",
         )
-        .with_label(errors::Label::new(
-            errors::LabelStyle::Primary,
+        .with_label(diagnostics::Label::new(
+            diagnostics::LabelStyle::Primary,
             SourceSpan::new(&path, 1, 13, 1, 15),
             "related source",
         ))
@@ -1359,7 +1359,7 @@ fn frozen_frs_code_table_matches_source() {
     );
 }
 
-/// The runtime registry `errors::codes::all_codes()` must list exactly the
+/// The runtime registry `diagnostics::codes::all_codes()` must list exactly the
 /// frozen set.
 ///
 /// Nothing compared the two before, and they had silently diverged:
@@ -1373,7 +1373,7 @@ fn frozen_frs_code_table_matches_source() {
 /// only in the "Retired codes" table of `docs/diagnostics-codes-en.md`.
 #[test]
 fn code_registry_matches_frozen_table() {
-    let registry: std::collections::BTreeSet<String> = errors::codes::all_codes()
+    let registry: std::collections::BTreeSet<String> = diagnostics::codes::all_codes()
         .iter()
         .map(|code| code.0.to_owned())
         .collect();
@@ -1383,7 +1383,7 @@ fn code_registry_matches_frozen_table() {
     let extra_in_registry = registry.difference(&documented).collect::<Vec<_>>();
     assert!(
         missing_from_registry.is_empty() && extra_in_registry.is_empty(),
-        "errors::codes::all_codes() drifted from the frozen table \
+        "diagnostics::codes::all_codes() drifted from the frozen table \
          (documented but absent from the registry: {missing_from_registry:?}; \
          in the registry but undocumented: {extra_in_registry:?})."
     );

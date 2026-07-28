@@ -19,7 +19,7 @@ use compiler::{
     ProcessingApi, RealType, SchedulingStrategy, compile_options_json_string,
     enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
 };
-use errors::DiagnosticBundle;
+use diagnostics::DiagnosticBundle;
 use fir::checker::verify_fir_module;
 
 use super::args::{

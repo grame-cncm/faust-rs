@@ -38,7 +38,7 @@
 
 use super::args::{ErrorFormat, ErrorVerbosity};
 use compiler::CompilerError;
-use errors::{DiagnosticBundle, LabelStyle, Severity, Stage};
+use diagnostics::{DiagnosticBundle, LabelStyle, Severity, Stage};
 use serde_json::json;
 use std::path::Path;
 

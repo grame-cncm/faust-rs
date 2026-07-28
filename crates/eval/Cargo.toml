@@ -8,7 +8,7 @@ authors.workspace = true
 [dependencies]
 ahash = { version = "0.8", default-features = false, features = ["std"] }
 boxes = { path = "../boxes" }
-errors = { path = "../errors" }
+diagnostics = { path = "../diagnostics" }
 normalize = { path = "../normalize" }
 parser = { path = "../parser" }
 propagate = { path = "../propagate" }

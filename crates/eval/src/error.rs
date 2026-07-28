@@ -3,8 +3,8 @@
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
-use errors::codes;
-use errors::{Diagnostic, IntoDiagnostic, Severity, Stage};
+use diagnostics::codes;
+use diagnostics::{Diagnostic, IntoDiagnostic, Severity, Stage};
 use tlib::TreeId;
 
 /// Performance statistics collected during evaluation.

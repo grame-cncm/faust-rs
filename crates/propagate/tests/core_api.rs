@@ -5,7 +5,7 @@
 //! - Guards regression/parity behavior on representative fixtures and corpus cases.
 
 use boxes::{BoxBuilder, BoxMatch, match_box};
-use errors::{IntoDiagnostic, Severity, Stage, codes};
+use diagnostics::{IntoDiagnostic, Severity, Stage, codes};
 use propagate::{
     ArityCache, FlatBoxBuildError, FlatBoxId, PropagateError, PropagateUiOptions, box_arity_typed,
     make_sig_input_list, propagate_typed, propagate_typed_with_ui, propagate_typed_with_ui_options,

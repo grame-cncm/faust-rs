@@ -551,7 +551,7 @@ boundary plus the `foreign-call` runtime bridge.
 | Crate | Role |
 |---|---|
 | `tlib` | Hash-consed tree arena, symbols, lists, recursive tree helpers |
-| `errors` | Structured diagnostics model |
+| `diagnostics` | Structured diagnostic reports, stable codes, labels, and bundles |
 | `interval` | Interval arithmetic |
 | `algebra` | Shared algebra/rewrite scaffold |
 | `graph` | Shared graph algorithms scaffold |

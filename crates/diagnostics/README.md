@@ -1,4 +1,4 @@
-# errors
+# diagnostics
 
 Structured diagnostics model shared by every stage of the `faust-rs` compiler pipeline.
 
@@ -29,7 +29,12 @@ Structured diagnostics model shared by every stage of the `faust-rs` compiler pi
 
 ## Position in the pipeline
 
-Compiler stages that emit structured diagnostics depend on `errors`; leaf IR,
+Compiler stages that emit structured diagnostics depend on `diagnostics`; leaf IR,
 runtime, FFI, and tooling crates may use their own typed errors instead. The
-`errors` crate only models diagnostics: final rendering belongs to the
+`diagnostics` crate only models report data: final rendering belongs to the
 `faust-rs` binary or another consumer.
+
+Operational errors remain in the crate that owns each fallible operation and
+implement `std::error::Error` there. `Diagnostic` and `DiagnosticBundle`
+deliberately do not implement that trait: they can represent warnings, remarks,
+and aggregates rather than one causal failure.

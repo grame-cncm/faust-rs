@@ -10,7 +10,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use boxes::{BoxBuilder, BoxMatch, match_box};
-use errors::{IntoDiagnostic, Severity, Stage, codes};
+use diagnostics::{IntoDiagnostic, Severity, Stage, codes};
 use eval::{
     Environment, EvalError, EvalSourceContext, LoopDetector, eval_box, eval_process,
     eval_process_with_source_context, eval_process_with_stats,

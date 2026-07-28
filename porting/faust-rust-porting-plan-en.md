@@ -150,7 +150,7 @@ The structure below comes from the project's `CMakeLists.txt` (`build/CMakeLists
 | `compiler/draw/schema/` | Visual diagrams of block diagrams | `draw` (integrated) |
 | `compiler/draw/device/` | Abstract drawing devices (SVG, PS) | `draw` (integrated) |
 | `compiler/documentator/` | Automatic mathematical documentation generation | `doc` |
-| `compiler/errors/` | Error management, warnings | `errors` |
+| `compiler/errors/` | Error management, warnings | `diagnostics` |
 | `compiler/utils/` | Miscellaneous utilities (names, files, global state) | `utils` |
 | `compiler/*.cpp` (root) | Entry point (`main.cpp`), `global.cpp`, `libfaust.cpp` | `compiler` (binary + lib) |
 
@@ -368,7 +368,7 @@ Compiler Memoization Strategy comparison: `phases/phase-0-memoization-strategy-e
 
 | Stage | Crate | Description | Validation tests |
 |-------|-------|-------------|---------------------|
-| 1.1 | `errors` | Error types, source locations/ranges, diagnostic codes, phase-aware diagnostics bundle, rendering contracts | Unit testing |
+| 1.1 | `diagnostics` | Diagnostic reports, source locations/ranges, stable codes, phase-aware bundles, rendering contracts | Unit testing |
 | 1.2 | `utils` | Common utilities (names, paths, global config) | Unit testing |
 | 1.3 | **`tlib`** | **High priority.** Trees with hash-consing, symbols, functional lists (cons/hd/tl), tagged nodes, properties on the nodes. This is the fundamental data structure of the entire compiler. | Comprehensive testing of hash-consing, structural equality, list operations |
 | 1.4 | `interval` | Interval arithmetic (bounds, propagation) | Testing arithmetic operations on intervals |

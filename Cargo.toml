@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "crates/tlib",
-  "crates/errors",
+  "crates/diagnostics",
   "crates/interval",
   "crates/algebra",
   "crates/graph",

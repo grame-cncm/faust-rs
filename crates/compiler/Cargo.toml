@@ -11,7 +11,7 @@ backend-wasm = ["codegen/backend-wasm"]
 
 [dependencies]
 clap.workspace = true
-errors = { path = "../errors" }
+diagnostics = { path = "../diagnostics" }
 parser = { path = "../parser" }
 codegen = { path = "../codegen" }
 boxes = { path = "../boxes" }

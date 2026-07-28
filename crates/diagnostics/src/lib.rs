@@ -1,4 +1,4 @@
-//! Structured diagnostics model for `faust-rs`.
+//! Structured diagnostics report model for `faust-rs`.
 //!
 //! # Source provenance (C++)
 //! - `compiler/errors/*` (error classes and reporting helpers)
@@ -9,6 +9,7 @@
 //! - Keep stable diagnostic codes (`codes::*`) suitable for tests, CI gates and
 //!   tooling integrations.
 //! - Offer stage/severity/source-span metadata independent from output format.
+//! - Leave operational errors and recovery decisions in their owning crates.
 //!
 //! # Design invariants
 //! - Diagnostic codes are stable identifiers: textual wording can evolve without
@@ -16,6 +17,9 @@
 //! - Stage attribution is explicit (`Stage` enum) so failures can be bucketed
 //!   per pipeline step.
 //! - Rendering policy is caller-owned: this crate models data, not UI.
+//! - [`Diagnostic`] and [`DiagnosticBundle`] are report data, not
+//!   [`std::error::Error`] implementations: they may contain warnings, remarks,
+//!   or several messages.
 //!
 //! # API mapping status
 //! - Public API is `adapted`: equivalent diagnostic intent to C++ with Rust
@@ -26,15 +30,6 @@ use std::path::PathBuf;
 pub mod codes;
 
 pub use codes::all_codes;
-
-/// Stable crate identifier used by shared metadata and diagnostics.
-pub const CRATE_NAME: &str = "errors";
-
-/// Returns the stable identifier of the `errors` crate.
-#[must_use]
-pub fn crate_id() -> &'static str {
-    CRATE_NAME
-}
 
 /// Diagnostic severity level.
 ///

@@ -107,8 +107,8 @@ use std::fmt::{Display, Formatter};
 
 use ahash::{AHashMap, AHashSet};
 use boxes::{BoxId, BoxMatch, match_box};
-use errors::codes;
-use errors::{Diagnostic, IntoDiagnostic, Severity, Stage};
+use diagnostics::codes;
+use diagnostics::{Diagnostic, IntoDiagnostic, Severity, Stage};
 use signals::{SigBuilder, SigId, SigMatch, match_sig};
 use tlib::{
     NodeKind, TreeArena, TreeId, de_bruijn_aperture_with_memo, list_to_vec, tree_to_int,
