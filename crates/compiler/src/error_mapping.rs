@@ -494,6 +494,7 @@ pub(crate) fn validate_signal_types(
     ctx: &parser::ParserCtx,
     defs_root: BoxId,
     entrypoint_name: &str,
+    collect_warnings: bool,
 ) -> Result<DiagnosticBundle, CompilerError> {
     let mut annotator = TypeAnnotator::new(arena, ui);
     annotator.annotate(signals).map_err(|error| {
@@ -508,8 +509,14 @@ pub(crate) fn validate_signal_types(
         )
     })?;
 
-    // Inference always records its non-fatal observations; whether they reach
-    // the user is the CLI's decision, not this function's.
+    // Rendering one warning walks the definition graph and dumps the offending
+    // Signal expression to a string. That is worth paying for when a reader
+    // will see the result and pure waste otherwise, so the caller's intent has
+    // to reach this far rather than being applied to a bundle already built.
+    if !collect_warnings {
+        return Ok(DiagnosticBundle::new());
+    }
+
     let mut warnings = DiagnosticBundle::new();
     for warning in annotator.warnings() {
         warnings.push(type_warning_to_diagnostic(

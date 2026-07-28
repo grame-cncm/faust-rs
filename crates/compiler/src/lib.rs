@@ -1161,13 +1161,12 @@ impl Compiler {
                     &output.state.ctx,
                     root,
                     ep,
+                    self.semantic_warnings,
                 )
             })
             .map_err(|error| error.with_source_map(source_map.clone()))?;
         if self.semantic_warnings {
             warnings.set_source_map(source_map);
-        } else {
-            warnings = DiagnosticBundle::new();
         }
 
         Ok(SignalCompileOutput {

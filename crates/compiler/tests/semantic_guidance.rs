@@ -209,6 +209,37 @@ fn a_potential_out_of_domain_operand_warns_only_when_requested() {
 }
 
 #[test]
+fn a_disabled_warning_channel_builds_no_diagnostic_at_all() {
+    // Rendering one warning walks the definition graph and dumps the offending
+    // Signal expression to a string. Building that and discarding it is pure
+    // waste, so the opt-out has to reach the producer, not just the result.
+    //
+    // Observing "it was not built" from outside means observing that nothing
+    // that depends on the build is present: an empty bundle whose source map
+    // was never attached either.
+    let source = "process = sqrt;\n";
+
+    let quiet = Compiler::new()
+        .compile_source_to_signals("guidance.dsp", source)
+        .expect("a potential domain problem must not block compilation");
+    assert!(quiet.warnings.is_empty());
+    assert!(
+        quiet.warnings.source_map().is_empty(),
+        "a bundle that was never populated must not carry a source map either"
+    );
+
+    let loud = Compiler::new()
+        .with_semantic_warnings(true)
+        .compile_source_to_signals("guidance.dsp", source)
+        .expect("enabling warnings must not change the compilation result");
+    assert_eq!(loud.warnings.len(), 1);
+    assert!(
+        !loud.warnings.source_map().is_empty(),
+        "a populated bundle needs its snapshots so the renderer can quote the line"
+    );
+}
+
+#[test]
 fn notes_follow_the_canonical_cause_rule_computed_order() {
     let diagnostics = failing_diagnostics("filter(x) = x * 0.5;\nprocess = filtre;\n");
     let ranks = diagnostics[0]
