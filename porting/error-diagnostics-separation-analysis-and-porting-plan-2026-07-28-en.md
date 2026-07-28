@@ -652,3 +652,45 @@ Renaming `errors` to `diagnostics` corrects the misleading boundary.
 Borrowing conversion, causal `source()` chains, typed type failures, and parser
 taxonomy convergence address the concrete idiomatic-Rust gaps without
 sacrificing the structured diagnostics work already present.
+
+## 11. Implementation outcome
+
+All six phases were completed on 2026-07-28:
+
+| Phase | Outcome | Commit |
+|---|---|---|
+| E0 | frozen package, code, rendering, parser, and source-chain contracts | `bf454cb1` |
+| E1 | renamed the package to `diagnostics` and preserved compiler re-exports | `373d5e66` |
+| E2 | replaced consuming conversion with `ToDiagnostic::to_diagnostic(&self)` | `ffb48605` |
+| E3 | exposed typed inference failures and exhaustive causal sources | `7aee00a5` |
+| E4 | removed the parser-local severity and wording-based code inference | `01053558` |
+| E5 | added `xtask error-model-check`, CI enforcement, and architecture documentation | `Enforce error and diagnostics ownership` |
+
+The ownership rule is now:
+
+- define a local typed error in the phase/backend crate when callers need to
+  distinguish a failure, retain structured fields, or traverse a cause;
+- emit a `Diagnostic` when a failure, warning, or remark must enter the stable
+  human/JSON reporting contract;
+- implement `Error::source()` when one operational failure wraps one concrete
+  lower-level failure, but not when a facade variant represents an aggregate
+  diagnostic report;
+- retain `Result<_, String>` only for private formatting/test utilities or
+  narrow ABI adapters whose caller immediately renders or maps the text.
+
+The intentionally retained workspace-visible string errors are owned and
+bounded as follows:
+
+- `parser::lex_tokens` is a lexer inspection convenience API that predates the
+  compile facade; its text is not a stable compiler diagnostic category;
+- `ffi-common` C argument/string decoders return boundary-validation text that
+  each owning FFI facade immediately sends through its established C error
+  channel;
+- private compiler factory serialization and interpreter/Cranelift FFI helpers
+  use strings as short-range adapter errors and map them into their owning
+  typed facade or ABI result before crossing the compiler API.
+
+These retained cases do not justify shared error variants. If one gains
+cross-layer consumers, stable categories, or a useful causal source, its owner
+must introduce a local typed error and map it to `diagnostics` at the reporting
+boundary.

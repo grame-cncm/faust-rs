@@ -46,7 +46,7 @@ This table maps `gGlobal` responsibilities used in the critical flow to explicit
 | `CompilerConfig` (immutable request options) | `compiler` (+ shared config type in `utils` if needed) | `gOutputLang`, `gClassName`, `gSuperClassName`, `gProcessName`, `gFloatSize`, `gVectorSwitch`, `gSchedulerSwitch`, `gOpenCLSwitch`, `gCUDASwitch`, `gMemoryManager`, `gExtControl`, `gOneSample`, `gOneSampleIO`, `gInPlace`, `gComputeMix`, `gBool2Int`, `gLocalCausalityCheck`, `gDumpNorm`, `gStrictSelect`, `gSimplifySelect2`, `gUseDenseDelay`, `gMaxDenseDelay`, `gMinDensity`, `gMaxCopyDelay`, `gMinCopyLoop`, `gMaskDelayLineThreshold`, `gIIRRingThreshold`, `gFirLoopSize`, `gHLSUnrollFactor`, `gFactorizeFIRIIRs`, `gReconstructFIRIIRs`, `gSchedulingStrategy`, `gPrintXMLSwitch`, `gPrintDocSwitch`, `gPrintFileListSwitch`, `gDrawPSSwitch`, `gDrawSVGSwitch`, `gDrawSignals`, `gDrawRetiming`, `gDrawRecProjGraph`, `gGraphSwitch`, `gTopoSwitch`, `gPrintHSchedule`, `gExportDSP`, `gTimeout` | Replace mutable option toggles by one immutable config snapshot per compile request. |
 | `PathConfig` + `InputSet` | `compiler` | `gInputString`, `gInputFiles`, `gOutputFile`, `gOutputDir`, `gArchFile`, `gInjectFlag`, `gInjectFile`, `gMasterDocument`, `gMasterName`, `gReader` | Keep filesystem and input orchestration in `compiler`; parser receives concrete source units. |
 | `ParserCtx` (parse-local mutable state) | `parser` | `gResult`, `gWaveForm`, `gStripDocSwitch`, `gLstDependenciesSwitch`, `gLstDistributedSwitch`, parser-side error increments, `nil` usage in grammar actions | Parser-specific mutable state must stop leaking into codegen/orchestration state. |
-| `DiagnosticsCtx` | `errors` (data), coordinated by `compiler` | `gErrorCount`, `gErrorMessage`, global warning state | Normalize to structured diagnostics and status instead of string side channels. |
+| `DiagnosticsCtx` | `diagnostics` (data), coordinated by `compiler` | `gErrorCount`, `gErrorMessage`, global warning state | Normalize to structured diagnostics and status instead of string side channels. |
 | `TreeArenaCtx` (interning + list/tree primitives + properties) | `tlib` | `nil`, `cons` ecosystem, tree/property identities (`BOXTYPEPROP`, `DEFLINEPROP`, `USELINEPROP`, etc.) as parser/eval/codegen dependencies | Core identity model should be session-owned and passed explicitly. |
 | `PrimitiveRegistry` (math/box primitive handles) | `boxes` + `signals` on top of `tlib` | `gAbsPrim`, `gAcosPrim`, `gAsinPrim`, `gAtanPrim`, `gAtan2Prim`, `gCosPrim`, `gSinPrim`, `gTanPrim`, `gExpPrim`, `gLogPrim`, `gLog10Prim`, `gPowPrim`, `gSqrtPrim`, `gMinPrim`, `gMaxPrim`, `gFmodPrim`, `gRemainderPrim`, `gFloorPrim`, `gCeilPrim`, `gRintPrim`, `gRoundPrim` | Parser grammar currently dereferences prim pointers directly; move to explicit registry passed to parser/boxes constructors. |
 | `MetadataCtx` | `compiler` (+ `doc` integration) | `gMetaDataSet`, `gFunMDSet` | Metadata is currently touched in parser and consumed later in libcode/codegen; isolate as explicit artifact in compile session. |
@@ -132,7 +132,7 @@ This is the first explicit contract for the migrated production flow.
 - Consumes immutable `CompilerConfig` + explicit IR/artifacts from previous phases.
 - No direct dependence on parser-local mutable state.
 
-### 4.6 `errors` crate (diagnostics model owner)
+### 4.6 `diagnostics` crate (diagnostics model owner)
 
 - Owns diagnostic data model and categorization.
 - `compiler` aggregates diagnostics from parser/eval/codegen and maps to API outputs.

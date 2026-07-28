@@ -93,6 +93,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           cargo run -p xtask -- cli-parser-check
+          cargo run -p xtask -- error-model-check
           cargo run -p xtask -- ffi-boundary-check
           cargo run -p xtask -- structure-check
 

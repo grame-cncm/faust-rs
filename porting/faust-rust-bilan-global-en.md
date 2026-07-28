@@ -148,7 +148,7 @@ None of the technical choices (TreeArena, lrpar, inkwell) have been validated by
 ### Step 2 — Phase 1 (3–4 weeks in AI tandem)
 
 - `tlib`: TreeArena functional with tests and benchmarks
-- `errors`, `utils`, `algebra`, `graph`: simple crates
+- `diagnostics`, `ffi-common`, `algebra`, `graph`: focused foundation crates
 - `interval`: 60+ operations carried with `check.cpp` tests
 
 ### Stage 3 and beyond — Phases 2–9

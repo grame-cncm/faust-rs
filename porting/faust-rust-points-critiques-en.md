@@ -413,7 +413,7 @@ Without an explicit prototype, diagnostics quality is likely to regress into mix
 Duration: 1 day
 ```
 
-1. Define a minimal diagnostics schema in `errors` (`severity`, `stage`, `code`, `labels`, `notes/help`).
+1. Define a minimal diagnostics schema in `diagnostics` (`severity`, `stage`, `code`, `labels`, `notes/help`).
 2. Convert one parser error class and one eval/propagate error class into this schema.
 3. Expose two renderers:
    - human text output,

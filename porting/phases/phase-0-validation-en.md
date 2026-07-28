@@ -108,7 +108,7 @@ Primary goals:
   - tracking entry in `JOURNAL.md`.
 
 ### 2.12 Diagnostics model baseline
-- Define a shared diagnostics schema (`severity`, `stage`, `code`, source labels, notes/help) in `errors`.
+- Define a shared diagnostics schema (`severity`, `stage`, `code`, source labels, notes/help) in `diagnostics`.
 - Validate at least one parser error and one downstream error class (`eval` or `propagate`) converted to the schema.
 - Freeze renderer requirements (human + JSON) and deterministic snapshot policy.
 - Reference architecture and staged rollout document:

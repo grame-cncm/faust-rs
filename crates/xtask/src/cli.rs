@@ -54,6 +54,7 @@ pub(crate) enum XtaskCommand {
     LockstepSimdCheck,
     FfiBoundaryCheck,
     CliParserCheck,
+    ErrorModelCheck,
     StructureCheck,
     CliTranscriptGen,
     CliTranscriptCheck,

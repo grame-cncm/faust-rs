@@ -1,6 +1,6 @@
 # Phase 1 — Foundations
 
-> **Crates**: `tlib`, `errors`, `utils`, `interval`, `algebra`, `graph`
+> **Crates**: `tlib`, `diagnostics`, `ffi-common`, `interval`, `algebra`, `graph`
 > **Estimate**: 35–45 person days
 > **Prerequisites**: none (initial phase)
 
@@ -395,18 +395,18 @@ impl<N> Schedule<N> {
 ## 3. Dependencies between crates (Phase 1)
 
 ```
-errors          (no internal dependency)
-utils           → errors
+diagnostics     (no internal dependency)
+ffi-common      (no internal dependency)
 algebra         (no internal dependency)
 interval        → algebra
 graph           (no internal dependency)
-tlib            → errors
+tlib            (no diagnostics dependency)
 ```
 
 External dependencies:
 - `smallvec` (for `SmallVec` in `TreeNode`)
 - `hashbrown` or `std::collections::HashMap`
-- `thiserror` (for `errors`)
+- standard `Display`/`Error` implementations for phase-local operational errors
 
 ---
 

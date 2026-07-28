@@ -2,7 +2,7 @@
 
 > **Crate**: `boxes`
 > **Estimate**: 12–16 person days
-> **Prerequisites**: Phase 1 (`tlib`, `errors`)
+> **Prerequisites**: Phase 1 (`tlib`, `diagnostics`)
 
 ---
 

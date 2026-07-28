@@ -80,6 +80,7 @@ dot -V
 | `lockstep-simd-check` | Require Clang to emit four-wide LLVM floating-point operations for complex lockstep corpus cases |
 | `ffi-boundary-check` | Enforce one-way FFI dependency layers and the explicit unsafe-code allowlist |
 | `cli-parser-check` | Reject unclassified process parsers and handwritten CLI diagnostics |
+| `error-model-check` | Enforce typed operational-error and structured-diagnostic ownership |
 | `structure-check` | Validate repository layout, checker isolation, and source-size contracts |
 | `cli-transcript-gen` | Record the local compiler CLI differential transcript |
 | `cli-transcript-check` | Compare the compiler CLI against the recorded local transcript |
@@ -151,6 +152,13 @@ from Cargo metadata, scans package Rust sources, and enforces these ownership
 rules. New exceptions must be justified in
 `porting/cli-parser-consolidation-analysis-and-porting-plan-2026-07-28-en.md`
 and added narrowly to the check.
+
+`cargo run -p xtask -- error-model-check` verifies that `diagnostics` is the
+sole report-model package, phase errors use the borrowing `ToDiagnostic`
+contract, `CompilerError` retains typed sources plus total bundle access, and
+the parser does not regain a parallel severity or message-text classifier.
+The ownership policy is documented in
+`porting/error-diagnostics-separation-analysis-and-porting-plan-2026-07-28-en.md`.
 
 ## Golden Snapshots
 

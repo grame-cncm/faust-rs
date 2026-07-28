@@ -18,7 +18,7 @@
 7. [Implementation Phases](#7-implementation-phases)
 8. [Integration in the Pipeline](#8-integration-in-the-pipeline)
 9. [Test Strategy](#9-test-strategy)
-10. [Relationship with `errors` Crate](#10-relationship-with-errors-crate)
+10. [Relationship with `diagnostics` Crate](#10-relationship-with-diagnostics-crate)
 
 ---
 
@@ -622,7 +622,7 @@ Steps:
 
 1. Export `verify_fir_module` from `crates/fir/src/lib.rs`
 2. Wire into `compiler` crate: call verifier after FIR generation, before codegen
-3. Emit structured diagnostics via `errors` crate (or `FirVerifyReport` directly)
+3. Emit `FirVerifyReport` entries and let `compiler` map them to shared diagnostics
 4. Add `--verify-fir` CLI flag to enable/disable (enabled by default in debug builds)
 5. Write integration tests (see Section 9)
 
@@ -714,21 +714,13 @@ The existing `xtask golden-check` infrastructure can be extended to also record 
 
 ---
 
-## 10. Relationship with `errors` Crate
+## 10. Relationship with `diagnostics` Crate
 
-The `errors` crate provides `FrsError`, `FrsWarning`, and the diagnostic infrastructure used across the compiler pipeline. Two options:
-
-**Option A — `FirVerifyReport` is standalone (preferred initially)**
-- `FirDiagnostic` lives in `crates/fir`
-- `compiler` crate converts `FirDiagnostic` → `FrsError`/`FrsWarning` with phase label `FRS-FIR-*`
-- Clean separation, `fir` crate does not depend on `errors` crate
-
-**Option B — `FirDiagnostic` uses `errors` types directly**
-- `fir` crate gets a new dependency on `errors`
-- Adds one edge to the dependency graph (currently `fir` → `tlib` only)
-- More consistent diagnostic codes across the pipeline
-
-**Recommendation:** Start with Option A. Migrate to Option B in a dedicated pass after the verifier is feature-complete.
+The implemented boundary keeps `FirVerifyReport` and `FirDiagnostic` in
+`crates/fir`. The `compiler` facade converts the report into the shared
+`DiagnosticBundle` with stable `FRS-FIR-*` codes. This preserves FIR checker
+independence while keeping one public rendering and tooling schema; `fir` does
+not depend directly on `diagnostics`.
 
 ---
 
