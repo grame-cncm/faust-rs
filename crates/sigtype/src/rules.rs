@@ -73,6 +73,64 @@ impl InferenceRule {
             Self::SignalStructure => "signal-structure",
         }
     }
+
+    /// One-sentence statement of what this rule requires.
+    ///
+    /// Lives next to the rule rather than in the compiler facade so the
+    /// wording cannot drift away from the check that enforces it.
+    #[must_use]
+    pub const fn statement(self) -> &'static str {
+        match self {
+            Self::DelayInterval => {
+                "a variable delay amount must have a bounded interval with a non-negative upper bound"
+            }
+            Self::SoundfilePartInterval => {
+                "a soundfile part selector must stay within the integer interval [0, 255]"
+            }
+            Self::ClockEnvironmentPosition => {
+                "a clock environment must stay an opaque annotation and never reach signal position"
+            }
+            Self::RecursiveGroup => {
+                "every projection of a recursive group must target that group's own body"
+            }
+            Self::MathDomain => "an operand must stay inside its operation's mathematical domain",
+            Self::TableConstruction => {
+                "a table's size, generator and index must each satisfy their static type contract"
+            }
+            Self::SignalStructure => "the Signal graph must be structurally well formed",
+        }
+    }
+
+    /// One safe next step for a programmer facing this rule.
+    ///
+    /// Deliberately advice, not an edit: none of these repairs is deterministic
+    /// enough to become a [`crate::InferenceError`]-driven source patch.
+    #[must_use]
+    pub const fn help(self) -> &'static str {
+        match self {
+            Self::DelayInterval => {
+                "bound the delay amount, for example `min(maxdelay, max(0, d))`, so its interval is finite and non-negative"
+            }
+            Self::SoundfilePartInterval => {
+                "clamp the part selector into 0..255, for example with `min(255, max(0, part))`"
+            }
+            Self::ClockEnvironmentPosition => {
+                "keep the clocked wrapper applied to a circuit; it cannot be used as a plain signal"
+            }
+            Self::RecursiveGroup => {
+                "check that the recursion's outputs and projections line up; this usually means a `~` whose feedback bus was rewritten"
+            }
+            Self::MathDomain => {
+                "constrain the operand so the domain holds for every sample, for example with `max`/`min`"
+            }
+            Self::TableConstruction => {
+                "give the table a compile-time constant size and a generator with no inputs"
+            }
+            Self::SignalStructure => {
+                "this points at a compiler invariant rather than a DSP mistake; please report it with the source that triggered it"
+            }
+        }
+    }
 }
 
 /// Domain of `sqrt`: negative operands are undefined over the reals.
@@ -302,6 +360,20 @@ impl InferenceError {
             Self::MathDomain { actual, .. } => actual.first().copied(),
             Self::TableConstruction { actual, .. } => Some(actual.interval()),
             _ => None,
+        }
+    }
+
+    /// Every inferred interval the rule examined, in operand order.
+    ///
+    /// [`Self::actual_interval`] returns only the first one, which is the whole
+    /// story for a unary rule but not for a binary one: in `x % 0` it is the
+    /// numerator's interval, while the denominator is what failed. Renderers
+    /// that describe the violation to a reader should use this instead.
+    #[must_use]
+    pub fn actual_intervals(&self) -> Vec<Interval> {
+        match self {
+            Self::MathDomain { actual, .. } => actual.clone(),
+            _ => self.actual_interval().into_iter().collect(),
         }
     }
 

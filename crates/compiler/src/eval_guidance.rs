@@ -37,13 +37,21 @@ pub(crate) fn add_eval_guidance(
 
 /// Proposes an exact rename when exactly one visible symbol is the clear match.
 ///
-/// The edit replaces the primary label's range, which for an undefined symbol
-/// is the failing use site. Applicability stays [`Applicability::MaybeIncorrect`]
-/// even for a distance-one match: the compiler knows the name is reachable, not
-/// that renaming preserves the programmer's intent.
+/// The two failure shapes rename in opposite directions, and getting that
+/// backwards produces an edit that changes nothing:
+///
+/// - an **undefined symbol** is a misspelled *use*, so the use site becomes the
+///   symbol that actually exists;
+/// - a **missing entry point** is a misspelled *definition*, so the near-miss
+///   definition name becomes the entry point the compiler is looking for.
+///
+/// Applicability stays [`Applicability::MaybeIncorrect`] even for a
+/// distance-one match: the compiler knows the name is reachable, not that
+/// renaming preserves the programmer's intent.
 ///
 /// Nothing is emitted when the candidate set is ambiguous, when there is no
-/// primary label, or when the label span cannot be mapped to a canonical range.
+/// primary label, when the label span cannot be mapped to a canonical range, or
+/// when the edit would replace the text with itself.
 fn add_symbol_rename_fix(
     diagnostic: Diagnostic,
     error: &eval::EvalError,
@@ -52,6 +60,22 @@ fn add_symbol_rename_fix(
     let suggestions = error.symbol_suggestions();
     let Some(best) = unambiguous_suggestion(&suggestions) else {
         return diagnostic;
+    };
+    let (replacement, explanation) = match error {
+        eval::EvalError::MissingProcessDefinition { entrypoint, .. } => (
+            entrypoint.clone(),
+            format!(
+                "`{}` looks like a misspelling of the required `{entrypoint}` entry point",
+                best.name
+            ),
+        ),
+        _ => (
+            best.name.clone(),
+            format!(
+                "`{}` is visible from this site, but renaming changes which definition runs",
+                best.name
+            ),
+        ),
     };
     let Some(label) = diagnostic
         .labels
@@ -63,20 +87,21 @@ fn add_symbol_rename_fix(
     let Ok(range) = source_map.from_source_span(&label.span) else {
         return diagnostic;
     };
+    if source_map
+        .slice(range)
+        .is_ok_and(|text| text == replacement)
+    {
+        return diagnostic;
+    }
 
-    let name = best.name.clone();
     diagnostic.with_fix(SuggestedFix {
-        title: format!("rename to `{name}`").into(),
+        title: format!("rename to `{replacement}`").into(),
         applicability: Applicability::MaybeIncorrect,
         edits: vec![TextEdit {
             range,
-            replacement: name.into_boxed_str(),
+            replacement: replacement.into_boxed_str(),
         }],
-        explanation: Some(
-            "`{}` is visible from this site, but renaming changes which definition runs"
-                .replace("{}", &best.name)
-                .into(),
-        ),
+        explanation: Some(explanation.into()),
     })
 }
 

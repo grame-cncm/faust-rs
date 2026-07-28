@@ -175,7 +175,7 @@ impl ImportSite {
 /// Errors returned by [`SourceReader`] during source loading and import expansion.
 ///
 /// Each variant maps to one stable `FRS-SRC-*` diagnostic code; see
-/// [`SourceReaderError::to_diagnostics`] and `docs/diagnostics-codes-en.md`.
+/// [`SourceReaderError::to_diagnostics`] and `docs/faust-error-model-en.md`.
 #[derive(Debug)]
 pub enum SourceReaderError {
     Io {

@@ -57,6 +57,22 @@ fn an_unambiguous_suggestion_carries_an_exact_rename_edit() {
 }
 
 #[test]
+fn a_misspelled_entry_point_renames_the_definition_not_the_suggestion() {
+    // The two rename shapes go in opposite directions: an undefined symbol is a
+    // misspelled use, a missing entry point is a misspelled definition. Getting
+    // this backwards produced an edit that replaced `proces` with `proces`.
+    let diagnostics = failing_diagnostics("gain = 0.5;\nproces = *(gain);\n");
+    let fix = diagnostics[0]
+        .fixes
+        .first()
+        .expect("a near-miss entry point must offer a rename");
+
+    assert_eq!(fix.edits[0].replacement.as_ref(), "process");
+    assert_eq!(fix.edits[0].range.start, 12, "the `proces` definition name");
+    assert_eq!(fix.edits[0].range.end, 18);
+}
+
+#[test]
 fn two_equally_close_candidates_offer_no_edit() {
     let diagnostics = failing_diagnostics("gaina = 1;\ngainb = 2;\nprocess = gainx;\n");
     assert!(

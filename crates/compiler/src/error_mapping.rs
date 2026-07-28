@@ -600,7 +600,18 @@ pub(crate) fn type_error_to_compiler(
     )
     .with_category(DiagnosticCategory::UserCode)
     .with_detail_code(error.rule().as_str())
+    .with_note("cause: an inferred signal type or interval violates a typing rule")
+    .with_note(format!("rule: {}", error.rule().statement()))
     .with_fact("inference_rule", error.rule().as_str());
+
+    // A structural failure is a compiler invariant, not a DSP mistake, and its
+    // help must not suggest the programmer did something wrong.
+    if matches!(
+        error.rule(),
+        sigtype::InferenceRule::SignalStructure | sigtype::InferenceRule::RecursiveGroup
+    ) {
+        diagnostic = diagnostic.with_category(DiagnosticCategory::CompilerBug);
+    }
 
     if let Some(actual) = error.actual_type() {
         diagnostic = diagnostic.with_fact("actual_type", actual.to_string());
@@ -620,6 +631,29 @@ pub(crate) fn type_error_to_compiler(
     if let Some(expected) = error.expected() {
         diagnostic = diagnostic.with_fact("expected", expected);
     }
+    let intervals = error.actual_intervals();
+    if !intervals.is_empty() {
+        let rendered = intervals
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let label = if intervals.len() > 1 {
+            "inferred operand intervals"
+        } else {
+            "inferred interval"
+        };
+        diagnostic = diagnostic.with_note(match error.expected() {
+            Some(expected) => format!("computed: {label} = {rendered}, expected {expected}"),
+            None => format!("computed: {label} = {rendered}"),
+        });
+    } else if let Some(actual) = error.actual_type() {
+        diagnostic = diagnostic.with_note(match error.expected() {
+            Some(expected) => format!("computed: inferred type = {actual}, expected {expected}"),
+            None => format!("computed: inferred type = {actual}"),
+        });
+    }
+    diagnostic = diagnostic.with_help(error.rule().help());
     let operands = error.operands();
     if !operands.is_empty() {
         diagnostic = diagnostic.with_debug_fact(

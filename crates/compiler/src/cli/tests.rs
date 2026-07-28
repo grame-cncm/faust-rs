@@ -1317,7 +1317,7 @@ fn diagnostics_json_renderer_handles_lex_family_code_shape() {
     // `. 'EXTRA'` rule (crates/parser/src/grammar/faustlexer.l) matches
     // every byte, so a genuine `lrpar::LexParseError::LexError` never
     // occurs in practice -- the failure surfaces one layer up as
-    // FRS-PARSE-0001 instead (see docs/diagnostics-codes-en.md for the full
+    // FRS-PARSE-0001 instead (see docs/faust-error-model-en.md for the full
     // writeup). There is therefore no `.dsp` fixture that can drive this
     // code through the CLI end to end (unlike the other seven families,
     // covered by `crates/compiler/tests/cli_diagnostics_channel.rs`). This
@@ -1396,7 +1396,7 @@ fn extract_frs_codes_into(text: &str, out: &mut std::collections::BTreeSet<Strin
     }
 }
 
-/// The frozen set documented in `docs/diagnostics-codes-en.md`.
+/// The frozen set documented in `docs/faust-error-model-en.md`.
 ///
 /// Keep this list and that document's tables in sync by construction: any
 /// change here must be mirrored there in the same commit, and vice versa.
@@ -1451,7 +1451,7 @@ fn frozen_frs_code_table_matches_source() {
     // `porting/mcp-server-analysis-and-plan-2026-07-21-en.md` §1.4.5 and the
     // task itself specify: `grep -rhoE 'FRS-[A-Z]+-[0-9]+' --include=*.rs
     // crates/ | sort -u`) and diffs it against the frozen table documented
-    // in docs/diagnostics-codes-en.md. Both adding an undocumented code and
+    // in docs/faust-error-model-en.md. Both adding an undocumented code and
     // renumbering a documented one make this fail.
     let crates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -1466,10 +1466,10 @@ fn frozen_frs_code_table_matches_source() {
     let stale_in_docs = documented.difference(&found).collect::<Vec<_>>();
     assert!(
         missing_from_docs.is_empty() && stale_in_docs.is_empty(),
-        "FRS-* code set drifted from docs/diagnostics-codes-en.md \
+        "FRS-* code set drifted from docs/faust-error-model-en.md \
          (present in source but undocumented: {missing_from_docs:?}; \
          documented but no longer present in source -- e.g. a renumbering: \
-         {stale_in_docs:?}). Update docs/diagnostics-codes-en.md and this \
+         {stale_in_docs:?}). Update docs/faust-error-model-en.md and this \
          test's `documented_frs_codes` in the same change."
     );
 }
@@ -1485,7 +1485,7 @@ fn frozen_frs_code_table_matches_source() {
 /// exist to prevent, so it is now checked rather than assumed.
 ///
 /// Retired codes are deliberately absent from both sides: they are recorded
-/// only in the "Retired codes" table of `docs/diagnostics-codes-en.md`.
+/// only in the "Retired codes" table of `docs/faust-error-model-en.md`.
 #[test]
 fn code_registry_matches_frozen_table() {
     let registry: std::collections::BTreeSet<String> = diagnostics::codes::all_codes()

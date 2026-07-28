@@ -17,7 +17,7 @@ use super::*;
 
 const CHECK_SOURCE: &str = "crates/xtask/src/diagnostics_quality_check.rs";
 const SCHEMA: &str = "docs/diagnostics-v2.schema.json";
-const CODE_TABLE: &str = "docs/diagnostics-codes-en.md";
+const CODE_TABLE: &str = "docs/faust-error-model-en.md";
 
 /// Rust enums whose variants are serialized as schema enum values.
 ///

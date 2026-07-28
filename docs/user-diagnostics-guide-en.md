@@ -1,6 +1,12 @@
 # Faust-rs Diagnostics Guide (User)
 
-This guide explains how to read and use compiler diagnostics in the Rust port.
+This guide is the short operational reference: how to run the compiler, read one
+error, and choose a verbosity.
+
+For the full picture — why the model differs from the C++ compiler, what each
+severity/category/verbosity level is for, how the JSON channel and MCP fit
+together, and a worked example of every error family — see
+[`docs/faust-error-model-en.md`](faust-error-model-en.md).
 
 ## 1. Run with diagnostics
 
@@ -138,7 +144,7 @@ and keeps writing to stderr exactly as before.) A `CompilerError` variant
 that carries no structured bundle (backend codegen failures, unresolved
 imports) still gets a minimal envelope with `"code": null` rather than
 silence, so a JSON consumer never has to special-case "no output". See the
-frozen code table in `docs/diagnostics-codes-en.md` for the full `FRS-*`
+frozen code table in `docs/faust-error-model-en.md` for the full `FRS-*`
 list, including which codes are reachable in practice today.
 
 ## 7. `--check`: diagnostics without codegen
