@@ -135,6 +135,7 @@ fn run(cli: XtaskCli) -> Result<(), Box<dyn std::error::Error>> {
         XtaskCommand::VectorCompileBudgetCheck(args) => vector_compile_budget_check(args)?,
         XtaskCommand::LockstepSimdCheck => lockstep_simd_check()?,
         XtaskCommand::FfiBoundaryCheck => ffi_boundary_check()?,
+        XtaskCommand::CliParserCheck => cli_parser_check()?,
         XtaskCommand::StructureCheck => structure_check()?,
         XtaskCommand::CliTranscriptGen => cli_transcript_gen()?,
         XtaskCommand::CliTranscriptCheck => cli_transcript_check()?,
@@ -146,6 +147,7 @@ fn run(cli: XtaskCli) -> Result<(), Box<dyn std::error::Error>> {
 
 mod backend_align;
 mod cli;
+mod cli_parser_check;
 mod cli_transcript;
 mod code_graphs;
 mod corpus_status_query;
@@ -167,6 +169,7 @@ mod wasm;
 
 pub(crate) use backend_align::*;
 pub(crate) use cli::*;
+pub(crate) use cli_parser_check::*;
 pub(crate) use cli_transcript::*;
 pub(crate) use code_graphs::*;
 pub(crate) use corpus_status_query::*;

@@ -53,6 +53,7 @@ pub(crate) enum XtaskCommand {
     VectorCompileBudgetCheck(VectorCompileBudgetArgs),
     LockstepSimdCheck,
     FfiBoundaryCheck,
+    CliParserCheck,
     StructureCheck,
     CliTranscriptGen,
     CliTranscriptCheck,

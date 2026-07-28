@@ -79,6 +79,7 @@ dot -V
 | `vector-interp-opt-check` | Compare interpreter `opt_level=0` and max optimization on representative checked-vector cases |
 | `lockstep-simd-check` | Require Clang to emit four-wide LLVM floating-point operations for complex lockstep corpus cases |
 | `ffi-boundary-check` | Enforce one-way FFI dependency layers and the explicit unsafe-code allowlist |
+| `cli-parser-check` | Reject unclassified process parsers and handwritten CLI diagnostics |
 | `structure-check` | Validate repository layout, checker isolation, and source-size contracts |
 | `cli-transcript-gen` | Record the local compiler CLI differential transcript |
 | `cli-transcript-check` | Compare the compiler CLI against the recorded local transcript |
@@ -138,6 +139,18 @@ cargo run --release -p xtask -- vector-compile-budget-check
 - Repository-relative paths are preferred in generated documentation.
 - Runtime trace comparison uses exact metadata/shape checks and tolerant float
   sample comparison.
+- Cargo binary/example command lines use Clap. The compiler and two impulse
+  runners keep narrow legacy-token normalizers that immediately hand off to
+  Clap.
+- `ffi-common` argument parsing is an embedded C `argc`/`argv` protocol, not a
+  process CLI. The dependency-free generated impulse architecture at
+  `tests/impulse-tests/archs/impulserust.rs` is the sole standalone exception.
+
+`cargo run -p xtask -- cli-parser-check` obtains the workspace target inventory
+from Cargo metadata, scans package Rust sources, and enforces these ownership
+rules. New exceptions must be justified in
+`porting/cli-parser-consolidation-analysis-and-porting-plan-2026-07-28-en.md`
+and added narrowly to the check.
 
 ## Golden Snapshots
 
