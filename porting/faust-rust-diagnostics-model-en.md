@@ -3,6 +3,11 @@
 > Scope: define a structured, phase-wide diagnostics model for the Rust port, with semantic parity against C++ behavior and better user-facing feedback quality.
 > Status: planning baseline (to be implemented incrementally across `diagnostics`, `parser`, `eval`, `propagate`, and `compiler`).
 
+> 2026-07-28 follow-up: most of this baseline is now implemented. The
+> source-provenance, typed-context, renderer, and AI/tooling work proposed for
+> the next generation is specified in
+> `compiler-diagnostics-v2-analysis-and-improvement-plan-2026-07-28-en.md`.
+
 ---
 
 ## 1. Why this document exists
