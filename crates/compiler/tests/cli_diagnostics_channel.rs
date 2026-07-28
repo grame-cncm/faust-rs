@@ -381,6 +381,12 @@ fn check_json_sfir_family_failure_is_clean() {
         !message.contains(first_code(&result)),
         "the message must not repeat the code the diagnostic already carries, got: {message}"
     );
+    assert!(
+        result.stdout["diagnostics"][0]["labels"]
+            .as_array()
+            .is_some_and(|labels| !labels.is_empty()),
+        "unsupported lowering must point to the originating Faust construct"
+    );
 }
 
 #[test]
@@ -398,17 +404,35 @@ fn check_json_fir_family_failure_is_clean() {
         "expected a FRS-FIR-* code, got {}",
         first_code(&result)
     );
+    let diagnostic = &result.stdout["diagnostics"][0];
+    assert_eq!(
+        diagnostic["facts"]["fir_code"]["value"],
+        diagnostic["detail_code"]
+    );
+    assert!(
+        diagnostic["labels"]
+            .as_array()
+            .is_some_and(|labels| !labels.is_empty()),
+        "FIR failure must trace back to Faust source: {diagnostic}"
+    );
+    assert!(
+        diagnostic["notes"]
+            .as_array()
+            .is_some_and(|notes| notes.iter().all(|note| !note
+                .as_str()
+                .is_some_and(|note| note.starts_with("fir_code=")))),
+        "legacy fir_code note protocol must be absent"
+    );
 }
 
 /// A backend emission failure must carry `FRS-CODEGEN-0001` plus the backend
-/// and its own `FRS-CGEN-*` code as notes.
+/// and its own `FRS-CGEN-*` code as typed fields.
 ///
 /// Until 2026-07-21 all five codegen variants returned `None` from
 /// `CompilerError::diagnostic_bundle()`, so a backend failure reached the user
 /// through the `code: null` envelope. One `FRS-CODEGEN-*` code covers every
 /// backend on purpose: the backends already own a 27-code
-/// `FRS-CGEN-<LANG>-NNNN` taxonomy, carried here as a note exactly as
-/// `FRS-FIR-0002` carries `fir_code=...`.
+/// `FRS-CGEN-<LANG>-NNNN` taxonomy, carried as `detail_code` and a fact.
 ///
 /// # Choice of fixture
 ///
@@ -445,19 +469,27 @@ fn codegen_backend_failure_is_structured() {
 
     assert_eq!(diag["code"], "FRS-CODEGEN-0001");
     assert_eq!(diag["stage"], "codegen");
-    let notes: Vec<&str> = diag["notes"]
-        .as_array()
-        .expect("notes must be an array")
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .collect();
+    assert_eq!(diag["facts"]["backend"]["value"], "wasm");
     assert!(
-        notes.iter().any(|n| n.contains("backend: wasm")),
-        "the failing backend must be named, got {notes:?}"
+        diag["detail_code"]
+            .as_str()
+            .is_some_and(|code| code.starts_with("FRS-CGEN-WASM-")),
+        "backend detail code must be typed, got {diag}"
+    );
+    assert_eq!(diag["facts"]["codegen_code"]["value"], diag["detail_code"]);
+    assert!(
+        diag["notes"]
+            .as_array()
+            .is_some_and(|notes| notes.iter().all(|note| !note
+                .as_str()
+                .is_some_and(|note| note.starts_with("codegen_code=")))),
+        "legacy codegen_code note protocol must be absent"
     );
     assert!(
-        notes.iter().any(|n| n.contains("codegen_code=FRS-CGEN-")),
-        "the backend's own stable code must travel as a note, got {notes:?}"
+        diag["labels"]
+            .as_array()
+            .is_some_and(|labels| !labels.is_empty()),
+        "backend failure must retain a source → Signal → FIR trace"
     );
 }
 

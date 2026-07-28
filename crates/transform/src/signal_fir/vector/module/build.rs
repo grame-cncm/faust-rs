@@ -290,10 +290,13 @@ pub(super) fn build_verified_vector_module_with_evidence(
     )?;
     trace_stage("module-assembly-verification");
 
+    program.derive_origins(module);
+    let (store, origins) = program.into_store_and_origins();
     Ok(BuiltVectorModule {
         output: SignalFirOutput {
-            store: program.into_store(),
+            store,
             module,
+            origins,
             emission_order: Vec::new(),
             shadow_report: None,
             vector_pipeline_status: VectorPipelineStatus::Certified,

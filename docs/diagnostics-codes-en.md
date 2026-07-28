@@ -30,8 +30,9 @@ This currently returns **32 codes** across **9 stage-family namespaces**:
 Backend emitters additionally own a **separate, finer taxonomy** of 27 codes
 shaped `FRS-CGEN-<LANG>-NNNN` (ASC, C, CLIF, CPP, INTERP, JULIA, RUST, WASM).
 Those are *not* part of this table and do not appear in `diagnostics::codes`: they
-travel inside `FRS-CODEGEN-0001` diagnostics as a `codegen_code=...` note, the
-same way FIR verifier codes travel inside `FRS-FIR-000{1,2}` as `fir_code=...`.
+travel inside `FRS-CODEGEN-0001` diagnostics as typed `detail_code` and
+`codegen_code` fact values, the same way FIR verifier codes travel inside
+`FRS-FIR-000{1,2}` as `detail_code` and `fir_code`.
 Note they do not match the extraction regex either (the extra `-<LANG>` segment
 means `FRS-[A-Z]+-[0-9]+` never matches), so they cannot silently leak into the
 frozen set.
@@ -165,10 +166,10 @@ observable in practice today.
 
 | Code | Stage | Meaning | Raised at |
 |---|---|---|---|
-| `FRS-CODEGEN-0001` | `codegen` | Backend code generation failed while emitting from FIR. Carries `backend=<lang>` and `codegen_code=FRS-CGEN-<LANG>-NNNN` notes. | `CompilerError::codegen_diagnostics`, via all five backend variants |
+| `FRS-CODEGEN-0001` | `codegen` | Backend code generation failed while emitting from FIR. Carries typed `backend`, `detail_code`, and `codegen_code` fields. | `CompilerError::codegen_diagnostics`, via all backend variants |
 
 One code covers every backend deliberately: the failure class is identical and
-the backend is a parameter, so the discriminating detail rides in notes rather
+the backend is a parameter, so the discriminating detail rides in typed fields rather
 than multiplying near-identical `FRS-*` codes.
 
 `FRS-COMP-0001`..`0003` are retired; the numbering gap is deliberate (see
@@ -178,8 +179,8 @@ below).
 
 | Code | Stage | Meaning | Raised at |
 |---|---|---|---|
-| `FRS-FIR-0001` | `fir` | FIR verifier error diagnostic (fatal; details in notes as `fir_code=...`). | `crates/compiler/src/json_naming.rs:27`; currently unreachable from any known DSP input — see caveat. |
-| `FRS-FIR-0002` | `fir` | FIR verifier warning diagnostic (details in notes as `fir_code=...`); promoted to fatal under `--fir-verify-strict`. | `crates/compiler/src/json_naming.rs:28`; reachable, e.g. a DSP whose generated FIR contains a constant-zero division warning (`fir_code=FIR-B04`) combined with `--fir-verify-strict`. |
+| `FRS-FIR-0001` | `fir` | FIR verifier error diagnostic (fatal; verifier code in `detail_code` and typed `fir_code`). | `crates/compiler/src/json_naming.rs:27`; currently unreachable from any known DSP input — see caveat. |
+| `FRS-FIR-0002` | `fir` | FIR verifier warning diagnostic (verifier code in `detail_code` and typed `fir_code`); promoted to fatal under `--fir-verify-strict`. | `crates/compiler/src/json_naming.rs:28`; reachable for an ordinary DSP under `--fir-verify-strict`. |
 
 ### `FRS-SFIR-*` — Signal-to-FIR lowering (8 codes)
 

@@ -109,6 +109,7 @@ digraph workspace_crates {
     "sigtype" -> "signals";
     "sigtype" -> "tlib";
     "sigtype" -> "ui";
+    "transform" -> "boxes";
     "transform" -> "fir";
     "transform" -> "interval";
     "transform" -> "normalize";

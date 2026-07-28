@@ -71,6 +71,7 @@ mod error;
 mod loop_graph;
 mod module;
 mod one_sample;
+mod origins;
 mod placement;
 mod planner;
 pub mod pv_slice;
@@ -90,6 +91,7 @@ pub use vector::state as vector_state;
 pub use vector::verify as vector_verify;
 
 pub use error::{SignalFirError, SignalFirErrorCode};
+pub use origins::{FirOrigins, FirSignalOrigin};
 
 use fir::{FirId, FirStore, FirType};
 use signals::SigId;
@@ -98,7 +100,9 @@ use tlib::TreeArena;
 use ui::UiProgram;
 
 use crate::schedule::SchedulingStrategy;
-use crate::signal_prepare::prepare_signals_for_fir_verified;
+use crate::signal_prepare::{
+    prepare_signals_for_fir_verified, prepare_signals_for_fir_verified_with_origins,
+};
 
 /// Internal DSP computation precision used when lowering signals to FIR.
 ///
@@ -402,6 +406,8 @@ pub struct SignalFirOutput {
     pub store: FirStore,
     /// Root node id of the generated FIR module.
     pub module: FirId,
+    /// Source-neutral Signal/Box derivations for reachable FIR nodes.
+    pub origins: FirOrigins,
     /// First-lowering order of every distinct materialized `SigId`. On the
     /// scalar forward path this is driven by the selected `Hsched`. Recursion
     /// carrier projections are omitted because they are not ordinary cached
@@ -470,6 +476,7 @@ pub fn compile_signals_to_fir_fastlane_with_ui(
         options,
         None,
         None,
+        None,
         std::env::var_os("FAUST_RS_SHADOW_REPORT").is_some(),
     )
 }
@@ -495,6 +502,7 @@ pub fn compile_signals_to_fir_fastlane_with_ui_and_shadow(
         num_outputs,
         ui,
         options,
+        None,
         None,
         None,
         true,
@@ -547,6 +555,36 @@ pub fn compile_signals_to_fir_fastlane_clocked_with_timing(
     options: &SignalFirOptions,
     timing_sink: Option<&SignalFirTimingSink>,
 ) -> Result<SignalFirOutput, SignalFirError> {
+    compile_signals_to_fir_fastlane_clocked_with_timing_and_origins(
+        arena,
+        signals,
+        num_inputs,
+        num_outputs,
+        ui,
+        clock_domains,
+        options,
+        timing_sink,
+        None,
+    )
+}
+
+/// Clocked/timed lowering with explicit propagated Signal origins.
+///
+/// This adapted Rust entry point keeps provenance outside the hash-consed
+/// Signal and FIR arenas. Callers that do not own provenance should use
+/// [`compile_signals_to_fir_fastlane_clocked_with_timing`].
+#[allow(clippy::too_many_arguments)]
+pub fn compile_signals_to_fir_fastlane_clocked_with_timing_and_origins(
+    arena: &TreeArena,
+    signals: &[SigId],
+    num_inputs: usize,
+    num_outputs: usize,
+    ui: &UiProgram,
+    clock_domains: &propagate::ClockDomainTable,
+    options: &SignalFirOptions,
+    timing_sink: Option<&SignalFirTimingSink>,
+    signal_origins: Option<&propagate::SignalOrigins>,
+) -> Result<SignalFirOutput, SignalFirError> {
     compile_fastlane_inner(
         arena,
         signals,
@@ -556,6 +594,7 @@ pub fn compile_signals_to_fir_fastlane_clocked_with_timing(
         options,
         Some(clock_domains),
         timing_sink,
+        signal_origins,
         std::env::var_os("FAUST_RS_SHADOW_REPORT").is_some(),
     )
 }
@@ -585,6 +624,7 @@ fn compile_fastlane_inner(
     options: &SignalFirOptions,
     clock_domains: Option<&propagate::ClockDomainTable>,
     timing_sink: Option<&SignalFirTimingSink>,
+    signal_origins: Option<&propagate::SignalOrigins>,
     build_shadow_report: bool,
 ) -> Result<SignalFirOutput, SignalFirError> {
     let plan = time_signal_fir_phase(timing_sink, "fir-plan", || {
@@ -594,11 +634,23 @@ fn compile_fastlane_inner(
     // normalizations.  Keep them as one atomic timing region so the measured
     // stage matches the verified preparation boundary consumed by lowering.
     let prepared = time_signal_fir_phase(timing_sink, "fir-prepare-normalize", || {
-        prepare_signals_for_fir_verified(arena, signals, ui).map_err(|err| {
-            SignalFirError::new(
+        let result = signal_origins.map_or_else(
+            || prepare_signals_for_fir_verified(arena, signals, ui),
+            |origins| prepare_signals_for_fir_verified_with_origins(arena, signals, ui, origins),
+        );
+        result.map_err(|err| {
+            let signal = err.signal();
+            let box_origins = err.box_origins().to_vec();
+            let error = SignalFirError::new(
                 SignalFirErrorCode::UnsupportedSignalNode,
                 format!("signal preparation failed: {err}"),
             )
+            .with_box_origins(&box_origins);
+            if let Some(signal) = signal {
+                error.at_signal(signal)
+            } else {
+                error
+            }
         })
     })?;
 
@@ -807,6 +859,7 @@ fn compile_fastlane_inner(
             ui,
             prepared.types_map(),
             prepared.sig_types_map(),
+            prepared.origins(),
             options.real_type.as_fir_type(),
             options.max_copy_delay,
             options.delay_line_threshold,
@@ -820,6 +873,10 @@ fn compile_fastlane_inner(
                 None
             },
         )
+    })
+    .map_err(|mut error| {
+        error.attach_origins(prepared.origins());
+        error
     })?;
 
     // The post-activation trace is intentionally off the hot path. When

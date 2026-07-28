@@ -432,6 +432,7 @@ pub(crate) fn build_module<'a>(
     ui: &'a UiProgram,
     types: &'a HashMap<SigId, SimpleSigType>,
     sig_types: &'a HashMap<SigId, SigType>,
+    signal_origins: &'a propagate::SignalOrigins,
     real_ty: FirType,
     max_copy_delay: u32,
     delay_line_threshold: u32,
@@ -453,6 +454,7 @@ pub(crate) fn build_module<'a>(
         ui,
         types,
         sig_types,
+        signal_origins,
         plan.num_inputs,
         real_ty,
         placement,
@@ -1107,9 +1109,11 @@ pub(crate) fn build_module<'a>(
         )
     };
 
+    lower.fir_origins.derive_reachable(&lower.store, module);
     Ok(SignalFirOutput {
         store: lower.store,
         module,
+        origins: lower.fir_origins,
         emission_order: lower.emission_order,
         // Filled in by `compile_fastlane_inner`, which owns the causality
         // gate's `Hgraph`/`Hsched`; `build_module` has no schedule to

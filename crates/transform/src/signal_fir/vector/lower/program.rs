@@ -3,6 +3,7 @@
 
 use crate::schedule::SchedulingStrategy;
 use crate::signal_fir::ControlRateMode;
+use crate::signal_fir::FirOrigins;
 use crate::signal_fir::vector::analysis::EffectAtom;
 use crate::signal_fir::vector::route::{VectorRegion, VectorRouteError, VerifiedRoutedFir};
 use crate::signal_fir::vector::verify::ValueType;
@@ -37,6 +38,7 @@ impl PureVectorRegionBody {
 /// pure.
 pub struct VerifiedPureVectorProgram {
     pub(super) store: FirStore,
+    pub(super) origins: FirOrigins,
     pub(super) static_declarations: Vec<FirId>,
     pub(super) table_declarations: Vec<FirId>,
     pub(super) table_init_statements: Vec<FirId>,
@@ -67,9 +69,14 @@ impl VerifiedPureVectorProgram {
         &mut self.store
     }
 
-    /// Consumes the checked program after final module assembly.
-    pub(crate) fn into_store(self) -> FirStore {
-        self.store
+    /// Consumes the checked program and returns its FIR store plus provenance.
+    pub(crate) fn into_store_and_origins(self) -> (FirStore, FirOrigins) {
+        (self.store, self.origins)
+    }
+
+    /// Propagates direct Signal producers through the assembled module.
+    pub(crate) fn derive_origins(&mut self, module: FirId) {
+        self.origins.derive_reachable(&self.store, module);
     }
 
     /// Canonical transport declarations emitted before region bodies.

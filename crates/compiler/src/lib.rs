@@ -107,7 +107,7 @@ use diagnostics::{ToDiagnostic, codes::COMP_TYPE_FAILED};
 use fir::{
     FirId, FirStore,
     checker::{FirVerifyReport, Severity as FirVerifySeverity, verify_fir_module},
-    inliner::sweep_scaffolding_drop_roots,
+    inliner::sweep_scaffolding_drop_roots_with_mapping,
 };
 use parser::VirtualSourceMap;
 use parser::{CompilationMetadataKey, CompilationMetadataSnapshot, ParseOutput, SourceReaderError};
@@ -145,6 +145,10 @@ pub struct SignalCompileOutput {
     pub loaded_files: Vec<PathBuf>,
     /// Evaluated `process` box expression after `eval`.
     pub process_box: BoxId,
+    /// Definition-list root used for occurrence-aware diagnostic ownership.
+    pub definitions_root: BoxId,
+    /// Selected Faust entrypoint name for binding/source traces.
+    pub entrypoint_name: Box<str>,
     /// Inferred process arity (`inputs`/`outputs`) from `propagate::box_arity_typed`.
     pub process_arity: BoxArity,
     /// Final propagated output signal list.
@@ -203,6 +207,8 @@ pub struct FirCompileOutput {
     pub store: FirStore,
     /// FIR module root id.
     pub module: FirId,
+    /// Signal/Box derivations remapped into the canonical FIR store.
+    pub origins: transform::signal_fir::FirOrigins,
     /// Checked signal-level vector activation or named fallback status.
     pub vector_pipeline_status: VectorPipelineStatus,
     /// Effective scalar or checked-vector compute shape in the returned FIR.
@@ -718,7 +724,7 @@ impl Compiler {
             self.control_rate_mode,
             self.processing_api,
         )
-        .map_err(|error| lower_fir_error_to_compiler(source, error))
+        .map_err(|error| lower_fir_error_to_compiler(source, signals, error))
     }
 
     #[must_use]
@@ -1111,6 +1117,8 @@ impl Compiler {
         Ok(SignalCompileOutput {
             compilation_metadata,
             parse: output,
+            definitions_root: root,
+            entrypoint_name: ep.into(),
             loaded_files: eval_source_context
                 .as_ref()
                 .map_or_else(Vec::new, eval::EvalSourceContext::loaded_files),
@@ -1245,7 +1253,7 @@ pub enum CompilerError {
         /// Program provenance; see the shared field convention.
         source: Box<str>,
         /// Typed error from the stage that failed.
-        error: SignalFirError,
+        error: Box<SignalFirError>,
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
@@ -1422,7 +1430,7 @@ impl std::error::Error for CompilerError {
             Self::Propagate { error, .. } => Some(error),
             Self::Type { error, .. } => Some(error.as_ref()),
             Self::ExecutionOptions { error, .. } => Some(error),
-            Self::Transform { error, .. } => Some(error),
+            Self::Transform { error, .. } => Some(error.as_ref()),
             Self::CodegenCpp { error, .. } => Some(error),
             Self::CodegenC { error, .. } => Some(error),
             Self::CodegenJulia { error, .. } => Some(error),
@@ -1481,10 +1489,10 @@ impl CompilerError {
     /// `backend_code` the backend's own stable `FRS-CGEN-<LANG>-NNNN` code, and
     /// `message` its text without the bracketed code prefix.
     ///
-    /// The backend code travels as a note rather than becoming its own `FRS-*`
-    /// code, mirroring `FRS-FIR-0002` + `fir_code=...`: the backends already
-    /// own that taxonomy and duplicating it here would create two competing
-    /// schemes for the same events.
+    /// The backend code travels as the typed `detail_code` and `codegen_code`
+    /// fact rather than becoming its own top-level `FRS-*` code. Backends
+    /// already own that taxonomy, and duplicating it here would create two
+    /// competing schemes for the same events.
     fn codegen_diagnostics(
         source: &str,
         backend: &str,
@@ -1493,23 +1501,27 @@ impl CompilerError {
         category: DiagnosticCategory,
     ) -> DiagnosticBundle {
         let mut bundle = DiagnosticBundle::new();
-        bundle.push(
-            Diagnostic::new(
-                Severity::Error,
-                Stage::Codegen,
-                diagnostics::codes::CODEGEN_EMISSION_FAILED,
-                format!("{backend} backend code generation failed: {message}"),
-            )
-            .with_category(category)
-            .with_detail_code(backend_code)
-            .with_fact("backend", backend)
-            .with_fact("source", source)
-            .with_note(format!("backend: {backend}"))
-            .with_note(format!("codegen_code={backend_code}"))
-            .with_note(format!("source: {source}"))
-            .with_help("this is a backend limitation or a compiler bug, not a DSP syntax error")
-            .with_help("try another `-lang` backend to confirm the front-end result is sound"),
-        );
+        let mut diagnostic = Diagnostic::new(
+            Severity::Error,
+            Stage::Codegen,
+            diagnostics::codes::CODEGEN_EMISSION_FAILED,
+            format!("{backend} backend code generation failed: {message}"),
+        )
+        .with_category(category)
+        .with_detail_code(backend_code)
+        .with_fact("backend", backend)
+        .with_fact("source", source)
+        .with_fact("codegen_code", backend_code);
+        diagnostic = match category {
+            DiagnosticCategory::UnsupportedFeature => diagnostic
+                .with_help("this backend does not support the generated construct")
+                .with_help("try another `-lang` backend or rewrite the reported Faust construct"),
+            DiagnosticCategory::CompilerBug => diagnostic
+                .with_help("this is an internal compiler invariant failure, not a DSP syntax error")
+                .with_help("report a minimal reproducer with the backend and detail code"),
+            _ => diagnostic,
+        };
+        bundle.push(diagnostic);
         bundle
     }
 

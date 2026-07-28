@@ -535,6 +535,27 @@ fn invalid_table_generator_is_typed_and_source_located() {
 }
 
 #[test]
+fn canonical_fir_retains_signal_and_box_derivations() {
+    let fir = Compiler::new()
+        .compile_source_to_fir_with_lane(
+            "fir_origins.dsp",
+            "gain = 0.5; process = _ * gain;",
+            compiler::SignalFirLane::TransformFastLane,
+        )
+        .expect("valid source should lower to FIR");
+
+    let origins = fir.origins.origins_for(fir.module);
+    assert!(
+        !origins.is_empty(),
+        "canonical module must inherit at least one Signal producer"
+    );
+    assert!(
+        origins.iter().any(|origin| !origin.boxes.is_empty()),
+        "FIR producers must retain their Box derivations"
+    );
+}
+
+#[test]
 fn propagate_error_operator_span_points_to_composition_token() {
     let compiler = Compiler::new();
     let source = read_corpus("err_03_propagate_split_mismatch.dsp");

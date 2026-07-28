@@ -115,6 +115,7 @@ impl CodegenErrorCode {
 pub struct CodegenError {
     code: CodegenErrorCode,
     message: String,
+    fir_node: Option<FirId>,
 }
 
 impl CodegenError {
@@ -124,7 +125,21 @@ impl CodegenError {
         Self {
             code,
             message: message.into(),
+            fir_node: None,
         }
+    }
+
+    /// Associates the error with the FIR node rejected by the emitter.
+    #[must_use]
+    pub fn at_node(mut self, node: FirId) -> Self {
+        self.fir_node = Some(node);
+        self
+    }
+
+    /// Returns the offending FIR node when the emitter retained it.
+    #[must_use]
+    pub const fn fir_node(&self) -> Option<FirId> {
+        self.fir_node
     }
 
     /// Returns the stable backend error code.
@@ -1043,6 +1058,7 @@ fn unsupported_node(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
             node.as_u32()
         ),
     )
+    .at_node(node)
 }
 
 /// Formats a floating-point literal with stable C++ syntax.

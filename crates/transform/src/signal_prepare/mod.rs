@@ -253,6 +253,15 @@ pub enum SignalPrepareError {
     Inference(sigtype::InferenceError),
     /// Explicit prepared-forest contract validation failed.
     Validation(String),
+    /// Prepared-forest contract failure with an offending Signal.
+    ValidationAt {
+        /// Prepared Signal rejected by the verifier.
+        signal: SigId,
+        /// Structural invariant that failed.
+        message: String,
+        /// Box candidates inherited through preparation.
+        box_origins: Vec<boxes::BoxId>,
+    },
     /// The signal promotion pass failed (type-driven cast insertion).
     Promotion(NormalFormError),
     /// Algebraic simplification found a division by a constant zero.
@@ -274,6 +283,9 @@ impl fmt::Display for SignalPrepareError {
             Self::Validation(msg) => {
                 write!(f, "signal preparation postcondition failed: {msg}")
             }
+            Self::ValidationAt { message, .. } => {
+                write!(f, "signal preparation postcondition failed: {message}")
+            }
             Self::Promotion(err) => write!(f, "signal preparation promotion failed: {err}"),
             Self::DivisionByZero(msg) => write!(f, "{msg}"),
         }
@@ -286,7 +298,42 @@ impl Error for SignalPrepareError {
             Self::Recursion(e) => Some(e),
             Self::Inference(e) => Some(e),
             Self::Promotion(e) => Some(e),
-            Self::Typing(_) | Self::Validation(_) | Self::DivisionByZero(_) => None,
+            Self::Typing(_)
+            | Self::Validation(_)
+            | Self::ValidationAt { .. }
+            | Self::DivisionByZero(_) => None,
+        }
+    }
+}
+
+impl SignalPrepareError {
+    /// Prepared Signal most closely associated with the failure, when known.
+    #[must_use]
+    pub fn signal(&self) -> Option<SigId> {
+        match self {
+            Self::Inference(error) => error.signal(),
+            Self::ValidationAt { signal, .. } => Some(*signal),
+            _ => None,
+        }
+    }
+
+    /// Ordered Box candidates associated with the offending Signal.
+    #[must_use]
+    pub fn box_origins(&self) -> &[boxes::BoxId] {
+        match self {
+            Self::ValidationAt { box_origins, .. } => box_origins,
+            _ => &[],
+        }
+    }
+
+    fn attach_origins(&mut self, origins: &propagate::SignalOrigins) {
+        if let Self::ValidationAt {
+            signal,
+            box_origins,
+            ..
+        } = self
+        {
+            *box_origins = origins.origins_for(*signal).to_vec();
         }
     }
 }

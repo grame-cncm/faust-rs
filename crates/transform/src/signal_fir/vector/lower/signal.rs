@@ -9,6 +9,7 @@ use super::program::*;
 use super::tables::mutable_table_name;
 use crate::schedule::SchedulingStrategy;
 use crate::signal_fir::ControlRateMode;
+use crate::signal_fir::FirOrigins;
 use crate::signal_fir::module::map_binop;
 use crate::signal_fir::vector::analysis::wrtbl_is_readonly;
 use crate::signal_fir::vector::clock_ad::{ClockGuard, VerifiedVectorClockAdPlan};
@@ -49,6 +50,7 @@ struct PureVectorLowerer<'a> {
     ui: &'a ui::UiProgram,
     session: VectorRouteSession<'a>,
     store: FirStore,
+    fir_origins: FirOrigins,
     real_type: FirType,
     num_inputs: usize,
     signal_ids: BTreeMap<u64, SigId>,
@@ -198,6 +200,7 @@ pub(super) fn lower_vector_program_impl<'a>(
         ui: context.ui,
         session,
         store,
+        fir_origins: FirOrigins::new(),
         real_type: context.real_type.clone(),
         num_inputs: context.num_inputs,
         signal_ids,
@@ -266,6 +269,10 @@ pub(super) fn lower_vector_program_impl<'a>(
             .unwrap_or_default(),
     );
     for (&signal_id, &value) in control_ids.iter().zip(&rewritten_control_values) {
+        let sig = lowerer.sig(signal_id)?;
+        lowerer
+            .fir_origins
+            .record_signal(value, sig, lowerer.prepared.origins());
         lowerer
             .session
             .define_control(signal_id, value, &lowerer.store)?;
@@ -314,6 +321,10 @@ pub(super) fn lower_vector_program_impl<'a>(
         )?;
         for ((root, _), &value) in materialized_roots.iter().zip(&rewritten_roots) {
             local_cache.insert(*root, value);
+            let sig = lowerer.sig(*root)?;
+            lowerer
+                .fir_origins
+                .record_signal(value, sig, lowerer.prepared.origins());
         }
 
         let mut stores = Vec::new();
@@ -394,6 +405,7 @@ pub(super) fn lower_vector_program_impl<'a>(
     trace_stage("route-and-body-verification");
     Ok(VerifiedPureVectorProgram {
         store: lowerer.store,
+        origins: lowerer.fir_origins,
         static_declarations: lowerer.static_declarations,
         table_declarations: lowerer.table_declarations,
         table_init_statements: lowerer.table_init_statements,
@@ -451,6 +463,8 @@ impl PureVectorLowerer<'_> {
         active.remove(&(scope, signal_id));
         self.check_type(signal_id, value)?;
         cache.insert(signal_id, value);
+        self.fir_origins
+            .record_signal(value, sig, self.prepared.origins());
         Ok(value)
     }
 
@@ -500,6 +514,8 @@ impl PureVectorLowerer<'_> {
         active.remove(&(scope, signal_id));
         self.check_type(signal_id, value)?;
         cache.insert(signal_id, value);
+        self.fir_origins
+            .record_signal(value, sig, self.prepared.origins());
         Ok(value)
     }
 

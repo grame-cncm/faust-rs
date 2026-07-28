@@ -35,17 +35,12 @@ pub(crate) fn fir_verify_bundle_from_report(report: &FirVerifyReport) -> Diagnos
             .with_detail_code(d.code)
             .with_fact("fir_code", d.code)
             .with_fact("fir_node_id", u64::from(d.node.as_u32()))
-            .with_note(format!("fir_code={}", d.code))
-            .with_note(format!("fir_node_id={}", d.node.as_u32()));
+            .with_debug_fact("fir_node_id", u64::from(d.node.as_u32()));
         if let Some(fun) = d.context.function_name.as_deref() {
-            diag = diag
-                .with_fact("fir_function", fun)
-                .with_note(format!("fir_function={fun}"));
+            diag = diag.with_fact("fir_function", fun);
         }
         if let Some(var) = d.context.variable_name.as_deref() {
-            diag = diag
-                .with_fact("fir_variable", var)
-                .with_note(format!("fir_variable={var}"));
+            diag = diag.with_fact("fir_variable", var);
         }
         bundle.push(diag);
     }
@@ -78,12 +73,35 @@ pub(crate) fn signal_fir_diagnostic(error: &SignalFirError) -> Diagnostic {
     // `Diagnostic` already carries the code, so using Display here printed it
     // twice: "error [FRS-SFIR-0004] [FRS-SFIR-0004] signal preparation
     // failed: ...". Take the bare message and let the diagnostic own the code.
-    Diagnostic::new(
+    let category = match error.code() {
+        SignalFirErrorCode::InvalidOptions => DiagnosticCategory::InvalidOptions,
+        SignalFirErrorCode::ClockAnalysis => DiagnosticCategory::UserCode,
+        SignalFirErrorCode::UnsupportedSignalNode
+        | SignalFirErrorCode::UnsupportedBinOp
+        | SignalFirErrorCode::ClockedNotLowered
+        | SignalFirErrorCode::ForeignCountInExecutionMode
+        | SignalFirErrorCode::BlockSensitiveOneSample => DiagnosticCategory::UnsupportedFeature,
+        SignalFirErrorCode::EmptySignalList
+        | SignalFirErrorCode::OutputArityMismatch
+        | SignalFirErrorCode::InputIndexOutOfRange => DiagnosticCategory::CompilerBug,
+    };
+    let mut diagnostic = Diagnostic::new(
         diagnostics::Severity::Error,
         diagnostics::Stage::Transform,
         code,
         error.message(),
     )
+    .with_category(category)
+    .with_detail_code(error.code().as_str());
+    if category == DiagnosticCategory::UnsupportedFeature {
+        diagnostic = diagnostic
+            .with_help("the selected lowering path does not support this Faust construct")
+            .with_help("try a supported rewrite or another backend when available");
+    } else if category == DiagnosticCategory::CompilerBug {
+        diagnostic = diagnostic
+            .with_help("this is an internal lowering invariant; report a minimal reproducer");
+    }
+    diagnostic
 }
 
 // ─── Name utilities ───────────────────────────────────────────────────────────

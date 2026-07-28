@@ -1977,6 +1977,20 @@ impl<'a, 'b, 'c> InlineStmtCloner<'a, 'b, 'c> {
 /// Local names are deliberately preserved so textual output remains stable.
 #[must_use]
 pub fn sweep_scaffolding_drop_roots(src_store: &FirStore, module: FirId) -> (FirStore, FirId) {
+    let (store, module, _) = sweep_scaffolding_drop_roots_with_mapping(src_store, module);
+    (store, module)
+}
+
+/// Provenance-aware variant of [`sweep_scaffolding_drop_roots`].
+///
+/// The returned `(source, destination)` pairs cover every cloned node. A
+/// source may occur more than once because lexical cloning can duplicate a
+/// shared FIR node; callers must therefore treat the mapping as one-to-many.
+#[must_use]
+pub fn sweep_scaffolding_drop_roots_with_mapping(
+    src_store: &FirStore,
+    module: FirId,
+) -> (FirStore, FirId, Vec<(FirId, FirId)>) {
     let mut dst_store = FirStore::new();
     let mut state = FirHygienicCloneState::default();
     let mut cloner = HygienicCloner::new(src_store, &mut dst_store, &mut state);
@@ -1987,7 +2001,8 @@ pub fn sweep_scaffolding_drop_roots(src_store: &FirStore, module: FirId) -> (Fir
         .clone_node(module)
         .expect("verified FIR must contain only cloneable node kinds");
     cloner.pop_scope();
-    (dst_store, module)
+    let mapping = std::mem::take(&mut cloner.clone_pairs);
+    (dst_store, module, mapping)
 }
 
 /// Returns whether evaluating `value` has no observable side effect.
@@ -2054,6 +2069,7 @@ struct HygienicCloner<'a, 'b> {
     local_renames: Vec<FirLocalRename>,
     preserve_local_names: bool,
     sweep_scaffolding_drop_roots: bool,
+    clone_pairs: Vec<(FirId, FirId)>,
 }
 
 impl<'a, 'b> HygienicCloner<'a, 'b> {
@@ -2068,6 +2084,7 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
             local_renames: Vec::new(),
             preserve_local_names: false,
             sweep_scaffolding_drop_roots: false,
+            clone_pairs: Vec::new(),
         }
     }
 
@@ -2661,6 +2678,7 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
                 )
             }
         };
+        self.clone_pairs.push((id, out));
         Ok(out)
     }
 }

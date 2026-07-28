@@ -1023,7 +1023,10 @@ fn compiler_error_source_classification_covers_every_variant() {
     });
     assert_source_is::<SignalFirError>(CompilerError::Transform {
         source: "transform.dsp".into(),
-        error: SignalFirError::new(SignalFirErrorCode::EmptySignalList, "empty"),
+        error: Box::new(SignalFirError::new(
+            SignalFirErrorCode::EmptySignalList,
+            "empty",
+        )),
         diagnostics: empty(),
     });
     assert_source_is::<CppCodegenError>(CompilerError::CodegenCpp {

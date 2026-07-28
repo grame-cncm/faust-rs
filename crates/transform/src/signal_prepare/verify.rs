@@ -102,7 +102,10 @@ impl PreparedSignals {
         self,
         ui: &UiProgram,
     ) -> Result<super::VerifiedPreparedSignals, SignalPrepareError> {
-        self.verify(ui)?;
+        self.verify(ui).map_err(|mut error| {
+            error.attach_origins(&self.origins);
+            error
+        })?;
         Ok(super::VerifiedPreparedSignals { inner: self })
     }
 }
@@ -496,10 +499,14 @@ fn verify_prepared_signal(
                     ))
                 })?
             } else {
-                return Err(SignalPrepareError::Validation(format!(
-                    "projection {} does not target symbolic recursion",
-                    sig.as_u32()
-                )));
+                return Err(SignalPrepareError::ValidationAt {
+                    signal: sig,
+                    message: format!(
+                        "projection {} does not target symbolic recursion",
+                        sig.as_u32()
+                    ),
+                    box_origins: Vec::new(),
+                });
             };
             let index = usize::try_from(index).expect("negative indices rejected above");
             if index >= arity {

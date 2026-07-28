@@ -5,6 +5,9 @@
 
 use std::fmt::{Display, Formatter};
 
+use boxes::BoxId;
+use signals::SigId;
+
 /// Stable error-code namespace for the signal->FIR fast-lane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignalFirErrorCode {
@@ -73,6 +76,8 @@ pub struct SignalFirError {
     /// This text is not a stable API contract; callers should key behavior on
     /// [`SignalFirError::code`] / [`SignalFirErrorCode::as_str`].
     message: String,
+    signal: Option<SigId>,
+    box_origins: Vec<BoxId>,
 }
 
 impl SignalFirError {
@@ -82,7 +87,42 @@ impl SignalFirError {
         Self {
             code,
             message: message.into(),
+            signal: None,
+            box_origins: Vec::new(),
         }
+    }
+
+    /// Associates the failure with the prepared Signal that triggered it.
+    #[must_use]
+    pub fn at_signal(mut self, signal: SigId) -> Self {
+        self.signal = Some(signal);
+        self
+    }
+
+    /// Attaches already-resolved Box derivations.
+    #[must_use]
+    pub fn with_box_origins(mut self, origins: &[BoxId]) -> Self {
+        self.box_origins = origins.to_vec();
+        self
+    }
+
+    /// Snapshots Box derivations for the associated prepared Signal.
+    pub(crate) fn attach_origins(&mut self, origins: &propagate::SignalOrigins) {
+        if let Some(signal) = self.signal {
+            self.box_origins = origins.origins_for(signal).to_vec();
+        }
+    }
+
+    /// Prepared Signal associated with this failure, when known.
+    #[must_use]
+    pub const fn signal(&self) -> Option<SigId> {
+        self.signal
+    }
+
+    /// Ordered Box candidates retained from Signal provenance.
+    #[must_use]
+    pub fn box_origins(&self) -> &[BoxId] {
+        &self.box_origins
     }
 
     /// Returns the stable error code.

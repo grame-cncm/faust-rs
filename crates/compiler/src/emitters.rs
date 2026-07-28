@@ -64,7 +64,7 @@ impl Compiler {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_cpp(source_name, &signals, options, ctx)
-            .map_err(|e| lower_cpp_error_to_compiler(source_name, e))
+            .map_err(|e| lower_cpp_error_to_compiler(source_name, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file, then emits C++ text.
@@ -95,7 +95,7 @@ impl Compiler {
         let source = path.display().to_string();
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_cpp(&source, &signals, options, ctx)
-            .map_err(|e| lower_cpp_error_to_compiler(&source, e))
+            .map_err(|e| lower_cpp_error_to_compiler(&source, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file with default import search path,
@@ -148,7 +148,7 @@ impl Compiler {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_c(source_name, &signals, options, ctx)
-            .map_err(|e| lower_c_error_to_compiler(source_name, e))
+            .map_err(|e| lower_c_error_to_compiler(source_name, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file, then emits C text.
@@ -179,7 +179,7 @@ impl Compiler {
         let source = path.display().to_string();
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_c(&source, &signals, options, ctx)
-            .map_err(|e| lower_c_error_to_compiler(&source, e))
+            .map_err(|e| lower_c_error_to_compiler(&source, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file with default import search path,
@@ -232,7 +232,7 @@ impl Compiler {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_rust(source_name, &signals, options, ctx)
-            .map_err(|e| lower_rust_error_to_compiler(source_name, e))
+            .map_err(|e| lower_rust_error_to_compiler(source_name, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file, then emits Rust text.
@@ -263,7 +263,7 @@ impl Compiler {
         let source = path.display().to_string();
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_rust(&source, &signals, options, ctx)
-            .map_err(|e| lower_rust_error_to_compiler(&source, e))
+            .map_err(|e| lower_rust_error_to_compiler(&source, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file with default import search path,
@@ -316,7 +316,7 @@ impl Compiler {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_julia(source_name, &signals, options, ctx)
-            .map_err(|e| lower_julia_error_to_compiler(source_name, e))
+            .map_err(|e| lower_julia_error_to_compiler(source_name, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file, then emits Julia text.
@@ -347,7 +347,7 @@ impl Compiler {
         let source = path.display().to_string();
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_julia(&source, &signals, options, ctx)
-            .map_err(|e| lower_julia_error_to_compiler(&source, e))
+            .map_err(|e| lower_julia_error_to_compiler(&source, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file with default import search path,
@@ -404,7 +404,7 @@ impl Compiler {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_asc(source_name, &signals, options, ctx)
-            .map_err(|e| lower_asc_error_to_compiler(source_name, e))
+            .map_err(|e| lower_asc_error_to_compiler(source_name, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file, then emits AssemblyScript.
@@ -435,7 +435,7 @@ impl Compiler {
         let source = path.display().to_string();
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_asc(&source, &signals, options, ctx)
-            .map_err(|e| lower_asc_error_to_compiler(&source, e))
+            .map_err(|e| lower_asc_error_to_compiler(&source, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file with default import search path,
@@ -492,7 +492,7 @@ impl Compiler {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_codebox(source_name, &signals, options, ctx)
-            .map_err(|e| lower_codebox_error_to_compiler(source_name, e))
+            .map_err(|e| lower_codebox_error_to_compiler(source_name, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file, then emits codebox text.
@@ -523,7 +523,7 @@ impl Compiler {
         let source = path.display().to_string();
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_codebox(&source, &signals, options, ctx)
-            .map_err(|e| lower_codebox_error_to_compiler(&source, e))
+            .map_err(|e| lower_codebox_error_to_compiler(&source, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file with default import search path,
@@ -581,7 +581,7 @@ impl Compiler {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_interp(source_name, &signals, options, ctx)
-            .map_err(|e| lower_interp_error_to_compiler(source_name, e))
+            .map_err(|e| lower_interp_error_to_compiler(source_name, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file, then emits `.fbc` bytecode
@@ -613,7 +613,7 @@ impl Compiler {
         let source = path.display().to_string();
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_interp(&source, &signals, options, ctx)
-            .map_err(|e| lower_interp_error_to_compiler(&source, e))
+            .map_err(|e| lower_interp_error_to_compiler(&source, &signals, e))
     }
 
     /// Parses + evaluates + propagates one file with default import search
@@ -691,7 +691,7 @@ impl Compiler {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_cranelift_report(source_name, &signals, options, ctx)
-            .map_err(|e| lower_cranelift_error_to_compiler(source_name, e))
+            .map_err(|e| lower_cranelift_error_to_compiler(source_name, &signals, e))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -725,7 +725,7 @@ impl Compiler {
         let source = path.display().to_string();
         let ctx = self.lowering_ctx(lane);
         lower_signals_to_cranelift_report(&source, &signals, options, ctx)
-            .map_err(|e| lower_cranelift_error_to_compiler(&source, e))
+            .map_err(|e| lower_cranelift_error_to_compiler(&source, &signals, e))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -832,7 +832,7 @@ impl Compiler {
             compile_options_json_string(Some("wasm"), options.double_precision),
         );
         generate_wasm_module_with_context(&lowered.store, lowered.module, options, &json_context)
-            .map_err(|error| CompilerError::codegen_wasm(source_name, error))
+            .map_err(|error| wasm_error_to_compiler(source_name, &signals, &lowered, error))
     }
 
     /// Parses + evaluates + propagates one file, then emits a WASM module
@@ -870,7 +870,7 @@ impl Compiler {
             compile_options_json_string(Some("wasm"), options.double_precision),
         );
         generate_wasm_module_with_context(&lowered.store, lowered.module, options, &json_context)
-            .map_err(|error| CompilerError::codegen_wasm(&source, error))
+            .map_err(|error| wasm_error_to_compiler(&source, &signals, &lowered, error))
     }
 
     /// Parses + evaluates + propagates one file with default import search path,
@@ -939,7 +939,7 @@ impl Compiler {
             &request.wasm_options,
             &json_context,
         )
-        .map_err(|error| CompilerError::codegen_wasm(&request.source_name, error))?;
+        .map_err(|error| wasm_error_to_compiler(&request.source_name, &signals, &lowered, error))?;
         Ok(WasmArtifactBundle::from_wasm_module(
             module,
             compile_options,
@@ -1050,7 +1050,7 @@ impl Compiler {
                 double_precision: self.real_type == RealType::Float64,
             },
         )
-        .map_err(|error| CompilerError::codegen_wasm(source_name, error))?;
+        .map_err(|error| wasm_error_to_compiler(source_name, &signals, &lowered, error))?;
         Ok(json.render())
     }
 
@@ -1101,7 +1101,7 @@ impl Compiler {
                 double_precision: self.real_type == RealType::Float64,
             },
         )
-        .map_err(|error| CompilerError::codegen_wasm(&source, error))?;
+        .map_err(|error| wasm_error_to_compiler(&source, &signals, &lowered, error))?;
         Ok(json.render())
     }
 

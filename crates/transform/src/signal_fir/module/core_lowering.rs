@@ -273,7 +273,8 @@ impl<'a> SignalToFirLower<'a> {
                          back half (inference, guarded blocks, per-domain local \
                          time — roadmap P1–P3) has not been ported"
                     ),
-                ));
+                )
+                .at_signal(sig));
             }
             other => {
                 return Err(SignalFirError::new(
@@ -282,7 +283,8 @@ impl<'a> SignalToFirLower<'a> {
                         "unsupported signal node in Step 2C: {other:?} (expr={})",
                         dump_sig_readable(self.arena, sig)
                     ),
-                ));
+                )
+                .at_signal(sig));
             }
         };
 
@@ -357,6 +359,8 @@ impl<'a> SignalToFirLower<'a> {
             // selected Hsched (`crate::signal_fir::shadow`).
             self.cache
                 .insert_at(self.regions.effective_depth(), sig, lowered);
+            self.fir_origins
+                .record_signal(lowered, sig, self.signal_origins);
             if self.emission_seen.insert(sig) {
                 self.emission_order.push(sig);
             }
