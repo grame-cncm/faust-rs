@@ -33,6 +33,7 @@ pub(crate) fn execution_error_to_compiler(
             backend,
             error.code(),
             &error.to_string(),
+            DiagnosticCategory::InvalidOptions,
         ),
         error,
     }
@@ -65,6 +66,7 @@ fn lower_error_to_compiler<E: BackendCodegenError>(
                 backend,
                 error.code_str(),
                 error.message_str(),
+                DiagnosticCategory::UnsupportedFeature,
             );
             wrap(source.into(), error, diagnostics)
         }
@@ -168,6 +170,7 @@ pub(crate) fn lower_cranelift_error_to_compiler(
                 "cranelift",
                 error.code.as_str(),
                 &error.message,
+                DiagnosticCategory::UnsupportedFeature,
             ),
             error,
         },
@@ -196,6 +199,7 @@ pub(crate) fn lower_interp_error_to_compiler(
                 "interp",
                 error.code.as_str(),
                 &error.message,
+                DiagnosticCategory::UnsupportedFeature,
             ),
             error,
         },
@@ -206,6 +210,7 @@ pub(crate) fn lower_interp_error_to_compiler(
                 "interp",
                 InterpCodegenErrorCode::CompilationFailed.as_str(),
                 &message,
+                DiagnosticCategory::UnsupportedFeature,
             ),
             error: InterpCodegenError {
                 code: InterpCodegenErrorCode::CompilationFailed,
@@ -275,6 +280,8 @@ pub(crate) fn type_error_to_compiler(source: &str, error: InferenceError) -> Com
         COMP_TYPE_FAILED,
         error.0.clone(),
     )
+    .with_category(DiagnosticCategory::UserCode)
+    .with_detail_code("signal-type-inference")
     .with_note("stage=sigtype");
     CompilerError::Type {
         source: source.into(),
@@ -348,12 +355,19 @@ pub(crate) fn enrich_diagnostic_with_node(
     diagnostic = diagnostic
         .with_note(format!("node_id={}", node.as_u32()))
         .with_note(format!("box_expr={}", compact_box_preview(arena, node)))
-        .with_note(format!("expr={}", compact_human_box_preview(arena, node)));
+        .with_note(format!("expr={}", compact_human_box_preview(arena, node)))
+        .with_debug_fact("node_id", u64::from(node.as_u32()))
+        .with_debug_fact("box_expr", compact_box_preview(arena, node));
     if let Some(owner) = owner {
-        diagnostic = diagnostic.with_note(format!("error originates from definition '{owner}'"));
+        diagnostic = diagnostic
+            .with_note(format!("error originates from definition '{owner}'"))
+            .with_fact("owner_definition", owner);
     }
     if let Some(trace) = alias_binding_trace_for_node(arena, root, node, entrypoint_name) {
-        diagnostic = diagnostic.with_note(format!("binding_trace={trace}"));
+        let path = trace.split(" -> ").map(str::to_owned).collect::<Vec<_>>();
+        diagnostic = diagnostic
+            .with_note(format!("binding_trace={trace}"))
+            .with_fact("binding_trace_path", path);
     }
     diagnostic
 }

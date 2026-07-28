@@ -25,12 +25,19 @@
 //! - Public API is `adapted`: equivalent diagnostic intent to C++ with Rust
 //!   ownership/typing and structured aggregation via [`DiagnosticBundle`].
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub mod codes;
+mod model_v2;
 mod source;
 
 pub use codes::all_codes;
+pub use model_v2::{
+    Applicability, DebugContext, DetailCode, DiagnosticCategory, DiagnosticTrace, DiagnosticValue,
+    FactKey, IrReference, LabelRole, RelatedDiagnostic, SuggestedFix, TextEdit, TraceFrame,
+    TraceKind,
+};
 pub use source::{
     ContentHash, HumanPosition, LspPosition, SourceCoordinateError, SourceFile, SourceId,
     SourceKind, SourceMap, SourceMapBuilder, SourceRange,
@@ -87,7 +94,7 @@ pub struct DiagnosticCode(pub &'static str);
 /// Lines and columns are 1-based. Existing producers treat `end_col` as the
 /// half-open caret boundary. New diagnostics should use canonical
 /// [`SourceRange`] values and convert through [`SourceMap::to_source_span`]
-/// only at v1 compatibility boundaries.
+/// only at legacy producer or renderer boundaries.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceSpan {
     /// File where this span originates.
@@ -132,6 +139,8 @@ pub enum LabelStyle {
 pub struct Label {
     /// Visual role of the label in rendered diagnostics.
     pub style: LabelStyle,
+    /// Machine-readable semantic role, independent from [`Self::message`].
+    pub role: LabelRole,
     /// Source location attached to this label.
     pub span: SourceSpan,
     /// User-facing label text.
@@ -142,11 +151,23 @@ impl Label {
     /// Creates a label.
     #[must_use]
     pub fn new(style: LabelStyle, span: SourceSpan, message: impl Into<Box<str>>) -> Self {
+        let role = match style {
+            LabelStyle::Primary => LabelRole::PrimaryCause,
+            LabelStyle::Secondary => LabelRole::DerivedFrom,
+        };
         Self {
             style,
+            role,
             span,
             message: message.into(),
         }
+    }
+
+    /// Sets the typed semantic role and returns the updated label.
+    #[must_use]
+    pub fn with_role(mut self, role: LabelRole) -> Self {
+        self.role = role;
+        self
     }
 }
 
@@ -159,6 +180,10 @@ pub struct Diagnostic {
     pub stage: Stage,
     /// Stable machine-readable diagnostic code.
     pub code: DiagnosticCode,
+    /// Backend/pass-local detail code.
+    pub detail_code: Option<DetailCode>,
+    /// High-level ownership category.
+    pub category: DiagnosticCategory,
     /// Main human-readable message.
     pub message: Box<str>,
     /// Source labels attached to this diagnostic.
@@ -167,6 +192,16 @@ pub struct Diagnostic {
     pub notes: Vec<Box<str>>,
     /// Suggested actionable fixes.
     pub help: Vec<Box<str>>,
+    /// Deterministically ordered machine-readable facts.
+    pub facts: BTreeMap<FactKey, DiagnosticValue>,
+    /// Typed causal traces.
+    pub traces: Vec<DiagnosticTrace>,
+    /// Applicability-graded fixes.
+    pub fixes: Vec<SuggestedFix>,
+    /// Related, non-recursive diagnostics.
+    pub related: Vec<RelatedDiagnostic>,
+    /// Opt-in internal evidence.
+    pub debug: Option<DebugContext>,
 }
 
 impl Diagnostic {
@@ -182,10 +217,17 @@ impl Diagnostic {
             severity,
             stage,
             code,
+            detail_code: None,
+            category: default_category(stage),
             message: message.into(),
             labels: Vec::new(),
             notes: Vec::new(),
             help: Vec::new(),
+            facts: BTreeMap::new(),
+            traces: Vec::new(),
+            fixes: Vec::new(),
+            related: Vec::new(),
+            debug: None,
         }
     }
 
@@ -208,6 +250,83 @@ impl Diagnostic {
     pub fn with_help(mut self, help: impl Into<Box<str>>) -> Self {
         self.help.push(help.into());
         self
+    }
+
+    /// Sets the high-level diagnostic category.
+    #[must_use]
+    pub fn with_category(mut self, category: DiagnosticCategory) -> Self {
+        self.category = category;
+        self
+    }
+
+    /// Sets a backend/pass-local stable detail code.
+    #[must_use]
+    pub fn with_detail_code(mut self, detail_code: impl Into<Box<str>>) -> Self {
+        self.detail_code = Some(DetailCode::new(detail_code));
+        self
+    }
+
+    /// Adds or replaces one typed fact.
+    #[must_use]
+    pub fn with_fact(
+        mut self,
+        key: impl Into<Box<str>>,
+        value: impl Into<DiagnosticValue>,
+    ) -> Self {
+        self.facts.insert(FactKey::new(key), value.into());
+        self
+    }
+
+    /// Adds one typed causal trace.
+    #[must_use]
+    pub fn with_trace(mut self, trace: DiagnosticTrace) -> Self {
+        self.traces.push(trace);
+        self
+    }
+
+    /// Adds one structured suggested fix.
+    #[must_use]
+    pub fn with_fix(mut self, fix: SuggestedFix) -> Self {
+        self.fixes.push(fix);
+        self
+    }
+
+    /// Adds one related diagnostic summary.
+    #[must_use]
+    pub fn with_related(mut self, related: RelatedDiagnostic) -> Self {
+        self.related.push(related);
+        self
+    }
+
+    /// Sets opt-in internal/debug evidence.
+    #[must_use]
+    pub fn with_debug_context(mut self, debug: DebugContext) -> Self {
+        self.debug = Some(debug);
+        self
+    }
+
+    /// Adds or replaces one typed debug field.
+    #[must_use]
+    pub fn with_debug_fact(
+        mut self,
+        key: impl Into<Box<str>>,
+        value: impl Into<DiagnosticValue>,
+    ) -> Self {
+        self.debug
+            .get_or_insert_with(DebugContext::new)
+            .insert(key, value);
+        self
+    }
+}
+
+const fn default_category(stage: Stage) -> DiagnosticCategory {
+    match stage {
+        Stage::SourceReader => DiagnosticCategory::Environment,
+        Stage::Compiler => DiagnosticCategory::CompilerBug,
+        Stage::Codegen | Stage::Fir | Stage::Transform => DiagnosticCategory::UnsupportedFeature,
+        Stage::Lexer | Stage::Parser | Stage::Eval | Stage::Propagate | Stage::Normalize => {
+            DiagnosticCategory::UserCode
+        }
     }
 }
 
@@ -232,9 +351,8 @@ impl DiagnosticBundle {
 
     /// Associates the immutable source snapshots compiled in this session.
     ///
-    /// This metadata is deliberately absent from the v1 JSON renderer. Human
-    /// renderers may use it to avoid re-reading a file that changed after
-    /// compilation.
+    /// Human renderers use it to avoid re-reading a file that changed after
+    /// compilation, and the JSON renderer emits its stable source metadata.
     pub fn set_source_map(&mut self, source_map: SourceMap) {
         self.source_map = source_map;
     }
@@ -296,8 +414,8 @@ pub trait ToDiagnostic {
 #[cfg(test)]
 mod tests {
     use super::{
-        Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, Severity, SourceSpan,
-        Stage,
+        Diagnostic, DiagnosticBundle, DiagnosticCategory, DiagnosticCode, DiagnosticValue, Label,
+        LabelRole, LabelStyle, Severity, SourceSpan, Stage,
     };
 
     #[test]
@@ -319,8 +437,37 @@ mod tests {
         assert_eq!(diag.message.as_ref(), "unexpected token");
         assert_eq!(diag.labels.len(), 1);
         assert_eq!(diag.labels[0].span, span);
+        assert_eq!(diag.labels[0].role, LabelRole::PrimaryCause);
         assert_eq!(diag.notes.len(), 1);
         assert_eq!(diag.help.len(), 1);
+    }
+
+    #[test]
+    fn v2_builder_keeps_typed_category_detail_and_facts() {
+        let diag = Diagnostic::new(
+            Severity::Error,
+            Stage::Codegen,
+            DiagnosticCode("FRS-CODEGEN-0001"),
+            "backend rejected an instruction",
+        )
+        .with_category(DiagnosticCategory::UnsupportedFeature)
+        .with_detail_code("FRS-CGEN-WASM-0007")
+        .with_fact("backend", "wasm")
+        .with_fact("actual", 3_i64);
+
+        assert_eq!(diag.category, DiagnosticCategory::UnsupportedFeature);
+        assert_eq!(
+            diag.detail_code.as_ref().map(|code| code.as_str()),
+            Some("FRS-CGEN-WASM-0007")
+        );
+        assert_eq!(
+            diag.facts.get(&super::FactKey::new("backend")),
+            Some(&DiagnosticValue::String("wasm".into()))
+        );
+        assert_eq!(
+            diag.facts.get(&super::FactKey::new("actual")),
+            Some(&DiagnosticValue::Integer(3))
+        );
     }
 
     #[test]

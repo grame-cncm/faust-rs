@@ -165,7 +165,11 @@ notes. G2 must not count parsed note prefixes as typed coverage.
 | Cranelift backend | `codegen::cranelift` | source/FIR origin and lowering/JIT context |
 | Wasm backend | `codegen::wasm` | source/FIR origin and import/layout context |
 
-## 7. Frozen v1 contracts
+## 7. Baseline contracts at G0
+
+> G2 update (2026-07-28): the project owner subsequently authorized removal
+> of JSON v1. The bullets below record the G0 baseline used to detect the
+> intended breaking change; they no longer require a compatibility renderer.
 
 G1 and G2 must preserve:
 
@@ -176,9 +180,8 @@ G1 and G2 must preserve:
   `crates/compiler/tests/cli_diagnostics_channel.rs`;
 - negative diagnostic corpus and golden snapshots;
 - current CLI exit status;
-- standard v1 JSON field names and note ordering.
-
-V2 must be opt-in until its schema and compatibility policy are complete.
+- standard pre-G2 JSON field names and note ordering, except for the explicitly
+  authorized G2 replacement.
 
 ## 8. G0 pass result
 
@@ -186,6 +189,7 @@ V2 must be opt-in until its schema and compatibility policy are complete.
 - source-occurrence ambiguity has a structural regression test;
 - both candidate representations have an executable measurement harness;
 - the hybrid decision is recorded without changing production IR;
-- v1 contracts and performance measurements required before G3 are explicit.
+- baseline contracts and performance measurements required before G3 are
+  explicit.
 
 G1 may begin.

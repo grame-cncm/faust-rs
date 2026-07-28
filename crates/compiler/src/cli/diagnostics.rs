@@ -31,7 +31,10 @@
 
 use super::args::{ErrorFormat, ErrorVerbosity};
 use compiler::CompilerError;
-use diagnostics::{DiagnosticBundle, LabelStyle, Severity, Stage};
+use diagnostics::{
+    Applicability, DiagnosticBundle, DiagnosticCategory, DiagnosticValue, Label, LabelRole,
+    LabelStyle, Severity, SourceKind, SourceRange, Stage, TraceKind,
+};
 use serde_json::json;
 use std::path::Path;
 
@@ -241,19 +244,36 @@ fn caret_span(col: u32, end_col: u32) -> String {
     format!("{}{}", " ".repeat(start), "^".repeat(width))
 }
 
-/// Formats diagnostics in a machine-oriented JSON payload.
+/// Formats the typed, versioned machine diagnostics envelope.
+///
+/// This function serializes only typed machine fields. It never classifies
+/// label/note/help prose or extracts facts from string prefixes.
 pub fn format_diagnostics_json(bundle: &DiagnosticBundle) -> String {
     format_diagnostics_json_with_verbosity(bundle, ErrorVerbosity::Standard)
 }
 
-/// Formats diagnostics in JSON with optional debug-oriented enrichment.
-///
-/// `Standard` keeps the stable CI/IDE contract.
-/// `Debug` adds extracted low-level fields under `diagnostics[*].debug`.
+/// Formats diagnostics JSON with optional typed debug evidence.
 pub fn format_diagnostics_json_with_verbosity(
     bundle: &DiagnosticBundle,
     verbosity: ErrorVerbosity,
 ) -> String {
+    let sources = bundle
+        .source_map()
+        .iter()
+        .map(|source| {
+            let text = match source.kind() {
+                SourceKind::Memory | SourceKind::VirtualLibrary => Some(source.text()),
+                SourceKind::File | SourceKind::ImportedFile => None,
+            };
+            json!({
+                "id": source.id().as_u32(),
+                "name": source.name().display().to_string(),
+                "kind": source_kind_name(source.kind()),
+                "content_hash": source.content_hash().to_hex(),
+                "text": text,
+            })
+        })
+        .collect::<Vec<_>>();
     let diagnostics = bundle
         .as_slice()
         .iter()
@@ -261,142 +281,240 @@ pub fn format_diagnostics_json_with_verbosity(
             let labels = diag
                 .labels
                 .iter()
-                .map(|label| {
-                    let role = label_role(label.message.as_ref());
+                .map(|label| label_v2_json(bundle, label))
+                .collect::<Vec<_>>();
+            let facts = diag
+                .facts
+                .iter()
+                .map(|(key, value)| (key.as_str().to_owned(), diagnostic_value_json(value)))
+                .collect::<serde_json::Map<_, _>>();
+            let traces = diag
+                .traces
+                .iter()
+                .map(|trace| {
                     json!({
-                        "style": match label.style {
-                            LabelStyle::Primary => "primary",
-                            LabelStyle::Secondary => "secondary",
-                        },
-                        "role": role,
-                        "file": label.span.file.display().to_string(),
-                        "line": label.span.line,
-                        "col": label.span.col,
-                        "end_line": label.span.end_line,
-                        "end_col": label.span.end_col,
-                        "message": label.message,
+                        "kind": trace_kind_name(trace.kind),
+                        "frames": trace.frames.iter().map(|frame| {
+                            json!({
+                                "name": frame.name,
+                                "range": frame.span.map(source_range_json),
+                                "ir": frame.ir.as_ref().map(|ir| json!({
+                                    "kind": ir.kind,
+                                    "id": ir.id,
+                                })),
+                                "description": frame.description,
+                            })
+                        }).collect::<Vec<_>>(),
                     })
                 })
                 .collect::<Vec<_>>();
-            let mut payload = json!({
-                "severity": match diag.severity {
-                    Severity::Error => "error",
-                    Severity::Warning => "warning",
-                    Severity::Remark => "remark",
-                },
-                "stage": match diag.stage {
-                    Stage::SourceReader => "source_reader",
-                    Stage::Lexer => "lexer",
-                    Stage::Parser => "parser",
-                    Stage::Eval => "eval",
-                    Stage::Propagate => "propagate",
-                    Stage::Normalize => "normalize",
-                    Stage::Transform => "transform",
-                    Stage::Fir => "fir",
-                    Stage::Codegen => "codegen",
-                    Stage::Compiler => "compiler",
-                },
+            let fixes = diag
+                .fixes
+                .iter()
+                .map(|fix| {
+                    json!({
+                        "title": fix.title,
+                        "applicability": applicability_name(fix.applicability),
+                        "edits": fix.edits.iter().map(|edit| json!({
+                            "range": source_range_json(edit.range),
+                            "replacement": edit.replacement,
+                        })).collect::<Vec<_>>(),
+                        "explanation": fix.explanation,
+                    })
+                })
+                .collect::<Vec<_>>();
+            let related = diag
+                .related
+                .iter()
+                .map(|related| {
+                    json!({
+                        "code": related.code.0,
+                        "message": related.message,
+                        "labels": related.labels.iter()
+                            .map(|label| label_v2_json(bundle, label))
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>();
+            let debug = if matches!(verbosity, ErrorVerbosity::Debug) {
+                diag.debug.as_ref().map(|debug| {
+                    debug
+                        .fields
+                        .iter()
+                        .map(|(key, value)| (key.as_str().to_owned(), diagnostic_value_json(value)))
+                        .collect::<serde_json::Map<_, _>>()
+                })
+            } else {
+                None
+            };
+            json!({
+                "severity": severity_name(diag.severity),
+                "stage": stage_name(diag.stage),
                 "code": diag.code.0,
+                "detail_code": diag.detail_code.as_ref().map(|code| code.as_str()),
+                "category": category_name(diag.category),
                 "message": diag.message,
                 "labels": labels,
+                "facts": facts,
+                "traces": traces,
+                "fixes": fixes,
+                "related": related,
                 "notes": diag.notes,
                 "help": diag.help,
-                "context": diagnostic_context_from_notes(diag.notes.as_slice()),
-            });
-            if matches!(verbosity, ErrorVerbosity::Debug)
-                && let Some(obj) = payload.as_object_mut()
-            {
-                obj.insert(
-                    "debug".to_owned(),
-                    diagnostic_debug_from_notes(diag.notes.as_slice()),
-                );
-            }
-            payload
+                "debug": debug,
+            })
         })
         .collect::<Vec<_>>();
 
-    serde_json::to_string_pretty(&json!({ "diagnostics": diagnostics }))
-        .expect("diagnostics JSON formatting should not fail")
+    serde_json::to_string_pretty(&json!({
+        "schema_version": 2,
+        "compiler": {
+            "name": "faust-rs",
+            "version": env!("CARGO_PKG_VERSION"),
+            "target": format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
+        },
+        "request": {
+            "mode": serde_json::Value::Null,
+            "backend": serde_json::Value::Null,
+            "normalized_options": [],
+        },
+        "status": if bundle.error_count() == 0 { "success" } else { "failed" },
+        "sources": sources,
+        "diagnostics": diagnostics,
+    }))
+    .expect("diagnostics v2 JSON formatting should not fail")
 }
 
-/// Maps human label messages to stable JSON role identifiers.
-///
-/// This keeps machine-readable output decoupled from prose used in human mode.
-fn label_role(message: &str) -> Option<&'static str> {
-    match message {
-        "call site" => Some("call_site"),
-        "definition site" => Some("definition_site"),
-        _ => None,
-    }
-}
-
-/// Extracts structured context fields from diagnostic notes when present.
-///
-/// The extraction is best-effort and intentionally tolerant: unknown notes are
-/// ignored so textual diagnostics can evolve without breaking JSON consumers.
-fn diagnostic_context_from_notes(notes: &[Box<str>]) -> serde_json::Value {
-    let mut owner_definition = None::<String>;
-    let mut binding_trace = None::<Vec<String>>;
-    let mut scope_local = None::<String>;
-    let mut scope_visible = None::<String>;
-    let mut scope_top_level = None::<String>;
-
-    for note in notes {
-        if let Some(owner) = note.strip_prefix("error originates from definition '") {
-            owner_definition = Some(owner.trim_end_matches('\'').to_owned());
-            continue;
-        }
-        if let Some(trace) = note.strip_prefix("binding_trace=") {
-            let path = trace.split(" -> ").map(str::to_owned).collect::<Vec<_>>();
-            if !path.is_empty() {
-                binding_trace = Some(path);
-            }
-            continue;
-        }
-        if let Some(v) = note.strip_prefix("scope.local=") {
-            scope_local = Some(v.to_owned());
-            continue;
-        }
-        if let Some(v) = note.strip_prefix("scope.visible=") {
-            scope_visible = Some(v.to_owned());
-            continue;
-        }
-        if let Some(v) = note.strip_prefix("scope.top_level=") {
-            scope_top_level = Some(v.to_owned());
-            continue;
-        }
-    }
-
+fn label_v2_json(bundle: &DiagnosticBundle, label: &Label) -> serde_json::Value {
+    let range = bundle
+        .source_map()
+        .from_source_span(&label.span)
+        .ok()
+        .map(source_range_json);
     json!({
-        "owner_definition": owner_definition,
-        "binding_trace_path": binding_trace,
-        "scope": {
-            "local": scope_local,
-            "visible": scope_visible,
-            "top_level": scope_top_level,
-        }
+        "style": match label.style {
+            LabelStyle::Primary => "primary",
+            LabelStyle::Secondary => "secondary",
+        },
+        "role": label_role_name(label.role),
+        "range": range,
+        "compatibility_span": {
+            "file": label.span.file.display().to_string(),
+            "line": label.span.line,
+            "col": label.span.col,
+            "end_line": label.span.end_line,
+            "end_col": label.span.end_col,
+        },
+        "message": label.message,
     })
 }
 
-/// Extracts debug-only fields from diagnostic notes.
-///
-/// This keeps internal details (`node_id`, `box_expr`) out of the default JSON
-/// surface while still allowing explicit debug workflows.
-fn diagnostic_debug_from_notes(notes: &[Box<str>]) -> serde_json::Value {
-    let mut node_id = None::<u32>;
-    let mut box_expr = None::<String>;
-    for note in notes {
-        if let Some(v) = note.strip_prefix("node_id=") {
-            node_id = v.parse::<u32>().ok();
-            continue;
+fn source_range_json(range: SourceRange) -> serde_json::Value {
+    json!({
+        "source_id": range.source.as_u32(),
+        "start": range.start,
+        "end": range.end,
+    })
+}
+
+fn diagnostic_value_json(value: &DiagnosticValue) -> serde_json::Value {
+    match value {
+        DiagnosticValue::String(value) => json!({"type": "string", "value": value}),
+        DiagnosticValue::Integer(value) => json!({"type": "integer", "value": value}),
+        DiagnosticValue::Unsigned(value) => json!({"type": "unsigned", "value": value}),
+        DiagnosticValue::Real(value) => json!({"type": "real", "value": value}),
+        DiagnosticValue::Boolean(value) => json!({"type": "boolean", "value": value}),
+        DiagnosticValue::StringList(values) => {
+            json!({"type": "string_list", "value": values})
         }
-        if let Some(v) = note.strip_prefix("box_expr=") {
-            box_expr = Some(v.to_owned());
-            continue;
+        DiagnosticValue::IntegerRange { min, max } => {
+            json!({"type": "integer_range", "min": min, "max": max})
+        }
+        DiagnosticValue::Object(fields) => {
+            let value = fields
+                .iter()
+                .map(|(key, value)| (key.as_str().to_owned(), diagnostic_value_json(value)))
+                .collect::<serde_json::Map<_, _>>();
+            json!({"type": "object", "value": value})
         }
     }
-    json!({
-        "node_id": node_id,
-        "box_expr": box_expr
-    })
+}
+
+const fn severity_name(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+        Severity::Remark => "remark",
+    }
+}
+
+const fn stage_name(stage: Stage) -> &'static str {
+    match stage {
+        Stage::SourceReader => "source_reader",
+        Stage::Lexer => "lexer",
+        Stage::Parser => "parser",
+        Stage::Eval => "eval",
+        Stage::Propagate => "propagate",
+        Stage::Normalize => "normalize",
+        Stage::Transform => "transform",
+        Stage::Fir => "fir",
+        Stage::Codegen => "codegen",
+        Stage::Compiler => "compiler",
+    }
+}
+
+const fn category_name(category: DiagnosticCategory) -> &'static str {
+    match category {
+        DiagnosticCategory::UserCode => "user_code",
+        DiagnosticCategory::UnsupportedFeature => "unsupported_feature",
+        DiagnosticCategory::InvalidOptions => "invalid_options",
+        DiagnosticCategory::Environment => "environment",
+        DiagnosticCategory::Cancelled => "cancelled",
+        DiagnosticCategory::CompilerBug => "compiler_bug",
+    }
+}
+
+const fn source_kind_name(kind: SourceKind) -> &'static str {
+    match kind {
+        SourceKind::File => "file",
+        SourceKind::Memory => "memory",
+        SourceKind::ImportedFile => "imported_file",
+        SourceKind::VirtualLibrary => "virtual_library",
+    }
+}
+
+const fn label_role_name(role: LabelRole) -> &'static str {
+    match role {
+        LabelRole::PrimaryCause => "primary_cause",
+        LabelRole::UseSite => "use_site",
+        LabelRole::DefinitionSite => "definition_site",
+        LabelRole::CallSite => "call_site",
+        LabelRole::Operator => "operator",
+        LabelRole::ExpectedHere => "expected_here",
+        LabelRole::ConflictsWith => "conflicts_with",
+        LabelRole::ImportSite => "import_site",
+        LabelRole::PreviousToken => "previous_token",
+        LabelRole::MatchingDelimiter => "matching_delimiter",
+        LabelRole::DerivedFrom => "derived_from",
+    }
+}
+
+const fn trace_kind_name(kind: TraceKind) -> &'static str {
+    match kind {
+        TraceKind::Binding => "binding",
+        TraceKind::Import => "import",
+        TraceKind::Expansion => "expansion",
+        TraceKind::Evaluation => "evaluation",
+        TraceKind::Transformation => "transformation",
+        TraceKind::Causal => "causal",
+    }
+}
+
+const fn applicability_name(applicability: Applicability) -> &'static str {
+    match applicability {
+        Applicability::MachineApplicable => "machine_applicable",
+        Applicability::MaybeIncorrect => "maybe_incorrect",
+        Applicability::HasPlaceholders => "has_placeholders",
+        Applicability::Manual => "manual",
+    }
 }

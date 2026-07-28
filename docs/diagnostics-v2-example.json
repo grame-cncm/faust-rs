@@ -1,0 +1,68 @@
+{
+  "schema_version": 2,
+  "compiler": {
+    "name": "faust-rs",
+    "version": "0.5.0",
+    "target": "aarch64-macos"
+  },
+  "request": {
+    "mode": "check",
+    "backend": null,
+    "normalized_options": []
+  },
+  "status": "failed",
+  "sources": [
+    {
+      "id": 0,
+      "name": "example.dsp",
+      "kind": "memory",
+      "content_hash": "a64391f00df780e17224a35ba2fe2c894e1f3f799e711308232a299cd6e3d461",
+      "text": "process = typo;\n"
+    }
+  ],
+  "diagnostics": [
+    {
+      "severity": "error",
+      "stage": "eval",
+      "code": "FRS-EVAL-0002",
+      "detail_code": "undefined-binding",
+      "category": "user_code",
+      "message": "undefined symbol `typo`",
+      "labels": [
+        {
+          "style": "primary",
+          "role": "use_site",
+          "range": {
+            "source_id": 0,
+            "start": 10,
+            "end": 14
+          },
+          "compatibility_span": {
+            "file": "example.dsp",
+            "line": 1,
+            "col": 11,
+            "end_line": 1,
+            "end_col": 15
+          },
+          "message": "symbol is not defined"
+        }
+      ],
+      "facts": {
+        "symbol": {
+          "type": "string",
+          "value": "typo"
+        },
+        "visible_symbols": {
+          "type": "string_list",
+          "value": ["process"]
+        }
+      },
+      "traces": [],
+      "fixes": [],
+      "related": [],
+      "notes": [],
+      "help": ["define the symbol or correct its spelling"],
+      "debug": null
+    }
+  ]
+}

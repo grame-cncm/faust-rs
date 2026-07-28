@@ -1,0 +1,403 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://faust.grame.fr/schemas/faust-rs-diagnostics-v2.schema.json",
+  "title": "faust-rs diagnostics v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "compiler",
+    "request",
+    "status",
+    "sources",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "compiler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "target"],
+      "properties": {
+        "name": { "const": "faust-rs" },
+        "version": { "type": "string" },
+        "target": { "type": "string" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "backend", "normalized_options"],
+      "properties": {
+        "mode": { "type": ["string", "null"] },
+        "backend": { "type": ["string", "null"] },
+        "normalized_options": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "status": {
+      "enum": ["success", "failed"]
+    },
+    "sources": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/source" }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "kind", "content_hash", "text"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "name": { "type": "string" },
+        "kind": {
+          "enum": ["file", "memory", "imported_file", "virtual_library"]
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "text": { "type": ["string", "null"] }
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "start", "end"],
+      "properties": {
+        "source_id": { "type": "integer", "minimum": 0 },
+        "start": { "type": "integer", "minimum": 0 },
+        "end": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "compatibility_span": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "col", "end_line", "end_col"],
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "col": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "end_col": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "label": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "style",
+        "role",
+        "range",
+        "compatibility_span",
+        "message"
+      ],
+      "properties": {
+        "style": { "enum": ["primary", "secondary"] },
+        "role": {
+          "enum": [
+            "primary_cause",
+            "use_site",
+            "definition_site",
+            "call_site",
+            "operator",
+            "expected_here",
+            "conflicts_with",
+            "import_site",
+            "previous_token",
+            "matching_delimiter",
+            "derived_from"
+          ]
+        },
+        "range": {
+          "oneOf": [
+            { "$ref": "#/$defs/range" },
+            { "type": "null" }
+          ]
+        },
+        "compatibility_span": {
+          "$ref": "#/$defs/compatibility_span"
+        },
+        "message": { "type": "string" }
+      }
+    },
+    "fact_value": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "string" },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "integer" },
+            "value": { "type": "integer" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "unsigned" },
+            "value": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "real" },
+            "value": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "boolean" },
+            "value": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "string_list" },
+            "value": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "min", "max"],
+          "properties": {
+            "type": { "const": "integer_range" },
+            "min": { "type": "integer" },
+            "max": { "type": "integer" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "value"],
+          "properties": {
+            "type": { "const": "object" },
+            "value": {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/fact_value" }
+            }
+          }
+        }
+      ]
+    },
+    "trace_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "range", "ir", "description"],
+      "properties": {
+        "name": { "type": ["string", "null"] },
+        "range": {
+          "oneOf": [
+            { "$ref": "#/$defs/range" },
+            { "type": "null" }
+          ]
+        },
+        "ir": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "id"],
+              "properties": {
+                "kind": { "type": "string" },
+                "id": { "type": "integer", "minimum": 0 }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "frames"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "binding",
+            "import",
+            "expansion",
+            "evaluation",
+            "transformation",
+            "causal"
+          ]
+        },
+        "frames": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/trace_frame" }
+        }
+      }
+    },
+    "text_edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["range", "replacement"],
+      "properties": {
+        "range": { "$ref": "#/$defs/range" },
+        "replacement": { "type": "string" }
+      }
+    },
+    "fix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "applicability", "edits", "explanation"],
+      "properties": {
+        "title": { "type": "string" },
+        "applicability": {
+          "enum": [
+            "machine_applicable",
+            "maybe_incorrect",
+            "has_placeholders",
+            "manual"
+          ]
+        },
+        "edits": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/text_edit" }
+        },
+        "explanation": { "type": ["string", "null"] }
+      }
+    },
+    "related": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "labels"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^FRS-[A-Z]+-[0-9]{4}$"
+        },
+        "message": { "type": "string" },
+        "labels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/label" }
+        }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "severity",
+        "stage",
+        "code",
+        "detail_code",
+        "category",
+        "message",
+        "labels",
+        "facts",
+        "traces",
+        "fixes",
+        "related",
+        "notes",
+        "help",
+        "debug"
+      ],
+      "properties": {
+        "severity": { "enum": ["error", "warning", "remark"] },
+        "stage": {
+          "enum": [
+            "source_reader",
+            "lexer",
+            "parser",
+            "eval",
+            "propagate",
+            "normalize",
+            "transform",
+            "fir",
+            "codegen",
+            "compiler"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "pattern": "^FRS-[A-Z]+-[0-9]{4}$"
+        },
+        "detail_code": { "type": ["string", "null"] },
+        "category": {
+          "enum": [
+            "user_code",
+            "unsupported_feature",
+            "invalid_options",
+            "environment",
+            "cancelled",
+            "compiler_bug"
+          ]
+        },
+        "message": { "type": "string" },
+        "labels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/label" }
+        },
+        "facts": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/fact_value" }
+        },
+        "traces": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/trace" }
+        },
+        "fixes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fix" }
+        },
+        "related": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/related" }
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "help": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "debug": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/fact_value" }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    }
+  }
+}

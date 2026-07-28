@@ -11,8 +11,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use clap::{CommandFactory, Parser, ValueEnum};
 use compiler::{Compiler, FaustInstallPaths};
 use diagnostics::{
-    Diagnostic, DiagnosticBundle, DiagnosticCode, Severity, SourceKind, SourceMapBuilder,
-    SourceSpan, Stage,
+    Applicability, DebugContext, Diagnostic, DiagnosticBundle, DiagnosticCategory, DiagnosticCode,
+    LabelRole, Severity, SourceKind, SourceMapBuilder, SourceRange, SourceSpan, Stage,
+    SuggestedFix, TextEdit,
 };
 use serde_json::Value;
 use signals::{SigMatch, match_sig};
@@ -673,9 +674,20 @@ fn diagnostics_human_renderer_uses_the_compiled_snapshot_after_file_changes() {
     assert!(rendered.contains("1 | process = missing;"));
     assert!(!rendered.contains("changed_after_compile"));
 
-    let v1_with_snapshot = format_diagnostics_json(&bundle);
+    let json_with_snapshot: Value =
+        serde_json::from_str(&format_diagnostics_json(&bundle)).expect("v2 JSON should be valid");
+    assert_eq!(json_with_snapshot["sources"][0]["kind"], "file");
+    assert_eq!(
+        json_with_snapshot["diagnostics"][0]["labels"][0]["range"]["start"],
+        10
+    );
     bundle.set_source_map(diagnostics::SourceMap::new());
-    assert_eq!(format_diagnostics_json(&bundle), v1_with_snapshot);
+    let json_without_snapshot: Value =
+        serde_json::from_str(&format_diagnostics_json(&bundle)).expect("v2 JSON should be valid");
+    assert!(
+        json_without_snapshot["diagnostics"][0]["labels"][0]["range"].is_null(),
+        "legacy labels without a registered source keep their compatibility span"
+    );
 
     std::fs::remove_file(path).expect("fixture should be removed");
 }
@@ -712,6 +724,77 @@ fn diagnostics_json_renderer_snapshot_shape_stable() {
 }
 
 #[test]
+fn diagnostics_json_v2_serializes_typed_fields_without_parsing_notes() {
+    let mut sources = SourceMapBuilder::new();
+    let source_id = sources.add("typed.dsp", SourceKind::Memory, "process = typo;\n");
+    let mut bundle = DiagnosticBundle::new();
+    bundle.set_source_map(sources.finish());
+    bundle.push(
+        Diagnostic::new(
+            Severity::Error,
+            Stage::Eval,
+            DiagnosticCode("FRS-EVAL-0002"),
+            "undefined symbol",
+        )
+        .with_category(DiagnosticCategory::UserCode)
+        .with_detail_code("undefined-binding")
+        .with_fact("symbol", "typo")
+        .with_note("backend_code=must-not-be-parsed")
+        .with_label(
+            diagnostics::Label::new(
+                diagnostics::LabelStyle::Primary,
+                SourceSpan::new("typed.dsp", 1, 11, 1, 15),
+                "unknown name",
+            )
+            .with_role(LabelRole::UseSite),
+        )
+        .with_fix(SuggestedFix {
+            title: "replace the symbol".into(),
+            applicability: Applicability::MachineApplicable,
+            edits: vec![TextEdit {
+                range: SourceRange::new(source_id, 10, 14),
+                replacement: "known".into(),
+            }],
+            explanation: None,
+        }),
+    );
+
+    let standard: Value =
+        serde_json::from_str(&format_diagnostics_json(&bundle)).expect("v2 must be valid JSON");
+    assert_eq!(standard["schema_version"], 2);
+    assert_eq!(standard["status"], "failed");
+    assert_eq!(
+        standard["sources"][0]["content_hash"]
+            .as_str()
+            .map(str::len),
+        Some(64)
+    );
+    let diagnostic = &standard["diagnostics"][0];
+    assert_eq!(diagnostic["category"], "user_code");
+    assert_eq!(diagnostic["detail_code"], "undefined-binding");
+    assert_eq!(diagnostic["labels"][0]["role"], "use_site");
+    assert_eq!(diagnostic["labels"][0]["range"]["start"], 10);
+    assert_eq!(diagnostic["facts"]["symbol"]["type"], "string");
+    assert_eq!(diagnostic["facts"]["symbol"]["value"], "typo");
+    assert_eq!(
+        diagnostic["fixes"][0]["applicability"],
+        "machine_applicable"
+    );
+    assert!(
+        diagnostic["facts"].get("backend_code").is_none(),
+        "v2 must not derive a fact by parsing note prose"
+    );
+    assert!(diagnostic["debug"].is_null());
+
+    let debug: Value = serde_json::from_str(&format_diagnostics_json_with_verbosity(
+        &bundle,
+        ErrorVerbosity::Debug,
+    ))
+    .expect("debug v2 must be valid JSON");
+    assert_eq!(debug["schema_version"], 2);
+}
+
+#[test]
 fn diagnostics_json_renderer_debug_mode_exposes_internal_fields() {
     let mut bundle = DiagnosticBundle::new();
     bundle.push(
@@ -722,14 +805,21 @@ fn diagnostics_json_renderer_debug_mode_exposes_internal_fields() {
             "split mismatch",
         )
         .with_note("node_id=42")
-        .with_note("box_expr=3(1(), 1())"),
+        .with_note("box_expr=3(1(), 1())")
+        .with_debug_context(
+            DebugContext::new()
+                .with_field("node_id", 42_u64)
+                .with_field("box_expr", "3(1(), 1())"),
+        ),
     );
     let rendered = format_diagnostics_json_with_verbosity(&bundle, ErrorVerbosity::Debug);
     let value: Value =
         serde_json::from_str(&rendered).expect("JSON diagnostics output should be valid");
     let diag = &value["diagnostics"][0];
-    assert_eq!(diag["debug"]["node_id"], 42);
-    assert_eq!(diag["debug"]["box_expr"], "3(1(), 1())");
+    assert_eq!(diag["debug"]["node_id"]["type"], "unsigned");
+    assert_eq!(diag["debug"]["node_id"]["value"], 42);
+    assert_eq!(diag["debug"]["box_expr"]["type"], "string");
+    assert_eq!(diag["debug"]["box_expr"]["value"], "3(1(), 1())");
 }
 
 #[test]

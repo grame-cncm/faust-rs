@@ -732,7 +732,7 @@ Pass criteria:
 - snippets work for file, memory, and virtual sources;
 - rendering uses the exact compiled source snapshot even if the file changes;
 - human and LSP coordinates are correct on the Unicode/CRLF corpus;
-- existing v1 JSON stays unchanged.
+- the G1 source-map change alone does not alter the then-current JSON output.
 
 Suggested commit:
 
@@ -746,18 +746,27 @@ Deliverables:
 
 - add typed category, detail code, facts, label roles, traces, fixes, related
   diagnostics, and debug context;
-- stop deriving machine fields from note strings in v2;
+- stop deriving machine fields from note strings;
 - add `schema_version`;
-- provide an explicit v1/v2 selection or API entry point;
+- replace the previous unversioned JSON payload with schema v2 under the
+  existing `--error-format json` spelling;
 - publish a JSON Schema and examples;
 - keep current `FRS-*` codes frozen.
 
 Pass criteria:
 
 - v2 consumers never need to parse note/help prose;
-- v1 snapshot tests remain byte-for-byte stable;
 - schema validation passes for every negative corpus entry;
 - deterministic serialization is cross-platform.
+
+Compatibility decision (2026-07-28):
+
+- the project owner explicitly authorized removal of JSON v1;
+- there is no parallel `json-v2` CLI value and no v1 renderer to maintain;
+- this is an intentional machine-channel breaking change before an external
+  stability commitment;
+- stable `FRS-*` meanings, human diagnostics, exit status, C/C++ and Wasm API
+  behavior, and successful non-diagnostic output remain unchanged.
 
 Suggested commit:
 
@@ -991,7 +1000,6 @@ shows material production cost.
 - current CLI exit status;
 - C/C++ and Wasm compiler API behavior;
 - C++ acceptance/rejection parity;
-- v1 JSON while v2 is introduced;
 - default successful-compilation output.
 
 ### Intentional adapted Rust APIs
@@ -1013,7 +1021,7 @@ period where appropriate.
 | hash-consing conflates occurrences | occurrence handles or origin sets selected by measured prototype |
 | origin graph becomes cyclic or huge | arena ids, bounded parents, cycle checks, deterministic truncation |
 | transformations propagate misleading blame | explicit derivation kinds and multi-origin ambiguity, never fabricate one exact site |
-| schema v2 breaks current tools | retain v1 and publish version negotiation |
+| schema v2 breaks current tools | one documented pre-stability break; publish schema/version and reject unknown consumers explicitly |
 | automated fixes alter DSP semantics | strict applicability levels; only deterministic edits are machine-applicable |
 | rich output overwhelms humans | progressive disclosure and standard/debug/full modes |
 | absolute paths/source text leak | redaction policy, source ids, opt-in source embedding |

@@ -97,19 +97,17 @@ pub(crate) fn maybe_add_source_label(
                     source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name)
                 });
         if let Some(primary_span) = owner_span {
-            diagnostic = diagnostic.with_label(Label::new(
-                LabelStyle::Primary,
-                primary_span.clone(),
-                "related source",
-            ));
+            diagnostic = diagnostic.with_label(
+                Label::new(LabelStyle::Primary, primary_span.clone(), "related source")
+                    .with_role(LabelRole::DefinitionSite),
+            );
             if let Some(secondary_span) = call_span
                 && secondary_span != primary_span
             {
-                diagnostic = diagnostic.with_label(Label::new(
-                    LabelStyle::Secondary,
-                    secondary_span,
-                    "related call site",
-                ));
+                diagnostic = diagnostic.with_label(
+                    Label::new(LabelStyle::Secondary, secondary_span, "related call site")
+                        .with_role(LabelRole::CallSite),
+                );
             }
             return diagnostic;
         }
@@ -153,19 +151,17 @@ pub(crate) fn maybe_add_eval_source_labels(
         let call_span =
             source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name);
         if let Some(primary_span) = origin_span {
-            diagnostic = diagnostic.with_label(Label::new(
-                LabelStyle::Primary,
-                primary_span.clone(),
-                "definition site",
-            ));
+            diagnostic = diagnostic.with_label(
+                Label::new(LabelStyle::Primary, primary_span.clone(), "definition site")
+                    .with_role(LabelRole::DefinitionSite),
+            );
             if let Some(secondary_span) = call_span
                 && secondary_span != primary_span
             {
-                diagnostic = diagnostic.with_label(Label::new(
-                    LabelStyle::Secondary,
-                    secondary_span,
-                    "call site",
-                ));
+                diagnostic = diagnostic.with_label(
+                    Label::new(LabelStyle::Secondary, secondary_span, "call site")
+                        .with_role(LabelRole::CallSite),
+                );
             }
             return diagnostic;
         }
@@ -182,21 +178,19 @@ pub(crate) fn maybe_add_eval_source_labels(
     let Some(primary_span) = primary else {
         return diagnostic;
     };
-    diagnostic = diagnostic.with_label(Label::new(
-        LabelStyle::Primary,
-        primary_span.clone(),
-        "call site",
-    ));
+    diagnostic = diagnostic.with_label(
+        Label::new(LabelStyle::Primary, primary_span.clone(), "call site")
+            .with_role(LabelRole::CallSite),
+    );
     let secondary = source_span_for_definition_of_expr(ctx, arena, defs_root, node)
         .or_else(|| source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name));
     if let Some(secondary_span) = secondary
         && secondary_span != primary_span
     {
-        diagnostic = diagnostic.with_label(Label::new(
-            LabelStyle::Secondary,
-            secondary_span,
-            "definition site",
-        ));
+        diagnostic = diagnostic.with_label(
+            Label::new(LabelStyle::Secondary, secondary_span, "definition site")
+                .with_role(LabelRole::DefinitionSite),
+        );
     }
     diagnostic
 }

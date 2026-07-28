@@ -47,6 +47,7 @@ pub enum CliLang {
 pub enum ErrorFormat {
     #[default]
     Human,
+    /// Typed, versioned diagnostics JSON contract.
     Json,
 }
 

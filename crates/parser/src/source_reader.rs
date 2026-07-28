@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use diagnostics::{
-    Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, Severity, SourceSpan, Stage,
-    codes,
+    Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelRole, LabelStyle, Severity,
+    SourceSpan, Stage, codes,
 };
 
 /// One source-origin marker for a line in expanded source text.
@@ -256,13 +256,19 @@ impl SourceReaderError {
                 );
                 if let Some(ImportSite { line, col }) = site {
                     let end_col = col + u32::try_from(name.chars().count()).unwrap_or(0);
-                    diag = diag.with_label(Label::new(
-                        LabelStyle::Primary,
-                        SourceSpan::new(from.clone(), *line, *col, *line, end_col),
-                        "unresolved import",
-                    ));
+                    diag = diag.with_label(
+                        Label::new(
+                            LabelStyle::Primary,
+                            SourceSpan::new(from.clone(), *line, *col, *line, end_col),
+                            "unresolved import",
+                        )
+                        .with_role(LabelRole::ImportSite),
+                    );
                 }
                 diag = diag
+                    .with_detail_code("unresolved-import")
+                    .with_fact("import_name", name.clone())
+                    .with_fact("imported_from", from.display().to_string())
                     .with_note(format!("import name: {name}"))
                     .with_note(format!("imported from: {}", from.display()));
                 // The importing file's own directory is usually also on the
@@ -273,6 +279,13 @@ impl SourceReaderError {
                         unique.push(dir);
                     }
                 }
+                diag = diag.with_fact(
+                    "searched_directories",
+                    unique
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>(),
+                );
                 if unique.is_empty() {
                     diag = diag.with_note("no search directories were configured");
                 } else {

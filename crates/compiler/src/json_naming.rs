@@ -32,13 +32,20 @@ pub(crate) fn fir_verify_bundle_from_report(report: &FirVerifyReport) -> Diagnos
             FirVerifySeverity::Warning => diagnostics::Severity::Warning,
         };
         let mut diag = Diagnostic::new(severity, diagnostics::Stage::Fir, code, d.message.clone())
+            .with_detail_code(d.code)
+            .with_fact("fir_code", d.code)
+            .with_fact("fir_node_id", u64::from(d.node.as_u32()))
             .with_note(format!("fir_code={}", d.code))
             .with_note(format!("fir_node_id={}", d.node.as_u32()));
         if let Some(fun) = d.context.function_name.as_deref() {
-            diag = diag.with_note(format!("fir_function={fun}"));
+            diag = diag
+                .with_fact("fir_function", fun)
+                .with_note(format!("fir_function={fun}"));
         }
         if let Some(var) = d.context.variable_name.as_deref() {
-            diag = diag.with_note(format!("fir_variable={var}"));
+            diag = diag
+                .with_fact("fir_variable", var)
+                .with_note(format!("fir_variable={var}"));
         }
         bundle.push(diag);
     }

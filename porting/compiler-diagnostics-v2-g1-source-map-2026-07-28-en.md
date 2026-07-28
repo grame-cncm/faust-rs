@@ -96,7 +96,8 @@ Focused tests cover:
 - stable content hashes;
 - file, memory, imported-file, and virtual-library registration;
 - rendering from the compiled snapshot after the backing file changes;
-- byte-for-byte invariance of v1 JSON with source-map metadata present.
+- byte-for-byte invariance of the then-current JSON with source-map metadata
+  present.
 
 ## 6. G1 pass result
 
@@ -105,7 +106,9 @@ Focused tests cover:
 - Unicode, tabs, CRLF, multi-line, human, and LSP coordinates have structural
   tests;
 - `SourceSpan` remains available through explicit compatibility conversions;
-- existing v1 JSON serialization does not inspect or emit the source map.
+- the G1 JSON serialization does not inspect or emit the source map.
 
-G2 may define the opt-in typed/versioned schema on top of this source
-foundation.
+G2 may define the typed/versioned schema on top of this source foundation.
+The project owner later authorized replacing the earlier JSON payload directly,
+so this G1 compatibility observation is historical rather than a requirement
+to retain a second renderer.

@@ -144,6 +144,96 @@ fn first_message(result: &CheckResult) -> &str {
         })
 }
 
+/// Checks the structural constraints shared with
+/// `docs/diagnostics-v2.schema.json`.
+fn assert_diagnostics_v2_shape(value: &serde_json::Value, case: &Path) {
+    assert_eq!(
+        value["schema_version"],
+        2,
+        "schema version for {}",
+        case.display()
+    );
+    assert!(
+        matches!(value["status"].as_str(), Some("success" | "failed")),
+        "status for {}",
+        case.display()
+    );
+    assert!(
+        value["compiler"].is_object(),
+        "compiler for {}",
+        case.display()
+    );
+    assert!(
+        value["request"].is_object(),
+        "request for {}",
+        case.display()
+    );
+    let sources = value["sources"]
+        .as_array()
+        .unwrap_or_else(|| panic!("sources for {}", case.display()));
+    for source in sources {
+        assert!(source["id"].is_u64(), "source id for {}", case.display());
+        assert!(
+            source["name"].is_string(),
+            "source name for {}",
+            case.display()
+        );
+        assert_eq!(
+            source["content_hash"].as_str().map(str::len),
+            Some(64),
+            "source hash for {}",
+            case.display()
+        );
+    }
+    let diagnostics = value["diagnostics"]
+        .as_array()
+        .unwrap_or_else(|| panic!("diagnostics for {}", case.display()));
+    for diagnostic in diagnostics {
+        for key in [
+            "severity", "stage", "code", "category", "message", "labels", "facts", "traces",
+            "fixes", "related", "notes", "help",
+        ] {
+            assert!(
+                diagnostic.get(key).is_some(),
+                "missing {key} for {}: {diagnostic}",
+                case.display()
+            );
+        }
+        assert!(
+            diagnostic["code"]
+                .as_str()
+                .is_some_and(|code| code.starts_with("FRS-")),
+            "stable code for {}",
+            case.display()
+        );
+        assert!(
+            diagnostic["labels"].is_array(),
+            "labels for {}",
+            case.display()
+        );
+        assert!(
+            diagnostic["facts"].is_object(),
+            "facts for {}",
+            case.display()
+        );
+        assert!(
+            diagnostic["traces"].is_array(),
+            "traces for {}",
+            case.display()
+        );
+        assert!(
+            diagnostic["fixes"].is_array(),
+            "fixes for {}",
+            case.display()
+        );
+        assert!(
+            diagnostic["related"].is_array(),
+            "related for {}",
+            case.display()
+        );
+    }
+}
+
 // ─── D2: success shares the same schema as failure ────────────────────────
 
 #[test]
@@ -166,6 +256,60 @@ fn check_json_success_has_empty_diagnostics_no_leading_bytes_exit_0() {
         "stdout must start with '{{' with no leading bytes, got: {:?}",
         String::from_utf8_lossy(&result.stdout_raw)
     );
+}
+
+#[test]
+fn json_schema_and_every_negative_corpus_entry_are_structurally_valid() {
+    let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("docs")
+        .join("diagnostics-v2.schema.json");
+    let schema_text = std::fs::read_to_string(&schema_path).expect("v2 schema should be readable");
+    let schema: serde_json::Value =
+        serde_json::from_str(&schema_text).expect("v2 schema should be valid JSON");
+    assert_eq!(
+        schema["$schema"],
+        "https://json-schema.org/draft/2020-12/schema"
+    );
+
+    let corpus_dir = corpus_path("")
+        .canonicalize()
+        .expect("negative corpus directory should canonicalize");
+    let mut cases = std::fs::read_dir(&corpus_dir)
+        .expect("negative corpus should be readable")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("err_") && name.ends_with(".dsp"))
+        })
+        .collect::<Vec<_>>();
+    cases.sort();
+    assert!(!cases.is_empty());
+
+    for case in cases {
+        let output = run_check_json(&case, &[]);
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+            panic!(
+                "v2 output for {} is not one JSON document: {e}\n{}",
+                case.display(),
+                String::from_utf8_lossy(&output.stdout)
+            )
+        });
+        assert_diagnostics_v2_shape(&value, &case);
+        if !output.status.success() {
+            assert!(
+                !value["diagnostics"]
+                    .as_array()
+                    .expect("diagnostics array")
+                    .is_empty(),
+                "failed negative case has no diagnostic: {}",
+                case.display()
+            );
+        }
+    }
 }
 
 // ─── D1 x D2: one failure case per stage-family namespace ──────────────────
@@ -374,8 +518,24 @@ fn check_json_src_family_unresolved_import_is_structured() {
         "expected one label pointing at the import directive, got: {}",
         result.stdout["diagnostics"][0]
     );
-    let line = labels[0]["line"].as_u64().expect("label must carry a line");
+    assert_eq!(labels[0]["role"], "import_site");
+    let line = labels[0]["compatibility_span"]["line"]
+        .as_u64()
+        .expect("label must carry a compatibility line");
     assert!(line >= 1, "label line must be 1-based, got {line}");
+
+    let facts = &result.stdout["diagnostics"][0]["facts"];
+    assert_eq!(
+        facts["import_name"]["value"],
+        "this_library_does_not_exist_frs_src_test.lib"
+    );
+    assert_eq!(facts["searched_directories"]["type"], "string_list");
+    assert!(
+        facts["searched_directories"]["value"]
+            .as_array()
+            .is_some_and(|paths| !paths.is_empty()),
+        "searched paths must be available without parsing notes: {facts}"
+    );
 
     let notes: Vec<&str> = result.stdout["diagnostics"][0]["notes"]
         .as_array()

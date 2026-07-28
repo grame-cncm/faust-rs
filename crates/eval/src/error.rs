@@ -417,6 +417,9 @@ impl ToDiagnostic for EvalError {
                     available_defs.join(", ")
                 }
             ))
+            .with_detail_code("missing-entrypoint")
+            .with_fact("entrypoint", entrypoint.clone())
+            .with_fact("available_definitions", available_defs.clone())
             .with_help(format!(
                 "define `{entrypoint} = ...;` in the top-level definitions"
             ))
@@ -462,6 +465,11 @@ impl ToDiagnostic for EvalError {
                     top_level_scope.join(", ")
                 }
             ))
+            .with_detail_code("undefined-binding")
+            .with_fact("symbol", symbol.clone())
+            .with_fact("scope_local", local_scope.clone())
+            .with_fact("scope_visible", visible_scope.clone())
+            .with_fact("scope_top_level", top_level_scope.clone())
             .with_help("define the symbol in scope or fix the identifier name")
             .with_help(format!("template: {symbol} = ...; // define before use"))
             .with_help("for top-level aliases: define target before first use"),

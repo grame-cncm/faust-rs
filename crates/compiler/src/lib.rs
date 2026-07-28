@@ -97,9 +97,11 @@ use codegen::json::{
     JsonBuildOptions, JsonDescription, JsonMetaEntry, build_json_description_from_fir,
 };
 pub use diagnostics::{
-    ContentHash, Diagnostic, DiagnosticBundle, DiagnosticCode, HumanPosition, Label, LabelStyle,
-    LspPosition, Severity, SourceCoordinateError, SourceFile, SourceId, SourceKind, SourceMap,
-    SourceMapBuilder, SourceRange, SourceSpan, Stage,
+    Applicability, ContentHash, DebugContext, DetailCode, Diagnostic, DiagnosticBundle,
+    DiagnosticCategory, DiagnosticCode, DiagnosticTrace, DiagnosticValue, FactKey, HumanPosition,
+    IrReference, Label, LabelRole, LabelStyle, LspPosition, RelatedDiagnostic, Severity,
+    SourceCoordinateError, SourceFile, SourceId, SourceKind, SourceMap, SourceMapBuilder,
+    SourceRange, SourceSpan, Stage, SuggestedFix, TextEdit, TraceFrame, TraceKind,
 };
 use diagnostics::{ToDiagnostic, codes::COMP_TYPE_FAILED};
 use fir::{
@@ -1471,6 +1473,7 @@ impl CompilerError {
         backend: &str,
         backend_code: &str,
         message: &str,
+        category: DiagnosticCategory,
     ) -> DiagnosticBundle {
         let mut bundle = DiagnosticBundle::new();
         bundle.push(
@@ -1480,6 +1483,10 @@ impl CompilerError {
                 diagnostics::codes::CODEGEN_EMISSION_FAILED,
                 format!("{backend} backend code generation failed: {message}"),
             )
+            .with_category(category)
+            .with_detail_code(backend_code)
+            .with_fact("backend", backend)
+            .with_fact("source", source)
             .with_note(format!("backend: {backend}"))
             .with_note(format!("codegen_code={backend_code}"))
             .with_note(format!("source: {source}"))
@@ -1493,8 +1500,13 @@ impl CompilerError {
     /// bundle attached.
     #[must_use]
     pub fn codegen_wasm(source: &str, error: WasmBackendError) -> Self {
-        let diagnostics =
-            Self::codegen_diagnostics(source, "wasm", error.code().as_str(), error.message());
+        let diagnostics = Self::codegen_diagnostics(
+            source,
+            "wasm",
+            error.code().as_str(),
+            error.message(),
+            DiagnosticCategory::UnsupportedFeature,
+        );
         Self::CodegenWasm {
             source: source.into(),
             error,
