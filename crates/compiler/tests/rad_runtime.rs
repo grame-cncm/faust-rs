@@ -1234,7 +1234,7 @@ fn corpus_err_rad_zero_body_surfaces_rad_body_arity_diagnostic() {
     let err = compiler
         .compile_source_to_signals("err_rad_zero_body.dsp", &source)
         .expect_err("zero-output body must fail at propagate stage");
-    let diagnostics = err.diagnostics().expect("diagnostics on rad body arity");
+    let diagnostics = err.diagnostic_bundle();
     assert!(
         diagnostics
             .as_slice()
@@ -1252,7 +1252,7 @@ fn corpus_err_rad_zero_seed_surfaces_rad_seed_arity_diagnostic() {
     let err = compiler
         .compile_source_to_signals("err_rad_zero_seed.dsp", &source)
         .expect_err("zero-output seeds must fail at propagate stage");
-    let diagnostics = err.diagnostics().expect("diagnostics on rad seed arity");
+    let diagnostics = err.diagnostic_bundle();
     assert!(
         diagnostics
             .as_slice()

@@ -36,15 +36,15 @@ use crate::types::SigType;
 
 /// Typed failures returned by the type inference pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeError(pub String);
+pub struct InferenceError(pub String);
 
-impl std::fmt::Display for TypeError {
+impl std::fmt::Display for InferenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "type error: {}", self.0)
     }
 }
 
-impl std::error::Error for TypeError {}
+impl std::error::Error for InferenceError {}
 
 /// One symbolic recursive group discovered before running the global recursive
 /// typing fixpoint.
@@ -97,7 +97,7 @@ impl RecTypingState {
     /// Discovery order is deterministic DFS over the output list with DAG
     /// sharing preserved by `visited`. This matches the kind of stable vector
     /// ordering the C++ driver expects before running `updateRecTypes(...)`.
-    fn discover(arena: &TreeArena, outputs: &[SigId]) -> Result<Self, TypeError> {
+    fn discover(arena: &TreeArena, outputs: &[SigId]) -> Result<Self, InferenceError> {
         let groups = discover_recursive_groups(arena, outputs)?;
         let mut current = Vec::with_capacity(groups.len());
         let mut upper = Vec::with_capacity(groups.len());
@@ -128,7 +128,7 @@ impl RecTypingState {
 fn discover_recursive_groups(
     arena: &TreeArena,
     outputs: &[SigId],
-) -> Result<Vec<RecGroup>, TypeError> {
+) -> Result<Vec<RecGroup>, InferenceError> {
     let mut groups = Vec::new();
     let mut visited = HashSet::new();
     let mut seen_groups = HashSet::new();
@@ -144,7 +144,7 @@ fn walk_collect_rec_groups(
     visited: &mut HashSet<SigId>,
     seen_groups: &mut HashSet<SigId>,
     groups: &mut Vec<RecGroup>,
-) -> Result<(), TypeError> {
+) -> Result<(), InferenceError> {
     if !visited.insert(sig) {
         return Ok(());
     }
@@ -155,10 +155,10 @@ fn walk_collect_rec_groups(
 
     if arena.is_list(sig) {
         let head = arena.hd(sig).ok_or_else(|| {
-            TypeError("malformed list payload during recursive group discovery".to_owned())
+            InferenceError("malformed list payload during recursive group discovery".to_owned())
         })?;
         let tail = arena.tl(sig).ok_or_else(|| {
-            TypeError("malformed list payload during recursive group discovery".to_owned())
+            InferenceError("malformed list payload during recursive group discovery".to_owned())
         })?;
         walk_collect_rec_groups(arena, head, visited, seen_groups, groups)?;
         walk_collect_rec_groups(arena, tail, visited, seen_groups, groups)?;
@@ -183,7 +183,7 @@ fn walk_collect_rec_groups(
     }
 
     let node = arena.node(sig).ok_or_else(|| {
-        TypeError(format!(
+        InferenceError(format!(
             "missing node {} during recursive group discovery",
             sig.as_u32()
         ))
@@ -194,14 +194,14 @@ fn walk_collect_rec_groups(
     Ok(())
 }
 
-fn body_list_arity(arena: &TreeArena, mut body_list: SigId) -> Result<usize, TypeError> {
+fn body_list_arity(arena: &TreeArena, mut body_list: SigId) -> Result<usize, InferenceError> {
     let mut n = 0usize;
     while !arena.is_nil(body_list) {
         let _head = arena.hd(body_list).ok_or_else(|| {
-            TypeError("malformed symbolic recursion body list during discovery".to_owned())
+            InferenceError("malformed symbolic recursion body list during discovery".to_owned())
         })?;
         body_list = arena.tl(body_list).ok_or_else(|| {
-            TypeError("malformed symbolic recursion body list during discovery".to_owned())
+            InferenceError("malformed symbolic recursion body list during discovery".to_owned())
         })?;
         n += 1;
     }
@@ -244,7 +244,10 @@ impl<'a> TypeAnnotator<'a> {
     ///
     /// # C++ source
     /// `typeAnnotation(Tree sig, bool causality)` entry point.
-    pub fn annotate(&mut self, outputs: &[SigId]) -> Result<HashMap<SigId, SigType>, TypeError> {
+    pub fn annotate(
+        &mut self,
+        outputs: &[SigId],
+    ) -> Result<HashMap<SigId, SigType>, InferenceError> {
         let mut rec_state = RecTypingState::discover(self.arena, outputs)?;
         if !rec_state.groups.is_empty() {
             self.solve_recursive_groups(&mut rec_state)?;
@@ -270,7 +273,7 @@ impl<'a> TypeAnnotator<'a> {
     ///
     /// # C++ source
     /// `Type T(Tree term, Tree env)` / `inferSigType(Tree sig, Tree env)`
-    fn infer(&mut self, sig: SigId) -> Result<SigType, TypeError> {
+    fn infer(&mut self, sig: SigId) -> Result<SigType, InferenceError> {
         // Return memoised result if available.
         if let Some(t) = self.env.get(&sig) {
             return Ok(t.clone());
@@ -288,7 +291,7 @@ impl<'a> TypeAnnotator<'a> {
         Ok(ty)
     }
 
-    fn infer_inner(&mut self, sig: SigId) -> Result<SigType, TypeError> {
+    fn infer_inner(&mut self, sig: SigId) -> Result<SigType, InferenceError> {
         match match_sig(self.arena, sig) {
             // ── Literals ────────────────────────────────────────────────────
             SigMatch::Int(n) => Ok(make_simple(
@@ -339,7 +342,7 @@ impl<'a> TypeAnnotator<'a> {
             SigMatch::Delay(x, n) => {
                 let tn = self.infer(n)?;
                 // Validate that the delay amount has a bounded non-negative interval.
-                check_delay_interval(&tn).map_err(|e| TypeError(e.0))?;
+                check_delay_interval(&tn).map_err(|e| InferenceError(e.0))?;
                 let tx = self.infer(x)?;
                 // C++: castInterval(sampCast(t1), itv::reunion(t1->getInterval(), interval(0)))
                 let itv = interval::reunion(tx.interval(), interval::singleton(0.0));
@@ -731,7 +734,7 @@ impl<'a> TypeAnnotator<'a> {
             // infers `x`. Reaching it here means a traversal leaked it into
             // signal position — fail loudly instead of guessing a type
             // (roadmap P0: no silent state for the clocked machinery).
-            SigMatch::ClockEnvToken(id) => Err(TypeError(format!(
+            SigMatch::ClockEnvToken(id) => Err(InferenceError(format!(
                 "clock-env token #{id} reached type inference in signal position; \
                  it must stay an opaque annotation of Clocked(env, y)"
             ))),
@@ -765,11 +768,11 @@ impl<'a> TypeAnnotator<'a> {
                 let mut cur = sig;
                 while !self.arena.is_nil(cur) {
                     let head = self.arena.hd(cur).ok_or_else(|| {
-                        TypeError("malformed cons list during type inference".into())
+                        InferenceError("malformed cons list during type inference".into())
                     })?;
                     components.push(self.infer(head)?);
                     cur = self.arena.tl(cur).ok_or_else(|| {
-                        TypeError("malformed cons list during type inference".into())
+                        InferenceError("malformed cons list during type inference".into())
                     })?;
                 }
                 Ok(make_tuplet(components))
@@ -781,13 +784,17 @@ impl<'a> TypeAnnotator<'a> {
     }
 
     /// Mirrors C++ `checkPartInterval(sig, t)` for soundfile part selectors.
-    fn check_soundfile_part_interval(&self, sig: SigId, ty: &SigType) -> Result<(), TypeError> {
+    fn check_soundfile_part_interval(
+        &self,
+        sig: SigId,
+        ty: &SigType,
+    ) -> Result<(), InferenceError> {
         let interval = ty.interval();
         if !interval.is_valid()
             || interval.lo() < 0.0
             || interval.hi() >= f64::from(MAX_SOUNDFILE_PARTS)
         {
-            return Err(TypeError(format!(
+            return Err(InferenceError(format!(
                 "ERROR : out of range soundfile part number ({} instead of interval(0,{})) in expression : {}",
                 interval,
                 MAX_SOUNDFILE_PARTS - 1,
@@ -797,7 +804,7 @@ impl<'a> TypeAnnotator<'a> {
         Ok(())
     }
 
-    fn solve_recursive_groups(&mut self, state: &mut RecTypingState) -> Result<(), TypeError> {
+    fn solve_recursive_groups(&mut self, state: &mut RecTypingState) -> Result<(), InferenceError> {
         for _ in std::iter::repeat_n((), RECURSIVE_NARROWING_LIMIT) {
             self.update_rec_types(&state.groups, &mut state.upper, true)?;
         }
@@ -834,7 +841,7 @@ impl<'a> TypeAnnotator<'a> {
         groups: &[RecGroup],
         approximations: &mut [SigType],
         inter: bool,
-    ) -> Result<(), TypeError> {
+    ) -> Result<(), InferenceError> {
         self.env.clear();
         self.in_progress.clear();
         self.seed_rec_groups(groups, approximations);
@@ -885,7 +892,7 @@ impl<'a> TypeAnnotator<'a> {
         &mut self,
         sig: SigId,
         visited: &mut HashSet<SigId>,
-    ) -> Result<(), TypeError> {
+    ) -> Result<(), InferenceError> {
         if !visited.insert(sig) {
             return Ok(());
         }
@@ -906,10 +913,10 @@ impl<'a> TypeAnnotator<'a> {
 
         if self.arena.is_list(sig) {
             let head = self.arena.hd(sig).ok_or_else(|| {
-                TypeError("malformed list during reachable type population".into())
+                InferenceError("malformed list during reachable type population".into())
             })?;
             let tail = self.arena.tl(sig).ok_or_else(|| {
-                TypeError("malformed list during reachable type population".into())
+                InferenceError("malformed list during reachable type population".into())
             })?;
             self.populate_reachable_types(head, visited)?;
             self.populate_reachable_types(tail, visited)?;
@@ -922,7 +929,7 @@ impl<'a> TypeAnnotator<'a> {
         }
 
         let node = self.arena.node(sig).ok_or_else(|| {
-            TypeError(format!(
+            InferenceError(format!(
                 "missing signal node {} during type population",
                 sig.as_u32()
             ))
@@ -941,7 +948,7 @@ impl<'a> TypeAnnotator<'a> {
         &mut self,
         x: SigId,
         f: fn(Interval) -> Interval,
-    ) -> Result<SigType, TypeError> {
+    ) -> Result<SigType, InferenceError> {
         let tx = self.infer(x)?;
         let itv = f(tx.interval());
         // Pure math functions preserve the variability of their argument:
@@ -999,7 +1006,7 @@ impl<'a> TypeAnnotator<'a> {
     /// sample-rate values whose startup interval includes zero, just like the
     /// ordinary `Delay` rule. This helper mirrors that expanded expression
     /// enough for type annotation while keeping the compact carrier intact.
-    fn infer_fir_carrier(&mut self, coefs: &[SigId]) -> Result<SigType, TypeError> {
+    fn infer_fir_carrier(&mut self, coefs: &[SigId]) -> Result<SigType, InferenceError> {
         if coefs.len() < 2 {
             return Ok(make_maximal());
         }
@@ -1035,7 +1042,7 @@ impl<'a> TypeAnnotator<'a> {
     /// sample-rate recursive signal. In absence of the fully expanded recursive
     /// equation, the conservative structural type joins the independent input
     /// and feedback coefficient types, then raises variability to `Samp`.
-    fn infer_iir_carrier(&mut self, coefs: &[SigId]) -> Result<SigType, TypeError> {
+    fn infer_iir_carrier(&mut self, coefs: &[SigId]) -> Result<SigType, InferenceError> {
         if coefs.len() < 2 {
             return Ok(make_maximal());
         }
@@ -1114,7 +1121,7 @@ impl<'a> TypeAnnotator<'a> {
         )
     }
 
-    fn infer_bargraph(&mut self, _id: ControlId, x: SigId) -> Result<SigType, TypeError> {
+    fn infer_bargraph(&mut self, _id: ControlId, x: SigId) -> Result<SigType, InferenceError> {
         // C++: T(s1, env)->promoteVariability(kBlock)
         // The lo/hi bound signals are computed for side effects in C++ but their
         // values are NOT reflected in the returned type.  The returned type is the
@@ -1125,7 +1132,11 @@ impl<'a> TypeAnnotator<'a> {
 
     // ── Tables ───────────────────────────────────────────────────────────────
 
-    fn infer_write_table(&mut self, size: SigId, generator: SigId) -> Result<SigType, TypeError> {
+    fn infer_write_table(
+        &mut self,
+        size: SigId,
+        generator: SigId,
+    ) -> Result<SigType, InferenceError> {
         let _tsize = self.infer(size)?;
         let tgen = self.infer(generator)?;
         Ok(make_table_type(tgen))
@@ -1151,7 +1162,7 @@ impl<'a> TypeAnnotator<'a> {
     /// `fLo = std::numeric_limits<double>::lowest()`, `fHi = std::numeric_limits<double>::max()`.
     /// This is the fully-open interval `[f64::MIN, f64::MAX]` — not NaN/empty.
     /// Rust equivalent: `Interval::new_default()`.
-    fn infer_foreign_const_type(&self, kind: SigId) -> Result<SigType, TypeError> {
+    fn infer_foreign_const_type(&self, kind: SigId) -> Result<SigType, InferenceError> {
         Ok(make_simple(
             self.foreign_nature(kind),
             Variability::Konst,
@@ -1168,7 +1179,7 @@ impl<'a> TypeAnnotator<'a> {
     /// `makeSimpleType(tree2int(type), kBlock, kExec, kVect, kNum, interval())`
     ///
     /// Same interval semantics as `inferFConstType` — see that method's doc.
-    fn infer_foreign_var_type(&self, kind: SigId) -> Result<SigType, TypeError> {
+    fn infer_foreign_var_type(&self, kind: SigId) -> Result<SigType, InferenceError> {
         Ok(make_simple(
             self.foreign_nature(kind),
             Variability::Block,
@@ -1179,7 +1190,11 @@ impl<'a> TypeAnnotator<'a> {
         ))
     }
 
-    fn infer_foreign_fun_type(&mut self, ff: SigId, args: SigId) -> Result<SigType, TypeError> {
+    fn infer_foreign_fun_type(
+        &mut self,
+        ff: SigId,
+        args: SigId,
+    ) -> Result<SigType, InferenceError> {
         let ret_nature = self.foreign_fun_return_nature(ff);
         let arg_types = self.infer_list_items(args)?;
         let variability = arg_types
@@ -1214,7 +1229,7 @@ impl<'a> TypeAnnotator<'a> {
     ///   global `annotate(...)` driver before ordinary subtree typing runs,
     /// - this method is therefore only a seeded lookup / conservative fallback,
     ///   not a local recursive solver anymore.
-    fn infer_sym_rec(&mut self, sig: SigId) -> Result<SigType, TypeError> {
+    fn infer_sym_rec(&mut self, sig: SigId) -> Result<SigType, InferenceError> {
         let Some((var, body)) = match_sym_rec(self.arena, sig) else {
             return Ok(make_maximal());
         };
@@ -1232,7 +1247,7 @@ impl<'a> TypeAnnotator<'a> {
     /// `inferProjType(Type t, int i, int vec)` — called with `vec = kScal`.
     /// Each component is promoted by the group's variability/computability, and
     /// vectorability is promoted to kScal (the more conservative of the two).
-    fn infer_proj(&mut self, idx: i32, group: SigId) -> Result<SigType, TypeError> {
+    fn infer_proj(&mut self, idx: i32, group: SigId) -> Result<SigType, InferenceError> {
         let tg = self.infer(group)?;
         let (gv, gc) = (tg.variability(), tg.computability());
         let comp = match &tg {
@@ -1248,15 +1263,15 @@ impl<'a> TypeAnnotator<'a> {
             .promote_vectorability(Vectorability::Scal))
     }
 
-    fn infer_list_items(&mut self, list: SigId) -> Result<Vec<SigType>, TypeError> {
+    fn infer_list_items(&mut self, list: SigId) -> Result<Vec<SigType>, InferenceError> {
         let mut items = Vec::new();
         let mut cursor = list;
         while !self.arena.is_nil(cursor) {
             let head = self.arena.hd(cursor).ok_or_else(|| {
-                TypeError("malformed list payload during foreign function typing".to_owned())
+                InferenceError("malformed list payload during foreign function typing".to_owned())
             })?;
             let tail = self.arena.tl(cursor).ok_or_else(|| {
-                TypeError("malformed list payload during foreign function typing".to_owned())
+                InferenceError("malformed list payload during foreign function typing".to_owned())
             })?;
             items.push(self.infer(head)?);
             cursor = tail;
@@ -1294,15 +1309,19 @@ fn match_ffunction_node(arena: &TreeArena, id: SigId) -> Option<(SigId, SigId, S
 /// Each recursive component starts as an integer sample/init scalar with a
 /// zero interval. The group carrier itself is a tuplet with one such component
 /// per body slot.
-fn initial_rec_type(arena: &TreeArena, body: SigId) -> Result<SigType, TypeError> {
+fn initial_rec_type(arena: &TreeArena, body: SigId) -> Result<SigType, InferenceError> {
     let mut items = Vec::new();
     let mut list = body;
     while !arena.is_nil(list) {
         let _head = arena.hd(list).ok_or_else(|| {
-            TypeError("malformed symbolic recursion body list during type inference".to_owned())
+            InferenceError(
+                "malformed symbolic recursion body list during type inference".to_owned(),
+            )
         })?;
         let tail = arena.tl(list).ok_or_else(|| {
-            TypeError("malformed symbolic recursion body list during type inference".to_owned())
+            InferenceError(
+                "malformed symbolic recursion body list during type inference".to_owned(),
+            )
         })?;
         items.push(make_simple(
             Nature::Int,
@@ -1324,15 +1343,19 @@ fn initial_rec_type(arena: &TreeArena, body: SigId) -> Result<SigType, TypeError
 /// interval to the default full range. In the C++ implementation this upper
 /// bound is used during recursive widening while all other type coordinates
 /// still come from the freshly inferred recursive body.
-fn maximal_rec_type(arena: &TreeArena, body: SigId) -> Result<SigType, TypeError> {
+fn maximal_rec_type(arena: &TreeArena, body: SigId) -> Result<SigType, InferenceError> {
     let mut items = Vec::new();
     let mut list = body;
     while !arena.is_nil(list) {
         let _head = arena.hd(list).ok_or_else(|| {
-            TypeError("malformed symbolic recursion body list during type inference".to_owned())
+            InferenceError(
+                "malformed symbolic recursion body list during type inference".to_owned(),
+            )
         })?;
         let tail = arena.tl(list).ok_or_else(|| {
-            TypeError("malformed symbolic recursion body list during type inference".to_owned())
+            InferenceError(
+                "malformed symbolic recursion body list during type inference".to_owned(),
+            )
         })?;
         items.push(make_simple(
             Nature::Int,
@@ -1347,9 +1370,9 @@ fn maximal_rec_type(arena: &TreeArena, body: SigId) -> Result<SigType, TypeError
     Ok(make_tuplet(items))
 }
 
-fn as_tuplet_type(ty: &SigType) -> Result<&crate::types::TupletType, TypeError> {
+fn as_tuplet_type(ty: &SigType) -> Result<&crate::types::TupletType, InferenceError> {
     let SigType::Tuplet(tuplet) = ty else {
-        return Err(TypeError(
+        return Err(InferenceError(
             "recursive type update expected tuplet approximations".to_owned(),
         ));
     };
@@ -1365,7 +1388,7 @@ fn apply_recursive_widening(
     upper: SigType,
     age_min: &mut [i32],
     age_max: &mut [i32],
-) -> Result<SigType, TypeError> {
+) -> Result<SigType, InferenceError> {
     let prev = as_tuplet_type(&prev)?;
     let next = as_tuplet_type(&next)?;
     let upper = as_tuplet_type(&upper)?;
@@ -1415,7 +1438,7 @@ fn apply_recursive_widening(
 ///
 /// # C++ source
 /// `inferReadTableType(Type tbl, Type ri)`
-fn infer_read_table(tbl: SigType, idx: SigType) -> Result<SigType, TypeError> {
+fn infer_read_table(tbl: SigType, idx: SigType) -> Result<SigType, InferenceError> {
     let content = match &tbl {
         SigType::Table(tt) => *tt.content.clone(),
         other => other.clone(),
@@ -1431,7 +1454,11 @@ fn infer_read_table(tbl: SigType, idx: SigType) -> Result<SigType, TypeError> {
 ///
 /// # C++ source
 /// `inferWriteTableType(Type tbl, Type wi, Type ws)`
-fn infer_write_table_type(tbl: SigType, _wi: SigType, _ws: SigType) -> Result<SigType, TypeError> {
+fn infer_write_table_type(
+    tbl: SigType,
+    _wi: SigType,
+    _ws: SigType,
+) -> Result<SigType, InferenceError> {
     // Return the table type unchanged — writes don't change the table's type.
     Ok(tbl)
 }
@@ -1459,7 +1486,7 @@ mod tests {
         ann.annotate(outputs).expect("annotation failed")
     }
 
-    fn annotate_err(arena: &TreeArena, outputs: &[SigId]) -> TypeError {
+    fn annotate_err(arena: &TreeArena, outputs: &[SigId]) -> InferenceError {
         let ui = empty_ui();
         let mut ann = TypeAnnotator::new(arena, &ui);
         ann.annotate(outputs).expect_err("annotation should fail")

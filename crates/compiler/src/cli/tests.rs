@@ -572,9 +572,7 @@ fn diagnostics_json_renderer_exposes_structured_fields() {
     let err = compiler
         .compile_source_to_signals("missing_process.dsp", "foo = _;")
         .expect_err("missing process should fail");
-    let diagnostics = err
-        .diagnostics()
-        .expect("compiler errors should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
 
     let rendered = format_diagnostics_json(diagnostics);
     let value: Value =
@@ -856,9 +854,7 @@ fn diagnostics_human_renderer_snapshots_cover_complex_phase4_failures() {
         let err = compiler
             .compile_file_default_to_signals(&path)
             .expect_err("fixture should fail in signal pipeline");
-        let diagnostics = err
-            .diagnostics()
-            .expect("fixture error should expose diagnostics");
+        let diagnostics = err.diagnostic_bundle();
         let rendered = format_diagnostics_human(diagnostics);
         let path_text = path.to_string_lossy().to_string();
         let normalized = rendered.replace(&path_text, "$FIXTURE");
@@ -923,9 +919,7 @@ fn diagnostics_json_renderer_snapshots_cover_complex_phase4_failures() {
         let err = compiler
             .compile_file_default_to_signals(&path)
             .expect_err("fixture should fail in signal pipeline");
-        let diagnostics = err
-            .diagnostics()
-            .expect("fixture error should expose diagnostics");
+        let diagnostics = err.diagnostic_bundle();
         let rendered = format_diagnostics_json(diagnostics);
         let value: Value =
             serde_json::from_str(&rendered).expect("JSON diagnostics output should be valid");
@@ -966,9 +960,7 @@ fn diagnostics_human_renderer_snapshot_for_eval_undefined_symbol() {
     let err = compiler
         .compile_file_default_to_signals(&path)
         .expect_err("fixture should fail in eval stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("fixture error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let rendered = format_diagnostics_human(diagnostics);
     let path_text = path.to_string_lossy().to_string();
     let normalized = rendered.replace(&path_text, "$FIXTURE");
@@ -987,9 +979,7 @@ fn diagnostics_human_renderer_snapshot_for_eval_undefined_symbol_alias_chain() {
     let err = compiler
         .compile_file_default_to_signals(&path)
         .expect_err("fixture should fail in eval stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("fixture error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let rendered = format_diagnostics_human(diagnostics);
     let path_text = path.to_string_lossy().to_string();
     let normalized = rendered.replace(&path_text, "$FIXTURE");
@@ -1011,9 +1001,7 @@ fn diagnostics_json_renderer_snapshot_for_eval_undefined_symbol() {
     let err = compiler
         .compile_file_default_to_signals(&path)
         .expect_err("fixture should fail in eval stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("fixture error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let rendered = format_diagnostics_json(diagnostics);
     let value: Value =
         serde_json::from_str(&rendered).expect("JSON diagnostics output should be valid");
@@ -1037,9 +1025,7 @@ fn diagnostics_json_renderer_snapshot_for_eval_undefined_symbol_alias_chain() {
     let err = compiler
         .compile_file_default_to_signals(&path)
         .expect_err("fixture should fail in eval stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("fixture error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let rendered = format_diagnostics_json(diagnostics);
     let value: Value =
         serde_json::from_str(&rendered).expect("JSON diagnostics output should be valid");
@@ -1083,9 +1069,7 @@ fn diagnostics_json_renderer_note_order_for_propagate_split_compound() {
     let err = compiler
         .compile_file_default_to_signals(&path)
         .expect_err("fixture should fail in propagate stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("fixture error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let rendered = format_diagnostics_json(diagnostics);
     let value: Value =
         serde_json::from_str(&rendered).expect("JSON diagnostics output should be valid");
@@ -1113,9 +1097,7 @@ fn diagnostics_json_renderer_note_order_for_propagate_merge_alias() {
     let err = compiler
         .compile_file_default_to_signals(&path)
         .expect_err("fixture should fail in propagate stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("fixture error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let rendered = format_diagnostics_json(diagnostics);
     let value: Value =
         serde_json::from_str(&rendered).expect("JSON diagnostics output should be valid");
@@ -1140,9 +1122,7 @@ fn diagnostics_json_renderer_note_order_for_propagate_rec_alias() {
     let err = compiler
         .compile_file_default_to_signals(&path)
         .expect_err("fixture should fail in propagate stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("fixture error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let rendered = format_diagnostics_json(diagnostics);
     let value: Value =
         serde_json::from_str(&rendered).expect("JSON diagnostics output should be valid");
@@ -1171,9 +1151,7 @@ fn diagnostics_human_renderer_snapshot_for_pipeline_origin_fallback() {
     let err = compiler
         .compile_parsed_to_signals("err_17_origin_fallback_missing_props_eval.dsp", parsed)
         .expect_err("fixture should fail in eval stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("fixture error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let rendered = format_diagnostics_human(diagnostics);
     assert!(rendered.contains("origin span unavailable; pointing to nearest call/owner site"));
 }

@@ -74,7 +74,8 @@ All phases converge to `diagnostics::Diagnostic`:
 - `notes` (cause/rule/computed/context),
 - `help` (actionable fixes).
 
-`DiagnosticBundle` is the transport object exposed by `CompilerError::diagnostics()`.
+`DiagnosticBundle` is the transport object exposed by
+`CompilerError::diagnostic_bundle()`.
 
 ## 5. Current source-label strategy
 

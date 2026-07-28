@@ -34,9 +34,7 @@ fn parse_error_fixture_exposes_frs_parse_code() {
         .compile_source("err_01_parse_missing_rhs.dsp", &source)
         .expect_err("parse error fixture should fail parse stage");
 
-    let diagnostics = err
-        .diagnostics()
-        .expect("parse error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     assert!(
         diagnostics
             .as_slice()
@@ -53,9 +51,7 @@ fn eval_error_fixture_exposes_frs_eval_code() {
         .compile_source_to_signals("err_02_eval_missing_process.dsp", &source)
         .expect_err("eval error fixture should fail eval stage");
 
-    let diagnostics = err
-        .diagnostics()
-        .expect("eval error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     assert!(
         diagnostics
             .as_slice()
@@ -107,9 +103,7 @@ fn eval_error_fixtures_expose_source_labels_and_readable_context() {
             Ok(_) => panic!("{file} should fail in eval stage"),
             Err(err) => err,
         };
-        let diagnostics = err
-            .diagnostics()
-            .unwrap_or_else(|| panic!("{file} should expose diagnostics"));
+        let diagnostics = err.diagnostic_bundle();
         assert!(
             diagnostics
                 .as_slice()
@@ -181,9 +175,7 @@ process = par(i, 3, fact(i));
                 .compile_source_to_signals("fact_stack_overflow.dsp", source)
                 .expect_err("missing factorial base case for fact(0) should fail in eval stage");
 
-            let diagnostics = err
-                .diagnostics()
-                .expect("recursive eval failure should expose diagnostics");
+            let diagnostics = err.diagnostic_bundle();
             let first = diagnostics
                 .as_slice()
                 .first()
@@ -219,9 +211,7 @@ fn eval_undefined_symbol_exposes_binding_trace() {
     let err = compiler
         .compile_source_to_signals("err_09_eval_undefined_symbol.dsp", &source)
         .expect_err("fixture should fail in eval stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("eval error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -266,9 +256,7 @@ fn eval_undefined_symbol_exposes_multi_label_call_and_definition_sites() {
             &source,
         )
         .expect_err("fixture should fail in eval stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("eval error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -303,9 +291,7 @@ fn eval_undefined_symbol_alias_chain_exposes_rule_computed_and_template_help() {
             &source,
         )
         .expect_err("fixture should fail in eval stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("eval error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -373,9 +359,7 @@ fn propagate_error_fixture_exposes_frs_prop_code() {
         .compile_source_to_signals("err_03_propagate_split_mismatch.dsp", &source)
         .expect_err("propagate error fixture should fail propagate stage");
 
-    let diagnostics = err
-        .diagnostics()
-        .expect("propagate error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     assert!(
         diagnostics
             .as_slice()
@@ -429,9 +413,7 @@ fn soundfile_part_interval_error_exposes_compiler_type_diagnostic() {
         .compile_file_default_to_signals(&path)
         .expect_err("soundfile part interval fixture should fail type validation");
 
-    let diagnostics = err
-        .diagnostics()
-        .expect("type validation error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -458,9 +440,7 @@ fn propagate_error_operator_span_points_to_composition_token() {
         .compile_source_to_signals("err_03_propagate_split_mismatch.dsp", &source)
         .expect_err("propagate error fixture should fail propagate stage");
 
-    let diagnostics = err
-        .diagnostics()
-        .expect("propagate error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -506,9 +486,7 @@ fn propagate_error_complex_fixtures_expose_codes_and_source_labels() {
             Err(err) => err,
         };
 
-        let diagnostics = err
-            .diagnostics()
-            .unwrap_or_else(|| panic!("{file} should expose diagnostics"));
+        let diagnostics = err.diagnostic_bundle();
         assert!(
             diagnostics
                 .as_slice()
@@ -538,9 +516,7 @@ fn propagate_split_nested_alias_exposes_trace_and_template_help() {
     let err = compiler
         .compile_source_to_signals("err_14_propagate_split_mismatch_nested_alias.dsp", &source)
         .expect_err("fixture should fail in propagate stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("propagate error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -568,9 +544,7 @@ fn propagate_compound_fixture_exposes_cause_and_template_notes() {
     let err = compiler
         .compile_source_to_signals("err_16_propagate_compound_with_letrec_split.dsp", &source)
         .expect_err("fixture should fail in propagate stage");
-    let diagnostics = err
-        .diagnostics()
-        .expect("propagate error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -598,9 +572,7 @@ fn propagate_error_alias_chain_exposes_binding_trace_note() {
         .compile_source_to_signals("err_06_propagate_split_mismatch_chain.dsp", &source)
         .expect_err("fixture should fail in propagate stage");
 
-    let diagnostics = err
-        .diagnostics()
-        .expect("propagate error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -629,9 +601,7 @@ fn propagate_error_includes_paired_side_context_notes() {
         .compile_source_to_signals("err_05_propagate_merge_mismatch_alias.dsp", &source)
         .expect_err("fixture should fail in propagate stage");
 
-    let diagnostics = err
-        .diagnostics()
-        .expect("propagate error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()
@@ -674,9 +644,7 @@ fn propagate_error_ui_expr_note_is_pretty_printed() {
         .compile_source_to_signals("err_08_propagate_seq_ui_mismatch.dsp", &source)
         .expect_err("fixture should fail in propagate stage");
 
-    let diagnostics = err
-        .diagnostics()
-        .expect("propagate error should expose diagnostics");
+    let diagnostics = err.diagnostic_bundle();
     let first = diagnostics
         .as_slice()
         .first()

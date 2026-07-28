@@ -3,9 +3,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::CraneliftBackendError;
 use super::{
-    Compiler, CompilerError, ComputeMode, ExpandDspRequest, GenerateAuxFilesRequest, RealType,
-    SchedulingStrategy, SignalFirLane, WasmArtifactRequest, build_import_search_paths,
+    AscCodegenError, CCodegenError, CodeboxCodegenError, Compiler, CompilerError, ComputeMode,
+    CppCodegenError, DiagnosticBundle, ExpandDspRequest, GenerateAuxFilesRequest, InferenceError,
+    InterpCodegenError, InterpCodegenErrorCode, JuliaCodegenError, PropagateError, RealType,
+    RustCodegenError, SchedulingStrategy, SignalFirError, SignalFirErrorCode, SignalFirLane,
+    SourceReaderError, WasmArtifactRequest, WasmBackendError, build_import_search_paths,
     compile_options_json_string, default_import_search_paths, golden_snapshot, resolve_module_name,
     resolve_ui_root_label,
 };
@@ -962,4 +967,146 @@ fn ad_seed_references_unify_to_one_control() {
         !cpp.contains("FAUSTFLOAT fHslider1;"),
         "fad seed reference forked into a second control:\n{cpp}"
     );
+}
+
+#[test]
+fn compiler_error_source_classification_covers_every_variant() {
+    fn assert_source_is<T>(error: CompilerError)
+    where
+        T: std::error::Error + 'static,
+    {
+        let source = std::error::Error::source(&error).expect("typed variant must expose a source");
+        assert!(
+            source.is::<T>(),
+            "unexpected source type for compiler error: {error:?}"
+        );
+        let _ = error.diagnostic_bundle();
+    }
+
+    fn assert_has_no_source(error: CompilerError) {
+        assert!(
+            std::error::Error::source(&error).is_none(),
+            "aggregate-only variant must not invent a source: {error:?}"
+        );
+        let _ = error.diagnostic_bundle();
+    }
+
+    let empty = || DiagnosticBundle::new();
+    assert_source_is::<SourceReaderError>(CompilerError::import(SourceReaderError::ImportCycle {
+        path: PathBuf::from("cycle.dsp"),
+    }));
+    assert_source_is::<eval::EvalError>(CompilerError::Eval {
+        source: "eval.dsp".into(),
+        error: Box::new(eval::EvalError::NegativeIterationCount { value: -1 }),
+        diagnostics: empty(),
+    });
+    assert_source_is::<PropagateError>(CompilerError::Propagate {
+        source: "propagate.dsp".into(),
+        error: PropagateError::NegativeIntegerValue {
+            field: "index",
+            value: -1,
+        },
+        diagnostics: empty(),
+    });
+    assert_source_is::<InferenceError>(CompilerError::Type {
+        source: "type.dsp".into(),
+        error: InferenceError("type failure".to_owned()),
+        diagnostics: empty(),
+    });
+    assert_source_is::<crate::execution::ExecutionOptionsError>(CompilerError::ExecutionOptions {
+        source: "options.dsp".into(),
+        error: crate::execution::ExecutionOptionsError::OneSampleWithVectorMode,
+        diagnostics: empty(),
+    });
+    assert_source_is::<SignalFirError>(CompilerError::Transform {
+        source: "transform.dsp".into(),
+        error: SignalFirError::new(SignalFirErrorCode::EmptySignalList, "empty"),
+        diagnostics: empty(),
+    });
+    assert_source_is::<CppCodegenError>(CompilerError::CodegenCpp {
+        source: "cpp.dsp".into(),
+        error: CppCodegenError::new(
+            codegen::backends::cpp::CodegenErrorCode::RootNotModule,
+            "root",
+        ),
+        diagnostics: empty(),
+    });
+    assert_source_is::<CCodegenError>(CompilerError::CodegenC {
+        source: "c.dsp".into(),
+        error: CCodegenError::new(
+            codegen::backends::c::CodegenErrorCode::RootNotModule,
+            "root",
+        ),
+        diagnostics: empty(),
+    });
+    assert_source_is::<JuliaCodegenError>(CompilerError::CodegenJulia {
+        source: "julia.dsp".into(),
+        error: JuliaCodegenError::new(
+            codegen::backends::julia::CodegenErrorCode::RootNotModule,
+            "root",
+        ),
+        diagnostics: empty(),
+    });
+    assert_source_is::<AscCodegenError>(CompilerError::CodegenAsc {
+        source: "asc.dsp".into(),
+        error: AscCodegenError::new(
+            codegen::backends::asc::CodegenErrorCode::RootNotModule,
+            "root",
+        ),
+        diagnostics: empty(),
+    });
+    assert_source_is::<CodeboxCodegenError>(CompilerError::CodegenCodebox {
+        source: "codebox.dsp".into(),
+        error: CodeboxCodegenError::new(
+            codegen::backends::codebox::CodegenErrorCode::RootNotModule,
+            "root",
+        ),
+        diagnostics: empty(),
+    });
+    assert_source_is::<RustCodegenError>(CompilerError::CodegenRust {
+        source: "rust.dsp".into(),
+        error: RustCodegenError::new(
+            codegen::backends::rust::CodegenErrorCode::RootNotModule,
+            "root",
+        ),
+        diagnostics: empty(),
+    });
+    assert_source_is::<InterpCodegenError>(CompilerError::CodegenInterp {
+        source: "interp.dsp".into(),
+        error: InterpCodegenError {
+            code: InterpCodegenErrorCode::RootNotModule,
+            message: "root".to_owned(),
+        },
+        diagnostics: empty(),
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    assert_source_is::<CraneliftBackendError>(CompilerError::CodegenCranelift {
+        source: "cranelift.dsp".into(),
+        error: CraneliftBackendError {
+            code: codegen::backends::cranelift::CraneliftBackendErrorCode::UnsupportedModuleShape,
+            message: "root".to_owned(),
+        },
+        diagnostics: empty(),
+    });
+    assert_source_is::<WasmBackendError>(CompilerError::CodegenWasm {
+        source: "wasm.dsp".into(),
+        error: WasmBackendError::new(
+            codegen::backends::wasm::WasmBackendErrorCode::UnsupportedModuleShape,
+            "root",
+        ),
+        diagnostics: empty(),
+    });
+
+    assert_has_no_source(CompilerError::missing_root("missing.dsp"));
+    assert_has_no_source(CompilerError::Parse {
+        source: "parse.dsp".into(),
+        parse_errors: 1,
+        recoveries: 0,
+        diagnostics: empty(),
+    });
+    assert_has_no_source(CompilerError::FirVerify {
+        source: "fir.dsp".into(),
+        strict: false,
+        diagnostics: empty(),
+    });
 }

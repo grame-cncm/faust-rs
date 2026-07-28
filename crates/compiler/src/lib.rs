@@ -109,6 +109,7 @@ use parser::VirtualSourceMap;
 use parser::{CompilationMetadataKey, CompilationMetadataSnapshot, ParseOutput, SourceReaderError};
 use propagate::{ArityCache, BoxArity, PropagateError, PropagateUiOptions};
 use signals::SigId;
+pub use sigtype::InferenceError;
 use sigtype::TypeAnnotator;
 use tlib::NodeKind;
 pub use transform::schedule::SchedulingStrategy;
@@ -1197,7 +1198,7 @@ pub enum CompilerError {
         /// Program provenance; see the shared field convention.
         source: Box<str>,
         /// Typed error from the stage that failed.
-        error: Box<str>,
+        error: InferenceError,
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
@@ -1385,7 +1386,29 @@ impl std::fmt::Display for CompilerError {
     }
 }
 
-impl std::error::Error for CompilerError {}
+impl std::error::Error for CompilerError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Import(error, _) => Some(error),
+            Self::Eval { error, .. } => Some(error.as_ref()),
+            Self::Propagate { error, .. } => Some(error),
+            Self::Type { error, .. } => Some(error),
+            Self::ExecutionOptions { error, .. } => Some(error),
+            Self::Transform { error, .. } => Some(error),
+            Self::CodegenCpp { error, .. } => Some(error),
+            Self::CodegenC { error, .. } => Some(error),
+            Self::CodegenJulia { error, .. } => Some(error),
+            Self::CodegenAsc { error, .. } => Some(error),
+            Self::CodegenCodebox { error, .. } => Some(error),
+            Self::CodegenRust { error, .. } => Some(error),
+            Self::CodegenInterp { error, .. } => Some(error),
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::CodegenCranelift { error, .. } => Some(error),
+            Self::CodegenWasm { error, .. } => Some(error),
+            Self::MissingRoot { .. } | Self::Parse { .. } | Self::FirVerify { .. } => None,
+        }
+    }
+}
 
 impl CompilerError {
     /// Builds an [`CompilerError::Import`] with its structured `FRS-SRC-*`
@@ -1469,34 +1492,39 @@ impl CompilerError {
 
     /// Returns the structured diagnostics carried by this error.
     ///
-    /// Every variant now carries a bundle, so this never returns `None` — the
-    /// `Option` is kept for source compatibility with existing callers. The
-    /// exhaustive match below is deliberate: it makes the compiler reject a new
-    /// variant that forgets its bundle, which is how the `code: null` fallback
-    /// crept in for import and backend failures in the first place.
+    /// The exhaustive match is deliberate: adding a variant without a bundle
+    /// becomes a compile error instead of silently reaching an unstructured
+    /// renderer fallback.
+    #[must_use]
+    pub fn diagnostic_bundle(&self) -> &DiagnosticBundle {
+        match self {
+            Self::Parse { diagnostics, .. } => diagnostics,
+            Self::Eval { diagnostics, .. } => diagnostics,
+            Self::Propagate { diagnostics, .. } => diagnostics,
+            Self::Type { diagnostics, .. } => diagnostics,
+            Self::Transform { diagnostics, .. } => diagnostics,
+            Self::ExecutionOptions { diagnostics, .. } => diagnostics,
+            Self::FirVerify { diagnostics, .. } => diagnostics,
+            Self::Import(_, diagnostics) => diagnostics,
+            Self::CodegenCpp { diagnostics, .. } => diagnostics,
+            Self::CodegenC { diagnostics, .. } => diagnostics,
+            Self::CodegenJulia { diagnostics, .. } => diagnostics,
+            Self::CodegenAsc { diagnostics, .. } => diagnostics,
+            Self::CodegenCodebox { diagnostics, .. } => diagnostics,
+            Self::CodegenRust { diagnostics, .. } => diagnostics,
+            Self::CodegenInterp { diagnostics, .. } => diagnostics,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::CodegenCranelift { diagnostics, .. } => diagnostics,
+            Self::CodegenWasm { diagnostics, .. } => diagnostics,
+            Self::MissingRoot { diagnostics, .. } => diagnostics,
+        }
+    }
+
+    /// Compatibility wrapper for callers that still expect an optional bundle.
+    #[deprecated(since = "0.5.0", note = "use diagnostic_bundle()")]
     #[must_use]
     pub fn diagnostics(&self) -> Option<&DiagnosticBundle> {
-        match self {
-            Self::Parse { diagnostics, .. } => Some(diagnostics),
-            Self::Eval { diagnostics, .. } => Some(diagnostics),
-            Self::Propagate { diagnostics, .. } => Some(diagnostics),
-            Self::Type { diagnostics, .. } => Some(diagnostics),
-            Self::Transform { diagnostics, .. } => Some(diagnostics),
-            Self::ExecutionOptions { diagnostics, .. } => Some(diagnostics),
-            Self::FirVerify { diagnostics, .. } => Some(diagnostics),
-            Self::Import(_, diagnostics) => Some(diagnostics),
-            Self::CodegenCpp { diagnostics, .. } => Some(diagnostics),
-            Self::CodegenC { diagnostics, .. } => Some(diagnostics),
-            Self::CodegenJulia { diagnostics, .. } => Some(diagnostics),
-            Self::CodegenAsc { diagnostics, .. } => Some(diagnostics),
-            Self::CodegenCodebox { diagnostics, .. } => Some(diagnostics),
-            Self::CodegenRust { diagnostics, .. } => Some(diagnostics),
-            Self::CodegenInterp { diagnostics, .. } => Some(diagnostics),
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::CodegenCranelift { diagnostics, .. } => Some(diagnostics),
-            Self::CodegenWasm { diagnostics, .. } => Some(diagnostics),
-            Self::MissingRoot { diagnostics, .. } => Some(diagnostics),
-        }
+        Some(self.diagnostic_bundle())
     }
 }
 

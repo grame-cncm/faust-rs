@@ -260,7 +260,7 @@ fn check_json_fir_family_failure_is_clean() {
 /// and its own `FRS-CGEN-*` code as notes.
 ///
 /// Until 2026-07-21 all five codegen variants returned `None` from
-/// `CompilerError::diagnostics()`, so a backend failure reached the user
+/// `CompilerError::diagnostic_bundle()`, so a backend failure reached the user
 /// through the `code: null` envelope. One `FRS-CODEGEN-*` code covers every
 /// backend on purpose: the backends already own a 27-code
 /// `FRS-CGEN-<LANG>-NNNN` taxonomy, carried here as a note exactly as

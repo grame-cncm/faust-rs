@@ -98,8 +98,8 @@ impl From<sigtype::TypeError> for NormalFormError {
     }
 }
 
-impl From<sigtype::rules::TypeError> for NormalFormError {
-    fn from(e: sigtype::rules::TypeError) -> Self {
+impl From<sigtype::InferenceError> for NormalFormError {
+    fn from(e: sigtype::InferenceError) -> Self {
         Self::Type(format!("{e}"))
     }
 }

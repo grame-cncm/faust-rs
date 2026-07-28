@@ -264,21 +264,21 @@ pub(crate) fn validate_signal_types(
     annotator
         .annotate(signals)
         .map(|_| ())
-        .map_err(|error| type_error_to_compiler(source, error.0))
+        .map_err(|error| type_error_to_compiler(source, error))
 }
 
 /// Wraps a signal type validation error into the compiler facade error surface.
-pub(crate) fn type_error_to_compiler(source: &str, error: String) -> CompilerError {
+pub(crate) fn type_error_to_compiler(source: &str, error: InferenceError) -> CompilerError {
     let diagnostic = Diagnostic::new(
         Severity::Error,
         Stage::Compiler,
         COMP_TYPE_FAILED,
-        error.clone(),
+        error.0.clone(),
     )
     .with_note("stage=sigtype");
     CompilerError::Type {
         source: source.into(),
-        error: error.into_boxed_str(),
+        error,
         diagnostics: bundle_from_diagnostic(diagnostic),
     }
 }

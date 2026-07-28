@@ -31,5 +31,5 @@ pub use ops::{
     merge_interval, merge_nature, merge_variability, merge_vectorability, num_cast, product_types,
     samp_cast, union_types,
 };
-pub use rules::TypeAnnotator;
+pub use rules::{InferenceError, TypeAnnotator};
 pub use types::{SigType, SimpleType, TableType, TupletType};

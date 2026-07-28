@@ -22,17 +22,10 @@
 //! mode targets a terminal where stdout is reserved for a dump mode's
 //! generated output (`--dump-cpp`, `--dump-sig`, ...).
 //!
-//! Not every [`CompilerError`] variant carries a structured
-//! [`DiagnosticBundle`] -- backend codegen failures and import/source-read
-//! failures do not (see `CompilerError::diagnostics`). For those,
-//! [`print_structured_diagnostics`] still has to uphold the "stdout is
-//! always a single JSON document" contract in JSON mode, so it synthesizes a
-//! minimal one-diagnostic fallback envelope with `code: null` from the
-//! error's `Display` text rather than emitting nothing (see
-//! `porting/mcp-server-analysis-and-plan-2026-07-21-en.md` §1.4.2 for the
-//! measured gap this closes). Minting a real `FRS-*` code for that fallback
-//! is deliberately out of scope here: D3 freezes the current 34-code table
-//! in the same phase, so this module must not grow it.
+//! Every [`CompilerError`] variant carries a structured [`DiagnosticBundle`].
+//! The total `CompilerError::diagnostic_bundle` accessor therefore keeps both
+//! human and JSON rendering on the stable diagnostic model without a
+//! text-only fallback path.
 //!
 //! See `docs/diagnostics-codes-en.md` for the frozen `FRS-*` code table.
 
@@ -51,12 +44,7 @@ pub fn print_structured_diagnostics(
     format: ErrorFormat,
     verbosity: ErrorVerbosity,
 ) {
-    let Some(bundle) = err.diagnostics() else {
-        if matches!(format, ErrorFormat::Json) {
-            println!("{}", format_fallback_diagnostics_json(err));
-        }
-        return;
-    };
+    let bundle = err.diagnostic_bundle();
     match format {
         ErrorFormat::Human => match verbosity {
             ErrorVerbosity::Standard => eprint!("{}", format_diagnostics_human(bundle)),
@@ -73,39 +61,6 @@ pub fn print_structured_diagnostics(
             ),
         },
     }
-}
-
-/// Synthesizes a minimal one-diagnostic JSON envelope for [`CompilerError`]
-/// variants that carry no structured [`DiagnosticBundle`] (backend codegen
-/// failures, import/source-read failures -- see `CompilerError::diagnostics`).
-///
-/// The envelope uses the exact same shape as [`format_diagnostics_json`]
-/// (`{"diagnostics": [...]}` with the same per-diagnostic keys) so a JSON
-/// consumer never needs a second schema; the only observable difference is
-/// `code: null`, which a consumer can use to detect "unstructured legacy
-/// error text" versus a stable `FRS-*` code.
-fn format_fallback_diagnostics_json(err: &CompilerError) -> String {
-    serde_json::to_string_pretty(&json!({
-        "diagnostics": [{
-            "severity": "error",
-            "stage": "compiler",
-            "code": serde_json::Value::Null,
-            "message": err.to_string(),
-            "labels": [],
-            "notes": [],
-            "help": [],
-            "context": {
-                "owner_definition": serde_json::Value::Null,
-                "binding_trace_path": serde_json::Value::Null,
-                "scope": {
-                    "local": serde_json::Value::Null,
-                    "visible": serde_json::Value::Null,
-                    "top_level": serde_json::Value::Null,
-                }
-            }
-        }]
-    }))
-    .expect("fallback diagnostics JSON formatting should not fail")
 }
 
 /// Formats diagnostics in a human-oriented form.
