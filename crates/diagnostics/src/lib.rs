@@ -260,10 +260,10 @@ impl From<Vec<Diagnostic>> for DiagnosticBundle {
     }
 }
 
-/// Conversion contract for phase-local errors to diagnostics.
-pub trait IntoDiagnostic {
-    /// Converts one phase-local error value into a structured [`Diagnostic`].
-    fn into_diagnostic(self) -> Diagnostic;
+/// Borrowing conversion contract for phase-local errors to diagnostics.
+pub trait ToDiagnostic {
+    /// Builds a structured [`Diagnostic`] without consuming the phase-local error.
+    fn to_diagnostic(&self) -> Diagnostic;
 }
 
 #[cfg(test)]

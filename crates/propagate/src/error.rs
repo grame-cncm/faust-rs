@@ -219,8 +219,8 @@ impl From<FlatBoxBuildError> for PropagateError {
 }
 
 /// Converts propagation errors into structured diagnostics used by the compiler facade.
-impl IntoDiagnostic for PropagateError {
-    fn into_diagnostic(self) -> Diagnostic {
+impl ToDiagnostic for PropagateError {
+    fn to_diagnostic(&self) -> Diagnostic {
         let message = self.to_string();
         match self {
             Self::UnsupportedBox { .. } => {
@@ -271,7 +271,7 @@ impl IntoDiagnostic for PropagateError {
                 .with_note(format!(
                     "split composition requires right inputs ({right_inputs}) to be divisible by left outputs ({left_outputs})"
                 ))
-                .with_note(if left_outputs == 0 {
+                .with_note(if *left_outputs == 0 {
                     "computed: divisor outputs(A)=0 is invalid".to_owned()
                 } else {
                     format!(
@@ -279,12 +279,12 @@ impl IntoDiagnostic for PropagateError {
                         right_inputs % left_outputs
                     )
                 })
-                .with_note(if left_outputs == 0 {
+                .with_note(if *left_outputs == 0 {
                     "suggested target: outputs(A) must be > 0 before divisibility can be satisfied".to_owned()
                 } else {
                     let next = right_inputs
                         .saturating_add(left_outputs - 1)
-                        .checked_div(left_outputs)
+                        .checked_div(*left_outputs)
                         .expect("left_outputs is non-zero in split arity target")
                         * left_outputs;
                     format!(
@@ -304,7 +304,7 @@ impl IntoDiagnostic for PropagateError {
                 .with_note(format!(
                     "merge composition requires left outputs ({left_outputs}) to be a multiple of right inputs ({right_inputs})"
                 ))
-                .with_note(if right_inputs == 0 {
+                .with_note(if *right_inputs == 0 {
                     "computed: divisor inputs(B)=0 is invalid".to_owned()
                 } else {
                     format!(
@@ -312,12 +312,12 @@ impl IntoDiagnostic for PropagateError {
                         left_outputs % right_inputs
                     )
                 })
-                .with_note(if right_inputs == 0 {
+                .with_note(if *right_inputs == 0 {
                     "suggested target: inputs(B) must be > 0 before multiple constraints can be satisfied".to_owned()
                 } else {
                     let next = left_outputs
                         .saturating_add(right_inputs - 1)
-                        .checked_div(right_inputs)
+                        .checked_div(*right_inputs)
                         .expect("right_inputs is non-zero in merge arity target")
                         * right_inputs;
                     format!(
@@ -425,7 +425,7 @@ impl IntoDiagnostic for PropagateError {
             .with_note(format!(
                 "cause: {pass} produced a de Bruijn reference outside its local recursive scope"
             ))
-            .with_note(detail)
+            .with_note(detail.as_str())
             .with_help("this indicates an internal AD transform bug; preserve the failing DSP as a regression fixture"),
             Self::RadUnsupportedNode { kind, .. } => {
                 // Tailor the diagnostic by family so users get an actionable
@@ -436,7 +436,7 @@ impl IntoDiagnostic for PropagateError {
                     codes::PROP_UNSUPPORTED_BOX,
                     message,
                 );
-                match kind {
+                match *kind {
                     "delay-or-prefix" => {
                         diag = diag
                             .with_note(

@@ -99,7 +99,7 @@ use codegen::json::{
 pub use diagnostics::{
     Diagnostic, DiagnosticBundle, DiagnosticCode, Label, LabelStyle, Severity, SourceSpan, Stage,
 };
-use diagnostics::{IntoDiagnostic, codes::COMP_TYPE_FAILED};
+use diagnostics::{ToDiagnostic, codes::COMP_TYPE_FAILED};
 use fir::{
     FirId, FirStore,
     checker::{FirVerifyReport, Severity as FirVerifySeverity, verify_fir_module},
@@ -982,7 +982,7 @@ impl Compiler {
             let node = eval_error_node(&error);
             let owner =
                 node.and_then(|n| owner_definition_name_for_node(&output.state.arena, root, n));
-            let mut diagnostic = error.clone().into_diagnostic();
+            let mut diagnostic = error.to_diagnostic();
             if let Some(n) = node {
                 diagnostic = enrich_diagnostic_with_node(
                     diagnostic,

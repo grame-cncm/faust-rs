@@ -10,7 +10,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use boxes::{BoxBuilder, BoxMatch, match_box};
-use diagnostics::{IntoDiagnostic, Severity, Stage, codes};
+use diagnostics::{Severity, Stage, ToDiagnostic, codes};
 use eval::{
     Environment, EvalError, EvalSourceContext, LoopDetector, eval_box, eval_process,
     eval_process_with_source_context, eval_process_with_stats,
@@ -1689,12 +1689,14 @@ fn eval_case_under_application_preserves_residual_case_and_no_match_still_errors
 #[test]
 fn eval_error_converts_to_structured_diagnostic_codes() {
     let arena = TreeArena::new();
-    let missing = EvalError::MissingProcessDefinition {
+    let missing_error = EvalError::MissingProcessDefinition {
         entrypoint: "process".to_owned(),
         definitions: arena.nil(),
         available_defs: vec!["foo".to_owned()],
-    }
-    .into_diagnostic();
+    };
+    let missing_display = missing_error.to_string();
+    let missing = missing_error.to_diagnostic();
+    assert_eq!(missing_error.to_string(), missing_display);
     assert_eq!(missing.severity, Severity::Error);
     assert_eq!(missing.stage, Stage::Eval);
     assert_eq!(missing.code, codes::EVAL_MISSING_PROCESS);
@@ -1705,7 +1707,7 @@ fn eval_error_converts_to_structured_diagnostic_codes() {
         definitions: arena.nil(),
         available_defs: vec!["foo".to_owned()],
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert!(
         missing_custom.message.contains("missing `dsp` definition"),
         "custom entrypoint message should mention the requested name"
@@ -1718,7 +1720,7 @@ fn eval_error_converts_to_structured_diagnostic_codes() {
         visible_scope: vec!["x".to_owned(), "y".to_owned()],
         top_level_scope: vec!["y".to_owned()],
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert_eq!(undef.code, codes::EVAL_UNDEFINED_SYMBOL);
     assert!(
         undef
@@ -1728,7 +1730,7 @@ fn eval_error_converts_to_structured_diagnostic_codes() {
         "undefined-symbol diagnostics should expose explicit cause note"
     );
 
-    let iter = EvalError::NegativeIterationCount { value: -1 }.into_diagnostic();
+    let iter = EvalError::NegativeIterationCount { value: -1 }.to_diagnostic();
     assert_eq!(iter.code, codes::EVAL_ITERATION_INVALID);
     assert!(!iter.help.is_empty());
     assert!(
@@ -1743,7 +1745,7 @@ fn eval_error_converts_to_structured_diagnostic_codes() {
         expected: 2,
         got: 3,
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert_eq!(arity.code, codes::EVAL_ARITY_MISMATCH);
     assert!(!arity.notes.is_empty());
 
@@ -1752,7 +1754,7 @@ fn eval_error_converts_to_structured_diagnostic_codes() {
         first_def: arena.nil(),
         second_def: arena.nil(),
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert_eq!(redef.code, codes::EVAL_REDEFINED_SYMBOL);
     assert_eq!(redef.severity, Severity::Error);
     assert!(

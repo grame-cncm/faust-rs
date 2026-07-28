@@ -657,14 +657,14 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `validate_execution_options` | `crates/compiler/src/execution.rs:326` |
 | `fn` | `golden_snapshot` | `crates/compiler/src/golden.rs:32` |
 | `fn` | `golden_snapshot_from_file` | `crates/compiler/src/golden.rs:47` |
-| `fn` | `compile_options_json_string` | `crates/compiler/src/json_naming.rs:210` |
+| `fn` | `compile_options_json_string` | `crates/compiler/src/json_naming.rs:214` |
 | `mod` | `enrobage` | `crates/compiler/src/lib.rs:42` |
 | `mod` | `execution` | `crates/compiler/src/lib.rs:54` |
 | `use` | `golden` | `crates/compiler/src/lib.rs:59` |
 | `use` | `json_naming` | `crates/compiler/src/lib.rs:60` |
 | `use` | `paths` | `crates/compiler/src/lib.rs:61` |
 | `use` | `signal_lowering::render_cranelift_module_report` | `crates/compiler/src/lib.rs:63` |
-| `use` | `diagnostics` | `crates/compiler/src/lib.rs:100` |
+| `use` | `diagnostics` | `crates/compiler/src/lib.rs:99` |
 | `use` | `transform::schedule::SchedulingStrategy` | `crates/compiler/src/lib.rs:114` |
 | `use` | `transform::signal_fir` | `crates/compiler/src/lib.rs:115` |
 | `struct` | `SignalCompileOutput` | `crates/compiler/src/lib.rs:132` |
@@ -803,7 +803,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `len` | `crates/diagnostics/src/lib.rs:237` |
 | `fn` | `is_empty` | `crates/diagnostics/src/lib.rs:243` |
 | `fn` | `error_count` | `crates/diagnostics/src/lib.rs:249` |
-| `trait` | `IntoDiagnostic` | `crates/diagnostics/src/lib.rs:264` |
+| `trait` | `ToDiagnostic` | `crates/diagnostics/src/lib.rs:264` |
 
 ## `doc`
 

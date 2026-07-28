@@ -5,7 +5,7 @@
 //! - Guards regression/parity behavior on representative fixtures and corpus cases.
 
 use boxes::{BoxBuilder, BoxMatch, match_box};
-use diagnostics::{IntoDiagnostic, Severity, Stage, codes};
+use diagnostics::{Severity, Stage, ToDiagnostic, codes};
 use propagate::{
     ArityCache, FlatBoxBuildError, FlatBoxId, PropagateError, PropagateUiOptions, box_arity_typed,
     make_sig_input_list, propagate_typed, propagate_typed_with_ui, propagate_typed_with_ui_options,
@@ -1768,7 +1768,7 @@ fn propagate_reverse_ad_delay_or_prefix_kind_has_temporal_diagnostic() {
         node: arena.nil(),
         kind: "delay-or-prefix",
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert!(
         diag.notes
             .iter()
@@ -1898,7 +1898,7 @@ fn propagate_reverse_ad_ltv_recursive_kind_has_block_replay_diagnostic() {
         node: arena.nil(),
         kind: "recursive-block-linear-time-varying",
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert!(
         diag.notes.iter().any(|n| n.contains("BlockReverseAD")),
         "LTV recursive RAD diagnostic must point at the BlockReverseAD fallback"
@@ -1934,7 +1934,7 @@ fn propagate_reverse_ad_nonlinear_recursive_kind_has_bptt_diagnostic() {
         node: arena.nil(),
         kind: "recursive-bptt-required",
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert!(
         diag.notes.iter().any(|n| n.contains("BlockReverseAD")),
         "nonlinear recursive RAD diagnostic must point at the BlockReverseAD fallback"
@@ -1965,11 +1965,13 @@ fn propagate_error_converts_to_structured_diagnostic_codes() {
     let mut arena = TreeArena::new();
     let node = BoxBuilder::new(&mut arena).wire();
 
-    let unsupported = PropagateError::UnsupportedBox {
+    let unsupported_error = PropagateError::UnsupportedBox {
         node,
         kind: "ident",
-    }
-    .into_diagnostic();
+    };
+    let unsupported_display = unsupported_error.to_string();
+    let unsupported = unsupported_error.to_diagnostic();
+    assert_eq!(unsupported_error.to_string(), unsupported_display);
     assert_eq!(unsupported.severity, Severity::Error);
     assert_eq!(unsupported.stage, Stage::Propagate);
     assert_eq!(unsupported.code, codes::PROP_UNSUPPORTED_BOX);
@@ -1987,7 +1989,7 @@ fn propagate_error_converts_to_structured_diagnostic_codes() {
         expected: 2,
         got: 1,
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert_eq!(arity.code, codes::PROP_ARITY_MISMATCH);
     assert!(!arity.notes.is_empty());
     assert!(
@@ -2004,7 +2006,7 @@ fn propagate_error_converts_to_structured_diagnostic_codes() {
         left_outputs: 2,
         right_inputs: 3,
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert_eq!(split.code, codes::PROP_ARITY_MISMATCH);
     assert!(split.notes.iter().any(|n| n.contains("rule: split(A, B)")));
     assert!(
@@ -2034,7 +2036,7 @@ fn propagate_error_converts_to_structured_diagnostic_codes() {
         right_inputs: 2,
         right_outputs: 1,
     }
-    .into_diagnostic();
+    .to_diagnostic();
     assert_eq!(rec.code, codes::PROP_RECURSION_MISMATCH);
     assert!(!rec.notes.is_empty());
     assert!(!rec.help.is_empty());

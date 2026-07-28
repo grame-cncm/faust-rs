@@ -385,7 +385,7 @@ of latency and memory footprints before merge.
   for `FlatNodeKind::ReverseAD`.
 - `RadBodyArity` / `RadSeedArity` / `RadUnsupportedNode` diagnostics:
   [crates/propagate/src/error.rs](../crates/propagate/src/error.rs), in the
-  `IntoDiagnostic` implementation for `PropagateError`.
+  `ToDiagnostic` implementation for `PropagateError`.
 - `BlockReverseAD` FIR lowering:
   [crates/transform/src/signal_fir/block_reverse_ad.rs](../crates/transform/src/signal_fir/block_reverse_ad.rs).
 - Stateful RAD feasibility classifier:

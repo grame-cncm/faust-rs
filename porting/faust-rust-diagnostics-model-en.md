@@ -144,8 +144,8 @@ Codes are stable contracts for tests, CI triage, and tooling integration.
 Each phase error type must implement conversion to diagnostics:
 
 ```rust
-pub trait IntoDiagnostic {
-    fn into_diagnostic(self) -> Diagnostic;
+pub trait ToDiagnostic {
+    fn to_diagnostic(&self) -> Diagnostic;
 }
 ```
 

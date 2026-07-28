@@ -15,7 +15,7 @@
    - `eval::eval_process` (boxes resolution),
    - `propagate::box_arity` then `propagate::propagate` (signals and arity checks).
 4. `EvalError` / `PropagateError` are converted to structured diagnostics through
-   `diagnostics::IntoDiagnostic`, then enriched in compiler with context:
+   `diagnostics::ToDiagnostic`, then enriched in compiler with context:
    - node id and compact expression previews,
    - owner definition / alias binding trace,
    - source labels resolved from parser properties.
@@ -26,7 +26,7 @@
 
 ## 2. Parser context contract
 
-`ParserCtx` (in `crates/parser-proto/src/context.rs`) is the parser-local replacement for
+`ParserCtx` (in `crates/parser/src/context.rs`) is the parser-local replacement for
 legacy parser globals:
 
 - source cursor (`file`, `line`, `col`, `end_line`, `end_col`),

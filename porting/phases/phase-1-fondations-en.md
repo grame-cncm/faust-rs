@@ -270,8 +270,8 @@ pub struct FaustError {
 impl std::error::Error for FaustError {}
 
 /// Conversion contract for phase-local errors
-pub trait IntoDiagnostic {
-    fn into_diagnostic(self) -> Diagnostic;
+pub trait ToDiagnostic {
+    fn to_diagnostic(&self) -> Diagnostic;
 }
 ```
 

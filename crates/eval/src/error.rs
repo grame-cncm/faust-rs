@@ -4,7 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
 use diagnostics::codes;
-use diagnostics::{Diagnostic, IntoDiagnostic, Severity, Stage};
+use diagnostics::{Diagnostic, Severity, Stage, ToDiagnostic};
 use tlib::TreeId;
 
 /// Performance statistics collected during evaluation.
@@ -68,7 +68,7 @@ pub struct EvalStats {
 /// Evaluator error.
 ///
 /// Each variant corresponds to a distinct failure mode of the evaluation phase. All variants
-/// carry enough context to produce rich diagnostics via [`IntoDiagnostic`].
+/// carry enough context to produce rich diagnostics via [`ToDiagnostic`].
 ///
 /// # C++ correspondence
 ///
@@ -389,8 +389,8 @@ impl std::error::Error for EvalError {}
 ///
 /// This keeps `EvalError` as the local phase error type while exposing
 /// stable stage/code metadata for compiler-level aggregation and CLI rendering.
-impl IntoDiagnostic for EvalError {
-    fn into_diagnostic(self) -> Diagnostic {
+impl ToDiagnostic for EvalError {
+    fn to_diagnostic(&self) -> Diagnostic {
         let message = self.to_string();
         match self {
             Self::MissingProcessDefinition {
@@ -475,7 +475,7 @@ impl IntoDiagnostic for EvalError {
             .with_note("rule: case rule arity must match provided argument tuple arity")
             .with_note(format!(
                 "computed: expected={expected}, provided={got}, delta={}",
-                got as i128 - expected as i128
+                *got as i128 - *expected as i128
             ))
             .with_note(format!(
                 "suggested target: call case function with exactly {expected} argument(s)"
@@ -494,11 +494,11 @@ impl IntoDiagnostic for EvalError {
             )
             .with_note(format!(
                 "computed: provided={got}, expected_max={expected}, overflow={}",
-                got.saturating_sub(expected)
+                got.saturating_sub(*expected)
             ))
             .with_note(format!(
                 "suggested target: remove {} extra argument(s)",
-                got.saturating_sub(expected)
+                got.saturating_sub(*expected)
             ))
             .with_help("remove extra arguments or expand the function input arity")
             .with_help("template: f(a, b); // keep provided args <= function input arity"),
@@ -682,9 +682,9 @@ impl IntoDiagnostic for EvalError {
                 max_bits,
             } => {
                 let (init, min, max) = (
-                    f64::from_bits(init_bits),
-                    f64::from_bits(min_bits),
-                    f64::from_bits(max_bits),
+                    f64::from_bits(*init_bits),
+                    f64::from_bits(*min_bits),
+                    f64::from_bits(*max_bits),
                 );
                 Diagnostic::new(
                     Severity::Error,
