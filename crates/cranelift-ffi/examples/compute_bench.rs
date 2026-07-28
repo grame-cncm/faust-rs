@@ -1,8 +1,9 @@
 use std::ffi::{CStr, CString};
 use std::hint::black_box;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use clap::{ArgGroup, Parser, ValueEnum};
 use codegen::backends::cranelift::{CraneliftOptions, generate_cranelift_module};
 use codegen::backends::interp::{InterpOptions, generate_interp_module, write_fbc};
 use codegen::fixtures::{build_heavy_bench_test_module, build_sine_phasor_test_module};
@@ -27,6 +28,35 @@ const SAMPLE_RATE: i32 = 48_000;
 const BLOCK_SIZE: usize = 64;
 const NUM_BLOCKS: usize = 4096;
 const WARMUP_BLOCKS: usize = 256;
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Fixture {
+    #[value(name = "sine_phasor")]
+    SinePhasor,
+    #[value(name = "heavy_bench")]
+    HeavyBench,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "compute_bench",
+    about = "Compare interpreter and Cranelift compute throughput",
+    group(
+        ArgGroup::new("input")
+            .required(true)
+            .multiple(false)
+            .args(["dsp", "fixture"])
+    )
+)]
+struct CliArgs {
+    /// Faust DSP source file.
+    #[arg(value_name = "DSP")]
+    dsp: Option<PathBuf>,
+
+    /// Built-in compiler fixture.
+    #[arg(long, value_enum)]
+    fixture: Option<Fixture>,
+}
 
 type ComputeFn =
     unsafe extern "C" fn(*mut std::ffi::c_void, i32, *mut *mut FaustFloat, *mut *mut FaustFloat);
@@ -425,21 +455,12 @@ fn run_cranelift_fixture_heavy_bench() -> Result<(Duration, f64), String> {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let input = match args.as_slice() {
-        [flag, name] if flag == "--fixture" && name == "sine_phasor" => {
-            BenchInput::FixtureSinePhasor
-        }
-        [flag, name] if flag == "--fixture" && name == "heavy_bench" => {
-            BenchInput::FixtureHeavyBench
-        }
-        [dsp] => BenchInput::DspFile(Path::new(dsp)),
-        _ => {
-            eprintln!(
-                "usage:\n  cargo run -p cranelift-ffi --release --example compute_bench -- <dsp-file>\n  cargo run -p cranelift-ffi --release --example compute_bench -- --fixture sine_phasor\n  cargo run -p cranelift-ffi --release --example compute_bench -- --fixture heavy_bench"
-            );
-            std::process::exit(2);
-        }
+    let args = CliArgs::parse();
+    let input = match (args.dsp.as_deref(), args.fixture) {
+        (Some(path), None) => BenchInput::DspFile(path),
+        (None, Some(Fixture::SinePhasor)) => BenchInput::FixtureSinePhasor,
+        (None, Some(Fixture::HeavyBench)) => BenchInput::FixtureHeavyBench,
+        _ => unreachable!("Clap requires exactly one benchmark input"),
     };
     let total_samples = (BLOCK_SIZE * NUM_BLOCKS) as f64;
 
@@ -473,4 +494,23 @@ fn main() {
         clif_sum
     );
     println!("Speedup (Cranelift vs Interp): {:.2}x", speedup);
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::CliArgs;
+
+    #[test]
+    fn cli_requires_one_dsp_or_fixture() {
+        CliArgs::command().debug_assert();
+        assert!(CliArgs::try_parse_from(["compute_bench", "test.dsp"]).is_ok());
+        assert!(CliArgs::try_parse_from(["compute_bench", "--fixture", "sine_phasor"]).is_ok());
+        assert!(CliArgs::try_parse_from(["compute_bench"]).is_err());
+        assert!(
+            CliArgs::try_parse_from(["compute_bench", "test.dsp", "--fixture", "heavy_bench"])
+                .is_err()
+        );
+    }
 }

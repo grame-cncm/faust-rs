@@ -5,23 +5,25 @@
 //! - Measures baseline timings for creation and lookup patterns.
 //! - Supports optional preallocation mode (`--prealloc`) for capacity studies.
 
-use std::env;
 use std::hint::black_box;
 use std::time::Instant;
 
+use clap::Parser;
 use tlib::{NodeKind, PropertyStore, TreeArena};
 
-fn parse_args() -> (usize, bool) {
-    let mut n = 200_000usize;
-    let mut prealloc = false;
-    for arg in env::args().skip(1) {
-        if arg == "--prealloc" {
-            prealloc = true;
-        } else if let Ok(parsed) = arg.parse::<usize>() {
-            n = parsed;
-        }
-    }
-    (n, prealloc)
+#[derive(Debug, Parser)]
+#[command(
+    name = "treearena_bench",
+    about = "Benchmark TreeArena interning and property operations"
+)]
+struct CliArgs {
+    /// Number of nodes in each benchmark phase.
+    #[arg(default_value_t = 200_000)]
+    nodes: usize,
+
+    /// Reserve the expected arena and property capacities up front.
+    #[arg(long)]
+    prealloc: bool,
 }
 
 fn make_arena(n: usize, prealloc: bool) -> TreeArena {
@@ -42,7 +44,9 @@ fn make_arena(n: usize, prealloc: bool) -> TreeArena {
 }
 
 fn main() {
-    let (n, prealloc) = parse_args();
+    let args = CliArgs::parse();
+    let n = args.nodes;
+    let prealloc = args.prealloc;
 
     let mut arena = make_arena(n, prealloc);
     let mut nodes = Vec::with_capacity(n);
@@ -128,4 +132,23 @@ fn main() {
         prop_get_elapsed.as_secs_f64() * 1_000.0
     );
     println!("arena_nodes={}", arena.len());
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::CliArgs;
+
+    #[test]
+    fn cli_preserves_defaults_and_option_order() {
+        CliArgs::command().debug_assert();
+        let defaults = CliArgs::try_parse_from(["treearena_bench"]).unwrap();
+        assert_eq!(defaults.nodes, 200_000);
+        assert!(!defaults.prealloc);
+
+        let reordered = CliArgs::try_parse_from(["treearena_bench", "--prealloc", "12"]).unwrap();
+        assert_eq!(reordered.nodes, 12);
+        assert!(reordered.prealloc);
+    }
 }

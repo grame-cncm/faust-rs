@@ -24,3 +24,6 @@ cranelift-frontend = "0.117"
 cranelift-jit = "0.117"
 cranelift-module = "0.117"
 cranelift-native = "0.117"
+
+[dev-dependencies]
+clap.workspace = true

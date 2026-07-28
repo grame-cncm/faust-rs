@@ -12,22 +12,61 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use clap::{Parser, ValueEnum};
 use compiler::{
     Compiler, ComputeMode, RealType, SchedulingStrategy, SignalFirLane, VectorPipelineStatus,
 };
 
-fn parse_precision(args: &[String]) -> RealType {
-    let Some(value) = args.iter().find_map(|arg| arg.strip_prefix("--precision=")) else {
-        return RealType::Float64;
-    };
-    match value {
-        "f32" | "float" | "single" => RealType::Float32,
-        "f64" | "double" => RealType::Float64,
-        _ => {
-            eprintln!("invalid precision: {value} (expected f32 or f64)");
-            std::process::exit(2);
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Precision {
+    #[value(aliases = ["float", "single"])]
+    F32,
+    #[value(aliases = ["double"])]
+    F64,
+}
+
+impl From<Precision> for RealType {
+    fn from(value: Precision) -> Self {
+        match value {
+            Precision::F32 => Self::Float32,
+            Precision::F64 => Self::Float64,
         }
     }
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "count_vector_corpus",
+    about = "Measure checked-vector coverage over the impulse-test corpus"
+)]
+struct CliArgs {
+    /// Vector loop variant.
+    #[arg(default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=1))]
+    loop_variant: u8,
+
+    /// Scheduling strategy selector.
+    #[arg(default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=3))]
+    scheduling_strategy: u8,
+
+    /// Floating-point precision.
+    #[arg(long, value_enum, default_value = "f64")]
+    precision: Precision,
+
+    /// Emit the machine-readable coverage report.
+    #[arg(long)]
+    json: bool,
+
+    /// Retain corpus paths containing this substring.
+    #[arg(long)]
+    filter: Option<String>,
+
+    /// Process one INDEX/COUNT shard of the sorted corpus.
+    #[arg(long, value_parser = parse_shard)]
+    shard: Option<(usize, usize)>,
+
+    /// Also measure a scalar compile for each selected DSP.
+    #[arg(long)]
+    compare_scalar_time: bool,
 }
 
 fn precision_name(real_type: RealType) -> &'static str {
@@ -44,23 +83,7 @@ fn portable_path(path: &std::path::Path) -> String {
         .join("/")
 }
 
-fn parse_arg(args: &[String], index: usize, default: u8, name: &str) -> u8 {
-    args.get(index)
-        .map_or(Ok(default), |value| {
-            value
-                .parse::<u8>()
-                .map_err(|_| format!("invalid {name}: {value}"))
-        })
-        .unwrap_or_else(|error| {
-            eprintln!("{error}");
-            std::process::exit(2);
-        })
-}
-
-fn parse_shard(args: &[String]) -> Result<Option<(usize, usize)>, String> {
-    let Some(value) = args.iter().find_map(|arg| arg.strip_prefix("--shard=")) else {
-        return Ok(None);
-    };
+fn parse_shard(value: &str) -> Result<(usize, usize), String> {
     let (index, count) = value
         .split_once('/')
         .ok_or_else(|| format!("invalid shard: {value} (expected INDEX/COUNT)"))?;
@@ -75,59 +98,61 @@ fn parse_shard(args: &[String]) -> Result<Option<(usize, usize)>, String> {
             "invalid shard: {value} (COUNT must be positive and INDEX < COUNT)"
         ));
     }
-    Ok(Some((index, count)))
+    Ok((index, count))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_shard;
+    use clap::{CommandFactory, Parser};
+
+    use super::{CliArgs, parse_shard};
 
     #[test]
     fn shard_argument_is_checked() {
-        assert_eq!(
-            parse_shard(&["scan".to_owned(), "--shard=2/4".to_owned()]),
-            Ok(Some((2, 4)))
-        );
-        assert!(parse_shard(&["scan".to_owned(), "--shard=4/4".to_owned()]).is_err());
-        assert!(parse_shard(&["scan".to_owned(), "--shard=0/0".to_owned()]).is_err());
-        assert!(parse_shard(&["scan".to_owned(), "--shard=bad".to_owned()]).is_err());
+        assert_eq!(parse_shard("2/4"), Ok((2, 4)));
+        assert!(parse_shard("4/4").is_err());
+        assert!(parse_shard("0/0").is_err());
+        assert!(parse_shard("bad").is_err());
+    }
+
+    #[test]
+    fn clap_preserves_positional_and_equals_forms() {
+        CliArgs::command().debug_assert();
+        let args = CliArgs::try_parse_from([
+            "count_vector_corpus",
+            "1",
+            "3",
+            "--precision=f32",
+            "--filter=delay",
+            "--shard=2/4",
+            "--json",
+        ])
+        .unwrap();
+        assert_eq!(args.loop_variant, 1);
+        assert_eq!(args.scheduling_strategy, 3);
+        assert_eq!(args.shard, Some((2, 4)));
     }
 }
 
 fn main() {
+    let args = CliArgs::parse();
     std::thread::Builder::new()
         .name("vector-corpus-scan".to_owned())
         .stack_size(64 * 1024 * 1024)
-        .spawn(run)
+        .spawn(move || run(args))
         .expect("spawn vector corpus scan thread")
         .join()
         .expect("vector corpus scan thread");
 }
 
-fn run() {
-    let args = std::env::args().collect::<Vec<_>>();
-    let positional = std::iter::once(args[0].clone())
-        .chain(
-            args.iter()
-                .skip(1)
-                .filter(|arg| !arg.starts_with("--"))
-                .cloned(),
-        )
-        .collect::<Vec<_>>();
-    let json = args.iter().any(|arg| arg == "--json");
-    let compare_scalar_time = args.iter().any(|arg| arg == "--compare-scalar-time");
-    let filter = args.iter().find_map(|arg| arg.strip_prefix("--filter="));
-    let shard = parse_shard(&args).unwrap_or_else(|error| {
-        eprintln!("{error}");
-        std::process::exit(2);
-    });
-    let real_type = parse_precision(&args);
-    let loop_variant = parse_arg(&positional, 1, 0, "loop variant");
-    let strategy = parse_arg(&positional, 2, 0, "scheduling strategy");
-    if loop_variant > 1 || strategy > 3 {
-        eprintln!("loop variant must be 0..1 and scheduling strategy must be 0..3");
-        std::process::exit(2);
-    }
+fn run(args: CliArgs) {
+    let json = args.json;
+    let compare_scalar_time = args.compare_scalar_time;
+    let filter = args.filter.as_deref();
+    let shard = args.shard;
+    let real_type = args.precision.into();
+    let loop_variant = args.loop_variant;
+    let strategy = args.scheduling_strategy;
     let root = PathBuf::from("tests/impulse-tests/dsp");
 
     let mut files = std::fs::read_dir(&root)

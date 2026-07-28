@@ -2,13 +2,25 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use clap::Parser;
 use codegen::backends::cranelift::{
     CraneliftOptions, diagnose_cranelift_compute_subset_gap, generate_cranelift_module,
 };
 use compiler::{Compiler, SignalFirLane};
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "corpus_scan_cranelift",
+    about = "Scan selected corpus paths through the Cranelift backend"
+)]
+struct CliArgs {
+    /// Free substring filters; a path is retained when any filter matches.
+    #[arg(value_name = "FILTER", allow_hyphen_values = true)]
+    filters: Vec<String>,
+}
+
 fn main() {
-    let filters: Vec<String> = std::env::args().skip(1).collect();
+    let filters = CliArgs::parse().filters;
     let root = Path::new("tests/corpus");
     let mut files: Vec<PathBuf> = fs::read_dir(root)
         .expect("read tests/corpus")
@@ -120,4 +132,18 @@ fn main() {
 
 fn files_were_filtered(filters: &[String]) -> bool {
     !filters.is_empty()
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::CliArgs;
+
+    #[test]
+    fn cli_accepts_free_filters() {
+        CliArgs::command().debug_assert();
+        let args = CliArgs::try_parse_from(["corpus_scan_cranelift", "table", "-edge"]).unwrap();
+        assert_eq!(args.filters, ["table", "-edge"]);
+    }
 }

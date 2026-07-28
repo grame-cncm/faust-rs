@@ -1,7 +1,8 @@
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use clap::{ArgGroup, Parser, ValueEnum};
 use codegen::backends::interp::{
     FbcDspFactory, FbcDspInstance, InterpOptions, generate_interp_module, read_fbc,
 };
@@ -11,6 +12,30 @@ const SAMPLE_RATE: i32 = 48_000;
 const BLOCK_SIZE: usize = 64;
 const NUM_BLOCKS: usize = 4096;
 const WARMUP_BLOCKS: usize = 256;
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum Fixture {
+    #[value(name = "sine_phasor")]
+    SinePhasor,
+    #[value(name = "heavy_bench")]
+    HeavyBench,
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "interp_baseline",
+    about = "Profile the interpreter on built-in fixtures or one FBC file",
+    group(ArgGroup::new("input").multiple(false).args(["fixture", "fbc"]))
+)]
+struct CliArgs {
+    /// Run one built-in FIR fixture.
+    #[arg(long, value_enum)]
+    fixture: Option<Fixture>,
+
+    /// Load and run one textual FBC file.
+    #[arg(long, value_name = "PATH")]
+    fbc: Option<PathBuf>,
+}
 
 fn i32_arity_to_usize(value: i32, label: &str) -> Result<usize, String> {
     usize::try_from(value).map_err(|_| format!("invalid negative {label}: {value}"))
@@ -119,8 +144,8 @@ fn load_fbc_factory(path: &Path) -> Result<(String, FbcDspFactory<f32>), String>
 }
 
 fn main() -> Result<(), String> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() {
+    let args = CliArgs::parse();
+    if args.fixture.is_none() && args.fbc.is_none() {
         let (name1, f1) = load_fixture_factory("sine_phasor")?;
         run_profiled_baseline(&name1, f1)?;
         let (name2, f2) = load_fixture_factory("heavy_bench")?;
@@ -128,17 +153,45 @@ fn main() -> Result<(), String> {
         return Ok(());
     }
 
-    match args.as_slice() {
-        [flag, name] if flag == "--fixture" => {
+    match (args.fixture, args.fbc) {
+        (Some(fixture), None) => {
+            let name = match fixture {
+                Fixture::SinePhasor => "sine_phasor",
+                Fixture::HeavyBench => "heavy_bench",
+            };
             let (id, factory) = load_fixture_factory(name)?;
             run_profiled_baseline(&id, factory)
         }
-        [flag, path] if flag == "--fbc" => {
-            let (id, factory) = load_fbc_factory(Path::new(path))?;
+        (None, Some(path)) => {
+            let (id, factory) = load_fbc_factory(&path)?;
             run_profiled_baseline(&id, factory)
         }
-        _ => Err(
-            "usage:\n  cargo run -p codegen --release --example interp_baseline\n  cargo run -p codegen --release --example interp_baseline -- --fixture sine_phasor|heavy_bench\n  cargo run -p codegen --release --example interp_baseline -- --fbc /path/to/file.fbc".to_owned()
-        ),
+        (None, None) => unreachable!("handled default fixture pair"),
+        (Some(_), Some(_)) => unreachable!("Clap input group rejects multiple sources"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::{CommandFactory, Parser};
+
+    use super::CliArgs;
+
+    #[test]
+    fn cli_accepts_default_fixture_and_fbc_modes() {
+        CliArgs::command().debug_assert();
+        assert!(CliArgs::try_parse_from(["interp_baseline"]).is_ok());
+        assert!(CliArgs::try_parse_from(["interp_baseline", "--fixture", "sine_phasor"]).is_ok());
+        assert!(CliArgs::try_parse_from(["interp_baseline", "--fbc", "test.fbc"]).is_ok());
+        assert!(
+            CliArgs::try_parse_from([
+                "interp_baseline",
+                "--fixture",
+                "heavy_bench",
+                "--fbc",
+                "test.fbc"
+            ])
+            .is_err()
+        );
     }
 }
