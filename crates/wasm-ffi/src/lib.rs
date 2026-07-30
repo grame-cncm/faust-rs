@@ -49,13 +49,17 @@
 #![allow(non_snake_case)]
 #![allow(unsafe_code)]
 
+mod diagnostic_record;
+
 use std::collections::HashMap;
 use std::slice;
 use std::str;
 use std::sync::{Mutex, OnceLock};
 
 use codegen::backends::wasm::WasmOptions;
+use compiler::diagnostics_json::DiagnosticsRequestMetadata;
 use compiler::{Compiler, RealType, WasmArtifactBundle, WasmArtifactRequest};
+use diagnostic_record::FfiDiagnosticRecord;
 use parser::VirtualSourceMap;
 
 include!(concat!(env!("OUT_DIR"), "/embedded_faust_libraries.rs"));
@@ -71,7 +75,7 @@ const WASM_FFI_VERSION: &str = concat!("faust-rs-wasm-ffi/", env!("CARGO_PKG_VER
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StoredCompileResult {
     Ok(WasmArtifactBundle),
-    Err(String),
+    Err(FfiDiagnosticRecord),
 }
 
 /// Stored text-helper outcome kept behind an integer handle.
@@ -216,16 +220,63 @@ fn virtual_sources_from_argv(argv: &[String]) -> VirtualSourceMap {
     vsources
 }
 
+/// Parsed compile request plus the diagnostic context that must survive a
+/// compiler failure.
+#[derive(Debug, Clone)]
+struct ParsedCompileRequest {
+    artifact: WasmArtifactRequest,
+    semantic_warnings: bool,
+    diagnostics: DiagnosticsRequestMetadata,
+}
+
+fn diagnostics_request_metadata(
+    parsed: &ffi_common::FfiCompileArgs,
+    internal_memory: bool,
+) -> DiagnosticsRequestMetadata {
+    let mut normalized_options = vec![
+        "-lang=wasm".to_owned(),
+        if parsed.double {
+            "-double".to_owned()
+        } else {
+            "-single".to_owned()
+        },
+        if internal_memory {
+            "memory=internal".to_owned()
+        } else {
+            "memory=external".to_owned()
+        },
+    ];
+    normalized_options.extend(
+        parsed
+            .search_paths
+            .iter()
+            .map(|path| format!("-I={}", path.display())),
+    );
+    if parsed.warnings {
+        normalized_options.push("--warn".to_owned());
+    }
+    DiagnosticsRequestMetadata {
+        mode: Some("compile_dsp".to_owned()),
+        backend: Some("wasm".to_owned()),
+        normalized_options,
+    }
+}
+
+fn default_diagnostics_request(internal_memory: bool) -> DiagnosticsRequestMetadata {
+    diagnostics_request_metadata(&ffi_common::FfiCompileArgs::default(), internal_memory)
+}
+
 fn parse_compile_request(
     name: &str,
     source: &str,
     args: &str,
     internal_memory: bool,
-) -> Result<WasmArtifactRequest, String> {
+) -> Result<ParsedCompileRequest, String> {
     let _embedded_root = embedded_standard_library_root();
     let _embedded_roots = embedded_standard_library_roots();
     let argv = split_faustwasm_args(args);
     let parsed = ffi_common::parse_ffi_compile_args(&argv)?;
+    let diagnostics = diagnostics_request_metadata(&parsed, internal_memory);
     let mut request = WasmArtifactRequest::new(name, source);
     request.import_dirs = parsed.search_paths;
     request.virtual_sources = virtual_sources_from_argv(&argv);
@@ -234,7 +285,11 @@ fn parse_compile_request(
         internal_memory,
         ..WasmOptions::default()
     };
-    Ok(request)
+    Ok(ParsedCompileRequest {
+        artifact: request,
+        semantic_warnings: parsed.warnings,
+        diagnostics,
+    })
 }
 
 /// Materialize the build-time embedded standard-library bundle as a virtual
@@ -276,18 +331,28 @@ fn compile_to_stored_result(
     args: &str,
     internal_memory: bool,
 ) -> StoredCompileResult {
-    let request = match parse_compile_request(name, source, args, internal_memory) {
+    let parsed = match parse_compile_request(name, source, args, internal_memory) {
         Ok(request) => request,
-        Err(error) => return StoredCompileResult::Err(error),
+        Err(error) => {
+            return StoredCompileResult::Err(FfiDiagnosticRecord::transport(
+                error,
+                default_diagnostics_request(internal_memory),
+            ));
+        }
     };
-    let compiler = Compiler::new().with_real_type(if request.wasm_options.double_precision {
-        RealType::Float64
-    } else {
-        RealType::Float32
-    });
-    match compiler.compile_wasm_artifact(&request) {
+    let compiler = Compiler::new()
+        .with_real_type(if parsed.artifact.wasm_options.double_precision {
+            RealType::Float64
+        } else {
+            RealType::Float32
+        })
+        .with_semantic_warnings(parsed.semantic_warnings);
+    match compiler.compile_wasm_artifact(&parsed.artifact) {
         Ok(bundle) => StoredCompileResult::Ok(bundle),
-        Err(error) => StoredCompileResult::Err(error.to_string()),
+        Err(error) => StoredCompileResult::Err(FfiDiagnosticRecord::from_compiler_error(
+            &error,
+            parsed.diagnostics,
+        )),
     }
 }
 
@@ -385,7 +450,7 @@ fn result_compile_options_len(handle: u32) -> usize {
 /// Read the error payload pointer for one stored compile result.
 fn result_error_ptr(handle: u32) -> *const u8 {
     with_result(handle, |result| match result {
-        Some(StoredCompileResult::Err(message)) => message.as_ptr(),
+        Some(StoredCompileResult::Err(failure)) => failure.message().as_ptr(),
         _ => std::ptr::null(),
     })
 }
@@ -393,7 +458,7 @@ fn result_error_ptr(handle: u32) -> *const u8 {
 /// Read the error payload length for one stored compile result.
 fn result_error_len(handle: u32) -> usize {
     with_result(handle, |result| match result {
-        Some(StoredCompileResult::Err(message)) => message.len(),
+        Some(StoredCompileResult::Err(failure)) => failure.message().len(),
         _ => 0,
     })
 }
@@ -484,15 +549,30 @@ pub unsafe extern "C" fn faust_wasm_compile_dsp(
     let result = unsafe {
         let name = match decode_utf8_arg(name_ptr, name_len, "name") {
             Ok(name) => name,
-            Err(error) => return store_result(StoredCompileResult::Err(error)),
+            Err(error) => {
+                return store_result(StoredCompileResult::Err(FfiDiagnosticRecord::transport(
+                    error,
+                    default_diagnostics_request(internal_memory != 0),
+                )));
+            }
         };
         let source = match decode_utf8_arg(source_ptr, source_len, "source") {
             Ok(source) => source,
-            Err(error) => return store_result(StoredCompileResult::Err(error)),
+            Err(error) => {
+                return store_result(StoredCompileResult::Err(FfiDiagnosticRecord::transport(
+                    error,
+                    default_diagnostics_request(internal_memory != 0),
+                )));
+            }
         };
         let args = match decode_utf8_arg(args_ptr, args_len, "args") {
             Ok(args) => args,
-            Err(error) => return store_result(StoredCompileResult::Err(error)),
+            Err(error) => {
+                return store_result(StoredCompileResult::Err(FfiDiagnosticRecord::transport(
+                    error,
+                    default_diagnostics_request(internal_memory != 0),
+                )));
+            }
         };
         compile_to_stored_result(name, source, args, internal_memory != 0)
     };
@@ -941,6 +1021,7 @@ mod tests {
         StoredCompileResult, StoredTextResult, compile_to_stored_result, parse_compile_request,
         split_faustwasm_args, store_result, store_text_result,
     };
+    use crate::diagnostic_record::FfiDiagnosticRecord;
 
     fn temp_root(test_name: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -975,9 +1056,16 @@ mod tests {
         )
         .expect("request should parse");
 
-        assert!(request.wasm_options.double_precision);
-        assert!(request.wasm_options.internal_memory);
-        assert_eq!(request.import_dirs, vec![root]);
+        assert!(request.artifact.wasm_options.double_precision);
+        assert!(request.artifact.wasm_options.internal_memory);
+        assert_eq!(request.artifact.import_dirs, vec![root]);
+        assert_eq!(request.diagnostics.backend.as_deref(), Some("wasm"));
+        assert!(
+            request
+                .diagnostics
+                .normalized_options
+                .contains(&"-double".to_owned())
+        );
     }
 
     #[test]
@@ -990,6 +1078,53 @@ mod tests {
         assert!(bundle.wasm_bytes.starts_with(b"\0asm"));
         assert!(bundle.dsp_json.contains("\"filename\": \"osc.dsp\""));
         assert_eq!(bundle.compile_options, "-lang wasm -single");
+        assert!(bundle.warnings.is_empty());
+    }
+
+    #[test]
+    fn successful_compile_retains_opted_in_warnings_without_becoming_an_error() {
+        let result = compile_to_stored_result("warning.dsp", "process = sqrt;", "--warn", true);
+        let StoredCompileResult::Ok(bundle) = result else {
+            panic!("semantic warnings must not fail the compilation");
+        };
+
+        assert_eq!(bundle.warnings.len(), 1);
+        assert_eq!(
+            bundle.warnings.as_slice()[0].severity,
+            compiler::Severity::Warning
+        );
+    }
+
+    #[test]
+    fn compile_failure_retains_typed_diagnostics_before_the_abi_boundary() {
+        let result = compile_to_stored_result("broken.dsp", "process = ;", "", true);
+        let StoredCompileResult::Err(failure) = result else {
+            panic!("invalid source should fail");
+        };
+        let diagnostics = failure
+            .diagnostics()
+            .expect("compiler failure must retain its diagnostic bundle");
+
+        assert!(!failure.message().is_empty());
+        assert!(diagnostics.error_count() > 0);
+        assert!(
+            diagnostics
+                .as_slice()
+                .iter()
+                .any(|diagnostic| diagnostic.code.0.starts_with("FRS-PARSE-"))
+        );
+        assert!(!diagnostics.source_map().is_empty());
+    }
+
+    #[test]
+    fn malformed_ffi_options_do_not_fabricate_compiler_diagnostics() {
+        let result = compile_to_stored_result("broken.dsp", "process = 0;", "-I", true);
+        let StoredCompileResult::Err(failure) = result else {
+            panic!("malformed options should fail");
+        };
+
+        assert!(failure.message().contains("missing path after -I"));
+        assert!(failure.diagnostics().is_none());
     }
 
     #[test]
@@ -1062,7 +1197,10 @@ mod tests {
 
     #[test]
     fn stored_handles_keep_error_payloads_addressable_until_free() {
-        let handle = store_result(StoredCompileResult::Err("boom".to_owned()));
+        let handle = store_result(StoredCompileResult::Err(FfiDiagnosticRecord::transport(
+            "boom",
+            Default::default(),
+        )));
         assert_eq!(super::faust_wasm_result_is_ok(handle), 0);
         assert_eq!(super::faust_wasm_result_error_len(handle), 4);
         assert!(!super::faust_wasm_result_error_ptr(handle).is_null());

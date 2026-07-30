@@ -302,8 +302,8 @@ impl WasmArtifactRequest {
 /// - preserved semantics: owned WASM bytes plus companion JSON;
 /// - adapted: compile provenance is exposed as a dedicated field in addition to
 ///   the JSON payload;
-/// - deferred: warnings and aux files until the corresponding Rust services are
-///   ported.
+/// - adapted: opted-in warnings are retained beside the successful artifacts;
+/// - deferred: auxiliary files until the corresponding Rust service is ported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WasmArtifactBundle {
     /// Binary WebAssembly module bytes.
@@ -312,6 +312,12 @@ pub struct WasmArtifactBundle {
     pub dsp_json: String,
     /// High-level compilation provenance mirrored from the JSON payload.
     pub compile_options: String,
+    /// Non-blocking diagnostics retained from a successful compilation.
+    ///
+    /// This is empty unless the compiler was configured with
+    /// [`Compiler::with_semantic_warnings`]. Its presence never changes
+    /// success/failure semantics.
+    pub warnings: DiagnosticBundle,
 }
 
 /// One auxiliary file produced by [`Compiler::generate_aux_files`].
@@ -541,11 +547,16 @@ fn parser_float_size(real_type: RealType) -> u8 {
 impl WasmArtifactBundle {
     /// Repackages a compiled [`WasmModule`] into the public artifact bundle,
     /// pairing its binary and JSON with the formatted `compile_options` string.
-    fn from_wasm_module(module: WasmModule, compile_options: String) -> Self {
+    fn from_wasm_module(
+        module: WasmModule,
+        compile_options: String,
+        warnings: DiagnosticBundle,
+    ) -> Self {
         Self {
             wasm_bytes: module.wasm_binary,
             dsp_json: module.dsp_json,
             compile_options,
+            warnings,
         }
     }
 }

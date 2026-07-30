@@ -51,7 +51,9 @@ Implementation progress:
 
 - P0 complete: contract frozen in `22434645`;
 - P1 complete: reusable complete diagnostics-v2 renderer;
-- P2–P6 pending.
+- P2 complete: typed failures and successful warnings retained by WASM
+  compile-result state;
+- P3–P6 pending.
 
 ## 1. Executive conclusion
 

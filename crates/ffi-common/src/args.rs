@@ -5,8 +5,8 @@ use std::path::PathBuf;
 /// Minimal shared subset of Faust CLI-like options accepted by Rust FFI crates.
 ///
 /// Supported options: `-I <path>`, `-cn <name>`, `-double`, the vector-mode
-/// trio `-vec` / `-vs <n>` / `-lv <n>`, and the scheduling-strategy option
-/// `-ss <n>`.
+/// trio `-vec` / `-vs <n>` / `-lv <n>`, the scheduling-strategy option
+/// `-ss <n>`, and the non-fatal diagnostic switch `--warn`.
 /// Unknown options are ignored so backend FFI crates can accept broader argv
 /// vectors while incrementally extending support.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -40,10 +40,15 @@ pub struct FfiCompileArgs {
     /// `compiler::SchedulingStrategy`): `0 -> DepthFirst`,
     /// `1 -> BreadthFirst`, `2 -> Special`, `n >= 3 -> ReverseBreadthFirst`.
     pub scheduling_strategy: u32,
+    /// Collect non-blocking semantic warnings on successful compilations.
+    ///
+    /// This mirrors the compiler facade's warning policy: warnings are
+    /// retained for a diagnostics query but never turn success into failure.
+    pub warnings: bool,
 }
 
 /// Parses the shared FFI option subset (`-I`, `-cn`, `-double`,
-/// `-vec`/`-vs`/`-lv`, `-ss`) from an argv vector. `vec_size` defaults to 32
+/// `-vec`/`-vs`/`-lv`, `-ss`, `--warn`) from an argv vector. `vec_size` defaults to 32
 /// when `-vec` is given without `-vs`, matching the Faust CLI.
 /// `scheduling_strategy` defaults to `0` (depth-first) when `-ss` is absent,
 /// mirroring the CLI's `--scheduling-strategy` default.
@@ -111,6 +116,11 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
             index += 2;
             continue;
         }
+        if arg == "--warn" {
+            parsed.warnings = true;
+            index += 1;
+            continue;
+        }
         index += 1;
     }
     Ok(parsed)
@@ -174,6 +184,12 @@ mod tests {
         assert!(!parsed.vec_mode);
         assert_eq!(parsed.vec_size, 32);
         assert_eq!(parsed.loop_variant, 0);
+    }
+
+    #[test]
+    fn accepts_non_fatal_warning_collection() {
+        let parsed = parse_ffi_compile_args(&["--warn".to_owned()]).unwrap();
+        assert!(parsed.warnings);
     }
 
     #[test]

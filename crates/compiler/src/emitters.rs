@@ -921,6 +921,7 @@ impl Compiler {
             &request.import_dirs,
             &request.virtual_sources,
         )?;
+        let warnings = signals.warnings.clone();
         let lowered = self.lower_to_fir(&request.source_name, &signals, request.lane)?;
         let mut json_context = wasm_json_context_for_memory_source(
             &request.source_name,
@@ -943,6 +944,7 @@ impl Compiler {
         Ok(WasmArtifactBundle::from_wasm_module(
             module,
             compile_options,
+            warnings,
         ))
     }
 
@@ -980,6 +982,7 @@ impl Compiler {
         Ok(WasmArtifactBundle::from_wasm_module(
             module,
             compile_options,
+            DiagnosticBundle::new(),
         ))
     }
 
