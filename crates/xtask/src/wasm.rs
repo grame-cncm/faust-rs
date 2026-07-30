@@ -152,6 +152,8 @@ pub(crate) fn required_wasm_ffi_exports() -> &'static [&'static str] {
         "faust_wasm_text_result_is_ok",
         "faust_wasm_text_result_ptr",
         "faust_wasm_text_result_len",
+        "faust_wasm_text_result_diagnostics_ptr",
+        "faust_wasm_text_result_diagnostics_len",
         "faust_wasm_text_result_free",
     ]
 }

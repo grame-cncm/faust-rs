@@ -418,6 +418,8 @@ fn verify_wasm_ffi_exports_accepts_expected_surface() {
               (func (export "faust_wasm_text_result_is_ok"))
               (func (export "faust_wasm_text_result_ptr"))
               (func (export "faust_wasm_text_result_len"))
+              (func (export "faust_wasm_text_result_diagnostics_ptr"))
+              (func (export "faust_wasm_text_result_diagnostics_len"))
               (func (export "faust_wasm_text_result_free"))
             )
             "#,

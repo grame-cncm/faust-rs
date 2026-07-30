@@ -141,11 +141,31 @@ impl StoredTextResult {
 
 /// Request metadata identifying one helper-service call in a diagnostics
 /// report (`generateAuxFiles`, `expandDSP`, ...).
+///
+/// Transport-only arguments are sanitized: a `--virtual-source
+/// <name>=<base64>` value keeps only the source name — the payload is the
+/// complete source text, which must not leak into the report (the report's
+/// own `sources` section is governed by [`SourceTextPolicy`], and inlining
+/// base64 here would both bypass that policy and bloat the payload).
 fn service_diagnostics_request(mode: &str, args: &str) -> DiagnosticsRequestMetadata {
+    let mut normalized_options: Vec<String> = Vec::new();
+    let mut elide_next_value = false;
+    for token in args.split_whitespace() {
+        if elide_next_value {
+            elide_next_value = false;
+            let name = token.split('=').next().unwrap_or(token);
+            normalized_options.push(format!("{name}=<elided>"));
+            continue;
+        }
+        if token == "--virtual-source" {
+            elide_next_value = true;
+        }
+        normalized_options.push(token.to_owned());
+    }
     DiagnosticsRequestMetadata {
         mode: Some(mode.to_owned()),
         backend: None,
-        normalized_options: args.split_whitespace().map(str::to_owned).collect(),
+        normalized_options,
     }
 }
 
@@ -1661,6 +1681,123 @@ mod tests {
         );
         assert_eq!(is_ok, 1);
         assert!(diagnostics.is_none());
+    }
+
+    #[test]
+    fn diagnostics_report_parses_structurally_with_typed_fixes() {
+        let (is_ok, _text, diagnostics) = call_generate_aux_files_json_with_diagnostics(
+            "broken",
+            "cutoff = 1000;\nprocess = _ * cutof;\n",
+            "-lang asc -cn BrokenDsp -o /broken.out.ts",
+        );
+        assert_eq!(is_ok, 0);
+        let payload: serde_json::Value =
+            serde_json::from_str(&diagnostics.expect("diagnostics retained"))
+                .expect("diagnostics report must be valid JSON");
+        assert_eq!(payload["schema_version"], 2);
+        assert_eq!(payload["status"], "failed");
+        assert_eq!(payload["request"]["mode"], "generateAuxFiles");
+        let diagnostic = &payload["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "FRS-EVAL-0002");
+        assert_eq!(diagnostic["category"], "user_code");
+        assert_eq!(diagnostic["severity"], "error");
+        // The primary label carries a resolvable span.
+        let label = &diagnostic["labels"][0];
+        assert_eq!(label["style"], "primary");
+        assert!(label["range"]["start"].is_number());
+        assert_eq!(label["compatibility_span"]["line"], 2);
+        // The rename fix travels typed, with its applicability promise.
+        let fix = &diagnostic["fixes"][0];
+        assert_eq!(fix["applicability"], "maybe_incorrect");
+        assert_eq!(
+            fix["edits"][0]["replacement"], "cutoff",
+            "typed edit expected: {fix}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_report_elides_virtual_source_payloads() {
+        // The sibling source travels as `--virtual-source name=<base64>`;
+        // neither the source text nor its base64 encoding may appear in the
+        // diagnostics report (SourceTextPolicy::None governs source echoing).
+        let marker = "SECRET_HELPER_CONTENT_98765";
+        let helper = format!("wet = 0.5; // {marker}\n");
+        let helper_b64 = super::base64_encode(helper.as_bytes());
+        let args = format!(
+            "-lang asc -cn BrokenDsp --virtual-source helper.dsp={helper_b64} -o /broken.out.ts"
+        );
+        let (is_ok, _text, diagnostics) = call_generate_aux_files_json_with_diagnostics(
+            "broken",
+            "h = library(\"helper.dsp\");\nprocess = _ * undefined_symbol;\n",
+            &args,
+        );
+        assert_eq!(is_ok, 0);
+        let json = diagnostics.expect("compiler failure must retain diagnostics");
+        assert!(!json.contains(marker), "source text leaked: {json}");
+        assert!(!json.contains(&helper_b64), "base64 payload leaked");
+        assert!(
+            json.contains("helper.dsp=<elided>"),
+            "virtual-source name retained as metadata: {json}"
+        );
+    }
+
+    #[test]
+    fn expand_dsp_failure_retains_structured_diagnostics() {
+        let source = "process = _ * cutof;";
+        let args = "";
+        let handle = unsafe {
+            super::faust_wasm_expand_dsp(
+                "broken".as_ptr(),
+                "broken".len(),
+                source.as_ptr(),
+                source.len(),
+                args.as_ptr(),
+                args.len(),
+            )
+        };
+        assert_eq!(super::faust_wasm_text_result_is_ok(handle), 0);
+        let diag_len = super::faust_wasm_text_result_diagnostics_len(handle);
+        assert!(diag_len > 0, "expandDSP must retain compiler diagnostics");
+        let json = unsafe {
+            let ptr = super::faust_wasm_text_result_diagnostics_ptr(handle);
+            std::str::from_utf8(std::slice::from_raw_parts(ptr, diag_len))
+                .expect("diagnostics must be UTF-8")
+                .to_owned()
+        };
+        assert!(json.contains("FRS-EVAL-0002"), "{json}");
+        assert!(json.contains(r#""mode": "expandDSP""#), "{json}");
+        super::faust_wasm_text_result_free(handle);
+    }
+
+    #[test]
+    fn argument_failures_have_no_diagnostics_payload() {
+        // get_info with an unknown key: an InvalidArgument service error with
+        // no compiler diagnostic behind it.
+        let what = "bogus-info-key";
+        let handle = unsafe { super::faust_wasm_get_info(what.as_ptr(), what.len()) };
+        assert_eq!(super::faust_wasm_text_result_is_ok(handle), 0);
+        assert_eq!(super::faust_wasm_text_result_diagnostics_len(handle), 0);
+        assert!(super::faust_wasm_text_result_diagnostics_ptr(handle).is_null());
+        super::faust_wasm_text_result_free(handle);
+    }
+
+    #[test]
+    fn unknown_and_freed_handles_have_no_diagnostics_payload() {
+        // Never-issued handle.
+        assert!(super::faust_wasm_text_result_diagnostics_ptr(0xDEAD_BEEF).is_null());
+        assert_eq!(
+            super::faust_wasm_text_result_diagnostics_len(0xDEAD_BEEF),
+            0
+        );
+
+        // Freed handle: reading after release must yield the same nulls.
+        let (handle, _) = {
+            let handle = store_text_result(super::StoredTextResult::err("gone"));
+            (handle, ())
+        };
+        super::faust_wasm_text_result_free(handle);
+        assert!(super::faust_wasm_text_result_diagnostics_ptr(handle).is_null());
+        assert_eq!(super::faust_wasm_text_result_diagnostics_len(handle), 0);
     }
 
     #[test]

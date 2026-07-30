@@ -427,10 +427,11 @@ impl FaustwasmServiceError {
     /// Builds an error tagged [`FaustwasmServiceErrorCode::Unsupported`].
     ///
     /// Takes any [`Display`](std::fmt::Display) value so a fallible stage can
-    /// be mapped without a closure: `.map_err(FaustwasmServiceError::unsupported)?`
-    /// works for [`CompilerError`], backend codegen errors, and `draw` errors
-    /// alike. Every compile failure on this surface renders through here, so
-    /// one rendered diagnostic shape reaches the host for all of them.
+    /// be mapped without a closure: `.map_err(FaustwasmServiceError::unsupported)?`.
+    /// Use it for failures that carry no typed compiler diagnostics (backend
+    /// codegen errors, `draw` errors); [`CompilerError`] sources go through
+    /// [`FaustwasmServiceError::compile_failure`] instead so the typed
+    /// [`DiagnosticBundle`] survives to the host bindings.
     fn unsupported(message: impl std::fmt::Display) -> Self {
         Self {
             code: FaustwasmServiceErrorCode::Unsupported,

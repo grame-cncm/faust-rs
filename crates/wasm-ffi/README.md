@@ -83,6 +83,22 @@ The raw compiler-module ABI is explicitly handle-based:
 9. release the compile result with `faust_wasm_result_free`
 10. release the temporary request buffers with `faust_wasm_dealloc`
 
+Helper text results (`faust_wasm_get_info`, `faust_wasm_expand_dsp`,
+`faust_wasm_generate_aux_files_json`) carry structured diagnostics too: when
+`faust_wasm_text_result_is_ok` returns `0`,
+`faust_wasm_text_result_diagnostics_ptr/len` expose the complete
+diagnostics-v2 report for compiler failures (null/0 for transport and
+argument failures, and on modules predating these exports). The
+compatibility message from `faust_wasm_text_result_ptr/len` is unchanged, so
+hosts adopt the richer payload at their own pace. Host-adapter status:
+
+- WebAssembly Music consumes these exports (structured errors reach its
+  Faust editor, CLI, and LLM studio agent);
+- the `faustwasm` TypeScript adapter (`RustLibFaust` / `FaustCompiler`) does
+  not read them yet — its `readTextResult` frees the handle without querying
+  diagnostics. Wiring `getErrorDiagnostics()`-style accessors for the helper
+  surface there is tracked follow-up work.
+
 Pointer validity rules:
 
 - payload pointers returned by `faust_wasm_result_*_ptr` stay valid only until
