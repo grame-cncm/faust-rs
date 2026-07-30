@@ -276,3 +276,49 @@ fn disabled_origins_record_nothing() {
     assert!(origins.is_empty());
     assert!(origins.origins_for(root).is_empty());
 }
+
+#[test]
+fn remap_is_independent_of_node_map_hash_order() {
+    // A many-to-one clone mapping combined with MAX_ORIGINS_PER_SIGNAL makes
+    // iteration order decide which candidates survive. Build one that
+    // overflows the cap and check the result is a function of the inputs.
+    let mut arena = TreeArena::new();
+    let boxes = {
+        let mut b = BoxBuilder::new(&mut arena);
+        (0..12).map(|i| b.int(i)).collect::<Vec<_>>()
+    };
+    let (sources, destination) = {
+        let mut b = SigBuilder::new(&mut arena);
+        let sources = (0..12).map(|i| b.int(100 + i)).collect::<Vec<_>>();
+        let destination = b.int(999);
+        (sources, destination)
+    };
+
+    let mut table = SignalOrigins::default();
+    for (signal, box_node) in sources.iter().zip(&boxes) {
+        table.record(*signal, *box_node);
+    }
+
+    // A fresh HashMap is built on every round: its iteration order is what
+    // varies, so agreement across rounds is the property under test.
+    let mut rounds = (0..16).map(|_| {
+        let node_map = sources
+            .iter()
+            .map(|source| (*source, destination))
+            .collect::<std::collections::HashMap<_, _>>();
+        table.remap(&node_map).origins_for(destination).to_vec()
+    });
+
+    let first = rounds.next().expect("at least one round");
+    assert_eq!(
+        first.len(),
+        SignalOrigins::MAX_ORIGINS_PER_SIGNAL,
+        "the fixture must actually overflow the cap, otherwise it proves nothing"
+    );
+    for round in rounds {
+        assert_eq!(
+            round, first,
+            "remap must not depend on HashMap iteration order"
+        );
+    }
+}

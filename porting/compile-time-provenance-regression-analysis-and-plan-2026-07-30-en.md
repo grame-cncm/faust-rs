@@ -4,8 +4,10 @@
 > pre-arc reference, and the overhead is now flat across every program-size
 > bucket (1.06x–1.17x) instead of reaching 9.55x on the largest — the complexity
 > defect is gone, only a uniform constant remains. `dx7_alg5` compiles in 1.67 s
-> against 1.97 s before the arc. See "Execution outcome" at the end, which also
-> records where this plan was wrong.
+> against 1.97 s before the arc. All four steps are resolved: 1 and 2
+> implemented, 3 and 4 closed as not-to-be-implemented with the measurements
+> that decided it. See "Execution outcome" at the end, which also records where
+> this plan was wrong.
 
 ## Summary
 
@@ -277,10 +279,74 @@ traffic plus `ui::split_label_metadata` and `boxes::match_box`, neither of which
 this arc introduced. Claiming a cause without evidence is how cause 3 got into
 this document in the first place.
 
+## Step 4 — decision: do not implement lazy derivation
+
+Step 4 proposed replacing the eager capped tables with direct records plus a
+rewrite-edge log, deriving provenance on demand when a diagnostic is built. The
+argument was that a successful compilation should not pay to build evidence
+only a failing one reads.
+
+That argument is sound in principle and does not survive measurement.
+
+**Upper bound on the benefit.** Disabling *all* provenance recording on the
+compiler path — `SignalOrigins` and `FirOrigins` both — is strictly better than
+any lazy scheme could be, since a lazy scheme still records direct origins and
+still maintains an edge log. Measured against the current state, `--check` wall
+clock, best of three:
+
+| DSP | current | no provenance at all | gain |
+| --- | --- | --- | --- |
+| `dx7_alg5` | 1 674 ms | 1 456 ms | −13.0 % |
+| `parametric_eq` | 901 ms | 807 ms | −10.4 % |
+| `spectral_level` | 1 038 ms | 997 ms | −4.0 % |
+| `bells` | 421 ms | 406 ms | −3.7 % |
+| `virtual_analog_oscillators` | 811 ms | 795 ms | −2.0 % |
+| `vcf_wah_pedals` | 860 ms | 856 ms | −0.5 % |
+| `reverb_designer` | 7 576 ms | 7 931 ms | +4.7 % |
+| **total** | **13 281 ms** | **13 247 ms** | **−0.3 %** |
+
+The total is noise. `reverb_designer` measuring *slower* without provenance is
+the clearest statement of the signal-to-noise ratio at this scale.
+
+**Memory, the other half of the trade-off.** Peak RSS, same comparison:
+
+| DSP | current | no provenance at all |
+| --- | --- | --- |
+| `dx7_alg5` | 681.1 MB | 682.1 MB (+0.1 %) |
+| `reverb_designer` | 321.9 MB | 318.9 MB (−0.9 %) |
+
+Provenance is under 1 % of peak memory. Lazy derivation would have to keep
+intermediate arenas or their remap tables alive, so on the dimension where it
+costs, it costs; on the dimension where it saves, there is nothing to save.
+
+**Decision: closed, not implemented.** Buying at most 0.3 % of compile time and
+nothing in memory does not justify a rewrite-edge log, extended arena
+lifetimes, and a redesign of how diagnostics reach source occurrences — each of
+which risks the diagnostic quality the whole arc was built to deliver.
+
+**Consequence: the caps are now the design, not a stopgap.** The earlier warning
+against treating `MAX_ORIGINS_PER_SIGNAL = 8` as permanent is therefore
+withdrawn, and the guarantee it was standing in for has been made explicit
+instead. `SignalOrigins::remap` now iterates its clone mapping in ascending
+`SigId` order rather than in `HashMap` order: the mapping is expected to be
+injective, but nothing in the type enforces it, and if two sources ever shared a
+destination the cap would let hash order decide which candidates a diagnostic
+can name. `remap_is_independent_of_node_map_hash_order` builds a deliberately
+many-to-one mapping that overflows the cap and fails without the sort.
+
+Reopen this decision only if a future change makes provenance a materially
+larger share of compile time or memory — the numbers above, not the argument,
+are what would have to move.
+
 ### Still open
 
-Step 4 — lazy diagnostic-time derivation instead of eager capped tables —
-remains a design decision, not a patch. It is now less urgent: the eager tables
-cost a flat ~10 % rather than a size-dependent multiple. `MAX_ORIGINS_PER_SIGNAL
-= 8` and `MAX_SIGNALS_PER_NODE = 8` should still not be treated as permanent
-until it is settled, and no test should be written against truncated output.
+The residual ~1.10x is **not provenance**. With provenance entirely removed,
+every measured case still sits at 1.10x–1.13x of the pre-arc reference
+(`dx7_alg5` at 0.74x). Something else in the arc, or outside it, accounts for
+that flat constant; the profile points at diffuse allocator traffic plus
+`ui::split_label_metadata` and `boxes::match_box`, neither introduced here.
+
+That is a separate investigation with its own question — a uniform ~10 %, not a
+complexity defect — and it is deliberately not folded into this plan. The
+front-end budget gate now holds the line at the current numbers, so it can be
+picked up on its own merits rather than under time pressure.

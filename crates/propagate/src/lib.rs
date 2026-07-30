@@ -374,13 +374,24 @@ impl SignalOrigins {
     }
 
     /// Remaps this table after a Signal forest is cloned to another arena.
+    ///
+    /// Sources are visited in ascending `SigId` order rather than in the hash
+    /// order of `node_map`. The clone mapping is expected to be injective, in
+    /// which case order is irrelevant — but nothing in the type enforces that,
+    /// and if two sources ever share a destination, [`Self::record`] keeps only
+    /// the first [`Self::MAX_ORIGINS_PER_SIGNAL`] candidates it sees. Hash order
+    /// would then decide *which* candidates a diagnostic can name, and vary from
+    /// run to run. Sorting makes the result a function of the inputs alone,
+    /// which is cheap here: `remap` runs once per compilation.
     #[must_use]
     pub fn remap(&self, node_map: &std::collections::HashMap<SigId, SigId>) -> Self {
         if !self.recording {
             return Self::disabled();
         }
+        let mut pairs = node_map.iter().collect::<Vec<_>>();
+        pairs.sort_unstable_by_key(|(source, _)| source.as_u32());
         let mut remapped = Self::default();
-        for (source, destination) in node_map {
+        for (source, destination) in pairs {
             for origin in self.origins_for(*source) {
                 remapped.record(*destination, *origin);
             }
