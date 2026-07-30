@@ -110,9 +110,11 @@ jobs:
       # revision as the cross-platform lint-and-test job. The Ubuntu package
       # can lag that revision and does not provide dx.algorithm used by the
       # dx7_alg5 front-end budget case.
+      # `stdfaust.lib` itself imports dx7.lib from the checkout's dx7/
+      # directory.
       # The vector corpus also contains historical DSPs that import legacy
       # names such as math.lib from the checkout's old/ directory.
-      FAUST_LIB_PATH: ${{ github.workspace }}/faustlibraries:${{ github.workspace }}/faustlibraries/old
+      FAUST_LIB_PATH: ${{ github.workspace }}/faustlibraries:${{ github.workspace }}/faustlibraries/dx7:${{ github.workspace }}/faustlibraries/old
     steps:
       - name: Checkout
         uses: actions/checkout@v4

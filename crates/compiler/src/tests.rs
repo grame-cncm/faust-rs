@@ -137,16 +137,18 @@ fn import_search_paths_expand_native_path_lists_in_order() {
     let path = PathBuf::from("/project/main.dsp");
     let library_dirs = [
         PathBuf::from("/libraries/current"),
+        PathBuf::from("/libraries/dx7"),
         PathBuf::from("/libraries/old"),
     ];
     let faust_lib_path = std::env::join_paths(&library_dirs).expect("native path list");
     let paths = build_import_search_paths(&path, &[], Some(faust_lib_path), None);
 
     assert_eq!(
-        &paths[..3],
+        &paths[..4],
         [
             PathBuf::from("/project"),
             PathBuf::from("/libraries/current"),
+            PathBuf::from("/libraries/dx7"),
             PathBuf::from("/libraries/old"),
         ]
     );
