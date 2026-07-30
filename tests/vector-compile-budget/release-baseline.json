@@ -48,51 +48,51 @@
     {
       "name": "bells",
       "path": "tests/impulse-tests/dsp/bells.dsp",
-      "units_milli": 136413,
-      "note": "Regression debt: 136.4 units now vs 11.1 before the diagnostics-provenance arc (x12.3). Lower this baseline as each step of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md lands.",
+      "units_milli": 16103,
+      "note": "Regression debt: 16.1 units vs 11.1 before the diagnostics-provenance arc (x1.5). Lower as the remaining steps of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md land.",
       "enabled": true
     },
     {
       "name": "parametric_eq",
       "path": "tests/impulse-tests/dsp/parametric_eq.dsp",
-      "units_milli": 216827,
-      "note": "Regression debt: 216.8 units now vs 22.0 before the diagnostics-provenance arc (x9.9). Lower this baseline as each step of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md lands.",
+      "units_milli": 44000,
+      "note": "Regression debt: 44.0 units vs 22.0 before the diagnostics-provenance arc (x2.0). Lower as the remaining steps of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md land.",
       "enabled": true
     },
     {
       "name": "reverb_designer",
       "path": "tests/impulse-tests/dsp/reverb_designer.dsp",
-      "units_milli": 299275,
-      "note": "Regression debt: 299.3 units now vs 217.2 before the diagnostics-provenance arc (x1.4). Lower this baseline as each step of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md lands.",
+      "units_milli": 285379,
+      "note": "Regression debt: 285.4 units vs 217.2 before the diagnostics-provenance arc (x1.3). Lower as the remaining steps of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md land.",
       "enabled": true
     },
     {
       "name": "spectral_level",
       "path": "tests/impulse-tests/dsp/spectral_level.dsp",
-      "units_milli": 318724,
-      "note": "Regression debt: 318.7 units now vs 27.4 before the diagnostics-provenance arc (x11.6). Lower this baseline as each step of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md lands.",
+      "units_milli": 58103,
+      "note": "Regression debt: 58.1 units vs 27.4 before the diagnostics-provenance arc (x2.1). Lower as the remaining steps of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md land.",
       "enabled": true
     },
     {
       "name": "vcf_wah_pedals",
       "path": "tests/impulse-tests/dsp/vcf_wah_pedals.dsp",
-      "units_milli": 251413,
-      "note": "Regression debt: 251.4 units now vs 23.1 before the diagnostics-provenance arc (x10.9). Lower this baseline as each step of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md lands.",
+      "units_milli": 43068,
+      "note": "Regression debt: 43.1 units vs 23.1 before the diagnostics-provenance arc (x1.9). Lower as the remaining steps of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md land.",
       "enabled": true
     },
     {
       "name": "virtual_analog_oscillators",
       "path": "tests/impulse-tests/dsp/virtual_analog_oscillators.dsp",
-      "units_milli": 408206,
-      "note": "Regression debt: 408.2 units now vs 22.0 before the diagnostics-provenance arc (x18.6). Lower this baseline as each step of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md lands.",
+      "units_milli": 42000,
+      "note": "Regression debt: 42.0 units vs 22.0 before the diagnostics-provenance arc (x1.9). Lower as the remaining steps of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md land.",
       "enabled": true
     },
     {
       "name": "dx7_alg5",
       "path": "examples/rust/dx7-piano/dsp/dx7_alg5.dsp",
-      "units_milli": 1,
-      "note": "Disabled: exceeds the 120 s compilation timeout on main-dev. Re-enable once step 1 of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md has landed.",
-      "enabled": false
+      "units_milli": 125275,
+      "enabled": true,
+      "note": "Regression debt: 125.3 units vs 59.9 before the diagnostics-provenance arc (x2.1). Lower as the remaining steps of porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md land."
     }
   ]
 }

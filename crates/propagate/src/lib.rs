@@ -257,13 +257,30 @@ impl SignalOrigins {
         self.recording
     }
 
+    /// Maximum Box candidates retained per signal.
+    ///
+    /// Origins are bounded diagnostic evidence, not an exhaustive occurrence
+    /// index. Hash-consed signals are shared by many boxes, so without a cap
+    /// the per-pass `inherit_forest` unions accumulate candidate lists that
+    /// grow with program size, and the linear-scan dedup in [`Self::record`]
+    /// turns preparation super-quadratic. Diagnostic-time occurrence choice
+    /// only ever consults the leading candidates.
+    ///
+    /// Matches the bound proposed in `faust-rs#15`, which targets `main`; this
+    /// branch needs it too, and the correction plan's later steps cannot be
+    /// measured until it is in place.
+    pub const MAX_ORIGINS_PER_SIGNAL: usize = 8;
+
     /// Records that `signal` was produced while propagating `box_node`.
+    ///
+    /// Retains at most [`Self::MAX_ORIGINS_PER_SIGNAL`] candidates per signal,
+    /// in first-recorded order.
     pub fn record(&mut self, signal: SigId, box_node: BoxId) {
         if !self.recording {
             return;
         }
         let origins = self.by_signal.entry(signal).or_default();
-        if !origins.contains(&box_node) {
+        if origins.len() < Self::MAX_ORIGINS_PER_SIGNAL && !origins.contains(&box_node) {
             origins.push(box_node);
         }
     }

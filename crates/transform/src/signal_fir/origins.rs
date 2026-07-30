@@ -40,7 +40,18 @@ impl FirOrigins {
         Self::default()
     }
 
+    /// Maximum Signal derivations retained per FIR node.
+    ///
+    /// Like [`SignalOrigins::MAX_ORIGINS_PER_SIGNAL`], this keeps the table
+    /// bounded diagnostic evidence: `derive_reachable` unions descendant
+    /// derivations into every reachable parent, so unbounded per-node lists
+    /// would grow with program size and make the walk super-quadratic.
+    pub const MAX_SIGNALS_PER_NODE: usize = 8;
+
     /// Records one prepared Signal as a direct producer of `fir`.
+    ///
+    /// Retains at most [`Self::MAX_SIGNALS_PER_NODE`] derivations per node,
+    /// stored in Signal-id order.
     pub fn record_signal(&mut self, fir: FirId, signal: SigId, signal_origins: &SignalOrigins) {
         let boxes = signal_origins.origins_for(signal).to_vec();
         let entries = self.by_fir.entry(fir).or_default();
@@ -50,7 +61,7 @@ impl FirOrigins {
                     existing.boxes.push(origin);
                 }
             }
-        } else {
+        } else if entries.len() < Self::MAX_SIGNALS_PER_NODE {
             entries.push(FirSignalOrigin { signal, boxes });
             entries.sort_by_key(|entry| entry.signal.as_u32());
         }
@@ -138,7 +149,7 @@ fn merge_origin(entries: &mut Vec<FirSignalOrigin>, origin: &FirSignalOrigin) {
                 existing.boxes.push(box_origin);
             }
         }
-    } else {
+    } else if entries.len() < FirOrigins::MAX_SIGNALS_PER_NODE {
         entries.push(origin.clone());
         entries.sort_by_key(|entry| entry.signal.as_u32());
     }
