@@ -50,10 +50,7 @@ fn generate_basic_structure() {
     let cpp = generate_cpp_from_fbc(&factory, &opts).expect("generation should succeed");
 
     // Class structure.
-    assert!(
-        cpp.contains("class test_dsp_dsp final : public dsp"),
-        "{cpp}"
-    );
+    assert!(cpp.contains("class test_dsp final : public dsp"), "{cpp}");
     assert!(
         cpp.contains("int getNumInputs() override { return 1; }"),
         "{cpp}"

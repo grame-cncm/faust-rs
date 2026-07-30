@@ -59,8 +59,9 @@ use super::real::FbcReal;
 pub struct FbcCppOptions {
     /// Class name override.
     ///
-    /// When `None`, defaults to `"{factory_name}_dsp"` (sanitized to a valid
-    /// C++ identifier). Falls back to `"FbcDsp"` if the factory name is empty.
+    /// When `None`, defaults to the factory name (sanitized to a valid C++
+    /// identifier), matching Faust C++'s `mydsp` default. Falls back to
+    /// `"FbcDsp"` if the factory name is empty.
     pub class_name: Option<String>,
     /// Whether to emit `#pragma once` at the top of the header. Default: `true`.
     pub pragma_once: bool,
@@ -183,7 +184,7 @@ impl<'a, R: FbcReal> CppGen<'a, R> {
                 if base.is_empty() {
                     "FbcDsp".to_owned()
                 } else {
-                    format!("{base}_dsp")
+                    base
                 }
             });
         let real_ctype = if R::TYPE_NAME == "f32" {
