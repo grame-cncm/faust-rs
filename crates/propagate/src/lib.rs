@@ -227,10 +227,23 @@ impl Default for SignalOrigins {
 }
 
 impl SignalOrigins {
+    /// Maximum Box candidates retained per signal.
+    ///
+    /// Origins are bounded diagnostic evidence, not an exhaustive occurrence
+    /// index: hash-consed signals shared by many boxes would otherwise
+    /// accumulate unbounded lists, and the per-pass `inherit_forest` unions
+    /// would turn preparation super-quadratic on large programs (dx7-class
+    /// DSPs regressed from ~1s to minutes). Diagnostic-time occurrence
+    /// choice only ever consults the leading candidates.
+    pub const MAX_ORIGINS_PER_SIGNAL: usize = 8;
+
     /// Records that `signal` was produced while propagating `box_node`.
+    ///
+    /// Retains at most [`Self::MAX_ORIGINS_PER_SIGNAL`] candidates per
+    /// signal, in first-recorded order.
     pub fn record(&mut self, signal: SigId, box_node: BoxId) {
         let origins = self.by_signal.entry(signal).or_default();
-        if !origins.contains(&box_node) {
+        if origins.len() < Self::MAX_ORIGINS_PER_SIGNAL && !origins.contains(&box_node) {
             origins.push(box_node);
         }
     }
