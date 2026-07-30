@@ -69,7 +69,9 @@ impl FaustInstallPaths {
 
         let mut import_dirs = Vec::new();
         if let Some(env_path) = faust_lib_path {
-            push_unique(&mut import_dirs, PathBuf::from(env_path));
+            for path in std::env::split_paths(&env_path) {
+                push_unique(&mut import_dirs, path);
+            }
         }
         push_unique(&mut import_dirs, dsp_dir.clone());
         push_unique(&mut import_dirs, PathBuf::from("/usr/local/share/faust"));
@@ -205,7 +207,8 @@ pub(crate) fn merge_import_search_paths(path: &Path, extra_paths: &[PathBuf]) ->
 ///
 /// 1. User-supplied `extra_paths` (highest priority).
 /// 2. Directory containing the source file.
-/// 3. Paths from the `FAUST_LIB_PATH` environment variable (colon/semicolon-separated).
+/// 3. Paths from the `FAUST_LIB_PATH` environment variable, separated with
+///    the host platform's native path separator.
 /// 4. Standard library locations relative to the running executable.
 ///
 /// Parameters are explicit so the function is pure and fully testable without
@@ -236,7 +239,9 @@ pub(crate) fn build_import_search_paths(
     );
 
     if let Some(env_path) = faust_lib_path {
-        push_unique(&mut ordered, PathBuf::from(env_path));
+        for path in std::env::split_paths(&env_path) {
+            push_unique(&mut ordered, path);
+        }
     }
 
     if let Some(share_root) = current_exe
