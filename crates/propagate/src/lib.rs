@@ -298,19 +298,36 @@ impl SignalOrigins {
     /// Records a Box origin for newly created nodes reachable from an output
     /// bus while preserving more specific origins already assigned by child
     /// propagation calls.
+    /// Propagation calls this once per box node, innermost first, so the walk
+    /// must stay proportional to what that box actually added rather than to
+    /// everything below it.
+    ///
+    /// **Attribution closure.** When this returns, every node reachable from
+    /// `signals` carries an origin. An already-attributed node was therefore
+    /// covered by the inner call that attributed it, together with its whole
+    /// reachable subgraph — and Signal nodes are hash-consed and immutable, so
+    /// that subgraph cannot have grown since. Descending past such a node can
+    /// only re-confirm origins that already exist.
+    ///
+    /// Pruning there is what keeps the cost linear. Without it, a node deep in
+    /// the graph is re-walked once per enclosing box, which is the quadratic
+    /// factor that made `dx.algorithm(5)` and its corpus neighbours regress.
+    /// The resulting table is unchanged: this prunes redundant traversal, not
+    /// recording.
     pub fn record_derived_forest(&mut self, arena: &TreeArena, signals: &[SigId], box_node: BoxId) {
         if !self.recording {
             return;
         }
         let mut stack = signals.to_vec();
-        let mut visited = std::collections::HashSet::new();
+        let mut visited = AHashSet::new();
         while let Some(signal) = stack.pop() {
             if !visited.insert(signal) {
                 continue;
             }
-            if self.origins_for(signal).is_empty() {
-                self.record(signal, box_node);
+            if !self.origins_for(signal).is_empty() {
+                continue;
             }
+            self.record(signal, box_node);
             if let Some(children) = arena.children(signal) {
                 stack.extend(children.iter().copied());
             }

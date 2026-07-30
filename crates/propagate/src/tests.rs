@@ -150,3 +150,129 @@ fn propagation_retains_all_box_origins_for_a_hash_consed_signal() {
         "origin sets must remain deduplicated under hash-consing"
     );
 }
+
+/// Reference implementation of the pre-pruning walk, kept only for this test.
+///
+/// It descends past already-attributed nodes, which is exactly the redundant
+/// traversal `record_derived_forest` now prunes.
+fn record_derived_forest_unpruned(
+    origins: &mut SignalOrigins,
+    arena: &TreeArena,
+    signals: &[SigId],
+    box_node: BoxId,
+) {
+    let mut stack = signals.to_vec();
+    let mut visited = AHashSet::new();
+    while let Some(signal) = stack.pop() {
+        if !visited.insert(signal) {
+            continue;
+        }
+        if origins.origins_for(signal).is_empty() {
+            origins.record(signal, box_node);
+        }
+        if let Some(children) = arena.children(signal) {
+            stack.extend(children.iter().copied());
+        }
+    }
+    origins.record_outputs(signals, box_node);
+}
+
+#[test]
+fn pruned_derived_forest_walk_records_exactly_what_the_full_walk_records() {
+    // Nested shared structure: the inner box attributes `shared` and its
+    // subtree, then two enclosing boxes re-reach it. That is the shape where
+    // pruning skips traversal, so it is the shape that must stay equivalent.
+    let mut arena = TreeArena::new();
+    let (inner, mid, outer) = {
+        let mut b = BoxBuilder::new(&mut arena);
+        (b.int(1), b.int(2), b.int(3))
+    };
+    let (shared, mid_root, outer_root) = {
+        let mut b = SigBuilder::new(&mut arena);
+        let leaf = b.int(7);
+        let shared = b.add(leaf, leaf);
+        let mid_root = b.mul(shared, shared);
+        let outer_root = b.add(mid_root, shared);
+        (shared, mid_root, outer_root)
+    };
+
+    let steps = [
+        (vec![shared], inner),
+        (vec![mid_root], mid),
+        (vec![outer_root], outer),
+    ];
+
+    let mut pruned = SignalOrigins::default();
+    let mut reference = SignalOrigins::default();
+    for (signals, box_node) in &steps {
+        pruned.record_derived_forest(&arena, signals, *box_node);
+        record_derived_forest_unpruned(&mut reference, &arena, signals, *box_node);
+    }
+
+    for signal in [shared, mid_root, outer_root] {
+        assert_eq!(
+            pruned.origins_for(signal),
+            reference.origins_for(signal),
+            "pruning must not change recorded origins for {signal:?}"
+        );
+    }
+    assert_eq!(pruned.len(), reference.len());
+}
+
+#[test]
+fn derived_forest_walk_attributes_every_reachable_node() {
+    // The pruning is only sound because a call leaves no reachable node
+    // unattributed; assert that closure property directly.
+    let mut arena = TreeArena::new();
+    let box_node = {
+        let mut b = BoxBuilder::new(&mut arena);
+        b.int(1)
+    };
+    let root = {
+        let mut b = SigBuilder::new(&mut arena);
+        let leaf = b.int(7);
+        let inner = b.add(leaf, leaf);
+        b.mul(inner, leaf)
+    };
+
+    let mut origins = SignalOrigins::default();
+    origins.record_derived_forest(&arena, &[root], box_node);
+
+    let mut stack = vec![root];
+    let mut visited = AHashSet::new();
+    while let Some(signal) = stack.pop() {
+        if !visited.insert(signal) {
+            continue;
+        }
+        assert!(
+            !origins.origins_for(signal).is_empty(),
+            "{signal:?} reachable from the walked root must carry an origin"
+        );
+        if let Some(children) = arena.children(signal) {
+            stack.extend(children.iter().copied());
+        }
+    }
+}
+
+#[test]
+fn disabled_origins_record_nothing() {
+    let mut arena = TreeArena::new();
+    let box_node = {
+        let mut b = BoxBuilder::new(&mut arena);
+        b.int(1)
+    };
+    let root = {
+        let mut b = SigBuilder::new(&mut arena);
+        let leaf = b.int(7);
+        b.add(leaf, leaf)
+    };
+
+    let mut origins = SignalOrigins::disabled();
+    origins.record_derived_forest(&arena, &[root], box_node);
+    origins.record(root, box_node);
+    origins.inherit_forest(&arena, &[root]);
+
+    assert!(!origins.is_recording());
+    assert!(origins.is_empty());
+    assert!(origins.origins_for(root).is_empty());
+}
