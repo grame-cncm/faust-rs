@@ -44,11 +44,33 @@ pub fn propagate_typed_with_ui_options(
     cache: &mut ArityCache,
     ui_options: &PropagateUiOptions,
 ) -> Result<PropagateOutput, PropagateError> {
+    propagate_typed_with_origins_policy(
+        arena,
+        box_tree,
+        inputs,
+        cache,
+        ui_options,
+        SignalOrigins::default(),
+    )
+}
+
+/// Propagation core, parameterized by whether Box provenance is accumulated.
+///
+/// Passing [`SignalOrigins::disabled`] removes the per-box provenance forest
+/// walk entirely; the returned `signal_origins` is then empty by construction.
+/// Only use it for callers that provably discard the table.
+fn propagate_typed_with_origins_policy(
+    arena: &mut TreeArena,
+    box_tree: FlatBoxId,
+    inputs: &[SigId],
+    cache: &mut ArityCache,
+    ui_options: &PropagateUiOptions,
+    mut signal_origins: SignalOrigins,
+) -> Result<PropagateOutput, PropagateError> {
     let ui = build_ui_program(arena, box_tree, ui_options);
     let mut slot_env = SlotEnv::new();
     let mut memo = PropagateMemo::default();
     let mut clock_domains = ClockDomainTable::new();
-    let mut signal_origins = SignalOrigins::default();
     let mut ctx = PropagateContext {
         cache,
         control_ids: &ui.control_ids,
@@ -76,11 +98,25 @@ pub fn propagate_typed_with_ui_options(
 /// Compatibility wrapper for callers that only consume DSP signal outputs. New
 /// post-`eval/a2sb` callers that own grouped UI should prefer
 /// [`propagate_typed_with_ui`].
+///
+/// Because the returned value cannot expose provenance, this entry point
+/// propagates with recording disabled: accumulating a table the caller has no
+/// way to read was pure cost. `eval` reaches this path for every constant fold
+/// (`crates/eval/src/simplify.rs`, the C++ `boxPropagateSig` equivalent), which
+/// made evaluation pay one full provenance forest walk per folded expression.
 pub fn propagate_typed(
     arena: &mut TreeArena,
     box_tree: FlatBoxId,
     inputs: &[SigId],
     cache: &mut ArityCache,
 ) -> Result<Vec<SigId>, PropagateError> {
-    propagate_typed_with_ui(arena, box_tree, inputs, cache).map(|output| output.signals)
+    propagate_typed_with_origins_policy(
+        arena,
+        box_tree,
+        inputs,
+        cache,
+        &PropagateUiOptions::default(),
+        SignalOrigins::disabled(),
+    )
+    .map(|output| output.signals)
 }

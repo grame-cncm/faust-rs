@@ -216,19 +216,52 @@ pub struct PropagateOutput {
 #[derive(Clone, Debug)]
 pub struct SignalOrigins {
     by_signal: AHashMap<SigId, Vec<BoxId>>,
+    /// When `false`, every recording operation is a no-op and the table stays
+    /// empty. See [`SignalOrigins::disabled`].
+    recording: bool,
 }
 
 impl Default for SignalOrigins {
     fn default() -> Self {
         Self {
             by_signal: AHashMap::new(),
+            recording: true,
         }
     }
 }
 
 impl SignalOrigins {
+    /// Returns a table that records nothing.
+    ///
+    /// Provenance exists to build a diagnostic. A caller that discards the
+    /// table cannot observe it, so building it is pure cost: every recording
+    /// entry point below returns early, and in particular
+    /// [`Self::record_derived_forest`] skips its DFS over the reachable signal
+    /// forest, which propagation performs once per box node.
+    ///
+    /// This is what `propagate_typed` uses: it returns only the signal list, so
+    /// the origins it used to accumulate were dropped unread. `eval` calls it
+    /// for every constant fold (the C++ `boxPropagateSig` path), which made
+    /// evaluation pay a full provenance walk per folded expression.
+    #[must_use]
+    pub fn disabled() -> Self {
+        Self {
+            by_signal: AHashMap::new(),
+            recording: false,
+        }
+    }
+
+    /// Returns `true` when this table accumulates recordings.
+    #[must_use]
+    pub const fn is_recording(&self) -> bool {
+        self.recording
+    }
+
     /// Records that `signal` was produced while propagating `box_node`.
     pub fn record(&mut self, signal: SigId, box_node: BoxId) {
+        if !self.recording {
+            return;
+        }
         let origins = self.by_signal.entry(signal).or_default();
         if !origins.contains(&box_node) {
             origins.push(box_node);
@@ -237,6 +270,9 @@ impl SignalOrigins {
 
     /// Records the same Box derivation for every signal in one output bus.
     pub fn record_outputs(&mut self, signals: &[SigId], box_node: BoxId) {
+        if !self.recording {
+            return;
+        }
         for signal in signals {
             self.record(*signal, box_node);
         }
@@ -246,6 +282,9 @@ impl SignalOrigins {
     /// bus while preserving more specific origins already assigned by child
     /// propagation calls.
     pub fn record_derived_forest(&mut self, arena: &TreeArena, signals: &[SigId], box_node: BoxId) {
+        if !self.recording {
+            return;
+        }
         let mut stack = signals.to_vec();
         let mut visited = std::collections::HashSet::new();
         while let Some(signal) = stack.pop() {
@@ -273,6 +312,9 @@ impl SignalOrigins {
     /// Normalization, recursion conversion, and AD rewrites can use this
     /// operation without depending on parser types.
     pub fn inherit(&mut self, derived: SigId, sources: &[SigId]) {
+        if !self.recording {
+            return;
+        }
         let inherited = sources
             .iter()
             .flat_map(|source| self.origins_for(*source))
@@ -289,6 +331,9 @@ impl SignalOrigins {
     /// retains the source of an operator even when the replacement node no
     /// longer contains the old node as a structural child.
     pub fn inherit_replacements(&mut self, before: &[SigId], after: &[SigId]) {
+        if !self.recording {
+            return;
+        }
         for (source, derived) in before.iter().zip(after) {
             self.inherit(*derived, &[*source]);
         }
@@ -297,6 +342,9 @@ impl SignalOrigins {
     /// Remaps this table after a Signal forest is cloned to another arena.
     #[must_use]
     pub fn remap(&self, node_map: &std::collections::HashMap<SigId, SigId>) -> Self {
+        if !self.recording {
+            return Self::disabled();
+        }
         let mut remapped = Self::default();
         for (source, destination) in node_map {
             for origin in self.origins_for(*source) {
@@ -313,6 +361,9 @@ impl SignalOrigins {
     /// reachable child origins. This is conservative by design: exact
     /// occurrence choice remains a diagnostic-time operation.
     pub fn inherit_forest(&mut self, arena: &TreeArena, roots: &[SigId]) {
+        if !self.recording {
+            return;
+        }
         fn visit(
             origins: &mut SignalOrigins,
             arena: &TreeArena,
