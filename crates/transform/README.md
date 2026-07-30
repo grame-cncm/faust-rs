@@ -105,7 +105,7 @@ signal state to `instanceClear`, and UI zone resets to
 cargo test -p transform --lib                                  # unit tests
 cargo run -p xtask -- golden-check                             # generated-output parity
 cargo run -p xtask -- vector-coverage-check                    # certified vector retention
-cargo run --release -p xtask -- vector-compile-budget-check    # compile-cost budget
+cargo run --release -p xtask -- compile-budget-check    # compile-cost budget
 cargo test -p compiler --test vector_mode                      # scalar/vector bit-exactness oracle
 cargo run -p xtask -- structure-check                          # layout contract (thresholds, checker isolation)
 cargo rustdoc -p transform --lib -- -D missing-docs            # documentation completeness

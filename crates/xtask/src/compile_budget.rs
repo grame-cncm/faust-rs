@@ -1,5 +1,9 @@
 //! Release-build compilation-cost retention gate for representative DSPs.
 //!
+//! Named `compile-budget-check` rather than `vector-...`: it covers the scalar
+//! front end and both scalar and vector codegen, so scoping the name to vector
+//! mode misdescribed what it gates.
+//!
 //! The gate has two independent dimensions.
 //!
 //! **Codegen basket** (`codegen_cases`) measures the complete file-to-C++ path
@@ -25,8 +29,8 @@ use compiler::{Compiler, ComputeMode, SchedulingStrategy, SignalFirLane};
 use std::hint::black_box;
 use std::time::Instant;
 
-const VECTOR_COMPILE_BUDGET_BASELINE: &str = "tests/vector-compile-budget/release-baseline.json";
-const VECTOR_COMPILE_BUDGET_SCHEMA: u32 = 2;
+const COMPILE_BUDGET_BASELINE: &str = "tests/compile-budget/release-baseline.json";
+const COMPILE_BUDGET_SCHEMA: u32 = 2;
 
 /// Basket entries that must never silently disappear from the codegen budget.
 const REQUIRED_CODEGEN_CASES: [&str; 5] = [
@@ -76,6 +80,13 @@ struct CompileBudgetProfile {
     /// The minimum is the robust estimator for "this run met no interference":
     /// scheduler noise, page faults, and neighbouring CI jobs can only add time.
     repeats: u32,
+    /// Timed runs per codegen measurement; the minimum is retained.
+    ///
+    /// Separate from `repeats` because the two baskets have very different cost
+    /// profiles: a codegen pass is seconds where a front-end pass is
+    /// milliseconds. Recording a codegen baseline from a single run let a fast
+    /// outlier become the reference and made the gate flaky.
+    codegen_repeats: u32,
     /// Timed runs for the calibration DSP specifically.
     ///
     /// The calibration divides every other measurement, so its noise is the
@@ -94,8 +105,20 @@ struct CompileBudgetProfile {
 struct CompileBudgetCase {
     name: String,
     path: String,
+    /// Coarse absolute backstop, kept for a catastrophic blow-up.
+    ///
+    /// These have to be loose enough for the slowest runner, so they are not
+    /// the real gate -- `scalar_units_milli` is. Retained because a case that
+    /// somehow escapes normalization (a calibration that moved with it) should
+    /// still hit a wall.
     scalar_max_ms: u64,
     vector_max_ms: u64,
+    /// Scalar file-to-C++ cost in calibration units, times 1000.
+    #[serde(default)]
+    scalar_units_milli: u64,
+    /// Vector file-to-C++ cost in calibration units, times 1000.
+    #[serde(default)]
+    vector_units_milli: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -122,18 +145,34 @@ const fn default_true() -> bool {
     true
 }
 
-pub(crate) fn vector_compile_budget_check(
-    args: VectorCompileBudgetArgs,
+/// One measured front-end case.
+struct FrontendMeasurement {
+    name: String,
+    /// Cost in calibration units, times 1000.
+    units_milli: u64,
+}
+
+/// One measured codegen case, in both compute modes.
+struct CodegenMeasurement {
+    name: String,
+    /// Scalar cost in calibration units, times 1000.
+    scalar_units_milli: u64,
+    /// Vector cost in calibration units, times 1000.
+    vector_units_milli: u64,
+}
+
+pub(crate) fn compile_budget_check(
+    args: CompileBudgetArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if cfg!(debug_assertions) {
         return Err(
-            "vector-compile-budget-check must run with `cargo run --release -p xtask -- vector-compile-budget-check`"
+            "compile-budget-check must run with `cargo run --release -p xtask -- compile-budget-check`"
                 .into(),
         );
     }
     let baseline_path = args
         .baseline
-        .unwrap_or_else(|| workspace_root().join(VECTOR_COMPILE_BUDGET_BASELINE));
+        .unwrap_or_else(|| workspace_root().join(COMPILE_BUDGET_BASELINE));
     let mut baseline: CompileBudgetBaseline =
         serde_json::from_str(&fs::read_to_string(&baseline_path)?)?;
     validate_baseline(&baseline)?;
@@ -160,36 +199,17 @@ pub(crate) fn vector_compile_budget_check(
     // enforcing run must measure it under the same machine conditions --
     // measuring it after the codegen basket in one mode and before it in the
     // other moved the calibration by 44% and shifted every ratio with it.
-    let measured = measure_frontend_basket(&baseline)?;
+    let (calibration_ms, measured) = measure_frontend_basket(&baseline)?;
+
+    let codegen = measure_codegen_basket(&baseline, calibration_ms)?;
     if args.update {
-        return write_updated_baseline(&baseline_path, &mut baseline, &measured);
+        return write_updated_baseline(&baseline_path, &mut baseline, &measured, &codegen);
     }
     check_frontend_basket(&baseline, &measured)?;
-
-    for case in &baseline.codegen_cases {
-        let path = workspace_root().join(&case.path);
-        let scalar_ms = measure_compile(
-            &path,
-            ComputeMode::Scalar,
-            baseline.profile.scheduling_strategy,
-        )?;
-        let vector_ms = measure_compile(
-            &path,
-            ComputeMode::Vector {
-                vec_size: baseline.profile.vec_size,
-                loop_variant: baseline.profile.loop_variant,
-            },
-            baseline.profile.scheduling_strategy,
-        )?;
-        check_case_budget(case, &baseline.profile, scalar_ms, vector_ms)?;
-        println!(
-            "vector compile budget {:>26}: scalar={scalar_ms:>6} ms vector={vector_ms:>6} ms",
-            case.name
-        );
-    }
+    check_codegen_basket(&baseline, &codegen)?;
 
     println!(
-        "vector-compile-budget-check: OK ({} codegen cases scalar + vector, {} front-end cases normalized)",
+        "compile-budget-check: OK ({} codegen cases scalar + vector, {} front-end cases normalized)",
         baseline.codegen_cases.len(),
         measured.len()
     );
@@ -197,10 +217,10 @@ pub(crate) fn vector_compile_budget_check(
 }
 
 fn validate_baseline(baseline: &CompileBudgetBaseline) -> Result<(), Box<dyn std::error::Error>> {
-    if baseline.schema_version != VECTOR_COMPILE_BUDGET_SCHEMA {
+    if baseline.schema_version != COMPILE_BUDGET_SCHEMA {
         return Err(format!(
             "unsupported vector compile budget schema {}, expected {}",
-            baseline.schema_version, VECTOR_COMPILE_BUDGET_SCHEMA
+            baseline.schema_version, COMPILE_BUDGET_SCHEMA
         )
         .into());
     }
@@ -280,7 +300,7 @@ fn require_cases<'a>(
 /// close as possible to the conditions of the measurements it normalizes.
 fn measure_frontend_basket(
     baseline: &CompileBudgetBaseline,
-) -> Result<Vec<(String, u64)>, Box<dyn std::error::Error>> {
+) -> Result<(u64, Vec<FrontendMeasurement>), Box<dyn std::error::Error>> {
     let calibration_path = workspace_root().join(&baseline.profile.calibration_path);
     let calibration_ms = measure_frontend(
         &calibration_path,
@@ -308,16 +328,114 @@ fn measure_frontend_basket(
         let path = workspace_root().join(&case.path);
         let case_ms = measure_frontend(&path, baseline.profile.repeats)?;
         let units_milli = case_ms.saturating_mul(1000) / calibration_ms;
-        measured.push((case.name.clone(), units_milli));
+        measured.push(FrontendMeasurement {
+            name: case.name.clone(),
+            units_milli,
+        });
+    }
+    Ok((calibration_ms, measured))
+}
+
+/// Measures the codegen basket, normalized against the same calibration.
+///
+/// Returns `(name, scalar_units_milli, vector_units_milli)` per case.
+fn measure_codegen_basket(
+    baseline: &CompileBudgetBaseline,
+    calibration_ms: u64,
+) -> Result<Vec<CodegenMeasurement>, Box<dyn std::error::Error>> {
+    let mut measured = Vec::new();
+    for case in &baseline.codegen_cases {
+        let path = workspace_root().join(&case.path);
+        let scalar_ms = measure_compile(
+            &path,
+            ComputeMode::Scalar,
+            baseline.profile.scheduling_strategy,
+            baseline.profile.codegen_repeats,
+        )?;
+        let vector_ms = measure_compile(
+            &path,
+            ComputeMode::Vector {
+                vec_size: baseline.profile.vec_size,
+                loop_variant: baseline.profile.loop_variant,
+            },
+            baseline.profile.scheduling_strategy,
+            baseline.profile.codegen_repeats,
+        )?;
+        check_case_budget(case, &baseline.profile, scalar_ms, vector_ms)?;
+        println!(
+            "codegen budget {:>26}: scalar={scalar_ms:>6} ms vector={vector_ms:>6} ms",
+            case.name
+        );
+        measured.push(CodegenMeasurement {
+            name: case.name.clone(),
+            scalar_units_milli: scalar_ms.saturating_mul(1000) / calibration_ms,
+            vector_units_milli: vector_ms.saturating_mul(1000) / calibration_ms,
+        });
     }
     Ok(measured)
 }
 
+/// Enforces the normalized codegen budget.
+///
+/// The absolute ceilings in [`check_case_budget`] have to survive the slowest
+/// runner, which currently leaves 4.7x to 638x of headroom -- the same width
+/// that let the 2026-07-30 front-end regression through a green CI. These
+/// normalized ceilings are the real gate on the codegen path.
+fn check_codegen_basket(
+    baseline: &CompileBudgetBaseline,
+    measured: &[CodegenMeasurement],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for CodegenMeasurement {
+        name,
+        scalar_units_milli: scalar_units,
+        vector_units_milli: vector_units,
+    } in measured
+    {
+        let case = baseline
+            .codegen_cases
+            .iter()
+            .find(|case| &case.name == name)
+            .ok_or_else(|| format!("measured unknown codegen case {name}"))?;
+        for (mode, measured_units, baseline_units) in [
+            ("scalar", *scalar_units, case.scalar_units_milli),
+            ("vector", *vector_units, case.vector_units_milli),
+        ] {
+            if baseline_units == 0 {
+                return Err(format!(
+                    "codegen case {name} has no recorded {mode} units; regenerate the baseline \
+                     with `cargo run --release -p xtask -- compile-budget-check --update`"
+                )
+                .into());
+            }
+            let ceiling = frontend_ceiling_milli(baseline_units, &baseline.profile);
+            println!(
+                "codegen budget {:>26}: {mode} {:.3} units (baseline {:.3}, ceiling {:.3})",
+                case.name,
+                measured_units as f64 / 1000.0,
+                baseline_units as f64 / 1000.0,
+                ceiling as f64 / 1000.0,
+            );
+            if measured_units > ceiling {
+                return Err(format!(
+                    "{name} {mode} codegen cost is {:.3} calibration units; baseline is {:.3} \
+                     and the {}% tolerance permits {:.3}.",
+                    measured_units as f64 / 1000.0,
+                    baseline_units as f64 / 1000.0,
+                    baseline.profile.frontend_tolerance_percent,
+                    ceiling as f64 / 1000.0,
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn check_frontend_basket(
     baseline: &CompileBudgetBaseline,
-    measured: &[(String, u64)],
+    measured: &[FrontendMeasurement],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for (name, units_milli) in measured {
+    for FrontendMeasurement { name, units_milli } in measured {
         let case = baseline
             .frontend_cases
             .iter()
@@ -336,7 +454,7 @@ fn check_frontend_basket(
                 "{name} front-end cost is {:.3} calibration units; baseline is {:.3} and the \
                  {}% tolerance permits {:.3}. Either the change made compilation slower, or the \
                  baseline needs an explicit, justified update via \
-                 `cargo run --release -p xtask -- vector-compile-budget-check --update`.",
+                 `cargo run --release -p xtask -- compile-budget-check --update`.",
                 *units_milli as f64 / 1000.0,
                 case.units_milli as f64 / 1000.0,
                 baseline.profile.frontend_tolerance_percent,
@@ -361,9 +479,10 @@ fn frontend_ceiling_milli(baseline_units_milli: u64, profile: &CompileBudgetProf
 fn write_updated_baseline(
     baseline_path: &Path,
     baseline: &mut CompileBudgetBaseline,
-    measured: &[(String, u64)],
+    measured: &[FrontendMeasurement],
+    codegen: &[CodegenMeasurement],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for (name, units_milli) in measured {
+    for FrontendMeasurement { name, units_milli } in measured {
         let Some(case) = baseline
             .frontend_cases
             .iter_mut()
@@ -385,26 +504,56 @@ fn write_updated_baseline(
             *units_milli as f64 / 1000.0,
         );
     }
+    for CodegenMeasurement {
+        name,
+        scalar_units_milli: scalar_units,
+        vector_units_milli: vector_units,
+    } in codegen
+    {
+        let Some(case) = baseline
+            .codegen_cases
+            .iter_mut()
+            .find(|case| &case.name == name)
+        else {
+            continue;
+        };
+        println!(
+            "codegen baseline {:>26}: scalar {:.3} -> {:.3}, vector {:.3} -> {:.3} units",
+            case.name,
+            case.scalar_units_milli as f64 / 1000.0,
+            *scalar_units as f64 / 1000.0,
+            case.vector_units_milli as f64 / 1000.0,
+            *vector_units as f64 / 1000.0,
+        );
+        case.scalar_units_milli = *scalar_units;
+        case.vector_units_milli = *vector_units;
+    }
     let mut json = serde_json::to_string_pretty(baseline)?;
     json.push('\n');
     fs::write(baseline_path, json)?;
     println!(
-        "vector-compile-budget-check: baseline updated at {}",
+        "compile-budget-check: baseline updated at {}",
         baseline_path.display()
     );
     println!("review the diff and justify every increase in the commit message");
     Ok(())
 }
 
+/// Returns the fastest of `repeats` timed codegen runs, in milliseconds.
 fn measure_compile(
     path: &Path,
     compute_mode: ComputeMode,
     scheduling_strategy: u32,
+    repeats: u32,
 ) -> Result<u64, Box<dyn std::error::Error>> {
-    let started = Instant::now();
-    let bytes = compile_cpp(path, compute_mode, scheduling_strategy)?;
-    black_box(bytes);
-    Ok(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX))
+    let mut best = u64::MAX;
+    for _ in 0..repeats.max(1) {
+        let started = Instant::now();
+        let bytes = compile_cpp(path, compute_mode, scheduling_strategy)?;
+        black_box(bytes);
+        best = best.min(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
+    }
+    Ok(best)
 }
 
 /// Returns the fastest of `repeats` timed front-end runs, in milliseconds.
@@ -478,6 +627,21 @@ fn check_case_budget(
 mod tests {
     use super::*;
 
+    fn fe(name: &str, units_milli: u64) -> FrontendMeasurement {
+        FrontendMeasurement {
+            name: name.to_owned(),
+            units_milli,
+        }
+    }
+
+    fn cg(name: &str, scalar_units_milli: u64, vector_units_milli: u64) -> CodegenMeasurement {
+        CodegenMeasurement {
+            name: name.to_owned(),
+            scalar_units_milli,
+            vector_units_milli,
+        }
+    }
+
     fn profile() -> CompileBudgetProfile {
         CompileBudgetProfile {
             vec_size: 32,
@@ -487,6 +651,7 @@ mod tests {
             fixed_noise_margin_ms: 100,
             calibration_path: "tests/impulse-tests/dsp/karplus.dsp".to_owned(),
             repeats: 2,
+            codegen_repeats: 2,
             calibration_repeats: 8,
             frontend_tolerance_percent: 25,
             min_calibration_ms: 5,
@@ -499,12 +664,14 @@ mod tests {
             path: "unused".to_owned(),
             scalar_max_ms: 1000,
             vector_max_ms: 2000,
+            scalar_units_milli: 10_000,
+            vector_units_milli: 20_000,
         }
     }
 
     fn frontend_baseline(units_milli: u64) -> CompileBudgetBaseline {
         CompileBudgetBaseline {
-            schema_version: VECTOR_COMPILE_BUDGET_SCHEMA,
+            schema_version: COMPILE_BUDGET_SCHEMA,
             profile: profile(),
             codegen_cases: Vec::new(),
             frontend_cases: vec![FrontendBudgetCase {
@@ -533,8 +700,8 @@ mod tests {
     fn frontend_tolerance_accepts_jitter_and_rejects_regressions() {
         let baseline = frontend_baseline(10_000);
         // +24% is runner jitter under a 25% tolerance; +26% is not.
-        check_frontend_basket(&baseline, &[("fixture".to_owned(), 12_400)]).unwrap();
-        assert!(check_frontend_basket(&baseline, &[("fixture".to_owned(), 12_600)]).is_err());
+        check_frontend_basket(&baseline, &[fe("fixture", 12_400)]).unwrap();
+        assert!(check_frontend_basket(&baseline, &[fe("fixture", 12_600)]).is_err());
     }
 
     #[test]
@@ -542,9 +709,38 @@ mod tests {
         // `spectral_level` went from 902 ms to 10 899 ms against a calibration
         // that did not move: any tolerance short of +1100% must reject it.
         let baseline = frontend_baseline(27_400);
-        assert!(check_frontend_basket(&baseline, &[("fixture".to_owned(), 331_000)]).is_err());
+        assert!(check_frontend_basket(&baseline, &[fe("fixture", 331_000)]).is_err());
         // The residual left by the PR #15 caps alone (x2.5) must also fail.
-        assert!(check_frontend_basket(&baseline, &[("fixture".to_owned(), 69_100)]).is_err());
+        assert!(check_frontend_basket(&baseline, &[fe("fixture", 69_100)]).is_err());
+    }
+
+    #[test]
+    fn codegen_normalization_rejects_what_the_absolute_ceiling_waves_through() {
+        // spectral_level scalar measured 1531 ms against a 20 000 ms ceiling:
+        // 13x of headroom. A 2x codegen regression clears the ceiling and must
+        // be caught by the normalized budget instead.
+        let baseline = CompileBudgetBaseline {
+            schema_version: COMPILE_BUDGET_SCHEMA,
+            profile: profile(),
+            codegen_cases: vec![case()],
+            frontend_cases: Vec::new(),
+        };
+        check_codegen_basket(&baseline, &[cg("fixture", 12_400, 24_000)]).unwrap();
+        assert!(check_codegen_basket(&baseline, &[cg("fixture", 20_000, 24_000)]).is_err());
+        assert!(check_codegen_basket(&baseline, &[cg("fixture", 12_400, 40_000)]).is_err());
+    }
+
+    #[test]
+    fn codegen_case_without_recorded_units_is_rejected() {
+        let mut only = case();
+        only.scalar_units_milli = 0;
+        let baseline = CompileBudgetBaseline {
+            schema_version: COMPILE_BUDGET_SCHEMA,
+            profile: profile(),
+            codegen_cases: vec![only],
+            frontend_cases: Vec::new(),
+        };
+        assert!(check_codegen_basket(&baseline, &[cg("fixture", 1, 1)]).is_err());
     }
 
     #[test]

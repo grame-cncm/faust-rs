@@ -132,7 +132,7 @@ fn run(cli: XtaskCli) -> Result<(), Box<dyn std::error::Error>> {
         XtaskCommand::VectorCoverageMerge(args) => vector_coverage_merge(args)?,
         XtaskCommand::VectorCoverageCheck(args) => vector_coverage_check(args)?,
         XtaskCommand::VectorInterpOptCheck => vector_interp_opt_check()?,
-        XtaskCommand::VectorCompileBudgetCheck(args) => vector_compile_budget_check(args)?,
+        XtaskCommand::CompileBudgetCheck(args) => compile_budget_check(args)?,
         XtaskCommand::LockstepSimdCheck => lockstep_simd_check()?,
         XtaskCommand::FfiBoundaryCheck => ffi_boundary_check()?,
         XtaskCommand::CliParserCheck => cli_parser_check()?,
@@ -153,6 +153,7 @@ mod cli;
 mod cli_parser_check;
 mod cli_transcript;
 mod code_graphs;
+mod compile_budget;
 mod corpus_status_query;
 mod diagnostics_provenance;
 mod diagnostics_quality_check;
@@ -169,7 +170,6 @@ mod reports;
 mod runtime_trace;
 mod shared;
 mod structure_check;
-mod vector_compile_budget;
 mod vector_coverage;
 mod wasm;
 
@@ -178,6 +178,7 @@ pub(crate) use cli::*;
 pub(crate) use cli_parser_check::*;
 pub(crate) use cli_transcript::*;
 pub(crate) use code_graphs::*;
+pub(crate) use compile_budget::*;
 pub(crate) use corpus_status_query::*;
 pub(crate) use diagnostics_provenance::*;
 pub(crate) use diagnostics_quality_check::*;
@@ -194,7 +195,6 @@ pub(crate) use reports::*;
 pub(crate) use runtime_trace::*;
 pub(crate) use shared::*;
 pub(crate) use structure_check::*;
-pub(crate) use vector_compile_budget::*;
 pub(crate) use vector_coverage::*;
 pub(crate) use wasm::*;
 

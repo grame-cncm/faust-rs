@@ -75,7 +75,7 @@ dot -V
 | `p7-matrix-report` | Generate the executable-backend matrix from impulse-test artifacts |
 | `vector-coverage-merge` | Validate and merge `count_vector_corpus` JSON reports into the checked vector-coverage baseline |
 | `vector-coverage-check` | Recompile every baseline-certified mode/DSP pair and require checked vector chunk-driver structure |
-| `vector-compile-budget-check` | Measure the versioned release compile-time baskets — scalar/vector codegen plus normalized front-end cost — and reject unexplained regressions |
+| `compile-budget-check` | Measure the versioned release compile-time baskets — scalar/vector codegen plus normalized front-end cost — and reject unexplained regressions |
 | `vector-interp-opt-check` | Compare interpreter `opt_level=0` and max optimization on representative checked-vector cases |
 | `lockstep-simd-check` | Require Clang to emit four-wide LLVM floating-point operations for complex lockstep corpus cases |
 | `ffi-boundary-check` | Enforce one-way FFI dependency layers and the explicit unsafe-code allowlist |
@@ -116,24 +116,26 @@ cargo run -p xtask -- vector-interp-opt-check
 cargo run -p xtask -- lockstep-simd-check
 ```
 
-`vector-compile-budget-check` enforces two baskets, both versioned in
-`tests/vector-compile-budget/release-baseline.json`.
+`compile-budget-check` enforces two baskets, both versioned in
+`tests/compile-budget/release-baseline.json`.
 
 `codegen_cases` warms each entry before measuring scalar and vector
-compilation, then applies absolute ceilings and a noise-tolerant vector/scalar
-ratio.
+compilation. `frontend_cases` measures the `--check` path only (`parse -> eval
+-> propagate -> type -> FIR verify`, no codegen) over `tests/impulse-tests/dsp`
+entries.
 
-`frontend_cases` measures the `--check` path only (`parse -> eval -> propagate
--> type -> FIR verify`, no codegen) over `tests/impulse-tests/dsp` entries, and
-expresses each cost as a ratio against a calibration DSP measured in the same
-process. Normalizing this way cancels machine speed, which is what allows a
-25% tolerance: absolute millisecond ceilings have to be loose enough for the
-slowest CI runner, and at that width they no longer catch a 2x regression.
+Both express each cost as a ratio against a calibration DSP measured in the
+same process. Normalizing this way cancels machine speed, which is what allows
+a 25% tolerance: absolute millisecond ceilings have to be loose enough for the
+slowest CI runner, and at that width they no longer catch a 2x regression — the
+codegen ceilings carried 4.7x to 638x of headroom before normalization. They are
+kept, together with the vector/scalar ratio, as a coarse backstop for a
+catastrophic blow-up.
 
 It must run with release optimizations:
 
 ```bash
-cargo run --release -p xtask -- vector-compile-budget-check
+cargo run --release -p xtask -- compile-budget-check
 ```
 
 `--update` re-records the front-end units from the current run instead of
@@ -142,7 +144,7 @@ the commit message, otherwise the gate degrades into a recorder that ratifies
 whatever the last commit did.
 
 ```bash
-cargo run --release -p xtask -- vector-compile-budget-check --update
+cargo run --release -p xtask -- compile-budget-check --update
 ```
 
 ## Environment Variables

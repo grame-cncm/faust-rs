@@ -43,7 +43,7 @@ Guidelines for contributors and coding agents working on `faust-rs`.
 - CI stages include `cargo check`, formatting, clippy, and tests.
 - CI also runs golden parity guardrails via `cargo run -p xtask -- golden-check`.
 - CI also runs the compilation-cost gate via
-  `cargo run --release -p xtask -- vector-compile-budget-check`.
+  `cargo run --release -p xtask -- compile-budget-check`.
 - A change is not considered ready unless CI is green.
 - Code that constructs, normalizes, displays, or compares filesystem paths must
   be checked for cross-platform behavior. Prefer `Path`/`PathBuf` operations,
@@ -64,7 +64,7 @@ Guidelines for contributors and coding agents working on `faust-rs`.
   - `cargo fmt --all`
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `cargo test --workspace --all-targets`
-  - `cargo run --release -p xtask -- vector-compile-budget-check` before any
+  - `cargo run --release -p xtask -- compile-budget-check` before any
     commit that touches the compilation pipeline (`parser`, `eval`, `propagate`,
     `normalize`, `sigtype`, `transform`, `fir`, `codegen`, `compiler`) — see
     "Compilation-cost discipline" below.
@@ -176,19 +176,26 @@ diagnostics-provenance arc multiplied front-end cost by 4.5x over the corpus and
 by up to 17x on individual DSPs; it reached `main` through a green CI and was
 found by a user, not by a gate. Treat cost like behavior.
 
-- The gate is `cargo run --release -p xtask -- vector-compile-budget-check`.
+- The gate is `cargo run --release -p xtask -- compile-budget-check`.
   Release profile only; it refuses to run under `debug_assertions`.
 - It enforces two independent baskets, versioned in
-  `tests/vector-compile-budget/release-baseline.json`:
-  - `codegen_cases` — full file-to-C++ path, scalar and vector, absolute
-    ceilings plus a vector/scalar ratio;
+  `tests/compile-budget/release-baseline.json`:
+  - `codegen_cases` — full file-to-C++ path, scalar and vector;
   - `frontend_cases` — the `--check` path only, over `tests/impulse-tests/dsp`
-    entries, expressed in **calibration units** rather than milliseconds.
-- Units are the point. Absolute wall-clock ceilings must be loosened until they
+    entries.
+- Both baskets are enforced in **calibration units**, not milliseconds. Units
+  are the point. Absolute wall-clock ceilings must be loosened until they
   survive the slowest runner, at which stage they no longer catch a 2x
-  regression. Each measurement is divided by the cost of a calibration DSP
-  measured in the same process, so machine speed cancels out and the tolerance
-  can be 25%.
+  regression — the codegen ceilings carried 4.7x to 638x of headroom before
+  normalization, the same width that let the 2026-07-30 front-end regression
+  through. Each measurement is divided by the cost of a calibration DSP measured
+  in the same process, so machine speed cancels out and the tolerance is 25%.
+  The absolute ceilings and the vector/scalar ratio are retained as a coarse
+  backstop only.
+- The gate detects a per-case regression of 25% or more. Smaller ones pass, by
+  design: measured run-to-run spread is ±8%, and a tighter bound would be flaky.
+  Do not read a green gate as "no slowdown"; read it as "no slowdown this gate
+  can distinguish from noise".
 - Run it before committing any change to `parser`, `eval`, `propagate`,
   `normalize`, `sigtype`, `transform`, `fir`, `codegen`, or `compiler`. It costs
   a few minutes and is the only thing standing between a complexity defect and

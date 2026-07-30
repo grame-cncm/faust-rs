@@ -134,7 +134,7 @@ Identified by reading, **not yet isolated by measurement**:
 
 ## Why CI did not catch any of this
 
-`vector-compile-budget-check` existed but could not see it. Its ceilings were
+`compile-budget-check` existed but could not see it. Its ceilings were
 absolute wall clock and therefore had to be loose enough for the slowest runner:
 `reverb_designer` went from 7.1 s to 18.3 s **against a `scalar_max_ms` of
 45 000** and never turned the job red. It also measured only the full
@@ -194,7 +194,7 @@ specification.
 
 ## Non-regression gate
 
-`vector-compile-budget-check` is extended rather than duplicated
+`compile-budget-check` is extended rather than duplicated
 (`crates/xtask/src/vector_compile_budget.rs`, baseline schema 2):
 
 - a **front-end basket** measures the `--check` path only, over

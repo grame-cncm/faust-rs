@@ -127,4 +127,4 @@ jobs:
         run: cargo run -p xtask -- vector-interp-opt-check
 
       - name: Release compilation cost budget (codegen + normalized front end)
-        run: cargo run --release -p xtask -- vector-compile-budget-check
+        run: cargo run --release -p xtask -- compile-budget-check

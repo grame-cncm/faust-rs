@@ -46,7 +46,7 @@ fn ci_command_names_are_accepted() {
         "structure-check",
         "vector-coverage-check",
         "vector-interp-opt-check",
-        "vector-compile-budget-check",
+        "compile-budget-check",
     ] {
         parse_xtask([command]).unwrap_or_else(|error| panic!("{command}: {error}"));
     }
