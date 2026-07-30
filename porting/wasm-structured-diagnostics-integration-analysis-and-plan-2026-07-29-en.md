@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-29
 
-**Status:** Proposed; analysis and planning only
+**Status:** Implementation in progress; P0 contract frozen on 2026-07-30
 
 **`faust-rs` baseline:** `b5478ed4` (`Stop building type warnings the caller discards`)
 
@@ -22,6 +22,30 @@ here; that document remains the reference if they are taken up later.
 `faustasm` repository or component was found. This plan treats that name as a
 reference to `faustwasm`. If it denotes a distinct project, its API must be
 inventoried during P0 before its integration is specified or implemented.
+
+## 0. Implementation progress and frozen P0 decisions
+
+The implementation request of 2026-07-30 approves Option D and freezes these
+external compatibility decisions:
+
+- the raw export is
+  `faust_wasm_result_get_error_diagnostics(result_handle)`;
+- it returns an independently owned text-result handle;
+- the query takes no diagnostic-level or presentation argument and always
+  returns the complete retained diagnostics-v2 report;
+- existing error pointer/length accessors and compile-result lifetimes remain
+  unchanged;
+- `FaustCompilerError.getErrorDiagnostics()` is the authoritative
+  per-failure TypeScript API;
+- `FaustCompiler.getErrorDiagnostics()` is a last-error convenience only;
+- FFI reports omit source text by default while preserving source metadata,
+  hashes, and ranges;
+- `faustasm` is treated as the `faustwasm` integration named by this document.
+
+The baseline is `faust-rs` commit `b5478ed4` and `faustwasm` branch `rust` at
+`74a5132`. Existing compile-result and text-result lifetime tests are the
+compatibility baseline; phase-specific negative fixtures are added with the
+implementation that makes their structured assertions possible.
 
 ## 1. Executive conclusion
 
