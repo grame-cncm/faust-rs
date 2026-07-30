@@ -57,7 +57,9 @@ Implementation progress:
   exports;
 - P4 complete in `faustwasm` commit `f2abc95`: typed error/report API and
   optional-export integration;
-- P5–P6 pending.
+- P5 complete in `faustwasm` commit `eabf1f5`: Node and browser end-to-end
+  coverage against the real Rust compiler module;
+- P6 pending.
 
 ## 1. Executive conclusion
 
