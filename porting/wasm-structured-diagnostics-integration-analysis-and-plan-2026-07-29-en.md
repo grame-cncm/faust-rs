@@ -55,7 +55,9 @@ Implementation progress:
   compile-result state;
 - P3 complete: raw parameter-free diagnostics queries and verified WASM
   exports;
-- P4–P6 pending.
+- P4 complete in `faustwasm` commit `f2abc95`: typed error/report API and
+  optional-export integration;
+- P5–P6 pending.
 
 ## 1. Executive conclusion
 
