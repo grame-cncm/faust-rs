@@ -55,7 +55,7 @@ impl Compiler {
             &search_paths,
         )
         .map(|_| request.source.clone())
-        .map_err(FaustwasmServiceError::unsupported)
+        .map_err(FaustwasmServiceError::compile_failure)
     }
 
     /// Returns a copy of this compiler with the compilation options found in a
@@ -168,14 +168,14 @@ impl Compiler {
         if wants("-cpp") {
             let cpp = compiler
                 .compile_source_to_cpp(name, source, &CppOptions::default())
-                .map_err(FaustwasmServiceError::unsupported)?;
+                .map_err(FaustwasmServiceError::compile_failure)?;
             artifacts.push(AuxFileArtifact::text(stem, "cpp", cpp));
         }
 
         if wants("-c") {
             let c = compiler
                 .compile_source_to_c(name, source, &COptions::default())
-                .map_err(FaustwasmServiceError::unsupported)?;
+                .map_err(FaustwasmServiceError::compile_failure)?;
             artifacts.push(AuxFileArtifact::text(stem, "c", c));
         }
 
@@ -188,7 +188,7 @@ impl Compiler {
             };
             let wasm = compiler
                 .compile_source_to_wasm(name, source, &options)
-                .map_err(FaustwasmServiceError::unsupported)?;
+                .map_err(FaustwasmServiceError::compile_failure)?;
             artifacts.push(AuxFileArtifact::binary(stem, "wasm", wasm.wasm_binary));
             artifacts.push(AuxFileArtifact::text(stem, "json", wasm.dsp_json));
         }
@@ -200,7 +200,7 @@ impl Compiler {
         if wants("-json") && !wants("-wasm") {
             let json = compiler
                 .compile_source_to_json(name, source)
-                .map_err(FaustwasmServiceError::unsupported)?;
+                .map_err(FaustwasmServiceError::compile_failure)?;
             artifacts.push(AuxFileArtifact::text(stem, "json", json));
         }
 
@@ -212,7 +212,7 @@ impl Compiler {
                     &search_paths,
                     &request.virtual_sources,
                 )
-                .map_err(FaustwasmServiceError::unsupported)?;
+                .map_err(FaustwasmServiceError::compile_failure)?;
             // Name the diagram "process" so the root file is always
             // process.svg, matching the C++ compiler convention and the
             // faustwasm `FaustSvgDiagrams.from(...)` expectation.
@@ -268,14 +268,14 @@ impl Compiler {
                 search_paths,
                 &request.virtual_sources,
             )
-            .map_err(FaustwasmServiceError::unsupported)?;
+            .map_err(FaustwasmServiceError::compile_failure)?;
         let lowered = self
             .lower_to_fir(
                 &request.source_name,
                 &signals,
                 SignalFirLane::TransformFastLane,
             )
-            .map_err(FaustwasmServiceError::unsupported)?;
+            .map_err(FaustwasmServiceError::compile_failure)?;
 
         let class_name = argv_value(argv, &["-cn"]).map_or_else(
             || sanitize_cpp_ident(source_name_to_class(&request.source_name).as_str()),

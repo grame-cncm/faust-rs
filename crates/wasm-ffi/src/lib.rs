@@ -97,7 +97,56 @@ struct StoredCompileSuccess {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StoredTextResult {
     Ok(String),
-    Err(String),
+    Err {
+        /// Human-readable compatibility message (unchanged legacy payload).
+        message: String,
+        /// Complete diagnostics-v2 JSON report, retained when the failure
+        /// carried typed compiler diagnostics. `None` for transport and
+        /// argument failures.
+        diagnostics_json: Option<String>,
+    },
+}
+
+impl StoredTextResult {
+    /// One error text result with no typed compiler diagnostics.
+    fn err(message: impl Into<String>) -> Self {
+        StoredTextResult::Err {
+            message: message.into(),
+            diagnostics_json: None,
+        }
+    }
+
+    /// Captures a helper-service failure, rendering any retained compiler
+    /// diagnostics as one complete diagnostics-v2 report — the same
+    /// no-presentation-parameter contract as
+    /// [`faust_wasm_result_get_error_diagnostics`].
+    fn from_service_error(
+        error: compiler::FaustwasmServiceError,
+        request: DiagnosticsRequestMetadata,
+    ) -> Self {
+        let diagnostics_json = error.diagnostics.as_ref().map(|bundle| {
+            render_complete_diagnostics_v2_json(
+                bundle,
+                DiagnosticsCompilerMetadata::default(),
+                request,
+                SourceTextPolicy::None,
+            )
+        });
+        StoredTextResult::Err {
+            message: error.message,
+            diagnostics_json,
+        }
+    }
+}
+
+/// Request metadata identifying one helper-service call in a diagnostics
+/// report (`generateAuxFiles`, `expandDSP`, ...).
+fn service_diagnostics_request(mode: &str, args: &str) -> DiagnosticsRequestMetadata {
+    DiagnosticsRequestMetadata {
+        mode: Some(mode.to_owned()),
+        backend: None,
+        normalized_options: args.split_whitespace().map(str::to_owned).collect(),
+    }
 }
 
 /// Registry for compile result handles exposed to the host.
@@ -481,14 +530,14 @@ fn error_diagnostics_result(handle: u32) -> StoredTextResult {
     with_result(handle, |result| match result {
         Some(StoredCompileResult::Err(failure)) => match failure.render_complete_json() {
             Some(json) => StoredTextResult::Ok(json),
-            None => StoredTextResult::Err(
+            None => StoredTextResult::err(
                 "compile result has no structured compiler diagnostics".to_owned(),
             ),
         },
         Some(StoredCompileResult::Ok(_)) => {
-            StoredTextResult::Err("successful compile result has no error diagnostics".to_owned())
+            StoredTextResult::err("successful compile result has no error diagnostics")
         }
-        None => StoredTextResult::Err("unknown compile result handle".to_owned()),
+        None => StoredTextResult::err("unknown compile result handle"),
     })
 }
 
@@ -503,16 +552,17 @@ fn success_diagnostics_result(handle: u32) -> StoredTextResult {
             ))
         }
         Some(StoredCompileResult::Err(_)) => {
-            StoredTextResult::Err("failed compile result has no success diagnostics".to_owned())
+            StoredTextResult::err("failed compile result has no success diagnostics")
         }
-        None => StoredTextResult::Err("unknown compile result handle".to_owned()),
+        None => StoredTextResult::err("unknown compile result handle"),
     })
 }
 
 /// Read the UTF-8 payload pointer for one stored text result.
 fn text_result_ptr(handle: u32) -> *const u8 {
     with_text_result(handle, |result| match result {
-        Some(StoredTextResult::Ok(text)) | Some(StoredTextResult::Err(text)) => text.as_ptr(),
+        Some(StoredTextResult::Ok(text)) => text.as_ptr(),
+        Some(StoredTextResult::Err { message, .. }) => message.as_ptr(),
         None => std::ptr::null(),
     })
 }
@@ -520,7 +570,8 @@ fn text_result_ptr(handle: u32) -> *const u8 {
 /// Read the UTF-8 payload length for one stored text result.
 fn text_result_len(handle: u32) -> usize {
     with_text_result(handle, |result| match result {
-        Some(StoredTextResult::Ok(text)) | Some(StoredTextResult::Err(text)) => text.len(),
+        Some(StoredTextResult::Ok(text)) => text.len(),
+        Some(StoredTextResult::Err { message, .. }) => message.len(),
         None => 0,
     })
 }
@@ -734,12 +785,12 @@ pub unsafe extern "C" fn faust_wasm_get_info(what_ptr: *const u8, what_len: usiz
     let result = unsafe {
         let what = match decode_utf8_arg(what_ptr, what_len, "what") {
             Ok(what) => what,
-            Err(error) => return store_text_result(StoredTextResult::Err(error)),
+            Err(error) => return store_text_result(StoredTextResult::err(error)),
         };
         let compiler = Compiler::new();
         match compiler.get_faustwasm_info(what) {
             Ok(text) => StoredTextResult::Ok(text),
-            Err(error) => StoredTextResult::Err(error.to_string()),
+            Err(error) => StoredTextResult::err(error.to_string()),
         }
     };
     store_text_result(result)
@@ -766,15 +817,15 @@ pub unsafe extern "C" fn faust_wasm_expand_dsp(
     let result = unsafe {
         let name = match decode_utf8_arg(name_ptr, name_len, "name") {
             Ok(name) => name,
-            Err(error) => return store_text_result(StoredTextResult::Err(error)),
+            Err(error) => return store_text_result(StoredTextResult::err(error)),
         };
         let source = match decode_utf8_arg(source_ptr, source_len, "source") {
             Ok(source) => source,
-            Err(error) => return store_text_result(StoredTextResult::Err(error)),
+            Err(error) => return store_text_result(StoredTextResult::err(error)),
         };
         let args = match decode_utf8_arg(args_ptr, args_len, "args") {
             Ok(args) => args,
-            Err(error) => return store_text_result(StoredTextResult::Err(error)),
+            Err(error) => return store_text_result(StoredTextResult::err(error)),
         };
         let compiler = Compiler::new();
         match compiler.expand_dsp(&compiler::ExpandDspRequest {
@@ -783,7 +834,10 @@ pub unsafe extern "C" fn faust_wasm_expand_dsp(
             args: args.to_owned(),
         }) {
             Ok(text) => StoredTextResult::Ok(text),
-            Err(error) => StoredTextResult::Err(error.to_string()),
+            Err(error) => StoredTextResult::from_service_error(
+                error,
+                service_diagnostics_request("expandDSP", args),
+            ),
         }
     };
     store_text_result(result)
@@ -1021,15 +1075,15 @@ pub unsafe extern "C" fn faust_wasm_generate_aux_files_json(
     let result = unsafe {
         let name = match decode_utf8_arg(name_ptr, name_len, "name") {
             Ok(name) => name,
-            Err(error) => return store_text_result(StoredTextResult::Err(error)),
+            Err(error) => return store_text_result(StoredTextResult::err(error)),
         };
         let source = match decode_utf8_arg(source_ptr, source_len, "source") {
             Ok(source) => source,
-            Err(error) => return store_text_result(StoredTextResult::Err(error)),
+            Err(error) => return store_text_result(StoredTextResult::err(error)),
         };
         let args = match decode_utf8_arg(args_ptr, args_len, "args") {
             Ok(args) => args,
-            Err(error) => return store_text_result(StoredTextResult::Err(error)),
+            Err(error) => return store_text_result(StoredTextResult::err(error)),
         };
         let argv = split_faustwasm_args(args);
         let compiler = compiler_with_process_name_from_argv(&argv);
@@ -1050,7 +1104,10 @@ pub unsafe extern "C" fn faust_wasm_generate_aux_files_json(
                     .collect();
                 StoredTextResult::Ok(artifacts_to_json(&wasm_artifacts))
             }
-            Err(error) => StoredTextResult::Err(error.to_string()),
+            Err(error) => StoredTextResult::from_service_error(
+                error,
+                service_diagnostics_request("generateAuxFiles", args),
+            ),
         }
     };
     store_text_result(result)
@@ -1076,6 +1133,41 @@ pub extern "C" fn faust_wasm_text_result_ptr(handle: u32) -> *const u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn faust_wasm_text_result_len(handle: u32) -> usize {
     text_result_len(handle)
+}
+
+/// Returns the pointer to the complete diagnostics-v2 JSON report retained by
+/// one **error** text result.
+///
+/// Null when the handle is unknown, the result is successful, or the failure
+/// carried no typed compiler diagnostics (transport/argument errors) — in
+/// those cases the compatibility message from
+/// [`faust_wasm_text_result_ptr`] is all there is. Like the compile-result
+/// query [`faust_wasm_result_get_error_diagnostics`], this has no
+/// presentation parameter: every retained diagnostic field is serialized and
+/// the host derives smaller views locally.
+#[unsafe(no_mangle)]
+pub extern "C" fn faust_wasm_text_result_diagnostics_ptr(handle: u32) -> *const u8 {
+    with_text_result(handle, |result| match result {
+        Some(StoredTextResult::Err {
+            diagnostics_json: Some(json),
+            ..
+        }) => json.as_ptr(),
+        _ => std::ptr::null(),
+    })
+}
+
+/// Returns the byte length of the diagnostics-v2 JSON report retained by one
+/// error text result, or `0` when there is none (see
+/// [`faust_wasm_text_result_diagnostics_ptr`]).
+#[unsafe(no_mangle)]
+pub extern "C" fn faust_wasm_text_result_diagnostics_len(handle: u32) -> usize {
+    with_text_result(handle, |result| match result {
+        Some(StoredTextResult::Err {
+            diagnostics_json: Some(json),
+            ..
+        }) => json.len(),
+        _ => 0,
+    })
 }
 
 /// Releases a stored text result handle and the owned payload behind it.
@@ -1496,6 +1588,79 @@ mod tests {
         };
         super::faust_wasm_text_result_free(handle);
         (is_ok, text)
+    }
+
+    /// Helper: like [`call_generate_aux_files_json`] but also reads the
+    /// retained diagnostics-v2 report before releasing the handle.
+    fn call_generate_aux_files_json_with_diagnostics(
+        name: &str,
+        source: &str,
+        args: &str,
+    ) -> (u32, String, Option<String>) {
+        let handle = unsafe {
+            super::faust_wasm_generate_aux_files_json(
+                name.as_ptr(),
+                name.len(),
+                source.as_ptr(),
+                source.len(),
+                args.as_ptr(),
+                args.len(),
+            )
+        };
+        let is_ok = super::faust_wasm_text_result_is_ok(handle);
+        let text = unsafe {
+            let ptr = super::faust_wasm_text_result_ptr(handle);
+            let len = super::faust_wasm_text_result_len(handle);
+            std::str::from_utf8(std::slice::from_raw_parts(ptr, len))
+                .expect("result must be UTF-8")
+                .to_owned()
+        };
+        let diag_len = super::faust_wasm_text_result_diagnostics_len(handle);
+        let diagnostics = if diag_len == 0 {
+            assert!(super::faust_wasm_text_result_diagnostics_ptr(handle).is_null());
+            None
+        } else {
+            let ptr = super::faust_wasm_text_result_diagnostics_ptr(handle);
+            Some(unsafe {
+                std::str::from_utf8(std::slice::from_raw_parts(ptr, diag_len))
+                    .expect("diagnostics must be UTF-8")
+                    .to_owned()
+            })
+        };
+        super::faust_wasm_text_result_free(handle);
+        (is_ok, text, diagnostics)
+    }
+
+    #[test]
+    fn generate_aux_files_json_failure_retains_structured_diagnostics() {
+        // Misspelled identifier: the classic FRS-EVAL-0002 case from the
+        // error-model document — the host must receive the complete
+        // diagnostics-v2 report, not only the flattened message.
+        let (is_ok, text, diagnostics) = call_generate_aux_files_json_with_diagnostics(
+            "broken",
+            "cutoff = 1000;\nprocess = _ * cutof;\n",
+            "-lang asc -cn BrokenDsp --ec --os -o /broken.out.ts",
+        );
+        assert_eq!(is_ok, 0, "compilation must fail: {text}");
+        assert!(text.contains("cutof"), "compatibility message kept: {text}");
+        let json = diagnostics.expect("compiler failure must retain diagnostics");
+        assert!(json.contains(r#""schema_version": 2"#), "{json}");
+        assert!(json.contains("FRS-EVAL-0002"), "{json}");
+        assert!(json.contains(r#""category": "user_code""#), "{json}");
+        assert!(json.contains(r#""status": "failed""#), "{json}");
+        // The near-name suggestion travels as typed data.
+        assert!(json.contains("cutoff"), "{json}");
+    }
+
+    #[test]
+    fn generate_aux_files_json_success_has_no_diagnostics_payload() {
+        let (is_ok, _text, diagnostics) = call_generate_aux_files_json_with_diagnostics(
+            "fine",
+            "process = _;",
+            "-lang asc -cn FineDsp -o /fine.out.ts",
+        );
+        assert_eq!(is_ok, 1);
+        assert!(diagnostics.is_none());
     }
 
     #[test]
