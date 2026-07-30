@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-29
 
-**Status:** Implementation in progress; P0 contract frozen on 2026-07-30
+**Status:** Implemented and locally validated on 2026-07-30
 
 **`faust-rs` baseline:** `b5478ed4` (`Stop building type warnings the caller discards`)
 
@@ -50,24 +50,25 @@ implementation that makes their structured assertions possible.
 Implementation progress:
 
 - P0 complete: contract frozen in `22434645`;
-- P1 complete: reusable complete diagnostics-v2 renderer;
-- P2 complete: typed failures and successful warnings retained by WASM
-  compile-result state;
-- P3 complete: raw parameter-free diagnostics queries and verified WASM
-  exports;
+- P1 complete in `28b2a432`: reusable complete diagnostics-v2 renderer;
+- P2 complete in `0b2efa78`: typed failures and successful warnings retained
+  by WASM compile-result state;
+- P3 complete in `ec6033e4`: raw parameter-free diagnostics queries and
+  verified WASM exports;
 - P4 complete in `faustwasm` commit `f2abc95`: typed error/report API and
   optional-export integration;
-- P5 complete in `faustwasm` commit `eabf1f5`: Node and browser end-to-end
-  coverage against the real Rust compiler module;
-- P6 pending.
+- P5 complete in `faustwasm` commits `eabf1f5` and `1e879fe`: Node and browser
+  end-to-end coverage against the real Rust compiler module;
+- P6 complete in `faustwasm` commit `3c27c32`: consumer documentation and a
+  compile-checked public TypeScript example.
 
 ## 1. Executive conclusion
 
-The Rust-backed WASM integration detects a failed DSP compilation. It does not,
-however, expose the complete `faust-rs` diagnostic model through its public
-host API.
+At the documented baseline, the Rust-backed WASM integration detected a failed
+DSP compilation but did not expose the complete `faust-rs` diagnostic model
+through its public host API.
 
-The boundary currently reduces typed compiler failures to a string:
+At the baseline, the boundary reduced typed compiler failures to a string:
 
 ```text
 CompilerError
@@ -95,9 +96,10 @@ information that makes the new diagnostics useful:
 - source hashes and immutable source snapshots;
 - backend detail codes and compiler-bug classification.
 
-The diagnostics-v2 JSON format already exists and is validated for the CLI,
-but it is implemented in the binary-only CLI module. It is not yet a reusable
-compiler-library service and is not carried by the FFI layer.
+At that baseline, the diagnostics-v2 JSON format existed and was validated for
+the CLI, but its renderer lived in the binary-only CLI module and the FFI did
+not retain the typed report. P1–P4 implement the reusable renderer, retention,
+ABI query, and TypeScript projection described below.
 
 `getErrorDiagnostics()` must return the complete retained diagnostics-v2
 report. It deliberately takes no rendering or verbosity parameter: consumers
@@ -159,9 +161,10 @@ It covers:
 - the distinction between compiler failures and host-side
   `WebAssembly.compile(...)` failures.
 
-It does not authorize implementation. In particular, the external TypeScript
-API, the raw WASM ABI, and ownership and threading choices must be confirmed
-before implementation because they affect external compatibility surfaces.
+The original plan did not authorize implementation until its P0 contract was
+confirmed. The implementation request of 2026-07-30 approved those decisions;
+the frozen API, ABI, ownership, and compatibility choices are recorded in
+section 0.
 
 ## 3. Non-goals
 
@@ -776,7 +779,8 @@ pipelines and use only exported APIs.
 
 ## 9. Improvement backlog
 
-The following improvements are ordered after the core failed-compilation path.
+Core items 1–7 below were implemented by P1–P6. Items 8–15 remain optional
+follow-up work ordered after the failed-compilation path.
 
 ### High priority
 
@@ -787,7 +791,8 @@ The following improvements are ordered after the core failed-compilation path.
    Remove premature `CompilerError`/backend-error stringification in the WASM
    path.
 3. **Structured compile failures in raw WASM and TypeScript.**
-   Add the level query and `FaustCompilerError` methods.
+   Add the parameter-free complete-report query and `FaustCompilerError`
+   methods.
 4. **Correct request metadata.**
    Populate `mode`, `backend`, and `normalized_options` for WASM instead of
    using CLI placeholders.
@@ -856,11 +861,11 @@ The following improvements are ordered after the core failed-compilation path.
 
 ## 11. API mapping and compatibility status
 
-| Surface | Mapping | Planned impact |
+| Surface | Mapping | Implemented impact |
 |---|---|---|
 | `CompilerError::diagnostic_bundle()` | internal `1:1` source | no semantic change |
-| diagnostics-v2 JSON | `1:1` schema projection | move to reusable library API; schema unchanged |
-| `StoredCompileResult::Err` | adapted internal representation | string becomes message plus optional diagnostic record |
+| diagnostics-v2 JSON | `1:1` schema projection | reusable library API; schema unchanged |
+| `StoredCompileResult::Err` | adapted internal representation | message plus optional diagnostic record |
 | existing WASM error accessors | `1:1` preserved | no signature or lifetime change |
 | WASM diagnostics query | additive Rust extension | parameter-free complete-report text-result handle; optional for older modules |
 | successful-compile diagnostic query | additive extension | warnings/remarks only; empty success report allowed |
@@ -922,3 +927,11 @@ This plan is complete when:
 10. source inclusion is explicit and independent of client-side filtering;
 11. all Rust workspace, compiler-module, TypeScript, Node, browser, and
     cross-platform CI gates are green.
+
+Local validation covers criteria 1–10 and the locally executable parts of
+criterion 11. The full Rust workspace, diagnostics-quality check, golden check,
+module build/export verification, faustwasm build, compile-checked TypeScript
+example, Node test, and browser test pass. Cross-platform confirmation remains
+the responsibility of CI. The pre-existing repository-wide faustwasm lint
+baseline remains red on unrelated formatting, `no-explicit-any`, and unused
+value findings; the diagnostics-specific files are formatted and compile.
