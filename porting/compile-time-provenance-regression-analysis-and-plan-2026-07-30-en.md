@@ -1,5 +1,12 @@
 # Compile-time regression of the diagnostics-provenance arc — analysis and correction plan (2026-07-30)
 
+> **Status: executed 2026-07-30.** Corpus cost went from 4.53x to **1.10x** of the
+> pre-arc reference, and the overhead is now flat across every program-size
+> bucket (1.06x–1.17x) instead of reaching 9.55x on the largest — the complexity
+> defect is gone, only a uniform constant remains. `dx7_alg5` compiles in 1.67 s
+> against 1.97 s before the arc. See "Execution outcome" at the end, which also
+> records where this plan was wrong.
+
 ## Summary
 
 The compiler-diagnostics-v2 arc (`8a909843..41e4373d`, 29 commits, 98 files,
@@ -206,3 +213,74 @@ as asserted by
 
 `dx7_alg5` is present but `enabled: false`: it exceeds the 120 s compilation
 timeout on `main-dev`. Step 1 re-enables it.
+
+## Execution outcome (2026-07-30)
+
+| Configuration | Corpus total | vs reference |
+| --- | --- | --- |
+| `98496b4a` (before the arc) | 26.1 s | 1.00x |
+| `41e4373d` (`main-dev`, start of this work) | 118.0 s | 4.53x |
+| + step 1 | 100.4 s | 3.86x |
+| + cause 1 caps | — | — |
+| + step 2 | **28.7 s** | **1.10x** |
+
+Per file, `--check` wall clock in milliseconds:
+
+| DSP | before the arc | start | final | final vs before |
+| --- | --- | --- | --- | --- |
+| `dx7_alg5` | 1 972 | >120 000 (timeout) | **1 674** | **0.85x** |
+| `reverb_designer` | 7 146 | 18 286 | 7 576 | 1.06x |
+| `spectral_level` | 902 | 10 899 | 1 038 | 1.15x |
+| `virtual_analog_oscillators` | 723 | 12 148 | 811 | 1.12x |
+| `vcf_wah_pedals` | 760 | 7 905 | 860 | 1.13x |
+| `bells` | 364 | 5 220 | 421 | 1.16x |
+| `parametric_eq` | 724 | 6 725 | 901 | 1.24x |
+
+The size-dependence is what mattered most, and it is gone:
+
+| Reference cost bucket | n | at start | final |
+| --- | --- | --- | --- |
+| < 25 ms | 264 | 1.79x | 1.11x |
+| 250–500 ms | 7 | 3.66x | 1.12x |
+| 500–1000 ms | 7 | **9.55x** | **1.17x** |
+| > 1 s | 4 | 4.57x | 1.06x |
+
+### Where this plan was wrong
+
+**The step order was wrong.** Step 2 was implemented and measured first and
+produced *no improvement at all*. Profiling then put 4 056 samples of self time
+in `SignalOrigins::record` — the unbounded-list dedup of cause 1, which this
+document had assigned to `faust-rs#15` and assumed present. It is not on
+`main-dev`. Step 2 was set aside, the caps landed as their own commit, and only
+then did the pruning show its value (−15 % to −53 %). A plan step that measures
+as worthless may be blocked by another step rather than useless; the profile,
+not the plan, decides which.
+
+**Step 3 was not implemented, because its premise did not survive
+measurement.** Cause 3 was explicitly recorded above as "identified by reading,
+not yet isolated by measurement", and that caution was warranted:
+
+- `BoxProvenance`, `import_box_provenance`, `SourceMap` and `SourceLocation`
+  appear **nowhere** in the profile of the final binary — zero samples;
+- a direct probe of the table on the two largest programs gives
+  `dx7_alg5`: 80 origins over 41 nodes, **max 3 per node**;
+  `reverb_designer`: 15 origins over 6 nodes, max 3. The proposed cap of 8 would
+  never fire.
+
+The table is populated at definition and use sites, not per AST node, so the
+"unbounded accumulation" is a structural property with no measured cost. Adding
+a cap would have changed which occurrence a diagnostic selects — a real risk —
+in exchange for nothing. The concern is left recorded here rather than acted on.
+
+The residual 1.10x is **not attributed**. The profile shows diffuse allocator
+traffic plus `ui::split_label_metadata` and `boxes::match_box`, neither of which
+this arc introduced. Claiming a cause without evidence is how cause 3 got into
+this document in the first place.
+
+### Still open
+
+Step 4 — lazy diagnostic-time derivation instead of eager capped tables —
+remains a design decision, not a patch. It is now less urgent: the eager tables
+cost a flat ~10 % rather than a size-dependent multiple. `MAX_ORIGINS_PER_SIGNAL
+= 8` and `MAX_SIGNALS_PER_NODE = 8` should still not be treated as permanent
+until it is settled, and no test should be written against truncated output.
