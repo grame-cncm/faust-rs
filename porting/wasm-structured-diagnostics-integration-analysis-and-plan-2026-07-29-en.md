@@ -47,6 +47,12 @@ The baseline is `faust-rs` commit `b5478ed4` and `faustwasm` branch `rust` at
 compatibility baseline; phase-specific negative fixtures are added with the
 implementation that makes their structured assertions possible.
 
+Implementation progress:
+
+- P0 complete: contract frozen in `22434645`;
+- P1 complete: reusable complete diagnostics-v2 renderer;
+- P2–P6 pending.
+
 ## 1. Executive conclusion
 
 The Rust-backed WASM integration detects a failed DSP compilation. It does not,

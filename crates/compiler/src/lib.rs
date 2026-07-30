@@ -39,6 +39,7 @@
 // undocumented.
 #![warn(missing_docs)]
 
+pub mod diagnostics_json;
 pub mod enrobage;
 
 mod box_preview;
