@@ -57,7 +57,10 @@ use std::str;
 use std::sync::{Mutex, OnceLock};
 
 use codegen::backends::wasm::WasmOptions;
-use compiler::diagnostics_json::DiagnosticsRequestMetadata;
+use compiler::diagnostics_json::{
+    DiagnosticsCompilerMetadata, DiagnosticsRequestMetadata, SourceTextPolicy,
+    render_complete_diagnostics_v2_json,
+};
 use compiler::{Compiler, RealType, WasmArtifactBundle, WasmArtifactRequest};
 use diagnostic_record::FfiDiagnosticRecord;
 use parser::VirtualSourceMap;
@@ -74,8 +77,16 @@ const WASM_FFI_VERSION: &str = concat!("faust-rs-wasm-ffi/", env!("CARGO_PKG_VER
 /// [`faust_wasm_result_free`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum StoredCompileResult {
-    Ok(WasmArtifactBundle),
+    Ok(StoredCompileSuccess),
     Err(FfiDiagnosticRecord),
+}
+
+/// Successful artifact plus the request context used to render retained
+/// warnings without reconstructing options from DSP JSON.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StoredCompileSuccess {
+    artifact: WasmArtifactBundle,
+    diagnostics_request: DiagnosticsRequestMetadata,
 }
 
 /// Stored text-helper outcome kept behind an integer handle.
@@ -348,7 +359,10 @@ fn compile_to_stored_result(
         })
         .with_semantic_warnings(parsed.semantic_warnings);
     match compiler.compile_wasm_artifact(&parsed.artifact) {
-        Ok(bundle) => StoredCompileResult::Ok(bundle),
+        Ok(artifact) => StoredCompileResult::Ok(StoredCompileSuccess {
+            artifact,
+            diagnostics_request: parsed.diagnostics,
+        }),
         Err(error) => StoredCompileResult::Err(FfiDiagnosticRecord::from_compiler_error(
             &error,
             parsed.diagnostics,
@@ -402,7 +416,7 @@ fn store_text_result(result: StoredTextResult) -> u32 {
 /// for the same handle.
 fn result_bytes_ptr(handle: u32) -> *const u8 {
     with_result(handle, |result| match result {
-        Some(StoredCompileResult::Ok(bundle)) => bundle.wasm_bytes.as_ptr(),
+        Some(StoredCompileResult::Ok(success)) => success.artifact.wasm_bytes.as_ptr(),
         _ => std::ptr::null(),
     })
 }
@@ -410,7 +424,7 @@ fn result_bytes_ptr(handle: u32) -> *const u8 {
 /// Read the compiled WASM payload length for one stored compile result.
 fn result_bytes_len(handle: u32) -> usize {
     with_result(handle, |result| match result {
-        Some(StoredCompileResult::Ok(bundle)) => bundle.wasm_bytes.len(),
+        Some(StoredCompileResult::Ok(success)) => success.artifact.wasm_bytes.len(),
         _ => 0,
     })
 }
@@ -418,7 +432,7 @@ fn result_bytes_len(handle: u32) -> usize {
 /// Read the companion JSON payload pointer for one stored compile result.
 fn result_json_ptr(handle: u32) -> *const u8 {
     with_result(handle, |result| match result {
-        Some(StoredCompileResult::Ok(bundle)) => bundle.dsp_json.as_ptr(),
+        Some(StoredCompileResult::Ok(success)) => success.artifact.dsp_json.as_ptr(),
         _ => std::ptr::null(),
     })
 }
@@ -426,7 +440,7 @@ fn result_json_ptr(handle: u32) -> *const u8 {
 /// Read the companion JSON payload length for one stored compile result.
 fn result_json_len(handle: u32) -> usize {
     with_result(handle, |result| match result {
-        Some(StoredCompileResult::Ok(bundle)) => bundle.dsp_json.len(),
+        Some(StoredCompileResult::Ok(success)) => success.artifact.dsp_json.len(),
         _ => 0,
     })
 }
@@ -434,7 +448,7 @@ fn result_json_len(handle: u32) -> usize {
 /// Read the `compile_options` payload pointer for one stored compile result.
 fn result_compile_options_ptr(handle: u32) -> *const u8 {
     with_result(handle, |result| match result {
-        Some(StoredCompileResult::Ok(bundle)) => bundle.compile_options.as_ptr(),
+        Some(StoredCompileResult::Ok(success)) => success.artifact.compile_options.as_ptr(),
         _ => std::ptr::null(),
     })
 }
@@ -442,7 +456,7 @@ fn result_compile_options_ptr(handle: u32) -> *const u8 {
 /// Read the `compile_options` payload length for one stored compile result.
 fn result_compile_options_len(handle: u32) -> usize {
     with_result(handle, |result| match result {
-        Some(StoredCompileResult::Ok(bundle)) => bundle.compile_options.len(),
+        Some(StoredCompileResult::Ok(success)) => success.artifact.compile_options.len(),
         _ => 0,
     })
 }
@@ -460,6 +474,38 @@ fn result_error_len(handle: u32) -> usize {
     with_result(handle, |result| match result {
         Some(StoredCompileResult::Err(failure)) => failure.message().len(),
         _ => 0,
+    })
+}
+
+fn error_diagnostics_result(handle: u32) -> StoredTextResult {
+    with_result(handle, |result| match result {
+        Some(StoredCompileResult::Err(failure)) => match failure.render_complete_json() {
+            Some(json) => StoredTextResult::Ok(json),
+            None => StoredTextResult::Err(
+                "compile result has no structured compiler diagnostics".to_owned(),
+            ),
+        },
+        Some(StoredCompileResult::Ok(_)) => {
+            StoredTextResult::Err("successful compile result has no error diagnostics".to_owned())
+        }
+        None => StoredTextResult::Err("unknown compile result handle".to_owned()),
+    })
+}
+
+fn success_diagnostics_result(handle: u32) -> StoredTextResult {
+    with_result(handle, |result| match result {
+        Some(StoredCompileResult::Ok(success)) => {
+            StoredTextResult::Ok(render_complete_diagnostics_v2_json(
+                &success.artifact.warnings,
+                DiagnosticsCompilerMetadata::default(),
+                success.diagnostics_request.clone(),
+                SourceTextPolicy::None,
+            ))
+        }
+        Some(StoredCompileResult::Err(_)) => {
+            StoredTextResult::Err("failed compile result has no success diagnostics".to_owned())
+        }
+        None => StoredTextResult::Err("unknown compile result handle".to_owned()),
     })
 }
 
@@ -635,6 +681,36 @@ pub extern "C" fn faust_wasm_result_error_ptr(handle: u32) -> *const u8 {
 #[unsafe(no_mangle)]
 pub extern "C" fn faust_wasm_result_error_len(handle: u32) -> usize {
     result_error_len(handle)
+}
+
+/// Returns a text-result handle containing the complete diagnostics-v2 report
+/// for one failed compiler request.
+///
+/// This query has no presentation parameter: every retained diagnostic field
+/// is serialized, and the host may derive smaller views locally. The returned
+/// text result owns its JSON independently, so it remains valid after
+/// `handle` is released with [`faust_wasm_result_free`].
+///
+/// A successful compile result, a transport failure without a
+/// [`compiler::CompilerError`], or an unknown/freed handle produces an error
+/// text result. Inspect it with [`faust_wasm_text_result_is_ok`] and always
+/// release it with [`faust_wasm_text_result_free`].
+#[unsafe(no_mangle)]
+pub extern "C" fn faust_wasm_result_get_error_diagnostics(handle: u32) -> u32 {
+    store_text_result(error_diagnostics_result(handle))
+}
+
+/// Returns a text-result handle containing diagnostics retained by a
+/// successful compile.
+///
+/// The report has diagnostics-v2 `status: "success"` and contains opted-in
+/// warnings/remarks. An empty diagnostic array is a valid successful result.
+/// Failed or unknown compile-result handles produce an error text result.
+/// The returned handle is independent from `handle` and must be released with
+/// [`faust_wasm_text_result_free`].
+#[unsafe(no_mangle)]
+pub extern "C" fn faust_wasm_result_get_diagnostics(handle: u32) -> u32 {
+    store_text_result(success_diagnostics_result(handle))
 }
 
 /// Releases a stored compile result handle and all owned buffers behind it.
@@ -1071,9 +1147,10 @@ mod tests {
     #[test]
     fn compile_to_stored_result_returns_wasm_and_json_payloads() {
         let result = compile_to_stored_result("osc.dsp", "process = 0;", "", true);
-        let StoredCompileResult::Ok(bundle) = result else {
+        let StoredCompileResult::Ok(success) = result else {
             panic!("compile should succeed");
         };
+        let bundle = success.artifact;
 
         assert!(bundle.wasm_bytes.starts_with(b"\0asm"));
         assert!(bundle.dsp_json.contains("\"filename\": \"osc.dsp\""));
@@ -1084,9 +1161,10 @@ mod tests {
     #[test]
     fn successful_compile_retains_opted_in_warnings_without_becoming_an_error() {
         let result = compile_to_stored_result("warning.dsp", "process = sqrt;", "--warn", true);
-        let StoredCompileResult::Ok(bundle) = result else {
+        let StoredCompileResult::Ok(success) = result else {
             panic!("semantic warnings must not fail the compilation");
         };
+        let bundle = success.artifact;
 
         assert_eq!(bundle.warnings.len(), 1);
         assert_eq!(
@@ -1139,9 +1217,10 @@ mod tests {
             &format!("-I {}", root.display()),
             true,
         );
-        let StoredCompileResult::Ok(bundle) = result else {
+        let StoredCompileResult::Ok(success) = result else {
             panic!("compile with import dir should succeed");
         };
+        let bundle = success.artifact;
 
         assert!(bundle.wasm_bytes.starts_with(b"\0asm"));
         assert!(bundle.dsp_json.contains("child.lib"));
@@ -1187,9 +1266,10 @@ mod tests {
             "",
             true,
         );
-        let StoredCompileResult::Ok(bundle) = result else {
+        let StoredCompileResult::Ok(success) = result else {
             panic!("compile with embedded stdfaust should succeed when bundled");
         };
+        let bundle = success.artifact;
 
         assert!(bundle.wasm_bytes.starts_with(b"\0asm"));
         assert!(bundle.dsp_json.contains("stdfaust.lib"));
@@ -1216,6 +1296,116 @@ mod tests {
         assert!(!super::faust_wasm_text_result_ptr(handle).is_null());
         super::faust_wasm_text_result_free(handle);
         assert_eq!(super::faust_wasm_text_result_len(handle), 0);
+    }
+
+    fn read_text_result(handle: u32) -> (u32, String) {
+        let is_ok = super::faust_wasm_text_result_is_ok(handle);
+        let len = super::faust_wasm_text_result_len(handle);
+        let text = if len == 0 {
+            String::new()
+        } else {
+            let ptr = super::faust_wasm_text_result_ptr(handle);
+            assert!(!ptr.is_null());
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+            std::str::from_utf8(bytes)
+                .expect("text result must be UTF-8")
+                .to_owned()
+        };
+        (is_ok, text)
+    }
+
+    #[test]
+    fn error_diagnostics_query_returns_complete_owned_json() {
+        let compile_handle = store_result(compile_to_stored_result(
+            "broken.dsp",
+            "process = ;",
+            "",
+            true,
+        ));
+        let first = super::faust_wasm_result_get_error_diagnostics(compile_handle);
+        let second = super::faust_wasm_result_get_error_diagnostics(compile_handle);
+        let (first_ok, first_json) = read_text_result(first);
+        let (second_ok, second_json) = read_text_result(second);
+
+        assert_eq!(first_ok, 1);
+        assert_eq!(second_ok, 1);
+        assert_eq!(first_json, second_json, "repeated queries must be stable");
+        let report: serde_json::Value =
+            serde_json::from_str(&first_json).expect("diagnostics must be valid JSON");
+        assert_eq!(report["schema_version"], 2);
+        assert_eq!(report["status"], "failed");
+        assert_eq!(report["request"]["backend"], "wasm");
+        assert!(
+            report["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| !diagnostics.is_empty())
+        );
+
+        super::faust_wasm_result_free(compile_handle);
+        assert_eq!(
+            read_text_result(first).1,
+            first_json,
+            "text result must outlive its source compile result"
+        );
+        super::faust_wasm_text_result_free(first);
+        super::faust_wasm_text_result_free(second);
+    }
+
+    #[test]
+    fn error_diagnostics_query_rejects_transport_success_and_unknown_handles() {
+        let transport_handle = store_result(compile_to_stored_result(
+            "broken.dsp",
+            "process = 0;",
+            "-I",
+            true,
+        ));
+        let transport_diagnostics =
+            super::faust_wasm_result_get_error_diagnostics(transport_handle);
+        assert_eq!(read_text_result(transport_diagnostics).0, 0);
+
+        let success_handle = store_result(compile_to_stored_result(
+            "valid.dsp",
+            "process = 0;",
+            "",
+            true,
+        ));
+        let success_error_diagnostics =
+            super::faust_wasm_result_get_error_diagnostics(success_handle);
+        assert_eq!(read_text_result(success_error_diagnostics).0, 0);
+
+        let unknown = super::faust_wasm_result_get_error_diagnostics(u32::MAX);
+        let (unknown_ok, unknown_message) = read_text_result(unknown);
+        assert_eq!(unknown_ok, 0);
+        assert!(unknown_message.contains("unknown compile result handle"));
+
+        super::faust_wasm_text_result_free(transport_diagnostics);
+        super::faust_wasm_text_result_free(success_error_diagnostics);
+        super::faust_wasm_text_result_free(unknown);
+        super::faust_wasm_result_free(transport_handle);
+        super::faust_wasm_result_free(success_handle);
+    }
+
+    #[test]
+    fn success_diagnostics_query_returns_opted_in_warnings() {
+        let compile_handle = store_result(compile_to_stored_result(
+            "warning.dsp",
+            "process = sqrt;",
+            "--warn",
+            true,
+        ));
+        let diagnostics = super::faust_wasm_result_get_diagnostics(compile_handle);
+        let (is_ok, json) = read_text_result(diagnostics);
+        let report: serde_json::Value =
+            serde_json::from_str(&json).expect("success diagnostics must be JSON");
+
+        assert_eq!(is_ok, 1);
+        assert_eq!(report["status"], "success");
+        assert_eq!(report["diagnostics"][0]["severity"], "warning");
+        assert_eq!(report["request"]["backend"], "wasm");
+        assert!(report["sources"][0]["text"].is_null());
+
+        super::faust_wasm_result_free(compile_handle);
+        super::faust_wasm_text_result_free(diagnostics);
     }
 
     // ── base64 helpers ──────────────────────────────────────────────────────

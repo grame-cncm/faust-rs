@@ -73,14 +73,24 @@ The raw compiler-module ABI is explicitly handle-based:
    - `faust_wasm_result_json_ptr/len`
    - `faust_wasm_result_compile_options_ptr/len`
    - or `faust_wasm_result_error_ptr/len`
-6. copy the payloads on the host side
-7. release the compile result with `faust_wasm_result_free`
-8. release the temporary request buffers with `faust_wasm_dealloc`
+6. optionally query structured diagnostics:
+   - `faust_wasm_result_get_error_diagnostics` for a failed compiler request
+   - `faust_wasm_result_get_diagnostics` for warnings/remarks retained by a
+     successful request
+7. inspect/copy the returned text-result handle, then release it with
+   `faust_wasm_text_result_free`
+8. copy compile payloads on the host side
+9. release the compile result with `faust_wasm_result_free`
+10. release the temporary request buffers with `faust_wasm_dealloc`
 
 Pointer validity rules:
 
 - payload pointers returned by `faust_wasm_result_*_ptr` stay valid only until
   the matching `faust_wasm_result_free(handle)`
+- structured diagnostic queries take no verbosity parameter and return the
+  complete diagnostics-v2 report; hosts can filter typed fields locally
+- diagnostic text-result handles own their JSON independently and remain valid
+  after the originating compile-result handle is freed
 - request buffers returned by `faust_wasm_alloc` stay valid only until the
   matching `faust_wasm_dealloc(ptr, len)`
 - handles are process-global within one compiler-module instance and are not

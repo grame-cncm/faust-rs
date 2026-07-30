@@ -53,7 +53,9 @@ Implementation progress:
 - P1 complete: reusable complete diagnostics-v2 renderer;
 - P2 complete: typed failures and successful warnings retained by WASM
   compile-result state;
-- P3–P6 pending.
+- P3 complete: raw parameter-free diagnostics queries and verified WASM
+  exports;
+- P4–P6 pending.
 
 ## 1. Executive conclusion
 

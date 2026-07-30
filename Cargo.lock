@@ -1262,6 +1262,7 @@ dependencies = [
  "compiler",
  "ffi-common",
  "parser",
+ "serde_json",
 ]
 
 [[package]]

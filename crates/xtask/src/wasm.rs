@@ -142,6 +142,8 @@ pub(crate) fn required_wasm_ffi_exports() -> &'static [&'static str] {
         "faust_wasm_result_compile_options_len",
         "faust_wasm_result_error_ptr",
         "faust_wasm_result_error_len",
+        "faust_wasm_result_get_error_diagnostics",
+        "faust_wasm_result_get_diagnostics",
         "faust_wasm_result_free",
         "faust_wasm_get_info",
         "faust_wasm_expand_dsp",

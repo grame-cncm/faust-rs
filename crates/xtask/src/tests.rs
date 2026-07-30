@@ -408,6 +408,8 @@ fn verify_wasm_ffi_exports_accepts_expected_surface() {
               (func (export "faust_wasm_result_compile_options_len"))
               (func (export "faust_wasm_result_error_ptr"))
               (func (export "faust_wasm_result_error_len"))
+              (func (export "faust_wasm_result_get_error_diagnostics"))
+              (func (export "faust_wasm_result_get_diagnostics"))
               (func (export "faust_wasm_result_free"))
               (func (export "faust_wasm_get_info"))
               (func (export "faust_wasm_expand_dsp"))

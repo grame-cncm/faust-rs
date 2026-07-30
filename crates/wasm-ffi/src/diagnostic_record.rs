@@ -11,7 +11,10 @@
 //! the C++ `libFaustWasm` factory API. Unlike the historical text-only shape,
 //! the record retains the Rust compiler's typed diagnostics-v2 data.
 
-use compiler::diagnostics_json::{DiagnosticsRequestMetadata, SourceTextPolicy};
+use compiler::diagnostics_json::{
+    DiagnosticsCompilerMetadata, DiagnosticsRequestMetadata, SourceTextPolicy,
+    render_complete_diagnostics_v2_json,
+};
 use compiler::{CompilerError, DiagnosticBundle};
 
 /// One owned failure record associated with a specific compile-result handle.
@@ -57,8 +60,22 @@ impl FfiDiagnosticRecord {
     }
 
     /// Returns the typed compiler bundle, if this is a compiler failure.
-    #[cfg(test)]
     pub(crate) fn diagnostics(&self) -> Option<&DiagnosticBundle> {
         self.diagnostics.as_ref()
+    }
+
+    /// Renders the complete diagnostics-v2 report for this failure.
+    ///
+    /// Transport failures return `None`; callers must continue to use the
+    /// compatibility message for those failures.
+    pub(crate) fn render_complete_json(&self) -> Option<String> {
+        self.diagnostics().map(|diagnostics| {
+            render_complete_diagnostics_v2_json(
+                diagnostics,
+                DiagnosticsCompilerMetadata::default(),
+                self.request.clone(),
+                self.source_text,
+            )
+        })
     }
 }
