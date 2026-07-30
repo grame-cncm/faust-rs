@@ -403,6 +403,13 @@ pub struct FaustwasmServiceError {
     pub code: FaustwasmServiceErrorCode,
     /// User-facing explanation intended for JS-side propagation.
     pub message: String,
+    /// Typed compiler diagnostics, retained when the failure came from a
+    /// [`CompilerError`] (the common case: the DSP failed to compile).
+    ///
+    /// `None` for transport/argument failures, which have no compiler
+    /// diagnostic to carry. Host bindings render this through the
+    /// diagnostics-v2 JSON channel instead of re-parsing `message`.
+    pub diagnostics: Option<DiagnosticBundle>,
 }
 
 /// Stable error codes for the helper-service surface.
@@ -428,6 +435,7 @@ impl FaustwasmServiceError {
         Self {
             code: FaustwasmServiceErrorCode::Unsupported,
             message: message.to_string(),
+            diagnostics: None,
         }
     }
 
@@ -437,6 +445,21 @@ impl FaustwasmServiceError {
         Self {
             code: FaustwasmServiceErrorCode::InvalidArgument,
             message: message.to_string(),
+            diagnostics: None,
+        }
+    }
+
+    /// Builds an [`FaustwasmServiceErrorCode::Unsupported`] error that keeps
+    /// the typed compiler diagnostics alongside the rendered message.
+    ///
+    /// Use this — not [`FaustwasmServiceError::unsupported`] — wherever the
+    /// source error is a [`CompilerError`], so host bindings can serve the
+    /// complete diagnostics-v2 report instead of one flattened string.
+    fn compile_failure(error: CompilerError) -> Self {
+        Self {
+            code: FaustwasmServiceErrorCode::Unsupported,
+            message: error.to_string(),
+            diagnostics: Some(error.diagnostic_bundle().clone()),
         }
     }
 }
