@@ -105,6 +105,12 @@ jobs:
     name: Checked vector retention (Ubuntu)
     needs: check
     runs-on: ubuntu-latest
+    env:
+      # Keep the performance corpus on the same pinned standard-library
+      # revision as the cross-platform lint-and-test job. The Ubuntu package
+      # can lag that revision and does not provide dx.algorithm used by the
+      # dx7_alg5 front-end budget case.
+      FAUST_LIB_PATH: ${{ github.workspace }}/faustlibraries
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -115,10 +121,12 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Faust standard libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y faust
+      - name: Check out the Faust standard libraries
+        uses: actions/checkout@v4
+        with:
+          repository: grame-cncm/faustlibraries
+          ref: ecf2fdc238148c44c18352102333a1229ca7a8d3
+          path: faustlibraries
 
       - name: Checked vector coverage retention
         run: cargo run -p xtask -- vector-coverage-check
