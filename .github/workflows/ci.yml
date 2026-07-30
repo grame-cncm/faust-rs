@@ -126,5 +126,5 @@ jobs:
       - name: Checked vector interpreter optimization parity
         run: cargo run -p xtask -- vector-interp-opt-check
 
-      - name: Release vector compilation cost budget
+      - name: Release compilation cost budget (codegen + normalized front end)
         run: cargo run --release -p xtask -- vector-compile-budget-check

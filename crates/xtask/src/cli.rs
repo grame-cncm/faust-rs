@@ -304,6 +304,10 @@ pub(crate) struct VectorCoverageCheckArgs {
 pub(crate) struct VectorCompileBudgetArgs {
     #[arg(long, value_name = "PATH")]
     pub(crate) baseline: Option<PathBuf>,
+    /// Rewrite the front-end baseline units from this run instead of enforcing
+    /// them. Every increase must be justified in the commit message.
+    #[arg(long)]
+    pub(crate) update: bool,
 }
 
 /// Options for run-to-run emission determinism.

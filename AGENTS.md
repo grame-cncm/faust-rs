@@ -42,6 +42,8 @@ Guidelines for contributors and coding agents working on `faust-rs`.
 - CI runs on Linux, macOS, and Windows.
 - CI stages include `cargo check`, formatting, clippy, and tests.
 - CI also runs golden parity guardrails via `cargo run -p xtask -- golden-check`.
+- CI also runs the compilation-cost gate via
+  `cargo run --release -p xtask -- vector-compile-budget-check`.
 - A change is not considered ready unless CI is green.
 - Code that constructs, normalizes, displays, or compares filesystem paths must
   be checked for cross-platform behavior. Prefer `Path`/`PathBuf` operations,
@@ -62,6 +64,10 @@ Guidelines for contributors and coding agents working on `faust-rs`.
   - `cargo fmt --all`
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `cargo test --workspace --all-targets`
+  - `cargo run --release -p xtask -- vector-compile-budget-check` before any
+    commit that touches the compilation pipeline (`parser`, `eval`, `propagate`,
+    `normalize`, `sigtype`, `transform`, `fir`, `codegen`, `compiler`) — see
+    "Compilation-cost discipline" below.
 - Add or update unit tests in the touched crate(s) as part of each porting change; if tests cannot be added immediately, record the reason, owner, and planned follow-up in `JOURNAL.md`.
 - Document migrated source provenance as you port: add Rustdoc comments (`///` or `//!`) that reference the corresponding C++ source files/functions and capture key invariants/semantic notes needed to maintain parity.
 - Public API migration is parity-driven, not blindly signature-driven:
@@ -161,6 +167,41 @@ When touching one of these areas, add focused tests/benchmarks in the same PR.
   - `cargo run -p xtask -- golden-gen-rust` only for local bootstrap/scaffold updates.
   - `FAUST_CPP_BIN=/path/to/faust cargo run -p xtask -- golden-gen-cpp` for true C++ reference refresh.
 - Any golden refresh must be documented in `JOURNAL.md` and mention reference commit/flags in PR description.
+
+## 9bis. Compilation-Cost Discipline
+
+Compilation speed is a user-visible contract, and a regression in it is silent:
+every test stays green while large programs become unusable. The 2026-07-30
+diagnostics-provenance arc multiplied front-end cost by 4.5x over the corpus and
+by up to 17x on individual DSPs; it reached `main` through a green CI and was
+found by a user, not by a gate. Treat cost like behavior.
+
+- The gate is `cargo run --release -p xtask -- vector-compile-budget-check`.
+  Release profile only; it refuses to run under `debug_assertions`.
+- It enforces two independent baskets, versioned in
+  `tests/vector-compile-budget/release-baseline.json`:
+  - `codegen_cases` — full file-to-C++ path, scalar and vector, absolute
+    ceilings plus a vector/scalar ratio;
+  - `frontend_cases` — the `--check` path only, over `tests/impulse-tests/dsp`
+    entries, expressed in **calibration units** rather than milliseconds.
+- Units are the point. Absolute wall-clock ceilings must be loosened until they
+  survive the slowest runner, at which stage they no longer catch a 2x
+  regression. Each measurement is divided by the cost of a calibration DSP
+  measured in the same process, so machine speed cancels out and the tolerance
+  can be 25%.
+- Run it before committing any change to `parser`, `eval`, `propagate`,
+  `normalize`, `sigtype`, `transform`, `fir`, `codegen`, or `compiler`. It costs
+  a few minutes and is the only thing standing between a complexity defect and
+  `main`.
+- A failure is a finding, not an obstacle. Do not raise the baseline to make it
+  pass. `--update` rewrites the recorded units, and **every increase must be
+  justified in the commit message**; an unexplained `--update` is a regression
+  ratified rather than fixed.
+- Adding a case is always welcome; removing one from `REQUIRED_*_CASES` is
+  rejected by the tool, because a silently shrinking basket reopens a known hole.
+- Outstanding debt and the correction plan live in
+  `porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md`.
+  Lower the baseline as each step lands.
 
 ## 10. Recursion and RouteIR Guidance
 
