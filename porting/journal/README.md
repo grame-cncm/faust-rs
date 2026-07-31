@@ -1,6 +1,7 @@
 # Porting Journal (Daily Split)
 
-Source journal snapshot: `JOURNAL.md` from commit `4eebb49`.
+Initial journal migration source: `JOURNAL.md` from commit `4eebb49`.
+The index is maintained as new daily entries are added.
 
 Files are listed chronologically (oldest day first). Inside each file, entries are ordered by Git commit recency (newest first).
 

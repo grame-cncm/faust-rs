@@ -15,7 +15,7 @@
 //! |---|---|
 //! | `Loop(init, body)` | `<init>; while(true){ <body>; }` |
 //! | `CondBranch` | `if (!<cond>) { break; }` inside `while(true)` |
-//! | `If(b1, b2)` | `if (<cond>) { <b1> } else { <b2> }` |
+//! | `If(b1, b2)` | conditional statement; `Return`-only branches are omitted |
 //! | `SelectReal/Int(b1, b2)` | pre-declared merge var + `if/else` |
 //! | `Return` | end of block (no explicit `return` emitted) |
 //!
@@ -30,6 +30,17 @@
 //! This path is an ahead-of-time backend over already compiled interpreter
 //! bytecode. It is therefore useful for validating interpreter semantics and
 //! producing native artifacts without depending on FIR/C++ backend parity.
+//!
+//! # Control-flow and stack invariant
+//!
+//! FBC branch blocks are statement blocks for `If` and value-producing blocks
+//! for `SelectReal`/`SelectInt`. The compiler snapshots the virtual real and
+//! integer stacks before each branch and restores them at the join; only a
+//! select's explicit merge temporary is allowed to cross that boundary. A
+//! `Return` terminates an FBC block rather than the generated C++ method, so a
+//! return-only `If` branch is intentionally not emitted. If only the false
+//! branch has statements, the emitter inverts the condition instead of
+//! producing an empty true branch.
 //!
 //! # Usage example
 //!
@@ -85,19 +96,28 @@ impl Default for FbcCppOptions {
 pub enum FbcCppError {
     /// An instruction references a branch (sub-block) that is absent.
     MissingBranchTarget {
+        /// Opcode that requires the missing target.
         opcode: FbcOpcode,
+        /// Containing block of the malformed instruction.
         block_id: BlockId,
+        /// Program counter within `block_id`.
         pc: usize,
     },
     /// A `BlockId` referenced in the bytecode is out of range for the arena.
-    InvalidBlockId { block_id: BlockId },
+    InvalidBlockId {
+        /// Invalid arena index.
+        block_id: BlockId,
+    },
     /// An opcode is not translatable in code-generation mode.
     ///
     /// Currently only `LoadSoundFieldInt` / `LoadSoundFieldReal` fall here,
     /// as sound-file support requires an external runtime object.
     Unsupported {
+        /// Opcode with no self-contained C++ lowering.
         opcode: FbcOpcode,
+        /// Containing block of the unsupported instruction.
         block_id: BlockId,
+        /// Program counter within `block_id`.
         pc: usize,
     },
 }

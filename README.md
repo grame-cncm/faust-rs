@@ -281,11 +281,11 @@ cargo install --path crates/compiler
 ## Use faust-rs
 
 ```bash
-# Run without installation (from the repository)
-cargo run -p compiler
+# Show the CLI without installation (from the repository)
+cargo run -p compiler -- --help
 
-# Run the installed binary
-faust-rs
+# Show the installed binary's CLI
+faust-rs --help
 ```
 
 DSP compilation examples:

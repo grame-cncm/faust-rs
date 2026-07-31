@@ -6,13 +6,12 @@ phase P0). Regenerate everything with `./capture.sh` (honors `FAUST_CPP_BIN`).
 
 ## Reference pinning
 
-- Binary: `/Users/letz/Developpements/RUST/faust/build/bin/faust`
+- Binary: the local C++ reference build selected through `FAUST_CPP_BIN` when
+  the captures were generated (the checkout path is deliberately not versioned).
 - `faust --version`: FAUST Version 2.84.3
 - C++ repo HEAD at capture time: `8eebea4294a44a5260484c750d332781ed9f8ffd`
   on branch `master-dev-ocpp-od-fir-2-FIR19` — **matches the plan's pinned
   reference `8eebea429` exactly** (no mismatch).
-- `/usr/local/bin/faust` on this machine is the same research build, not a
-  mainline Faust.
 
 ## Flag inventory on this build
 

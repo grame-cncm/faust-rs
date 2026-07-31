@@ -153,9 +153,10 @@ impl Trait {
 
 /// Collects wire segments and filters them for visibility before rendering.
 ///
-/// A wire is visible if it connects a real output (registered via [`add_output`])
-/// to a real input (registered via [`add_input`]).  The propagation loop in
-/// [`compute_visible`] extends the reachable endpoint sets transitively.
+/// A wire is visible if it connects a real output (registered via
+/// [`TraitCollector::add_output`]) to a real input (registered via
+/// [`TraitCollector::add_input`]). Its internal reachability pass extends the
+/// endpoint sets transitively.
 ///
 /// Mirrors the C++ `collector` which mutates traits in-place in a vector.
 ///

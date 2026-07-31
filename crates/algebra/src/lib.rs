@@ -19,6 +19,7 @@
 //! - `crate_id()` is `adapted` (workspace/tooling utility), not a direct C++
 //!   API counterpart.
 
+/// Stable identifier used by workspace-level crate discovery.
 pub const CRATE_NAME: &str = "algebra";
 
 #[must_use]

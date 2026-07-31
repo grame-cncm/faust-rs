@@ -58,10 +58,11 @@ original reproducers remain here as historical/parity references.
 Reference C++:
 
 ```bash
-/usr/local/bin/faust tests/cpp_parity_known_gaps/gap_01_pattern_def_constant_clause.dsp -norm
-/usr/local/bin/faust tests/cpp_parity_known_gaps/gap_02_pattern_def_clause_grouping.dsp -norm
-/usr/local/bin/faust tests/cpp_parity_known_gaps/gap_03_case_pattern_constant_folding.dsp -norm
-/usr/local/bin/faust tests/cpp_parity_known_gaps/gap_04_case_pattern_scope_barrier.dsp -norm
+FAUST_CPP_BIN=/path/to/faust
+"$FAUST_CPP_BIN" tests/cpp_parity_known_gaps/gap_01_pattern_def_constant_clause.dsp -norm
+"$FAUST_CPP_BIN" tests/cpp_parity_known_gaps/gap_02_pattern_def_clause_grouping.dsp -norm
+"$FAUST_CPP_BIN" tests/cpp_parity_known_gaps/gap_03_case_pattern_constant_folding.dsp -norm
+"$FAUST_CPP_BIN" tests/cpp_parity_known_gaps/gap_04_case_pattern_scope_barrier.dsp -norm
 ```
 
 Rust compiler:

@@ -32,6 +32,7 @@ Top-level compiler facade.  Wires all pipeline stages together behind a single
 | `compile_source_to_interp[_with_lane]` | `.fbc` bytecode string |
 | `compile_file_to_interp[_with_lane]` | `.fbc` bytecode string |
 | `compile_file_default_to_interp[_with_lane]` | `.fbc` bytecode string |
+| `compile_*_to_cranelift_report[_with_lane]` | Cranelift JIT backend status report string (native targets only) |
 | `compile_source_to_asc[_with_lane]` | AssemblyScript source string |
 | `compile_file_to_asc[_with_lane]` | AssemblyScript source string |
 | `compile_file_default_to_asc[_with_lane]` | AssemblyScript source string |
@@ -91,9 +92,10 @@ The public signal->FIR route is:
 - Aggregate typed stage errors into one top-level `CompilerError`.
 - Provide test/golden-oriented helper outputs (box dump, signal dump, FIR dump).
 - Route backend generation to C, C++, Codebox (RNBO), Rust, AssemblyScript,
-  Julia, interpreter bytecode, Cranelift JIT, WASM/JSON artifacts, and strict
-  JSON emitters with consistent options. Cranelift is currently a CLI/FFI route
-  over the shared FIR lowering rather than a dedicated `Compiler::compile_*`
-  method, and is unavailable when `compiler` itself targets `wasm32` because
-  that target cannot host its native JIT.
+  Julia, interpreter bytecode, Cranelift JIT status reports, WASM/JSON
+  artifacts, and strict JSON emitters with consistent options. Cranelift
+  facade methods return a status report rather than a live JIT module; callers
+  that need to execute compiled code use the lower-level codegen API or the
+  Cranelift FFI. Cranelift is unavailable when `compiler` itself targets
+  `wasm32` because that target cannot host its native JIT.
 - Apply architecture wrapping for C, C++, and Julia output when `-a` is used.

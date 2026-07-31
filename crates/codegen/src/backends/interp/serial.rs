@@ -54,11 +54,26 @@ pub const FAUST_VERSION: &str = "2.85.0-rust";
 #[derive(Clone, Debug)]
 pub enum FbcSerialError {
     /// Unexpected token in the input stream.
-    UnexpectedToken { expected: String, got: String },
+    UnexpectedToken {
+        /// Grammar token or literal expected at the current position.
+        expected: String,
+        /// Token that was actually read.
+        got: String,
+    },
     /// File format version mismatch.
-    VersionMismatch { expected: u32, got: u32 },
+    VersionMismatch {
+        /// FBC format version supported by this reader.
+        expected: u32,
+        /// Format version declared in the input header.
+        got: u32,
+    },
     /// REAL type mismatch (e.g., file says "double" but we're reading as f32).
-    TypeMismatch { expected: String, got: String },
+    TypeMismatch {
+        /// Scalar type selected by the Rust reader.
+        expected: String,
+        /// Scalar type declared in the FBC header.
+        got: String,
+    },
     /// Failed to parse an integer.
     ParseInt(String),
     /// Failed to parse a real number.

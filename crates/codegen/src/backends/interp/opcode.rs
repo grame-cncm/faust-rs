@@ -24,7 +24,15 @@ pub const INTERP_FILE_VERSION: u32 = 9;
 /// Uses `#[repr(u16)]` to guarantee dense integer discriminants suitable for
 /// jump-table dispatch. The ordering matches the C++ enum exactly; do **not**
 /// reorder variants without updating [`FBC_INSTRUCTION_NAMES`] and the `.fbc`
-/// format.
+/// format. The variant spelling is itself part of the serialized FBC ABI:
+/// names classify the operand form (`Int`/`Real`, heap-backed, immediate-value,
+/// or inverted-order) and are consumed by the compiler, executor, optimizer,
+/// serializer, and FBC-to-C++ emitter. Consult those exhaustive opcode matches
+/// rather than assigning new semantics to an unused discriminant.
+///
+/// The enum deliberately keeps the C++ grouping and names instead of exposing
+/// a Rust-specific algebra of operations. That makes a textual `.fbc` dump and
+/// an upstream C++ opcode table directly comparable during parity work.
 ///
 /// # Source provenance (C++)
 /// - `FBCInstruction::Opcode` in `fbc_opcode.hh`

@@ -264,7 +264,8 @@ pub(crate) struct CorpusStatusQueryCase {
 }
 
 /// Bucketed counts. `total` always equals the sum of the other four fields —
-/// enforced by construction in [`Counts::record`], and asserted in tests.
+/// enforced by construction in [`CorpusStatusQueryCounts::record`] and
+/// asserted in tests.
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub(crate) struct CorpusStatusQueryCounts {
     pub(crate) total: usize,
@@ -342,7 +343,7 @@ fn resolve_case_path(root: &Path, raw: &Path) -> Result<PathBuf, Box<dyn std::er
 
 /// Builds the full [`CorpusStatusQueryResponse`] for the requested scope.
 ///
-/// Split out from [`corpus_status_query`] so tests can call it directly
+/// Split out from [`corpus_status_query()`] so tests can call it directly
 /// without going through argv parsing or stdout.
 pub(crate) fn run_corpus_status_query(
     options: &CorpusStatusQueryOptions,

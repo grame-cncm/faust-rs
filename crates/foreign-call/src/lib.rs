@@ -1,23 +1,46 @@
+//! Runtime bridge from symbolic Faust foreign bindings to host C functions.
+//!
+//! This crate supports only the scalar signatures represented by [`ScalarType`]
+//! and [`Value`]. A caller must supply an address with the matching `extern "C"`
+//! ABI; a mismatch is unsupported and can violate the host ABI contract.
+
 #![allow(unsafe_code)] // Explicit runtime bridge from symbolic foreign bindings to raw host pointers.
 
+/// Scalar types supported by the foreign-call ABI dispatcher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScalarType {
+    /// A signed 32-bit integer.
     Int32,
+    /// An IEEE-754 single-precision value.
     Float32,
+    /// An IEEE-754 double-precision value.
     Float64,
+    /// A C-compatible boolean value.
     Bool,
+    /// No return value.
     Void,
 }
 
+/// A scalar argument or return value accepted by [`invoke`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Value {
+    /// A signed 32-bit integer value.
     Int32(i32),
+    /// A single-precision floating-point value.
     Float32(f32),
+    /// A double-precision floating-point value.
     Float64(f64),
+    /// A boolean value.
     Bool(bool),
+    /// The value returned by a `void` foreign function.
     Void,
 }
 
+/// Invokes a supported scalar `extern "C"` function at `addr`.
+///
+/// Returns `None` when `args` does not match one of the supported homogeneous
+/// zero-, one-, or two-argument signatures. `addr` must be a valid function
+/// address whose ABI, argument types, and return type match `ret` and `args`.
 #[must_use]
 pub fn invoke(addr: usize, ret: ScalarType, args: &[Value]) -> Option<Value> {
     match (ret, args) {

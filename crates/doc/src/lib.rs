@@ -12,6 +12,7 @@
 //! # API mapping status
 //! - `crate_id()` is `adapted` utility metadata (no direct C++ counterpart).
 
+/// Stable identifier used by workspace-level crate discovery.
 pub const CRATE_NAME: &str = "doc";
 
 #[must_use]

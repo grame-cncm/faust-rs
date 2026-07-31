@@ -69,6 +69,12 @@ impl BlockId {
 /// - `offset1`, `offset2`: heap offsets for memory operations.
 /// - `branch1`: branch 1 (if-true / loop-init block).
 /// - `branch2`: branch 2 (if-false / loop-body block).
+///
+/// Branch interpretation is opcode-specific: `If` and `Select*` use
+/// `branch1`/`branch2` as true/false blocks, while `Loop` uses them as its
+/// initialization/body blocks. Branch targets are arena indices rather than
+/// nested blocks, so a serializer and an optimizer can preserve sharing and
+/// loop back-edges without cloning instruction streams.
 #[derive(Clone, Debug)]
 pub struct FbcInstruction<R: FbcReal> {
     /// Operation code selecting the instruction semantics.

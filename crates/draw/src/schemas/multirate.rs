@@ -1,4 +1,8 @@
-//! Multi-rate schemas: [`OnDemandSchema`], [`DownSamplingSchema`], [`UpSamplingSchema`].
+//! Multi-rate schemas for on-demand, downsampling, and upsampling nodes.
+//!
+//! The three node families share [`MultiRateSchema`]; their Faust-specific
+//! names are selected by the schema builder rather than represented by distinct
+//! Rust types.
 //!
 //! All three share the same structure: an inner schema surrounded by a solid
 //! border box, a rate-control input port, and a label.

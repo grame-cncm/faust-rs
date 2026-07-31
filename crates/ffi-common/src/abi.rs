@@ -11,14 +11,22 @@ pub type FfiFaustFloat = f32;
 /// while the callback-table definition is maintained in a single place.
 #[repr(C)]
 pub struct UIGlue {
+    /// Opaque host context passed as the first argument to every callback.
     pub ui_interface: *mut c_void,
+    /// Opens a tab group with the supplied label.
     pub open_tab_box: Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
+    /// Opens a horizontal group with the supplied label.
     pub open_horizontal_box: Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
+    /// Opens a vertical group with the supplied label.
     pub open_vertical_box: Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
+    /// Closes the most recently opened UI group.
     pub close_box: Option<unsafe extern "C" fn(*mut c_void)>,
+    /// Adds a momentary button bound to a DSP zone.
     pub add_button: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *mut FfiFaustFloat)>,
+    /// Adds a toggle button bound to a DSP zone.
     pub add_check_button:
         Option<unsafe extern "C" fn(*mut c_void, *const c_char, *mut FfiFaustFloat)>,
+    /// Adds a vertical slider with label, zone, initial value, range, and step.
     pub add_vertical_slider: Option<
         unsafe extern "C" fn(
             *mut c_void,
@@ -30,6 +38,7 @@ pub struct UIGlue {
             FfiFaustFloat,
         ),
     >,
+    /// Adds a horizontal slider with label, zone, initial value, range, and step.
     pub add_horizontal_slider: Option<
         unsafe extern "C" fn(
             *mut c_void,
@@ -41,6 +50,7 @@ pub struct UIGlue {
             FfiFaustFloat,
         ),
     >,
+    /// Adds a numeric entry with label, zone, initial value, range, and step.
     pub add_num_entry: Option<
         unsafe extern "C" fn(
             *mut c_void,
@@ -52,6 +62,7 @@ pub struct UIGlue {
             FfiFaustFloat,
         ),
     >,
+    /// Adds a horizontal bargraph with label, zone, and display range.
     pub add_horizontal_bargraph: Option<
         unsafe extern "C" fn(
             *mut c_void,
@@ -61,6 +72,7 @@ pub struct UIGlue {
             FfiFaustFloat,
         ),
     >,
+    /// Adds a vertical bargraph with label, zone, and display range.
     pub add_vertical_bargraph: Option<
         unsafe extern "C" fn(
             *mut c_void,
@@ -70,8 +82,10 @@ pub struct UIGlue {
             FfiFaustFloat,
         ),
     >,
+    /// Adds a soundfile control and returns its host-managed handle through the out-pointer.
     pub add_soundfile:
         Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char, *mut *mut c_void)>,
+    /// Attaches key/value metadata to an optional DSP zone.
     pub declare:
         Option<unsafe extern "C" fn(*mut c_void, *mut FfiFaustFloat, *const c_char, *const c_char)>,
 }
@@ -79,7 +93,9 @@ pub struct UIGlue {
 /// C-ABI metadata callback table used by generated/runtime DSP code (mirrors Faust `MetaGlue`).
 #[repr(C)]
 pub struct MetaGlue {
+    /// Opaque host context passed to [`MetaGlue::declare`].
     pub meta_interface: *mut c_void,
+    /// Publishes one DSP metadata key/value pair.
     pub declare: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char)>,
 }
 

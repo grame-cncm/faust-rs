@@ -137,81 +137,95 @@ impl Interval {
 
     #[inline]
     #[must_use]
+    /// Returns the inclusive lower bound.
     pub fn lo(&self) -> f64 {
         self.lo
     }
     #[inline]
     #[must_use]
+    /// Returns the inclusive upper bound.
     pub fn hi(&self) -> f64 {
         self.hi
     }
     #[inline]
     #[must_use]
+    /// Returns the binary precision exponent associated with this interval.
     pub fn lsb(&self) -> i32 {
         self.lsb
     }
     #[inline]
     #[must_use]
+    /// Returns the width `hi - lo` of the interval.
     pub fn size(&self) -> f64 {
         self.hi - self.lo
     }
 
     #[inline]
     #[must_use]
+    /// Returns `true` when either bound is NaN.
     pub fn is_empty(&self) -> bool {
         self.lo.is_nan() || self.hi.is_nan()
     }
 
     #[inline]
     #[must_use]
+    /// Returns `true` when neither bound is NaN.
     pub fn is_valid(&self) -> bool {
         !self.is_empty()
     }
 
     #[inline]
     #[must_use]
+    /// Returns `true` when either bound is infinite.
     pub fn is_unbounded(&self) -> bool {
         self.lo.is_infinite() || self.hi.is_infinite()
     }
 
     #[inline]
     #[must_use]
+    /// Returns `true` when both bounds are finite.
     pub fn is_bounded(&self) -> bool {
         !self.is_unbounded()
     }
 
     #[inline]
     #[must_use]
+    /// Returns whether `x` lies within the inclusive bounds.
     pub fn has(&self, x: f64) -> bool {
         self.lo <= x && self.hi >= x
     }
 
     #[inline]
     #[must_use]
+    /// Returns whether this interval is exactly the singleton `x`.
     pub fn is(&self, x: f64) -> bool {
         self.lo == x && self.hi == x
     }
 
     #[inline]
     #[must_use]
+    /// Returns whether zero lies within the inclusive bounds.
     pub fn has_zero(&self) -> bool {
         self.has(0.0)
     }
 
     #[inline]
     #[must_use]
+    /// Returns whether this interval is exactly zero.
     pub fn is_zero(&self) -> bool {
         self.is(0.0)
     }
 
     #[inline]
     #[must_use]
+    /// Returns whether the interval is a non-empty singleton.
     pub fn is_const(&self) -> bool {
         self.lo == self.hi && !self.lo.is_nan()
     }
 
     #[inline]
     #[must_use]
+    /// Returns whether the singleton interval contains a power of two.
     pub fn is_power_of2(&self) -> bool {
         let n = self.hi as i32;
         self.is_const() && (n & n.wrapping_neg()) == n
@@ -219,6 +233,7 @@ impl Interval {
 
     #[inline]
     #[must_use]
+    /// Returns whether the singleton interval has an all-low-bits-set mask value.
     pub fn is_bitmask(&self) -> bool {
         let n = (self.hi as i32).wrapping_add(1);
         self.is_const() && (n & n.wrapping_neg()) == n

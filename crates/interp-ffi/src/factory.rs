@@ -797,7 +797,7 @@ pub unsafe extern "C" fn expandCInterpreterDSPFromString(
 /// Generate auxiliary output files from a Faust DSP source file.
 ///
 /// Output formats are selected by argv flags: -cpp, -c, -wasm, -json, -svg.
-/// Output directory is taken from -O <path> (defaults to ".").
+/// Output directory is taken from `-O <path>` (defaults to `.`).
 /// Returns `true` on success.
 ///
 /// # Safety
@@ -853,7 +853,7 @@ pub unsafe extern "C" fn generateCInterpreterAuxFilesFromFile(
 /// Generate auxiliary output files from a Faust DSP source string.
 ///
 /// Output formats are selected by argv flags: -cpp, -c, -wasm, -json, -svg.
-/// Output directory is taken from -O <path> (defaults to ".").
+/// Output directory is taken from `-O <path>` (defaults to `.`).
 /// Returns `true` on success.
 ///
 /// # Safety
