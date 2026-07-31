@@ -116,16 +116,23 @@ fn compile_rust(control: ControlRateMode, api: ProcessingApi) -> String {
 #[test]
 fn rust_shapes_match_the_d3_contract() {
     // D3: public inherent methods; the FaustDsp trait stays unchanged.
+    let classic = compile_rust(ControlRateMode::InlinePerBlock, ProcessingApi::Block);
+    assert!(!classic.contains("`control()` and `frame()` are public inherent methods"));
+
     let ec = compile_rust(ControlRateMode::External, ProcessingApi::Block);
     assert!(ec.contains("pub fn control(&mut self)"));
     assert!(!ec.contains("pub fn frame("));
     assert!(ec.contains("impl FaustDsp for mydsp"));
+    assert!(ec.contains("`control()` and `frame()` are public inherent methods"));
 
     let ecos = compile_rust(ControlRateMode::External, ProcessingApi::OneSample);
     assert!(ecos.contains("pub fn control(&mut self)"));
     assert!(
         ecos.contains("pub fn frame(&mut self, inputs: &[FaustFloat], outputs: &mut [FaustFloat])")
     );
+    assert!(ecos.contains(
+        "// `FaustDsp` keeps the legacy block-processing contract. With `-ec` and/or `-os`,\n// `control()` and `frame()` are public inherent methods on `mydsp`, intentionally not trait methods.\nimpl FaustDsp for mydsp {"
+    ));
     // Canonical compute kept, empty, parameters underscored.
     let compute_pos = ecos
         .find("pub fn compute(&mut self, _count: usize")

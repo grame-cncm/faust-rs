@@ -720,7 +720,10 @@ fn emit_rust_api(
 
     let _ = writeln!(out, "}}");
 
-    emit_faust_dsp_trait_impl(out, class_name);
+    let has_execution_entry_point = declared_functions
+        .iter()
+        .any(|f| matches!(f.name.as_str(), "control" | "frame"));
+    emit_faust_dsp_trait_impl(out, class_name, has_execution_entry_point);
 
     for f in declared_functions {
         if matches!(
@@ -847,7 +850,20 @@ fn emit_parameter_accessors(
 }
 
 /// Emits the `FaustDsp` adapter contract used by the C++ Faust Rust architectures.
-fn emit_faust_dsp_trait_impl(out: &mut String, class_name: &str) {
+fn emit_faust_dsp_trait_impl(out: &mut String, class_name: &str, has_execution_entry_point: bool) {
+    if has_execution_entry_point {
+        // Keep this explanation in execution-option output: readers commonly
+        // inspect the adapter first and could otherwise mistake the
+        // intentionally inherent entry points for missing trait methods.
+        let _ = writeln!(
+            out,
+            "// `FaustDsp` keeps the legacy block-processing contract. With `-ec` and/or `-os`,"
+        );
+        let _ = writeln!(
+            out,
+            "// `control()` and `frame()` are public inherent methods on `{class_name}`, intentionally not trait methods."
+        );
+    }
     let _ = writeln!(out, "impl FaustDsp for {class_name} {{");
     let _ = writeln!(out, "    type T = FaustFloat;");
     let _ = writeln!(
