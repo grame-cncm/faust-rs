@@ -1775,15 +1775,39 @@ impl BlockComp {
                 let saved_r = self.rstack.clone();
                 let saved_i = self.istack.clone();
 
-                writeln!(out, "{}if ({} != 0) {{", tab(t), cond).unwrap();
-                self.compile_block(arena, out, t + 1, b1)?;
+                // Render branches independently so a Return-only FBC block does
+                // not become an empty C++ `else {}` block. C++ does not need the
+                // branch at all when it has no emitted statements.
+                let mut then_out = String::new();
+                self.compile_block(arena, &mut then_out, t + 1, b1)?;
                 self.rstack = saved_r.clone();
                 self.istack = saved_i.clone();
-                writeln!(out, "{}}} else {{", tab(t)).unwrap();
-                self.compile_block(arena, out, t + 1, b2)?;
+
+                let mut else_out = String::new();
+                self.compile_block(arena, &mut else_out, t + 1, b2)?;
                 self.rstack = saved_r;
                 self.istack = saved_i;
-                writeln!(out, "{}}}", tab(t)).unwrap();
+
+                match (then_out.is_empty(), else_out.is_empty()) {
+                    (false, false) => {
+                        writeln!(out, "{}if ({} != 0) {{", tab(t), cond).unwrap();
+                        out.push_str(&then_out);
+                        writeln!(out, "{}}} else {{", tab(t)).unwrap();
+                        out.push_str(&else_out);
+                        writeln!(out, "{}}}", tab(t)).unwrap();
+                    }
+                    (false, true) => {
+                        writeln!(out, "{}if ({} != 0) {{", tab(t), cond).unwrap();
+                        out.push_str(&then_out);
+                        writeln!(out, "{}}}", tab(t)).unwrap();
+                    }
+                    (true, false) => {
+                        writeln!(out, "{}if ({} == 0) {{", tab(t), cond).unwrap();
+                        out.push_str(&else_out);
+                        writeln!(out, "{}}}", tab(t)).unwrap();
+                    }
+                    (true, true) => {}
+                }
             }
 
             SelectReal => {

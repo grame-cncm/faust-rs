@@ -162,6 +162,68 @@ fn generate_custom_class_name() {
 }
 
 #[test]
+fn if_with_empty_else_omits_else_block() {
+    let mut arena = FbcBlockArena::<f32>::new();
+
+    let mut then_block = FbcBlock::new();
+    then_block.push(FbcInstruction::with_values_and_offsets(
+        FbcOpcode::StoreIntValue,
+        7,
+        0.0,
+        0,
+        -1,
+    ));
+    then_block.push(FbcInstruction::new(FbcOpcode::Return));
+    let then_id = arena.alloc(then_block);
+
+    let empty_id = trivial_block(&mut arena);
+
+    let mut main_block = FbcBlock::new();
+    main_block.push(FbcInstruction::with_values(FbcOpcode::Int32Value, 1, 0.0));
+    main_block.push(FbcInstruction::full(
+        FbcOpcode::If,
+        "",
+        0,
+        0.0,
+        -1,
+        -1,
+        Some(then_id),
+        Some(empty_id),
+    ));
+    main_block.push(FbcInstruction::new(FbcOpcode::Return));
+    let main_id = arena.alloc(main_block);
+
+    let factory = FbcDspFactory::new(
+        "if_empty_else",
+        "",
+        "",
+        INTERP_FILE_VERSION,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0,
+        0,
+        0,
+        arena,
+        vec![],
+        vec![],
+        main_id,
+        empty_id,
+        empty_id,
+        empty_id,
+        empty_id,
+        empty_id,
+    );
+
+    let cpp = generate_cpp_from_fbc(&factory, &FbcCppOptions::default()).unwrap();
+    assert!(cpp.contains("if (iI0 != 0) {"), "{cpp}");
+    assert!(cpp.contains("iVec[0] = 7;"), "{cpp}");
+    assert!(!cpp.contains("} else {"), "{cpp}");
+}
+
+#[test]
 fn generate_with_loop_and_condbranch() {
     // Build a factory whose static_init_block contains a loop:
     //   init_block:  StoreIntValue(slot=2, value=0)  → iVec[2] = 0; Return
