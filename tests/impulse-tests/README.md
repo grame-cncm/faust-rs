@@ -10,8 +10,12 @@ See the design write-up in
 
 ## What it does
 
-1. **Reference (the oracle).** `make reference` compiles every `dsp/*.dsp` with
-   the C++ Faust compiler wrapped in the original 4-pass impulse architecture
+1. **Reference (the oracle).** `make reference` first preflights every
+   `dsp/*.dsp` with the configured C++ Faust compiler. DSPs it rejects are
+   recorded as unavailable C++ oracles, with one diagnostic log per DSP; they
+   are excluded from differential targets without being classified as faust-rs
+   failures. It then compiles each supported DSP with the C++ Faust compiler
+   wrapped in the original 4-pass impulse architecture
    (`impulsearch.cpp` + `controlTools.h`), builds a native binary, and runs it
    for 60000 frames: impulse pass + random-split pass + polyphonic 4-voice pass
    + polyphonic 1-voice pass. Output goes to `reference/*.ir`.
@@ -97,6 +101,7 @@ See the design write-up in
 cd tests/impulse-tests
 make build         # build the faust-rs binaries the harness drives
 make reference     # generate the reference .ir oracle  (run once)
+make reference-report # show C++-oracle-supported and rejected DSPs
 make interp        # check the interpreter backend
 make cpp           # check the C++ backend
 make c             # check the C backend
@@ -123,8 +128,11 @@ make help          # list targets and variables
 make clean         # remove ir/ and build/
 ```
 
-There is no `reference` rebuild on every run: delete `reference/` (or
-`make distclean`) to regenerate.
+Differential backend targets invoke `make reference` first. The C++ oracle
+preflight is cached and only reruns when the selected corpus or oracle
+configuration changes; ordinary reference responses still follow normal Make
+timestamp rules. Delete `reference/` (or `make distclean`) to regenerate all
+supported responses.
 
 ## Layout
 
@@ -132,8 +140,9 @@ There is no `reference` rebuild on every run: delete `reference/` (or
 |---|---|
 | `dsp/` | 132 test DSP programs (93 baseline + 21 ondemand + 18 multirate) |
 | `common.mk` | shared, overridable configuration |
-| `known.mk` | per-DSP tolerances + known-failure exclusion lists |
-| `KNOWN_FAILURES.md` | documented gaps/tolerances with causes |
+| `known.mk` | per-DSP tolerances + faust-rs known-failure exclusion lists |
+| `build/ref/cpp-oracle-manifest.mk` | generated C++ oracle support classification |
+| `KNOWN_FAILURES.md` | documented gaps, tolerances, and oracle exclusions |
 | `Make.ref` | genuine C++ 4-pass reference generation |
 | `Make.gcc` | faust-rs C / C++ backends (full 4-pass, exact compare) |
 | `Make.interp` | faust-rs interpreter backend (scalar prefix, `-part`) |

@@ -7,9 +7,14 @@
 #                       Used only for genuine *bounded* rounding bands; each
 #                       entry records the observed max |delta| and where.
 #
-#   KNOWN_FAIL_all      DSPs excluded from every backend's default pass/fail gate.
+#   KNOWN_FAIL_all      faust-rs DSPs excluded from every backend's default
+#                       pass/fail gate.
 #   KNOWN_FAIL_<backend> DSPs excluded for one backend (outdir name: cpp/c/interp).
 #                       These are real divergences/gaps to fix, not rounding.
+#
+# `CPP_ORACLE_UNSUPPORTED` comes from the generated C++-oracle manifest. It is
+# also filtered from every backend target because no reference response exists,
+# but is intentionally not a `KNOWN_FAIL`: faust-rs may compile it correctly.
 #
 # Excluded cases are simply not built by the aggregate targets; build one
 # explicitly (e.g. `make ir/interp/sound.ir`) to see it fail.
@@ -128,4 +133,4 @@ without_exec = $(patsubst %-ec-os,%,$(patsubst %-ec,%,$(patsubst %-os,%,$1)))
 base_backend = $(patsubst %-vec0,%,$(patsubst %-vec1,%,$(call without_ss,$(call without_exec,$1))))
 # Names excluded for a given backend outdir. Every variant inherits its base
 # backend's known failures plus any exact outdir-specific list.
-known_fail_for = $(KNOWN_FAIL_all) $(KNOWN_FAIL_$(call base_backend,$1)) $(KNOWN_FAIL_$1)
+known_fail_for = $(CPP_ORACLE_UNSUPPORTED) $(KNOWN_FAIL_all) $(KNOWN_FAIL_$(call base_backend,$1)) $(KNOWN_FAIL_$1)

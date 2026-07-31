@@ -35,7 +35,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -79,13 +79,13 @@ backend-matrix-full:
 # Each matrix outdir is unique so combinations can run in
 # parallel without sharing generated artifacts.
 define DEFINE_SCHEDULE_TARGETS
-$(1)-ss%:
+$(1)-ss%: reference
 	$$(MAKE) -f $(2) all outdir=$$@ $(3) COMPILER_OPTS="-ss $$*"
 
-$(1)-vec0-ss%:
+$(1)-vec0-ss%: reference
 	$$(MAKE) -f $(2) all outdir=$$@ $(3) COMPILER_OPTS="-vec -lv 0 -ss $$*"
 
-$(1)-vec1-ss%:
+$(1)-vec1-ss%: reference
 	$$(MAKE) -f $(2) all outdir=$$@ $(3) COMPILER_OPTS="-vec -lv 1 -ss $$*"
 endef
 
@@ -100,6 +100,20 @@ $(eval $(call DEFINE_SCHEDULE_TARGETS,julia,Make.julia,))
 
 reference:
 	$(MAKE) -f Make.ref reference
+
+reference-report:
+	$(MAKE) -f Make.ref reference-report
+
+# Every ordinary differential target first refreshes the C++ oracle manifest.
+# This lets a new C++ compiler rejection exclude only the affected DSPs before
+# any faust-rs backend asks for a missing `reference/<dsp>.ir` file.
+CPP_ORACLE_CHECK_TARGETS := all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix \
+	interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 \
+	cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 \
+	assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 \
+	julia julia-vec0 julia-vec1 cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os \
+	rust-ec rust-os rust-ec-os all-execopts
+$(CPP_ORACLE_CHECK_TARGETS): reference
 
 # ── RAD lane ─────────────────────────────────────────────────────────────────
 #
@@ -283,7 +297,8 @@ help:
 	@echo "-------- faust-rs impulse-response tests --------"
 	@echo "Targets:"
 	@echo "  build          : cargo build the faust-rs compiler + impulse runner"
-	@echo "  reference      : generate the genuine C++ reference .ir files (oracle)"
+	@echo "  reference      : preflight C++ oracle support, then generate supported .ir files"
+	@echo "  reference-report: list C++-oracle-supported/rejected DSPs and diagnostic logs"
 	@echo "  interp         : check the faust-rs interpreter backend (scalar prefix)"
 	@echo "  cranelift      : check the faust-rs Cranelift JIT backend (scalar prefix, 64-bit)"
 	@echo "  wasm           : check the faust-rs WASM backend (scalar prefix, 64-bit, Node)"
@@ -333,4 +348,4 @@ help:
 	@echo "  COMPILE_BENCH_CSV=$(COMPILE_BENCH_CSV)"
 	@echo "  precision=<tol>  (filesCompare tolerance override)"
 	@echo ""
-	@echo "Run 'make reference' once before the backend targets."
+	@echo "Differential backend targets refresh the C++ oracle automatically."

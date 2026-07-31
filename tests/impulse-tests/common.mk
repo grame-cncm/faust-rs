@@ -81,6 +81,21 @@ dspdir ?= dsp
 refdir ?= reference
 
 dspfiles := $(wildcard $(dspdir)/*.dsp)
+# `Make.ref` regenerates this manifest by asking the configured C++ Faust
+# compiler whether each selected DSP can produce the normal C++ oracle. It is
+# deliberately separate from `KNOWN_FAIL_*`: an unavailable C++ oracle makes a
+# differential comparison impossible but says nothing about faust-rs.
+CPP_ORACLE_MANIFEST ?= build/ref/cpp-oracle-manifest.mk
+CPP_ORACLE_CONFIG ?= build/ref/cpp-oracle-config.txt
+CPP_ORACLE_LOG_DIR ?= build/ref/cpp-oracle-errors
+ifneq ($(wildcard $(CPP_ORACLE_MANIFEST)),)
+include $(CPP_ORACLE_MANIFEST)
+endif
+CPP_ORACLE_SUPPORTED ?=
+CPP_ORACLE_UNSUPPORTED ?=
+# The manifest records bare DSP names. Filter by full path so `dspdir` remains
+# overridable for targeted and alternate-corpus runs.
+cpp_oracle_dspfiles = $(filter-out $(addprefix $(dspdir)/,$(addsuffix .dsp,$(CPP_ORACLE_UNSUPPORTED))),$(dspfiles))
 VECTOR_CERTIFIED_LIST := ../vector-coverage/certified-dspfiles.txt
 vector_certified_repo_files := $(shell sed -n '/\.dsp$$/p' $(VECTOR_CERTIFIED_LIST) 2>/dev/null)
 vector_certified_dspfiles := $(patsubst tests/impulse-tests/%,%,$(vector_certified_repo_files))
