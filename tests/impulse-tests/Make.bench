@@ -31,7 +31,7 @@
 #
 # Or through the aggregate Makefile:
 #
-#   make bench
+#   make bench BENCH_OPTIONS="-double -run 5 -bs 512"  # normal comparison
 #   make vec-bench
 #   make compile-bench
 #
@@ -42,7 +42,9 @@
 #   FAUSTBENCH         faustbench executable.
 #   BENCH_OPTIONS      options passed to faustbench, defaulting to -double.
 #   BENCH_WARN_MIN     warning threshold for generated-code regressions.
+#   BENCH_DIR          generated wrappers and per-DSP logs.
 #   BENCH_CSV          output CSV for `bench`.
+#   BENCH_AGGREGATE_CSV aggregate status and performance summary for `bench`.
 #   VEC_BENCH_OPTIONS  options shared by the 12 vector/scheduling measurements.
 #   VEC_BENCH_WARN_MIN warning threshold when vector code is slower than scalar.
 #   VEC_BENCH_CSV      detailed output CSV for `vec-bench`.
@@ -63,10 +65,11 @@ vector_testnames := $(filter-out $(call known_fail_for,cpp),$(vector_allnames))
 #   logs/                   per-DSP compiler and faustbench logs
 #   compile/{cpp,faust-rs}/ generated C++ sources for compile-bench
 #   summary CSVs            BENCH_CSV and COMPILE_BENCH_CSV
-benchdir := build/bench
+benchdir := $(BENCH_DIR)
 cppbindir := $(benchdir)/cpp-bin
 rsbindir := $(benchdir)/rs-bin
 logdir := $(benchdir)/logs
+bench_aggregate_awk := $(abspath tools/benchAggregate.awk)
 
 # Resolve paths once at make evaluation time so the generated shell wrappers do
 # not depend on the caller's later PATH or working directory.
@@ -77,10 +80,13 @@ faust_cpp_abs := $(shell command -v $(FAUST_CPP) 2>/dev/null || printf '%s' "$(F
 faust_rs_abs := $(abspath $(FAUST_RS))
 cxx_abs := $(shell command -v $(CXX) 2>/dev/null || printf '%s' "$(CXX)")
 
-.PHONY: bench vec-bench compile-bench force
+.PHONY: bench bench-self-test vec-bench compile-bench force
 .DELETE_ON_ERROR:
 
 bench: $(BENCH_CSV)
+
+bench-self-test:
+	@tools/testBenchHarness.sh
 
 vec-bench: $(VEC_BENCH_CSV)
 
@@ -94,46 +100,72 @@ compile-bench: $(COMPILE_BENCH_CSV)
 #   build/bench/cpp-bin/faust -> FAUST_CPP
 #   build/bench/rs-bin/faust  -> FAUST_RS, with compatibility filtering
 #
-# Each per-compiler run writes its raw faustbench output to logs/. The recipe
-# extracts the "Best value is : ... MBytes/sec" line and stores both values plus
-# the faust-rs relative delta in BENCH_CSV:
+# Each per-compiler run writes its raw faustbench output to logs/. Odd DSPs run
+# C++ Faust first and even DSPs run faust-rs first, avoiding a corpus-wide
+# thermal/frequency bias. The recipe extracts the "Best value is : ...
+# MBytes/sec" line and stores both values plus the faust-rs relative delta in
+# BENCH_CSV:
 #
 #   delta_pct = (faust_rs_mbytes_sec - faust_cpp_mbytes_sec)
 #               / faust_cpp_mbytes_sec * 100
+#
+# Missing and non-finite measurements retain their values and receive explicit
+# statuses. Only finite positive `ok` pairs contribute to the geometric mean,
+# median, and regression count in BENCH_AGGREGATE_CSV.
 $(BENCH_CSV): force | $(cppbindir)/faust $(cppbindir)/uname $(rsbindir)/faust $(rsbindir)/uname $(benchdir)/cxx $(logdir)/.dir
 	@set -e; \
-	printf 'dsp,faust_cpp_mbytes_sec,faust_rs_mbytes_sec,delta_pct,status\n' > "$@"; \
-	total=0; better=0; worse=0; failed=0; \
+	mkdir -p "$$(dirname "$@")" "$$(dirname "$(BENCH_AGGREGATE_CSV)")"; \
+	printf 'dsp,faust_cpp_mbytes_sec,faust_rs_mbytes_sec,delta_pct,status,run_order\n' > "$@"; \
 	bench_value() { \
 		compiler_path="$$1"; \
 		dsp="$$2"; \
 		log="$$3"; \
 		CXX="$(cxx_wrapper_abs)" CXXFLAGS="$${CXXFLAGS:--Ofast -fbracket-depth=512}" PATH="$$compiler_path:$$PATH" $(FAUSTBENCH) $(BENCH_OPTIONS) -I dsp -I $(FAUSTLIBS) "$$dsp" > "$$log" 2>&1 || return 1; \
-		sed -nE 's/^Best value is : ([0-9.]+) MBytes\/sec.*/\1/p' "$$log" | tail -1; \
+		LC_ALL=C awk '$$1 == "Best" && $$2 == "value" && $$3 == "is" && $$4 == ":" { value = tolower($$5) } END { if (value != "") print value }' "$$log"; \
 	}; \
+	is_finite_positive() { \
+		LC_ALL=C awk -v value="$$1" 'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$$/ && value + 0 > 0) }'; \
+	}; \
+	index=0; \
 	for name in $(testnames); do \
+		index=$$((index + 1)); \
 		dsp="dsp/$$name.dsp"; \
 		printf '[bench] %s\n' "$$name"; \
 		cpp_log="$(logdir)/$$name.cpp.log"; \
 		rs_log="$(logdir)/$$name.faust-rs.log"; \
+		if [ $$((index % 2)) -eq 1 ]; then \
+			run_order=cpp-first; \
+			cpp_val="$$(bench_value "$(cppbindir_abs)" "$$dsp" "$$cpp_log" || true)"; \
+			rs_val="$$(bench_value "$(rsbindir_abs)" "$$dsp" "$$rs_log" || true)"; \
+		else \
+			run_order=faust-rs-first; \
+			rs_val="$$(bench_value "$(rsbindir_abs)" "$$dsp" "$$rs_log" || true)"; \
+			cpp_val="$$(bench_value "$(cppbindir_abs)" "$$dsp" "$$cpp_log" || true)"; \
+		fi; \
 		status=ok; \
-		cpp_val="$$(bench_value "$(cppbindir_abs)" "$$dsp" "$$cpp_log" || true)"; \
-		rs_val="$$(bench_value "$(rsbindir_abs)" "$$dsp" "$$rs_log" || true)"; \
-		if [ -z "$$cpp_val" ] || [ -z "$$rs_val" ]; then \
-			status=failed; \
-			failed=$$((failed + 1)); \
-			printf '%s,%s,%s,,%s\n' "$$name" "$$cpp_val" "$$rs_val" "$$status" >> "$@"; \
-			printf '[bench][failed] %s (logs: %s, %s)\n' "$$name" "$$cpp_log" "$$rs_log" >&2; \
+		if [ -z "$$cpp_val" ] && [ -z "$$rs_val" ]; then \
+			status=failed_both; \
+		elif [ -z "$$cpp_val" ]; then \
+			if LC_ALL=C grep -q 'ERROR : undefined symbol :' "$$cpp_log"; then status=unsupported_cpp; else status=failed_cpp; fi; \
+		elif [ -z "$$rs_val" ]; then \
+			status=failed_faust_rs; \
+		elif ! is_finite_positive "$$cpp_val" && ! is_finite_positive "$$rs_val"; then \
+			status=nonfinite_both; \
+		elif ! is_finite_positive "$$cpp_val"; then \
+			status=nonfinite_cpp; \
+		elif ! is_finite_positive "$$rs_val"; then \
+			status=nonfinite_faust_rs; \
+		fi; \
+		if [ "$$status" != ok ]; then \
+			printf '%s,%s,%s,,%s,%s\n' "$$name" "$$cpp_val" "$$rs_val" "$$status" "$$run_order" >> "$@"; \
+			printf '[bench][%s] %s (cpp %s, faust-rs %s; logs: %s, %s)\n' "$$status" "$$name" "$${cpp_val:-missing}" "$${rs_val:-missing}" "$$cpp_log" "$$rs_log" >&2; \
 			continue; \
 		fi; \
-		total=$$((total + 1)); \
 		delta="$$(LC_ALL=C awk -v rs="$$rs_val" -v cpp="$$cpp_val" 'BEGIN { if (cpp == 0) { print "inf"; } else { printf "%.2f", (rs - cpp) / cpp * 100; } }')"; \
-		printf '%s,%s,%s,%s,%s\n' "$$name" "$$cpp_val" "$$rs_val" "$$delta" "$$status" >> "$@"; \
+		printf '%s,%s,%s,%s,%s,%s\n' "$$name" "$$cpp_val" "$$rs_val" "$$delta" "$$status" "$$run_order" >> "$@"; \
 		if LC_ALL=C awk -v d="$$delta" 'BEGIN { exit !(d > 0) }'; then \
-			better=$$((better + 1)); \
 			printf '[bench][better] %s +%s%% (cpp %s, faust-rs %s)\n' "$$name" "$$delta" "$$cpp_val" "$$rs_val"; \
 		elif LC_ALL=C awk -v d="$$delta" 'BEGIN { exit !(d < 0) }'; then \
-			worse=$$((worse + 1)); \
 			abs_delta="$$(LC_ALL=C awk -v d="$$delta" 'BEGIN { if (d < 0) d = -d; printf "%.2f", d; }')"; \
 			printf '[bench][worse] %s -%s%% (cpp %s, faust-rs %s)\n' "$$name" "$$abs_delta" "$$cpp_val" "$$rs_val"; \
 			if LC_ALL=C awk -v d="$$abs_delta" -v min="$(BENCH_WARN_MIN)" 'BEGIN { exit !(d >= min) }'; then \
@@ -143,7 +175,9 @@ $(BENCH_CSV): force | $(cppbindir)/faust $(cppbindir)/uname $(rsbindir)/faust $(
 			printf '[bench][same] %s 0.00%% (cpp %s, faust-rs %s)\n' "$$name" "$$cpp_val" "$$rs_val"; \
 		fi; \
 	done; \
-	printf '[bench] summary: total=%s better=%s worse=%s failed=%s csv=%s\n' "$$total" "$$better" "$$worse" "$$failed" "$@"
+	LC_ALL=C awk -v warn_min="$(BENCH_WARN_MIN)" -f "$(bench_aggregate_awk)" "$@" > "$(BENCH_AGGREGATE_CSV)"; \
+	summary="$$(LC_ALL=C awk -F, 'NR == 2 { printf "comparable=%s better=%s worse=%s same=%s geomean=%s%% median=%s%% regressions>=%s%%:%s unsupported_cpp=%s failed_cpp=%s failed_faust_rs=%s failed_both=%s nonfinite_cpp=%s nonfinite_faust_rs=%s nonfinite_both=%s", $$1, $$2, $$3, $$4, $$5, $$6, "$(BENCH_WARN_MIN)", $$7, $$8, $$9, $$10, $$11, $$12, $$13, $$14 }' "$(BENCH_AGGREGATE_CSV)")"; \
+	printf '[bench] summary: %s csv=%s aggregate=%s\n' "$$summary" "$@" "$(BENCH_AGGREGATE_CSV)"
 
 # C++ backend scalar/vector/scheduling runtime benchmark.
 #

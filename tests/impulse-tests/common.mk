@@ -57,13 +57,15 @@ COMPILER_OPTS ?= $(VECOPTS)
 FAUSTBENCH ?= faustbench -single
 BENCH_OPTIONS ?= -double
 BENCH_WARN_MIN ?= 5
-BENCH_CSV ?= build/bench/summary.csv
+BENCH_DIR ?= build/bench
+BENCH_CSV ?= $(BENCH_DIR)/summary.csv
+BENCH_AGGREGATE_CSV ?= $(BENCH_DIR)/aggregate.csv
 VEC_BENCH_OPTIONS ?= $(BENCH_OPTIONS)
 VEC_BENCH_WARN_MIN ?= 5
-VEC_BENCH_CSV ?= build/bench/vector-scheduling.csv
-VEC_BENCH_SUMMARY_CSV ?= build/bench/vector-scheduling-summary.csv
-VEC_BENCH_AGGREGATE_CSV ?= build/bench/vector-scheduling-aggregate.csv
-COMPILE_BENCH_CSV ?= build/bench/compile-summary.csv
+VEC_BENCH_CSV ?= $(BENCH_DIR)/vector-scheduling.csv
+VEC_BENCH_SUMMARY_CSV ?= $(BENCH_DIR)/vector-scheduling-summary.csv
+VEC_BENCH_AGGREGATE_CSV ?= $(BENCH_DIR)/vector-scheduling-aggregate.csv
+COMPILE_BENCH_CSV ?= $(BENCH_DIR)/compile-summary.csv
 
 # Which DSP set is under test, and where its reference responses live.
 #

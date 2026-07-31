@@ -35,7 +35,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts bench vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -254,6 +254,9 @@ assemblyscript-vec1:
 bench:
 	@$(MAKE) -f Make.bench bench
 
+bench-self-test:
+	@$(MAKE) -f Make.bench bench-self-test
+
 vec-bench:
 	@$(MAKE) -f Make.bench vec-bench
 
@@ -301,7 +304,8 @@ help:
 	@echo "  backend-matrix : all-ss + all-vec-ss (full configured corpus)"
 	@echo "  backend-matrix-smoke: backend-matrix on BACKEND_MATRIX_SMOKE_DSPFILES"
 	@echo "  backend-matrix-full : clean matrix outputs, run full matrix, write audited report"
-	@echo "  bench          : compare C++ Faust and faust-rs generated-code speed with faustbench -single"
+	@echo "  bench          : compare generated-code speed (usual: BENCH_OPTIONS='-double -run 5 -bs 512')"
+	@echo "  bench-self-test: validate benchmark ordering, statuses, and aggregate calculations"
 	@echo "  vec-bench      : compare scalar/vec0/vec1 C++ code under -ss 0..3 for universally certified DSPs"
 	@echo "  compile-bench  : compare C++ Faust and faust-rs compile time on the DSP corpus"
 	@echo "  cpp            : check the faust-rs C++ backend (full 4-pass)"
@@ -319,7 +323,9 @@ help:
 	@echo "  RUNNER=$(RUNNER)"
 	@echo "  FAUSTBENCH=$(FAUSTBENCH)"   
 	@echo "  BENCH_OPTIONS=$(BENCH_OPTIONS)"
+	@echo "  BENCH_DIR=$(BENCH_DIR)"
 	@echo "  BENCH_CSV=$(BENCH_CSV)"
+	@echo "  BENCH_AGGREGATE_CSV=$(BENCH_AGGREGATE_CSV)"
 	@echo "  VEC_BENCH_OPTIONS=$(VEC_BENCH_OPTIONS)"
 	@echo "  VEC_BENCH_CSV=$(VEC_BENCH_CSV)"
 	@echo "  VEC_BENCH_SUMMARY_CSV=$(VEC_BENCH_SUMMARY_CSV)"

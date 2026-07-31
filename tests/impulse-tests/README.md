@@ -114,6 +114,7 @@ make backend-matrix-smoke # run the representative backend matrix corpus
 make backend-matrix       # run all 96 backend/mode/strategy combinations
 make -j8 backend-matrix-full # fresh full matrix plus the audited report
 make bench         # compare C++ Faust and faust-rs performance with faustbench -single
+make bench-self-test # validate benchmark ordering, statuses, and aggregate calculations
 make vec-bench     # compare scalar/vec0/vec1 C++ throughput under -ss 0..3 for checked vector DSPs
 make compile-bench # compare C++ Faust and faust-rs compile time
 make all           # cpp + c + interp + cranelift + wasm + assemblyscript + rust
@@ -207,21 +208,49 @@ backend/mode/strategy combination.
 
 ## Performance Bench
 
-`make bench` runs the impulse DSP corpus through `faustbench -single` twice:
-once with `FAUST_CPP` and once with `FAUST_RS`. Because `faustbench` finds a
-binary named `faust` on `PATH`, the target creates temporary wrappers under
-`build/bench/` and writes:
+`make bench` runs every impulse DSP through `faustbench -single` with both
+`FAUST_CPP` and `FAUST_RS`. It alternates which compiler runs first for each
+successive DSP, avoiding a corpus-wide thermal or frequency bias. Because
+`faustbench` finds a binary named `faust` on `PATH`, the target creates
+temporary wrappers under `build/bench/` and writes:
 
 - `build/bench/summary.csv` — DSP name, C++ Faust throughput, faust-rs
-  throughput, and relative delta.
+  throughput, relative delta, explicit status, and run order.
+- `build/bench/aggregate.csv` — comparable count, win/loss counts, geometric
+  mean, median, regression count, and counts for every non-comparable status.
 - `build/bench/logs/*.log` — full `faustbench` output for each compiler.
 
-The default precision option is `BENCH_OPTIONS=-double`; the recipe also passes
-`-I dsp -I $(FAUSTLIBS)`. Override as needed:
+Only pairs of finite positive measurements with status `ok` enter the
+performance aggregates. The corpus itself is not silently reduced:
+
+- `unsupported_cpp` identifies a C++ Faust `undefined symbol` diagnostic when
+  faust-rs produced a measurement;
+- `failed_cpp`, `failed_faust_rs`, and `failed_both` identify missing
+  measurements;
+- `nonfinite_cpp`, `nonfinite_faust_rs`, and `nonfinite_both` retain explicit
+  `inf` or `nan` results without treating them as numeric performance.
+
+The first five columns of `summary.csv` retain their previous order; the
+`run_order` audit column is appended. `BENCH_DIR`, `BENCH_CSV`, and
+`BENCH_AGGREGATE_CSV` are all overridable.
+
+The default `BENCH_OPTIONS=-double` is convenient for a quick exploratory
+pass, but it does not provide the repeated measurements expected for a normal
+performance comparison. For the usual benchmark workflow, use five runs and a
+fixed 512-sample block:
 
 ```bash
-make bench BENCH_OPTIONS="-double -run 3" BENCH_WARN_MIN=10
+make bench BENCH_OPTIONS="-double -run 5 -bs 512"
 ```
+
+This is the recommended command for results intended to guide optimization or
+report a regression. The recipe also passes `-I dsp -I $(FAUSTLIBS)`.
+`BENCH_WARN_MIN` remains independently overridable when a different reporting
+threshold is wanted.
+
+`make bench-self-test` uses a synthetic `faustbench` fixture to verify
+alternating order, all principal statuses, geometric-mean/median calculation,
+and the CSV contracts without requiring either compiler.
 
 `make vec-bench` keeps the `faust-rs` compiler and native C++ build settings
 fixed and measures the 12 combinations formed by scalar, `-vec -lv 0`, and
