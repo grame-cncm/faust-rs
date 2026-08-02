@@ -1225,18 +1225,7 @@ fn emit_value(store: &FirStore, value: FirId) -> Result<String, CodegenError> {
             for arg in args {
                 rendered.push(emit_value(store, arg)?);
             }
-            let jl_name = match name.as_str() {
-                // Integer min/max: no NaN is representable, so Julia's own are
-                // exact. The float ones go through the NaN-absorbing helpers
-                // emitted in the preamble, because Faust's semantics are C's
-                // `fmin`/`fmax`, not Julia's `min`/`max`.
-                "min_i" => "min",
-                "max_i" => "max",
-                "fmin" | "std::fmin" => "faust_fmin",
-                "fmax" | "std::fmax" => "faust_fmax",
-                "std::fabs" | "fabs" => "abs",
-                _ => name.strip_prefix("std::").unwrap_or(name.as_str()),
-            };
+            let jl_name = map_julia_fun_name(&name);
             Ok(format!("{jl_name}({})", rendered.join(", ")))
         }
         FirMatch::NullValue { .. } => Ok("nothing".to_owned()),
@@ -1263,6 +1252,55 @@ fn emit_value(store: &FirStore, value: FirId) -> Result<String, CodegenError> {
             ))
         }
         _ => Err(unsupported_node("value", value, store)),
+    }
+}
+
+/// Maps FIR C/libm spellings to Julia's precision-generic math API.
+///
+/// Faust's single-precision `maths.lib` declarations select C symbols such as
+/// `tanhf`. Julia uses the same `tanh` spelling for `Float32` and `Float64`,
+/// so leaving the suffix intact produces an unresolved generated call.
+fn map_julia_fun_name(name: &str) -> &str {
+    let name = name.strip_prefix("std::").unwrap_or(name);
+    match name {
+        // Integer min/max: no NaN is representable, so Julia's own are exact.
+        "min_i" => "min",
+        "max_i" => "max",
+        // Float min/max must preserve C `fmin`/`fmax` NaN-absorption semantics.
+        "fminf" | "fmin" => "faust_fmin",
+        "fmaxf" | "fmax" => "faust_fmax",
+        "fabsf" | "fabs" => "abs",
+        "acosf" | "acos" => "acos",
+        "acoshf" | "acosh" => "acosh",
+        "asinf" | "asin" => "asin",
+        "asinhf" | "asinh" => "asinh",
+        "atanf" | "atan" => "atan",
+        "atan2f" | "atan2" => "atan2",
+        "atanhf" | "atanh" => "atanh",
+        "ceilf" | "ceil" => "ceil",
+        "cosf" | "cos" => "cos",
+        "coshf" | "cosh" => "cosh",
+        "copysignf" | "copysign" => "copysign",
+        "expf" | "exp" => "exp",
+        "exp2f" | "exp2" => "exp2",
+        "exp10f" | "exp10" => "exp10",
+        "floorf" | "floor" => "floor",
+        "fmodf" | "fmod" => "fmod",
+        "isnanf" | "isnan" => "isnan",
+        "isinff" | "isinf" => "isinf",
+        "logf" | "log" => "log",
+        "log2f" | "log2" => "log2",
+        "log10f" | "log10" => "log10",
+        "powf" | "pow" => "pow",
+        "remainderf" | "remainder" => "remainder",
+        "rintf" | "rint" => "rint",
+        "roundf" | "round" => "round",
+        "sinf" | "sin" => "sin",
+        "sinhf" | "sinh" => "sinh",
+        "sqrtf" | "sqrt" => "sqrt",
+        "tanf" | "tan" => "tan",
+        "tanhf" | "tanh" => "tanh",
+        other => other,
     }
 }
 
@@ -1712,7 +1750,7 @@ fn julia_string_literal(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        CodegenErrorCode, EmitMode, JuliaOptions, JuliaRealType, emit_cast, emit_stmt,
+        CodegenErrorCode, EmitMode, JuliaOptions, JuliaRealType, emit_cast, emit_stmt, emit_value,
         generate_julia_module,
     };
     use crate::fixtures::build_sine_phasor_test_module;
@@ -1795,6 +1833,45 @@ mod tests {
         assert_eq!(
             emit_cast(&fir::FirType::Float64, "dsp.fVslider0"),
             "T(dsp.fVslider0)"
+        );
+    }
+
+    #[test]
+    fn maps_single_precision_libm_calls_to_julia_names() {
+        let mut store = FirStore::new();
+        let (calls, copysign) = {
+            let mut b = FirBuilder::new(&mut store);
+            let x = b.float32(0.5);
+            let y = b.float32(0.25);
+            let calls = [
+                ("acoshf", "acosh"),
+                ("asinhf", "asinh"),
+                ("atanhf", "atanh"),
+                ("coshf", "cosh"),
+                ("sinhf", "sinh"),
+                ("tanhf", "tanh"),
+                ("isnanf", "isnan"),
+                ("isinff", "isinf"),
+            ]
+            .into_iter()
+            .map(|(name, expected)| (name, expected, b.fun_call(name, &[x], FirType::Float32)))
+            .collect::<Vec<_>>();
+            let copysign = b.fun_call("copysignf", &[x, y], FirType::Float32);
+            (calls, copysign)
+        };
+
+        for (name, expected, call) in calls {
+            let rendered = emit_value(&store, call).expect("supported math call");
+            assert!(
+                rendered.starts_with(&format!("{expected}(")),
+                "{name} rendered as {rendered}"
+            );
+        }
+
+        assert!(
+            emit_value(&store, copysign)
+                .expect("supported copysign call")
+                .starts_with("copysign("),
         );
     }
 
