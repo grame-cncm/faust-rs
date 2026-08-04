@@ -75,8 +75,9 @@ Recent commits (most recent first):
 
 - Eight impulse exclusions are explicit in `tests/impulse-tests/known.mk`:
   shared `subcontainer1`; one-sample-incompatible `bs`; unsupported `sound`;
-  nesting-limit `bells`, `modulations`, `osci`, `tester`; oversized initializer
-  `tester2`.
+  fully parenthesized associative expression in `bells`; and generated tables
+  expanded into oversized literal initializers in `modulations`, `osci`,
+  `tester`, and `tester2`.
 - The upstream adapter prints lifecycle `checkDefaults` warnings for some DSPs
   because its reset methods are no-ops. Traces still match; direct generated
   lifecycle tests remain authoritative.
@@ -86,9 +87,10 @@ Recent commits (most recent first):
 ## Next Steps
 
 1. Add Cmajor runtime event capture for UI mutation and bargraph cadence.
-2. Materialize deep expressions to remove `bells`, `modulations`, `osci`, and
-   `tester` from `KNOWN_FAIL_cmajor`.
-3. Chunk or generate the 65,537-element initializer used by `tester2`.
+2. Port the C++ precedence-aware binary-expression printer to remove `bells`
+   from `KNOWN_FAIL_cmajor` without fully parenthesizing its addition chain.
+3. Preserve table-generator provenance and emit compact `SIG0`/`fill..._<size>`
+   code to remove `modulations`, `osci`, `tester`, and `tester2`.
 4. Reassess soundfile support and the shared subcontainer gap separately.
 
 ## Useful Commands to Resume

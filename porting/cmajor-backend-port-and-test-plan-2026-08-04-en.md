@@ -667,10 +667,14 @@ The `tests/impulse-tests` lane is now active as the opt-in `make cmajor` target.
 Against a 133-case C++-oracle corpus, 125 supported scalar-double programs pass
 through Cmajor 1.0.3175 and match the canonical traces. The eight exclusions
 are auditable in `known.mk`: the shared `subcontainer1` gap; `bs` (`count` is
-invalid in one-sample mode); `sound` (unsupported soundfile); and `bells`,
-`modulations`, `osci`, `tester`, and `tester2` (expression/initializer
-materialization limits). The passing set includes UI, bargraphs, state, tables,
-waveforms, and all current upsampling/downsampling impulse fixtures.
+invalid in one-sample mode); `sound` (unsupported soundfile); `bells` (the Rust
+emitter fully parenthesizes an associative addition chain instead of applying
+the pinned C++ emitter's precedence rules); and `modulations`, `osci`, `tester`,
+and `tester2` (Rust expands generated oscillator tables into 65,536/65,537-value
+literal initializers instead of preserving the generator and emitting the C++
+backend's compact `SIG0`/`fill..._<size>` form). The passing set includes UI,
+bargraphs, state, tables, waveforms, and all current upsampling/downsampling
+impulse fixtures.
 
 ### C7 — Polyphonic and effect application layer
 
