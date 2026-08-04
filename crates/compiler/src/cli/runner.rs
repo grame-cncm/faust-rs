@@ -192,6 +192,7 @@ pub fn emit_json_companion_output(json_text: &str, output: &Path) {
 pub fn cli_lang_name(lang: CliLang) -> &'static str {
     match lang {
         CliLang::C => "c",
+        CliLang::Cmajor => "cmajor",
         CliLang::Cpp => "cpp",
         CliLang::Fir => "fir",
         CliLang::Interp => "interp",

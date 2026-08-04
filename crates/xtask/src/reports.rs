@@ -1480,6 +1480,7 @@ fn rust_case_status_inner(compiler: &compiler::Compiler, input: &Path) -> CaseSt
                 compiler::CompilerError::CodegenRust { .. } => ("codegen", err.to_string()),
                 compiler::CompilerError::CodegenAsc { .. } => ("codegen", err.to_string()),
                 compiler::CompilerError::CodegenCodebox { .. } => ("codegen", err.to_string()),
+                compiler::CompilerError::CodegenCmajor { .. } => ("codegen", err.to_string()),
                 compiler::CompilerError::CodegenInterp { .. } => ("codegen", err.to_string()),
                 compiler::CompilerError::CodegenCranelift { .. } => ("codegen", err.to_string()),
                 compiler::CompilerError::CodegenWasm { .. } => ("codegen", err.to_string()),

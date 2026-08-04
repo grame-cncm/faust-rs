@@ -301,6 +301,9 @@ faust-rs -lang asc foo.dsp
 # Generate C
 faust-rs -lang c foo.dsp
 
+# Generate a scalar Cmajor processor
+faust-rs -lang cmajor foo.dsp -o foo.cmajor
+
 # Generate RNBO codebox source
 faust-rs -lang codebox foo.dsp -o foo.codebox
 
@@ -373,6 +376,13 @@ by Faust's `rnbo-dsp.h` wrapper for manual RNBO round-trips. The backend has
 in-tree structural and numeric tests; the RNBO import/export validation remains
 manual because the RNBO SDK is not part of this workspace.
 
+The scalar `cmajor` target has the same intrinsic execution shape: event-based
+external control and one sample per processor tick, independent of `-ec` and
+`-os`; it rejects `-vec`. It supports the default single precision and
+`-double`, `-cn`, UI events,
+rate-limited bargraphs, tables, `--json`, and `-a` architecture wrapping.
+Polyphonic and Cmajor SDK application tooling remain deferred.
+
 `-ss` accepts non-negative integers: `0`, `1`, and `2` select the strategies
 shown above, while `3` and greater select reverse breadth-first. Missing,
 negative, and non-integer values are hard errors; this is deliberately stricter
@@ -417,6 +427,7 @@ the same model applies:
 ```bash
 faust -lang asc foo.dsp
 faust -lang c foo.dsp
+faust -lang cmajor foo.dsp
 faust -lang codebox foo.dsp
 faust -lang codebox-test foo.dsp
 faust -lang cpp foo.dsp
@@ -434,6 +445,7 @@ Without installation (equivalent):
 ```bash
 cargo run -p compiler -- -lang asc foo.dsp
 cargo run -p compiler -- -lang c foo.dsp
+cargo run -p compiler -- -lang cmajor foo.dsp
 cargo run -p compiler -- -lang codebox foo.dsp
 cargo run -p compiler -- -lang codebox-test foo.dsp
 cargo run -p compiler -- -lang cpp foo.dsp
@@ -566,7 +578,7 @@ boundary plus the `foreign-call` runtime bridge.
 | `transform` | Signal preparation and signal-to-FIR lowering |
 | `fir` | Faust Intermediate Representation |
 | `foreign-call` | Raw C ABI foreign-function invocation bridge |
-| `codegen` | AssemblyScript, C, C++, Codebox (RNBO), Rust, interpreter, Cranelift, WASM, and Julia backend generation |
+| `codegen` | AssemblyScript, C, C++, Cmajor, Codebox (RNBO), Rust, interpreter, Cranelift, WASM, and Julia backend generation |
 | `draw` | SVG block-diagram rendering |
 | `doc` | Documentation/reporting scaffold |
 | `compiler` | Top-level compiler facade and CLI |

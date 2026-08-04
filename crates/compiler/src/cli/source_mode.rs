@@ -6,6 +6,7 @@
 use boxes::dump_box;
 use codegen::backends::asc::AscOptions;
 use codegen::backends::c::COptions;
+use codegen::backends::cmajor::{CmajorOptions, CmajorRealType};
 use codegen::backends::codebox::CodeboxOptions;
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::cranelift::CraneliftOptions;
@@ -436,6 +437,44 @@ pub(crate) fn run_source_mode(
                 }
             }
             Err(err) => report_pipeline_failure("Codebox pipeline failed", &err, cli),
+        }
+        timer.total();
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Cmajor)) {
+        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
+        let options = CmajorOptions {
+            class_name: selected_class_name(cli).unwrap_or_else(|| "mydsp".to_owned()),
+            real_type: if cli.double {
+                CmajorRealType::Float64
+            } else {
+                CmajorRealType::Float32
+            },
+        };
+        let result = compiler.compile_file_to_cmajor_with_lane(
+            input_path,
+            &cli.import_dir,
+            &options,
+            selected_codegen_lane(cli).into_compiler_lane(),
+        );
+        timer.phase("cmajor-codegen");
+
+        match result {
+            Ok(cmajor) => {
+                let rendered = wrap_backend_with_architecture(&cmajor, cli);
+                emit_output(&rendered, cli.output.as_ref());
+                if cli.dump_json {
+                    emit_cli_json_companion_for_backend(
+                        &compiler,
+                        cli,
+                        input_path,
+                        CliLang::Cmajor,
+                    );
+                }
+            }
+            Err(err) => report_pipeline_failure("Cmajor pipeline failed", &err, cli),
         }
         timer.total();
         return;

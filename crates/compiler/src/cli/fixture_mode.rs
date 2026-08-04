@@ -6,6 +6,7 @@
 use codegen::backends::asc::{AscOptions, generate_asc_module};
 use codegen::backends::c::COptions;
 use codegen::backends::c::generate_c_module;
+use codegen::backends::cmajor::{CmajorOptions, CmajorRealType, generate_cmajor_module};
 use codegen::backends::codebox::{CodeboxOptions, generate_codebox_module};
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::cpp::generate_cpp_module;
@@ -189,6 +190,31 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             }
             Err(err) => {
                 eprintln!("Codebox fixture codegen failed: {err}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+
+    if matches!(cli.lang, Some(CliLang::Cmajor)) {
+        let options = CmajorOptions {
+            class_name: selected_class_name(cli).unwrap_or_else(|| "mydsp".to_owned()),
+            real_type: if cli.double {
+                CmajorRealType::Float64
+            } else {
+                CmajorRealType::Float32
+            },
+        };
+        match generate_cmajor_module(&store, module, &options) {
+            Ok(cmajor) => {
+                let rendered = wrap_backend_with_architecture(&cmajor, cli);
+                emit_output(&rendered, cli.output.as_ref());
+                if cli.dump_json {
+                    emit_fixture_json_companion(cli, &store, module, "cmajor");
+                }
+            }
+            Err(err) => {
+                eprintln!("Cmajor fixture codegen failed: {err}");
                 std::process::exit(1);
             }
         }

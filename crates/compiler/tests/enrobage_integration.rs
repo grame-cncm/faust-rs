@@ -84,6 +84,30 @@ fn cli_lang_julia_accepts_architecture_wrapper() {
 }
 
 #[test]
+fn cli_lang_cmajor_accepts_architecture_wrapper() {
+    let output = Command::new(env!("CARGO_BIN_EXE_faust-rs"))
+        .arg("-lang")
+        .arg("cmajor")
+        .arg("-a")
+        .arg(fixture_arch("wrapper.cmajor"))
+        .arg(dsp_corpus("rep_01_passthrough.dsp"))
+        .output()
+        .expect("run faust-rs -lang cmajor with architecture wrapper");
+
+    assert!(
+        output.status.success(),
+        "faust-rs failed\nstderr:\n{}\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be UTF-8 Cmajor text");
+    assert!(stdout.starts_with("// Fixture Cmajor architecture wrapper."));
+    assert!(stdout.contains("processor mydsp"));
+    assert!(stdout.ends_with("// End Cmajor architecture wrapper.\n"));
+}
+
+#[test]
 fn wrap_cpp_with_architecture_accepts_julia_templates() {
     let generated_julia = "# GENERATED JULIA DSP\nmutable struct customdsp{T} <: faust_dsp\nend\n";
     let mut options = EnrobageOptions::new(fixture_arch("wrapper.jl"));

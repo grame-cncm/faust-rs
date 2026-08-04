@@ -19,7 +19,7 @@
 //! - Aggregate typed stage errors into one top-level [`CompilerError`] surface.
 //! - Provide test/golden-oriented helper outputs (box dump, signal dump, FIR dump).
 //! - Route backend generation, with consistent options, to every emitter:
-//!   C++, C, Rust, Julia, AssemblyScript, interpreter `.fbc`, WASM, the JSON
+//!   C++, C, Cmajor, Rust, Julia, AssemblyScript, interpreter `.fbc`, WASM, the JSON
 //!   description, and the Cranelift JIT status report. Every entry point
 //!   returns source text or bytes; a caller that needs to *run* JIT-compiled
 //!   code must own the generated module itself and so lowers through the FIR
@@ -77,6 +77,9 @@ use std::time::{Duration, Instant};
 use boxes::{BoxId, BoxMatch, dump_box, match_box};
 use codegen::backends::asc::{AscOptions, CodegenError as AscCodegenError, generate_asc_module};
 use codegen::backends::c::{COptions, CodegenError as CCodegenError, generate_c_module};
+use codegen::backends::cmajor::{
+    CmajorOptions, CodegenError as CmajorCodegenError, generate_cmajor_module,
+};
 use codegen::backends::codebox::{
     CodeboxOptions, CodegenError as CodeboxCodegenError, generate_codebox_module,
 };
@@ -1419,6 +1422,15 @@ pub enum CompilerError {
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
+    /// Cmajor backend emission failed from FIR.
+    CodegenCmajor {
+        /// Program provenance; see the shared field convention.
+        source: Box<str>,
+        /// Typed error from the stage that failed.
+        error: CmajorCodegenError,
+        /// Rendered diagnostics for this failure.
+        diagnostics: DiagnosticBundle,
+    },
     /// Rust backend emission failed from FIR.
     CodegenRust {
         /// Program provenance; see the shared field convention.
@@ -1520,6 +1532,9 @@ impl std::fmt::Display for CompilerError {
             Self::CodegenCodebox { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
+            Self::CodegenCmajor { source, error, .. } => {
+                write!(f, "code generation failed for {source}: {error}")
+            }
             Self::CodegenRust { source, error, .. } => {
                 write!(f, "code generation failed for {source}: {error}")
             }
@@ -1551,6 +1566,7 @@ impl std::error::Error for CompilerError {
             Self::CodegenJulia { error, .. } => Some(error),
             Self::CodegenAsc { error, .. } => Some(error),
             Self::CodegenCodebox { error, .. } => Some(error),
+            Self::CodegenCmajor { error, .. } => Some(error),
             Self::CodegenRust { error, .. } => Some(error),
             Self::CodegenInterp { error, .. } => Some(error),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1582,6 +1598,7 @@ impl CompilerError {
             | Self::CodegenJulia { diagnostics, .. }
             | Self::CodegenAsc { diagnostics, .. }
             | Self::CodegenCodebox { diagnostics, .. }
+            | Self::CodegenCmajor { diagnostics, .. }
             | Self::CodegenRust { diagnostics, .. }
             | Self::CodegenInterp { diagnostics, .. }
             | Self::CodegenWasm { diagnostics, .. }
@@ -1709,6 +1726,7 @@ impl CompilerError {
             Self::CodegenJulia { diagnostics, .. } => diagnostics,
             Self::CodegenAsc { diagnostics, .. } => diagnostics,
             Self::CodegenCodebox { diagnostics, .. } => diagnostics,
+            Self::CodegenCmajor { diagnostics, .. } => diagnostics,
             Self::CodegenRust { diagnostics, .. } => diagnostics,
             Self::CodegenInterp { diagnostics, .. } => diagnostics,
             #[cfg(not(target_arch = "wasm32"))]

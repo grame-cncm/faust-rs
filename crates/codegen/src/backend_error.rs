@@ -47,6 +47,7 @@ pub trait BackendCodegenError {
             | "FRS-CGEN-ASC-0003"
             | "FRS-CGEN-RUST-0003"
             | "FRS-CGEN-CBOX-0002"
+            | "FRS-CGEN-CMAJ-0002"
             | "FRS-CGEN-WASM-0003" => BackendFailureKind::UnsupportedFeature,
             _ => BackendFailureKind::CompilerInvariant,
         }
@@ -107,6 +108,7 @@ impl_backend_error_via_methods!(crate::backends::asc::CodegenError);
 impl_backend_error_via_methods!(crate::backends::rust::CodegenError);
 impl_backend_error_via_methods!(crate::backends::wasm::WasmBackendError);
 impl_backend_error_via_fields!(crate::backends::codebox::CodegenError);
+impl_backend_error_via_fields!(crate::backends::cmajor::CodegenError);
 impl_backend_error_via_fields!(crate::backends::interp::CodegenError);
 #[cfg(not(target_arch = "wasm32"))]
 impl_backend_error_via_fields!(crate::backends::cranelift::CraneliftBackendError);

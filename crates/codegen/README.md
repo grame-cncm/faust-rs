@@ -14,6 +14,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
                                                                 → AssemblyScript source
                                                                 → C source
                                                                 → C++ source
+                                                                → Cmajor source
                                                                 → Codebox (RNBO) source
                                                                 → Rust source
                                                                 → .fbc bytecode
@@ -31,6 +32,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 | `backends::asc` | `compiler/generator/asc/` |
 | `backends::c` | `compiler/generator/c/` |
 | `backends::cpp` | `compiler/generator/cpp/` |
+| `backends::cmajor` | `compiler/generator/cmajor/` |
 | `backends::codebox` | `compiler/generator/codebox/` |
 | `backends::cranelift` | *(new — no C++ equivalent)* |
 | `backends::interp` | `compiler/generator/interpreter/` |
@@ -55,7 +57,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 | `interp::fbc_to_cpp` | ✅ Implemented | `generate_cpp_from_fbc` |
 | `wasm` | 🔧 Bring-up | `generate_wasm_module` |
 | `codebox` | 🔧 Implemented; RNBO validation pending | `generate_codebox_module` |
-| `cmajor` | 🔧 Scalar bring-up | `generate_cmajor_module` |
+| `cmajor` | ✅ Scalar backend; poly/SDK tools deferred | `generate_cmajor_module` |
 | `csharp` | 🗂 Scaffolded | — |
 | `dlang` | 🗂 Scaffolded | — |
 | `jax` | 🗂 Scaffolded | — |
@@ -531,15 +533,22 @@ math spelling, scalar control flow, delay arrays, and the forever-running
 `init = classInit -> instanceInit`; direct `instanceInit` does not call
 `classInit`.
 
-The backend currently exposes its codegen API while compiler-facade/CLI, UI
-events, bargraphs, table specialization, and external Cmajor validation are
-completed in the staged plan. Unsupported types and nodes return stable typed
-errors rather than partial source.
+The scalar backend includes compiler-facade and `-lang cmajor` CLI routes,
+single/double precision, UI events and metadata, 50 Hz bargraphs, concrete
+read/write/waveform/generated tables, architecture wrapping, and opt-in syntax
+validation through `CMAJ_BIN`. Cmajor's polyphonic, DSP lifecycle-event, hybrid,
+and SDK application layers remain explicitly deferred. Unsupported types and
+nodes return stable typed errors rather than partial source.
 
 ```rust
 use codegen::backends::cmajor::{CmajorOptions, generate_cmajor_module};
 
 let source = generate_cmajor_module(&store, root_id, &CmajorOptions::default())?;
+```
+
+```sh
+cargo run -p compiler -- -lang cmajor my.dsp -o mydsp.cmajor
+CMAJ_BIN=/path/to/cmaj cargo test -p compiler --test cmajor_backend
 ```
 
 | Item | Description |

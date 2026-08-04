@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::*;
 use codegen::backends::asc::AscOptions;
 use codegen::backends::c::COptions;
+use codegen::backends::cmajor::CmajorOptions;
 use codegen::backends::cpp::CppOptions;
 #[cfg(not(target_arch = "wasm32"))]
 use codegen::backends::cranelift::CraneliftOptions;
@@ -549,6 +550,98 @@ impl Compiler {
         lane: SignalFirLane,
     ) -> Result<String, CompilerError> {
         self.compile_file_to_codebox_with_lane(path, &[], options, lane)
+    }
+
+    // ── Cmajor backend ────────────────────────────────────────────────────────────
+
+    /// Parses + evaluates + propagates one source, then emits Cmajor text.
+    ///
+    /// Cmajor intrinsically uses external control and one-sample processing;
+    /// those modes are forced by the lowering dispatcher and vector mode is
+    /// rejected with a stable execution-capability diagnostic.
+    pub fn compile_source_to_cmajor(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &CmajorOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_source_to_cmajor_with_lane(
+            source_name,
+            source,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one source, then emits Cmajor text using
+    /// the selected signal-to-FIR lowering lane.
+    pub fn compile_source_to_cmajor_with_lane(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &CmajorOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals = self.compile_source_to_signals(source_name, source)?;
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_cmajor(source_name, &signals, options, ctx)
+            .map_err(|error| lower_cmajor_error_to_compiler(source_name, &signals, error))
+    }
+
+    /// Parses + evaluates + propagates one file, then emits Cmajor text.
+    pub fn compile_file_to_cmajor(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        options: &CmajorOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_cmajor_with_lane(
+            path,
+            search_paths,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one file, then emits Cmajor text using
+    /// the selected signal-to-FIR lowering lane.
+    pub fn compile_file_to_cmajor_with_lane(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        options: &CmajorOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals = self.compile_file_to_signals(path, search_paths)?;
+        let source = path.display().to_string();
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_cmajor(&source, &signals, options, ctx)
+            .map_err(|error| lower_cmajor_error_to_compiler(&source, &signals, error))
+    }
+
+    /// Parses + evaluates + propagates one file with default import paths,
+    /// then emits Cmajor text.
+    pub fn compile_file_default_to_cmajor(
+        &self,
+        path: &Path,
+        options: &CmajorOptions,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_default_to_cmajor_with_lane(
+            path,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+    }
+
+    /// Parses + evaluates + propagates one file with default import paths,
+    /// then emits Cmajor text using the selected signal-to-FIR lowering lane.
+    pub fn compile_file_default_to_cmajor_with_lane(
+        &self,
+        path: &Path,
+        options: &CmajorOptions,
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_cmajor_with_lane(path, &[], options, lane)
     }
 
     // ── Interpreter backend (`.fbc` bytecode) ─────────────────────────────────────

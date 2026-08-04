@@ -55,6 +55,8 @@ pub(crate) type LowerToRustError = LowerError<RustCodegenError>;
 pub(crate) type LowerToAscError = LowerError<AscCodegenError>;
 /// Lowering error surface for the codebox (RNBO) backend.
 pub(crate) type LowerToCodeboxError = LowerError<CodeboxCodegenError>;
+/// Lowering error surface for the Cmajor backend.
+pub(crate) type LowerToCmajorError = LowerError<CmajorCodegenError>;
 
 #[derive(Debug)]
 pub(crate) enum LowerToInterpError {
@@ -517,6 +519,29 @@ pub(crate) fn lower_signals_to_codebox(
     lower_signals_to_codebox_transform_fastlane(source_name, output, options, &ctx)
 }
 
+/// Dispatches Cmajor lowering after forcing its intrinsic execution shape.
+///
+/// C++ provenance: `compileCmajor` in `compiler/libcode.cpp` unconditionally
+/// selects external control and one-sample code. Rust exposes the same
+/// output-invariant contract through the capability table: `-ec` and `-os`
+/// are accepted aliases, while vector mode is rejected explicitly.
+pub(crate) fn lower_signals_to_cmajor(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &CmajorOptions,
+    mut ctx: SignalLoweringContext,
+) -> Result<String, LowerToCmajorError> {
+    ctx.control_rate_mode = ControlRateMode::External;
+    ctx.processing_api = ProcessingApi::OneSample;
+    validate_execution_options(
+        "cmajor",
+        ctx.control_rate_mode,
+        ctx.processing_api,
+        ctx.compute_mode,
+    )?;
+    lower_signals_to_cmajor_transform_fastlane(source_name, output, options, &ctx)
+}
+
 /// Dispatches rust lowering through the selected signal->FIR lane.
 pub(crate) fn lower_signals_to_rust(
     source_name: &str,
@@ -941,6 +966,51 @@ pub(crate) fn lower_signals_to_codebox_transform_fastlane(
     codegen_options.double_precision = ctx.real_type == RealType::Float64;
     time_phase_with_sink(timing_sink, "codebox-codegen", || {
         generate_codebox_module(&lowered.store, lowered.module, &codegen_options)
+    })
+    .map_err(|error| LowerError::Codegen {
+        error,
+        origins: lowered.origins.clone(),
+    })
+}
+
+/// Lowers signals to FIR and emits one scalar Cmajor processor.
+pub(crate) fn lower_signals_to_cmajor_transform_fastlane(
+    source_name: &str,
+    output: &SignalCompileOutput,
+    options: &CmajorOptions,
+    ctx: &SignalLoweringContext,
+) -> Result<String, LowerToCmajorError> {
+    let module_name = resolve_module_name(Some(&options.class_name), source_name);
+    let timing_sink = ctx.timing_sink.as_ref();
+    let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
+        lower_signals_to_fir_transform_fastlane_with_timing(
+            output,
+            module_name,
+            ctx.real_type,
+            ctx.max_copy_delay,
+            ctx.delay_line_threshold,
+            ctx.compute_mode,
+            ctx.scheduling_strategy,
+            ctx.control_rate_mode,
+            ctx.processing_api,
+            timing_sink,
+        )
+    })
+    .map_err(LowerError::Transform)?;
+    time_phase_with_sink(timing_sink, "fir-verify", || {
+        maybe_verify_fir_module(&lowered, ctx.fir_verify)
+    })
+    .map_err(|report| LowerError::Verify {
+        report,
+        origins: lowered.origins.clone(),
+    })?;
+    let mut codegen_options = options.clone();
+    codegen_options.real_type = match ctx.real_type {
+        RealType::Float32 => codegen::backends::cmajor::CmajorRealType::Float32,
+        RealType::Float64 => codegen::backends::cmajor::CmajorRealType::Float64,
+    };
+    time_phase_with_sink(timing_sink, "cmajor-codegen", || {
+        generate_cmajor_module(&lowered.store, lowered.module, &codegen_options)
     })
     .map_err(|error| LowerError::Codegen {
         error,

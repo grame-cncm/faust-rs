@@ -1,0 +1,4 @@
+// Fixture Cmajor architecture wrapper.
+<<includeIntrinsic>>
+<<includeclass>>
+// End Cmajor architecture wrapper.

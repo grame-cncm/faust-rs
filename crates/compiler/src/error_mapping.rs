@@ -179,6 +179,26 @@ pub(crate) fn lower_codebox_error_to_compiler(
     )
 }
 
+/// Maps a `LowerToCmajorError` into a [`CompilerError`], attaching the source
+/// name and the stable Cmajor diagnostic code.
+pub(crate) fn lower_cmajor_error_to_compiler(
+    source: &str,
+    output: &SignalCompileOutput,
+    error: LowerToCmajorError,
+) -> CompilerError {
+    lower_error_to_compiler(
+        source,
+        output,
+        "cmajor",
+        error,
+        |source, error, diagnostics| CompilerError::CodegenCmajor {
+            source,
+            error,
+            diagnostics,
+        },
+    )
+}
+
 /// Maps a `LowerToRustError` into a [`CompilerError`], attaching the source name.
 pub(crate) fn lower_rust_error_to_compiler(
     source: &str,

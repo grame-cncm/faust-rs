@@ -222,7 +222,7 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         ))
         && cli.architecture.is_some()
     {
-        eprintln!("--architecture is currently supported only for C/C++/Julia output");
+        eprintln!("--architecture is currently supported only for C/C++/Cmajor/Julia output");
         std::process::exit(2);
     }
     if cli.no_fir_verify && (cli.dump_fir_verify || cli.check) {

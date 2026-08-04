@@ -76,7 +76,7 @@ pub struct BackendExecutionCaps {
     pub canonical_compute_required: bool,
 }
 
-/// One row per active `-lang` backend. Scaffolded backends (cmajor, …) get
+/// One row per active `-lang` backend. Scaffolded backends get
 /// rows when they become active, initialized from plan §5.8.
 const BACKEND_CAPS: &[BackendExecutionCaps] = &[
     BackendExecutionCaps {
@@ -187,13 +187,24 @@ const BACKEND_CAPS: &[BackendExecutionCaps] = &[
         // satisfy, only RNBO's per-sample entry point.
         canonical_compute_required: false,
     },
+    // C++ `compileCmajor` forces these same two modes. A Cmajor processor owns
+    // a one-sample `main` loop and event-based controls, so flags are accepted
+    // compatibility aliases and vector code would contradict the target ABI.
+    BackendExecutionCaps {
+        backend: "cmajor",
+        external_control: ExecutionCapability::Intrinsic,
+        one_sample: ExecutionCapability::Intrinsic,
+        combined: ExecutionCapability::Intrinsic,
+        vector: ExecutionCapability::Unsupported,
+        canonical_compute_required: false,
+    },
 ];
 
 /// Returns the capability row for a stable backend identifier.
 ///
 /// Identifiers match the primary `-lang` value (`"c"`, `"cpp"`, `"rust"`,
 /// `"fir"`, `"interp"`, `"cranelift"`, `"wasm"`, `"wast"`, `"asc"`,
-/// `"julia"`, `"codebox"`). Unknown identifiers return `None` so callers fail
+/// `"julia"`, `"codebox"`, `"cmajor"`). Unknown identifiers return `None` so callers fail
 /// closed.
 #[must_use]
 pub fn backend_execution_caps(backend: &str) -> Option<&'static BackendExecutionCaps> {
@@ -368,7 +379,7 @@ pub fn validate_execution_options(
     // control landed in phase 5 with the promoted-control-event certificate
     // (`-os -vec` was already rejected above, so reaching here in vector
     // mode means `-ec -vec`).
-    const LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust", "asc", "codebox"];
+    const LOWERING_LANDED: &[&str] = &["fir", "cpp", "c", "rust", "asc", "codebox", "cmajor"];
     if LOWERING_LANDED.contains(&backend) {
         return Ok(());
     }
@@ -388,7 +399,7 @@ pub fn validate_execution_options(
 mod tests {
     use super::*;
 
-    const ALL_BACKENDS: [&str; 11] = [
+    const ALL_BACKENDS: [&str; 12] = [
         "c",
         "cpp",
         "rust",
@@ -400,6 +411,7 @@ mod tests {
         "asc",
         "julia",
         "codebox",
+        "cmajor",
     ];
 
     #[test]
@@ -453,7 +465,7 @@ mod tests {
     #[test]
     fn unknown_backend_fails_closed() {
         let err = validate_execution_options(
-            "cmajor",
+            "nonsense",
             ControlRateMode::External,
             ProcessingApi::Block,
             ComputeMode::Scalar,
@@ -481,23 +493,25 @@ mod tests {
         );
     }
 
-    /// Codebox's execution options are intrinsic, so every shape — including
+    /// Per-sample event backends have intrinsic execution options, so every shape — including
     /// the default one, where neither flag was typed — must be accepted. It is
     /// `lower_signals_to_codebox` that then forces both, which is what makes
     /// the four cases produce identical output.
     #[test]
-    fn codebox_accepts_every_execution_shape_because_both_are_intrinsic() {
-        for (control, api) in [
-            (ControlRateMode::InlinePerBlock, ProcessingApi::Block),
-            (ControlRateMode::External, ProcessingApi::Block),
-            (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
-            (ControlRateMode::External, ProcessingApi::OneSample),
-        ] {
-            assert_eq!(
-                validate_execution_options("codebox", control, api, ComputeMode::Scalar),
-                Ok(()),
-                "{control:?} / {api:?}"
-            );
+    fn per_sample_backends_accept_every_execution_shape_as_intrinsic() {
+        for backend in ["codebox", "cmajor"] {
+            for (control, api) in [
+                (ControlRateMode::InlinePerBlock, ProcessingApi::Block),
+                (ControlRateMode::External, ProcessingApi::Block),
+                (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
+                (ControlRateMode::External, ProcessingApi::OneSample),
+            ] {
+                assert_eq!(
+                    validate_execution_options(backend, control, api, ComputeMode::Scalar),
+                    Ok(()),
+                    "{backend}: {control:?} / {api:?}"
+                );
+            }
         }
     }
 
@@ -505,22 +519,24 @@ mod tests {
     /// not silently downgraded to scalar output. Checked without `-ec`/`-os`
     /// too, since that path used to return early before any backend lookup.
     #[test]
-    fn codebox_rejects_vector_mode_by_name_with_or_without_the_other_flags() {
+    fn per_sample_backends_reject_vector_mode_by_name() {
         let vector = ComputeMode::Vector {
             vec_size: 32,
             loop_variant: 0,
         };
-        for (control, api) in [
-            (ControlRateMode::InlinePerBlock, ProcessingApi::Block),
-            (ControlRateMode::External, ProcessingApi::Block),
-        ] {
-            let err = validate_execution_options("codebox", control, api, vector).unwrap_err();
-            assert_eq!(err.code(), "FRS-EXEC-VEC-BACKEND", "{control:?} / {api:?}");
-            assert_eq!(
-                err.to_string(),
-                "'-vec' option cannot be used with the 'codebox' backend, \
-                 which emits one sample at a time"
-            );
+        for backend in ["codebox", "cmajor"] {
+            for (control, api) in [
+                (ControlRateMode::InlinePerBlock, ProcessingApi::Block),
+                (ControlRateMode::External, ProcessingApi::Block),
+            ] {
+                let err = validate_execution_options(backend, control, api, vector).unwrap_err();
+                assert_eq!(
+                    err.code(),
+                    "FRS-EXEC-VEC-BACKEND",
+                    "{backend}: {control:?} / {api:?}"
+                );
+                assert!(err.to_string().contains(backend), "{err}");
+            }
         }
     }
 
@@ -532,7 +548,10 @@ mod tests {
             vec_size: 32,
             loop_variant: 0,
         };
-        for backend in ALL_BACKENDS.iter().filter(|b| **b != "codebox") {
+        for backend in ALL_BACKENDS
+            .iter()
+            .filter(|b| !["codebox", "cmajor"].contains(b))
+        {
             assert_eq!(
                 validate_execution_options(
                     backend,
@@ -651,7 +670,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "'-os' option can only be used with 'c', 'cpp', 'rust', 'fir', 'asc', 'codebox' \
+            "'-os' option can only be used with 'c', 'cpp', 'rust', 'fir', 'asc', 'codebox', 'cmajor' \
              backends (got 'julia')"
         );
     }

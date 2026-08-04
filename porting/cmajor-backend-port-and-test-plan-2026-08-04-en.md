@@ -854,21 +854,21 @@ for the full gates before a commit.
 The scalar Cmajor backend may be marked implemented only when all of these are
 true:
 
-- [ ] C0 Go decision and the reference pin are recorded.
-- [ ] `generate_cmajor_module` is a documented, typed public codegen API.
-- [ ] `-lang cmajor` is reachable through facade and CLI.
-- [ ] external control and one-sample modes are intrinsic and tested.
+- [x] C0 Go decision and the reference pin are recorded.
+- [x] `generate_cmajor_module` is a documented, typed public codegen API.
+- [x] `-lang cmajor` is reachable through facade and CLI.
+- [x] external control and one-sample modes are intrinsic and tested.
 - [ ] vector/scheduler/OpenMP and other unsupported modes fail explicitly.
-- [ ] `float32` and `float64` source is accepted by the pinned Cmajor frontend.
+- [x] `float32` and `float64` source is accepted by the pinned Cmajor frontend.
 - [ ] scalar FIR, state, delay, loop, math, waveform, table, and subcontainer
       fixtures pass.
 - [ ] UI endpoint and bargraph contracts pass structurally and at runtime.
-- [ ] backend lifecycle conformance passes before any golden/impulse enrollment.
+- [x] backend lifecycle conformance passes before any golden/impulse enrollment.
 - [ ] C++ differential differences are classified and narrow.
 - [ ] Cmajor `-O0`/`-O4` numeric parity passes on the stateful subset.
 - [ ] impulse/numeric results meet recorded thresholds.
-- [ ] compiler and codegen README/API documentation is updated.
-- [ ] `JOURNAL.md`'s daily target records mapping statuses, reference pins,
+- [x] compiler and codegen README/API documentation is updated.
+- [x] `JOURNAL.md`'s daily target records mapping statuses, reference pins,
       tests, known gaps, and any deferred variants.
 - [ ] full format, clippy, workspace tests, golden checks, and release
       compile-budget check pass.

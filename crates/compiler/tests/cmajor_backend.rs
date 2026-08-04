@@ -1,7 +1,7 @@
 //! Cmajor backend integration tests.
 //!
 //! These tests deliberately compile self-contained Faust definitions through
-//! the production signal-to-FIR lane before invoking the source emitter. They
+//! the production compiler facade and signal-to-FIR lane. They
 //! do not depend on an installed Faust compiler, Faust libraries, or Cmajor
 //! SDK. Optional Cmajor frontend/runtime validation is layered separately.
 //!
@@ -29,10 +29,14 @@ fn cmajor_with(source_name: &str, source: &str, options: &CmajorOptions) -> Stri
         .with_real_type(real_type)
         .with_control_rate_mode(ControlRateMode::External)
         .with_processing_api(ProcessingApi::OneSample);
-    let fir = compiler
-        .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
-        .expect("Cmajor FIR lowering must succeed");
-    generate_cmajor_module(&fir.store, fir.module, options).expect("Cmajor emission must succeed")
+    compiler
+        .compile_source_to_cmajor_with_lane(
+            source_name,
+            source,
+            options,
+            SignalFirLane::TransformFastLane,
+        )
+        .expect("Cmajor facade emission must succeed")
 }
 
 /// Runs the optional external Cmajor syntax gate when `CMAJ_BIN` is set.
@@ -186,6 +190,111 @@ fn one_sample_io_uses_cmajor_streams() {
     assert_eq!(text.matches("advance();").count(), 1, "{text}");
     assert!(!text.contains("inputs["), "{text}");
     assert!(!text.contains("outputs["), "{text}");
+}
+
+#[test]
+fn intrinsic_execution_flags_do_not_change_facade_output() {
+    let source = "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.01);";
+    let options = CmajorOptions::default();
+    let mut outputs = Vec::new();
+    for (control, api) in [
+        (ControlRateMode::InlinePerBlock, ProcessingApi::Block),
+        (ControlRateMode::External, ProcessingApi::Block),
+        (ControlRateMode::InlinePerBlock, ProcessingApi::OneSample),
+        (ControlRateMode::External, ProcessingApi::OneSample),
+    ] {
+        outputs.push(
+            Compiler::new()
+                .with_control_rate_mode(control)
+                .with_processing_api(api)
+                .compile_source_to_cmajor("intrinsic.dsp", source, &options)
+                .expect("intrinsic Cmajor modes must compile"),
+        );
+    }
+    assert!(outputs.windows(2).all(|pair| pair[0] == pair[1]));
+}
+
+#[test]
+fn facade_and_cli_emit_identical_cmajor_source() {
+    let root =
+        std::env::temp_dir().join(format!("faust-rs-cmajor-cli-parity-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create Cmajor CLI test directory");
+    let dsp = root.join("parity.dsp");
+    std::fs::write(&dsp, "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.01);\n")
+        .expect("write Cmajor CLI source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_faust-rs"))
+        .arg("-lang")
+        .arg("cmajor")
+        .arg(&dsp)
+        .output()
+        .expect("run Cmajor CLI");
+    assert!(
+        output.status.success(),
+        "Cmajor CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cli = String::from_utf8(output.stdout).expect("Cmajor CLI output is UTF-8");
+    let facade = Compiler::new()
+        .compile_file_default_to_cmajor(&dsp, &CmajorOptions::default())
+        .expect("Cmajor facade file compilation succeeds");
+    assert_eq!(cli.trim(), facade.trim());
+    assert_cmajor_frontend("cli-parity", &cli);
+
+    std::fs::remove_file(&dsp).expect("remove Cmajor CLI source");
+    std::fs::remove_dir(&root).expect("remove Cmajor CLI test directory");
+}
+
+#[test]
+fn cli_honors_name_double_output_json_and_vector_rejection() {
+    let root = std::env::temp_dir().join(format!(
+        "faust-rs-cmajor-cli-options-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).expect("create Cmajor CLI options directory");
+    let dsp = root.join("options.dsp");
+    let output_path = root.join("custom.cmajor");
+    let json_path = output_path.with_extension("json");
+    std::fs::write(&dsp, "process = _ * 0.5;\n").expect("write Cmajor CLI options source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_faust-rs"))
+        .args(["-lang", "cmajor", "-double", "-cn", "Custom", "--json"])
+        .arg("-o")
+        .arg(&output_path)
+        .arg(&dsp)
+        .output()
+        .expect("run Cmajor CLI options");
+    assert!(
+        output.status.success(),
+        "Cmajor CLI options failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cmajor = std::fs::read_to_string(&output_path).expect("read Cmajor output");
+    assert!(cmajor.contains("processor Custom"), "{cmajor}");
+    assert!(cmajor.contains("stream float64"), "{cmajor}");
+    let json = std::fs::read_to_string(&json_path).expect("read Cmajor JSON companion");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid companion JSON");
+    assert_eq!(parsed["inputs"], 1);
+    assert_eq!(parsed["outputs"], 1);
+    assert_cmajor_frontend("cli-options", &cmajor);
+
+    let vector = Command::new(env!("CARGO_BIN_EXE_faust-rs"))
+        .args(["-lang", "cmajor", "-vec"])
+        .arg(&dsp)
+        .output()
+        .expect("run rejected Cmajor vector request");
+    assert!(!vector.status.success());
+    assert!(
+        String::from_utf8_lossy(&vector.stderr).contains("FRS-EXEC-VEC-BACKEND")
+            || String::from_utf8_lossy(&vector.stderr).contains("cannot be used"),
+        "{}",
+        String::from_utf8_lossy(&vector.stderr)
+    );
+
+    for path in [&dsp, &output_path, &json_path] {
+        std::fs::remove_file(path).expect("remove Cmajor CLI options artifact");
+    }
+    std::fs::remove_dir(&root).expect("remove Cmajor CLI options directory");
 }
 
 #[test]

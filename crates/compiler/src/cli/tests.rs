@@ -248,6 +248,7 @@ fn cli_lang_tokens_are_the_expected_set_in_alphabetical_order() {
         [
             "asc",
             "c",
+            "cmajor",
             "codebox",
             "codebox-test",
             "cpp",

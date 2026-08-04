@@ -7,3 +7,4 @@ porting steps:
 - stream-copy sentinels (`<<includeIntrinsic>>`, `<<includeclass>>`),
 - architecture include injection (`#include <faust/...>` and quoted variant),
 - class-name replacement (`mydsp` forced, `dsp` word-boundary).
+- language-neutral `<<includeclass>>` insertion for Cmajor source.

@@ -16,6 +16,8 @@ pub enum CliLang {
     Asc,
     #[value(alias = "c99")]
     C,
+    /// Scalar Cmajor processor with intrinsic event control and one-sample I/O.
+    Cmajor,
     /// RNBO codebox. Emits one sample at a time with external control,
     /// whether or not `-ec`/`-os` were passed; rejects `-vec`.
     Codebox,
