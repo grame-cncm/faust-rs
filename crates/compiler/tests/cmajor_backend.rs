@@ -8,19 +8,123 @@
 //! Source provenance and acceptance contract:
 //! `porting/cmajor-backend-port-and-test-plan-2026-08-04-en.md` C1-C6.
 
-use codegen::backends::cmajor::{CmajorOptions, CodegenErrorCode, generate_cmajor_module};
-use compiler::{Compiler, ControlRateMode, ProcessingApi, SignalFirLane};
+use codegen::backends::cmajor::{
+    CmajorOptions, CmajorRealType, CodegenErrorCode, generate_cmajor_module,
+};
+use compiler::{Compiler, ControlRateMode, ProcessingApi, RealType, SignalFirLane};
+use std::process::Command;
 
 /// Compiles a Faust source with the execution shape Cmajor intrinsically uses.
 fn cmajor(source_name: &str, source: &str) -> String {
+    cmajor_with(source_name, source, &CmajorOptions::default())
+}
+
+/// Compiles with precision synchronized across lowering and source emission.
+fn cmajor_with(source_name: &str, source: &str, options: &CmajorOptions) -> String {
+    let real_type = match options.real_type {
+        CmajorRealType::Float32 => RealType::Float32,
+        CmajorRealType::Float64 => RealType::Float64,
+    };
     let compiler = Compiler::new()
+        .with_real_type(real_type)
         .with_control_rate_mode(ControlRateMode::External)
         .with_processing_api(ProcessingApi::OneSample);
     let fir = compiler
         .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
         .expect("Cmajor FIR lowering must succeed");
-    generate_cmajor_module(&fir.store, fir.module, &CmajorOptions::default())
-        .expect("Cmajor emission must succeed")
+    generate_cmajor_module(&fir.store, fir.module, options).expect("Cmajor emission must succeed")
+}
+
+/// Runs the optional external Cmajor syntax gate when `CMAJ_BIN` is set.
+fn assert_cmajor_frontend(source_name: &str, source: &str) {
+    let Ok(cmaj) = std::env::var("CMAJ_BIN") else {
+        return;
+    };
+    let path = std::env::temp_dir().join(format!(
+        "faust-rs-cmajor-{source_name}-{}.cmajor",
+        std::process::id()
+    ));
+    std::fs::write(&path, source).expect("write temporary Cmajor source");
+    let result = Command::new(cmaj)
+        .args(["generate", "--target=syntaxtree"])
+        .arg(&path)
+        .output()
+        .expect("run Cmajor frontend");
+    std::fs::remove_file(&path).expect("remove temporary Cmajor source");
+    assert!(
+        result.status.success(),
+        "Cmajor rejected {source_name}:\n{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+fn controls_emit_annotated_events_and_dirty_handlers() {
+    let text = cmajor(
+        "ui.dsp",
+        "process = _ * hslider(\"gain[unit:dB]\", 0.5, 0, 1, 0.01) \
+         * checkbox(\"on\") + button(\"trig\") \
+         + nentry(\"num\", 2, 0, 10, 1);",
+    );
+    assert!(
+        text.contains("input event float32 eventfHslider0"),
+        "{text}"
+    );
+    assert!(text.contains("min: 0.0f, max: 1.0f"), "{text}");
+    assert!(text.contains("meta_unit0: \"dB\""), "{text}");
+    assert!(text.contains("event eventfHslider0(float32 val)"), "{text}");
+    assert!(text.contains("fUpdated ||= (fHslider0 != val)"), "{text}");
+    assert!(
+        text.contains("latching, text: \"off|on\", boolean"),
+        "{text}"
+    );
+    assert_cmajor_frontend("ui", &text);
+}
+
+#[test]
+fn bargraphs_emit_rate_limited_output_events() {
+    let text = cmajor(
+        "bar.dsp",
+        "process = _ <: attach(_, vbargraph(\"lvl\", 0, 1)), \
+         hbargraph(\"pk\", 0, 2);",
+    );
+    assert!(
+        text.contains("output event float32 eventfVbargraph0"),
+        "{text}"
+    );
+    assert!(text.contains("int fControlSlice;"), "{text}");
+    assert!(
+        text.contains("if (fControlSlice == 0) { eventfVbargraph0 <- fVbargraph0; }"),
+        "{text}"
+    );
+    assert!(
+        text.contains("fControlSlice = int(processor.frequency) / 50;"),
+        "{text}"
+    );
+    assert!(text.contains("if (fControlSlice-- == 0)"), "{text}");
+    assert_cmajor_frontend("bargraph", &text);
+}
+
+#[test]
+fn float64_precision_reaches_streams_controls_and_literals() {
+    let options = CmajorOptions {
+        real_type: CmajorRealType::Float64,
+        ..CmajorOptions::default()
+    };
+    let text = cmajor_with(
+        "double.dsp",
+        "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.01);",
+        &options,
+    );
+    assert!(text.contains("input stream float64 input0;"), "{text}");
+    assert!(
+        text.contains("input event float64 eventfHslider0"),
+        "{text}"
+    );
+    assert!(text.contains("init: 0.5, step: 0.01"), "{text}");
+    assert!(!text.contains("0.5f"), "{text}");
+    assert_cmajor_frontend("float64", &text);
 }
 
 #[test]

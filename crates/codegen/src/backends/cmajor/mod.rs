@@ -31,13 +31,17 @@
 //! - scalar `float32` and `float64` processors;
 //! - one input/output stream per channel;
 //! - scalar state, arrays, loops, conditions, delays, and math calls;
+//! - input-event UI controls with short names, metadata, and dirty-control
+//!   handlers;
+//! - output-event bargraphs rate-limited to approximately 50 Hz;
 //! - generated lifecycle, separated `control`, and one-sample `main`;
 //! - stable rejection of vector types, fixed/quad values, bitcasts,
 //!   soundfiles, and malformed FIR.
 //!
-//! UI event endpoints, rate-limited bargraphs, and table-specialization
-//! planning are layered on the same emitter in the following port milestones.
+//! Concrete table specialization is layered on the same emitter in the next
+//! port milestone.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fmt::Write as _;
 
@@ -161,6 +165,46 @@ struct FunctionView<'a> {
     body: Option<FirId>,
 }
 
+/// One UI endpoint reconstructed from `buildUserInterface`.
+///
+/// The endpoint owns all strings and metadata so naming remains request-local;
+/// unlike the C++ backend, this emitter has no `gGlobal` fresh-name state.
+struct UiWidget {
+    kind: UiWidgetKind,
+    label: String,
+    short_name: String,
+    group: String,
+    zone: String,
+    metadata: Vec<(String, String)>,
+}
+
+/// Cmajor-relevant widget payload.
+enum UiWidgetKind {
+    Button(fir::ButtonType),
+    Slider {
+        init: f64,
+        lo: f64,
+        hi: f64,
+        step: f64,
+    },
+    Bargraph {
+        lo: f64,
+        hi: f64,
+    },
+}
+
+/// Fully resolved UI plan shared by declarations, handlers, and scheduling.
+struct UiPlan {
+    widgets: Vec<UiWidget>,
+    bargraph_zones: BTreeSet<String>,
+}
+
+impl UiPlan {
+    fn has_bargraphs(&self) -> bool {
+        !self.bargraph_zones.is_empty()
+    }
+}
+
 /// Context controlling declaration and statement spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EmitContext {
@@ -205,6 +249,7 @@ pub fn generate_cmajor_module(
             "Cmajor requires a one-sample `frame` entry point",
         ));
     }
+    let ui = collect_ui(store, view.functions)?;
 
     let mut out = String::new();
     let _ = writeln!(out, "/* Code generated with faust-rs");
@@ -215,18 +260,23 @@ pub fn generate_cmajor_module(
     let _ = writeln!(out, "\t{{");
 
     emit_streams(&mut out, &view, options);
+    emit_ui_declarations(&mut out, &ui, options)?;
     emit_field_block(store, &mut out, view.dsp_struct, options)?;
     emit_field_block(store, &mut out, view.static_decls, options)?;
     emit_field_block(store, &mut out, view.globals, options)?;
     let _ = writeln!(out, "\t\tbool fUpdated;");
+    if ui.has_bargraphs() {
+        let _ = writeln!(out, "\t\tint fControlSlice;");
+    }
     let _ = writeln!(out);
 
+    emit_ui_handlers(&mut out, &ui, options);
     emit_non_api_functions(store, &mut out, &view, options)?;
     emit_math_helpers(&mut out, options);
     emit_arity_helpers(&mut out, &view);
-    emit_lifecycle(store, &mut out, &view, options)?;
+    emit_lifecycle(store, &mut out, &view, options, ui.has_bargraphs())?;
     emit_control(store, &mut out, &view, options)?;
-    emit_main(store, &mut out, &view, options)?;
+    emit_main(store, &mut out, &view, options, ui.has_bargraphs())?;
 
     let _ = writeln!(out, "\t}}");
     let _ = writeln!(out, "}}");
@@ -242,6 +292,310 @@ fn emit_streams(out: &mut String, view: &ModuleView, options: &CmajorOptions) {
     for channel in (0..view.num_inputs).rev() {
         let _ = writeln!(out, "\t\tinput stream {real} input{channel};");
     }
+}
+
+/// Reconstructs endpoint names and annotations from `buildUserInterface`.
+///
+/// C++ parity: the first `ShortnameInstVisitor` pass observes every address,
+/// then the second pass emits endpoints. Rust materializes that two-pass state
+/// explicitly, which also makes duplicate-address failures deterministic.
+fn collect_ui(store: &FirStore, functions: FirId) -> Result<UiPlan, CodegenError> {
+    let Some(body) = find_function_body(store, functions, "buildUserInterface") else {
+        return Ok(UiPlan {
+            widgets: Vec::new(),
+            bargraph_zones: BTreeSet::new(),
+        });
+    };
+
+    let mut path = Vec::new();
+    let mut pending_metadata = Vec::new();
+    let mut collected = Vec::new();
+    collect_ui_in(
+        store,
+        body,
+        &mut path,
+        &mut pending_metadata,
+        &mut collected,
+    )?;
+
+    let addresses: Vec<String> = collected
+        .iter()
+        .map(|(address, _)| address.clone())
+        .collect();
+    let mut unique_addresses = BTreeSet::new();
+    for address in &addresses {
+        if !unique_addresses.insert(address.as_str()) {
+            return Err(CodegenError::new(
+                CodegenErrorCode::InvalidStructure,
+                format!("two UI widgets share the address `{address}`"),
+            ));
+        }
+    }
+    let short_names = crate::shortname::compute_short_names(&addresses);
+    let mut bargraph_zones = BTreeSet::new();
+    let mut endpoint_names = BTreeSet::new();
+    let mut widgets = Vec::with_capacity(collected.len());
+    for (address, mut widget) in collected {
+        widget.short_name = short_names
+            .get(&address)
+            .cloned()
+            .unwrap_or_else(|| build_label(&widget.label));
+        let endpoint = format!("event{}", widget.zone);
+        validate_identifier(&endpoint, "UI endpoint")?;
+        if !endpoint_names.insert(endpoint.clone()) {
+            return Err(CodegenError::new(
+                CodegenErrorCode::InvalidStructure,
+                format!("two UI widgets emit the endpoint `{endpoint}`"),
+            ));
+        }
+        if matches!(widget.kind, UiWidgetKind::Bargraph { .. }) {
+            bargraph_zones.insert(widget.zone.clone());
+        }
+        widgets.push(widget);
+    }
+    Ok(UiPlan {
+        widgets,
+        bargraph_zones,
+    })
+}
+
+/// Recursive UI collector retaining C++'s sequential metadata semantics.
+fn collect_ui_in(
+    store: &FirStore,
+    block: FirId,
+    path: &mut Vec<String>,
+    pending_metadata: &mut Vec<(String, String)>,
+    out: &mut Vec<(String, UiWidget)>,
+) -> Result<(), CodegenError> {
+    for stmt in block_items(store, block) {
+        match match_fir(store, stmt) {
+            FirMatch::OpenBox { label, .. } => {
+                path.push(label);
+                pending_metadata.clear();
+            }
+            FirMatch::CloseBox => {
+                path.pop();
+                pending_metadata.clear();
+            }
+            FirMatch::AddMetaDeclare { key, value, .. } => {
+                pending_metadata.push((key, value));
+            }
+            FirMatch::AddButton { typ, label, var } => push_ui_widget(
+                path,
+                pending_metadata,
+                out,
+                label,
+                var,
+                UiWidgetKind::Button(typ),
+            ),
+            FirMatch::AddSlider {
+                label,
+                var,
+                init,
+                lo,
+                hi,
+                step,
+                ..
+            } => push_ui_widget(
+                path,
+                pending_metadata,
+                out,
+                label,
+                var,
+                UiWidgetKind::Slider { init, lo, hi, step },
+            ),
+            FirMatch::AddBargraph {
+                label, var, lo, hi, ..
+            } => push_ui_widget(
+                path,
+                pending_metadata,
+                out,
+                label,
+                var,
+                UiWidgetKind::Bargraph { lo, hi },
+            ),
+            FirMatch::AddSoundfile { label, .. } => {
+                return Err(CodegenError::new(
+                    CodegenErrorCode::Unsupported,
+                    format!("soundfile `{label}` is not supported by Cmajor"),
+                ));
+            }
+            FirMatch::Block(_) => {
+                collect_ui_in(store, stmt, path, pending_metadata, out)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Finalizes one UI record and consumes metadata attached to it.
+fn push_ui_widget(
+    path: &[String],
+    pending_metadata: &mut Vec<(String, String)>,
+    out: &mut Vec<(String, UiWidget)>,
+    label: String,
+    zone: String,
+    kind: UiWidgetKind,
+) {
+    let address = ui_path(path, &label);
+    out.push((
+        address.clone(),
+        UiWidget {
+            kind,
+            label,
+            short_name: String::new(),
+            group: address,
+            zone,
+            metadata: std::mem::take(pending_metadata),
+        },
+    ));
+}
+
+/// Emits public Cmajor event endpoints with host-visible UI annotations.
+fn emit_ui_declarations(
+    out: &mut String,
+    ui: &UiPlan,
+    options: &CmajorOptions,
+) -> Result<(), CodegenError> {
+    let real = options.real_type.cmajor_name();
+    let mut metadata_ids: BTreeMap<&str, usize> = BTreeMap::new();
+    for widget in &ui.widgets {
+        let direction = if matches!(widget.kind, UiWidgetKind::Bargraph { .. }) {
+            "output"
+        } else {
+            "input"
+        };
+        let endpoint = format!("event{}", widget.zone);
+        validate_identifier(&endpoint, "UI endpoint")?;
+        let display_name = match widget.kind {
+            UiWidgetKind::Slider { .. } => &widget.label,
+            UiWidgetKind::Button(_) | UiWidgetKind::Bargraph { .. } => &widget.short_name,
+        };
+        let _ = write!(
+            out,
+            "\t\t{direction} event {real} {endpoint} [[ name: {}, group: {}",
+            cmajor_string(display_name),
+            cmajor_string(&build_ui_path(&widget.group))
+        );
+        match widget.kind {
+            UiWidgetKind::Button(typ) => {
+                if typ == fir::ButtonType::Checkbox {
+                    let _ = write!(out, ", latching");
+                }
+                let _ = write!(out, ", text: \"off|on\", boolean");
+            }
+            UiWidgetKind::Slider { init, lo, hi, step } => {
+                let _ = write!(
+                    out,
+                    ", min: {}, max: {}, init: {}, step: {}",
+                    float_literal(lo, options.real_type),
+                    float_literal(hi, options.real_type),
+                    float_literal(init, options.real_type),
+                    float_literal(step, options.real_type)
+                );
+            }
+            UiWidgetKind::Bargraph { lo, hi } => {
+                let _ = write!(
+                    out,
+                    ", min: {}, max: {}",
+                    float_literal(lo, options.real_type),
+                    float_literal(hi, options.real_type)
+                );
+            }
+        }
+        for (key, value) in &widget.metadata {
+            if key.as_bytes().first().is_some_and(u8::is_ascii_digit) {
+                continue;
+            }
+            let next = metadata_ids.entry(key).or_default();
+            let metadata_name = format!("meta_{key}{next}");
+            *next += 1;
+            validate_identifier(&metadata_name, "Cmajor metadata annotation")?;
+            let _ = write!(out, ", {metadata_name}: {}", cmajor_string(value));
+        }
+        let _ = writeln!(out, " ]];");
+    }
+    if !ui.widgets.is_empty() {
+        let _ = writeln!(out);
+    }
+    Ok(())
+}
+
+/// Emits input-event handlers; output bargraphs need declarations only.
+fn emit_ui_handlers(out: &mut String, ui: &UiPlan, options: &CmajorOptions) {
+    let real = options.real_type.cmajor_name();
+    for widget in &ui.widgets {
+        if matches!(widget.kind, UiWidgetKind::Bargraph { .. }) {
+            continue;
+        }
+        let _ = writeln!(out, "\t\t// {}", widget.short_name);
+        let _ = writeln!(
+            out,
+            "\t\tevent event{}({real} val) {{ fUpdated ||= ({} != val); {} = val; }}",
+            widget.zone, widget.zone, widget.zone
+        );
+    }
+    if ui
+        .widgets
+        .iter()
+        .any(|widget| !matches!(widget.kind, UiWidgetKind::Bargraph { .. }))
+    {
+        let _ = writeln!(out);
+    }
+}
+
+/// Builds the full UI path used by the short-name pass.
+fn ui_path(path: &[String], label: &str) -> String {
+    let mut result = String::new();
+    for segment in path {
+        result.push('/');
+        result.push_str(segment);
+    }
+    result.push('/');
+    result.push_str(label);
+    result
+}
+
+/// Applies the Cmajor backend's narrower path-label normalization.
+fn build_ui_path(path: &str) -> String {
+    path.split('/')
+        .filter(|part| !part.is_empty())
+        .map(build_label)
+        .fold(String::new(), |mut result, part| {
+            result.push('/');
+            result.push_str(&part);
+            result
+        })
+}
+
+/// C++ `buildLabel`: replaces punctuation Cmajor treats specially.
+fn build_label(label: &str) -> String {
+    label
+        .chars()
+        .map(|ch| match ch {
+            ' ' | '(' | ')' | '\\' | '/' | '.' | '-' => '_',
+            other => other,
+        })
+        .collect()
+}
+
+/// Quotes a Faust label or metadata value as a Cmajor string literal.
+fn cmajor_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other => escaped.push(other),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 /// Emits persistent declarations from one FIR module section.
@@ -362,6 +716,7 @@ fn emit_lifecycle(
     out: &mut String,
     view: &ModuleView,
     options: &CmajorOptions,
+    has_bargraphs: bool,
 ) -> Result<(), CodegenError> {
     emit_named_body(
         store,
@@ -411,6 +766,9 @@ fn emit_lifecycle(
     let _ = writeln!(out, "\t\tvoid init()");
     let _ = writeln!(out, "\t\t{{");
     let _ = writeln!(out, "\t\t\tlet sample_rate = int(processor.frequency);");
+    if has_bargraphs {
+        let _ = writeln!(out, "\t\t\tfControlSlice = int(processor.frequency) / 50;");
+    }
     let _ = writeln!(out, "\t\t\tclassInit(sample_rate);");
     let _ = writeln!(out, "\t\t\tinstanceInit(sample_rate);");
     let _ = writeln!(out, "\t\t}}");
@@ -464,6 +822,7 @@ fn emit_main(
     out: &mut String,
     view: &ModuleView,
     options: &CmajorOptions,
+    has_bargraphs: bool,
 ) -> Result<(), CodegenError> {
     let body = find_function_body(store, view.functions, "frame")
         .or_else(|| find_function_body(store, view.functions, "compute"))
@@ -482,6 +841,12 @@ fn emit_main(
         "\t\t\t\tif (fUpdated) {{ fUpdated = false; control(); }}"
     );
     emit_block_items(store, out, options, body, 4, EmitContext::Body)?;
+    if has_bargraphs {
+        let _ = writeln!(
+            out,
+            "\t\t\t\tif (fControlSlice-- == 0) {{ fControlSlice = int(processor.frequency) / 50; }}"
+        );
+    }
     let _ = writeln!(out, "\t\t\t\tadvance();");
     let _ = writeln!(out, "\t\t\t}}");
     let _ = writeln!(out, "\t\t}}");
@@ -535,7 +900,10 @@ fn emit_stmt(
             }
             validate_identifier(&name, "variable")?;
             let type_name = emit_type(&typ, options)?;
-            let qualifier = if context == EmitContext::Field && access == AccessType::Static {
+            // Cmajor has no class-static storage. The C++ backend emits these
+            // declarations per processor instance and may initialize them at
+            // runtime, so `Static` must not be translated to `const`.
+            let qualifier = if context != EmitContext::Field && access == AccessType::Static {
                 "const "
             } else {
                 ""
@@ -556,7 +924,7 @@ fn emit_stmt(
         } => {
             validate_identifier(&name, "table")?;
             let elem = emit_type(&elem_type, options)?;
-            let qualifier = if context == EmitContext::Field && access == AccessType::Static {
+            let qualifier = if context != EmitContext::Field && access == AccessType::Static {
                 "const "
             } else {
                 ""
@@ -577,6 +945,12 @@ fn emit_stmt(
             let value = emit_value(store, options, value)?;
             if let Some(channel) = io_channel(&name, "output") {
                 let _ = writeln!(out, "{tab}output{channel} <- {value};");
+            } else if is_bargraph_zone(&name) {
+                let _ = writeln!(out, "{tab}{name} = {value};");
+                let _ = writeln!(
+                    out,
+                    "{tab}if (fControlSlice == 0) {{ event{name} <- {name}; }}"
+                );
             } else {
                 let _ = writeln!(out, "{tab}{name} = {value};");
             }
@@ -1150,6 +1524,11 @@ fn sanitize_identifier(name: &str) -> String {
 /// Extracts a numeric suffix from `prefixN`.
 fn io_channel(name: &str, prefix: &str) -> Option<usize> {
     name.strip_prefix(prefix)?.parse().ok()
+}
+
+/// Recognizes the canonical FIR zones assigned to bargraph widgets.
+fn is_bargraph_zone(name: &str) -> bool {
+    name.starts_with("fHbargraph") || name.starts_with("fVbargraph")
 }
 
 /// Returns all items held by a FIR block.
