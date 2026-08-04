@@ -55,7 +55,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 | `interp::fbc_to_cpp` | ✅ Implemented | `generate_cpp_from_fbc` |
 | `wasm` | 🔧 Bring-up | `generate_wasm_module` |
 | `codebox` | 🔧 Implemented; RNBO validation pending | `generate_codebox_module` |
-| `cmajor` | 🗂 Scaffolded | — |
+| `cmajor` | 🔧 Scalar bring-up | `generate_cmajor_module` |
 | `csharp` | 🗂 Scaffolded | — |
 | `dlang` | 🗂 Scaffolded | — |
 | `jax` | 🗂 Scaffolded | — |
@@ -522,6 +522,37 @@ cargo run -p compiler -- --lang codebox-test my.dsp -o mydsp.codebox
 
 ---
 
+### Cmajor backend — `backends::cmajor`
+
+Emits a Cmajor `processor` from FIR lowered for external control and the
+one-sample API. The scalar core owns Cmajor streams, fields, lifecycle methods,
+math spelling, scalar control flow, delay arrays, and the forever-running
+`main` loop. Its lifecycle follows the shared faust-rs contract:
+`init = classInit -> instanceInit`; direct `instanceInit` does not call
+`classInit`.
+
+The backend currently exposes its codegen API while compiler-facade/CLI, UI
+events, bargraphs, table specialization, and external Cmajor validation are
+completed in the staged plan. Unsupported types and nodes return stable typed
+errors rather than partial source.
+
+```rust
+use codegen::backends::cmajor::{CmajorOptions, generate_cmajor_module};
+
+let source = generate_cmajor_module(&store, root_id, &CmajorOptions::default())?;
+```
+
+| Item | Description |
+|---|---|
+| `CmajorOptions` | public processor name and `CmajorRealType` |
+| `generate_cmajor_module` | `(&FirStore, FirId, &CmajorOptions) -> Result<String, CodegenError>` |
+| `CodegenError` | Codes `FRS-CGEN-CMAJ-0001..0005` |
+
+Port and test contract:
+`porting/cmajor-backend-port-and-test-plan-2026-08-04-en.md`.
+
+---
+
 ### Fixtures — `fixtures`
 
 Shared FIR modules for backend-agnostic parity testing. All backends are
@@ -555,5 +586,4 @@ The following backends expose a stable `backend_id()` identifier and are
 otherwise empty. They reserve a place in the roadmap and prevent accidental
 namespace collisions as parity work proceeds.
 
-`cmajor` · `csharp` · `dlang` · `jax` · `jsfx` · `llvm` · `sdf3`
-· `vhdl`
+`csharp` · `dlang` · `jax` · `jsfx` · `llvm` · `sdf3` · `vhdl`
