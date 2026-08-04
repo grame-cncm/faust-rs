@@ -79,6 +79,11 @@ KNOWN_FAIL_rust :=
 # --- Julia backend (scalar prefix through the local Julia harness) ----------
 KNOWN_FAIL_julia :=
 
+# --- Cmajor backend (full upstream Cmajor impulse adapter) -------------------
+# `control` is excluded by Make.cmajor for parity with the pinned C++ lane; it
+# is not a semantic failure of a supported Cmajor construct.
+KNOWN_FAIL_cmajor :=
+
 # --- mode/scheduling variants ------------------------------------------------
 # Variant outdirs inherit their base backend's known failures. Any divergence
 # specific to one mode/strategy can be added as KNOWN_FAIL_<outdir>, for example

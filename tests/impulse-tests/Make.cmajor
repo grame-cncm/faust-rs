@@ -1,0 +1,54 @@
+#
+# Test the faust-rs scalar Cmajor backend against the C++ Faust impulse oracle.
+#
+# The generated Cmajor processor is compiled to a standalone C++ class by the
+# external Cmajor tool, wrapped by Faust C++'s cmajor_cpp_dsp adapter, and run
+# through the upstream impulse architecture. Each DSP gets a private directory
+# so `make -j` never shares cmajordsp.cmajor, cmajordsp.h, or the executable.
+#
+# Run from this directory, for example:
+#   make -f Make.cmajor all CMAJ_BIN=/path/to/cmaj
+#
+
+include common.mk
+
+outdir ?= cmajor
+CMAJ_BIN ?= cmaj
+CMAJ_CXX ?= $(CXX)
+CMAJOR_PATCH ?= $(CPP_TESTS)/cmajordsp.cmajorpatch
+CMAJOR_IMPULSE_ARCH ?= $(CPP_TESTS)/archs/impulsecmajor.cpp
+CMAJOR_ADAPTER ?= $(FAUST_ARCH)/faust/dsp/cmajor-cpp-dsp.h
+CMAJOR_CXXFLAGS ?= -O3 -I$(FAUST_ARCH) -I$(CPP_TESTS)/archs -pthread -std=c++17
+
+# Match the upstream Cmajor lane: `control.dsp` exercises the legacy `control`
+# primitive and is not a test of Cmajor input events.
+CMAJOR_EXCLUDED ?= control
+
+allnames := $(dspfiles:$(dspdir)/%.dsp=%)
+testnames := $(filter-out $(CMAJOR_EXCLUDED) $(call known_fail_for,$(outdir)),$(allnames))
+listfiles := $(testnames:%=ir/$(outdir)/%.ir)
+
+.PHONY: all
+.DELETE_ON_ERROR:
+
+all: $(COMPARE) ir/$(outdir)/.dir build/$(outdir)/.dir $(listfiles)
+
+ir/$(outdir)/.dir:
+	mkdir -p ir/$(outdir)
+	touch $@
+
+build/$(outdir)/.dir:
+	mkdir -p build/$(outdir)
+	touch $@
+
+$(COMPARE): tools/filesCompare.cpp
+	$(CXX) -O2 -std=c++11 $< -o $@
+
+ir/$(outdir)/%.ir: $(dspdir)/%.dsp $(refdir)/%.ir $(CMAJOR_PATCH) $(CMAJOR_IMPULSE_ARCH) $(CMAJOR_ADAPTER) | ir/$(outdir)/.dir build/$(outdir)/.dir
+	mkdir -p build/$(outdir)/$*
+	$(FAUST_RS) -lang cmajor -double -cn cmajordsp $(COMPILER_OPTS) -I $(dspdir) -I $(FAUSTLIBS) $< -o build/$(outdir)/$*/cmajordsp.cmajor
+	cp $(CMAJOR_PATCH) build/$(outdir)/$*/cmajordsp.cmajorpatch
+	$(CMAJ_BIN) generate --target=cpp build/$(outdir)/$*/cmajordsp.cmajorpatch --output=build/$(outdir)/$*/cmajordsp.h
+	$(CMAJ_CXX) $(CMAJOR_CXXFLAGS) -Ibuild/$(outdir)/$* $(CMAJOR_IMPULSE_ARCH) -o build/$(outdir)/$*/impulsecmajor
+	./build/$(outdir)/$*/impulsecmajor > $@
+	$(COMPARE) $@ $(refdir)/$*.ir $(call dsp_precision,$*) || (rm -f $@; false)

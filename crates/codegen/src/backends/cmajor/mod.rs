@@ -1253,10 +1253,19 @@ fn emit_value(
             let value = emit_value(store, options, value)?;
             Ok(format!("({name} = {value})"))
         }
-        FirMatch::BinOp { op, lhs, rhs, .. } => {
+        FirMatch::BinOp { op, lhs, rhs, typ } => {
             let lhs = emit_value(store, options, lhs)?;
             let rhs = emit_value(store, options, rhs)?;
-            Ok(format!("({lhs} {} {rhs})", emit_binop(op)))
+            let expression = format!("({lhs} {} {rhs})", emit_binop(op));
+            // Canonical Faust FIR gives comparisons the language-level int32
+            // result type, whereas Cmajor comparisons produce `bool`. Preserve
+            // the FIR contract explicitly; Cmajor rejects an implicit bool to
+            // int32 store even though C/C++ accept it.
+            if is_comparison(op) && typ == FirType::Int32 {
+                Ok(format!("int32({expression})"))
+            } else {
+                Ok(expression)
+            }
         }
         FirMatch::Neg { value, .. } => {
             let value = emit_value(store, options, value)?;
@@ -1418,6 +1427,14 @@ const fn emit_binop(op: FirBinOp) -> &'static str {
         FirBinOp::Gt => ">",
         FirBinOp::Ge => ">=",
     }
+}
+
+/// Whether a FIR binary operator produces Cmajor's native `bool` type.
+const fn is_comparison(op: FirBinOp) -> bool {
+    matches!(
+        op,
+        FirBinOp::Eq | FirBinOp::Ne | FirBinOp::Lt | FirBinOp::Le | FirBinOp::Gt | FirBinOp::Ge
+    )
 }
 
 /// Maps C/C++ precision-specific math names to Cmajor built-ins.
@@ -1645,6 +1662,20 @@ mod tests {
         assert!(text.contains("output stream float32 output0;"), "{text}");
         assert!(text.contains("output0 <- input0;"), "{text}");
         assert_eq!(text.matches("advance();").count(), 1, "{text}");
+    }
+
+    #[test]
+    fn comparison_preserves_fir_int32_result_type() {
+        let mut store = FirStore::new();
+        let comparison = {
+            let mut b = FirBuilder::new(&mut store);
+            let lhs = b.int32(1);
+            let rhs = b.int32(2);
+            b.binop(FirBinOp::Lt, lhs, rhs, FirType::Int32)
+        };
+        let text = emit_value(&store, &CmajorOptions::default(), comparison)
+            .expect("comparison emission should succeed");
+        assert_eq!(text, "int32((1 < 2))");
     }
 
     #[test]
