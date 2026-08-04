@@ -38,8 +38,16 @@
 //! - stable rejection of vector types, fixed/quad values, bitcasts,
 //!   soundfiles, and malformed FIR.
 //!
-//! Concrete table specialization is layered on the same emitter in the next
-//! port milestone.
+//! # Table representation adaptation
+//!
+//! The C++ backend runs `CmajorTableTypeVisitor` and
+//! `CmajorTableVisitor` because its generic instruction functions may still
+//! carry placeholder table types. Canonical Rust FIR already co-locates the
+//! concrete element type and length in [`FirType::Array`] and
+//! [`FirMatch::DeclareTable`]. The emitter therefore renders those owned types
+//! directly: no name-indexed specialization side table is needed. Integration
+//! tests cover read-only, writable, waveform, and generated tables at multiple
+//! sizes, plus repeated generation to guard request-local determinism.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

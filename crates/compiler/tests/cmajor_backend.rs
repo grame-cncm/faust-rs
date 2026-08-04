@@ -128,6 +128,55 @@ fn float64_precision_reaches_streams_controls_and_literals() {
 }
 
 #[test]
+fn readonly_table_emits_concrete_cmajor_storage() {
+    let text = cmajor("rdtable.dsp", "process = rdtable(8, 0.25, int(_));");
+    assert!(text.contains("[8]"), "{text}");
+    assert!(text.contains(".at(") || text.contains("[int("), "{text}");
+    assert_cmajor_frontend("rdtable", &text);
+}
+
+#[test]
+fn waveform_table_emits_initializer_and_indexed_read() {
+    let text = cmajor(
+        "waveform.dsp",
+        "wave(x) = waveform { 10, 20, 30, 40 }, int(x) : rdtable; \
+         process = wave;",
+    );
+    assert!(text.contains("[4]"), "{text}");
+    assert!(text.contains("10.0f") || text.contains("10"), "{text}");
+    assert_cmajor_frontend("waveform", &text);
+}
+
+#[test]
+fn writable_table_emits_runtime_store_and_wrapped_access() {
+    let text = cmajor(
+        "rwtable.dsp",
+        "process = rwtable(8, 0.0, int(_), _ * 0.5, int(_));",
+    );
+    assert!(text.contains("[8]"), "{text}");
+    assert!(text.contains(".at("), "{text}");
+    assert_cmajor_frontend("rwtable", &text);
+}
+
+#[test]
+fn generated_table_specializes_fill_helper_to_concrete_size() {
+    let source = "generator = +(1) ~ _; process = rdtable(8, generator, int(_));";
+    let text = cmajor("generated-table.dsp", source);
+    assert!(text.contains("[8]"), "{text}");
+    assert_cmajor_frontend("generated-table", &text);
+
+    let other = cmajor(
+        "generated-table-16.dsp",
+        "generator = +(1) ~ _; process = rdtable(16, generator, int(_));",
+    );
+    assert!(other.contains("[16]"), "{other}");
+    assert_cmajor_frontend("generated-table-16", &other);
+
+    let repeated = cmajor("generated-table.dsp", source);
+    assert_eq!(text, repeated, "Cmajor table lowering leaked request state");
+}
+
+#[test]
 fn one_sample_io_uses_cmajor_streams() {
     let text = cmajor("io.dsp", "process = _ , _ : +;");
     assert!(text.contains("input stream float32 input1;"), "{text}");

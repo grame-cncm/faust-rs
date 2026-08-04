@@ -274,6 +274,15 @@ If one logical fill function is called with multiple lengths, add a deterministi
 index side table detached from the owning function/call unless the need and its
 invariants are documented and structurally tested.
 
+Implementation finding (2026-08-04): canonical Rust FIR does carry concrete
+array element types and lengths at every Cmajor emission boundary exercised by
+read-only, writable, waveform, and generated-table fixtures. The backend emits
+these owned types directly. Two generator sizes compiled in one process and a
+repeated first request produce deterministic source accepted by Cmajor
+1.0.3175, so `CmajorTablePlan` is not introduced. This is an `adapted`
+representation-level mapping: it removes C++ placeholder-type repair without
+changing the generated fixed-size table contract.
+
 ### 4.6 Lifecycle: intentional adaptation
 
 The current C++ Cmajor output is:
@@ -454,7 +463,7 @@ must remain stable once tests and external callers consume them.
 | `CmajorInstVisitor` | Cmajor FIR text emitter | adapted | syntax/semantics preserved, typed errors replace asserts |
 | `CmajorInstUIVisitor` | deterministic UI endpoint plan | adapted | names, annotations, paths, metadata, order preserved |
 | `CmajorStringTypeManager` | Cmajor type/literal functions | adapted | same supported scalar/array output |
-| table-size visitors | `CmajorTablePlan` only if FIR requires it | adapted | identical concrete helper signatures and table values |
+| table-size visitors | concrete owned FIR array types (no side table) | adapted | identical concrete helper signatures and table values |
 | `-lang cmajor` CLI | `CliLang::Cmajor` | 1:1 | same user-facing spelling and text artifact |
 | `-cn` processor name | `CmajorOptions::class_name` | 1:1 | same externally visible processor name |
 | `-single` / `-double` | `CmajorRealType` | 1:1 | exact stream, UI, state, helper precision |
