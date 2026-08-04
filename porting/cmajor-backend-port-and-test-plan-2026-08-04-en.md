@@ -783,6 +783,50 @@ against the interpreter and the canonical impulse references:
 - `float64`: absolute or relative error at most `1e-12`;
 - NaN/Inf/sign-of-zero classes: exact classification.
 
+#### 9.4.1 `tests/impulse-tests` integration contract
+
+The pinned C++ suite already treats Cmajor as an executable backend in
+`tests/impulse-tests/Make.cmajor`. The Rust lane shall preserve its semantic
+route:
+
+```text
+faust-rs -lang cmajor -double -cn cmajordsp
+  -> cmaj generate --target=cpp cmajordsp.cmajorpatch
+  -> generated cmajordsp C++ class
+  -> upstream cmajor_cpp_dsp adapter and impulse architecture
+  -> .ir trace
+  -> filesCompare against the canonical C++ reference
+```
+
+The first integration step is an explicit external `make cmajor` target, not a
+member of the default `all` or scheduling matrix. It requires `cmaj` and the
+pinned C++ checkout, whereas ordinary workspace and impulse lanes must remain
+self-contained apart from their already documented reference dependency.
+`CMAJ_BIN`, `CMAJ_CXX`, `CPP_TESTS`, and `FAUST_ARCH` must be overridable.
+
+Adaptations from upstream are deliberate:
+
+- every DSP owns `build/cmajor/<name>/cmajordsp.cmajor`, patch, generated
+  header, and executable, avoiding the shared temporary names that make the C++
+  recipe unsafe under `make -j`;
+- the C++ checkout's `archs/impulsecmajor.cpp`, `controlTools.h`, and
+  `architecture/faust/dsp/cmajor-cpp-dsp.h` are referenced in place, consistent
+  with the existing native impulse lanes; they are not copied into faust-rs;
+- `control.dsp` remains an explicit exclusion initially, matching upstream,
+  because that fixture exercises the legacy `control` primitive rather than
+  the Cmajor event-control contract;
+- the scalar double target is the mandatory first gate. `-fp` and `-mapp`
+  variants are added only when the faust-rs CLI accepts and implements those
+  options; vector/scheduler matrix entries remain forbidden for scalar Cmajor;
+- traces use the same `filesCompare`, per-DSP tolerances, and canonical
+  `reference/*.ir` files as the other executable backends.
+
+The impulse lane validates audio outputs and input control events through the
+upstream adapter. It does not by itself validate output-event delivery for
+bargraphs, because `cmajor_cpp_dsp::compute` copies audio streams but does not
+drain Cmajor output events. The separate C6 bargraph cadence runtime test
+therefore remains mandatory.
+
 If a pinned reference case exceeds these preliminary thresholds, Phase C0
 must record a specific measured tolerance and its cause. Do not introduce one
 global loose epsilon.
