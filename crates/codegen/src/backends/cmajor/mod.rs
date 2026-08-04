@@ -218,6 +218,8 @@ impl UiPlan {
 enum EmitContext {
     /// Persistent processor fields.
     Field,
+    /// Lifecycle initialization body, where Cmajor forbids endpoint access.
+    Init,
     /// Local function body.
     Body,
 }
@@ -306,7 +308,8 @@ fn emit_streams(out: &mut String, view: &ModuleView, options: &CmajorOptions) {
 ///
 /// C++ parity: the first `ShortnameInstVisitor` pass observes every address,
 /// then the second pass emits endpoints. Rust materializes that two-pass state
-/// explicitly, which also makes duplicate-address failures deterministic.
+/// explicitly. Repeated display addresses are legal and receive the same short
+/// name; endpoint uniqueness is enforced independently from each widget zone.
 fn collect_ui(store: &FirStore, functions: FirId) -> Result<UiPlan, CodegenError> {
     let Some(body) = find_function_body(store, functions, "buildUserInterface") else {
         return Ok(UiPlan {
@@ -330,15 +333,6 @@ fn collect_ui(store: &FirStore, functions: FirId) -> Result<UiPlan, CodegenError
         .iter()
         .map(|(address, _)| address.clone())
         .collect();
-    let mut unique_addresses = BTreeSet::new();
-    for address in &addresses {
-        if !unique_addresses.insert(address.as_str()) {
-            return Err(CodegenError::new(
-                CodegenErrorCode::InvalidStructure,
-                format!("two UI widgets share the address `{address}`"),
-            ));
-        }
-    }
     let short_names = crate::shortname::compute_short_names(&addresses);
     let mut bargraph_zones = BTreeSet::new();
     let mut endpoint_names = BTreeSet::new();
@@ -800,7 +794,7 @@ fn emit_named_body(
         let _ = writeln!(out, "\t\t\tfUpdated = true;");
     }
     if let Some(body) = find_function_body(store, functions, name) {
-        emit_block_items(store, out, options, body, 3, EmitContext::Body)?;
+        emit_block_items(store, out, options, body, 3, EmitContext::Init)?;
     }
     let _ = writeln!(out, "\t\t}}");
     let _ = writeln!(out);
@@ -953,7 +947,7 @@ fn emit_stmt(
             let value = emit_value(store, options, value)?;
             if let Some(channel) = io_channel(&name, "output") {
                 let _ = writeln!(out, "{tab}output{channel} <- {value};");
-            } else if is_bargraph_zone(&name) {
+            } else if is_bargraph_zone(&name) && context != EmitContext::Init {
                 let _ = writeln!(out, "{tab}{name} = {value};");
                 let _ = writeln!(
                     out,

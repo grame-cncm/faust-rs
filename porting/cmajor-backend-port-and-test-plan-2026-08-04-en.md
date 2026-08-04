@@ -1,8 +1,9 @@
 # Cmajor backend port and test plan — 2026-08-04
 
 Status: scalar implementation in qualification. C1-C5 are implemented; C6 has
-a narrow pinned-C++ differential and a stateful Cmajor runtime probe, while the
-full UI/bargraph runtime and impulse corpus remain open. C7-C8 are deferred.
+a narrow pinned-C++ differential, a stateful Cmajor runtime probe, and a
+125-case impulse gate. Output-event/bargraph runtime remains open. C7-C8 are
+deferred.
 
 ## 1. Goal and recommended scope
 
@@ -662,6 +663,15 @@ identically at `-O0` and `-O4`. This is not yet the complete C6 numeric matrix;
 UI event delivery, bargraph cadence, table runtime values, and the impulse
 corpus remain unchecked below.
 
+The `tests/impulse-tests` lane is now active as the opt-in `make cmajor` target.
+Against a 133-case C++-oracle corpus, 125 supported scalar-double programs pass
+through Cmajor 1.0.3175 and match the canonical traces. The eight exclusions
+are auditable in `known.mk`: the shared `subcontainer1` gap; `bs` (`count` is
+invalid in one-sample mode); `sound` (unsupported soundfile); and `bells`,
+`modulations`, `osci`, `tester`, and `tester2` (expression/initializer
+materialization limits). The passing set includes UI, bargraphs, state, tables,
+waveforms, and all current upsampling/downsampling impulse fixtures.
+
 ### C7 — Polyphonic and effect application layer
 
 This phase starts only after C0-C6 are green.
@@ -921,7 +931,8 @@ true:
 - [x] backend lifecycle conformance passes before any golden/impulse enrollment.
 - [x] C++ differential differences are classified and narrow.
 - [x] Cmajor `-O0`/`-O4` numeric parity passes on the recursive stateful probe.
-- [ ] impulse/numeric results meet recorded thresholds.
+- [x] the 125-case supported impulse corpus meets its recorded thresholds;
+      eight explicit exclusions remain tracked in `known.mk`.
 - [x] compiler and codegen README/API documentation is updated.
 - [x] `JOURNAL.md`'s daily target records mapping statuses, reference pins,
       tests, known gaps, and any deferred variants.

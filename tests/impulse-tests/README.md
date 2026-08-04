@@ -45,6 +45,11 @@ See the design write-up in
    - `make julia` — the faust-rs Julia backend is appended to a self-contained
      Julia impulse runtime, run by `julia`, and compared on the scalar prefix
      with `filesCompare -part` in 64-bit (`-double`) mode.
+   - `make cmajor` — faust-rs emits scalar-double Cmajor, `cmaj generate
+     --target=cpp` produces a native class, and the pinned C++ Faust
+     `cmajor_cpp_dsp` adapter runs the upstream impulse protocol. Each DSP uses
+     a private build directory, so this external lane supports `make -j`. It is
+     intentionally outside `make all` and the vector/scheduling matrix.
    - `make <backend>-vec0` / `make <backend>-vec1` — run the same backend with
      `-vec -lv 0` or `-vec -lv 1` respectively. Available for `cpp`, `c`,
      `interp`, `cranelift`, `wasm`, `assemblyscript`, `rust`, and `julia`; `make all-vec` runs
@@ -89,6 +94,8 @@ See the design write-up in
 - Node.js for the WASM and AssemblyScript impulse runners.
 - `rustc` (already required to build the workspace) for the Rust backend gate.
 - Julia with the `StaticArrays` package for the Julia backend gate.
+- Cmajor's `cmaj` command for the optional Cmajor backend gate; override its
+  path with `CMAJ_BIN=/path/to/cmaj` and its C++ compiler with `CMAJ_CXX`.
 - `asc` (AssemblyScript compiler) on `PATH`, or `ASC=/path/to/asc`.
 - The Node runners use a 600-second compiler timeout so heavily parallel
   backend-matrix runs do not inherit the interactive CLI's 120-second limit.
@@ -110,6 +117,7 @@ make wasm          # check the WASM backend (64-bit scalar prefix)
 make assemblyscript # check the AssemblyScript backend (scalar prefix)
 make rust          # check the Rust backend (scalar prefix, rustc)
 make julia         # check the Julia backend (scalar prefix, Julia)
+make cmajor        # check scalar Cmajor via cmaj-generated C++
 make cpp-vec0      # check the C++ backend with -vec -lv 0
 make cpp-vec1      # check the C++ backend with -vec -lv 1
 make all-vec       # check -vec -lv 0 and -vec -lv 1 across all backends
