@@ -8,6 +8,7 @@
 
 use codegen::backends::asc::AscOptions;
 use codegen::backends::c::COptions;
+use codegen::backends::cmajor::CmajorOptions;
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::julia::JuliaOptions;
 use codegen::backends::rust::RustOptions;
@@ -378,6 +379,13 @@ fn compute_probe(backend: &str) -> ComputeProbe {
             // RNBO's per-sample entry: one argument per input, no count.
             per_sample: "function compute(i0) {",
         },
+        "cmajor" => ComputeProbe {
+            emit: compile_cmajor,
+            // A Cmajor processor has only its forever-running tick loop; it
+            // does not expose the canonical Faust block API.
+            block_compute: "void compute(",
+            per_sample: "void main()",
+        },
         unknown => panic!(
             "backend '{unknown}' has a capability row accepting '-os' but no \
              canonical-`compute` probe. Add one: state the signature fragment \
@@ -410,6 +418,17 @@ fn compile_codebox() -> String {
             &codegen::backends::codebox::CodeboxOptions::default(),
         )
         .expect("codebox compilation must succeed")
+}
+
+fn compile_cmajor() -> String {
+    // Like codebox, Cmajor forces both modes as an intrinsic target contract.
+    Compiler::new()
+        .compile_source_to_cmajor(
+            "exec_options_test.dsp",
+            SLIDER_GAIN,
+            &CmajorOptions::default(),
+        )
+        .expect("Cmajor compilation must succeed")
 }
 
 /// `canonical_compute_required` must describe what the backend actually emits.

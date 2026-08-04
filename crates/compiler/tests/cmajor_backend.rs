@@ -4,6 +4,9 @@
 //! the production compiler facade and signal-to-FIR lane. They
 //! do not depend on an installed Faust compiler, Faust libraries, or Cmajor
 //! SDK. Optional Cmajor frontend/runtime validation is layered separately.
+//! Set `CMAJ_BIN` to enable Cmajor syntax and generated-C++ runtime checks,
+//! `FAUST_CPP_BIN` to enable the pinned C++ Faust differential, and optionally
+//! `CMAJ_CXX` to select the C++ compiler used by the runtime harness.
 //!
 //! Source provenance and acceptance contract:
 //! `porting/cmajor-backend-port-and-test-plan-2026-08-04-en.md` C1-C6.
@@ -61,6 +64,140 @@ fn assert_cmajor_frontend(source_name: &str, source: &str) {
         String::from_utf8_lossy(&result.stdout),
         String::from_utf8_lossy(&result.stderr)
     );
+}
+
+/// Generates the same self-contained source with the opt-in pinned C++ Faust.
+fn cpp_cmajor(source_name: &str, source: &str, double: bool) -> Option<String> {
+    let faust = std::env::var("FAUST_CPP_BIN").ok()?;
+    let path = std::env::temp_dir().join(format!(
+        "faust-rs-cmajor-cpp-{source_name}-{}.dsp",
+        std::process::id()
+    ));
+    std::fs::write(&path, source).expect("write temporary C++ differential DSP");
+    let mut command = Command::new(faust);
+    command.args(["-lang", "cmajor", "-cn", "mydsp"]);
+    if double {
+        command.arg("-double");
+    }
+    let result = command
+        .arg(&path)
+        .output()
+        .expect("run pinned C++ Faust Cmajor backend");
+    std::fs::remove_file(&path).expect("remove temporary C++ differential DSP");
+    assert!(
+        result.status.success(),
+        "C++ Faust rejected {source_name}:\n{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Some(String::from_utf8(result.stdout).expect("C++ Cmajor source is UTF-8"))
+}
+
+/// Narrow observable contract used for C++/Rust differential comparison.
+///
+/// Formatting, helper layout, and the intentionally adapted lifecycle are
+/// excluded. Streams, public events, handlers, tick advancement, and bargraph
+/// scheduling are retained. Table declarations and `.at` calls are omitted:
+/// the pinned C++ optimizer constant-folds some tables that canonical Rust FIR
+/// deliberately retains, without changing the public or runtime contract.
+#[derive(Debug, PartialEq, Eq)]
+struct CmajorContract {
+    streams: Vec<String>,
+    events: Vec<String>,
+    handlers: Vec<String>,
+    advance_count: usize,
+    bargraph_clock: bool,
+}
+
+fn cmajor_contract(source: &str) -> CmajorContract {
+    let mut streams = Vec::new();
+    let mut events = Vec::new();
+    let mut handlers = Vec::new();
+    for line in source.lines().map(str::trim) {
+        let compact = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if compact.starts_with("input stream ") || compact.starts_with("output stream ") {
+            streams.push(compact.trim_end_matches(';').to_owned());
+        } else if compact.starts_with("input event ") || compact.starts_with("output event ") {
+            let declaration = compact.split("[[").next().unwrap_or(&compact).trim();
+            events.push(declaration.trim_end_matches(';').trim().to_owned());
+        } else if compact.starts_with("event event") {
+            let signature = compact.split('{').next().unwrap_or(&compact);
+            handlers.push(signature.chars().filter(|ch| !ch.is_whitespace()).collect());
+        }
+    }
+    let no_space: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+    CmajorContract {
+        streams,
+        events,
+        handlers,
+        advance_count: no_space.matches("advance();").count(),
+        bargraph_clock: no_space.contains("fControlSlice--==0"),
+    }
+}
+
+/// Generates C++ through Cmajor, compiles a tiny host, and returns 16 samples.
+fn run_cmajor_generated_cpp(
+    cmaj: &str,
+    directory: &std::path::Path,
+    optimization: &str,
+) -> Vec<f32> {
+    let patch = directory.join("runtime.cmajorpatch");
+    let header = directory.join(format!("runtime-{optimization}.hpp"));
+    let result = Command::new(cmaj)
+        .arg("generate")
+        .arg(optimization)
+        .arg("--target=cpp")
+        .arg(format!("--output={}", header.display()))
+        .arg(&patch)
+        .output()
+        .expect("run Cmajor C++ generator");
+    assert!(
+        result.status.success(),
+        "Cmajor C++ generation {optimization} failed:\n{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    let header_name = header
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("UTF-8 Cmajor header name");
+    let harness = directory.join(format!("harness-{optimization}.cpp"));
+    std::fs::write(
+        &harness,
+        format!(
+            "#include <cstdio>\n#include \"{header_name}\"\n\
+             int main() {{ RuntimeMain dsp; dsp.initialise(1, 48000.0); \
+             dsp.advance(16); float samples[16] = {{}}; \
+             dsp.copyOutputFrames(RuntimeMain::getEndpointHandleForName(\"audioOut\"), samples, 16); \
+             for (float sample : samples) std::printf(\"%.9g\\n\", double(sample)); }}\n"
+        ),
+    )
+    .expect("write Cmajor C++ runtime harness");
+    let executable = directory.join(format!("runtime-{optimization}"));
+    let cxx = std::env::var("CMAJ_CXX").unwrap_or_else(|_| "c++".to_owned());
+    let build = Command::new(cxx)
+        .args(["-std=c++17", "-O2"])
+        .arg(&harness)
+        .arg("-o")
+        .arg(&executable)
+        .output()
+        .expect("compile Cmajor-generated C++ runtime harness");
+    assert!(
+        build.status.success(),
+        "Cmajor C++ harness build failed:\n{}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&executable)
+        .output()
+        .expect("run Cmajor-generated C++ runtime harness");
+    assert!(run.status.success(), "Cmajor C++ runtime harness failed");
+    String::from_utf8(run.stdout)
+        .expect("runtime samples are UTF-8")
+        .lines()
+        .map(|line| line.parse::<f32>().expect("runtime sample is numeric"))
+        .collect()
 }
 
 #[test]
@@ -190,6 +327,7 @@ fn one_sample_io_uses_cmajor_streams() {
     assert_eq!(text.matches("advance();").count(), 1, "{text}");
     assert!(!text.contains("inputs["), "{text}");
     assert!(!text.contains("outputs["), "{text}");
+    assert_cmajor_frontend("io", &text);
 }
 
 #[test]
@@ -298,6 +436,94 @@ fn cli_honors_name_double_output_json_and_vector_rejection() {
 }
 
 #[test]
+fn pinned_cpp_and_rust_observable_contracts_match() {
+    let cases = [
+        ("diff-io", "process = _ , _ : +;", false),
+        (
+            "diff-ui",
+            "process = _ * hslider(\"gain[unit:dB]\", 0.5, 0, 1, 0.01);",
+            false,
+        ),
+        (
+            "diff-bargraph",
+            "process = _ <: attach(_, vbargraph(\"lvl\", 0, 1));",
+            false,
+        ),
+        ("diff-table", "process = rdtable(8, 0.25, int(_));", false),
+        ("diff-double", "process = _ * 0.5;", true),
+    ];
+    for (name, source, double) in cases {
+        let Some(cpp) = cpp_cmajor(name, source, double) else {
+            return;
+        };
+        let options = CmajorOptions {
+            real_type: if double {
+                CmajorRealType::Float64
+            } else {
+                CmajorRealType::Float32
+            },
+            ..CmajorOptions::default()
+        };
+        let rust = cmajor_with(name, source, &options);
+        assert_eq!(
+            cmajor_contract(&rust),
+            cmajor_contract(&cpp),
+            "observable Cmajor contract drift for {name}\nRust:\n{rust}\nC++:\n{cpp}"
+        );
+    }
+}
+
+#[test]
+fn cmajor_runtime_matches_expected_recurrence_at_o0_and_o4() {
+    let Ok(cmaj) = std::env::var("CMAJ_BIN") else {
+        return;
+    };
+    let root = std::env::temp_dir().join(format!("faust-rs-cmajor-runtime-{}", std::process::id()));
+    std::fs::create_dir_all(&root).expect("create Cmajor runtime directory");
+    let mut source = cmajor("runtime.dsp", "process = 1 : + ~ *(0.5);");
+    source.push_str(
+        "\ngraph RuntimeMain [[ main ]]\n{\n\toutput stream float32 audioOut;\n\tnode dsp = faust::mydsp;\n\tconnection dsp.output0 -> audioOut;\n}\n",
+    );
+    std::fs::write(root.join("runtime.cmajor"), source).expect("write runtime Cmajor source");
+    std::fs::write(
+        root.join("runtime.cmajorpatch"),
+        r#"{
+  "CmajorVersion": 1,
+  "ID": "dev.faust_rs.runtime",
+  "version": "1.0",
+  "name": "mydsp",
+  "description": "Cmajor backend optimization parity fixture",
+  "category": "synth",
+  "manufacturer": "faust-rs",
+  "isInstrument": false,
+  "source": "runtime.cmajor"
+}
+"#,
+    )
+    .expect("write runtime Cmajor patch");
+
+    let o0 = run_cmajor_generated_cpp(&cmaj, &root, "-O0");
+    let o4 = run_cmajor_generated_cpp(&cmaj, &root, "-O4");
+    assert_eq!(o0.len(), 16);
+    assert_eq!(o4.len(), 16);
+    for (index, (&unoptimized, &optimized)) in o0.iter().zip(&o4).enumerate() {
+        assert!(
+            (unoptimized - optimized).abs() <= 1.0e-6,
+            "Cmajor optimization drift at sample {index}: O0={unoptimized}, O4={optimized}"
+        );
+    }
+    for (index, &sample) in o0.iter().enumerate() {
+        let expected = 2.0 - 2.0_f32.powi(-(index as i32));
+        assert!(
+            (sample - expected).abs() <= 1.0e-5,
+            "unexpected recurrence at sample {index}: got {sample}, expected {expected}"
+        );
+    }
+
+    std::fs::remove_dir_all(&root).expect("remove Cmajor runtime directory");
+}
+
+#[test]
 fn recurrence_and_delay_emit_state_and_dynamic_access() {
     let recurrence = cmajor("rec.dsp", "process = + ~ *(0.5);");
     assert!(
@@ -305,10 +531,24 @@ fn recurrence_and_delay_emit_state_and_dynamic_access() {
         "{recurrence}"
     );
     assert!(recurrence.contains("loop"), "{recurrence}");
+    assert_cmajor_frontend("recurrence", &recurrence);
 
     let delay = cmajor("delay.dsp", "process = _ : @(7);");
     assert!(delay.contains(".at("), "{delay}");
     assert!(delay.contains("output0 <-"), "{delay}");
+    assert_cmajor_frontend("delay", &delay);
+}
+
+#[test]
+fn scalar_math_names_are_accepted_by_cmajor() {
+    let text = cmajor(
+        "math.dsp",
+        "process = (_ : sin), (_ : cos), (_ : abs), (_ : sqrt);",
+    );
+    for name in ["sin(", "cos(", "abs(", "sqrt("] {
+        assert!(text.contains(name), "missing {name}: {text}");
+    }
+    assert_cmajor_frontend("math", &text);
 }
 
 #[test]

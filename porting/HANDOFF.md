@@ -1,100 +1,94 @@
 # Session Handoff
 
-Date: 2026-07-24
+Date: 2026-08-04
 
 ## Repo State
 
-- Branch: `external-control-one-sample` (linear on top of `main`).
-- Executing `porting/external-control-one-sample-port-plan-2026-07-23-en.md`
-  (D1-D3 approved; the plan's §5.7 AssemblyScript amendment was merged via
-  PR #11, so the asc one-sample follow-up is officially reserved).
+- Branch: `main-dev`
+- Session base HEAD: `be817b064d3a47030122b62347d2be18e53144cf`
+- The qualification changes described here are committed immediately after
+  this handoff as the next linear commit.
 
-## Plan progress
+Recent commits (most recent first):
 
-| Phase | State |
-|---|---|
-| 0 — baselines, reference toolchain | done |
-| 1 — typed options, capability table, CLI, count/D2 diagnostics | done |
-| 2 — FIR execution contract (tagged sections, control/frame, promotion, one-sample lowering) | done |
-| 3 — C, C++, FIR emitters + differentials | done |
-| 4 — Rust backend (D3 inherent methods) | done |
-| 5 — vector external control + promoted-control-event certificate | done |
-| 6 — hardening/docs | in progress (CLI guide + README done; coverage rerun pending) |
+- `be817b06` Activate scalar Cmajor facade and CLI
+- `b85d7d5f` Validate concrete Cmajor table lowering
+- `ac2c5daa` Add Cmajor UI events and bargraphs
+- `0ef0c895` Add scalar Cmajor emitter core
+- `ccc3e5ee` Plan scalar Cmajor backend port
 
-Follow-up reserved by plan §5.7: the AssemblyScript one-sample target
-(`-ec -os` as primary combination, additive to the block contract; an
-`adapted` contract decision to design explicitly).
+## Working Tree
 
-## Key mechanisms (where things live)
+- Tracked changes at handoff preparation: Cmajor qualification tests and this
+  session's plan, journal, README, and handoff updates.
+- Numerous pre-existing untracked user DSPs, patches, reports, and generated
+  files remain in the repository root; the Cmajor work did not modify or stage
+  them.
 
-- Options: `ControlRateMode`/`ProcessingApi` next to `ComputeMode`
-  (transform::signal_fir), carried by SignalFirOptions/Compiler.
-- Capability model: `compiler::execution` (single declarative table;
-  FRS-EXEC-* diagnostics; `-os -vec` always rejected).
-- Scalar split: tagged `ControlStatement { ownership, statement }` list in
-  `signal_fir/module/state.rs`; promotion generalizes the konst-escape
-  path (`materialize_in_bucket`); assembly in `module/build.rs`.
-- One-sample: direct channel I/O in `module/core_lowering.rs`; empty
-  canonical compute; `frame` before compute in the functions block.
-- FIR contract: faust_api reserves `control(dsp)` /
-  `frame(dsp, FAUSTFLOAT*, FAUSTFLOAT*)`; fir checker rules FIR-F08/F09.
-- Vector `-ec`: UI snapshots + struct-promoted control roots
-  (`vector/lower/signal.rs`, CSE Struct mode in `signal_fir/cse.rs`),
-  `control` emission in `vector/module/lifecycle.rs`, certificate rules in
-  `vector/module/check.rs` (`verify_external_control`) with corruption
-  tests in `vector/module/tests.rs`.
-- D2 classifier: `signal_fir/one_sample.rs` (FRS-SFIR-0010); foreign
-  `count` rejection in `lower_fvar` (FRS-SFIR-0009).
+## Current Goal
 
-## Reference toolchains
+- Qualify the scalar `-lang cmajor` backend against pinned Faust C++ and the
+  current Cmajor toolchain, then complete the remaining C6 runtime matrix.
 
-- Pinned dev reference: `../faust` @ `8eebea429`
-  (`master-dev-ocpp-od-fir-2-FIR19`), built at `../faust/build/bin/faust`.
-  CAVEATS recorded in the journal: its own `-ec -os` output does not
-  compile for recursive DSPs (reported upstream:
-  https://github.com/grame-cncm/faust/issues/1277 — sletz: does not happen
-  on official master-dev; branch is experimental), its `-vec` is disabled
-  unconditionally, and its `-os` Rust output looks self-inconsistent
-  (unverified; check with a real cargo build before reporting).
-- Behavioral oracle for `-ec -vec`: stable Faust 2.83.1
-  (`/opt/homebrew/bin/faust`).
+## What Changed This Session
 
-## Validation status (latest)
+- Added a documented canonical-FIR-to-Cmajor scalar emitter with f32/f64,
+  streams, lifecycle, state, delays, loops, math, UI events, 50 Hz bargraphs,
+  and concrete read/write/waveform/generated tables.
+- Added compiler facade, CLI, architecture wrapping, intrinsic one-sample and
+  external-control capability routing, typed diagnostics, and public Rustdoc.
+- Added frontend, pinned-C++ observable-contract, and Cmajor-generated-C++
+  `-O0`/`-O4` recurrence tests.
 
-- Every commit: fmt, clippy workspace 0, workspace tests, golden 196.
-- vector_mode oracle 36/36 at phases 4-5.
-- Runtime differentials (external harness in the session scratchpad):
-  scalar `-ec`/`-os`/`-ec -os` bit-exact vs block AND vs pinned reference
-  (stateless case; recursive case arbitrated by the internal block-vs-frame
-  oracle); Rust `control+frame×N` bit-exact (rustc -D warnings);
-  `-ec -vec` bit-exact vs classic vector, scalar, and stable 2.83.1.
-- Architecture projects (AGENTS.md): block and `-ec -os` Rust outputs pass
-  `cargo check` inside a real `faust2jackrust -source` project; the jack
-  LINK step is blocked locally (universal libjack without arm64 slice) —
-  environment limitation, recorded.
-- Golden-of-new-shapes decision: the golden harness snapshots default
-  emission only (per-case option plumbing does not exist); the emitted
-  `-ec`/`-os` shapes are locked by `crates/compiler/tests/execution_options.rs`
-  and the transform structural tests instead (adapted, recorded).
+## Decisions / Constraints
 
-## Commands
+- Reference Faust C++ is commit
+  `8eebea4294a44a5260484c750d332781ed9f8ffd`.
+- Lifecycle is intentionally adapted to the repository-wide contract:
+  `init = classInit -> instanceInit`, and direct `instanceInit` does not call
+  `classInit`.
+- The C++ constant-table optimizer difference is excluded from the narrow
+  source differential; runtime semantics remain the required oracle.
+- C7/C8 polyphonic, DSP-event, hybrid, and SDK application layers are deferred.
 
-```bash
-cargo test -p transform --lib                      # 403 tests
-cargo test -p compiler --test execution_options    # shape locks
-cargo test -p compiler --test vector_mode          # 36 oracle tests
-cargo run -q -p xtask -- golden-check              # 196 OK
-cargo run -q -p xtask -- vector-coverage-check     # 1,536 pairs expected
-```
+## Validation Run
 
-## Next steps
+- `cargo fmt --all -- --check` -> pass.
+- `cargo clippy --workspace --all-targets -- -D warnings` -> pass.
+- `cargo test --workspace --all-targets` -> pass.
+- `cargo run -p xtask -- golden-check` -> pass.
+- `cargo run --release -p xtask -- compile-budget-check` -> pass, no baseline
+  update.
+- `RUSTDOCFLAGS=-Dwarnings cargo doc -p codegen -p compiler --no-deps` -> pass.
+- `CMAJ_BIN=/usr/local/bin/cmaj FAUST_CPP_BIN=... cargo test -p compiler
+  --test cmajor_backend` -> 17 pass, including C++ differential and Cmajor
+  runtime at `-O0`/`-O4`.
+- `cargo run -p xtask -- golden-check-cpp` -> 34 known unrelated failures:
+  stored filename-derived metadata names differ from current `mydsp`; no Cmajor
+  snapshot or baseline changed.
 
-1. Finish phase 6: coverage rerun result, journal, this handoff.
-2. AssemblyScript one-sample target (plan §5.7): design the asc
-   `frame`/`control` contract (flat channel arrays; `-ec -os` primary),
-   wire the capability table (`explicit` for asc), implement the emitter
-   on the phase-2 FIR contract, differential against the wasm-music
-   MidiVoice host expectations.
-3. Optional upstream: verify the pinned reference's Rust `-os` output with
-   a real cargo build; if broken, report as a sibling of issue #1277
-   (noting sletz's triage: the branch is experimental).
+## Open Issues / Blockers
+
+- C6 still needs runtime event delivery, bargraph cadence, tables, broader
+  f32/f64 numeric/impulse coverage, and explicit negative Cmajor mutations.
+- The full C++ golden gate is not green because of the unrelated metadata-name
+  baseline drift described above.
+
+## Next Steps
+
+1. Extend the Cmajor-generated-C++ harness with input streams and event I/O.
+2. Cover UI mutation, bargraph cadence, table values, and f64 runtime behavior.
+3. Add the compact interpreter-versus-Cmajor impulse matrix and only then mark
+   C6 and the scalar completion checklist green.
+
+## Useful Commands to Resume
+
+- `CMAJ_BIN=/usr/local/bin/cmaj FAUST_CPP_BIN=/Users/letz/Developpements/RUST/faust/build/bin/faust cargo test -p compiler --test cmajor_backend`
+- `cargo test --workspace --all-targets`
+- `cargo run -p xtask -- golden-check`
+- `cargo run --release -p xtask -- compile-budget-check`
+
+## Notes
+
+- Optional tools are never auto-discovered in normal tests; their explicit
+  environment variables keep CI self-contained.

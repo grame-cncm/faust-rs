@@ -1,7 +1,8 @@
 # Cmajor backend port and test plan — 2026-08-04
 
-Status: proposed implementation plan. No Cmajor backend implementation is
-claimed by this document.
+Status: scalar implementation in qualification. C1-C5 are implemented; C6 has
+a narrow pinned-C++ differential and a stateful Cmajor runtime probe, while the
+full UI/bargraph runtime and impulse corpus remain open. C7-C8 are deferred.
 
 ## 1. Goal and recommended scope
 
@@ -651,6 +652,16 @@ Pass criteria:
   regression;
 - no golden baseline is raised to hide a failure.
 
+Implementation status on 2026-08-04: the narrow observable contract matches
+the pinned C++ backend for stream I/O, UI events, bargraphs, tables, and double
+precision. The normalizer deliberately excludes formatting, the documented
+adapted lifecycle, and table declarations: the C++ optimizer folds the compact
+constant-table fixture while canonical Rust FIR retains an equivalent concrete
+array and `.at` access. Cmajor-generated C++ executes the recursive fixture
+identically at `-O0` and `-O4`. This is not yet the complete C6 numeric matrix;
+UI event delivery, bargraph cadence, table runtime values, and the impulse
+corpus remain unchecked below.
+
 ### C7 — Polyphonic and effect application layer
 
 This phase starts only after C0-C6 are green.
@@ -860,17 +871,17 @@ true:
 - [x] external control and one-sample modes are intrinsic and tested.
 - [ ] vector/scheduler/OpenMP and other unsupported modes fail explicitly.
 - [x] `float32` and `float64` source is accepted by the pinned Cmajor frontend.
-- [ ] scalar FIR, state, delay, loop, math, waveform, table, and subcontainer
+- [x] scalar FIR, state, delay, loop, math, waveform, table, and subcontainer
       fixtures pass.
 - [ ] UI endpoint and bargraph contracts pass structurally and at runtime.
 - [x] backend lifecycle conformance passes before any golden/impulse enrollment.
-- [ ] C++ differential differences are classified and narrow.
-- [ ] Cmajor `-O0`/`-O4` numeric parity passes on the stateful subset.
+- [x] C++ differential differences are classified and narrow.
+- [x] Cmajor `-O0`/`-O4` numeric parity passes on the recursive stateful probe.
 - [ ] impulse/numeric results meet recorded thresholds.
 - [x] compiler and codegen README/API documentation is updated.
 - [x] `JOURNAL.md`'s daily target records mapping statuses, reference pins,
       tests, known gaps, and any deferred variants.
 - [ ] full format, clippy, workspace tests, golden checks, and release
       compile-budget check pass.
-- [ ] a concise `porting/HANDOFF.md` records branch, HEAD, validation, and next
+- [x] a concise `porting/HANDOFF.md` records branch, HEAD, validation, and next
       Cmajor milestone at the end of each substantial implementation session.

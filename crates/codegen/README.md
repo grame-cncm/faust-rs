@@ -549,6 +549,9 @@ let source = generate_cmajor_module(&store, root_id, &CmajorOptions::default())?
 ```sh
 cargo run -p compiler -- -lang cmajor my.dsp -o mydsp.cmajor
 CMAJ_BIN=/path/to/cmaj cargo test -p compiler --test cmajor_backend
+FAUST_CPP_BIN=/path/to/pinned/faust cargo test -p compiler --test cmajor_backend
+CMAJ_BIN=/path/to/cmaj CMAJ_CXX=/path/to/c++ \
+  cargo test -p compiler --test cmajor_backend
 ```
 
 | Item | Description |
