@@ -55,6 +55,8 @@ use std::fmt::Write as _;
 
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
+use super::textual::{OperandSide, c_like_fir_operator, infix_operand_needs_parentheses};
+
 /// Stable backend identifier used by CLI, diagnostics, and capability tables.
 pub const BACKEND_NAME: &str = "cmajor";
 
@@ -1248,9 +1250,9 @@ fn emit_value(
             Ok(format!("({name} = {value})"))
         }
         FirMatch::BinOp { op, lhs, rhs, typ } => {
-            let lhs = emit_value(store, options, lhs)?;
-            let rhs = emit_value(store, options, rhs)?;
-            let expression = format!("({lhs} {} {rhs})", emit_binop(op));
+            let lhs = emit_infix_operand(store, options, op, lhs, OperandSide::Left)?;
+            let rhs = emit_infix_operand(store, options, op, rhs, OperandSide::Right)?;
+            let expression = format!("{lhs} {} {rhs}", emit_binop(op));
             // Canonical Faust FIR gives comparisons the language-level int32
             // result type, whereas Cmajor comparisons produce `bool`. Preserve
             // the FIR contract explicitly; Cmajor rejects an implicit bool to
@@ -1304,6 +1306,42 @@ fn emit_value(
             format!("value {other:?} is not supported by the Cmajor backend"),
         )),
     }
+}
+
+/// Emits one child of a Cmajor infix expression with only required grouping.
+///
+/// The shared textual policy owns precedence and associativity. This adapter
+/// supplies FIR operator identity and treats an `int32` comparison as atomic:
+/// [`emit_value`] wraps that comparison in a Cmajor conversion, so its infix
+/// expression is no longer exposed directly to the parent operator.
+fn emit_infix_operand(
+    store: &FirStore,
+    options: &CmajorOptions,
+    parent_op: FirBinOp,
+    operand: FirId,
+    side: OperandSide,
+) -> Result<String, CodegenError> {
+    let rendered = emit_value(store, options, operand)?;
+    let FirMatch::BinOp {
+        op: child_op, typ, ..
+    } = match_fir(store, operand)
+    else {
+        return Ok(rendered);
+    };
+    if is_comparison(child_op) && typ == FirType::Int32 {
+        return Ok(rendered);
+    }
+    let needs_parentheses = infix_operand_needs_parentheses(
+        c_like_fir_operator(parent_op),
+        c_like_fir_operator(child_op),
+        side,
+        parent_op == child_op,
+    );
+    Ok(if needs_parentheses {
+        format!("({rendered})")
+    } else {
+        rendered
+    })
 }
 
 /// Emits an explicit Cmajor boolean conversion for a control condition.
@@ -1669,7 +1707,61 @@ mod tests {
         };
         let text = emit_value(&store, &CmajorOptions::default(), comparison)
             .expect("comparison emission should succeed");
-        assert_eq!(text, "int32((1 < 2))");
+        assert_eq!(text, "int32(1 < 2)");
+    }
+
+    #[test]
+    fn infix_emission_flattens_only_safe_c_like_shapes() {
+        let mut store = FirStore::new();
+        let (right_add, right_sub, grouped_mul) = {
+            let mut b = FirBuilder::new(&mut store);
+            let a = b.load_var("a", AccessType::Stack, FirType::Float64);
+            let b_value = b.load_var("b", AccessType::Stack, FirType::Float64);
+            let c = b.load_var("c", AccessType::Stack, FirType::Float64);
+            let b_plus_c = b.binop(FirBinOp::Add, b_value, c, FirType::Float64);
+            let right_add = b.binop(FirBinOp::Add, a, b_plus_c, FirType::Float64);
+            let b_minus_c = b.binop(FirBinOp::Sub, b_value, c, FirType::Float64);
+            let right_sub = b.binop(FirBinOp::Sub, a, b_minus_c, FirType::Float64);
+            let a_plus_b = b.binop(FirBinOp::Add, a, b_value, FirType::Float64);
+            let grouped_mul = b.binop(FirBinOp::Mul, a_plus_b, c, FirType::Float64);
+            (right_add, right_sub, grouped_mul)
+        };
+        let options = CmajorOptions::default();
+        assert_eq!(
+            emit_value(&store, &options, right_add).expect("right-add emission"),
+            "a + b + c"
+        );
+        assert_eq!(
+            emit_value(&store, &options, right_sub).expect("right-sub emission"),
+            "a - (b - c)"
+        );
+        assert_eq!(
+            emit_value(&store, &options, grouped_mul).expect("grouped-mul emission"),
+            "(a + b) * c"
+        );
+    }
+
+    #[test]
+    fn deep_associative_addition_has_bounded_rendered_nesting() {
+        const TERMS: usize = 128;
+        let mut store = FirStore::new();
+        let expression = {
+            let mut b = FirBuilder::new(&mut store);
+            let mut expression = b.load_var(
+                format!("v{}", TERMS - 1),
+                AccessType::Stack,
+                FirType::Float64,
+            );
+            for index in (0..TERMS - 1).rev() {
+                let term = b.load_var(format!("v{index}"), AccessType::Stack, FirType::Float64);
+                expression = b.binop(FirBinOp::Add, term, expression, FirType::Float64);
+            }
+            expression
+        };
+        let text = emit_value(&store, &CmajorOptions::default(), expression)
+            .expect("deep addition emission should succeed");
+        assert_eq!(text.matches(" + ").count(), TERMS - 1, "{text}");
+        assert!(!text.contains(['(', ')']), "{text}");
     }
 
     #[test]

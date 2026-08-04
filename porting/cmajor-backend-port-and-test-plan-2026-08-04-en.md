@@ -2,7 +2,7 @@
 
 Status: scalar implementation in qualification. C1-C5 are implemented; C6 has
 a narrow pinned-C++ differential, a stateful Cmajor runtime probe, and a
-125-case impulse gate. Output-event/bargraph runtime remains open. C7-C8 are
+126-case impulse gate. Output-event/bargraph runtime remains open. C7-C8 are
 deferred.
 
 ## 1. Goal and recommended scope
@@ -664,15 +664,16 @@ UI event delivery, bargraph cadence, table runtime values, and the impulse
 corpus remain unchecked below.
 
 The `tests/impulse-tests` lane is now active as the opt-in `make cmajor` target.
-Against a 133-case C++-oracle corpus, 125 supported scalar-double programs pass
-through Cmajor 1.0.3175 and match the canonical traces. The eight exclusions
+Against a 133-case C++-oracle corpus, 126 supported scalar-double programs pass
+through Cmajor 1.0.3175 and match the canonical traces. The seven exclusions
 are auditable in `known.mk`: the shared `subcontainer1` gap; `bs` (`count` is
-invalid in one-sample mode); `sound` (unsupported soundfile); `bells` (the Rust
-emitter fully parenthesizes an associative addition chain instead of applying
-the pinned C++ emitter's precedence rules); and `modulations`, `osci`, `tester`,
-and `tester2` (Rust expands generated oscillator tables into 65,536/65,537-value
-literal initializers instead of preserving the generator and emitting the C++
-backend's compact `SIG0`/`fill..._<size>` form). The passing set includes UI,
+invalid in one-sample mode); `sound` (unsupported soundfile); and `modulations`,
+`osci`, `tester`, and `tester2` (Rust expands generated oscillator tables into
+65,536/65,537-value literal initializers instead of preserving the generator
+and emitting the C++ backend's compact `SIG0`/`fill..._<size>` form). `bells`
+now passes after Cmajor adopted the shared precedence-aware textual-expression
+layout: its generated maximum parenthesis depth fell from 111 to 3 without
+losing required non-associative grouping. The passing set includes UI,
 bargraphs, state, tables, waveforms, and all current upsampling/downsampling
 impulse fixtures.
 
@@ -935,12 +936,12 @@ true:
 - [x] backend lifecycle conformance passes before any golden/impulse enrollment.
 - [x] C++ differential differences are classified and narrow.
 - [x] Cmajor `-O0`/`-O4` numeric parity passes on the recursive stateful probe.
-- [x] the 125-case supported impulse corpus meets its recorded thresholds;
-      eight explicit exclusions remain tracked in `known.mk`.
+- [x] the 126-case supported impulse corpus meets its recorded thresholds;
+      seven explicit exclusions remain tracked in `known.mk`.
 - [x] compiler and codegen README/API documentation is updated.
 - [x] `JOURNAL.md`'s daily target records mapping statuses, reference pins,
       tests, known gaps, and any deferred variants.
-- [ ] full format, clippy, workspace tests, golden checks, and release
+- [x] full format, clippy, workspace tests, golden checks, and release
       compile-budget check pass.
 - [x] a concise `porting/HANDOFF.md` records branch, HEAD, validation, and next
       Cmajor milestone at the end of each substantial implementation session.

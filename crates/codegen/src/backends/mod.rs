@@ -7,6 +7,8 @@
 //!   - internal `faust_api` module (DSP API signature validation)
 //!   - internal `c_family` module (syntax-parameterless emission shared by
 //!     `c`/`cpp`; see `porting/c-family-emitter-core-plan-2026-07-04-en.md`)
+//!   - internal `textual` module (precedence-aware expression layout reusable
+//!     by textual targets)
 //! - Scaffolded backends (planned parity targets):
 //!   - `cranelift`, `cmajor`, `csharp`, `dlang`, `interp`, `jax`, `jsfx`,
 //!     `julia`, `llvm`, `rust`, `sdf3`, `vhdl`, `wasm`.
@@ -24,6 +26,7 @@
 
 pub(crate) mod c_family;
 pub(crate) mod faust_api;
+pub(crate) mod textual;
 
 pub mod asc;
 pub mod c;

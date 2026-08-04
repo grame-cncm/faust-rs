@@ -82,9 +82,6 @@ KNOWN_FAIL_julia :=
 # --- Cmajor backend (full upstream Cmajor impulse adapter) -------------------
 # `control` is excluded by Make.cmajor for parity with the pinned C++ lane; it
 # is not a semantic failure of a supported Cmajor construct.
-# `bells` reaches Cmajor's parser nesting limit because the Rust emitter wraps
-# every binary operation in parentheses. The pinned C++ text emitter applies
-# operator precedence and flattens its associative addition chain instead.
 # `bs` reads the block-size foreign variable `count`, forbidden by Cmajor's
 # intrinsic one-sample contract (FRS-SFIR-0009), like the `-os` backend lanes.
 # `sound` uses soundfiles, which the scalar Cmajor backend rejects explicitly.
@@ -93,7 +90,7 @@ KNOWN_FAIL_julia :=
 # surrounding source, Cmajor reports either excessive nesting or an oversized
 # initializer. The pinned backend preserves the generator and emits a compact
 # `SIG0` subprocessor plus `fill..._<size>` loop.
-KNOWN_FAIL_cmajor := bells bs modulations osci sound tester tester2
+KNOWN_FAIL_cmajor := bs modulations osci sound tester tester2
 
 # --- mode/scheduling variants ------------------------------------------------
 # Variant outdirs inherit their base backend's known failures. Any divergence
