@@ -864,7 +864,6 @@ fn emit_block_with_mode(
     Ok(())
 }
 
-/// Emits one FIR statement into C syntax.
 /// Renders the increment of a non-reverse `ForLoop` in C style
 /// (`i = i + step`; the `cpp` backend spells this `i += step`).
 fn c_for_loop_step(var: &str, step: &str) -> String {
@@ -1005,12 +1004,22 @@ fn emit_type(typ: &FirType, options: &COptions) -> String {
     )
 }
 
+/// Renders a C declarator: `<base type> <name><array suffix>`.
+///
+/// C array bounds are part of the declarator, not the type prefix (`float
+/// buf[8];`, not `float[8] buf;`), so this cannot reuse [`emit_type`]
+/// directly for array-typed declarations; it defers to
+/// [`emit_type_base_and_suffix`] to peel the bracketed suffix off first.
 fn emit_named_type(typ: &FirType, name: &str, options: &COptions) -> String {
     let mut suffix = String::new();
     let base = emit_type_base_and_suffix(typ, options, &mut suffix);
     format!("{base} {name}{suffix}")
 }
 
+/// Recursively splits an array type into its element base type and the
+/// accumulated `[size]...` declarator suffix, appending to `suffix` for each
+/// nested array dimension. Non-array types are rendered directly via
+/// [`emit_type`] with an untouched (typically empty) `suffix`.
 fn emit_type_base_and_suffix(typ: &FirType, options: &COptions, suffix: &mut String) -> String {
     match typ {
         FirType::Array(inner, size) => {
