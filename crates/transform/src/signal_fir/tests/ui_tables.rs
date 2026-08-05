@@ -517,8 +517,9 @@ fn int_waveform_declares_int32_table() {
                 name,
                 elem_type: FirType::Int32,
                 ..
-            } if name.starts_with("iTbl")
+            } if name.starts_with('i')
         )),
-        "integer waveform tables should declare Int32 element type and use the iTbl prefix"
+        "integer generated tables should declare Int32 element type and take the \
+         upstream `i` type prefix (§5.6)"
     );
 }

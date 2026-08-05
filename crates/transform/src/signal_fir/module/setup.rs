@@ -64,6 +64,17 @@ pub(super) struct NameGen {
     pub(super) ftemp_counter: u32,
     /// Monotonic counter for scheduled `iTemp*` sample-rate variables.
     pub(super) itemp_counter: u32,
+    /// Allocation-ordered counter behind generated table names
+    /// (`{i|f}tbl{k}`), shared by integer and real tables.
+    ///
+    /// C++ parity: `getTypedNames` builds `"i"|"f"` + `getFreshID("tbl")`
+    /// (`instructions_compiler.cpp:1040`), so the type letter is a prefix and
+    /// not part of the counter key: an int table followed by a real one yields
+    /// `itbl0` then `ftbl1`, never two zeros.
+    pub(super) tbl_counter: u32,
+    /// Allocation-ordered counter behind literal waveform table names
+    /// (`{i|f}{module}Wave{j}`), likewise shared across element types.
+    pub(super) wave_counter: u32,
 }
 
 /// Read-only placement analysis results, computed once before lowering begins.
@@ -104,6 +115,7 @@ impl<'a> SignalToFirLower<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         arena: &'a TreeArena,
+        module_name: &str,
         ui_program: &'a UiProgram,
         types: &'a HashMap<SigId, SimpleSigType>,
         sig_types: &'a HashMap<SigId, SigType>,
@@ -139,6 +151,7 @@ impl<'a> SignalToFirLower<'a> {
             input_ptr_aliases: HashMap::new(),
             used_protos: arithmetic::UsedPrototypes::default(),
             name_gen: NameGen::default(),
+            module_name: module_name.to_owned(),
             placement,
             rad_reverse: build::RadReverseState::default(),
             bra: bra::BraState::default(),

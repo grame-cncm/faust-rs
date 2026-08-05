@@ -41,7 +41,7 @@ impl<'a> SignalToFirLower<'a> {
             return self.unsupported_node(node, "SIGWAVEFORM cannot be empty");
         }
         let n = i32::try_from(values.len()).unwrap_or(i32::MAX);
-        let idx_name = format!("iWave{}", node.as_u32());
+        let idx_name = format!("{table_name}_idx");
         if self.sections.named_struct_vars.insert(idx_name.clone()) {
             let mut b = FirBuilder::new(&mut self.store);
             let dec = b.declare_var(idx_name.clone(), FirType::Int32, AccessType::Struct, None);
@@ -177,6 +177,35 @@ impl<'a> SignalToFirLower<'a> {
         }
     }
 
+    /// Allocates the next generated-table name, `{i|f}tbl{k}` (§5.6).
+    ///
+    /// One counter serves both element types, matching C++ `getTypedNames`:
+    /// the `i`/`f` letter is a prefix, not part of the counter key. The
+    /// allocation order therefore has to be deterministic, which is what the
+    /// emission-determinism gate covers.
+    ///
+    /// Read-only tables filled by a sub-module additionally carry that
+    /// sub-module's name as a suffix (`ftbl0mydspSIG0`, C++
+    /// `generateStaticTable`'s `vname += tablename`); writable tables never do
+    /// (`generateTable`). The suffix is appended by the caller that knows the
+    /// filling sub-module, so a folded table under `--table-init const` — which
+    /// no sub-module fills — correctly keeps the bare form.
+    pub(super) fn next_table_name(&mut self, elem_ty: &FirType) -> String {
+        let prefix = if *elem_ty == FirType::Int32 { "i" } else { "f" };
+        let k = self.name_gen.tbl_counter;
+        self.name_gen.tbl_counter += 1;
+        format!("{prefix}tbl{k}")
+    }
+
+    /// Allocates the next literal waveform table name,
+    /// `{i|f}{module}Wave{j}` (C++ `declareWaveform`).
+    pub(super) fn next_waveform_name(&mut self, elem_ty: &FirType) -> String {
+        let prefix = if *elem_ty == FirType::Int32 { "i" } else { "f" };
+        let j = self.name_gen.wave_counter;
+        self.name_gen.wave_counter += 1;
+        format!("{prefix}{}Wave{j}", self.module_name)
+    }
+
     /// Ensures one waveform table declaration is emitted exactly once.
     pub(super) fn ensure_waveform_table(
         &mut self,
@@ -191,12 +220,7 @@ impl<'a> SignalToFirLower<'a> {
             lowered_values.push(self.lower_signal(*value)?);
         }
         let elem_ty = self.signal_fir_type(sig)?;
-        let prefix = if elem_ty == FirType::Int32 {
-            "iTbl"
-        } else {
-            "fTbl"
-        };
-        let name = format!("{prefix}{}", sig.as_u32());
+        let name = self.next_waveform_name(&elem_ty);
         let mut b = FirBuilder::new(&mut self.store);
         let decl = b.declare_table(name.clone(), AccessType::Static, elem_ty, &lowered_values);
         self.sections.static_declarations.push(decl);
@@ -220,12 +244,7 @@ impl<'a> SignalToFirLower<'a> {
         let size = self.table_size_from_sig(size_sig)?;
         let elem_ty = self.signal_fir_type(sig)?;
         let generated = self.expand_generator_values(generator_sig, size, &elem_ty)?;
-        let prefix = if elem_ty == FirType::Int32 {
-            "iTbl"
-        } else {
-            "fTbl"
-        };
-        let name = format!("{prefix}{}", sig.as_u32());
+        let name = self.next_table_name(&elem_ty);
         let mut b = FirBuilder::new(&mut self.store);
         let decl = b.declare_table(name.clone(), AccessType::Static, elem_ty, &generated);
         self.sections.static_declarations.push(decl);
@@ -251,12 +270,7 @@ impl<'a> SignalToFirLower<'a> {
         let size = self.table_size_from_sig(size_sig)?;
         let elem_ty = self.signal_fir_type(sig)?;
         let generated = self.expand_generator_values(generator_sig, size, &elem_ty)?;
-        let prefix = if elem_ty == FirType::Int32 {
-            "iTbl"
-        } else {
-            "fTbl"
-        };
-        let name = format!("{prefix}{}", sig.as_u32());
+        let name = self.next_table_name(&elem_ty);
         let mut b = FirBuilder::new(&mut self.store);
         let decl = b.declare_table(
             name.clone(),

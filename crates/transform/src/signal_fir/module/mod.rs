@@ -408,6 +408,9 @@ struct SignalToFirLower<'a> {
     used_protos: arithmetic::UsedPrototypes,
     /// Monotonic counters for all generated variable names.
     name_gen: setup::NameGen,
+    /// DSP class name, used as the container prefix of literal waveform table
+    /// names (`{i|f}{module_name}Wave{j}`, C++ `declareWaveform`).
+    module_name: String,
     /// Read-only placement analysis results (ref counts, boundary set, konst escapes).
     placement: setup::PlacementInfo,
     /// RAD reverse-time scheduling state.

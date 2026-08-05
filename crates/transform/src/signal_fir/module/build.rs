@@ -451,6 +451,7 @@ pub(crate) fn build_module<'a>(
     let placement = setup::PlacementInfo::new(sig_ref_counts, sig_at_boundary, konst_escapes);
     let mut lower = SignalToFirLower::new(
         arena,
+        module_name,
         ui,
         types,
         sig_types,

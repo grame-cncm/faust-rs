@@ -462,6 +462,19 @@ Consequences to plan for:
   S6; there is no reason for scalar and vector output to name the same table
   differently.
 
+**Known residual after the S2 rename (2026-08-05).** Waveform tables now match
+the reference exactly, names and `_idx` companions included
+(`fmydspWave0[3]` / `imydspWave1[3]`). Generated tables match in *form* but not
+always in *counter order*: on `f13_mixed_type_tables` upstream allocates
+`itbl0`(64), `ftbl1`(32), `itbl2`(16) in program order while faust-rs allocates
+`ftbl0`(32), `itbl1`(64), `itbl2`(16). The counter is allocation-ordered in both
+compilers; what differs is the order in which each one first materializes a
+table during lowering. This is stable across runs — the emission-determinism
+requirement (I4) is met — and it is a pure naming residual with no semantic
+effect. Closing it means aligning traversal order with the reference, which is
+a separate concern from this port; S4a should record the residual in its diff
+rather than treat it as a defect.
+
 ### 5.7 No folded fast path in `runtime` mode
 
 Decided 2026-08-05 (option B): in `runtime` mode **every** `SIGGEN` becomes a
