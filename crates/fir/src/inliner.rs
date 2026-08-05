@@ -1190,20 +1190,26 @@ pub(crate) fn flatten_clone_body(
     fun_arg_subst: &HashMap<String, (String, AccessType)>,
     struct_subst: &HashMap<String, (String, AccessType)>,
 ) -> Result<FirId, FirHygienicCloneError> {
-    // The clone reads and writes the same store; a snapshot keeps the borrow
-    // checker satisfied without copying node data.
+    // Source and destination are the same store, which the cloner cannot
+    // borrow twice. Clone into a scratch store, restore the original, then
+    // re-intern the result into it.
+    //
+    // Writing the clone directly into the emptied `store` and then restoring
+    // the source over it is the obvious-looking version and is wrong: it
+    // discards every node just written, leaving the returned id dangling. The
+    // FIR matcher decodes such an id as `Unknown`, which most consumers ignore
+    // rather than reject, so the damage surfaces far from here.
     let src = std::mem::take(store);
-    let mut cloner = HygienicCloner::new(&src, store, state);
+    let mut scratch = FirStore::new();
+    let mut cloner = HygienicCloner::new(&src, &mut scratch, state);
     cloner.fun_arg_subst = fun_arg_subst.clone();
     cloner.struct_subst = struct_subst.clone();
     cloner.push_scope();
     let result = cloner.clone_node(body);
     cloner.pop_scope();
-    let out = result?;
-    // Nothing was removed from the source, so restoring it keeps every id the
-    // caller still holds valid.
+    let cloned = result?;
     *store = src;
-    Ok(out)
+    Ok(store.import_from(&scratch, cloned))
 }
 
 /// Prepares a callee body for future inlining by materializing actual arguments and

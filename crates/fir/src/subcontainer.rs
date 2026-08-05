@@ -600,7 +600,12 @@ impl FlattenReport {
 /// 2. no call to a sub-module entry point survives — an `instanceInit…` or
 ///    `fill…` call after flattening would reference a function that no longer
 ///    exists, which the C backends would only discover at compile time;
-/// 3. no `NewDsp` allocation survives, since the object it allocated is gone.
+/// 3. no `NewDsp` allocation survives, since the object it allocated is gone;
+/// 4. every reachable node still decodes. A dangling id decodes as `Unknown`,
+///    which most consumers skip rather than reject, so it travels silently
+///    until a backend refuses it — which is how the clone-into-emptied-store
+///    bug in `flatten_clone_body` was found, well after these checks first
+///    passed against its output.
 ///
 /// A module that was never flattened (no sub-modules to begin with) is clean
 /// by construction.
@@ -630,6 +635,12 @@ pub fn verify_flattened(store: &FirStore, module: FirId) -> FlattenReport {
     let mut stack = vec![functions];
     while let Some(id) = stack.pop() {
         match match_fir(store, id) {
+            FirMatch::Unknown => {
+                report.problems.push(format!(
+                    "node {} does not decode after flattening; the id is dangling",
+                    id.as_u32()
+                ));
+            }
             FirMatch::SubModule { name, .. } => {
                 report
                     .problems

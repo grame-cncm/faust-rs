@@ -436,6 +436,11 @@ fn emit_dspsetup(
     emit_array_initialisers(store, out, options, view.globals)?;
 
     for name in [
+        // `staticInit` carries the fills of generated tables and must run
+        // before anything reads them. It is the FIR name for what the DSP API
+        // calls `classInit`; codebox has one setup entry point, so both land
+        // here.
+        "staticInit",
         "classInit",
         "instanceResetUserInterface",
         "instanceClear",
