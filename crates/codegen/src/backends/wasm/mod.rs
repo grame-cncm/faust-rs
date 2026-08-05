@@ -308,6 +308,7 @@ pub fn generate_wasm_module_with_context(
         globals,
         functions,
         static_decls,
+        sub_modules,
         ..
     } = match_fir(store, module)
     else {
@@ -316,6 +317,14 @@ pub fn generate_wasm_module_with_context(
             "WASM backend expects a FIR Module root",
         ));
     };
+
+    let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+    if !sub_module_names.is_empty() {
+        return Err(WasmBackendError::new(
+            WasmBackendErrorCode::UnsupportedFirNode,
+            crate::backends::unsupported_sub_modules_message("wasm", &sub_module_names),
+        ));
+    }
 
     let FirMatch::Block(function_items) = match_fir(store, functions) else {
         return Err(WasmBackendError::new(

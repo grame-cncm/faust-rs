@@ -145,6 +145,7 @@ fn module_with_functions(
         globals,
         functions,
         static_decls,
+        &[],
     )
 }
 
@@ -889,6 +890,7 @@ pub fn build_ir_coverage_test_module() -> (FirStore, FirId) {
         globals_block,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }

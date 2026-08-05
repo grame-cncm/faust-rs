@@ -853,7 +853,16 @@ fn build_sample_rate_state_module() -> (FirStore, FirId) {
     let compute = declare_trivial_compute(&mut b);
     let functions = b.block(&[compute]);
     let static_decls = b.block(&[]);
-    let module = b.module(0, 1, "sr_dsp", dsp_struct, globals, functions, static_decls);
+    let module = b.module(
+        0,
+        1,
+        "sr_dsp",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
     (store, module)
 }
 
@@ -1023,6 +1032,7 @@ fn build_soundfile_access_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1090,6 +1100,7 @@ fn build_static_table_ui_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1206,6 +1217,7 @@ fn build_float_compare_result_int32_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     let _ = inputs_ptr;
     let _ = outputs_ptr;
@@ -1278,6 +1290,7 @@ fn build_labeled_passthrough_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1346,6 +1359,7 @@ fn build_local_array_buffer_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1400,6 +1414,7 @@ fn build_instance_clear_state_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1488,6 +1503,7 @@ fn build_struct_state_cast_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1565,6 +1581,7 @@ fn build_native_math_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1631,6 +1648,7 @@ fn build_internal_max_i_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1698,6 +1716,7 @@ fn build_int_abs_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1778,6 +1797,7 @@ fn build_loop_statement_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1801,6 +1821,7 @@ fn build_single_i32_state_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1838,6 +1859,7 @@ fn build_static_table_layout_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1914,6 +1936,7 @@ fn build_static_table_compute_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -2021,6 +2044,7 @@ fn build_struct_table_instance_constants_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -2129,6 +2153,7 @@ fn build_foreign_float_helper_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -2219,6 +2244,7 @@ fn build_generic_foreign_function_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -2323,6 +2349,7 @@ fn build_foreign_global_var_module() -> (FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }

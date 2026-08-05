@@ -2489,8 +2489,16 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
         globals,
         functions,
         static_decls,
+        sub_modules,
     } = match_fir(store, module)
     {
+        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+        if !sub_module_names.is_empty() {
+            return Err(CodegenError::new(
+                CodegenErrorCode::UnsupportedNode,
+                crate::backends::unsupported_sub_modules_message("rust", &sub_module_names),
+            ));
+        }
         Ok(ModuleView {
             dsp_struct,
             globals,

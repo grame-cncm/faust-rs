@@ -240,7 +240,28 @@ pub(crate) fn child_ids(node: &FirMatch) -> Vec<FirId> {
             globals,
             functions,
             static_decls,
+            sub_modules,
             ..
-        } => vec![*dsp_struct, *globals, *functions, *static_decls],
+        } => vec![
+            *dsp_struct,
+            *globals,
+            *functions,
+            *static_decls,
+            *sub_modules,
+        ],
+        FirMatch::SubModule {
+            dsp_struct,
+            static_decls,
+            globals,
+            functions,
+            sub_modules,
+            ..
+        } => vec![
+            *dsp_struct,
+            *static_decls,
+            *globals,
+            *functions,
+            *sub_modules,
+        ],
     }
 }

@@ -47,6 +47,7 @@ fn make_minimal_legacy_like_module() -> (fir::FirStore, fir::FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }

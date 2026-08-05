@@ -618,6 +618,8 @@ impl<'a> FirBuilder<'a> {
     /// C++ parity: `ModuleInst`.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
+    /// Pass `&[]` for `sub_modules` unless the program declares a table filled
+    /// at initialization time; see [`Self::sub_module`].
     pub fn module(
         &mut self,
         num_inputs: usize,
@@ -627,10 +629,12 @@ impl<'a> FirBuilder<'a> {
         globals: FirId,
         functions: FirId,
         static_decls: FirId,
+        sub_modules: &[FirId],
     ) -> FirId {
         let name_id = self.store.arena.symbol(name);
         let num_inputs_id = self.store.arena.int(num_inputs as i64);
         let num_outputs_id = self.store.arena.int(num_outputs as i64);
+        let sub_modules_id = self.block(sub_modules);
         intern_tag(
             &mut self.store.arena,
             FIR_MODULE_TAG,
@@ -642,6 +646,43 @@ impl<'a> FirBuilder<'a> {
                 globals,
                 functions,
                 static_decls,
+                sub_modules_id,
+            ],
+        )
+    }
+
+    /// C++ parity: the `CodeContainer` produced by `signal2Container` for one
+    /// `SIGGEN` table generator.
+    ///
+    /// `functions` must hold exactly `instanceInit{name}(dsp, sample_rate)` and
+    /// `fill{name}(dsp, count, table)`; `elem_type` is the element type of the
+    /// filled table and therefore of the `table` argument. Nested generators go
+    /// in `sub_modules` and are filled before this one runs.
+    #[must_use]
+    pub fn sub_module(
+        &mut self,
+        name: impl Into<String>,
+        elem_type: FirType,
+        dsp_struct: FirId,
+        static_decls: FirId,
+        globals: FirId,
+        functions: FirId,
+        sub_modules: &[FirId],
+    ) -> FirId {
+        let name_id = self.store.arena.symbol(name);
+        let elem_type_id = encode_type(&mut self.store.arena, &elem_type);
+        let sub_modules_id = self.block(sub_modules);
+        intern_tag(
+            &mut self.store.arena,
+            FIR_SUB_MODULE_TAG,
+            &[
+                name_id,
+                elem_type_id,
+                dsp_struct,
+                static_decls,
+                globals,
+                functions,
+                sub_modules_id,
             ],
         )
     }

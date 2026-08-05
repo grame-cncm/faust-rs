@@ -54,6 +54,7 @@ fn scaffolding_drop_sweep_removes_only_pure_block_roots() {
         globals,
         functions,
         static_decls,
+        &[],
     );
 
     let (swept_store, swept_module) = sweep_scaffolding_drop_roots(&store, module);
@@ -142,7 +143,7 @@ fn analyzes_call_graph_sizes_and_candidates() {
     let decls = b.block(&[g_fun, f_fun]);
     let module = {
         let static_decls = b.block(&[]);
-        b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+        b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
     };
 
     let analysis = analyze_fir_inliner(&store, module, &FirInlineOptions::default())
@@ -231,7 +232,7 @@ fn detects_recursive_sccs_and_marks_skipped() {
         let decls = b.block(&[f_fun, g_fun]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
 
@@ -319,7 +320,7 @@ fn candidate_policy_respects_marked_only_size_and_reserved_api() {
         let decls = b.block(&[helper, compute, large]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
 
@@ -425,7 +426,7 @@ fn hygienic_clone_state_avoids_name_collisions_across_repeated_clones() {
         let decls = b.block(&[f]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
     assert_no_checker_errors(&dst, module);
@@ -485,7 +486,7 @@ fn hygienic_clone_renames_loop_vars_and_iterators_consistently() {
         let decls = b.block(&[f]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
     assert_no_checker_errors(&dst, module);
@@ -565,7 +566,7 @@ fn prepare_callee_body_materializes_args_and_substitutes_funargs() {
         let decls = b.block(&[wrapper]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
     assert_no_checker_errors(&dst, module);
@@ -659,7 +660,7 @@ fn inline_module_once_inlines_canonical_helper_calls() {
         let decls = b.block(&[helper, wrapper]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
 
@@ -740,7 +741,7 @@ fn inline_module_once_preserves_soundfile_nodes_and_inlines_soundfile_helper() {
         let decls = b.block(&[helper, build_ui, wrapper]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
 
@@ -808,7 +809,7 @@ fn inline_module_once_skips_non_canonical_return_shape() {
         let decls = b.block(&[helper, wrapper]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
 
@@ -890,7 +891,7 @@ fn function_rewrite_order_is_callees_first_across_scc_dag() {
         let decls = b.block(&[wrapper, helper, leaf]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
 
@@ -968,7 +969,7 @@ fn inline_module_fixpoint_inlines_call_chain_across_multiple_passes() {
         let decls = b.block(&[wrapper, helper, leaf]);
         {
             let static_decls = b.block(&[]);
-            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls)
+            b.module(0, 0, "mydsp", dsp_struct, globals, decls, static_decls, &[])
         }
     };
 

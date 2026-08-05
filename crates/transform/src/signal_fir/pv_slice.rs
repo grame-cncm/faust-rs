@@ -551,6 +551,7 @@ pub fn route_pv_vector_fir(plan: &PvPlan, variant: PvLoopVariant) -> (FirStore, 
         globals_block,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }

@@ -1133,15 +1133,25 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             globals,
             functions,
             static_decls,
-        } => Ok(ModuleView {
-            name,
-            dsp_struct,
-            globals,
-            functions,
-            num_inputs,
-            num_outputs,
-            static_decls,
-        }),
+            sub_modules,
+        } => {
+            let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+            if !sub_module_names.is_empty() {
+                return Err(CodegenError::new(
+                    CodegenErrorCode::UnsupportedNode,
+                    crate::backends::unsupported_sub_modules_message("cpp", &sub_module_names),
+                ));
+            }
+            Ok(ModuleView {
+                name,
+                dsp_struct,
+                globals,
+                functions,
+                num_inputs,
+                num_outputs,
+                static_decls,
+            })
+        }
         _ => Err(CodegenError::new(
             CodegenErrorCode::RootNotModule,
             format!(
@@ -1294,7 +1304,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
 
         let out = generate_cpp_module(&store, module, &CppOptions::default())
             .expect("module root should generate");
@@ -1320,7 +1339,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
         let options = CppOptions {
             super_class_name: Some("faust_dsp".to_owned()),
             ..CppOptions::default()
@@ -1341,7 +1369,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
         let err = generate_cpp_module(&store, module, &CppOptions::default())
             .expect_err("non-block section must fail");
         assert_eq!(err.code(), CodegenErrorCode::InvalidModuleSection);
@@ -1393,7 +1430,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[fun]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
         let out = generate_cpp_module(&store, module, &CppOptions::default())
             .expect("core statement/value slice should generate");
 
@@ -1424,7 +1470,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[build_ui]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
 
         let err = generate_cpp_module(&store, module, &CppOptions::default())
             .expect_err("invalid canonical buildUserInterface signature must fail");
@@ -1517,7 +1572,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[ui, metadata]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
 
         let out =
             generate_cpp_module(&store, module, &CppOptions::default()).expect("UI nodes emit");
@@ -1584,5 +1648,63 @@ mod tests {
         };
         assert_eq!(emit_type(&FirType::Quad, &options), "long double");
         assert_eq!(emit_type(&FirType::FixedPoint, &options), "faustfixed");
+    }
+
+    #[test]
+    /// S1 fail-closed guard: a backend that cannot emit generated-table
+    /// sub-modules must reject the module rather than emit the table
+    /// declaration alone, which would be read as zeros at runtime
+    /// (`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`).
+    fn module_carrying_a_sub_module_is_rejected_until_the_backend_emits_it() {
+        let mut store = FirStore::new();
+        let module = {
+            let mut b = FirBuilder::new(&mut store);
+            let sub = {
+                let init_body = b.block(&[]);
+                let init = b.declare_fun(
+                    "instanceInitmydspSIG0",
+                    FirType::Fun {
+                        args: vec![],
+                        ret: Box::new(FirType::Void),
+                    },
+                    &[],
+                    Some(init_body),
+                    false,
+                );
+                let fill_body = b.block(&[]);
+                let fill = b.declare_fun(
+                    "fillmydspSIG0",
+                    FirType::Fun {
+                        args: vec![],
+                        ret: Box::new(FirType::Void),
+                    },
+                    &[],
+                    Some(fill_body),
+                    false,
+                );
+                let functions = b.block(&[init, fill]);
+                let empty = b.block(&[]);
+                b.sub_module(
+                    "mydspSIG0",
+                    FirType::Float32,
+                    empty,
+                    empty,
+                    empty,
+                    functions,
+                    &[],
+                )
+            };
+            let empty = b.block(&[]);
+            b.module(0, 0, "mydsp", empty, empty, empty, empty, &[sub])
+        };
+
+        let err = generate_cpp_module(&store, module, &CppOptions::default())
+            .expect_err("sub-module carrying module must be rejected");
+        assert_eq!(err.code(), CodegenErrorCode::UnsupportedNode);
+        assert!(
+            err.message().contains("mydspSIG0"),
+            "diagnostic should name the offending sub-module: {}",
+            err.message()
+        );
     }
 }

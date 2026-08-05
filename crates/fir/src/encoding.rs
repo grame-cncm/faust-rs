@@ -83,6 +83,7 @@ pub(crate) const FIR_V_LOAD_SOUNDFILE_BUFFER_TAG: &str = "FIRST_LOADSOUNDFILEBUF
 pub(crate) const FIR_ADD_META_DECLARE_TAG: &str = "FIRST_ADDMETA";
 pub(crate) const FIR_LABEL_TAG: &str = "FIRST_LABEL";
 pub(crate) const FIR_MODULE_TAG: &str = "FIRST_MODULE";
+pub(crate) const FIR_SUB_MODULE_TAG: &str = "FIRST_SUBMODULE";
 pub(crate) const FIR_NAMED_TYPE_TAG: &str = "FIR_NAMEDTYPE";
 pub(crate) const FIR_SWITCH_CASE_TAG: &str = "FIR_SWITCHCASE";
 

@@ -115,7 +115,7 @@ fn canonical_fir_fingerprint_ignores_arena_allocation_history() {
             let store_value = b.store_var("state", AccessType::Struct, value);
             let body = b.block(&[store_value]);
             let empty = b.block(&[]);
-            b.module(0, 0, "fingerprint", empty, empty, body, empty)
+            b.module(0, 0, "fingerprint", empty, empty, body, empty, &[])
         };
         (store, root)
     }
@@ -689,7 +689,7 @@ fn fir_match_children_is_total_over_a_composite_module() {
     let globals = b.block(&[]);
     let functions = b.block(&[body]);
     let static_decls = b.block(&[]);
-    let module = b.module(0, 0, "m", dsp_struct, globals, functions, static_decls);
+    let module = b.module(0, 0, "m", dsp_struct, globals, functions, static_decls, &[]);
 
     let mut pending = vec![module];
     let mut seen = std::collections::BTreeSet::new();

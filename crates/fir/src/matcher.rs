@@ -271,6 +271,38 @@ pub enum FirMatch {
         globals: FirId,
         functions: FirId,
         static_decls: FirId,
+        /// `Block` of [`FirMatch::SubModule`] nodes owned by this module.
+        ///
+        /// Empty for every program without a generated table. A backend that
+        /// has not been migrated to emit sub-modules must fail on a non-empty
+        /// block rather than ignore it: skipping it would emit a table
+        /// declaration that nothing ever fills.
+        sub_modules: FirId,
+    },
+    /// A self-contained 0-input / 1-output program that fills one table at
+    /// initialization time.
+    ///
+    /// C++ parity: the `CodeContainer` built by `signal2Container` for a
+    /// `SIGGEN` table generator, exposing `instanceInit<name>(sample_rate)` and
+    /// `fill<name>(count, table)`. Sub-modules nest: a generator that reads
+    /// another generated table owns that table's sub-module in turn.
+    SubModule {
+        /// Class/struct name, e.g. `mydspSIG0`.
+        name: String,
+        /// Element type of the table this sub-module fills, and therefore of
+        /// the `table` argument of its `fill` function.
+        elem_type: FirType,
+        /// `Block` of `DeclareVar` — the generator's own state.
+        dsp_struct: FirId,
+        /// `Block` of file-scope declarations the generator owns, e.g. the
+        /// literal waveform table behind a waveform payload.
+        static_decls: FirId,
+        /// `Block` of prototypes/global declarations the generator needs.
+        globals: FirId,
+        /// `Block` holding exactly `instanceInit<name>` and `fill<name>`.
+        functions: FirId,
+        /// `Block` of nested [`FirMatch::SubModule`] nodes.
+        sub_modules: FirId,
     },
 }
 
@@ -886,6 +918,34 @@ pub fn match_fir(store: &FirStore, id: FirId) -> FirMatch {
             FirMatch::Label(label)
         }
         (
+            FIR_SUB_MODULE_TAG,
+            [
+                name,
+                elem_type,
+                dsp_struct,
+                static_decls,
+                globals,
+                functions,
+                sub_modules,
+            ],
+        ) => {
+            let Some(name) = decode_symbol(&store.arena, *name) else {
+                return FirMatch::Unknown;
+            };
+            let Some(elem_type) = decode_type(&store.arena, *elem_type) else {
+                return FirMatch::Unknown;
+            };
+            FirMatch::SubModule {
+                name,
+                elem_type,
+                dsp_struct: *dsp_struct,
+                static_decls: *static_decls,
+                globals: *globals,
+                functions: *functions,
+                sub_modules: *sub_modules,
+            }
+        }
+        (
             FIR_MODULE_TAG,
             [
                 num_inputs,
@@ -895,6 +955,7 @@ pub fn match_fir(store: &FirStore, id: FirId) -> FirMatch {
                 globals,
                 functions,
                 static_decls,
+                sub_modules,
             ],
         ) => {
             let Some(name) = decode_symbol(&store.arena, *name) else {
@@ -920,6 +981,7 @@ pub fn match_fir(store: &FirStore, id: FirId) -> FirMatch {
                 globals: *globals,
                 functions: *functions,
                 static_decls: *static_decls,
+                sub_modules: *sub_modules,
             }
         }
         _ => FirMatch::Unknown,
@@ -1030,7 +1092,16 @@ pub fn fir_match_children(store: &FirStore, id: FirId) -> Vec<FirId> {
             globals,
             functions,
             static_decls,
+            sub_modules,
             ..
-        } => vec![dsp_struct, globals, functions, static_decls],
+        } => vec![dsp_struct, globals, functions, static_decls, sub_modules],
+        FirMatch::SubModule {
+            dsp_struct,
+            static_decls,
+            globals,
+            functions,
+            sub_modules,
+            ..
+        } => vec![dsp_struct, static_decls, globals, functions, sub_modules],
     }
 }

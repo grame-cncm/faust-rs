@@ -189,6 +189,7 @@ pub fn generate_interp_module<R: real::FbcReal>(
         globals,
         functions,
         static_decls,
+        sub_modules,
     ) = match match_fir(store, module) {
         fir::FirMatch::Module {
             num_inputs,
@@ -198,6 +199,7 @@ pub fn generate_interp_module<R: real::FbcReal>(
             globals,
             functions,
             static_decls,
+            sub_modules,
         } => (
             num_inputs,
             num_outputs,
@@ -206,6 +208,7 @@ pub fn generate_interp_module<R: real::FbcReal>(
             globals,
             functions,
             static_decls,
+            sub_modules,
         ),
         _ => {
             return Err(CodegenError::new(
@@ -214,6 +217,14 @@ pub fn generate_interp_module<R: real::FbcReal>(
             ));
         }
     };
+
+    let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+    if !sub_module_names.is_empty() {
+        return Err(CodegenError::new(
+            CodegenErrorCode::CompilationFailed,
+            crate::backends::unsupported_sub_modules_message("interp", &sub_module_names),
+        ));
+    }
 
     let module_name = options.module_name.clone().unwrap_or(module_name_fir);
 

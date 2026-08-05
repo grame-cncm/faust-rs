@@ -562,8 +562,29 @@ fn child_ids(node: &FirMatch) -> Vec<FirId> {
             globals,
             functions,
             static_decls,
+            sub_modules,
             ..
-        } => vec![*dsp_struct, *globals, *functions, *static_decls],
+        } => vec![
+            *dsp_struct,
+            *globals,
+            *functions,
+            *static_decls,
+            *sub_modules,
+        ],
+        FirMatch::SubModule {
+            dsp_struct,
+            static_decls,
+            globals,
+            functions,
+            sub_modules,
+            ..
+        } => vec![
+            *dsp_struct,
+            *static_decls,
+            *globals,
+            *functions,
+            *sub_modules,
+        ],
     }
 }
 
@@ -1396,6 +1417,7 @@ fn rewrite_module_once(
         globals,
         functions,
         static_decls,
+        sub_modules,
     } = match_fir(src_store, module)
     else {
         return Err(FirInlineRewriteError::Analysis(
@@ -1429,6 +1451,16 @@ fn rewrite_module_once(
         FirFunctionSection::Functions,
     )?;
 
+    // Sub-modules are self-contained programs with their own state and their
+    // own two entry points; nothing in them is a callsite this pass rewrites,
+    // so they are cloned across unchanged rather than walked for inlining.
+    let mut cloned_sub_modules = Vec::new();
+    if let FirMatch::Block(items) = match_fir(src_store, sub_modules) {
+        for item in items {
+            cloned_sub_modules
+                .push(clone_fir_hygienic_with_state(src_store, item, dst_store, state)?.root);
+        }
+    }
     let mut b = FirBuilder::new(dst_store);
     Ok(b.module(
         num_inputs,
@@ -1438,6 +1470,7 @@ fn rewrite_module_once(
         globals,
         functions,
         static_decls,
+        &cloned_sub_modules,
     ))
 }
 
@@ -2188,6 +2221,23 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
         renamed
     }
 
+    /// Clones the *items* of a sub-module block and returns them as a list.
+    ///
+    /// `module`/`sub_module` take the items and intern the enclosing block
+    /// themselves, so cloning the block node directly would nest one block
+    /// inside another and silently break every consumer that expects
+    /// `sub_modules` to decode as a block of `SubModule` nodes.
+    fn clone_sub_modules(&mut self, block: FirId) -> Result<Vec<FirId>, FirHygienicCloneError> {
+        let FirMatch::Block(items) = match_fir(self.src, block) else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            out.push(self.clone_node(item)?);
+        }
+        Ok(out)
+    }
+
     /// Clones one FIR node, recursively renaming locals and remapping parameters as needed.
     fn clone_node(&mut self, id: FirId) -> Result<FirId, FirHygienicCloneError> {
         let node = match_fir(self.src, id);
@@ -2661,11 +2711,13 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
                 globals,
                 functions,
                 static_decls,
+                sub_modules,
             } => {
                 let dsp_struct = self.clone_node(dsp_struct)?;
                 let globals = self.clone_node(globals)?;
                 let functions = self.clone_node(functions)?;
                 let static_decls = self.clone_node(static_decls)?;
+                let sub_modules = self.clone_sub_modules(sub_modules)?;
                 let mut b = FirBuilder::new(self.dst);
                 b.module(
                     num_inputs,
@@ -2675,6 +2727,32 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
                     globals,
                     functions,
                     static_decls,
+                    &sub_modules,
+                )
+            }
+            FirMatch::SubModule {
+                name,
+                elem_type,
+                dsp_struct,
+                static_decls,
+                globals,
+                functions,
+                sub_modules,
+            } => {
+                let dsp_struct = self.clone_node(dsp_struct)?;
+                let static_decls = self.clone_node(static_decls)?;
+                let globals = self.clone_node(globals)?;
+                let functions = self.clone_node(functions)?;
+                let sub_modules = self.clone_sub_modules(sub_modules)?;
+                let mut b = FirBuilder::new(self.dst);
+                b.sub_module(
+                    name,
+                    elem_type,
+                    dsp_struct,
+                    static_decls,
+                    globals,
+                    functions,
+                    &sub_modules,
                 )
             }
         };

@@ -1,7 +1,7 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: specification, ready for phase S0
+Status: S0 and S1 done; S2 (transform producer) is next
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -294,7 +294,7 @@ No new node kind. Required changes:
   `DeclareTable` arm for literal waveform tables.
 - Each non-C-family backend's static-declaration emitter gains the same arm
   (`asc`, `julia`, `rust`, `cmajor`, `codebox`).
-- `fir::checker` gains rule **FIR-T01**: a `DeclareVar(Array)` in `static_decls`
+- `fir::checker` gains rule **FIR-SM01**: a `DeclareVar(Array)` in `static_decls`
   or in `dsp_struct` that is read by `compute` must be written by a fill site
   reachable from `staticInit` or `instanceConstants`.
 
@@ -321,13 +321,13 @@ the same commit; there is no dual-arity matcher.
 
 Checker rules:
 
-- **FIR-T02** — a `SubModule`'s `functions` block contains exactly
+- **FIR-SM02** — a `SubModule`'s `functions` block contains exactly
   `instanceInit<name>(sample_rate)` and `fill<name>(count, table)`, both
   `Void`-returning, and no `compute`; the module I/O arity contract
   (`checker.rs`, `check_compute_io_arity_contract`) does not apply to it.
-- **FIR-T03** — `fill<name>` writes only to its `table` `FunArgs` argument and
+- **FIR-SM03** — `fill<name>` writes only to its `table` `FunArgs` argument and
   to its own state; it never touches the parent struct.
-- **FIR-T04** — sub-module names are unique within a module and stable across
+- **FIR-SM04** — sub-module names are unique within a module and stable across
   two compilations of the same program (emission determinism, as in
   `porting/scalar-emission-determinism-plan-2026-07-20-en.md`).
 
@@ -685,8 +685,8 @@ Following `porting/` methodology, the producer never validates itself.
 
 | # | Invariant | Independent check |
 |---|---|---|
-| I1 | Every uninitialized table read in `compute` is filled before use | `fir::checker` rule FIR-T01, walking lifecycle bodies, independent of `tables.rs` |
-| I2 | `fill<Sub>` writes exactly `size` elements, indices `0..size` | structural checker over the fill loop bounds (FIR-T03) |
+| I1 | Every uninitialized table read in `compute` is filled before use | `fir::checker` rule FIR-SM01, walking lifecycle bodies, independent of `tables.rs` |
+| I2 | `fill<Sub>` writes exactly `size` elements, indices `0..size` | structural checker over the fill loop bounds (FIR-SM03) |
 | I3 | Sub-module state never aliases parent state | name-domain check after flattening, both policies |
 | I4 | Lowering is deterministic, **table names included** | two compilations of the same program produce byte-identical FIR dumps; the gate is extended to assert identical `{i\|f}tbl{k}` assignments, since `k` is now allocation-ordered rather than `SigId`-derived (§5.6) |
 | I5 | `runtime` and `const` agree numerically | differential run in `-double`, where the folded `f64` values and the runtime `f64` computation must match bit-for-bit; in `-single` compare against the C++ reference instead, not against the folded path |
@@ -727,13 +727,32 @@ changed. Three results feed back into this plan:
   static tables and emits **one** filler class, leaving the inner table zero.
   `f08` is a regression guard, not a parity target.
 
-### S1 — FIR model
+### S1 — FIR model — **done 2026-08-05**
 
-`DeclareVar(Array)` in static declarations, `staticInit` function slot,
-`SubModule` node, eighth `Module` field, `FirStore::import_from`, checker rules
-FIR-T01…T04, `dump.rs` and `encoding.rs` support. Gate:
-`cargo test -p fir`, plus a hand-built `SubModule` fixture that the checker
-accepts and four mutated fixtures that it rejects.
+`SubModule` node (`FIRST_SUBMODULE`), eighth `Module` field `sub_modules`,
+`FirStore::import_from` over `TreeArena::clone_subtree_from`, matcher/dump/
+inliner traversal, checker rules FIR-SM01…SM04, and a fail-closed guard in
+every backend decoder. `DeclareVar(Array)` in `static_decls` needed no change:
+`check_globals` already accepts `Static`/`Global` variable declarations.
+
+Gate met: `cargo test --workspace` green; one accepted `SubModule` fixture plus
+four mutated fixtures, each verified to fail when its rule is disabled; one
+backend test proving the fail-closed rejection.
+
+Two corrections to this plan came out of the implementation:
+
+- The rule codes are **FIR-SM01…SM04**, not FIR-T01…T04 as first written:
+  `FIR-T01`–`T04` are already taken by the table-access rules
+  (`checker.rs`, index type, store element type, missing declaration), and
+  `FIR-M06` is already taken too. Reusing them would have made the mutation
+  tests satisfiable by an unrelated diagnostic — which is exactly what the
+  first draft of those tests did before the collision was found.
+- `FirBuilder::module` takes `sub_modules: &[FirId]` rather than a pre-built
+  block id, so the ~100 existing call sites append `&[]` instead of gaining a
+  statement. The clone paths in `fir::inliner` must clone the block's *items*
+  (`clone_sub_modules`), never the block node itself: passing the block would
+  nest a block inside a block and break every consumer that expects
+  `sub_modules` to decode as a block of `SubModule`.
 
 ### S2 — Transform producer
 
@@ -849,7 +868,7 @@ recorded as the expected `const`-mode outcome rather than as failures.
 | Risk | Mitigation |
 |---|---|
 | Numeric drift `f32` runtime fill vs `f64` folded fill | Expected and desired: the runtime fill is the reference behavior. Validate against C++, never against the folded path, in `-single` (I5). |
-| A backend silently ignores a `SubModule` and emits a zero table | Hard per-backend error on unhandled `SubModule`; checker rule FIR-T01 runs before emission. |
+| A backend silently ignores a `SubModule` and emits a zero table | Hard per-backend error on unhandled `SubModule`; checker rule FIR-SM01 runs before emission. |
 | Static tables become non-`const`, losing read-only placement | Matches the reference; document it, and keep literal waveform tables `const` (C7). |
 | Thread safety: `classInit` refilling shared static tables | Same exposure as the reference. Do not add locking; state it in the journal entry. |
 | Regression on nested generators (§2.4) | C5 + I6 + a dedicated fixture; the fallback `--table-init const` keeps the folded behavior available. |
@@ -864,7 +883,9 @@ recorded as the expected `const`-mode outcome rather than as failures.
 
 - [x] S0 baseline artifacts recorded under
       `porting/generated/siggen-table-init-s0/` (2026-08-05)
-- [ ] `SubModule` node, `staticInit`, sized uninitialized tables, checker rules
+- [x] `SubModule` node, sized uninitialized tables, checker rules FIR-SM01…SM04,
+      fail-closed backend guards (2026-08-05); `staticInit` emission lands with
+      its producer in S2
 - [ ] Upstream table naming `{i|f}tbl{k}[{Sub}]` landed as a standalone commit
 - [ ] `build_fill_module` and `module/subcontainer.rs` with recursion
 - [ ] `--table-init runtime|const`, default `runtime`, both modes gated

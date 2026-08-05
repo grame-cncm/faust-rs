@@ -42,6 +42,20 @@ impl FirStore {
         self.arena.len() <= 1
     }
 
+    /// Re-interns one subtree of `src` into this store and returns its local
+    /// handle.
+    ///
+    /// [`FirId`]s are store-local, so a FIR tree built in a separate store —
+    /// for instance a table generator lowered by its own `SignalToFirLower`,
+    /// which owns its [`FirStore`] — must be imported before it can be
+    /// referenced here. Hash-consing, ordered children, repeated-subtree
+    /// sharing and tag identity are all preserved by the underlying arena
+    /// primitive.
+    #[must_use]
+    pub fn import_from(&mut self, src: &Self, root: FirId) -> FirId {
+        self.arena.clone_subtree_from(&src.arena, root)
+    }
+
     /// Returns the value type when `id` points to a value node.
     #[must_use]
     pub fn value_type(&self, id: FirId) -> Option<FirType> {

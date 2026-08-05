@@ -1160,14 +1160,24 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             dsp_struct,
             globals,
             functions,
+            sub_modules,
             ..
-        } => Ok(ModuleView {
-            dsp_struct,
-            globals,
-            functions,
-            num_inputs,
-            num_outputs,
-        }),
+        } => {
+            let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+            if !sub_module_names.is_empty() {
+                return Err(CodegenError::new(
+                    CodegenErrorCode::Unsupported,
+                    crate::backends::unsupported_sub_modules_message("codebox", &sub_module_names),
+                ));
+            }
+            Ok(ModuleView {
+                dsp_struct,
+                globals,
+                functions,
+                num_inputs,
+                num_outputs,
+            })
+        }
         other => Err(CodegenError::new(
             CodegenErrorCode::RootNotModule,
             format!("expected FIR module root, got {other:?}"),

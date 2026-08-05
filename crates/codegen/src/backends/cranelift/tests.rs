@@ -150,7 +150,16 @@ fn build_instance_constants_test_module() -> (fir::FirStore, FirId) {
     );
 
     let functions = b.block(&[instance_constants, compute]);
-    let module = b.module(0, 1, "mydsp", dsp_struct, globals, functions, static_decls);
+    let module = b.module(
+        0,
+        1,
+        "mydsp",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
     (store, module)
 }
 
@@ -218,6 +227,7 @@ fn build_subset_gap_fun_call_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -286,6 +296,7 @@ fn build_subset_supported_foreign_fun_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -354,6 +365,7 @@ fn build_loop_local_declare_var_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -460,6 +472,7 @@ fn build_cross_block_local_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -533,6 +546,7 @@ fn compile_module_coerces_retyped_local_assignment() {
         globals,
         functions,
         static_decls,
+        &[],
     );
     let options = CraneliftOptions {
         fail_on_subset_gap: true,
@@ -640,6 +654,7 @@ fn build_subset_custom_foreign_fun_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -734,6 +749,7 @@ fn build_subset_global_scalar_load_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -832,6 +848,7 @@ fn build_subset_lowerable_compute_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -895,6 +912,7 @@ fn build_select2_mixed_bool_int_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -984,6 +1002,7 @@ fn build_stack_input_load_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -1069,6 +1088,7 @@ fn build_math_intrinsics_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -1149,6 +1169,7 @@ fn build_label_and_uninitialized_stack_subset_module() -> (fir::FirStore, FirId)
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -1238,6 +1259,7 @@ fn build_switch_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1319,6 +1341,7 @@ fn build_if_control_neg_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -1404,6 +1427,7 @@ fn build_for_while_local_store_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -1481,6 +1505,7 @@ fn build_for_loop_declared_init_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -1567,6 +1592,7 @@ fn build_global_table_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1645,6 +1671,7 @@ fn build_struct_array_var_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -1713,6 +1740,7 @@ fn build_stack_local_array_buffer_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -1784,6 +1812,7 @@ fn build_int32_and_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         static_decls,
+        &[],
     );
     (store, module)
 }
@@ -1920,6 +1949,7 @@ fn build_globals_with_helper_prototype_subset_module() -> (fir::FirStore, FirId)
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -2005,6 +2035,7 @@ fn build_shift_array_var_struct_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -2072,6 +2103,7 @@ fn build_int_to_float_cast_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }
@@ -2148,6 +2180,7 @@ fn build_float_to_int_cast_subset_module() -> (fir::FirStore, FirId) {
         globals,
         functions,
         sd,
+        &[],
     );
     (store, module)
 }

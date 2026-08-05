@@ -211,6 +211,8 @@ pub(super) fn assemble_module(
         globals,
         functions,
         static_declarations,
+        // The checked vector path folds its table generators; migrating it is S6.
+        &[],
     ))
 }
 pub(super) fn sample_loop_for_statements(store: &mut FirStore, statements: &[FirId]) -> FirId {

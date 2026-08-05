@@ -59,7 +59,7 @@ fn make_valid_module(store: &mut FirStore) -> FirId {
     let functions = make_full_functions(&mut b);
     {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     }
 }
 
@@ -73,7 +73,7 @@ fn module_with_fun(store: &mut FirStore, fun_id: FirId) -> FirId {
     let functions = b.block(&[fun_id]);
     {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     }
 }
 
@@ -104,7 +104,7 @@ fn m02_bad_dsp_struct_not_block() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", bad_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", bad_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(report.diagnostics.iter().any(|d| d.code == "FIR-M02"));
@@ -119,7 +119,7 @@ fn m02_bad_dsp_struct_non_struct_type() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", bad_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", bad_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(report.diagnostics.iter().any(|d| d.code == "FIR-M02"));
@@ -134,7 +134,7 @@ fn m03_globals_not_block() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, bad_globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, bad_globals, functions, sd, &[])
     };
     assert!(
         verify_fir_module(&store, module_id)
@@ -153,7 +153,7 @@ fn m04_declarations_not_block() {
     let bad_decls = b.int32(0);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, bad_decls, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, bad_decls, sd, &[])
     };
     assert!(
         verify_fir_module(&store, module_id)
@@ -173,7 +173,7 @@ fn m05_non_declarefun_in_declarations() {
     let functions = b.block(&[intruder]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     assert!(
         verify_fir_module(&store, module_id)
@@ -194,7 +194,7 @@ fn m06_duplicate_function_name() {
     let functions = b.block(&[f1, f2]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(!report.has_errors());
@@ -210,7 +210,7 @@ fn m07_missing_api_function() {
     let functions = make_empty_block(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(!report.has_errors());
@@ -234,7 +234,7 @@ fn s03_void_struct_field() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", bad_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", bad_struct, globals, functions, sd, &[])
     };
     assert!(
         verify_fir_module(&store, module_id)
@@ -259,7 +259,7 @@ fn s04_zero_size_array_field() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", bad_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", bad_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(!report.has_errors());
@@ -278,7 +278,7 @@ fn struct_fields_registered_in_symbols() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let (_report, symbols) = verify_module_structure(&store, module_id);
     assert_eq!(symbols.struct_name.as_deref(), Some("dsp"));
@@ -297,7 +297,7 @@ fn s01_struct_field_wrong_access() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(report.has_errors());
@@ -318,7 +318,7 @@ fn s02_duplicate_struct_field_name() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(report.has_errors());
@@ -338,7 +338,7 @@ fn g01_non_declarevar_in_globals() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     assert!(
         verify_fir_module(&store, module_id)
@@ -358,7 +358,7 @@ fn g02_wrong_access_type_in_globals() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     assert!(
         verify_fir_module(&store, module_id)
@@ -379,7 +379,7 @@ fn g03_duplicate_global_name() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     assert!(
         verify_fir_module(&store, module_id)
@@ -399,7 +399,7 @@ fn globals_registered_in_symbols() {
     let functions = make_full_functions(&mut b);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let (_report, symbols) = verify_module_structure(&store, module_id);
     assert!(symbols.globals.contains_key("gRate"));
@@ -649,7 +649,7 @@ fn module_with_body(store: &mut FirStore, stmts: &[FirId]) -> FirId {
     let functions = b.block(&[fun]);
     {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     }
 }
 
@@ -670,7 +670,7 @@ fn module_with_struct_and_body(store: &mut FirStore, dsp_struct: FirId, stmts: &
     let functions = b.block(&[fun]);
     {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     }
 }
 
@@ -688,7 +688,7 @@ fn module_with_int_body(store: &mut FirStore, stmts: &[FirId]) -> FirId {
     let functions = b.block(&[fun]);
     {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     }
 }
 
@@ -957,7 +957,7 @@ fn global_load_is_valid() {
     let functions = b.block(&[fun]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(
@@ -1364,7 +1364,7 @@ fn fc02_fc03_call_arity_and_arg_type_mismatch() {
     let functions = b.block(&[callee, caller]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(
@@ -1485,7 +1485,7 @@ fn v01_storevar_rejects_void_expression_value() {
     let functions = b.block(&[callee, caller]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
 
     let report = verify_fir_module(&store, module_id);
@@ -1521,7 +1521,7 @@ fn v01_return_rejects_void_expression_value() {
     let functions = b.block(&[callee, caller]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
 
     let report = verify_fir_module(&store, module_id);
@@ -1558,7 +1558,7 @@ fn v01_value_array_rejects_void_elements() {
     let functions = b.block(&[callee, caller]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
 
     let report = verify_fir_module(&store, module_id);
@@ -1601,7 +1601,7 @@ fn ma03_and_ma04_math_call_warnings() {
     let functions = b.block(&[sin_decl, fabs_decl, caller]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(
@@ -1635,7 +1635,7 @@ fn m08_compute_input_index_out_of_module_arity() {
     let functions = b.block(&[compute]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 1, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 1, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(
@@ -1665,7 +1665,7 @@ fn m09_compute_output_index_out_of_module_arity() {
     let functions = b.block(&[compute]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(1, 1, "dsp", dsp_struct, globals, functions, sd)
+        b.module(1, 1, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(
@@ -1726,7 +1726,7 @@ fn lc01_instance_constants_reads_clear_only_field() {
     let functions = b.block(&[instance_constants, instance_clear]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
 
     let report = verify_fir_module(&store, module_id);
@@ -1790,7 +1790,7 @@ fn lc01_no_warn_when_field_initialized_in_instance_constants() {
     let functions = b.block(&[instance_constants, instance_clear]);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
 
     let report = verify_fir_module(&store, module_id);
@@ -1878,7 +1878,7 @@ fn f08_frame_with_empty_compute_is_clean() {
     let functions = make_functions_with_frame(&mut b, compute_body, frame_body);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(!report.diagnostics.iter().any(|d| d.code == "FIR-F08"));
@@ -1900,7 +1900,7 @@ fn f08_frame_with_nonempty_compute_is_flagged() {
     let functions = make_functions_with_frame(&mut b, compute_body, frame_body);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(report.diagnostics.iter().any(|d| d.code == "FIR-F08"));
@@ -1921,8 +1921,330 @@ fn f09_frame_referencing_count_is_flagged() {
     let functions = make_functions_with_frame(&mut b, compute_body, frame_body);
     let module_id = {
         let sd = b.block(&[]);
-        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd)
+        b.module(0, 0, "dsp", dsp_struct, globals, functions, sd, &[])
     };
     let report = verify_fir_module(&store, module_id);
     assert!(report.diagnostics.iter().any(|d| d.code == "FIR-F09"));
+}
+
+// ─── Generated-table sub-modules (FIR-SM01…T04) ───────────────────────────────
+//
+// Fixtures for `porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`
+// phase S1. One well-formed module is accepted; each mutation below breaks
+// exactly one rule and must be rejected. The mutations are the point: a checker
+// that only ever sees valid input proves nothing.
+
+/// Builds `fill{name}(dsp, count, table)` writing `table[i]` once.
+fn make_fill_fun(b: &mut FirBuilder<'_>, name: &str, elem: FirType, table_arg: &str) -> FirId {
+    let args = vec![
+        NamedType {
+            name: "dsp".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        },
+        NamedType {
+            name: "count".to_string(),
+            typ: FirType::Int32,
+        },
+        NamedType {
+            name: table_arg.to_string(),
+            typ: FirType::Ptr(Box::new(elem.clone())),
+        },
+    ];
+    let body = {
+        let idx = b.int32(0);
+        let value = b.float32(0.5);
+        let store = b.store_table(table_arg, AccessType::FunArgs, idx, value);
+        b.block(&[store])
+    };
+    let typ = FirType::Fun {
+        args: args.iter().map(|a| a.typ.clone()).collect(),
+        ret: Box::new(FirType::Void),
+    };
+    b.declare_fun(format!("fill{name}"), typ, &args, Some(body), false)
+}
+
+/// Builds `instanceInit{name}(dsp, sample_rate)`.
+fn make_sub_init_fun(b: &mut FirBuilder<'_>, name: &str) -> FirId {
+    let args = vec![
+        NamedType {
+            name: "dsp".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        },
+        NamedType {
+            name: "sample_rate".to_string(),
+            typ: FirType::Int32,
+        },
+    ];
+    let body = b.block(&[]);
+    let typ = FirType::Fun {
+        args: args.iter().map(|a| a.typ.clone()).collect(),
+        ret: Box::new(FirType::Void),
+    };
+    b.declare_fun(format!("instanceInit{name}"), typ, &args, Some(body), false)
+}
+
+/// Builds a well-formed sub-module named `name` filling a table of `elem`.
+fn make_sub_module(b: &mut FirBuilder<'_>, name: &str, elem: FirType) -> FirId {
+    let init = make_sub_init_fun(b, name);
+    let fill = make_fill_fun(b, name, elem.clone(), "table");
+    let functions = b.block(&[init, fill]);
+    let dsp_struct = b.block(&[]);
+    let static_decls = b.block(&[]);
+    let globals = b.block(&[]);
+    b.sub_module(
+        name,
+        elem,
+        dsp_struct,
+        static_decls,
+        globals,
+        functions,
+        &[],
+    )
+}
+
+/// Builds `staticInit(dsp, sample_rate)` calling `fill{sub}(…, <table>)`.
+fn make_static_init_fun(b: &mut FirBuilder<'_>, sub: &str, table: &str) -> FirId {
+    let args = vec![
+        NamedType {
+            name: "dsp".to_string(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        },
+        NamedType {
+            name: "sample_rate".to_string(),
+            typ: FirType::Int32,
+        },
+    ];
+    let body = {
+        let count = b.int32(4);
+        let table_ref = b.load_var(
+            table,
+            AccessType::Static,
+            FirType::Array(Box::new(FirType::Float32), 4),
+        );
+        let call = b.fun_call(format!("fill{sub}"), &[count, table_ref], FirType::Void);
+        let dropped = b.drop_(call);
+        b.block(&[dropped])
+    };
+    let typ = FirType::Fun {
+        args: args.iter().map(|a| a.typ.clone()).collect(),
+        ret: Box::new(FirType::Void),
+    };
+    b.declare_fun("staticInit", typ, &args, Some(body), false)
+}
+
+/// Builds a `compute` whose body reads `table[0]`.
+fn make_compute_reading_table(b: &mut FirBuilder<'_>, table: &str) -> FirId {
+    let params = vec![
+        FirType::Ptr(Box::new(FirType::Obj)),
+        FirType::Int32,
+        FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+    ];
+    let args: Vec<NamedType> = ["dsp", "count", "inputs", "outputs"]
+        .iter()
+        .zip(params.iter())
+        .map(|(n, t)| NamedType {
+            name: (*n).to_string(),
+            typ: t.clone(),
+        })
+        .collect();
+    let body = {
+        let idx = b.int32(0);
+        let read = b.load_table(table, AccessType::Static, idx, FirType::Float32);
+        let decl = b.declare_var("v", FirType::Float32, AccessType::Stack, Some(read));
+        b.block(&[decl])
+    };
+    let typ = FirType::Fun {
+        args: params,
+        ret: Box::new(FirType::Void),
+    };
+    b.declare_fun("compute", typ, &args, Some(body), false)
+}
+
+/// Assembles the accepted shape, optionally dropping the fill call so the
+/// declared table is never written.
+fn build_generated_table_module(store: &mut FirStore, with_fill: bool) -> FirId {
+    let mut b = FirBuilder::new(store);
+    let sub = make_sub_module(&mut b, "dspSIG0", FirType::Float32);
+    let table = b.declare_var(
+        "ftbl0dspSIG0",
+        FirType::Array(Box::new(FirType::Float32), 4),
+        AccessType::Static,
+        None,
+    );
+    let static_decls = b.block(&[table]);
+    let compute = make_compute_reading_table(&mut b, "ftbl0dspSIG0");
+    let functions = if with_fill {
+        let static_init = make_static_init_fun(&mut b, "dspSIG0", "ftbl0dspSIG0");
+        b.block(&[static_init, compute])
+    } else {
+        b.block(&[compute])
+    };
+    let dsp_struct = b.block(&[]);
+    let globals = b.block(&[]);
+    b.module(
+        0,
+        0,
+        "dsp",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[sub],
+    )
+}
+
+#[test]
+fn generated_table_module_with_fill_call_is_accepted() {
+    let mut store = FirStore::new();
+    let module_id = build_generated_table_module(&mut store, true);
+    let report = verify_fir_module(&store, module_id);
+    let table_diags: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("FIR-SM"))
+        .collect();
+    assert!(
+        table_diags.is_empty(),
+        "well-formed sub-module rejected: {table_diags:?}"
+    );
+}
+
+#[test]
+fn sm01_table_declared_without_initializer_and_never_filled_is_flagged() {
+    // Mutation: drop the `fill` call from staticInit. The table still exists
+    // and `compute` still reads it, so without this rule the program compiles
+    // and silently reads zeros.
+    let mut store = FirStore::new();
+    let module_id = build_generated_table_module(&mut store, false);
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "FIR-SM01"),
+        "missing fill call was not reported: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn sm02_sub_module_missing_its_fill_entry_point_is_flagged() {
+    // Mutation: a sub-module that declares only `instanceInit`.
+    let mut store = FirStore::new();
+    let module_id = {
+        let mut b = FirBuilder::new(&mut store);
+        let sub = {
+            let init = make_sub_init_fun(&mut b, "dspSIG0");
+            let functions = b.block(&[init]);
+            let dsp_struct = b.block(&[]);
+            let static_decls = b.block(&[]);
+            let globals = b.block(&[]);
+            b.sub_module(
+                "dspSIG0",
+                FirType::Float32,
+                dsp_struct,
+                static_decls,
+                globals,
+                functions,
+                &[],
+            )
+        };
+        let dsp_struct = b.block(&[]);
+        let globals = b.block(&[]);
+        let functions = b.block(&[]);
+        let static_decls = b.block(&[]);
+        b.module(
+            0,
+            0,
+            "dsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[sub],
+        )
+    };
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "FIR-SM02"),
+        "sub-module without a fill function was accepted: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn sm03_fill_writing_a_foreign_argument_table_is_flagged() {
+    // Mutation: the fill body stores through an argument table that is not
+    // `table` — a lowering bug that would corrupt parent state.
+    let mut store = FirStore::new();
+    let module_id = {
+        let mut b = FirBuilder::new(&mut store);
+        let sub = {
+            let init = make_sub_init_fun(&mut b, "dspSIG0");
+            let fill = make_fill_fun(&mut b, "dspSIG0", FirType::Float32, "other");
+            let functions = b.block(&[init, fill]);
+            let dsp_struct = b.block(&[]);
+            let static_decls = b.block(&[]);
+            let globals = b.block(&[]);
+            b.sub_module(
+                "dspSIG0",
+                FirType::Float32,
+                dsp_struct,
+                static_decls,
+                globals,
+                functions,
+                &[],
+            )
+        };
+        let dsp_struct = b.block(&[]);
+        let globals = b.block(&[]);
+        let functions = b.block(&[]);
+        let static_decls = b.block(&[]);
+        b.module(
+            0,
+            0,
+            "dsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[sub],
+        )
+    };
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "FIR-SM03"),
+        "fill writing a foreign table was accepted: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn sm04_duplicate_sub_module_names_are_flagged() {
+    // Mutation: two generators sharing one name, which would collapse them
+    // onto a single filler at emission.
+    let mut store = FirStore::new();
+    let module_id = {
+        let mut b = FirBuilder::new(&mut store);
+        let first = make_sub_module(&mut b, "dspSIG0", FirType::Float32);
+        let second = make_sub_module(&mut b, "dspSIG0", FirType::Int32);
+        let dsp_struct = b.block(&[]);
+        let globals = b.block(&[]);
+        let functions = b.block(&[]);
+        let static_decls = b.block(&[]);
+        b.module(
+            0,
+            0,
+            "dsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[first, second],
+        )
+    };
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "FIR-SM04"),
+        "duplicate sub-module names were accepted: {:?}",
+        report.diagnostics
+    );
 }

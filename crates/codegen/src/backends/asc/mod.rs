@@ -1306,15 +1306,25 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             globals,
             functions,
             static_decls,
-        } => Ok(ModuleView {
-            name,
-            dsp_struct,
-            globals,
-            functions,
-            num_inputs,
-            num_outputs,
-            static_decls,
-        }),
+            sub_modules,
+        } => {
+            let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+            if !sub_module_names.is_empty() {
+                return Err(CodegenError::new(
+                    CodegenErrorCode::UnsupportedNode,
+                    crate::backends::unsupported_sub_modules_message("asc", &sub_module_names),
+                ));
+            }
+            Ok(ModuleView {
+                name,
+                dsp_struct,
+                globals,
+                functions,
+                num_inputs,
+                num_outputs,
+                static_decls,
+            })
+        }
         _ => Err(CodegenError::new(
             CodegenErrorCode::RootNotModule,
             format!(
@@ -1526,7 +1536,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[]);
         let static_decls = b.block(&[]);
-        let module = b.module(1, 2, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            1,
+            2,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
         let out = generate_asc_module(&store, module, &AscOptions::default())
             .expect("module should generate");
         assert!(out.contains("export class mydsp {"));
@@ -1548,7 +1567,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[]);
         let static_decls = b.block(&[]);
-        let module = b.module(1, 1, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            1,
+            1,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
         let out = generate_asc_module(
             &store,
             module,
@@ -1606,7 +1634,16 @@ mod tests {
         );
         let functions = b.block(&[compute]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
         let out = generate_asc_module(&store, module, &AscOptions::default())
             .expect("module should generate");
         assert!(out.contains("let vbuf0: StaticArray<f32> = new StaticArray<f32>(32);"));
@@ -1638,7 +1675,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[fun]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 1, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            1,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
         let out = generate_asc_module(&store, module, &AscOptions::default())
             .expect("module should generate");
         assert!(out.contains("this.fHslider0 = 0.5;"));
@@ -1705,7 +1751,16 @@ mod tests {
             false,
         );
         let functions = b.block(&[compute]);
-        let module = b.module(0, 1, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            1,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
 
         let out = generate_asc_module(&store, module, &AscOptions::default())
             .expect("soundfile access should generate");

@@ -1106,6 +1106,9 @@ pub(crate) fn build_module<'a>(
             globals,
             functions,
             static_decls_block,
+            // Scalar lowering has no table generators yet: the sub-module
+            // producer lands in S2.
+            &[],
         )
     };
 

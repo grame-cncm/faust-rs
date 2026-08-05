@@ -1646,15 +1646,25 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             globals,
             functions,
             static_decls,
+            sub_modules,
             ..
-        } => Ok(ModuleView {
-            dsp_struct,
-            globals,
-            functions,
-            static_decls,
-            num_inputs,
-            num_outputs,
-        }),
+        } => {
+            let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+            if !sub_module_names.is_empty() {
+                return Err(CodegenError::new(
+                    CodegenErrorCode::Unsupported,
+                    crate::backends::unsupported_sub_modules_message("cmajor", &sub_module_names),
+                ));
+            }
+            Ok(ModuleView {
+                dsp_struct,
+                globals,
+                functions,
+                static_decls,
+                num_inputs,
+                num_outputs,
+            })
+        }
         other => Err(CodegenError::new(
             CodegenErrorCode::RootNotModule,
             format!("expected FIR module root, found {other:?}"),
@@ -1685,7 +1695,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[frame]);
         let static_decls = b.block(&[]);
-        let module = b.module(1, 1, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            1,
+            1,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
         (store, module)
     }
 

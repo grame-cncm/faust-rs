@@ -1063,8 +1063,16 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
         globals,
         functions,
         static_decls,
+        sub_modules,
     } = match_fir(store, module)
     {
+        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+        if !sub_module_names.is_empty() {
+            return Err(CodegenError::new(
+                CodegenErrorCode::UnsupportedNode,
+                crate::backends::unsupported_sub_modules_message("c", &sub_module_names),
+            ));
+        }
         Ok(ModuleView {
             name,
             dsp_struct,
@@ -1216,7 +1224,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[metadata]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
 
         let err = generate_c_module(&store, module, &COptions::default())
             .expect_err("invalid canonical metadata signature must fail");
@@ -1295,7 +1312,16 @@ mod tests {
         let globals = b.block(&[]);
         let functions = b.block(&[ui, metadata]);
         let static_decls = b.block(&[]);
-        let module = b.module(0, 0, "mydsp", dsp_struct, globals, functions, static_decls);
+        let module = b.module(
+            0,
+            0,
+            "mydsp",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
 
         let out = generate_c_module(&store, module, &COptions::default())
             .expect("C UI nodes emit in the correct callback family");
