@@ -727,20 +727,7 @@ fn emit_c_api(
     }
 
     for f in declared_functions {
-        if matches!(
-            f.name.as_str(),
-            "metadata"
-                | "instanceConstants"
-                | "instanceResetUserInterface"
-                | "instanceClear"
-                | "buildUserInterface"
-                | "compute"
-                | "control"
-                | "frame"
-                // `staticInit` is rendered as the body of `classInit`, not as
-                // a function of its own.
-                | "staticInit"
-        ) {
+        if crate::backends::is_lifecycle_function(&f.name) {
             continue;
         }
         if names.contains(&f.name.as_str()) {

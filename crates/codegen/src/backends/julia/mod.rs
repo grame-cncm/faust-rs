@@ -694,17 +694,7 @@ fn emit_julia_api(
     }
 
     for f in declared_functions {
-        if matches!(
-            f.name.as_str(),
-            "metadata"
-                | "instanceConstants"
-                | "instanceResetUserInterface"
-                | "instanceClear"
-                | "buildUserInterface"
-                | "compute"
-                // `staticInit` is rendered as the body of `classInit!`.
-                | "staticInit"
-        ) {
+        if crate::backends::is_lifecycle_function(&f.name) {
             continue;
         }
         emit_helper_function(store, out, f)?;

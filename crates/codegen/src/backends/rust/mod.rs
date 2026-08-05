@@ -754,22 +754,7 @@ fn emit_rust_api(
     emit_faust_dsp_trait_impl(out, class_name, has_execution_entry_point);
 
     for f in declared_functions {
-        if matches!(
-            f.name.as_str(),
-            "metadata"
-                | "instanceConstants"
-                | "instanceResetUserInterface"
-                | "instanceClear"
-                | "buildUserInterface"
-                | "compute"
-                | "control"
-                | "frame"
-                // `staticInit` is rendered as the body of `class_init`, where
-                // the write guards it needs are in scope; emitting it again as
-                // a free function would reference guards that do not exist
-                // there.
-                | "staticInit"
-        ) {
+        if crate::backends::is_lifecycle_function(&f.name) {
             continue;
         }
         let _ = writeln!(out);

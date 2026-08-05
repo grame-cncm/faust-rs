@@ -55,6 +55,39 @@ pub(crate) fn sub_module_names(store: &FirStore, sub_modules: FirId) -> Vec<Stri
         .collect()
 }
 
+/// FIR function names a backend must never emit as an ordinary function.
+///
+/// Each of these is part of the DSP lifecycle and is rendered into the
+/// backend's own surface: `staticInit` becomes the body of `classInit`
+/// (`dspsetup` in codebox), `compute` becomes the target's compute entry point,
+/// and so on. A backend that walks its `functions` block and emits whatever it
+/// does not recognize will emit these a second time — producing a duplicate
+/// definition that, for `staticInit`, references locals that only exist inside
+/// `classInit`.
+///
+/// That mistake was made independently in the `c`, `rust` and `julia` backends
+/// before this list existed. `is_lifecycle_function` is the single place to
+/// consult; `backends::emits_no_lifecycle_leak` in the compiler test suite is
+/// what catches a backend that forgets to.
+const LIFECYCLE_FUNCTIONS: &[&str] = &[
+    "staticInit",
+    "metadata",
+    "instanceConstants",
+    "instanceResetUserInterface",
+    "instanceClear",
+    "buildUserInterface",
+    "compute",
+    "control",
+    "frame",
+];
+
+/// Returns `true` when `name` is a lifecycle function the backend renders into
+/// its own surface rather than emitting verbatim.
+#[must_use]
+pub fn is_lifecycle_function(name: &str) -> bool {
+    LIFECYCLE_FUNCTIONS.contains(&name)
+}
+
 /// Message body shared by every backend's "sub-modules not supported yet"
 /// rejection, so the diagnostics stay uniform while each backend keeps its own
 /// stable error code.
