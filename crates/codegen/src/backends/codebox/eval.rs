@@ -281,6 +281,8 @@ impl Program {
         Ok(None)
     }
 
+    /// Executes one statement, returning `Some` when it was (or contained) a
+    /// `return` that should unwind the enclosing [`Self::exec_block`] calls.
     fn exec(
         &mut self,
         stmt: &Stmt,
@@ -389,6 +391,7 @@ impl Program {
         }
     }
 
+    /// Recursively evaluates one expression to a runtime [`Value`].
     fn eval(&mut self, expr: &Expr, locals: &HashMap<String, Value>) -> Result<Value, EvalError> {
         match expr {
             Expr::Num(v) => Ok(Value::Num(*v)),

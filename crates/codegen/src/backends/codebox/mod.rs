@@ -328,6 +328,7 @@ fn widget_prefix_button(typ: fir::ButtonType) -> &'static str {
     }
 }
 
+/// The `RB_*` prefix `rnbo-dsp.h` matches on, per widget kind.
 fn widget_prefix_slider(typ: fir::SliderType) -> &'static str {
     match typ {
         fir::SliderType::Horizontal => "RB_hslider_",
