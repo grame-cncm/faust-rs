@@ -184,6 +184,25 @@ impl WasmMemoryLayout {
                         )
                     })?;
                 }
+                // A runtime-filled generated table reaches the layout as a
+                // `Static` array declaration. That is not an invariant
+                // violation, it is a backend that has not been migrated yet
+                // (plan phase S5), so it gets the deliberate refusal rather
+                // than the internal-error diagnostic.
+                FirMatch::DeclareVar {
+                    name,
+                    typ: FirType::Array(..),
+                    access: AccessType::Static,
+                    ..
+                } => {
+                    return Err(WasmBackendError::new(
+                        WasmBackendErrorCode::UnsupportedFirNode,
+                        crate::backends::unsupported_sub_modules_message(
+                            "wasm",
+                            std::slice::from_ref(&name),
+                        ),
+                    ));
+                }
                 FirMatch::DeclareVar { access, .. }
                     if access != AccessType::Struct && access != AccessType::Global =>
                 {

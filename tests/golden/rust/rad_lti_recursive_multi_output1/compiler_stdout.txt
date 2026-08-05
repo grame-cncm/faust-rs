@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=rad_lti_recursive_multi_output1.dsp
+bytes=402
+lines=15
+fnv1a64=bb5671b229280916

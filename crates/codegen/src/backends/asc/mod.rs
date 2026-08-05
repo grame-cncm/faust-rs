@@ -131,6 +131,7 @@ struct ModuleView {
     num_inputs: usize,
     num_outputs: usize,
     static_decls: FirId,
+    sub_modules: FirId,
 }
 
 /// Borrowed function declaration view used while stitching the class body.
@@ -183,6 +184,7 @@ pub fn generate_asc_module(
     // are emitted as module-level `export function`s before the class.
     emit_toplevel_functions(store, &mut out, options, &class_name, module.globals)?;
 
+    emit_sub_modules(store, &mut out, options, &class_name, module.sub_modules)?;
     let _ = writeln!(out, "export class {class_name} {{");
 
     // ---- fields: DSP struct state + globals (non-function) ----
@@ -393,6 +395,9 @@ fn emit_methods_canonical_order(
     }
 
     let _ = writeln!(out, "    static classInit(sample_rate: i32): void {{");
+    if let Some(body) = declared_function_body(store, module.functions, "staticInit") {
+        emit_block(store, out, options, class_name, body, 2)?;
+    }
     let _ = writeln!(out, "    }}");
 
     for name in [
@@ -615,6 +620,14 @@ fn emit_stmt(
                     let _ = write!(out, "{tab}");
                 }
                 let _ = write!(out, "{}", emit_member_decl(&typ, &name, options));
+            } else if matches!(
+                init.map(|id| match_fir(store, id)),
+                Some(FirMatch::NewDsp { .. })
+            ) {
+                // A sub-container handle is typed by the DSP class: the
+                // trampolines take `dsp: mydsp` and cast internally, so the
+                // generic pointer spelling would not match them.
+                let _ = write!(out, "{tab}let {name}: {class_name}");
             } else {
                 let _ = write!(out, "{tab}let {}: {}", name, emit_type(&typ, options));
             }
@@ -1075,7 +1088,9 @@ fn emit_value(
             ))
         }
         FirMatch::NullValue { .. } => Ok("null".to_owned()),
-        FirMatch::NewDsp { name, .. } => Ok(format!("new {name}()")),
+        // The generated constructor, not a bare `new`: it wraps the cast the
+        // typed-reference model needs.
+        FirMatch::NewDsp { name, .. } => Ok(format!("new{name}()")),
         _ => Err(unsupported_node("value", value, store)),
     }
 }
@@ -1249,6 +1264,162 @@ fn emit_type(typ: &FirType, options: &AscOptions) -> String {
 }
 
 /// Emits `DeclareTable(Static)` nodes as `static` class-member StaticArrays.
+/// Emits every generated-table sub-container as a class plus its trampolines.
+///
+/// AssemblyScript is object-oriented like C++, so the generator is a class with
+/// its two methods. What differs is the call shape: the reference wraps each
+/// entry point in a free function taking `dsp: mydsp` and casting with
+/// `changetype`, because AssemblyScript's typed references do not implicitly
+/// convert. Those trampolines take the receiver as their first argument, which
+/// is exactly the FIR call shape — so unlike `cpp` nothing has to be stripped.
+///
+/// `delete<Sub>` is emitted empty: AssemblyScript is garbage-collected and the
+/// reference keeps the function only to preserve the call surface.
+fn emit_sub_modules(
+    store: &FirStore,
+    out: &mut String,
+    options: &AscOptions,
+    class_name: &str,
+    sub_modules: FirId,
+) -> Result<(), CodegenError> {
+    let FirMatch::Block(items) = match_fir(store, sub_modules) else {
+        return Ok(());
+    };
+    for item in items {
+        let FirMatch::SubModule {
+            name,
+            elem_type,
+            dsp_struct,
+            functions,
+            sub_modules: nested,
+            ..
+        } = match_fir(store, item)
+        else {
+            return Err(CodegenError::new(
+                CodegenErrorCode::InvalidModuleSection,
+                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
+            ));
+        };
+
+        emit_sub_modules(store, out, options, class_name, nested)?;
+
+        let _ = writeln!(out, "class {name} {{");
+        if let FirMatch::Block(fields) = match_fir(store, dsp_struct) {
+            for field in fields {
+                if let FirMatch::DeclareVar { name, typ, .. } = match_fir(store, field) {
+                    match &typ {
+                        FirType::Array(elem, size) => {
+                            let ty = emit_type(elem, options);
+                            let _ = writeln!(
+                                out,
+                                "    {name}: StaticArray<{ty}> = new StaticArray<{ty}>({size});"
+                            );
+                        }
+                        other => {
+                            let _ = writeln!(out, "    {name}: {};", emit_type(other, options));
+                        }
+                    }
+                }
+            }
+        }
+        let _ = writeln!(out);
+        let _ = writeln!(out, "    getNumInputs{name}(): i32 {{");
+        let _ = writeln!(out, "        return 0;");
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "    getNumOutputs{name}(): i32 {{");
+        let _ = writeln!(out, "        return 1;");
+        let _ = writeln!(out, "    }}");
+
+        let table_ty = emit_type(&elem_type, options);
+        if let FirMatch::Block(fns) = match_fir(store, functions) {
+            for f in fns {
+                let FirMatch::DeclareFun {
+                    name: fun_name,
+                    args,
+                    body: Some(body),
+                    ..
+                } = match_fir(store, f)
+                else {
+                    continue;
+                };
+                // The receiver is the method's own `this`; the rest keep their
+                // FIR names, with `table` typed as the filled array.
+                let params: Vec<String> = args
+                    .iter()
+                    .skip(1)
+                    .map(|arg| match &arg.typ {
+                        FirType::Ptr(_) => {
+                            format!("{}: StaticArray<{table_ty}>", arg.name)
+                        }
+                        other => format!("{}: {}", arg.name, emit_type(other, options)),
+                    })
+                    .collect();
+                let _ = writeln!(out, "    {fun_name}({}): void {{", params.join(", "));
+                emit_block(store, out, options, &name, body, 2)?;
+                let _ = writeln!(out, "    }}");
+            }
+        }
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+
+        let _ = writeln!(out, "function new{name}(): {class_name} {{");
+        let _ = writeln!(out, "    return changetype<{class_name}>(new {name}());");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+        let _ = writeln!(out, "function delete{name}(dsp: {class_name}): void {{");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+        if let FirMatch::Block(fns) = match_fir(store, functions) {
+            for f in fns {
+                let FirMatch::DeclareFun {
+                    name: fun_name,
+                    args,
+                    ..
+                } = match_fir(store, f)
+                else {
+                    continue;
+                };
+                let params: Vec<String> = args
+                    .iter()
+                    .skip(1)
+                    .map(|arg| match &arg.typ {
+                        FirType::Ptr(_) => format!("{}: StaticArray<{table_ty}>", arg.name),
+                        other => format!("{}: {}", arg.name, emit_type(other, options)),
+                    })
+                    .collect();
+                let names: Vec<String> = args.iter().skip(1).map(|arg| arg.name.clone()).collect();
+                let _ = writeln!(
+                    out,
+                    "function {fun_name}(dsp: {class_name}{}{}): void {{",
+                    if params.is_empty() { "" } else { ", " },
+                    params.join(", ")
+                );
+                let _ = writeln!(
+                    out,
+                    "    changetype<{name}>(dsp).{fun_name}({});",
+                    names.join(", ")
+                );
+                let _ = writeln!(out, "}}");
+                let _ = writeln!(out);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns the body of the named function declared by a module, if any.
+fn declared_function_body(store: &FirStore, functions: FirId, wanted: &str) -> Option<FirId> {
+    let FirMatch::Block(items) = match_fir(store, functions) else {
+        return None;
+    };
+    items
+        .into_iter()
+        .find_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareFun { name, body, .. } if name == wanted => body,
+            _ => None,
+        })
+}
+
 fn emit_static_tables(
     store: &FirStore,
     out: &mut String,
@@ -1260,6 +1431,23 @@ fn emit_static_tables(
     };
     let mut any = false;
     for stmt in stmts {
+        // A table filled at initialization time is declared with its size and
+        // no data; `classInit` writes it.
+        if let FirMatch::DeclareVar {
+            name,
+            typ: FirType::Array(elem, size),
+            init: None,
+            ..
+        } = match_fir(store, stmt)
+        {
+            let ty = emit_type(&elem, options);
+            let _ = writeln!(
+                out,
+                "    static {name}: StaticArray<{ty}> = new StaticArray<{ty}>({size});"
+            );
+            any = true;
+            continue;
+        }
         if let FirMatch::DeclareTable {
             name,
             elem_type,
@@ -1307,24 +1495,16 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             functions,
             static_decls,
             sub_modules,
-        } => {
-            let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-            if !sub_module_names.is_empty() {
-                return Err(CodegenError::new(
-                    CodegenErrorCode::UnsupportedNode,
-                    crate::backends::unsupported_sub_modules_message("asc", &sub_module_names),
-                ));
-            }
-            Ok(ModuleView {
-                name,
-                dsp_struct,
-                globals,
-                functions,
-                num_inputs,
-                num_outputs,
-                static_decls,
-            })
-        }
+        } => Ok(ModuleView {
+            name,
+            dsp_struct,
+            globals,
+            functions,
+            num_inputs,
+            num_outputs,
+            static_decls,
+            sub_modules,
+        }),
         _ => Err(CodegenError::new(
             CodegenErrorCode::RootNotModule,
             format!(

@@ -91,7 +91,7 @@ pub fn is_lifecycle_function(name: &str) -> bool {
 /// Message body shared by every backend's "sub-modules not supported yet"
 /// rejection, so the diagnostics stay uniform while each backend keeps its own
 /// stable error code.
-pub(crate) fn unsupported_sub_modules_message(backend: &str, names: &[String]) -> String {
+pub fn unsupported_sub_modules_message(backend: &str, names: &[String]) -> String {
     format!(
         "the `{backend}` backend cannot yet emit generated-table sub-modules ({}); \
          compile with `--table-init const` to fold the table at compile time instead",
