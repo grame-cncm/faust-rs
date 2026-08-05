@@ -11,7 +11,9 @@
 //! verification arrives with the evaluator layer.
 
 use codegen::backends::codebox::{CodeboxOptions, CodegenErrorCode, generate_codebox_module};
-use compiler::{Compiler, ComputeMode, ControlRateMode, ProcessingApi, RealType, SignalFirLane};
+use compiler::{
+    Compiler, ComputeMode, ControlRateMode, ProcessingApi, RealType, SignalFirLane, TableInitMode,
+};
 
 /// Compiles one source to codebox, through the lowering the backend expects.
 fn codebox(source_name: &str, source: &str) -> String {
@@ -878,5 +880,92 @@ fn a_literal_waveform_is_declared_and_filled() {
     assert!(
         text.contains("Wave0_cb[0] = 10"),
         "waveform data missing:\n{text}"
+    );
+}
+
+/// The two `--table-init` modes must agree numerically on the same backend.
+///
+/// `const` folds the generator into a literal table at compile time; `runtime`
+/// compiles it into a sub-module that codebox inlines and runs in `dspsetup`.
+/// The table content is the same either way, so the emitted programs must
+/// produce identical output — which is what makes the flattened fill loop
+/// trustworthy rather than merely well-shaped.
+///
+/// This is the mode matrix of
+/// `porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md` §8.2,
+/// applied to the first backend that consumes the flattening pass.
+fn assert_table_init_modes_agree(source_name: &str, source: &str, frames: usize) {
+    let render = |mode: TableInitMode| -> Vec<f64> {
+        let compiler = Compiler::new()
+            .with_real_type(RealType::Float64)
+            .with_control_rate_mode(ControlRateMode::External)
+            .with_processing_api(ProcessingApi::OneSample)
+            .with_table_init_mode(mode);
+        let fir = compiler
+            .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
+            .unwrap_or_else(|e| panic!("{mode:?}: FIR lowering must succeed: {e:?}"));
+        let text = generate_codebox_module(
+            &fir.store,
+            fir.module,
+            &CodeboxOptions {
+                double_precision: true,
+                test_labels: false,
+            },
+        )
+        .unwrap_or_else(|e| panic!("{mode:?}: codebox emission must succeed: {e}"));
+        let mut program = Program::parse(&text)
+            .unwrap_or_else(|e| panic!("{mode:?}: emitted codebox must parse: {e}\n{text}"));
+        program.dspsetup(44100.0).expect("dspsetup must run");
+
+        let arity = program.compute_arity();
+        let mut out = Vec::with_capacity(frames);
+        for frame in 0..frames {
+            let sample = if frame == 0 { 1.0f64 } else { 0.0f64 };
+            let inputs: Vec<f64> = vec![sample; arity];
+            let outputs = program
+                .compute(&[], &inputs)
+                .unwrap_or_else(|e| panic!("{mode:?}: compute must run: {e}"));
+            out.extend(outputs);
+        }
+        out
+    };
+
+    let folded = render(TableInitMode::Const);
+    let filled = render(TableInitMode::Runtime);
+    assert_eq!(
+        folded.len(),
+        filled.len(),
+        "the two modes produced different output lengths"
+    );
+    for (frame, (a, b)) in folded.iter().zip(filled.iter()).enumerate() {
+        assert!(
+            (a - b).abs() < 1e-12,
+            "frame {frame}: const mode gave {a}, runtime mode gave {b}"
+        );
+    }
+    // A table of zeros would satisfy the comparison vacuously.
+    assert!(
+        folded.iter().any(|v| *v != 0.0),
+        "the fixture must produce a non-zero signal for the comparison to mean anything"
+    );
+}
+
+#[test]
+fn table_init_modes_agree_on_a_constant_generator() {
+    assert_table_init_modes_agree(
+        "tblc.dsp",
+        "t = (+(1) ~ _) - 1;\nprocess = rdtable(8, 0.25, int(t % 8));",
+        32,
+    );
+}
+
+#[test]
+fn table_init_modes_agree_on_a_recursive_generator() {
+    // The generator's carrier is read one sample late — the shape whose update
+    // used to be dropped, producing an all-zero table.
+    assert_table_init_modes_agree(
+        "tblr.dsp",
+        "t = (+(1) ~ _) - 1;\nprocess = rdtable(8, int(t * 2), int(t % 8));",
+        32,
     );
 }

@@ -1,7 +1,7 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S4a done; S4b next (`codebox` unblocked, `rust`/`julia`/`asc`/`cmajor`
+Status: S0-S4a done; S4b in progress (`codebox` done, `rust`/`julia`/`asc`/`cmajor`
 not started)
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
@@ -879,9 +879,13 @@ Split in two, because `cpp`/`c` now carry the full nested-class emitter:
 - **S4b — `rust`, `julia`, `asc`, `cmajor`, `codebox`.** Same gates in their own
   language shapes; `codebox` uses the flattened form.
 
-  **`codebox` prerequisites cleared (2026-08-05):** its static-table defect is
-  fixed (`1f9b3ca3`) and the S2 scheduling hole is closed, so its migration is
-  now the five-line change described below. Wiring it to the S3 flattening pass
+  **`codebox` done (2026-08-05).** Consumes the S3 flattening pass with
+  `StackLocals`. Both `--table-init` modes are compared numerically through the
+  codebox evaluator (§8.2 layer 6), including a generator whose carrier is read
+  one sample late. Emitted line counts on a 65536-entry constant table:
+  65 572 folded versus 42 filled — the backend where the sub-module form pays
+  the most, since codebox has no array literal and folding costs one assignment
+  per element. Wiring it to the S3 flattening pass
   works — the generator inlines correctly and the module emits — but codebox
   never emits the module's `static_decls` at all: on
   `rdtable(65536, 0.5, …)` it emits a read of `ftbl0_cb[…]` with zero

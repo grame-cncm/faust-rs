@@ -148,6 +148,28 @@ pub fn generate_codebox_module(
     module: FirId,
     options: &CodeboxOptions,
 ) -> Result<String, CodegenError> {
+    // Codebox folds the whole lifecycle into one entry point and has no nested
+    // container, so a table generator is inlined into the program that calls
+    // it. `StackLocals` applies for the same reason it does to a static
+    // `classInit`: there is no instance to hold the generator's state, only the
+    // initialization code itself.
+    let flattened = fir::subcontainer::has_sub_modules(store, module)
+        .then(|| {
+            fir::subcontainer::flatten_sub_modules_owned(
+                store,
+                module,
+                fir::subcontainer::SubModuleStatePolicy::StackLocals,
+            )
+            .map_err(|err| {
+                CodegenError::new(
+                    CodegenErrorCode::Unsupported,
+                    format!("flattening generated tables failed: {err}"),
+                )
+            })
+        })
+        .transpose()?;
+    let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
+
     let view = decode_module(store, module)?;
     let mut out = String::new();
 
@@ -668,8 +690,9 @@ fn emit_stmt(
             if let Some(init) = init {
                 let value = emit_value(store, options, init)?;
                 let _ = write!(out, " = {value}");
-            } else if phase == Phase::Fields || persistent {
-                // A `@state` scalar must be initialised.
+            } else {
+                // Every declaration carries an initialiser in this grammar,
+                // `let` as much as `@state`: `let x : Int;` does not parse.
                 let _ = write!(out, " = 0");
             }
             let _ = writeln!(out, ";");
@@ -1197,25 +1220,15 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             globals,
             functions,
             static_decls,
-            sub_modules,
             ..
-        } => {
-            let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-            if !sub_module_names.is_empty() {
-                return Err(CodegenError::new(
-                    CodegenErrorCode::Unsupported,
-                    crate::backends::unsupported_sub_modules_message("codebox", &sub_module_names),
-                ));
-            }
-            Ok(ModuleView {
-                dsp_struct,
-                globals,
-                functions,
-                static_decls,
-                num_inputs,
-                num_outputs,
-            })
-        }
+        } => Ok(ModuleView {
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            num_inputs,
+            num_outputs,
+        }),
         other => Err(CodegenError::new(
             CodegenErrorCode::RootNotModule,
             format!("expected FIR module root, got {other:?}"),
