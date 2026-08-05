@@ -866,70 +866,29 @@ fn emit_faust_dsp_trait_impl(out: &mut String, class_name: &str, has_execution_e
     }
     let _ = writeln!(out, "impl FaustDsp for {class_name} {{");
     let _ = writeln!(out, "    type T = FaustFloat;");
-    let _ = writeln!(
-        out,
-        "    fn new() -> Self where Self: Sized {{ Self::new() }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn metadata(&self, m: &mut dyn Meta) {{ self.metadata(m) }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn get_sample_rate(&self) -> i32 {{ self.get_sample_rate() }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn get_num_inputs(&self) -> i32 {{ self.get_num_inputs() }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn get_num_outputs(&self) -> i32 {{ self.get_num_outputs() }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn class_init(sample_rate: i32) where Self: Sized {{ Self::class_init(sample_rate); }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn instance_reset_params(&mut self) {{ self.instance_reset_params() }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn instance_clear(&mut self) {{ self.instance_clear() }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn instance_constants(&mut self, sample_rate: i32) {{ self.instance_constants(sample_rate) }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn instance_init(&mut self, sample_rate: i32) {{ self.instance_init(sample_rate) }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn init(&mut self, sample_rate: i32) {{ self.init(sample_rate) }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn build_user_interface(&self, ui: &mut dyn UI<Self::T>) {{ self.build_user_interface(ui) }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn build_user_interface_static(ui: &mut dyn UI<Self::T>) where Self: Sized {{ Self::build_user_interface_static(ui); }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn get_param(&self, param: ParamIndex) -> Option<Self::T> {{ self.get_param(param) }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn set_param(&mut self, param: ParamIndex, value: Self::T) {{ self.set_param(param, value) }}"
-    );
-    let _ = writeln!(
-        out,
-        "    fn compute(&mut self, count: i32, inputs: &[&[Self::T]], outputs: &mut [&mut [Self::T]]) {{ self.compute(usize::try_from(count).expect(\"DSP block length must be non-negative\"), inputs, outputs) }}"
-    );
+    // Every `FaustDsp` trait method has a fixed signature that just forwards
+    // to the identically-named inherent method emitted by `emit_rust_api`.
+    const TRAIT_METHOD_FORWARDS: &[&str] = &[
+        "fn new() -> Self where Self: Sized { Self::new() }",
+        "fn metadata(&self, m: &mut dyn Meta) { self.metadata(m) }",
+        "fn get_sample_rate(&self) -> i32 { self.get_sample_rate() }",
+        "fn get_num_inputs(&self) -> i32 { self.get_num_inputs() }",
+        "fn get_num_outputs(&self) -> i32 { self.get_num_outputs() }",
+        "fn class_init(sample_rate: i32) where Self: Sized { Self::class_init(sample_rate); }",
+        "fn instance_reset_params(&mut self) { self.instance_reset_params() }",
+        "fn instance_clear(&mut self) { self.instance_clear() }",
+        "fn instance_constants(&mut self, sample_rate: i32) { self.instance_constants(sample_rate) }",
+        "fn instance_init(&mut self, sample_rate: i32) { self.instance_init(sample_rate) }",
+        "fn init(&mut self, sample_rate: i32) { self.init(sample_rate) }",
+        "fn build_user_interface(&self, ui: &mut dyn UI<Self::T>) { self.build_user_interface(ui) }",
+        "fn build_user_interface_static(ui: &mut dyn UI<Self::T>) where Self: Sized { Self::build_user_interface_static(ui); }",
+        "fn get_param(&self, param: ParamIndex) -> Option<Self::T> { self.get_param(param) }",
+        "fn set_param(&mut self, param: ParamIndex, value: Self::T) { self.set_param(param, value) }",
+        "fn compute(&mut self, count: i32, inputs: &[&[Self::T]], outputs: &mut [&mut [Self::T]]) { self.compute(usize::try_from(count).expect(\"DSP block length must be non-negative\"), inputs, outputs) }",
+    ];
+    for method in TRAIT_METHOD_FORWARDS {
+        let _ = writeln!(out, "    {method}");
+    }
     let _ = writeln!(out, "}}");
 }
 
@@ -1881,26 +1840,17 @@ fn emit_binop_expr(
             };
             Ok(format!("({l}).{method}({r})"))
         }
-        FirBinOp::Add => Ok(format!(
-            "({l} + {})",
-            coerce_rendered(store, typ, rhs, &rhs_rendered)
-        )),
-        FirBinOp::Sub => Ok(format!(
-            "({l} - {})",
-            coerce_rendered(store, typ, rhs, &rhs_rendered)
-        )),
-        FirBinOp::Mul => Ok(format!(
-            "({l} * {})",
-            coerce_rendered(store, typ, rhs, &rhs_rendered)
-        )),
-        FirBinOp::Div => Ok(format!(
-            "({l} / {})",
-            coerce_rendered(store, typ, rhs, &rhs_rendered)
-        )),
-        FirBinOp::Rem => Ok(format!(
-            "({l} % {})",
-            coerce_rendered(store, typ, rhs, &rhs_rendered)
-        )),
+        FirBinOp::Add | FirBinOp::Sub | FirBinOp::Mul | FirBinOp::Div | FirBinOp::Rem => {
+            let r = coerce_rendered(store, typ, rhs, &rhs_rendered);
+            let token = match op {
+                FirBinOp::Add => "+",
+                FirBinOp::Sub => "-",
+                FirBinOp::Mul => "*",
+                FirBinOp::Div => "/",
+                _ => "%",
+            };
+            Ok(format!("({l} {token} {r})"))
+        }
         FirBinOp::And | FirBinOp::Or | FirBinOp::Xor => {
             let r = if matches!(typ, FirType::Bool) {
                 rhs_rendered
