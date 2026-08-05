@@ -1498,6 +1498,26 @@ fn emit_static_tables(
     Ok(())
 }
 
+/// Flattens the items of both DSP state sections (`dsp_struct` then `globals`)
+/// into one list, validating that each section is a FIR `Block`.
+///
+/// Shared by [`collect_struct_initializers`] and [`collect_table_initializers`],
+/// which each filter this list for their own declaration kind.
+fn struct_and_global_items(
+    store: &FirStore,
+    dsp_struct: FirId,
+    globals: FirId,
+) -> Result<Vec<FirId>, CodegenError> {
+    let mut out = Vec::new();
+    for section in [dsp_struct, globals] {
+        let FirMatch::Block(items) = match_fir(store, section) else {
+            return Err(invalid_section("struct section", section, store));
+        };
+        out.extend(items);
+    }
+    Ok(out)
+}
+
 /// Collects explicit scalar initializers from DSP state sections.
 ///
 /// These initializers are replayed in synthesized reset paths when the FIR
@@ -1511,24 +1531,18 @@ fn collect_struct_initializers(
     dsp_struct: FirId,
     globals: FirId,
 ) -> Result<Vec<StructInit>, CodegenError> {
-    let mut out = Vec::new();
-    for section in [dsp_struct, globals] {
-        let FirMatch::Block(items) = match_fir(store, section) else {
-            return Err(invalid_section("struct section", section, store));
-        };
-        for item in items {
-            if let FirMatch::DeclareVar {
+    Ok(struct_and_global_items(store, dsp_struct, globals)?
+        .into_iter()
+        .filter_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareVar {
                 name,
                 typ,
                 init: Some(init),
                 ..
-            } = match_fir(store, item)
-            {
-                out.push(StructInit { name, typ, init });
-            }
-        }
-    }
-    Ok(out)
+            } => Some(StructInit { name, typ, init }),
+            _ => None,
+        })
+        .collect())
 }
 
 /// Collects mutable table initializers from DSP state sections.
@@ -1544,28 +1558,22 @@ fn collect_table_initializers(
     dsp_struct: FirId,
     globals: FirId,
 ) -> Result<Vec<TableInit>, CodegenError> {
-    let mut out = Vec::new();
-    for section in [dsp_struct, globals] {
-        let FirMatch::Block(items) = match_fir(store, section) else {
-            return Err(invalid_section("struct section", section, store));
-        };
-        for item in items {
-            if let FirMatch::DeclareTable {
+    Ok(struct_and_global_items(store, dsp_struct, globals)?
+        .into_iter()
+        .filter_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareTable {
                 name,
                 elem_type,
                 values,
                 ..
-            } = match_fir(store, item)
-            {
-                out.push(TableInit {
-                    name,
-                    elem_type,
-                    values,
-                });
-            }
-        }
-    }
-    Ok(out)
+            } => Some(TableInit {
+                name,
+                elem_type,
+                values,
+            }),
+            _ => None,
+        })
+        .collect())
 }
 
 /// Collects body-bearing function declarations from the module function block.
