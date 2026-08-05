@@ -11,7 +11,8 @@
 //!
 //! # Design notes
 //! - Two modes: **normal** (human-readable labels) and **small** (compact tokens).
-//!   Both are text-based, line-oriented.
+//!   Both are text-based, line-oriented, and readable by [`read_fbc`], which
+//!   auto-detects the mode from the first header token.
 //! - Sub-blocks (for If/Select/Loop instructions) are written/read recursively.
 //! - String quoting: labels, keys, and values are wrapped in double quotes
 //!   (`quote1`/`unquote1`).
@@ -160,9 +161,10 @@ fn fmt_real<R: FbcReal>(v: R) -> String {
 /// - `writer`: output stream.
 /// - `small`: if `true`, use compact (small) format; otherwise, normal format.
 ///
-/// Both modes encode the same semantic content. `small=true` keeps tokens short
-/// for compact fixtures, while normal mode favors readability and parity with
-/// the traditional C++ textual dumps.
+/// Both modes encode the same semantic content and are readable by
+/// [`read_fbc`], which auto-detects the mode from the first header token.
+/// `small=true` keeps tokens short for compact fixtures, while normal mode
+/// favors readability and parity with the traditional C++ textual dumps.
 ///
 /// # Source provenance (C++)
 /// - `interpreter_dsp_factory_aux::write()` in `interpreter_dsp_aux.hh`.
@@ -525,16 +527,32 @@ fn write_block_store_instruction<R: FbcReal>(
 /// Deserializes an [`FbcDspFactory`] from `.fbc` text format.
 ///
 /// The reader must be positioned at the start of the `.fbc` content
-/// (the `"interpreter_dsp_factory float|double"` line).
+/// (the `"interpreter_dsp_factory float|double"` line, or `"i float|double"`
+/// for the small/compact format — see [`write_fbc`]). The format is detected
+/// from the first header token; the rest of the file body (meta/UI/code
+/// blocks) uses the same block-size-prefixed, position-based grammar in both
+/// formats and needs no mode-specific handling.
 ///
 /// # Source provenance (C++)
 /// - `read_real_type()` in `interpreter_dsp_aux.cpp` (header line).
 /// - `interpreter_dsp_factory_aux::read()` in `interpreter_dsp.hh` (body).
 pub fn read_fbc<R: FbcReal>(reader: &mut dyn BufRead) -> Result<FbcDspFactory<R>, FbcSerialError> {
-    // ── Header line: "interpreter_dsp_factory float|double" ────────────
+    // ── Header line: "interpreter_dsp_factory float|double" (normal) or
+    //    "i float|double" (small) — the leading token selects the grammar
+    //    used for the remaining header fields below.
     let header_line = read_line(reader)?;
     let mut header_tokens = header_line.split_whitespace();
-    check_token(header_tokens.next(), "interpreter_dsp_factory")?;
+    let head = header_tokens.next().ok_or(FbcSerialError::UnexpectedEof)?;
+    let small = match head {
+        "interpreter_dsp_factory" => false,
+        "i" => true,
+        other => {
+            return Err(FbcSerialError::UnexpectedToken {
+                expected: "interpreter_dsp_factory' or 'i".to_string(),
+                got: other.to_string(),
+            });
+        }
+    };
     let real_type = header_tokens
         .next()
         .ok_or(FbcSerialError::UnexpectedEof)?
@@ -550,7 +568,7 @@ pub fn read_fbc<R: FbcReal>(reader: &mut dyn BufRead) -> Result<FbcDspFactory<R>
     // ── file_version ───────────────────────────────────────────────────
     let line = read_line(reader)?;
     let mut tokens = line.split_whitespace();
-    check_token(tokens.next(), "file_version")?;
+    header_token(&mut tokens, "file_version", "f", small)?;
     let file_num = parse_i32(tokens.next())?;
     if file_num as u32 != INTERP_FILE_VERSION {
         return Err(FbcSerialError::VersionMismatch {
@@ -562,55 +580,59 @@ pub fn read_fbc<R: FbcReal>(reader: &mut dyn BufRead) -> Result<FbcDspFactory<R>
     // ── Faust version (read and discard) ───────────────────────────────
     let line = read_line(reader)?;
     let mut tokens = line.split_whitespace();
-    check_token(tokens.next(), "Faust")?;
-    check_token(tokens.next(), "version")?;
+    if small {
+        header_token(&mut tokens, "", "v", true)?;
+    } else {
+        check_token(tokens.next(), "Faust")?;
+        check_token(tokens.next(), "version")?;
+    }
     // Version string is read but not stored.
 
     // ── compile_options ────────────────────────────────────────────────
     let line = read_line(reader)?;
     let compile_options = line
-        .strip_prefix("compile_options ")
+        .strip_prefix(if small { "c " } else { "compile_options " })
         .unwrap_or("")
         .to_string();
 
     // ── name ───────────────────────────────────────────────────────────
     let line = read_line(reader)?;
     let mut tokens = line.split_whitespace();
-    check_token(tokens.next(), "name")?;
+    header_token(&mut tokens, "name", "n", small)?;
     let name = tokens.next().unwrap_or("").to_string();
 
     // ── sha_key ────────────────────────────────────────────────────────
     let line = read_line(reader)?;
     let mut tokens = line.split_whitespace();
-    check_token(tokens.next(), "sha_key")?;
+    header_token(&mut tokens, "sha_key", "s", small)?;
     let sha_key = tokens.next().unwrap_or("").to_string();
 
     // ── opt_level ──────────────────────────────────────────────────────
     let line = read_line(reader)?;
     let mut tokens = line.split_whitespace();
-    check_token(tokens.next(), "opt_level")?;
+    header_token(&mut tokens, "opt_level", "o", small)?;
     let opt_level = parse_i32(tokens.next())?;
 
     // ── inputs / outputs ───────────────────────────────────────────────
     let line = read_line(reader)?;
     let mut tokens = line.split_whitespace();
-    check_token(tokens.next(), "inputs")?;
+    header_token(&mut tokens, "inputs", "i", small)?;
     let num_inputs = parse_i32(tokens.next())?;
-    check_token(tokens.next(), "outputs")?;
+    header_token(&mut tokens, "outputs", "o", small)?;
     let num_outputs = parse_i32(tokens.next())?;
 
     // ── heap sizes / offsets ───────────────────────────────────────────
     let line = read_line(reader)?;
     let mut tokens = line.split_whitespace();
-    check_token(tokens.next(), "int_heap_size")?;
+    header_token(&mut tokens, "int_heap_size", "i", small)?;
     let int_heap_size = parse_i32(tokens.next())?;
-    check_token(tokens.next(), "real_heap_size")?;
+    header_token(&mut tokens, "real_heap_size", "r", small)?;
     let real_heap_size = parse_i32(tokens.next())?;
-    check_token(tokens.next(), "sr_offset")?;
+    header_token(&mut tokens, "sr_offset", "s", small)?;
     let sr_offset = parse_i32(tokens.next())?;
-    check_token(tokens.next(), "count_offset")?;
+    header_token(&mut tokens, "count_offset", "c", small)?;
     let count_offset = parse_i32(tokens.next())?;
-    check_token(tokens.next(), "iota_offset")?;
+    header_token(&mut tokens, "iota_offset", "i", small)?;
     let iota_offset = parse_i32(tokens.next())?;
 
     // ── meta_block ─────────────────────────────────────────────────────
@@ -712,6 +734,28 @@ fn check_token(token: Option<&str>, expected: &str) -> Result<(), FbcSerialError
             got: String::new(),
         }),
     }
+}
+
+/// Checks the next header token against whichever grammar is active.
+///
+/// Header fields use a distinct literal keyword per format (e.g.
+/// `"file_version"` in normal mode vs `"f"` in small mode) at the same
+/// position, so callers only need to supply both spellings and let this
+/// helper pick the one matching the format detected from the first header
+/// line. `normal == ""` skips the check (used for small-only header
+/// fields that have no normal-mode counterpart token, like the Faust
+/// version line's single `"v"` label).
+fn header_token(
+    tokens: &mut std::str::SplitWhitespace<'_>,
+    normal: &str,
+    small_label: &str,
+    small: bool,
+) -> Result<(), FbcSerialError> {
+    let expected = if small { small_label } else { normal };
+    if expected.is_empty() {
+        return Ok(());
+    }
+    check_token(tokens.next(), expected)
 }
 
 /// Parses an i32 from an optional token.
@@ -964,13 +1008,11 @@ fn read_code_instruction<R: FbcReal>(
         let _offset2_label = tokens.next(); // "offset2"
         let offset2 = parse_i32(tokens.next())?;
 
-        // Optional "name" field.
-        let name = if let Some(label) = tokens.next() {
-            if label == "name" {
-                tokens.next().unwrap_or("").to_string()
-            } else {
-                String::new()
-            }
+        // Optional "name"/"n" field: present or absent, but its label token is
+        // discarded positionally like the others above (its literal spelling
+        // differs between normal ("name") and small ("n") mode).
+        let name = if tokens.next().is_some() {
+            tokens.next().unwrap_or("").to_string()
         } else {
             String::new()
         };

@@ -195,6 +195,84 @@ fn test_write_read_roundtrip() {
 }
 
 #[test]
+fn test_write_read_roundtrip_small() {
+    let factory = make_test_factory();
+
+    // Write in small (compact) format.
+    let mut buf = Vec::new();
+    write_fbc(&factory, &mut buf, true).unwrap();
+    let serialized = String::from_utf8(buf).unwrap();
+
+    // Read back — `read_fbc` must auto-detect the small format from the
+    // leading "i float|double" header token.
+    let mut cursor = io::Cursor::new(serialized.as_bytes());
+    let factory2: FbcDspFactory<f32> = read_fbc(&mut cursor).unwrap();
+
+    // Same assertions as `test_write_read_roundtrip`, since both formats
+    // must decode to the same semantic factory.
+    assert_eq!(factory2.name, "test_dsp");
+    assert_eq!(factory2.sha_key, "abc123");
+    assert_eq!(factory2.num_inputs, 2);
+    assert_eq!(factory2.num_outputs, 2);
+    assert_eq!(factory2.int_heap_size, 32);
+    assert_eq!(factory2.real_heap_size, 64);
+    assert_eq!(factory2.sr_offset, 0);
+    assert_eq!(factory2.count_offset, 1);
+    assert_eq!(factory2.iota_offset, 2);
+    assert_eq!(factory2.opt_level, 4);
+    assert_eq!(factory2.version, INTERP_FILE_VERSION);
+
+    assert_eq!(factory2.meta_block.len(), 2);
+    assert_eq!(factory2.meta_block[0].key, "name");
+    assert_eq!(factory2.meta_block[0].value, "test_dsp");
+    assert_eq!(factory2.meta_block[1].key, "author");
+    assert_eq!(factory2.meta_block[1].value, "Faust");
+
+    assert_eq!(factory2.ui_block.len(), 1);
+    assert_eq!(factory2.ui_block[0].opcode, FbcOpcode::AddHorizontalSlider);
+    assert_eq!(factory2.ui_block[0].offset, 5);
+    assert_eq!(factory2.ui_block[0].label, "gain");
+
+    assert_eq!(factory2.arena.get(factory2.static_init_block).len(), 2);
+    assert_eq!(factory2.arena.get(factory2.init_block).len(), 1);
+}
+
+#[test]
+fn test_instruction_name_field_roundtrips_in_both_formats() {
+    // `FbcInstruction::name` carries foreign-call signatures (see
+    // `foreign::ForeignSignature::encode`). Its header token spells "name" in
+    // normal mode and "n" in small mode, so both must be exercised.
+    for small in [false, true] {
+        let mut arena = FbcBlockArena::<f32>::new();
+        let mut block = FbcBlock::new();
+        block.push(FbcInstruction::with_name(
+            FbcOpcode::ForeignCallReal,
+            "myFunc|d|dd",
+        ));
+        block.push(FbcInstruction::new(FbcOpcode::Return));
+        let block_id = arena.alloc(block);
+
+        let factory = FbcDspFactory::new(
+            "test_dsp", "", "", INTERP_FILE_VERSION, 0, 0, 0, 0, 0, 0, 0, 0, arena, vec![],
+            vec![], block_id, block_id, block_id, block_id, block_id, block_id,
+        );
+
+        let mut buf = Vec::new();
+        write_fbc(&factory, &mut buf, small).unwrap();
+        let serialized = String::from_utf8(buf).unwrap();
+
+        let mut cursor = io::Cursor::new(serialized.as_bytes());
+        let factory2: FbcDspFactory<f32> = read_fbc(&mut cursor).unwrap();
+        let block2 = factory2.arena.get(factory2.static_init_block);
+        assert_eq!(
+            block2.instructions[0].name, "myFunc|d|dd",
+            "name field lost roundtripping through {} format",
+            if small { "small" } else { "normal" }
+        );
+    }
+}
+
+#[test]
 fn test_version_check() {
     // Build a .fbc string with wrong version.
     let bad_fbc = "interpreter_dsp_factory float\nfile_version 99\n";
