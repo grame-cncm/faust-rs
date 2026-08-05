@@ -42,7 +42,7 @@
 //!
 //! Unsupported FIR nodes fail with `FRS-CGEN-RUST-0003`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
@@ -163,6 +163,7 @@ struct ModuleView {
     num_inputs: usize,
     num_outputs: usize,
     static_decls: FirId,
+    sub_modules: FirId,
 }
 
 /// One scalar state initializer extracted from `dsp_struct` or `globals`.
@@ -308,8 +309,13 @@ pub fn generate_rust_module(
         .and_then(|function| function.body)
         .map_or_else(UiStats::default, |body| collect_ui_stats(store, body));
 
+    // Runtime-filled tables live behind a lock; every body that touches one
+    // binds a guard first (see `locked_table_names`).
+    let locked = locked_table_names(store, module.static_decls);
+
     let mut out = String::new();
     emit_rust_header(&mut out, options);
+    emit_sub_modules(store, &mut out, options, &locked, module.sub_modules)?;
     emit_static_tables(store, &mut out, options, module.static_decls)?;
     emit_struct_definition(
         store,
@@ -344,6 +350,7 @@ pub fn generate_rust_module(
         &mut out,
         RustApiEmitInput {
             options,
+            locked: &locked,
             class_name: &class_name,
             declared_functions: &functions,
             struct_inits: &struct_inits,
@@ -541,6 +548,9 @@ struct RustApiEmitInput<'a> {
     state_types: &'a StateTypes,
     /// Raw `dsp_struct`/`globals` section ids re-walked by the constructor.
     state_sections: [FirId; 2],
+    /// Runtime-filled tables, which live behind a lock (see
+    /// [`locked_table_names`]).
+    locked: &'a BTreeSet<String>,
 }
 
 /// Emits the public Faust-style Rust API around the lowered FIR bodies.
@@ -561,6 +571,7 @@ fn emit_rust_api(
 ) -> Result<(), CodegenError> {
     let RustApiEmitInput {
         options,
+        locked,
         class_name,
         declared_functions,
         struct_inits,
@@ -574,7 +585,7 @@ fn emit_rust_api(
     emit_constructor(store, out, options, class_name, state_sections)?;
 
     if let Some(f) = declared_functions.iter().find(|f| f.name == "metadata") {
-        emit_named_method(store, out, options, state_types, f)?;
+        emit_named_method(store, out, options, locked, state_types, f)?;
     } else {
         let _ = writeln!(out, "    pub fn metadata(&self, m: &mut dyn Meta) {{");
         let _ = writeln!(out, "    }}");
@@ -595,6 +606,23 @@ fn emit_rust_api(
     let _ = writeln!(out);
 
     let _ = writeln!(out, "    pub fn class_init(sample_rate: i32) {{");
+    if let Some(f) = declared_functions.iter().find(|f| f.name == "staticInit")
+        && let Some(body) = f.body
+    {
+        // Filling a table needs exclusive access; reading it later only needs
+        // a shared one.
+        let tables = locked_tables_used(store, body, locked);
+        emit_table_guards(out, &tables, 2, true);
+        emit_block(
+            store,
+            out,
+            options,
+            locked,
+            body,
+            2,
+            &mut EmitCtx::new(EmitMode::Default, state_types),
+        )?;
+    }
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out);
 
@@ -602,7 +630,7 @@ fn emit_rust_api(
         .iter()
         .find(|f| f.name == "instanceConstants")
     {
-        emit_named_method(store, out, options, state_types, f)?;
+        emit_named_method(store, out, options, locked, state_types, f)?;
     } else {
         let _ = writeln!(
             out,
@@ -617,17 +645,17 @@ fn emit_rust_api(
         .iter()
         .find(|f| f.name == "instanceResetUserInterface")
     {
-        emit_named_method(store, out, options, state_types, f)?;
+        emit_named_method(store, out, options, locked, state_types, f)?;
     } else {
         let _ = writeln!(out, "    pub fn instance_reset_params(&mut self) {{");
         for init in struct_inits {
-            let value = emit_value(store, options, init.init)?;
+            let value = emit_value(store, options, locked, init.init)?;
             let value = coerce_rendered(store, &init.typ, init.init, &value);
             let _ = writeln!(out, "        self.{} = {value};", init.name);
         }
         for init in table_inits {
             for (index, value_id) in init.values.iter().copied().enumerate() {
-                let value = emit_value(store, options, value_id)?;
+                let value = emit_value(store, options, locked, value_id)?;
                 let value = coerce_rendered(store, &init.elem_type, value_id, &value);
                 let _ = writeln!(out, "        self.{}[{index}] = {value};", init.name);
             }
@@ -640,7 +668,7 @@ fn emit_rust_api(
         .iter()
         .find(|f| f.name == "instanceClear")
     {
-        emit_named_method(store, out, options, state_types, f)?;
+        emit_named_method(store, out, options, locked, state_types, f)?;
     } else {
         let _ = writeln!(out, "    pub fn instance_clear(&mut self) {{");
         let _ = writeln!(out, "    }}");
@@ -677,7 +705,7 @@ fn emit_rust_api(
         );
         let _ = writeln!(out, "    }}");
         let _ = writeln!(out);
-        emit_named_method(store, out, options, state_types, f)?;
+        emit_named_method(store, out, options, locked, state_types, f)?;
     } else {
         let _ = writeln!(
             out,
@@ -702,13 +730,13 @@ fn emit_rust_api(
 
     // Execution entry points precede the canonical compute (§2.3).
     if let Some(f) = declared_functions.iter().find(|f| f.name == "control") {
-        emit_named_method(store, out, options, state_types, f)?;
+        emit_named_method(store, out, options, locked, state_types, f)?;
     }
     if let Some(f) = declared_functions.iter().find(|f| f.name == "frame") {
-        emit_named_method(store, out, options, state_types, f)?;
+        emit_named_method(store, out, options, locked, state_types, f)?;
     }
     if let Some(f) = declared_functions.iter().find(|f| f.name == "compute") {
-        emit_named_method(store, out, options, state_types, f)?;
+        emit_named_method(store, out, options, locked, state_types, f)?;
     } else {
         let _ = writeln!(
             out,
@@ -736,11 +764,16 @@ fn emit_rust_api(
                 | "compute"
                 | "control"
                 | "frame"
+                // `staticInit` is rendered as the body of `class_init`, where
+                // the write guards it needs are in scope; emitting it again as
+                // a free function would reference guards that do not exist
+                // there.
+                | "staticInit"
         ) {
             continue;
         }
         let _ = writeln!(out);
-        emit_helper_function(store, out, options, state_types, f)?;
+        emit_helper_function(store, out, options, locked, state_types, f)?;
     }
 
     Ok(())
@@ -907,6 +940,7 @@ fn emit_named_method(
     store: &FirStore,
     out: &mut String,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     state_types: &StateTypes,
     decl: &DeclareFunView,
 ) -> Result<(), CodegenError> {
@@ -988,7 +1022,11 @@ fn emit_named_method(
     if mode == EmitMode::Ui {
         ctx.ui_params = collect_ui_params(store, body);
     }
-    emit_block(store, out, options, body, 2, &mut ctx)?;
+    // A body that reads a runtime-filled table needs a shared guard bound
+    // before its statements; `emit_var_ref_with_locks` then indexes the guard.
+    let tables = locked_tables_used(store, body, locked);
+    emit_table_guards(out, &tables, 2, false);
+    emit_block(store, out, options, locked, body, 2, &mut ctx)?;
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out);
     Ok(())
@@ -1003,6 +1041,7 @@ fn emit_helper_function(
     store: &FirStore,
     out: &mut String,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     state_types: &StateTypes,
     decl: &DeclareFunView,
 ) -> Result<(), CodegenError> {
@@ -1037,7 +1076,7 @@ fn emit_helper_function(
         let _ = writeln!(out, "fn {}({params}) -> {} {{", decl.name, emit_type(&ret));
     }
     let mut ctx = EmitCtx::new(EmitMode::Default, state_types);
-    emit_block(store, out, options, body, 1, &mut ctx)?;
+    emit_block(store, out, options, locked, body, 1, &mut ctx)?;
     let _ = writeln!(out, "}}");
     Ok(())
 }
@@ -1195,6 +1234,7 @@ fn emit_block(
     store: &FirStore,
     out: &mut String,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     block: FirId,
     indent: usize,
     ctx: &mut EmitCtx,
@@ -1203,7 +1243,7 @@ fn emit_block(
         return Err(unsupported_node("expected block", block, store));
     };
     for stmt in items {
-        emit_stmt(store, out, options, stmt, indent, ctx)?;
+        emit_stmt(store, out, options, locked, stmt, indent, ctx)?;
     }
     Ok(())
 }
@@ -1224,6 +1264,7 @@ fn emit_stmt(
     store: &FirStore,
     out: &mut String,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     stmt: FirId,
     indent: usize,
     ctx: &mut EmitCtx,
@@ -1243,8 +1284,13 @@ fn emit_stmt(
                 // FIR pointer spellings would force a borrow model choice that
                 // the initializer already made.
                 if let Some(init) = init {
-                    let init = emit_value(store, options, init)?;
-                    let mutable = if ctx.mutable_vars.contains(&name) {
+                    // A sub-container is mutated by both of its methods, so its
+                    // binding is always mutable regardless of what the FIR
+                    // mutability analysis saw.
+                    let is_sub_container =
+                        matches!(match_fir(store, init), FirMatch::NewDsp { .. });
+                    let init = emit_value(store, options, locked, init)?;
+                    let mutable = if is_sub_container || ctx.mutable_vars.contains(&name) {
                         "mut "
                     } else {
                         ""
@@ -1256,7 +1302,7 @@ fn emit_stmt(
                 return Ok(());
             }
             let value = if let Some(init) = init {
-                let rendered = emit_value(store, options, init)?;
+                let rendered = emit_value(store, options, locked, init)?;
                 coerce_rendered(store, &typ, init, &rendered)
             } else {
                 zero_value(&typ)
@@ -1282,7 +1328,7 @@ fn emit_stmt(
         } => {
             let mut rendered = Vec::with_capacity(values.len());
             for value in &values {
-                let v = emit_value(store, options, *value)?;
+                let v = emit_value(store, options, locked, *value)?;
                 rendered.push(coerce_rendered(store, &elem_type, *value, &v));
             }
             ctx.table_elem_types.insert(name.clone(), elem_type.clone());
@@ -1300,13 +1346,13 @@ fn emit_stmt(
             access,
             value,
         } => {
-            let rendered = emit_value(store, options, value)?;
+            let rendered = emit_value(store, options, locked, value)?;
             let rendered = if let Some(dest) = ctx.var_types.get(&name).cloned() {
                 coerce_rendered(store, &dest, value, &rendered)
             } else {
                 rendered
             };
-            let target = emit_var_ref(&name, access);
+            let target = emit_var_ref_with_locks(&name, access, locked);
             let _ = writeln!(out, "{tab}{target} = {rendered};");
             Ok(())
         }
@@ -1316,51 +1362,83 @@ fn emit_stmt(
             index,
             value,
         } => {
-            let index = emit_index_expr(store, options, index)?;
-            let rendered = emit_value(store, options, value)?;
+            let index = emit_index_expr(store, options, locked, index)?;
+            let rendered = emit_value(store, options, locked, value)?;
             let rendered = if let Some(elem) = ctx.table_elem_types.get(&name).cloned() {
                 coerce_rendered(store, &elem, value, &rendered)
             } else {
                 rendered
             };
-            let target = emit_var_ref(&name, access);
+            let target = emit_var_ref_with_locks(&name, access, locked);
             let _ = writeln!(out, "{tab}{target}[{index}] = {rendered};");
             Ok(())
         }
         FirMatch::Drop(value) => {
-            let value = emit_value(store, options, value)?;
+            // A sub-container entry point is a method on the generator, and a
+            // void call is a statement — `let _ = f(x);` would both mis-spell
+            // the call and discard nothing.
+            if let FirMatch::FunCall {
+                ref name,
+                ref args,
+                typ: FirType::Void,
+            } = match_fir(store, value)
+                && is_sub_module_method(name)
+                && let Some((receiver, rest)) = args.split_first()
+            {
+                let receiver = emit_value(store, options, locked, *receiver)?;
+                let mut rendered = Vec::with_capacity(rest.len());
+                for (index, arg) in rest.iter().enumerate() {
+                    let text = emit_value(store, options, locked, *arg)?;
+                    // The last argument of `fill` is the table itself, passed
+                    // as a mutable slice out of its guard.
+                    let is_table = name.starts_with("fill") && index + 1 == rest.len();
+                    rendered.push(if is_table {
+                        format!("{text}.as_mut()")
+                    } else {
+                        text
+                    });
+                }
+                let method = if name.starts_with("instanceInit") {
+                    name.replacen("instanceInit", "instance_init", 1)
+                } else {
+                    name.clone()
+                };
+                let _ = writeln!(out, "{tab}{receiver}.{method}({});", rendered.join(", "));
+                return Ok(());
+            }
+            let value = emit_value(store, options, locked, value)?;
             let _ = writeln!(out, "{tab}let _ = {value};");
             Ok(())
         }
         FirMatch::Return(value) => {
             if let Some(value) = value {
-                let value = emit_value(store, options, value)?;
+                let value = emit_value(store, options, locked, value)?;
                 let _ = writeln!(out, "{tab}return {value};");
             } else {
                 let _ = writeln!(out, "{tab}return;");
             }
             Ok(())
         }
-        FirMatch::Block(_) => emit_block(store, out, options, stmt, indent, ctx),
+        FirMatch::Block(_) => emit_block(store, out, options, locked, stmt, indent, ctx),
         FirMatch::If {
             cond,
             then_block,
             else_block,
         } => {
-            let cond = emit_cond(store, options, cond)?;
+            let cond = emit_cond(store, options, locked, cond)?;
             let _ = writeln!(out, "{tab}if {cond} {{");
-            emit_block(store, out, options, then_block, indent + 1, ctx)?;
+            emit_block(store, out, options, locked, then_block, indent + 1, ctx)?;
             if let Some(else_block) = else_block {
                 let _ = writeln!(out, "{tab}}} else {{");
-                emit_block(store, out, options, else_block, indent + 1, ctx)?;
+                emit_block(store, out, options, locked, else_block, indent + 1, ctx)?;
             }
             let _ = writeln!(out, "{tab}}}");
             Ok(())
         }
         FirMatch::Control { cond, stmt } => {
-            let cond = emit_cond(store, options, cond)?;
+            let cond = emit_cond(store, options, locked, cond)?;
             let _ = writeln!(out, "{tab}if {cond} {{");
-            emit_stmt(store, out, options, stmt, indent + 1, ctx)?;
+            emit_stmt(store, out, options, locked, stmt, indent + 1, ctx)?;
             let _ = writeln!(out, "{tab}}}");
             Ok(())
         }
@@ -1369,16 +1447,16 @@ fn emit_stmt(
             ref cases,
             default,
         } => {
-            let cond = emit_value(store, options, cond)?;
+            let cond = emit_value(store, options, locked, cond)?;
             let _ = writeln!(out, "{tab}match {cond} {{");
             for (value, block) in cases {
                 let _ = writeln!(out, "{tab}    {value} => {{");
-                emit_block(store, out, options, *block, indent + 2, ctx)?;
+                emit_block(store, out, options, locked, *block, indent + 2, ctx)?;
                 let _ = writeln!(out, "{tab}    }}");
             }
             let _ = writeln!(out, "{tab}    _ => {{");
             if let Some(default) = default {
-                emit_block(store, out, options, default, indent + 2, ctx)?;
+                emit_block(store, out, options, locked, default, indent + 2, ctx)?;
             }
             let _ = writeln!(out, "{tab}    }}");
             let _ = writeln!(out, "{tab}}}");
@@ -1395,17 +1473,17 @@ fn emit_stmt(
             // init is a DeclareVar(kLoop) per FIR contract; extract its value.
             let init_val =
                 if let FirMatch::DeclareVar { init: Some(v), .. } = match_fir(store, init) {
-                    emit_value(store, options, v)?
+                    emit_value(store, options, locked, v)?
                 } else {
-                    emit_value(store, options, init)?
+                    emit_value(store, options, locked, init)?
                 };
-            let end = emit_value(store, options, end)?;
-            let step = emit_value(store, options, step)?;
+            let end = emit_value(store, options, locked, end)?;
+            let step = emit_value(store, options, locked, step)?;
             let cmp = if is_reverse { ">" } else { "<" };
             let _ = writeln!(out, "{tab}{{");
             let _ = writeln!(out, "{tab}    let mut {var}: i32 = {init_val};");
             let _ = writeln!(out, "{tab}    while {var} {cmp} {end} {{");
-            emit_block(store, out, options, body, indent + 2, ctx)?;
+            emit_block(store, out, options, locked, body, indent + 2, ctx)?;
             let _ = writeln!(out, "{tab}        {var} = {var}.wrapping_add({step});");
             let _ = writeln!(out, "{tab}    }}");
             let _ = writeln!(out, "{tab}}}");
@@ -1417,20 +1495,20 @@ fn emit_stmt(
             body,
             is_reverse,
         } => {
-            let upper = emit_value(store, options, upper)?;
+            let upper = emit_value(store, options, locked, upper)?;
             if is_reverse {
                 let _ = writeln!(out, "{tab}for {var} in (0..{upper}).rev() {{");
             } else {
                 let _ = writeln!(out, "{tab}for {var} in 0..{upper} {{");
             }
-            emit_block(store, out, options, body, indent + 1, ctx)?;
+            emit_block(store, out, options, locked, body, indent + 1, ctx)?;
             let _ = writeln!(out, "{tab}}}");
             Ok(())
         }
         FirMatch::WhileLoop { cond, body } => {
-            let cond = emit_cond(store, options, cond)?;
+            let cond = emit_cond(store, options, locked, cond)?;
             let _ = writeln!(out, "{tab}while {cond} {{");
-            emit_block(store, out, options, body, indent + 1, ctx)?;
+            emit_block(store, out, options, locked, body, indent + 1, ctx)?;
             let _ = writeln!(out, "{tab}}}");
             Ok(())
         }
@@ -1632,6 +1710,7 @@ fn emit_io_alias(
 fn emit_value(
     store: &FirStore,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     value: FirId,
 ) -> Result<String, CodegenError> {
     match match_fir(store, value) {
@@ -1642,10 +1721,14 @@ fn emit_value(
         | FirMatch::Quad { value, .. }
         | FirMatch::FixedPoint { value, .. } => Ok(format!("{}f64", trim_float(value))),
         FirMatch::Bool { value, .. } => Ok(if value { "true" } else { "false" }.to_owned()),
-        FirMatch::LoadVar { name, access, .. } => Ok(emit_var_ref(&name, access)),
-        FirMatch::LoadVarAddress { name, access, .. } => {
-            Ok(format!("&mut {}", emit_var_ref(&name, access)))
+        FirMatch::NewDsp { name, .. } => Ok(format!("new{name}()")),
+        FirMatch::LoadVar { name, access, .. } => {
+            Ok(emit_var_ref_with_locks(&name, access, locked))
         }
+        FirMatch::LoadVarAddress { name, access, .. } => Ok(format!(
+            "&mut {}",
+            emit_var_ref_with_locks(&name, access, locked)
+        )),
         FirMatch::LoadTable {
             name,
             access,
@@ -1659,11 +1742,14 @@ fn emit_value(
                     store,
                 ));
             }
-            let index = emit_index_expr(store, options, index)?;
+            let index = emit_index_expr(store, options, locked, index)?;
             if matches!(access, AccessType::FunArgs) && name == "inputs" {
                 return Ok(format!("inputs[{index}]"));
             }
-            Ok(format!("{}[{index}]", emit_var_ref(&name, access)))
+            Ok(format!(
+                "{}[{index}]",
+                emit_var_ref_with_locks(&name, access, locked)
+            ))
         }
         FirMatch::TeeVar {
             name,
@@ -1671,20 +1757,20 @@ fn emit_value(
             value: inner,
             ..
         } => {
-            let inner = emit_value(store, options, inner)?;
-            let target = emit_var_ref(&name, access);
+            let inner = emit_value(store, options, locked, inner)?;
+            let target = emit_var_ref_with_locks(&name, access, locked);
             Ok(format!("{{ {target} = {inner}; {target} }}"))
         }
         FirMatch::BinOp { op, lhs, rhs, typ } => {
-            emit_binop_expr(store, options, op, lhs, rhs, &typ)
+            emit_binop_expr(store, options, locked, op, lhs, rhs, &typ)
         }
         FirMatch::Neg { value: inner, typ } => {
-            let rendered = emit_value(store, options, inner)?;
+            let rendered = emit_value(store, options, locked, inner)?;
             let rendered = coerce_rendered(store, &typ, inner, &rendered);
             Ok(format!("(-{rendered})"))
         }
         FirMatch::Cast { typ, value: inner } => {
-            let rendered = emit_value(store, options, inner)?;
+            let rendered = emit_value(store, options, locked, inner)?;
             Ok(cast_rendered(
                 &typ,
                 value_type(store, inner).as_ref(),
@@ -1692,7 +1778,7 @@ fn emit_value(
             ))
         }
         FirMatch::Bitcast { typ, value: inner } => {
-            let rendered = emit_value(store, options, inner)?;
+            let rendered = emit_value(store, options, locked, inner)?;
             emit_bitcast(store, &typ, inner, &rendered)
         }
         FirMatch::Select2 {
@@ -1701,23 +1787,25 @@ fn emit_value(
             else_value,
             typ,
         } => {
-            let cond = emit_cond(store, options, cond)?;
-            let then_rendered = emit_value(store, options, then_value)?;
+            let cond = emit_cond(store, options, locked, cond)?;
+            let then_rendered = emit_value(store, options, locked, then_value)?;
             let then_rendered = coerce_rendered(store, &typ, then_value, &then_rendered);
-            let else_rendered = emit_value(store, options, else_value)?;
+            let else_rendered = emit_value(store, options, locked, else_value)?;
             let else_rendered = coerce_rendered(store, &typ, else_value, &else_rendered);
             Ok(format!(
                 "(if {cond} {{ {then_rendered} }} else {{ {else_rendered} }})"
             ))
         }
-        FirMatch::FunCall { name, args, typ } => emit_fun_call(store, options, &name, &args, &typ),
+        FirMatch::FunCall { name, args, typ } => {
+            emit_fun_call(store, options, locked, &name, &args, &typ)
+        }
         FirMatch::NullValue { .. } => Ok("Default::default()".to_owned()),
         FirMatch::LoadSoundfileLength { var, part } => {
-            let part = emit_index_expr(store, options, part)?;
+            let part = emit_index_expr(store, options, locked, part)?;
             Ok(format!("self.{var}.fLength[{part}]"))
         }
         FirMatch::LoadSoundfileRate { var, part } => {
-            let part = emit_index_expr(store, options, part)?;
+            let part = emit_index_expr(store, options, locked, part)?;
             Ok(format!("self.{var}.fSR[{part}]"))
         }
         FirMatch::LoadSoundfileBuffer {
@@ -1727,9 +1815,9 @@ fn emit_value(
             idx,
             ..
         } => {
-            let chan = emit_index_expr(store, options, chan)?;
-            let part = emit_index_expr(store, options, part)?;
-            let idx = emit_index_expr(store, options, idx)?;
+            let chan = emit_index_expr(store, options, locked, chan)?;
+            let part = emit_index_expr(store, options, locked, part)?;
+            let idx = emit_index_expr(store, options, locked, idx)?;
             Ok(format!(
                 "self.{var}.fBuffers[{chan}][(self.{var}.fOffset[{part}] as usize) + {idx}]"
             ))
@@ -1744,13 +1832,18 @@ fn emit_value(
 /// result type), and plain integer values are also valid truth values. Direct
 /// comparison nodes are rendered as native Rust booleans; everything else gets
 /// an explicit `!= 0` because Rust has no integer truthiness.
-fn emit_cond(store: &FirStore, options: &RustOptions, cond: FirId) -> Result<String, CodegenError> {
+fn emit_cond(
+    store: &FirStore,
+    options: &RustOptions,
+    locked: &BTreeSet<String>,
+    cond: FirId,
+) -> Result<String, CodegenError> {
     if let FirMatch::BinOp { op, lhs, rhs, .. } = match_fir(store, cond)
         && is_comparison(op)
     {
-        return emit_comparison(store, options, op, lhs, rhs);
+        return emit_comparison(store, options, locked, op, lhs, rhs);
     }
-    let rendered = emit_value(store, options, cond)?;
+    let rendered = emit_value(store, options, locked, cond)?;
     match value_type(store, cond) {
         Some(FirType::Bool) => Ok(rendered),
         Some(FirType::Float32 | FirType::Float64 | FirType::FaustFloat | FirType::Quad) => {
@@ -1772,12 +1865,13 @@ fn is_comparison(op: FirBinOp) -> bool {
 fn emit_comparison(
     store: &FirStore,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     op: FirBinOp,
     lhs: FirId,
     rhs: FirId,
 ) -> Result<String, CodegenError> {
-    let lhs_rendered = emit_value(store, options, lhs)?;
-    let rhs_rendered = emit_value(store, options, rhs)?;
+    let lhs_rendered = emit_value(store, options, locked, lhs)?;
+    let rhs_rendered = emit_value(store, options, locked, rhs)?;
     let (l, r) = coerce_comparison_operands(store, (lhs, &lhs_rendered), (rhs, &rhs_rendered));
     let token = comparison_token(op);
     Ok(format!("({l} {token} {r})"))
@@ -1791,9 +1885,10 @@ fn emit_comparison(
 fn emit_index_expr(
     store: &FirStore,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     value: FirId,
 ) -> Result<String, CodegenError> {
-    let rendered = emit_value(store, options, value)?;
+    let rendered = emit_value(store, options, locked, value)?;
     Ok(format!("({rendered}) as usize"))
 }
 
@@ -1807,19 +1902,20 @@ fn emit_index_expr(
 fn emit_binop_expr(
     store: &FirStore,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     op: FirBinOp,
     lhs: FirId,
     rhs: FirId,
     typ: &FirType,
 ) -> Result<String, CodegenError> {
-    let lhs_rendered = emit_value(store, options, lhs)?;
-    let rhs_rendered = emit_value(store, options, rhs)?;
+    let lhs_rendered = emit_value(store, options, locked, lhs)?;
+    let rhs_rendered = emit_value(store, options, locked, rhs)?;
 
     if is_comparison(op) {
         // FIR comparisons carry their C result type (`Int32` from the fast
         // lane, `Bool` in hand-written fixtures). The rendered Rust expression
         // must match that type so arithmetic/coercion callers stay sound.
-        let rendered = emit_comparison(store, options, op, lhs, rhs)?;
+        let rendered = emit_comparison(store, options, locked, op, lhs, rhs)?;
         return Ok(match typ {
             FirType::Bool => rendered,
             _ => format!("(({rendered}) as {})", emit_type(typ)),
@@ -1931,6 +2027,7 @@ fn coerce_comparison_operands<'a>(
 fn emit_fun_call(
     store: &FirStore,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     name: &str,
     args: &[FirId],
     typ: &FirType,
@@ -1977,7 +2074,7 @@ fn emit_fun_call(
     };
 
     if matches!(base, "min_i" | "max_i") {
-        let rendered = render_args(store, options, args, None)?;
+        let rendered = render_args(store, options, locked, args, None)?;
         let method = if base == "min_i" { "min" } else { "max" };
         return Ok(format!("i32::{method}({})", rendered.join(", ")));
     }
@@ -1991,15 +2088,15 @@ fn emit_fun_call(
         };
         match base {
             "abs" | "labs" => {
-                let rendered = render_args(store, options, args, Some(typ))?;
+                let rendered = render_args(store, options, locked, args, Some(typ))?;
                 return Ok(format!("(({})).wrapping_abs()", rendered[0]));
             }
             "min" | "fmin" => {
-                let rendered = render_args(store, options, args, Some(typ))?;
+                let rendered = render_args(store, options, locked, args, Some(typ))?;
                 return Ok(format!("{int_type}::min({})", rendered.join(", ")));
             }
             "max" | "fmax" => {
-                let rendered = render_args(store, options, args, Some(typ))?;
+                let rendered = render_args(store, options, locked, args, Some(typ))?;
                 return Ok(format!("{int_type}::max({})", rendered.join(", ")));
             }
             _ => {}
@@ -2037,28 +2134,28 @@ fn emit_fun_call(
         _ => None,
     };
     if let Some(method) = method {
-        let rendered = render_args(store, options, args, Some(typ))?;
+        let rendered = render_args(store, options, locked, args, Some(typ))?;
         return Ok(format!("{float_type}::{method}({})", rendered.join(", ")));
     }
     match base {
         // C classification macros return int; the FIR result type is Int32.
         "isnan" | "isnanf" | "isnanl" => {
-            let rendered = render_args(store, options, args, None)?;
+            let rendered = render_args(store, options, locked, args, None)?;
             return Ok(format!("((({}).is_nan()) as i32)", rendered[0]));
         }
         "isinf" | "isinff" | "isinfl" => {
-            let rendered = render_args(store, options, args, None)?;
+            let rendered = render_args(store, options, locked, args, None)?;
             return Ok(format!("((({}).is_infinite()) as i32)", rendered[0]));
         }
         _ => {}
     }
     match base {
         "fmod" => {
-            let rendered = render_args(store, options, args, Some(typ))?;
+            let rendered = render_args(store, options, locked, args, Some(typ))?;
             Ok(format!("(({}) % ({}))", rendered[0], rendered[1]))
         }
         "remainder" | "rint" => {
-            let rendered = render_args(store, options, args, Some(typ))?;
+            let rendered = render_args(store, options, locked, args, Some(typ))?;
             let function = match (base, resolve_float(typ, options)) {
                 ("remainder", RustRealType::Float32) => "remainder_f32",
                 ("remainder", RustRealType::Float64) => "remainder_f64",
@@ -2069,14 +2166,14 @@ fn emit_fun_call(
             Ok(format!("{function}({})", rendered.join(", ")))
         }
         "exp10" => {
-            let rendered = render_args(store, options, args, Some(typ))?;
+            let rendered = render_args(store, options, locked, args, Some(typ))?;
             Ok(format!(
                 "{float_type}::powf(10.0 as {float_type}, {})",
                 rendered[0]
             ))
         }
         _ => {
-            let rendered = render_args(store, options, args, None)?;
+            let rendered = render_args(store, options, locked, args, None)?;
             Ok(format!("{base}({})", rendered.join(", ")))
         }
     }
@@ -2086,12 +2183,13 @@ fn emit_fun_call(
 fn render_args(
     store: &FirStore,
     options: &RustOptions,
+    locked: &BTreeSet<String>,
     args: &[FirId],
     coerce_to: Option<&FirType>,
 ) -> Result<Vec<String>, CodegenError> {
     let mut rendered = Vec::with_capacity(args.len());
     for arg in args {
-        let value = emit_value(store, options, *arg)?;
+        let value = emit_value(store, options, locked, *arg)?;
         let value = if let Some(target) = coerce_to {
             coerce_rendered(store, target, *arg, &value)
         } else {
@@ -2251,7 +2349,214 @@ fn resolve_float(typ: &FirType, options: &RustOptions) -> RustRealType {
 /// Struct state is addressed through `self.name`; stack, loop, global, static,
 /// and function-argument values keep their local textual name in this backend
 /// slice.
-fn emit_var_ref(name: &str, access: AccessType) -> String {
+/// Returns `true` for a generated sub-container entry point.
+fn is_sub_module_method(name: &str) -> bool {
+    name.starts_with("instanceInit") && name != "instanceInit"
+        || name.starts_with("fill") && name != "fill"
+}
+
+/// Emits every generated-table sub-container as a struct with its two methods.
+///
+/// C++ parity: the `CodeContainer` a `SIGGEN` produces. Rust has no destructor
+/// call to emit — the sub-container is a local of `class_init` and drops on
+/// its own — so only the constructor is generated, matching upstream, which
+/// likewise skips `delete` for this backend.
+fn emit_sub_modules(
+    store: &FirStore,
+    out: &mut String,
+    options: &RustOptions,
+    locked: &BTreeSet<String>,
+    sub_modules: FirId,
+) -> Result<(), CodegenError> {
+    let FirMatch::Block(items) = match_fir(store, sub_modules) else {
+        return Ok(());
+    };
+    for item in items {
+        let FirMatch::SubModule {
+            name,
+            dsp_struct,
+            static_decls,
+            functions,
+            sub_modules: nested,
+            ..
+        } = match_fir(store, item)
+        else {
+            return Err(CodegenError::new(
+                CodegenErrorCode::InvalidModuleSection,
+                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
+            ));
+        };
+
+        emit_sub_modules(store, out, options, locked, nested)?;
+        emit_static_tables(store, out, options, static_decls)?;
+
+        let fields = match match_fir(store, dsp_struct) {
+            FirMatch::Block(items) => items,
+            _ => Vec::new(),
+        };
+        let _ = writeln!(out, "#[allow(non_camel_case_types, dead_code)]");
+        let _ = writeln!(out, "pub struct {name} {{");
+        for field in &fields {
+            if let FirMatch::DeclareVar { name, typ, .. } = match_fir(store, *field) {
+                let _ = writeln!(out, "    {name}: {},", emit_type(&typ));
+            }
+        }
+        let _ = writeln!(out, "}}");
+
+        let _ = writeln!(out, "#[allow(non_snake_case, dead_code)]");
+        let _ = writeln!(out, "impl {name} {{");
+        let _ = writeln!(out, "    fn get_num_inputs{name}(&self) -> i32 {{");
+        let _ = writeln!(out, "        return 0;");
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "    fn get_num_outputs{name}(&self) -> i32 {{");
+        let _ = writeln!(out, "        return 1;");
+        let _ = writeln!(out, "    }}");
+        if let FirMatch::Block(fns) = match_fir(store, functions) {
+            for f in fns {
+                let FirMatch::DeclareFun {
+                    name: fun_name,
+                    args,
+                    body: Some(body),
+                    ..
+                } = match_fir(store, f)
+                else {
+                    continue;
+                };
+                // The receiver is implicit; remaining arguments keep their FIR
+                // names and types, with `table` taken as a mutable slice.
+                let params: Vec<String> = args
+                    .iter()
+                    .skip(1)
+                    .map(|arg| match &arg.typ {
+                        FirType::Ptr(elem) => {
+                            format!("{}: &mut[{}]", arg.name, emit_type(elem))
+                        }
+                        other => format!("{}: {}", arg.name, emit_type(other)),
+                    })
+                    .collect();
+                let rust_name = if fun_name.starts_with("instanceInit") {
+                    fun_name.replacen("instanceInit", "instance_init", 1)
+                } else {
+                    fun_name.clone()
+                };
+                let _ = writeln!(
+                    out,
+                    "    pub fn {rust_name}(&mut self, {}) {{",
+                    params.join(", ")
+                );
+                let state_types = collect_state_types(store, &[dsp_struct]);
+                let mut ctx = EmitCtx::new(EmitMode::Default, &state_types);
+                emit_block(store, out, options, locked, body, 2, &mut ctx)?;
+                let _ = writeln!(out, "    }}");
+            }
+        }
+        let _ = writeln!(out, "}}");
+
+        let _ = writeln!(out, "#[allow(non_snake_case, dead_code)]");
+        let _ = writeln!(out, "pub fn new{name}() -> {name} {{");
+        let _ = writeln!(out, "    {name} {{");
+        for field in &fields {
+            if let FirMatch::DeclareVar { name, typ, .. } = match_fir(store, *field) {
+                let zero = match &typ {
+                    FirType::Array(elem, size) => {
+                        let z = if matches!(**elem, FirType::Int32 | FirType::Int64) {
+                            "0"
+                        } else {
+                            "0.0"
+                        };
+                        format!("[{z};{size}]")
+                    }
+                    FirType::Int32 | FirType::Int64 => "0".to_owned(),
+                    _ => "0.0".to_owned(),
+                };
+                let _ = writeln!(out, "        {name}: {zero},");
+            }
+        }
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+    }
+    Ok(())
+}
+
+/// Names of the module's runtime-filled tables — the ones held behind a lock.
+///
+/// A table declared with a size and no initializer is populated by `class_init`
+/// and is therefore mutable. Rust has no safe mutable static, so each of these
+/// lives in a `RwLock` and every function that touches one has to bind a guard
+/// first. Folded tables (`DeclareTable`, immutable) are not in this set and are
+/// read directly.
+fn locked_table_names(store: &FirStore, static_decls: FirId) -> BTreeSet<String> {
+    let FirMatch::Block(stmts) = match_fir(store, static_decls) else {
+        return BTreeSet::new();
+    };
+    stmts
+        .into_iter()
+        .filter_map(|stmt| match match_fir(store, stmt) {
+            FirMatch::DeclareVar {
+                name,
+                typ: FirType::Array(..),
+                init: None,
+                ..
+            } => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns the locked tables one body touches, in declaration order.
+///
+/// Emitting a guard for a table the body never touches would be a dead binding
+/// and, for a write guard, a needless exclusive lock.
+fn locked_tables_used(store: &FirStore, body: FirId, locked: &BTreeSet<String>) -> Vec<String> {
+    let mut used = BTreeSet::new();
+    let mut stack = vec![body];
+    while let Some(id) = stack.pop() {
+        match match_fir(store, id) {
+            FirMatch::LoadTable { ref name, .. } | FirMatch::StoreTable { ref name, .. }
+                if locked.contains(name) =>
+            {
+                used.insert(name.clone());
+            }
+            FirMatch::LoadVar { ref name, .. } if locked.contains(name) => {
+                used.insert(name.clone());
+            }
+            _ => {}
+        }
+        stack.extend(fir::fir_match_children(store, id));
+    }
+    used.into_iter().collect()
+}
+
+/// Emits the guard bindings a body needs before its statements.
+fn emit_table_guards(out: &mut String, tables: &[String], indent: usize, write: bool) {
+    if tables.is_empty() {
+        return;
+    }
+    let tab = "    ".repeat(indent);
+    let method = if write { "write" } else { "read" };
+    let mutability = if write { "mut " } else { "" };
+    let _ = writeln!(
+        out,
+        "{tab}// Obtaining locks on {} static table(s)",
+        tables.len()
+    );
+    for table in tables {
+        let _ = writeln!(
+            out,
+            "{tab}let {mutability}{table}_guard = {table}.{method}().unwrap();"
+        );
+    }
+}
+
+/// Renders a variable reference at its storage class.
+///
+/// `locked` names the runtime-filled tables: inside a body that has bound
+/// guards for them, the guard is what is indexed, never the static itself.
+fn emit_var_ref_with_locks(name: &str, access: AccessType, locked: &BTreeSet<String>) -> String {
+    if locked.contains(name) {
+        return format!("{name}_guard");
+    }
     match access {
         AccessType::Struct => format!("self.{name}"),
         _ => name.to_owned(),
@@ -2330,6 +2635,32 @@ fn emit_static_tables(
     };
     let mut emitted = false;
     for stmt in &stmts {
+        // A table filled at initialization time is mutable, and Rust has no
+        // safe mutable static: upstream wraps it in a lock and takes a guard at
+        // each access. `DeclareVar(Array, init: None)` is the runtime-filled
+        // shape; `DeclareTable` below stays an immutable folded array.
+        if let FirMatch::DeclareVar {
+            name,
+            typ: FirType::Array(elem, size),
+            init: None,
+            ..
+        } = match_fir(store, *stmt)
+        {
+            let elem_ty = emit_type(&elem);
+            let zero = if matches!(*elem, FirType::Int32 | FirType::Int64) {
+                "0".to_owned()
+            } else {
+                "0.0".to_owned()
+            };
+            let _ = writeln!(out, "#[allow(non_upper_case_globals, dead_code)]");
+            let _ = writeln!(
+                out,
+                "static {name}: std::sync::RwLock<[{elem_ty}; {size}]> = \
+                 std::sync::RwLock::new([{zero}; {size}]);"
+            );
+            emitted = true;
+            continue;
+        }
         if let FirMatch::DeclareTable {
             name,
             elem_type,
@@ -2337,9 +2668,12 @@ fn emit_static_tables(
             ..
         } = match_fir(store, *stmt)
         {
+            // A folded table's elements are literals, and a folded table is
+            // never itself locked, so no guard can appear in its initializer.
+            let no_locks = BTreeSet::new();
             let mut rendered = Vec::with_capacity(values.len());
             for value in values {
-                let v = emit_value(store, options, value)?;
+                let v = emit_value(store, options, &no_locks, value)?;
                 rendered.push(coerce_rendered(store, &elem_type, value, &v));
             }
             let _ = writeln!(out, "#[allow(non_upper_case_globals, dead_code)]");
@@ -2492,13 +2826,6 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
         sub_modules,
     } = match_fir(store, module)
     {
-        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-        if !sub_module_names.is_empty() {
-            return Err(CodegenError::new(
-                CodegenErrorCode::UnsupportedNode,
-                crate::backends::unsupported_sub_modules_message("rust", &sub_module_names),
-            ));
-        }
         Ok(ModuleView {
             dsp_struct,
             globals,
@@ -2506,6 +2833,7 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             num_inputs,
             num_outputs,
             static_decls,
+            sub_modules,
         })
     } else {
         Err(CodegenError::new(
@@ -2698,6 +3026,7 @@ mod tests {
             emit_fun_call(
                 &store,
                 &single_options,
+                &std::collections::BTreeSet::new(),
                 "remainderf",
                 &[single, single],
                 &FirType::Float32,
@@ -2709,6 +3038,7 @@ mod tests {
             emit_fun_call(
                 &store,
                 &single_options,
+                &std::collections::BTreeSet::new(),
                 "rintf",
                 &[single],
                 &FirType::Float32,
@@ -2725,6 +3055,7 @@ mod tests {
             emit_fun_call(
                 &store,
                 &double_options,
+                &std::collections::BTreeSet::new(),
                 "remainder",
                 &[double, double],
                 &FirType::Float64,
@@ -2736,6 +3067,7 @@ mod tests {
             emit_fun_call(
                 &store,
                 &double_options,
+                &std::collections::BTreeSet::new(),
                 "rint",
                 &[double],
                 &FirType::Float64,
@@ -2910,8 +3242,16 @@ mod tests {
         let mut ctx = EmitCtx::new(EmitMode::Ui, &StateTypes::default());
         ctx.ui_params.insert("fSound0".to_owned(), 0);
 
-        emit_block(&store, &mut out, &RustOptions::default(), body, 1, &mut ctx)
-            .expect("soundfile UI should be emitted for the faust-rs extension");
+        emit_block(
+            &store,
+            &mut out,
+            &RustOptions::default(),
+            &std::collections::BTreeSet::new(),
+            body,
+            1,
+            &mut ctx,
+        )
+        .expect("soundfile UI should be emitted for the faust-rs extension");
 
         assert!(
             out.contains("ui_interface.add_soundfile(\"sample\", \"sample.wav\", ParamIndex(0));")

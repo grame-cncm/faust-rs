@@ -1,8 +1,8 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S4a done; S4b in progress (`codebox` done, `rust`/`julia`/`asc`/`cmajor`
-not started)
+Status: S0-S4a done; S4b in progress (`codebox` and `rust` done,
+`julia`/`asc`/`cmajor` not started)
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -583,7 +583,8 @@ The pass is pure FIR→FIR and is validated by an independent structural checker
 | Backend | Shape | Work |
 |---|---|---|
 | `cpp`, `c` | **native nested class** (§5.9.1) | full reference shape: nested class/struct, `new`/`delete` helpers, `getNumInputs`/`getNumOutputs`, `instanceInit<Sub>`, `fill<Sub>`; render `staticInit` as the `classInit` body (replacing the hardcoded empty one at `cpp/mod.rs:399`); `DeclareVar(Array)` arm in `emit_static_tables` |
-| `rust`, `julia`, `asc` | native sub-module | same, using the language's struct/impl form; no `delete` |
+| `rust` | native sub-module — **done 2026-08-05** | struct + impl, `new{Sub}()` constructor, no `delete` (the sub-container is a `class_init` local and drops on its own, as upstream also assumes). Rust has no safe mutable static, so a runtime-filled table becomes `std::sync::RwLock<[T;N]>`: `class_init` takes a write guard, every body reading one takes a read guard, and table references name the guard. |
+| `julia`, `asc` | native sub-module | same, using the language's struct/impl form; no `delete` |
 | `cmajor` | native sub-module | as already specified in the cmajor plan §4.5 (size-suffixed fill names, `Struct&` receiver), per-instance tables |
 | `codebox` | flattened, `StackLocals` | it already folds the lifecycle into one entry point |
 | `wasm` | flattened, `MergedStructFields` | matches upstream; `classInit` keeps its `dsp` argument |
