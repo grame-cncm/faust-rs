@@ -1,0 +1,4 @@
+C++ pipeline failed: transform failed for dsp/f02_subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported
+error [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported
+  = help: the selected lowering path does not support this Faust construct
+  = help: try a supported rewrite or another backend when available

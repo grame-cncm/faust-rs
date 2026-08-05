@@ -709,11 +709,23 @@ Rejecting mutations that must turn each check red:
 
 ## 7. Implementation phases
 
-### S0 — Freeze and baseline
+### S0 — Freeze and baseline — **done 2026-08-05**
 
-Record, under `porting/generated/`, the reference outputs for the fixtures of
-§8.1 from `faust 2.87.1` and the current `faust-rs` outputs, plus the size and
-timing table of §2.2. No code change.
+Reference and current outputs for the §8.1 fixtures, sizes, timings, structural
+counts, and the re-measured impulse baseline are frozen under
+`porting/generated/siggen-table-init-s0/`
+([baseline](generated/siggen-table-init-s0/baseline-2026-08-05-en.md)). No code
+changed. Three results feed back into this plan:
+
+- The impulse gates are at **93/93** on `cpp`, `c` and `interp`, not the
+  inherited 92/93 · 87/93 · 74/93. §8.2 layer 4 is restated accordingly.
+- A thirteenth fixture was added, `f13_mixed_type_tables`: §5.6 rule 1 (one
+  `tbl` counter shared by int and real tables) was an inference from
+  `getTypedNames` until this probe produced
+  `itbl0mydspSIG0` / `ftbl1mydspSIG1` / `itbl2mydspSIG2`.
+- The `f08` nesting defect of §2.4 is quantified: the reference declares two
+  static tables and emits **one** filler class, leaving the inner table zero.
+  `f08` is a regression guard, not a parity target.
 
 ### S1 — FIR model
 
@@ -815,10 +827,15 @@ recorded as the expected `const`-mode outcome rather than as failures.
    numbering, whitespace and the metadata block. Record the residual diff for
    each fixture in `porting/generated/` — it is the standing measure of how far
    the two compilers have drifted.
-4. **Numeric** — `tests/impulse-tests` for `cpp`, `c`, `interp`; the target is
-   `subcontainer1` moving from error to pass without any regression in the
-   documented baselines (cpp 92/93, c 87/93, interp 74/93 — re-measure at S0
-   rather than trusting these figures).
+4. **Numeric** — `tests/impulse-tests` for `cpp`, `c`, `interp`. S0 re-measured
+   the baseline and found **93/93 on all three**, not the cpp 92/93, c 87/93,
+   interp 74/93 quoted by earlier documents
+   (`porting/generated/siggen-table-init-s0/baseline-2026-08-05-en.md`). The
+   target is therefore exact rather than comparative: remove
+   `KNOWN_FAIL_all := subcontainer1` from `tests/impulse-tests/known.mk` and its
+   row from `KNOWN_FAILURES.md`, take the gate from 93 to 94 cases, and keep all
+   three backends at 100%. There are no pre-existing failures for a regression
+   to hide behind.
 5. **Cost** — emitted-source bytes and compile wall time for the §8.1 fixtures,
    recorded in `porting/generated/` and in the journal entry.
 6. **Mode matrix** — every §8.1 fixture is compiled in both `--table-init` modes
@@ -845,7 +862,8 @@ recorded as the expected `const`-mode outcome rather than as failures.
 
 ## 10. Completion checklist
 
-- [ ] S0 baseline artifacts recorded under `porting/generated/`
+- [x] S0 baseline artifacts recorded under
+      `porting/generated/siggen-table-init-s0/` (2026-08-05)
 - [ ] `SubModule` node, `staticInit`, sized uninitialized tables, checker rules
 - [ ] Upstream table naming `{i|f}tbl{k}[{Sub}]` landed as a standalone commit
 - [ ] `build_fill_module` and `module/subcontainer.rs` with recursion
