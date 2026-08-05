@@ -559,6 +559,37 @@ fn emit_section_fields(
     Ok(())
 }
 
+/// Writes ` = <init>` for an explicit FIR initializer, or the default
+/// ` = new StaticArray<T>(size)` for a non-empty array declaration with no
+/// initializer. Writes nothing when neither applies (matching AssemblyScript's
+/// own default-initialization for scalars).
+///
+/// Shared by the `Fields` and non-`Fields` branches of `emit_stmt`'s
+/// `DeclareVar` arm, which only differ in how the declaration head itself
+/// (`name: type` member vs `let name: type` local) is rendered.
+fn emit_declare_var_init(
+    out: &mut String,
+    store: &FirStore,
+    options: &AscOptions,
+    class_name: &str,
+    typ: &FirType,
+    init: Option<FirId>,
+) -> Result<(), CodegenError> {
+    if let Some(init) = init {
+        let init = emit_value(store, options, class_name, init)?;
+        let _ = write!(out, " = {init}");
+    } else if let FirType::Array(inner, size) = typ
+        && *size > 0
+    {
+        let _ = write!(
+            out,
+            " = new StaticArray<{}>({size})",
+            emit_type(inner, options)
+        );
+    }
+    Ok(())
+}
+
 /// Emits one FIR statement.
 fn emit_stmt(
     store: &FirStore,
@@ -584,35 +615,11 @@ fn emit_stmt(
                     let _ = write!(out, "{tab}");
                 }
                 let _ = write!(out, "{}", emit_member_decl(&typ, &name, options));
-                if let Some(init) = init {
-                    let init = emit_value(store, options, class_name, init)?;
-                    let _ = write!(out, " = {init}");
-                } else if let FirType::Array(inner, size) = &typ
-                    && *size > 0
-                {
-                    let _ = write!(
-                        out,
-                        " = new StaticArray<{}>({size})",
-                        emit_type(inner, options)
-                    );
-                }
-                let _ = writeln!(out, ";");
             } else {
                 let _ = write!(out, "{tab}let {}: {}", name, emit_type(&typ, options));
-                if let Some(init) = init {
-                    let init = emit_value(store, options, class_name, init)?;
-                    let _ = write!(out, " = {init}");
-                } else if let FirType::Array(inner, size) = &typ
-                    && *size > 0
-                {
-                    let _ = write!(
-                        out,
-                        " = new StaticArray<{}>({size})",
-                        emit_type(inner, options)
-                    );
-                }
-                let _ = writeln!(out, ";");
             }
+            emit_declare_var_init(out, store, options, class_name, &typ, init)?;
+            let _ = writeln!(out, ";");
             Ok(())
         }
         FirMatch::DeclareTable {
@@ -1286,6 +1293,9 @@ fn emit_static_tables(
     Ok(())
 }
 
+/// Decodes the FIR root into the [`ModuleView`] used by the rest of the emitter.
+///
+/// Returns `RootNotModule` when `module` does not decode to `FirMatch::Module`.
 fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenError> {
     match match_fir(store, module) {
         FirMatch::Module {
@@ -1316,6 +1326,12 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
     }
 }
 
+/// Returns `true` for canonical Faust lifecycle/DSP-API function names.
+///
+/// Used by [`emit_declare_fun`] to decide whether to strip the leading `dsp`
+/// FIR argument: these methods become AssemblyScript instance methods with
+/// an implicit `this`, so their explicit FIR `dsp` parameter has no rendered
+/// counterpart.
 fn is_dsp_api_method(name: &str) -> bool {
     // `control`/`frame` are the execution-options entry points (plan §5.7:
     // the AssemblyScript one-sample target).
@@ -1400,10 +1416,13 @@ fn trim_float(value: f64) -> String {
     }
 }
 
+/// Renders a comma-joined `[...]` AssemblyScript array literal.
 fn format_array(values: impl Iterator<Item = String>) -> String {
     format!("[{}]", values.collect::<Vec<_>>().join(", "))
 }
 
+/// Builds an `InvalidModuleSection` error for a module section that did not
+/// decode as a FIR block.
 fn invalid_section(section: &str, id: FirId, store: &FirStore) -> CodegenError {
     CodegenError::new(
         CodegenErrorCode::InvalidModuleSection,
@@ -1415,6 +1434,7 @@ fn invalid_section(section: &str, id: FirId, store: &FirStore) -> CodegenError {
     )
 }
 
+/// Builds an `UnsupportedNode` error for one FIR node the asc emitter cannot render.
 fn unsupported_node(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
     CodegenError::new(
         CodegenErrorCode::UnsupportedNode,
@@ -1426,6 +1446,7 @@ fn unsupported_node(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
     )
 }
 
+/// Returns the stable AssemblyScript backend identifier (`"asc"`).
 #[must_use]
 pub fn backend_id() -> &'static str {
     BACKEND_NAME
