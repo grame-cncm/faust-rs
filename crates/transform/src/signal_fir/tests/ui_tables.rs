@@ -8,7 +8,7 @@ use crate::signal_fir::{
 };
 use fir::{AccessType, FirMatch, FirType, match_fir};
 use signals::{BinOp, SigBuilder, SigId};
-use tlib::TreeArena;
+use tlib::{TreeArena, de_bruijn_rec, de_bruijn_ref};
 use ui::{ControlKind, ControlRange};
 
 #[test]
@@ -707,5 +707,78 @@ fn const_mode_keeps_folding_and_emits_no_sub_module() {
     assert!(
         !declared_function_names(&out).contains(&"staticInit".to_string()),
         "const mode has nothing to fill, so it must not declare staticInit"
+    );
+}
+
+#[test]
+fn a_generator_reading_its_recursion_through_a_delay_still_updates_the_carrier() {
+    // Regression: a generator whose recursion carrier is read *only* through a
+    // delay produced a fill loop that read the carrier and never advanced it,
+    // so every table entry kept the initial value. The cause was structural —
+    // `build_module` drives recursion-group emission through
+    // `lower_scheduled_graph`, which no-ops without a schedule, and the
+    // sub-module lowering passed none.
+    //
+    // The fixtures checked numerically before this either read their recursion
+    // directly (`os.osc`) or had none at all (`ma.SR`), so none of them
+    // exercised the delayed-only shape.
+    let mut arena = TreeArena::new();
+    // `ba.time * 2`: a counter read one sample late, which is the shape whose
+    // carrier update went missing.
+    let self_ref = de_bruijn_ref(&mut arena, 1);
+    let body = {
+        let mut b = SigBuilder::new(&mut arena);
+        let one = b.int(1);
+        let feedback = b.proj(0, self_ref);
+        b.binop(BinOp::Add, feedback, one)
+    };
+    let body_list = arena.cons(body, arena.nil());
+    let group = de_bruijn_rec(&mut arena, body_list);
+    let sig = {
+        let mut b = SigBuilder::new(&mut arena);
+        let counter = b.proj(0, group);
+        let delayed = b.delay1(counter);
+        let two = b.int(2);
+        let content = b.binop(BinOp::Mul, delayed, two);
+        readonly_table_signal(&mut b, 8, content)
+    };
+    let out = compile_runtime_table_init(&arena, &[sig], 0, 1);
+
+    let FirMatch::Module { sub_modules, .. } = match_fir(&out.store, out.module) else {
+        panic!("module expected");
+    };
+    let FirMatch::Block(subs) = match_fir(&out.store, sub_modules) else {
+        panic!("sub_modules block expected");
+    };
+    assert_eq!(subs.len(), 1, "expected one generator sub-module");
+
+    // The fill body must both read and write the carrier. Reading without
+    // writing is the defect; the store is what advances it.
+    let FirMatch::SubModule { functions, .. } = match_fir(&out.store, subs[0]) else {
+        panic!("sub-module expected");
+    };
+    let FirMatch::Block(items) = match_fir(&out.store, functions) else {
+        panic!("functions block expected");
+    };
+    let fill_body = items
+        .iter()
+        .find_map(|id| match match_fir(&out.store, *id) {
+            FirMatch::DeclareFun { name, body, .. } if name.starts_with("fill") => body,
+            _ => None,
+        })
+        .expect("fill function with a body");
+
+    let mut stores = 0usize;
+    let mut stack = vec![fill_body];
+    while let Some(id) = stack.pop() {
+        if matches!(match_fir(&out.store, id), FirMatch::StoreVar { .. }) {
+            stores += 1;
+        }
+        stack.extend(fir::fir_match_children(&out.store, id));
+    }
+    assert!(
+        stores > 0,
+        "the fill body reads the generator's recursion carrier but never \
+         advances it, so every table entry would keep its initial value"
     );
 }

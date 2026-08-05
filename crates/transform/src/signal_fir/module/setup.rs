@@ -157,6 +157,7 @@ impl<'a> SignalToFirLower<'a> {
             module_name: module_name.to_owned(),
             table_fill_sink: None,
             table_init_mode: crate::signal_fir::TableInitMode::default(),
+            scheduling_strategy: crate::schedule::SchedulingStrategy::DepthFirst,
             sub_modules: Vec::new(),
             placement,
             rad_reverse: build::RadReverseState::default(),

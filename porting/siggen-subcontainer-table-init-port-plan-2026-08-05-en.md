@@ -1,8 +1,8 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S4a done. **S4b blocked** on an S2 producer defect (delayed-only
-recursion in a generator emits no carrier update); see the note in S2.
+Status: S0-S4a done; S4b next (`codebox` unblocked, `rust`/`julia`/`asc`/`cmajor`
+not started)
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -774,27 +774,26 @@ Two corrections to this plan came out of the implementation:
   nest a block inside a block and break every consumer that expects
   `sub_modules` to decode as a block of `SubModule`.
 
-### S2 — Transform producer — **done 2026-08-05, one known hole**
+### S2 — Transform producer — **done 2026-08-05**
 
-> **Open defect found 2026-08-05 while starting S4b.** A generator whose
-> recursion carrier is read **only through a delay** never gets its carrier
-> update emitted, so every table entry uses the initial value. On
-> `rdtable(64, int(ba.time * 2), …)` the fill body is
-> `table[i0] = (2 * iRec10);` with no `iRec10 = …` anywhere — all 64 entries
-> would be 0 instead of 0, 2, 4, 6…
+> **Defect found and fixed 2026-08-05.** A generator whose recursion carrier is
+> read **only through a delay** produced a fill loop that read the carrier and
+> never advanced it, so every table entry kept the initial value. On
+> `rdtable(64, int(ba.time * 2), …)` the fill body was
+> `table[i0] = (2 * iRec10);` with no `iRec10 = …` anywhere.
 >
 > Cause: `build_module` drives recursion-group emission through
 > `lower_scheduled_graph`, which no-ops when `scalar_schedule` is `None`, and
-> `subcontainer.rs` passes `None`. The main pipeline builds that schedule with
-> the `hgraph` gate before calling `build_module`; the sub-module lowering must
-> do the same.
+> `subcontainer.rs` passed `None`. A generator is an ordinary program and needs
+> the same `hgraph` gate the main pipeline runs — clock-free, so the
+> wrapper-free branch — and its schedule passed down. Fixed by building it in
+> `build_generator_sub_module`; the scheduling strategy is threaded so the
+> generator is scheduled like the program that owns it.
 >
-> Not caught earlier because the fixtures that were checked numerically read
-> their recursion directly (`os.osc`) or have none at all (`subcontainer1`,
-> which is `ma.SR`). Both of those still match the C++ oracle.
->
-> This blocks S4b and everything after it: no backend should be migrated onto a
-> producer that can emit a silently wrong table.
+> Not caught earlier because the fixtures checked numerically read their
+> recursion directly (`os.osc`) or have none at all (`subcontainer1`, which is
+> `ma.SR`). Covered now by a delayed-only fixture that asserts the fill body
+> writes the carrier, verified to fail when the schedule is withheld.
 
 
 Landed in two commits, as specified: the naming-only rename first
@@ -880,9 +879,9 @@ Split in two, because `cpp`/`c` now carry the full nested-class emitter:
 - **S4b — `rust`, `julia`, `asc`, `cmajor`, `codebox`.** Same gates in their own
   language shapes; `codebox` uses the flattened form.
 
-  **`codebox` is blocked (2026-08-05).** *Its own static-table defect is now
-  fixed (commit `1f9b3ca3`), but a second blocker appeared — see the S2 hole
-  below.* Wiring it to the S3 flattening pass
+  **`codebox` prerequisites cleared (2026-08-05):** its static-table defect is
+  fixed (`1f9b3ca3`) and the S2 scheduling hole is closed, so its migration is
+  now the five-line change described below. Wiring it to the S3 flattening pass
   works — the generator inlines correctly and the module emits — but codebox
   never emits the module's `static_decls` at all: on
   `rdtable(65536, 0.5, …)` it emits a read of `ftbl0_cb[…]` with zero

@@ -897,6 +897,7 @@ fn compile_fastlane_inner(
             options.control_rate_mode,
             options.processing_api,
             options.table_init_mode,
+            options.scheduling_strategy,
             clocked,
             if matches!(fallback_compute_mode, ComputeMode::Scalar) {
                 gate_graphs.as_ref().map(|(_, schedule)| schedule)

@@ -554,6 +554,7 @@ pub(crate) fn build_module<'a>(
     control_rate_mode: ControlRateMode,
     processing_api: ProcessingApi,
     table_init_mode: crate::signal_fir::TableInitMode,
+    scheduling_strategy: crate::schedule::SchedulingStrategy,
     clocked: Option<clocked::ClockedPlan<'a>>,
     scalar_schedule: Option<&crate::hgraph::Hsched>,
     // `fill`: when set, lower a table generator instead of a DSP — the single
@@ -584,6 +585,7 @@ pub(crate) fn build_module<'a>(
     lower.processing_api = processing_api;
     lower.table_fill_sink = fill.map(|spec| spec.elem_ty.clone());
     lower.table_init_mode = table_init_mode;
+    lower.scheduling_strategy = scheduling_strategy;
     lower.clocked = clocked.map(clocked::ClockedState::new);
     lower.scalar_schedule = scalar_schedule.cloned();
     lower.fixed_ad_internal_signals = fixed_ad_internal_signals(lower.arena, signals);

@@ -92,6 +92,55 @@ impl SignalToFirLower<'_> {
             name: name.clone(),
             elem_ty: elem_ty.clone(),
         };
+        // A generator is scheduled like any other program. Skipping this was a
+        // correctness bug, not an optimization: `build_module` drives
+        // recursion-group emission through `lower_scheduled_graph`, which
+        // no-ops without a schedule, so a carrier read only through a delay
+        // never got its update emitted and every table entry kept the initial
+        // value. Generators carry no clock domains, so this is the
+        // wrapper-free branch of the main gate.
+        let empty_domains = propagate::ClockDomainTable::new();
+        let envs =
+            crate::clk_env::annotate(prepared.arena(), &empty_domains, outputs).map_err(|err| {
+                SignalFirError::new(
+                    SignalFirErrorCode::ClockAnalysis,
+                    format!("table generator clock-environment inference failed: {err}"),
+                )
+            })?;
+        let mut hgraph = crate::hgraph::build_hgraph(
+            prepared.arena(),
+            &empty_domains,
+            &envs,
+            outputs,
+            prepared.sig_types_map(),
+        )
+        .map_err(|err| {
+            SignalFirError::new(
+                SignalFirErrorCode::ClockAnalysis,
+                format!("table generator dependency graph failed: {err}"),
+            )
+        })?;
+        let effects =
+            crate::signal_fir::vector::analysis::analyze_scalar_scheduling_effects(&prepared)
+                .map_err(|err| {
+                    SignalFirError::new(
+                        SignalFirErrorCode::ClockAnalysis,
+                        format!("table generator effect analysis failed: {err}"),
+                    )
+                })?;
+        crate::hgraph::orient_effect_conflicts(&mut hgraph, &effects).map_err(|err| {
+            SignalFirError::new(
+                SignalFirErrorCode::ClockAnalysis,
+                format!("table generator effect ordering failed: {err}"),
+            )
+        })?;
+        let hsched = crate::hgraph::schedule(&hgraph, self.scheduling_strategy).map_err(|err| {
+            SignalFirError::new(
+                SignalFirErrorCode::ClockAnalysis,
+                format!("table generator scheduling failed: {err}"),
+            )
+        })?;
+
         let empty_ui = UiProgram::empty();
         let lowered = super::build::build_module(
             &plan,
@@ -109,8 +158,9 @@ impl SignalToFirLower<'_> {
             super::super::ControlRateMode::InlinePerBlock,
             super::super::ProcessingApi::Block,
             self.table_init_mode,
+            self.scheduling_strategy,
             None,
-            None,
+            Some(&hsched),
             Some(&spec),
         )?;
 
