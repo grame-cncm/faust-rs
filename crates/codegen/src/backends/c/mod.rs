@@ -158,6 +158,7 @@ struct ModuleView {
     num_inputs: usize,
     num_outputs: usize,
     static_decls: FirId,
+    sub_modules: FirId,
 }
 
 /// Normalized function declaration extracted from FIR before textual emission.
@@ -217,6 +218,7 @@ pub fn generate_c_module(
     emit_c_header(&mut out, &class_name);
     emit_static_tables(store, &mut out, &effective_options, module.static_decls)?;
     let _ = writeln!(out);
+    emit_sub_modules(store, &mut out, &effective_options, module.sub_modules)?;
     emit_struct_definition(
         store,
         &mut out,
@@ -316,6 +318,129 @@ fn emit_struct_definition(
     let _ = writeln!(out, "}} {class_name};");
     let _ = writeln!(out);
     Ok(())
+}
+
+/// Emits every generated-table sub-container as a struct plus free functions.
+///
+/// C++ parity: the same `CodeContainer` the C++ backend emits as a class
+/// becomes, in C, a `typedef struct` holding the generator's state and a pair
+/// of `static` functions taking it as their first parameter. State access
+/// needs no special handling: the generator's fields are `AccessType::Struct`,
+/// which `emit_var_ref` already renders as `dsp->field`, and `dsp` is exactly
+/// what these functions receive.
+///
+/// Allocation goes through `calloc`/`free` rather than `new`/`delete`, which is
+/// why a module with a generated table pulls in `<stdlib.h>`.
+///
+/// Sub-modules are emitted deepest-first, so a nested generator's struct and
+/// functions precede the ones that call them.
+fn emit_sub_modules(
+    store: &FirStore,
+    out: &mut String,
+    options: &COptions,
+    sub_modules: FirId,
+) -> Result<(), CodegenError> {
+    let FirMatch::Block(items) = match_fir(store, sub_modules) else {
+        return Ok(());
+    };
+    for item in items {
+        let FirMatch::SubModule {
+            name,
+            dsp_struct,
+            static_decls,
+            globals,
+            functions,
+            sub_modules: nested,
+            ..
+        } = match_fir(store, item)
+        else {
+            return Err(CodegenError::new(
+                CodegenErrorCode::InvalidModuleSection,
+                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
+            ));
+        };
+
+        emit_sub_modules(store, out, options, nested)?;
+        emit_static_tables(store, out, options, static_decls)?;
+
+        let _ = writeln!(out, "typedef struct {{");
+        emit_struct_fields(store, out, options, dsp_struct)?;
+        emit_struct_fields(store, out, options, globals)?;
+        let _ = writeln!(out, "}} {name};");
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "static {name}* new{name}() {{ return ({name}*)calloc(1, sizeof({name})); }}"
+        );
+        let _ = writeln!(
+            out,
+            "static void delete{name}({name}* dsp) {{ free(dsp); }}"
+        );
+        let _ = writeln!(out);
+        // Arity getters exist for reference parity; a generator is 0-input /
+        // 1-output by construction.
+        let _ = writeln!(out, "int getNumInputs{name}({name}* RESTRICT dsp) {{");
+        let _ = writeln!(out, "    return 0;");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out, "int getNumOutputs{name}({name}* RESTRICT dsp) {{");
+        let _ = writeln!(out, "    return 1;");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+
+        if let FirMatch::Block(fns) = match_fir(store, functions) {
+            for f in fns {
+                let FirMatch::DeclareFun {
+                    name: fun_name,
+                    args,
+                    body: Some(body),
+                    ..
+                } = match_fir(store, f)
+                else {
+                    continue;
+                };
+                let params: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, arg)| {
+                        if index == 0 {
+                            format!("{name}* dsp")
+                        } else {
+                            emit_named_type(&arg.typ, &arg.name, options)
+                        }
+                    })
+                    .collect();
+                let _ = writeln!(out, "static void {fun_name}({}) {{", params.join(", "));
+                emit_block(store, out, options, body, 1)?;
+                let _ = writeln!(out, "}}");
+                let _ = writeln!(out);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns the `(variable, sub-module)` pairs allocated inside one block.
+///
+/// The FIR carries the allocation but not the release, which is bound to how
+/// each language allocates; C pairs `calloc` with `free` once the fill has run.
+fn allocated_sub_containers(store: &FirStore, block: FirId) -> Vec<(String, String)> {
+    let FirMatch::Block(items) = match_fir(store, block) else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareVar {
+                name,
+                init: Some(init),
+                ..
+            } => match match_fir(store, init) {
+                FirMatch::NewDsp { name: sub, .. } => Some((name, sub)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
 }
 
 /// Emits one FIR block worth of struct fields.
@@ -466,7 +591,16 @@ fn emit_c_api(
     let _ = writeln!(out);
 
     let _ = writeln!(out, "void classInit{class_name}(int sample_rate) {{");
-    let _ = writeln!(out, "    (void)sample_rate;");
+    if let Some(static_init) = declared_functions.iter().find(|f| f.name == "staticInit")
+        && let Some(body) = static_init.body
+    {
+        emit_block(store, out, options, body, 1)?;
+        for (var, sub) in allocated_sub_containers(store, body) {
+            let _ = writeln!(out, "    delete{sub}({var});");
+        }
+    } else {
+        let _ = writeln!(out, "    (void)sample_rate;");
+    }
     let _ = writeln!(out, "}}");
     let _ = writeln!(out);
 
@@ -603,6 +737,9 @@ fn emit_c_api(
                 | "compute"
                 | "control"
                 | "frame"
+                // `staticInit` is rendered as the body of `classInit`, not as
+                // a function of its own.
+                | "staticInit"
         ) {
             continue;
         }
@@ -981,6 +1118,11 @@ fn emit_value(store: &FirStore, options: &COptions, value: FirId) -> Result<Stri
     if let Some(result) = c_family::emit_value_common(store, &ctx, value) {
         return result;
     }
+    // A sub-container allocation goes through the generated `new<Sub>()`
+    // helper, which wraps `calloc`; `cpp` has the same arm with `new`.
+    if let FirMatch::NewDsp { name, .. } = match_fir(store, value) {
+        return Ok(format!("new{name}()"));
+    }
     Err(unsupported_node("value", value, store))
 }
 
@@ -1080,13 +1222,6 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
         sub_modules,
     } = match_fir(store, module)
     {
-        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-        if !sub_module_names.is_empty() {
-            return Err(CodegenError::new(
-                CodegenErrorCode::UnsupportedNode,
-                crate::backends::unsupported_sub_modules_message("c", &sub_module_names),
-            ));
-        }
         Ok(ModuleView {
             name,
             dsp_struct,
@@ -1095,6 +1230,7 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             num_inputs,
             num_outputs,
             static_decls,
+            sub_modules,
         })
     } else {
         Err(CodegenError::new(
@@ -1360,6 +1496,165 @@ mod tests {
             crate::backends::c_family::trim_float(1.0 / 2147483647.0),
             "0.0000000004656612875245797",
             "C backend double literals must preserve enough precision for grain/table DSPs"
+        );
+    }
+
+    #[test]
+    /// S4a: `c` emits the sub-container as a struct plus free functions taking
+    /// it as their first parameter, with `calloc`/`free` allocation and a
+    /// `classInit` that fills the table — the reference shape of plan §5.9.1.
+    fn sub_module_is_emitted_as_a_struct_with_a_filling_class_init() {
+        let mut store = FirStore::new();
+        let module = {
+            let mut b = FirBuilder::new(&mut store);
+            let obj_ty = FirType::Ptr(Box::new(FirType::Obj));
+            let sub = {
+                let init_body = b.block(&[]);
+                let init = b.declare_fun(
+                    "instanceInitmydspSIG0",
+                    FirType::Fun {
+                        args: vec![obj_ty.clone(), FirType::Int32],
+                        ret: Box::new(FirType::Void),
+                    },
+                    &[
+                        NamedType {
+                            name: "dsp".into(),
+                            typ: obj_ty.clone(),
+                        },
+                        NamedType {
+                            name: "sample_rate".into(),
+                            typ: FirType::Int32,
+                        },
+                    ],
+                    Some(init_body),
+                    false,
+                );
+                let fill_body = b.block(&[]);
+                let table_ty = FirType::Ptr(Box::new(FirType::Float32));
+                let fill = b.declare_fun(
+                    "fillmydspSIG0",
+                    FirType::Fun {
+                        args: vec![obj_ty.clone(), FirType::Int32, table_ty.clone()],
+                        ret: Box::new(FirType::Void),
+                    },
+                    &[
+                        NamedType {
+                            name: "dsp".into(),
+                            typ: obj_ty.clone(),
+                        },
+                        NamedType {
+                            name: "count".into(),
+                            typ: FirType::Int32,
+                        },
+                        NamedType {
+                            name: "table".into(),
+                            typ: table_ty,
+                        },
+                    ],
+                    Some(fill_body),
+                    false,
+                );
+                let functions = b.block(&[init, fill]);
+                let empty = b.block(&[]);
+                b.sub_module(
+                    "mydspSIG0",
+                    FirType::Float32,
+                    empty,
+                    empty,
+                    empty,
+                    functions,
+                    &[],
+                )
+            };
+            let table = b.declare_var(
+                "ftbl0mydspSIG0",
+                FirType::Array(Box::new(FirType::Float32), 8),
+                fir::AccessType::Static,
+                None,
+            );
+            let static_decls = b.block(&[table]);
+            let static_init_body = {
+                let new_obj = b.new_dsp("mydspSIG0", obj_ty.clone());
+                let alloc = b.declare_var(
+                    "sig0",
+                    obj_ty.clone(),
+                    fir::AccessType::Stack,
+                    Some(new_obj),
+                );
+                let obj = b.load_var("sig0", fir::AccessType::Stack, obj_ty.clone());
+                let sr = b.load_var("sample_rate", fir::AccessType::FunArgs, FirType::Int32);
+                let init_call = b.fun_call("instanceInitmydspSIG0", &[obj, sr], FirType::Void);
+                let init_stmt = b.drop_(init_call);
+                let obj2 = b.load_var("sig0", fir::AccessType::Stack, obj_ty.clone());
+                let count = b.int32(8);
+                let tbl = b.load_var(
+                    "ftbl0mydspSIG0",
+                    fir::AccessType::Static,
+                    FirType::Array(Box::new(FirType::Float32), 8),
+                );
+                let fill_call = b.fun_call("fillmydspSIG0", &[obj2, count, tbl], FirType::Void);
+                let fill_stmt = b.drop_(fill_call);
+                b.block(&[alloc, init_stmt, fill_stmt])
+            };
+            let static_init = b.declare_fun(
+                "staticInit",
+                FirType::Fun {
+                    args: vec![obj_ty.clone(), FirType::Int32],
+                    ret: Box::new(FirType::Void),
+                },
+                &[
+                    NamedType {
+                        name: "dsp".into(),
+                        typ: obj_ty,
+                    },
+                    NamedType {
+                        name: "sample_rate".into(),
+                        typ: FirType::Int32,
+                    },
+                ],
+                Some(static_init_body),
+                false,
+            );
+            let functions = b.block(&[static_init]);
+            let empty = b.block(&[]);
+            b.module(0, 1, "mydsp", empty, empty, functions, static_decls, &[sub])
+        };
+
+        let text = generate_c_module(&store, module, &COptions::default())
+            .expect("sub-module emission must succeed");
+
+        assert!(text.contains("} mydspSIG0;"), "struct missing: {text}");
+        assert!(
+            text.contains("static mydspSIG0* newmydspSIG0() { return (mydspSIG0*)calloc(1, sizeof(mydspSIG0)); }"),
+            "calloc helper missing: {text}"
+        );
+        assert!(
+            text.contains("static void deletemydspSIG0(mydspSIG0* dsp) { free(dsp); }"),
+            "free helper missing: {text}"
+        );
+        assert!(
+            text.contains("static void instanceInitmydspSIG0(mydspSIG0* dsp, int sample_rate)"),
+            "init signature must take the receiver: {text}"
+        );
+        assert!(
+            text.contains("static float ftbl0mydspSIG0[8];"),
+            "uninitialized table declaration missing: {text}"
+        );
+        for expected in [
+            "mydspSIG0* sig0 = newmydspSIG0();",
+            "instanceInitmydspSIG0(sig0, sample_rate);",
+            "fillmydspSIG0(sig0, 8, ftbl0mydspSIG0);",
+            "deletemydspSIG0(sig0);",
+        ] {
+            assert!(
+                text.contains(expected),
+                "classInit missing `{expected}`: {text}"
+            );
+        }
+        // Emitted once as the classInit body, never as a function of its own.
+        assert!(
+            !text.contains("static void staticInit("),
+            "staticInit leaked as a function: {text}"
         );
     }
 }

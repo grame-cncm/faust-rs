@@ -1,7 +1,8 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S3 done, S4a `cpp` done; S4a `c` is next
+Status: S0-S4a done; S4b started (`codebox` blocked on a pre-existing defect,
+`rust`/`julia`/`asc`/`cmajor` not started)
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -845,9 +846,11 @@ lowering a fill module.
 
 Split in two, because `cpp`/`c` now carry the full nested-class emitter:
 
-- **S4a — `cpp` and `c`.** `cpp` done 2026-08-05; `c` still pending (it needs
-  the `dsp->` receiver seam for sub-module state, a different mechanism from
-  C++'s bare field access). Nested class/struct emission per §5.9.1: sub-module
+- **S4a — `cpp` and `c`. Done 2026-08-05.** Both emit the nested form of
+  §5.9.1 and both match the C++ oracle sample-for-sample on `subcontainer1`.
+  The `dsp->` receiver seam C needs turned out to already exist: sub-module
+  state is `AccessType::Struct`, which `emit_var_ref` renders as `dsp->field`,
+  and `dsp` is exactly what the free functions receive. Nested class/struct emission per §5.9.1: sub-module
   placement, receiver-type seam for state access, `new`/`delete` helpers,
   `classInit` body from `staticInit`, uninitialized static table declarations,
   `<stdlib.h>` include for `c`. Gate: generated sources compile, the structural
@@ -855,6 +858,18 @@ Split in two, because `cpp`/`c` now carry the full nested-class emitter:
   `os.osc(440)` fixture drops below 10 KB.
 - **S4b — `rust`, `julia`, `asc`, `cmajor`, `codebox`.** Same gates in their own
   language shapes; `codebox` uses the flattened form.
+
+  **`codebox` is blocked (2026-08-05).** Wiring it to the S3 flattening pass
+  works — the generator inlines correctly and the module emits — but codebox
+  never emits the module's `static_decls` at all: on
+  `rdtable(65536, 0.5, …)` it emits a read of `ftbl0_cb[…]` with zero
+  declarations of that symbol and zero occurrences of the constant. Verified
+  pre-existing against the commit before this port, in `const` mode, so it is
+  independent of generated tables. Dropping the sub-module guard there would
+  trade an explicit refusal for a program that silently reads an unfilled
+  table, which is what this port exists to prevent. The guard stays until the
+  static-table defect is fixed; the migration is then five lines
+  (`flatten_sub_modules_owned` + drop the guard).
 
 Both sub-phases must keep every S4 fixture passing under `--table-init const`
 as well; the two modes are gated together from S4 onwards.
@@ -960,7 +975,7 @@ recorded as the expected `const`-mode outcome rather than as failures.
       `runtime` in S7, both modes gated
 - [x] Flattening pass with both state policies + independent checker (2026-08-05)
 - [x] `cpp` nested-class emission matching §5.9.1, with its structural test (2026-08-05)
-- [ ] `c` nested-struct emission
+- [x] `c` nested-struct emission (2026-08-05)
 - [ ] All ten backends migrated or explicitly failing on `SubModule`
 - [ ] Vector path migrated or failing closed with a stable reason
 - [x] `subcontainer1.dsp` matches the C++ oracle sample-for-sample under

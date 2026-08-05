@@ -175,6 +175,35 @@ pub fn flatten_sub_modules(
     ))
 }
 
+/// Flattens into a freshly owned store.
+///
+/// Backends receive `&FirStore` and cannot mutate it, so this imports the
+/// module into a new store first. The returned store owns every id in the
+/// returned root.
+///
+/// # Errors
+/// Returns [`FlattenError`] for the same reasons as [`flatten_sub_modules`].
+pub fn flatten_sub_modules_owned(
+    src: &FirStore,
+    module: FirId,
+    policy: SubModuleStatePolicy,
+) -> Result<(FirStore, FirId), FlattenError> {
+    let mut dst = FirStore::new();
+    let root = dst.import_from(src, module);
+    let flattened = flatten_sub_modules(&mut dst, root, policy)?;
+    Ok((dst, flattened))
+}
+
+/// Returns `true` when a module declares at least one generated-table
+/// sub-module.
+#[must_use]
+pub fn has_sub_modules(store: &FirStore, module: FirId) -> bool {
+    let FirMatch::Module { sub_modules, .. } = match_fir(store, module) else {
+        return false;
+    };
+    matches!(match_fir(store, sub_modules), FirMatch::Block(items) if !items.is_empty())
+}
+
 /// Indexes sub-modules by name and collects the declarations to hoist.
 fn collect_sub_modules(
     store: &mut FirStore,
