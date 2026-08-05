@@ -75,6 +75,12 @@ pub struct ForeignSignature {
 
 /// Returns `true` if the interpreter runtime can execute this foreign-call
 /// signature with the current bounded scalar ABI.
+///
+/// The shape restrictions (0-2 args, all args the same type, and that type
+/// matching `ret` unless `ret` is `Void`) mirror the finite set of
+/// `extern "C" fn` signatures that `foreign_call::invoke` hand-enumerates and
+/// dispatches to via `transmute`; there is no generic FFI call path, so any
+/// signature outside that fixed table cannot actually be invoked at runtime.
 #[must_use]
 pub fn is_supported_signature(ret: ForeignScalarType, args: &[ForeignScalarType]) -> bool {
     match args {
