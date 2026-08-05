@@ -699,7 +699,10 @@ pub(crate) fn build_module<'a>(
         sample_loops.push((true, lower.regions.current_flattened()));
         lower.reset_sample_loop_state(region::RegionKind::SampleLoop);
     }
-    if !processing_api.is_one_sample() {
+    // A table-fill module writes into its `table` argument, not into audio
+    // channels: emitting the `outputN = outputs[N]` aliases here would
+    // reference an `outputs` parameter its signature does not have.
+    if !processing_api.is_one_sample() && fill.is_none() {
         for index in 0..plan.num_outputs {
             let mut b = FirBuilder::new(&mut lower.store);
             let chan = b.int32(i32::try_from(index).expect("validated output index fits i32"));

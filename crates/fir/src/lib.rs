@@ -56,6 +56,7 @@ mod dump;
 mod encoding;
 mod matcher;
 mod store;
+pub mod subcontainer;
 mod types;
 
 pub use builder::FirBuilder;

@@ -23,6 +23,7 @@ mod contract;
 mod coverage;
 mod delays;
 mod execution;
+mod flatten;
 mod placement;
 mod recursion;
 mod reverse_ad;

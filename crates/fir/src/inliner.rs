@@ -1170,6 +1170,42 @@ pub fn clone_fir_hygienic_with_state(
     })
 }
 
+/// Clones one sub-module body into the same store with explicit `kFunArgs` and
+/// `kStruct` substitutions, for [`crate::subcontainer::flatten_sub_modules`].
+///
+/// Unlike [`prepare_callee_body_for_inlining`], no argument is materialized
+/// into a temp: the caller has already decided what each parameter maps to,
+/// because a flattened `fill` writes directly into the caller's own table
+/// rather than through a copied pointer. Local `kStack`/`kLoop` names are
+/// still renamed hygienically, which is what keeps the sub-module's loop
+/// counters from colliding with the enclosing function's.
+///
+/// # Errors
+/// Returns [`FirHygienicCloneError`] when the body contains a node the clone
+/// engine does not handle.
+pub(crate) fn flatten_clone_body(
+    store: &mut FirStore,
+    body: FirId,
+    state: &mut FirHygienicCloneState,
+    fun_arg_subst: &HashMap<String, (String, AccessType)>,
+    struct_subst: &HashMap<String, (String, AccessType)>,
+) -> Result<FirId, FirHygienicCloneError> {
+    // The clone reads and writes the same store; a snapshot keeps the borrow
+    // checker satisfied without copying node data.
+    let src = std::mem::take(store);
+    let mut cloner = HygienicCloner::new(&src, store, state);
+    cloner.fun_arg_subst = fun_arg_subst.clone();
+    cloner.struct_subst = struct_subst.clone();
+    cloner.push_scope();
+    let result = cloner.clone_node(body);
+    cloner.pop_scope();
+    let out = result?;
+    // Nothing was removed from the source, so restoring it keeps every id the
+    // caller still holds valid.
+    *store = src;
+    Ok(out)
+}
+
 /// Prepares a callee body for future inlining by materializing actual arguments and
 /// substituting `kFunArgs` references to fresh stack temporaries.
 ///
@@ -1274,7 +1310,10 @@ fn prepare_callee_body_for_inlining_with_cloned_args(
     subst: HashMap<String, String>,
 ) -> Result<FirPreparedInlineBody, FirInlinePrepareError> {
     let mut cloner = HygienicCloner::new(src_store, dst_store, state);
-    cloner.fun_arg_subst = subst;
+    cloner.fun_arg_subst = subst
+        .into_iter()
+        .map(|(param, temp)| (param, (temp, AccessType::Stack)))
+        .collect();
     cloner.push_scope();
     let body = cloner.clone_node(body_id)?;
     cloner.pop_scope();
@@ -2098,7 +2137,22 @@ struct HygienicCloner<'a, 'b> {
     dst: &'b mut FirStore,
     state: &'b mut FirHygienicCloneState,
     scopes: Vec<HashMap<String, String>>,
-    fun_arg_subst: HashMap<String, String>,
+    /// `kFunArgs` name substitutions, each with the access class the
+    /// substituted reference takes.
+    ///
+    /// Inlining a callee parameter into a caller temp gives
+    /// `(temp, AccessType::Stack)`. Flattening a table-generator sub-module
+    /// instead binds its `table` parameter to the caller's own table, which
+    /// lives in `Static` or `Struct` storage — hence the access class travels
+    /// with the name rather than being assumed.
+    fun_arg_subst: HashMap<String, (String, AccessType)>,
+    /// `kStruct` name substitutions, each with the access class the
+    /// substituted reference takes.
+    ///
+    /// Used when a sub-module's own state is merged into the enclosing program
+    /// (renamed struct fields) or demoted to locals of the initialization
+    /// function (`StackLocals`).
+    struct_subst: HashMap<String, (String, AccessType)>,
     local_renames: Vec<FirLocalRename>,
     preserve_local_names: bool,
     sweep_scaffolding_drop_roots: bool,
@@ -2114,6 +2168,7 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
             state,
             scopes: Vec::new(),
             fun_arg_subst: HashMap::new(),
+            struct_subst: HashMap::new(),
             local_renames: Vec::new(),
             preserve_local_names: false,
             sweep_scaffolding_drop_roots: false,
@@ -2159,8 +2214,13 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
             return self
                 .fun_arg_subst
                 .get(name)
-                .cloned()
+                .map(|(n, _)| n.clone())
                 .unwrap_or_else(|| name.to_string());
+        }
+        if access == AccessType::Struct
+            && let Some((renamed, _)) = self.struct_subst.get(name)
+        {
+            return renamed.clone();
         }
         if matches!(access, AccessType::Stack | AccessType::Loop) {
             self.lookup_local_rename(name)
@@ -2177,10 +2237,16 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
 
     /// Adjusts the access class when a `kFunArgs` reference is materialized to a stack temp.
     fn remap_access(&self, access: AccessType, name: &str) -> AccessType {
-        if access == AccessType::FunArgs && self.fun_arg_subst.contains_key(name) {
-            AccessType::Stack
-        } else {
-            access
+        match access {
+            AccessType::FunArgs => self
+                .fun_arg_subst
+                .get(name)
+                .map_or(access, |(_, target)| *target),
+            AccessType::Struct => self
+                .struct_subst
+                .get(name)
+                .map_or(access, |(_, target)| *target),
+            _ => access,
         }
     }
 

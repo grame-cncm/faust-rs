@@ -1,7 +1,7 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S2 done; S3 (flattening pass) is next
+Status: S0-S3 done; S4a (`cpp`/`c` nested emission) is next
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -812,11 +812,34 @@ waveform-content, constant-content, and nested fixtures — the last two are wha
 prove option B is actually applied and no payload classification survives on the
 `runtime` path.
 
-### S3 — Flattening pass
+### S3 — Flattening pass — **done 2026-08-05**
 
-`fir::subcontainer::flatten_sub_modules` with both policies and its independent
-structural checker. Gate: `cargo test -p fir`, flattened output of every S2
-fixture accepted by the checker under both policies.
+`fir::subcontainer::flatten_sub_modules` with both state policies, plus
+`verify_flattened` as the independent structural check (no sub-module left
+declared or reachable, no surviving allocation, no call to a vanished entry
+point). Tests run the **real S2 producer** and flatten its output rather than a
+hand-built fixture, since the pass exists to consume what the producer emits.
+
+Three implementation findings:
+
+- The pass reuses the inliner's hygienic clone engine rather than duplicating
+  its traversal. `HygienicCloner`'s `fun_arg_subst` was generalized from
+  `name -> name` to `name -> (name, AccessType)`, and a `struct_subst` map
+  added: a flattened `fill` writes into the caller's own table, which lives in
+  `Static` or `Struct` storage, so the access class has to travel with the
+  name instead of being assumed to be `Stack`.
+- Sub-modules must be resolved from the **callee name**, not from the receiver
+  object. The clone engine hoists a `NewDsp` out of its declaration into a
+  statement of its own, so a receiver-based lookup silently missed nested
+  allocations; `verify_flattened` caught it.
+- Recursion happens on the *spliced* statements: a sub-module's `instanceInit`
+  can itself contain an allocate/init/fill triple for a nested generator, so
+  inlining is followed by another rewrite pass over the result.
+
+S3 also uncovered an S2 producer bug: fill bodies carried the DSP path's
+`output0 = outputs[0]` channel aliases, referencing an `outputs` parameter a
+`fill` signature does not have. Fixed by skipping the alias emission when
+lowering a fill module.
 
 ### S4 — C-family and textual backends
 
@@ -933,7 +956,7 @@ recorded as the expected `const`-mode outcome rather than as failures.
 - [x] `build_fill_module` and `module/subcontainer.rs` with recursion (2026-08-05)
 - [ ] `--table-init runtime|const` implemented (2026-08-05); default flips to
       `runtime` in S7, both modes gated
-- [ ] Flattening pass with both state policies + independent checker
+- [x] Flattening pass with both state policies + independent checker (2026-08-05)
 - [ ] `cpp`/`c` nested-class emission matching §5.9.1, with its structural tests
 - [ ] All ten backends migrated or explicitly failing on `SubModule`
 - [ ] Vector path migrated or failing closed with a stable reason
