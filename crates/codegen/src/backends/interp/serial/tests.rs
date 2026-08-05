@@ -253,8 +253,27 @@ fn test_instruction_name_field_roundtrips_in_both_formats() {
         let block_id = arena.alloc(block);
 
         let factory = FbcDspFactory::new(
-            "test_dsp", "", "", INTERP_FILE_VERSION, 0, 0, 0, 0, 0, 0, 0, 0, arena, vec![],
-            vec![], block_id, block_id, block_id, block_id, block_id, block_id,
+            "test_dsp",
+            "",
+            "",
+            INTERP_FILE_VERSION,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            arena,
+            vec![],
+            vec![],
+            block_id,
+            block_id,
+            block_id,
+            block_id,
+            block_id,
+            block_id,
         );
 
         let mut buf = Vec::new();
@@ -265,7 +284,8 @@ fn test_instruction_name_field_roundtrips_in_both_formats() {
         let factory2: FbcDspFactory<f32> = read_fbc(&mut cursor).unwrap();
         let block2 = factory2.arena.get(factory2.static_init_block);
         assert_eq!(
-            block2.instructions[0].name, "myFunc|d|dd",
+            block2.instructions[0].name,
+            "myFunc|d|dd",
             "name field lost roundtripping through {} format",
             if small { "small" } else { "normal" }
         );
