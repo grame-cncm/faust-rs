@@ -1212,6 +1212,33 @@ pub(crate) fn flatten_clone_body(
     Ok(store.import_from(&scratch, cloned))
 }
 
+/// Clones a subtree, rewriting `kStatic` references named in `subst`.
+///
+/// Used when a table moves from file scope into the DSP struct: the
+/// declaration changes access class, and every reference has to follow.
+///
+/// # Errors
+/// Returns [`FirHygienicCloneError`] when the subtree contains a node the clone
+/// engine does not handle.
+pub(crate) fn flatten_clone_body_with_static_subst(
+    store: &mut FirStore,
+    body: FirId,
+    state: &mut FirHygienicCloneState,
+    static_subst: &HashMap<String, (String, AccessType)>,
+) -> Result<FirId, FirHygienicCloneError> {
+    let src = std::mem::take(store);
+    let mut scratch = FirStore::new();
+    let mut cloner = HygienicCloner::new(&src, &mut scratch, state);
+    cloner.static_subst = static_subst.clone();
+    cloner.preserve_local_names = true;
+    cloner.push_scope();
+    let result = cloner.clone_node(body);
+    cloner.pop_scope();
+    let cloned = result?;
+    *store = src;
+    Ok(store.import_from(&scratch, cloned))
+}
+
 /// Prepares a callee body for future inlining by materializing actual arguments and
 /// substituting `kFunArgs` references to fresh stack temporaries.
 ///
@@ -2159,6 +2186,9 @@ struct HygienicCloner<'a, 'b> {
     /// (renamed struct fields) or demoted to locals of the initialization
     /// function (`StackLocals`).
     struct_subst: HashMap<String, (String, AccessType)>,
+    /// `kStatic` name substitutions, used when a file-scope table is promoted
+    /// to a DSP struct field for a target with no shared static storage.
+    static_subst: HashMap<String, (String, AccessType)>,
     local_renames: Vec<FirLocalRename>,
     preserve_local_names: bool,
     sweep_scaffolding_drop_roots: bool,
@@ -2175,6 +2205,7 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
             scopes: Vec::new(),
             fun_arg_subst: HashMap::new(),
             struct_subst: HashMap::new(),
+            static_subst: HashMap::new(),
             local_renames: Vec::new(),
             preserve_local_names: false,
             sweep_scaffolding_drop_roots: false,
@@ -2228,6 +2259,11 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
         {
             return renamed.clone();
         }
+        if access == AccessType::Static
+            && let Some((renamed, _)) = self.static_subst.get(name)
+        {
+            return renamed.clone();
+        }
         if matches!(access, AccessType::Stack | AccessType::Loop) {
             self.lookup_local_rename(name)
                 .map(ToOwned::to_owned)
@@ -2250,6 +2286,10 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
                 .map_or(access, |(_, target)| *target),
             AccessType::Struct => self
                 .struct_subst
+                .get(name)
+                .map_or(access, |(_, target)| *target),
+            AccessType::Static => self
+                .static_subst
                 .get(name)
                 .map_or(access, |(_, target)| *target),
             _ => access,

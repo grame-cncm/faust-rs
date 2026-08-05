@@ -247,6 +247,40 @@ pub fn generate_julia_module(
     module: FirId,
     options: &JuliaOptions,
 ) -> Result<String, CodegenError> {
+    // Julia has no nested container and its `classInit!` takes the DSP, so a
+    // table generator is inlined with its state merged into the DSP struct.
+    // This is what upstream does — `julia_code_container.cpp` runs
+    // `inlineSubcontainersFunCalls` on the static-init instructions — and it is
+    // why the reference emits `dsp.iRec0` inside `classInit!` rather than a
+    // separate generator object.
+    let flattened = if fir::subcontainer::has_sub_modules(store, module) {
+        let (mut owned, root) = fir::subcontainer::flatten_sub_modules_owned(
+            store,
+            module,
+            fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
+        )
+        .map_err(|err| {
+            CodegenError::new(
+                CodegenErrorCode::UnsupportedNode,
+                format!("flattening generated tables failed: {err}"),
+            )
+        })?;
+        // Julia has no shared static storage: the reference emits the table as
+        // `dsp.ftbl0mydspSIG0`, zeroed in the constructor.
+        let root = fir::subcontainer::promote_static_tables_to_struct(&mut owned, root).map_err(
+            |err| {
+                CodegenError::new(
+                    CodegenErrorCode::UnsupportedNode,
+                    format!("promoting generated tables failed: {err}"),
+                )
+            },
+        )?;
+        Some((owned, root))
+    } else {
+        None
+    };
+    let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
+
     let module = decode_module(store, module)?;
     let class_name = options
         .class_name
@@ -529,7 +563,16 @@ fn emit_julia_api(
         out,
         "function classInit!(dsp::{class_name}{{T}}, sample_rate::Int32) where {{T}}"
     );
-    let _ = writeln!(out, "\tnothing");
+    if let Some(body) = declared_functions
+        .iter()
+        .find(|f| f.name == "staticInit")
+        .and_then(|f| f.body)
+    {
+        let mut mode = EmitMode::Default;
+        emit_stmt(store, out, body, 1, &mut mode)?;
+    } else {
+        let _ = writeln!(out, "\tnothing");
+    }
     let _ = writeln!(out, "end");
     let _ = writeln!(out);
 
@@ -659,6 +702,8 @@ fn emit_julia_api(
                 | "instanceClear"
                 | "buildUserInterface"
                 | "compute"
+                // `staticInit` is rendered as the body of `classInit!`.
+                | "staticInit"
         ) {
             continue;
         }
@@ -1626,16 +1671,9 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
         globals,
         functions,
         static_decls,
-        sub_modules,
+        sub_modules: _,
     } = match_fir(store, module)
     {
-        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-        if !sub_module_names.is_empty() {
-            return Err(CodegenError::new(
-                CodegenErrorCode::UnsupportedNode,
-                crate::backends::unsupported_sub_modules_message("julia", &sub_module_names),
-            ));
-        }
         Ok(ModuleView {
             name,
             dsp_struct,

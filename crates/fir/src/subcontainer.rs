@@ -38,7 +38,7 @@
 //! sub-module is lowered with its own fresh name counters and its `iRec0` is
 //! unrelated to the enclosing program's `iRec0`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::inliner::{FirHygienicCloneState, flatten_clone_body};
 use crate::{AccessType, FirBuilder, FirId, FirMatch, FirStore, FirType, match_fir};
@@ -192,6 +192,117 @@ pub fn flatten_sub_modules_owned(
     let root = dst.import_from(src, module);
     let flattened = flatten_sub_modules(&mut dst, root, policy)?;
     Ok((dst, flattened))
+}
+
+/// Moves runtime-filled tables from file scope into the DSP struct.
+///
+/// Some targets have no shared static storage: Julia's `classInit!` takes the
+/// DSP and the reference emits `dsp.ftbl0mydspSIG0`, and Cmajor keeps tables as
+/// processor fields for the same reason
+/// (`porting/cmajor-backend-port-and-test-plan-2026-08-04-en.md` §4.5).
+///
+/// Rewriting the declaration's access class rather than special-casing the
+/// emitters means every reference to the table renders through the backend's
+/// existing struct-field path, with no per-site knowledge of which tables moved.
+/// Folded tables (`DeclareTable`, immutable, with their data inline) are left
+/// at file scope: they need no instance and duplicating them per instance would
+/// be a regression.
+///
+/// # Errors
+/// Returns [`FlattenError`] when the root is not a module.
+pub fn promote_static_tables_to_struct(
+    store: &mut FirStore,
+    module: FirId,
+) -> Result<FirId, FlattenError> {
+    let FirMatch::Module {
+        num_inputs,
+        num_outputs,
+        name,
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        sub_modules,
+    } = match_fir(store, module)
+    else {
+        return Err(FlattenError::RootNotModule(module));
+    };
+    let FirMatch::Block(statics) = match_fir(store, static_decls) else {
+        return Err(FlattenError::RootNotModule(module));
+    };
+
+    let mut promoted = Vec::new();
+    let mut kept = Vec::new();
+    for item in statics {
+        match match_fir(store, item) {
+            FirMatch::DeclareVar {
+                name,
+                typ: typ @ FirType::Array(..),
+                init: None,
+                ..
+            } => {
+                let mut b = FirBuilder::new(store);
+                promoted.push(b.declare_var(name, typ, AccessType::Struct, None));
+            }
+            _ => kept.push(item),
+        }
+    }
+    if promoted.is_empty() {
+        return Ok(module);
+    }
+
+    let dsp_struct = append_block(store, dsp_struct, &promoted);
+    let static_decls = {
+        let mut b = FirBuilder::new(store);
+        b.block(&kept)
+    };
+    let functions =
+        rewrite_static_table_access(store, functions, &promoted_names(store, &promoted));
+
+    // Sub-modules are carried across untouched. This pass normally runs after
+    // flattening, where none are left, but discarding them here would silently
+    // drop a generator if it were ever run on a module that still had them.
+    let carried = match match_fir(store, sub_modules) {
+        FirMatch::Block(items) => items,
+        _ => Vec::new(),
+    };
+    let mut b = FirBuilder::new(store);
+    Ok(b.module(
+        num_inputs,
+        num_outputs,
+        name,
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &carried,
+    ))
+}
+
+/// Rewrites every reference to a promoted table from `Static` to `Struct`.
+fn rewrite_static_table_access(
+    store: &mut FirStore,
+    functions: FirId,
+    promoted: &BTreeSet<String>,
+) -> FirId {
+    let subst: HashMap<String, (String, AccessType)> = promoted
+        .iter()
+        .map(|name| (name.clone(), (name.clone(), AccessType::Struct)))
+        .collect();
+    let mut state = FirHygienicCloneState::default();
+    crate::inliner::flatten_clone_body_with_static_subst(store, functions, &mut state, &subst)
+        .unwrap_or(functions)
+}
+
+/// Names of the promoted declarations.
+fn promoted_names(store: &FirStore, promoted: &[FirId]) -> BTreeSet<String> {
+    promoted
+        .iter()
+        .filter_map(|id| match match_fir(store, *id) {
+            FirMatch::DeclareVar { name, .. } => Some(name),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Returns `true` when a module declares at least one generated-table
