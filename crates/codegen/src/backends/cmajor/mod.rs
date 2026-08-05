@@ -162,6 +162,7 @@ struct ModuleView {
     globals: FirId,
     functions: FirId,
     static_decls: FirId,
+    sub_modules: FirId,
     num_inputs: usize,
     num_outputs: usize,
 }
@@ -252,6 +253,42 @@ pub fn generate_cmajor_module(
     options: &CmajorOptions,
 ) -> Result<String, CodegenError> {
     validate_identifier(&options.class_name, "processor")?;
+    // Emission is written (nested struct, size-suffixed fill, promoted tables)
+    // but incomplete: a sub-module's fields are `Struct`-access and render
+    // bare, while Cmajor requires the `this.` receiver inside
+    // `void f (Sub& this, …)`. The real Cmajor compiler rejects the output with
+    // "Cannot find symbol 'fConst0'". Threading a receiver prefix through the
+    // value emitter is the remaining work; until then this backend refuses
+    // rather than emitting source its own toolchain will not accept.
+    if let FirMatch::Module { sub_modules, .. } = match_fir(store, module) {
+        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+        if !sub_module_names.is_empty() {
+            return Err(CodegenError::new(
+                CodegenErrorCode::Unsupported,
+                crate::backends::unsupported_sub_modules_message("cmajor", &sub_module_names),
+            ));
+        }
+    }
+    // Cmajor has no shared static storage, so a generated table is a processor
+    // field — the adaptation this backend's own plan documents at §4.5. The
+    // sub-module itself stays nested: Cmajor has structs and functions taking
+    // an explicit receiver, so the reference emits the generator as a struct.
+    let promoted = fir::subcontainer::has_sub_modules(store, module)
+        .then(|| {
+            let mut owned = FirStore::new();
+            let root = owned.import_from(store, module);
+            fir::subcontainer::promote_static_tables_to_struct(&mut owned, root)
+                .map(|root| (owned, root))
+                .map_err(|err| {
+                    CodegenError::new(
+                        CodegenErrorCode::Unsupported,
+                        format!("promoting generated tables failed: {err}"),
+                    )
+                })
+        })
+        .transpose()?;
+    let (store, module) = promoted.as_ref().map_or((store, module), |(s, m)| (s, *m));
+
     let view = decode_module(store, module)?;
     if find_function_body(store, view.functions, "frame").is_none()
         && find_function_body(store, view.functions, "compute").is_none()
@@ -276,6 +313,8 @@ pub fn generate_cmajor_module(
     emit_field_block(store, &mut out, view.dsp_struct, options)?;
     emit_field_block(store, &mut out, view.static_decls, options)?;
     emit_field_block(store, &mut out, view.globals, options)?;
+    let table_sizes = collect_table_sizes(store, view.functions);
+    emit_sub_modules(store, &mut out, options, view.sub_modules, &table_sizes)?;
     let _ = writeln!(out, "\t\tbool fUpdated;");
     if ui.has_bargraphs() {
         let _ = writeln!(out, "\t\tint fControlSlice;");
@@ -293,6 +332,117 @@ pub fn generate_cmajor_module(
     let _ = writeln!(out, "\t}}");
     let _ = writeln!(out, "}}");
     Ok(out)
+}
+
+/// Emits every generated-table sub-container as a nested struct with its
+/// functions.
+///
+/// Cmajor has structs and functions taking an explicit receiver, so the
+/// reference emits the generator as a `struct` plus `void f (Sub& this, …)`
+/// functions rather than inlining it.
+///
+/// Two Cmajor-specific shapes, both from this backend's plan §4.5: array
+/// parameters carry their concrete length, so the fill function's name is
+/// suffixed with the table size (`fillmydspSIG0_65536`) to keep one name per
+/// instantiated length; and `new<Sub>` returns a value while `delete<Sub>` is
+/// empty, the language having no manual deallocation.
+fn emit_sub_modules(
+    store: &FirStore,
+    out: &mut String,
+    options: &CmajorOptions,
+    sub_modules: FirId,
+    table_sizes: &BTreeMap<String, usize>,
+) -> Result<(), CodegenError> {
+    let FirMatch::Block(items) = match_fir(store, sub_modules) else {
+        return Ok(());
+    };
+    for item in items {
+        let FirMatch::SubModule {
+            name,
+            elem_type,
+            dsp_struct,
+            functions,
+            sub_modules: nested,
+            ..
+        } = match_fir(store, item)
+        else {
+            return Err(CodegenError::new(
+                CodegenErrorCode::InvalidStructure,
+                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
+            ));
+        };
+
+        emit_sub_modules(store, out, options, nested, table_sizes)?;
+
+        let _ = writeln!(out, "\t\tstruct {name}");
+        let _ = writeln!(out, "\t\t{{");
+        emit_field_block(store, out, dsp_struct, options)?;
+        let _ = writeln!(out, "\t\t}}");
+        let _ = writeln!(out);
+
+        let size = table_sizes.get(&name).copied().unwrap_or(0);
+        let elem = emit_type(&elem_type, options)?;
+        if let FirMatch::Block(fns) = match_fir(store, functions) {
+            for f in fns {
+                let FirMatch::DeclareFun {
+                    name: fun_name,
+                    args,
+                    body: Some(body),
+                    ..
+                } = match_fir(store, f)
+                else {
+                    continue;
+                };
+                let emitted_name = if fun_name.starts_with("fill") {
+                    format!("{fun_name}_{size}")
+                } else {
+                    fun_name.clone()
+                };
+                let mut params = vec![format!("{name}& this")];
+                for arg in args.iter().skip(1) {
+                    params.push(match &arg.typ {
+                        FirType::Ptr(_) => format!("{elem}[{size}]& {}", arg.name),
+                        other => format!("{} {}", emit_type(other, options)?, arg.name),
+                    });
+                }
+                let _ = writeln!(out, "\t\tvoid {emitted_name} ({})", params.join(", "));
+                let _ = writeln!(out, "\t\t{{");
+                emit_block_items(store, out, options, body, 3, EmitContext::Init)?;
+                let _ = writeln!(out, "\t\t}}");
+                let _ = writeln!(out);
+            }
+        }
+        let _ = writeln!(out, "\t\t{name} new{name}() {{ {name} obj; return obj; }}");
+        let _ = writeln!(out, "\t\tvoid delete{name} ({name}& this) {{}}");
+        let _ = writeln!(out);
+    }
+    Ok(())
+}
+
+/// Maps each sub-module to the length of the table it fills.
+///
+/// Cmajor array parameters are typed by length, so the fill signature needs the
+/// concrete size. The FIR keeps the generator length-agnostic — exactly as the
+/// C++ `fill(count, table)` does — so the size is read back from the call site
+/// in `staticInit`.
+fn collect_table_sizes(store: &FirStore, functions: FirId) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    let Some(body) = find_function_body(store, functions, "staticInit") else {
+        return out;
+    };
+    let mut stack = vec![body];
+    while let Some(id) = stack.pop() {
+        if let FirMatch::FunCall { name, args, .. } = match_fir(store, id)
+            && let Some(sub) = name.strip_prefix("fill")
+            && let Some(count) = args.get(1)
+            && let FirMatch::Int32 { value, .. } = match_fir(store, *count)
+            && let Ok(size) = usize::try_from(value)
+        {
+            out.insert(sub.to_owned(), size);
+        }
+        stack.extend(fir::fir_match_children(store, id));
+    }
+    out
 }
 
 /// Emits Cmajor streams in the ordering of the pinned C++ `sortIO` reference.
@@ -727,7 +877,10 @@ fn emit_lifecycle(
         out,
         options,
         view.functions,
-        "classInit",
+        // `staticInit` is the FIR name for what the DSP API calls `classInit`;
+        // Cmajor calls it from `instanceInit` because its tables are
+        // per-processor (§4.6 of the cmajor plan).
+        "staticInit",
         "void classInit(int sample_rate)",
         false,
     )?;
@@ -919,7 +1072,13 @@ fn emit_stmt(
                 return Ok(());
             }
             validate_identifier(&name, "variable")?;
-            let type_name = emit_type(&typ, options)?;
+            // A sub-container handle is a value of the generator struct, not a
+            // runtime pointer: Cmajor has no `Obj` handle type, and its
+            // functions take `Sub& this`.
+            let type_name = match init.map(|id| match_fir(store, id)) {
+                Some(FirMatch::NewDsp { name: sub, .. }) => sub,
+                _ => emit_type(&typ, options)?,
+            };
             let qualifier = static_qualifier(context, access);
             let _ = write!(out, "{tab}{qualifier}{type_name} {name}");
             if let Some(init) = init {
@@ -1293,10 +1452,18 @@ fn emit_value(
         }
         FirMatch::FunCall { name, args, .. } => {
             let mut rendered = Vec::with_capacity(args.len());
-            for arg in args {
-                rendered.push(emit_value(store, options, arg)?);
+            for arg in &args {
+                rendered.push(emit_value(store, options, *arg)?);
             }
-            Ok(format!("{}({})", map_math_name(&name), rendered.join(", ")))
+            // A fill call names the size-specialized function; the size is the
+            // literal `count` argument the producer emitted.
+            let name = match args.get(1).map(|id| match_fir(store, *id)) {
+                Some(FirMatch::Int32 { value, .. }) if name.starts_with("fill") => {
+                    format!("{name}_{value}")
+                }
+                _ => map_math_name(&name).to_string(),
+            };
+            Ok(format!("{name}({})", rendered.join(", ")))
         }
         FirMatch::NullValue { .. } => Ok("0".to_owned()),
         FirMatch::NewDsp { name, .. } => Ok(format!("new{name}()")),
@@ -1648,23 +1815,15 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             static_decls,
             sub_modules,
             ..
-        } => {
-            let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-            if !sub_module_names.is_empty() {
-                return Err(CodegenError::new(
-                    CodegenErrorCode::Unsupported,
-                    crate::backends::unsupported_sub_modules_message("cmajor", &sub_module_names),
-                ));
-            }
-            Ok(ModuleView {
-                dsp_struct,
-                globals,
-                functions,
-                static_decls,
-                num_inputs,
-                num_outputs,
-            })
-        }
+        } => Ok(ModuleView {
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            sub_modules,
+            num_inputs,
+            num_outputs,
+        }),
         other => Err(CodegenError::new(
             CodegenErrorCode::RootNotModule,
             format!("expected FIR module root, found {other:?}"),

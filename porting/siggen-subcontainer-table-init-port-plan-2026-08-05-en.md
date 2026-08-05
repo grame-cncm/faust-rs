@@ -1,9 +1,9 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S4a done; S4b in progress (`codebox`, `rust`, `julia` done and
-numerically validated; `asc` emitted but its gate is blocked on `wasm`/S5;
-`cmajor` not started)
+Status: S0-S4a done; S4b in progress. `codebox`, `rust`, `julia` done and
+numerically validated. `asc` emitted, gate blocked on `wasm`/S5. `cmajor`
+mostly written but incomplete — guard still on, see §5.9.
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -587,7 +587,7 @@ The pass is pure FIR→FIR and is validated by an independent structural checker
 | `rust` | native sub-module — **done 2026-08-05** | struct + impl, `new{Sub}()` constructor, no `delete` (the sub-container is a `class_init` local and drops on its own, as upstream also assumes). Rust has no safe mutable static, so a runtime-filled table becomes `std::sync::RwLock<[T;N]>`: `class_init` takes a write guard, every body reading one takes a read guard, and table references name the guard. |
 | `julia` | **flattened, `MergedStructFields`** — done 2026-08-05 | Corrects this table: upstream inlines for Julia (`julia_code_container.cpp` runs `inlineSubcontainersFunCalls`), and the reference emits `dsp.iRec0` inside `classInit!` with the generator's state merged into the DSP struct. Julia also has no shared static storage, so runtime-filled tables are promoted to struct fields by `promote_static_tables_to_struct`. |
 | `asc` | native sub-module — **emitted 2026-08-05, numeric gate blocked** | Class plus `changetype` trampolines: AssemblyScript's typed references do not implicitly convert, so each entry point gets a free function taking `dsp: mydsp` — which is the FIR call shape, so nothing is stripped. `delete<Sub>` is emitted empty (garbage collected). **Its impulse gate cannot run yet**: `tools/impulseasc.js` builds a JSON companion through the `wasm` backend, which is S5 and still refuses generated tables. `asc` is therefore the one migrated backend not validated numerically. |
-| `cmajor` | native sub-module | as already specified in the cmajor plan §4.5 (size-suffixed fill names, `Struct&` receiver), per-instance tables |
+| `cmajor` | native sub-module — **incomplete, guard still on (2026-08-05)** | Nested struct, size-suffixed fill (`fillmydspSIG0_64`), and per-instance tables via `promote_static_tables_to_struct` are all emitted. **One gap remains**: a sub-module's fields are `Struct`-access and render bare, while Cmajor needs the `this.` receiver inside `void f (Sub& this, …)`. Verified against the real toolchain — `cmaj generate` rejects the output with `Cannot find symbol 'fConst0'`. Threading a receiver prefix through the value emitter is the remaining work; the guard stays until then. |
 | `codebox` | flattened, `StackLocals` | it already folds the lifecycle into one entry point |
 | `wasm` | flattened, `MergedStructFields` | matches upstream; `classInit` keeps its `dsp` argument |
 | `interp` | flattened, `MergedStructFields` | fill bytecode lands in the already-existing `static_init_block` / `init_block`; `compile_static_decls_init_block` keeps handling literal `DeclareTable`s and gains storage predeclaration for uninitialized `DeclareVar(Array)` |
