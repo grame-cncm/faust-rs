@@ -64,6 +64,12 @@ pub const BACKEND_NAME: &str = "wasm";
 
 /// Fallback minimum page count when auto-sizing would otherwise pick zero.
 const DEFAULT_MEMORY_PAGES: u32 = 1;
+
+// Byte offsets of the `Soundfile` struct fields (`fBuffers`, `fLength`,
+// `fSR`, `fOffset`, in that member order), as seen through a `Soundfile*`
+// loaded from the DSP struct. WASM's 32-bit linear memory packs each
+// pointer-sized member 4 bytes apart, unlike the 8-byte spacing used by
+// native 64-bit backends (e.g. Cranelift) for the same struct.
 const SOUNDFILE_BUFFERS_OFFSET: u32 = 0;
 const SOUNDFILE_LENGTH_OFFSET: u32 = 4;
 const SOUNDFILE_RATE_OFFSET: u32 = 8;
@@ -1466,6 +1472,11 @@ impl ComputeSubsetLowerer<'_> {
         self.lower_switch_cases(cond, &cond_ty, cases, default, function)
     }
 
+    /// Emits `Switch` as a recursive `if/else` chain of equality tests.
+    ///
+    /// Each recursive call re-lowers `cond` and re-emits one case comparison,
+    /// nesting the remaining cases (and the optional `default`) inside the
+    /// `else` branch, until no cases remain.
     fn lower_switch_cases(
         &mut self,
         cond: FirId,
@@ -1512,6 +1523,11 @@ impl ComputeSubsetLowerer<'_> {
                 function.instruction(&Instruction::F64Const(value));
                 Ok(())
             }
+            // `count` (compute's 2nd param) and `sample_rate` (instanceConstants'
+            // 2nd param) both resolve to local index 1: they never appear in the
+            // same function body, since each name only occurs in the FIR body of
+            // the one lifecycle function whose ABI declares it (see
+            // `WasmFunc::signature`), so the shared index is safe.
             FirMatch::LoadVar {
                 name,
                 access: AccessType::FunArgs,
@@ -1685,6 +1701,12 @@ impl ComputeSubsetLowerer<'_> {
                 function.instruction(&Instruction::I32Load(memarg(0)));
                 Ok(())
             }
+            // Computes `((T**)fBuffers)[chan][fFrameOffset[part] + idx]` on the
+            // WASM operand stack: first the per-channel buffer pointer
+            // (`fBuffers[chan]`), then the sample address within it
+            // (`fFrameOffset[part] + idx`, scaled by the element size), then
+            // the load. Mirrors the equivalent Cranelift/native lowering,
+            // adapted to WASM's implicit stack rather than named SSA values.
             FirMatch::LoadSoundfileBuffer {
                 var,
                 chan,

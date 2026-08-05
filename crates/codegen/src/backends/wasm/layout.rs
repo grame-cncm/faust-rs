@@ -426,6 +426,14 @@ fn expect_block(store: &FirStore, id: FirId, label: &str) -> Result<Vec<FirId>, 
     }
 }
 
+/// Reserves linear-memory offsets for `Stack`-declared array locals.
+///
+/// WASM's native `local` slots are scalar-only (`i32`/`i64`/`f32`/`f64`), so a
+/// FIR stack-local array cannot be represented as a WASM local the way a
+/// scalar can; it needs a fixed linear-memory address instead, exactly like a
+/// struct array field. This pre-pass walks every function body to collect
+/// those array declarations before [`WasmMemoryLayout::from_module`] assigns
+/// them offsets, so `lower_function_subset` can later look them up by name.
 fn collect_local_stack_arrays(
     store: &FirStore,
     function_items: &[FirId],
