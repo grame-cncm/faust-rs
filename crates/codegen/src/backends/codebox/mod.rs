@@ -117,6 +117,8 @@ struct ModuleView {
     functions: FirId,
     num_inputs: usize,
     num_outputs: usize,
+    /// File-scope table declarations; emitted as per-processor `@state`.
+    static_decls: FirId,
 }
 
 /// Where a declaration is being emitted, which decides `@state` versus `let`.
@@ -165,6 +167,12 @@ pub fn generate_codebox_module(
     }
 
     let _ = writeln!(out, "// Fields");
+    // File-scope tables are per-processor `@state` in codebox: the language has
+    // no shared static storage, which is the same adaptation the Cmajor backend
+    // documents.
+    for stmt in block_items(store, view.static_decls) {
+        emit_stmt(store, &mut out, options, stmt, 0, Phase::Fields)?;
+    }
     for stmt in block_items(store, view.dsp_struct) {
         emit_stmt(store, &mut out, options, stmt, 0, Phase::Fields)?;
     }
@@ -423,6 +431,7 @@ fn emit_dspsetup(
     let _ = writeln!(out, "function dspsetup() {{");
     let _ = writeln!(out, "\tfUpdated = true;");
 
+    emit_array_initialisers(store, out, options, view.static_decls)?;
     emit_array_initialisers(store, out, options, view.dsp_struct)?;
     emit_array_initialisers(store, out, options, view.globals)?;
 
@@ -453,24 +462,33 @@ fn emit_array_initialisers(
     block: FirId,
 ) -> Result<(), CodegenError> {
     for stmt in block_items(store, block) {
-        let FirMatch::DeclareVar {
-            name,
-            typ,
-            init: Some(init),
-            ..
-        } = match_fir(store, stmt)
-        else {
-            continue;
-        };
-        if !matches!(typ, FirType::Array(..)) {
-            continue;
-        }
-        let target = codebox_var_name(&name);
-        for (index, element) in array_literal_elements(store, options, init)
-            .into_iter()
-            .enumerate()
-        {
-            let _ = writeln!(out, "\t{target}[{index}] = {element};");
+        match match_fir(store, stmt) {
+            FirMatch::DeclareVar {
+                name,
+                typ: FirType::Array(..),
+                init: Some(init),
+                ..
+            } => {
+                let target = codebox_var_name(&name);
+                for (index, element) in array_literal_elements(store, options, init)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let _ = writeln!(out, "\t{target}[{index}] = {element};");
+                }
+            }
+            // Waveforms and folded generated tables reach the backend as
+            // `DeclareTable` with an explicit element list, which is the shape
+            // the transform emits and which this function previously ignored —
+            // leaving `compute` reading a table nothing ever wrote.
+            FirMatch::DeclareTable { name, values, .. } => {
+                let target = codebox_var_name(&name);
+                for (index, value) in values.into_iter().enumerate() {
+                    let element = emit_value(store, options, value)?;
+                    let _ = writeln!(out, "\t{target}[{index}] = {element};");
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -650,6 +668,19 @@ fn emit_stmt(
                 let _ = write!(out, " = 0");
             }
             let _ = writeln!(out, ";");
+            Ok(())
+        }
+
+        // A lookup table: constructed here, filled element by element in
+        // `dspsetup` (see `emit_array_initialisers`). Codebox has no array
+        // literal, so declaration and data are necessarily separate.
+        FirMatch::DeclareTable { name, values, .. } => {
+            let var = codebox_var_name(&name);
+            let _ = writeln!(
+                out,
+                "{tab}@state {var} = new FixedFloatArray({});",
+                values.len()
+            );
             Ok(())
         }
 
@@ -1160,6 +1191,7 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             dsp_struct,
             globals,
             functions,
+            static_decls,
             sub_modules,
             ..
         } => {
@@ -1174,6 +1206,7 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
                 dsp_struct,
                 globals,
                 functions,
+                static_decls,
                 num_inputs,
                 num_outputs,
             })

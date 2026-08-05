@@ -804,3 +804,79 @@ fn the_facade_forwards_the_test_label_option() {
         .expect("emission must succeed");
     assert!(text.contains("RB_hslider_g"), "{text}");
 }
+
+/// A lookup table must be declared and filled, not merely read.
+///
+/// Regression: `generate_codebox_module` emitted `compute()` reading
+/// `ftbl0_cb[…]` while never declaring the symbol and never writing a single
+/// element, so any `rdtable`/`rwtable` DSP silently returned zeros. Two causes:
+/// the module's `static_decls` block was never visited, and `DeclareTable` —
+/// the shape the transform actually emits for a table — had no arm in either
+/// the statement emitter or the array initialiser pass, which only understood
+/// `DeclareVar` with an array-literal init.
+#[test]
+fn a_read_only_table_is_declared_and_filled() {
+    // Spelled without imports: the harness compiles from a string and has no
+    // library search path. `t` is `ba.time`.
+    let text = codebox(
+        "tbl.dsp",
+        "t = (+(1) ~ _) - 1;\nprocess = rdtable(4, int(t * 2), int(t % 4));",
+    );
+
+    // The table name carries a type prefix (`itbl0_cb`), so the whole
+    // identifier around the `tbl` marker is what matters.
+    let table = text
+        .lines()
+        .find_map(|line| {
+            let marker = line.find("tbl")?;
+            let bytes = line.as_bytes();
+            let mut start = marker;
+            while start > 0
+                && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_')
+            {
+                start -= 1;
+            }
+            let mut end = marker;
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                end += 1;
+            }
+            Some(line[start..end].to_owned())
+        })
+        .expect("the emitted program must mention a table");
+
+    assert!(
+        text.contains(&format!("@state {table} = new FixedFloatArray(")),
+        "table `{table}` is read but never declared:\n{text}"
+    );
+    for (index, value) in [(0, "0"), (1, "2"), (2, "4"), (3, "6")] {
+        assert!(
+            text.contains(&format!("{table}[{index}] = {value};")),
+            "table `{table}` element {index} is never written:\n{text}"
+        );
+    }
+    // The fill belongs to dspsetup, before any compute call.
+    let setup = text.find("function dspsetup()").expect("dspsetup");
+    let compute = text.find("function compute(").expect("compute");
+    let first_fill = text
+        .find(&format!("{table}[0] ="))
+        .expect("first element write");
+    assert!(
+        setup < first_fill && first_fill < compute,
+        "table data must be written inside dspsetup:\n{text}"
+    );
+}
+
+/// A literal `waveform` used directly as a signal keeps its own declaration and
+/// data, which is a separate path from generated tables.
+#[test]
+fn a_literal_waveform_is_declared_and_filled() {
+    let text = codebox("wave.dsp", "process = waveform{10.0, 20.0, 30.0};");
+    assert!(
+        text.contains("Wave0_cb = new FixedFloatArray(3)"),
+        "waveform table missing its declaration:\n{text}"
+    );
+    assert!(
+        text.contains("Wave0_cb[0] = 10"),
+        "waveform data missing:\n{text}"
+    );
+}
