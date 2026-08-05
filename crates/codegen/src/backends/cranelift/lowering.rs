@@ -1403,7 +1403,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 FirBinOp::Gt => self.int_cmp_to_i8(IntCC::SignedGreaterThan, l, r),
                 FirBinOp::Ge => self.int_cmp_to_i8(IntCC::SignedGreaterThanOrEqual, l, r),
             },
-            FirType::Float32 | FirType::FaustFloat => match op {
+            // `fadd`/`fsub`/`fmul`/`fdiv`/`fcmp` are width-agnostic: they operate
+            // on whatever F32/F64 CLIF value type `l`/`r` already carry (fixed
+            // above by `coerce_value_to_fir_type`), so F32 and F64 share one arm.
+            FirType::Float32 | FirType::FaustFloat | FirType::Float64 => match op {
                 FirBinOp::Add => self.fb.ins().fadd(l, r),
                 FirBinOp::Sub => self.fb.ins().fsub(l, r),
                 FirBinOp::Mul => self.fb.ins().fmul(l, r),
@@ -1434,42 +1437,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 ),
                 _ => {
                     return Err(LoweringError::Unsupported(format!(
-                        "unsupported float32/faustfloat binop in subset lowering: {op:?}"
-                    )));
-                }
-            },
-            FirType::Float64 => match op {
-                FirBinOp::Add => self.fb.ins().fadd(l, r),
-                FirBinOp::Sub => self.fb.ins().fsub(l, r),
-                FirBinOp::Mul => self.fb.ins().fmul(l, r),
-                FirBinOp::Div => self.fb.ins().fdiv(l, r),
-                FirBinOp::Eq => {
-                    self.float_cmp_to_i8(cranelift_codegen::ir::condcodes::FloatCC::Equal, l, r)
-                }
-                FirBinOp::Ne => {
-                    self.float_cmp_to_i8(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, l, r)
-                }
-                FirBinOp::Lt => {
-                    self.float_cmp_to_i8(cranelift_codegen::ir::condcodes::FloatCC::LessThan, l, r)
-                }
-                FirBinOp::Le => self.float_cmp_to_i8(
-                    cranelift_codegen::ir::condcodes::FloatCC::LessThanOrEqual,
-                    l,
-                    r,
-                ),
-                FirBinOp::Gt => self.float_cmp_to_i8(
-                    cranelift_codegen::ir::condcodes::FloatCC::GreaterThan,
-                    l,
-                    r,
-                ),
-                FirBinOp::Ge => self.float_cmp_to_i8(
-                    cranelift_codegen::ir::condcodes::FloatCC::GreaterThanOrEqual,
-                    l,
-                    r,
-                ),
-                _ => {
-                    return Err(LoweringError::Unsupported(format!(
-                        "unsupported Float64 binop in subset lowering: {op:?}"
+                        "unsupported float binop in subset lowering: {op:?} ({typ:?})"
                     )));
                 }
             },
@@ -1971,4 +1939,129 @@ pub(crate) fn try_lower_function_body(
         emit_return_stub(lowering.fb);
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        binary_math_symbol_f32, binary_math_symbol_f64, unary_math_symbol_f32,
+        unary_math_symbol_f64,
+    };
+    use fir::FirMathOp;
+
+    const ALL_MATH_OPS: &[FirMathOp] = &[
+        FirMathOp::Pow,
+        FirMathOp::Min,
+        FirMathOp::Max,
+        FirMathOp::Sin,
+        FirMathOp::Cos,
+        FirMathOp::Acos,
+        FirMathOp::Asin,
+        FirMathOp::Atan,
+        FirMathOp::Atan2,
+        FirMathOp::Tan,
+        FirMathOp::Exp,
+        FirMathOp::Exp10,
+        FirMathOp::Log,
+        FirMathOp::Log10,
+        FirMathOp::Sqrt,
+        FirMathOp::Abs,
+        FirMathOp::Fmod,
+        FirMathOp::Remainder,
+        FirMathOp::Floor,
+        FirMathOp::Ceil,
+        FirMathOp::Rint,
+        FirMathOp::Round,
+    ];
+
+    enum Kind {
+        Unary,
+        Binary,
+    }
+
+    /// Expected `(kind, f32 symbol, f64 symbol)` for every `FirMathOp`.
+    ///
+    /// This match has no `_` arm on purpose: adding a new `FirMathOp`
+    /// variant breaks this function at compile time, forcing the new op to
+    /// be classified here instead of silently falling through the
+    /// `_ => None` arms in the `*_math_symbol_*` tables above.
+    fn expected(op: FirMathOp) -> (Kind, &'static str, &'static str) {
+        match op {
+            FirMathOp::Sin => (Kind::Unary, "sinf", "sin"),
+            FirMathOp::Cos => (Kind::Unary, "cosf", "cos"),
+            FirMathOp::Acos => (Kind::Unary, "acosf", "acos"),
+            FirMathOp::Asin => (Kind::Unary, "asinf", "asin"),
+            FirMathOp::Atan => (Kind::Unary, "atanf", "atan"),
+            FirMathOp::Tan => (Kind::Unary, "tanf", "tan"),
+            FirMathOp::Exp => (Kind::Unary, "expf", "exp"),
+            FirMathOp::Exp10 => (Kind::Unary, "exp10f", "exp10"),
+            FirMathOp::Log => (Kind::Unary, "logf", "log"),
+            FirMathOp::Log10 => (Kind::Unary, "log10f", "log10"),
+            FirMathOp::Sqrt => (Kind::Unary, "sqrtf", "sqrt"),
+            FirMathOp::Abs => (Kind::Unary, "fabsf", "fabs"),
+            FirMathOp::Floor => (Kind::Unary, "floorf", "floor"),
+            FirMathOp::Ceil => (Kind::Unary, "ceilf", "ceil"),
+            FirMathOp::Rint => (Kind::Unary, "rintf", "rint"),
+            FirMathOp::Round => (Kind::Unary, "roundf", "round"),
+            FirMathOp::Pow => (Kind::Binary, "powf", "pow"),
+            FirMathOp::Min => (Kind::Binary, "fminf", "fmin"),
+            FirMathOp::Max => (Kind::Binary, "fmaxf", "fmax"),
+            FirMathOp::Atan2 => (Kind::Binary, "atan2f", "atan2"),
+            FirMathOp::Fmod => (Kind::Binary, "fmodf", "fmod"),
+            FirMathOp::Remainder => (Kind::Binary, "remainderf", "remainder"),
+        }
+    }
+
+    #[test]
+    fn math_symbol_tables_match_every_fir_math_op() {
+        for op in ALL_MATH_OPS {
+            let (kind, f32_sym, f64_sym) = expected(*op);
+            match kind {
+                Kind::Unary => {
+                    assert_eq!(
+                        unary_math_symbol_f32(*op),
+                        Some(f32_sym),
+                        "{op:?}: wrong/missing f32 unary symbol"
+                    );
+                    assert_eq!(
+                        unary_math_symbol_f64(*op),
+                        Some(f64_sym),
+                        "{op:?}: wrong/missing f64 unary symbol"
+                    );
+                    assert_eq!(
+                        binary_math_symbol_f32(*op),
+                        None,
+                        "{op:?}: unary op unexpectedly has an f32 binary symbol"
+                    );
+                    assert_eq!(
+                        binary_math_symbol_f64(*op),
+                        None,
+                        "{op:?}: unary op unexpectedly has an f64 binary symbol"
+                    );
+                }
+                Kind::Binary => {
+                    assert_eq!(
+                        binary_math_symbol_f32(*op),
+                        Some(f32_sym),
+                        "{op:?}: wrong/missing f32 binary symbol"
+                    );
+                    assert_eq!(
+                        binary_math_symbol_f64(*op),
+                        Some(f64_sym),
+                        "{op:?}: wrong/missing f64 binary symbol"
+                    );
+                    assert_eq!(
+                        unary_math_symbol_f32(*op),
+                        None,
+                        "{op:?}: binary op unexpectedly has an f32 unary symbol"
+                    );
+                    assert_eq!(
+                        unary_math_symbol_f64(*op),
+                        None,
+                        "{op:?}: binary op unexpectedly has an f64 unary symbol"
+                    );
+                }
+            }
+        }
+    }
 }

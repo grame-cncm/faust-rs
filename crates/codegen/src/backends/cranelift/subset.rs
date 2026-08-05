@@ -49,6 +49,14 @@ pub(crate) fn compute_body_subset_gap_reason_from_compute_decl(
     )
 }
 
+/// Generic engine behind [`function_body_matches_current_subset`] and
+/// [`compute_body_subset_gap_reason_from_compute_decl`].
+///
+/// This takes any `DeclareFun` (not just `compute`), since
+/// `declare_jit_function` in `jit_data.rs` reuses the same subset check for
+/// `instanceConstants`/`instanceClear`. The `compute`-named wrapper above
+/// exists to keep the public diagnostics API name focused on `compute`,
+/// which is the primary lowering target callers care about.
 pub(crate) fn function_body_subset_gap_reason_from_decl(
     store: &FirStore,
     function_decl: FirId,

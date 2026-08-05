@@ -478,6 +478,10 @@ pub(crate) fn find_module_and_function(
     Ok((module_name, compute_id))
 }
 
+/// Shorthand for [`find_module_and_function`] looking up `compute` specifically.
+///
+/// This is the lookup used by the main [`generate_cranelift_module`] entry
+/// point, since every backend compilation revolves around lowering `compute`.
 pub(crate) fn find_module_and_compute(
     store: &FirStore,
     module: FirId,
@@ -520,6 +524,13 @@ pub(crate) fn fir_type_layout_scalar(
     Ok(s)
 }
 
+/// Maps a FIR scalar/storage type to the Cranelift IR (CLIF) register type
+/// used to hold it during `compute` lowering.
+///
+/// This is distinct from [`fir_type_layout_scalar`]: that helper computes
+/// byte size/alignment for the `dsp*` memory layout, while this one picks
+/// the Cranelift SSA value type (`I32`, `F32`, `F64`, pointer type, ...) used
+/// once a value is loaded into a register during lowering.
 pub(crate) fn fir_type_to_clif_type(
     ptr_ty: Type,
     typ: &FirType,

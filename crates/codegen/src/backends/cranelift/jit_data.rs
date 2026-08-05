@@ -47,6 +47,11 @@ pub(crate) fn define_static_tables_in_jit(
         }
 
         // Serialise element values to little-endian bytes.
+        //
+        // Note: each arm only appends bytes for the `FirMatch` variant matching
+        // `elem_type`; other value shapes are silently skipped rather than
+        // rejected, which relies on FIR table construction already guaranteeing
+        // element/type homogeneity.
         let bytes: Box<[u8]> = match &elem_type {
             FirType::Int32 => {
                 let mut buf = Vec::with_capacity(values.len() * 4);

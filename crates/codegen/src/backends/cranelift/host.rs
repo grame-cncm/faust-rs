@@ -39,6 +39,7 @@ extern "C" fn host_exp(x: f64) -> f64 {
     x.exp()
 }
 
+// Rust's standard library has no direct `exp10`, so it is expressed as `10^x`.
 extern "C" fn host_exp10f(x: f32) -> f32 {
     10.0_f32.powf(x)
 }
@@ -79,6 +80,8 @@ extern "C" fn host_fabs(x: f64) -> f64 {
     x.abs()
 }
 
+// `i32::MIN.abs()` would overflow/panic; `checked_abs` falls back to the
+// original (still-negative) value instead, matching C's `abs()` behavior.
 extern "C" fn host_abs(a: i32) -> i32 {
     a.checked_abs().unwrap_or(a)
 }
@@ -187,6 +190,8 @@ extern "C" fn host_fmod(a: f64, b: f64) -> f64 {
     a % b
 }
 
+// C's `rint` rounds half-to-even (banker's rounding) under the default
+// rounding mode, unlike Rust's `round()` which rounds half away from zero.
 extern "C" fn host_rintf(a: f32) -> f32 {
     a.round_ties_even()
 }
@@ -195,6 +200,9 @@ extern "C" fn host_rint(a: f64) -> f64 {
     a.round_ties_even()
 }
 
+// C's `remainder` (IEEE 754 remainder) differs from `%`: it is computed as
+// `a - round_ties_even(a / b) * b`, so the result can be negative even when
+// `a` is positive, and has smaller magnitude than `b / 2`.
 extern "C" fn host_remainderf(a: f32, b: f32) -> f32 {
     a - (a / b).round_ties_even() * b
 }
