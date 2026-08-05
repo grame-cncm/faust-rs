@@ -1,7 +1,7 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S3 done; S4a (`cpp`/`c` nested emission) is next
+Status: S0-S3 done, S4a `cpp` done; S4a `c` is next
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -845,7 +845,9 @@ lowering a fill module.
 
 Split in two, because `cpp`/`c` now carry the full nested-class emitter:
 
-- **S4a — `cpp` and `c`.** Nested class/struct emission per §5.9.1: sub-module
+- **S4a — `cpp` and `c`.** `cpp` done 2026-08-05; `c` still pending (it needs
+  the `dsp->` receiver seam for sub-module state, a different mechanism from
+  C++'s bare field access). Nested class/struct emission per §5.9.1: sub-module
   placement, receiver-type seam for state access, `new`/`delete` helpers,
   `classInit` body from `staticInit`, uninitialized static table declarations,
   `<stdlib.h>` include for `c`. Gate: generated sources compile, the structural
@@ -957,11 +959,15 @@ recorded as the expected `const`-mode outcome rather than as failures.
 - [ ] `--table-init runtime|const` implemented (2026-08-05); default flips to
       `runtime` in S7, both modes gated
 - [x] Flattening pass with both state policies + independent checker (2026-08-05)
-- [ ] `cpp`/`c` nested-class emission matching §5.9.1, with its structural tests
+- [x] `cpp` nested-class emission matching §5.9.1, with its structural test (2026-08-05)
+- [ ] `c` nested-struct emission
 - [ ] All ten backends migrated or explicitly failing on `SubModule`
 - [ ] Vector path migrated or failing closed with a stable reason
-- [ ] `subcontainer1.dsp` passes; no impulse regression
-- [ ] `os.osc(440)` emitted source under 10 KB
+- [x] `subcontainer1.dsp` matches the C++ oracle sample-for-sample under
+      `-lang cpp --table-init runtime` (2026-08-05); removing its
+      `KNOWN_FAIL_all` entry waits for S7
+- [x] `os.osc(440)` emitted source under 10 KB — 3 818 bytes, 88% of the
+      reference, down from 1 420 248 (2026-08-05)
 - [ ] Mode matrix (§8.2 layer 6) green on every migrated backend
 - [ ] Journal entry in English
 

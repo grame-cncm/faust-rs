@@ -219,6 +219,10 @@ pub(crate) struct CFamilyStmtCtx<'a, E> {
     /// Renders `type name` declarations with array suffixes (the caller's
     /// `emit_named_type` wrapper).
     pub render_named_type: &'a dyn Fn(&FirType, &str) -> String,
+    /// Renders a void call as a bare statement, or `None` to fall back to the
+    /// generic dropped-value form. This is the seam where `cpp` emits
+    /// `sig0->fill…(…)` and `c` emits `fill…(sig0, …)`.
+    pub render_void_call: &'a dyn Fn(&str, &[FirId]) -> Option<String>,
     /// Renders a FIR type (the caller's `emit_type` wrapper).
     pub render_type: &'a dyn Fn(&FirType) -> String,
     /// Renders a FIR value expression (the caller's `emit_value` wrapper).
@@ -457,6 +461,20 @@ pub(crate) fn emit_static_tables<E>(
     };
     let keywords = syntax.static_table_keywords;
     for stmt in stmts {
+        // A generated table filled at initialization time is declared with its
+        // size and no initializer, and must not be `const`: `classInit` writes
+        // it. C++ parity: `static float ftbl0mydspSIG0[65536];`
+        if let FirMatch::DeclareVar {
+            name,
+            typ: FirType::Array(elem, size),
+            init: None,
+            ..
+        } = match_fir(store, stmt)
+        {
+            let type_str = emit_type(&elem, syntax, quad, fixed);
+            let _ = writeln!(out, "static {type_str} {name}[{size}];");
+            continue;
+        }
         if let FirMatch::DeclareTable {
             name,
             elem_type,
@@ -667,6 +685,15 @@ pub(crate) fn emit_stmt_common<E>(
             access: _,
             init,
         } => {
+            // A sub-container handle is typed by the class it allocates, not by
+            // the generic object pointer the FIR carries: `mydspSIG0* sig0`,
+            // never `void** sig0`.
+            let typ = match init.map(|id| match_fir(store, id)) {
+                Some(FirMatch::NewDsp { name: ref sub, .. }) => {
+                    FirType::Struct(format!("{sub}*"), Vec::new())
+                }
+                _ => typ,
+            };
             let _ = write!(out, "{tab}{}", (ctx.render_named_type)(&typ, &name));
             if let Some(init) = init {
                 match (ctx.render_value)(init) {
@@ -741,13 +768,29 @@ pub(crate) fn emit_stmt_common<E>(
             }
             (Err(err), _) | (_, Err(err)) => Err(err),
         },
-        FirMatch::Drop(value) => match (ctx.render_value)(value) {
-            Ok(value) => {
-                let _ = writeln!(out, "{tab}(void)({value});");
-                Ok(())
+        FirMatch::Drop(value) => {
+            // A dropped void call is a statement, not a discarded value: the
+            // `(void)(...)` cast only makes sense for a call that returns
+            // something. Sub-container entry points return void, and upstream
+            // emits them bare.
+            if let FirMatch::FunCall {
+                ref name,
+                ref args,
+                typ: FirType::Void,
+            } = match_fir(store, value)
+                && let Some(rendered) = (ctx.render_void_call)(name, args)
+            {
+                let _ = writeln!(out, "{tab}{rendered};");
+                return Some(Ok(()));
             }
-            Err(err) => Err(err),
-        },
+            match (ctx.render_value)(value) {
+                Ok(value) => {
+                    let _ = writeln!(out, "{tab}(void)({value});");
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            }
+        }
         FirMatch::NullStatement => {
             let _ = writeln!(out, "{tab};");
             Ok(())

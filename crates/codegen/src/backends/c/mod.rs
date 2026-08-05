@@ -899,6 +899,20 @@ fn emit_stmt(
         for_loop_step: c_for_loop_step,
         simple_loop_increment: c_simple_loop_increment,
         render_named_type: &|typ, name| emit_named_type(typ, name, options),
+        render_void_call: &|name, args| {
+            // In C a sub-container entry point stays a free function whose
+            // first parameter is the receiver, so only the `(void)` wrapper
+            // has to go.
+            if !name.starts_with("instanceInit") && !name.starts_with("fill") {
+                return None;
+            }
+            let rendered: Vec<String> = args
+                .iter()
+                .map(|arg| emit_value(store, options, *arg))
+                .collect::<Result<_, _>>()
+                .ok()?;
+            Some(format!("{name}({})", rendered.join(", ")))
+        },
         render_type: &|typ| emit_type(typ, options),
         render_value: &|value| emit_value(store, options, value),
         emit_block: &|out, block, indent, mode| {

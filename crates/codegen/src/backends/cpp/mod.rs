@@ -176,6 +176,7 @@ struct ModuleView {
     num_inputs: usize,
     num_outputs: usize,
     static_decls: FirId,
+    sub_modules: FirId,
 }
 
 /// Borrowed function declaration view used while stitching the C++ class body.
@@ -236,6 +237,16 @@ pub fn generate_cpp_module(
     emit_static_tables(store, &mut out, &effective_options, module.static_decls)?;
     let _ = writeln!(out);
 
+    // Generated-table sub-containers come before the DSP class that fills
+    // them, deepest-first so a nested generator's class precedes its user.
+    emit_sub_modules(
+        store,
+        &mut out,
+        &effective_options,
+        &module_name,
+        module.sub_modules,
+    )?;
+
     let _ = writeln!(out, "class {class_name} : public {super_class_name} {{");
     let _ = writeln!(out, "private:");
     if !has_sample_rate_field {
@@ -284,6 +295,7 @@ pub fn generate_cpp_module(
             declared_functions: &declared_functions,
             struct_inits: &struct_inits,
             table_inits: &table_inits,
+            static_init_body: find_function_body(store, module.functions, "staticInit"),
             indent: 1,
         },
     )?;
@@ -337,6 +349,9 @@ struct DspContractEmitInput<'a> {
     struct_inits: &'a [c_family::StructInit],
     /// Table initializers replayed by the same fallback.
     table_inits: &'a [c_family::TableInit],
+    /// Body of the FIR `staticInit` function, when the module declares one.
+    /// Rendered as the `classInit` body.
+    static_init_body: Option<FirId>,
     indent: usize,
 }
 
@@ -360,6 +375,7 @@ fn emit_dsp_contract_methods(
         declared_functions,
         struct_inits,
         table_inits,
+        static_init_body,
         indent,
     } = spec;
     let tab = "    ".repeat(indent);
@@ -396,8 +412,25 @@ fn emit_dsp_contract_methods(
     let _ = writeln!(out, "{tab}virtual int getNumOutputs() {{");
     let _ = writeln!(out, "{tab}    return {};", num_outputs);
     let _ = writeln!(out, "{tab}}}");
+    // `classInit` is the backend rendering of the FIR `staticInit` body: the
+    // fills of file-scope generated tables, shared by every instance. Without
+    // a `staticInit` there is nothing to initialize and the method stays empty.
     let _ = writeln!(out, "{tab}static void classInit(int sample_rate) {{");
-    let _ = writeln!(out, "{tab}    (void)sample_rate;");
+    if let Some(static_init_body) = static_init_body {
+        emit_block(
+            store,
+            out,
+            options,
+            module_name,
+            static_init_body,
+            indent + 1,
+        )?;
+        for (var, sub) in allocated_sub_containers(store, static_init_body) {
+            let _ = writeln!(out, "{tab}    delete{sub}({var});");
+        }
+    } else {
+        let _ = writeln!(out, "{tab}    (void)sample_rate;");
+    }
     let _ = writeln!(out, "{tab}}}");
     let _ = writeln!(out, "{tab}virtual int getSampleRate() {{");
     let _ = writeln!(out, "{tab}    return fSampleRate;");
@@ -584,6 +617,13 @@ fn emit_section(
         {
             continue;
         }
+        // `staticInit` is rendered as the body of `classInit`, not as a method
+        // of its own.
+        if section_name == "functions"
+            && matches!(match_fir(store, item), FirMatch::DeclareFun { ref name, .. } if name == "staticInit")
+        {
+            continue;
+        }
         emit_stmt(store, out, options, module_name, item, _indent)?;
     }
     Ok(())
@@ -642,6 +682,21 @@ fn emit_stmt_with_mode(
         for_loop_step: cpp_for_loop_step,
         simple_loop_increment: cpp_simple_loop_increment,
         render_named_type: &|typ, name| emit_named_type(typ, name, options),
+        render_void_call: &|name, args| {
+            // A sub-container entry point is a method: the first argument is
+            // the receiver, and C++ spells the call `sig0->fill…(rest)`.
+            if !is_sub_module_method(name) {
+                return None;
+            }
+            let (receiver, rest) = args.split_first()?;
+            let receiver = emit_value(store, options, *receiver).ok()?;
+            let rendered: Vec<String> = rest
+                .iter()
+                .map(|arg| emit_value(store, options, *arg))
+                .collect::<Result<_, _>>()
+                .ok()?;
+            Some(format!("{receiver}->{name}({})", rendered.join(", ")))
+        },
         render_type: &|typ| emit_type(typ, options),
         render_value: &|value| emit_value(store, options, value),
         emit_block: &|out, block, indent, mode| {
@@ -777,6 +832,137 @@ fn block_stores_var(store: &FirStore, block: FirId, name: &str) -> bool {
     })
 }
 
+/// Returns `true` for a generated sub-container entry point.
+///
+/// These are emitted as methods of the sub-container class, so their explicit
+/// `dsp` receiver argument is stripped exactly as for the DSP API methods.
+fn is_sub_module_method(name: &str) -> bool {
+    name.starts_with("instanceInit") && name != "instanceInit"
+        || name.starts_with("fill") && name != "fill"
+}
+
+/// Returns the `(variable, sub-module)` pairs allocated inside one block.
+///
+/// The FIR carries the allocation but not the release: freeing is bound to how
+/// each language allocates, and upstream itself skips it for Rust, Julia and
+/// AssemblyScript. C++ emits `delete<Sub>(sigN)` once the fill has run.
+fn allocated_sub_containers(store: &FirStore, block: FirId) -> Vec<(String, String)> {
+    let FirMatch::Block(items) = match_fir(store, block) else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareVar {
+                name,
+                init: Some(init),
+                ..
+            } => match match_fir(store, init) {
+                FirMatch::NewDsp { name: sub, .. } => Some((name, sub)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns the body of the named function declared by a module, if any.
+fn find_function_body(store: &FirStore, functions: FirId, wanted: &str) -> Option<FirId> {
+    let FirMatch::Block(items) = match_fir(store, functions) else {
+        return None;
+    };
+    items
+        .into_iter()
+        .find_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareFun { name, body, .. } if name == wanted => body,
+            _ => None,
+        })
+}
+
+/// Emits every generated-table sub-container as a nested class.
+///
+/// C++ parity: `generateSigGen` / `generateStaticSigGen` produce a
+/// `CodeContainer` per `SIGGEN`, which `produceInternal` emits as a class with
+/// its own state, `instanceInit<Sub>` and `fill<Sub>`, plus `new`/`delete`
+/// helpers. Keeping the nested form — rather than inlining the generator into
+/// `classInit` — is what lets `classInit` stay `static`: the sub-container is
+/// a local of that function, so it needs no instance to live in.
+///
+/// Sub-modules are emitted deepest-first: a generator that reads another
+/// generated table calls its class, which must already be declared.
+fn emit_sub_modules(
+    store: &FirStore,
+    out: &mut String,
+    options: &CppOptions,
+    module_name: &str,
+    sub_modules: FirId,
+) -> Result<(), CodegenError> {
+    let FirMatch::Block(items) = match_fir(store, sub_modules) else {
+        return Ok(());
+    };
+    for item in items {
+        let FirMatch::SubModule {
+            name,
+            dsp_struct,
+            static_decls,
+            globals,
+            functions,
+            sub_modules: nested,
+            ..
+        } = match_fir(store, item)
+        else {
+            return Err(CodegenError::new(
+                CodegenErrorCode::InvalidModuleSection,
+                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
+            ));
+        };
+
+        emit_sub_modules(store, out, options, module_name, nested)?;
+        emit_static_tables(store, out, options, static_decls)?;
+
+        let _ = writeln!(out, "class {name} {{");
+        let _ = writeln!(out);
+        let _ = writeln!(out, "  private:");
+        let _ = writeln!(out);
+        emit_section(
+            store,
+            out,
+            options,
+            module_name,
+            "dsp_struct",
+            dsp_struct,
+            1,
+        )?;
+        emit_section(store, out, options, module_name, "globals", globals, 1)?;
+        let _ = writeln!(out);
+        let _ = writeln!(out, "  public:");
+        let _ = writeln!(out);
+        // Arity getters exist for reference parity; a generator is always
+        // 0-input / 1-output by construction, so they are derived rather than
+        // read from FIR.
+        let _ = writeln!(out, "    int getNumInputs{name}() {{");
+        let _ = writeln!(out, "        return 0;");
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "    int getNumOutputs{name}() {{");
+        let _ = writeln!(out, "        return 1;");
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out);
+        emit_section(store, out, options, module_name, "functions", functions, 1)?;
+        let _ = writeln!(out, "}};");
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "static {name}* new{name}() {{ return ({name}*)new {name}(); }}"
+        );
+        let _ = writeln!(
+            out,
+            "static void delete{name}({name}* dsp) {{ delete dsp; }}"
+        );
+        let _ = writeln!(out);
+    }
+    Ok(())
+}
+
 /// Emits one FIR function declaration or method definition into the generated class.
 fn emit_declare_fun(
     store: &FirStore,
@@ -790,7 +976,7 @@ fn emit_declare_fun(
         .map_err(|msg| CodegenError::new(CodegenErrorCode::InvalidModuleSection, msg))?;
     let tab = "    ".repeat(indent);
     let mut params_override: Option<String> = None;
-    let strip_explicit_dsp_arg = is_dsp_api_method(decl.name)
+    let strip_explicit_dsp_arg = (is_dsp_api_method(decl.name) || is_sub_module_method(decl.name))
         && matches!(decl.named_args.first(), Some(named) if named.name == "dsp")
         && matches!(
             decl.typ,
@@ -994,7 +1180,7 @@ fn emit_value(
         | FirMatch::FixedPointArray { values, .. } => {
             Ok(format_array(values.iter().map(|v| trim_float(*v))))
         }
-        FirMatch::NewDsp { name, .. } => Ok(format!("new {name}()")),
+        FirMatch::NewDsp { name, .. } => Ok(format!("new{name}()")),
         _ => Err(unsupported_node("value", value, store)),
     }
 }
@@ -1134,24 +1320,16 @@ fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenE
             functions,
             static_decls,
             sub_modules,
-        } => {
-            let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-            if !sub_module_names.is_empty() {
-                return Err(CodegenError::new(
-                    CodegenErrorCode::UnsupportedNode,
-                    crate::backends::unsupported_sub_modules_message("cpp", &sub_module_names),
-                ));
-            }
-            Ok(ModuleView {
-                name,
-                dsp_struct,
-                globals,
-                functions,
-                num_inputs,
-                num_outputs,
-                static_decls,
-            })
-        }
+        } => Ok(ModuleView {
+            name,
+            dsp_struct,
+            globals,
+            functions,
+            num_inputs,
+            num_outputs,
+            static_decls,
+            sub_modules,
+        }),
         _ => Err(CodegenError::new(
             CodegenErrorCode::RootNotModule,
             format!(
@@ -1651,34 +1829,57 @@ mod tests {
     }
 
     #[test]
-    /// S1 fail-closed guard: a backend that cannot emit generated-table
-    /// sub-modules must reject the module rather than emit the table
-    /// declaration alone, which would be read as zeros at runtime
-    /// (`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`).
-    fn module_carrying_a_sub_module_is_rejected_until_the_backend_emits_it() {
+    /// S4a: `cpp` emits the nested sub-container class, its `new`/`delete`
+    /// helpers, and a `classInit` that allocates, initializes, fills and
+    /// releases it — the reference shape frozen in plan §5.9.1.
+    fn sub_module_is_emitted_as_a_nested_class_with_a_filling_class_init() {
         let mut store = FirStore::new();
         let module = {
             let mut b = FirBuilder::new(&mut store);
+            let obj_ty = FirType::Ptr(Box::new(FirType::Obj));
             let sub = {
                 let init_body = b.block(&[]);
                 let init = b.declare_fun(
                     "instanceInitmydspSIG0",
                     FirType::Fun {
-                        args: vec![],
+                        args: vec![obj_ty.clone(), FirType::Int32],
                         ret: Box::new(FirType::Void),
                     },
-                    &[],
+                    &[
+                        NamedType {
+                            name: "dsp".into(),
+                            typ: obj_ty.clone(),
+                        },
+                        NamedType {
+                            name: "sample_rate".into(),
+                            typ: FirType::Int32,
+                        },
+                    ],
                     Some(init_body),
                     false,
                 );
                 let fill_body = b.block(&[]);
+                let table_ty = FirType::Ptr(Box::new(FirType::Float32));
                 let fill = b.declare_fun(
                     "fillmydspSIG0",
                     FirType::Fun {
-                        args: vec![],
+                        args: vec![obj_ty.clone(), FirType::Int32, table_ty.clone()],
                         ret: Box::new(FirType::Void),
                     },
-                    &[],
+                    &[
+                        NamedType {
+                            name: "dsp".into(),
+                            typ: obj_ty.clone(),
+                        },
+                        NamedType {
+                            name: "count".into(),
+                            typ: FirType::Int32,
+                        },
+                        NamedType {
+                            name: "table".into(),
+                            typ: table_ty,
+                        },
+                    ],
                     Some(fill_body),
                     false,
                 );
@@ -1694,17 +1895,97 @@ mod tests {
                     &[],
                 )
             };
+            let table = b.declare_var(
+                "ftbl0mydspSIG0",
+                FirType::Array(Box::new(FirType::Float32), 8),
+                fir::AccessType::Static,
+                None,
+            );
+            let static_decls = b.block(&[table]);
+            let static_init_body = {
+                let new_obj = b.new_dsp("mydspSIG0", obj_ty.clone());
+                let alloc = b.declare_var(
+                    "sig0",
+                    obj_ty.clone(),
+                    fir::AccessType::Stack,
+                    Some(new_obj),
+                );
+                let obj = b.load_var("sig0", fir::AccessType::Stack, obj_ty.clone());
+                let sr = b.load_var("sample_rate", fir::AccessType::FunArgs, FirType::Int32);
+                let init_call = b.fun_call("instanceInitmydspSIG0", &[obj, sr], FirType::Void);
+                let init_stmt = b.drop_(init_call);
+                let obj2 = b.load_var("sig0", fir::AccessType::Stack, obj_ty.clone());
+                let count = b.int32(8);
+                let tbl = b.load_var(
+                    "ftbl0mydspSIG0",
+                    fir::AccessType::Static,
+                    FirType::Array(Box::new(FirType::Float32), 8),
+                );
+                let fill_call = b.fun_call("fillmydspSIG0", &[obj2, count, tbl], FirType::Void);
+                let fill_stmt = b.drop_(fill_call);
+                b.block(&[alloc, init_stmt, fill_stmt])
+            };
+            let static_init = b.declare_fun(
+                "staticInit",
+                FirType::Fun {
+                    args: vec![obj_ty.clone(), FirType::Int32],
+                    ret: Box::new(FirType::Void),
+                },
+                &[
+                    NamedType {
+                        name: "dsp".into(),
+                        typ: obj_ty,
+                    },
+                    NamedType {
+                        name: "sample_rate".into(),
+                        typ: FirType::Int32,
+                    },
+                ],
+                Some(static_init_body),
+                false,
+            );
+            let functions = b.block(&[static_init]);
             let empty = b.block(&[]);
-            b.module(0, 0, "mydsp", empty, empty, empty, empty, &[sub])
+            b.module(0, 1, "mydsp", empty, empty, functions, static_decls, &[sub])
         };
 
-        let err = generate_cpp_module(&store, module, &CppOptions::default())
-            .expect_err("sub-module carrying module must be rejected");
-        assert_eq!(err.code(), CodegenErrorCode::UnsupportedNode);
+        let text = generate_cpp_module(&store, module, &CppOptions::default())
+            .expect("sub-module emission must succeed");
+
+        assert!(text.contains("class mydspSIG0 {"), "{text}");
         assert!(
-            err.message().contains("mydspSIG0"),
-            "diagnostic should name the offending sub-module: {}",
-            err.message()
+            text.contains("static mydspSIG0* newmydspSIG0()"),
+            "allocation helper missing: {text}"
+        );
+        assert!(
+            text.contains("static void deletemydspSIG0(mydspSIG0* dsp)"),
+            "release helper missing: {text}"
+        );
+        // The table is declared with its size, mutable and uninitialized: its
+        // content is computed by classInit, not by the compiler.
+        assert!(
+            text.contains("static float ftbl0mydspSIG0[8];"),
+            "uninitialized table declaration missing: {text}"
+        );
+        assert!(
+            !text.contains("const static float ftbl0mydspSIG0"),
+            "a runtime-filled table must not be const: {text}"
+        );
+        for expected in [
+            "mydspSIG0* sig0 = newmydspSIG0();",
+            "sig0->instanceInitmydspSIG0(sample_rate);",
+            "sig0->fillmydspSIG0(8, ftbl0mydspSIG0);",
+            "deletemydspSIG0(sig0);",
+        ] {
+            assert!(
+                text.contains(expected),
+                "classInit missing `{expected}`: {text}"
+            );
+        }
+        // `staticInit` is the classInit body, never a method of its own.
+        assert!(
+            !text.contains("void staticInit("),
+            "staticInit leaked as a method: {text}"
         );
     }
 }
