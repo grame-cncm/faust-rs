@@ -382,6 +382,22 @@ impl<'a> SignalToFirLower<'a> {
         num_outputs: usize,
     ) -> Result<(), SignalFirError> {
         let mut value = self.lower_signal(sig)?;
+        // Table-fill lowering (`build_fill_module`): the single output goes to
+        // `table[i0]`, the `fill` function's own argument, at the sub-module's
+        // element type. No `FaustFloat` cast — a generated table holds internal
+        // values, not interface samples. C++ parity: `compileSingleSignal`
+        // pushes `genStoreArrayFunArgsVar(getTableName(), loopIndex, CS(sig))`.
+        if let Some(elem_ty) = self.table_fill_sink.clone() {
+            let needs_cast = self.store.value_type(value) != Some(elem_ty.clone());
+            let mut b = FirBuilder::new(&mut self.store);
+            if needs_cast {
+                value = b.cast(elem_ty, value);
+            }
+            let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+            let store = b.store_table("table", AccessType::FunArgs, i0, value);
+            self.regions.current_phases_mut().immediate.push(store);
+            return Ok(());
+        }
         if signal_index < num_outputs {
             let needs_output_cast = self.store.value_type(value) != Some(FirType::FaustFloat);
             let mut b = FirBuilder::new(&mut self.store);

@@ -75,6 +75,9 @@ pub(super) struct NameGen {
     /// Allocation-ordered counter behind literal waveform table names
     /// (`{i|f}{module}Wave{j}`), likewise shared across element types.
     pub(super) wave_counter: u32,
+    /// Allocation-ordered counter behind sub-module names (`{module}SIG{k}`,
+    /// C++ `getFreshID(getClassName() + "SIG")`).
+    pub(super) sub_module_counter: u32,
 }
 
 /// Read-only placement analysis results, computed once before lowering begins.
@@ -152,6 +155,9 @@ impl<'a> SignalToFirLower<'a> {
             used_protos: arithmetic::UsedPrototypes::default(),
             name_gen: NameGen::default(),
             module_name: module_name.to_owned(),
+            table_fill_sink: None,
+            table_init_mode: crate::signal_fir::TableInitMode::default(),
+            sub_modules: Vec::new(),
             placement,
             rad_reverse: build::RadReverseState::default(),
             bra: bra::BraState::default(),

@@ -185,6 +185,8 @@ pub(crate) struct SignalLoweringContext {
     /// `compute()` codegen strategy: scalar, or the checked vector pipeline
     /// (`-vec`) that falls back to scalar for shapes it cannot certify.
     pub(crate) compute_mode: ComputeMode,
+    /// How generated-table content is produced (`--table-init`).
+    pub(crate) table_init_mode: transform::signal_fir::TableInitMode,
     /// Signal/loop dependency scheduling policy (`-ss` /
     /// `--scheduling-strategy`) applied to the lowered dependency graph.
     pub(crate) scheduling_strategy: SchedulingStrategy,
@@ -223,6 +225,7 @@ pub(crate) fn lower_signals_to_interp_transform_fastlane(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })
@@ -305,6 +308,7 @@ pub(crate) fn lower_signals_to_cranelift_report(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })
@@ -596,6 +600,7 @@ pub(crate) fn lower_signals_to_fir(
     scheduling_strategy: SchedulingStrategy,
     control_rate_mode: ControlRateMode,
     processing_api: ProcessingApi,
+    table_init_mode: transform::signal_fir::TableInitMode,
 ) -> Result<FirCompileOutput, LowerToFirError> {
     validate_execution_options("fir", control_rate_mode, processing_api, compute_mode)
         .map_err(LowerToFirError::ExecutionOptions)?;
@@ -610,6 +615,7 @@ pub(crate) fn lower_signals_to_fir(
         scheduling_strategy,
         control_rate_mode,
         processing_api,
+        table_init_mode,
     )
     .map_err(LowerToFirError::Transform)?;
     maybe_verify_fir_module(&lowered, fir_verify).map_err(|report| LowerToFirError::Verify {
@@ -638,6 +644,7 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane(
     scheduling_strategy: SchedulingStrategy,
     control_rate_mode: ControlRateMode,
     processing_api: ProcessingApi,
+    table_init_mode: transform::signal_fir::TableInitMode,
 ) -> Result<FirCompileOutput, SignalFirError> {
     lower_signals_to_fir_transform_fastlane_with_timing(
         output,
@@ -649,6 +656,7 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane(
         scheduling_strategy,
         control_rate_mode,
         processing_api,
+        table_init_mode,
         None,
     )
 }
@@ -668,6 +676,7 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane_with_timing(
     scheduling_strategy: SchedulingStrategy,
     control_rate_mode: ControlRateMode,
     processing_api: ProcessingApi,
+    table_init_mode: transform::signal_fir::TableInitMode,
     timing_sink: Option<&TimingSink>,
 ) -> Result<FirCompileOutput, SignalFirError> {
     let signal_fir_options = SignalFirOptions {
@@ -679,6 +688,7 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane_with_timing(
         scheduling_strategy,
         control_rate_mode,
         processing_api,
+        table_init_mode,
     };
     let lowered =
         transform::signal_fir::compile_signals_to_fir_fastlane_clocked_with_timing_and_origins(
@@ -729,6 +739,7 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })
@@ -769,6 +780,7 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })
@@ -809,6 +821,7 @@ pub(crate) fn lower_signals_to_julia_transform_fastlane(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })
@@ -857,6 +870,7 @@ pub(crate) fn lower_signals_to_rust_transform_fastlane(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })
@@ -905,6 +919,7 @@ pub(crate) fn lower_signals_to_asc_transform_fastlane(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })
@@ -951,6 +966,7 @@ pub(crate) fn lower_signals_to_codebox_transform_fastlane(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })
@@ -993,6 +1009,7 @@ pub(crate) fn lower_signals_to_cmajor_transform_fastlane(
             ctx.scheduling_strategy,
             ctx.control_rate_mode,
             ctx.processing_api,
+            ctx.table_init_mode,
             timing_sink,
         )
     })

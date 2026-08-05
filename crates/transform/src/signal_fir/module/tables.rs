@@ -13,6 +13,7 @@ use crate::signal_fir::FirType;
 use crate::signal_fir::SigId;
 use crate::signal_fir::SignalFirError;
 use crate::signal_fir::SignalFirErrorCode;
+use crate::signal_fir::TableInitMode;
 use crate::signal_fir::module::AccessType;
 use crate::signal_fir::module::FirBinOp;
 use crate::signal_fir::module::FirBuilder;
@@ -177,6 +178,85 @@ impl<'a> SignalToFirLower<'a> {
         }
     }
 
+    /// Emits the allocate / init / fill sequence that populates one generated
+    /// table at initialization time.
+    ///
+    /// C++ parity, `generateStaticTable`:
+    ///
+    /// ```cpp
+    /// mydspSIG0* sig0 = newmydspSIG0();
+    /// sig0->instanceInitmydspSIG0(sample_rate);
+    /// sig0->fillmydspSIG0(65536, ftbl0mydspSIG0);
+    /// deletemydspSIG0(sig0);            // emitted by the backend
+    /// ```
+    ///
+    /// The object is a stack local of the enclosing lifecycle function, which
+    /// is what lets a `static classInit` fill a file-scope table without any
+    /// instance state. Deallocation is left to the backend: it is bound to how
+    /// each target allocates (`delete`, `free`, or nothing at all for
+    /// garbage-collected targets), and C++ itself skips it for Rust, Julia and
+    /// AssemblyScript.
+    ///
+    /// Read-only tables are file-scope and shared, so their fill belongs to
+    /// `staticInit` (rendered as `classInit`); writable tables are per-instance
+    /// struct fields, so theirs belongs to `instanceConstants`. This is the
+    /// `generateStaticTable` / `generateTable` split in C++.
+    pub(super) fn emit_fill_call(
+        &mut self,
+        sub_module: &str,
+        table_name: &str,
+        size: usize,
+        access: AccessType,
+        elem_ty: &FirType,
+    ) {
+        let obj_name = format!("sig{}", self.name_gen.sub_module_counter.saturating_sub(1));
+        let obj_ty = FirType::Ptr(Box::new(FirType::Obj));
+
+        let alloc = {
+            let mut b = FirBuilder::new(&mut self.store);
+            let new_obj = b.new_dsp(sub_module.to_owned(), obj_ty.clone());
+            b.declare_var(
+                obj_name.clone(),
+                obj_ty.clone(),
+                AccessType::Stack,
+                Some(new_obj),
+            )
+        };
+        let init = {
+            let mut b = FirBuilder::new(&mut self.store);
+            let obj = b.load_var(obj_name.clone(), AccessType::Stack, obj_ty.clone());
+            let sample_rate = b.load_var("sample_rate", AccessType::FunArgs, FirType::Int32);
+            let call = b.fun_call(
+                format!("instanceInit{sub_module}"),
+                &[obj, sample_rate],
+                FirType::Void,
+            );
+            b.drop_(call)
+        };
+        let fill = {
+            let mut b = FirBuilder::new(&mut self.store);
+            let obj = b.load_var(obj_name, AccessType::Stack, obj_ty);
+            let count = b.int32(i32::try_from(size).unwrap_or(i32::MAX));
+            let table = b.load_var(
+                table_name.to_owned(),
+                access,
+                FirType::Array(Box::new(elem_ty.clone()), size),
+            );
+            let call = b.fun_call(
+                format!("fill{sub_module}"),
+                &[obj, count, table],
+                FirType::Void,
+            );
+            b.drop_(call)
+        };
+
+        let target = match access {
+            AccessType::Static => &mut self.sections.static_init_statements,
+            _ => &mut self.sections.constants_statements,
+        };
+        target.extend([alloc, init, fill]);
+    }
+
     /// Allocates the next generated-table name, `{i|f}tbl{k}` (§5.6).
     ///
     /// One counter serves both element types, matching C++ `getTypedNames`:
@@ -243,11 +323,36 @@ impl<'a> SignalToFirLower<'a> {
     ) -> Result<(String, usize), SignalFirError> {
         let size = self.table_size_from_sig(size_sig)?;
         let elem_ty = self.signal_fir_type(sig)?;
-        let generated = self.expand_generator_values(generator_sig, size, &elem_ty)?;
-        let name = self.next_table_name(&elem_ty);
-        let mut b = FirBuilder::new(&mut self.store);
-        let decl = b.declare_table(name.clone(), AccessType::Static, elem_ty, &generated);
-        self.sections.static_declarations.push(decl);
+        let name = match self.table_init_mode {
+            TableInitMode::Runtime => {
+                // The table lives at file scope, uninitialized, and is filled
+                // once per `classInit` by its generator sub-module. C++
+                // parity: `generateStaticTable` + `generateStaticSigGen`.
+                let filler = self.build_generator_sub_module(generator_sig, &elem_ty)?;
+                let name = format!("{}{}", self.next_table_name(&elem_ty), filler.name);
+                let decl = {
+                    let mut b = FirBuilder::new(&mut self.store);
+                    b.declare_var(
+                        name.clone(),
+                        FirType::Array(Box::new(elem_ty.clone()), size),
+                        AccessType::Static,
+                        None,
+                    )
+                };
+                self.sections.static_declarations.push(decl);
+                self.emit_fill_call(&filler.name, &name, size, AccessType::Static, &elem_ty);
+                self.sub_modules.push(filler.node);
+                name
+            }
+            TableInitMode::Const => {
+                let generated = self.expand_generator_values(generator_sig, size, &elem_ty)?;
+                let name = self.next_table_name(&elem_ty);
+                let mut b = FirBuilder::new(&mut self.store);
+                let decl = b.declare_table(name.clone(), AccessType::Static, elem_ty, &generated);
+                self.sections.static_declarations.push(decl);
+                name
+            }
+        };
         self.ui.waveform_tables.insert(sig, name.clone());
         self.ui.waveform_table_len.insert(sig, size);
         self.ui.table_access_by_sig.insert(sig, AccessType::Static);
@@ -269,17 +374,43 @@ impl<'a> SignalToFirLower<'a> {
     ) -> Result<(String, usize), SignalFirError> {
         let size = self.table_size_from_sig(size_sig)?;
         let elem_ty = self.signal_fir_type(sig)?;
-        let generated = self.expand_generator_values(generator_sig, size, &elem_ty)?;
+        // Writable tables never take the sub-module suffix: C++ `generateTable`
+        // omits the `vname += tablename` that `generateStaticTable` performs.
         let name = self.next_table_name(&elem_ty);
-        let mut b = FirBuilder::new(&mut self.store);
-        let decl = b.declare_table(
-            name.clone(),
-            AccessType::Struct,
-            elem_ty.clone(),
-            &generated,
-        );
-        self.sections.struct_declarations.push(decl);
-        self.register_constant_table_init(name.clone(), AccessType::Struct, elem_ty, &generated);
+        match self.table_init_mode {
+            TableInitMode::Runtime => {
+                let filler = self.build_generator_sub_module(generator_sig, &elem_ty)?;
+                let decl = {
+                    let mut b = FirBuilder::new(&mut self.store);
+                    b.declare_var(
+                        name.clone(),
+                        FirType::Array(Box::new(elem_ty.clone()), size),
+                        AccessType::Struct,
+                        None,
+                    )
+                };
+                self.sections.struct_declarations.push(decl);
+                self.emit_fill_call(&filler.name, &name, size, AccessType::Struct, &elem_ty);
+                self.sub_modules.push(filler.node);
+            }
+            TableInitMode::Const => {
+                let generated = self.expand_generator_values(generator_sig, size, &elem_ty)?;
+                let mut b = FirBuilder::new(&mut self.store);
+                let decl = b.declare_table(
+                    name.clone(),
+                    AccessType::Struct,
+                    elem_ty.clone(),
+                    &generated,
+                );
+                self.sections.struct_declarations.push(decl);
+                self.register_constant_table_init(
+                    name.clone(),
+                    AccessType::Struct,
+                    elem_ty,
+                    &generated,
+                );
+            }
+        }
         self.ui.waveform_tables.insert(sig, name.clone());
         self.ui.waveform_table_len.insert(sig, size);
         self.ui.table_access_by_sig.insert(sig, AccessType::Struct);

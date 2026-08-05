@@ -53,6 +53,18 @@ pub enum ErrorFormat {
     Json,
 }
 
+/// CLI spelling of the generated-table initialization strategy
+/// (`--table-init`), mapped to `transform::signal_fir::TableInitMode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum TableInitArg {
+    /// Compile each table generator into a sub-module filled at initialization
+    /// time (the C++ reference behavior).
+    Runtime,
+    /// Fold the generator into a literal initializer list at compile time.
+    #[default]
+    Const,
+}
+
 /// How source paths are spelled in rendered human diagnostics.
 ///
 /// Only presentation: the JSON channel always reports the compiled source name
@@ -315,6 +327,17 @@ pub struct CliArgs {
     /// Default: disabled (all delays above `mcd` use circular-pow2).
     #[arg(long = "dlt", default_value_t = u32::MAX)]
     pub dlt: u32,
+    /// How the initial content of `rdtable`/`rwtable` tables is produced.
+    ///
+    /// `runtime` compiles each table generator into a sub-module whose `fill`
+    /// function computes the content at initialization time, as the C++
+    /// reference does; this is the only mode that can express content
+    /// depending on the sample rate or on a foreign function, and it keeps the
+    /// emitted source small. `const` evaluates the generator at compile time
+    /// and emits a literal initializer list, giving a `const` ROM-able table
+    /// but rejecting generators that are not fully determined at compile time.
+    #[arg(long = "table-init", value_enum, default_value_t = TableInitArg::Const)]
+    pub table_init: TableInitArg,
     /// Vector mode (`-vec`): restructure `compute()` into an outer chunk loop
     /// so the C compiler can auto-vectorize the inner loops (SIMD).
     ///
@@ -467,6 +490,13 @@ pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<Stri
         }
         if arg == "-mcd" {
             normalized.push("--mcd".to_owned());
+            if let Some(value) = it.next() {
+                normalized.push(value);
+            }
+            continue;
+        }
+        if arg == "-table-init" {
+            normalized.push("--table-init".to_owned());
             if let Some(value) = it.next() {
                 normalized.push(value);
             }

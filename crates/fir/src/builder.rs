@@ -659,6 +659,7 @@ impl<'a> FirBuilder<'a> {
     /// filled table and therefore of the `table` argument. Nested generators go
     /// in `sub_modules` and are filled before this one runs.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn sub_module(
         &mut self,
         name: impl Into<String>,

@@ -2248,3 +2248,41 @@ fn sm04_duplicate_sub_module_names_are_flagged() {
         report.diagnostics
     );
 }
+
+#[test]
+fn sm05_nested_generator_whose_fill_is_never_called_is_flagged() {
+    // Mutation: a sub-module that owns a nested generator but whose
+    // `instanceInit` does not call the nested `fill`. This is the upstream
+    // 2.87.1 defect — inner table declared, never written, outer table
+    // computed from zeros — and the first implementation of the Rust producer
+    // reproduced it by building the sub-module's `instanceInit` from
+    // constants/reset/clear only.
+    let mut store = FirStore::new();
+    let module_id = {
+        let mut b = FirBuilder::new(&mut store);
+        let inner = make_sub_module(&mut b, "dspSIG0SIG0", FirType::Float32);
+        let outer = {
+            let init = make_sub_init_fun(&mut b, "dspSIG0");
+            let fill = make_fill_fun(&mut b, "dspSIG0", FirType::Float32, "table");
+            let functions = b.block(&[init, fill]);
+            let empty = b.block(&[]);
+            b.sub_module(
+                "dspSIG0",
+                FirType::Float32,
+                empty,
+                empty,
+                empty,
+                functions,
+                &[inner],
+            )
+        };
+        let empty = b.block(&[]);
+        b.module(0, 0, "dsp", empty, empty, empty, empty, &[outer])
+    };
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "FIR-SM05"),
+        "nested generator with no fill call was accepted: {:?}",
+        report.diagnostics
+    );
+}

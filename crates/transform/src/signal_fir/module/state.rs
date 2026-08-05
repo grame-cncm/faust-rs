@@ -67,6 +67,10 @@ pub(super) struct ModuleSections {
     pub(super) global_declarations: Vec<FirId>,
     /// `instanceConstants` body: table initializations and compile-time constants.
     pub(super) constants_statements: Vec<FirId>,
+    /// `staticInit` body (rendered as `classInit` by backends): fills of
+    /// read-only generated tables, which live at file scope and are shared by
+    /// every instance. C++ parity: `fStaticInitInstructions`.
+    pub(super) static_init_statements: Vec<FirId>,
     /// `instanceResetUserInterface` body: UI zone reset assignments.
     pub(super) reset_statements: Vec<FirId>,
     /// `instanceClear` body: delay-line and recursion-state zero-init loops.

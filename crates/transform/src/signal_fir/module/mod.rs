@@ -143,6 +143,7 @@ mod rad_formula_builder;
 mod region;
 mod setup;
 mod state;
+mod subcontainer;
 mod tables;
 mod ui_lowering;
 pub(super) use build::build_module;
@@ -411,6 +412,15 @@ struct SignalToFirLower<'a> {
     /// DSP class name, used as the container prefix of literal waveform table
     /// names (`{i|f}{module_name}Wave{j}`, C++ `declareWaveform`).
     module_name: String,
+    /// When set, this lowerer is building a table-generator sub-module: its
+    /// single output is stored into the `table` function argument at this
+    /// element type instead of into an audio output buffer.
+    table_fill_sink: Option<FirType>,
+    /// How generated-table content is produced (`--table-init`).
+    table_init_mode: crate::signal_fir::TableInitMode,
+    /// Sub-modules produced for this program's generated tables, in allocation
+    /// order; becomes the module's `sub_modules` block.
+    sub_modules: Vec<FirId>,
     /// Read-only placement analysis results (ref counts, boundary set, konst escapes).
     placement: setup::PlacementInfo,
     /// RAD reverse-time scheduling state.

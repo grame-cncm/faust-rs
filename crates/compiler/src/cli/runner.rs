@@ -16,14 +16,15 @@ use codegen::backends::wasm::WasmOptions;
 use codegen::fixtures::backend_test_fixtures;
 use compiler::{
     Compiler, CompilerError, ComputeMode, ControlRateMode, FaustInstallPaths, FirVerifyOptions,
-    ProcessingApi, RealType, SchedulingStrategy, compile_options_json_string,
+    ProcessingApi, RealType, SchedulingStrategy, TableInitMode, compile_options_json_string,
     enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
 };
 use diagnostics::DiagnosticBundle;
 use fir::checker::verify_fir_module;
 
 use super::args::{
-    CliArgs, CliLang, CliSignalFirLane, ErrorFormat, ErrorVerbosity, normalize_legacy_args,
+    CliArgs, CliLang, CliSignalFirLane, ErrorFormat, ErrorVerbosity, TableInitArg,
+    normalize_legacy_args,
 };
 use super::diagnostics::{format_diagnostics_json_with_verbosity, print_bundle};
 use super::validate::{
@@ -299,6 +300,14 @@ pub fn selected_real_type(cli: &CliArgs) -> RealType {
     }
 }
 
+/// Maps `--table-init` to the transform-level [`TableInitMode`].
+pub fn selected_table_init_mode(cli: &CliArgs) -> TableInitMode {
+    match cli.table_init {
+        TableInitArg::Runtime => TableInitMode::Runtime,
+        TableInitArg::Const => TableInitMode::Const,
+    }
+}
+
 /// Maps the `-vec`/`-vs`/`-lv` switches to a [`ComputeMode`] (roadmap P6, V1).
 pub fn selected_compute_mode(cli: &CliArgs) -> ComputeMode {
     if cli.vec {
@@ -368,6 +377,7 @@ pub fn compiler_from_cli(
         .with_real_type(selected_real_type(cli))
         .with_mcd(cli.mcd)
         .with_dlt(cli.dlt)
+        .with_table_init_mode(selected_table_init_mode(cli))
         .with_compute_mode(selected_compute_mode(cli))
         .with_scheduling_strategy(selected_scheduling_strategy(cli))
         .with_control_rate_mode(selected_control_rate_mode(cli))

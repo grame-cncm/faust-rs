@@ -337,6 +337,120 @@ fn build_fastest_driver(store: &mut FirStore, bodies: &[Vec<FirId>], vs: i32) ->
     vec![main_guarded, rem_guarded]
 }
 
+/// Names and element type of the table one generator sub-module fills.
+pub(crate) struct FillSpec {
+    /// Sub-module class name, `{module}SIG{k}`.
+    pub(crate) name: String,
+    /// Element type of the filled table.
+    pub(crate) elem_ty: FirType,
+}
+
+/// Assembles a `SubModule` from a finished table-generator lowering.
+///
+/// C++ parity: `generateInstanceInitFun` (fInit + fResetUI + fClear) and
+/// `generateFillFun` (compute block + scalar loop over `count`) in
+/// `code_container.cpp`.
+fn assemble_sub_module(
+    lower: &mut SignalToFirLower<'_>,
+    spec: &FillSpec,
+    fill_statements: &[FirId],
+) -> Result<FirId, SignalFirError> {
+    let dsp_arg_type = FirType::Ptr(Box::new(FirType::Obj));
+    let dsp_arg = NamedType {
+        name: "dsp".to_string(),
+        typ: dsp_arg_type.clone(),
+    };
+
+    let init_body = {
+        // A sub-module has no `classInit` of its own, so anything it would
+        // have put there — the fills of tables *it* generates, when the
+        // generator itself reads a generated table — goes at the front of its
+        // `instanceInit`. The parent calls `instanceInit` before `fill`, so a
+        // nested table is populated before the loop that reads it.
+        //
+        // Dropping these is not a missing optimization but a wrong answer: it
+        // is precisely the upstream defect of §2.4, where the inner table is
+        // declared and never filled, and the outer table is computed from
+        // zeros. Rule FIR-SM05 keeps it from coming back.
+        let mut statements = lower.sections.static_init_statements.clone();
+        statements.extend(lower.sections.constants_statements.iter().copied());
+        statements.extend(lower.sections.reset_statements.iter().copied());
+        statements.extend(lower.sections.clear_statements.iter().copied());
+        let mut b = FirBuilder::new(&mut lower.store);
+        b.block(&statements)
+    };
+    let init_args = [
+        dsp_arg.clone(),
+        NamedType {
+            name: "sample_rate".to_string(),
+            typ: FirType::Int32,
+        },
+    ];
+    let instance_init = {
+        let mut b = FirBuilder::new(&mut lower.store);
+        b.declare_fun(
+            format!("instanceInit{}", spec.name),
+            FirType::Fun {
+                args: vec![dsp_arg_type.clone(), FirType::Int32],
+                ret: Box::new(FirType::Void),
+            },
+            &init_args,
+            Some(init_body),
+            false,
+        )
+    };
+
+    let fill_body = {
+        let mut b = FirBuilder::new(&mut lower.store);
+        b.block(fill_statements)
+    };
+    let table_arg_ty = FirType::Ptr(Box::new(spec.elem_ty.clone()));
+    let fill_args = [
+        dsp_arg,
+        NamedType {
+            name: "count".to_string(),
+            typ: FirType::Int32,
+        },
+        NamedType {
+            name: "table".to_string(),
+            typ: table_arg_ty.clone(),
+        },
+    ];
+    let fill = {
+        let mut b = FirBuilder::new(&mut lower.store);
+        b.declare_fun(
+            format!("fill{}", spec.name),
+            FirType::Fun {
+                args: vec![dsp_arg_type, FirType::Int32, table_arg_ty],
+                ret: Box::new(FirType::Void),
+            },
+            &fill_args,
+            Some(fill_body),
+            false,
+        )
+    };
+
+    // A generator that reads another generated table produced that table's
+    // sub-module during this same lowering; it must travel with us (contract
+    // C5). Taking it from the lowering — not from the caller's spec — is what
+    // makes nesting work at arbitrary depth.
+    let nested = std::mem::take(&mut lower.sub_modules);
+    let mut b = FirBuilder::new(&mut lower.store);
+    let functions = b.block(&[instance_init, fill]);
+    let dsp_struct = b.block(&lower.sections.struct_declarations);
+    let static_decls = b.block(&lower.sections.static_declarations);
+    let globals = b.block(&lower.sections.global_declarations);
+    Ok(b.sub_module(
+        spec.name.clone(),
+        spec.elem_ty.clone(),
+        dsp_struct,
+        static_decls,
+        globals,
+        functions,
+        &nested,
+    ))
+}
+
 /// Lowers a prepared signal forest into a complete FIR module.
 ///
 /// Entry point for the fast-lane Step 2A–2G boundary: accepts pre-validated
@@ -439,8 +553,13 @@ pub(crate) fn build_module<'a>(
     compute_mode: ComputeMode,
     control_rate_mode: ControlRateMode,
     processing_api: ProcessingApi,
+    table_init_mode: crate::signal_fir::TableInitMode,
     clocked: Option<clocked::ClockedPlan<'a>>,
     scalar_schedule: Option<&crate::hgraph::Hsched>,
+    // `fill`: when set, lower a table generator instead of a DSP — the single
+    // output is stored into the `table` argument and the result is a
+    // `SubModule` rather than a `Module` (C++ `signal2Container`).
+    fill: Option<&FillSpec>,
 ) -> Result<SignalFirOutput, SignalFirError> {
     let delay_opts = DelayOptions {
         max_copy_delay,
@@ -463,6 +582,8 @@ pub(crate) fn build_module<'a>(
     );
     lower.control_rate_mode = control_rate_mode;
     lower.processing_api = processing_api;
+    lower.table_fill_sink = fill.map(|spec| spec.elem_ty.clone());
+    lower.table_init_mode = table_init_mode;
     lower.clocked = clocked.map(clocked::ClockedState::new);
     lower.scalar_schedule = scalar_schedule.cloned();
     lower.fixed_ad_internal_signals = fixed_ad_internal_signals(lower.arena, signals);
@@ -701,6 +822,34 @@ pub(crate) fn build_module<'a>(
             false,
         )
     };
+
+    // `staticInit` carries the fills of file-scope generated tables and is
+    // rendered as `classInit` by the backends. It is emitted only when such a
+    // table exists, so every program without one keeps its current shape.
+    let static_init = (!lower.sections.static_init_statements.is_empty()).then(|| {
+        let body = {
+            let mut b = FirBuilder::new(&mut lower.store);
+            b.block(&lower.sections.static_init_statements)
+        };
+        let args = [
+            dsp_arg.clone(),
+            NamedType {
+                name: "sample_rate".to_string(),
+                typ: FirType::Int32,
+            },
+        ];
+        let mut b = FirBuilder::new(&mut lower.store);
+        b.declare_fun(
+            "staticInit",
+            FirType::Fun {
+                args: vec![dsp_arg_type.clone(), FirType::Int32],
+                ret: Box::new(FirType::Void),
+            },
+            &args,
+            Some(body),
+            false,
+        )
+    });
 
     let constants_body = {
         let sample_rate_store = {
@@ -1071,13 +1220,15 @@ pub(crate) fn build_module<'a>(
     math_prototypes.extend(lower.sections.global_declarations.iter().copied());
     let functions = {
         let mut b = FirBuilder::new(&mut lower.store);
-        let mut function_items = vec![
+        let mut function_items = Vec::new();
+        function_items.extend(static_init);
+        function_items.extend([
             metadata,
             instance_constants,
             instance_reset_ui,
             instance_clear,
             build_ui,
-        ];
+        ]);
         // C++ emission order (§2.3): `control` then `frame` precede the
         // canonical `compute`.
         function_items.extend(control);
@@ -1097,6 +1248,27 @@ pub(crate) fn build_module<'a>(
         let mut b = FirBuilder::new(&mut lower.store);
         b.block(&lower.sections.static_declarations)
     };
+    // Table-generator lowering returns a `SubModule` built from the same
+    // sections: `instanceInit` is the C++ sub-container's fInit + fResetUI +
+    // fClear, and `fill` is its compute block plus the scalar loop over
+    // `count` — which is exactly `compute_statements`, since the output sink
+    // already redirected the single output to `table[i0]`.
+    if let Some(spec) = fill {
+        let module = assemble_sub_module(&mut lower, spec, &compute_statements)?;
+        lower.fir_origins.derive_reachable(&lower.store, module);
+        return Ok(SignalFirOutput {
+            store: lower.store,
+            module,
+            origins: lower.fir_origins,
+            emission_order: lower.emission_order,
+            shadow_report: None,
+            vector_pipeline_status: super::super::VectorPipelineStatus::NotRequested,
+            vector_effective_mode: super::super::VectorEffectiveMode::Scalar,
+            vector_pipeline_detail: None,
+        });
+    }
+
+    let sub_modules = std::mem::take(&mut lower.sub_modules);
     let module: FirId = {
         let mut b = FirBuilder::new(&mut lower.store);
         b.module(
@@ -1107,9 +1279,7 @@ pub(crate) fn build_module<'a>(
             globals,
             functions,
             static_decls_block,
-            // Scalar lowering has no table generators yet: the sub-module
-            // producer lands in S2.
-            &[],
+            &sub_modules,
         )
     };
 

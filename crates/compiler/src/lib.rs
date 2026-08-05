@@ -126,7 +126,7 @@ use sigtype::TypeAnnotator;
 use tlib::NodeKind;
 pub use transform::schedule::SchedulingStrategy;
 pub use transform::signal_fir::{
-    ComputeMode, ControlRateMode, ProcessingApi, RealType, VectorEffectiveMode,
+    ComputeMode, ControlRateMode, ProcessingApi, RealType, TableInitMode, VectorEffectiveMode,
     VectorFallbackReason, VectorPipelineStatus,
 };
 use transform::signal_fir::{SignalFirError, SignalFirErrorCode, SignalFirOptions};
@@ -513,6 +513,8 @@ pub struct Compiler {
     /// Delay above which the if-based wrapping strategy is used.
     /// Mirrors Faust `-dlt N`. Default: `u32::MAX` (disabled).
     delay_line_threshold: u32,
+    /// How generated-table content is produced (`--table-init`).
+    table_init_mode: TableInitMode,
     /// Codegen strategy for `compute()`: scalar (default) or vector mode
     /// (`-vec`/`-vs`/`-lv`).
     ///
@@ -597,6 +599,7 @@ impl Compiler {
             entrypoint_name: "process".into(),
             real_type: RealType::default(),
             max_copy_delay: 16,
+            table_init_mode: TableInitMode::default(),
             delay_line_threshold: u32::MAX,
             compute_mode: ComputeMode::Scalar,
             scheduling_strategy: SchedulingStrategy::DepthFirst,
@@ -644,6 +647,17 @@ impl Compiler {
     #[must_use]
     pub fn with_real_type(mut self, real_type: RealType) -> Self {
         self.real_type = real_type;
+        self
+    }
+
+    /// Selects how generated-table content is produced (`--table-init`).
+    ///
+    /// `Runtime` compiles each table generator into a sub-module filled at
+    /// initialization time (the C++ reference behavior); `Const` folds it into
+    /// a literal initializer list at compile time.
+    #[must_use]
+    pub fn with_table_init_mode(mut self, mode: TableInitMode) -> Self {
+        self.table_init_mode = mode;
         self
     }
 
@@ -764,6 +778,7 @@ impl Compiler {
             scheduling_strategy: self.scheduling_strategy,
             control_rate_mode: self.control_rate_mode,
             processing_api: self.processing_api,
+            table_init_mode: self.table_init_mode,
             timing_sink: self.timing_sink.clone(),
         }
     }
@@ -789,6 +804,7 @@ impl Compiler {
             self.scheduling_strategy,
             self.control_rate_mode,
             self.processing_api,
+            self.table_init_mode,
         )
         .map_err(|error| lower_fir_error_to_compiler(source, signals, error))
     }

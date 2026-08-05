@@ -94,6 +94,15 @@ impl Compiler {
         if let Some(n) = argv_value_parsed(argv, &["-dlt", "--dlt"]) {
             compiler = compiler.with_dlt(n);
         }
+        if let Some(mode) = argv_value(argv, &["--table-init", "-table-init"]) {
+            // An unknown value keeps the default rather than failing here; the
+            // CLI layer is where argument validation belongs.
+            match mode {
+                "runtime" => compiler = compiler.with_table_init_mode(TableInitMode::Runtime),
+                "const" => compiler = compiler.with_table_init_mode(TableInitMode::Const),
+                _ => {}
+            }
+        }
         if has(&["-vec", "--vec"]) {
             let vec_size =
                 argv_value_parsed(argv, &["-vs", "--vs"]).unwrap_or(ComputeMode::DEFAULT_VEC_SIZE);

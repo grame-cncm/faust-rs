@@ -1,7 +1,7 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0 and S1 done; S2 (transform producer) is next
+Status: S0-S2 done; S3 (flattening pass) is next
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -330,6 +330,12 @@ Checker rules:
 - **FIR-SM04** — sub-module names are unique within a module and stable across
   two compilations of the same program (emission determinism, as in
   `porting/scalar-emission-determinism-plan-2026-07-20-en.md`).
+- **FIR-SM05** — a sub-module owning nested generators calls each of their
+  fills from its own `instanceInit`. Added during S2, after the first producer
+  reproduced the upstream defect of §2.4 by assembling a sub-module's
+  `instanceInit` from constants/reset/clear only, silently dropping the nested
+  fill. A sub-module has no `classInit`, so nested fills have nowhere else to
+  go.
 
 ### 5.4 FIR extension C — `staticInit`
 
@@ -767,7 +773,32 @@ Two corrections to this plan came out of the implementation:
   nest a block inside a block and break every consumer that expects
   `sub_modules` to decode as a block of `SubModule`.
 
-### S2 — Transform producer
+### S2 — Transform producer — **done 2026-08-05**
+
+Landed in two commits, as specified: the naming-only rename first
+(`c093e424`), then the producer. `--table-init runtime` compiles every `SIGGEN`
+into a sub-module; `const` stays the effective default until S7. The three
+fixtures that could not be compiled at all now lower successfully and stop at
+the S1 backend guard, which is this phase's intended end state:
+`f02_subcontainer1`, `f03_sr_dependent` and `f09_ffunction_gen` return
+`FRS-CGEN-CPP-0003` instead of `FRS-SFIR-0004`.
+
+Sub-module counts are as designed: one per generator, one for two reads of the
+same generator (`f11`), `SIG0`/`SIG1` for two distinct ones (`f12`), and
+`mydspSIG0SIG0` nested inside `mydspSIG0` for `f08`.
+
+Two implementation notes:
+
+- `FirBuilder::module` had to grow no further: the sub-module list is taken
+  from the lowering (`std::mem::take(&mut lower.sub_modules)`), not from the
+  caller's `FillSpec`. The first version read it from the spec, which is
+  always empty at that point, so nested sub-modules were dropped.
+- The producer initially reproduced the upstream nesting defect exactly (§2.4):
+  a sub-module's `instanceInit` was built from constants/reset/clear, so a
+  nested generator's fill call vanished. Fixed by prepending
+  `static_init_statements`, and locked by new rule FIR-SM05.
+
+Original phase description:
 
 Opens with the **naming-only commit** of §5.6 — `{i|f}tbl{k}[{Sub}]` everywhere,
 no behavior change, all tests updated — so that the rename never mixes with the
@@ -896,12 +927,12 @@ recorded as the expected `const`-mode outcome rather than as failures.
 
 - [x] S0 baseline artifacts recorded under
       `porting/generated/siggen-table-init-s0/` (2026-08-05)
-- [x] `SubModule` node, sized uninitialized tables, checker rules FIR-SM01…SM04,
-      fail-closed backend guards (2026-08-05); `staticInit` emission lands with
-      its producer in S2
-- [ ] Upstream table naming `{i|f}tbl{k}[{Sub}]` landed as a standalone commit
-- [ ] `build_fill_module` and `module/subcontainer.rs` with recursion
-- [ ] `--table-init runtime|const`, default `runtime`, both modes gated
+- [x] `SubModule` node, sized uninitialized tables, checker rules FIR-SM01…SM05,
+      fail-closed backend guards (2026-08-05)
+- [x] Upstream table naming `{i|f}tbl{k}[{Sub}]` landed as a standalone commit (2026-08-05)
+- [x] `build_fill_module` and `module/subcontainer.rs` with recursion (2026-08-05)
+- [ ] `--table-init runtime|const` implemented (2026-08-05); default flips to
+      `runtime` in S7, both modes gated
 - [ ] Flattening pass with both state policies + independent checker
 - [ ] `cpp`/`c` nested-class emission matching §5.9.1, with its structural tests
 - [ ] All ten backends migrated or explicitly failing on `SubModule`
