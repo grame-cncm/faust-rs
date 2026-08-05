@@ -877,6 +877,22 @@ fn emit_block_items(
     }
 }
 
+/// Returns the `const ` storage qualifier for a `DeclareVar`/`DeclareTable`
+/// with `AccessType::Static`, or `""` otherwise. Shared by the `DeclareVar`
+/// and `DeclareTable` arms of `emit_stmt`.
+///
+/// In [`EmitContext::Field`] position specifically, `Static` must not be
+/// translated to `const`: Cmajor has no class-static storage, so the C++
+/// backend emits these declarations as ordinary per-processor-instance
+/// fields that may still be initialized at runtime.
+fn static_qualifier(context: EmitContext, access: AccessType) -> &'static str {
+    if context != EmitContext::Field && access == AccessType::Static {
+        "const "
+    } else {
+        ""
+    }
+}
+
 /// Emits one Cmajor statement.
 fn emit_stmt(
     store: &FirStore,
@@ -904,14 +920,7 @@ fn emit_stmt(
             }
             validate_identifier(&name, "variable")?;
             let type_name = emit_type(&typ, options)?;
-            // Cmajor has no class-static storage. The C++ backend emits these
-            // declarations per processor instance and may initialize them at
-            // runtime, so `Static` must not be translated to `const`.
-            let qualifier = if context != EmitContext::Field && access == AccessType::Static {
-                "const "
-            } else {
-                ""
-            };
+            let qualifier = static_qualifier(context, access);
             let _ = write!(out, "{tab}{qualifier}{type_name} {name}");
             if let Some(init) = init {
                 let init = emit_value(store, options, init)?;
@@ -928,11 +937,7 @@ fn emit_stmt(
         } => {
             validate_identifier(&name, "table")?;
             let elem = emit_type(&elem_type, options)?;
-            let qualifier = if context != EmitContext::Field && access == AccessType::Static {
-                "const "
-            } else {
-                ""
-            };
+            let qualifier = static_qualifier(context, access);
             let _ = write!(out, "{tab}{qualifier}{elem}[{}] {name}", values.len());
             if !values.is_empty() {
                 let mut rendered = Vec::with_capacity(values.len());
