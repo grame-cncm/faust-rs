@@ -37,6 +37,14 @@
 //! - Command dispatch and validation are declared once in the typed Clap tree;
 //!   workflow modules receive validated option values.
 
+// Match the `faust-rs` binary's allocator so measurements describe the shipped
+// configuration. Without this, `compile-profile` reports a corpus 39 % slower
+// than the product on allocation-heavy stages, which is exactly the kind of
+// skew that sends an optimisation after the wrong stage.
+#[cfg(not(target_arch = "wasm32"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use clap::Parser;
 use fir::dump_fir;
 use serde::{Deserialize, Serialize};

@@ -22,3 +22,10 @@ wat = "1"
 
 [lints]
 workspace = true
+
+# The profiling harness must measure the shipped configuration: `faust-rs`
+# selects `mimalloc`, and without it here `compile-profile` overstates
+# allocation-heavy stages (measured 39 % on `fir-prepare-normalize`) and would
+# misdirect the next optimisation.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc = "0.1.52"
