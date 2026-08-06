@@ -42,6 +42,12 @@ pub struct VerifiedPureVectorProgram {
     pub(super) static_declarations: Vec<FirId>,
     pub(super) table_declarations: Vec<FirId>,
     pub(super) table_init_statements: Vec<FirId>,
+    /// Fill statements for file-scope generated tables; the body of
+    /// `staticInit` (rendered as `classInit`). Empty unless `--table-init
+    /// runtime` produced a read-only generated table.
+    pub(super) static_init_statements: Vec<FirId>,
+    /// `SubModule` nodes for generated tables, in allocation order.
+    pub(super) sub_modules: Vec<FirId>,
     pub(super) mutable_tables: BTreeMap<u64, (String, usize, FirType)>,
     pub(super) transport_declarations: Vec<FirId>,
     pub(super) control_statements: Vec<FirId>,
@@ -101,6 +107,18 @@ impl VerifiedPureVectorProgram {
     #[must_use]
     pub fn table_init_statements(&self) -> &[FirId] {
         &self.table_init_statements
+    }
+
+    /// Fill statements for file-scope generated tables (`staticInit`).
+    #[must_use]
+    pub fn static_init_statements(&self) -> &[FirId] {
+        &self.static_init_statements
+    }
+
+    /// Generated-table sub-modules carried by this program.
+    #[must_use]
+    pub fn sub_modules(&self) -> &[FirId] {
+        &self.sub_modules
     }
 
     /// Accepted mutable tables by signal id: field name, length, element type.
@@ -321,4 +339,12 @@ pub struct VectorLoweringContext<'a> {
     /// temporaries are struct-promoted, and the whole externalizable control
     /// section moves to a `control` entry point (plan phase 5).
     pub control_rate_mode: ControlRateMode,
+    /// Enclosing module name; a generator sub-module is named `{module}SIG{k}`.
+    pub module_name: &'a str,
+    /// Whether table generators are folded or compiled into sub-modules (S6).
+    pub table_init_mode: crate::signal_fir::TableInitMode,
+    /// Delay policy inherited by a generator sub-module.
+    pub max_copy_delay: u32,
+    /// Delay policy inherited by a generator sub-module.
+    pub delay_line_threshold: u32,
 }

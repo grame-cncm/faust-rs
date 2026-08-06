@@ -867,6 +867,8 @@ fn compile_fastlane_inner(
                     compute_mode: options.compute_mode,
                     strategy: options.scheduling_strategy,
                     control_rate_mode: options.control_rate_mode,
+                    table_init_mode: options.table_init_mode,
+                    delay_line_threshold: options.delay_line_threshold,
                 },
             )
         }) {

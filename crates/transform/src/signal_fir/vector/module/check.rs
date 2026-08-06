@@ -135,7 +135,22 @@ pub(super) fn verify_mutable_table_attribution(
         return Err(module_shape("instanceConstants is not a block"));
     };
     let mut covered = BTreeMap::<String, BTreeSet<i32>>::new();
+    // Under `--table-init runtime` a table is seeded by one `fill<Sub>(obj,
+    // count, table)` call instead of `length` element stores, so cell coverage
+    // is not the right question for it. The obligation becomes: the table is
+    // named by exactly one fill call, and that call's `count` is its full
+    // length. A table with neither shape is still rejected below.
+    let mut filled = BTreeMap::<String, Vec<usize>>::new();
     for statement in &init_statements {
+        if let Some((name, count)) = fill_call_target(store, *statement) {
+            if !declared.contains_key(&name) {
+                return Err(module_shape(format!(
+                    "instanceConstants fills unknown table {name}"
+                )));
+            }
+            filled.entry(name).or_default().push(count);
+            continue;
+        }
         let FirMatch::StoreTable { name, index, .. } = match_fir(store, *statement) else {
             continue;
         };
@@ -156,6 +171,27 @@ pub(super) fn verify_mutable_table_attribution(
         }
     }
     for (name, length) in &declared {
+        if let Some(counts) = filled.get(name) {
+            if covered.contains_key(name) {
+                return Err(module_shape(format!(
+                    "mutable table {name} is both filled by a generator and stored element-wise"
+                )));
+            }
+            match counts.as_slice() {
+                [count] if count == length => continue,
+                [count] => {
+                    return Err(module_shape(format!(
+                        "mutable table {name} fill covers {count} of {length} cells"
+                    )));
+                }
+                _ => {
+                    return Err(module_shape(format!(
+                        "mutable table {name} is filled {} times",
+                        counts.len()
+                    )));
+                }
+            }
+        }
         let cells = covered.get(name).map_or(0, BTreeSet::len);
         let complete = cells == *length
             && covered.get(name).is_some_and(|cells| {
@@ -172,6 +208,32 @@ pub(super) fn verify_mutable_table_attribution(
     }
     Ok(())
 }
+/// Recognizes `drop(fill<Sub>(obj, count, table))`, returning the table it
+/// fills and the cell count the call claims to cover.
+///
+/// Matched structurally rather than by name alone: the third argument must be a
+/// load of the table, so a fill call that names one table and writes another
+/// cannot pass as coverage for the first.
+fn fill_call_target(store: &FirStore, statement: FirId) -> Option<(String, usize)> {
+    let inner = match match_fir(store, statement) {
+        FirMatch::Drop(value) => value,
+        _ => return None,
+    };
+    let FirMatch::FunCall { name, args, .. } = match_fir(store, inner) else {
+        return None;
+    };
+    if !name.starts_with("fill") || args.len() != 3 {
+        return None;
+    }
+    let FirMatch::Int32 { value: count, .. } = match_fir(store, args[1]) else {
+        return None;
+    };
+    let FirMatch::LoadVar { name: table, .. } = match_fir(store, args[2]) else {
+        return None;
+    };
+    Some((table, usize::try_from(count).ok()?))
+}
+
 /// Rejects a UI write event attributed to a signal that performs no such write.
 ///
 /// The event model now attributes an effect operation to the signal performing

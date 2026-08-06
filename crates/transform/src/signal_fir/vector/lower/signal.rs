@@ -78,6 +78,24 @@ struct PureVectorLowerer<'a> {
     promoted_control_fields: Vec<(String, FirType)>,
     /// Counter for `fSlow` snapshot names.
     snapshot_counter: u32,
+    /// Whether table generators are folded or compiled into sub-modules (S6).
+    table_init_mode: crate::signal_fir::TableInitMode,
+    /// Enclosing module name, for `{module}SIG{k}`.
+    module_name: String,
+    /// Delay policy inherited by a generator sub-module.
+    max_copy_delay: u32,
+    /// Delay policy inherited by a generator sub-module.
+    delay_line_threshold: u32,
+    /// `SubModule` nodes built for generated tables, in allocation order.
+    sub_modules: Vec<FirId>,
+    /// Next `{module}SIG{k}` index.
+    sub_module_counter: u32,
+    /// Scheduling strategy inherited by a generator sub-module.
+    scheduling_strategy: SchedulingStrategy,
+    /// Fill statements for file-scope generated tables; these belong to
+    /// `staticInit`, not `instanceConstants` — a static table is shared, so it
+    /// is filled once per class, exactly as in the scalar path.
+    static_init_statements: Vec<FirId>,
 }
 /// Lowers actual effect-free prepared signals into P4.4 vector regions.
 ///
@@ -98,6 +116,13 @@ pub fn lower_pure_vector_program(
         real_type,
         num_inputs,
         control_rate_mode: ControlRateMode::InlinePerBlock,
+        // `lower_pure_vector_program` is the P5.2 unit-test entry point: it
+        // exercises the pure lowering in isolation, with no enclosing module,
+        // so it keeps the folding mode and never builds a sub-module.
+        module_name: "mydsp",
+        table_init_mode: crate::signal_fir::TableInitMode::Const,
+        max_copy_delay: 0,
+        delay_line_threshold: 0,
     };
     lower_vector_program_impl(prepared, verified_plan, None, None, &context)
 }
@@ -223,6 +248,14 @@ pub(super) fn lower_vector_program_impl<'a>(
         snapshot_stores: Vec::new(),
         promoted_control_fields: Vec::new(),
         snapshot_counter: 0,
+        table_init_mode: context.table_init_mode,
+        module_name: context.module_name.to_owned(),
+        max_copy_delay: context.max_copy_delay,
+        delay_line_threshold: context.delay_line_threshold,
+        sub_modules: Vec::new(),
+        sub_module_counter: 0,
+        scheduling_strategy: context.strategy,
+        static_init_statements: Vec::new(),
     };
 
     let mut control_cache = BTreeMap::new();
@@ -409,6 +442,8 @@ pub(super) fn lower_vector_program_impl<'a>(
         static_declarations: lowerer.static_declarations,
         table_declarations: lowerer.table_declarations,
         table_init_statements: lowerer.table_init_statements,
+        static_init_statements: lowerer.static_init_statements,
+        sub_modules: lowerer.sub_modules,
         mutable_tables: lowerer.mutable_tables,
         transport_declarations,
         control_statements,
@@ -1424,6 +1459,105 @@ impl PureVectorLowerer<'_> {
         Ok(FirBuilder::new(&mut self.store).load_table(name, access, checked_index, expected))
     }
 
+    /// Compiles one table generator into a sub-module of this program.
+    ///
+    /// Deliberately the *same* compiler the scalar lowerer uses
+    /// (`module::subcontainer_compile`): a generator is a 0-input/1-output
+    /// program evaluated once at initialization, so it is never vectorized, and
+    /// building it twice in two places is how the two paths would drift.
+    fn build_generator_sub_module(
+        &mut self,
+        signal_id: u64,
+        generator: SigId,
+        elem_type: &FirType,
+    ) -> Result<String, PureVectorLowerError> {
+        let name = format!("{}SIG{}", self.module_name, self.sub_module_counter);
+        self.sub_module_counter += 1;
+        let spec = crate::signal_fir::module::subcontainer_compile::GeneratorSubModuleSpec {
+            name: &name,
+            elem_ty: elem_type.clone(),
+            real_ty: self.real_type.clone(),
+            max_copy_delay: self.max_copy_delay,
+            delay_line_threshold: self.delay_line_threshold,
+            table_init_mode: self.table_init_mode,
+            scheduling_strategy: self.scheduling_strategy,
+        };
+        let node = crate::signal_fir::module::subcontainer_compile::compile_generator_sub_module(
+            self.prepared.arena(),
+            &mut self.store,
+            generator,
+            &spec,
+        )
+        .map_err(|error| PureVectorLowerError::UnsupportedSignal {
+            signal_id,
+            expression: format!("table generator sub-module failed: {error}"),
+        })?;
+        self.sub_modules.push(node);
+        Ok(name)
+    }
+
+    /// Emits `new` / `instanceInit` / `fill` for one generated table.
+    ///
+    /// Mirrors the scalar `emit_fill_call`, including the placement split: a
+    /// `Static` table is file-scope and shared, so its fill belongs to
+    /// `staticInit`; a `Struct` table is per-instance, so its fill belongs to
+    /// `instanceConstants`.
+    fn emit_fill_call(
+        &mut self,
+        sub_module: &str,
+        table_name: &str,
+        size: usize,
+        access: AccessType,
+        elem_type: &FirType,
+    ) {
+        let obj_name = format!("sig{}", self.sub_module_counter.saturating_sub(1));
+        let obj_ty = FirType::Ptr(Box::new(FirType::Obj));
+
+        let alloc = {
+            let mut b = FirBuilder::new(&mut self.store);
+            let new_obj = b.new_dsp(sub_module.to_owned(), obj_ty.clone());
+            b.declare_var(
+                obj_name.clone(),
+                obj_ty.clone(),
+                AccessType::Stack,
+                Some(new_obj),
+            )
+        };
+        let init = {
+            let mut b = FirBuilder::new(&mut self.store);
+            let obj = b.load_var(obj_name.clone(), AccessType::Stack, obj_ty.clone());
+            let sample_rate = b.load_var("sample_rate", AccessType::FunArgs, FirType::Int32);
+            let call = b.fun_call(
+                format!("instanceInit{sub_module}"),
+                &[obj, sample_rate],
+                FirType::Void,
+            );
+            b.drop_(call)
+        };
+        let fill = {
+            let mut b = FirBuilder::new(&mut self.store);
+            let obj = b.load_var(obj_name, AccessType::Stack, obj_ty);
+            let count = b.int32(i32::try_from(size).unwrap_or(i32::MAX));
+            let table = b.load_var(
+                table_name.to_owned(),
+                access,
+                FirType::Array(Box::new(elem_type.clone()), size),
+            );
+            let call = b.fun_call(
+                format!("fill{sub_module}"),
+                &[obj, count, table],
+                FirType::Void,
+            );
+            b.drop_(call)
+        };
+
+        let target = match access {
+            AccessType::Static => &mut self.static_init_statements,
+            _ => &mut self.table_init_statements,
+        };
+        target.extend([alloc, init, fill]);
+    }
+
     fn ensure_readonly_table(
         &mut self,
         signal_id: u64,
@@ -1433,13 +1567,32 @@ impl PureVectorLowerer<'_> {
         if let Some(table) = self.readonly_tables.get(&signal_id) {
             return Ok(table.clone());
         }
-        let (length, elem_type, initializers) =
-            self.table_initializers(signal_id, size, generator)?;
-        let prefix = if elem_type == FirType::Int32 {
+        let prefix = if self.table_element_type(signal_id)? == FirType::Int32 {
             "iVecTbl"
         } else {
             "fVecTbl"
         };
+        if self.table_init_mode == crate::signal_fir::TableInitMode::Runtime {
+            // The table lives at file scope, uninitialized, and is filled once
+            // per `classInit` by its generator sub-module — the same shape the
+            // scalar path emits.
+            let (length, elem_type) = self.table_shape(signal_id, size)?;
+            let sub_module = self.build_generator_sub_module(signal_id, generator, &elem_type)?;
+            let name = format!("{prefix}{signal_id}{sub_module}");
+            let declaration = FirBuilder::new(&mut self.store).declare_var(
+                name.clone(),
+                FirType::Array(Box::new(elem_type.clone()), length),
+                AccessType::Static,
+                None,
+            );
+            self.static_declarations.push(declaration);
+            self.emit_fill_call(&sub_module, &name, length, AccessType::Static, &elem_type);
+            let table = (name, length, elem_type);
+            self.readonly_tables.insert(signal_id, table.clone());
+            return Ok(table);
+        }
+        let (length, elem_type, initializers) =
+            self.table_initializers(signal_id, size, generator)?;
         let name = format!("{prefix}{signal_id}");
         let declaration = FirBuilder::new(&mut self.store).declare_table(
             name.clone(),
@@ -1451,6 +1604,50 @@ impl PureVectorLowerer<'_> {
         let table = (name, length, elem_type);
         self.readonly_tables.insert(signal_id, table.clone());
         Ok(table)
+    }
+
+    /// Element type of a table signal, without touching its content.
+    fn table_element_type(&mut self, signal_id: u64) -> Result<FirType, PureVectorLowerError> {
+        self.fir_type(signal_id)
+    }
+
+    /// Constant length and element type of a table, without evaluating its
+    /// generator.
+    ///
+    /// The `runtime` path needs exactly this much and no more: folding the
+    /// generator is what it exists to avoid, and calling `table_initializers`
+    /// would reintroduce the SIGGEN interpreter — including its rejection of
+    /// sample-rate-dependent and foreign-function content.
+    fn table_shape(
+        &mut self,
+        signal_id: u64,
+        size: SigId,
+    ) -> Result<(usize, FirType), PureVectorLowerError> {
+        let length = match match_sig(self.prepared.arena(), size) {
+            SigMatch::Int(value) if value > 0 => {
+                usize::try_from(value).map_err(|_| PureVectorLowerError::UnsupportedSignal {
+                    signal_id,
+                    expression: format!("table size {value} exceeds usize"),
+                })?
+            }
+            _ => {
+                return Err(PureVectorLowerError::UnsupportedSignal {
+                    signal_id,
+                    expression: "table requires a positive literal size".to_owned(),
+                });
+            }
+        };
+        let elem_type = self.fir_type(signal_id)?;
+        if !matches!(
+            elem_type,
+            FirType::Int32 | FirType::Float32 | FirType::Float64
+        ) {
+            return Err(PureVectorLowerError::UnsupportedSignal {
+                signal_id,
+                expression: format!("unsupported table element type {elem_type:?}"),
+            });
+        }
+        Ok((length, elem_type))
     }
 
     /// Evaluates a table's constant length, element type, and per-element
@@ -1531,6 +1728,25 @@ impl PureVectorLowerer<'_> {
     ) -> Result<(String, usize, FirType), PureVectorLowerError> {
         if let Some(table) = self.mutable_tables.get(&signal_id) {
             return Ok(table.clone());
+        }
+        if self.table_init_mode == crate::signal_fir::TableInitMode::Runtime {
+            // A writable table stays a per-instance struct field; only its
+            // seeding changes, from an element-wise store list to one `fill`
+            // call in `instanceConstants`.
+            let (length, elem_type) = self.table_shape(signal_id, size)?;
+            let name = mutable_table_name(signal_id, &elem_type);
+            let sub_module = self.build_generator_sub_module(signal_id, generator, &elem_type)?;
+            let declaration = FirBuilder::new(&mut self.store).declare_var(
+                name.clone(),
+                FirType::Array(Box::new(elem_type.clone()), length),
+                AccessType::Struct,
+                None,
+            );
+            self.table_declarations.push(declaration);
+            self.emit_fill_call(&sub_module, &name, length, AccessType::Struct, &elem_type);
+            let table = (name, length, elem_type);
+            self.mutable_tables.insert(signal_id, table.clone());
+            return Ok(table);
         }
         let (length, elem_type, initializers) =
             self.table_initializers(signal_id, size, generator)?;

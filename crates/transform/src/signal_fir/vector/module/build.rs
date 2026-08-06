@@ -49,6 +49,13 @@ pub(crate) struct VectorModuleContext<'a> {
     pub strategy: SchedulingStrategy,
     /// Control-rate evaluation scheduling (`-ec`), plan phase 5.
     pub control_rate_mode: ControlRateMode,
+    /// Whether a table generator is folded at compile time or compiled into a
+    /// sub-module that fills the table at initialization (S6). The generator
+    /// sub-module is built by the same compiler the scalar path uses.
+    pub table_init_mode: crate::signal_fir::TableInitMode,
+    /// Delay policy inherited by a generator sub-module, which must match the
+    /// enclosing program's.
+    pub delay_line_threshold: u32,
 }
 pub(crate) fn build_verified_vector_module(
     prepared: &VerifiedPreparedSignals,
@@ -180,6 +187,10 @@ pub(super) fn build_verified_vector_module_with_evidence(
             real_type: real_type.clone(),
             num_inputs,
             control_rate_mode: context.control_rate_mode,
+            module_name,
+            table_init_mode: context.table_init_mode,
+            max_copy_delay,
+            delay_line_threshold: context.delay_line_threshold,
         },
     )
     .map_err(|error| {
@@ -250,6 +261,8 @@ pub(super) fn build_verified_vector_module_with_evidence(
     let static_declarations = program.static_declarations().to_vec();
     let table_declarations = program.table_declarations().to_vec();
     let table_init_statements = program.table_init_statements().to_vec();
+    let static_init_statements = program.static_init_statements().to_vec();
+    let sub_modules = program.sub_modules().to_vec();
     let mut external_control_statements = program.external_control_statements().to_vec();
     remove_pure_drop_roots(program.store(), &mut external_control_statements);
     let control_state_fields = program.control_state_fields().to_vec();
@@ -271,6 +284,8 @@ pub(super) fn build_verified_vector_module_with_evidence(
         static_declarations: &static_declarations,
         external_control_statements: &external_control_statements,
         control_state_fields: &control_state_fields,
+        static_init_statements: &static_init_statements,
+        sub_modules: &sub_modules,
     };
     let module = assemble_module(program.store_mut(), &module_context)?;
     verify_final_module(

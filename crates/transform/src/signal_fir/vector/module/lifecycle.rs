@@ -28,6 +28,12 @@ pub(super) struct FinalModuleContext<'a> {
     pub(super) external_control_statements: &'a [FirId],
     /// DSP struct fields created by external-control promotion.
     pub(super) control_state_fields: &'a [(String, FirType)],
+    /// Fill statements for file-scope generated tables: the `staticInit` body
+    /// (rendered as `classInit`). Empty unless `--table-init runtime` produced
+    /// a read-only generated table.
+    pub(super) static_init_statements: &'a [FirId],
+    /// Generated-table `SubModule` nodes carried by this module.
+    pub(super) sub_modules: &'a [FirId],
 }
 pub(super) fn assemble_module(
     store: &mut FirStore,
@@ -180,13 +186,37 @@ pub(super) fn assemble_module(
         )
     });
     let globals = build_prototypes(store, real_type, math_ops, int_helpers);
-    let mut function_items = vec![
-        metadata,
+    // `staticInit` is emitted only when there is something to fill. A module
+    // with no generated table keeps the shape it had before S6, so nothing in
+    // the 16-mode certification sees a new function.
+    let static_init = (!context.static_init_statements.is_empty()).then(|| {
+        let body = FirBuilder::new(store).block(context.static_init_statements);
+        FirBuilder::new(store).declare_fun(
+            "staticInit",
+            FirType::Fun {
+                args: vec![dsp_arg_type.clone(), FirType::Int32],
+                ret: Box::new(FirType::Void),
+            },
+            &[
+                dsp_arg.clone(),
+                NamedType {
+                    name: "sample_rate".to_owned(),
+                    typ: FirType::Int32,
+                },
+            ],
+            Some(body),
+            false,
+        )
+    });
+
+    let mut function_items = vec![metadata];
+    function_items.extend(static_init);
+    function_items.extend([
         instance_constants,
         instance_reset_ui,
         instance_clear,
         build_ui,
-    ];
+    ]);
     function_items.extend(control);
     function_items.push(compute);
     let functions = FirBuilder::new(store).block(&function_items);
@@ -211,8 +241,7 @@ pub(super) fn assemble_module(
         globals,
         functions,
         static_declarations,
-        // The checked vector path folds its table generators; migrating it is S6.
-        &[],
+        context.sub_modules,
     ))
 }
 pub(super) fn sample_loop_for_statements(store: &mut FirStore, statements: &[FirId]) -> FirId {

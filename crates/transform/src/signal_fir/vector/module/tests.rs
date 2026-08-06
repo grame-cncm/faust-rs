@@ -386,6 +386,8 @@ fn module_context<'a>(
         },
         strategy,
         control_rate_mode: ControlRateMode::InlinePerBlock,
+        table_init_mode: crate::signal_fir::TableInitMode::Const,
+        delay_line_threshold: 0,
     }
 }
 
