@@ -591,7 +591,7 @@ The pass is pure FIR→FIR and is validated by an independent structural checker
 | `codebox` | flattened, `StackLocals` | it already folds the lifecycle into one entry point |
 | `wasm` | flattened, `MergedStructFields` | matches upstream; `classInit` keeps its `dsp` argument |
 | `interp` | flattened, `MergedStructFields` | fill bytecode lands in the already-existing `static_init_block` / `init_block`; `compile_static_decls_init_block` keeps handling literal `DeclareTable`s and gains storage predeclaration for uninitialized `DeclareVar(Array)` |
-| `cranelift` | flattened, `MergedStructFields` | fill code compiled into the `classInit`/`instanceConstants` JIT functions; removes the current `CodeTooLarge` pressure that motivated the 256-element unroll threshold |
+| `cranelift` | flattened, `MergedStructFields` — guard added 2026-08-05 (it had none; it refused only by accident, `jit_data` never pre-declaring the table) | fill code compiled into the `classInit`/`instanceConstants` JIT functions; removes the current `CodeTooLarge` pressure that motivated the 256-element unroll threshold |
 
 Every backend keeps a hard failure (`FRS-CGEN-*-…`) when it meets a `SubModule`
 it has not been migrated to handle; no backend may silently skip a fill call.

@@ -43,6 +43,22 @@ pub fn generate_cranelift_module(
     module: FirId,
     options: &CraneliftOptions,
 ) -> Result<JitDspModule, CraneliftBackendError> {
+    // Cranelift is not migrated to generated-table sub-modules (plan phase S5).
+    // It already fails on such a module, but only by accident: the table is a
+    // `DeclareVar(Array)` that `jit_data` never pre-declares, so lowering
+    // reports "subset matcher drift" — an internal-invariant message for what is
+    // really an unimplemented feature. Refusing up front makes the failure
+    // designed rather than lucky, and gives the same actionable message as every
+    // other backend.
+    if let FirMatch::Module { sub_modules, .. } = match_fir(store, module) {
+        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
+        if !sub_module_names.is_empty() {
+            return Err(CraneliftBackendError::unsupported_module_shape(
+                crate::backends::unsupported_sub_modules_message("cranelift", &sub_module_names),
+            ));
+        }
+    }
+
     let (module_name, compute_decl) = find_module_and_compute(store, module)?;
 
     // Attempt full JIT compilation.  On some targets (notably AArch64) Cranelift
