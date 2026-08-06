@@ -141,6 +141,41 @@ dominant stage.
 3. **Then re-measure provenance.** Its 4.2 s is partly the same repeated work;
    how much survives a propagation memo is not predictable from here.
 
+## 7. Attempted 2026-08-06: the `propagate_in_slot_env` memo does not pay
+
+Step 2 of §5 was implemented and reverted. Recorded here because the reasoning
+that led to it was sound and still produced nothing, which is worth more than
+the code would have been.
+
+| variant | propagation | output |
+|---|---|---|
+| baseline | 10.6 s | — |
+| P1a — memoize only when the slot env is empty | 13.7 s | byte-identical |
+| P1b — slot env in the key, `contains_forward_ad` memoized | 13.9 s | byte-identical |
+
+Three measurements explain it:
+
+1. **88 % of calls have a non-empty slot env** (2.11 M of 2.4 M), inverting the
+   assumption P1a is built on. `suppress_fad` and `ForwardAD` subtrees block
+   *zero* calls on this input, so the plan's carve-outs cost without excluding.
+2. **Slot envs are tiny** — mean 1.97 bindings, max 4 — so the plan's P1b
+   interning machinery is unnecessary; sorted bindings in the key are cheaper
+   and exact. That makes every call memoizable.
+3. **The hit rate is then 12 %**, with the table at **748 k entries** to avoid
+   123 k recomputations. The same box is rarely propagated twice with the same
+   inputs.
+
+So the repeated work that §3 measures — C++ flat, faust-rs linear in the number
+of uses of a shared argument — **is not repeated at the granularity of
+`propagate_in_slot_env` calls keyed by their inputs.** The next investigation
+has to find where it *is* repeated, rather than assume this function is the
+place; the profile's allocator dominance (~50 % of self time) is the better
+lead, and a memo that adds 748 k `Vec<SigId>` entries moves it the wrong way.
+
+`contains_forward_ad` memoization is worth keeping in mind independently: it is
+a pure structural predicate over `FlatBoxId` and the probe made it hot. It is
+not worth landing on its own, because nothing else calls it per node today.
+
 ## 6. Validation obligations
 
 Whatever is implemented must carry these, and none of them is satisfied by the

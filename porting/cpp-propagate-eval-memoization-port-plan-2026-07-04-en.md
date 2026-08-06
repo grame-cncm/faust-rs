@@ -242,7 +242,14 @@ motivating workload), and 2–3 FAD-heavy files from the repo corpus
 
 ### Phase P1 — propagation-result memo (port of upstream (1a))
 
-> **Measured 2026-08-06 on a case the corpus does not contain: worth up to 24×
+> **Implemented and measured 2026-08-06: no win, reverted.** Both the P1a cut
+> and a stronger variant were built and benchmarked on the reference case; the
+> memo made propagation *slower* (10.6 s → 13.9 s) while producing byte-identical
+> output. Details below and in
+> `porting/propagation-cost-analysis-2026-08-06-en.md` §7. The measurement that
+> motivated the attempt still stands:
+>
+> **the case the corpus does not contain is worth up to 24×
 > on the dominant stage.** `virtualAnalogForBrowser.dsp` spends 82 % of its
 > compile time in propagation (10.6 s against the reference's 0.27 s), and the
 > mechanism is exactly this one — C++ propagation cost is flat in the number of
@@ -301,6 +308,42 @@ for free (persistent cons-list, pointer key). Rust's `SlotEnv` is a mutable
   would miss the very common bind→unbind→re-bind-same pattern in `par(i, N, …)`
   bodies). Interning cost is paid once per distinct env content, like C++
   hash-consing of the slotenv list — but only for envs that actually get keyed.
+
+#### Measured outcome (2026-08-06) — the premise does not hold
+
+Built exactly as specified, then improved when the specification's assumption
+failed, and measured on `virtualAnalogForBrowser.dsp` at each step:
+
+| variant | propagation | note |
+|---|---|---|
+| baseline | 10.6 s | |
+| **P1a** (memoize only when `slot_env.is_empty()`) | 13.7 s | |
+| **P1b** (slot env in the key, `contains_forward_ad` memoized) | 13.9 s | |
+
+Output was byte-identical at every step, so this is a cost result, not a
+correctness one.
+
+**P1a's assumption is inverted on this input.** The plan expects "the vast
+majority of propagation runs outside any `Symbolic` scope". Measured: of 2.4 M
+calls, **2.11 M (88 %) have a non-empty slot env**, while `suppress_fad` and
+`contains_forward_ad` block *zero*. P1a therefore memoizes 12 % of calls and
+pays a key construction plus a `contains_forward_ad` walk on each of them.
+
+**P1b's interning machinery is unnecessary, and does not rescue it.** Slot envs
+measure at mean 1.97 bindings, max 4, so they can go in the key sorted —
+cheaper than the proposed epoch+intern scheme and exact, with no collision path.
+With that, every call becomes memoizable. It still does not pay: **the hit rate
+is 12 %**, and the table reaches **748 k entries** to avoid 123 k
+recomputations. The same box is rarely propagated twice with the same inputs;
+the repeated work the K-scaling probe detects is not repeated *at this
+granularity*.
+
+That last sentence is the finding worth keeping. `propagation-cost-analysis`
+§3 shows C++ flat and faust-rs linear in the number of uses of a shared
+argument, so work *is* being repeated — but memoizing `propagate_in_slot_env`
+on `(box, inputs, slot_env, group_path, clock_env)` does not capture it, and
+the allocation the table adds shows up directly in a profile already dominated
+by the allocator. Whatever C++ shares, it is not this.
 
 **What P1 must NOT do:** hoist the memo across top-level `propagate_typed_*`
 calls. `control_ids` and the grouped-UI build are per-call; `group_path` hashes
