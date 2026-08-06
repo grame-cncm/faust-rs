@@ -5,10 +5,8 @@ Status: S0-S5 done. **Every backend is migrated and no backend refuses a
 sub-module any more.** Numerically validated against the C++ oracle, in both
 `--table-init runtime` and the default `const` mode: `cpp`, `c`, `rust`,
 `julia`, `codebox`, `cmajor` (87/87), `interp` (93/93), `wasm` (93/93),
-`cranelift` (93/93). `asc` is 92/93 in both modes — `phaser_flanger` fails on a
-pre-existing multi-line-UI-label emission bug unrelated to this port, which only
-became visible when the assemblyscript lane became runnable (it builds its JSON
-companion through `wasm`). Remaining: S6 (vector), S7 (flip the default).
+`cranelift` (93/93), `asc` (93/93). Remaining: S6 (vector), S7 (flip the
+default).
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -591,7 +589,7 @@ The pass is pure FIR→FIR and is validated by an independent structural checker
 | `cpp`, `c` | **native nested class** (§5.9.1) | full reference shape: nested class/struct, `new`/`delete` helpers, `getNumInputs`/`getNumOutputs`, `instanceInit<Sub>`, `fill<Sub>`; render `staticInit` as the `classInit` body (replacing the hardcoded empty one at `cpp/mod.rs:399`); `DeclareVar(Array)` arm in `emit_static_tables` |
 | `rust` | native sub-module — **done 2026-08-05** | struct + impl, `new{Sub}()` constructor, no `delete` (the sub-container is a `class_init` local and drops on its own, as upstream also assumes). Rust has no safe mutable static, so a runtime-filled table becomes `std::sync::RwLock<[T;N]>`: `class_init` takes a write guard, every body reading one takes a read guard, and table references name the guard. |
 | `julia` | **flattened, `MergedStructFields`** — done 2026-08-05 | Corrects this table: upstream inlines for Julia (`julia_code_container.cpp` runs `inlineSubcontainersFunCalls`), and the reference emits `dsp.iRec0` inside `classInit!` with the generator's state merged into the DSP struct. Julia also has no shared static storage, so runtime-filled tables are promoted to struct fields by `promote_static_tables_to_struct`. |
-| `asc` | native sub-module — **emitted 2026-08-05, numeric gate blocked** | Class plus `changetype` trampolines: AssemblyScript's typed references do not implicitly convert, so each entry point gets a free function taking `dsp: mydsp` — which is the FIR call shape, so nothing is stripped. `delete<Sub>` is emitted empty (garbage collected). **Its impulse gate cannot run yet**: `tools/impulseasc.js` builds a JSON companion through the `wasm` backend, which is S5 and still refuses generated tables. `asc` is therefore the one migrated backend not validated numerically. |
+| `asc` | native sub-module — **done 2026-08-06** | Class plus `changetype` trampolines: AssemblyScript's typed references do not implicitly convert, so each entry point gets a free function taking `dsp: mydsp` — which is the FIR call shape, so nothing is stripped. `delete<Sub>` is emitted empty (garbage collected). Numerically validated 2026-08-06, once `wasm` (S5) unblocked `tools/impulseasc.js`, which builds its JSON companion through that backend. Doing so surfaced two defects: sub-module classes dropped their own `static_decls`/`globals`, so a `waveform` generator's `…Wave0` array was addressed but never declared; and a pre-existing bug, unrelated to this port, emitted a multi-line UI label into a `//` comment without joining its continuation. |
 | `cmajor` | native sub-module — **done 2026-08-06** | Nested struct, size-suffixed fill (`fillmydspSIG0_64`), per-instance tables via `promote_static_tables_to_struct`, and explicit `this.` receivers via `qualify_sub_module_bodies`. Accepted by `cmaj generate` 1.0.3175 and numerically matched against the C++ oracle on `subcontainer1`. |
 | `codebox` | flattened, `StackLocals` | it already folds the lifecycle into one entry point |
 | `wasm` | flattened, `MergedStructFields` — **done 2026-08-06** | matches upstream; `classInit` keeps its `dsp` argument. Three gaps had to be closed: the memory layout refused a `Static` array outright (now placed like a constant static table, with no data segment behind it); `classInit` was hardcoded to an empty body, the same defect recorded for `cpp`; and `StoreTable(kStatic)` was not in the lowering subset. |
