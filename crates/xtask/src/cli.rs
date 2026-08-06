@@ -62,6 +62,8 @@ pub(crate) enum XtaskCommand {
     CliTranscriptGen,
     CliTranscriptCheck,
     EmissionDeterminism(EmissionDeterminismArgs),
+    /// Per-stage compile-time profile over the DSP corpus.
+    CompileProfile(CompileProfileArgs),
 }
 
 /// Options for comparing provenance storage representations.
@@ -309,6 +311,30 @@ pub(crate) struct CompileBudgetArgs {
     /// them. Every increase must be justified in the commit message.
     #[arg(long)]
     pub(crate) update: bool,
+}
+
+/// Options for the per-stage compile-time profile.
+#[derive(Clone, Debug, Args)]
+pub(crate) struct CompileProfileArgs {
+    /// Emit the profile as JSON instead of the human table.
+    #[arg(long)]
+    pub(crate) json: bool,
+    /// Record the profile to this path (relative paths resolve from the
+    /// workspace root).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) write: Option<PathBuf>,
+    /// Compare stage shares against a recorded profile and fail on drift.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) baseline: Option<PathBuf>,
+    /// Allowed per-stage share drift, in percentage points (default 3.0).
+    #[arg(long, value_name = "POINTS")]
+    pub(crate) tolerance: Option<f64>,
+    /// Restrict the corpus to DSPs whose name contains this text.
+    #[arg(long, value_name = "TEXT")]
+    pub(crate) filter: Option<String>,
+    /// How many slowest DSPs to list (default 8).
+    #[arg(long, value_name = "N")]
+    pub(crate) top: Option<usize>,
 }
 
 /// Options for run-to-run emission determinism.

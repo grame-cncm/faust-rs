@@ -74,6 +74,7 @@ dot -V
 | `libfaust-export-check` | Build unified `libfaust`, audit exported symbols, and syntax-check C/C++ clients |
 | `p7-matrix-report` | Generate the executable-backend matrix from impulse-test artifacts |
 | `vector-coverage-merge` | Validate and merge `count_vector_corpus` JSON reports into the checked vector-coverage baseline |
+| `compile-profile` | Per-stage compile-time profile over the DSP corpus; `--baseline` gates stage-share drift |
 | `vector-coverage-check` | Recompile every baseline-certified mode/DSP pair and require checked vector chunk-driver structure |
 | `compile-budget-check` | Measure the versioned release compile-time baskets — scalar/vector codegen plus normalized front-end cost — and reject unexplained regressions |
 | `vector-interp-opt-check` | Compare interpreter `opt_level=0` and max optimization on representative checked-vector cases |
@@ -86,6 +87,35 @@ dot -V
 | `cli-transcript-gen` | Record the local compiler CLI differential transcript |
 | `cli-transcript-check` | Compare the compiler CLI against the recorded local transcript |
 | `emission-determinism` | Repeat selected compilations and report nondeterministic output |
+
+## Compile-time Profile
+
+`compile-profile` compiles every `tests/impulse-tests/dsp/*.dsp` in-process,
+collecting per-stage durations from the compiler's own timing sink — the same
+one `faust-rs -time` prints — and reports where compile time is spent.
+
+```bash
+cargo run -p xtask -- compile-profile
+cargo run -p xtask -- compile-profile --write tests/compile-profile/corpus-baseline.json
+cargo run -p xtask -- compile-profile --baseline tests/compile-profile/corpus-baseline.json
+```
+
+It complements rather than duplicates `compile-budget-check`: that gate defends
+*how much* compiling costs, this one reports *where* the cost sits. A uniform
+slowdown moves the budget and leaves this table unchanged; a stage that doubles
+while another halves does the reverse.
+
+`--baseline` compares stage **shares**, never seconds. Shares are
+dimensionless, so a baseline recorded on another machine stays meaningful and a
+faster runner does not read as drift — the failure mode `compile_budget`'s
+header documents for absolute ceilings. A stage appearing or vanishing is
+reported regardless of tolerance, so a renamed stage cannot silently drop out.
+
+Note that `signal-fir` contains the `fir-*` stages, so printed shares exceed
+100 %; only top-level stages contribute to the total.
+
+Written for phase P0 of
+`porting/eval-box-simplification-memoization-analysis-2026-08-06-en.md`.
 
 ## Vector Coverage Retention
 

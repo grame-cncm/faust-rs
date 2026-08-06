@@ -1,7 +1,8 @@
 # Compile-time analysis — where faust-rs spends 3.8× the reference's time
 
 **Date**: 2026-08-06
-**Status**: analysis complete, implementation plan proposed, nothing implemented
+**Status**: analysis complete; **P0 (measurement harness) implemented
+2026-08-06**, P1-P4 proposed and not implemented
 **Trigger**: `make compile-bench` reports faust-rs slower than C++ Faust on 91 of
 94 corpus DSPs; the question was why.
 **Related**: `porting/cpp-propagate-eval-memoization-port-plan-2026-07-04-en.md`
@@ -201,12 +202,36 @@ settled in the same pass rather than left implicit.
 
 ## 4. Phases
 
-### P0 — measurement harness
+### P0 — measurement harness — done 2026-08-06
 
-Make the numbers above reproducible on demand rather than by hand: a small
-`xtask` that runs `-time` over the corpus and prints the per-stage table of
-§1.1. Without it, any later claim about compile time is a one-off measurement
-that nobody can re-check. This is also what makes P1's gate meaningful.
+`cargo run -p xtask -- compile-profile`
+(`crates/xtask/src/compile_profile.rs`). Compiles every corpus DSP in-process
+and collects per-stage durations from the compiler's own timing sink rather
+than by parsing a subprocess's stderr, so stage names cannot drift out of sync
+with the compiler. `--write` records a profile, `--baseline` compares against
+one and fails on drift.
+
+It compares **shares, not seconds**: shares are dimensionless, so a baseline
+survives a machine change and a faster runner does not read as drift — the
+failure mode `compile_budget`'s own header documents for absolute ceilings.
+Absolute cost stays `compile-budget-check`'s job; duplicating it here would
+produce two gates failing together for unrelated reasons.
+
+Baseline recorded at `tests/compile-profile/corpus-baseline.json`: 133 DSPs,
+21.2 s, evaluation 71.5 %, parser 14.0 %, signal-fir 12.2 %. The shares differ
+slightly from §1.1 because the harness profiles the whole 133-DSP corpus while
+§1.1 was measured by hand over the 94 DSPs `compile-bench` gates; the shape is
+the same and the harness is now the reproducible number.
+
+**The harness immediately paid for itself.** Re-applying the §2.3 experiment as
+its rejecting mutation did not produce a share shift — it produced a **stack
+overflow**. Compiling 133 programs in one process is exactly the situation a
+`thread_local` memo cannot survive: `TreeId`s from a previous arena resolve to
+unrelated trees, and the evaluator recurses until the stack runs out. This is
+obligation V3 of §5, demonstrated rather than argued, on the harness's first
+use — and the CLI cannot show it, because it compiles once per process. The
+drift comparison was then verified separately against a perturbed baseline
+(exit 1) and by four unit tests over the comparison itself.
 
 ### P1 — arena-scoped simplification memo
 
@@ -246,7 +271,7 @@ check must have a mutation that turns it red.
 |---|---|---|---|
 | V1 | Memoization changes no output | Full impulse corpus, every backend, both `--table-init` modes, byte-identical `.ir` against the C++ oracle | — (this is the numeric gate) |
 | V2 | Emitted code is byte-identical, not merely numerically equal | `xtask emission-determinism` extended to compare pre-/post-memo emission for every corpus DSP | Return `box_id` unchanged from a memo hit for one node kind → emission differs |
-| V3 | The memo is arena-scoped | A test compiling two different programs in one process and asserting the second is unaffected by the first | Hoist the memo to a `thread_local` (the §2.3 experiment) → the test must fail |
+| V3 | The memo is arena-scoped | A test compiling two different programs in one process and asserting the second is unaffected by the first. `xtask compile-profile` is already such a test in practice: it compiles 133 programs in one process | Hoist the memo to a `thread_local` (the §2.3 experiment) → **confirmed 2026-08-06**: `compile-profile` dies with a stack overflow |
 | V4 | The memo actually hits | Instrumented hit/miss counters on a known input, asserted against a recorded ratio | Disable insertion → hit rate collapses to 0, assertion fails |
 | V5 | Compile time actually improves | P0 harness, asserting the corpus total stays under a recorded ceiling | — (regression guard) |
 
