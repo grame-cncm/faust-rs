@@ -164,10 +164,7 @@ pub(crate) fn apply_pattern_matcher_value(
         // compile-time simplification pass used by pattern preparation. Without
         // this, selector expressions like `((l != 0) & ...) * 2` remain residual
         // box trees and only catch-all rules match.
-        let arg = {
-            let mut cache = ahash::HashMap::with_hasher(ahash::RandomState::new());
-            box_simplification(arena, &mut cache, raw_arg)
-        };
+        let arg = box_simplification(arena, raw_arg);
         let (new_state, _) = pattern_matcher::apply_pattern_matcher(
             arena,
             &pm.automaton,

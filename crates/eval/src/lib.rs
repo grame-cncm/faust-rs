@@ -1208,8 +1208,7 @@ fn eval_route_value(
     let outs_node = eval_box_to_int_node(arena, eval_outs).unwrap_or(eval_outs);
     let routes_node = a2sb(arena, eval_routes, loop_detector).unwrap_or(eval_routes);
     let spec_node = eval_box_to_int_list_node(arena, routes_node).unwrap_or_else(|| {
-        let mut cache = ahash::HashMap::with_hasher(ahash::RandomState::new());
-        let simplified_routes = box_simplification(arena, &mut cache, routes_node);
+        let simplified_routes = box_simplification(arena, routes_node);
         normalize_route_spec(arena, simplified_routes)
     });
 
@@ -2141,8 +2140,7 @@ mod simplify_helpers_tests {
     fn box_simplification_int_literal_passthrough() {
         let mut arena = TreeArena::default();
         let five = BoxBuilder::new(&mut arena).int(5);
-        let mut cache = ahash::HashMap::with_hasher(ahash::RandomState::new());
-        let result = box_simplification(&mut arena, &mut cache, five);
+        let result = box_simplification(&mut arena, five);
         assert!(matches!(match_box(&arena, result), BoxMatch::Int(5)));
     }
 
@@ -2151,8 +2149,7 @@ mod simplify_helpers_tests {
     fn box_simplification_folds_arithmetic() {
         let mut arena = TreeArena::default();
         let expr = make_int_add(&mut arena, 2, 3);
-        let mut cache = ahash::HashMap::with_hasher(ahash::RandomState::new());
-        let result = box_simplification(&mut arena, &mut cache, expr);
+        let result = box_simplification(&mut arena, expr);
         assert!(
             matches!(match_box(&arena, result), BoxMatch::Int(5)),
             "expected Int(5)"
@@ -2164,8 +2161,7 @@ mod simplify_helpers_tests {
     fn box_simplification_wire_passthrough() {
         let mut arena = TreeArena::default();
         let wire = BoxBuilder::new(&mut arena).wire();
-        let mut cache = ahash::HashMap::with_hasher(ahash::RandomState::new());
-        let result = box_simplification(&mut arena, &mut cache, wire);
+        let result = box_simplification(&mut arena, wire);
         assert!(matches!(match_box(&arena, result), BoxMatch::Wire));
     }
 

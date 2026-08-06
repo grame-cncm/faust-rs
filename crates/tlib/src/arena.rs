@@ -15,6 +15,8 @@ use std::sync::Arc;
 
 use ahash::AHashMap;
 
+use crate::property::{PropertyKey, PropertyStore};
+
 /// Arena-local identifier of an interned tree node.
 ///
 /// Equality on `TreeId` is the fast structural equality primitive used by higher phases.
@@ -232,6 +234,20 @@ pub struct TreeArena {
     tag_registry: SymbolTable,
     symbol_interner: SymbolTable,
     nil: TreeId,
+    /// Per-node memo tables owned by the arena, keyed by property.
+    ///
+    /// This is the Rust shape of the C++ `CTree::setProperty/getProperty`
+    /// mechanism (`compiler/tlib/tree.hh`), which upstream uses to attach
+    /// compilation-lifetime results to hash-consed nodes —
+    /// `gGlobal->gSimplifiedBoxProperty` being the case that motivated adding
+    /// it here.
+    ///
+    /// Ownership by the arena is the point, not a convenience. A memo keyed by
+    /// `TreeId` is only meaningful for the arena that issued those ids; giving
+    /// it any longer life makes it return another compilation's trees, which
+    /// is a silent wrong answer rather than a crash. Living here, it is created
+    /// and dropped with the arena and cannot outlive its keys.
+    properties: PropertyStore<TreeId>,
 }
 
 impl Default for TreeArena {
@@ -281,6 +297,7 @@ impl TreeArena {
             tag_registry: SymbolTable::new(),
             symbol_interner: SymbolTable::new(),
             nil: TreeId(0),
+            properties: PropertyStore::new(),
         };
         let nil = arena.intern(NodeKind::Nil, &[]);
         arena.nil = nil;
@@ -291,6 +308,30 @@ impl TreeArena {
     #[must_use]
     pub fn nil(&self) -> TreeId {
         self.nil
+    }
+
+    /// Interns a per-node property key, for callers that memoize on nodes.
+    ///
+    /// Bind the key once and use [`Self::node_property`] /
+    /// [`Self::set_node_property`] on the hot path; the string lookup is only
+    /// paid at bind time.
+    pub fn property_key(&mut self, name: &str) -> PropertyKey {
+        self.properties.key(name)
+    }
+
+    /// Reads the value memoized on `node` under `key`.
+    #[must_use]
+    pub fn node_property(&self, node: TreeId, key: PropertyKey) -> Option<TreeId> {
+        self.properties.get_with_key(node, key).copied()
+    }
+
+    /// Memoizes `value` on `node` under `key`.
+    ///
+    /// Sound only for values that are a pure function of the node, which is
+    /// what makes the arena's lifetime the right one: nodes are interned and
+    /// never rewritten, so an entry cannot go stale while the arena lives.
+    pub fn set_node_property(&mut self, node: TreeId, key: PropertyKey, value: TreeId) {
+        self.properties.set_with_key(node, key, value);
     }
 
     /// Reserves additional capacity in internal storage/interner tables.

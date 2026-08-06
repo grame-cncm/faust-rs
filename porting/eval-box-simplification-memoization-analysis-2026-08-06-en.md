@@ -1,8 +1,9 @@
 # Compile-time analysis — where faust-rs spends 3.8× the reference's time
 
 **Date**: 2026-08-06
-**Status**: analysis complete; **P0 (measurement harness) implemented
-2026-08-06**, P1-P4 proposed and not implemented
+**Status**: analysis complete; **P0 and P1 implemented 2026-08-06** — the
+corpus went from 3.81x to 2.30x the reference's compile time. P2-P4 proposed
+and not implemented
 **Trigger**: `make compile-bench` reports faust-rs slower than C++ Faust on 91 of
 94 corpus DSPs; the question was why.
 **Related**: `porting/cpp-propagate-eval-memoization-port-plan-2026-07-04-en.md`
@@ -233,19 +234,57 @@ use — and the CLI cannot show it, because it compiles once per process. The
 drift comparison was then verified separately against a perturbed baseline
 (exit 1) and by four unit tests over the comparison itself.
 
-### P1 — arena-scoped simplification memo
+### P1 — arena-scoped simplification memo — done 2026-08-06
 
-Option A. `box_simplification` loses its `cache` parameter; the memo becomes a
-property store on `TreeArena`. Expected: corpus 18.1 s → ~11 s, worst case
-7.2 s → ~0.85 s.
+Option A as designed. `TreeArena` owns a `PropertyStore<TreeId>` and exposes
+`property_key` / `node_property` / `set_node_property`; `box_simplification`
+lost its `cache` parameter and both call sites lost their per-call allocation.
+
+Measured, against the prediction of ~11 s / ~0.85 s:
+
+| | before | after | |
+|---|---|---|---|
+| corpus (`compile-bench`, 94 DSPs) | 18.11 s | **10.68 s** | ratio 3.81× → **2.30×** |
+| median per-DSP delta | +122 % | +101 % | |
+| `reverb_designer` | 7.226 s | **0.754 s** | C++ is 0.842 s — **faster than the reference** |
+| `compile-profile` (133 DSPs) | 21.2 s | 13.7 s | evaluation share 71.5 % → 56.5 % |
+
+Correctness: cpp/c/interp/wasm impulse lanes 94/94; `golden-check` byte-identical
+(V2); `emission-determinism` 399 stable; `vector-coverage-check` 1568 pairs;
+`cli-transcript-check` 148 identical; workspace tests and clippy clean.
+
+`compile-budget-check` baselines were retightened — every entry decreased, none
+increased. `reverb_designer` scalar went 270.6 → 27.3 units (−90 %) and the
+front-end basket fell 4–22 % across the board. Leaving the old ceilings in place
+would have let the regression back in unnoticed, which is the failure the budget
+exists to prevent.
+
+**Two things the mutation testing caught, neither of which the first attempt
+had right.**
+
+The V3 test initially failed to reject its mutation twice over. First, toy
+programs do not discriminate: four hand-written pairs all passed under a
+`thread_local` memo, because small arenas' low `TreeId`s are canonical nodes
+that simplify to themselves in any arena, so the leak returns the right answer
+by accident. Real corpus DSPs were needed — `freeverb` then `spectral_tilt`.
+Second, and worse, the test gave each compilation its own worker thread for
+stack reasons; `thread_local` is per-thread, so thread-per-compile *isolated
+exactly the leak the test existed to catch*. Sharing one worker across the
+scenario is what makes it evidence. Under the mutation it now fails with
+`boxPar expects child node 15847 to exist in the bound TreeArena`.
+
+A test that passes under its own mutation is worse than no test, because it is
+recorded as coverage.
 
 ### P2 — the second layer
 
-`propagate_box_and_simplify`'s per-call `ArityCache`, and the per-call cache at
-`lib.rs:1211`. Measure first: with P1 in place, evaluation is still 4.9 s of an
-11.0 s total, and it is not yet established how much of that is this. **Do not
-implement P2 before re-profiling** — P1 changes the shape of the remaining
-cost, and the phase exists to be re-measured, not assumed.
+`propagate_box_and_simplify`'s per-call `ArityCache`. The per-call cache at
+`lib.rs:1211` is gone — P1 removed it along with the other call site.
+
+Re-measured after P1: evaluation is 7.77 s of 13.74 s (56.5 %), still the
+largest single stage. How much of that is the `ArityCache` layer is **not yet
+established**; the profile names the stage, not the function. Profile before
+implementing.
 
 ### P3 — parser
 

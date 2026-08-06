@@ -333,27 +333,40 @@ pub(crate) fn try_fold_seq_numeric(
 
 // ─── Box simplification ────────────────────────────────────────────────────────
 
+/// Property name under which a box's simplified form is memoized on the arena.
+const SIMPLIFIED_BOX_PROPERTY: &str = "simplified-box";
+
 /// Memoised entry point: simplify `box_id` by replacing any 0→1 sub-expression
 /// that propagates to a compile-time constant with the corresponding
 /// `boxInt(n)` or `boxReal(x)` literal.
 ///
-/// The result is stored in `cache` so that shared sub-trees are only visited
-/// once (matching the C++ `gSimplifiedBoxProperty` property cache).
+/// The result is memoized **on the arena**, so a given subtree is simplified
+/// once per compilation, as C++ does through `gGlobal->gSimplifiedBoxProperty`.
+///
+/// The memo used to be a `HashMap` supplied by the caller, and the dominant
+/// caller — `apply.rs`, on every pattern-match dispatch — allocated a fresh one
+/// per argument. Simplification was therefore re-run from scratch at every
+/// level of a deep dispatch recursion, which made evaluation 67 % of total
+/// compile time and this the single largest cost in the compiler
+/// (`porting/eval-box-simplification-memoization-analysis-2026-08-06-en.md`).
+///
+/// Arena ownership is what makes the memo sound as well as fast. `TreeId`s are
+/// only meaningful for the arena that issued them, so a memo with a longer life
+/// — a `thread_local`, say — silently returns another compilation's trees;
+/// `xtask compile-profile`, which compiles the whole corpus in one process,
+/// dies on the stack when that is tried.
 ///
 /// # C++ equivalent
 ///
 /// `static Tree boxSimplification(Tree box)` in
 /// `compiler/evaluate/eval.cpp`.
-pub(crate) fn box_simplification(
-    arena: &mut TreeArena,
-    cache: &mut ahash::HashMap<TreeId, TreeId>,
-    box_id: TreeId,
-) -> TreeId {
-    if let Some(&cached) = cache.get(&box_id) {
+pub(crate) fn box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeId {
+    let key = arena.property_key(SIMPLIFIED_BOX_PROPERTY);
+    if let Some(cached) = arena.node_property(box_id, key) {
         return cached;
     }
-    let result = numeric_box_simplification(arena, cache, box_id);
-    cache.insert(box_id, result);
+    let result = numeric_box_simplification(arena, box_id);
+    arena.set_node_property(box_id, key, result);
     result
 }
 
@@ -366,7 +379,6 @@ pub(crate) fn box_simplification(
 /// `compiler/evaluate/eval.cpp`.
 pub(crate) fn numeric_box_simplification(
     arena: &mut TreeArena,
-    cache: &mut ahash::HashMap<TreeId, TreeId>,
     box_id: TreeId,
 ) -> TreeId {
     // Fast path: already a numeric literal.
@@ -400,7 +412,7 @@ pub(crate) fn numeric_box_simplification(
         }
     }
     // Not a numeric constant: simplify children recursively.
-    inside_box_simplification(arena, cache, box_id)
+    inside_box_simplification(arena, box_id)
 }
 
 /// Recurses into composite boxes, calling [`box_simplification`] on each
@@ -415,7 +427,6 @@ pub(crate) fn numeric_box_simplification(
 /// `compiler/evaluate/eval.cpp`.
 pub(crate) fn inside_box_simplification(
     arena: &mut TreeArena,
-    cache: &mut ahash::HashMap<TreeId, TreeId>,
     box_id: TreeId,
 ) -> TreeId {
     match match_box(arena, box_id) {
@@ -462,69 +473,69 @@ pub(crate) fn inside_box_simplification(
 
         // ── Recursive on 1 child ──────────────────────────────────────────
         BoxMatch::VGroup(label, body) => {
-            let sb = box_simplification(arena, cache, body);
+            let sb = box_simplification(arena, body);
             let mut bld = BoxBuilder::new(arena);
             bld.vgroup(label, sb)
         }
         BoxMatch::HGroup(label, body) => {
-            let sb = box_simplification(arena, cache, body);
+            let sb = box_simplification(arena, body);
             let mut bld = BoxBuilder::new(arena);
             bld.hgroup(label, sb)
         }
         BoxMatch::TGroup(label, body) => {
-            let sb = box_simplification(arena, cache, body);
+            let sb = box_simplification(arena, body);
             let mut bld = BoxBuilder::new(arena);
             bld.tgroup(label, sb)
         }
         BoxMatch::Symbolic(slot, body) => {
-            let sb = box_simplification(arena, cache, body);
+            let sb = box_simplification(arena, body);
             let mut bld = BoxBuilder::new(arena);
             bld.symbolic(slot, sb)
         }
 
         // ── Recursive on 2 children ───────────────────────────────────────
         BoxMatch::Seq(a, b) => {
-            let sa = box_simplification(arena, cache, a);
-            let sb = box_simplification(arena, cache, b);
+            let sa = box_simplification(arena, a);
+            let sb = box_simplification(arena, b);
             let mut bld = BoxBuilder::new(arena);
             bld.seq(sa, sb)
         }
         BoxMatch::Par(a, b) => {
-            let sa = box_simplification(arena, cache, a);
-            let sb = box_simplification(arena, cache, b);
+            let sa = box_simplification(arena, a);
+            let sb = box_simplification(arena, b);
             let mut bld = BoxBuilder::new(arena);
             bld.par(sa, sb)
         }
         BoxMatch::Split(a, b) => {
-            let sa = box_simplification(arena, cache, a);
-            let sb = box_simplification(arena, cache, b);
+            let sa = box_simplification(arena, a);
+            let sb = box_simplification(arena, b);
             let mut bld = BoxBuilder::new(arena);
             bld.split(sa, sb)
         }
         BoxMatch::Merge(a, b) => {
-            let sa = box_simplification(arena, cache, a);
-            let sb = box_simplification(arena, cache, b);
+            let sa = box_simplification(arena, a);
+            let sb = box_simplification(arena, b);
             let mut bld = BoxBuilder::new(arena);
             bld.merge(sa, sb)
         }
         BoxMatch::Rec(a, b) => {
-            let sa = box_simplification(arena, cache, a);
-            let sb = box_simplification(arena, cache, b);
+            let sa = box_simplification(arena, a);
+            let sb = box_simplification(arena, b);
             let mut bld = BoxBuilder::new(arena);
             bld.rec(sa, sb)
         }
 
         // ── Metadata: simplify body, keep metadata list ───────────────────
         BoxMatch::Metadata(body, meta) => {
-            let sb = box_simplification(arena, cache, body);
+            let sb = box_simplification(arena, body);
             let mut bld = BoxBuilder::new(arena);
             bld.metadata(sb, meta)
         }
 
         // ── Route: simplify ins/outs, keep spec ──────────────────────────
         BoxMatch::Route(ins, outs, routes) => {
-            let si = box_simplification(arena, cache, ins);
-            let so = box_simplification(arena, cache, outs);
+            let si = box_simplification(arena, ins);
+            let so = box_simplification(arena, outs);
             let mut bld = BoxBuilder::new(arena);
             bld.route(si, so, routes)
         }
@@ -535,3 +546,65 @@ pub(crate) fn inside_box_simplification(
 }
 
 // ─── Evaluate label node ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod memo_tests {
+    use super::*;
+    use boxes::BoxBuilder;
+
+    /// V4: the memo is written, so a second simplification is a lookup.
+    ///
+    /// Without an observable hit counter, what is checkable is that the entry
+    /// exists afterwards and that the second call agrees with the first. A
+    /// version that computed correctly but never stored would pass every
+    /// correctness test in the suite while leaving the cost exactly where it
+    /// was — which is the state this phase set out to fix, so it needs its own
+    /// assertion rather than being implied by the timings.
+    #[test]
+    fn simplifying_a_box_records_it_on_the_arena() {
+        let mut arena = TreeArena::new();
+        // `(2, 3) : +` — a 0->1 box that simplifies to the literal 5.
+        let two = BoxBuilder::new(&mut arena).int(2);
+        let three = BoxBuilder::new(&mut arena).int(3);
+        let par = BoxBuilder::new(&mut arena).par(two, three);
+        let add = BoxBuilder::new(&mut arena).add();
+        let expr = BoxBuilder::new(&mut arena).seq(par, add);
+
+        let key = arena.property_key(SIMPLIFIED_BOX_PROPERTY);
+        assert!(
+            arena.node_property(expr, key).is_none(),
+            "a fresh arena must carry no memo"
+        );
+
+        let first = box_simplification(&mut arena, expr);
+        assert_eq!(
+            arena.node_property(expr, key),
+            Some(first),
+            "the simplified form must be recorded on the node"
+        );
+        assert_eq!(
+            box_simplification(&mut arena, expr),
+            first,
+            "a second simplification must agree with the first"
+        );
+    }
+
+    /// A fresh arena starts with an empty memo, which is the whole reason the
+    /// arena is the right owner: invalidation is not a policy anyone has to
+    /// remember, it is the drop.
+    #[test]
+    fn a_new_arena_starts_with_no_memo() {
+        let mut first = TreeArena::new();
+        let key = first.property_key(SIMPLIFIED_BOX_PROPERTY);
+        let node = BoxBuilder::new(&mut first).int(7);
+        let _ = box_simplification(&mut first, node);
+        assert!(first.node_property(node, key).is_some());
+
+        let mut second = TreeArena::new();
+        let key2 = second.property_key(SIMPLIFIED_BOX_PROPERTY);
+        assert!(
+            second.node_property(node, key2).is_none(),
+            "a second arena must not see the first arena's memo"
+        );
+    }
+}
