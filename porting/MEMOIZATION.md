@@ -167,11 +167,15 @@ Constraint:
 
 ### 2.5 `eval`: box simplification cache
 
-Status: implemented but not yet promoted to production path
+Status: **implemented, on the mainline path, and scoped wrongly — this is
+currently the single largest compile-time cost in the compiler.** Corrected
+2026-08-06; see
+`porting/eval-box-simplification-memoization-analysis-2026-08-06-en.md`.
 
 Location:
 
-- `crates/eval/src/lib.rs`
+- `crates/eval/src/simplify.rs` (the function), `crates/eval/src/apply.rs:168`
+  (the dominant caller)
 
 Cache:
 
@@ -179,14 +183,21 @@ Cache:
 
 Purpose:
 
-- memoizes numeric box simplification on shared box DAGs,
-- mirrors the C++ `gSimplifiedBoxProperty` behavior for this helper path.
+- memoizes numeric box simplification on shared box DAGs.
 
-Note:
+Note (2026-08-06 — the previous note was stale in three ways):
 
-- the code is currently marked `#[allow(dead_code)]` and documented as a future
-  production step, so this cache exists even though the surrounding path is not
-  yet a mainline hot path.
+- The path *is* mainline: `apply.rs` calls `box_simplification` on every
+  pattern-match dispatch. The `#[allow(dead_code)]` marking is long gone.
+- It does **not** mirror `gSimplifiedBoxProperty`. C++ keys that property on
+  the tree node and scopes it to the whole compilation; here the caller
+  allocates a fresh `HashMap` per dispatch, so the memo's lifetime is one
+  argument and every dispatch re-simplifies its subtree from scratch.
+- Measured cost: evaluation is 67 % of compile time over the 94-DSP corpus,
+  and giving this memo a compilation-scoped lifetime takes the corpus from
+  18.1 s to 11.2 s (3.81× → 2.23× vs C++ Faust), with `reverb_designer`
+  going 7.2 s → 0.85 s. Rule 1 of §1 is satisfied emphatically; what was
+  missing was rule 2's "explicit key" having an explicit *scope*.
 
 ### 2.6 `propagate`: box arity cache
 
@@ -627,8 +638,19 @@ For each new memoization site:
 
 ## 6. Current Priority
 
-The next memoization I would add is:
+Reordered 2026-08-06 on measured evidence rather than expectation
+(`porting/eval-box-simplification-memoization-analysis-2026-08-06-en.md`):
 
-1. `propagate`: cache only provably context-free closed subtree propagation.
-2. `normalize`: introduce a signal normal-form cache.
-3. `codegen`: add occurrence counting cache once the scheduling path is stable.
+1. **`eval`: give the existing `box_simplification` memo a compilation-scoped
+   lifetime (§2.5).** Not a new memoization — a scope fix on one that already
+   exists. Worth ~6.9 s of the corpus's 18.1 s; nothing else measured comes
+   close.
+2. `propagate`: cache only provably context-free closed subtree propagation.
+   Note the `propagation` stage is 2.2 % of compile time, so this is bounded by
+   ~0.4 s on the corpus however well it is done.
+3. `normalize`: introduce a signal normal-form cache.
+4. `codegen`: add occurrence counting cache once the scheduling path is stable.
+
+The reordering is the point: items 2-4 were listed first for two years on
+plausibility. The measurement says the largest available win was a scope bug in
+an already-implemented cache that the roadmap recorded as inactive.

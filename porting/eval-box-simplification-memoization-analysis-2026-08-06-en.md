@@ -1,0 +1,302 @@
+# Compile-time analysis — where faust-rs spends 3.8× the reference's time
+
+**Date**: 2026-08-06
+**Status**: analysis complete, implementation plan proposed, nothing implemented
+**Trigger**: `make compile-bench` reports faust-rs slower than C++ Faust on 91 of
+94 corpus DSPs; the question was why.
+**Related**: `porting/cpp-propagate-eval-memoization-port-plan-2026-07-04-en.md`
+(a different, smaller cost — see §7), `porting/MEMOIZATION.md`.
+
+---
+
+## 1. The measurement
+
+`make compile-bench` compiles every gated DSP with `-lang cpp -double` through
+both compilers and records wall time.
+
+| | C++ Faust | faust-rs | ratio |
+|---|---|---|---|
+| corpus total (94 DSPs) | 4.75 s | 18.11 s | **3.81×** |
+| median per-DSP delta | — | — | **+122 %** |
+| faster / slower / failed | — | 3 / 91 / 0 | — |
+
+Worst absolute cases:
+
+| DSP | C++ | faust-rs | delta |
+|---|---|---|---|
+| `reverb_designer` | 0.871 s | 7.226 s | +729 % |
+| `phaser_flanger` | 0.337 s | 1.516 s | +350 % |
+| `modulations` | 0.092 s | 1.026 s | +1014 % |
+| `spectral_level` | 0.498 s | 0.981 s | +97 % |
+
+Splitting the corpus by source size does *not* explain it: sources over 20 KB
+run at 4.13× and ordinary sources at 3.78×. The cost is not a large-input
+effect.
+
+### 1.1 Where the time goes
+
+Per-stage totals from `faust-rs -time`, summed over the same 94 DSPs
+(18.03 s measured, matching the benchmark's 18.11 s):
+
+| stage | seconds | share |
+|---|---|---|
+| **evaluation** | 12.064 | **66.9 %** |
+| parser | 2.841 | 15.8 % |
+| signal-fir | 2.522 | 14.0 % |
+| — of which `fir-prepare-normalize` | 1.885 | 10.5 % |
+| propagation | 0.401 | 2.2 % |
+| fir-clock-analysis | 0.213 | 1.2 % |
+| fir-lowering | 0.203 | 1.1 % |
+| everything else (7 stages) | 0.197 | 1.1 % |
+
+**The signal → FIR → codegen pipeline is not the problem.** It is 14 % of the
+total, and `cpp-codegen` itself is 0.2 %. On the worst case, `reverb_designer`,
+evaluation is 6.93 s of 7.20 s — 96 % — while the entire FIR side is 0.19 s.
+This is worth stating plainly because that pipeline is where most recent effort
+has gone; none of it is what makes the compiler slow.
+
+---
+
+## 2. The cause
+
+### 2.1 What the profile shows
+
+A `sample(1)` capture of `reverb_designer` (7 s, ~1537 samples, single hot
+thread) puts every sample under `eval`. The recursion is
+
+```
+eval_value → apply_value_list_value → (deep self-recursion)
+           → box_simplification → numeric_box_simplification
+           → propagate_box_and_simplify → normalize::simplify::sig_map
+```
+
+Symbol frequencies across the captured graph: `simplify` 5942, `eval_value`
+1128, `apply` 912. `box_simplification` and `propagate_box_and_simplify` carry
+the largest single-frame sample counts.
+
+### 2.2 The mechanism
+
+`box_simplification` is memoized — but the cache is created by its caller, and
+the dominant caller creates a fresh one **on every pattern-match dispatch**
+(`crates/eval/src/apply.rs:168`):
+
+```rust
+let arg = {
+    let mut cache = ahash::HashMap::with_hasher(ahash::RandomState::new());
+    box_simplification(arena, &mut cache, raw_arg)
+};
+```
+
+So the memo's lifetime is one argument. Every dispatch re-simplifies its whole
+box subtree from scratch, and `apply_value_list_value` recurses deeply through
+library code, so the same subtrees are re-walked at every level.
+
+The reference does the opposite. `compiler/evaluate/eval.cpp:1603`:
+
+```cpp
+static Tree boxSimplification(Tree box)
+{
+    Tree simplified;
+    if (gGlobal->gSimplifiedBoxProperty->get(box, simplified)) {
+        return simplified;
+    } else {
+        simplified = numericBoxSimplification(box);
+        ...
+        gGlobal->gSimplifiedBoxProperty->set(box, simplified);
+        return simplified;
+    }
+}
+```
+
+`gSimplifiedBoxProperty` is **compilation-global** and attached to hash-consed
+trees, so any given subtree is simplified exactly once per compilation. The
+faust-rs port kept the function and the memo but lost the memo's *scope*, which
+is the part that made it an optimization.
+
+Two smaller instances of the same pattern exist and should be looked at in the
+same pass, though neither is on the hot path in this corpus:
+
+- `crates/eval/src/lib.rs:1211` — fresh cache per `route` spec normalization.
+- `crates/eval/src/simplify.rs:38,162,305` — a fresh `ArityCache` per
+  `propagate_box_and_simplify` call, which is itself called from inside the
+  simplification recursion. This is a *second* layer of the same loss: each
+  candidate node re-runs a full typed propagation with an empty arity cache.
+
+### 2.3 Confirming experiment
+
+Making the memo persistent (a five-line `thread_local`, purely to measure) and
+re-running:
+
+| | before | after | |
+|---|---|---|---|
+| `reverb_designer` | 7370 ms | **849 ms** | 8.7×; C++ is 871 ms |
+| `spectral_level` | 987 ms | 849 ms | |
+| `vcf_wah_pedals` | 837 ms | 750 ms | |
+| `phaser_flanger` | 1524 ms | 1540 ms | unchanged — cost is elsewhere |
+| corpus total | 18.1 s | **11.2 s** | ratio 3.81× → **2.23×** |
+| median delta | +122 % | +103 % | |
+
+The cpp impulse lane stayed 94/94 under the experiment.
+
+**The experiment is not the fix.** A `thread_local` outlives a single
+compilation, and `TreeId`s from two different arenas are different trees with
+the same integer. The CLI compiles once per process and would be fine; the FFI
+factories, the test suite and any embedder compile many times per process and
+would read another compilation's memo. The scope has to be the arena, which is
+also what makes the invalidation automatic.
+
+---
+
+## 3. Design
+
+### 3.1 Where the memo belongs
+
+`tlib::PropertyStore<T>` already exists (`crates/tlib/src/property.rs`) and is
+documented as the port of `compiler/tlib/property.hh` +
+`CTree::setProperty/getProperty` — exactly the C++ mechanism above. It is
+currently used only by the parser, for source locations.
+
+Two options:
+
+| Option | Shape | Assessment |
+|---|---|---|
+| **A. Memo on the arena** | `TreeArena` gains a `PropertyStore`-backed simplification memo; `box_simplification` drops its `cache` parameter and uses `&mut TreeArena`, which it already takes | Closest to upstream, where the memo *is* a node property. No signature changes at any call site. Lifetime is the arena's, so a new compilation cannot see an old memo. Puts one eval-specific slot in `tlib` — which is what C++ does, and `PropertyStore` exists for it |
+| **B. Explicit memo threaded through eval** | An `EvalMemo` created once in `eval_entrypoint_full` and passed down | Keeps `tlib` free of eval concerns, but touches every frame between the entry point and `apply.rs`, and the evaluator's recursion is deep and varied. Larger diff, same effect |
+
+**Recommendation: A.** It is the upstream shape, the mechanism is already
+ported, and it removes a parameter rather than adding one. B's only advantage
+is layering purity, and C++ resolves that question the same way A does.
+
+### 3.2 Why the memo is sound
+
+`numeric_box_simplification(arena, cache, box_id)` reads no context beyond
+`box_id`: no environment, no closure, no flags. Trees are hash-consed, so equal
+subtrees are the same `TreeId`, and simplification is deterministic. Therefore
+`box_id ↦ simplified` is a function, and caching it for the arena's lifetime
+changes nothing observable.
+
+Three obligations the implementation must discharge, each of which is a way the
+above could stop being true:
+
+1. **Arena identity.** The memo must live in the arena, not beside it. A memo
+   keyed by `TreeId` and stored anywhere with a longer life is wrong, and wrong
+   *silently* — it returns a valid-looking tree from another compilation.
+2. **Growth only.** The arena interns and never rewrites nodes, so a memoized
+   entry cannot go stale. If a mutation path is ever added, the memo must be
+   invalidated with it. Worth an assertion rather than a comment.
+3. **No context creeps into the simplifier.** If `numeric_box_simplification`
+   ever gains a parameter beyond `box_id`, the key must gain it too. The
+   existing plan of 2026-07-04 §3 documents exactly this failure mode for
+   `propagate_in_slot_env`, where a `suppress_fad` side channel makes the
+   naive key unsound — and its answer, bypassing the memo rather than widening
+   the key, is the right precedent.
+
+Note a pre-existing divergence found while reading: C++ `boxSimplification`
+transfers the def-name property from the original box to the simplified one;
+faust-rs does not. That is not caused by this work and does not block it, but a
+memo makes the transfer happen once instead of per call, so it should be
+settled in the same pass rather than left implicit.
+
+---
+
+## 4. Phases
+
+### P0 — measurement harness
+
+Make the numbers above reproducible on demand rather than by hand: a small
+`xtask` that runs `-time` over the corpus and prints the per-stage table of
+§1.1. Without it, any later claim about compile time is a one-off measurement
+that nobody can re-check. This is also what makes P1's gate meaningful.
+
+### P1 — arena-scoped simplification memo
+
+Option A. `box_simplification` loses its `cache` parameter; the memo becomes a
+property store on `TreeArena`. Expected: corpus 18.1 s → ~11 s, worst case
+7.2 s → ~0.85 s.
+
+### P2 — the second layer
+
+`propagate_box_and_simplify`'s per-call `ArityCache`, and the per-call cache at
+`lib.rs:1211`. Measure first: with P1 in place, evaluation is still 4.9 s of an
+11.0 s total, and it is not yet established how much of that is this. **Do not
+implement P2 before re-profiling** — P1 changes the shape of the remaining
+cost, and the phase exists to be re-measured, not assumed.
+
+### P3 — parser
+
+2.84 s, 26 % of the post-P1 total. Dominated by machine-expanded corpus files:
+`modulations.dsp` is 922 KB of which **one line is 917 KB**, parsed in 0.95 s.
+This is a property of the test corpus rather than of real DSP sources, so P3 is
+lower value than its share suggests, and should be judged on a corpus of
+hand-written sources before any work is done.
+
+### P4 — `fir-prepare-normalize`
+
+1.89 s, 17 % post-P1, and the only significant cost inside the signal pipeline.
+Unanalyzed.
+
+---
+
+## 5. Validation
+
+Following `porting/` methodology: the producer never validates itself, and each
+check must have a mutation that turns it red.
+
+| # | Obligation | Independent check | Rejecting mutation |
+|---|---|---|---|
+| V1 | Memoization changes no output | Full impulse corpus, every backend, both `--table-init` modes, byte-identical `.ir` against the C++ oracle | — (this is the numeric gate) |
+| V2 | Emitted code is byte-identical, not merely numerically equal | `xtask emission-determinism` extended to compare pre-/post-memo emission for every corpus DSP | Return `box_id` unchanged from a memo hit for one node kind → emission differs |
+| V3 | The memo is arena-scoped | A test compiling two different programs in one process and asserting the second is unaffected by the first | Hoist the memo to a `thread_local` (the §2.3 experiment) → the test must fail |
+| V4 | The memo actually hits | Instrumented hit/miss counters on a known input, asserted against a recorded ratio | Disable insertion → hit rate collapses to 0, assertion fails |
+| V5 | Compile time actually improves | P0 harness, asserting the corpus total stays under a recorded ceiling | — (regression guard) |
+
+V3 is the one that matters most, because it is the failure the convenient
+implementation produces, and it is invisible to V1 and V2: a `thread_local`
+memo passes every single-compilation test in the suite. The CLI compiles once
+per process, so the impulse corpus — 94 processes, 94 compilations — cannot see
+it either. Only a test that compiles twice in one process can.
+
+---
+
+## 6. Risks
+
+- **Silent cross-compilation reuse.** Discussed above; V3 exists for it.
+- **Memory.** The memo is one `Option<TreeId>` slot per node per key.
+  `PropertyStore` is already `Vec`-indexed by `TreeId`, so this is bounded by
+  arena size and should be measured, not assumed, on `modulations` (the largest
+  corpus input).
+- **`PropertyStore` capacity behaviour under a hot path.** It was written for
+  the parser's source locations, which are written once and read rarely. This
+  memo is the opposite. If its layout turns out to be the wrong shape for a hot
+  read path, that is a `tlib` change, not a reason to move the memo elsewhere.
+- **Scope creep into P2/P3.** P1 is a self-contained change with a measured
+  expected effect. P2 and P3 are separate, and P3 may well be worth nothing.
+
+---
+
+## 7. Relation to the 2026-07-04 plan
+
+`porting/cpp-propagate-eval-memoization-port-plan-2026-07-04-en.md` ports the
+upstream memoization commits and identifies the main faust-rs gap as "no result
+memo in `propagate_in_slot_env`". That analysis stands, and its §3 treatment of
+unsound keys is directly reusable here — but it targets a different cost. The
+`propagation` stage is **2.2 %** of compile time in the measurement above,
+against **67 %** for evaluation. Whatever `propagate_in_slot_env` memoization
+is worth, it cannot be worth more than 0.4 s on this corpus.
+
+The two are complementary, not competing: this document adds the missing
+measurement that says which one to do first, and the answer is
+`box_simplification`.
+
+---
+
+## 8. References
+
+- `crates/eval/src/apply.rs:168` — the per-dispatch cache allocation.
+- `crates/eval/src/simplify.rs:347` — `box_simplification`, memoized on a
+  caller-supplied cache.
+- `crates/tlib/src/property.rs` — `PropertyStore`, the ported C++ mechanism.
+- `/Users/letz/faust/compiler/evaluate/eval.cpp:1603` — `boxSimplification` and
+  `gSimplifiedBoxProperty`.
+- `tests/impulse-tests/Make.bench` — `compile-bench`, and
+  `build/bench/compile-summary.csv` for the per-DSP table.
