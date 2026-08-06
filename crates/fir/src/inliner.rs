@@ -1212,6 +1212,34 @@ pub(crate) fn flatten_clone_body(
     Ok(store.import_from(&scratch, cloned))
 }
 
+/// Clones a subtree, rewriting `kStruct` references named in `subst`.
+///
+/// Local names are deliberately preserved: this is a renaming of struct member
+/// references, not an inlining, so the body's own loop counters and temporaries
+/// must keep the names the surrounding emitter already expects.
+///
+/// # Errors
+/// Returns [`FirHygienicCloneError`] when the subtree contains a node the clone
+/// engine does not handle.
+pub(crate) fn qualify_clone_body(
+    store: &mut FirStore,
+    body: FirId,
+    state: &mut FirHygienicCloneState,
+    struct_subst: &HashMap<String, (String, AccessType)>,
+) -> Result<FirId, FirHygienicCloneError> {
+    let src = std::mem::take(store);
+    let mut scratch = FirStore::new();
+    let mut cloner = HygienicCloner::new(&src, &mut scratch, state);
+    cloner.struct_subst = struct_subst.clone();
+    cloner.preserve_local_names = true;
+    cloner.push_scope();
+    let result = cloner.clone_node(body);
+    cloner.pop_scope();
+    let cloned = result?;
+    *store = src;
+    Ok(store.import_from(&scratch, cloned))
+}
+
 /// Clones a subtree, rewriting `kStatic` references named in `subst`.
 ///
 /// Used when a table moves from file scope into the DSP struct: the

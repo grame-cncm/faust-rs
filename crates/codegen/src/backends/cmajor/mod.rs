@@ -253,22 +253,6 @@ pub fn generate_cmajor_module(
     options: &CmajorOptions,
 ) -> Result<String, CodegenError> {
     validate_identifier(&options.class_name, "processor")?;
-    // Emission is written (nested struct, size-suffixed fill, promoted tables)
-    // but incomplete: a sub-module's fields are `Struct`-access and render
-    // bare, while Cmajor requires the `this.` receiver inside
-    // `void f (Sub& this, …)`. The real Cmajor compiler rejects the output with
-    // "Cannot find symbol 'fConst0'". Threading a receiver prefix through the
-    // value emitter is the remaining work; until then this backend refuses
-    // rather than emitting source its own toolchain will not accept.
-    if let FirMatch::Module { sub_modules, .. } = match_fir(store, module) {
-        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-        if !sub_module_names.is_empty() {
-            return Err(CodegenError::new(
-                CodegenErrorCode::Unsupported,
-                crate::backends::unsupported_sub_modules_message("cmajor", &sub_module_names),
-            ));
-        }
-    }
     // Cmajor has no shared static storage, so a generated table is a processor
     // field — the adaptation this backend's own plan documents at §4.5. The
     // sub-module itself stays nested: Cmajor has structs and functions taking
@@ -278,6 +262,13 @@ pub fn generate_cmajor_module(
             let mut owned = FirStore::new();
             let root = owned.import_from(store, module);
             fir::subcontainer::promote_static_tables_to_struct(&mut owned, root)
+                .and_then(|root| {
+                    // Cmajor addresses struct members only through the
+                    // receiver: a bare `fConst0` inside `void f (Sub& this, …)`
+                    // is "Cannot find symbol". Rewriting the references once
+                    // here keeps the emitter free of any notion of where it is.
+                    fir::subcontainer::qualify_sub_module_bodies(&mut owned, root, "this")
+                })
                 .map(|root| (owned, root))
                 .map_err(|err| {
                     CodegenError::new(

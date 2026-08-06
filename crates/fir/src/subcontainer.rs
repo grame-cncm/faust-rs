@@ -305,6 +305,173 @@ fn promoted_names(store: &FirStore, promoted: &[FirId]) -> BTreeSet<String> {
         .collect()
 }
 
+/// Qualifies every `kStruct` reference in `body` with an explicit receiver.
+///
+/// Some targets address struct members only through a named receiver: Cmajor
+/// functions are written `void f (Sub& this, …)` and reject a bare `fConst0`
+/// with "Cannot find symbol". Rewriting the references — rather than teaching
+/// the emitter where it currently is — keeps the knowledge in one place and
+/// costs the emitter nothing.
+///
+/// Only the body is rewritten; the struct's own field *declarations* keep their
+/// plain names, which is what makes this safe to apply to a sub-module's
+/// functions without touching its type.
+///
+/// # Errors
+/// Returns [`FlattenError`] when the body contains a node the clone engine does
+/// not handle.
+pub fn qualify_struct_access(
+    store: &mut FirStore,
+    body: FirId,
+    fields: &BTreeSet<String>,
+    receiver: &str,
+) -> Result<FirId, FlattenError> {
+    if fields.is_empty() {
+        return Ok(body);
+    }
+    let subst: HashMap<String, (String, AccessType)> = fields
+        .iter()
+        .map(|name| {
+            (
+                name.clone(),
+                (format!("{receiver}.{name}"), AccessType::Struct),
+            )
+        })
+        .collect();
+    let mut state = FirHygienicCloneState::default();
+    crate::inliner::qualify_clone_body(store, body, &mut state, &subst)
+        .map_err(|err| FlattenError::Clone(format!("{err:?}")))
+}
+
+/// Qualifies every sub-module's function bodies with an explicit receiver.
+///
+/// A whole-module normalization for targets whose functions address struct
+/// members only through a named receiver, applied once before emission so the
+/// emitter itself needs no notion of where it is. Nested sub-modules are
+/// rewritten too.
+///
+/// # Errors
+/// Returns [`FlattenError`] when the root is not a module or a body could not
+/// be rewritten.
+pub fn qualify_sub_module_bodies(
+    store: &mut FirStore,
+    module: FirId,
+    receiver: &str,
+) -> Result<FirId, FlattenError> {
+    let FirMatch::Module {
+        num_inputs,
+        num_outputs,
+        name,
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        sub_modules,
+    } = match_fir(store, module)
+    else {
+        return Err(FlattenError::RootNotModule(module));
+    };
+    let FirMatch::Block(subs) = match_fir(store, sub_modules) else {
+        return Ok(module);
+    };
+    if subs.is_empty() {
+        return Ok(module);
+    }
+
+    let mut rewritten = Vec::with_capacity(subs.len());
+    for sub in subs {
+        rewritten.push(qualify_one_sub_module(store, sub, receiver)?);
+    }
+
+    let mut b = FirBuilder::new(store);
+    Ok(b.module(
+        num_inputs,
+        num_outputs,
+        name,
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &rewritten,
+    ))
+}
+
+/// Rewrites one sub-module's function bodies, recursing into nested ones.
+fn qualify_one_sub_module(
+    store: &mut FirStore,
+    sub: FirId,
+    receiver: &str,
+) -> Result<FirId, FlattenError> {
+    let FirMatch::SubModule {
+        name,
+        elem_type,
+        dsp_struct,
+        static_decls,
+        globals,
+        functions,
+        sub_modules,
+    } = match_fir(store, sub)
+    else {
+        return Err(FlattenError::NotASubModule(sub));
+    };
+
+    let fields = struct_field_names(store, dsp_struct);
+    let FirMatch::Block(items) = match_fir(store, functions) else {
+        return Ok(sub);
+    };
+    let mut new_functions = Vec::with_capacity(items.len());
+    for item in items {
+        let FirMatch::DeclareFun {
+            name: fun_name,
+            typ,
+            args,
+            body: Some(body),
+            is_inline,
+        } = match_fir(store, item)
+        else {
+            new_functions.push(item);
+            continue;
+        };
+        let body = qualify_struct_access(store, body, &fields, receiver)?;
+        let mut b = FirBuilder::new(store);
+        new_functions.push(b.declare_fun(fun_name, typ, &args, Some(body), is_inline));
+    }
+
+    let mut nested = Vec::new();
+    if let FirMatch::Block(inner) = match_fir(store, sub_modules) {
+        for one in inner {
+            nested.push(qualify_one_sub_module(store, one, receiver)?);
+        }
+    }
+
+    let mut b = FirBuilder::new(store);
+    let functions = b.block(&new_functions);
+    Ok(b.sub_module(
+        name,
+        elem_type,
+        dsp_struct,
+        static_decls,
+        globals,
+        functions,
+        &nested,
+    ))
+}
+
+/// Names of the fields a struct block declares.
+#[must_use]
+pub fn struct_field_names(store: &FirStore, dsp_struct: FirId) -> BTreeSet<String> {
+    let FirMatch::Block(items) = match_fir(store, dsp_struct) else {
+        return BTreeSet::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareVar { name, .. } | FirMatch::DeclareTable { name, .. } => Some(name),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Returns `true` when a module declares at least one generated-table
 /// sub-module.
 #[must_use]
