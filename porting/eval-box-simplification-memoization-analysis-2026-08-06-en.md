@@ -3,8 +3,10 @@
 **Date**: 2026-08-06
 **Status**: **P0 and P1 implemented 2026-08-06** — the corpus went from 3.81x
 to 2.30x the reference's compile time. **P2 profiled and its hypothesis
-refuted**; the remaining cost is library lexing, not memoization (see P2/P2′).
-P3-P4 proposed and not implemented
+refuted**; the remaining cost is library lexing, not memoization. **P2′
+measured**: the lexer is 373x slower than a hand-written scanner; its
+definition is now built once (2.30x -> 2.13x), replacing it is scoped but not
+started. P3-P4 proposed and not implemented
 **Trigger**: `make compile-bench` reports faust-rs slower than C++ Faust on 91 of
 94 corpus DSPs; the question was why.
 **Related**: `porting/cpp-propagate-eval-memoization-port-plan-2026-07-04-en.md`
@@ -334,19 +336,57 @@ The standard library is re-lexed on every compilation, lazily, during the
 not locate functions, and the same reasoning error is what produced this
 phase's hypothesis.
 
-### P2′ — library lexing (proposed, unstarted)
+### P2′ — library lexing — measured 2026-08-06
 
-Two directions, neither costed yet:
+Measured with `cargo run --release -p parser --example lexbench`, which reports
+all three numbers below and is kept as the evidence.
 
-- **A faster lexer.** `lrlex` drives `regex_automata` per token. C++ Faust uses
-  a flex-generated DFA and pays a fraction of this.
-- **Reusing parsed libraries across compilations.** Tempting and dangerous for
-  exactly the reason P1 documents: anything keyed by `TreeId` cannot cross an
-  arena. A cache would have to hold source-level ASTs and re-intern per
-  compilation, and would need V3-style evidence that it does.
+**The lexer is 373× slower than a straightforward scanner.**
 
-Neither should be started without its own analysis; this phase's lesson is that
-a plausible mechanism is worth nothing against a measurement.
+| | throughput | per token |
+|---|---|---|
+| `lrlex` over the installed `.lib` corpus (2.2 MB, 227 526 tokens) | 2.4 MB/s | 4.08 µs |
+| minimal hand-written reference scanner, same bytes (228 384 tokens) | 911 MB/s | 0.011 µs |
+
+The reference recognizes whitespace, both comment forms, identifiers, numbers,
+strings and punctuation — not a Faust lexer, but it produces a near-identical
+token count on the same input, so the comparison is not measuring different
+amounts of work. `lrlex` matches each of `faustlexer.l`'s 128 rules with its own
+`regex_automata` automaton and takes the longest, which is where the factor
+comes from.
+
+**How much is lexed.** A two-line DSP that imports `stdfaust.lib` lexes
+**453 836 bytes** across ten files — `filters.lib` 162 KB, `basics.lib` 116 KB,
+`oscillators.lib` 76 KB, `maths.lib` 44 KB. At 2.4 MB/s that is ~180 ms of a
+249 ms compile.
+
+**Done: the lexer definition is now built once.** `lexerdef()` compiles the 128
+rules into automata and measured 2.3 ms — and it was called once per *file*, so
+that two-line DSP rebuilt a constant ten times, 23 ms of its 249 ms. It is now a
+`OnceLock`. Sound because the definition is immutable: `lexerdef.lexer(input)`
+borrows it and all mutable state — position, the `comment`/`doc`/`lst` start
+conditions — lives in the returned lexer. Corpus 14.19 s → 12.9 s, and
+`compile-bench` 2.30× → **2.13×**.
+
+**Not done: replacing the lexer.** The 373× headroom is real and it is the
+largest remaining item by a wide margin — removing essentially all lexing time
+would take the corpus from ~12.9 s toward ~6 s. But a replacement has to
+reproduce `faustlexer.l` exactly: 128 rules, four exclusive start conditions,
+and the `mdoc` sublanguage. That is a port with its own plan and its own
+differential gate (lex every corpus and library file with both, compare token
+streams), not an afternoon.
+
+**Also found, not done: files are parsed more than once per compilation.** The
+trace above shows `platform.lib` parsed three times and `maths.lib` twice —
+50.7 KB of the 453.8 KB is redundant, 11 %. A per-compilation parsed-file memo
+is cheaper than a new lexer and independent of it. It needs care around source
+origins and metadata, which are threaded through `parse` and are not obviously
+a function of the file alone.
+
+**Still not to be attempted casually: reusing parsed libraries *across*
+compilations.** Anything keyed by `TreeId` cannot cross an arena, for the reason
+P1 documents; such a cache would have to hold source-level ASTs and re-intern
+per compilation, and would need V3-style evidence that it does.
 
 ### P3 — parser
 
