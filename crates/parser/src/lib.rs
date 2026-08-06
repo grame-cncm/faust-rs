@@ -1413,6 +1413,90 @@ fn shared_lexerdef() -> &'static LRNonStreamingLexerDef<DefaultLexerTypes<u32>> 
     LEXERDEF.get_or_init(faustlexer_l::lexerdef)
 }
 
+/// Which lexing strategy `lex_stream` should use.
+///
+/// Exists so the token streams of the two can be compared over the whole
+/// corpus before either becomes the default
+/// (`porting/lexer-combined-dfa-port-plan-2026-08-06-en.md`, phase L0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LexerImpl {
+    /// `lrlex`: one anchored regex per rule, all eligible ones run at every
+    /// token start. O(tokens x rules).
+    PerRule,
+    /// One multi-pattern DFA per start condition. O(input bytes).
+    CombinedDfa,
+}
+
+/// One lexeme, reduced to what the parser actually consumes.
+///
+/// Deliberately not [`LexedToken`]: that carries a resolved name and
+/// line/column, which are derived. Equality of *these* triples is the property
+/// a lexer replacement has to preserve, and comparing derived fields instead
+/// would let a difference in the raw stream hide behind a shared derivation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RawLexeme {
+    pub tok_id: u32,
+    pub start: usize,
+    pub len: usize,
+}
+
+/// How a lex attempt ended.
+///
+/// Failures are part of the compared contract, not an absence of one: error
+/// spans reach diagnostics that this project gates on, so a replacement that
+/// gets every successful file right and reports failures one byte off is still
+/// wrong.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LexOutcome {
+    /// Lexing consumed the whole input.
+    Complete(Vec<RawLexeme>),
+    /// Lexing stopped; `error_at` is the byte offset of the failure, and the
+    /// lexemes produced before it are kept for comparison.
+    Failed {
+        lexemes: Vec<RawLexeme>,
+        error_at: usize,
+    },
+}
+
+/// Lexes `input` with the requested strategy, returning the raw token stream.
+///
+/// # Errors
+/// Never returns `Err`; a lex failure is reported as [`LexOutcome::Failed`] so
+/// the failing position can be compared like any other observable.
+#[must_use]
+pub fn lex_stream(input: &str, impl_: LexerImpl) -> LexOutcome {
+    match impl_ {
+        // L0: both arms are `lrlex`, so the differential harness can be landed
+        // and shown green against a known-identical pair before the new lexer
+        // exists. A harness that first runs against a real change cannot
+        // distinguish "the change is correct" from "the harness compares
+        // nothing".
+        LexerImpl::PerRule | LexerImpl::CombinedDfa => lex_stream_per_rule(input),
+    }
+}
+
+fn lex_stream_per_rule(input: &str) -> LexOutcome {
+    let lexerdef = shared_lexerdef();
+    let lexer = lexerdef.lexer(input);
+    let mut lexemes = Vec::new();
+    for item in lexer.iter() {
+        match item {
+            Ok(lexeme) => lexemes.push(RawLexeme {
+                tok_id: lexeme.tok_id(),
+                start: lexeme.span().start(),
+                len: lexeme.span().len(),
+            }),
+            Err(err) => {
+                return LexOutcome::Failed {
+                    lexemes,
+                    error_at: err.span().start(),
+                };
+            }
+        }
+    }
+    LexOutcome::Complete(lexemes)
+}
+
 /// Lexes `input` and returns named tokens with source locations.
 pub fn lex_tokens(input: &str) -> Result<Vec<LexedToken>, String> {
     let lexerdef = shared_lexerdef();

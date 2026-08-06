@@ -120,12 +120,28 @@ reimplements `.l` parsing.
 
 ## 5. Phases
 
-- **L0 — differential harness.** An `xtask` (or test) that lexes every file in
+- **L0 — differential harness. Done 2026-08-06.** An `xtask` (or test) that lexes every file in
   `tests/impulse-tests/dsp/`, `tests/corpus/` and the installed Faust library
   directory with both lexers and compares the full token stream: id, start,
   length, and the error position when lexing fails. This lands and passes
   *before* the new lexer is wired in, against `lrlex` on both sides, so that a
   green run means the harness works rather than that nothing changed.
+
+  `cargo run -p xtask -- lexer-differential`: 405 files, 646 498 lexemes,
+  identical. Two things it refuses to pass without, both because a silent gap
+  here would make every later phase meaningless:
+
+  - **Every start condition must be reached.** Verified from the source text
+    rather than the token stream — a bug that failed to enter a condition would
+    also suppress its tokens, so asking the tokens would be circular. Reached:
+    comment 47 files, doc 3, lst 3.
+  - **At least one input must fail to lex.** It turns out none did.
+    `faustlexer.l` ends with a catch-all `. 'EXTRA'`, so *no input can fail in
+    `INITIAL`* — unknown characters become `EXTRA` tokens the parser rejects
+    later. Obligation §3.2/5 is unreachable there. The exclusive `lst`
+    condition has no catch-all, and that is the one shape that stops the lexer:
+    `tests/lexer-fixtures/lst_unknown_key.dsp` is an unrecognized attribute
+    inside `<listing …>`. Without it the error-offset comparison was dead code.
 - **L1 — the combined lexer, behind an env switch.** Implement it, default off,
   and make L0 compare old against new.
 - **L2 — flip the default**, keeping the switch for bisection.

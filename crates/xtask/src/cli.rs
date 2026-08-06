@@ -64,6 +64,8 @@ pub(crate) enum XtaskCommand {
     EmissionDeterminism(EmissionDeterminismArgs),
     /// Per-stage compile-time profile over the DSP corpus.
     CompileProfile(CompileProfileArgs),
+    /// Token-stream differential between the two lexer implementations.
+    LexerDifferential(LexerDifferentialArgs),
 }
 
 /// Options for comparing provenance storage representations.
@@ -311,6 +313,14 @@ pub(crate) struct CompileBudgetArgs {
     /// them. Every increase must be justified in the commit message.
     #[arg(long)]
     pub(crate) update: bool,
+}
+
+/// Options for the lexer token-stream differential.
+#[derive(Clone, Debug, Args)]
+pub(crate) struct LexerDifferentialArgs {
+    /// Print both outcomes for every differing file.
+    #[arg(long)]
+    pub(crate) verbose: bool,
 }
 
 /// Options for the per-stage compile-time profile.
