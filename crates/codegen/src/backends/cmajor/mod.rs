@@ -301,10 +301,10 @@ pub fn generate_cmajor_module(
 
     emit_streams(&mut out, &view, options);
     emit_ui_declarations(&mut out, &ui, options)?;
-    emit_field_block(store, &mut out, view.dsp_struct, options)?;
-    emit_field_block(store, &mut out, view.static_decls, options)?;
-    emit_field_block(store, &mut out, view.globals, options)?;
-    let table_sizes = collect_table_sizes(store, view.functions);
+    emit_field_block(store, &mut out, view.dsp_struct, options, 2)?;
+    emit_field_block(store, &mut out, view.static_decls, options, 2)?;
+    emit_field_block(store, &mut out, view.globals, options, 2)?;
+    let table_sizes = collect_table_sizes(store, &[view.functions, view.sub_modules]);
     emit_sub_modules(store, &mut out, options, view.sub_modules, &table_sizes)?;
     let _ = writeln!(out, "\t\tbool fUpdated;");
     if ui.has_bargraphs() {
@@ -352,9 +352,10 @@ fn emit_sub_modules(
             name,
             elem_type,
             dsp_struct,
+            static_decls,
+            globals,
             functions,
             sub_modules: nested,
-            ..
         } = match_fir(store, item)
         else {
             return Err(CodegenError::new(
@@ -365,13 +366,29 @@ fn emit_sub_modules(
 
         emit_sub_modules(store, out, options, nested, table_sizes)?;
 
+        // A generator's own constants — chiefly the `const int32[N] …Wave0`
+        // arrays a `waveform` generator reads from — are shared, not per
+        // instance, so the reference hoists them to processor scope alongside
+        // the struct rather than making them fields. Dropping them left the
+        // fill body referencing an undeclared symbol.
+        emit_field_block(store, out, static_decls, options, 2)?;
+        emit_field_block(store, out, globals, options, 2)?;
+
         let _ = writeln!(out, "\t\tstruct {name}");
         let _ = writeln!(out, "\t\t{{");
-        emit_field_block(store, out, dsp_struct, options)?;
+        emit_field_block(store, out, dsp_struct, options, 3)?;
         let _ = writeln!(out, "\t\t}}");
         let _ = writeln!(out);
 
-        let size = table_sizes.get(&name).copied().unwrap_or(0);
+        // No known size means no fill call site was found for this generator.
+        // Emitting `elem[0]& table` would produce a definition that no call
+        // site matches, so fail loudly instead.
+        let size = table_sizes.get(&name).copied().ok_or_else(|| {
+            CodegenError::new(
+                CodegenErrorCode::InvalidStructure,
+                format!("no fill call site found for sub-module `{name}`, cannot type its table"),
+            )
+        })?;
         let elem = emit_type(&elem_type, options)?;
         if let FirMatch::Block(fns) = match_fir(store, functions) {
             for f in fns {
@@ -414,14 +431,16 @@ fn emit_sub_modules(
 ///
 /// Cmajor array parameters are typed by length, so the fill signature needs the
 /// concrete size. The FIR keeps the generator length-agnostic — exactly as the
-/// C++ `fill(count, table)` does — so the size is read back from the call site
-/// in `staticInit`.
-fn collect_table_sizes(store: &FirStore, functions: FirId) -> BTreeMap<String, usize> {
+/// C++ `fill(count, table)` does — so the size is read back from the call site.
+///
+/// The scan covers the whole module, not just `staticInit`: a read-only table
+/// is filled from `staticInit`, but a writable one (`rwtable`) is filled from
+/// `instanceConstants`, and a nested generator's fill call sits inside its
+/// parent sub-module's `instanceInit`. Scanning only `staticInit` left every
+/// `rwtable` generator with no known size.
+fn collect_table_sizes(store: &FirStore, roots: &[FirId]) -> BTreeMap<String, usize> {
     let mut out = BTreeMap::new();
-    let Some(body) = find_function_body(store, functions, "staticInit") else {
-        return out;
-    };
-    let mut stack = vec![body];
+    let mut stack: Vec<FirId> = roots.to_vec();
     while let Some(id) = stack.pop() {
         if let FirMatch::FunCall { name, args, .. } = match_fir(store, id)
             && let Some(sub) = name.strip_prefix("fill")
@@ -749,6 +768,7 @@ fn emit_field_block(
     out: &mut String,
     block: FirId,
     options: &CmajorOptions,
+    indent: usize,
 ) -> Result<(), CodegenError> {
     for stmt in block_items(store, block) {
         match match_fir(store, stmt) {
@@ -757,7 +777,7 @@ fn emit_field_block(
             FirMatch::DeclareVar { .. }
             | FirMatch::DeclareTable { .. }
             | FirMatch::DeclareStructType { .. } => {
-                emit_stmt(store, out, options, stmt, 2, EmitContext::Field)?;
+                emit_stmt(store, out, options, stmt, indent, EmitContext::Field)?;
             }
             FirMatch::DeclareFun { .. }
             | FirMatch::Label(_)
