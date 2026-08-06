@@ -1,10 +1,14 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S4 done. Every S4 backend is migrated: `cpp`, `c`, `rust`, `julia`,
-`codebox` and `cmajor` are numerically validated against the C++ oracle; `asc`
-is emitted but its gate is blocked on `wasm`/S5. Remaining: S5 (`interp`,
-`wasm`, `cranelift`), S6 (vector), S7 (flip the default).
+Status: S0-S5 done. **Every backend is migrated and no backend refuses a
+sub-module any more.** Numerically validated against the C++ oracle, in both
+`--table-init runtime` and the default `const` mode: `cpp`, `c`, `rust`,
+`julia`, `codebox`, `cmajor` (87/87), `interp` (93/93), `wasm` (93/93),
+`cranelift` (93/93). `asc` is 92/93 in both modes — `phaser_flanger` fails on a
+pre-existing multi-line-UI-label emission bug unrelated to this port, which only
+became visible when the assemblyscript lane became runnable (it builds its JSON
+companion through `wasm`). Remaining: S6 (vector), S7 (flip the default).
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -590,12 +594,16 @@ The pass is pure FIR→FIR and is validated by an independent structural checker
 | `asc` | native sub-module — **emitted 2026-08-05, numeric gate blocked** | Class plus `changetype` trampolines: AssemblyScript's typed references do not implicitly convert, so each entry point gets a free function taking `dsp: mydsp` — which is the FIR call shape, so nothing is stripped. `delete<Sub>` is emitted empty (garbage collected). **Its impulse gate cannot run yet**: `tools/impulseasc.js` builds a JSON companion through the `wasm` backend, which is S5 and still refuses generated tables. `asc` is therefore the one migrated backend not validated numerically. |
 | `cmajor` | native sub-module — **done 2026-08-06** | Nested struct, size-suffixed fill (`fillmydspSIG0_64`), per-instance tables via `promote_static_tables_to_struct`, and explicit `this.` receivers via `qualify_sub_module_bodies`. Accepted by `cmaj generate` 1.0.3175 and numerically matched against the C++ oracle on `subcontainer1`. |
 | `codebox` | flattened, `StackLocals` | it already folds the lifecycle into one entry point |
-| `wasm` | flattened, `MergedStructFields` | matches upstream; `classInit` keeps its `dsp` argument |
-| `interp` | flattened, `MergedStructFields` | fill bytecode lands in the already-existing `static_init_block` / `init_block`; `compile_static_decls_init_block` keeps handling literal `DeclareTable`s and gains storage predeclaration for uninitialized `DeclareVar(Array)` |
-| `cranelift` | flattened, `MergedStructFields` — guard added 2026-08-05 (it had none; it refused only by accident, `jit_data` never pre-declaring the table) | fill code compiled into the `classInit`/`instanceConstants` JIT functions; removes the current `CodeTooLarge` pressure that motivated the 256-element unroll threshold |
+| `wasm` | flattened, `MergedStructFields` — **done 2026-08-06** | matches upstream; `classInit` keeps its `dsp` argument. Three gaps had to be closed: the memory layout refused a `Static` array outright (now placed like a constant static table, with no data segment behind it); `classInit` was hardcoded to an empty body, the same defect recorded for `cpp`; and `StoreTable(kStatic)` was not in the lowering subset. |
+| `interp` | flattened, `MergedStructFields` — **done 2026-08-06** | fill bytecode lands in the already-existing `static_init_block` / `init_block`; `predeclare_storage_block` already handled the uninitialized `DeclareVar(Array)`, so the only code change beyond flattening was publishing the sample rate to the heap before running the static-init block. |
+| `cranelift` | flattened, `MergedStructFields` — **done 2026-08-06** | `staticInit` is now JIT-compiled and called from `class_init_instance`, which was an explicit no-op; the table becomes a zero-initialized **writable** JIT data object; `StoreTable(kStatic)` added to the lowering subset, carrying the declared element type alongside the `DataId` so the store width matches the load. |
 
-Every backend keeps a hard failure (`FRS-CGEN-*-…`) when it meets a `SubModule`
-it has not been migrated to handle; no backend may silently skip a fill call.
+Every backend keeps a hard failure when it meets a `SubModule`. As of S5 none
+is an "unsupported feature" refusal — every backend is migrated, so a surviving
+sub-module is an internal error. `backends::unsupported_sub_modules_message`
+therefore has no callers left; it is kept for the next backend to be added.
+`crates/compiler/tests/lifecycle_leak_guard.rs` covers all seven textual
+backends with no skip path.
 
 ### 5.9.1 Nested emission contract for `cpp` and `c`
 
@@ -904,10 +912,42 @@ Split in two, because `cpp`/`c` now carry the full nested-class emitter:
 Both sub-phases must keep every S4 fixture passing under `--table-init const`
 as well; the two modes are gated together from S4 onwards.
 
-### S5 — Flat backends
+### S5 — Flat backends — done 2026-08-06
 
-`wasm`, `interp`, `cranelift`. Gate: interpreter and JIT numeric outputs match
-the `cpp` output of the same program for every S2 fixture.
+`wasm`, `interp`, `cranelift`, all flattened with `MergedStructFields`. Each
+keeps its table in `static_decls` rather than promoting it to a struct field,
+because each already has the right sharing semantics there: interpreter static
+storage is per instance (`class_init` runs the static-init block on the
+instance's own executor), while WASM linear memory and a Cranelift JIT data
+object are shared exactly as C++'s file-scope array is.
+
+Gate met: 93/93 on all three impulse lanes under `--table-init runtime` and
+93/93 under `const`, with `subcontainer1` — excluded from every lane as
+`KNOWN_FAIL_all` — matching the C++ oracle on all three.
+
+Four things this phase turned up that the plan had not anticipated:
+
+1. **`classInit` dropped its `sample_rate` in the flat runtimes.** `wasm`
+   hardcoded an empty `classInit` body, and both the interpreter and Cranelift
+   runtimes ignored the argument. That is survivable only while no generator
+   needs the sample rate; `subcontainer1.dsp` does, and filled its table from 0,
+   reading back 1 (`fmax(1, 0)`). The C++ interpreter has the same hole and can
+   afford it, never having had a generator to feed.
+2. **`StoreTable(kStatic)` was in no flat backend's lowering subset.** A static
+   table is addressed absolutely (WASM) or through its own `GlobalValue`
+   (Cranelift), not at an offset from `dsp`, so each needed a case mirroring its
+   existing `LoadTable(kStatic)`. Without it no generator could write the table
+   it exists to fill.
+3. **Silent fallbacks hide exactly this class of bug.** WASM's body emitter
+   falls back to an empty function when lowering fails, so gap (2) first
+   presented as all-zero output rather than a diagnostic. Adding the
+   error-propagating probe `compute` already had is what turned it into one.
+4. **`--table-init` reached neither JIT backend.** Both FFI factories build
+   their compiler from `parse_ffi_compile_args`, which had no such option, so
+   the flag was accepted and dropped — a gate run "in runtime mode" was really
+   re-testing `const`. The first cranelift 93/93 measured in this phase was
+   exactly that false green. The option now lives in the shared
+   `FfiCompileArgs`.
 
 ### S6 — Vector path
 
