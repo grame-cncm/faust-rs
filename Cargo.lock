@@ -539,6 +539,7 @@ dependencies = [
  "box-ffi",
  "cranelift-ffi",
  "interp-ffi",
+ "mimalloc",
  "signal-ffi",
 ]
 

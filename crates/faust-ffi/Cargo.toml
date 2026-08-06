@@ -17,3 +17,12 @@ interp_ffi = { package = "interp-ffi", path = "../interp-ffi" }
 cranelift_ffi = { package = "cranelift-ffi", path = "../cranelift-ffi", default-features = false }
 box_ffi = { package = "box-ffi", path = "../box-ffi", default-features = false }
 signal_ffi = { package = "signal-ffi", path = "../signal-ffi", default-features = false }
+
+# `faust-ffi` is a cdylib/staticlib — the final artifact for its Rust code, not
+# an rlib whose consumer picks the allocator — so selecting one here is the
+# library's own choice rather than an imposition. Sound because the FFI memory
+# contract never crosses allocators: every pointer handed to a host is
+# allocated by `CString::into_raw` and freed by `CString::from_raw` through the
+# exported `freeCMemory`, and nothing in the crate frees host memory.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc = "0.1.52"
