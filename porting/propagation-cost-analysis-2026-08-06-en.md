@@ -242,8 +242,32 @@ the allocator is scoped to the binary on purpose — `compiler` does not carry i
 as an ordinary dependency, since a library must not impose an allocator on its
 consumers — so every FFI embedder still pays the platform allocator in full.
 
-The follow-up with the evidence already in hand: **`SmallVec<[SigId; 2]>` for
-propagation results** would remove ~98 % of these allocations outright rather
-than making them cheaper, and would help every consumer rather than only the
-CLI. It is a type change across the propagation signatures, so it needs its own
-pass; §8.1's distribution is the measurement that justifies the inline capacity.
+### 8.4 `SmallVec` was tried and is a pessimization
+
+The obvious follow-up — `SmallVec<[SigId; 2]>` for propagation results, removing
+~98 % of the allocations outright and helping every consumer rather than only
+the CLI — was implemented and measured. It is **slower**, in both allocators:
+
+| result type | system allocator | `mimalloc` |
+|---|---|---|
+| `Vec<SigId>` | 10.7–11.4 s | **5.42 s** |
+| `SmallVec<[SigId; 2]>` | **15.3 s** | 5.50 s |
+
+Same build, same DSP, byte-identical output. The inline capacity was chosen on
+evidence — `SmallVec<[SigId; 2]>` is 24 bytes, exactly `Vec<SigId>`'s size, so
+covering 98 % of results inline costs nothing in footprint — and the choice was
+not the problem.
+
+The problem is that these values are *moved* far more often than they are
+allocated. Thirty million results are constructed, returned through several
+frames, and dropped; a `SmallVec` move and drop must branch on the
+inline-versus-spilled discriminant where a `Vec` move is an unconditional
+three-word copy, and `with_capacity(n)` for `n > 2` spills immediately and pays
+the overhead on top of the allocation it did not avoid. Both allocators already
+have fast paths for 4-byte allocations, so what was saved was small and what
+was added was paid 30 million times.
+
+**The allocation count is therefore not the lever it appears to be.** What
+`mimalloc` buys is not fewer allocations but cheaper ones, and that is
+apparently most of what was available. A structural fix would have to reduce
+how many propagation *results* exist at all, not how each one is stored.
