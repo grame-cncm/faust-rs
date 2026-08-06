@@ -1290,9 +1290,10 @@ fn emit_sub_modules(
             name,
             elem_type,
             dsp_struct,
+            static_decls,
+            globals,
             functions,
             sub_modules: nested,
-            ..
         } = match_fir(store, item)
         else {
             return Err(CodegenError::new(
@@ -1304,6 +1305,12 @@ fn emit_sub_modules(
         emit_sub_modules(store, out, options, class_name, nested)?;
 
         let _ = writeln!(out, "class {name} {{");
+        // A generator's own constants — the `…Wave0` array a `waveform`
+        // generator reads from — are class statics, which is how its body
+        // addresses them (`mydspSIG0.imydspSIG0Wave0`). Skipping them left the
+        // fill referencing a property the class does not declare.
+        emit_static_tables(store, out, options, static_decls)?;
+        emit_static_tables(store, out, options, globals)?;
         if let FirMatch::Block(fields) = match_fir(store, dsp_struct) {
             for field in fields {
                 if let FirMatch::DeclareVar { name, typ, .. } = match_fir(store, field) {

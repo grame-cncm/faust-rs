@@ -18,7 +18,7 @@ const MAX_CHAN = 64;
 const MAX_SOUNDFILE_PARTS = 256;
 
 function usage() {
-  console.error("usage: impulsewasm.js <file.dsp> [-n <frames>] [-I <dir>]... [-single|-double] [-vec [-vs <n>] [-lv <n>]] [-ss <n>]");
+  console.error("usage: impulsewasm.js <file.dsp> [-n <frames>] [-I <dir>]... [-single|-double] [-vec [-vs <n>] [-lv <n>]] [-ss <n>] [--table-init const|runtime]");
 }
 
 function parseArgs(argv) {
@@ -45,7 +45,7 @@ function parseArgs(argv) {
       doublePrecision = false;
     } else if (arg === "-vec") {
       compilerArgs.push("-vec");
-    } else if (arg === "-vs" || arg === "-lv" || arg === "-ss" || arg === "--scheduling-strategy") {
+    } else if (arg === "-vs" || arg === "-lv" || arg === "-ss" || arg === "--scheduling-strategy" || arg === "--table-init") {
       i += 1;
       if (i >= argv.length) throw new Error(`${arg} requires a value`);
       if ((arg === "-ss" || arg === "--scheduling-strategy") && !/^\d+$/.test(argv[i])) {

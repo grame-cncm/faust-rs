@@ -301,6 +301,33 @@ pub fn generate_wasm_module_with_context(
     options: &WasmOptions,
     json_context: &WasmJsonContext,
 ) -> Result<WasmModule, WasmBackendError> {
+    // WASM has no nested container: one linear memory, one flat function list.
+    // A table generator is therefore inlined with its state merged into the
+    // DSP's own fields, which is what upstream does for this backend
+    // (`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`
+    // §5.9). The table stays in `static_decls`: static memory is shared by
+    // every instance here exactly as C++'s file-scope array is, so `classInit`
+    // fills it once.
+    let flattened = if fir::subcontainer::has_sub_modules(store, module) {
+        let (owned, root) = fir::subcontainer::flatten_sub_modules_owned(
+            store,
+            module,
+            fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
+        )
+        .map_err(|err| {
+            WasmBackendError::new(
+                WasmBackendErrorCode::UnsupportedFirNode,
+                format!("flattening generated tables failed: {err}"),
+            )
+        })?;
+        Some((owned, root))
+    } else {
+        None
+    };
+    let (store, module) = flattened
+        .as_ref()
+        .map_or((store, module), |(s, m)| (s, *m));
+
     let FirMatch::Module {
         num_inputs,
         num_outputs,
@@ -318,11 +345,16 @@ pub fn generate_wasm_module_with_context(
         ));
     };
 
+    // Flattening removed them; a survivor is an internal error, and must not
+    // reach the output — a table declared and never filled reads as zeros.
     let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
     if !sub_module_names.is_empty() {
         return Err(WasmBackendError::new(
             WasmBackendErrorCode::UnsupportedFirNode,
-            crate::backends::unsupported_sub_modules_message("wasm", &sub_module_names),
+            format!(
+                "sub-modules survived flattening ({}); this is an internal error",
+                sub_module_names.join(", ")
+            ),
         ));
     }
 
@@ -348,6 +380,7 @@ pub fn generate_wasm_module_with_context(
     let compute_body = find_function_body(store, &function_items, "compute");
     let instance_constants_body = find_function_body(store, &function_items, "instanceConstants");
     let instance_clear_body = find_function_body(store, &function_items, "instanceClear");
+    let static_init_body = find_function_body(store, &function_items, "staticInit");
     let instance_reset_ui_body =
         find_function_body(store, &function_items, "instanceResetUserInterface");
     let foreign_fun_imports = collect_foreign_fun_imports(store, globals, options)?;
@@ -387,6 +420,7 @@ pub fn generate_wasm_module_with_context(
             compute_body,
             instance_constants_body,
             instance_clear_body,
+            static_init_body,
             instance_reset_ui_body,
         ],
         &foreign_fun_imports,
@@ -394,6 +428,12 @@ pub fn generate_wasm_module_with_context(
     )?;
     if let Some(body) = compute_body {
         let _ = lower_compute_subset(store, body, &memory_layout, &imports, options)?;
+    }
+    // Same probe for `staticInit`: the body emitter falls back to an empty
+    // function when lowering fails, which for a generated table means the
+    // table is declared and never filled. Surface the error here instead.
+    if let Some(body) = static_init_body {
+        let _ = lower_instance_constants_subset(store, body, &memory_layout, &imports, options)?;
     }
     let imported_function_count = imports.len() as u32;
 
@@ -531,6 +571,7 @@ pub fn generate_wasm_module_with_context(
             compute_body,
             instance_constants_body,
             instance_clear_body,
+            static_init_body,
             instance_reset_ui_body,
             options,
         ));
@@ -672,12 +713,25 @@ fn scaffold_function_body(
     compute_body: Option<FirId>,
     instance_constants_body: Option<FirId>,
     instance_clear_body: Option<FirId>,
+    static_init_body: Option<FirId>,
     instance_reset_ui_body: Option<FirId>,
     options: &WasmOptions,
 ) -> Function {
     let mut function = Function::new(Vec::new());
     match func {
-        WasmFunc::ClassInit => {}
+        WasmFunc::ClassInit => {
+            // `classInit(dsp, sample_rate)` shares the `instanceConstants` ABI,
+            // so the generator's inlined fill loop lowers with the same
+            // two-parameter frame. Leaving this empty — as it was before the
+            // generated-table port — means a runtime-filled table is declared
+            // in linear memory and never written, and every read returns zero.
+            if let Some(body) = static_init_body
+                && let Ok(lowered) =
+                    lower_instance_constants_subset(store, body, memory_layout, imports, options)
+            {
+                return lowered;
+            }
+        }
         WasmFunc::Compute => {
             if let Some(body) = compute_body
                 && let Ok(lowered) =
@@ -1155,6 +1209,12 @@ impl ComputeSubsetLowerer<'_> {
                 index,
                 value,
             } => self.lower_store_table_struct(&name, index, value, function),
+            FirMatch::StoreTable {
+                name,
+                access: AccessType::Static,
+                index,
+                value,
+            } => self.lower_store_table_static(&name, index, value, function),
             FirMatch::StoreVar {
                 name,
                 access: AccessType::Stack | AccessType::Loop,
@@ -1437,6 +1497,36 @@ impl ComputeSubsetLowerer<'_> {
             WasmBackendError::new(
                 WasmBackendErrorCode::UnsupportedFirNode,
                 format!("missing value type for struct table store `{name}`"),
+            )
+        })?;
+        self.emit_cast_if_needed(&value_type, field_val_type, function)?;
+        function.instruction(&store_instruction_for_valtype(field_val_type)?);
+        Ok(())
+    }
+
+    /// Stores one element of a static table.
+    ///
+    /// A static table sits at an absolute address in linear memory rather than
+    /// at an offset from the `dsp` pointer, so — unlike the struct form — no
+    /// base is pushed. This mirrors the `LoadTable(kStatic)` case; it exists so
+    /// a generated table's fill loop can write the table it was built to fill.
+    fn lower_store_table_static(
+        &mut self,
+        name: &str,
+        index: FirId,
+        value: FirId,
+        function: &mut Function,
+    ) -> Result<(), WasmBackendError> {
+        let field = self.struct_field(name)?.clone();
+        let field_val_type = wasm_val_type_for_field(&field);
+        function.instruction(&Instruction::I32Const(field.offset as i32));
+        self.lower_index_offset(index, &field_fir_type(&field, self.options), function)?;
+        function.instruction(&Instruction::I32Add);
+        self.lower_expr(value, function)?;
+        let value_type = self.store.value_type(value).ok_or_else(|| {
+            WasmBackendError::new(
+                WasmBackendErrorCode::UnsupportedFirNode,
+                format!("missing value type for static table store `{name}`"),
             )
         })?;
         self.emit_cast_if_needed(&value_type, field_val_type, function)?;

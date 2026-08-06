@@ -44,7 +44,7 @@ function parseArgs(argv) {
       i += 1;
       if (i >= argv.length) throw new Error(`${arg} requires a value`);
       compilerArgs.push(arg, argv[i]);
-    } else if (arg === "-vs" || arg === "-lv" || arg === "-ss" || arg === "--scheduling-strategy") {
+    } else if (arg === "-vs" || arg === "-lv" || arg === "-ss" || arg === "--scheduling-strategy" || arg === "--table-init") {
       i += 1;
       if (i >= argv.length) throw new Error(`${arg} requires a value`);
       if ((arg === "-ss" || arg === "--scheduling-strategy") && !/^\d+$/.test(argv[i])) {

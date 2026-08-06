@@ -185,23 +185,43 @@ impl WasmMemoryLayout {
                     })?;
                 }
                 // A runtime-filled generated table reaches the layout as a
-                // `Static` array declaration. That is not an invariant
-                // violation, it is a backend that has not been migrated yet
-                // (plan phase S5), so it gets the deliberate refusal rather
-                // than the internal-error diagnostic.
+                // `Static` array declaration: same placement as a constant
+                // static table, but with no data segment behind it — the
+                // generator's fill loop writes the bytes during `classInit`.
                 FirMatch::DeclareVar {
                     name,
-                    typ: FirType::Array(..),
+                    typ: FirType::Array(elem_type, len),
                     access: AccessType::Static,
                     ..
                 } => {
-                    return Err(WasmBackendError::new(
-                        WasmBackendErrorCode::UnsupportedFirNode,
-                        crate::backends::unsupported_sub_modules_message(
-                            "wasm",
-                            std::slice::from_ref(&name),
-                        ),
-                    ));
+                    let (val_type, elem_size) = fir_type_storage(*elem_type, audio_slot)?;
+                    let len = u32::try_from(len).map_err(|_| {
+                        WasmBackendError::new(
+                            WasmBackendErrorCode::MemoryLayoutOverflow,
+                            "WASM generated table length does not fit in u32",
+                        )
+                    })?;
+                    let size = elem_size.checked_mul(len).ok_or_else(|| {
+                        WasmBackendError::new(
+                            WasmBackendErrorCode::MemoryLayoutOverflow,
+                            "WASM generated table byte size overflow",
+                        )
+                    })?;
+                    let offset = align_up(runtime_offset, elem_size);
+                    field_offsets.insert(
+                        name,
+                        FieldLayout {
+                            offset,
+                            typ: val_type,
+                            size,
+                        },
+                    );
+                    runtime_offset = offset.checked_add(size).ok_or_else(|| {
+                        WasmBackendError::new(
+                            WasmBackendErrorCode::MemoryLayoutOverflow,
+                            "WASM runtime layout size overflow while placing generated table",
+                        )
+                    })?;
                 }
                 FirMatch::DeclareVar { access, .. }
                     if access != AccessType::Struct && access != AccessType::Global =>
