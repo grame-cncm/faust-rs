@@ -130,10 +130,23 @@ impl<'a, R: FbcReal> FbcDspInstance<'a, R> {
 
     /// Executes the static init block.
     ///
+    /// The sample rate is published to the heap before the block runs.
+    /// `classInit` takes a `sample_rate` in every backend, and a generated
+    /// table whose content depends on it reads that argument — the C++ output
+    /// forwards it as `sig0->instanceInitmydspSIG0(sample_rate)`. Here a
+    /// `sample_rate` function argument compiles to a load of the `fSampleRate`
+    /// heap slot, which otherwise only `instanceConstants` writes, and that
+    /// runs afterwards; `subcontainer1.dsp` then fills its table from 0 and
+    /// reads back 1 (`fmax(1, 0)`) instead of the sample rate.
+    ///
+    /// This departs from the C++ interpreter, whose `classInit` ignores its
+    /// argument — it can afford to because it never had a generator to feed.
+    ///
     /// # Source provenance (C++)
     /// - `interpreter_dsp_aux::classInit()` in `interpreter_dsp_aux.hh`
     ///   (lines 570–584).
-    pub fn class_init(&mut self, _sample_rate: i32) {
+    pub fn class_init(&mut self, sample_rate: i32) {
+        self.executor.int_heap[self.factory.sr_offset as usize] = sample_rate;
         self.executor
             .execute_block(&self.factory.arena, self.factory.static_init_block);
     }

@@ -479,9 +479,22 @@ pub unsafe extern "C" fn computeCInterpreterDSPInstance(
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
 /// Execute the static init block (classInit equivalent).
-unsafe fn class_init_instance(dsp: *mut InterpreterDspInstance, _sample_rate: c_int) {
+///
+/// The sample rate is published to the heap first. `classInit` takes a
+/// `sample_rate` in every backend, and a generated table whose content depends
+/// on it reads that argument: the C++ output forwards it as
+/// `sig0->instanceInitmydspSIG0(sample_rate)`. In the interpreter a
+/// `sample_rate` function argument is compiled to a load of the `fSampleRate`
+/// heap slot, so without this store the generator fills its table from a slot
+/// that only `instanceConstants` writes — and that runs afterwards.
+/// `subcontainer1.dsp` then reads 1 (`fmax(1, 0)`) instead of the sample rate.
+unsafe fn class_init_instance(dsp: *mut InterpreterDspInstance, sample_rate: c_int) {
     unsafe {
         let factory = &(*(*dsp).factory).inner;
+        let sr_off = factory.sr_offset() as usize;
+        if let Some(slot) = (*dsp).executor.int_heap_mut().get_mut(sr_off) {
+            *slot = sample_rate;
+        }
         let block = factory.static_init_block();
         factory.execute_block_on(&mut (*dsp).executor, block);
     }

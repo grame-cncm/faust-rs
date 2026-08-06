@@ -35,6 +35,7 @@ use codegen::backends::interp::{
 };
 use compiler::{
     Compiler, ComputeMode, FirVerifyOptions, RealType, SchedulingStrategy, SignalFirLane,
+    TableInitMode,
 };
 use fir::{FirId, FirStore};
 
@@ -54,6 +55,7 @@ struct Options {
     import_dirs: Vec<PathBuf>,
     compute_mode: ComputeMode,
     scheduling_strategy: SchedulingStrategy,
+    table_init: TableInitMode,
 }
 
 fn main() -> ExitCode {
@@ -104,6 +106,7 @@ fn real_main(options: Options) -> Result<String, String> {
         .with_real_type(real_type)
         .with_compute_mode(options.compute_mode)
         .with_scheduling_strategy(options.scheduling_strategy)
+        .with_table_init_mode(options.table_init)
         .with_fir_verify_options(FirVerifyOptions {
             enabled: true,
             strict: false,
@@ -170,6 +173,28 @@ struct CliArgs {
     /// FIR scheduling strategy selector.
     #[arg(long = "scheduling-strategy", default_value_t = 0)]
     scheduling_strategy: u32,
+
+    /// How a `rdtable`/`rwtable` initialization signal is computed:
+    /// `const` folds it at compile time, `runtime` emits a generator
+    /// sub-module that fills the table at initialization.
+    #[arg(long = "table-init", value_name = "MODE", default_value = "const")]
+    table_init: TableInitArg,
+}
+
+/// CLI spelling of [`TableInitMode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum TableInitArg {
+    Const,
+    Runtime,
+}
+
+impl From<TableInitArg> for TableInitMode {
+    fn from(value: TableInitArg) -> Self {
+        match value {
+            TableInitArg::Const => Self::Const,
+            TableInitArg::Runtime => Self::Runtime,
+        }
+    }
 }
 
 /// Parses argv after mapping the legacy Faust one-dash spellings to the
@@ -202,6 +227,7 @@ where
         import_dirs: args.import_dirs,
         compute_mode,
         scheduling_strategy: SchedulingStrategy::decode(args.scheduling_strategy),
+        table_init: args.table_init.into(),
     })
 }
 
