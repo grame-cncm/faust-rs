@@ -1,12 +1,13 @@
 # SIGGEN table initialization through generated sub-modules — implementation specification
 
 Date: 2026-08-05
-Status: S0-S5 done. **Every backend is migrated and no backend refuses a
-sub-module any more.** Numerically validated against the C++ oracle, in both
-`--table-init runtime` and the default `const` mode: `cpp`, `c`, `rust`,
-`julia`, `codebox`, `cmajor` (87/87), `interp` (93/93), `wasm` (93/93),
-`cranelift` (93/93), `asc` (93/93). The checked vector path builds the same
-sub-modules (S6). Remaining: S7 (flip the default).
+Status: **complete (S0-S7, 2026-08-06)**. `--table-init runtime` is the default
+on every backend and in both the scalar and checked vector paths. The impulse
+corpus is green everywhere: cpp/c/interp/wasm/cranelift/julia/rust/
+assemblyscript 133/133, cmajor 127/127. `const` remains a permanent supported
+mode, qualified in the same runs at 132/133 with the single expected
+`FRS-SFIR-0004` rejection of §2.3. Vector certification went from 97 certified
+with 1 compile error to 98 certified with 0 errors across all 16 modes.
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -982,13 +983,39 @@ certified mode/DSP pairs across 16 modes — and **98 under `runtime`**, because
 had to be folded. cpp `-vec -lv 0` and `-lv 1` impulse lanes are 93/93 in both
 modes.
 
-### S7 — Default switch and qualification
+### S7 — Default switch and qualification — done 2026-08-06
 
-Flip the default to `runtime`, run the full impulse corpus, corpus qualification
-in all 16 modes, size/cost report, and a `JOURNAL.md` entry in English. The
-`const` mode is qualified in the same run, not dropped: the impulse corpus is
-executed in both modes, with the known `FRS-SFIR-0004` rejections of §2.3
-recorded as the expected `const`-mode outcome rather than as failures.
+The default is `runtime`. `KNOWN_FAIL_all` is empty for the first time in the
+project's life: `subcontainer1.dsp` sat there because its table content depends
+on the sample rate, and every lane now gates the whole 133-DSP corpus.
+
+Impulse corpus under the new default, all green: cpp 133/133, c 133/133,
+interp 133/133, wasm 133/133, cranelift 133/133, julia 133/133, rust 133/133,
+assemblyscript 133/133, cmajor 127/127.
+
+`const` is qualified in the same runs, not dropped: 132/133, the one rejection
+being the expected `FRS-SFIR-0004` on `subcontainer1`. `known.mk` carries
+`TABLE_INIT_CONST_UNFOLDABLE` so a const-mode run records that as its expected
+outcome rather than as a failure, which is what §2.3 asked for.
+
+Vector certification improved rather than merely holding: the 16-mode baseline
+went from 97 certified / 1 compile error to **98 certified / 0 errors**, and
+`vector-coverage-check` retains 1568 mode/DSP pairs (was 1552).
+
+**Size and cost.** Emitted C++, `const` → `runtime`:
+
+| DSP | const | runtime | ratio | compile |
+|---|---|---|---|---|
+| `grain3` | 2 840 039 B | 6 810 B | 417× | 0.17 s → 0.01 s |
+| `table` | 1 505 074 B | 4 358 B | 345× | — |
+| `osc` | 1 420 814 B | 4 202 B | 338× | 0.10 s → 0.03 s |
+| `modulations` | 2 881 838 B | 48 612 B | 59× | 1.19 s → 1.05 s |
+| `table1` | 2 956 B | 4 598 B | 0.6× | — |
+| `waveform2` | 2 329 B | 3 233 B | 0.7× | — |
+
+The last two are the honest other side: for a table of a handful of entries the
+sub-module costs more than the literals it replaces. That is a reason `const`
+stays available, not a reason to keep it as the default.
 
 ## 8. Test plan
 
