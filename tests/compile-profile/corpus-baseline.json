@@ -3,131 +3,131 @@
   "corpus_root": "tests/impulse-tests/dsp",
   "compiled": 133,
   "failed": [],
-  "total_seconds": 13.331996447000003,
+  "total_seconds": 5.741312293000001,
   "stages": [
     {
-      "stage": "evaluation",
-      "seconds": 7.557870123000002,
-      "share_pct": 56.68970999989046
-    },
-    {
       "stage": "signal-fir",
-      "seconds": 2.6926041280000006,
-      "share_pct": 20.196555997477006
+      "seconds": 2.6899355829999987,
+      "share_pct": 46.85227776722158
     },
     {
-      "stage": "parser",
-      "seconds": 2.579518198000001,
-      "share_pct": 19.348326473492648
+      "stage": "evaluation",
+      "seconds": 2.1791176180000003,
+      "share_pct": 37.95504419184535
     },
     {
       "stage": "fir-prepare-normalize",
-      "seconds": 1.986121996000001,
-      "share_pct": 14.897408680655047
+      "seconds": 1.989802591,
+      "share_pct": 34.65762685346403
     },
     {
       "stage": "propagation",
-      "seconds": 0.4182099190000002,
-      "share_pct": 3.1368889172942045
+      "seconds": 0.41745262199999994,
+      "share_pct": 7.27103144187039
+    },
+    {
+      "stage": "parser",
+      "seconds": 0.3727450870000002,
+      "share_pct": 6.492332553560331
     },
     {
       "stage": "fir-lowering",
-      "seconds": 0.23227016800000003,
-      "share_pct": 1.7422009443474311
+      "seconds": 0.22880949999999997,
+      "share_pct": 3.9853170899442647
     },
     {
       "stage": "fir-clock-analysis",
-      "seconds": 0.22829211599999996,
-      "share_pct": 1.7123625625580687
+      "seconds": 0.22450596199999998,
+      "share_pct": 3.9103596972720873
     },
     {
       "stage": "fir-effect-orientation",
-      "seconds": 0.06777946100000001,
-      "share_pct": 0.5083969326683394
+      "seconds": 0.06588833300000002,
+      "share_pct": 1.1476179945886809
     },
     {
       "stage": "fir-verify",
-      "seconds": 0.04806770700000001,
-      "share_pct": 0.3605439529712469
+      "seconds": 0.04715496100000001,
+      "share_pct": 0.8213272261377056
     },
     {
       "stage": "cpp-codegen",
-      "seconds": 0.04560037299999999,
-      "share_pct": 0.3420370923535694
+      "seconds": 0.04461905000000001,
+      "share_pct": 0.7771576901399535
     },
     {
       "stage": "fir-hgraph",
-      "seconds": 0.03036691500000001,
-      "share_pct": 0.22777470066633002
+      "seconds": 0.03083225,
+      "share_pct": 0.5370244366883109
     },
     {
       "stage": "fir-scheduling",
-      "seconds": 0.027043582,
-      "share_pct": 0.202847203774086
+      "seconds": 0.025766624000000002,
+      "share_pct": 0.4487932842708369
     },
     {
       "stage": "arity",
-      "seconds": 0.017528041000000005,
-      "share_pct": 0.13147348988338656
+      "seconds": 0.017707041,
+      "share_pct": 0.30841452435167155
     },
     {
       "stage": "signal-type-validation",
-      "seconds": 0.015947002000000002,
-      "share_pct": 0.1196145083251086
+      "seconds": 0.015232587,
+      "share_pct": 0.2653154230709951
     },
     {
       "stage": "fir-scalar-effects",
-      "seconds": 0.015584670999999996,
-      "share_pct": 0.11689675332539483
+      "seconds": 0.015013591,
+      "share_pct": 0.2615010338020642
     },
     {
       "stage": "box-flatten",
-      "seconds": 0.004017126000000001,
-      "share_pct": 0.03013146617590004
+      "seconds": 0.003855827,
+      "share_pct": 0.06715933227846102
     },
     {
       "stage": "ui-path-check",
-      "seconds": 0.0007015370000000002,
-      "share_pct": 0.005262055107716906
+      "seconds": 0.0006468779999999999,
+      "share_pct": 0.011267075661233323
     },
     {
       "stage": "fir-plan",
-      "seconds": 0.000056953000000000015,
-      "share_pct": 0.00042719033286883084
+      "seconds": 0.00005341600000000003,
+      "share_pct": 0.000930379628802401
     }
   ],
   "slowest": [
     {
-      "dsp": "phaser_flanger",
-      "seconds": 1.4128678319999999
-    },
-    {
-      "dsp": "modulations",
-      "seconds": 1.1238269149999998
-    },
-    {
       "dsp": "spectral_level",
-      "seconds": 0.838533875
+      "seconds": 0.773132293
     },
     {
       "dsp": "reverb_designer",
-      "seconds": 0.7916431669999998
-    },
-    {
-      "dsp": "vcf_wah_pedals",
-      "seconds": 0.684315082
+      "seconds": 0.592384875
     },
     {
       "dsp": "parametric_eq",
-      "seconds": 0.6529689169999999
+      "seconds": 0.508467832
+    },
+    {
+      "dsp": "phaser_flanger",
+      "seconds": 0.481302083
     },
     {
       "dsp": "virtual_analog_oscillators",
-      "seconds": 0.6492584149999999
+      "seconds": 0.457082919
+    },
+    {
+      "dsp": "vcf_wah_pedals",
+      "seconds": 0.42706225
     },
     {
       "dsp": "spectral_tilt",
-      "seconds": 0.604783959
+      "seconds": 0.38558525000000005
+    },
+    {
+      "dsp": "gate_compressor",
+      "seconds": 0.379292124
     }
   ]
 }

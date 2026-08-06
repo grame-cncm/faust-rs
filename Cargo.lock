@@ -842,6 +842,7 @@ dependencies = [
  "diagnostics",
  "lrlex",
  "lrpar",
+ "regex-automata",
  "tlib",
 ]
 
@@ -1461,6 +1462,7 @@ dependencies = [
  "codegen",
  "compiler",
  "fir",
+ "parser",
  "serde",
  "serde_json",
  "sha2",

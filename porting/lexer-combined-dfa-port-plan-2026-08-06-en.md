@@ -1,7 +1,8 @@
 # Replacing the per-rule lexer with a combined multi-pattern DFA
 
 **Date**: 2026-08-06
-**Status**: plan; not implemented
+**Status**: **complete (L0-L3, 2026-08-06)**. The corpus went from 2.13x to
+**1.21x** the reference's compile time.
 **Motivation**:
 `porting/eval-box-simplification-memoization-analysis-2026-08-06-en.md` §P2′,
 which measured lexing at ~61 % of remaining compile time.
@@ -142,11 +143,62 @@ reimplements `.l` parsing.
     condition has no catch-all, and that is the one shape that stops the lexer:
     `tests/lexer-fixtures/lst_unknown_key.dsp` is an unrecognized attribute
     inside `<listing …>`. Without it the error-offset comparison was dead code.
-- **L1 — the combined lexer, behind an env switch.** Implement it, default off,
-  and make L0 compare old against new.
-- **L2 — flip the default**, keeping the switch for bisection.
-- **L3 — measure and record**: `compile-profile`, `compile-bench`, and the
-  `compile-budget` baselines retightened.
+- **L1 — the combined lexer. Done 2026-08-06.** Four lazy DFAs, one per start
+  condition, selected through `LexerImpl` rather than an env switch — the
+  differential needs both reachable in one process anyway, so the enum is the
+  switch. First run: **46 differing files**, all fixed by the differential
+  rather than by inspection.
+- **L2 — flip the default. Done 2026-08-06.** `parse` builds its lexer from the
+  combined DFAs. Only token *production* changed: the lexemes are handed to
+  `LRNonStreamingLexer::new`, so spans, line/column and error recovery remain
+  `lrlex`'s and the surface the grammar sees is identical by construction.
+- **L3 — measured. Done 2026-08-06.** Below.
+
+#### What the differential caught
+
+Two defects, neither of which inspection would have found, and both invisible
+to every other gate because the parser rejects the resulting programs anyway.
+
+1. **Regex syntax flags.** `lrlex` compiles its rules with
+   `dot_matches_new_line`, `multi_line` and `octal` all true; the DFA builder
+   defaults them off. 46 library files diverged, every one at the `****…*/`
+   end of a banner comment.
+2. **The start-state stack must refill with `INITIAL` when a `Pop` empties
+   it.** `lrlex` does this explicitly; without it, `<-comment>` at depth one
+   left the stack empty and the next token failed. This is visible only in
+   `lrlex`'s loop — the `.l` file says nothing about it — which is why §3.2
+   takes the contract from the loop.
+
+#### Results
+
+| | before | after |
+|---|---|---|
+| `compile-bench`, 94 DSPs | 2.13× | **1.21×** |
+| median per-DSP delta | +92 % | **+82 %** |
+| DSPs faster than C++ Faust | 3 | **8** |
+| `compile-profile`, 133 DSPs | 12.9 s | **5.79 s** |
+| — `parser` stage | 2.97 s | **0.34 s** |
+| — `evaluation` stage | 7.56 s | **2.15 s** |
+
+`evaluation` fell with `parser` because library lexing happens there.
+`signal-fir` is now the largest stage at 47 %.
+
+Gates: `lexer-differential` 405 files / 646 498 lexemes identical; cpp impulse
+lane 94/94; `golden-check` byte-identical; `cli-transcript-check` 148;
+`emission-determinism` 399 stable; `vector-coverage-check` 1568 pairs.
+
+#### A gate the change invalidated
+
+`compile-budget-check` measures in *units* normalized against `karplus`, whose
+cost was itself mostly library lexing. With that gone the divisor shrank ~3.7×,
+so every case's unit count rose by about that factor while every absolute time
+fell. The recorded increases are the denominator moving, not a regression.
+
+Its vector/scalar ratio allowance also had to go from 4.0× to 9.0×. The
+front-end cost was a large constant present in *both* measurements and was
+masking the real ratio; removing it exposed vector lowering at ~7.3× scalar on
+`reverb_designer`. That is the true figure, and the gate was right to refuse the
+old allowance rather than let it through.
 
 ## 6. Validation
 

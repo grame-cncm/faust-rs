@@ -1471,8 +1471,285 @@ pub fn lex_stream(input: &str, impl_: LexerImpl) -> LexOutcome {
         // exists. A harness that first runs against a real change cannot
         // distinguish "the change is correct" from "the harness compares
         // nothing".
-        LexerImpl::PerRule | LexerImpl::CombinedDfa => lex_stream_per_rule(input),
+        LexerImpl::PerRule => lex_stream_per_rule(input),
+        LexerImpl::CombinedDfa => lex_stream_combined(input),
     }
+}
+
+/// The combined multi-pattern automata, one per start condition.
+///
+/// Built once per process behind a `OnceLock`, like [`shared_lexerdef`].
+struct CombinedDfas {
+    /// Indexed by start-state id.
+    states: Vec<StateDfa>,
+    /// Token id for each rule index, `None` for rules that skip.
+    tok_ids: Vec<Option<u32>>,
+    /// `(target_state_id, operation)` for each rule index.
+    targets: Vec<Option<(usize, lrlex::StartStateOperation)>>,
+}
+
+struct StateDfa {
+    dfa: regex_automata::hybrid::dfa::DFA,
+    /// Local `PatternID` to global rule index. Ascending, so the DFA's
+    /// lowest-pattern-id tie-break is `lrlex`'s earliest-rule tie-break.
+    rules: Vec<usize>,
+}
+
+/// Start conditions this implementation is known to handle.
+///
+/// `lrlex` does not expose `StartState::exclusive`, so eligibility for rules
+/// with no explicit start states — which match only in *non-exclusive*
+/// conditions — cannot be read from the API. It is derived here from the one
+/// fact that is checked rather than assumed: `INITIAL` is inclusive and the
+/// `%x` conditions are exclusive. If `faustlexer.l` ever declares a `%s`
+/// (inclusive) condition, this list stops matching and the build fails loudly
+/// instead of silently making that condition exclusive.
+const KNOWN_START_CONDITIONS: [&str; 4] = ["INITIAL", "comment", "doc", "lst"];
+
+fn shared_combined_dfas() -> &'static CombinedDfas {
+    static DFAS: std::sync::OnceLock<CombinedDfas> = std::sync::OnceLock::new();
+    DFAS.get_or_init(build_combined_dfas)
+}
+
+fn build_combined_dfas() -> CombinedDfas {
+    use lrlex::LexerDef as _;
+    use regex_automata::{MatchKind, hybrid::dfa::DFA};
+
+    let def = shared_lexerdef();
+
+    let names: Vec<&str> = def.iter_start_states().map(lrlex::StartState::name).collect();
+    assert_eq!(
+        names, KNOWN_START_CONDITIONS,
+        "faustlexer.l declares start conditions this lexer was not written for; \
+         `INITIAL` must be the only inclusive one (see KNOWN_START_CONDITIONS)"
+    );
+
+    let rules: Vec<_> = def.iter_rules().collect();
+
+    // Name -> token id, recovered from the grammar. `Rule::tok_id` is not part
+    // of lrlex's public API, but a named rule's id *is* the grammar's token
+    // index — that is how `lrpar` matches the two — so inverting `token_epp`
+    // recovers the same mapping rather than inventing a parallel one.
+    //
+    // `token_epp` panics past the last token instead of returning `None`, and
+    // the grammar exports no count, so the scan stops as soon as every rule
+    // name has been resolved. A build where some named rule has no grammar
+    // token cannot lex at all under `lrlex` either — it would set that rule's
+    // id to `None` — so the assertion below is the honest failure for it.
+    let mut wanted: std::collections::HashSet<&str> =
+        rules.iter().filter_map(|r| r.name()).collect();
+    let mut tok_id_of_name: std::collections::HashMap<&str, u32> =
+        std::collections::HashMap::new();
+    let mut idx = 0u32;
+    while !wanted.is_empty() {
+        let name = faustparser_y::token_epp(cfgrammar::TIdx(idx));
+        if let Some(name) = name {
+            wanted.remove(name);
+            tok_id_of_name.insert(name, idx);
+        }
+        idx += 1;
+    }
+    assert!(
+        wanted.is_empty(),
+        "lexer rules name tokens the grammar does not define: {wanted:?}"
+    );
+    let tok_ids = rules
+        .iter()
+        .map(|r| r.name().and_then(|n| tok_id_of_name.get(n).copied()))
+        .collect();
+    let targets = rules.iter().map(|r| r.target_state()).collect();
+
+    let states = (0..names.len())
+        .map(|state_id| {
+            let exclusive = state_id != 0;
+            let mut local = Vec::new();
+            let mut pats = Vec::new();
+            for (ridx, r) in rules.iter().enumerate() {
+                let eligible = if r.start_states().is_empty() {
+                    !exclusive
+                } else {
+                    r.start_states().contains(&state_id)
+                };
+                if eligible {
+                    local.push(ridx);
+                    pats.push(format!("(?:{})", r.re_str()));
+                }
+            }
+            // The syntax flags must match the ones `lrlex` compiles its rules
+            // with (`RegexOptions` in the generated lexer): `.` spans newlines,
+            // `^`/`$` are per-line, and `\0…` is octal. Leaving them at the
+            // defaults changed which rule matched at comment ends and made 46
+            // library files diverge.
+            let dfa = DFA::builder()
+                .configure(DFA::config().match_kind(MatchKind::All))
+                .syntax(
+                    regex_automata::util::syntax::Config::new()
+                        .dot_matches_new_line(true)
+                        .multi_line(true)
+                        .octal(true),
+                )
+                .build_many(&pats)
+                .expect("faustlexer.l rules must compile into a multi-pattern DFA");
+            StateDfa { dfa, rules: local }
+        })
+        .collect();
+
+    CombinedDfas {
+        states,
+        tok_ids,
+        targets,
+    }
+}
+
+/// Lexes with one automaton per start condition.
+///
+/// Mirrors `lrlex`'s loop exactly — see
+/// `porting/lexer-combined-dfa-port-plan-2026-08-06-en.md` §3.2 — with the
+/// per-rule scan replaced by a single anchored search. `MatchKind::All` gives
+/// the longest match and, on a tie, the lowest pattern id; patterns are added
+/// in rule order, so that is `lrlex`'s "earliest rule wins".
+fn lex_stream_combined(input: &str) -> LexOutcome {
+    use lrlex::StartStateOperation;
+    use regex_automata::{Anchored, Input};
+
+    let dfas = shared_combined_dfas();
+    let mut caches: Vec<_> = dfas.states.iter().map(|s| s.dfa.create_cache()).collect();
+    let mut lexemes: Vec<RawLexeme> = Vec::new();
+    // (repeat count, state id), mirroring lrlex's counted stack.
+    let mut stack: Vec<(usize, usize)> = vec![(1, 0)];
+    let mut at = 0usize;
+
+    while at < input.len() {
+        let Some(&(_, state_id)) = stack.last() else {
+            return LexOutcome::Failed {
+                lexemes,
+                error_at: at,
+            };
+        };
+        let sd = &dfas.states[state_id];
+        let probe = Input::new(input).span(at..input.len()).anchored(Anchored::Yes);
+        // A zero-length match is not progress: `lrlex` requires `longest > 0`,
+        // and accepting one here would loop forever. A cache error is a hard
+        // failure, never a quiet fallback to a different match.
+        let hit = match sd.dfa.try_search_fwd(&mut caches[state_id], &probe) {
+            Ok(Some(h)) if h.offset() > at => h,
+            _ => {
+                return LexOutcome::Failed {
+                    lexemes,
+                    error_at: at,
+                };
+            }
+        };
+        let ridx = sd.rules[hit.pattern().as_usize()];
+        let end = hit.offset();
+
+        match dfas.tok_ids[ridx] {
+            Some(tok_id) => lexemes.push(RawLexeme {
+                tok_id,
+                start: at,
+                len: end - at,
+            }),
+            // Unnamed rules skip; a named rule with no token id is an error,
+            // exactly as in `lrlex`.
+            None if shared_lexerdef_rule_is_anonymous(ridx) => {}
+            None => {
+                return LexOutcome::Failed {
+                    lexemes,
+                    error_at: at,
+                };
+            }
+        }
+
+        if let Some((target, op)) = dfas.targets[ridx].as_ref() {
+            let target = *target;
+            if target >= dfas.states.len() {
+                return LexOutcome::Failed {
+                    lexemes,
+                    error_at: at,
+                };
+            }
+            match op {
+                StartStateOperation::ReplaceStack => {
+                    stack.clear();
+                    stack.push((1, target));
+                }
+                StartStateOperation::Push => match stack.last_mut() {
+                    Some((count, s)) if *s == target => *count += 1,
+                    _ => stack.push((1, target)),
+                },
+                StartStateOperation::Pop => match stack.last_mut() {
+                    Some((count, _)) if *count > 1 => *count -= 1,
+                    Some(_) => {
+                        stack.pop();
+                        // `lrlex` refills with INITIAL rather than leaving the
+                        // stack empty, so a `<-comment>` at depth one returns
+                        // to INITIAL instead of failing on the next token.
+                        // Only its loop shows this; the `.l` file does not.
+                        if stack.is_empty() {
+                            stack.push((1, 0));
+                        }
+                    }
+                    None => {
+                        return LexOutcome::Failed {
+                            lexemes,
+                            error_at: at,
+                        };
+                    }
+                },
+            }
+        }
+        at = end;
+    }
+    LexOutcome::Complete(lexemes)
+}
+
+/// Builds the `lrpar` lexer the parser consumes, using the combined DFA.
+///
+/// Only token *production* changes: spans, line/column and error recovery all
+/// stay `lrlex`'s, because the result is handed back to `LRNonStreamingLexer`.
+/// That keeps the surface the grammar sees identical by construction rather
+/// than by reimplementation, and is why `lex_stream`'s differential over the
+/// corpus is sufficient evidence for the whole change.
+fn combined_lexer(input: &str) -> lrlex::LRNonStreamingLexer<'_, '_, DefaultLexerTypes<u32>> {
+    use lrpar::Lexeme as _;
+    let mut out: Vec<Result<lrlex::DefaultLexeme<u32>, lrlex::LRLexError>> = Vec::new();
+    match lex_stream_combined(input) {
+        LexOutcome::Complete(lexemes) => {
+            out.extend(
+                lexemes
+                    .into_iter()
+                    .map(|l| Ok(lrlex::DefaultLexeme::new(l.tok_id, l.start, l.len))),
+            );
+        }
+        LexOutcome::Failed { lexemes, error_at } => {
+            out.extend(
+                lexemes
+                    .into_iter()
+                    .map(|l| Ok(lrlex::DefaultLexeme::new(l.tok_id, l.start, l.len))),
+            );
+            out.push(Err(lrlex::LRLexError::new(cfgrammar::Span::new(
+                error_at, error_at,
+            ))));
+        }
+    }
+    lrlex::LRNonStreamingLexer::new(
+        input,
+        out,
+        {
+            let mut cache = cfgrammar::NewlineCache::new();
+            cache.feed(input);
+            cache
+        },
+    )
+}
+
+/// Whether rule `ridx` produces no lexeme (its `.l` action is `;`).
+fn shared_lexerdef_rule_is_anonymous(ridx: usize) -> bool {
+    use lrlex::LexerDef as _;
+    shared_lexerdef()
+        .iter_rules()
+        .nth(ridx)
+        .is_some_and(|r| r.name().is_none())
 }
 
 fn lex_stream_per_rule(input: &str) -> LexOutcome {
@@ -2107,8 +2384,7 @@ fn parse_program_with_origins_and_precision(
     source_kind: SourceKind,
 ) -> ParseOutput {
     let direct_source = source_origins.is_none();
-    let lexerdef = shared_lexerdef();
-    let lexer = lexerdef.lexer(input);
+    let lexer = combined_lexer(input);
     let mut parse_state = ParseState::new_with_origins_and_metadata(
         source_file,
         input,

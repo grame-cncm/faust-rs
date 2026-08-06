@@ -14,6 +14,7 @@ diagnostics = { path = "../diagnostics" }
 cfgrammar = "0.13.10"
 lrlex = "0.13.10"
 lrpar = "0.13.10"
+regex-automata = "0.4"
 tlib = { path = "../tlib" }
 
 [dev-dependencies]

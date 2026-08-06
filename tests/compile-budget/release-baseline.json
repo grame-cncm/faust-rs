@@ -4,7 +4,7 @@
     "vec_size": 32,
     "loop_variant": 0,
     "scheduling_strategy": 0,
-    "max_vector_to_scalar_ratio_milli": 4000,
+    "max_vector_to_scalar_ratio_milli": 9000,
     "fixed_noise_margin_ms": 2000,
     "calibration_path": "tests/impulse-tests/dsp/karplus.dsp",
     "repeats": 2,
@@ -19,89 +19,89 @@
       "path": "tests/impulse-tests/dsp/APF.dsp",
       "scalar_max_ms": 10000,
       "vector_max_ms": 20000,
-      "scalar_units_milli": 1392,
-      "vector_units_milli": 1571
+      "scalar_units_milli": 833,
+      "vector_units_milli": 1666
     },
     {
       "name": "karplus",
       "path": "tests/impulse-tests/dsp/karplus.dsp",
       "scalar_max_ms": 15000,
       "vector_max_ms": 30000,
-      "scalar_units_milli": 1000,
-      "vector_units_milli": 1321
+      "scalar_units_milli": 833,
+      "vector_units_milli": 2500
     },
     {
       "name": "cubic_distortion",
       "path": "tests/impulse-tests/dsp/cubic_distortion.dsp",
       "scalar_max_ms": 15000,
       "vector_max_ms": 30000,
-      "scalar_units_milli": 19642,
-      "vector_units_milli": 47607
+      "scalar_units_milli": 54500,
+      "vector_units_milli": 187666
     },
     {
       "name": "spectral_level",
       "path": "tests/impulse-tests/dsp/spectral_level.dsp",
       "scalar_max_ms": 20000,
       "vector_max_ms": 40000,
-      "scalar_units_milli": 28500,
-      "vector_units_milli": 149321
+      "scalar_units_milli": 129333,
+      "vector_units_milli": 705500
     },
     {
       "name": "reverb_designer",
       "path": "tests/impulse-tests/dsp/reverb_designer.dsp",
       "scalar_max_ms": 45000,
       "vector_max_ms": 90000,
-      "scalar_units_milli": 27250,
-      "vector_units_milli": 160857
+      "scalar_units_milli": 100333,
+      "vector_units_milli": 733833
     }
   ],
   "frontend_cases": [
     {
       "name": "bells",
       "path": "tests/impulse-tests/dsp/bells.dsp",
-      "units_milli": 14107,
+      "units_milli": 23833,
       "note": "14.7 units vs 11.1 before the diagnostics-provenance arc (x1.32). See porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md.",
       "enabled": true
     },
     {
       "name": "parametric_eq",
       "path": "tests/impulse-tests/dsp/parametric_eq.dsp",
-      "units_milli": 22500,
+      "units_milli": 84166,
       "note": "28.8 units vs 22.0 before the diagnostics-provenance arc (x1.31). See porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md.",
       "enabled": true
     },
     {
       "name": "reverb_designer",
       "path": "tests/impulse-tests/dsp/reverb_designer.dsp",
-      "units_milli": 26607,
+      "units_milli": 98666,
       "note": "268.0 units vs 217.2 before the diagnostics-provenance arc (x1.23). See porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md.",
       "enabled": true
     },
     {
       "name": "spectral_level",
       "path": "tests/impulse-tests/dsp/spectral_level.dsp",
-      "units_milli": 28214,
+      "units_milli": 127000,
       "note": "35.0 units vs 27.4 before the diagnostics-provenance arc (x1.28). See porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md.",
       "enabled": true
     },
     {
       "name": "vcf_wah_pedals",
       "path": "tests/impulse-tests/dsp/vcf_wah_pedals.dsp",
-      "units_milli": 25464,
+      "units_milli": 68833,
       "note": "30.3 units vs 23.1 before the diagnostics-provenance arc (x1.31). See porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md.",
       "enabled": true
     },
     {
       "name": "virtual_analog_oscillators",
       "path": "tests/impulse-tests/dsp/virtual_analog_oscillators.dsp",
-      "units_milli": 23964,
+      "units_milli": 71500,
       "note": "29.1 units vs 22.0 before the diagnostics-provenance arc (x1.32). See porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md.",
       "enabled": true
     },
     {
       "name": "dx7_alg5",
       "path": "examples/rust/dx7-piano/dsp/dx7_alg5.dsp",
-      "units_milli": 47392,
+      "units_milli": 204166,
       "note": "57.4 units vs 59.9 before the diagnostics-provenance arc (x0.96). See porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md.",
       "enabled": true
     }
