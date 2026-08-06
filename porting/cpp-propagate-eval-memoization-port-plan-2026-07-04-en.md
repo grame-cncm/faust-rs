@@ -242,6 +242,14 @@ motivating workload), and 2–3 FAD-heavy files from the repo corpus
 
 ### Phase P1 — propagation-result memo (port of upstream (1a))
 
+> **Measured 2026-08-06 on a case the corpus does not contain: worth up to 24×
+> on the dominant stage.** `virtualAnalogForBrowser.dsp` spends 82 % of its
+> compile time in propagation (10.6 s against the reference's 0.27 s), and the
+> mechanism is exactly this one — C++ propagation cost is flat in the number of
+> uses of a shared argument, faust-rs is linear in it. Two earlier attempts in
+> this repository to bound this phase's value used the corpus and were wrong
+> both times. See `porting/propagation-cost-analysis-2026-08-06-en.md`.
+
 Add to `PropagateMemo`:
 
 ```rust

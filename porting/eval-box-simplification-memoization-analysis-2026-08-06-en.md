@@ -497,9 +497,17 @@ the stage that shares its name. The bound was wrong.
 What replaces it is a direct measurement rather than a better inference. That
 plan's §P2 `liftn` fast path was implemented and measured under P2 here: no
 win, because `liftn` is called under a thousand times per compilation and
-almost always returns at its existing memo. Its §P1 `propagate_in_slot_env`
-memo remains unmeasured; the self-time profile does not show that function
-among the leaders, which is evidence against it but not a measurement of it.
+almost always returns at its existing memo.
+
+**Second correction (2026-08-06, later the same day).** The sentence that stood
+here — "the self-time profile does not show `propagate_in_slot_env` among the
+leaders, which is evidence against it" — was also wrong, and for a new reason:
+that profile was of a *corpus* DSP, and the corpus contains nothing shaped like
+the programs where propagation dominates. On
+`virtualAnalogForBrowser.dsp` (331 lines, 108 widgets) propagation is **82 %**
+of compile time and runs **39× slower than the reference**, against 2.2 % on
+the corpus. That plan's value was never measured on an input that could show
+it. See `porting/propagation-cost-analysis-2026-08-06-en.md`.
 
 ---
 
