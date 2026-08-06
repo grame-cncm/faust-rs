@@ -1,4 +1,4 @@
-#107 Module { num_inputs: 1, num_outputs: 1, name: "control_flow", dsp_struct: TreeId(101), globals: TreeId(103), functions: TreeId(105), static_decls: TreeId(101) }
+#107 Module { num_inputs: 1, num_outputs: 1, name: "control_flow", dsp_struct: TreeId(101), globals: TreeId(103), functions: TreeId(105), static_decls: TreeId(101), sub_modules: TreeId(101) }
   #101 Block([])
   #103 Block([TreeId(5)])
     #5 DeclareVar { name: "fMode", typ: Int32, access: Struct, init: Some(TreeId(3)) }
@@ -57,5 +57,6 @@
                   #41 FunCall { name: "fabs", args: [TreeId(38)], typ: Float64 }
                     #38 Cast { typ: Float64, value: TreeId(26) }
                       #26 LoadTable { name: "input0", access: Stack, index: TreeId(25), typ: FaustFloat }
+  #101 Block([])
   #101 Block([])
 EXIT=0

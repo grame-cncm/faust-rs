@@ -1,4 +1,4 @@
-#89 Module { num_inputs: 1, num_outputs: 1, name: "math_intrinsics", dsp_struct: TreeId(84), globals: TreeId(84), functions: TreeId(86), static_decls: TreeId(84) }
+#89 Module { num_inputs: 1, num_outputs: 1, name: "math_intrinsics", dsp_struct: TreeId(84), globals: TreeId(84), functions: TreeId(86), static_decls: TreeId(84), sub_modules: TreeId(84) }
   #84 Block([])
   #84 Block([])
   #86 Block([TreeId(83)])
@@ -34,5 +34,6 @@
                       #22 Cast { typ: Float64, value: TreeId(20) }
                     #29 FunCall { name: "cos", args: [TreeId(22)], typ: Float64 }
                       #22 Cast { typ: Float64, value: TreeId(20) }
+  #84 Block([])
   #84 Block([])
 EXIT=0

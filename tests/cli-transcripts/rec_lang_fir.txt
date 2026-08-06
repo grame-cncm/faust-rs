@@ -1,4 +1,4 @@
-#157 Module { num_inputs: 1, num_outputs: 1, name: "rec", dsp_struct: TreeId(12), globals: TreeId(13), functions: TreeId(156), static_decls: TreeId(13) }
+#157 Module { num_inputs: 1, num_outputs: 1, name: "rec", dsp_struct: TreeId(12), globals: TreeId(13), functions: TreeId(156), static_decls: TreeId(13), sub_modules: TreeId(13) }
   #12 Block([TreeId(4), TreeId(9)])
     #4 DeclareVar { name: "fSampleRate", typ: Int32, access: Struct, init: None }
     #9 DeclareVar { name: "fRec40", typ: Array(Float32, 4), access: Struct, init: None }
@@ -65,5 +65,6 @@
                     #117 BinOp { op: Sub, lhs: TreeId(116), rhs: TreeId(102), typ: Int32 }
                       #116 LoadVar { name: "jRec1", access: Loop, typ: Int32 }
                       #102 Int32 { value: 1, typ: Int32 }
+  #13 Block([])
   #13 Block([])
 EXIT=0

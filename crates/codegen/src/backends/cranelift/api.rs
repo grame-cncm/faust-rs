@@ -64,9 +64,7 @@ pub fn generate_cranelift_module(
     } else {
         None
     };
-    let (store, module) = flattened
-        .as_ref()
-        .map_or((store, module), |(s, m)| (s, *m));
+    let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     // Flattening removed them; a survivor is an internal error, and must not
     // reach the JIT — a table declared and never filled reads as zeros.
@@ -201,8 +199,7 @@ pub(crate) fn try_generate_cranelift_module(
                 &extern_data_ids,
                 options.double_precision,
             )?;
-            generated_functions_clif
-                .push((format!("{module_name}::staticInit"), static_init_clif));
+            generated_functions_clif.push((format!("{module_name}::staticInit"), static_init_clif));
             entry_addr
         }
         Err(_) => 0,

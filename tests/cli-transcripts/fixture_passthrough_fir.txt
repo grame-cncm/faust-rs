@@ -1,4 +1,4 @@
-#54 Module { num_inputs: 1, num_outputs: 1, name: "passthrough", dsp_struct: TreeId(49), globals: TreeId(49), functions: TreeId(51), static_decls: TreeId(49) }
+#54 Module { num_inputs: 1, num_outputs: 1, name: "passthrough", dsp_struct: TreeId(49), globals: TreeId(49), functions: TreeId(51), static_decls: TreeId(49), sub_modules: TreeId(49) }
   #49 Block([])
   #49 Block([])
   #51 Block([TreeId(48)])
@@ -17,5 +17,6 @@
               #19 LoadVar { name: "i0", access: Loop, typ: Int32 }
               #20 LoadTable { name: "input0", access: Stack, index: TreeId(19), typ: FaustFloat }
                 #19 LoadVar { name: "i0", access: Loop, typ: Int32 }
+  #49 Block([])
   #49 Block([])
 EXIT=0

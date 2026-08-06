@@ -336,7 +336,7 @@ pub struct CliArgs {
     /// emitted source small. `const` evaluates the generator at compile time
     /// and emits a literal initializer list, giving a `const` ROM-able table
     /// but rejecting generators that are not fully determined at compile time.
-    #[arg(long = "table-init", value_enum, default_value_t = TableInitArg::Const)]
+    #[arg(long = "table-init", value_enum, default_value_t = TableInitArg::Runtime)]
     pub table_init: TableInitArg,
     /// Vector mode (`-vec`): restructure `compute()` into an outer chunk loop
     /// so the C compiler can auto-vectorize the inner loops (SIMD).

@@ -324,9 +324,7 @@ pub fn generate_wasm_module_with_context(
     } else {
         None
     };
-    let (store, module) = flattened
-        .as_ref()
-        .map_or((store, module), |(s, m)| (s, *m));
+    let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     let FirMatch::Module {
         num_inputs,

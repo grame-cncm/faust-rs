@@ -21,9 +21,19 @@ fn codebox(source_name: &str, source: &str) -> String {
 }
 
 fn codebox_with(source_name: &str, source: &str, options: &CodeboxOptions) -> String {
+    codebox_with_table_init(source_name, source, options, TableInitMode::default())
+}
+
+fn codebox_with_table_init(
+    source_name: &str,
+    source: &str,
+    options: &CodeboxOptions,
+    table_init: TableInitMode,
+) -> String {
     let compiler = Compiler::new()
         .with_control_rate_mode(ControlRateMode::External)
-        .with_processing_api(ProcessingApi::OneSample);
+        .with_processing_api(ProcessingApi::OneSample)
+        .with_table_init_mode(table_init);
     let fir = compiler
         .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
         .expect("FIR lowering must succeed");
@@ -818,54 +828,89 @@ fn the_facade_forwards_the_test_label_option() {
 /// `DeclareVar` with an array-literal init.
 #[test]
 fn a_read_only_table_is_declared_and_filled() {
-    // Spelled without imports: the harness compiles from a string and has no
-    // library search path. `t` is `ba.time`.
-    let text = codebox(
-        "tbl.dsp",
-        "t = (+(1) ~ _) - 1;\nprocess = rdtable(4, int(t * 2), int(t % 4));",
-    );
-
-    // The table name carries a type prefix (`itbl0_cb`), so the whole
-    // identifier around the `tbl` marker is what matters.
-    let table = text
-        .lines()
-        .find_map(|line| {
-            let marker = line.find("tbl")?;
-            let bytes = line.as_bytes();
-            let mut start = marker;
-            while start > 0
-                && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_')
-            {
-                start -= 1;
-            }
-            let mut end = marker;
-            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
-                end += 1;
-            }
-            Some(line[start..end].to_owned())
-        })
-        .expect("the emitted program must mention a table");
-
-    assert!(
-        text.contains(&format!("@state {table} = new FixedFloatArray(")),
-        "table `{table}` is read but never declared:\n{text}"
-    );
-    for (index, value) in [(0, "0"), (1, "2"), (2, "4"), (3, "6")] {
-        assert!(
-            text.contains(&format!("{table}[{index}] = {value};")),
-            "table `{table}` element {index} is never written:\n{text}"
+    // The property has to hold in both table-init modes, and the two produce
+    // different shapes: `const` folds the content into one literal store per
+    // element, `runtime` emits the generator's fill loop. What must be true of
+    // both is that the table is declared and written inside `dspsetup`, before
+    // any compute call — the defect this test was written for was codebox
+    // reading a table it never declared or initialized.
+    for mode in [TableInitMode::Const, TableInitMode::Runtime] {
+        // Spelled without imports: the harness compiles from a string and has
+        // no library search path. `t` is `ba.time`.
+        let text = codebox_with_table_init(
+            "tbl.dsp",
+            "t = (+(1) ~ _) - 1;\nprocess = rdtable(4, int(t * 2), int(t % 4));",
+            &CodeboxOptions::default(),
+            mode,
         );
+
+        // The table name carries a type prefix (`itbl0_cb`), so the whole
+        // identifier around the `tbl` marker is what matters.
+        let table = text
+            .lines()
+            .find_map(|line| {
+                let marker = line.find("tbl")?;
+                let bytes = line.as_bytes();
+                let mut start = marker;
+                while start > 0
+                    && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_')
+                {
+                    start -= 1;
+                }
+                let mut end = marker;
+                while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                {
+                    end += 1;
+                }
+                Some(line[start..end].to_owned())
+            })
+            .expect("the emitted program must mention a table");
+
+        assert!(
+            text.contains(&format!("@state {table} = new FixedFloatArray(")),
+            "{mode:?}: table `{table}` is read but never declared:\n{text}"
+        );
+
+        let setup = text.find("function dspsetup()").expect("dspsetup");
+        let compute = text.find("function compute(").expect("compute");
+
+        match mode {
+            TableInitMode::Const => {
+                // The folded shape additionally pins the values, which is the
+                // only place the generator's arithmetic is checked directly.
+                for (index, value) in [(0, "0"), (1, "2"), (2, "4"), (3, "6")] {
+                    assert!(
+                        text.contains(&format!("{table}[{index}] = {value};")),
+                        "const: table `{table}` element {index} is never written:\n{text}"
+                    );
+                }
+                let first_fill = text
+                    .find(&format!("{table}[0] ="))
+                    .expect("first element write");
+                assert!(
+                    setup < first_fill && first_fill < compute,
+                    "const: table data must be written inside dspsetup:\n{text}"
+                );
+            }
+            TableInitMode::Runtime => {
+                // The fill loop indexes by its induction variable, so there is
+                // no literal `[0] =` to look for; what must hold is that some
+                // store into the table sits inside `dspsetup`.
+                let fill = text
+                    .find(&format!("{table}["))
+                    .and_then(|_| {
+                        text.match_indices(&format!("{table}["))
+                            .find(|(at, _)| text[*at..].contains("] ="))
+                            .map(|(at, _)| at)
+                    })
+                    .expect("runtime: the fill loop must store into the table");
+                assert!(
+                    setup < fill && fill < compute,
+                    "runtime: the fill must run inside dspsetup:\n{text}"
+                );
+            }
+        }
     }
-    // The fill belongs to dspsetup, before any compute call.
-    let setup = text.find("function dspsetup()").expect("dspsetup");
-    let compute = text.find("function compute(").expect("compute");
-    let first_fill = text
-        .find(&format!("{table}[0] ="))
-        .expect("first element write");
-    assert!(
-        setup < first_fill && first_fill < compute,
-        "table data must be written inside dspsetup:\n{text}"
-    );
 }
 
 /// A literal `waveform` used directly as a signal keeps its own declaration and

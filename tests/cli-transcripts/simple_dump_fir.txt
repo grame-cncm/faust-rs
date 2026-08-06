@@ -1,4 +1,4 @@
-#143 Module { num_inputs: 1, num_outputs: 1, name: "simple", dsp_struct: TreeId(10), globals: TreeId(11), functions: TreeId(142), static_decls: TreeId(11) }
+#143 Module { num_inputs: 1, num_outputs: 1, name: "simple", dsp_struct: TreeId(10), globals: TreeId(11), functions: TreeId(142), static_decls: TreeId(11), sub_modules: TreeId(11) }
   #10 Block([TreeId(4), TreeId(7)])
     #4 DeclareVar { name: "fSampleRate", typ: Int32, access: Struct, init: None }
     #7 DeclareVar { name: "fHslider0", typ: FaustFloat, access: Struct, init: None }
@@ -46,5 +46,6 @@
                   #105 Cast { typ: Float32, value: TreeId(104) }
                     #104 LoadTable { name: "input0", access: Stack, index: TreeId(102), typ: FaustFloat }
                       #102 LoadVar { name: "i0", access: Loop, typ: Int32 }
+  #11 Block([])
   #11 Block([])
 EXIT=0

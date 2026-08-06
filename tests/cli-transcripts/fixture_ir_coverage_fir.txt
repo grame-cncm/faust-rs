@@ -1,4 +1,4 @@
-#137 Module { num_inputs: 1, num_outputs: 1, name: "ir_coverage", dsp_struct: TreeId(127), globals: TreeId(131), functions: TreeId(134), static_decls: TreeId(135) }
+#137 Module { num_inputs: 1, num_outputs: 1, name: "ir_coverage", dsp_struct: TreeId(127), globals: TreeId(131), functions: TreeId(134), static_decls: TreeId(135), sub_modules: TreeId(135) }
   #127 Block([TreeId(125)])
     #125 DeclareStructType { typ: Struct("coverage_dsp", [FaustFloat]) }
   #131 Block([TreeId(16), TreeId(22), TreeId(33)])
@@ -50,5 +50,6 @@
                 #92 LoadTable { name: "input0", access: Stack, index: TreeId(91), typ: FaustFloat }
                   #91 LoadVar { name: "i0", access: Loop, typ: Int32 }
                 #93 LoadVar { name: "fTmp", access: Struct, typ: FaustFloat }
+  #135 Block([])
   #135 Block([])
 EXIT=0

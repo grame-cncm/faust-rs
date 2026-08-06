@@ -6,6 +6,21 @@ use crate::signal_fir::{
     SignalFirOptions, SignalFirOutput, TableInitMode, compile_signals_to_fir_fastlane_with_ui,
     siggen::interpret_generator_for_test,
 };
+
+/// Options pinning the folded `const` table-init mode.
+///
+/// The default flipped to `runtime` in plan phase S7, so a test that asserts
+/// the folded shape — a literal `DeclareTable` in `static_decls`, no
+/// sub-module, no `staticInit` — has to say so. `const` is a permanent
+/// supported mode, so these assertions stay meaningful; they just no longer
+/// describe the default.
+fn const_table_init_options() -> SignalFirOptions {
+    SignalFirOptions {
+        table_init_mode: TableInitMode::Const,
+        ..SignalFirOptions::default()
+    }
+}
+
 use fir::{AccessType, FirMatch, FirType, match_fir};
 use signals::{BinOp, SigBuilder, SigId};
 use tlib::{TreeArena, de_bruijn_rec, de_bruijn_ref};
@@ -168,7 +183,7 @@ fn section_routing_places_table_initialization_in_instance_constants() {
         let ridx = b.input(0);
         b.read_only_table(size, init, ridx)
     };
-    let out = compile_fastlane_without_ui(&arena, &[sig0], 1, 1, &SignalFirOptions::default())
+    let out = compile_fastlane_without_ui(&arena, &[sig0], 1, 1, &const_table_init_options())
         .expect("table section routing should compile");
 
     let FirMatch::Module {
@@ -320,7 +335,7 @@ fn wrtbl_readonly_generator_constant_lowers_to_declared_table() {
         let ridx = b.input(0);
         b.read_only_table(size, init, ridx)
     };
-    let out = compile_fastlane_without_ui(&arena, &[sig0], 1, 1, &SignalFirOptions::default())
+    let out = compile_fastlane_without_ui(&arena, &[sig0], 1, 1, &const_table_init_options())
         .expect("Step 2H should support readonly wrtbl with constant generator");
 
     let FirMatch::Module { static_decls, .. } = match_fir(&out.store, out.module) else {
@@ -351,7 +366,7 @@ fn wrtbl_runtime_write_emits_store_table_update() {
         let ridx = b.input(0);
         b.write_read_table(size, init, widx, wsig, ridx)
     };
-    let out = compile_fastlane_without_ui(&arena, &[sig0], 2, 1, &SignalFirOptions::default())
+    let out = compile_fastlane_without_ui(&arena, &[sig0], 2, 1, &const_table_init_options())
         .expect("Step 2H should support wrtbl runtime write/read shape");
 
     let FirMatch::Module {
@@ -441,7 +456,7 @@ fn wrtbl_generator_expansion_preserves_integer_table_types() {
         let mut b = SigBuilder::new(&mut arena);
         b.read_only_table(size, init, ridx)
     };
-    let out = compile_fastlane_without_ui(&arena, &[sig0], 1, 1, &SignalFirOptions::default())
+    let out = compile_fastlane_without_ui(&arena, &[sig0], 1, 1, &const_table_init_options())
         .expect("readonly wrtbl with computed int generator should lower");
 
     let FirMatch::Module { static_decls, .. } = match_fir(&out.store, out.module) else {
@@ -698,7 +713,7 @@ fn const_mode_keeps_folding_and_emits_no_sub_module() {
         let half = b.real(0.5);
         readonly_table_signal(&mut b, 16, half)
     };
-    let out = compile_fastlane_without_ui(&arena, &[sig], 0, 1, &SignalFirOptions::default())
+    let out = compile_fastlane_without_ui(&arena, &[sig], 0, 1, &const_table_init_options())
         .expect("const table init should lower");
     assert!(
         sub_module_names(&out).is_empty(),

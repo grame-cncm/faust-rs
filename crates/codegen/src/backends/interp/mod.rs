@@ -208,9 +208,7 @@ pub fn generate_interp_module<R: real::FbcReal>(
     } else {
         None
     };
-    let (store, module) = flattened
-        .as_ref()
-        .map_or((store, module), |(s, m)| (s, *m));
+    let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     // 1. Decode module root.
     let (

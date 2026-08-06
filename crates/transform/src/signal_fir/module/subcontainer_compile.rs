@@ -59,14 +59,17 @@ pub(crate) fn compile_generator_sub_module(
     // The generator is prepared exactly like the main program, so the
     // interpreter path and this path see the same normalized shape. This is the
     // same call `siggen::interpret_generator` already makes.
-    let prepared =
-        crate::signal_prepare::prepare_signals_for_fir_verified(arena, &[payload], &UiProgram::empty())
-            .map_err(|err| {
-                SignalFirError::new(
-                    SignalFirErrorCode::UnsupportedSignalNode,
-                    format!("table generator preparation failed: {err}"),
-                )
-            })?;
+    let prepared = crate::signal_prepare::prepare_signals_for_fir_verified(
+        arena,
+        &[payload],
+        &UiProgram::empty(),
+    )
+    .map_err(|err| {
+        SignalFirError::new(
+            SignalFirErrorCode::UnsupportedSignalNode,
+            format!("table generator preparation failed: {err}"),
+        )
+    })?;
 
     let outputs = prepared.outputs();
     if outputs.len() != 1 {
@@ -97,12 +100,13 @@ pub(crate) fn compile_generator_sub_module(
     // carry no clock domains, so this is the wrapper-free branch of the main
     // gate.
     let empty_domains = propagate::ClockDomainTable::new();
-    let envs = crate::clk_env::annotate(prepared.arena(), &empty_domains, outputs).map_err(|err| {
-        SignalFirError::new(
-            SignalFirErrorCode::ClockAnalysis,
-            format!("table generator clock-environment inference failed: {err}"),
-        )
-    })?;
+    let envs =
+        crate::clk_env::annotate(prepared.arena(), &empty_domains, outputs).map_err(|err| {
+            SignalFirError::new(
+                SignalFirErrorCode::ClockAnalysis,
+                format!("table generator clock-environment inference failed: {err}"),
+            )
+        })?;
     let mut hgraph = crate::hgraph::build_hgraph(
         prepared.arena(),
         &empty_domains,
@@ -129,13 +133,12 @@ pub(crate) fn compile_generator_sub_module(
             format!("table generator effect ordering failed: {err}"),
         )
     })?;
-    let hsched =
-        crate::hgraph::schedule(&hgraph, spec.scheduling_strategy).map_err(|err| {
-            SignalFirError::new(
-                SignalFirErrorCode::ClockAnalysis,
-                format!("table generator scheduling failed: {err}"),
-            )
-        })?;
+    let hsched = crate::hgraph::schedule(&hgraph, spec.scheduling_strategy).map_err(|err| {
+        SignalFirError::new(
+            SignalFirErrorCode::ClockAnalysis,
+            format!("table generator scheduling failed: {err}"),
+        )
+    })?;
 
     let empty_ui = UiProgram::empty();
     let lowered = super::build::build_module(

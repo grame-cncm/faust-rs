@@ -1,4 +1,4 @@
-#295 Module { num_inputs: 1, num_outputs: 1, name: "heavy_bench", dsp_struct: TreeId(278), globals: TreeId(291), functions: TreeId(293), static_decls: TreeId(278) }
+#295 Module { num_inputs: 1, num_outputs: 1, name: "heavy_bench", dsp_struct: TreeId(278), globals: TreeId(291), functions: TreeId(293), static_decls: TreeId(278), sub_modules: TreeId(278) }
   #278 Block([])
   #291 Block([TreeId(7), TreeId(9), TreeId(11), TreeId(13), TreeId(15), TreeId(17), TreeId(19), TreeId(21), TreeId(23), TreeId(25), TreeId(27), TreeId(29)])
     #7 DeclareVar { name: "s0", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
@@ -261,5 +261,6 @@
               #224 BinOp { op: Mul, lhs: TreeId(51), rhs: TreeId(223), typ: FaustFloat }
                 #51 LoadVar { name: "acc", access: Stack, typ: FaustFloat }
                 #223 Float32 { value: 0.083333336, typ: Float32 }
+  #278 Block([])
   #278 Block([])
 EXIT=0

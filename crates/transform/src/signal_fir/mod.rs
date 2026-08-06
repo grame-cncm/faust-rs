@@ -389,6 +389,11 @@ pub enum TableInitMode {
     /// This is the only mode that can express content depending on the sample
     /// rate or on a foreign function, and it keeps the emitted source small:
     /// a 65536-entry table costs a loop instead of 65536 literals.
+    ///
+    /// The default since 2026-08-06 (plan phase S7): it matches the C++
+    /// reference and is the only mode that compiles every program the
+    /// reference compiles.
+    #[default]
     Runtime,
     /// Evaluate the generator at compile time and emit the content as a literal
     /// initializer list.
@@ -396,7 +401,11 @@ pub enum TableInitMode {
     /// Produces a `const` table — shareable, ROM-placeable, needing no
     /// initialization phase — but only works for generators that are fully
     /// determined at compile time; others are rejected with `FRS-SFIR-0004`.
-    #[default]
+    ///
+    /// A permanent, supported mode — not a migration scaffold: it is the only
+    /// way to obtain fully folded tables, which matters for targets with no
+    /// initialization phase, for ROM placement, and for bisecting numeric
+    /// differences.
     Const,
 }
 
@@ -420,7 +429,7 @@ impl Default for SignalFirOptions {
             processing_api: ProcessingApi::Block,
             // S2..S6 keep `Const` as the effective default; S7 flips it to
             // `Runtime` once every backend emits sub-modules.
-            table_init_mode: TableInitMode::Const,
+            table_init_mode: TableInitMode::Runtime,
         }
     }
 }

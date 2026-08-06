@@ -73,6 +73,7 @@ tests/impulse-tests/dsp/spat.dsp
 tests/impulse-tests/dsp/spectral_level.dsp
 tests/impulse-tests/dsp/spectral_tilt.dsp
 tests/impulse-tests/dsp/stereoecho.dsp
+tests/impulse-tests/dsp/subcontainer1.dsp
 tests/impulse-tests/dsp/switcher.dsp
 tests/impulse-tests/dsp/table.dsp
 tests/impulse-tests/dsp/table1.dsp

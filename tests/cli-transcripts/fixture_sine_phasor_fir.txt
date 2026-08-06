@@ -1,4 +1,4 @@
-#116 Module { num_inputs: 0, num_outputs: 1, name: "mydsp", dsp_struct: TreeId(107), globals: TreeId(111), functions: TreeId(114), static_decls: TreeId(107) }
+#116 Module { num_inputs: 0, num_outputs: 1, name: "mydsp", dsp_struct: TreeId(107), globals: TreeId(111), functions: TreeId(114), static_decls: TreeId(107), sub_modules: TreeId(107) }
   #107 Block([])
   #111 Block([TreeId(11), TreeId(13), TreeId(15)])
     #11 DeclareVar { name: "fFreq", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
@@ -43,5 +43,6 @@
                   #66 BinOp { op: Mul, lhs: TreeId(55), rhs: TreeId(63), typ: Float64 }
                     #55 Float64 { value: 6.283185307179586, typ: Float64 }
                     #63 Select2 { cond: TreeId(62), then_value: TreeId(59), else_value: TreeId(58), typ: Float64 }
+  #107 Block([])
   #107 Block([])
 EXIT=0

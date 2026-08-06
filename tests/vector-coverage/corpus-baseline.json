@@ -11,9 +11,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -97,6 +97,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -367,12 +368,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -383,9 +379,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -469,6 +465,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -739,12 +736,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -755,9 +747,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -841,6 +833,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -1111,12 +1104,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -1127,9 +1115,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -1213,6 +1201,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -1483,12 +1472,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -1499,9 +1483,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -1585,6 +1569,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -1855,12 +1840,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -1871,9 +1851,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -1957,6 +1937,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -2227,12 +2208,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -2243,9 +2219,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -2329,6 +2305,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -2599,12 +2576,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -2615,9 +2587,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -2701,6 +2673,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -2971,12 +2944,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -2987,9 +2955,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -3073,6 +3041,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -3343,12 +3312,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -3359,9 +3323,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -3445,6 +3409,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -3715,12 +3680,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -3731,9 +3691,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -3817,6 +3777,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -4087,12 +4048,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -4103,9 +4059,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -4189,6 +4145,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -4459,12 +4416,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -4475,9 +4427,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -4561,6 +4513,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -4831,12 +4784,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -4847,9 +4795,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -4933,6 +4881,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -5203,12 +5152,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -5219,9 +5163,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -5305,6 +5249,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -5575,12 +5520,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     },
     {
       "mode": {
@@ -5591,9 +5531,9 @@
       },
       "summary": {
         "total": 133,
-        "certified": 97,
+        "certified": 98,
         "fallback": 35,
-        "error": 1,
+        "error": 0,
         "fallback_by_reason": {
           "FRS-VEC-FALLBACK-CLOCK-AD": 11,
           "FRS-VEC-FALLBACK-EVENTS": 7,
@@ -5677,6 +5617,7 @@
         "tests/impulse-tests/dsp/spectral_level.dsp",
         "tests/impulse-tests/dsp/spectral_tilt.dsp",
         "tests/impulse-tests/dsp/stereoecho.dsp",
+        "tests/impulse-tests/dsp/subcontainer1.dsp",
         "tests/impulse-tests/dsp/switcher.dsp",
         "tests/impulse-tests/dsp/table.dsp",
         "tests/impulse-tests/dsp/table1.dsp",
@@ -5947,12 +5888,7 @@
           "detail": "delayed recursive signal 112 crosses vector loops 6 -> 3; scalar fallback preserves recursive delay semantics"
         }
       ],
-      "error_files": [
-        {
-          "path": "tests/impulse-tests/dsp/subcontainer1.dsp",
-          "error": "transform failed for tests/impulse-tests/dsp/subcontainer1.dsp: [FRS-SFIR-0004] SIGGEN interpreter: foreign functions/constants/variables not supported"
-        }
-      ]
+      "error_files": []
     }
   ]
 }

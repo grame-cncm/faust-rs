@@ -32,7 +32,24 @@ PRECISION_noiseabs         := 1e-5   # 3e-6  polyphonic pass (c backend)
 PRECISION_comb_bug_exp     := 1e-3   # 1.1e-4 polyphonic pass (c backend)
 
 # --- shared compile gap ------------------------------------------------------
-KNOWN_FAIL_all := subcontainer1      # faust-rs sub-container codegen gap (compile-fail)
+# Empty since 2026-08-06. `subcontainer1` lived here for the project's lifetime:
+# its table content depends on the sample rate, which the compile-time SIGGEN
+# interpreter cannot evaluate. `--table-init runtime` — the default since the
+# generated-table sub-module port completed — compiles it on every backend, so
+# every lane now gates the whole corpus.
+KNOWN_FAIL_all :=
+
+# Programs the compile-time SIGGEN interpreter cannot fold, listed so a
+# `--table-init const` run records them as its expected outcome rather than as
+# failures (`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`
+# §2.3). They compile in the default `runtime` mode; under `const` they are
+# rejected with `FRS-SFIR-0004`, which is that mode working as specified, not a
+# regression. `const` is a permanent supported mode, so this list is permanent
+# too. Qualify const mode with:
+#
+#   make -f Make.gcc all COMPILER_OPTS="--table-init const" \
+#        KNOWN_FAIL_all="$(TABLE_INIT_CONST_UNFOLDABLE)"
+TABLE_INIT_CONST_UNFOLDABLE := subcontainer1
 
 # --- C++ backend: full parity otherwise --------------------------------------
 KNOWN_FAIL_cpp :=

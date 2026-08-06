@@ -1,4 +1,4 @@
-#84 Module { num_inputs: 1, num_outputs: 1, name: "table_state_delay", dsp_struct: TreeId(77), globals: TreeId(80), functions: TreeId(82), static_decls: TreeId(77) }
+#84 Module { num_inputs: 1, num_outputs: 1, name: "table_state_delay", dsp_struct: TreeId(77), globals: TreeId(80), functions: TreeId(82), static_decls: TreeId(77), sub_modules: TreeId(77) }
   #77 Block([])
   #80 Block([TreeId(8), TreeId(15)])
     #8 DeclareVar { name: "fWriteIdx", typ: Int32, access: Struct, init: Some(TreeId(5)) }
@@ -39,5 +39,6 @@
                   #41 Int32 { value: 4, typ: Int32 }
                 #5 Int32 { value: 0, typ: Int32 }
                 #40 BinOp { op: Add, lhs: TreeId(32), rhs: TreeId(39), typ: Int32 }
+  #77 Block([])
   #77 Block([])
 EXIT=0

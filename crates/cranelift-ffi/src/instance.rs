@@ -472,7 +472,8 @@ unsafe fn class_init_instance(dsp: *mut CraneliftDspInstance, sample_rate: c_int
         let Some(jit) = factory.compiled_jit.as_ref() else {
             return;
         };
-        let Some(static_init) = instance_constants_fn_from_addr(jit.static_init_entry_addr()) else {
+        let Some(static_init) = instance_constants_fn_from_addr(jit.static_init_entry_addr())
+        else {
             return;
         };
         let dsp_ptr = (*dsp).dsp_state.as_mut_ptr().cast::<c_void>();

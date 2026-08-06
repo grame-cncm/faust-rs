@@ -794,9 +794,15 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 "static table `{name}` not found in pre-declared JIT data"
             ))
         })?;
-        let elem_type = self.static_table_elem_types.get(name).cloned().ok_or_else(|| {
-            LoweringError::Unsupported(format!("static table `{name}` has no declared element type"))
-        })?;
+        let elem_type = self
+            .static_table_elem_types
+            .get(name)
+            .cloned()
+            .ok_or_else(|| {
+                LoweringError::Unsupported(format!(
+                    "static table `{name}` has no declared element type"
+                ))
+            })?;
         let gv = self.jit.declare_data_in_func(data_id, self.fb.func);
         let base = self.fb.ins().global_value(self.ptr_ty, gv);
         let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();

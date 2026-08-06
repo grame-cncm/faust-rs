@@ -21,8 +21,8 @@
 //! with no edit here.
 
 use codegen::backends::{
-    c::{COptions, generate_c_module},
     asc::{AscOptions, generate_asc_module},
+    c::{COptions, generate_c_module},
     cmajor::{CmajorOptions, generate_cmajor_module},
     codebox::{CodeboxOptions, generate_codebox_module},
     cpp::{CppOptions, generate_cpp_module},

@@ -177,7 +177,7 @@ struct CliArgs {
     /// How a `rdtable`/`rwtable` initialization signal is computed:
     /// `const` folds it at compile time, `runtime` emits a generator
     /// sub-module that fills the table at initialization.
-    #[arg(long = "table-init", value_name = "MODE", default_value = "const")]
+    #[arg(long = "table-init", value_name = "MODE", default_value = "runtime")]
     table_init: TableInitArg,
 }
 

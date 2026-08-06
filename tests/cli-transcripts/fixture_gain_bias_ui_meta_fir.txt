@@ -1,4 +1,4 @@
-#156 Module { num_inputs: 1, num_outputs: 1, name: "gain_bias_ui_meta", dsp_struct: TreeId(144), globals: TreeId(149), functions: TreeId(154), static_decls: TreeId(144) }
+#156 Module { num_inputs: 1, num_outputs: 1, name: "gain_bias_ui_meta", dsp_struct: TreeId(144), globals: TreeId(149), functions: TreeId(154), static_decls: TreeId(144), sub_modules: TreeId(144) }
   #144 Block([])
   #149 Block([TreeId(11), TreeId(13), TreeId(15), TreeId(17)])
     #11 DeclareVar { name: "fGain", typ: FaustFloat, access: Struct, init: Some(TreeId(3)) }
@@ -58,5 +58,6 @@
             #120 StoreTable { name: "output0", access: Stack, index: TreeId(104), value: TreeId(114) }
               #104 LoadVar { name: "i0", access: Loop, typ: Int32 }
               #114 BinOp { op: Add, lhs: TreeId(113), rhs: TreeId(107), typ: FaustFloat }
+  #144 Block([])
   #144 Block([])
 EXIT=0
