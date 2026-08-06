@@ -66,6 +66,8 @@ pub(crate) enum XtaskCommand {
     CompileProfile(CompileProfileArgs),
     /// Token-stream differential between the two lexer implementations.
     LexerDifferential(LexerDifferentialArgs),
+    /// Compare faust-rs and C++ Faust over a DSP tree.
+    ExamplesCompare(ExamplesCompareArgs),
 }
 
 /// Options for comparing provenance storage representations.
@@ -313,6 +315,33 @@ pub(crate) struct CompileBudgetArgs {
     /// them. Every increase must be justified in the commit message.
     #[arg(long)]
     pub(crate) update: bool,
+}
+
+/// Options for the faust-rs vs C++ Faust comparison.
+#[derive(Clone, Debug, Args)]
+pub(crate) struct ExamplesCompareArgs {
+    /// DSP tree to walk (default: the reference `examples/` directory).
+    #[arg(long, value_name = "DIR")]
+    pub(crate) root: Option<PathBuf>,
+    /// Runs per compiler per DSP; the minimum is kept (default 3).
+    #[arg(long, value_name = "N")]
+    pub(crate) repeats: Option<u32>,
+    /// C++ Faust binary. Defaults to `FAUST_CPP_BIN`, then the local build,
+    /// then `faust` on PATH.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) faust_bin: Option<PathBuf>,
+    /// faust-rs binary (default: `target/release/faust-rs`).
+    #[arg(long, value_name = "PATH")]
+    pub(crate) faust_rs_bin: Option<PathBuf>,
+    /// Restrict to DSPs whose path contains this text.
+    #[arg(long, value_name = "TEXT")]
+    pub(crate) filter: Option<String>,
+    /// Rows in each detail table (default 10).
+    #[arg(long, value_name = "N")]
+    pub(crate) top: Option<usize>,
+    /// Write the per-DSP results as CSV.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) csv: Option<PathBuf>,
 }
 
 /// Options for the lexer token-stream differential.

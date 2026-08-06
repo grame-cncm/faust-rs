@@ -145,6 +145,7 @@ fn run(cli: XtaskCli) -> Result<(), Box<dyn std::error::Error>> {
         XtaskCommand::EmissionDeterminism(args) => emission_determinism(args)?,
         XtaskCommand::CompileProfile(args) => compile_profile(args)?,
         XtaskCommand::LexerDifferential(args) => lexer_differential(args)?,
+        XtaskCommand::ExamplesCompare(args) => examples_compare(args)?,
     }
 
     Ok(())
@@ -157,6 +158,7 @@ mod cli_transcript;
 mod code_graphs;
 mod compile_budget;
 mod compile_profile;
+mod examples_compare;
 mod lexer_differential;
 mod corpus_status_query;
 mod diagnostics_provenance;
@@ -184,6 +186,7 @@ pub(crate) use cli_transcript::*;
 pub(crate) use code_graphs::*;
 pub(crate) use compile_budget::*;
 pub(crate) use compile_profile::*;
+pub(crate) use examples_compare::*;
 pub(crate) use lexer_differential::*;
 pub(crate) use corpus_status_query::*;
 pub(crate) use diagnostics_provenance::*;

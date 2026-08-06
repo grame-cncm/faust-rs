@@ -74,6 +74,7 @@ dot -V
 | `libfaust-export-check` | Build unified `libfaust`, audit exported symbols, and syntax-check C/C++ clients |
 | `p7-matrix-report` | Generate the executable-backend matrix from impulse-test artifacts |
 | `vector-coverage-merge` | Validate and merge `count_vector_corpus` JSON reports into the checked vector-coverage baseline |
+| `examples-compare` | Compare faust-rs and C++ Faust over a DSP tree: what each compiles, and how long it takes |
 | `compile-profile` | Per-stage compile-time profile over the DSP corpus; `--baseline` gates stage-share drift |
 | `vector-coverage-check` | Recompile every baseline-certified mode/DSP pair and require checked vector chunk-driver structure |
 | `compile-budget-check` | Measure the versioned release compile-time baskets — scalar/vector codegen plus normalized front-end cost — and reject unexplained regressions |
@@ -87,6 +88,33 @@ dot -V
 | `cli-transcript-gen` | Record the local compiler CLI differential transcript |
 | `cli-transcript-check` | Compare the compiler CLI against the recorded local transcript |
 | `emission-determinism` | Repeat selected compilations and report nondeterministic output |
+
+## Comparing against C++ Faust
+
+`examples-compare` walks a DSP tree, compiles every file with both compilers,
+and reports what each accepts and how long it takes.
+
+```bash
+cargo run -p xtask -- examples-compare
+cargo run -p xtask -- examples-compare --repeats 5 --csv /tmp/cmp.csv
+cargo run -p xtask -- examples-compare --root some/dsp/tree --filter reverb
+```
+
+It exists because the impulse corpus cannot answer either question: that corpus
+is a numerical gate and has been shaped by that, so a propagation blow-up
+invisible there showed up on the reference `examples/` tree immediately.
+
+Both compilers run as subprocesses with `-I <the file's own directory>`, since
+many examples import their neighbours. Each runs `--repeats` times and the
+**minimum** is kept, the same convention `compile_budget` uses.
+
+Two cautions the output states for itself. Per-DSP ratios below a 100 ms floor
+are process startup and timer granularity rather than compilation, so the ratio
+tables exclude them. And the C++ binary is resolved from `FAUST_CPP_BIN`, then
+the local build, then `PATH` — those differ by a third in total time on the same
+corpus, so the command prints which it used and `--faust-bin` pins it.
+
+This is a comparison, not a gate: it has no baseline and never fails on timing.
 
 ## Compile-time Profile
 
