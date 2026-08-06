@@ -5,8 +5,8 @@ Status: S0-S5 done. **Every backend is migrated and no backend refuses a
 sub-module any more.** Numerically validated against the C++ oracle, in both
 `--table-init runtime` and the default `const` mode: `cpp`, `c`, `rust`,
 `julia`, `codebox`, `cmajor` (87/87), `interp` (93/93), `wasm` (93/93),
-`cranelift` (93/93), `asc` (93/93). Remaining: S6 (vector), S7 (flip the
-default).
+`cranelift` (93/93), `asc` (93/93). The checked vector path builds the same
+sub-modules (S6). Remaining: S7 (flip the default).
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -947,12 +947,40 @@ Four things this phase turned up that the plan had not anticipated:
    exactly that false green. The option now lives in the shared
    `FfiCompileArgs`.
 
-### S6 — Vector path
+### S6 — Vector path — done 2026-08-06
 
-`vector/lower/signal.rs`: build the same sub-module, or fail closed with a
-stable `FRS-VEC-FALLBACK-…` reason. No silent folding may remain in the vector
-lowerer once `--table-init runtime` is the default. Gate: the 132-DSP vector
-corpus keeps its certified count.
+`vector/lower/signal.rs` builds the same sub-module rather than failing closed.
+Failing closed was the other option this plan allowed, and measuring killed it:
+37 of the 133 corpus DSPs carry a generated table and 18 of those are certified
+in vector mode, so the fallback route would have cost 97 → 79 certified at S7.
+
+`build_generator_sub_module` was a method on the scalar `SignalToFirLower`, so
+it was first extracted to `module/subcontainer_compile.rs` in its own commit,
+with scalar output verified byte-identical across the move. Both lowerers now
+call it. The generator is compiled in scalar mode even under `-vec`: it is a
+0-input/1-output program evaluated once at initialization, so there is nothing
+to vectorize, and a second implementation is exactly how the paths would drift.
+
+Two things the vector module lacked:
+
+- **No `staticInit`.** Read-only generated tables are file-scope and filled once
+  per class. The function is emitted only when there is something to fill, so a
+  module with no generated table keeps its previous shape and the 16-mode
+  certification sees no new function.
+- **The final-module checker demanded element-wise coverage** of a mutable
+  table's initialization, which one `fill` call cannot provide. The obligation
+  is now shape-dependent: element stores must cover every cell; a fill call must
+  name the table *structurally* (its third argument must load that table) and
+  claim its full length; a table carrying both shapes is rejected. Rejecting
+  mutations: short fill count, dropped fill (caught by FIR-SM01), fill pointed
+  at another table.
+
+Gate met, and exceeded: vectorization retention over the 133-DSP corpus is 97
+under `const` — unchanged, with `vector-coverage-check` retaining all 1552
+certified mode/DSP pairs across 16 modes — and **98 under `runtime`**, because
+`subcontainer1` gains vectorization it could never have had while its generator
+had to be folded. cpp `-vec -lv 0` and `-lv 1` impulse lanes are 93/93 in both
+modes.
 
 ### S7 — Default switch and qualification
 
