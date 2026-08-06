@@ -824,7 +824,7 @@ fn emit_stmt(
         }
         // UI / metadata / soundfile lower to comments (parity with C++ asc backend).
         FirMatch::OpenBox { label, .. } => {
-            let _ = writeln!(out, "{tab}// ui openbox {label}");
+            let _ = writeln!(out, "{tab}// ui openbox {}", one_line(&label));
             Ok(())
         }
         FirMatch::CloseBox => {
@@ -832,15 +832,15 @@ fn emit_stmt(
             Ok(())
         }
         FirMatch::AddButton { label, .. } => {
-            let _ = writeln!(out, "{tab}// ui button {label}");
+            let _ = writeln!(out, "{tab}// ui button {}", one_line(&label));
             Ok(())
         }
         FirMatch::AddSlider { label, .. } => {
-            let _ = writeln!(out, "{tab}// ui slider {label}");
+            let _ = writeln!(out, "{tab}// ui slider {}", one_line(&label));
             Ok(())
         }
         FirMatch::AddBargraph { label, .. } => {
-            let _ = writeln!(out, "{tab}// ui bargraph {label}");
+            let _ = writeln!(out, "{tab}// ui bargraph {}", one_line(&label));
             Ok(())
         }
         FirMatch::AddSoundfile { .. } => {
@@ -851,7 +851,7 @@ fn emit_stmt(
             Ok(())
         }
         FirMatch::AddMetaDeclare { key, .. } => {
-            let _ = writeln!(out, "{tab}// metadata {key}");
+            let _ = writeln!(out, "{tab}// metadata {}", one_line(&key));
             Ok(())
         }
         FirMatch::Label(_)
@@ -1205,6 +1205,49 @@ fn map_fun_name(name: &str, options: &AscOptions) -> String {
         return format!("{math}.{}", op.symbol());
     }
     name.to_owned()
+}
+
+/// Collapses a UI label or metadata key onto a single line for `//` comments.
+///
+/// A Faust label may span several source lines — `demos.lib` has one, reached
+/// by `phaser_flanger.dsp` — and a `//` comment only comments to end of line, so
+/// interpolating the label raw left its continuation as bare text that `asc`
+/// parsed as code and rejected with `TS1109: Expression expected.`
+///
+/// Runs of whitespace containing a line break collapse to one space, which
+/// matches how the label reads in the source: the break is where a space would
+/// be.
+fn one_line(text: &str) -> String {
+    if !text.contains(['\n', '\r']) {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut pending_break = false;
+    for ch in text.chars() {
+        match ch {
+            '\n' | '\r' => {
+                // Drop whitespace on both sides of the break so the join adds
+                // exactly one space.
+                while out.ends_with(char::is_whitespace) {
+                    out.pop();
+                }
+                pending_break = true;
+            }
+            c if c.is_whitespace() && pending_break => {}
+            c => {
+                if pending_break {
+                    // Only emit the joining space when something precedes it,
+                    // so a leading newline does not indent the comment.
+                    if !out.is_empty() {
+                        out.push(' ');
+                    }
+                    pending_break = false;
+                }
+                out.push(c);
+            }
+        }
+    }
+    out
 }
 
 fn faust_float_type(options: &AscOptions) -> &'static str {
@@ -1964,5 +2007,21 @@ mod tests {
         assert!(
             out.contains("<f32>(_soundfileBuffer(<i32>(this.fSound0), <i32>(0), <i32>(0), i0))")
         );
+    }
+
+    /// A Faust label may span source lines (`demos.lib`, reached by
+    /// `phaser_flanger.dsp`). A `//` comment ends at the newline, so emitting
+    /// such a label raw left its tail as bare text that `asc` parsed as code.
+    #[test]
+    fn multi_line_labels_stay_on_one_comment_line() {
+        assert_eq!(
+            one_line("Noise (White or Pink - uses only Amplitude control on\n        the left)"),
+            "Noise (White or Pink - uses only Amplitude control on the left)"
+        );
+        // Whitespace on either side of the break collapses to a single space.
+        assert_eq!(one_line("a  \n   b"), "a b");
+        assert_eq!(one_line("a\r\nb"), "a b");
+        // A label with no break is returned unchanged.
+        assert_eq!(one_line("plain label"), "plain label");
     }
 }
