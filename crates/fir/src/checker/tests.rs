@@ -2286,3 +2286,80 @@ fn sm05_nested_generator_whose_fill_is_never_called_is_flagged() {
         report.diagnostics
     );
 }
+
+/// FIR-SM06 is invariant I2: a fill call must cover its table's whole length.
+///
+/// FIR-SM01 proves a fill happens; only this rule constrains how much it
+/// writes. The mutation is the one the port plan names — a `count` of
+/// `size - 1` — and it is invisible to numeric tests, since the untouched cell
+/// is one of many and holds whatever the target's uninitialized storage did.
+#[test]
+fn sm06_a_fill_call_that_does_not_cover_the_whole_table_is_flagged() {
+    fn module_with_fill_count(count: i32, length: usize) -> (FirStore, FirId) {
+        let mut store = FirStore::new();
+        let module_id = {
+            let mut b = FirBuilder::new(&mut store);
+            let sub = make_sub_module(&mut b, "dspSIG0", FirType::Float32);
+            let table = b.declare_var(
+                "ftbl0dspSIG0",
+                FirType::Array(Box::new(FirType::Float32), length),
+                AccessType::Static,
+                None,
+            );
+            let static_decls = b.block(&[table]);
+            let call = {
+                let obj = b.load_var("sig0", AccessType::Stack, FirType::Ptr(Box::new(FirType::Obj)));
+                let n = b.int32(count);
+                let tbl = b.load_var(
+                    "ftbl0dspSIG0",
+                    AccessType::Static,
+                    FirType::Array(Box::new(FirType::Float32), length),
+                );
+                let c = b.fun_call("filldspSIG0", &[obj, n, tbl], FirType::Void);
+                b.drop_(c)
+            };
+            let body = b.block(&[call]);
+            let static_init = b.declare_fun(
+                "staticInit",
+                FirType::Fun {
+                    args: vec![FirType::Ptr(Box::new(FirType::Obj)), FirType::Int32],
+                    ret: Box::new(FirType::Void),
+                },
+                &[
+                    NamedType {
+                        name: "dsp".to_string(),
+                        typ: FirType::Ptr(Box::new(FirType::Obj)),
+                    },
+                    NamedType {
+                        name: "sample_rate".to_string(),
+                        typ: FirType::Int32,
+                    },
+                ],
+                Some(body),
+                false,
+            );
+            let functions = b.block(&[static_init]);
+            let empty = b.block(&[]);
+            b.module(0, 0, "dsp", empty, empty, functions, static_decls, &[sub])
+        };
+        (store, module_id)
+    }
+
+    // The producer's shape: count equals the declared length.
+    let (store, module_id) = module_with_fill_count(8, 8);
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        !report.diagnostics.iter().any(|d| d.code == "FIR-SM06"),
+        "a full-length fill was rejected: {:?}",
+        report.diagnostics
+    );
+
+    // The mutation: one cell short.
+    let (store, module_id) = module_with_fill_count(7, 8);
+    let report = verify_fir_module(&store, module_id);
+    assert!(
+        report.diagnostics.iter().any(|d| d.code == "FIR-SM06"),
+        "a short fill was accepted: {:?}",
+        report.diagnostics
+    );
+}

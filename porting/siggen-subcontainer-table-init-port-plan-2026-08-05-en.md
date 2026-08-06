@@ -4,10 +4,11 @@ Date: 2026-08-05
 Status: **complete (S0-S7, 2026-08-06)**. `--table-init runtime` is the default
 on every backend and in both the scalar and checked vector paths. The impulse
 corpus is green everywhere: cpp/c/interp/wasm/cranelift/julia/rust/
-assemblyscript 133/133, cmajor 127/127. `const` remains a permanent supported
+assemblyscript 94/94, cmajor 88/88. `const` remains a permanent supported
 mode, qualified in the same runs at 132/133 with the single expected
-`FRS-SFIR-0004` rejection of §2.3. Vector certification went from 97 certified
-with 1 compile error to 98 certified with 0 errors across all 16 modes.
+`FRS-SFIR-0004` rejection of §2.3 (93/93 with it excluded). Vector certification
+went from 97 certified with 1 compile error to 98 certified with 0 errors across
+all 16 modes.
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective
@@ -987,13 +988,18 @@ modes.
 
 The default is `runtime`. `KNOWN_FAIL_all` is empty for the first time in the
 project's life: `subcontainer1.dsp` sat there because its table content depends
-on the sample rate, and every lane now gates the whole 133-DSP corpus.
+on the sample rate, so the gate goes from 93 cases to 94.
 
-Impulse corpus under the new default, all green: cpp 133/133, c 133/133,
-interp 133/133, wasm 133/133, cranelift 133/133, julia 133/133, rust 133/133,
-assemblyscript 133/133, cmajor 127/127.
+The gated corpus is 94 of the 133 DSPs: the C++ oracle itself cannot compile the
+39 clock-domain fixtures (`downsampling_*`, `ondemand_*`, `upsampling_*`), which
+`build/ref/cpp-oracle-manifest.mk` excludes. A run made before that manifest has
+been generated gates all 133 instead — a superset, but not the canonical number.
 
-`const` is qualified in the same runs, not dropped: 132/133, the one rejection
+Impulse corpus under the new default, all green: cpp 94/94, c 94/94,
+interp 94/94, wasm 94/94, cranelift 94/94, julia 94/94, rust 94/94,
+assemblyscript 94/94, cmajor 88/88.
+
+`const` is qualified in the same runs, not dropped: 93/94, the one rejection
 being the expected `FRS-SFIR-0004` on `subcontainer1`. `known.mk` carries
 `TABLE_INIT_CONST_UNFOLDABLE` so a const-mode run records that as its expected
 outcome rather than as a failure, which is what §2.3 asked for.

@@ -30,6 +30,7 @@ Supported options:
 | `-vs <size>` | Vector chunk size (default: `32`) |
 | `-lv <variant>` | Vector loop variant (`0` or `1`) |
 | `-ss <n>` / `--scheduling-strategy <n>` | Select scheduling strategy |
+| `--table-init <const\|runtime>` | How `rdtable`/`rwtable` content is produced (default: `runtime`) |
 
 Unknown options are rejected instead of being silently ignored.
 

@@ -483,6 +483,7 @@ pub fn verify_module_structure(
     ctx.check_phase1();
     ctx.check_phase2();
     ctx.check_table_fill_coverage();
+    ctx.check_fill_call_extent();
     (
         FirVerifyReport {
             diagnostics: ctx.diags,
@@ -739,6 +740,94 @@ impl<'s> VerifyCtx<'s> {
                     ),
                     sub,
                 );
+            }
+        }
+    }
+
+    /// FIR-SM06: each `fill` call must cover its table's whole declared length.
+    ///
+    /// Invariant I2 of the port plan. FIR-SM01 proves a fill *happens*; it says
+    /// nothing about how much it writes. The sub-module's loop runs `0..count`,
+    /// so the elements actually initialized are decided entirely by the `count`
+    /// the call site passes — pass `size - 1` and the last cell keeps whatever
+    /// the target's uninitialized storage held, which no numeric test on a
+    /// 65536-entry table is likely to notice.
+    ///
+    /// The table's length comes from its own declaration rather than from the
+    /// call, so producer and check do not share a source: the call would have
+    /// to be wrong in the same direction as the declaration to slip through.
+    fn check_fill_call_extent(&mut self) {
+        let FirMatch::Module {
+            functions,
+            dsp_struct,
+            globals,
+            static_decls,
+            ..
+        } = match_fir(self.store, self.module_id)
+        else {
+            return;
+        };
+        let mut lengths: HashMap<String, usize> = HashMap::new();
+        for block in [dsp_struct, globals, static_decls] {
+            let FirMatch::Block(items) = match_fir(self.store, block) else {
+                continue;
+            };
+            for item in items {
+                match match_fir(self.store, item) {
+                    FirMatch::DeclareVar {
+                        name,
+                        typ: FirType::Array(_, size),
+                        ..
+                    } => {
+                        lengths.insert(name, size);
+                    }
+                    FirMatch::DeclareTable { name, values, .. } => {
+                        lengths.insert(name, values.len());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if lengths.is_empty() {
+            return;
+        }
+        let FirMatch::Block(items) = match_fir(self.store, functions) else {
+            return;
+        };
+        for item in items {
+            let FirMatch::DeclareFun {
+                name,
+                body: Some(body),
+                ..
+            } = match_fir(self.store, item)
+            else {
+                continue;
+            };
+            if name != "staticInit" && name != "instanceConstants" {
+                continue;
+            }
+            let mut stack = vec![body];
+            while let Some(id) = stack.pop() {
+                if let FirMatch::FunCall {
+                    name: callee, args, ..
+                } = match_fir(self.store, id)
+                    && callee.starts_with("fill")
+                    && args.len() == 3
+                    && let FirMatch::Int32 { value: count, .. } = match_fir(self.store, args[1])
+                    && let FirMatch::LoadVar { name: table, .. } = match_fir(self.store, args[2])
+                    && let Some(&length) = lengths.get(&table)
+                    && usize::try_from(count).map(|c| c != length).unwrap_or(true)
+                {
+                    self.error(
+                        "FIR-SM06",
+                        format!(
+                            "'{callee}' fills {count} of the {length} cells of table \
+                             '{table}'; the remaining cells would be read uninitialized"
+                        ),
+                        id,
+                    );
+                }
+                stack.extend(child_ids(&match_fir(self.store, id)));
             }
         }
     }

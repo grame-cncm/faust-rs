@@ -68,6 +68,42 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 
 ---
 
+## Generated-table sub-modules
+
+A `rdtable`/`rwtable` whose content is computed at initialization time arrives
+as a `SubModule` on the FIR module's `sub_modules` block — a nested program with
+its own state, an `instanceInit<Sub>` and a `fill<Sub>(count, table)`. Every
+implemented backend emits them as of 2026-08-06; `--table-init const` folds the
+content at compile time instead and is a permanent supported mode.
+
+Backends split into two shapes, matching what upstream does per target:
+
+| Shape | Backends | How |
+|---|---|---|
+| Native nested container | `cpp`, `c`, `rust`, `asc`, `cmajor` | Emit the sub-module as a nested class/struct with its two entry points, and render `staticInit` as the body of `classInit` |
+| Flattened | `interp`, `wasm`, `cranelift`, `codebox`, `julia` | `fir::subcontainer::flatten_sub_modules_owned` inlines the generator before decoding, under a `SubModuleStatePolicy` |
+
+Three obligations a backend must meet, each of which was violated at least once
+during the port:
+
+1. **Never skip a fill.** A table declared and never written reads as zeros —
+   a wrong answer, not a missing feature. `backends::sub_module_names` exists so
+   a backend can detect the case; `FIR-SM01`/`FIR-SM06` make it a hard error.
+2. **Never emit a lifecycle function verbatim.** `staticInit` becomes the
+   backend's own `classInit`/`dspsetup`; emitting it again from the `functions`
+   walk produces a second, never-called definition. Consult
+   `backends::is_lifecycle_function`; `compiler`'s `lifecycle_leak_guard` test
+   is what catches a backend that forgets.
+3. **Emit the sub-module's own `static_decls` and `globals`.** A `waveform`
+   generator reads a constant array declared there. Destructuring `SubModule`
+   with `..` silently drops them, and the fill body then references an
+   undeclared symbol.
+
+Design and phase history:
+`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`.
+
+---
+
 ## Public API
 
 ### AssemblyScript backend — `backends::asc`

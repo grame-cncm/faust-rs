@@ -72,11 +72,23 @@ to the DSP struct, compiled constants to `instanceConstants`, resettable
 signal state to `instanceClear`, and UI zone resets to
 `instanceResetUserInterface`.
 
+`TableInitMode` selects how a `rdtable`/`rwtable` gets its initial content.
+`Runtime` — the default since 2026-08-06 — compiles the generator into a FIR
+sub-module whose `fill` runs at initialization, matching C++ `signal2Container`;
+it is the only mode that can express sample-rate-dependent or
+foreign-function content, and it emits a loop where `Const` emits one literal
+per cell. `Const` evaluates the generator through the compile-time SIGGEN
+interpreter and is a permanent supported mode, being the only way to obtain a
+fully folded ROM-able table; generators it cannot fold are rejected with
+`FRS-SFIR-0004`. Both the scalar lowerer and the checked vector path build the
+same sub-module, through `module::subcontainer_compile`. See
+`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`.
+
 ## API classification
 
 | Tier | Items |
 |---|---|
-| Stable compiler contract | `signal_fir::{compile_signals_to_fir_fastlane_with_ui, compile_signals_to_fir_fastlane_clocked, compile_signals_to_fir_fastlane_clocked_with_timing}`, `SignalFirOptions`, `SignalFirOutput`, `SignalFirError`/`SignalFirErrorCode`, `RealType`, `ComputeMode`, `VectorPipelineStatus`, `VectorFallbackReason`, `VectorEffectiveMode`, `schedule::SchedulingStrategy`, `signal_prepare::{prepare_signals_for_fir, prepare_signals_for_fir_verified, PreparedSignals, VerifiedPreparedSignals}` |
+| Stable compiler contract | `signal_fir::{compile_signals_to_fir_fastlane_with_ui, compile_signals_to_fir_fastlane_clocked, compile_signals_to_fir_fastlane_clocked_with_timing}`, `SignalFirOptions`, `SignalFirOutput`, `SignalFirError`/`SignalFirErrorCode`, `RealType`, `ComputeMode`, `TableInitMode`, `VectorPipelineStatus`, `VectorFallbackReason`, `VectorEffectiveMode`, `schedule::SchedulingStrategy`, `signal_prepare::{prepare_signals_for_fir, prepare_signals_for_fir_verified, PreparedSignals, VerifiedPreparedSignals}` |
 | Diagnostic / testing surface | `clk_env::annotate`, `hgraph::{build_hgraph, audit_hgraph, audit_control_variability, schedule}`, `signal_fir::decoration_verify`, `signal_fir::shadow`, `signal_fir::pv_slice`, the vector artifact producers/checkers under `signal_fir::vector::*` |
 | Compatibility facade | `signal_fir::vector_*` aliases of the grouped `signal_fir::vector::{...}` modules (retained during the 2026-07 cleanup; do not remove without an explicit API decision) |
 

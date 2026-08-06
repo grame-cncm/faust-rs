@@ -88,9 +88,17 @@ pub fn is_lifecycle_function(name: &str) -> bool {
     LIFECYCLE_FUNCTIONS.contains(&name)
 }
 
-/// Message body shared by every backend's "sub-modules not supported yet"
-/// rejection, so the diagnostics stay uniform while each backend keeps its own
-/// stable error code.
+/// Message body for a backend's "sub-modules not supported yet" rejection, so
+/// the diagnostics stay uniform while each backend keeps its own stable error
+/// code.
+///
+/// **No caller as of plan phase S5** (2026-08-06): every backend emits
+/// generated-table sub-modules, so a sub-module reaching a backend is an
+/// internal error rather than an unsupported feature, and each backend says so
+/// in its own words. This is kept for the next backend to be added, which will
+/// need exactly this refusal between the day it can decode a module and the day
+/// it can fill a table — the alternative being to emit a table that nothing
+/// writes, which reads as zeros.
 pub fn unsupported_sub_modules_message(backend: &str, names: &[String]) -> String {
     format!(
         "the `{backend}` backend cannot yet emit generated-table sub-modules ({}); \

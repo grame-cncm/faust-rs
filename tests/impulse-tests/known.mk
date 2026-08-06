@@ -36,7 +36,9 @@ PRECISION_comb_bug_exp     := 1e-3   # 1.1e-4 polyphonic pass (c backend)
 # its table content depends on the sample rate, which the compile-time SIGGEN
 # interpreter cannot evaluate. `--table-init runtime` — the default since the
 # generated-table sub-module port completed — compiles it on every backend, so
-# every lane now gates the whole corpus.
+# every lane gates 94 cases rather than 93. (94 of the corpus's 133 DSPs: the
+# generated C++-oracle manifest excludes the 39 clock-domain fixtures upstream
+# Faust cannot compile.)
 KNOWN_FAIL_all :=
 
 # Programs the compile-time SIGGEN interpreter cannot fold, listed so a
