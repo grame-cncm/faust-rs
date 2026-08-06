@@ -813,7 +813,11 @@ fn emit_non_api_functions(
             else {
                 continue;
             };
-            if is_dsp_api_method(&name) {
+            // `is_dsp_api_method` covers this backend's own entry points;
+            // `is_lifecycle_function` covers the shared list, which is where
+            // `staticInit` lives — it is rendered as the `classInit` body, so
+            // emitting it here too produced a second, never-called copy.
+            if is_dsp_api_method(&name) || crate::backends::is_lifecycle_function(&name) {
                 continue;
             }
             emit_function(

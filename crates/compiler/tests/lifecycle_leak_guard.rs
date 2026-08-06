@@ -22,6 +22,8 @@
 
 use codegen::backends::{
     c::{COptions, generate_c_module},
+    asc::{AscOptions, generate_asc_module},
+    cmajor::{CmajorOptions, generate_cmajor_module},
     codebox::{CodeboxOptions, generate_codebox_module},
     cpp::{CppOptions, generate_cpp_module},
     julia::{JuliaOptions, generate_julia_module},
@@ -33,10 +35,15 @@ use compiler::{Compiler, ControlRateMode, ProcessingApi, SignalFirLane, TableIni
 /// necessarily declares `staticInit`.
 const SOURCE: &str = "t = (+(1) ~ _) - 1;\nprocess = rdtable(8, int(t * 2), int(t % 8));";
 
-/// Marker in the shared refusal message of a backend that has not been migrated.
-const NOT_MIGRATED: &str = "cannot yet emit generated-table sub-modules";
+/// Every textual backend that renders a FIR module, so a new one is added here
+/// deliberately rather than by omission.
+///
+/// There is no skip path: as of plan phase S5 every backend emits
+/// generated-table sub-modules, and a backend that starts refusing them again
+/// is a regression this guard must report, not step over.
+const BACKENDS: [&str; 7] = ["cpp", "c", "rust", "julia", "codebox", "asc", "cmajor"];
 
-fn emit(backend: &str) -> Option<String> {
+fn emit(backend: &str) -> String {
     let mut compiler = Compiler::new().with_table_init_mode(TableInitMode::Runtime);
     if backend == "codebox" {
         compiler = compiler
@@ -58,26 +65,20 @@ fn emit(backend: &str) -> Option<String> {
             .map_err(|e| e.to_string()),
         "codebox" => generate_codebox_module(&fir.store, fir.module, &CodeboxOptions::default())
             .map_err(|e| e.to_string()),
+        "asc" => generate_asc_module(&fir.store, fir.module, &AscOptions::default())
+            .map_err(|e| e.to_string()),
+        "cmajor" => generate_cmajor_module(&fir.store, fir.module, &CmajorOptions::default())
+            .map_err(|e| e.to_string()),
         other => panic!("unknown backend {other}"),
     };
 
-    match rendered {
-        Ok(text) => Some(text),
-        // A backend that has not been migrated refuses with the shared message;
-        // that is a deliberate state, not a failure of this guard.
-        Err(message) if message.contains(NOT_MIGRATED) => None,
-        Err(message) => panic!("{backend}: emission failed unexpectedly: {message}"),
-    }
+    rendered.unwrap_or_else(|message| panic!("{backend}: emission failed unexpectedly: {message}"))
 }
 
 #[test]
 fn no_backend_emits_static_init_as_an_ordinary_function() {
-    let mut checked = 0usize;
-    for backend in ["cpp", "c", "rust", "julia", "codebox"] {
-        let Some(text) = emit(backend) else {
-            continue;
-        };
-        checked += 1;
+    for backend in BACKENDS {
+        let text = emit(backend);
         assert!(
             !text.contains("staticInit"),
             "{backend} emitted `staticInit` into its output; it must be rendered \
@@ -85,10 +86,6 @@ fn no_backend_emits_static_init_as_an_ordinary_function() {
              never as a function of its own:\n{text}"
         );
     }
-    assert!(
-        checked > 0,
-        "no backend was actually exercised; the fixture or the skip detection is wrong"
-    );
 }
 
 #[test]
@@ -102,10 +99,8 @@ fn every_backend_populates_the_generated_table() {
     // calls `fill<Sub>(…)`; a flattened one inlines the loop and writes the
     // table directly. So the check is simply: something, somewhere outside the
     // compute loop, assigns into the table.
-    for backend in ["cpp", "c", "rust", "julia", "codebox"] {
-        let Some(text) = emit(backend) else {
-            continue;
-        };
+    for backend in BACKENDS {
+        let text = emit(backend);
         let table = text
             .lines()
             .find_map(|line| {

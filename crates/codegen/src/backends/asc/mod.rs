@@ -463,6 +463,13 @@ fn emit_methods_canonical_order(
             if emitted.iter().any(|done| *done == name) {
                 continue;
             }
+            // A lifecycle function is rendered into this backend's own surface
+            // — `staticInit` becomes the body of the static `classInit` — so
+            // emitting it here too produces a second, never-called copy with a
+            // meaningless receiver parameter.
+            if crate::backends::is_lifecycle_function(&name) {
+                continue;
+            }
             emit_declare_fun(
                 store,
                 out,
