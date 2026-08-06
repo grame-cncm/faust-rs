@@ -21,11 +21,8 @@ use compiler::{Compiler, SignalFirLane, TableInitMode};
 
 /// Fixtures whose generator cannot be evaluated at compile time (plan §2.3):
 /// sample-rate-dependent content and a foreign function in the fill body.
-const CONST_MODE_UNFOLDABLE: [&str; 3] = [
-    "f02_subcontainer1",
-    "f03_sr_dependent",
-    "f09_ffunction_gen",
-];
+const CONST_MODE_UNFOLDABLE: [&str; 3] =
+    ["f02_subcontainer1", "f03_sr_dependent", "f09_ffunction_gen"];
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

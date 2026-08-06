@@ -138,9 +138,7 @@ fn collect_inputs(root: &Path) -> Result<Vec<PathBuf>, String> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let is_source = path
-                .extension()
-                .is_some_and(|e| e == "dsp" || e == "lib");
+            let is_source = path.extension().is_some_and(|e| e == "dsp" || e == "lib");
             if is_source {
                 out.push(path);
             }
@@ -193,11 +191,13 @@ pub(crate) fn lexer_differential(
          {failures} file(s) that do not lex"
     );
     if failures == 0 {
-        return Err("lexer-differential: no input fails to lex, so the error-offset \
+        return Err(
+            "lexer-differential: no input fails to lex, so the error-offset \
                     comparison ran on nothing; tests/lexer-fixtures must contain at \
                     least one file that stops the lexer"
-            .to_owned()
-            .into());
+                .to_owned()
+                .into(),
+        );
     }
 
     let missing = coverage.missing();
@@ -231,11 +231,7 @@ mod tests {
     use parser::RawLexeme;
 
     fn lx(tok_id: u32, start: usize, len: usize) -> RawLexeme {
-        RawLexeme {
-            tok_id,
-            start,
-            len,
-        }
+        RawLexeme { tok_id, start, len }
     }
 
     #[test]

@@ -377,10 +377,7 @@ pub(crate) fn box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeI
 ///
 /// `static Tree numericBoxSimplification(Tree box)` in
 /// `compiler/evaluate/eval.cpp`.
-pub(crate) fn numeric_box_simplification(
-    arena: &mut TreeArena,
-    box_id: TreeId,
-) -> TreeId {
+pub(crate) fn numeric_box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeId {
     // Fast path: already a numeric literal.
     match match_box(arena, box_id) {
         BoxMatch::Int(_) | BoxMatch::Real(_) => return box_id,
@@ -425,10 +422,7 @@ pub(crate) fn numeric_box_simplification(
 ///
 /// `static Tree insideBoxSimplification(Tree box)` in
 /// `compiler/evaluate/eval.cpp`.
-pub(crate) fn inside_box_simplification(
-    arena: &mut TreeArena,
-    box_id: TreeId,
-) -> TreeId {
+pub(crate) fn inside_box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeId {
     match match_box(arena, box_id) {
         // ── Leaves — return unchanged ──────────────────────────────────────
         BoxMatch::Int(_)

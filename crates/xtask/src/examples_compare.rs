@@ -56,13 +56,7 @@ struct CaseRow {
 ///
 /// Output goes to a scratch path rather than the input's directory so a run
 /// never writes into the corpus being measured.
-fn measure(
-    bin: &Path,
-    input: &Path,
-    include: &Path,
-    out: &Path,
-    repeats: u32,
-) -> (bool, u128) {
+fn measure(bin: &Path, input: &Path, include: &Path, out: &Path, repeats: u32) -> (bool, u128) {
     let mut best = u128::MAX;
     let mut ok = false;
     for _ in 0..repeats.max(1) {

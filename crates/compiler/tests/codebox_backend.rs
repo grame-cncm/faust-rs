@@ -858,7 +858,8 @@ fn a_read_only_table_is_declared_and_filled() {
                     start -= 1;
                 }
                 let mut end = marker;
-                while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
                 {
                     end += 1;
                 }

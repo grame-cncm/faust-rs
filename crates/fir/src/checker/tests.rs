@@ -2308,7 +2308,11 @@ fn sm06_a_fill_call_that_does_not_cover_the_whole_table_is_flagged() {
             );
             let static_decls = b.block(&[table]);
             let call = {
-                let obj = b.load_var("sig0", AccessType::Stack, FirType::Ptr(Box::new(FirType::Obj)));
+                let obj = b.load_var(
+                    "sig0",
+                    AccessType::Stack,
+                    FirType::Ptr(Box::new(FirType::Obj)),
+                );
                 let n = b.int32(count);
                 let tbl = b.load_var(
                     "ftbl0dspSIG0",

@@ -278,9 +278,7 @@ fn compare(profile: &CompileProfile, baseline: &CompileProfile, tolerance_pct: f
     findings
 }
 
-pub(crate) fn compile_profile(
-    args: CompileProfileArgs,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn compile_profile(args: CompileProfileArgs) -> Result<(), Box<dyn std::error::Error>> {
     let root = workspace_root();
     let top = args.top.unwrap_or(8);
     let filter = args.filter.as_deref();
@@ -339,7 +337,9 @@ pub(crate) fn compile_profile(
             for f in &findings {
                 println!("compile-profile: {f}");
             }
-            return Err(format!("compile-profile: {} stage share finding(s)", findings.len()).into());
+            return Err(
+                format!("compile-profile: {} stage share finding(s)", findings.len()).into(),
+            );
         }
     }
 
@@ -410,7 +410,11 @@ mod tests {
         let renamed = profile(10.0, &[("eval", 10.0, 100.0)]);
         let findings = compare(&renamed, &base, 3.0);
         assert_eq!(findings.len(), 2, "{findings:?}");
-        assert!(findings.iter().any(|f| f.contains("absent from the baseline")));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.contains("absent from the baseline"))
+        );
         assert!(findings.iter().any(|f| f.contains("now absent")));
     }
 }

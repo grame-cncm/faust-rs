@@ -1517,7 +1517,10 @@ fn build_combined_dfas() -> CombinedDfas {
 
     let def = shared_lexerdef();
 
-    let names: Vec<&str> = def.iter_start_states().map(lrlex::StartState::name).collect();
+    let names: Vec<&str> = def
+        .iter_start_states()
+        .map(lrlex::StartState::name)
+        .collect();
     assert_eq!(
         names, KNOWN_START_CONDITIONS,
         "faustlexer.l declares start conditions this lexer was not written for; \
@@ -1538,8 +1541,7 @@ fn build_combined_dfas() -> CombinedDfas {
     // id to `None` — so the assertion below is the honest failure for it.
     let mut wanted: std::collections::HashSet<&str> =
         rules.iter().filter_map(|r| r.name()).collect();
-    let mut tok_id_of_name: std::collections::HashMap<&str, u32> =
-        std::collections::HashMap::new();
+    let mut tok_id_of_name: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
     let mut idx = 0u32;
     while !wanted.is_empty() {
         let name = faustparser_y::token_epp(cfgrammar::TIdx(idx));
@@ -1627,7 +1629,9 @@ fn lex_stream_combined(input: &str) -> LexOutcome {
             };
         };
         let sd = &dfas.states[state_id];
-        let probe = Input::new(input).span(at..input.len()).anchored(Anchored::Yes);
+        let probe = Input::new(input)
+            .span(at..input.len())
+            .anchored(Anchored::Yes);
         // A zero-length match is not progress: `lrlex` requires `longest > 0`,
         // and accepting one here would loop forever. A cache error is a hard
         // failure, never a quiet fallback to a different match.
@@ -1732,15 +1736,11 @@ fn combined_lexer(input: &str) -> lrlex::LRNonStreamingLexer<'_, '_, DefaultLexe
             ))));
         }
     }
-    lrlex::LRNonStreamingLexer::new(
-        input,
-        out,
-        {
-            let mut cache = cfgrammar::NewlineCache::new();
-            cache.feed(input);
-            cache
-        },
-    )
+    lrlex::LRNonStreamingLexer::new(input, out, {
+        let mut cache = cfgrammar::NewlineCache::new();
+        cache.feed(input);
+        cache
+    })
 }
 
 /// Whether rule `ridx` produces no lexeme (its `.l` action is `;`).
