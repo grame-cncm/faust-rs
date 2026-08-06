@@ -144,6 +144,7 @@ mod region;
 mod setup;
 mod state;
 mod subcontainer;
+pub(crate) mod subcontainer_compile;
 mod tables;
 mod ui_lowering;
 pub(super) use build::build_module;

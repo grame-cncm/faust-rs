@@ -25,11 +25,9 @@
 //! (`porting/generated/siggen-table-init-s0/`, fixture `f08`).
 
 use fir::{FirId, FirType};
-use signals::{SigId, SigMatch, match_sig};
-use ui::UiProgram;
+use signals::SigId;
 
-use super::build::FillSpec;
-use super::{SignalFirError, SignalFirErrorCode, SignalToFirLower};
+use super::{SignalFirError, SignalToFirLower};
 
 /// One generator compiled into a sub-module, ready to be referenced by the
 /// enclosing program.
@@ -51,123 +49,22 @@ impl SignalToFirLower<'_> {
         generator: SigId,
         elem_ty: &FirType,
     ) -> Result<GeneratedTableFiller, SignalFirError> {
-        let payload = match match_sig(self.arena, generator) {
-            SigMatch::Gen(inner) => inner,
-            _ => generator,
-        };
         let name = self.next_sub_module_name();
-
-        // The generator is prepared exactly like the main program, so the
-        // interpreter path and this path see the same normalized shape. This
-        // is the same call `siggen::interpret_generator` already makes.
-        let prepared = crate::signal_prepare::prepare_signals_for_fir_verified(
-            self.arena,
-            &[payload],
-            &UiProgram::empty(),
-        )
-        .map_err(|err| {
-            SignalFirError::new(
-                SignalFirErrorCode::UnsupportedSignalNode,
-                format!("table generator preparation failed: {err}"),
-            )
-        })?;
-
-        let outputs = prepared.outputs();
-        if outputs.len() != 1 {
-            return Err(SignalFirError::new(
-                SignalFirErrorCode::UnsupportedSignalNode,
-                format!(
-                    "table generator must have exactly one output, got {}",
-                    outputs.len()
-                ),
-            ));
-        }
-
-        let plan = super::super::planner::SignalFirPlan {
-            num_inputs: 0,
-            num_outputs: 1,
-            signal_count: outputs.len(),
-        };
-        let spec = FillSpec {
-            name: name.clone(),
+        let spec = super::subcontainer_compile::GeneratorSubModuleSpec {
+            name: &name,
             elem_ty: elem_ty.clone(),
+            real_ty: self.real_ty(),
+            max_copy_delay: self.delay.options().max_copy_delay,
+            delay_line_threshold: self.delay.options().delay_line_threshold,
+            table_init_mode: self.table_init_mode,
+            scheduling_strategy: self.scheduling_strategy,
         };
-        // A generator is scheduled like any other program. Skipping this was a
-        // correctness bug, not an optimization: `build_module` drives
-        // recursion-group emission through `lower_scheduled_graph`, which
-        // no-ops without a schedule, so a carrier read only through a delay
-        // never got its update emitted and every table entry kept the initial
-        // value. Generators carry no clock domains, so this is the
-        // wrapper-free branch of the main gate.
-        let empty_domains = propagate::ClockDomainTable::new();
-        let envs =
-            crate::clk_env::annotate(prepared.arena(), &empty_domains, outputs).map_err(|err| {
-                SignalFirError::new(
-                    SignalFirErrorCode::ClockAnalysis,
-                    format!("table generator clock-environment inference failed: {err}"),
-                )
-            })?;
-        let mut hgraph = crate::hgraph::build_hgraph(
-            prepared.arena(),
-            &empty_domains,
-            &envs,
-            outputs,
-            prepared.sig_types_map(),
-        )
-        .map_err(|err| {
-            SignalFirError::new(
-                SignalFirErrorCode::ClockAnalysis,
-                format!("table generator dependency graph failed: {err}"),
-            )
-        })?;
-        let effects =
-            crate::signal_fir::vector::analysis::analyze_scalar_scheduling_effects(&prepared)
-                .map_err(|err| {
-                    SignalFirError::new(
-                        SignalFirErrorCode::ClockAnalysis,
-                        format!("table generator effect analysis failed: {err}"),
-                    )
-                })?;
-        crate::hgraph::orient_effect_conflicts(&mut hgraph, &effects).map_err(|err| {
-            SignalFirError::new(
-                SignalFirErrorCode::ClockAnalysis,
-                format!("table generator effect ordering failed: {err}"),
-            )
-        })?;
-        let hsched = crate::hgraph::schedule(&hgraph, self.scheduling_strategy).map_err(|err| {
-            SignalFirError::new(
-                SignalFirErrorCode::ClockAnalysis,
-                format!("table generator scheduling failed: {err}"),
-            )
-        })?;
-
-        let empty_ui = UiProgram::empty();
-        let lowered = super::build::build_module(
-            &plan,
-            &name,
-            prepared.arena(),
-            outputs,
-            &empty_ui,
-            prepared.types_map(),
-            prepared.sig_types_map(),
-            prepared.origins(),
-            self.real_ty(),
-            self.delay.options().max_copy_delay,
-            self.delay.options().delay_line_threshold,
-            super::super::ComputeMode::Scalar,
-            super::super::ControlRateMode::InlinePerBlock,
-            super::super::ProcessingApi::Block,
-            self.table_init_mode,
-            self.scheduling_strategy,
-            None,
-            Some(&hsched),
-            Some(&spec),
+        let node = super::subcontainer_compile::compile_generator_sub_module(
+            self.arena,
+            &mut self.store,
+            generator,
+            &spec,
         )?;
-
-        // `FirId`s are store-local: the generator was lowered into its own
-        // store and must be re-interned here before the parent module can
-        // reference it.
-        let node = self.store.import_from(&lowered.store, lowered.module);
         Ok(GeneratedTableFiller { name, node })
     }
 
