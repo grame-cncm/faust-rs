@@ -36,3 +36,9 @@ path = "src/main.rs"
 
 [lints]
 workspace = true
+
+# The CLI binary only. `mimalloc` is not a library dependency: a library must
+# not impose an allocator on its consumers, and nothing in `compiler`'s public
+# API depends on it.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mimalloc = "0.1.52"

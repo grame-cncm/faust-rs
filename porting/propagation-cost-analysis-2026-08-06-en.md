@@ -190,3 +190,60 @@ corpus alone:
 
 P4 is not hypothetical: the box-simplification memo of the same day failed
 exactly that way, and only a test compiling twice in one process could see it.
+
+## 8. The allocator — measured 2026-08-06, and it is the largest single item
+
+§2.1's profile put the platform allocator at roughly half of propagation self
+time, and §7 noted it as the better lead. It is.
+
+### 8.1 Volume
+
+`propagate_inner` is called **~30 million times** on this 331-line DSP, and its
+`Vec<SigId>` result has:
+
+| | |
+|---|---|
+| mean length | **1.19** |
+| length ≤ 1 | **83 %** |
+| length ≤ 2 | 98 % |
+| length ≤ 4 | 100 % |
+
+Thirty million heap allocations, essentially all of one element.
+
+### 8.2 Throughput
+
+Swapping the CLI binary's global allocator to `mimalloc` — three lines, no
+other change:
+
+| | system allocator | `mimalloc` |
+|---|---|---|
+| `virtualAnalogForBrowser.dsp` propagation | 10.95 s | **5.42 s** |
+| — total | 13.40 s | **7.60 s** |
+| impulse corpus (`compile-bench`) | 1.21× C++ | **0.82×** |
+| — DSPs faster than C++ Faust | 8 of 94 | **22 of 94** |
+| — median per-DSP delta | +82 % | **+36 %** |
+
+Output byte-identical; cpp impulse lane 94/94, `golden-check`,
+`cli-transcript-check`, workspace tests and clippy all unchanged.
+
+In aggregate the corpus is now **faster than the reference** (4.05 s against
+4.92 s). The median stays positive because the win scales with allocation
+volume: large programs gain, trivial ones are dominated by fixed costs.
+
+### 8.3 What this is and is not
+
+It is a real and large win, and it is the correct choice for the binary: the
+CLI is the product, and the platform allocator on macOS is simply slow under
+this much churn.
+
+It is **not** a fix for the underlying shape. Thirty million one-element
+allocations remain; `mimalloc` just services them faster. That matters because
+the allocator is scoped to the binary on purpose — `compiler` does not carry it
+as an ordinary dependency, since a library must not impose an allocator on its
+consumers — so every FFI embedder still pays the platform allocator in full.
+
+The follow-up with the evidence already in hand: **`SmallVec<[SigId; 2]>` for
+propagation results** would remove ~98 % of these allocations outright rather
+than making them cheaper, and would help every consumer rather than only the
+CLI. It is a type change across the propagation signatures, so it needs its own
+pass; §8.1's distribution is the measurement that justifies the inline capacity.
