@@ -303,6 +303,15 @@ correct; document it, don't change it.
 
 ### Phase P2 — `liftn` aperture fast-path (companion, from the March plan)
 
+> **Measured 2026-08-06: no win; do not implement.** The change below was
+> applied exactly as written and benchmarked over the 133-DSP corpus — 14.19 s
+> mean without it, 14.49 s with, three runs each. Instrumenting the call site
+> explains it: `liftn` is called fewer than a thousand times per compilation
+> and almost all of those return at its existing `(root, threshold)` memo probe
+> before reaching the guard. The loop this was meant to attack is not hot.
+> See `porting/eval-box-simplification-memoization-analysis-2026-08-06-en.md`
+> §P2.
+
 Not part of the upstream commits (C++ `liftn` has had the `aperture == 0`
 guard for years) but it attacks the same hot loop and the current Rust `liftn`
 ([engine.rs:1264](../crates/propagate/src/engine.rs)) still recurses into

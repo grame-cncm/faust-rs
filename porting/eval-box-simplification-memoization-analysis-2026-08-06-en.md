@@ -1,9 +1,10 @@
 # Compile-time analysis — where faust-rs spends 3.8× the reference's time
 
 **Date**: 2026-08-06
-**Status**: analysis complete; **P0 and P1 implemented 2026-08-06** — the
-corpus went from 3.81x to 2.30x the reference's compile time. P2-P4 proposed
-and not implemented
+**Status**: **P0 and P1 implemented 2026-08-06** — the corpus went from 3.81x
+to 2.30x the reference's compile time. **P2 profiled and its hypothesis
+refuted**; the remaining cost is library lexing, not memoization (see P2/P2′).
+P3-P4 proposed and not implemented
 **Trigger**: `make compile-bench` reports faust-rs slower than C++ Faust on 91 of
 94 corpus DSPs; the question was why.
 **Related**: `porting/cpp-propagate-eval-memoization-port-plan-2026-07-04-en.md`
@@ -276,15 +277,76 @@ scenario is what makes it evidence. Under the mutation it now fails with
 A test that passes under its own mutation is worse than no test, because it is
 recorded as coverage.
 
-### P2 — the second layer
+### P2 — profiled 2026-08-06; hypothesis refuted, nothing implemented
 
-`propagate_box_and_simplify`'s per-call `ArityCache`. The per-call cache at
-`lib.rs:1211` is gone — P1 removed it along with the other call site.
+P2 proposed memoizing `propagate_box_and_simplify`'s per-call `ArityCache`.
+**That hypothesis is wrong**, and so was the profiling method that suggested it.
+Nothing was implemented; the phase's output is a measurement and a correction.
 
-Re-measured after P1: evaluation is 7.77 s of 13.74 s (56.5 %), still the
-largest single stage. How much of that is the `ArityCache` layer is **not yet
-established**; the profile names the stage, not the function. Profile before
-implementing.
+**Two candidate fixes were measured and rejected.**
+
+`propagate_box_and_simplify` is cold after P1 — 242 of 7888 samples, against
+`box_simplification`'s 322. There is no second layer to fix there.
+
+The `liftn` closed-subterm fast path proposed by
+`porting/cpp-propagate-eval-memoization-port-plan-2026-07-04-en.md` §P2 was
+implemented as specified and measured: corpus 14.19 s mean over three runs
+without it, 14.49 s with. It is **not a win**. Instrumenting the call site
+explains why — `liftn` is called fewer than a thousand times per compilation,
+and almost all of those return at its existing `(root, threshold)` memo probe
+before reaching any guard. The plan's "two-line change" attacks a loop that is
+not hot. That finding belongs to that plan and is recorded here because this is
+where it was measured.
+
+**The method that produced the wrong hypothesis.** §2.1 attributed samples by
+taking, for each symbol, the largest count on any line of `sample`'s call-graph
+output. That number is a *stack node's cumulative total*, not self time, so a
+symbol sitting on a hot deep stack reads as hot without doing any work. It put
+`liftn` and `tlib::clone_rec` at ~41 % each; their true self times are
+`clone_rec` **35** samples and `liftn` below the 5-sample reporting floor.
+`sample` already prints a sound self-time ranking under *"Sort by top of stack,
+same collapsed"*, and that section is what any future profiling here should
+read.
+
+**What the sound profile says.** Self time on `phaser_flanger`, post-P1:
+
+| frame | samples | share |
+|---|---|---|
+| `lrlex::lexer` | 1836 | 23 % |
+| `regex_automata::hybrid::search::find_fwd` | 1793 | 23 % |
+| `regex_automata`, two more frames | 1168 | 15 % |
+| allocator (`tiny_malloc`/`tiny_free`/…) | ~1000 | 13 % |
+| `sigtype::rules::TypeAnnotator::infer` | 99 | 1 % |
+| `tlib::arena::clone_rec` | 35 | 0.4 % |
+
+Lexing and its regex engine are ~61 % of what remains. Confirmed independently
+without a profiler:
+
+| program | parser | evaluation | total |
+|---|---|---|---|
+| `import("stdfaust.lib"); process = os.osc(440) : fi.lowpass(1,1000);` | 0.018 s | 0.226 s | **249.5 ms** |
+| same shape, no import | 0.003 s | 0.000025 s | **3.8 ms** |
+
+The standard library is re-lexed on every compilation, lazily, during the
+*evaluation* stage — which is why evaluation carries the cost and why the
+`parser` stage looks small. This also revises §7: that document bounded the
+2026-07-04 plan's value by the `propagation` stage's 2.2 %, but stage names do
+not locate functions, and the same reasoning error is what produced this
+phase's hypothesis.
+
+### P2′ — library lexing (proposed, unstarted)
+
+Two directions, neither costed yet:
+
+- **A faster lexer.** `lrlex` drives `regex_automata` per token. C++ Faust uses
+  a flex-generated DFA and pays a fraction of this.
+- **Reusing parsed libraries across compilations.** Tempting and dangerous for
+  exactly the reason P1 documents: anything keyed by `TreeId` cannot cross an
+  arena. A cache would have to hold source-level ASTs and re-intern per
+  compilation, and would need V3-style evidence that it does.
+
+Neither should be started without its own analysis; this phase's lesson is that
+a plausible mechanism is worth nothing against a measurement.
 
 ### P3 — parser
 
@@ -342,15 +404,21 @@ it either. Only a test that compiles twice in one process can.
 
 `porting/cpp-propagate-eval-memoization-port-plan-2026-07-04-en.md` ports the
 upstream memoization commits and identifies the main faust-rs gap as "no result
-memo in `propagate_in_slot_env`". That analysis stands, and its §3 treatment of
-unsound keys is directly reusable here — but it targets a different cost. The
-`propagation` stage is **2.2 %** of compile time in the measurement above,
-against **67 %** for evaluation. Whatever `propagate_in_slot_env` memoization
-is worth, it cannot be worth more than 0.4 s on this corpus.
+memo in `propagate_in_slot_env`". Its §3 treatment of unsound keys is directly
+reusable and was the precedent for P1's soundness obligations.
 
-The two are complementary, not competing: this document adds the missing
-measurement that says which one to do first, and the answer is
-`box_simplification`.
+**Correction (2026-08-06, after P2's profiling).** This section originally
+bounded that plan's value by observing that the `propagation` *stage* is 2.2 %
+of compile time. That reasoning is invalid: a stage name does not locate a
+function, and `propagate_in_slot_env` is called from evaluation, not only from
+the stage that shares its name. The bound was wrong.
+
+What replaces it is a direct measurement rather than a better inference. That
+plan's §P2 `liftn` fast path was implemented and measured under P2 here: no
+win, because `liftn` is called under a thousand times per compilation and
+almost always returns at its existing memo. Its §P1 `propagate_in_slot_env`
+memo remains unmeasured; the self-time profile does not show that function
+among the leaders, which is evidence against it but not a measurement of it.
 
 ---
 
