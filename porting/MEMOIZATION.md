@@ -27,13 +27,32 @@ Memoization should only be added when all of the following hold:
    context-sensitive semantics.
 4. A structural or differential non-regression test can be added with the
    change.
+5. **The repeat rate is measured, not assumed** — on an input where the stage
+   in question dominates.
+
+Rule 5 was added 2026-08-06 because rules 1–4 only test whether a computation
+*could* be memoized. §3.1 satisfied all four and turned out to be a
+pessimization: 12 % hit rate, 748 k entries stored to avoid 123 k
+recomputations. Choose the input deliberately too — the impulse corpus puts
+propagation at 2.2 % of compile time where a real DSP puts it at 82 %.
 
 Preferred Rust pattern:
 
 - keep pass-global caches explicit,
 - thread them through one pass/session context,
-- do not attach mutable pass state to arena nodes,
-- separate analysis caches from operational lowering caches.
+- separate analysis caches from operational lowering caches,
+- **and pick the owner by what the cached value depends on, not by habit.**
+
+That last point replaces a flat "do not attach mutable pass state to arena
+nodes" (2026-08-06). The prohibition is right about *pass state* — a value that
+depends on where the pass currently is must not be parked on a node shared by
+every pass. It is wrong about a value that is a pure function of the node
+itself: for those the arena is the *correct* owner, because a `TreeId` is only
+meaningful to the arena that issued it, so arena ownership makes the memo's
+lifetime and its keys expire together and removes invalidation as something
+anyone has to remember. That is what C++ does through `CTree::setProperty`, and
+it is how §2.5 was fixed. The test that distinguishes the two cases is whether
+a fresh arena must see an empty table — if yes, the arena should own it.
 
 ## 2. Implemented
 
@@ -456,7 +475,26 @@ The items below are ordered by expected leverage and safety.
 
 ### 3.1 `propagate`: memoize propagation of context-free closed subtrees
 
-Status: planned
+Status: **attempted and rejected 2026-08-06.** Implemented as described below
+— `AHashMap<(FlatBoxId, inputs, slot_env, group_path, clock_env), Vec<SigId>>`
+— and measured on `virtualAnalogForBrowser.dsp`, the case where propagation is
+82 % of compile time. Propagation went **10.6 s to 13.9 s**: slower, with
+byte-identical output. The hit rate is 12 % and the table reaches 748 k entries
+to avoid 123 k recomputations, because the same box is rarely propagated twice
+with the same inputs. See
+`porting/propagation-cost-analysis-2026-08-06-en.md` §7.
+
+Two of this section's own premises were also measured false. The "only cache
+proven closed subtrees" narrowing is the plan's P1a cut, which assumes most
+propagation happens outside a `Symbolic` scope: 88 % of calls have a *non-empty*
+slot env. And the elaborate slot-env interning proposed as its successor is
+unnecessary — envs measure at mean 1.97 bindings, max 4, so sorted bindings in
+the key are cheaper and exact.
+
+The repeated work is real (C++ propagation is flat in the number of uses of a
+shared argument, faust-rs is linear) but it is **not repeated at the
+granularity of `propagate_in_slot_env` calls keyed by their inputs**. Anything
+revisiting this must first establish where it *is* repeated.
 
 Target:
 
@@ -649,12 +687,31 @@ Reordered 2026-08-06 on measured evidence rather than expectation
 
 1. ~~`eval`: give the existing `box_simplification` memo a compilation-scoped
    lifetime (§2.5).~~ **Done 2026-08-06**; worth 7.4 s of the corpus's 18.1 s.
-2. `propagate`: cache only provably context-free closed subtree propagation.
-   Note the `propagation` stage is 2.2 % of compile time, so this is bounded by
-   ~0.4 s on the corpus however well it is done.
+2. ~~`propagate`: cache only provably context-free closed subtree propagation
+   (§3.1).~~ **Attempted and rejected 2026-08-06**: slower, 12 % hit rate.
 3. `normalize`: introduce a signal normal-form cache.
 4. `codegen`: add occurrence counting cache once the scheduling path is stable.
 
-The reordering is the point: items 2-4 were listed first for two years on
-plausibility. The measurement says the largest available win was a scope bug in
-an already-implemented cache that the roadmap recorded as inactive.
+### What the day's measurements actually changed
+
+The reordering above was the point when it was written, and it was still not
+enough. Items 2–4 had been listed first for two years on plausibility; item 2
+has since been implemented and measured as a *pessimization*. Three plausible
+memoizations were tried on 2026-08-06 and all three lost:
+
+| change | result |
+|---|---|
+| `box_simplification` scope fix (§2.5) | **3.81× → 2.30×** — the one win |
+| `liftn` closed-subterm fast path | no change (14.19 s → 14.49 s) |
+| `propagate_in_slot_env` result memo (§3.1) | slower (10.6 s → 13.9 s) |
+| `SmallVec` for propagation results | slower (10.7 s → 15.3 s) |
+
+What actually moved the remaining cost was **not memoization at all**: a
+combined-DFA lexer (2.13× → 1.21×) and swapping the platform allocator
+(1.21× → 0.82×). The corpus now compiles *faster* than C++ Faust.
+
+The standing lesson for items 3 and 4: this roadmap's §1 rules test whether a
+computation *could* be memoized, never whether the repeat rate justifies it.
+Measure the hit rate on a case where the stage dominates before writing the
+cache — and pick that case deliberately, because the impulse corpus put
+propagation at 2.2 % where a real DSP puts it at 82 %.
