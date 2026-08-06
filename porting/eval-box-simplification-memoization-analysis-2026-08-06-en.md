@@ -368,13 +368,54 @@ borrows it and all mutable state — position, the `comment`/`doc`/`lst` start
 conditions — lives in the returned lexer. Corpus 14.19 s → 12.9 s, and
 `compile-bench` 2.30× → **2.13×**.
 
-**Not done: replacing the lexer.** The 373× headroom is real and it is the
-largest remaining item by a wide margin — removing essentially all lexing time
-would take the corpus from ~12.9 s toward ~6 s. But a replacement has to
-reproduce `faustlexer.l` exactly: 128 rules, four exclusive start conditions,
-and the `mdoc` sublanguage. That is a port with its own plan and its own
-differential gate (lex every corpus and library file with both, compare token
-streams), not an afternoon.
+**Why `lrlex` is slow, and it is not implementation quality.** `lrlex` keeps the
+128 rules as 128 *separate* anchored regexes and, at every token start, runs
+each one that the current start condition allows, keeping the longest match
+([`lexer.rs:419`](file:///Users/letz/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/lrlex-0.13.10/src/lib/lexer.rs)).
+That is O(tokens × rules) automaton startups. `flex`, which C++ Faust uses,
+compiles its 160 rules into **one** table-driven DFA of 611 states
+(`yy_accept`/`yy_base`/`yy_def`/`yy_nxt`/`yy_chk` in
+`compiler/parser/faustlexer.cpp`) and does one table lookup per input byte:
+O(bytes), independent of rule count. The measured gap follows from the
+asymptotics, not from tuning.
+
+Same DSP through both compilers, confirming it end to end:
+
+| | parser | evaluation | total |
+|---|---|---|---|
+| C++ Faust 2.87.1 | 0.48 ms | 10.4 ms | ~20 ms |
+| faust-rs | 9.3 ms | 236 ms | ~230 ms |
+
+Both defer library reading to *evaluation* (C++ without the import: 0.048 ms),
+so this compares the same work.
+
+**The combined DFA is available without leaving the current dependencies.**
+`regex-automata` — already a dependency, pulled in by `lrlex` itself — supports
+multi-pattern automata through `new_many`, returning which pattern matched.
+Building one lazy (`hybrid`) DFA over the same 128 rule patterns and scanning
+the same corpus:
+
+| strategy | build | throughput | vs `lrlex` |
+|---|---|---|---|
+| `lrlex`, 128 separate regexes | 2.3 ms | 2.4 MB/s | — |
+| one lazy multi-pattern DFA | **0.6 ms** | **266 MB/s** | **112×** |
+| one fully-determinized `dense::DFA` | 79 s | 240 MB/s | 98× |
+| hand-written reference scanner | — | 781–920 MB/s | ~350× |
+
+The lazy DFA is the shape a replacement should take: it builds in under a
+millisecond and determinizes on demand, where the dense DFA would have to be
+serialized at build time — which is, in effect, what `flex` does.
+
+**Not done: replacing the lexer.** The headroom is real and it is the largest
+remaining item by a wide margin — removing essentially all lexing time would
+take the corpus from ~12.9 s toward ~6 s. But throughput probes are not lexers.
+A replacement has to reproduce `faustlexer.l` exactly: longest-match with
+earliest-rule tie-breaking, the four exclusive start conditions, and the `mdoc`
+sublanguage. The benchmark's combined-DFA loop implements none of that, and its
+match count (114 730) differs from `lrlex`'s token count (227 526) precisely
+because it does not. This is a port with its own plan and its own differential
+gate — lex every corpus and library file with both and compare token streams —
+not an afternoon.
 
 **Also found, not done: files are parsed more than once per compilation.** The
 trace above shows `platform.lib` parsed three times and `maths.lib` twice —

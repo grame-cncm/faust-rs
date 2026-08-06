@@ -16,6 +16,9 @@ lrlex = "0.13.10"
 lrpar = "0.13.10"
 tlib = { path = "../tlib" }
 
+[dev-dependencies]
+regex-automata = "0.4"
+
 [build-dependencies]
 cfgrammar = "0.13.10"
 lrlex = "0.13.10"
