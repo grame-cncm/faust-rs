@@ -110,6 +110,12 @@ struct CliArgs {
     /// FIR scheduling strategy selector.
     #[arg(long = "scheduling-strategy")]
     scheduling_strategy: Option<u32>,
+
+    /// How a `rdtable`/`rwtable` initialization signal is computed:
+    /// `const` folds it at compile time, `runtime` emits a generator
+    /// sub-module that fills the table at initialization.
+    #[arg(long = "table-init", value_name = "MODE")]
+    table_init: Option<String>,
 }
 
 fn parse_args() -> Result<Options, clap::Error> {
@@ -136,6 +142,9 @@ where
     }
     if let Some(value) = args.scheduling_strategy {
         compiler_argv.extend(["-ss".to_owned(), value.to_string()]);
+    }
+    if let Some(value) = args.table_init {
+        compiler_argv.extend(["--table-init".to_owned(), value]);
     }
 
     Ok(Options {

@@ -222,6 +222,16 @@ pub(crate) fn subset_stmt_gap_reason(
             .or_else(|| {
                 subset_expr_gap_reason(store, value, extern_data_symbols, extern_function_symbols)
             }),
+        // A generated table's fill loop writes a static table.
+        FirMatch::StoreTable {
+            access: AccessType::Static,
+            index,
+            value,
+            ..
+        } => subset_expr_gap_reason(store, index, extern_data_symbols, extern_function_symbols)
+            .or_else(|| {
+                subset_expr_gap_reason(store, value, extern_data_symbols, extern_function_symbols)
+            }),
         FirMatch::Drop(v) => {
             subset_expr_gap_reason(store, v, extern_data_symbols, extern_function_symbols)
         }

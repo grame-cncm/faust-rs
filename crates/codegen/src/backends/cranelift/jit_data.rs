@@ -6,8 +6,13 @@
 
 use super::*;
 
+/// Pre-declared JIT data for the module's `AccessType::Static` tables: the
+/// `name -> DataId` handles function bodies reference, and the declared element
+/// type of each table.
+pub(crate) type StaticTableJitData = (HashMap<String, DataId>, HashMap<String, FirType>);
+
 /// Declares and defines every `AccessType::Static` table from the FIR
-/// `static_decls` block as a JIT read-only data object.
+/// `static_decls` block as a JIT data object.
 ///
 /// Static (file-scope constant) tables are emitted as `const static` arrays in
 /// the C/C++ backends.  In the Cranelift JIT they must be materialized as named
@@ -15,24 +20,66 @@ use super::*;
 /// bodies reference them via `GlobalValue` handles obtained from the `DataId`.
 ///
 /// Returns a map `name → DataId` that `LoadTable { access: Static }` lowering
-/// uses inside `ComputeLowering::lower_expr`.
+/// uses inside `ComputeLowering::lower_expr`, plus the declared element type of
+/// each table so `StoreTable { access: Static }` writes the width the matching
+/// load reads.
 pub(crate) fn define_static_tables_in_jit(
     store: &FirStore,
     module: FirId,
     jit: &mut JITModule,
     double: bool,
-) -> Result<HashMap<String, DataId>, CraneliftBackendError> {
+) -> Result<StaticTableJitData, CraneliftBackendError> {
     let static_decls_block = match match_fir(store, module) {
         FirMatch::Module { static_decls, .. } => static_decls,
-        _ => return Ok(HashMap::new()),
+        _ => return Ok((HashMap::new(), HashMap::new())),
     };
     let items = match match_fir(store, static_decls_block) {
         FirMatch::Block(ids) => ids,
-        _ => return Ok(HashMap::new()),
+        _ => return Ok((HashMap::new(), HashMap::new())),
     };
 
     let mut result = HashMap::new();
+    let mut elem_types = HashMap::new();
     for id in items {
+        // A generated table arrives as an uninitialized `Static` array: no
+        // contents, because `staticInit` computes them. It still needs a data
+        // object, zero-filled and — unlike a constant table — writable.
+        if let FirMatch::DeclareVar {
+            name,
+            typ: FirType::Array(elem, size),
+            access: AccessType::Static,
+            ..
+        } = match_fir(store, id)
+        {
+            let (elem_bytes, align): (usize, u64) = match elem.as_ref() {
+                FirType::Int32 | FirType::Float32 => (4, 4),
+                FirType::Int64 | FirType::Float64 => (8, 8),
+                FirType::FaustFloat if double => (8, 8),
+                FirType::FaustFloat => (4, 4),
+                other => {
+                    return Err(CraneliftBackendError::unsupported_module_shape(format!(
+                        "generated table `{name}` has unsupported element type for JIT data: \
+                         {other:?}"
+                    )));
+                }
+            };
+            let data_id = jit
+                .declare_data(&name, Linkage::Local, true, false)
+                .map_err(|e| {
+                    CraneliftBackendError::jit_failure(format!("declare_data `{name}` failed: {e}"))
+                })?;
+            let mut desc = DataDescription::new();
+            desc.init = Init::Zeros {
+                size: size * elem_bytes,
+            };
+            desc.align = Some(align);
+            jit.define_data(data_id, &desc).map_err(|e| {
+                CraneliftBackendError::jit_failure(format!("define_data `{name}` failed: {e}"))
+            })?;
+            elem_types.insert(name.clone(), elem.as_ref().clone());
+            result.insert(name, data_id);
+            continue;
+        }
         let FirMatch::DeclareTable {
             name,
             elem_type,
@@ -122,9 +169,10 @@ pub(crate) fn define_static_tables_in_jit(
             CraneliftBackendError::jit_failure(format!("define_data `{name}` failed: {e}"))
         })?;
 
+        elem_types.insert(name.clone(), elem_type);
         result.insert(name, data_id);
     }
-    Ok(result)
+    Ok((result, elem_types))
 }
 
 /// Declares imported data symbols for FIR `AccessType::Global` scalar loads.
@@ -180,6 +228,7 @@ pub(crate) fn declare_jit_function(
     force_stub: bool,
     jit: &mut JITModule,
     static_data_ids: &HashMap<String, DataId>,
+    static_table_elem_types: &HashMap<String, FirType>,
     extern_data_ids: &HashMap<String, DataId>,
     double: bool,
 ) -> Result<(String, usize, bool, String), CraneliftBackendError> {
@@ -252,6 +301,7 @@ pub(crate) fn declare_jit_function(
                     struct_layout,
                     ptr_ty,
                     static_data_ids,
+                    static_table_elem_types,
                     extern_data_ids,
                     extern_function_symbols,
                     double,

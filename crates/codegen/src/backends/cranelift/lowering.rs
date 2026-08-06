@@ -193,6 +193,9 @@ pub(crate) struct ComputeLowering<'a, 'b, 'c> {
     import_refs: HashMap<String, FuncRef>,
     /// Pre-declared JIT data IDs for `AccessType::Static` tables.
     pub(crate) static_data_ids: &'a HashMap<String, DataId>,
+    /// Declared element type of each `AccessType::Static` table, so a store
+    /// writes exactly the width the matching load reads.
+    pub(crate) static_table_elem_types: &'a HashMap<String, FirType>,
     /// Imported JIT data IDs for FIR `AccessType::Global` scalar symbols.
     pub(crate) extern_data_ids: &'a HashMap<String, DataId>,
     /// Registered host addresses for foreign function symbols resolved through
@@ -566,6 +569,12 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 index,
                 value,
             } => self.lower_store_table_struct(&name, index, value),
+            FirMatch::StoreTable {
+                name,
+                access: AccessType::Static,
+                index,
+                value,
+            } => self.lower_store_table_static(&name, index, value),
             FirMatch::StoreVar {
                 name,
                 access: AccessType::Struct,
@@ -757,6 +766,39 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         };
         let dsp = self.dsp_base_ptr()?;
         let base = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
+        let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
+        let mut value_v = self.lower_expr(value, Some(&elem_type))?.value();
+        value_v = self.coerce_value_to_fir_type(value_v, &elem_type)?;
+        let elem_clif = self.fir_type_to_clif(&elem_type)?;
+        let addr = self.indexed_addr(base, index_v, i64::from(elem_clif.bytes()));
+        self.fb.ins().store(MemFlags::new(), value_v, addr, 0);
+        Ok(())
+    }
+
+    /// Stores one element of a static table.
+    ///
+    /// A static table is a JIT data object addressed through its own
+    /// `GlobalValue`, not an offset from the `dsp` pointer, so this mirrors the
+    /// `LoadTable { access: Static }` case rather than the struct one. It
+    /// exists so a generated table's fill loop can write the table it was built
+    /// to fill; the element type comes from the declaration, so the store width
+    /// always matches what the load reads.
+    fn lower_store_table_static(
+        &mut self,
+        name: &str,
+        index: FirId,
+        value: FirId,
+    ) -> Result<(), LoweringError> {
+        let data_id = self.static_data_ids.get(name).copied().ok_or_else(|| {
+            LoweringError::Unsupported(format!(
+                "static table `{name}` not found in pre-declared JIT data"
+            ))
+        })?;
+        let elem_type = self.static_table_elem_types.get(name).cloned().ok_or_else(|| {
+            LoweringError::Unsupported(format!("static table `{name}` has no declared element type"))
+        })?;
+        let gv = self.jit.declare_data_in_func(data_id, self.fb.func);
+        let base = self.fb.ins().global_value(self.ptr_ty, gv);
         let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
         let mut value_v = self.lower_expr(value, Some(&elem_type))?.value();
         value_v = self.coerce_value_to_fir_type(value_v, &elem_type)?;
@@ -1868,6 +1910,9 @@ pub(crate) struct FunctionBodyLoweringContext<'a> {
     pub(crate) struct_layout: &'a StructLayoutPlan,
     pub(crate) ptr_ty: Type,
     pub(crate) static_data_ids: &'a HashMap<String, DataId>,
+    /// Declared element type of each `AccessType::Static` table, so a store
+    /// writes exactly the width the matching load reads.
+    pub(crate) static_table_elem_types: &'a HashMap<String, FirType>,
     pub(crate) extern_data_ids: &'a HashMap<String, DataId>,
     pub(crate) extern_function_symbols: &'a HashMap<String, *const c_void>,
     /// 64-bit (`double`) precision: resolves `FaustFloat` to `F64`.
@@ -1929,6 +1974,7 @@ pub(crate) fn try_lower_function_body(
         next_var: 0,
         import_refs: HashMap::new(),
         static_data_ids: cx.static_data_ids,
+        static_table_elem_types: cx.static_table_elem_types,
         extern_data_ids: cx.extern_data_ids,
         extern_function_symbols: cx.extern_function_symbols,
         double: cx.double,

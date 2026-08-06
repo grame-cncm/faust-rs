@@ -45,10 +45,18 @@ pub struct FfiCompileArgs {
     /// This mirrors the compiler facade's warning policy: warnings are
     /// retained for a diagnostics query but never turn success into failure.
     pub warnings: bool,
+    /// `runtime` when `--table-init runtime` was given, selecting a generated
+    /// sub-module that fills a `rdtable`/`rwtable` at initialization instead of
+    /// folding its contents at compile time.
+    ///
+    /// Kept as the raw string for the same reason as
+    /// [`Self::scheduling_strategy`]: `TableInitMode` lives in `transform`, and
+    /// `ffi-common` is a dependency-light leaf crate.
+    pub table_init: Option<String>,
 }
 
 /// Parses the shared FFI option subset (`-I`, `-cn`, `-double`,
-/// `-vec`/`-vs`/`-lv`, `-ss`, `--warn`) from an argv vector. `vec_size` defaults to 32
+/// `-vec`/`-vs`/`-lv`, `-ss`, `--table-init`, `--warn`) from an argv vector. `vec_size` defaults to 32
 /// when `-vec` is given without `-vs`, matching the Faust CLI.
 /// `scheduling_strategy` defaults to `0` (depth-first) when `-ss` is absent,
 /// mirroring the CLI's `--scheduling-strategy` default.
@@ -113,6 +121,14 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
             parsed.scheduling_strategy = value
                 .parse()
                 .map_err(|error| format!("bad -ss value: {error}"))?;
+            index += 2;
+            continue;
+        }
+        if arg == "--table-init" || arg == "-table-init" {
+            let Some(value) = argv.get(index + 1) else {
+                return Err("missing value after --table-init".to_owned());
+            };
+            parsed.table_init = Some(value.clone());
             index += 2;
             continue;
         }

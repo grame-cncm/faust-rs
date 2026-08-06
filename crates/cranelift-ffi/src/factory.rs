@@ -25,7 +25,7 @@ use codegen::backends::cranelift::{
 };
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, ComputeMode, ExpandDspRequest,
-    GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane,
+    GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane, TableInitMode,
     default_import_search_paths,
 };
 use ffi_common::{
@@ -943,6 +943,11 @@ fn compiler_from_argv(argv: &[String]) -> (FaustCompiler, bool) {
         })
         .with_compute_mode(compute_mode)
         .with_scheduling_strategy(SchedulingStrategy::decode(parsed.scheduling_strategy));
+    let compiler = match parsed.table_init.as_deref() {
+        Some("runtime") => compiler.with_table_init_mode(TableInitMode::Runtime),
+        Some("const") => compiler.with_table_init_mode(TableInitMode::Const),
+        _ => compiler,
+    };
     (compiler, parsed.double)
 }
 

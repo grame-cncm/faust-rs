@@ -180,7 +180,7 @@ pub unsafe extern "C" fn initCCraneliftDSPInstance(
             return;
         }
         (*dsp).initialized = true;
-        class_init_instance(dsp);
+        class_init_instance(dsp, sample_rate);
         instanceInitCCraneliftDSPInstance(dsp, sample_rate);
     }
 }
@@ -454,11 +454,33 @@ pub fn instance_status() -> &'static str {
     "cranelift-ffi instance runtime"
 }
 
-/// Placeholder for the Faust `classInit` family in the current standalone runtime.
+/// Runs the JIT-compiled `staticInit`, which fills the generated tables.
 ///
-/// The FIR-to-runtime descriptor path does not yet materialize a separate
-/// Cranelift-lowered `classInit`, so this stays as an explicit no-op hook.
-unsafe fn class_init_instance(_dsp: *mut CraneliftDspInstance) {}
+/// A runtime-filled table is a zeroed JIT data object; without this call
+/// nothing ever writes it and every read returns 0. `staticInit` shares the
+/// `(dsp, sample_rate)` ABI with `instanceConstants`, and takes the sample rate
+/// because a generator's content may depend on it — `subcontainer1.dsp` is the
+/// case that does.
+///
+/// Modules with no generated table have no `staticInit`, so the address is 0
+/// and this is the no-op it has always been.
+unsafe fn class_init_instance(dsp: *mut CraneliftDspInstance, sample_rate: c_int) {
+    unsafe {
+        let Some(factory) = (*dsp).factory.as_ref() else {
+            return;
+        };
+        let Some(jit) = factory.compiled_jit.as_ref() else {
+            return;
+        };
+        let Some(static_init) = instance_constants_fn_from_addr(jit.static_init_entry_addr()) else {
+            return;
+        };
+        let dsp_ptr = (*dsp).dsp_state.as_mut_ptr().cast::<c_void>();
+        if !dsp_ptr.is_null() {
+            static_init(dsp_ptr, sample_rate);
+        }
+    }
+}
 
 /// Replays FIR-derived UI items through the exported `UIGlue` callback table.
 ///
@@ -887,7 +909,7 @@ mod tests {
             "pub unsafe extern \"C\" fn initCCraneliftDSPInstance",
         );
         let init_class_i = init_body
-            .find("class_init_instance(dsp);")
+            .find("class_init_instance(dsp, sample_rate);")
             .expect("init should call classInit");
         let init_instance_i = init_body
             .find("instanceInitCCraneliftDSPInstance(dsp, sample_rate);")
@@ -902,7 +924,7 @@ mod tests {
             "pub unsafe extern \"C\" fn instanceInitCCraneliftDSPInstance",
         );
         assert!(
-            !instance_init_body.contains("class_init_instance(dsp);"),
+            !instance_init_body.contains("class_init_instance(dsp,"),
             "instanceInit must not call classInit"
         );
         let constants_i = instance_init_body

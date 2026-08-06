@@ -43,19 +43,40 @@ pub fn generate_cranelift_module(
     module: FirId,
     options: &CraneliftOptions,
 ) -> Result<JitDspModule, CraneliftBackendError> {
-    // Cranelift is not migrated to generated-table sub-modules (plan phase S5).
-    // It already fails on such a module, but only by accident: the table is a
-    // `DeclareVar(Array)` that `jit_data` never pre-declares, so lowering
-    // reports "subset matcher drift" — an internal-invariant message for what is
-    // really an unimplemented feature. Refusing up front makes the failure
-    // designed rather than lucky, and gives the same actionable message as every
-    // other backend.
+    // Cranelift has no nested container: one JIT module, one flat set of
+    // compiled functions. A table generator is therefore inlined with its state
+    // merged into the DSP struct, as for the other flat backends
+    // (`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`
+    // §5.9). The table stays in `static_decls` and becomes a writable JIT data
+    // object that `staticInit` fills.
+    let flattened = if fir::subcontainer::has_sub_modules(store, module) {
+        let (owned, root) = fir::subcontainer::flatten_sub_modules_owned(
+            store,
+            module,
+            fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
+        )
+        .map_err(|err| {
+            CraneliftBackendError::unsupported_module_shape(format!(
+                "flattening generated tables failed: {err}"
+            ))
+        })?;
+        Some((owned, root))
+    } else {
+        None
+    };
+    let (store, module) = flattened
+        .as_ref()
+        .map_or((store, module), |(s, m)| (s, *m));
+
+    // Flattening removed them; a survivor is an internal error, and must not
+    // reach the JIT — a table declared and never filled reads as zeros.
     if let FirMatch::Module { sub_modules, .. } = match_fir(store, module) {
         let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
         if !sub_module_names.is_empty() {
-            return Err(CraneliftBackendError::unsupported_module_shape(
-                crate::backends::unsupported_sub_modules_message("cranelift", &sub_module_names),
-            ));
+            return Err(CraneliftBackendError::unsupported_module_shape(format!(
+                "sub-modules survived flattening ({}); this is an internal error",
+                sub_module_names.join(", ")
+            )));
         }
     }
 
@@ -112,7 +133,7 @@ pub(crate) fn try_generate_cranelift_module(
         build_struct_layout_for_module(store, module, ptr_size, options.double_precision)?;
     // Define file-scope static tables as JIT read-only data objects before
     // compiling `compute`, so function bodies can reference them by DataId.
-    let static_data_ids =
+    let (static_data_ids, static_table_elem_types) =
         define_static_tables_in_jit(store, module, &mut jit, options.double_precision)?;
     let extern_data_ids =
         declare_extern_data_symbols_in_jit(&mut jit, &options.extern_data_symbols)?;
@@ -128,6 +149,7 @@ pub(crate) fn try_generate_cranelift_module(
             force_stub,
             &mut jit,
             &static_data_ids,
+            &static_table_elem_types,
             &extern_data_ids,
             options.double_precision,
         )?;
@@ -147,6 +169,7 @@ pub(crate) fn try_generate_cranelift_module(
                         false,
                         &mut jit,
                         &static_data_ids,
+                        &static_table_elem_types,
                         &extern_data_ids,
                         options.double_precision,
                     )?;
@@ -158,6 +181,32 @@ pub(crate) fn try_generate_cranelift_module(
             }
             Err(_) => 0,
         };
+    // `staticInit` fills the generated tables. Without it a runtime-filled
+    // table is a zeroed data object nothing ever writes, and every read of it
+    // returns 0 — the silent wrong answer this port exists to prevent.
+    let static_init_entry_addr = match find_module_and_function(store, module, "staticInit") {
+        Ok((_module_name, static_init_decl)) => {
+            let (_symbol_name, entry_addr, _lowered, static_init_clif) = declare_jit_function(
+                &format!("{module_name}::staticInit"),
+                static_init_decl,
+                store,
+                &struct_layout,
+                true,
+                &options.extern_data_symbols,
+                &options.extern_function_symbols,
+                false,
+                &mut jit,
+                &static_data_ids,
+                &static_table_elem_types,
+                &extern_data_ids,
+                options.double_precision,
+            )?;
+            generated_functions_clif
+                .push((format!("{module_name}::staticInit"), static_init_clif));
+            entry_addr
+        }
+        Err(_) => 0,
+    };
     // `instanceClear` resets state; some DSPs (e.g. `prefix`) fill buffers with
     // non-zero init values here, so it must be JIT-compiled and run at init.
     let instance_clear_entry_addr = match find_module_and_function(store, module, "instanceClear") {
@@ -173,6 +222,7 @@ pub(crate) fn try_generate_cranelift_module(
                 false,
                 &mut jit,
                 &static_data_ids,
+                &static_table_elem_types,
                 &extern_data_ids,
                 options.double_precision,
             )?;
@@ -189,6 +239,7 @@ pub(crate) fn try_generate_cranelift_module(
     }
 
     Ok(JitDspModule {
+        static_init_entry_addr,
         module_name: module_name.to_owned(),
         compute_symbol_name,
         compute_entry_addr,

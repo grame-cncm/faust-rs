@@ -174,6 +174,7 @@ pub struct JitDspModule {
     pub(crate) module_name: String,
     pub(crate) compute_symbol_name: String,
     pub(crate) compute_entry_addr: usize,
+    pub(crate) static_init_entry_addr: usize,
     pub(crate) instance_constants_entry_addr: usize,
     pub(crate) instance_clear_entry_addr: usize,
     pub(crate) compute_body_lowered: bool,
@@ -234,6 +235,15 @@ impl JitDspModule {
     #[must_use]
     pub fn instance_constants_entry_addr(&self) -> usize {
         self.instance_constants_entry_addr
+    }
+
+    /// Returns the finalized `staticInit` entry address when emitted.
+    ///
+    /// Non-zero only when the module has a `staticInit` function, which is the
+    /// case whenever a generated table needs filling.
+    #[must_use]
+    pub fn static_init_entry_addr(&self) -> usize {
+        self.static_init_entry_addr
     }
 
     /// Returns the finalized `instanceClear` entry address when emitted.

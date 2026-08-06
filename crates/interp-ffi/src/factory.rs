@@ -22,7 +22,7 @@ use codegen::backends::interp::{
 };
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, ExpandDspRequest, GenerateAuxFilesRequest,
-    RealType, SignalFirLane, default_import_search_paths,
+    RealType, SignalFirLane, TableInitMode, default_import_search_paths,
 };
 use ffi_common::{
     FfiCompileArgs, decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only,
@@ -505,6 +505,7 @@ fn compile_factory_from_file_fastlane(
     argv: &[String],
 ) -> Result<FbcDspFactoryAny, String> {
     let parsed = parse_ffi_compile_args(argv)?;
+    let table_init = parsed.table_init.clone();
     let real_type = ffi_real_type(&parsed);
     let interp_options = codegen::backends::interp::InterpOptions {
         module_name: parsed.module_name,
@@ -514,7 +515,10 @@ fn compile_factory_from_file_fastlane(
     let mut search_paths = default_import_search_paths(path);
     search_paths.extend(parsed.search_paths);
 
-    let compiler = FaustCompiler::new().with_real_type(real_type);
+    let compiler = apply_table_init(
+        FaustCompiler::new().with_real_type(real_type),
+        table_init.as_deref(),
+    );
     let fbc = compiler
         .compile_file_to_interp_with_lane(
             path,
@@ -536,13 +540,17 @@ fn compile_factory_from_string_fastlane(
     argv: &[String],
 ) -> Result<FbcDspFactoryAny, String> {
     let parsed = parse_ffi_compile_args(argv)?;
+    let table_init = parsed.table_init.clone();
     let real_type = ffi_real_type(&parsed);
     let interp_options = codegen::backends::interp::InterpOptions {
         module_name: parsed.module_name.or_else(|| Some(source_name.to_owned())),
         ..codegen::backends::interp::InterpOptions::default()
     };
 
-    let compiler = FaustCompiler::new().with_real_type(real_type);
+    let compiler = apply_table_init(
+        FaustCompiler::new().with_real_type(real_type),
+        table_init.as_deref(),
+    );
     let fbc = compiler
         .compile_source_to_interp_with_lane(
             source_name,
@@ -567,6 +575,18 @@ fn ffi_real_type(parsed: &FfiCompileArgs) -> RealType {
         RealType::Float64
     } else {
         RealType::Float32
+    }
+}
+
+/// Applies `--table-init` from the shared FFI argv subset.
+///
+/// Without this a caller asking for `runtime` silently got the `const`
+/// default, so a gate run "in runtime mode" would really be re-testing `const`.
+fn apply_table_init(compiler: FaustCompiler, table_init: Option<&str>) -> FaustCompiler {
+    match table_init {
+        Some("runtime") => compiler.with_table_init_mode(TableInitMode::Runtime),
+        Some("const") => compiler.with_table_init_mode(TableInitMode::Const),
+        _ => compiler,
     }
 }
 
