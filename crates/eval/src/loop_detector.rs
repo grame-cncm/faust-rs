@@ -158,7 +158,48 @@ const STRUCTURAL_HARD_MAX_DEPTH_ENV: &str = "FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH"
 /// identities and can therefore detect direct cycles as well as excessive
 /// acyclic depth. Set [`DEFAULT_EVAL_MAX_DEPTH_ENV`] to a positive integer to
 /// override this fallback for newly created detectors.
-const DEFAULT_EVAL_MAX_DEPTH: usize = 1_024;
+///
+/// Raising it does not slow cycle detection: a genuine cycle is caught by frame
+/// identity, not by exhausting the budget. The budget only bounds *acyclic*
+/// runaway, so its only cost is how much real stack a runaway may consume
+/// before it is reported.
+///
+/// # Choosing the value
+///
+/// # Why the value depends on the build profile
+///
+/// A logical frame does not cost a fixed amount of real stack: recursive `case`
+/// evaluation puts several Rust frames on the stack per logical frame, and
+/// debug builds make each of those far fatter. Measured 2026-08-06 on the
+/// 64 MiB thread every faust-rs entry point spawns, using the same unbounded
+/// `fact` recursion `diagnostic_errors` uses:
+///
+/// | build | last budget that reports cleanly | first that aborts | ≈ stack/frame |
+/// |---|---|---|---|
+/// | release | 16 384 | 32 768 | ~4 KiB |
+/// | debug | 1 024 | 4 096 | ~64 KiB |
+///
+/// A single constant must therefore be sized for debug, which is what 1 024
+/// was — and it is why raising it uniformly turns
+/// `diagnostic_errors::diverging_recursive_case_reports_eval_error_instead_of_aborting`
+/// from a passing test into a `SIGABRT` that takes the whole test binary with
+/// it. That test is the guard for this constant; it also skips itself when the
+/// *environment variable* raises the budget, which makes an env-var experiment
+/// look like it passed when it merely opted out.
+///
+/// So the default follows the profile. Release keeps a factor of 2 against its
+/// measured limit; debug keeps the value its own guard is sized for.
+///
+/// # What this buys
+///
+/// 1 024 rejected eight of the 297 DSPs in the reference `examples/` tree — all
+/// finite-difference physical models — with `FRS-EVAL-0099` rather than any
+/// real limitation. Seven need at most 4 096 and now compile.
+/// `physicalModeling/fds/2dKirchhoffThinPlate.dsp` needs 32 768, past the
+/// release limit above, so it stays a deliberate
+/// `FAUST_RS_DEFAULT_EVAL_MAX_DEPTH` opt-in rather than a default that trades a
+/// clean diagnostic for a crash.
+const DEFAULT_EVAL_MAX_DEPTH: usize = if cfg!(debug_assertions) { 1_024 } else { 8_192 };
 
 /// Default fallback hard cap for structural lowering recursion.
 ///
@@ -170,7 +211,12 @@ const DEFAULT_EVAL_MAX_DEPTH: usize = 1_024;
 /// fallback for newly created detectors. Raising it opts into the risk that a
 /// deeply recursive structural lowering path may overflow the real OS stack
 /// before Rust can report `RecursionDepthExceeded`.
-const STRUCTURAL_HARD_MAX_DEPTH: usize = 4_096;
+///
+/// Kept at least [`DEFAULT_EVAL_MAX_DEPTH`]: this cap clamps even explicit
+/// `with_max_depth` requests, so leaving it lower would silently cap a caller
+/// that asked for more, which is how a raised evaluator budget would appear to
+/// have no effect. It follows the profile for the same reason.
+const STRUCTURAL_HARD_MAX_DEPTH: usize = if cfg!(debug_assertions) { 4_096 } else { 8_192 };
 
 impl LoopDetector {
     /// Creates a detector with the default maximum recursion depth.
