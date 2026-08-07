@@ -38,7 +38,17 @@ jobs:
       # resolves it from FAUST_LIB_PATH first. Point it at the pinned Faust
       # standard-library checkout added below. Unlike `apt-get install faust`,
       # a git checkout works on all three runner OSes.
-      FAUST_LIB_PATH: ${{ github.workspace }}/faustlibraries
+      #
+      # `faustlibraries/old` carries deprecated pre-reorganization names
+      # (`oscillator.lib`, `filter.lib`, `effect.lib`, ...) that some impulse-tests
+      # corpus DSPs (e.g. `spectral_tilt.dsp`) still import directly — the same
+      # reason `vector_retention` below includes it. A real Faust install's
+      # `/usr/local/share/faust` bundles these as compatibility shims, masking
+      # the gap on a dev machine; a plain `faustlibraries` checkout does not.
+      # `std::env::split_paths` wants the platform separator, hence the
+      # per-OS `;`/`:` here rather than a literal one like `vector_retention`
+      # (Ubuntu-only) uses.
+      FAUST_LIB_PATH: ${{ github.workspace }}/faustlibraries${{ matrix.os == 'windows-latest' && ';' || ':' }}${{ github.workspace }}/faustlibraries/old
     strategy:
       fail-fast: false
       matrix:
