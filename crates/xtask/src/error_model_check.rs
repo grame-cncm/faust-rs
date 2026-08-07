@@ -164,21 +164,42 @@ pub(crate) fn collect_files(
     Ok(())
 }
 
+/// Whether `source` imports the legacy top-level `errors::` module, as
+/// opposed to merely mentioning a longer identifier that happens to end in
+/// `errors::` — `diagnostic_errors::some_test`, `user_errors::Kind`, and
+/// similar are legitimate module/test names a plain `.contains("errors::")`
+/// cannot tell apart from the real thing. A match only counts when the
+/// character right before `errors::` is not an identifier character, i.e.
+/// `errors::` starts its own identifier rather than ending someone else's.
+fn contains_legacy_errors_import(source: &str) -> bool {
+    source.match_indices("errors::").any(|(idx, _)| {
+        source[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+    })
+}
+
 fn source_findings(path: &str, source: &str) -> Vec<String> {
-    [
-        ("errors::", "legacy `errors` import path"),
-        ("IntoDiagnostic", "consuming diagnostic conversion"),
-        ("into_diagnostic(", "consuming diagnostic conversion call"),
-        ("DiagnosticSeverity", "parser-local diagnostic severity"),
-        (
-            "parser_code_for_message",
-            "message-text diagnostic classification",
-        ),
-    ]
-    .into_iter()
-    .filter(|(needle, _)| source.contains(needle))
-    .map(|(_, description)| format!("{path}: {description} detected"))
-    .collect()
+    let mut findings = Vec::new();
+    if contains_legacy_errors_import(source) {
+        findings.push(format!("{path}: legacy `errors` import path detected"));
+    }
+    findings.extend(
+        [
+            ("IntoDiagnostic", "consuming diagnostic conversion"),
+            ("into_diagnostic(", "consuming diagnostic conversion call"),
+            ("DiagnosticSeverity", "parser-local diagnostic severity"),
+            (
+                "parser_code_for_message",
+                "message-text diagnostic classification",
+            ),
+        ]
+        .into_iter()
+        .filter(|(needle, _)| source.contains(needle))
+        .map(|(_, description)| format!("{path}: {description} detected")),
+    );
+    findings
 }
 
 fn manifest_findings(path: &str, source: &str) -> Vec<String> {
@@ -258,6 +279,28 @@ mod tests {
         "#;
         let findings = manifest_findings("Cargo.toml", source);
         assert_eq!(findings.len(), 4);
+    }
+
+    #[test]
+    fn a_longer_identifier_ending_in_errors_is_not_a_legacy_import() {
+        // `diagnostic_errors` is a real module/test name in this codebase
+        // (e.g. crates/eval's own diagnostic test suite), referenced in doc
+        // comments as `diagnostic_errors::some_test`. A plain
+        // `.contains("errors::")` cannot distinguish that from `use
+        // errors::Foo` and used to false-positive on it.
+        assert!(
+            source_findings(
+                "loop_detector.rs",
+                "/// See `diagnostic_errors::diverging_case` for the guard."
+            )
+            .is_empty()
+        );
+        // The real thing, prefixed by whitespace/punctuation rather than an
+        // identifier character, must still be caught.
+        assert_eq!(
+            source_findings("lib.rs", "use errors::Diagnostic;").len(),
+            1
+        );
     }
 
     #[test]
