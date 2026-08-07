@@ -342,6 +342,27 @@ pub(crate) struct ExamplesCompareArgs {
     /// Write the per-DSP results as CSV.
     #[arg(long, value_name = "PATH")]
     pub(crate) csv: Option<PathBuf>,
+    /// Additional `-I` search directories passed to both compilers.
+    ///
+    /// A file's own directory is always searched; this is for libraries it
+    /// imports from elsewhere, e.g. `faustlibraries/tests/*.dsp` importing
+    /// `basics.lib` from the checkout root rather than from `tests/` itself.
+    /// Repeatable.
+    #[arg(long = "extra-include", value_name = "DIR")]
+    pub(crate) extra_include: Vec<PathBuf>,
+    /// Compile one case per top-level `<name><suffix>` definition found in
+    /// each file (via `-pn <name><suffix>`) instead of one case per file.
+    ///
+    /// For corpora with no `process`, like `faustlibraries/tests/*.dsp`,
+    /// where each file is a flat list of independent one-liners such as
+    /// `db2linear_test = ba.db2linear(-6);` meant to be selected and
+    /// compiled individually rather than compiled as a whole file.
+    #[arg(long)]
+    pub(crate) per_symbol: bool,
+    /// Suffix identifying a top-level definition as its own compile target
+    /// under `--per-symbol` (default `_test`).
+    #[arg(long, value_name = "SUFFIX")]
+    pub(crate) symbol_suffix: Option<String>,
 }
 
 /// Options for the lexer token-stream differential.

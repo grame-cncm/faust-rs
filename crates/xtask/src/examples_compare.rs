@@ -10,11 +10,27 @@
 //! # Method
 //!
 //! Both compilers run as subprocesses on the same input with `-I <the file's
-//! own directory>`, because many examples import their neighbours. Each is run
-//! `--repeats` times and the **minimum** is kept: scheduler noise, page faults
-//! and neighbouring work can only add time, so the minimum is the robust
-//! estimator for "this run met no interference". This is the same convention
-//! `compile_budget` uses.
+//! own directory>` plus any `--extra-include` directories, because many
+//! examples import their neighbours (or, for `--per-symbol`, import from a
+//! directory above the file itself). Each is run `--repeats` times and the
+//! **minimum** is kept: scheduler noise, page faults and neighbouring work can
+//! only add time, so the minimum is the robust estimator for "this run met no
+//! interference". This is the same convention `compile_budget` uses.
+//!
+//! # Per-symbol mode
+//!
+//! Some corpora have no `process` at all: `faustlibraries/tests/*.dsp` is a
+//! flat list of one-liners per file, each an independent regression case
+//! meant to be selected individually — `db2linear_test =
+//! ba.db2linear(-6);`, `linear2db_test = ba.linear2db(0.5);`, and so on, one
+//! per exercised library function, never combined into one `process`.
+//! Compiling such a file whole either fails outright (no `process`) or,
+//! worse, silently compiles nothing meaningful. `--per-symbol` instead scans
+//! each file for top-level `<name><suffix>` definitions (`--symbol-suffix`,
+//! default `_test`) and compiles each one on its own via `-pn
+//! <name><suffix>` — the same flag Faust uses to select a non-`process`
+//! entry point — turning "does this file compile" into "does every case in
+//! it compile", which is what these files are actually for.
 //!
 //! # What the numbers do and do not support
 //!
@@ -52,24 +68,45 @@ struct CaseRow {
     rs_ms: u128,
 }
 
+/// One compile to run: a file, and optionally which top-level definition to
+/// select as `process` via `-pn` (`--per-symbol` mode; `None` compiles the
+/// file as-is, using whatever `process` it already defines).
+struct WorkItem {
+    dsp: PathBuf,
+    process_name: Option<String>,
+}
+
 /// Runs one compiler on one input, returning success and the best wall time.
 ///
 /// Output goes to a scratch path rather than the input's directory so a run
-/// never writes into the corpus being measured.
-fn measure(bin: &Path, input: &Path, include: &Path, out: &Path, repeats: u32) -> (bool, u128) {
+/// never writes into the corpus being measured. `process_name`, when set,
+/// passes `-pn <name>` so a file with no `process` (or with several
+/// independent candidates) can still be compiled by picking one.
+fn measure(
+    bin: &Path,
+    input: &Path,
+    includes: &[&Path],
+    process_name: Option<&str>,
+    out: &Path,
+    repeats: u32,
+) -> (bool, u128) {
     let mut best = u128::MAX;
     let mut ok = false;
     for _ in 0..repeats.max(1) {
         let started = Instant::now();
-        let status = Command::new(bin)
-            .arg(input)
-            .arg("-I")
-            .arg(include)
-            .arg("-o")
+        let mut cmd = Command::new(bin);
+        cmd.arg(input);
+        for include in includes {
+            cmd.arg("-I").arg(include);
+        }
+        if let Some(name) = process_name {
+            cmd.arg("-pn").arg(name);
+        }
+        cmd.arg("-o")
             .arg(out)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+            .stderr(Stdio::null());
+        let status = cmd.status();
         let elapsed = started.elapsed().as_millis();
         ok = matches!(&status, Ok(s) if s.success());
         best = best.min(elapsed);
@@ -80,6 +117,48 @@ fn measure(bin: &Path, input: &Path, include: &Path, out: &Path, repeats: u32) -
         }
     }
     (ok, best)
+}
+
+/// Scans one file for top-level `<name><suffix>` definitions.
+///
+/// Deliberately line-based rather than a real Faust parse: the corpus this
+/// serves (`faustlibraries/tests/*.dsp`) writes exactly one definition per
+/// line, unindented, so `<identifier><suffix> = ...` at column 0 is enough to
+/// find every case without depending on the compiler under test to parse
+/// correctly first — the whole point is finding cases *before* compiling
+/// them. Indented lines are skipped so a same-named local inside a `with{}`
+/// block is never mistaken for a top-level case, and a name is accepted only
+/// when every character is alphanumeric/`_`, which rejects a parameterized
+/// definition like `foo_test(x) = ...` — `-pn` needs a fully-applied signal
+/// expression, not a function.
+fn collect_symbols(path: &Path, suffix: &str) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for line in text.lines() {
+        if line.is_empty() || line.starts_with(char::is_whitespace) || line.starts_with("//") {
+            continue;
+        }
+        let Some(eq_idx) = line.find('=') else {
+            continue;
+        };
+        // Skip `==` (comparison), not a definition.
+        if line[eq_idx..].starts_with("==") {
+            continue;
+        }
+        let name = line[..eq_idx].trim_end();
+        let is_identifier = !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if is_identifier && name.ends_with(suffix) {
+            names.push(name.to_owned());
+        }
+    }
+    names
 }
 
 fn collect_inputs(root: &Path, filter: Option<&str>) -> Result<Vec<PathBuf>, String> {
@@ -131,14 +210,56 @@ pub(crate) fn examples_compare(
         )
         .into());
     }
-    let repeats = args.repeats.unwrap_or(3).max(1);
+    // Per-symbol mode expands one file into dozens or hundreds of independent
+    // compiles; a `--repeats 3` timing default meant for whole files would
+    // triple an already large run for no benefit these cases are too small
+    // and fast to need noise-averaging for pass/fail.
+    let default_repeats = if args.per_symbol { 1 } else { 3 };
+    let repeats = args.repeats.unwrap_or(default_repeats).max(1);
     let inputs = collect_inputs(&root, args.filter.as_deref())?;
+    let symbol_suffix = args.symbol_suffix.as_deref().unwrap_or("_test");
+
+    let work: Vec<WorkItem> = if args.per_symbol {
+        inputs
+            .iter()
+            .flat_map(|input| {
+                let symbols = collect_symbols(input, symbol_suffix);
+                symbols.into_iter().map(move |name| WorkItem {
+                    dsp: input.clone(),
+                    process_name: Some(name),
+                })
+            })
+            .collect()
+    } else {
+        inputs
+            .iter()
+            .map(|input| WorkItem {
+                dsp: input.clone(),
+                process_name: None,
+            })
+            .collect()
+    };
+    if work.is_empty() {
+        return Err(format!(
+            "no `<name>{symbol_suffix}` definitions found under {} (is --per-symbol needed, \
+             or is --symbol-suffix wrong?)",
+            root.display()
+        )
+        .into());
+    }
 
     println!(
-        "examples-compare: {} DSP under {}, {repeats} run(s) each, keeping the minimum",
-        inputs.len(),
+        "examples-compare: {} case{} under {}, {repeats} run(s) each, keeping the minimum",
+        work.len(),
+        if work.len() == 1 { "" } else { "s" },
         root.display()
     );
+    if args.per_symbol {
+        println!(
+            "  per-symbol   : {} file(s), `-pn <name{symbol_suffix}>` per case",
+            inputs.len()
+        );
+    }
     println!(
         "  C++ reference: {}{}",
         cpp_bin.display(),
@@ -151,17 +272,39 @@ pub(crate) fn examples_compare(
     let cpp_out = scratch.join("cpp.cpp");
     let rs_out = scratch.join("rs.cpp");
 
-    let mut rows = Vec::with_capacity(inputs.len());
-    for input in &inputs {
-        let include = input.parent().unwrap_or(&root);
-        let (cpp_ok, cpp_ms) = measure(&cpp_bin, input, include, &cpp_out, repeats);
-        let (rs_ok, rs_ms) = measure(&rs_bin, input, include, &rs_out, repeats);
+    let mut rows = Vec::with_capacity(work.len());
+    for item in &work {
+        let own_dir = item.dsp.parent().unwrap_or(&root);
+        let mut includes: Vec<&Path> = vec![own_dir];
+        includes.extend(args.extra_include.iter().map(PathBuf::as_path));
+        let process_name = item.process_name.as_deref();
+        let (cpp_ok, cpp_ms) = measure(
+            &cpp_bin,
+            &item.dsp,
+            &includes,
+            process_name,
+            &cpp_out,
+            repeats,
+        );
+        let (rs_ok, rs_ms) = measure(
+            &rs_bin,
+            &item.dsp,
+            &includes,
+            process_name,
+            &rs_out,
+            repeats,
+        );
+        let dsp_label = item
+            .dsp
+            .strip_prefix(&root)
+            .unwrap_or(&item.dsp)
+            .to_string_lossy()
+            .into_owned();
         rows.push(CaseRow {
-            dsp: input
-                .strip_prefix(&root)
-                .unwrap_or(input)
-                .to_string_lossy()
-                .into_owned(),
+            dsp: match &item.process_name {
+                Some(name) => format!("{dsp_label}::{name}"),
+                None => dsp_label,
+            },
             cpp_ok,
             cpp_ms,
             rs_ok,
@@ -266,5 +409,70 @@ fn report(rows: &[CaseRow], top: usize) {
             r.cpp_ms as f64 / 1000.0,
             r.rs_ms as f64 / 1000.0
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_symbols;
+    use std::fs;
+
+    fn write_temp(name: &str, contents: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "faust-rs-examples-compare-{name}-{}-{}.dsp",
+            std::process::id(),
+            line!()
+        ));
+        fs::write(&path, contents).expect("write temp fixture");
+        path
+    }
+
+    #[test]
+    fn finds_one_top_level_case_per_line() {
+        let path = write_temp(
+            "basics",
+            r#"
+ba = library("basics.lib");
+samp2sec_test = ba.samp2sec(512);
+db2linear_test = ba.db2linear(-6);
+"#,
+        );
+        let names = collect_symbols(&path, "_test");
+        fs::remove_file(&path).ok();
+        assert_eq!(names, vec!["samp2sec_test", "db2linear_test"]);
+    }
+
+    #[test]
+    fn skips_comments_indentation_and_comparisons() {
+        let path = write_temp(
+            "skip",
+            r#"
+// commented_out_test = 1;
+    indented_test = 1;
+flag_test == 1;
+real_test = 1;
+"#,
+        );
+        let names = collect_symbols(&path, "_test");
+        fs::remove_file(&path).ok();
+        assert_eq!(names, vec!["real_test"]);
+    }
+
+    #[test]
+    fn rejects_parameterized_definitions() {
+        // `-pn` needs a fully-applied signal expression; a function taking
+        // arguments can't stand alone as `process`.
+        let path = write_temp("param", "foo_test(x) = x + 1;\nbar_test = foo_test(1);\n");
+        let names = collect_symbols(&path, "_test");
+        fs::remove_file(&path).ok();
+        assert_eq!(names, vec!["bar_test"]);
+    }
+
+    #[test]
+    fn honors_a_custom_suffix() {
+        let path = write_temp("suffix", "foo_case = 1;\nbar_test = 2;\n");
+        let names = collect_symbols(&path, "_case");
+        fs::remove_file(&path).ok();
+        assert_eq!(names, vec!["foo_case"]);
     }
 }
