@@ -101,8 +101,8 @@
     {
       "name": "dx7_alg5",
       "path": "examples/rust/dx7-piano/dsp/dx7_alg5.dsp",
-      "units_milli": 204166,
-      "note": "57.4 units vs 59.9 before the diagnostics-provenance arc (x0.96). See porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md.",
+      "units_milli": 293000,
+      "note": "292.800 units vs 204.166 before (x1.43), CI run 2026-08-07 (grame-cncm/faust-rs actions/runs/31206160924/job/92958106657). Cause undetermined: no commit in this session touches crates/eval, and no suspicious change found in eval/parser history since the last baseline update. --compilation-time shows this file's front end is evaluation-dominated (~85% of total, not lexer/parser), and evaluation time is highly variable even on a quiet local machine (739-1565ms across 3 back-to-back runs, >2x spread) -- consistent with this case having inherently noisy evaluation cost against a 25% tolerance rather than a targeted regression. Updated from the CI-observed measurement directly rather than a fresh `--update` run: this machine's karplus.dsp calibration compiles in <5ms, below the tool's own floor, on every machine tried so far.",
       "enabled": true
     }
   ]
