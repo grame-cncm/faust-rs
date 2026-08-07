@@ -186,6 +186,7 @@ fn double_precision_only_changes_literal_spelling() {
         &CodeboxOptions {
             double_precision: true,
             test_labels: false,
+            ..CodeboxOptions::default()
         },
     );
     assert!(single.contains("0.5f"), "{single}");
@@ -194,8 +195,12 @@ fn double_precision_only_changes_literal_spelling() {
         !double.contains("0.5f"),
         "double precision must drop the f suffix:\n{double}"
     );
-    // The shapes are otherwise identical.
-    assert_eq!(single.replace("0.5f", "0.5"), double);
+    // The shapes are otherwise identical (the header's compilation-options
+    // line also reflects `-single`/`-double`, so normalize that too).
+    assert_eq!(
+        single.replace("0.5f", "0.5"),
+        double.replace("-lang codebox -double", "-lang codebox -single")
+    );
 }
 
 /// Soundfiles are rejected with a typed error rather than emitted wrongly,
@@ -267,6 +272,7 @@ fn assert_codebox_matches_interpreter(source_name: &str, source: &str, frames: u
         &CodeboxOptions {
             double_precision: true,
             test_labels: false,
+            ..CodeboxOptions::default()
         },
     )
     .expect("codebox emission must succeed");
@@ -286,6 +292,7 @@ fn assert_codebox_matches_interpreter(source_name: &str, source: &str, frames: u
         &InterpOptions {
             opt_level: 0,
             module_name: None,
+            ..InterpOptions::default()
         },
     )
     .expect("interp codegen must succeed");
@@ -398,6 +405,7 @@ fn dump_ui_for_eyeball_comparison() {
             &CodeboxOptions {
                 double_precision: false,
                 test_labels: true,
+                ..CodeboxOptions::default()
             }
         )
     );
@@ -416,6 +424,7 @@ fn test_labelled(source_name: &str, source: &str) -> String {
         &CodeboxOptions {
             double_precision: false,
             test_labels: true,
+            ..CodeboxOptions::default()
         },
     )
 }
@@ -956,6 +965,7 @@ fn assert_table_init_modes_agree(source_name: &str, source: &str, frames: usize)
             &CodeboxOptions {
                 double_precision: true,
                 test_labels: false,
+                ..CodeboxOptions::default()
             },
         )
         .unwrap_or_else(|e| panic!("{mode:?}: codebox emission must succeed: {e}"));

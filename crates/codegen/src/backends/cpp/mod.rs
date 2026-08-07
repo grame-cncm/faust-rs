@@ -69,6 +69,12 @@ pub struct CppOptions {
     /// C++ fixed-point support may be backend-specific; Rust backend keeps this
     /// configurable to document/adapt non-1:1 mappings explicitly.
     pub fixed_type_name: String,
+    /// Compilation options string printed in the generated-file header.
+    ///
+    /// Mirrors C++ Faust's `Compilation options: ...` header line. `None`
+    /// falls back to a minimal `-lang cpp` line for callers (mostly tests)
+    /// that do not thread the real CLI flags through.
+    pub compile_options: Option<String>,
 }
 
 impl Default for CppOptions {
@@ -83,6 +89,7 @@ impl Default for CppOptions {
             super_class_name: Some("dsp".to_owned()),
             quad_type_name: "quad".to_owned(),
             fixed_type_name: "fixed".to_owned(),
+            compile_options: None,
         }
     }
 }
@@ -227,7 +234,12 @@ pub fn generate_cpp_module(
     let super_class_name = options.super_class_name.as_deref().unwrap_or("dsp");
 
     let mut out = String::new();
-    emit_cpp_header(&mut out, class_name, &module_name);
+    emit_cpp_header(
+        &mut out,
+        class_name,
+        &module_name,
+        options.compile_options.as_deref(),
+    );
     if let Some(namespace) = options.namespace.as_deref() {
         let _ = writeln!(out, "namespace {namespace} {{");
         let _ = writeln!(out);
@@ -550,13 +562,27 @@ fn collect_module_function_names(
 }
 
 /// Emits the generated-file prologue and platform macros.
-fn emit_cpp_header(out: &mut String, class_name: &str, module_name: &str) {
+fn emit_cpp_header(
+    out: &mut String,
+    class_name: &str,
+    module_name: &str,
+    compile_options: Option<&str>,
+) {
     let _ = writeln!(
         out,
         "/* ------------------------------------------------------------"
     );
     let _ = writeln!(out, "name: {}", cpp_string_literal(module_name));
-    let _ = writeln!(out, "Code generated with Faust (https://faust.grame.fr)");
+    let _ = writeln!(
+        out,
+        "Code generated with Faust {} (https://faust.grame.fr)",
+        crate::VERSION
+    );
+    let _ = writeln!(
+        out,
+        "Compilation options: {}",
+        compile_options.unwrap_or("-lang cpp")
+    );
     let _ = writeln!(
         out,
         "------------------------------------------------------------ */"
@@ -1505,7 +1531,11 @@ mod tests {
         ));
         assert!(out.contains("#ifndef  __mydsp_H__"));
         assert!(out.contains("#include <cmath>"));
-        assert!(out.contains("Code generated with Faust (https://faust.grame.fr)"));
+        assert!(out.contains(&format!(
+            "Code generated with Faust {} (https://faust.grame.fr)",
+            crate::VERSION
+        )));
+        assert!(out.contains("Compilation options: -lang cpp"));
         assert!(out.contains("\n#endif\n"));
     }
 

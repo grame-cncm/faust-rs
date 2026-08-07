@@ -60,6 +60,12 @@ pub struct CodeboxOptions {
     /// names and by nothing else, so without it a round-tripped patch exposes
     /// no controls.
     pub test_labels: bool,
+    /// Compilation options string printed in the generated-file header.
+    ///
+    /// `None` falls back to a minimal `-lang codebox` line derived from
+    /// [`Self::double_precision`], for callers (mostly tests) that do not
+    /// thread the real CLI flags through.
+    pub compile_options: Option<String>,
 }
 
 /// Stable error codes for this backend.
@@ -173,7 +179,19 @@ pub fn generate_codebox_module(
     let view = decode_module(store, module)?;
     let mut out = String::new();
 
-    let _ = writeln!(out, "// Code generated with faust-rs");
+    let _ = writeln!(out, "// Code generated with faust-rs {}", crate::VERSION);
+    let _ = writeln!(
+        out,
+        "// Compilation options: {}",
+        options
+            .compile_options
+            .as_deref()
+            .unwrap_or(if options.double_precision {
+                "-lang codebox -double"
+            } else {
+                "-lang codebox -single"
+            })
+    );
     let _ = writeln!(out, "// Additional functions");
 
     let params = collect_params(store, view.functions, options)?;

@@ -62,6 +62,12 @@ pub struct RustOptions {
     pub class_name: Option<String>,
     /// Concrete scalar type behind the generated `FaustFloat` alias.
     pub faust_float_type: RustRealType,
+    /// Compilation options string printed in the generated-file header.
+    ///
+    /// `None` falls back to a minimal `-lang rust` line derived from
+    /// [`Self::faust_float_type`], for callers (mostly tests) that do not
+    /// thread the real CLI flags through.
+    pub compile_options: Option<String>,
 }
 
 impl Default for RustOptions {
@@ -69,6 +75,7 @@ impl Default for RustOptions {
         Self {
             class_name: Some("mydsp".to_owned()),
             faust_float_type: RustRealType::Float32,
+            compile_options: None,
         }
     }
 }
@@ -375,8 +382,22 @@ fn emit_rust_header(out: &mut String, options: &RustOptions) {
         out,
         "/* ------------------------------------------------------------"
     );
-    let _ = writeln!(out, "Code generated with Faust Rust backend (faust-rs)");
-    let _ = writeln!(out, "Compilation options: -lang rust");
+    let _ = writeln!(
+        out,
+        "Code generated with Faust {} Rust backend (faust-rs)",
+        crate::VERSION
+    );
+    let _ = writeln!(
+        out,
+        "Compilation options: {}",
+        options
+            .compile_options
+            .as_deref()
+            .unwrap_or(match options.faust_float_type {
+                RustRealType::Float32 => "-lang rust -single",
+                RustRealType::Float64 => "-lang rust -double",
+            })
+    );
     let _ = writeln!(
         out,
         "------------------------------------------------------------ */"

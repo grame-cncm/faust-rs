@@ -88,6 +88,12 @@ pub struct CmajorOptions {
     pub class_name: String,
     /// Scalar precision used for `FAUSTFLOAT` and generated real values.
     pub real_type: CmajorRealType,
+    /// Compilation options string printed in the generated-file header.
+    ///
+    /// `None` falls back to a minimal `-lang cmajor` line derived from
+    /// [`Self::real_type`], for callers (mostly tests) that do not thread the
+    /// real CLI flags through.
+    pub compile_options: Option<String>,
 }
 
 impl Default for CmajorOptions {
@@ -95,6 +101,7 @@ impl Default for CmajorOptions {
         Self {
             class_name: "mydsp".to_owned(),
             real_type: CmajorRealType::Float32,
+            compile_options: None,
         }
     }
 }
@@ -292,8 +299,18 @@ pub fn generate_cmajor_module(
     let ui = collect_ui(store, view.functions)?;
 
     let mut out = String::new();
-    let _ = writeln!(out, "/* Code generated with faust-rs");
-    let _ = writeln!(out, "   Compilation options: -lang cmajor */");
+    let _ = writeln!(out, "/* Code generated with faust-rs {}", crate::VERSION);
+    let _ = writeln!(
+        out,
+        "   Compilation options: {} */",
+        options
+            .compile_options
+            .as_deref()
+            .unwrap_or(match options.real_type {
+                CmajorRealType::Float32 => "-lang cmajor -single",
+                CmajorRealType::Float64 => "-lang cmajor -double",
+            })
+    );
     let _ = writeln!(out, "namespace faust");
     let _ = writeln!(out, "{{");
     let _ = writeln!(out, "\tprocessor {}", options.class_name);

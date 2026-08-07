@@ -744,6 +744,7 @@ fn run_interp_trace_case_with_configuration(
     let interp_options = codegen::backends::interp::InterpOptions {
         opt_level,
         module_name: None,
+        ..codegen::backends::interp::InterpOptions::default()
     };
     let mut factory = codegen::backends::interp::generate_interp_module::<f32>(
         &fir.store,

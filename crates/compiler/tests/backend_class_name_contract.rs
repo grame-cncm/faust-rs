@@ -104,6 +104,16 @@ fn lang_values() -> Vec<String> {
     values
 }
 
+/// Runs one backend and returns its output with the header's compile-options
+/// echo stripped.
+///
+/// That line is a verbatim dump of the invocation (`Compilation options:
+/// -lang codebox -cn custom_name ...` / `compile_options -lang interp ...`),
+/// present on every backend regardless of whether that backend's DSP body
+/// actually uses `--class-name` for anything — `codebox` is flat and declares
+/// no class, so its options line echoes `-cn` while its body never does. This
+/// test asserts what the *body* does with the name, so the echo — which would
+/// make every backend look like it "honors" the flag — must not leak in.
 fn emit(dsp: &PathBuf, lang: &str, extra: &[&str]) -> String {
     let out = Command::new(bin())
         .arg(dsp)
@@ -111,7 +121,14 @@ fn emit(dsp: &PathBuf, lang: &str, extra: &[&str]) -> String {
         .args(extra)
         .output()
         .unwrap_or_else(|e| panic!("failed to run faust-rs -lang {lang}: {e}"));
-    String::from_utf8_lossy(&out.stdout).into_owned()
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            !lower.contains("compilation options") && !lower.contains("compile_options")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn fixture() -> PathBuf {

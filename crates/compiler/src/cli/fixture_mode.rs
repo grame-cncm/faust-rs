@@ -17,10 +17,7 @@ use codegen::backends::interp::InterpOptions;
 use codegen::backends::julia::{JuliaOptions, generate_julia_module};
 use codegen::backends::rust::{RustOptions, generate_rust_module};
 use codegen::backends::wasm::{WasmOptions, generate_wasm_module};
-use compiler::{
-    compile_options_json_string,
-    enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
-};
+use compiler::enrobage::{EnrobageOptions, wrap_cpp_with_architecture};
 use fir::{checker::verify_fir_module, dump_fir};
 
 use super::args::{CliArgs, CliLang};
@@ -62,7 +59,14 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     }
 
     if cli.dump_interp || matches!(cli.lang, Some(CliLang::Interp)) {
-        match compile_fixture_to_interp_text(&store, module, &InterpOptions::default()) {
+        let options = InterpOptions {
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Interp)),
+            )),
+            ..InterpOptions::default()
+        };
+        match compile_fixture_to_interp_text(&store, module, &options) {
             Ok(fbc_text) => {
                 emit_output(&fbc_text, cli.output.as_ref());
                 if cli.dump_json {
@@ -154,6 +158,10 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             // `-lang julia` and `-lang rust` all emitted `mydsp`.
             class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
             double_precision: cli.double,
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Asc)),
+            )),
             ..AscOptions::default()
         };
         match generate_asc_module(&store, module, &options) {
@@ -180,6 +188,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         let options = CodeboxOptions {
             double_precision: cli.double,
             test_labels: lang == CliLang::CodeboxTest,
+            compile_options: Some(compile_options_full_string(cli, Some(cli_lang_name(lang)))),
         };
         match generate_codebox_module(&store, module, &options) {
             Ok(codebox) => {
@@ -204,6 +213,10 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             } else {
                 CmajorRealType::Float32
             },
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Cmajor)),
+            )),
         };
         match generate_cmajor_module(&store, module, &options) {
             Ok(cmajor) => {
@@ -225,6 +238,10 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         let options = JuliaOptions {
             class_name: selected_class_name(cli),
             real_type: selected_julia_real_type(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Julia)),
+            )),
         };
         match generate_julia_module(&store, module, &options) {
             Ok(julia) => {
@@ -246,6 +263,10 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         let options = RustOptions {
             class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
             faust_float_type: selected_rust_real_type(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Rust)),
+            )),
         };
         match generate_rust_module(&store, module, &options) {
             Ok(rust) => {
@@ -263,7 +284,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     }
 
     if cli.dump_json {
-        let compile_options = compile_options_json_string(cli.lang.map(cli_lang_name), cli.double);
+        let compile_options = compile_options_full_string(cli, cli.lang.map(cli_lang_name));
         match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
             Ok(json) => {
                 if cli.lang.is_some() {
@@ -285,6 +306,10 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         let options = CppOptions {
             class_name: selected_class_name(cli),
             super_class_name: selected_super_class_name(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Cpp)),
+            )),
             ..CppOptions::default()
         };
         match generate_cpp_module(&store, module, &options) {
@@ -330,6 +355,10 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     if cli.dump_c || matches!(cli.lang, Some(CliLang::C)) {
         let options = COptions {
             class_name: selected_class_name(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::C)),
+            )),
             ..COptions::default()
         };
         match generate_c_module(&store, module, &options) {
@@ -389,7 +418,7 @@ fn emit_fixture_json_companion(
     backend: &str,
 ) {
     let output = require_companion_output_path(cli);
-    let compile_options = compile_options_json_string(Some(backend), cli.double);
+    let compile_options = compile_options_full_string(cli, Some(backend));
     match compile_fixture_to_json_text(store, module, compile_options, cli.double) {
         Ok(json) => emit_json_companion_output(&json, output),
         Err(err) => {

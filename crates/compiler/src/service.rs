@@ -294,6 +294,7 @@ impl Compiler {
         // Strict C++-style JSON snapshot, embedded as getJSON() in the output —
         // downstream tooling parses it for inputs/outputs and the UI tree
         // (mirrors the C++ asc backend's getJSON()).
+        let compile_options = compile_options_json_string(Some("asc"), double_precision);
         let json = build_strict_json_description(
             &lowered.store,
             lowered.module,
@@ -302,7 +303,7 @@ impl Compiler {
                 include_pathnames: Vec::new(),
                 library_list: Vec::new(),
                 top_level_meta: json_meta_entries_from_snapshot(&signals.compilation_metadata),
-                compile_options: compile_options_json_string(Some("asc"), double_precision),
+                compile_options: compile_options.clone(),
                 double_precision,
             },
         )
@@ -313,6 +314,7 @@ impl Compiler {
             class_name: Some(class_name.clone()),
             double_precision,
             json,
+            compile_options: Some(compile_options),
             ..AscOptions::default()
         };
         let asc = generate_asc_module(&lowered.store, lowered.module, &options)

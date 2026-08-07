@@ -264,6 +264,7 @@ fn run<R: FbcReal>(store: &FirStore, module: FirId, frames: usize) -> Result<Str
     let options = InterpOptions {
         opt_level: 0,
         module_name: None,
+        ..InterpOptions::default()
     };
     let mut factory = generate_interp_module::<R>(store, module, &options)
         .map_err(|e| format!("interp codegen failed: {e}"))?;

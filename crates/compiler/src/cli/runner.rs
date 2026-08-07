@@ -16,7 +16,7 @@ use codegen::backends::wasm::WasmOptions;
 use codegen::fixtures::backend_test_fixtures;
 use compiler::{
     Compiler, CompilerError, ComputeMode, ControlRateMode, FaustInstallPaths, FirVerifyOptions,
-    ProcessingApi, RealType, SchedulingStrategy, TableInitMode, compile_options_json_string,
+    ProcessingApi, RealType, SchedulingStrategy, TableInitMode,
     enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
 };
 use diagnostics::DiagnosticBundle;
@@ -206,6 +206,87 @@ pub fn cli_lang_name(lang: CliLang) -> &'static str {
         CliLang::Wasm => "wasm",
         CliLang::Wast => "wast",
     }
+}
+
+/// Builds the full `Compilation options: ...` string printed in every text
+/// backend's header and in the JSON companion's `compile_options` field.
+///
+/// Mirrors C++ Faust's `global::printCompilationOptions1()`, adapted to
+/// faust-rs's own convention: every flag appears only when it differs from
+/// its default, `-mcd`/`-ss`/`-table-init` included, even though C++ prints
+/// `-mcd` unconditionally — the line is meant to read as "what this run
+/// changed," not as a full flag dump. Precision (`-single`/`-double`) is the
+/// one exception, kept unconditional like C++ does, because there is no
+/// meaningful "unset" precision.
+///
+/// Every default compared against here comes from [`super::args::cli_defaults`]
+/// (the real `#[arg(default_value_t = ...)]` clap resolved) or from
+/// [`codegen::DEFAULT_CLASS_NAME`]/[`codegen::DEFAULT_SUPER_CLASS_NAME`] (the
+/// "mydsp"/"dsp" naming convention every backend's own `Options::default()`
+/// already uses) — never a literal re-typed here, so a flag's default cannot
+/// drift out of sync between where it's declared and where it's compared.
+///
+/// Limited to the subset of `printCompilationOptions1()` faust-rs actually
+/// implements — flags with no faust-rs equivalent (FPGA memory, OpenMP, VHDL
+/// trace, ...) are never printed because faust-rs has no state for them.
+/// `-table-init` and `-dlt` have no C++ counterpart; they are faust-rs's own
+/// codegen-affecting flags and are included for the same reason.
+pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) -> String {
+    let d = super::args::cli_defaults();
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(arch) = cli.architecture.as_ref() {
+        parts.push(format!("-a {}", arch.display()));
+    }
+    if let Some(lang) = backend_lang {
+        parts.push(format!("-lang {lang}"));
+    }
+    if cli.inline_architecture_files {
+        parts.push("-i".to_owned());
+    }
+    if cli.one_sample {
+        parts.push("-os".to_owned());
+    }
+    if cli.external_control {
+        parts.push("-ec".to_owned());
+    }
+    if let Some(name) = cli.class_name.as_deref()
+        && name != codegen::DEFAULT_CLASS_NAME
+    {
+        parts.push(format!("-cn {name}"));
+    }
+    if let Some(name) = cli.super_class_name.as_deref()
+        && name != codegen::DEFAULT_SUPER_CLASS_NAME
+    {
+        parts.push(format!("-scn {name}"));
+    }
+    if cli.process_name != d.process_name {
+        parts.push(format!("-pn {}", cli.process_name));
+    }
+    if cli.mcd != d.mcd {
+        parts.push(format!("-mcd {}", cli.mcd));
+    }
+    if cli.dlt != d.dlt {
+        parts.push(format!("-dlt {}", cli.dlt));
+    }
+    if cli.table_init != d.table_init {
+        parts.push(format!(
+            "-table-init {}",
+            match cli.table_init {
+                TableInitArg::Runtime => "runtime",
+                TableInitArg::Const => "const",
+            }
+        ));
+    }
+    if cli.vec {
+        parts.push("-vec".to_owned());
+        parts.push(format!("-lv {}", cli.lv));
+        parts.push(format!("-vs {}", cli.vs));
+    }
+    if cli.scheduling_strategy != d.scheduling_strategy {
+        parts.push(format!("-ss {}", cli.scheduling_strategy));
+    }
+    parts.push(if cli.double { "-double" } else { "-single" }.to_owned());
+    parts.join(" ")
 }
 
 /// Maps a [`CliLang`] to the backend identifier the capability table is keyed
@@ -506,8 +587,7 @@ pub fn emit_cli_json_companion_for_backend(
     input_path: &Path,
     backend_lang: CliLang,
 ) {
-    let compile_options =
-        compile_options_json_string(Some(cli_lang_name(backend_lang)), cli.double);
+    let compile_options = compile_options_full_string(cli, Some(cli_lang_name(backend_lang)));
     let result = if cli.import_dir.is_empty() {
         compiler.compile_file_default_to_json_with_lane_and_compile_options(
             input_path,

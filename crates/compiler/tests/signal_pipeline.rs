@@ -12,6 +12,20 @@ use signals::{BinOp, SigMatch, match_sig};
 use tlib::{TreeArena, TreeId, check_de_bruijn_coherence};
 use ui::{ControlKind, UiGroupKind, UiMatch, match_ui};
 
+/// Strips the header's compile-options echo line (`Compilation options:
+/// ...`).
+///
+/// The CLI threads the real invocation's flags into that line while a facade
+/// call with default `Options` has no `CliArgs` to draw them from and falls
+/// back to a bare `-lang <backend> -single`. The two legitimately differ
+/// there; facade/CLI parity tests compare everything else.
+fn strip_compile_options_line(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.to_ascii_lowercase().contains("compilation options"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn corpus_path(file: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -1628,7 +1642,7 @@ fn compile_source_to_rust_emits_rust_source() {
         .expect("rust facade compile must succeed");
 
     assert!(
-        out.contains("Faust Rust backend"),
+        out.contains("Rust backend"),
         "expected the Rust backend header, got: {}",
         &out[..out.len().min(200)]
     );
@@ -1667,8 +1681,8 @@ fn compile_source_to_rust_matches_cli_output() {
         .expect("rust facade compile must succeed");
 
     assert_eq!(
-        api_out.trim(),
-        cli_out.trim(),
+        strip_compile_options_line(api_out.trim()),
+        strip_compile_options_line(cli_out.trim()),
         "facade and CLI Rust emission drifted"
     );
 }
@@ -1718,8 +1732,8 @@ fn compile_source_to_asc_matches_cli_output() {
         .expect("asc facade compile must succeed");
 
     assert_eq!(
-        api_out.trim(),
-        cli_out.trim(),
+        strip_compile_options_line(api_out.trim()),
+        strip_compile_options_line(cli_out.trim()),
         "facade and CLI AssemblyScript emission drifted"
     );
 }

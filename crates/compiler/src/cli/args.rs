@@ -416,6 +416,26 @@ pub struct CliArgs {
     pub fold_complexity: usize,
 }
 
+/// Returns [`CliArgs`] as `clap` would parse an empty command line.
+///
+/// This is the one place that knows "what a flag defaults to": rather than
+/// re-typing a `default_value_t` as a literal everywhere it needs comparing
+/// against (e.g. deciding whether `-mcd` differs from its default in
+/// [`super::runner::compile_options_full_string`]), callers get the real
+/// value clap resolved from the `#[arg(...)]` attribute itself. A plain
+/// `#[derive(Default)]` on `CliArgs` looks like it would do the same thing
+/// but does not — it fills every field with its type's `Default::default()`
+/// (`0` for `mcd`, not `16`), silently ignoring `default_value_t`. Re-parsing
+/// is the only way to get clap's actual answer without a second copy of
+/// every default.
+///
+/// # Panics
+/// Never in practice: `CliArgs` has no required positional or flag argument,
+/// so an empty argument list always parses.
+pub fn cli_defaults() -> CliArgs {
+    CliArgs::try_parse_from(["faust-rs"]).expect("CliArgs has no required argument")
+}
+
 /// Normalizes legacy Faust-style flags to the current `clap` surface.
 pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut normalized = Vec::new();
@@ -593,4 +613,27 @@ pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<Stri
         normalized.push(arg);
     }
     normalized
+}
+
+#[cfg(test)]
+mod cli_defaults_tests {
+    use super::*;
+
+    /// Pins the actual values behind `-mcd`/`-pn`/etc. so a change to their
+    /// `default_value_t` in `CliArgs` is a visible, intentional diff here
+    /// rather than a silent shift in what `compile_options_full_string`
+    /// considers "default" (and therefore omits from the header).
+    #[test]
+    fn cli_defaults_matches_documented_flag_defaults() {
+        let d = cli_defaults();
+        assert_eq!(d.mcd, 16);
+        assert_eq!(d.dlt, u32::MAX);
+        assert_eq!(d.process_name, "process");
+        assert_eq!(d.scheduling_strategy, 0);
+        assert_eq!(d.table_init, TableInitArg::Runtime);
+        assert_eq!(d.lv, 0);
+        assert!(!d.vec);
+        assert!(d.class_name.is_none());
+        assert!(d.super_class_name.is_none());
+    }
 }

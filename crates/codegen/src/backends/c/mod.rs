@@ -66,6 +66,11 @@ pub struct COptions {
     /// Kept configurable because fixed-point backends may require a project
     /// specific typedef or include.
     pub fixed_type_name: String,
+    /// Compilation options string printed in the generated-file header.
+    ///
+    /// `None` falls back to a minimal `-lang c` line for callers (mostly
+    /// tests) that do not thread the real CLI flags through.
+    pub compile_options: Option<String>,
 }
 
 impl Default for COptions {
@@ -78,6 +83,7 @@ impl Default for COptions {
             class_name: Some("mydsp".to_owned()),
             quad_type_name: "quad".to_owned(),
             fixed_type_name: "fixed".to_owned(),
+            compile_options: None,
         }
     }
 }
@@ -215,7 +221,12 @@ pub fn generate_c_module(
     let struct_inits = collect_struct_initializers(store, module.dsp_struct, module.globals)?;
     let table_inits = collect_table_initializers(store, module.dsp_struct, module.globals)?;
     let mut out = String::new();
-    emit_c_header(&mut out, &class_name);
+    emit_c_header(
+        &mut out,
+        &class_name,
+        &module.name,
+        effective_options.compile_options.as_deref(),
+    );
     emit_static_tables(store, &mut out, &effective_options, module.static_decls)?;
     let _ = writeln!(out);
     emit_sub_modules(store, &mut out, &effective_options, module.sub_modules)?;
@@ -245,7 +256,32 @@ pub fn generate_c_module(
 }
 
 /// Emits the prologue/header guard and platform macros for the generated unit.
-fn emit_c_header(out: &mut String, class_name: &str) {
+fn emit_c_header(
+    out: &mut String,
+    class_name: &str,
+    module_name: &str,
+    compile_options: Option<&str>,
+) {
+    let _ = writeln!(
+        out,
+        "/* ------------------------------------------------------------"
+    );
+    let _ = writeln!(out, "name: \"{module_name}\"");
+    let _ = writeln!(
+        out,
+        "Code generated with Faust {} (https://faust.grame.fr)",
+        crate::VERSION
+    );
+    let _ = writeln!(
+        out,
+        "Compilation options: {}",
+        compile_options.unwrap_or("-lang c")
+    );
+    let _ = writeln!(
+        out,
+        "------------------------------------------------------------ */"
+    );
+    let _ = writeln!(out);
     let guard = format!("__{}_H__", class_name);
     let _ = writeln!(out, "#ifndef  {guard}");
     let _ = writeln!(out, "#define  {guard}");

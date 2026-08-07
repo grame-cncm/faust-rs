@@ -55,6 +55,12 @@ pub struct JuliaOptions {
     pub class_name: Option<String>,
     /// Julia real scalar type used by the generated `REAL` alias.
     pub real_type: JuliaRealType,
+    /// Compilation options string printed in the generated-file header.
+    ///
+    /// `None` falls back to a minimal `-lang julia` line derived from
+    /// [`Self::real_type`], for callers (mostly tests) that do not thread the
+    /// real CLI flags through.
+    pub compile_options: Option<String>,
 }
 
 impl Default for JuliaOptions {
@@ -62,6 +68,7 @@ impl Default for JuliaOptions {
         Self {
             class_name: Some("mydsp".to_owned()),
             real_type: JuliaRealType::Float32,
+            compile_options: None,
         }
     }
 }
@@ -292,7 +299,7 @@ pub fn generate_julia_module(
     let table_inits = collect_table_initializers(store, module.dsp_struct, module.globals)?;
 
     let mut out = String::new();
-    emit_julia_header(&mut out, options.real_type);
+    emit_julia_header(&mut out, options);
     emit_static_tables(store, &mut out, module.static_decls)?;
     emit_struct_definition(
         store,
@@ -321,15 +328,25 @@ pub fn generate_julia_module(
 /// The helper aliases are deliberately close to the C++ Faust Julia backend
 /// output so downstream structural tests and user expectations see the same
 /// runtime vocabulary.
-fn emit_julia_header(out: &mut String, real_type: JuliaRealType) {
+fn emit_julia_header(out: &mut String, options: &JuliaOptions) {
     let _ = writeln!(out, "#=");
-    let _ = writeln!(out, "Code generated with faust-rs");
-    let _ = writeln!(out, "Compilation options: -lang julia");
+    let _ = writeln!(out, "Code generated with faust-rs {}", crate::VERSION);
+    let _ = writeln!(
+        out,
+        "Compilation options: {}",
+        options
+            .compile_options
+            .as_deref()
+            .unwrap_or(match options.real_type {
+                JuliaRealType::Float32 => "-lang julia -single",
+                JuliaRealType::Float64 => "-lang julia -double",
+            })
+    );
     let _ = writeln!(out, "=#");
     let _ = writeln!(out);
     let _ = writeln!(out, "using StaticArrays");
     let _ = writeln!(out);
-    let _ = writeln!(out, "const REAL = {}", real_type.julia_name());
+    let _ = writeln!(out, "const REAL = {}", options.real_type.julia_name());
     let _ = writeln!(out, "pow(x, y) = x ^ y");
     let _ = writeln!(out, "rint(x) = round(x, Base.Rounding.RoundNearest)");
     let _ = writeln!(out, "fmod(x, y) = rem(x, y)");

@@ -41,6 +41,7 @@ fn run_module(store: &FirStore, module: FirId, input: &[f32]) -> (Vec<f32>, Vec<
     let options = InterpOptions {
         opt_level: 0,
         module_name: None,
+        ..InterpOptions::default()
     };
     let mut factory =
         generate_interp_module::<f32>(store, module, &options).expect("interp codegen");

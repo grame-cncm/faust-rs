@@ -49,6 +49,12 @@ pub struct AscOptions {
     /// downstream tooling (UI/param extraction, impulse runners) parses for
     /// inputs/outputs and the UI tree.
     pub json: Option<String>,
+    /// Compilation options string printed in the generated-file header.
+    ///
+    /// `None` falls back to a minimal `-lang asc` line derived from
+    /// [`Self::double_precision`], for callers (mostly tests) that do not
+    /// thread the real CLI flags through.
+    pub compile_options: Option<String>,
 }
 
 impl Default for AscOptions {
@@ -59,6 +65,7 @@ impl Default for AscOptions {
             quad_type_name: "f64".to_owned(),
             fixed_type_name: "f32".to_owned(),
             json: None,
+            compile_options: None,
         }
     }
 }
@@ -172,7 +179,20 @@ pub fn generate_asc_module(
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "// Code generated with faust-rs (https://faust.grame.fr)"
+        "// Code generated with faust-rs {} (https://faust.grame.fr)",
+        crate::VERSION
+    );
+    let _ = writeln!(
+        out,
+        "// Compilation options: {}",
+        options
+            .compile_options
+            .as_deref()
+            .unwrap_or(if options.double_precision {
+                "-lang asc -double"
+            } else {
+                "-lang asc -single"
+            })
     );
     let _ = writeln!(out, "// Language: AssemblyScript (experimental)");
     let _ = writeln!(out, "// name: {}", module.name);

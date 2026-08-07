@@ -32,6 +32,26 @@ pub mod shortname;
 
 pub const CRATE_NAME: &str = "codegen";
 
+/// Compiler version string printed in generated-file headers.
+///
+/// Mirrors C++ Faust's `Code generated with Faust <version>` header line.
+/// Tracks the workspace version since this crate inherits it.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Default DSP class name every backend's `Options::default()` uses.
+///
+/// Single source of truth for the "mydsp" convention shared by every
+/// backend's own `Default` impl (`CppOptions`, `RustOptions`, ...) and by
+/// `compiler`'s `compile_options_full_string`, which needs the same value to
+/// decide whether `-cn` differs from default.
+pub const DEFAULT_CLASS_NAME: &str = "mydsp";
+
+/// Default DSP superclass name every backend's `Options::default()` uses.
+///
+/// Single source of truth for the "dsp" convention, mirroring
+/// [`DEFAULT_CLASS_NAME`].
+pub const DEFAULT_SUPER_CLASS_NAME: &str = "dsp";
+
 #[must_use]
 /// Returns the stable crate identifier.
 pub fn crate_id() -> &'static str {

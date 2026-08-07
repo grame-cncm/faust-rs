@@ -41,9 +41,11 @@ use super::real::FbcReal;
 
 /// Faust version string written into `.fbc` headers.
 ///
-/// This should match the Faust compiler version that generates the bytecode.
-/// For the Rust port, we use a fixed version string.
-pub const FAUST_VERSION: &str = "2.85.0-rust";
+/// C++ Faust uses a single `FAUSTVERSION` macro everywhere, `interp` included
+/// (see `interpreter_dsp_aux.hh`'s `write()`); this tracks the same
+/// [`codegen::VERSION`](crate::VERSION) the other text backends print rather
+/// than a separate frozen string.
+pub const FAUST_VERSION: &str = crate::VERSION;
 
 // ── Error type ─────────────────────────────────────────────────────────────
 

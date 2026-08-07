@@ -82,6 +82,12 @@ pub struct InterpOptions {
     /// Override module/class name.  When `None`, the name embedded in the FIR
     /// module is used.
     pub module_name: Option<String>,
+    /// Compilation options string written into the `.fbc` header's
+    /// `compile_options` field.
+    ///
+    /// `None` falls back to a minimal `-lang interp` line, for callers
+    /// (mostly tests) that do not thread the real CLI flags through.
+    pub compile_options: Option<String>,
 }
 
 // ─── Error types ────────────────────────────────────────────────────────────
@@ -441,10 +447,14 @@ pub fn generate_interp_module<R: real::FbcReal>(
     let num_outputs = module_num_outputs as i32;
 
     // 8. Build and optionally optimize the factory.
+    let compile_options = options
+        .compile_options
+        .clone()
+        .unwrap_or_else(|| "-lang interp".to_owned());
     let mut factory = FbcDspFactory::new(
         module_name,
         "", // sha_key: not computed at this layer
-        "", // compile_options: not set at this layer
+        compile_options,
         INTERP_FILE_VERSION,
         num_inputs,
         num_outputs,

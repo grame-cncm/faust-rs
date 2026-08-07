@@ -933,6 +933,7 @@ mod tests {
         let options = InterpOptions {
             opt_level: 0,
             module_name: None,
+            ..InterpOptions::default()
         };
         let mut factory = generate_interp_module::<f32>(&store, module, &options)
             .expect("interp codegen should succeed");

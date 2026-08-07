@@ -22,7 +22,8 @@ use codegen::backends::interp::{
 };
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, ExpandDspRequest, GenerateAuxFilesRequest,
-    RealType, SignalFirLane, TableInitMode, default_import_search_paths,
+    RealType, SignalFirLane, TableInitMode, compile_options_json_string,
+    default_import_search_paths,
 };
 use ffi_common::{
     FfiCompileArgs, decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only,
@@ -509,6 +510,10 @@ fn compile_factory_from_file_fastlane(
     let real_type = ffi_real_type(&parsed);
     let interp_options = codegen::backends::interp::InterpOptions {
         module_name: parsed.module_name,
+        compile_options: Some(compile_options_json_string(
+            Some("interp"),
+            real_type == RealType::Float64,
+        )),
         ..codegen::backends::interp::InterpOptions::default()
     };
 
@@ -544,6 +549,10 @@ fn compile_factory_from_string_fastlane(
     let real_type = ffi_real_type(&parsed);
     let interp_options = codegen::backends::interp::InterpOptions {
         module_name: parsed.module_name.or_else(|| Some(source_name.to_owned())),
+        compile_options: Some(compile_options_json_string(
+            Some("interp"),
+            real_type == RealType::Float64,
+        )),
         ..codegen::backends::interp::InterpOptions::default()
     };
 

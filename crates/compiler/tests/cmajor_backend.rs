@@ -17,6 +17,20 @@ use codegen::backends::cmajor::{
 use compiler::{Compiler, ControlRateMode, ProcessingApi, RealType, SignalFirLane};
 use std::process::Command;
 
+/// Strips the header's compile-options echo line (`Compilation options:
+/// ...`).
+///
+/// The CLI threads the real invocation's flags into that line while the
+/// facade, called with `CmajorOptions::default()`, has no `CliArgs` to draw
+/// them from and falls back to a bare `-lang cmajor -single`. The two
+/// legitimately differ there; parity tests compare everything else.
+fn strip_compile_options_line(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.to_ascii_lowercase().contains("compilation options"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Compiles a Faust source with the execution shape Cmajor intrinsically uses.
 fn cmajor(source_name: &str, source: &str) -> String {
     cmajor_with(source_name, source, &CmajorOptions::default())
@@ -376,7 +390,10 @@ fn facade_and_cli_emit_identical_cmajor_source() {
     let facade = Compiler::new()
         .compile_file_default_to_cmajor(&dsp, &CmajorOptions::default())
         .expect("Cmajor facade file compilation succeeds");
-    assert_eq!(cli.trim(), facade.trim());
+    assert_eq!(
+        strip_compile_options_line(cli.trim()),
+        strip_compile_options_line(facade.trim())
+    );
     assert_cmajor_frontend("cli-parity", &cli);
 
     std::fs::remove_file(&dsp).expect("remove Cmajor CLI source");

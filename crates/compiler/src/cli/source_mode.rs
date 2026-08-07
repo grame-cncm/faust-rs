@@ -15,7 +15,7 @@ use codegen::backends::julia::JuliaOptions;
 use codegen::backends::rust::{RustOptions, generate_rust_module};
 use codegen::backends::wasm::WasmOptions;
 use compiler::{
-    Compiler, FirVerifyOptions, compile_options_json_string,
+    Compiler, FirVerifyOptions,
     enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
     golden_snapshot_from_file,
 };
@@ -298,7 +298,7 @@ pub(crate) fn run_source_mode(
             input_path,
             &cli.import_dir,
             selected_codegen_lane(cli).into_compiler_lane(),
-            compile_options_json_string(None, cli.double),
+            compile_options_full_string(cli, None),
         );
         timer.phase("json");
 
@@ -317,6 +317,10 @@ pub(crate) fn run_source_mode(
         // used to be a hardcoded default, so the flag was silently ignored.
         let options = InterpOptions {
             module_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Interp)),
+            )),
             ..InterpOptions::default()
         };
         let result = compiler.compile_file_to_interp_with_lane(
@@ -389,6 +393,10 @@ pub(crate) fn run_source_mode(
         let options = AscOptions {
             class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
             double_precision: cli.double,
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Asc)),
+            )),
             ..AscOptions::default()
         };
         let result = compiler.compile_file_to_asc_with_lane(
@@ -420,6 +428,7 @@ pub(crate) fn run_source_mode(
         let options = CodeboxOptions {
             double_precision: cli.double,
             test_labels: lang == CliLang::CodeboxTest,
+            compile_options: Some(compile_options_full_string(cli, Some(cli_lang_name(lang)))),
         };
         let result = compiler.compile_file_to_codebox_with_lane(
             input_path,
@@ -452,6 +461,10 @@ pub(crate) fn run_source_mode(
             } else {
                 CmajorRealType::Float32
             },
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Cmajor)),
+            )),
         };
         let result = compiler.compile_file_to_cmajor_with_lane(
             input_path,
@@ -486,6 +499,10 @@ pub(crate) fn run_source_mode(
         let options = JuliaOptions {
             class_name: selected_class_name(cli),
             real_type: selected_julia_real_type(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Julia)),
+            )),
         };
         let result = compiler.compile_file_to_julia_with_lane(
             input_path,
@@ -524,6 +541,10 @@ pub(crate) fn run_source_mode(
                 let options = RustOptions {
                     class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
                     faust_float_type: selected_rust_real_type(cli),
+                    compile_options: Some(compile_options_full_string(
+                        cli,
+                        Some(cli_lang_name(CliLang::Rust)),
+                    )),
                 };
                 match generate_rust_module(&out.store, out.module, &options) {
                     Ok(rust) => {
@@ -614,6 +635,10 @@ pub(crate) fn run_source_mode(
         let options = CppOptions {
             class_name: selected_class_name(cli),
             super_class_name: selected_super_class_name(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::Cpp)),
+            )),
             ..CppOptions::default()
         };
         let result = compiler.compile_file_to_cpp_with_lane(
@@ -667,6 +692,10 @@ pub(crate) fn run_source_mode(
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = COptions {
             class_name: selected_class_name(cli),
+            compile_options: Some(compile_options_full_string(
+                cli,
+                Some(cli_lang_name(CliLang::C)),
+            )),
             ..COptions::default()
         };
         let result = compiler.compile_file_to_c_with_lane(
