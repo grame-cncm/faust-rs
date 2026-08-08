@@ -71,6 +71,10 @@ fn propagate_typed_with_origins_policy(
     let ui = build_ui_program(arena, box_tree, ui_options);
     let mut slot_env = SlotEnv::new();
     let mut memo = PropagateMemo::default();
+    memo.results
+        .set_enabled(crate::result_memo::result_memo_is_safe_root(
+            arena, box_tree,
+        )?);
     let mut clock_domains = ClockDomainTable::new();
     let mut ctx = PropagateContext {
         cache,

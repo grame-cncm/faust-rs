@@ -592,6 +592,13 @@ that cannot be represented safely must be marked non-cacheable.
 
 #### P3-C — Compact input and output bus identity
 
+**Implementation status (2026-08-08): complete.** `BusKey` stores zero, one,
+or two `SigId` values inline and uses a compilation-local `BusId` only for
+larger slices. Large slices are held by one `Arc<[SigId]>` shared between the
+interner and reverse lookup. Small-bus cache probes—the measured common case—do
+not allocate or clone an owned vector; cached output materialization still
+returns the engine's existing `Vec<SigId>` API.
+
 Do not retain one owned `Vec<SigId>` in every memo entry again. Evaluate:
 
 - a compilation-local immutable bus arena returning `BusId`;
@@ -606,6 +613,12 @@ required parity feature. The requirement is that a cache probe not allocate or
 clone an owned bus.
 
 #### P3-D — Dense immutable Box facts
+
+**Implementation status (2026-08-08): deferred.** Canonical context plus exact
+result replay reduces the sentinel to the C++ call count without a dense Box
+plan. Arity is now a larger remaining stage than propagation on the sentinel,
+so immutable Box facts are a separate follow-up rather than a prerequisite or
+part of this fix.
 
 If P1 attributes meaningful cost to flat decoding, arity, aperture, or
 forward-AD containment, attach these immutable facts to a dense plan indexed by
@@ -627,6 +640,36 @@ by more than 2%; and semantic tests prove that distinct UI, clock, recursion,
 and AD contexts never alias.
 
 ### P4 — Retest exact propagation-result memoization with canonical keys
+
+**Implementation status (2026-08-08): complete.** The accepted table uses the
+specified exact key, a one-propagation lifetime, and compact bus storage. A
+whole-root linear analysis disables it for any graph containing forward/reverse
+AD or clocked wrappers; pending FAD state is also an explicit per-call barrier.
+Those exclusions preserve seed accumulation and fresh clock-domain identity
+until a replayable side-effect delta exists. UI and symbolic contexts remain
+eligible because their exact canonical ids are in the key. Provenance is
+replayed only at the hit boundary; descendant derivations already exist from
+the compulsory first miss for that exact key.
+
+Caching every eligible call immediately was rejected after measurement: it kept
+the Jiles-Atherton gain but raised the 1,110-case faust-rs corpus total to 79.17
+seconds. The accepted policy performs no hash-table probe or bus allocation for
+the first 1,024 eligible entries. Large traversals then activate exact caching;
+small DSPs stay on the original path. A repeated full corpus run measured 71.25
+seconds versus the original 70.86-second reference (+0.55%, inside the 2% gate).
+
+On the retained smoothed stereo sentinel, propagation falls from approximately
+1.23 seconds and 10,836,611 calls to 0.215 seconds and 4,845 calls, with 3,821
+actual probes and 851 hits after warm-up. Excluding the warm-up, the 3,803
+post-activation entries match the C++ profile count exactly. Raw stereo falls
+from 0.889 to 0.165 seconds; the smoothing delta shrinks from about 0.341 to
+0.050 seconds, avoiding 85% of it. Maximum resident set size is neutral/slightly
+lower (21.51 MiB before, 21.15 MiB after).
+
+The two requested production cases improve more strongly: propagation for
+`ja_transformer_demo_test` falls from 1.030 to 0.081 seconds (12.7x), and
+`ja_processor_stereo_ui_test` from 0.982 to 0.168 seconds (5.8x). Generated C++
+is byte-identical before and after for both cases and the retained sentinel.
 
 After P3, add a compilation-scoped memo equivalent in semantics to the C++
 table:
@@ -690,6 +733,12 @@ narrower structural optimization such as caller-owned buses or fused
 composition propagation. Do not fall back to a non-canonical memo key.
 
 ### P5 — Reduce provenance overhead without weakening diagnostics
+
+**Implementation status (2026-08-08): no change justified.** Once exact hits
+remove repeated subtrees, the profiler attributes only about 0.0005 seconds to
+3,803–4,845 origin-boundary calls on the retained case, down from 0.538 seconds
+across 10.8 million calls. The existing diagnostic provenance contract is kept
+unchanged; a separate redesign would add risk without material benefit here.
 
 Treat provenance separately from core propagation so its benefit remains
 measurable. If P1 shows a material residue, compare:

@@ -125,6 +125,7 @@ pub mod clock_domain;
 mod context_id;
 mod forward_ad;
 mod profile;
+mod result_memo;
 mod reverse_ad;
 pub mod stateful_rad;
 pub mod transpose_ad;

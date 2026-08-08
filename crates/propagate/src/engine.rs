@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::context_id::{SlotEnv, SlotEnvId, UiPathContext};
+use crate::result_memo::{PropagateResultMemo, PropagationModeKey};
 
 /// Propagates one box tree with an explicit slot environment.
 ///
@@ -28,11 +29,6 @@ pub(crate) fn propagate_in_slot_env(
     inputs: &[SigId],
     ctx: &mut PropagateContext<'_>,
 ) -> Result<Vec<SigId>, PropagateError> {
-    // Materialize both canonical context identities at the only validated
-    // propagation boundary. The next phase extends this tuple into the exact
-    // result-memo key; keeping the read here also ensures every recursive entry
-    // exercises the identity-maintenance invariants before memoization exists.
-    let _canonical_context = (ctx.slot_env.id(), ctx.ui_path.id());
     let profile_kind = if ctx.memo.profile.is_enabled() {
         Some(crate::profile::PropagateProfileKind::from_flat(
             flat_node_kind(arena, box_tree)?,
@@ -49,6 +45,34 @@ pub(crate) fn propagate_in_slot_env(
             expected: arity.inputs,
             got: inputs.len(),
         });
+    }
+    let result_key = ctx.memo.results.key(
+        box_tree,
+        ctx.slot_env.id(),
+        ctx.ui_path.id(),
+        PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, ctx.suppress_fad),
+        inputs,
+        !ctx.pending_fad_seeds.is_empty(),
+    );
+    if let Some(key) = result_key {
+        if let Some(outputs) = ctx.memo.results.get(key) {
+            ctx.memo.profile.record_result_memo_probe(true);
+            let origins_started = ctx.memo.profile.start();
+            ctx.signal_origins
+                .record_derived_forest(arena, &outputs, box_tree.as_tree_id());
+            ctx.memo.profile.record_origins(origins_started);
+            if let Some(kind) = profile_kind {
+                ctx.memo.profile.record_call(
+                    kind,
+                    inputs.len(),
+                    outputs.len(),
+                    profile_slot_bindings,
+                    profile_started,
+                );
+            }
+            return Ok(outputs);
+        }
+        ctx.memo.profile.record_result_memo_probe(false);
     }
     let outputs = propagate_inner(arena, box_tree, inputs, ctx)?;
     // Output arity validation: signal count may be less than box arity in two
@@ -75,6 +99,9 @@ pub(crate) fn propagate_in_slot_env(
             expected: arity.outputs,
             got: outputs.len(),
         });
+    }
+    if let Some(key) = result_key {
+        ctx.memo.results.insert(key, &outputs);
     }
     let origins_started = ctx.memo.profile.start();
     ctx.signal_origins
@@ -1300,6 +1327,9 @@ pub(crate) struct PropagateMemo {
     /// Canonical environment counterpart of C++'s synthesized lifted tree:
     /// repeated entry into the same recursion scope reuses one `SlotEnvId`.
     pub(crate) slot_env_lift: AHashMap<(SlotEnvId, i64), SlotEnvId>,
+    /// Exact C++-style propagation result memo, enabled only when whole-root
+    /// side-effect analysis proves signal-only replay safe.
+    pub(crate) results: PropagateResultMemo,
     /// Opt-in C++-comparable propagation attribution. It is dormant unless
     /// `FAUST_PROPAGATE_PROFILE` was present when this traversal was created.
     pub(crate) profile: crate::profile::PropagateProfile,
@@ -1311,6 +1341,7 @@ impl Default for PropagateMemo {
             liftn: AHashMap::new(),
             aperture: AHashMap::new(),
             slot_env_lift: AHashMap::new(),
+            results: PropagateResultMemo::default(),
             profile: crate::profile::PropagateProfile::default(),
         }
     }

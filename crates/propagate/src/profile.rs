@@ -116,6 +116,8 @@ pub(crate) struct PropagateProfile {
     entries: [ProfileEntry; PROFILE_KIND_COUNT],
     liftn_calls: u64,
     liftn_hits: u64,
+    result_memo_probes: u64,
+    result_memo_hits: u64,
     origin_calls: u64,
     origin_time: Duration,
 }
@@ -136,6 +138,8 @@ impl PropagateProfile {
             entries: [ProfileEntry::default(); PROFILE_KIND_COUNT],
             liftn_calls: 0,
             liftn_hits: 0,
+            result_memo_probes: 0,
+            result_memo_hits: 0,
             origin_calls: 0,
             origin_time: Duration::ZERO,
         }
@@ -182,6 +186,14 @@ impl PropagateProfile {
         if self.enabled {
             self.liftn_calls += 1;
             self.liftn_hits += u64::from(hit);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn record_result_memo_probe(&mut self, hit: bool) {
+        if self.enabled {
+            self.result_memo_probes += 1;
+            self.result_memo_hits += u64::from(hit);
         }
     }
 
@@ -244,6 +256,12 @@ impl PropagateProfile {
             percent(self.liftn_hits, self.liftn_calls),
         );
         eprintln!(
+            "result-memo\tprobes={}\thits={}\thit_rate={:.1}%",
+            self.result_memo_probes,
+            self.result_memo_hits,
+            percent(self.result_memo_hits, self.result_memo_probes),
+        );
+        eprintln!(
             "origins\tcalls={}\ttotal_s={:.6}",
             self.origin_calls,
             self.origin_time.as_secs_f64(),
@@ -270,6 +288,8 @@ mod tests {
         profile.record_call(PropagateProfileKind::Seq, 2, 1, 3, started);
         profile.record_liftn_call(false);
         profile.record_liftn_call(true);
+        profile.record_result_memo_probe(false);
+        profile.record_result_memo_probe(true);
         profile.record_origins(profile.start());
 
         let seq = profile.entries[PropagateProfileKind::Seq as usize];
@@ -279,6 +299,8 @@ mod tests {
         assert_eq!(seq.slot_bindings, 3);
         assert_eq!(profile.liftn_calls, 2);
         assert_eq!(profile.liftn_hits, 1);
+        assert_eq!(profile.result_memo_probes, 2);
+        assert_eq!(profile.result_memo_hits, 1);
         assert_eq!(profile.origin_calls, 1);
     }
 
