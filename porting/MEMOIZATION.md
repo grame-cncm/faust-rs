@@ -469,56 +469,82 @@ Purpose:
   recursion,
 - avoids repeated substitution and aperture queries on shared recursive trees.
 
+### 2.15 `propagate`: exact Box-to-Signal result memo
+
+Status: implemented 2026-08-08
+
+Location:
+
+- `crates/propagate/src/result_memo.rs`
+- `crates/propagate/src/engine.rs`
+
+Cache:
+
+- `PropagateMemo.results: PropagateResultMemo`, a compilation-scoped
+  `AHashMap<PropagateResultKey, BusKey>`.
+
+Key and payload:
+
+- the exact key is `(FlatBoxId, SlotEnvId, UiPathId, PropagationModeKey,
+  input bus)`;
+- `PropagationModeKey` contains the clock environment/domain and FAD
+  suppression state, so future eligibility expansion cannot alias those
+  contexts accidentally;
+- zero-, one-, and two-signal buses are stored inline; longer buses are
+  canonicalized in a per-run `Arc<[SigId]>` interner;
+- the payload is the exact output signal bus, using the same compact bus
+  representation.
+
+Purpose:
+
+- adapts C++ `propagate(...)` / `gResult2Memo` to reuse an already propagated
+  Box under the same canonical lexical, UI, execution-mode, and input context;
+- removes the repeated recursive propagation exposed by smoothed
+  Jiles-Atherton parameters while preserving canonical signal sharing and
+  diagnostic origins.
+
+Safety and scope:
+
+- a linear whole-root scan enables replay only when the flat Box DAG contains
+  neither forward/reverse AD nor `ondemand`/upsampling/downsampling wrappers;
+- a non-empty pending-FAD-seed vector is an additional per-call barrier;
+- an exact-key hit records only its own provenance boundary, while the first
+  miss records the full descendant derivation forest;
+- the table is intentionally one propagation run wide. It must not cross
+  arenas, compilation sessions, or mutable propagation contexts.
+
+Adaptive policy and validation:
+
+- the first 1,024 eligible calls run on the previous allocation-free path;
+  only a traversal large enough to amortize hashing and retained input buses
+  activates the table;
+- unit tests cover inline and interned buses, slot/UI key separation, warm-up,
+  replay, and the AD/clock safety gate;
+- on the 1,110-symbol faustlibraries corpus, the adaptive result is 71.25 s
+  versus the 70.86 s pre-change reference (+0.55%), whereas always-on caching
+  cost 79.17 s;
+- retained generated C++ is byte-identical. The smoothed stereo sentinel drops
+  from roughly 1.23 s to 0.215 s in propagation, and the two production
+  Jiles-Atherton cases improve by 12.7x and 5.8x respectively.
+
 ## 3. Planned Additions
 
 The items below are ordered by expected leverage and safety.
 
-### 3.1 `propagate`: memoize propagation of context-free closed subtrees
+### 3.1 `propagate`: result-memo eligibility expansion
 
-Status: **attempted and rejected 2026-08-06.** Implemented as described below
-— `AHashMap<(FlatBoxId, inputs, slot_env, group_path, clock_env), Vec<SigId>>`
-— and measured on `virtualAnalogForBrowser.dsp`, the case where propagation is
-82 % of compile time. Propagation went **10.6 s to 13.9 s**: slower, with
-byte-identical output. The hit rate is 12 % and the table reaches 748 k entries
-to avoid 123 k recomputations, because the same box is rarely propagated twice
-with the same inputs. See
-`porting/propagation-cost-analysis-2026-08-06-en.md` §7.
+Status: deferred; the original result memo is implemented in §2.15.
 
-Two of this section's own premises were also measured false. The "only cache
-proven closed subtrees" narrowing is the plan's P1a cut, which assumes most
-propagation happens outside a `Symbolic` scope: 88 % of calls have a *non-empty*
-slot env. And the elaborate slot-env interning proposed as its successor is
-unnecessary — envs measure at mean 1.97 bindings, max 4, so sorted bindings in
-the key are cheaper and exact.
+The 2026-08-06 experiment used an expensive mutable-environment and owned-bus
+key. It was slower on `virtualAnalogForBrowser.dsp` (10.6 s to 13.9 s, 12% hit
+rate) despite byte-identical output. That finding rejected the representation,
+not exact result replay. Canonical slot/UI identities and compact buses enabled
+the current implementation.
 
-The repeated work is real (C++ propagation is flat in the number of uses of a
-shared argument, faust-rs is linear) but it is **not repeated at the
-granularity of `propagate_in_slot_env` calls keyed by their inputs**. Anything
-revisiting this must first establish where it *is* repeated.
-
-Target:
-
-- `crates/propagate/src/lib.rs`
-
-Likely cache shape:
-
-- `AHashMap<(FlatBoxId, Vec<SigId> or specialized key), Vec<SigId>>`
-- or preferably a narrower cache only for proven closed subtrees
-
-Why:
-
-- `propagate_inner` still recomputes some subtrees that do not depend on
-  `slot_env`, `clock_env`, or dynamic input slicing.
-
-Constraint:
-
-- do not cache general `propagate_inner` results blindly,
-- only cache subtrees whose output is provably independent of dynamic context.
-
-Validation:
-
-- structural tests on recursion and clocked wrappers,
-- targeted profile before/after on shared recursive DSPs.
+The remaining work is to replace the conservative whole-root exclusion with a
+per-subtree eligibility fact, but only after AD seed accumulation and
+clock-domain state deltas have an explicit replay protocol. Until then, do not
+widen §2.15's gate.
 
 ### 3.2 `normalize`: broader normal-form stage caching beyond local simplify/promote passes
 
