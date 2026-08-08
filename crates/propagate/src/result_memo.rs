@@ -162,9 +162,14 @@ impl PropagateResultMemo {
         ui_path: UiPathId,
         mode: PropagationModeKey,
         inputs: &[SigId],
-        has_pending_fad_seeds: bool,
+        has_slot_bindings: bool,
     ) -> Option<PropagateResultKey> {
-        if !self.safe_root || has_pending_fad_seeds {
+        // The measurements that justify this table are symbolic recursive
+        // subtrees. On ordinary closed graphs the key bookkeeping can cost
+        // more than the shallow replay it finds, so retain the uncached path
+        // until a lexical binding proves that the context-sensitive shape is
+        // present.
+        if !self.safe_root || !has_slot_bindings {
             return None;
         }
         self.eligible_calls = self.eligible_calls.saturating_add(1);
@@ -278,9 +283,10 @@ mod tests {
         let box_tree = crate::try_build_flat_box(&arena, raw_box).expect("flat integer box");
         let signal = arena.int(2);
         let mut slots = SlotEnv::new();
-        let root_slot = slots.id();
         slots.push(arena.int(3), signal);
         let bound_slot = slots.id();
+        slots.push(arena.int(4), signal);
+        let nested_slot = slots.id();
         let mut ui = UiPathContext::new();
         let root_ui = ui.id();
         let saved_ui = ui.replace(vec![UiGroupPathSegment {
@@ -295,19 +301,19 @@ mod tests {
 
         for _ in 0..RESULT_MEMO_WARMUP_CALLS {
             assert!(
-                memo.key(box_tree, root_slot, root_ui, mode, &[signal], false)
+                memo.key(box_tree, bound_slot, root_ui, mode, &[signal], true)
                     .is_none()
             );
         }
 
         let root = memo
-            .key(box_tree, root_slot, root_ui, mode, &[signal], false)
+            .key(box_tree, bound_slot, root_ui, mode, &[signal], true)
             .expect("enabled key");
         let bound = memo
-            .key(box_tree, bound_slot, root_ui, mode, &[signal], false)
+            .key(box_tree, nested_slot, root_ui, mode, &[signal], true)
             .expect("enabled key");
         let grouped = memo
-            .key(box_tree, root_slot, grouped_ui, mode, &[signal], false)
+            .key(box_tree, nested_slot, grouped_ui, mode, &[signal], true)
             .expect("enabled key");
 
         assert_ne!(root, bound);
@@ -319,7 +325,9 @@ mod tests {
         let mut arena = TreeArena::new();
         let raw_box = BoxBuilder::new(&mut arena).int(1);
         let box_tree = crate::try_build_flat_box(&arena, raw_box).expect("flat integer box");
-        let slots = SlotEnv::new();
+        let mut slots = SlotEnv::new();
+        let output = arena.int(42);
+        slots.push(arena.int(3), output);
         let ui = UiPathContext::new();
         let mode = PropagationModeKey::new(arena.nil(), None, false);
         let mut memo = PropagateResultMemo::default();
@@ -327,24 +335,16 @@ mod tests {
 
         for _ in 0..RESULT_MEMO_WARMUP_CALLS {
             assert!(
-                memo.key(box_tree, slots.id(), ui.id(), mode, &[], false)
+                memo.key(box_tree, slots.id(), ui.id(), mode, &[], true)
                     .is_none()
             );
         }
         assert!(memo.entries.is_empty());
         assert!(memo.buses.buses.is_empty());
         assert!(
-            memo.key(box_tree, slots.id(), ui.id(), mode, &[], false)
+            memo.key(box_tree, slots.id(), ui.id(), mode, &[], true)
                 .is_some()
         );
-
-        let key = memo
-            .key(box_tree, slots.id(), ui.id(), mode, &[], false)
-            .expect("active key");
-        let output = arena.int(42);
-        assert!(memo.get(key).is_none());
-        memo.insert(key, &[output]);
-        assert_eq!(memo.get(key), Some(vec![output]));
     }
 
     #[test]

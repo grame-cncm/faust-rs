@@ -46,14 +46,18 @@ pub(crate) fn propagate_in_slot_env(
             got: inputs.len(),
         });
     }
-    let result_key = ctx.memo.results.key(
-        box_tree,
-        ctx.slot_env.id(),
-        ctx.ui_path.id(),
-        PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, ctx.suppress_fad),
-        inputs,
-        !ctx.pending_fad_seeds.is_empty(),
-    );
+    let result_key = if ctx.pending_fad_seeds.is_empty() {
+        ctx.memo.results.key(
+            box_tree,
+            ctx.slot_env.id(),
+            ctx.ui_path.id(),
+            PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, ctx.suppress_fad),
+            inputs,
+            ctx.slot_env.len() != 0,
+        )
+    } else {
+        None
+    };
     if let Some(key) = result_key {
         if let Some(outputs) = ctx.memo.results.get(key) {
             ctx.memo.profile.record_result_memo_probe(true);

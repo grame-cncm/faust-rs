@@ -508,6 +508,10 @@ Safety and scope:
 - a linear whole-root scan enables replay only when the flat Box DAG contains
   neither forward/reverse AD nor `ondemand`/upsampling/downsampling wrappers;
 - a non-empty pending-FAD-seed vector is an additional per-call barrier;
+- the adaptive table is further limited to non-empty lexical slot environments:
+  measurements show that context-free calls mostly pay its key cost without
+  finding valuable replay, while the recursive symbolic workloads it targets
+  retain their high-value reuse;
 - an exact-key hit records only its own provenance boundary, while the first
   miss records the full descendant derivation forest;
 - the table is intentionally one propagation run wide. It must not cross
@@ -515,9 +519,9 @@ Safety and scope:
 
 Adaptive policy and validation:
 
-- the first 1,024 eligible calls run on the previous allocation-free path;
-  only a traversal large enough to amortize hashing and retained input buses
-  activates the table;
+- the first 1,024 eligible, lexically-bound calls run on the previous
+  allocation-free path; only a traversal large enough to amortize hashing and
+  retained input buses activates the table;
 - unit tests cover inline and interned buses, slot/UI key separation, warm-up,
   replay, and the AD/clock safety gate;
 - on the 1,110-symbol faustlibraries corpus, the adaptive result is 71.25 s
