@@ -6,6 +6,7 @@
 //! `arity`, and `ui_build`.
 
 use super::*;
+use crate::context_id::{SlotEnv, UiPathContext};
 
 /// Propagates input signals and grouped UI through one validated flat box expression.
 ///
@@ -81,7 +82,7 @@ fn propagate_typed_with_origins_policy(
         clock_domain: None,
         suppress_fad: false,
         pending_fad_seeds: Vec::new(),
-        current_groups: Vec::new(),
+        ui_path: UiPathContext::new(),
         signal_origins: &mut signal_origins,
     };
     let signals = propagate_in_slot_env(arena, box_tree, inputs, &mut ctx);

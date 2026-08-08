@@ -1,7 +1,8 @@
 # Jiles-Atherton Smoothed-Parameter Propagation Cost — Analysis and Optimization Plan
 
 **Date**: 2026-08-08
-**Status**: revised after direct C++ propagation profiling; nothing implemented
+**Status**: P0/P1 and canonical slot/UI context identities implemented; exact
+result memo pending
 **Primary cases**:
 
 - `hysteresis_tests.dsp::ja_processor_stereo_ui_test`
@@ -541,6 +542,17 @@ cache.
 
 #### P3-A — Persistent canonical slot environments
 
+**Implementation status (2026-08-08): complete.** The mutable slot map is now
+a compilation-scoped interned `Bind(parent, slot, signal)` chain with a compact
+`SlotEnvId`. Push and restore are constant-size identity operations, lookup
+preserves lexical shadowing, and repeated construction receives the same id.
+Recursion rebuilds lifted binding chains in lexical order and memoizes the
+resulting environment by `(SlotEnvId, threshold)`. On the smoothed stereo
+sentinel this reduces `liftn` traffic from 473,425 calls (99.8% already signal
+memo hits) to 2,257 calls without changing the generated C++ bytes. Release
+propagation remains neutral within run noise at about 1.23 seconds, as expected:
+the dominant millions of recursive entries still await whole-result memoization.
+
 Replace the mutable `AHashMap<BoxId, SigId>` identity problem with a
 compilation-local persistent representation, conceptually:
 
@@ -560,6 +572,12 @@ environment whose unchanged closed values retain identity. Never reuse an
 environment across incompatible De Bruijn scopes.
 
 #### P3-B — Canonical UI path and mode identity
+
+**Implementation status (2026-08-08): UI path complete; mode pending.** The
+normalized UI path is now owned by `UiPathContext` and interned to `UiPathId`
+once per distinct path. Group navigation, FAD seed path clearing, restoration,
+control hashes, and generated output are unchanged. Clock and AD mode identity
+will be added with the exact memo key so side-effect eligibility is explicit.
 
 Represent the normalized UI group path as an interned persistent path:
 

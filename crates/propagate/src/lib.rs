@@ -122,6 +122,7 @@ use ui::{
 };
 
 pub mod clock_domain;
+mod context_id;
 mod forward_ad;
 mod profile;
 mod reverse_ad;
@@ -132,8 +133,6 @@ pub use clock_domain::{ClockDomain, ClockDomainId, ClockDomainKind, ClockDomainT
 
 /// Memoization cache for [`box_arity_typed`] results, keyed by validated flat boxes.
 pub type ArityCache = AHashMap<FlatBoxId, Result<BoxArity, PropagateError>>;
-/// Environment mapping route/slot placeholders to propagated signals.
-type SlotEnv = AHashMap<BoxId, SigId>;
 /// Context-aware mapping from (source widget box node, group-path hash) to stable control ids.
 /// The group-path hash distinguishes the same structural widget appearing in different UI groups.
 type ControlIds = AHashMap<(BoxId, u64), ControlId>;

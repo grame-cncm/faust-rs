@@ -6,6 +6,7 @@
 //! rather than entering this module directly.
 
 use super::*;
+use crate::context_id::{SlotEnv, SlotEnvId, UiPathContext};
 
 /// Propagates one box tree with an explicit slot environment.
 ///
@@ -15,8 +16,8 @@ use super::*;
 ///
 /// C++ threads a dedicated `slotenv` alongside the normal recursion so
 /// `boxSymbolic(slot, body)` can bind the first input bus to `boxSlot(slot)`.
-/// Rust keeps the same semantic mechanism but uses a local hash map keyed by the
-/// canonical `BoxId` of each slot node instead of global tree properties.
+/// Rust keeps the same semantic mechanism in a compilation-scoped persistent
+/// environment whose compact identity is canonical for equal binding chains.
 ///
 /// This helper is also the point where Rust enforces the public
 /// `propagate(...)` contract: callers may only enter `propagate_inner(...)`
@@ -27,6 +28,11 @@ pub(crate) fn propagate_in_slot_env(
     inputs: &[SigId],
     ctx: &mut PropagateContext<'_>,
 ) -> Result<Vec<SigId>, PropagateError> {
+    // Materialize both canonical context identities at the only validated
+    // propagation boundary. The next phase extends this tuple into the exact
+    // result-memo key; keeping the read here also ensures every recursive entry
+    // exercises the identity-maintenance invariants before memoization exists.
+    let _canonical_context = (ctx.slot_env.id(), ctx.ui_path.id());
     let profile_kind = if ctx.memo.profile.is_enabled() {
         Some(crate::profile::PropagateProfileKind::from_flat(
             flat_node_kind(arena, box_tree)?,
@@ -121,7 +127,7 @@ fn propagate_inner(
                 unreachable!("flat slot node must decode to BoxMatch::Slot")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
-            if let Some(sig) = ctx.slot_env.get(&box_tree.as_tree_id()).copied() {
+            if let Some(sig) = ctx.slot_env.get(&box_tree.as_tree_id()) {
                 Ok(vec![sig])
             } else {
                 let mut b = SigBuilder::new(arena);
@@ -349,7 +355,7 @@ fn propagate_inner(
                 unreachable!("flat button node must decode to BoxMatch::Button")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
-            let ctx_hash = group_path_hash(&ctx.current_groups);
+            let ctx_hash = group_path_hash(ctx.ui_path.groups());
             let control = *ctx
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
@@ -362,7 +368,7 @@ fn propagate_inner(
                 unreachable!("flat checkbox node must decode to BoxMatch::Checkbox")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
-            let ctx_hash = group_path_hash(&ctx.current_groups);
+            let ctx_hash = group_path_hash(ctx.ui_path.groups());
             let control = *ctx
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
@@ -375,7 +381,7 @@ fn propagate_inner(
                 unreachable!("flat vslider node must decode to BoxMatch::VSlider")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
-            let ctx_hash = group_path_hash(&ctx.current_groups);
+            let ctx_hash = group_path_hash(ctx.ui_path.groups());
             let control = *ctx
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
@@ -388,7 +394,7 @@ fn propagate_inner(
                 unreachable!("flat hslider node must decode to BoxMatch::HSlider")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
-            let ctx_hash = group_path_hash(&ctx.current_groups);
+            let ctx_hash = group_path_hash(ctx.ui_path.groups());
             let control = *ctx
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
@@ -401,7 +407,7 @@ fn propagate_inner(
                 unreachable!("flat numentry node must decode to BoxMatch::NumEntry")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
-            let ctx_hash = group_path_hash(&ctx.current_groups);
+            let ctx_hash = group_path_hash(ctx.ui_path.groups());
             let control = *ctx
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
@@ -414,7 +420,7 @@ fn propagate_inner(
                 unreachable!("flat vbargraph node must decode to BoxMatch::VBargraph")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 1)?;
-            let ctx_hash = group_path_hash(&ctx.current_groups);
+            let ctx_hash = group_path_hash(ctx.ui_path.groups());
             let control = *ctx
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
@@ -427,7 +433,7 @@ fn propagate_inner(
                 unreachable!("flat hbargraph node must decode to BoxMatch::HBargraph")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 1)?;
-            let ctx_hash = group_path_hash(&ctx.current_groups);
+            let ctx_hash = group_path_hash(ctx.ui_path.groups());
             let control = *ctx
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
@@ -460,13 +466,13 @@ fn propagate_inner(
                 group,
             } = normalize_group_label_navigation(
                 &label,
-                &ctx.current_groups,
+                ctx.ui_path.groups(),
                 UiGroupKind::Vertical,
             );
             parent_groups.push(group);
-            let saved = std::mem::replace(&mut ctx.current_groups, parent_groups);
+            let saved = ctx.ui_path.replace(parent_groups);
             let result = propagate_in_slot_env(arena, body, inputs, ctx);
-            ctx.current_groups = saved;
+            ctx.ui_path.restore(saved);
             result
         }
         FlatNodeKind::HGroup { body } => {
@@ -479,13 +485,13 @@ fn propagate_inner(
                 group,
             } = normalize_group_label_navigation(
                 &label,
-                &ctx.current_groups,
+                ctx.ui_path.groups(),
                 UiGroupKind::Horizontal,
             );
             parent_groups.push(group);
-            let saved = std::mem::replace(&mut ctx.current_groups, parent_groups);
+            let saved = ctx.ui_path.replace(parent_groups);
             let result = propagate_in_slot_env(arena, body, inputs, ctx);
-            ctx.current_groups = saved;
+            ctx.ui_path.restore(saved);
             result
         }
         FlatNodeKind::TGroup { body } => {
@@ -496,11 +502,11 @@ fn propagate_inner(
             let UiNormalizedGroupPath {
                 mut parent_groups,
                 group,
-            } = normalize_group_label_navigation(&label, &ctx.current_groups, UiGroupKind::Tab);
+            } = normalize_group_label_navigation(&label, ctx.ui_path.groups(), UiGroupKind::Tab);
             parent_groups.push(group);
-            let saved = std::mem::replace(&mut ctx.current_groups, parent_groups);
+            let saved = ctx.ui_path.replace(parent_groups);
             let result = propagate_in_slot_env(arena, body, inputs, ctx);
-            ctx.current_groups = saved;
+            ctx.ui_path.restore(saved);
             result
         }
         FlatNodeKind::Symbolic { body } => {
@@ -514,13 +520,9 @@ fn propagate_inner(
                     got: 0,
                 });
             }
-            let previous = ctx.slot_env.insert(slot, inputs[0]);
+            let saved_slot_env = ctx.slot_env.push(slot, inputs[0]);
             let result = propagate_in_slot_env(arena, body, &inputs[1..], ctx);
-            if let Some(sig) = previous {
-                ctx.slot_env.insert(slot, sig);
-            } else {
-                ctx.slot_env.remove(&slot);
-            }
+            ctx.slot_env.restore(saved_slot_env);
             result
         }
         FlatNodeKind::Seq(left, right) => {
@@ -614,12 +616,22 @@ fn propagate_inner(
             // references still point to the intended outer binder after the new `DEBRUIJNREC`
             // is inserted. This must happen BEFORE propagating `right`, because `right` produces
             // `l1`, which is spliced into the inner body as part of `rec_inputs`.
-            let lifted_slot_env: SlotEnv = ctx
-                .slot_env
-                .iter()
-                .map(|(k, v)| (*k, liftn(arena, *v, 1, ctx.memo)))
-                .collect();
-            let saved_slot_env = std::mem::replace(ctx.slot_env, lifted_slot_env);
+            let saved_slot_env = ctx.slot_env.id();
+            let lift_key = (saved_slot_env, 1);
+            let lifted_slot_env = if let Some(id) = ctx.memo.slot_env_lift.get(&lift_key).copied() {
+                id
+            } else {
+                let slot_bindings = ctx.slot_env.binding_chain();
+                let lifted_slot_bindings: Vec<_> = slot_bindings
+                    .into_iter()
+                    .map(|(slot, signal)| (slot, liftn(arena, signal, 1, ctx.memo)))
+                    .collect();
+                ctx.slot_env.replace_with_chain(&lifted_slot_bindings);
+                let id = ctx.slot_env.id();
+                ctx.memo.slot_env_lift.insert(lift_key, id);
+                id
+            };
+            ctx.slot_env.restore(lifted_slot_env);
 
             let l0 = make_mem_sig_proj_list(arena, right_arity.inputs)?;
             let l1 = propagate_in_slot_env(arena, right, &l0, ctx)?;
@@ -629,7 +641,7 @@ fn propagate_inner(
 
             let l2 = propagate_in_slot_env(arena, left, &rec_inputs, ctx)?;
 
-            *ctx.slot_env = saved_slot_env;
+            ctx.slot_env.restore(saved_slot_env);
             ctx.suppress_fad = saved_suppress;
             let seeds = std::mem::replace(&mut ctx.pending_fad_seeds, saved_pending);
 
@@ -688,9 +700,9 @@ fn propagate_inner(
             let seed_inputs: Vec<SigId> = inputs.iter().copied().take(seed_arity.inputs).collect();
             // Seeds are registered without group context in collect_ui_nodes; reset the
             // group stack so that widget lookups here use the same (empty-context) key.
-            let saved_groups = std::mem::take(&mut ctx.current_groups);
+            let saved_groups = ctx.ui_path.clear();
             let seed_sigs = propagate_in_slot_env(arena, seed, &seed_inputs, ctx)?;
-            ctx.current_groups = saved_groups;
+            ctx.ui_path.restore(saved_groups);
             if seed_sigs.len() != seed_arity.outputs {
                 return Err(PropagateError::FadSeedArity {
                     node: box_tree.as_tree_id(),
@@ -725,9 +737,9 @@ fn propagate_inner(
             // FAD wiring contract).
             let seed_inputs: Vec<SigId> = inputs.iter().copied().take(seeds_arity.inputs).collect();
             // Same rationale as ForwardAD: seeds are registered without group context.
-            let saved_groups = std::mem::take(&mut ctx.current_groups);
+            let saved_groups = ctx.ui_path.clear();
             let seed_sigs = propagate_in_slot_env(arena, seeds, &seed_inputs, ctx)?;
-            ctx.current_groups = saved_groups;
+            ctx.ui_path.restore(saved_groups);
             if seed_sigs.len() != seeds_arity.outputs {
                 return Err(PropagateError::RadSeedArity {
                     node: box_tree.as_tree_id(),
@@ -809,7 +821,7 @@ fn propagate_inner(
             expect_input_arity(box_tree.as_tree_id(), inputs, 2)?;
             let chan_count = usize_from_int_node(arena, chan, "soundfile channels")?;
             let mut b = SigBuilder::new(arena);
-            let ctx_hash = group_path_hash(&ctx.current_groups);
+            let ctx_hash = group_path_hash(ctx.ui_path.groups());
             let control = *ctx
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
@@ -1285,6 +1297,9 @@ pub(crate) fn make_mem_sig_proj_list(
 pub(crate) struct PropagateMemo {
     pub(crate) liftn: AHashMap<(TreeId, i64), TreeId>,
     pub(crate) aperture: AHashMap<TreeId, i64>,
+    /// Canonical environment counterpart of C++'s synthesized lifted tree:
+    /// repeated entry into the same recursion scope reuses one `SlotEnvId`.
+    pub(crate) slot_env_lift: AHashMap<(SlotEnvId, i64), SlotEnvId>,
     /// Opt-in C++-comparable propagation attribution. It is dormant unless
     /// `FAUST_PROPAGATE_PROFILE` was present when this traversal was created.
     pub(crate) profile: crate::profile::PropagateProfile,
@@ -1295,6 +1310,7 @@ impl Default for PropagateMemo {
         Self {
             liftn: AHashMap::new(),
             aperture: AHashMap::new(),
+            slot_env_lift: AHashMap::new(),
             profile: crate::profile::PropagateProfile::default(),
         }
     }
@@ -1327,10 +1343,10 @@ pub(crate) struct PropagateContext<'a> {
     /// Seeds collected from `ForwardAD` nodes suppressed during Rec branch
     /// propagation. Drained by the Rec arm after the recursive group is built.
     pub(crate) pending_fad_seeds: Vec<SigId>,
-    /// Accumulated UI group path at the current propagation position.
-    /// Mirrors the `current_groups` stack maintained during UI collection so
-    /// that widget control-id lookups use the same context-sensitive key.
-    pub(crate) current_groups: Vec<UiGroupPathSegment>,
+    /// Accumulated normalized UI group path and its canonical identity.
+    /// The path mirrors UI collection; its id is reserved for the exact
+    /// propagation memo key introduced after context validation.
+    pub(crate) ui_path: UiPathContext,
     /// Source-neutral Box derivations for every Signal output observed at a
     /// validated propagation boundary.
     pub(crate) signal_origins: &'a mut SignalOrigins,
