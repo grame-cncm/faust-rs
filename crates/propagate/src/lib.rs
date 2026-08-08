@@ -123,6 +123,7 @@ use ui::{
 
 pub mod clock_domain;
 mod forward_ad;
+mod profile;
 mod reverse_ad;
 pub mod stateful_rad;
 pub mod transpose_ad;

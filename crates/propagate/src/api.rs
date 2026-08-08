@@ -84,7 +84,9 @@ fn propagate_typed_with_origins_policy(
         current_groups: Vec::new(),
         signal_origins: &mut signal_origins,
     };
-    let signals = propagate_in_slot_env(arena, box_tree, inputs, &mut ctx)?;
+    let signals = propagate_in_slot_env(arena, box_tree, inputs, &mut ctx);
+    ctx.memo.profile.print();
+    let signals = signals?;
     Ok(PropagateOutput {
         signals,
         signal_origins,

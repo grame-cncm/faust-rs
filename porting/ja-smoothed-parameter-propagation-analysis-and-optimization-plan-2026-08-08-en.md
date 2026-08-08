@@ -428,6 +428,17 @@ smoothed/raw propagation delta and its stage is at least 70% propagation.
 
 ### P1 — Add temporary propagation attribution counters
 
+**Implementation status (2026-08-08): complete.** The propagate crate now
+implements opt-in `FAUST_PROPAGATE_PROFILE` attribution with C++-comparable Box
+families plus Rust-specific bus, slot, lifting, and origin counters. On the
+retained sentinel, smoothed stereo executes 10,836,611 Rust propagation calls
+against 3,803 in C++; raw stereo executes 8,009,171 against 2,939. Profiled
+origin attribution costs 0.538 of 1.980 seconds (27%) for smoothed stereo and
+0.412 of 1.424 seconds (29%) for raw stereo. Smoothed `liftn` performs 473,425
+calls with a 99.8% memo hit rate. The leading difference is therefore millions
+of avoidable propagation entries; provenance is a material residue, while a
+standalone `liftn` algorithm change cannot remove the dominant factor.
+
 Instrument one compilation with counters scoped to `PropagateContext`:
 
 - `propagate_inner` calls by `FlatNodeKind`;

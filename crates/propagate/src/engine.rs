@@ -27,6 +27,15 @@ pub(crate) fn propagate_in_slot_env(
     inputs: &[SigId],
     ctx: &mut PropagateContext<'_>,
 ) -> Result<Vec<SigId>, PropagateError> {
+    let profile_kind = if ctx.memo.profile.is_enabled() {
+        Some(crate::profile::PropagateProfileKind::from_flat(
+            flat_node_kind(arena, box_tree)?,
+        ))
+    } else {
+        None
+    };
+    let profile_started = ctx.memo.profile.start();
+    let profile_slot_bindings = ctx.slot_env.len();
     let arity = box_arity_typed(arena, box_tree, ctx.cache)?;
     if inputs.len() != arity.inputs {
         return Err(PropagateError::InputArityMismatch {
@@ -61,8 +70,19 @@ pub(crate) fn propagate_in_slot_env(
             got: outputs.len(),
         });
     }
+    let origins_started = ctx.memo.profile.start();
     ctx.signal_origins
         .record_derived_forest(arena, &outputs, box_tree.as_tree_id());
+    ctx.memo.profile.record_origins(origins_started);
+    if let Some(kind) = profile_kind {
+        ctx.memo.profile.record_call(
+            kind,
+            inputs.len(),
+            outputs.len(),
+            profile_slot_bindings,
+            profile_started,
+        );
+    }
     Ok(outputs)
 }
 
@@ -1265,6 +1285,9 @@ pub(crate) fn make_mem_sig_proj_list(
 pub(crate) struct PropagateMemo {
     pub(crate) liftn: AHashMap<(TreeId, i64), TreeId>,
     pub(crate) aperture: AHashMap<TreeId, i64>,
+    /// Opt-in C++-comparable propagation attribution. It is dormant unless
+    /// `FAUST_PROPAGATE_PROFILE` was present when this traversal was created.
+    pub(crate) profile: crate::profile::PropagateProfile,
 }
 
 impl Default for PropagateMemo {
@@ -1272,6 +1295,7 @@ impl Default for PropagateMemo {
         Self {
             liftn: AHashMap::new(),
             aperture: AHashMap::new(),
+            profile: crate::profile::PropagateProfile::default(),
         }
     }
 }
@@ -1345,8 +1369,10 @@ pub(crate) fn liftn(
 ) -> TreeId {
     let key = (root, threshold);
     if let Some(lifted) = memo.liftn.get(&key).copied() {
+        memo.profile.record_liftn_call(true);
         return lifted;
     }
+    memo.profile.record_liftn_call(false);
 
     if let Some(level) = debruijn_ref_level(arena, root) {
         let lifted = if level < threshold {
