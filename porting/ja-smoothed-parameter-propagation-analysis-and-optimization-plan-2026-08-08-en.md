@@ -1,8 +1,8 @@
 # Jiles-Atherton Smoothed-Parameter Propagation Cost — Analysis and Optimization Plan
 
 **Date**: 2026-08-08
-**Status**: P0/P1 and canonical slot/UI context identities implemented; exact
-result memo pending
+**Status**: implementation and validation complete; local compile-budget
+calibration floor remains external debt
 **Primary cases**:
 
 - `hysteresis_tests.dsp::ja_processor_stereo_ui_test`
@@ -760,6 +760,25 @@ broken, all current snapshots remain identical, and successful compilation
 performs no redundant reachable-forest walk.
 
 ### P6 — Validate across semantic contexts and consumers
+
+**Implementation status (2026-08-08): complete.** Workspace Clippy and the
+complete workspace test suite pass, including scalar/vector bit-exact tests,
+FAD/RAD recursion, clock-domain differential tests, grouped UI, diagnostics,
+and compiler-library/FFI coverage. `cargo doc -p propagate --no-deps` passes.
+The four retained raw/smoothed mono/stereo symbols compile and show the expected
+scaling after optimization. The 1,110-symbol faustlibraries differential has no
+acceptance mismatch and stays within the aggregate performance gate. A
+133-DSP `compile-profile` run completes in 3.83 seconds and assigns only 0.146
+seconds (3.8%) to propagation across that basket.
+
+Generated C++ is byte-identical before/after for the retained sentinel and both
+requested production symbols. The full test suite supplies Signal/FIR,
+diagnostic, UI, impulse, scalar, and vector semantic coverage. The ordinary
+`compile-budget-check` cannot measure ratios on this machine because the
+pre-existing `karplus.dsp` calibration is 4 ms, below its 5 ms validity floor;
+the floor was not weakened. All implementation performance evidence was
+therefore collected with direct stage profiles, the normalized sentinel, the
+full examples corpus, and maximum RSS.
 
 Run, at minimum:
 
