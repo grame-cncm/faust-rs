@@ -57,6 +57,13 @@
   ],
   "frontend_cases": [
     {
+      "name": "ja_smoothed_parameter",
+      "path": "tests/compile-budget/dsp/ja_smoothed_parameter.dsp",
+      "units_milli": 510000,
+      "note": "Self-contained Jiles-Atherton-shaped sentinel for a recursively smoothed parameter reused through four substeps and stereo composition. See porting/ja-smoothed-parameter-propagation-analysis-and-optimization-plan-2026-08-08-en.md.",
+      "enabled": true
+    },
+    {
       "name": "bells",
       "path": "tests/impulse-tests/dsp/bells.dsp",
       "units_milli": 23833,

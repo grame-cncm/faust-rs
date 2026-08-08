@@ -391,6 +391,15 @@ milestone because the pipelines assign work to phases differently.
 
 ### P0 — Retain representative benchmarks before changing propagation
 
+**Implementation status (2026-08-08): complete.** The self-contained
+`tests/compile-budget/dsp/ja_smoothed_parameter.dsp` fixture retains the four
+substeps and stereo shape without importing faustlibraries. Three reduced cores
+in series reproduce the original absolute differential while keeping the source
+portable: release propagation measured 0.873 s for raw stereo and 1.284 s for
+smoothed stereo, a 0.410 s delta. The smoothed stereo `process` is a required
+normalized front-end budget case; the raw/smooth and mono/stereo definitions
+remain selectable with `-pn` for differential profiling.
+
 Add two kinds of performance input:
 
 1. optional full-library cases for the two named faustlibraries symbols;

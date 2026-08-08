@@ -45,8 +45,12 @@ const REQUIRED_CODEGEN_CASES: [&str; 5] = [
 ///
 /// Every name here regressed measurably in the diagnostics-provenance arc, so
 /// dropping one would reopen a known hole rather than merely reduce coverage.
-const REQUIRED_FRONTEND_CASES: [&str; 6] = [
+/// `ja_smoothed_parameter` is the separate propagation-sharing sentinel from
+/// `ja-smoothed-parameter-propagation-analysis-and-optimization-plan-2026-08-08-en.md`;
+/// it is required for the same reason: aggregate corpora hid its stage shape.
+const REQUIRED_FRONTEND_CASES: [&str; 7] = [
     "bells",
+    "ja_smoothed_parameter",
     "parametric_eq",
     "reverb_designer",
     "spectral_level",
