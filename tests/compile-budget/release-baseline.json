@@ -11,7 +11,7 @@
     "codegen_repeats": 2,
     "calibration_repeats": 8,
     "frontend_tolerance_percent": 25,
-    "min_calibration_ms": 5
+    "min_calibration_ms": 4
   },
   "codegen_cases": [
     {

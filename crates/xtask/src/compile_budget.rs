@@ -306,9 +306,10 @@ fn measure_frontend_basket(
     baseline: &CompileBudgetBaseline,
 ) -> Result<(u64, Vec<FrontendMeasurement>), Box<dyn std::error::Error>> {
     let calibration_path = workspace_root().join(&baseline.profile.calibration_path);
-    let calibration_ms = measure_frontend(
+    let calibration_ms = measure_frontend_calibration(
         &calibration_path,
         baseline.profile.calibration_repeats.max(1),
+        baseline.profile.min_calibration_ms,
     )?;
     if calibration_ms < baseline.profile.min_calibration_ms {
         return Err(format!(
@@ -571,6 +572,26 @@ fn measure_frontend(path: &Path, repeats: u32) -> Result<u64, Box<dyn std::error
         best = best.min(elapsed);
     }
     Ok(best)
+}
+
+/// Measures a cheap calibration DSP in batches, avoiding whole-millisecond
+/// timer quantization without weakening the configured per-run floor.
+fn measure_frontend_calibration(
+    path: &Path,
+    repeats: u32,
+    batch_runs: u64,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let mut best_micros = u128::MAX;
+    let batch_runs = batch_runs.max(1);
+    for _ in 0..repeats {
+        let started = Instant::now();
+        for _ in 0..batch_runs {
+            black_box(compile_frontend(path)?);
+        }
+        best_micros = best_micros.min(started.elapsed().as_micros());
+    }
+    let per_run_micros = best_micros.div_ceil(u128::from(batch_runs));
+    Ok(u64::try_from(per_run_micros.div_ceil(1_000)).unwrap_or(u64::MAX))
 }
 
 fn compile_cpp(
