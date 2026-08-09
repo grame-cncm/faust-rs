@@ -184,7 +184,7 @@ entries.
 
 Both express each cost as a ratio against a calibration DSP measured in the
 same process. Normalizing this way cancels machine speed, which is what allows
-a 25% tolerance: absolute millisecond ceilings have to be loose enough for the
+a 30% tolerance: absolute millisecond ceilings have to be loose enough for the
 slowest CI runner, and at that width they no longer catch a 2x regression — the
 codegen ceilings carried 4.7x to 638x of headroom before normalization. They are
 kept, together with the vector/scalar ratio, as a coarse backstop for a

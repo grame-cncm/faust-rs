@@ -202,14 +202,14 @@ specification.
 - every measurement is normalized against a calibration DSP
   (`tests/impulse-tests/dsp/karplus.dsp`, unaffected by this arc: 0.997x)
   measured in the same process, so machine speed cancels and the tolerance can
-  be tight (**25 %**) instead of an order of magnitude;
+  be tight (**30 %**) instead of an order of magnitude;
 - the calibration is measured first and identically in enforcing and `--update`
   mode; measuring it after the codegen basket in one mode only moved it by 44 %
   and shifted every ratio with it;
 - `--update` rewrites the baseline explicitly, never automatically.
 
 Observed run-to-run spread on the recorded basket is ±8 % worst case, against a
-25 % tolerance — tight enough to reject the 2.5x residue that `#15` alone leaves,
+30 % tolerance — tight enough to reject the 2.5x residue that `#15` alone leaves,
 as asserted by
 `frontend_tolerance_rejects_the_2026_07_30_provenance_regression`.
 

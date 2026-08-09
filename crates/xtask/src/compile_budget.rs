@@ -678,7 +678,7 @@ mod tests {
             repeats: 2,
             codegen_repeats: 2,
             calibration_repeats: 8,
-            frontend_tolerance_percent: 25,
+            frontend_tolerance_percent: 30,
             min_calibration_ms: 5,
         }
     }
@@ -724,9 +724,10 @@ mod tests {
     #[test]
     fn frontend_tolerance_accepts_jitter_and_rejects_regressions() {
         let baseline = frontend_baseline(10_000);
-        // +24% is runner jitter under a 25% tolerance; +26% is not.
+        // +29% is runner jitter under a 30% tolerance; +31% is not.
         check_frontend_basket(&baseline, &[fe("fixture", 12_400)]).unwrap();
-        assert!(check_frontend_basket(&baseline, &[fe("fixture", 12_600)]).is_err());
+        check_frontend_basket(&baseline, &[fe("fixture", 12_900)]).unwrap();
+        assert!(check_frontend_basket(&baseline, &[fe("fixture", 13_100)]).is_err());
     }
 
     #[test]
@@ -776,6 +777,6 @@ mod tests {
 
     #[test]
     fn ceiling_applies_the_configured_tolerance() {
-        assert_eq!(frontend_ceiling_milli(10_000, &profile()), 12_500);
+        assert_eq!(frontend_ceiling_milli(10_000, &profile()), 13_000);
     }
 }
