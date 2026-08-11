@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 
 use compiler::{Compiler, SignalFirLane, TableInitMode};
 
-/// Fixtures whose generator cannot be evaluated at compile time (plan §2.3):
-/// sample-rate-dependent content and a foreign function in the fill body.
+/// Fixtures requiring an explicit compile-time SR or unsupported because they
+/// call a foreign function in the fill body.
 const CONST_MODE_UNFOLDABLE: [&str; 3] =
     ["f02_subcontainer1", "f03_sr_dependent", "f09_ffunction_gen"];
 
@@ -109,5 +109,31 @@ fn const_mode_rejects_exactly_the_three_documented_fixtures() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn const_mode_folds_sample_rate_generators_with_an_explicit_rate() {
+    for name in ["f02_subcontainer1", "f03_sr_dependent"] {
+        let path = fixture_dir().join(format!("{name}.dsp"));
+        let result = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                Compiler::new()
+                    .with_table_init_mode(TableInitMode::Const)
+                    .with_table_init_sample_rate(48_000)
+                    .compile_file_to_fir_with_lane(
+                        &path,
+                        &[fixture_dir(), PathBuf::from("/usr/local/share/faust")],
+                        SignalFirLane::TransformFastLane,
+                    )
+            })
+            .expect("worker thread must spawn")
+            .join()
+            .expect("compilation thread must not panic");
+        assert!(
+            result.is_ok(),
+            "{name} must fold with an explicit SR: {result:?}"
+        );
     }
 }

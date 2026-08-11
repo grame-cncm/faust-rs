@@ -35,7 +35,7 @@
 use std::collections::{HashMap, HashSet};
 
 use signals::{BinOp, SigId, SigMatch, dump_sig_readable, match_sig};
-use tlib::{TreeArena, list_to_vec, match_sym_rec, match_sym_ref};
+use tlib::{TreeArena, list_to_vec, match_sym_rec, match_sym_ref, tree_to_str};
 use ui::UiProgram;
 
 use crate::signal_prepare::SimpleSigType;
@@ -52,6 +52,7 @@ pub(super) fn interpret_generator(
     arena: &TreeArena,
     sig: SigId,
     size: usize,
+    table_init_sample_rate: Option<i32>,
 ) -> Result<Vec<f64>, SignalFirError> {
     let prepared =
         crate::signal_prepare::prepare_signals_for_fir(arena, &[sig], &UiProgram::empty())
@@ -67,7 +68,11 @@ pub(super) fn interpret_generator(
             "SIGGEN interpreter received empty prepared output list",
         )
     })?;
-    let mut interp = GeneratorInterpreter::new(prepared.arena(), prepared.types_map());
+    let mut interp = GeneratorInterpreter::new(
+        prepared.arena(),
+        prepared.types_map(),
+        table_init_sample_rate,
+    );
     let mut results = Vec::with_capacity(size);
     for _ in 0..size {
         let val = interp.eval(prepared_sig)?;
@@ -85,7 +90,7 @@ pub(super) fn interpret_generator_for_test(
     sig: SigId,
     size: usize,
 ) -> Result<Vec<f64>, SignalFirError> {
-    interpret_generator(arena, sig, size)
+    interpret_generator(arena, sig, size, None)
 }
 
 /// Small step interpreter for deterministic 0-input generator graphs.
@@ -108,8 +113,18 @@ struct GeneratorInterpreter<'a> {
     delay1_prev: HashMap<SigId, f64>,
     /// Current-step values that become `delay1_prev` on `advance()`.
     delay1_current: HashMap<SigId, f64>,
+    /// Explicit SR supplied to `--table-init const`, if any.
+    table_init_sample_rate: Option<i32>,
     /// Per-node history for general `Delay(x, n)` evaluation.
     delay_history: HashMap<SigId, Vec<f64>>,
+}
+
+/// Returns whether a foreign-constant name is Faust's `ma.SR` runtime alias.
+fn is_sampling_frequency(arena: &TreeArena, name: SigId) -> bool {
+    matches!(
+        tree_to_str(arena, name),
+        Some("fSamplingFreq" | "fSamplingRate")
+    )
 }
 
 impl<'a> GeneratorInterpreter<'a> {
@@ -118,7 +133,11 @@ impl<'a> GeneratorInterpreter<'a> {
     ///
     /// All runtime-like state starts zeroed so the first interpreted sample
     /// matches the compiled path's zero-initialized delay/recursion storage.
-    fn new(arena: &'a TreeArena, types: &'a HashMap<SigId, SimpleSigType>) -> Self {
+    fn new(
+        arena: &'a TreeArena,
+        types: &'a HashMap<SigId, SimpleSigType>,
+        table_init_sample_rate: Option<i32>,
+    ) -> Self {
         Self {
             arena,
             types,
@@ -127,6 +146,7 @@ impl<'a> GeneratorInterpreter<'a> {
             step: 0,
             delay1_prev: HashMap::new(),
             delay1_current: HashMap::new(),
+            table_init_sample_rate,
             delay_history: HashMap::new(),
         }
     }
@@ -270,6 +290,19 @@ impl<'a> GeneratorInterpreter<'a> {
                 SignalFirErrorCode::UnsupportedSignalNode,
                 "SIGGEN interpreter: soundfile access not allowed in generators",
             )),
+            SigMatch::FConst(_, name, _) if is_sampling_frequency(self.arena, name) => {
+                match self.table_init_sample_rate {
+                    Some(sample_rate) if sample_rate > 0 => Ok(f64::from(sample_rate)),
+                    Some(_) => Err(SignalFirError::new(
+                        SignalFirErrorCode::UnsupportedSignalNode,
+                        "SIGGEN interpreter: --table-init-sample-rate must be a positive integer",
+                    )),
+                    None => Err(SignalFirError::new(
+                        SignalFirErrorCode::UnsupportedSignalNode,
+                        "SIGGEN interpreter: ma.SR requires --table-init-sample-rate when --table-init const is selected",
+                    )),
+                }
+            }
             SigMatch::FConst(_, _, _) | SigMatch::FVar(_, _, _) | SigMatch::FFun(_, _) => {
                 Err(SignalFirError::new(
                     SignalFirErrorCode::UnsupportedSignalNode,
@@ -453,7 +486,8 @@ impl<'a> GeneratorInterpreter<'a> {
                 if size == 0 {
                     return Ok(0.0);
                 }
-                let table = interpret_generator(self.arena, gen_sig, size)?;
+                let table =
+                    interpret_generator(self.arena, gen_sig, size, self.table_init_sample_rate)?;
                 let i = ((index % size as i32) + size as i32) as usize % size;
                 Ok(table[i])
             }

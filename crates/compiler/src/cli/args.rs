@@ -334,10 +334,14 @@ pub struct CliArgs {
     /// reference does; this is the only mode that can express content
     /// depending on the sample rate or on a foreign function, and it keeps the
     /// emitted source small. `const` evaluates the generator at compile time
-    /// and emits a literal initializer list, giving a `const` ROM-able table
-    /// but rejecting generators that are not fully determined at compile time.
+    /// and emits a literal initializer list; a generator using `ma.SR` also
+    /// requires `--table-init-sample-rate HZ` to make the frozen value explicit.
     #[arg(long = "table-init", value_enum, default_value_t = TableInitArg::Runtime)]
     pub table_init: TableInitArg,
+    /// Sample rate embedded when `--table-init const` folds a generated table
+    /// that reads `ma.SR`. Required for that dependency; ignored otherwise.
+    #[arg(long = "table-init-sample-rate", value_name = "HZ")]
+    pub table_init_sample_rate: Option<i32>,
     /// Vector mode (`-vec`): restructure `compute()` into an outer chunk loop
     /// so the C compiler can auto-vectorize the inner loops (SIMD).
     ///

@@ -12,7 +12,7 @@
 
 use compiler::{
     Applicability, Compiler, CompilerError, Diagnostic, DiagnosticValue, FactKey, LabelRole,
-    LabelStyle, Severity, TraceKind,
+    LabelStyle, Severity, TableInitMode, TraceKind,
 };
 
 /// Compiles `source` and returns the diagnostics of the expected failure.
@@ -21,6 +21,27 @@ fn failing_diagnostics(source: &str) -> Vec<Diagnostic> {
         panic!("source is expected to fail");
     };
     error.diagnostic_bundle().as_slice().to_vec()
+}
+
+#[test]
+fn a_const_table_using_ma_sr_warns_about_the_frozen_rate() {
+    let source = "process = rdtable(8, fconstant(int fSamplingFreq, <math.h>), _);\n";
+    let output = Compiler::new()
+        .with_table_init_mode(TableInitMode::Const)
+        .with_table_init_sample_rate(48_000)
+        .with_semantic_warnings(true)
+        .compile_source_to_signals("frozen-sr.dsp", source)
+        .expect("semantic warning must not block compilation");
+    let warning = output
+        .warnings
+        .as_slice()
+        .iter()
+        .find(|diagnostic| diagnostic.code.0 == "FRS-COMP-0006")
+        .expect("const table use of ma.SR must be reported");
+    assert_eq!(
+        fact(warning, "table_init_sample_rate"),
+        Some(&DiagnosticValue::Integer(48_000))
+    );
 }
 
 /// Returns one typed fact by key.

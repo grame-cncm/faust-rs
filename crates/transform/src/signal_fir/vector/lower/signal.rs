@@ -80,6 +80,7 @@ struct PureVectorLowerer<'a> {
     snapshot_counter: u32,
     /// Whether table generators are folded or compiled into sub-modules (S6).
     table_init_mode: crate::signal_fir::TableInitMode,
+    table_init_sample_rate: Option<i32>,
     /// Enclosing module name, for `{module}SIG{k}`.
     module_name: String,
     /// Delay policy inherited by a generator sub-module.
@@ -121,6 +122,7 @@ pub fn lower_pure_vector_program(
         // so it keeps the folding mode and never builds a sub-module.
         module_name: "mydsp",
         table_init_mode: crate::signal_fir::TableInitMode::Const,
+        table_init_sample_rate: None,
         max_copy_delay: 0,
         delay_line_threshold: 0,
     };
@@ -249,6 +251,7 @@ pub(super) fn lower_vector_program_impl<'a>(
         promoted_control_fields: Vec::new(),
         snapshot_counter: 0,
         table_init_mode: context.table_init_mode,
+        table_init_sample_rate: context.table_init_sample_rate,
         module_name: context.module_name.to_owned(),
         max_copy_delay: context.max_copy_delay,
         delay_line_threshold: context.delay_line_threshold,
@@ -1480,6 +1483,7 @@ impl PureVectorLowerer<'_> {
             max_copy_delay: self.max_copy_delay,
             delay_line_threshold: self.delay_line_threshold,
             table_init_mode: self.table_init_mode,
+            table_init_sample_rate: self.table_init_sample_rate,
             scheduling_strategy: self.scheduling_strategy,
         };
         let node = crate::signal_fir::module::subcontainer_compile::compile_generator_sub_module(
@@ -1701,13 +1705,16 @@ impl PureVectorLowerer<'_> {
                 initializers.resize(length, value);
             }
             _ => {
-                let values =
-                    interpret_generator(self.prepared.arena(), inner, length).map_err(|error| {
-                        PureVectorLowerError::UnsupportedSignal {
-                            signal_id,
-                            expression: format!("read-only table generator failed: {error}"),
-                        }
-                    })?;
+                let values = interpret_generator(
+                    self.prepared.arena(),
+                    inner,
+                    length,
+                    self.table_init_sample_rate,
+                )
+                .map_err(|error| PureVectorLowerError::UnsupportedSignal {
+                    signal_id,
+                    expression: format!("read-only table generator failed: {error}"),
+                })?;
                 for value in values {
                     initializers.push(self.table_value(value, &elem_type)?);
                 }

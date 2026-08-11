@@ -948,6 +948,10 @@ fn compiler_from_argv(argv: &[String]) -> (FaustCompiler, bool) {
         Some("const") => compiler.with_table_init_mode(TableInitMode::Const),
         _ => compiler,
     };
+    let compiler = match parsed.table_init_sample_rate {
+        Some(sample_rate) => compiler.with_table_init_sample_rate(sample_rate),
+        None => compiler,
+    };
     (compiler, parsed.double)
 }
 

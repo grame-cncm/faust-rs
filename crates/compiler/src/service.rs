@@ -103,6 +103,9 @@ impl Compiler {
                 _ => {}
             }
         }
+        if let Some(sample_rate) = argv_value_parsed(argv, &["--table-init-sample-rate"]) {
+            compiler = compiler.with_table_init_sample_rate(sample_rate);
+        }
         if has(&["-vec", "--vec"]) {
             let vec_size =
                 argv_value_parsed(argv, &["-vs", "--vs"]).unwrap_or(ComputeMode::DEFAULT_VEC_SIZE);

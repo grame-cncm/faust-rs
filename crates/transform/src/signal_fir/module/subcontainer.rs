@@ -57,6 +57,7 @@ impl SignalToFirLower<'_> {
             max_copy_delay: self.delay.options().max_copy_delay,
             delay_line_threshold: self.delay.options().delay_line_threshold,
             table_init_mode: self.table_init_mode,
+            table_init_sample_rate: self.table_init_sample_rate,
             scheduling_strategy: self.scheduling_strategy,
         };
         let node = super::subcontainer_compile::compile_generator_sub_module(

@@ -111,7 +111,10 @@ pub use diagnostics::{
     SourceCoordinateError, SourceFile, SourceId, SourceKind, SourceMap, SourceMapBuilder,
     SourceRange, SourceSpan, Stage, SuggestedFix, TextEdit, TraceFrame, TraceKind,
 };
-use diagnostics::{ToDiagnostic, codes::COMP_TYPE_FAILED};
+use diagnostics::{
+    ToDiagnostic,
+    codes::{COMP_TABLE_INIT_SAMPLE_RATE, COMP_TYPE_FAILED},
+};
 use fir::{
     FirId, FirStore,
     checker::{FirVerifyReport, Severity as FirVerifySeverity, verify_fir_module},
@@ -120,10 +123,10 @@ use fir::{
 use parser::VirtualSourceMap;
 use parser::{CompilationMetadataKey, CompilationMetadataSnapshot, ParseOutput, SourceReaderError};
 use propagate::{ArityCache, BoxArity, PropagateError, PropagateUiOptions};
-use signals::SigId;
+use signals::{SigId, SigMatch, match_sig};
 pub use sigtype::InferenceError;
 use sigtype::TypeAnnotator;
-use tlib::NodeKind;
+use tlib::{NodeKind, tree_to_str};
 pub use transform::schedule::SchedulingStrategy;
 pub use transform::signal_fir::{
     ComputeMode, ControlRateMode, ProcessingApi, RealType, TableInitMode, VectorEffectiveMode,
@@ -515,6 +518,9 @@ pub struct Compiler {
     delay_line_threshold: u32,
     /// How generated-table content is produced (`--table-init`).
     table_init_mode: TableInitMode,
+    /// Explicit host sample rate used when `--table-init const` folds a
+    /// generator that reads `ma.SR`.
+    table_init_sample_rate: Option<i32>,
     /// Codegen strategy for `compute()`: scalar (default) or vector mode
     /// (`-vec`/`-vs`/`-lv`).
     ///
@@ -600,6 +606,7 @@ impl Compiler {
             real_type: RealType::default(),
             max_copy_delay: 16,
             table_init_mode: TableInitMode::default(),
+            table_init_sample_rate: None,
             delay_line_threshold: u32::MAX,
             compute_mode: ComputeMode::Scalar,
             scheduling_strategy: SchedulingStrategy::DepthFirst,
@@ -658,6 +665,17 @@ impl Compiler {
     #[must_use]
     pub fn with_table_init_mode(mut self, mode: TableInitMode) -> Self {
         self.table_init_mode = mode;
+        self
+    }
+
+    /// Sets the sample rate used to fold `ma.SR`-dependent generated tables
+    /// under `--table-init const`.
+    ///
+    /// The value is deliberately explicit: it is embedded in the table at
+    /// compilation time and is not replaced by the host's `init` sample rate.
+    #[must_use]
+    pub fn with_table_init_sample_rate(mut self, sample_rate: i32) -> Self {
+        self.table_init_sample_rate = Some(sample_rate);
         self
     }
 
@@ -779,6 +797,7 @@ impl Compiler {
             control_rate_mode: self.control_rate_mode,
             processing_api: self.processing_api,
             table_init_mode: self.table_init_mode,
+            table_init_sample_rate: self.table_init_sample_rate,
             timing_sink: self.timing_sink.clone(),
         }
     }
@@ -805,6 +824,7 @@ impl Compiler {
             self.control_rate_mode,
             self.processing_api,
             self.table_init_mode,
+            self.table_init_sample_rate,
         )
         .map_err(|error| lower_fir_error_to_compiler(source, signals, error))
     }
@@ -1221,6 +1241,17 @@ impl Compiler {
             })
             .map_err(|error| error.with_source_map(source_map.clone()))?;
         if self.semantic_warnings {
+            let table_warnings = const_table_sample_rate_warnings(
+                &output.state.arena,
+                &propagated.signals,
+                &propagated.signal_origins,
+                &output.state.ctx,
+                root,
+                ep,
+                self.table_init_mode,
+                self.table_init_sample_rate,
+            );
+            warnings.extend(table_warnings.as_slice().iter().cloned());
             warnings.set_source_map(source_map);
         }
 
@@ -1242,6 +1273,132 @@ impl Compiler {
             warnings,
         })
     }
+}
+
+/// Warns when a literal table embeds `ma.SR` instead of observing the host's
+/// initialization sample rate. The actual folding is performed by transform;
+/// keeping the advisory here gives every backend the same diagnostic channel.
+#[allow(clippy::too_many_arguments)]
+fn const_table_sample_rate_warnings(
+    arena: &tlib::TreeArena,
+    signals: &[SigId],
+    signal_origins: &propagate::SignalOrigins,
+    ctx: &parser::ParserCtx,
+    defs_root: BoxId,
+    entrypoint_name: &str,
+    table_init_mode: TableInitMode,
+    table_init_sample_rate: Option<i32>,
+) -> DiagnosticBundle {
+    if table_init_mode != TableInitMode::Const {
+        return DiagnosticBundle::new();
+    }
+    let Some(sample_rate) = table_init_sample_rate else {
+        return DiagnosticBundle::new();
+    };
+
+    let mut seen = HashSet::new();
+    let mut reported = HashSet::new();
+    let mut warnings = DiagnosticBundle::new();
+    for &signal in signals {
+        collect_const_table_sample_rate_reads(
+            arena,
+            signal,
+            &mut seen,
+            &mut reported,
+            &mut warnings,
+            signal_origins,
+            ctx,
+            defs_root,
+            entrypoint_name,
+            sample_rate,
+        );
+    }
+    warnings
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_const_table_sample_rate_reads(
+    arena: &tlib::TreeArena,
+    signal: SigId,
+    seen: &mut HashSet<SigId>,
+    reported: &mut HashSet<SigId>,
+    warnings: &mut DiagnosticBundle,
+    signal_origins: &propagate::SignalOrigins,
+    ctx: &parser::ParserCtx,
+    defs_root: BoxId,
+    entrypoint_name: &str,
+    sample_rate: i32,
+) {
+    if !seen.insert(signal) {
+        return;
+    }
+    if let SigMatch::WrTbl(_, generator, _, _) = match_sig(arena, signal)
+        && let Some(sr_read) = find_sampling_frequency_read(arena, generator, &mut HashSet::new())
+        && reported.insert(sr_read)
+    {
+        let diagnostic = Diagnostic::new(
+            Severity::Warning,
+            Stage::Transform,
+            COMP_TABLE_INIT_SAMPLE_RATE,
+            format!(
+                "--table-init const folds ma.SR as {sample_rate} Hz into this table"
+            ),
+        )
+        .with_category(DiagnosticCategory::InvalidOptions)
+        .with_note("cause: the table generator reads ma.SR")
+        .with_note(format!("computed: compile-time sample rate = {sample_rate} Hz"))
+        .with_fact("table_init", "const")
+        .with_fact("table_init_sample_rate", i64::from(sample_rate))
+        .with_fact("sample_rate_frozen", true)
+        .with_help("use --table-init runtime to evaluate the table with the host initialization sample rate");
+        warnings.push(add_signal_source_labels(
+            diagnostic,
+            sr_read,
+            signal_origins,
+            ctx,
+            arena,
+            defs_root,
+            entrypoint_name,
+        ));
+    }
+    if let Some(children) = arena.children(signal) {
+        for &child in children {
+            collect_const_table_sample_rate_reads(
+                arena,
+                child,
+                seen,
+                reported,
+                warnings,
+                signal_origins,
+                ctx,
+                defs_root,
+                entrypoint_name,
+                sample_rate,
+            );
+        }
+    }
+}
+
+fn find_sampling_frequency_read(
+    arena: &tlib::TreeArena,
+    signal: SigId,
+    seen: &mut HashSet<SigId>,
+) -> Option<SigId> {
+    if !seen.insert(signal) {
+        return None;
+    }
+    if let SigMatch::FConst(_, name, _) = match_sig(arena, signal)
+        && matches!(
+            tree_to_str(arena, name),
+            Some("fSamplingFreq" | "fSamplingRate")
+        )
+    {
+        return Some(signal);
+    }
+    arena
+        .children(signal)?
+        .iter()
+        .find_map(|&child| find_sampling_frequency_read(arena, child, seen))
 }
 
 impl Default for Compiler {

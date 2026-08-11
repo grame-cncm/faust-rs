@@ -343,6 +343,8 @@ pub struct VectorLoweringContext<'a> {
     pub module_name: &'a str,
     /// Whether table generators are folded or compiled into sub-modules (S6).
     pub table_init_mode: crate::signal_fir::TableInitMode,
+    /// Explicit SR used to fold `ma.SR` in const table generators.
+    pub table_init_sample_rate: Option<i32>,
     /// Delay policy inherited by a generator sub-module.
     pub max_copy_delay: u32,
     /// Delay policy inherited by a generator sub-module.

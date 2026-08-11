@@ -419,6 +419,7 @@ struct SignalToFirLower<'a> {
     table_fill_sink: Option<FirType>,
     /// How generated-table content is produced (`--table-init`).
     table_init_mode: crate::signal_fir::TableInitMode,
+    table_init_sample_rate: Option<i32>,
     /// Scheduling policy, carried so a table generator can be scheduled the
     /// same way as the program that owns it.
     scheduling_strategy: crate::schedule::SchedulingStrategy,

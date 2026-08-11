@@ -53,10 +53,12 @@ pub struct FfiCompileArgs {
     /// [`Self::scheduling_strategy`]: `TableInitMode` lives in `transform`, and
     /// `ffi-common` is a dependency-light leaf crate.
     pub table_init: Option<String>,
+    /// Explicit sample rate used to fold `ma.SR` under `--table-init const`.
+    pub table_init_sample_rate: Option<i32>,
 }
 
 /// Parses the shared FFI option subset (`-I`, `-cn`, `-double`,
-/// `-vec`/`-vs`/`-lv`, `-ss`, `--table-init`, `--warn`) from an argv vector. `vec_size` defaults to 32
+/// `-vec`/`-vs`/`-lv`, `-ss`, `--table-init`, `--table-init-sample-rate`, `--warn`) from an argv vector. `vec_size` defaults to 32
 /// when `-vec` is given without `-vs`, matching the Faust CLI.
 /// `scheduling_strategy` defaults to `0` (depth-first) when `-ss` is absent,
 /// mirroring the CLI's `--scheduling-strategy` default.
@@ -129,6 +131,18 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
                 return Err("missing value after --table-init".to_owned());
             };
             parsed.table_init = Some(value.clone());
+            index += 2;
+            continue;
+        }
+        if arg == "--table-init-sample-rate" {
+            let Some(value) = argv.get(index + 1) else {
+                return Err("missing value after --table-init-sample-rate".to_owned());
+            };
+            parsed.table_init_sample_rate = Some(
+                value
+                    .parse()
+                    .map_err(|error| format!("bad --table-init-sample-rate value: {error}"))?,
+            );
             index += 2;
             continue;
         }

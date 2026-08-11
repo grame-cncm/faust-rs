@@ -523,6 +523,7 @@ fn compile_factory_from_file_fastlane(
     let compiler = apply_table_init(
         FaustCompiler::new().with_real_type(real_type),
         table_init.as_deref(),
+        parsed.table_init_sample_rate,
     );
     let fbc = compiler
         .compile_file_to_interp_with_lane(
@@ -559,6 +560,7 @@ fn compile_factory_from_string_fastlane(
     let compiler = apply_table_init(
         FaustCompiler::new().with_real_type(real_type),
         table_init.as_deref(),
+        parsed.table_init_sample_rate,
     );
     let fbc = compiler
         .compile_source_to_interp_with_lane(
@@ -591,11 +593,19 @@ fn ffi_real_type(parsed: &FfiCompileArgs) -> RealType {
 ///
 /// Without this a caller asking for `runtime` silently got the `const`
 /// default, so a gate run "in runtime mode" would really be re-testing `const`.
-fn apply_table_init(compiler: FaustCompiler, table_init: Option<&str>) -> FaustCompiler {
-    match table_init {
+fn apply_table_init(
+    compiler: FaustCompiler,
+    table_init: Option<&str>,
+    table_init_sample_rate: Option<i32>,
+) -> FaustCompiler {
+    let compiler = match table_init {
         Some("runtime") => compiler.with_table_init_mode(TableInitMode::Runtime),
         Some("const") => compiler.with_table_init_mode(TableInitMode::Const),
         _ => compiler,
+    };
+    match table_init_sample_rate {
+        Some(sample_rate) => compiler.with_table_init_sample_rate(sample_rate),
+        None => compiler,
     }
 }
 

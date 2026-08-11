@@ -116,6 +116,8 @@ pub const FIR_VERIFY_WARNING: DiagnosticCode = DiagnosticCode("FRS-FIR-0002");
 pub const COMP_TYPE_FAILED: DiagnosticCode = DiagnosticCode("FRS-COMP-0004");
 /// Parse succeeded but exposed no root node — an internal invariant guard.
 pub const COMP_MISSING_ROOT: DiagnosticCode = DiagnosticCode("FRS-COMP-0005");
+/// A const table folds a host-dependent sample-rate value.
+pub const COMP_TABLE_INIT_SAMPLE_RATE: DiagnosticCode = DiagnosticCode("FRS-COMP-0006");
 
 /// Backend code generation failed while emitting from FIR.
 ///
@@ -165,6 +167,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         FIR_VERIFY_WARNING,
         COMP_TYPE_FAILED,
         COMP_MISSING_ROOT,
+        COMP_TABLE_INIT_SAMPLE_RATE,
         CODEGEN_EMISSION_FAILED,
     ]
 }

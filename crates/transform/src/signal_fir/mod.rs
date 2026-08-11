@@ -374,6 +374,10 @@ pub struct SignalFirOptions {
     /// How the initial content of `rdtable`/`rwtable` tables is produced
     /// (`--table-init`). See [`TableInitMode`].
     pub table_init_mode: TableInitMode,
+    /// Sample rate used to fold a `ma.SR`-dependent table generator in
+    /// [`TableInitMode::Const`]. `None` rejects such a generator, because the
+    /// host-provided initialization sample rate is otherwise unknowable.
+    pub table_init_sample_rate: Option<i32>,
 }
 
 /// How the initial content of a generated table is produced.
@@ -400,7 +404,9 @@ pub enum TableInitMode {
     ///
     /// Produces a `const` table — shareable, ROM-placeable, needing no
     /// initialization phase — but only works for generators that are fully
-    /// determined at compile time; others are rejected with `FRS-SFIR-0004`.
+    /// determined at compile time. A generator using `ma.SR` is supported only
+    /// with an explicit compile-time sample rate; other runtime dependencies
+    /// are rejected with `FRS-SFIR-0004`.
     ///
     /// A permanent, supported mode — not a migration scaffold: it is the only
     /// way to obtain fully folded tables, which matters for targets with no
@@ -430,6 +436,7 @@ impl Default for SignalFirOptions {
             // S2..S6 keep `Const` as the effective default; S7 flips it to
             // `Runtime` once every backend emits sub-modules.
             table_init_mode: TableInitMode::Runtime,
+            table_init_sample_rate: None,
         }
     }
 }
@@ -877,6 +884,7 @@ fn compile_fastlane_inner(
                     strategy: options.scheduling_strategy,
                     control_rate_mode: options.control_rate_mode,
                     table_init_mode: options.table_init_mode,
+                    table_init_sample_rate: options.table_init_sample_rate,
                     delay_line_threshold: options.delay_line_threshold,
                 },
             )
@@ -908,6 +916,7 @@ fn compile_fastlane_inner(
             options.control_rate_mode,
             options.processing_api,
             options.table_init_mode,
+            options.table_init_sample_rate,
             options.scheduling_strategy,
             clocked,
             if matches!(fallback_compute_mode, ComputeMode::Scalar) {

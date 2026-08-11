@@ -53,6 +53,7 @@ pub(crate) struct VectorModuleContext<'a> {
     /// sub-module that fills the table at initialization (S6). The generator
     /// sub-module is built by the same compiler the scalar path uses.
     pub table_init_mode: crate::signal_fir::TableInitMode,
+    pub table_init_sample_rate: Option<i32>,
     /// Delay policy inherited by a generator sub-module, which must match the
     /// enclosing program's.
     pub delay_line_threshold: u32,
@@ -189,6 +190,7 @@ pub(super) fn build_verified_vector_module_with_evidence(
             control_rate_mode: context.control_rate_mode,
             module_name,
             table_init_mode: context.table_init_mode,
+            table_init_sample_rate: context.table_init_sample_rate,
             max_copy_delay,
             delay_line_threshold: context.delay_line_threshold,
         },

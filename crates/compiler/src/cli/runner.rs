@@ -277,6 +277,9 @@ pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) ->
             }
         ));
     }
+    if let Some(sample_rate) = cli.table_init_sample_rate {
+        parts.push(format!("--table-init-sample-rate {sample_rate}"));
+    }
     if cli.vec {
         parts.push("-vec".to_owned());
         parts.push(format!("-lv {}", cli.lv));
@@ -463,6 +466,9 @@ pub fn compiler_from_cli(
         .with_scheduling_strategy(selected_scheduling_strategy(cli))
         .with_control_rate_mode(selected_control_rate_mode(cli))
         .with_processing_api(selected_processing_api(cli));
+    if let Some(sample_rate) = cli.table_init_sample_rate {
+        compiler = compiler.with_table_init_sample_rate(sample_rate);
+    }
     if let Some(flag) = cancel {
         compiler = compiler.with_cancel(flag);
     }

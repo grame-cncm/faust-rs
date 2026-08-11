@@ -91,18 +91,16 @@ For the writable case the content is additionally stored **twice**: once in the
 
 ### 2.3 Functional gaps
 
-Three programs that the reference compiles and `faust-rs` rejects with
-`FRS-SFIR-0004`:
-
-1. `tests/impulse-tests/dsp/subcontainer1.dsp` — the canonical upstream test
-   for sample-rate-dependent table content (`rdtable(100, ma.SR, ba.time%100)`).
-   This is the one remaining transform error of the impulse corpus.
-2. Any sample-rate-dependent generator, e.g.
-   `rdtable(1024, exp(-float(ba.time)/ma.SR), …)`. The reference compiles the
-   `1/min(192000, max(1, fSampleRate))` constant **inside the sub-container's**
-   `instanceInit`.
-3. Any `ffunction` inside table content. The reference emits
+One program class that the reference compiles and `faust-rs` still rejects with
+`FRS-SFIR-0004`: an `ffunction` inside table content. The reference emits
    `table[i1] = myfun(static_cast<float>(iRec0[1]));` in the fill loop.
+
+Sample-rate-dependent generators, including
+`rdtable(1024, exp(-float(ba.time)/ma.SR), …)`, compile in `runtime` mode as
+before. In `const` mode they require an explicit
+`--table-init-sample-rate HZ`, which is intentionally embedded in the literal
+table and reported as `FRS-COMP-0006` under `--warn`; no implicit default SR is
+permitted.
 
 UI widgets inside table content are **not** a gap: the reference type checker
 rejects them before code generation (`ERROR : checkInit failed for type RSESN`),

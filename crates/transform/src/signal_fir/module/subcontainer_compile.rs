@@ -37,6 +37,7 @@ pub(crate) struct GeneratorSubModuleSpec<'a> {
     pub max_copy_delay: u32,
     pub delay_line_threshold: u32,
     pub table_init_mode: TableInitMode,
+    pub table_init_sample_rate: Option<i32>,
     pub scheduling_strategy: SchedulingStrategy,
 }
 
@@ -157,6 +158,7 @@ pub(crate) fn compile_generator_sub_module(
         crate::signal_fir::ControlRateMode::InlinePerBlock,
         crate::signal_fir::ProcessingApi::Block,
         spec.table_init_mode,
+        spec.table_init_sample_rate,
         spec.scheduling_strategy,
         None,
         Some(&hsched),

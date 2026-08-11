@@ -476,7 +476,8 @@ impl<'a> SignalToFirLower<'a> {
                 // This is the compile-time equivalent of C++'s signal2Container
                 // approach — since SIGGEN generators are always 0-input
                 // deterministic DSP, we can evaluate them directly.
-                let values = interpret_generator(self.arena, init_sig, size)?;
+                let values =
+                    interpret_generator(self.arena, init_sig, size, self.table_init_sample_rate)?;
                 let mut out = Vec::with_capacity(size);
                 for v in values {
                     out.push(self.fir_const_for_table_value(v, elem_ty)?);

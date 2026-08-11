@@ -729,7 +729,7 @@ fn interval_fact(interval: interval::Interval) -> DiagnosticValue {
     DiagnosticValue::Object(fields)
 }
 
-fn add_signal_source_labels(
+pub(crate) fn add_signal_source_labels(
     mut diagnostic: Diagnostic,
     signal: SigId,
     signal_origins: &propagate::SignalOrigins,
