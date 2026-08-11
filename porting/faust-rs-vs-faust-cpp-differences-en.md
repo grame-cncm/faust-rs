@@ -222,14 +222,22 @@ must run unchanged with Faust C++ should not pass them.
 
 ### DIFF-BEH-007 — import delivery environments
 
-- Status: `adapted` / `narrower`.
-- Native Rust compilation supports local search directories and structural
-  local imports. Remote URL fetching and the full C++ `sourcefetcher` behavior
-  are not implemented.
+- Status: `adapted`.
+- Native Rust compilation supports local search directories, structural local
+  imports, direct HTTP(S) entry sources, explicit URL imports, relative imports
+  within remote graphs, and remote main architecture templates. The native
+  transport requires the default-off `network-imports` Cargo feature and the
+  per-run `--allow-network-imports` option.
+- Unlike C++'s process-global socket fetcher, Rust exposes a per-compiler
+  injected capability with URL policies, redirect re-authorization, bounded
+  bodies, real HTTPS, and structured errors. Remote evaluator-driven
+  `component(...)`/`library(...)`, remote inline architecture sub-includes, and
+  C/C++ compatibility-facade opt-in are still deferred.
 - The `wasm-ffi` embedded compiler instead ships standard libraries as
   read-only virtual sources and does not depend on an Emscripten filesystem.
-- Compatibility impact: builds relying on remote imports or legacy virtual
-  filesystem side effects require the sources to be supplied explicitly.
+- Compatibility impact: native CLI builds must opt in twice; embedded/browser
+  callers remain network-free unless they use the Rust injected API or provide
+  virtual/prefetched sources explicitly.
 
 ### DIFF-BEH-008 — relative pathname navigation in explicit group labels
 
@@ -398,7 +406,6 @@ remain visible until closed or explicitly reclassified.
 | ID | Status | Current difference |
 |---|---|---|
 | DIFF-GAP-001 | `narrower` | Full non-trivial stream-wrapper lowering remains less complete than the mature C++ route; the shared-runtime differential confirms different outputs for `rep_18_stream_wrappers` under impulse, ramp, and sine inputs. |
-| DIFF-GAP-003 | `narrower` | Remote URL imports and the full C++ `sourcefetcher` contract are absent. The adapted native implementation contract (`ureq` + `url`, explicit network opt-in, network-free WASM) is specified in [`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md). |
 | DIFF-GAP-004 | `narrower` | `getInfos` and some embedded-compiler/filesystem helper semantics remain partial or adapted. |
 | DIFF-GAP-005 | `narrower` | WASM and Julia are functional on validated paths but do not claim the complete semantic, layout, packaging, or upstream impulse-suite maturity of the C++ implementations. |
 | DIFF-GAP-006 | `narrower` | The specialized reverse-time recursive RAD path is disabled; Rust uses `BlockReverseAD` for temporal/recursive AD and still rejects mutable-table, soundfile, and unsupported foreign-function derivatives. |

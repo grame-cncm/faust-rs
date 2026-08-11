@@ -147,26 +147,23 @@ Needed to close:
 
 Priority: Medium-High.
 
-## G5 — `SourceFetcher` remains deferred (network import parity)
+## G5 — `SourceFetcher` adapted native path implemented
 
 Evidence:
-- `porting/phases/phase-3-parser-adjacent-modules-status-en.md` marks
-  `sourcefetcher` as `deferred`.
-- `source_reader.rs` explicitly states URL/network fetch is out-of-scope.
+- `SourceLocator` and structural import expansion preserve URL identity and
+  relative remote resolution.
+- `compiler::remote_fetch` supplies the optional bounded native transport and
+  the CLI requires explicit runtime permission.
+- Hermetic parser and loopback integration tests cover the implemented path.
 
 Impact:
-- no parity for remote import scenarios currently covered by C++ adjacent stack.
+- native direct sources/import graphs and main remote architectures are
+  supported through an adapted, safer API;
+- evaluator URL components/libraries, remote inline architecture sub-includes,
+  browser fetching, and compatibility-facade opt-in remain deferred.
 
-Needed to close:
-1. feature-gated fetch policy and reproducibility contract,
-2. implementation + tests for success/failure/disabled-network modes,
-3. lifecycle mapping update (`deferred` -> `adapted` or `1:1`).
-
-Priority: Medium (depends on project scope decision).
-
-Follow-up (2026-08-11): the gap remains open in code, but the policy decision,
-crate selection, source-identity adaptation, security boundary, implementation
-phases, and hermetic validation matrix are now specified in
+Follow-up (2026-08-11): G5 is closed for the planned native structural-import
+scope. Remaining surfaces are classified rather than hidden; see
 [`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](../sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md).
 
 ## G6 — Parser API does not yet expose source-file usage list to compiler facade

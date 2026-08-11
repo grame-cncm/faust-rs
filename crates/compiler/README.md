@@ -18,6 +18,7 @@ Top-level compiler facade.  Wires all pipeline stages together behind a single
 | `CompilerError` | Aggregated error type covering every pipeline stage |
 | `SignalCompileOutput` | Parse + eval + propagate result package |
 | `enrobage` | Architecture-file wrapping (Step E) |
+| `remote_fetch` | Optional native HTTP(S) transport and host authorization policy |
 
 ### `Compiler` entry points
 
@@ -61,6 +62,72 @@ Top-level compiler facade.  Wires all pipeline stages together behind a single
 | `compile_source_to_json_with_lane_and_compile_options` / `compile_file_to_json_with_compile_options` | JSON string + explicit `compile_options` provenance |
 | `compile_file_default_to_c[_with_lane]` / `compile_file_default_to_cpp[_with_lane]` | File-backed convenience wrappers without explicit search paths |
 | `get_faustwasm_info` / `expand_dsp` / `generate_aux_files` | Faustwasm-compatible helper services |
+
+## HTTP(S) sources and architectures
+
+Native HTTP(S) loading is optional and disabled by default. It requires two
+independent opt-ins:
+
+1. build `compiler` with the `network-imports` Cargo feature;
+2. enable networking for the individual CLI invocation or `Compiler` value.
+
+CLI example:
+
+```bash
+cargo run -p compiler --features network-imports -- \
+  --allow-network-imports -lang cpp https://example.test/main.dsp
+```
+
+The same option permits an explicit URL import in a local DSP and a remote main
+architecture template:
+
+```bash
+cargo run -p compiler --features network-imports -- \
+  --allow-network-imports -lang cpp local.dsp \
+  -a https://example.test/architecture.cpp
+```
+
+The Rust facade offers two activation levels:
+
+```rust,no_run
+use std::sync::Arc;
+
+use compiler::{
+    Compiler,
+    remote_fetch::{AllowAllRemoteUrls, UreqSourceFetcher},
+};
+use parser::RemoteFetchPolicy;
+
+let compiler = Compiler::new().with_remote_source_fetcher(
+    Arc::new(UreqSourceFetcher::new(Arc::new(AllowAllRemoteUrls))),
+    RemoteFetchPolicy::default(),
+);
+# let _ = compiler;
+```
+
+- `Compiler::with_remote_source_fetcher(...)` accepts an application-supplied
+  capability and policy. This is the preferred API for servers and embedded
+  applications.
+- `Compiler::with_native_network_imports()` installs the built-in native
+  transport with the default limits and unrestricted HTTP(S) host policy. It
+  is available only with `network-imports` on non-WASM targets and is intended
+  for explicitly trusted CLI-style use.
+- `remote_fetch::UreqSourceFetcher::new(...)` accepts a `RemoteUrlPolicy`.
+  Initial URLs and every redirect destination are checked by that policy, so a
+  server can enforce an allowlist or reject private-network destinations.
+- `enrobage::wrap_cpp_with_remote_architecture(...)` uses the same injected
+  fetch interface and limits; there is no second HTTP implementation.
+
+Supported remote resolution includes direct HTTP(S) entry sources, explicit
+URL imports, and relative imports within a remote source graph. Requests have
+bounded time, redirect count, and response size; response text must be UTF-8;
+URL credentials are rejected. A feature-off or runtime-off compiler performs
+no request and reports the stable `FRS-SRC-0005` diagnostic.
+
+Networking remains disabled for browser-WASM and the C/C++ compatibility
+facades. Remote evaluator-driven `component(...)` / `library(...)` loads and
+remote inline architecture sub-includes are currently deferred. Virtual or
+prefetched source bundles remain the supported embedded/browser mechanism.
 
 ### Lane defaults to know
 

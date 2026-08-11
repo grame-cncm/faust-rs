@@ -195,6 +195,29 @@ Add import search directories. Can be repeated.
 cargo run -p compiler -- --dump-sig main.dsp -I ./lib -I ./third_party/faust
 ```
 
+### `--allow-network-imports`
+
+Permit explicit HTTP(S) entry sources, structural imports, and main
+architecture templates for this invocation. Networking has two independent
+gates: the binary must be built with the default-off `network-imports` Cargo
+feature, and this runtime option must be present. There is no network fallback
+after an ordinary local import miss.
+
+```bash
+cargo run -p compiler --features network-imports -- \
+  --allow-network-imports -lang cpp https://example.test/main.dsp
+
+cargo run -p compiler --features network-imports -- \
+  --allow-network-imports -lang cpp local.dsp \
+  -a https://example.test/architecture.cpp
+```
+
+The native CLI permits any HTTP(S) host after explicit opt-in. Server or
+multi-user embeddings should instead use the Rust `Compiler` API with a
+restricted `RemoteUrlPolicy`. Browser-WASM, C/C++ compatibility facades,
+remote `component(...)`/`library(...)`, and remote inline architecture
+sub-includes remain network-disabled.
+
 ### `--double`
 
 Use double-precision internal DSP arithmetic (`-double` compatibility).

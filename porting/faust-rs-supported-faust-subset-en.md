@@ -851,8 +851,11 @@ Most importantly, the C++ compiler still has:
 - a fuller embedded-compiler helper surface for web tooling
   (`expandDSP` and `generateAuxFiles` are now real in Rust, but `getInfos`
   is only partially implemented and packaged FS semantics differ),
-- remote HTTP(S) imports and architecture sources; the adapted native
-  `sourcefetcher` contract and implementation phases are specified in
+- remote evaluator-driven `component(...)`/`library(...)`, remote inline
+  architecture sub-includes, and network opt-in through the C/C++ compatibility
+  facades. Native Rust/CLI direct HTTP(S) sources, structural imports, relative
+  remote import graphs, and main architecture templates are supported behind
+  the explicit policy described in
   [`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md),
 - the historical production path beyond the active Rust fast-lane slice.
 

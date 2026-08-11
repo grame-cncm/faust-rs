@@ -286,7 +286,21 @@ cargo run -p compiler -- --help
 
 # Show the installed binary's CLI
 faust-rs --help
+
+# Build/run the optional native HTTP(S) source support (still runtime-off by default)
+cargo run -p compiler --features network-imports -- \
+  --allow-network-imports -lang cpp https://example.test/main.dsp
 ```
+
+The feature and the CLI flag are deliberately separate opt-ins: compiling with
+`network-imports` does not enable network access by itself. Once enabled, the
+CLI accepts a direct HTTP(S) DSP source, explicit URL imports, relative imports
+inside a remote source graph, and a remote main architecture passed with `-a`.
+Requests and redirects are bounded and URL credentials are rejected. Server or
+embedded hosts should inject their own fetcher and URL authorization policy
+instead of using the unrestricted native convenience transport. See the
+[`compiler` HTTP(S) API documentation](crates/compiler/README.md#https-sources-and-architectures)
+and the [`--allow-network-imports` CLI reference](docs/user-cli-guide-en.md#--allow-network-imports).
 
 DSP compilation examples:
 

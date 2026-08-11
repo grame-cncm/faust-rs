@@ -4,7 +4,8 @@ Date: 2026-08-11
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
-Status: design complete; implementation not started
+Status: implemented for the native structural-import and main-architecture
+scope; explicitly deferred surfaces are listed in Phase 4
 
 ## 1. Objective
 
@@ -340,6 +341,10 @@ Public API mapping after this phase:
 | Evaluator `component(...)` / `library(...)` URLs | `deferred` | Local and virtual behavior unchanged; no URL fallback |
 
 ### Phase 5 — Closure and maintenance gates
+
+Status: complete. The dedicated hermetic parser/transport/compiler suite is
+used instead of a network-dependent golden corpus entry; all versioned corpus
+sources remain local and reproducible.
 
 1. Add a compact remote-import corpus fixture or a dedicated hermetic fixture
    suite; versioned corpus sources themselves must remain local.

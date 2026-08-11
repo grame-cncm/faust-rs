@@ -28,10 +28,10 @@ enumerate every code actually present in source is:
 grep -rhoE 'FRS-[A-Z]+-[0-9]+' --include=*.rs crates/ | sort -u
 ```
 
-This currently returns **33 codes** across **10 stage-family namespaces**:
-`FRS-LEX-*` (1), `FRS-PARSE-*` (3), `FRS-SRC-*` (3), `FRS-EVAL-*` (8),
-`FRS-PROP-*` (5), `FRS-COMP-*` (2), `FRS-UI-*` (1), `FRS-FIR-*` (2),
-`FRS-SFIR-*` (8), `FRS-CODEGEN-*` (1).
+This currently returns **39 codes** across **11 stage-family namespaces**:
+`FRS-LEX-*` (1), `FRS-PARSE-*` (3), `FRS-SRC-*` (6), `FRS-EVAL-*` (7),
+`FRS-PROP-*` (5), `FRS-COMP-*` (3), `FRS-UI-*` (1), `FRS-FIR-*` (2),
+`FRS-SFIR-*` (10), `FRS-CODEGEN-*` (1).
 
 Backend emitters additionally own a **separate, finer taxonomy** of 27 codes
 shaped `FRS-CGEN-<LANG>-NNNN` (ASC, C, CLIF, CPP, INTERP, JULIA, RUST, WASM).
@@ -56,9 +56,8 @@ reachability analysis. Building this table required tracing every code from
 its `diagnostics::codes::*` constant to an actual call site, and that surfaced
 real gaps, recorded here rather than papered over:
 
-- **`FRS-SRC-0001` through `FRS-SRC-0006`** are defined in
-  `crates/diagnostics/src/codes.rs` and listed in `codes::all_codes()`, but no
-  code anywhere in the workspace ever constructs a `Diagnostic` with them.
+- **`FRS-SRC-0001` through `FRS-SRC-0006`** were originally defined in
+  `crates/diagnostics/src/codes.rs` without live constructors.
 
   **Wired up 2026-07-21.** These were never dead reservations:
   `parser::source_reader::SourceReaderError` maps local and remote source
