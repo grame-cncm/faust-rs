@@ -121,6 +121,7 @@ fn run(cli: XtaskCli) -> Result<(), Box<dyn std::error::Error>> {
         XtaskCommand::InterpTraceGenCppfbc(args) => interp_trace_gen_cppfbc(args)?,
         XtaskCommand::InterpTraceGen(args) => interp_trace_gen(args)?,
         XtaskCommand::InterpTraceCheck(args) => interp_trace_check(args)?,
+        XtaskCommand::CorpusRuntimeDiff(args) => corpus_runtime_diff(args)?,
         XtaskCommand::FirDumpScan(args) => fir_dump_scan(args)?,
         XtaskCommand::BuildFaustwasmCompilerModule(args) => build_faustwasm_compiler_module(args)?,
         XtaskCommand::BuildLibfaust(args) => build_libfaust_distribution_command(args)?,

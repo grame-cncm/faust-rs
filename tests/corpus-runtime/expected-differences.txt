@@ -1,0 +1,8 @@
+# kind | corpus case | stable gap ID or oracle limitation
+mismatch | rep_18_stream_wrappers | DIFF-GAP-001
+mismatch | rep_19_primitive_family | DIFF-GAP-014
+mismatch | rep_37_table_rwtable_negative_indices | DIFF-GAP-015
+mismatch | rep_67_variable_delay_shifted_slider | DIFF-GAP-016
+oracle | rep_63_rwtable | C++ FBC v8 triggers an interpreter heap bounds failure
+oracle | rep_77_foreign_variable | C++ interpreter rejects foreign variables
+oracle | rep_78_foreign_function | C++ interpreter rejects foreign functions

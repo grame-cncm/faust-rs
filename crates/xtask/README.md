@@ -57,6 +57,7 @@ dot -V
 | `interp-trace-gen-cppfbc` | Batch-generate persisted runtime traces from C++ Faust `.fbc` files |
 | `interp-trace-gen` | Generate Rust runtime trace snapshots for `tests/runtime_corpus/` |
 | `interp-trace-check` | Compare Rust runtime traces against persisted snapshots |
+| `corpus-runtime-diff` | Execute the mutually accepted compile corpus through Rust and C++ interpreter bytecode and reject new numerical differences |
 | `fir-dump-scan` | Scan `dump_fir` output for loop-body expansion regressions |
 | `build-faustwasm-compiler-module` | Build `wasm-ffi` for `wasm32-unknown-unknown` and verify the raw export ABI |
 | `build-libfaust` | Build and publish the native C/C++ `libfaust-rs` distribution (`--release` for release artifacts) |
@@ -115,6 +116,27 @@ the local build, then `PATH` — those differ by a third in total time on the sa
 corpus, so the command prints which it used and `--faust-bin` pins it.
 
 This is a comparison, not a gate: it has no baseline and never fails on timing.
+
+## Corpus-wide numerical differential
+
+`corpus-runtime-diff` compiles every `tests/corpus/*.dsp` file with both
+compilers. For mutually accepted cases, C++ emits `.fbc` and Rust emits its
+FIR-derived interpreter bytecode; both are then executed by the same Rust
+interpreter runtime. The default impulse, ramp, and sine scenarios each run
+four 64-frame blocks at 48 kHz.
+
+```bash
+FAUST_CPP_BIN=../faust/build/bin/faust \
+  cargo run -p xtask -- corpus-runtime-diff
+cargo run -p xtask -- corpus-runtime-diff --case rep_01_passthrough.dsp
+```
+
+The checked list at `tests/corpus-runtime/expected-differences.txt` separates
+confirmed compiler mismatches from cases the C++ interpreter cannot currently
+serve as an oracle. A new mismatch fails the command. A listed mismatch that
+starts matching also fails, so closing a gap requires removing its stale entry.
+Invalid files and declared FAD/RAD source extensions retain the classifications
+from `corpus-status-query` and are reported separately from numerical passes.
 
 ## Compile-time Profile
 
@@ -209,7 +231,7 @@ cargo run --release -p xtask -- compile-budget-check --update
 
 | Variable | Used by | Description |
 |---|---|---|
-| `FAUST_CPP_BIN` | `golden-gen-cpp`, `interp-trace-dump-cppfbc`, `interp-trace-gen-cppfbc` | Path to the reference C++ `faust` binary |
+| `FAUST_CPP_BIN` | `golden-gen-cpp`, `interp-trace-dump-cppfbc`, `interp-trace-gen-cppfbc`, `corpus-runtime-diff` | Path to the reference C++ `faust` binary |
 | `GOLDEN_REF` | `golden-check` | `rust` (default) or `cpp` |
 | `CLANGXX` | `lockstep-simd-check` | Clang C++ executable used to emit optimized LLVM IR (default: `clang++`) |
 | `CC` / `CXX` | `libfaust-export-check` | C11/C++17 compilers used for maintained-header smoke checks |

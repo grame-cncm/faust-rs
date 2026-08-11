@@ -309,6 +309,21 @@ fn test_version_check() {
 }
 
 #[test]
+fn test_reads_append_compatible_cpp_v8_files() {
+    let factory = make_test_factory();
+    let mut buf = Vec::new();
+    write_fbc(&factory, &mut buf, false).unwrap();
+    let text = String::from_utf8(buf)
+        .unwrap()
+        .replacen("file_version 9", "file_version 8", 1);
+    let mut cursor = io::Cursor::new(text.into_bytes());
+    let restored: FbcDspFactory<f32> = read_fbc(&mut cursor).unwrap();
+    assert_eq!(restored.version, 8);
+    assert_eq!(restored.num_inputs, factory.num_inputs);
+    assert_eq!(restored.num_outputs, factory.num_outputs);
+}
+
+#[test]
 fn test_type_mismatch() {
     let bad_fbc = "interpreter_dsp_factory double\nfile_version 8\n";
     let mut cursor = io::Cursor::new(bad_fbc.as_bytes());

@@ -7,7 +7,9 @@ C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 Corpus: all 219 `tests/corpus/*.dsp` files present on the audit date
 
 Status update: the root-sibling ordering, source-identity, and compilation
-metadata gaps found by this audit were fixed on 2026-08-11.
+metadata gaps found by this audit were fixed on 2026-08-11. A maintained
+corpus-wide numerical differential was added the same day and exposed four
+remaining semantic mismatch families.
 
 ## 1. Purpose
 
@@ -143,7 +145,7 @@ groups, and all five cases are included in the maintained C++ UI-event
 differential. Re-running the 25-case comparison leaves only the two deliberate
 relative-group extensions.
 
-## 6. Whole-source comparison and limits
+## 6. Whole-source and numerical comparison
 
 `cargo run -p xtask -- golden-check-cpp` currently checks 34 stored C++ source
 snapshots. Raw files still differ because of the expected Rust compiler banner,
@@ -151,13 +153,44 @@ compilation-option text, formatting, declaration layout, and internal emitter
 choices. Raw byte identity is therefore not the active compatibility contract
 (`DIFF-BACK-004`).
 
-This audit does not claim corpus-wide numerical equivalence. The generated
-backend report intentionally compares only a reduced shell signature, and
-`tests/corpus` does not currently provide a general C++-versus-Rust executable
-sample harness for every accepted DSP. Numerical parity remains covered by the
-dedicated impulse, runtime-trace, optimized/unoptimized, table, vector, and
-backend-specific suites. A future corpus-wide execution harness would increase
-assurance beyond this structural audit.
+The maintained `corpus-runtime-diff` harness now covers every corpus case. It
+first retains the acceptance classification above. For each mutually accepted
+case, C++ Faust emits interpreter bytecode and faust-rs emits FIR-derived
+interpreter bytecode; both factories execute in the same Rust runtime. This
+isolates compiler semantics from differences between generated native hosts or
+C/C++ compilers. The reader accepts the pinned C++ reference's append-compatible
+FBC version 8 as well as Rust's version 9.
+
+With impulse, ramp, and sine inputs over four 64-frame blocks at 48 kHz, the
+run produced:
+
+| Result | Cases/traces |
+|---|---:|
+| mutually accepted DSPs | 102 cases |
+| matching numerical output | 95 cases / 285 traces |
+| confirmed expected mismatch | 4 cases |
+| C++ interpreter oracle limitation | 3 cases |
+| common rejection | 39 cases |
+| declared Rust FAD/RAD extension | 78 cases |
+| unexpected difference | 0 |
+
+The four mismatch families are maintained as fail-closed expectations:
+
+- `rep_18_stream_wrappers` confirms the existing stream-wrapper
+  `DIFF-GAP-001` under all three scenarios;
+- `rep_19_primitive_family` exposes `DIFF-GAP-014` in the
+  `control`/`enable` wrapper outputs;
+- `rep_37_table_rwtable_negative_indices` exposes `DIFF-GAP-015` for negative
+  table indices;
+- `rep_67_variable_delay_shifted_slider` exposes `DIFF-GAP-016` for the
+  composed negative variable-delay expression.
+
+The C++ Interp route is not a usable oracle for `rep_63_rwtable` (its version-8
+bytecode reaches an interpreter heap bounds failure), `rep_77_foreign_variable`,
+or `rep_78_foreign_function` (foreign symbols are rejected by that backend).
+These are explicit oracle skips, not numerical passes or confirmed compiler
+differences. The checked expectation file rejects new mismatches and also
+rejects stale mismatch entries once parity is restored.
 
 ## 7. Reproduction
 
@@ -168,6 +201,7 @@ cargo run -p xtask -- corpus-status-query --all --format human
 cargo run -p xtask -- corpus-status-report
 cargo run -p xtask -- backend-full-corpus-diff-report
 FAUST_CPP_BIN=../faust/build/bin/faust cargo run -p xtask -- golden-check-cpp
+FAUST_CPP_BIN=../faust/build/bin/faust cargo run -p xtask -- corpus-runtime-diff
 ```
 
 The arity, metadata, and complete UI-event comparisons were audit scripts over

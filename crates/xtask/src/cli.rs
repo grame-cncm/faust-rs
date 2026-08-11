@@ -31,6 +31,8 @@ pub(crate) enum XtaskCommand {
     InterpTraceGenCppfbc(InterpTraceCppFbcBatchArgs),
     InterpTraceGen(InterpTraceBatchArgs),
     InterpTraceCheck(InterpTraceBatchArgs),
+    /// Compare Rust and C++ numerical execution over `tests/corpus`.
+    CorpusRuntimeDiff(CorpusRuntimeDiffArgs),
     FirDumpScan(FirDumpScanArgs),
     BuildFaustwasmCompilerModule(FaustwasmCompilerModuleArgs),
     BuildLibfaust(BuildLibfaustArgs),
@@ -178,6 +180,32 @@ pub(crate) struct InterpTraceBatchArgs {
     pub(crate) num_blocks: usize,
     #[arg(long)]
     pub(crate) strict_fir_types: bool,
+}
+
+/// Options for the corpus-wide Rust-vs-C++ numerical differential.
+#[derive(Clone, Debug, Args)]
+pub(crate) struct CorpusRuntimeDiffArgs {
+    /// Restrict the run to explicit DSP files; defaults to all `tests/corpus` DSPs.
+    #[arg(long = "case", value_name = "PATH")]
+    pub(crate) cases: Vec<PathBuf>,
+    /// Input scenarios to execute; defaults to impulse, ramp, and sine.
+    #[arg(long, value_enum, value_delimiter = ',')]
+    pub(crate) scenarios: Vec<TraceScenarioArg>,
+    /// C++ Faust binary. Defaults to `FAUST_CPP_BIN`, the pinned local build, then PATH.
+    #[arg(long, value_name = "PATH")]
+    pub(crate) faust_bin: Option<PathBuf>,
+    #[arg(long, default_value_t = 48_000, value_parser = positive_usize)]
+    pub(crate) sample_rate: usize,
+    #[arg(long, default_value_t = 64, value_parser = positive_usize)]
+    pub(crate) block_size: usize,
+    #[arg(long, default_value_t = 4, value_parser = positive_usize)]
+    pub(crate) num_blocks: usize,
+    /// Absolute sample tolerance.
+    #[arg(long, default_value_t = 1.0e-6, value_parser = non_negative_f32)]
+    pub(crate) abs_tol: f32,
+    /// Relative sample tolerance.
+    #[arg(long, default_value_t = 1.0e-5, value_parser = non_negative_f32)]
+    pub(crate) rel_tol: f32,
 }
 
 /// Options for structural FIR dump scanning.
@@ -427,5 +455,16 @@ fn at_least_two(value: &str) -> Result<usize, String> {
         Err("value must be at least 2".to_owned())
     } else {
         Ok(parsed)
+    }
+}
+
+fn non_negative_f32(value: &str) -> Result<f32, String> {
+    let parsed = value
+        .parse::<f32>()
+        .map_err(|error| format!("invalid number {value:?}: {error}"))?;
+    if parsed.is_finite() && parsed >= 0.0 {
+        Ok(parsed)
+    } else {
+        Err("value must be finite and non-negative".to_owned())
     }
 }

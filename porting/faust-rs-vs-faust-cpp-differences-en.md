@@ -397,7 +397,7 @@ remain visible until closed or explicitly reclassified.
 
 | ID | Status | Current difference |
 |---|---|---|
-| DIFF-GAP-001 | `narrower` | Full non-trivial stream-wrapper lowering remains less complete than the mature C++ route. Consult the current corpus report before quoting exact counts. |
+| DIFF-GAP-001 | `narrower` | Full non-trivial stream-wrapper lowering remains less complete than the mature C++ route; the shared-runtime differential confirms different outputs for `rep_18_stream_wrappers` under impulse, ramp, and sine inputs. |
 | DIFF-GAP-002 | `narrower` | A generated table size must currently reduce to the literal shape accepted by the FIR table extractor; broader `tabulateNd`/computed-size coverage remains incomplete. |
 | DIFF-GAP-003 | `narrower` | Remote URL imports and the full C++ `sourcefetcher` contract are absent. |
 | DIFF-GAP-004 | `narrower` | `getInfos` and some embedded-compiler/filesystem helper semantics remain partial or adapted. |
@@ -407,13 +407,16 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-008 | `excluded` | `backend-java` is outside the Rust port target scope. |
 | DIFF-GAP-009 | `excluded` | Legacy `-lang ocpp` is outside the Rust port target scope. |
 | DIFF-GAP-010 | `narrower` | There is no direct Rust LLVM backend matching the C++ LLVM factory/target/object toolchain; Cranelift is a distinct extension, not a drop-in identity mapping. |
+| DIFF-GAP-014 | `narrower` | `rep_19_primitive_family` has different numerical results for the `control`/`enable` wrapper portion under the shared interpreter-runtime differential. |
+| DIFF-GAP-015 | `narrower` | `rep_37_table_rwtable_negative_indices` has different numerical behavior for negative read/write table indices. |
+| DIFF-GAP-016 | `narrower` | `rep_67_variable_delay_shifted_slider` differs for a variable delay whose shifted slider produces a negative intermediate delay expression. |
 For a time-stamped quantitative snapshot rather than this durable registry,
 use [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),
 the reports under `porting/phases/`, and `tests/golden/METADATA.toml`.
 
 The 219-case audit that exposed the now-closed root-ordering, source-identity,
-and compilation-metadata gaps, including its coverage limits and reproduction
-commands, is recorded in
+and compilation-metadata gaps and the maintained numerical differential that
+confirmed `DIFF-GAP-001` and exposed `DIFF-GAP-014` through `016` are recorded in
 [`faust-rs-corpus-difference-audit-2026-08-11-en.md`](faust-rs-corpus-difference-audit-2026-08-11-en.md).
 
 ## 10. Maintenance rule

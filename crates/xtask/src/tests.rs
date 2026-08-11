@@ -47,6 +47,7 @@ fn ci_command_names_are_accepted() {
         "vector-coverage-check",
         "vector-interp-opt-check",
         "compile-budget-check",
+        "corpus-runtime-diff",
     ] {
         parse_xtask([command]).unwrap_or_else(|error| panic!("{command}: {error}"));
     }
@@ -168,6 +169,68 @@ fn parse_interp_trace_batch_accepts_strict_fir_types_flag() {
     };
     let opts = InterpTraceBatchOptions::from(args);
     assert!(opts.strict_fir_types);
+}
+
+#[test]
+fn corpus_runtime_diff_defaults_to_three_scenarios_and_accepts_bare_cases() {
+    let cli = parse_xtask([
+        "corpus-runtime-diff",
+        "--case",
+        "rep_01_passthrough.dsp",
+        "--abs-tol",
+        "0.000002",
+    ])
+    .unwrap();
+    let XtaskCommand::CorpusRuntimeDiff(args) = cli.command else {
+        unreachable!("requested corpus-runtime-diff")
+    };
+    let options = CorpusRuntimeDiffOptions::from(args);
+    assert_eq!(
+        options.scenarios,
+        vec![
+            TraceScenario::Impulse,
+            TraceScenario::Ramp,
+            TraceScenario::Sine
+        ]
+    );
+    assert_eq!(options.tolerances.abs_tol, 2.0e-6);
+    let cases = resolve_corpus_runtime_cases(&options.cases).unwrap();
+    assert_eq!(cases.len(), 1);
+    assert!(cases[0].ends_with("tests/corpus/rep_01_passthrough.dsp"));
+}
+
+#[test]
+fn corpus_runtime_diff_rejects_negative_or_non_finite_tolerances() {
+    for value in ["-1", "NaN", "inf"] {
+        let error = parse_xtask(["corpus-runtime-diff", "--abs-tol", value]).unwrap_err();
+        assert!(error.to_string().contains(value));
+    }
+}
+
+#[test]
+fn corpus_runtime_expectations_are_strict_and_strip_dsp_suffixes() {
+    let entries = parse_corpus_runtime_expectations(
+        "# known\nmismatch | rep_18_stream_wrappers.dsp | DIFF-GAP-001\n\
+         oracle | rep_77_foreign_variable | unsupported by C++ interp\n",
+    )
+    .unwrap();
+    assert_eq!(
+        entries["rep_18_stream_wrappers"].kind,
+        CorpusRuntimeExpectationKind::Mismatch
+    );
+    assert_eq!(
+        entries["rep_77_foreign_variable"].kind,
+        CorpusRuntimeExpectationKind::Oracle
+    );
+
+    for invalid in [
+        "unknown | case | reason",
+        "mismatch | case | free-form reason",
+        "mismatch | case",
+        "mismatch | case | one\noracle | case.dsp | two",
+    ] {
+        assert!(parse_corpus_runtime_expectations(invalid).is_err());
+    }
 }
 
 #[test]
@@ -293,6 +356,33 @@ fn compare_runtime_traces_reports_large_float_delta() {
     assert_eq!(mismatch.field, "outputs");
     assert_eq!(mismatch.channel, Some(0));
     assert_eq!(mismatch.sample, Some(0));
+}
+
+#[test]
+fn cross_compiler_trace_comparison_ignores_only_the_lane() {
+    let cpp = RuntimeTrace {
+        dsp_path: "tests/corpus/x.dsp".into(),
+        lane: "cpp-fbc".into(),
+        scenario: "impulse".into(),
+        sample_rate: 48_000,
+        block_size: 64,
+        num_blocks: 1,
+        num_inputs: 1,
+        num_outputs: 1,
+        outputs: vec![vec![1.0, 0.0]],
+    };
+    let mut rust = cpp.clone();
+    rust.lane = "fast-lane".into();
+    assert!(compare_runtime_traces(&cpp, &rust, TraceCompareTolerances::default()).is_err());
+    assert!(
+        compare_cross_compiler_runtime_traces(&cpp, &rust, TraceCompareTolerances::default())
+            .is_ok()
+    );
+    rust.num_outputs = 2;
+    assert!(
+        compare_cross_compiler_runtime_traces(&cpp, &rust, TraceCompareTolerances::default())
+            .is_err()
+    );
 }
 
 #[test]

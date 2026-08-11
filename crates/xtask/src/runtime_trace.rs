@@ -185,9 +185,67 @@ pub(crate) struct RuntimeTrace {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct TraceCompareTolerances {
     /// Absolute tolerance.
-    abs_tol: f32,
+    pub(crate) abs_tol: f32,
     /// Relative tolerance.
-    rel_tol: f32,
+    pub(crate) rel_tol: f32,
+}
+
+/// Effective options for the corpus-wide numerical differential.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CorpusRuntimeDiffOptions {
+    pub(crate) cases: Vec<PathBuf>,
+    pub(crate) scenarios: Vec<TraceScenario>,
+    pub(crate) faust_bin: Option<PathBuf>,
+    pub(crate) sample_rate: usize,
+    pub(crate) block_size: usize,
+    pub(crate) num_blocks: usize,
+    pub(crate) tolerances: TraceCompareTolerances,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CorpusRuntimeExpectationKind {
+    Mismatch,
+    Oracle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CorpusRuntimeExpectation {
+    pub(crate) kind: CorpusRuntimeExpectationKind,
+    pub(crate) tracking: String,
+}
+
+const CORPUS_RUNTIME_EXPECTATIONS: &str = "tests/corpus-runtime/expected-differences.txt";
+
+impl From<CorpusRuntimeDiffArgs> for CorpusRuntimeDiffOptions {
+    fn from(args: CorpusRuntimeDiffArgs) -> Self {
+        let scenarios = if args.scenarios.is_empty() {
+            vec![
+                TraceScenario::Impulse,
+                TraceScenario::Ramp,
+                TraceScenario::Sine,
+            ]
+        } else {
+            let mut scenarios = Vec::new();
+            for scenario in args.scenarios.into_iter().map(TraceScenario::from) {
+                if !scenarios.contains(&scenario) {
+                    scenarios.push(scenario);
+                }
+            }
+            scenarios
+        };
+        Self {
+            cases: args.cases,
+            scenarios,
+            faust_bin: args.faust_bin,
+            sample_rate: args.sample_rate,
+            block_size: args.block_size,
+            num_blocks: args.num_blocks,
+            tolerances: TraceCompareTolerances {
+                abs_tol: args.abs_tol,
+                rel_tol: args.rel_tol,
+            },
+        }
+    }
 }
 
 impl Default for TraceCompareTolerances {
@@ -712,6 +770,36 @@ fn run_interp_trace_case_with_configuration(
     scheduling_strategy: compiler::SchedulingStrategy,
     require_checked_vector: bool,
 ) -> Result<RuntimeTrace, Box<dyn std::error::Error>> {
+    let mut factory = prepare_rust_interp_factory(
+        &options.case,
+        options.lane,
+        options.strict_fir_types,
+        opt_level,
+        compute_mode,
+        scheduling_strategy,
+        require_checked_vector,
+    )?;
+    execute_interp_factory_trace(
+        &mut factory,
+        &options.case,
+        options.lane.as_str(),
+        options.scenario,
+        options.sample_rate,
+        options.block_size,
+        options.num_blocks,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_rust_interp_factory(
+    case: &Path,
+    lane: TraceLane,
+    strict_fir_types: bool,
+    opt_level: i32,
+    compute_mode: compiler::ComputeMode,
+    scheduling_strategy: compiler::SchedulingStrategy,
+    require_checked_vector: bool,
+) -> Result<codegen::backends::interp::FbcDspFactory<f32>, Box<dyn std::error::Error>> {
     let compiler = compiler::Compiler::new()
         .with_fir_verify_options(compiler::FirVerifyOptions {
             enabled: true,
@@ -720,9 +808,7 @@ fn run_interp_trace_case_with_configuration(
         .with_compute_mode(compute_mode)
         .with_scheduling_strategy(scheduling_strategy);
 
-    let signals = compiler.compile_file_default_to_signals(&options.case)?;
-    let fir = compiler
-        .compile_file_default_to_fir_with_lane(&options.case, options.lane.to_signal_fir_lane())?;
+    let fir = compiler.compile_file_default_to_fir_with_lane(case, lane.to_signal_fir_lane())?;
     if require_checked_vector
         && (fir.vector_pipeline_status != compiler::VectorPipelineStatus::Certified
             || fir.vector_effective_mode != compiler::VectorEffectiveMode::CertifiedVector
@@ -730,15 +816,15 @@ fn run_interp_trace_case_with_configuration(
     {
         return Err(format!(
             "{} did not retain checked vector FIR: status={:?}, effective={:?}, detail={}",
-            options.case.display(),
+            case.display(),
             fir.vector_pipeline_status,
             fir.vector_effective_mode,
             fir.vector_pipeline_detail.as_deref().unwrap_or("-")
         )
         .into());
     }
-    if options.strict_fir_types {
-        enforce_strict_fir_type_diagnostics(&fir.store, fir.module, &options.case)?;
+    if strict_fir_types {
+        enforce_strict_fir_type_diagnostics(&fir.store, fir.module, case)?;
     }
 
     let interp_options = codegen::backends::interp::InterpOptions {
@@ -746,33 +832,43 @@ fn run_interp_trace_case_with_configuration(
         module_name: None,
         ..codegen::backends::interp::InterpOptions::default()
     };
-    let mut factory = codegen::backends::interp::generate_interp_module::<f32>(
+    codegen::backends::interp::generate_interp_module::<f32>(
         &fir.store,
         fir.module,
         &interp_options,
-    )?;
-    let mut instance = codegen::backends::interp::FbcDspInstance::new(&mut factory);
-    instance.init(options.sample_rate as i32);
+    )
+    .map_err(Into::into)
+}
 
-    let total_samples = options.block_size * options.num_blocks;
-    let input_channels = generate_trace_inputs(
-        options.scenario,
-        signals.process_arity.inputs,
-        total_samples,
-        options.sample_rate,
-    );
-    let mut output_channels = vec![vec![0.0f32; total_samples]; signals.process_arity.outputs];
+#[allow(clippy::too_many_arguments)]
+fn execute_interp_factory_trace(
+    factory: &mut codegen::backends::interp::FbcDspFactory<f32>,
+    case: &Path,
+    lane: &str,
+    scenario: TraceScenario,
+    sample_rate: usize,
+    block_size: usize,
+    num_blocks: usize,
+) -> Result<RuntimeTrace, Box<dyn std::error::Error>> {
+    let num_inputs = factory.num_inputs.max(0) as usize;
+    let num_outputs = factory.num_outputs.max(0) as usize;
+    let mut instance = codegen::backends::interp::FbcDspInstance::new(factory);
+    instance.init(sample_rate as i32);
 
-    for block_idx in 0..options.num_blocks {
-        let start = block_idx * options.block_size;
-        let end = start + options.block_size;
+    let total_samples = block_size * num_blocks;
+    let input_channels = generate_trace_inputs(scenario, num_inputs, total_samples, sample_rate);
+    let mut output_channels = vec![vec![0.0f32; total_samples]; num_outputs];
+
+    for block_idx in 0..num_blocks {
+        let start = block_idx * block_size;
+        let end = start + block_size;
         let input_refs: Vec<&[f32]> = input_channels.iter().map(|ch| &ch[start..end]).collect();
         let mut output_refs: Vec<&mut [f32]> = output_channels
             .iter_mut()
             .map(|ch| &mut ch[start..end])
             .collect();
         instance
-            .try_compute(options.block_size as i32, &input_refs, &mut output_refs)
+            .try_compute(block_size as i32, &input_refs, &mut output_refs)
             .map_err(|e| {
                 format!(
                     "interp runtime execution failed in compute block (block_idx={}): {e}",
@@ -782,14 +878,14 @@ fn run_interp_trace_case_with_configuration(
     }
 
     Ok(RuntimeTrace {
-        dsp_path: workspace_relative_path(&options.case),
-        lane: options.lane.as_str().to_string(),
-        scenario: options.scenario.as_str().to_string(),
-        sample_rate: options.sample_rate,
-        block_size: options.block_size,
-        num_blocks: options.num_blocks,
-        num_inputs: signals.process_arity.inputs,
-        num_outputs: signals.process_arity.outputs,
+        dsp_path: workspace_relative_path(case),
+        lane: lane.to_owned(),
+        scenario: scenario.as_str().to_string(),
+        sample_rate,
+        block_size,
+        num_blocks,
+        num_inputs,
+        num_outputs,
         outputs: output_channels,
     })
 }
@@ -804,7 +900,7 @@ pub(crate) fn resolve_faust_cpp_bin(
     if let Some(path) = std::env::var_os("FAUST_CPP_BIN") {
         return Ok(PathBuf::from(path));
     }
-    Ok(PathBuf::from("faust"))
+    Ok(resolve_cpp_faust_bin().0)
 }
 
 /// Invokes the Faust C++ compiler to produce an interpreter `.fbc` file.
@@ -858,76 +954,358 @@ pub(crate) fn run_interp_trace_case_from_cpp_fbc(
     options: &InterpTraceCppFbcDumpOptions,
 ) -> Result<RuntimeTrace, Box<dyn std::error::Error>> {
     let faust_bin = resolve_faust_cpp_bin(options.faust_bin.as_deref())?;
-    let case_id = case_name(&options.trace.case)?;
+    let mut factory = prepare_cpp_interp_factory(&faust_bin, &options.trace.case)?;
+    execute_interp_factory_trace(
+        &mut factory,
+        &options.trace.case,
+        "cpp-fbc",
+        options.trace.scenario,
+        options.trace.sample_rate,
+        options.trace.block_size,
+        options.trace.num_blocks,
+    )
+}
+
+fn prepare_cpp_interp_factory(
+    faust_bin: &Path,
+    case: &Path,
+) -> Result<codegen::backends::interp::FbcDspFactory<f32>, Box<dyn std::error::Error>> {
+    let case_id = case_name(case)?;
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let fbc_path = std::env::temp_dir().join(format!("faust_rs_xtask_{case_id}_{pid}_{nanos}.fbc"));
-    compile_dsp_to_cpp_fbc(&faust_bin, &options.trace.case, &fbc_path)?;
+    compile_dsp_to_cpp_fbc(faust_bin, case, &fbc_path)?;
 
-    let trace_result = (|| -> Result<RuntimeTrace, Box<dyn std::error::Error>> {
+    let factory_result = (|| -> Result<_, Box<dyn std::error::Error>> {
         let file = fs::File::open(&fbc_path)?;
         let mut reader = io::BufReader::new(file);
-        let mut factory: codegen::backends::interp::FbcDspFactory<f32> =
+        Ok(
             codegen::backends::interp::read_fbc(&mut reader).map_err(|e| {
                 format!(
                     "failed to read C++ generated .fbc {}: {e}",
                     fbc_path.display()
                 )
-            })?;
-        let num_inputs = factory.num_inputs.max(0) as usize;
-        let num_outputs = factory.num_outputs.max(0) as usize;
-
-        let mut instance = codegen::backends::interp::FbcDspInstance::new(&mut factory);
-        instance.init(options.trace.sample_rate as i32);
-
-        let total_samples = options.trace.block_size * options.trace.num_blocks;
-        let input_channels = generate_trace_inputs(
-            options.trace.scenario,
-            num_inputs,
-            total_samples,
-            options.trace.sample_rate,
-        );
-        let mut output_channels = vec![vec![0.0f32; total_samples]; num_outputs];
-        for block_idx in 0..options.trace.num_blocks {
-            let start = block_idx * options.trace.block_size;
-            let end = start + options.trace.block_size;
-            let input_refs: Vec<&[f32]> = input_channels.iter().map(|ch| &ch[start..end]).collect();
-            let mut output_refs: Vec<&mut [f32]> = output_channels
-                .iter_mut()
-                .map(|ch| &mut ch[start..end])
-                .collect();
-            instance
-                .try_compute(
-                    options.trace.block_size as i32,
-                    &input_refs,
-                    &mut output_refs,
-                )
-                .map_err(|e| {
-                    format!(
-                        "Rust interp runtime failed on C++ .fbc (block_idx={}): {e}",
-                        block_idx
-                    )
-                })?;
-        }
-
-        Ok(RuntimeTrace {
-            dsp_path: workspace_relative_path(&options.trace.case),
-            lane: "cpp-fbc".to_string(),
-            scenario: options.trace.scenario.as_str().to_string(),
-            sample_rate: options.trace.sample_rate,
-            block_size: options.trace.block_size,
-            num_blocks: options.trace.num_blocks,
-            num_inputs,
-            num_outputs,
-            outputs: output_channels,
-        })
+            })?,
+        )
     })();
 
     let _ = fs::remove_file(&fbc_path);
-    trace_result
+    factory_result
+}
+
+/// Compares numerical execution of every portable, mutually accepted corpus
+/// DSP between faust-rs and the pinned C++ compiler.
+///
+/// C++ Faust emits interpreter bytecode and faust-rs emits its FIR-derived
+/// bytecode. Both factories then execute in the same Rust interpreter runtime,
+/// isolating compiler semantic differences from native architecture/compiler
+/// differences. Invalid portable cases and declared Rust-only source extensions
+/// are classified before execution and reported as skips, never silently
+/// treated as numerical passes.
+pub(crate) fn corpus_runtime_diff(
+    args: CorpusRuntimeDiffArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let options = CorpusRuntimeDiffOptions::from(args);
+    let faust_bin = resolve_faust_cpp_bin(options.faust_bin.as_deref())?;
+    let cases = resolve_corpus_runtime_cases(&options.cases)?;
+    let selected_names = cases
+        .iter()
+        .map(|case| case_name(case))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let expectations_path = workspace_root().join(CORPUS_RUNTIME_EXPECTATIONS);
+    let expectations = parse_corpus_runtime_expectations(&fs::read_to_string(&expectations_path)?)?;
+    let corpus_names = corpus_files()?
+        .iter()
+        .map(|case| case_name(case))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    for name in expectations.keys() {
+        if !corpus_names.contains(name) {
+            return Err(format!("corpus runtime expectation names unknown case '{name}'").into());
+        }
+    }
+    let status_compiler = compiler::Compiler::new();
+
+    let mut common_cases = 0usize;
+    let mut matched_cases = 0usize;
+    let mut matched_traces = 0usize;
+    let mut expected_mismatches = 0usize;
+    let mut oracle_skips = 0usize;
+    let mut rejected_cases = 0usize;
+    let mut extension_cases = 0usize;
+    let mut seen_expectations = BTreeSet::new();
+    let mut failures = Vec::new();
+
+    println!(
+        "corpus-runtime-diff: {} case(s), C++={}, scenarios={}, sr={}, block={}x{}",
+        cases.len(),
+        faust_bin.display(),
+        options
+            .scenarios
+            .iter()
+            .map(|scenario| scenario.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        options.sample_rate,
+        options.block_size,
+        options.num_blocks
+    );
+
+    for case in cases {
+        let name = case_name(&case)?;
+        let cpp_status = cpp_case_status(&faust_bin, &case)?;
+        let rust_status = rust_case_status(&status_compiler, &case);
+        match classify_divergence(cpp_status.ok, rust_status.ok, &cpp_status.reason) {
+            DivergenceClass::ErrErr => {
+                rejected_cases += 1;
+                continue;
+            }
+            DivergenceClass::ExpectedDivergence => {
+                extension_cases += 1;
+                continue;
+            }
+            DivergenceClass::RealDivergence => {
+                failures.push(format!(
+                    "{name}: acceptance mismatch (C++: {}; Rust/{}: {})",
+                    cpp_status.reason, rust_status.stage, rust_status.reason
+                ));
+                continue;
+            }
+            DivergenceClass::OkOk => common_cases += 1,
+        }
+
+        let expectation = expectations.get(&name);
+        if matches!(
+            expectation.map(|entry| entry.kind),
+            Some(CorpusRuntimeExpectationKind::Oracle)
+        ) {
+            let entry = expectation.expect("oracle expectation exists");
+            oracle_skips += 1;
+            seen_expectations.insert(name.clone());
+            println!("[ORACLE] {name}: {}", entry.tracking);
+            continue;
+        }
+        if expectation.is_some() {
+            seen_expectations.insert(name.clone());
+        }
+
+        let mut cpp_factory = match prepare_cpp_interp_factory(&faust_bin, &case) {
+            Ok(factory) => factory,
+            Err(error) => {
+                failures.push(format!("{name}: C++ .fbc preparation failed: {error}"));
+                continue;
+            }
+        };
+        let mut rust_factory = match prepare_rust_interp_factory(
+            &case,
+            TraceLane::Fast,
+            false,
+            0,
+            compiler::ComputeMode::Scalar,
+            compiler::SchedulingStrategy::DepthFirst,
+            false,
+        ) {
+            Ok(factory) => factory,
+            Err(error) => {
+                failures.push(format!(
+                    "{name}: Rust interpreter preparation failed: {error}"
+                ));
+                continue;
+            }
+        };
+
+        let mut case_failures = Vec::new();
+        let mut execution_failed = false;
+        for &scenario in &options.scenarios {
+            let cpp_trace = match execute_interp_factory_trace(
+                &mut cpp_factory,
+                &case,
+                "cpp-fbc",
+                scenario,
+                options.sample_rate,
+                options.block_size,
+                options.num_blocks,
+            ) {
+                Ok(trace) => trace,
+                Err(error) => {
+                    execution_failed = true;
+                    case_failures.push(format!(
+                        "{name} [{}]: C++ trace execution failed: {error}",
+                        scenario.as_str()
+                    ));
+                    continue;
+                }
+            };
+            let rust_trace = match execute_interp_factory_trace(
+                &mut rust_factory,
+                &case,
+                TraceLane::Fast.as_str(),
+                scenario,
+                options.sample_rate,
+                options.block_size,
+                options.num_blocks,
+            ) {
+                Ok(trace) => trace,
+                Err(error) => {
+                    execution_failed = true;
+                    case_failures.push(format!(
+                        "{name} [{}]: Rust trace execution failed: {error}",
+                        scenario.as_str()
+                    ));
+                    continue;
+                }
+            };
+            match compare_cross_compiler_runtime_traces(&cpp_trace, &rust_trace, options.tolerances)
+            {
+                Ok(()) => matched_traces += 1,
+                Err(mismatch) => {
+                    case_failures.push(format!(
+                        "{name} [{}]: mismatch {mismatch:?}",
+                        scenario.as_str()
+                    ));
+                }
+            }
+        }
+
+        match (expectation, case_failures.is_empty(), execution_failed) {
+            (Some(entry), true, _) => failures.push(format!(
+                "{name}: stale expected mismatch {}; all scenarios now match",
+                entry.tracking
+            )),
+            (Some(_), false, true) => {
+                failures.extend(case_failures);
+            }
+            (Some(entry), false, false) => {
+                expected_mismatches += 1;
+                println!("[KNOWN {}] {name}: {}", entry.tracking, case_failures[0]);
+            }
+            (None, true, _) => {
+                matched_cases += 1;
+                println!("[OK] {name}");
+            }
+            (None, false, _) => failures.extend(case_failures),
+        }
+    }
+
+    for (name, entry) in &expectations {
+        if selected_names.contains(name) && !seen_expectations.contains(name) {
+            failures.push(format!(
+                "{name}: expected {:?} entry was not exercised ({})",
+                entry.kind, entry.tracking
+            ));
+        }
+    }
+
+    println!(
+        "corpus-runtime-diff summary: common={common_cases}, matched_cases={matched_cases}, \
+         matched_traces={matched_traces}, expected_mismatches={expected_mismatches}, \
+         oracle_skips={oracle_skips}, rejected={rejected_cases}, extensions={extension_cases}, \
+         unexpected={}",
+        failures.len()
+    );
+    if failures.is_empty() {
+        return Ok(());
+    }
+
+    Err(format!(
+        "corpus-runtime-diff found {} failure(s):\n{}",
+        failures.len(),
+        failures.join("\n")
+    )
+    .into())
+}
+
+pub(crate) fn parse_corpus_runtime_expectations(
+    source: &str,
+) -> Result<BTreeMap<String, CorpusRuntimeExpectation>, Box<dyn std::error::Error>> {
+    let mut entries = BTreeMap::new();
+    for (index, raw_line) in source.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let fields = line.split('|').map(str::trim).collect::<Vec<_>>();
+        if fields.len() != 3 || fields.iter().any(|field| field.is_empty()) {
+            return Err(format!(
+                "invalid corpus runtime expectation at line {}: expected 'kind | case | tracking'",
+                index + 1
+            )
+            .into());
+        }
+        let kind = match fields[0] {
+            "mismatch" => CorpusRuntimeExpectationKind::Mismatch,
+            "oracle" => CorpusRuntimeExpectationKind::Oracle,
+            other => {
+                return Err(format!(
+                    "invalid corpus runtime expectation kind '{other}' at line {}",
+                    index + 1
+                )
+                .into());
+            }
+        };
+        if kind == CorpusRuntimeExpectationKind::Mismatch && !fields[2].starts_with("DIFF-GAP-") {
+            return Err(format!(
+                "corpus runtime mismatch at line {} must reference a DIFF-GAP ID",
+                index + 1
+            )
+            .into());
+        }
+        let case = fields[1].strip_suffix(".dsp").unwrap_or(fields[1]);
+        if entries
+            .insert(
+                case.to_owned(),
+                CorpusRuntimeExpectation {
+                    kind,
+                    tracking: fields[2].to_owned(),
+                },
+            )
+            .is_some()
+        {
+            return Err(format!(
+                "duplicate corpus runtime expectation for '{case}' at line {}",
+                index + 1
+            )
+            .into());
+        }
+    }
+    Ok(entries)
+}
+
+pub(crate) fn resolve_corpus_runtime_cases(
+    requested: &[PathBuf],
+) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    if requested.is_empty() {
+        return Ok(corpus_files()?);
+    }
+    let root = workspace_root();
+    let corpus_root = root.join("tests/corpus");
+    let mut cases = Vec::with_capacity(requested.len());
+    for raw in requested {
+        let direct = if raw.is_absolute() {
+            raw.clone()
+        } else {
+            root.join(raw)
+        };
+        let resolved = if direct.is_file() {
+            direct
+        } else {
+            corpus_root.join(raw)
+        };
+        if !resolved.is_file() {
+            return Err(format!("corpus runtime case not found: {}", raw.display()).into());
+        }
+        if resolved.extension().and_then(std::ffi::OsStr::to_str) != Some("dsp") {
+            return Err(
+                format!("corpus runtime case is not a .dsp file: {}", raw.display()).into(),
+            );
+        }
+        cases.push(resolved);
+    }
+    cases.sort();
+    cases.dedup();
+    Ok(cases)
 }
 
 /// Rejects traces when FIR verification reported type-focused diagnostics.
@@ -1150,6 +1528,27 @@ pub(crate) fn compare_runtime_traces(
     actual: &RuntimeTrace,
     tol: TraceCompareTolerances,
 ) -> Result<(), TraceMismatch> {
+    compare_runtime_traces_inner(expected, actual, tol, true)
+}
+
+/// Compares traces produced by different compiler lanes.
+///
+/// The compiler provenance label is deliberately ignored; DSP identity,
+/// runtime configuration, arity, and every output sample remain checked.
+pub(crate) fn compare_cross_compiler_runtime_traces(
+    expected: &RuntimeTrace,
+    actual: &RuntimeTrace,
+    tol: TraceCompareTolerances,
+) -> Result<(), TraceMismatch> {
+    compare_runtime_traces_inner(expected, actual, tol, false)
+}
+
+fn compare_runtime_traces_inner(
+    expected: &RuntimeTrace,
+    actual: &RuntimeTrace,
+    tol: TraceCompareTolerances,
+    compare_lane: bool,
+) -> Result<(), TraceMismatch> {
     if expected.dsp_path != actual.dsp_path {
         return Err(TraceMismatch {
             field: "dsp".into(),
@@ -1159,7 +1558,7 @@ pub(crate) fn compare_runtime_traces(
             actual: None,
         });
     }
-    if expected.lane != actual.lane {
+    if compare_lane && expected.lane != actual.lane {
         return Err(TraceMismatch {
             field: "pipeline.signal_fir_lane".into(),
             channel: None,

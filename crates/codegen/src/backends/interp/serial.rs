@@ -37,6 +37,14 @@ use super::factory::FbcDspFactory;
 use super::opcode::{FBC_INSTRUCTION_NAMES, FbcOpcode, INTERP_FILE_VERSION};
 use super::real::FbcReal;
 
+/// Oldest append-compatible interpreter file version accepted by the reader.
+///
+/// Version 9 only appended the three Rust foreign-call opcodes after the
+/// complete version-8 opcode range. Consequently every version-8 instruction
+/// keeps the same numeric id and serialization grammar. Accepting V8 is needed
+/// to execute bytecode emitted by the pinned C++ reference (`8eebea429`).
+const MIN_READABLE_INTERP_FILE_VERSION: u32 = 8;
+
 // ── Constants ──────────────────────────────────────────────────────────────
 
 /// Faust version string written into `.fbc` headers.
@@ -572,7 +580,7 @@ pub fn read_fbc<R: FbcReal>(reader: &mut dyn BufRead) -> Result<FbcDspFactory<R>
     let mut tokens = line.split_whitespace();
     header_token(&mut tokens, "file_version", "f", small)?;
     let file_num = parse_i32(tokens.next())?;
-    if file_num as u32 != INTERP_FILE_VERSION {
+    if !(MIN_READABLE_INTERP_FILE_VERSION..=INTERP_FILE_VERSION).contains(&(file_num as u32)) {
         return Err(FbcSerialError::VersionMismatch {
             expected: INTERP_FILE_VERSION,
             got: file_num as u32,
