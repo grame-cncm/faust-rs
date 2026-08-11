@@ -5,7 +5,8 @@ Date: 2026-08-11
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
 Status: implemented for the native structural-import and main-architecture
-scope; explicitly deferred surfaces are listed in Phase 4
+scope; browser-WASM prefetched remote graphs are planned in Phase 6; other
+explicitly deferred surfaces are listed in Phase 4
 
 ## 1. Objective
 
@@ -161,10 +162,49 @@ without permission produces a stable structured diagnostic rather than being
 reported as an ordinary missing local file.
 
 The native transport is target-gated away from `wasm32-unknown-unknown`.
-`wasm-ffi` continues to use immutable embedded sources; it must not gain hidden
-network access. A future browser host can prefetch sources and inject them as
-virtual sources, or a separate async compile API can be designed, but neither
-is part of this plan.
+`wasm-ffi` must not gain hidden network access. Browser hosts instead fetch a
+remote graph asynchronously before compilation and pass an immutable URL-keyed
+bundle to the synchronous compiler call. This is distinct from
+`VirtualSourceMap`: virtual sources have logical path identity, whereas the
+remote bundle retains canonical HTTP(S) identity so relative URL joining,
+cycle detection, `used_sources`, and diagnostics keep the native semantics.
+
+### 5.6 Browser-WASM prefetched bundle
+
+Add a transport-independent `PrefetchedRemoteSourceBundle` in `parser`. It is
+an immutable mapping from normalized HTTP(S) URL to response bytes and
+implements `RemoteSourceFetcher` without performing I/O. Lookup removes URL
+fragments through the existing `SourceLocator` normalization, preserves query
+strings, enforces the request's per-response byte limit, and returns a stable
+missing-entry transport error. The requested and final URLs are identical;
+redirects must be resolved by the host before constructing the bundle.
+
+Extend source-string parsing so an in-memory root whose `source_name` is an
+HTTP(S) URL uses that URL as its parent locator without fetching the root a
+second time. Explicit URL imports also work from an ordinary in-memory root.
+All imported remote children are read through the injected bundle, and
+relative children are joined against their importing URL.
+
+Expose repeated bundle entries through the existing `wasm-ffi` argument ABI:
+
+```text
+--remote-source <absolute-http(s)-url> <base64-encoded-utf8-source>
+```
+
+Keeping this in the existing argument string preserves the raw compile export
+and current host adapters. The option is transport-only: it is removed from
+backend `compile_options`; diagnostics retain the normalized URL but replace
+the base64 payload with `<elided>`. Invalid URLs, missing values, malformed
+base64, and non-UTF-8 payloads fail before compilation with a deterministic
+transport error. Duplicate normalized URLs are rejected rather than silently
+overwritten.
+
+The host remains responsible for asynchronous download, redirect policy,
+authorization, aggregate graph size, and deciding when the bundle is complete.
+The compiler still enforces its normal per-source byte ceiling and never calls
+browser `fetch()`. This first browser slice intentionally does not discover or
+request missing URLs interactively: a missing nested import names the absent
+canonical URL, allowing the host to refill the bundle and retry if desired.
 
 ### 5.4 Default fetch policy
 
@@ -314,10 +354,10 @@ contract; feature-off and runtime-off behavior is tested separately.
 
 ### Phase 4 — Enrobage and public API surface
 
-Status: complete for the native Rust/CLI architecture surface. C/C++ facade,
-browser-WASM, and evaluator-driven remote `component(...)`/`library(...)`
-loading remain explicitly network-disabled/deferred rather than acquiring
-implicit network authority.
+Status: complete for the native Rust/CLI architecture surface. C/C++ facade
+and evaluator-driven remote `component(...)`/`library(...)` loading remain
+explicitly network-disabled/deferred rather than acquiring implicit network
+authority. Browser-WASM delivery is specified separately in Phase 6.
 
 1. Route remote architecture-file `checkURL` behavior through the same policy
    and fetcher rather than a second client.
@@ -337,7 +377,7 @@ Public API mapping after this phase:
 | Native CLI | `adapted` | Cargo feature plus `--allow-network-imports` |
 | Rust enrobage API | `adapted` | Reuses the same injected fetch contract and limits |
 | C and C++ compatibility facades | `deferred` | Disabled; no implicit process-global networking |
-| `wasm-ffi` / browser | `deferred` | Disabled; virtual/prefetched sources remain supported |
+| `wasm-ffi` / browser | `adapted` after Phase 6 | No internal networking; host-prefetched URL bundle only |
 | Evaluator `component(...)` / `library(...)` URLs | `deferred` | Local and virtual behavior unchanged; no URL fallback |
 
 ### Phase 5 — Closure and maintenance gates
@@ -354,7 +394,27 @@ sources remain local and reproducible.
 
 Pass criteria: feature-on/off CI is green, the local HTTP differential has no
 unclassified mismatch, and `DIFF-GAP-003` is removed or narrowed to explicitly
-deferred browser/server behavior.
+deferred API surfaces.
+
+### Phase 6 — Browser-WASM prefetched remote graphs
+
+Status: planned.
+
+1. Add the immutable URL-keyed fetch bundle in parser-core with normalization,
+   duplicate, missing-entry, byte-bound, and relative-resolution tests.
+2. Allow source-string compilation to install an injected remote fetcher and
+   to retain a remote root `source_name` as the parent URL.
+3. Decode repeated `--remote-source <url> <base64>` entries in `wasm-ffi`,
+   sanitize their payloads from diagnostics/options, and inject the bundle into
+   the per-request `Compiler`.
+4. Document the host-prefetch sequence and the absence of implicit browser
+   network authority in the raw ABI README.
+
+Pass criteria: a `wasm-ffi` test compiles a supplied remote root with at least
+one relative remote child, the same request fails deterministically when that
+child is absent, malformed bundle entries fail before compilation, and
+`cargo check -p wasm-ffi --target wasm32-unknown-unknown` succeeds without
+linking `ureq`.
 
 ## 9. Validation Matrix
 
@@ -369,7 +429,7 @@ slice additionally requires:
 | Body | empty; normal UTF-8; chunked; oversized; invalid UTF-8 |
 | Import graph | direct URL; remote relative child; duplicate import; redirect alias; remote cycle; mixed remote/virtual/local |
 | Diagnostics | human, JSON, and diagnostics-v2 stable category checks |
-| Platforms | Linux, macOS, Windows; `wasm32-unknown-unknown` remains network-free |
+| Platforms | Linux, macOS, Windows; `wasm32-unknown-unknown` remains internally network-free and accepts host-prefetched URL bundles |
 | Regression | parser unit tests; compiler integration tests; golden gates; corpus numerical differential where applicable |
 
 Implementation touches to `parser` or `compiler` also require:
@@ -387,7 +447,8 @@ cargo run --release -p xtask -- compile-budget-check
 The initial implementation does not include:
 
 - asynchronous compilation;
-- browser-side fetching from inside `wasm-ffi`;
+- browser-side fetching from inside `wasm-ffi` (host-side asynchronous
+  prefetch followed by bundle injection is supported by Phase 6);
 - FTP, data URLs, Git repositories, package registries, or arbitrary URI
   schemes;
 - authentication, cookies, or credential forwarding;
@@ -398,9 +459,12 @@ The initial implementation does not include:
 
 ## 11. Completion Definition
 
-This plan is complete when native Faust compilation can consume explicit
-HTTP(S) sources and their relative remote imports under an explicit policy,
-with hermetic tests, bounded resource use, deterministic disabled behavior,
-and documented API adaptation. Merely adding `ureq::get(...)` at an unresolved
+The native scope is complete when native Faust compilation can consume
+explicit HTTP(S) sources and their relative remote imports under an explicit
+policy. The browser-prefetch scope is complete when the raw WASM ABI can
+compile the same URL-relative graph from a fully host-supplied bundle while
+remaining incapable of network I/O itself. Both scopes require hermetic tests,
+bounded resource use, deterministic disabled or missing-entry behavior, and
+documented API adaptation. Merely adding `ureq::get(...)` at an unresolved
 import call site does not satisfy the source-identity, cycle, diagnostics,
 security, or cross-target contracts above.
