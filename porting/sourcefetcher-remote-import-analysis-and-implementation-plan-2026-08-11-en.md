@@ -282,6 +282,9 @@ is linked.
 
 ### Phase 2 — Native `ureq` transport
 
+Status: complete for the native transport; compiler import wiring follows in
+Phase 3.
+
 1. Add target-gated optional `ureq` dependency in `compiler`.
 2. Implement the frozen timeout, redirect, body-size, UTF-8, header, and error
    mapping policy.

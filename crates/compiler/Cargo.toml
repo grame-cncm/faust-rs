@@ -8,6 +8,7 @@ authors.workspace = true
 [features]
 default = ["backend-wasm"]
 backend-wasm = ["codegen/backend-wasm"]
+network-imports = ["dep:ureq"]
 
 [dependencies]
 clap.workspace = true
@@ -28,6 +29,7 @@ transform = { path = "../transform" }
 wasmprinter = "0.225"
 sigtype = { path = "../sigtype" }
 draw = { path = "../draw" }
+url = "2.5"
 
 [dev-dependencies]
 [[bin]]
@@ -42,3 +44,4 @@ workspace = true
 # API depends on it.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mimalloc = "0.1.52"
+ureq = { version = "3.3", optional = true }

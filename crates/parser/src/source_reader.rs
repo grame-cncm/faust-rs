@@ -107,7 +107,7 @@ impl SourceLocator {
 ///
 /// The defaults preserve the visible C++ timeout and redirect behavior while
 /// adding a bounded body and whole-request deadline.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RemoteFetchPolicy {
     /// Maximum redirect hops.
     pub max_redirects: u32,
@@ -150,6 +150,17 @@ pub struct FetchedSource {
     pub bytes: Vec<u8>,
 }
 
+impl FetchedSource {
+    /// Validates the response as a Faust UTF-8 source.
+    pub fn into_utf8(self) -> Result<String, SourceFetchError> {
+        String::from_utf8(self.bytes).map_err(|error| SourceFetchError {
+            kind: SourceFetchErrorKind::InvalidUtf8,
+            url: self.final_url,
+            message: format!("response is not valid UTF-8: {error}").into_boxed_str(),
+        })
+    }
+}
+
 /// Stable transport-independent remote failure category.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SourceFetchErrorKind {
@@ -167,6 +178,8 @@ pub enum SourceFetchErrorKind {
     Redirect,
     /// The response exceeded the byte limit.
     ResponseTooLarge,
+    /// The response is not valid UTF-8 Faust source text.
+    InvalidUtf8,
     /// The host policy rejected the URL.
     PolicyRejected,
     /// Other protocol or I/O failure.

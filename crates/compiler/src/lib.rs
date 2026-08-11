@@ -41,6 +41,8 @@
 
 pub mod diagnostics_json;
 pub mod enrobage;
+#[cfg(all(feature = "network-imports", not(target_arch = "wasm32")))]
+pub mod remote_fetch;
 
 mod box_preview;
 mod diagnostic_enrichment;
