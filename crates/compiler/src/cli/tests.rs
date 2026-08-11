@@ -1405,6 +1405,7 @@ fn documented_frs_codes() -> std::collections::BTreeSet<String> {
     [
         "FRS-COMP-0004",
         "FRS-COMP-0005",
+        "FRS-COMP-0006",
         "FRS-CODEGEN-0001",
         "FRS-EVAL-0001",
         "FRS-EVAL-0002",

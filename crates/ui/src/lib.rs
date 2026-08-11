@@ -626,10 +626,13 @@ enum UiDraftNode {
 ///
 /// Rust uses this builder instead of trying to mutate `TreeArena` groups in
 /// place. This is an `adapted` representation, but it makes pathname rebasing,
-/// group merging, and deterministic insertion order explicit and testable.
+/// group merging, and deterministic ordering explicit and testable. Its raw
+/// label ordering matches C++
+/// `compiler/generator/uitree.cpp::UITree::prepareUserInterfaceTree`, including
+/// children later wrapped by a synthesized root.
 #[derive(Default)]
 pub struct UiProgramBuilder {
-    roots: Vec<usize>,
+    roots: Vec<(String, usize)>,
     nodes: Vec<UiDraftNode>,
 }
 
@@ -688,7 +691,7 @@ impl UiProgramBuilder {
             }
             return true;
         }
-        self.roots.retain(|root| *root != group);
+        self.roots.retain(|(_, root)| *root != group);
         true
     }
 
@@ -728,12 +731,12 @@ impl UiProgramBuilder {
 
     #[must_use]
     /// Materializes the currently accumulated grouped UI forest into
-    /// `TreeArena`-backed nodes and returns the top-level roots in insertion
-    /// order.
+    /// `TreeArena`-backed nodes and returns the top-level roots in C++ label
+    /// order, with stable insertion order for equal keys.
     pub fn finish(self) -> (TreeArena, Vec<UiId>) {
         let mut arena = TreeArena::new();
         let mut roots = Vec::with_capacity(self.roots.len());
-        for root in &self.roots {
+        for (_, root) in &self.roots {
             roots.push(self.materialize_node(*root, &mut arena));
         }
         (arena, roots)
@@ -804,7 +807,7 @@ impl UiProgramBuilder {
                 | UiDraftNode::OutputControl(_)
                 | UiDraftNode::Soundfile(_) => panic!("parent must be a group"),
             },
-            None => self.roots.clone(),
+            None => self.roots.iter().map(|(_, root)| *root).collect(),
         }
     }
 
@@ -821,7 +824,12 @@ impl UiProgramBuilder {
                     panic!("parent must be a group");
                 }
             }
-            None => self.roots.push(child_id),
+            None => {
+                let pos = self
+                    .roots
+                    .partition_point(|(key, _)| key.as_str() <= order_key.as_str());
+                self.roots.insert(pos, (order_key, child_id));
+            }
         }
     }
 

@@ -659,34 +659,36 @@ Recommended internal direction:
 - keep canonical root synthesis and label/metadata extraction in the same UI IR
   construction phase so all layout decisions remain frozen before `transform`
 
-### 8.10 Known root-sibling ordering parity gap
+### 8.10 C++ root-sibling ordering parity rule
 
-A corpus-wide generated-UI comparison on 2026-08-11 exposed one ordering gap
-outside the pathname extension itself.
+A corpus-wide generated-UI comparison on 2026-08-11 exposed and then closed an
+ordering gap outside the pathname extension itself.
 
 The C++ UI tree orders every group's children, including controls placed under
 the implicit top-level group, by the raw label/order key. Rust's
-`UiProgramBuilder` applies that ordering to children of an explicit draft group,
-but its root forest is currently a plain insertion-ordered list. When
-`UiProgram::finish` synthesizes the top-level group around otherwise ungrouped
-controls, their dataflow-discovery order is retained instead of being sorted.
+`UiProgramBuilder` now applies that ordering both to children of an explicit
+draft group and to its root forest. When `UiProgram::finish` synthesizes the
+top-level group around otherwise ungrouped controls, those controls are already
+in the same raw-label order as C++
+`UITree::prepareUserInterfaceTree()`. Equal keys retain insertion order.
 
-Confirmed corpus cases:
+Historical mismatches used as regression cases:
 
-- `rep_38_sine_phasor.dsp`: Rust starts with `gain`; C++ starts with `freq1`;
-- `rep_55_sine_phasor_echo_feedback.dsp`: Rust starts with `gain`; C++ starts
+- `rep_38_sine_phasor.dsp`: Rust started with `gain`; C++ started with `freq1`;
+- `rep_55_sine_phasor_echo_feedback.dsp`: Rust started with `gain`; C++ started
   with `feedback`;
-- `rep_57_additive_synth.dsp`: Rust starts with `gain`; C++ starts with `freq`;
-- `rep_66_variable_delay_feedback.dsp`: Rust emits `mod_delay` before
-  `feedback`; C++ emits `feedback` first;
-- `rep_75_ui_widget_family_breadth.dsp`: Rust retains the source/dataflow order
-  `gate`, `pitch`, `delay`, `meter`; C++ emits `delay`, `gate`, `meter`, `pitch`.
+- `rep_57_additive_synth.dsp`: Rust started with `gain`; C++ started with `freq`;
+- `rep_66_variable_delay_feedback.dsp`: Rust emitted `mod_delay` before
+  `feedback`; C++ emitted `feedback` first;
+- `rep_75_ui_widget_family_breadth.dsp`: Rust retained the source/dataflow order
+  `gate`, `pitch`, `delay`, `meter`; C++ emitted `delay`, `gate`, `meter`, `pitch`.
 
-This is `DIFF-GAP-011`, a parity defect rather than a deliberate Rust behavior.
-It changes UI/JSON presentation order but not control labels, addresses, or DSP
-semantics. A correction must sort the synthesized root's children with the same
-raw-label key used for explicit groups while retaining stable insertion order
-for equal keys.
+The correction changed `UiProgramBuilder::roots` to retain each node's ordering
+key and use the same stable sorted insertion as explicit-group children. The
+five cases above are part of the maintained C++ UI-event differential. A second
+25-case audit now reports only the two deliberate relative-group differences
+(`rep_63` and `rep_64`), so `DIFF-GAP-011` is closed and removed from the living
+difference registry.
 
 ## 9. Transform and FIR contract
 

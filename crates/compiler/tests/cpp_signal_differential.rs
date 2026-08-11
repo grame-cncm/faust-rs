@@ -517,6 +517,31 @@ fn differential_ui_event_order_against_cpp_reference() {
             expect_valid: true,
         },
         Case {
+            name: "rep_38_sine_phasor",
+            input: CaseInput::CorpusFile("rep_38_sine_phasor.dsp"),
+            expect_valid: true,
+        },
+        Case {
+            name: "rep_55_sine_phasor_echo_feedback",
+            input: CaseInput::CorpusFile("rep_55_sine_phasor_echo_feedback.dsp"),
+            expect_valid: true,
+        },
+        Case {
+            name: "rep_57_additive_synth",
+            input: CaseInput::CorpusFile("rep_57_additive_synth.dsp"),
+            expect_valid: true,
+        },
+        Case {
+            name: "rep_66_variable_delay_feedback",
+            input: CaseInput::CorpusFile("rep_66_variable_delay_feedback.dsp"),
+            expect_valid: true,
+        },
+        Case {
+            name: "rep_75_ui_widget_family_breadth",
+            input: CaseInput::CorpusFile("rep_75_ui_widget_family_breadth.dsp"),
+            expect_valid: true,
+        },
+        Case {
             name: "rep_60_ui_relative_widget_path",
             input: CaseInput::CorpusFile("rep_60_ui_relative_widget_path.dsp"),
             expect_valid: true,

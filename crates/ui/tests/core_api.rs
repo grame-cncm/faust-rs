@@ -391,6 +391,20 @@ fn ui_program_builder_merges_group_paths_and_preserves_leaf_order() {
 }
 
 #[test]
+fn ui_program_builder_sorts_root_siblings_by_cpp_order_key() {
+    let mut builder = UiProgramBuilder::new();
+    builder.insert_input_control(&[], 0, "gain".to_owned());
+    builder.insert_input_control(&[], 1, "freq".to_owned());
+    builder.insert_output_control(&[], 2, "freq".to_owned());
+
+    let (arena, roots) = builder.finish();
+    assert_eq!(roots.len(), 3);
+    assert_eq!(match_ui(&arena, roots[0]), UiMatch::InputControl(1));
+    assert_eq!(match_ui(&arena, roots[1]), UiMatch::OutputControl(2));
+    assert_eq!(match_ui(&arena, roots[2]), UiMatch::InputControl(0));
+}
+
+#[test]
 fn ui_program_builder_can_drop_empty_group_placeholders() {
     let mut builder = UiProgramBuilder::new();
     let foo = vec![UiGroupSpec {

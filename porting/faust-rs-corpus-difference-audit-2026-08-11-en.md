@@ -6,6 +6,9 @@ C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
 Corpus: all 219 `tests/corpus/*.dsp` files present on the audit date
 
+Status update: the root-sibling ordering gap found by this audit was fixed on
+2026-08-11; `DIFF-GAP-012` and `DIFF-GAP-013` remain open.
+
 ## 1. Purpose
 
 This audit checks the complete local corpus for observable differences between
@@ -105,14 +108,14 @@ close-box events produced:
 
 | Result | Cases |
 |---|---:|
-| exact event parity | 18 |
+| exact event parity after the root-order fix | 23 |
 | deliberate relative-group extension | 2 |
-| root-sibling ordering parity gap | 5 |
+| remaining unintended UI difference | 0 |
 
 The two deliberate extensions are `rep_63_ui_relative_group_rebase` and
 `rep_64_ui_relative_group_root_clamp` (`DIFF-BEH-008`).
 
-The five `DIFF-GAP-011` cases are:
+The initial audit found five root-ordering mismatches:
 
 - `rep_38_sine_phasor`;
 - `rep_55_sine_phasor_echo_feedback`;
@@ -120,10 +123,12 @@ The five `DIFF-GAP-011` cases are:
 - `rep_66_variable_delay_feedback`;
 - `rep_75_ui_widget_family_breadth`.
 
-C++ sorts controls below its implicit root by the raw label/order key. Rust
-currently retains dataflow-discovery order in the root forest. Labels,
-addresses, and DSP computation are unchanged, but UI/JSON presentation order
-differs.
+C++ sorts controls below its implicit root by the raw label/order key. Rust was
+retaining dataflow-discovery order in the root forest. `UiProgramBuilder` now
+sorts root siblings with the same stable raw-label key used inside explicit
+groups, and all five cases are included in the maintained C++ UI-event
+differential. Re-running the 25-case comparison leaves only the two deliberate
+relative-group extensions.
 
 ## 6. Whole-source comparison and limits
 
