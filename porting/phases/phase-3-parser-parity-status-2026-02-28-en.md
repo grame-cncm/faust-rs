@@ -164,6 +164,11 @@ Needed to close:
 
 Priority: Medium (depends on project scope decision).
 
+Follow-up (2026-08-11): the gap remains open in code, but the policy decision,
+crate selection, source-identity adaptation, security boundary, implementation
+phases, and hermetic validation matrix are now specified in
+[`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](../sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md).
+
 ## G6 — Parser API does not yet expose source-file usage list to compiler facade
 
 Evidence:

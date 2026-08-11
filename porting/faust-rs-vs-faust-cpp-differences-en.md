@@ -398,7 +398,7 @@ remain visible until closed or explicitly reclassified.
 | ID | Status | Current difference |
 |---|---|---|
 | DIFF-GAP-001 | `narrower` | Full non-trivial stream-wrapper lowering remains less complete than the mature C++ route; the shared-runtime differential confirms different outputs for `rep_18_stream_wrappers` under impulse, ramp, and sine inputs. |
-| DIFF-GAP-003 | `narrower` | Remote URL imports and the full C++ `sourcefetcher` contract are absent. |
+| DIFF-GAP-003 | `narrower` | Remote URL imports and the full C++ `sourcefetcher` contract are absent. The adapted native implementation contract (`ureq` + `url`, explicit network opt-in, network-free WASM) is specified in [`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md). |
 | DIFF-GAP-004 | `narrower` | `getInfos` and some embedded-compiler/filesystem helper semantics remain partial or adapted. |
 | DIFF-GAP-005 | `narrower` | WASM and Julia are functional on validated paths but do not claim the complete semantic, layout, packaging, or upstream impulse-suite maturity of the C++ implementations. |
 | DIFF-GAP-006 | `narrower` | The specialized reverse-time recursive RAD path is disabled; Rust uses `BlockReverseAD` for temporal/recursive AD and still rejects mutable-table, soundfile, and unsupported foreign-function derivatives. |

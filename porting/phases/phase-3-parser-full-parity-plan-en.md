@@ -21,6 +21,11 @@ Reference C++ sources:
   - parser-adjacent modules (`sourcefetcher`, `enrobage`) are explicitly deferred,
   - strict differential run against C++ reveals at least one mismatch (`err_01_parse_missing_rhs.dsp`).
 
+Follow-up (2026-08-11): the historical Phase 3 deferral remains true of the
+current implementation, but `sourcefetcher` now has an approved adapted design
+and executable Phase 9 plan in
+[`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](../sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md).
+
 ## 3. Execution Plan
 
 ### Step 1: Stabilize Differential Baseline

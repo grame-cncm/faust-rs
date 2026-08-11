@@ -27,7 +27,8 @@
   - differential report:
     `porting/phases/phase-9-enrobage-diff-report-en.md`
 - Remaining out-of-scope item in parser-adjacent area:
-  - `sourcefetcher` remains deferred.
+  - `sourcefetcher` is specified but not implemented; see
+    [`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](../sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md).
 
 ---
 

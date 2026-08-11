@@ -512,6 +512,11 @@ Residual exclusions:
 
 - network import/sourcefetcher remains explicitly deferred
 
+Follow-up (2026-08-11): network imports are still unimplemented, but the
+deferral now has a concrete native implementation contract and staged closure
+plan in
+[`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md).
+
 ### Phase 4 — Signals / eval / propagate
 
 Assessment:

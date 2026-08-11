@@ -14,19 +14,20 @@ Source of truth (C++):
 
 | C++ module | Main C++ API / role | Rust target scope | Status | Rationale | Owner + milestone | Validation |
 |---|---|---|---|---|---|---|
-| `sourcefetcher` | low-level `http_fetch(...)` and HTTP helpers used by import/file handling | optional parser-adjacent capability (`parser` feature-gated path) | `deferred` (explicitly frozen) | Not required for parser migration viability gate; introduces network/dependency policy questions; avoid stubs in Phase 3. Core parser/import functionality remains local-file based via `SourceReader`. | Parser integration track, target **Phase 9 integration** | `parser` `SourceReader` flows pass for local/cycle behavior; URL import behavior is explicitly tested as unresolved/out-of-scope. |
+| `sourcefetcher` | low-level `http_fetch(...)` and HTTP helpers used by import/file handling | optional, policy-gated native transport injected into parser source resolution | `planned` (implementation not started) | The dependency, source-identity, security, disabled-network, and cross-target contracts are now specified; core parser/import functionality remains local-file based until the plan lands. | Parser/compiler integration track, target **Phase 9 integration**; see [`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](../sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md) | Existing local/cycle behavior remains the baseline; implementation must add hermetic feature-on/off and local HTTP differential coverage. |
 | `enrobage` | architecture-template/file helper set (`openArchStream`, `fopenSearch`, stream copy utilities, output naming) used by `libcode.cpp` and documentator | `compiler` integration layer (`crates/compiler/src/enrobage.rs`) | `adapted` (implemented for C++ output path) | Implemented in Rust with parity-first stream/path helpers and explicit CLI integration (`-a/-A/-i`) for C++ output. Remaining work is full end-to-end output parity cleanup outside strict enrobage scope (codegen-header differences). | Compiler/codegen integration track, **Phase 9 implemented milestone** (report: `phase-9-enrobage-diff-report-en.md`) | `compiler` enrobage tests pass: `enrobage_paths`, `enrobage_search`, `enrobage_stream`, `enrobage_integration`; wrapper differential checks documented in Phase 9 report. |
 
 ## 3. Scope Contract for Phase 3
 
-- `SourceReader` in `parser` is intentionally **local-file only**.
-- URL/network imports are intentionally not fetched in this phase.
+- `SourceReader` in `parser` remains **local-file only** until the approved
+  implementation plan lands.
+- URL/network imports are still not fetched by the current implementation.
 - No placeholder network/wrapper implementation is introduced in Phase 3.
 - This is an explicit **defer decision**, not an omission.
 
 ## 4. Integration Preconditions for Phase 9
 
-Before moving these modules out of `deferred`:
+Before implementing the planned network-source module:
 1. Define feature policy for remote fetch (default-off, reproducible/offline-safe behavior).
 2. Place APIs at the right boundary (`compiler`/`codegen`/`doc` orchestration layer) instead of parser-core.
 3. Add lifecycle mapping per API (`1:1` or `adapted`) with compatibility impact notes.
@@ -34,6 +35,10 @@ Before moving these modules out of `deferred`:
    - successful/failed URL fetch cases (if enabled),
    - wrapper/architecture file insertion behavior parity,
    - deterministic behavior when network is disabled.
+
+The decisions and executable phase breakdown for these preconditions are now
+recorded in
+[`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](../sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md).
 
 ## 5. Step-5 Coverage Update (Import Envelope)
 
