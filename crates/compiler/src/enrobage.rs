@@ -17,7 +17,13 @@
 use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::{env, fs::File};
+
+use parser::{
+    RemoteFetchPolicy, RemoteSourceFetcher, SourceFetchError, SourceLocator, SourceReader,
+    SourceReaderError,
+};
 
 /// Returns the basename portion of a path-like string.
 ///
@@ -357,6 +363,14 @@ pub fn wrap_cpp_with_architecture(
     let architecture_name = options.architecture_file.to_string_lossy();
     let file = open_arch_stream(architecture_name.as_ref(), &options.architecture_dirs)?;
     let mut src = BufReader::new(file);
+    wrap_cpp_with_architecture_reader(generated_cpp, options, &mut src)
+}
+
+fn wrap_cpp_with_architecture_reader(
+    generated_cpp: &str,
+    options: &EnrobageOptions,
+    src: &mut impl BufRead,
+) -> io::Result<WrappedCppCode> {
     let mut out = Vec::<u8>::new();
     let mut state = StreamCopyState::default();
     let cfg = StreamCopyConfig {
@@ -366,19 +380,69 @@ pub fn wrap_cpp_with_architecture(
         architecture_dirs: options.architecture_dirs.clone(),
     };
 
-    stream_copy_until(&mut src, &mut out, "<<includeIntrinsic>>", &cfg, &mut state)?;
-    stream_copy_until(&mut src, &mut out, "<<includeclass>>", &cfg, &mut state)?;
+    stream_copy_until(src, &mut out, "<<includeIntrinsic>>", &cfg, &mut state)?;
+    stream_copy_until(src, &mut out, "<<includeclass>>", &cfg, &mut state)?;
     write!(out, "{generated_cpp}")?;
     if !generated_cpp.ends_with('\n') {
         writeln!(out)?;
     }
-    stream_copy_until_end(&mut src, &mut out, &cfg, &mut state)?;
+    stream_copy_until_end(src, &mut out, &cfg, &mut state)?;
 
     Ok(WrappedCppCode {
         code: String::from_utf8(out)
             .expect("architecture wrapping output is expected to stay UTF-8 text"),
         recoverable_error: state.last_error,
     })
+}
+
+/// Error returned while loading or applying a remote architecture template.
+#[derive(Debug)]
+pub enum RemoteArchitectureError {
+    /// URL validation, permission, transport, or UTF-8 failure.
+    Source(SourceReaderError),
+    /// Failure while processing the downloaded architecture stream.
+    Wrap(io::Error),
+}
+
+impl std::fmt::Display for RemoteArchitectureError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Source(error) => error.fmt(formatter),
+            Self::Wrap(error) => write!(formatter, "cannot apply remote architecture: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RemoteArchitectureError {}
+
+/// Wraps generated code with an explicitly authorized HTTP(S) architecture.
+///
+/// # Source provenance and adaptation
+///
+/// This is the injected, bounded counterpart of C++
+/// `compiler/parser/enrobage.cpp::checkURL`. It shares the parser's
+/// [`RemoteSourceFetcher`] contract, so native and embedded hosts can use the
+/// same allowlist and resource limits as source imports. Networking is never
+/// selected implicitly and no process-global fetch state is used.
+pub fn wrap_cpp_with_remote_architecture(
+    generated_cpp: &str,
+    architecture_url: &str,
+    options: &EnrobageOptions,
+    fetcher: Arc<dyn RemoteSourceFetcher>,
+    policy: RemoteFetchPolicy,
+) -> Result<WrappedCppCode, RemoteArchitectureError> {
+    let locator =
+        SourceLocator::remote(architecture_url, None).map_err(RemoteArchitectureError::Source)?;
+    let fetched = SourceReader::new(Vec::new())
+        .with_remote_fetcher(fetcher, policy)
+        .fetch_remote(&locator)
+        .map_err(RemoteArchitectureError::Source)?;
+    let source = fetched.into_utf8().map_err(|error: SourceFetchError| {
+        RemoteArchitectureError::Source(SourceReaderError::RemoteFetch { error })
+    })?;
+    let mut src = BufReader::new(io::Cursor::new(source.into_bytes()));
+    wrap_cpp_with_architecture_reader(generated_cpp, options, &mut src)
+        .map_err(RemoteArchitectureError::Wrap)
 }
 
 /// Returns `true` when `filename` is an absolute path.

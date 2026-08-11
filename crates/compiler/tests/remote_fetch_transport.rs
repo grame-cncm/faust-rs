@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use compiler::{
     Compiler,
+    enrobage::{EnrobageOptions, wrap_cpp_with_remote_architecture},
     remote_fetch::{AllowAllRemoteUrls, RemoteUrlPolicy, UreqSourceFetcher},
 };
 use parser::{
@@ -185,4 +186,28 @@ fn compiler_expands_a_remote_relative_import_graph() {
     assert_eq!(output.process_arity.outputs, 1);
     assert_eq!(server.requests(), ["/main.dsp", "/lib/identity.lib"]);
     assert_eq!(output.parse.used_sources.len(), 2);
+}
+
+#[test]
+fn remote_architecture_uses_the_shared_fetch_capability() {
+    let server = HttpFixtureServer::start([(
+        "/minimal.cpp".to_owned(),
+        FixtureResponse::text(
+            "// prologue\n<<includeIntrinsic>>\n// middle\n<<includeclass>>\n// epilogue\n",
+        ),
+    )]);
+    let url = server.url("/minimal.cpp");
+    let options = EnrobageOptions::new(std::path::PathBuf::from(&url));
+    let wrapped = wrap_cpp_with_remote_architecture(
+        "class mydsp {};",
+        &url,
+        &options,
+        Arc::new(UreqSourceFetcher::new(Arc::new(AllowAllRemoteUrls))),
+        RemoteFetchPolicy::default(),
+    )
+    .expect("remote architecture should wrap generated code");
+
+    assert!(wrapped.code.contains("class mydsp {};"));
+    assert!(wrapped.code.contains("// epilogue"));
+    assert_eq!(server.requests(), ["/minimal.cpp"]);
 }

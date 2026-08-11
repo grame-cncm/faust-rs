@@ -19,6 +19,11 @@ use compiler::{
     ProcessingApi, RealType, SchedulingStrategy, TableInitMode,
     enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
 };
+#[cfg(all(feature = "network-imports", not(target_arch = "wasm32")))]
+use compiler::{
+    enrobage::wrap_cpp_with_remote_architecture,
+    remote_fetch::{AllowAllRemoteUrls, UreqSourceFetcher},
+};
 use diagnostics::DiagnosticBundle;
 use fir::checker::verify_fir_module;
 
@@ -340,7 +345,31 @@ pub fn wrap_backend_with_architecture(generated: &str, cli: &CliArgs) -> String 
     if let Some(super_class_name) = selected_super_class_name(cli) {
         options.super_class_name = super_class_name;
     }
-    let wrapped = match wrap_cpp_with_architecture(generated, &options) {
+    let architecture_url = architecture_file
+        .to_str()
+        .filter(|value| value.starts_with("http://") || value.starts_with("https://"));
+    if architecture_url.is_some() && !cli.allow_network_imports {
+        eprintln!("Architecture wrapping failed: network imports are disabled");
+        std::process::exit(1);
+    }
+    #[cfg(all(feature = "network-imports", not(target_arch = "wasm32")))]
+    let wrapped = if let Some(url) = architecture_url {
+        wrap_cpp_with_remote_architecture(
+            generated,
+            url,
+            &options,
+            std::sync::Arc::new(UreqSourceFetcher::new(std::sync::Arc::new(
+                AllowAllRemoteUrls,
+            ))),
+            parser::RemoteFetchPolicy::default(),
+        )
+        .map_err(|error| std::io::Error::other(error.to_string()))
+    } else {
+        wrap_cpp_with_architecture(generated, &options)
+    };
+    #[cfg(not(all(feature = "network-imports", not(target_arch = "wasm32"))))]
+    let wrapped = wrap_cpp_with_architecture(generated, &options);
+    let wrapped = match wrapped {
         Ok(wrapped) => wrapped,
         Err(err) => {
             eprintln!("Architecture wrapping failed: {err}");

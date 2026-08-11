@@ -17,7 +17,6 @@ use codegen::backends::interp::InterpOptions;
 use codegen::backends::julia::{JuliaOptions, generate_julia_module};
 use codegen::backends::rust::{RustOptions, generate_rust_module};
 use codegen::backends::wasm::{WasmOptions, generate_wasm_module};
-use compiler::enrobage::{EnrobageOptions, wrap_cpp_with_architecture};
 use fir::{checker::verify_fir_module, dump_fir};
 
 use super::args::{CliArgs, CliLang};
@@ -314,31 +313,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         };
         match generate_cpp_module(&store, module, &options) {
             Ok(cpp) => {
-                let rendered = if let Some(architecture_file) = cli.architecture.as_ref() {
-                    let mut options = EnrobageOptions::new(architecture_file.clone());
-                    options.architecture_dirs = cli.architecture_dir.clone();
-                    options.inline_arch_files = cli.inline_architecture_files;
-                    if let Some(class_name) = selected_class_name(cli) {
-                        options.class_name = class_name;
-                    }
-                    if let Some(super_class_name) = selected_super_class_name(cli) {
-                        options.super_class_name = super_class_name;
-                    }
-                    let wrapped = match wrap_cpp_with_architecture(&cpp, &options) {
-                        Ok(wrapped) => wrapped,
-                        Err(err) => {
-                            eprintln!("Architecture wrapping failed: {err}");
-                            std::process::exit(1);
-                        }
-                    };
-                    if let Some(err) = wrapped.recoverable_error.as_deref() {
-                        eprintln!("{err}");
-                        std::process::exit(1);
-                    }
-                    wrapped.code
-                } else {
-                    cpp
-                };
+                let rendered = wrap_backend_with_architecture(&cpp, cli);
                 emit_output(&rendered, cli.output.as_ref());
                 if cli.dump_json {
                     emit_fixture_json_companion(cli, &store, module, "cpp");
@@ -363,25 +338,8 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         };
         match generate_c_module(&store, module, &options) {
             Ok(c_code) => {
-                let rendered = if let Some(architecture_file) = cli.architecture.as_ref() {
-                    let mut options = EnrobageOptions::new(architecture_file.clone());
-                    options.architecture_dirs = cli.architecture_dir.clone();
-                    options.inline_arch_files = cli.inline_architecture_files;
-                    if let Some(class_name) = selected_class_name(cli) {
-                        options.class_name = class_name;
-                    }
-                    let wrapped = match wrap_cpp_with_architecture(&c_code, &options) {
-                        Ok(wrapped) => wrapped,
-                        Err(err) => {
-                            eprintln!("Architecture wrapping failed: {err}");
-                            std::process::exit(1);
-                        }
-                    };
-                    if let Some(err) = wrapped.recoverable_error.as_deref() {
-                        eprintln!("{err}");
-                        std::process::exit(1);
-                    }
-                    wrapped.code
+                let rendered = if cli.architecture.is_some() {
+                    wrap_backend_with_architecture(&c_code, cli)
                 } else {
                     c_code
                 };

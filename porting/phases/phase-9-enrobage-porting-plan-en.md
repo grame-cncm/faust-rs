@@ -56,7 +56,7 @@ Rationale:
 | `streamCopyUntilEnd` | `1:1` | thin wrapper around `streamCopyUntil` |
 | `fileBasename`/`fileDirname`/`stripEnd` | `1:1` | keep edge-case behavior (root/no-dir/windows-style path) |
 | `makeOutputFile` | `adapted` | use `PathBuf` composition while preserving output naming behavior |
-| `checkURL` (file/http/https) | `planned` | local-file checks exist; the shared policy-gated native fetcher and remote behavior are specified but not implemented |
+| `checkURL` (file/http/https) | `adapted` | local files retain the existing search path; remote main architecture templates use the shared injected, bounded fetch contract; remote inline sub-includes remain deferred |
 
 ## 5. Execution Steps
 

@@ -313,6 +313,11 @@ contract; feature-off and runtime-off behavior is tested separately.
 
 ### Phase 4 — Enrobage and public API surface
 
+Status: complete for the native Rust/CLI architecture surface. C/C++ facade,
+browser-WASM, and evaluator-driven remote `component(...)`/`library(...)`
+loading remain explicitly network-disabled/deferred rather than acquiring
+implicit network authority.
+
 1. Route remote architecture-file `checkURL` behavior through the same policy
    and fetcher rather than a second client.
 2. Map affected Rust, C, and C++ facade APIs as `adapted` or `deferred`.
@@ -321,6 +326,18 @@ contract; feature-off and runtime-off behavior is tested separately.
 
 Pass criteria: no public entry point silently enables network access and no
 second fetch implementation exists.
+
+Public API mapping after this phase:
+
+| Surface | Mapping | Network behavior |
+|---|---|---|
+| Parser `SourceLocator` / injected fetch APIs | `adapted` | Host-supplied capability only |
+| Rust `Compiler` | `adapted` | Per-instance fetcher/policy or native convenience profile |
+| Native CLI | `adapted` | Cargo feature plus `--allow-network-imports` |
+| Rust enrobage API | `adapted` | Reuses the same injected fetch contract and limits |
+| C and C++ compatibility facades | `deferred` | Disabled; no implicit process-global networking |
+| `wasm-ffi` / browser | `deferred` | Disabled; virtual/prefetched sources remain supported |
+| Evaluator `component(...)` / `library(...)` URLs | `deferred` | Local and virtual behavior unchanged; no URL fallback |
 
 ### Phase 5 — Closure and maintenance gates
 
