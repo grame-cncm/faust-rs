@@ -398,7 +398,6 @@ remain visible until closed or explicitly reclassified.
 | ID | Status | Current difference |
 |---|---|---|
 | DIFF-GAP-001 | `narrower` | Full non-trivial stream-wrapper lowering remains less complete than the mature C++ route; the shared-runtime differential confirms different outputs for `rep_18_stream_wrappers` under impulse, ramp, and sine inputs. |
-| DIFF-GAP-002 | `narrower` | A generated table size must currently reduce to the literal shape accepted by the FIR table extractor; broader `tabulateNd`/computed-size coverage remains incomplete. |
 | DIFF-GAP-003 | `narrower` | Remote URL imports and the full C++ `sourcefetcher` contract are absent. |
 | DIFF-GAP-004 | `narrower` | `getInfos` and some embedded-compiler/filesystem helper semantics remain partial or adapted. |
 | DIFF-GAP-005 | `narrower` | WASM and Julia are functional on validated paths but do not claim the complete semantic, layout, packaging, or upstream impulse-suite maturity of the C++ implementations. |

@@ -55,6 +55,23 @@ fn ci_command_names_are_accepted() {
 }
 
 #[test]
+fn generated_reports_replace_checkout_local_paths() {
+    let workspace_case = workspace_root().join("tests/corpus/example.dsp");
+    let cpp_binary = Path::new(CPP_SOURCE_ROOT).join("build/bin/faust");
+    let text = format!(
+        "case={} cpp={} expr=clocked(0x12Ab90, IN[0])",
+        workspace_case.display(),
+        cpp_binary.display()
+    );
+    let portable = portable_report_text(&text);
+    assert_eq!(
+        portable,
+        "case=tests/corpus/example.dsp cpp=../faust/build/bin/faust \
+         expr=clocked(<ptr>, IN[0])"
+    );
+}
+
+#[test]
 fn unknown_command_is_a_clap_error() {
     let error = parse_xtask(["definitely-unknown"]).unwrap_err();
     assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);

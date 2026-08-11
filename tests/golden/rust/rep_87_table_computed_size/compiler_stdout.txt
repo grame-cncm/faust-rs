@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=rep_87_table_computed_size.dsp
+bytes=264
+lines=4
+fnv1a64=e981e3590cadc729

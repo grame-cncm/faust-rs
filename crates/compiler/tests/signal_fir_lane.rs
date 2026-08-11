@@ -6,7 +6,7 @@
 
 use codegen::backends::cranelift::{CraneliftOptions, generate_cranelift_module};
 use codegen::backends::interp::{FbcDspInstance, InterpOptions, read_fbc};
-use compiler::{Compiler, RealType, SignalFirLane};
+use compiler::{Compiler, ComputeMode, RealType, SignalFirLane, TableInitMode};
 use std::path::PathBuf;
 
 fn corpus_path(file: &str) -> PathBuf {
@@ -486,6 +486,7 @@ fn fastlane_compiles_table_fixtures() {
         "rep_35_table_rwtable_runtime_write.dsp",
         "rep_36_table_rdtable_negative_index.dsp",
         "rep_37_table_rwtable_negative_indices.dsp",
+        "rep_87_table_computed_size.dsp",
     ] {
         let fast = compile_cpp_with_lane(file, SignalFirLane::TransformFastLane);
         assert!(
@@ -496,6 +497,42 @@ fn fastlane_compiles_table_fixtures() {
             !fast.contains("frs_"),
             "fast lane output should not contain frs_* shim names for {file}"
         );
+    }
+}
+
+#[test]
+fn computed_table_size_compiles_in_all_scalar_vector_and_init_modes() {
+    const SOURCE: &str = "process = rdtable((4 + 4) * (10 - 2), 0.25, int(_) & 63);";
+
+    for table_init_mode in [TableInitMode::Runtime, TableInitMode::Const] {
+        for compute_mode in [
+            ComputeMode::Scalar,
+            ComputeMode::Vector {
+                vec_size: 32,
+                loop_variant: 0,
+            },
+        ] {
+            let cpp = Compiler::new()
+                .with_table_init_mode(table_init_mode)
+                .with_compute_mode(compute_mode)
+                .compile_source_to_cpp_with_lane(
+                    "computed-table-size",
+                    SOURCE,
+                    &codegen::backends::cpp::CppOptions::default(),
+                    SignalFirLane::TransformFastLane,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "computed table size must compile in {table_init_mode:?}/{compute_mode:?}: \
+                         {error}"
+                    )
+                });
+            assert!(
+                cpp.contains("[64]"),
+                "computed table extent must simplify to 64 in \
+                 {table_init_mode:?}/{compute_mode:?}"
+            );
+        }
     }
 }
 
@@ -731,6 +768,7 @@ fn fastlane_compiles_c_table_fixtures_without_shims() {
         "rep_35_table_rwtable_runtime_write.dsp",
         "rep_36_table_rdtable_negative_index.dsp",
         "rep_37_table_rwtable_negative_indices.dsp",
+        "rep_87_table_computed_size.dsp",
     ] {
         let fast = compile_c_with_lane(file, SignalFirLane::TransformFastLane);
         assert!(

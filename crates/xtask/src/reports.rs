@@ -6,6 +6,54 @@
 
 use super::*;
 
+/// Rewrites checkout-local paths before a generated report is versioned.
+///
+/// Reports are shared across platforms, so both native and slash-normalized
+/// spellings are handled. The C++ reference tree has a stable sibling label;
+/// the Rust workspace prefix is simply removed.
+pub(crate) fn portable_report_text(text: &str) -> String {
+    fn replace_prefixes(text: String, path: &Path, replacement: &str) -> String {
+        let native = path.to_string_lossy();
+        let slash = native.replace('\\', "/");
+        let mut out = text;
+        for prefix in [
+            format!("{native}/"),
+            format!("{native}\\"),
+            format!("{slash}/"),
+        ] {
+            out = out.replace(&prefix, replacement);
+        }
+        out.replace(native.as_ref(), replacement.trim_end_matches('/'))
+            .replace(&slash, replacement.trim_end_matches('/'))
+    }
+
+    fn normalize_clocked_addresses(mut text: String) -> String {
+        let mut search_from = 0usize;
+        while let Some(relative_start) = text[search_from..].find("clocked(0x") {
+            let start = search_from + relative_start;
+            let digits_start = start + "clocked(0x".len();
+            let Some(relative_end) = text[digits_start..].find(',') else {
+                break;
+            };
+            let end = digits_start + relative_end;
+            if text[digits_start..end]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+            {
+                text.replace_range(start..end, "clocked(<ptr>");
+                search_from = start + "clocked(<ptr>".len();
+            } else {
+                search_from = digits_start;
+            }
+        }
+        text
+    }
+
+    let out = replace_prefixes(text.to_owned(), &workspace_root(), "");
+    let out = replace_prefixes(out, Path::new(CPP_SOURCE_ROOT), "../faust/");
+    normalize_clocked_addresses(out)
+}
+
 // ---------------------------------------------------------------------------
 // Differential report generation
 // ---------------------------------------------------------------------------
@@ -221,7 +269,7 @@ pub(crate) fn parser_parity_report() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = report_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&report_path, out)?;
+    fs::write(&report_path, portable_report_text(&out))?;
     println!("updated {}", report_path.display());
     Ok(())
 }
@@ -402,7 +450,7 @@ pub(crate) fn corpus_status_report() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = report_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&report_path, out)?;
+    fs::write(&report_path, portable_report_text(&out))?;
     println!("updated {}", report_path.display());
     Ok(())
 }
@@ -618,7 +666,7 @@ pub(crate) fn cpp_backend_diff_report() -> Result<(), Box<dyn std::error::Error>
     if let Some(parent) = report_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&report_path, out)?;
+    fs::write(&report_path, portable_report_text(&out))?;
     println!("updated {}", report_path.display());
     Ok(())
 }
@@ -794,7 +842,7 @@ pub(crate) fn table_fastlane_diff_report() -> Result<(), Box<dyn std::error::Err
     if let Some(parent) = report_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&report_path, out)?;
+    fs::write(&report_path, portable_report_text(&out))?;
     println!("updated {}", report_path.display());
     Ok(())
 }
@@ -990,7 +1038,7 @@ pub(crate) fn c_fastlane_diff_report() -> Result<(), Box<dyn std::error::Error>>
     if let Some(parent) = report_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&report_path, out)?;
+    fs::write(&report_path, portable_report_text(&out))?;
     println!("updated {}", report_path.display());
     Ok(())
 }
@@ -1289,7 +1337,7 @@ pub(crate) fn backend_full_corpus_diff_report() -> Result<(), Box<dyn std::error
     if let Some(parent) = report_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&report_path, out)?;
+    fs::write(&report_path, portable_report_text(&out))?;
     println!("updated {}", report_path.display());
     Ok(())
 }

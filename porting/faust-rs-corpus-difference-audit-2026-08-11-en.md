@@ -4,7 +4,8 @@ Date: 2026-08-11
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
-Corpus: all 219 `tests/corpus/*.dsp` files present on the audit date
+Corpus: the original 219 `tests/corpus/*.dsp` files plus the maintained
+`rep_87_table_computed_size` closure fixture added during follow-up
 
 Status update: the root-sibling ordering, source-identity, and compilation
 metadata gaps found by this audit were fixed on 2026-08-11. A maintained
@@ -28,7 +29,7 @@ This file is the dated evidence snapshot.
 
 | Classification | Cases |
 |---|---:|
-| accepted by C++ and Rust | 102 |
+| accepted by C++ and Rust | 103 |
 | rejected by C++ and Rust | 39 |
 | expected C++ rejection / Rust acceptance | 78 |
 | real acceptance divergence | 0 |
@@ -50,12 +51,12 @@ The regenerated detailed matrix is
 ## 3. Common generated-backend surface
 
 The full-corpus backend report found the expected C and C++ module-shell
-signature for all 102 cases accepted by both compilers:
+signature for all 103 cases accepted by both compilers:
 
 | Backend | Matching shell | Signature diff | Unsupported/rejected |
 |---|---:|---:|---:|
-| C++ | 102 | 0 | 117 |
-| C | 102 | 0 | 117 |
+| C++ | 103 | 0 | 117 |
+| C | 103 | 0 | 117 |
 
 Here, "matching shell" means the reduced public envelope checked by the report:
 class/struct identity and required platform macros. It is not a whole-source or
@@ -166,8 +167,8 @@ run produced:
 
 | Result | Cases/traces |
 |---|---:|
-| mutually accepted DSPs | 102 cases |
-| matching numerical output | 95 cases / 285 traces |
+| mutually accepted DSPs | 103 cases |
+| matching numerical output | 96 cases / 288 traces |
 | confirmed expected mismatch | 4 cases |
 | C++ interpreter oracle limitation | 3 cases |
 | common rejection | 39 cases |
@@ -184,6 +185,11 @@ The four mismatch families are maintained as fail-closed expectations:
   table indices;
 - `rep_67_variable_delay_shifted_slider` exposes `DIFF-GAP-016` for the
   composed negative variable-delay expression.
+
+The added `rep_87_table_computed_size` case is accepted by both compilers,
+retains matching C and C++ backend shells, and matches all three numerical
+scenarios. Together with the four-mode compiler test and a direct compilation
+of `basics.lib::tabulateNd_test`, this closes the former `DIFF-GAP-002`.
 
 The C++ Interp route is not a usable oracle for `rep_63_rwtable` (its version-8
 bytecode reaches an interpreter heap bounds failure), `rep_77_foreign_variable`,

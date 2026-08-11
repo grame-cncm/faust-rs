@@ -9,6 +9,11 @@ mode, qualified in the same runs at 132/133 with the single expected
 `FRS-SFIR-0004` rejection of §2.3 (93/93 with it excluded). Vector certification
 went from 97 certified with 1 compile error to 98 certified with 0 errors across
 all 16 modes.
+Follow-up (2026-08-11): computed table extents and the real
+`basics.lib::tabulateNd_test` are accepted in scalar/vector and runtime/const
+modes because global signal simplification reduces their arithmetic size before
+the literal FIR boundary. This closes `DIFF-GAP-002`; see
+`tests/corpus/rep_87_table_computed_size.dsp`.
 Scope: initial content of `rdtable` / `rwtable` tables (`SIGWRTBL(size, SIGGEN(g), …)`)
 
 ## 1. Objective

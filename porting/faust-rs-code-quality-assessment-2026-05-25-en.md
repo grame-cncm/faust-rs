@@ -351,6 +351,11 @@ partly planned); items 4–8 are high-leverage engineering hygiene.
    table-size extractor to accept non-literal sizes now that `simplify` runs in
    `signal_prepare`).
 
+   Follow-up (2026-08-11): the `tabulateNd`/computed-table-size part is closed;
+   global simplification now reduces the extent before FIR extraction and
+   `rep_87_table_computed_size` maintains the behavior. The stream-wrapper
+   numerical difference remains tracked separately.
+
 3. **Decide WASM/Julia maturity targets.** Either commit to byte-parity WASM UI
    offsets + full Julia impulse-test coverage, or explicitly document them as
    "functional subset, parity not pursued" so the scope is honest.

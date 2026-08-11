@@ -215,15 +215,15 @@ classes:
   accepts programs that the pinned C++ reference rejects because those symbols
   do not exist there.
 
-- total corpus cases in the latest checked-in report: `190`
-- `OK/OK` cases accepted by both Rust and C++: `94`
-- `ERR/ERR` cases rejected by both Rust and C++: `18`
+- total corpus cases in the latest checked-in report: `220`
+- `OK/OK` cases accepted by both Rust and C++: `103`
+- `ERR/ERR` cases rejected by both Rust and C++: `39`
 - `OK/ERR` mismatches: `0`
 - `ERR/OK` Rust-extension cases: `78`
 
 Important note:
 
-- the regenerated reports cover `190` files under `tests/corpus/`
+- the regenerated reports cover `220` files under `tests/corpus/`
 - many `ERR/OK` entries are intentional Rust language extensions used to test
   FAD/RAD, not regressions against the portable Faust C++ subset
 - the "portable C++ subset" still has no `OK/ERR` front-end mismatch in this
@@ -241,23 +241,24 @@ In other words:
 At the current backend route (`TransformFastLane`), the supported subset is
 still narrower. The latest checked-in full backend report says:
 
-- total corpus cases: `190`
-- end-to-end C backend parity: `OK=93`, `DIFF=0`, `UNSUPPORTED=97`
-- end-to-end C++ backend parity: `OK=93`, `DIFF=0`, `UNSUPPORTED=97`
+- total corpus cases: `220`
+- end-to-end C backend parity: `OK=103`, `DIFF=0`, `UNSUPPORTED=117`
+- end-to-end C++ backend parity: `OK=103`, `DIFF=0`, `UNSUPPORTED=117`
 
-The `97` unsupported entries combine several different situations:
+The `117` unsupported entries combine two situations:
 
 - intentionally invalid Faust programs,
 - Rust-only AD fixtures that compile in Rust but have no C++ reference backend
-  because the pinned C++ compiler rejects `fad`/`rad` as undefined symbols,
-- and `1` remaining C++-accepted valid corpus case:
-  - `rep_18_stream_wrappers.dsp`
+  because the pinned C++ compiler rejects `fad`/`rad` as undefined symbols.
 
 So for **C++-accepted portable** corpus programs, the current backend route
 compiles:
 
-- `93 / 94` portable backend cases,
-- and misses `1 / 94`, currently in the non-trivial stream-wrapper family.
+- `103 / 103` portable backend cases in the maintained corpus.
+
+This backend-shell result does not claim numerical parity. In particular,
+`rep_18_stream_wrappers.dsp` still exposes a runtime-output difference in the
+corpus numerical differential.
 
 ### 4.3 WASM / JSON backend status
 
@@ -626,16 +627,6 @@ The most important current exclusions are:
     mix of codegen/unit tests, CLI/enrobage tests, and selected generated Julia
     impulse runs.
 
-- **Complex table generators in `SIGGEN`**
-  - the fast-lane now handles a broad class of computed `SIGGEN` generators
-    via the compile-time `GeneratorInterpreter` (oscillator sine tables,
-    recursive phasor-driven tables, etc.),
-  - the remaining gap is `tabulateNd`-style generators whose table-size
-    expression is non-constant arithmetic (e.g. `8*8` → `BinOp(Mul, Int(8), Int(8))`):
-    the signal-level constant-folding pass (`normalize/simplify`) is now wired
-    into `signal_prepare`, but the table-size extractor still requires a literal
-    `Int` node.  See `porting/missing.md` entry 1.
-
 - **Reverse-mode AD (`rad(expr, seeds)`) — feed-forward subset supported**
   - `rad(expr, seeds)` is implemented at the propagation boundary in
     `crates/propagate/src/reverse_ad.rs`. It mirrors the explicit-seed
@@ -860,10 +851,6 @@ Most importantly, the C++ compiler still has:
 - a fuller embedded-compiler helper surface for web tooling
   (`expandDSP` and `generateAuxFiles` are now real in Rust, but `getInfos`
   is only partially implemented and packaged FS semantics differ),
-- the `simplify` constant-folding pass applied to table-size positions
-  (the Rust pipeline now runs `simplify` in `signal_prepare`, but the
-  table-size extractor in the FIR builder still requires a literal `Int` node;
-  multi-dimensional `tabulateNd` is therefore still unsupported),
 - the historical production path beyond the active Rust fast-lane slice.
 
 The variable-delay gap is now **substantially closed**:
