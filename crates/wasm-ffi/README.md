@@ -119,6 +119,39 @@ Concurrency note:
 - concurrent host calls are safe at the registry level, but the public contract
   is still “copy returned bytes promptly, then free the handle”
 
+## Prefetched HTTP(S) source graphs
+
+The compiler module never calls browser `fetch()` and does not link the native
+HTTP transport. A browser or worker can nevertheless compile URL-addressed
+graphs by fetching every source asynchronously before calling
+`faust_wasm_compile_dsp`.
+
+Pass the main source text normally and use its absolute URL as the `name`
+argument. Add each imported response to the argument string with a repeated:
+
+```text
+--remote-source <absolute-http(s)-url> <base64-encoded-utf8-source>
+```
+
+For example, a root named `https://example.test/dsp/main.dsp` containing
+`import("lib/identity.lib")` resolves that child as
+`https://example.test/dsp/lib/identity.lib`; the latter URL and its encoded
+source must be present in the bundle. Explicit absolute URL imports work from
+both URL-named and ordinary in-memory roots.
+
+The host owns asynchronous download, CORS/authentication, redirects, URL
+authorization, and the aggregate graph-size policy. Redirects should be
+resolved before injection and each final source stored under the URL used by
+the import graph. The compiler normalizes URL fragments, rejects duplicate
+normalized URLs, malformed base64, and non-UTF-8 source text, enforces its
+per-response byte limit, and reports the canonical missing URL when a bundle
+is incomplete. Base64 payloads are excluded from diagnostic option metadata.
+
+This mechanism is intentionally separate from `--virtual-source`: virtual
+sources have logical filesystem-like names, while prefetched remote sources
+retain URL identity for relative resolution, cycle detection, provenance, and
+diagnostics.
+
 ## Embedded Faust libraries
 
 At build time, `wasm-ffi` can discover and embed a read-only bundle of Faust

@@ -233,11 +233,14 @@ must run unchanged with Faust C++ should not pass them.
   bodies, real HTTPS, and structured errors. Remote evaluator-driven
   `component(...)`/`library(...)`, remote inline architecture sub-includes, and
   C/C++ compatibility-facade opt-in are still deferred.
-- The `wasm-ffi` embedded compiler instead ships standard libraries as
-  read-only virtual sources and does not depend on an Emscripten filesystem.
-- Compatibility impact: native CLI builds must opt in twice; embedded/browser
-  callers remain network-free unless they use the Rust injected API or provide
-  virtual/prefetched sources explicitly.
+- The `wasm-ffi` embedded compiler ships standard libraries as read-only
+  virtual sources and accepts host-prefetched URL/source bundles through
+  repeated `--remote-source <url> <base64>` arguments. The module performs no
+  browser network I/O and does not depend on an Emscripten filesystem; URL
+  identity and relative URL imports are preserved inside the supplied graph.
+- Compatibility impact: native CLI builds must opt in twice; browser callers
+  must fetch the complete graph asynchronously and supply it explicitly before
+  entering the synchronous compiler ABI.
 
 ### DIFF-BEH-008 — relative pathname navigation in explicit group labels
 

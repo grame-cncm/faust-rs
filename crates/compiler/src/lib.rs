@@ -1027,7 +1027,10 @@ impl Compiler {
         virtual_sources: &VirtualSourceMap,
     ) -> Result<SignalCompileOutput, CompilerError> {
         let metadata_store = parser::CompilationMetadataStore::new(source_name);
-        let output = if search_paths.is_empty() && virtual_sources.is_empty() {
+        let output = if search_paths.is_empty()
+            && virtual_sources.is_empty()
+            && self.remote_fetcher.is_none()
+        {
             ensure_parse_success(
                 source_name,
                 self.time_phase("parser", || {
@@ -1038,6 +1041,22 @@ impl Compiler {
                         metadata_store.clone(),
                     )
                 }),
+            )?
+        } else if let Some(fetcher) = self.remote_fetcher.clone() {
+            ensure_parse_success(
+                source_name,
+                self.time_phase("parser", || {
+                    parser::parse_program_with_remote_imports_and_precision_and_metadata(
+                        source,
+                        source_name,
+                        search_paths,
+                        virtual_sources,
+                        metadata_store.clone(),
+                        parser_float_size(self.real_type),
+                        parser::RemoteSourceCapability::new(fetcher, self.remote_fetch_policy),
+                    )
+                })
+                .map_err(CompilerError::import)?,
             )?
         } else {
             ensure_parse_success(

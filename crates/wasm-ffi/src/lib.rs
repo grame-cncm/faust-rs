@@ -45,6 +45,13 @@
 //! - the shipped WASM compiler-module stays self-contained for the standard
 //!   library set plus any explicitly embedded local `.lib` roots, without
 //!   recreating an Emscripten-style virtual filesystem.
+//!
+//! # Prefetched remote sources
+//! Browser hosts can preserve HTTP(S) identity without granting this module
+//! network authority. They asynchronously fetch a complete source graph, then
+//! pass each child as `--remote-source <url> <base64>` in the compile argument
+//! string. If the root `name` is an HTTP(S) URL, relative imports join against
+//! it. The resulting immutable in-memory fetcher performs no browser I/O.
 
 #![allow(non_snake_case)]
 #![allow(unsafe_code)]
@@ -54,7 +61,7 @@ mod diagnostic_record;
 use std::collections::HashMap;
 use std::slice;
 use std::str;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use codegen::backends::wasm::WasmOptions;
 use compiler::diagnostics_json::{
@@ -63,7 +70,7 @@ use compiler::diagnostics_json::{
 };
 use compiler::{Compiler, RealType, WasmArtifactBundle, WasmArtifactRequest};
 use diagnostic_record::FfiDiagnosticRecord;
-use parser::VirtualSourceMap;
+use parser::{PrefetchedRemoteSourceBundle, RemoteFetchPolicy, VirtualSourceMap};
 
 include!(concat!(env!("OUT_DIR"), "/embedded_faust_libraries.rs"));
 
@@ -142,25 +149,39 @@ impl StoredTextResult {
 /// Request metadata identifying one helper-service call in a diagnostics
 /// report (`generateAuxFiles`, `expandDSP`, ...).
 ///
-/// Transport-only arguments are sanitized: a `--virtual-source
-/// <name>=<base64>` value keeps only the source name — the payload is the
-/// complete source text, which must not leak into the report (the report's
-/// own `sources` section is governed by [`SourceTextPolicy`], and inlining
-/// base64 here would both bypass that policy and bloat the payload).
+/// Transport-only arguments are sanitized. A `--virtual-source
+/// <name>=<base64>` value keeps only the source name, while a
+/// `--remote-source <url> <base64>` value keeps the URL. Source payloads must
+/// not leak into the report (the report's own `sources` section is governed by
+/// [`SourceTextPolicy`], and inlining base64 here would both bypass that policy
+/// and bloat the payload).
 fn service_diagnostics_request(mode: &str, args: &str) -> DiagnosticsRequestMetadata {
     let mut normalized_options: Vec<String> = Vec::new();
-    let mut elide_next_value = false;
-    for token in args.split_whitespace() {
-        if elide_next_value {
-            elide_next_value = false;
-            let name = token.split('=').next().unwrap_or(token);
-            normalized_options.push(format!("{name}=<elided>"));
+    let tokens: Vec<_> = args.split_whitespace().collect();
+    let mut index = 0;
+    while index < tokens.len() {
+        if tokens[index] == "--virtual-source" {
+            normalized_options.push(tokens[index].to_owned());
+            if let Some(spec) = tokens.get(index + 1) {
+                let name = spec.split('=').next().unwrap_or(spec);
+                normalized_options.push(format!("{name}=<elided>"));
+            }
+            index += 2;
             continue;
         }
-        if token == "--virtual-source" {
-            elide_next_value = true;
+        if tokens[index] == "--remote-source" {
+            normalized_options.push(tokens[index].to_owned());
+            if let Some(url) = tokens.get(index + 1) {
+                normalized_options.push((*url).to_owned());
+            }
+            if tokens.get(index + 2).is_some() {
+                normalized_options.push("<elided>".to_owned());
+            }
+            index += 3;
+            continue;
         }
-        normalized_options.push(token.to_owned());
+        normalized_options.push(tokens[index].to_owned());
+        index += 1;
     }
     DiagnosticsRequestMetadata {
         mode: Some(mode.to_owned()),
@@ -300,6 +321,40 @@ fn virtual_sources_from_argv(argv: &[String]) -> VirtualSourceMap {
     vsources
 }
 
+/// Decode repeated host-prefetched remote sources from the raw argument ABI.
+///
+/// Each entry is encoded as `--remote-source <absolute-url> <base64>`. The
+/// browser host performs asynchronous I/O before entering this synchronous
+/// module; this function only validates and freezes the supplied graph.
+fn prefetched_remote_sources_from_argv(
+    argv: &[String],
+) -> Result<PrefetchedRemoteSourceBundle, String> {
+    let mut entries = Vec::new();
+    let mut index = 0;
+    while index < argv.len() {
+        if argv[index] != "--remote-source" {
+            index += 1;
+            continue;
+        }
+        let Some(url) = argv.get(index + 1) else {
+            return Err("missing URL after --remote-source".to_owned());
+        };
+        let Some(encoded) = argv.get(index + 2) else {
+            return Err(format!(
+                "missing base64 source payload after --remote-source {url}"
+            ));
+        };
+        let bytes = base64_decode(encoded.as_bytes())
+            .map_err(|()| format!("invalid base64 payload for remote source `{url}`"))?;
+        str::from_utf8(&bytes)
+            .map_err(|error| format!("remote source `{url}` is not valid UTF-8: {error}"))?;
+        entries.push((url.clone(), bytes));
+        index += 3;
+    }
+    PrefetchedRemoteSourceBundle::try_from_sources(entries)
+        .map_err(|error| format!("invalid prefetched remote source bundle: {error}"))
+}
+
 /// Parsed compile request plus the diagnostic context that must survive a
 /// compiler failure.
 #[derive(Debug, Clone)]
@@ -307,6 +362,7 @@ struct ParsedCompileRequest {
     artifact: WasmArtifactRequest,
     semantic_warnings: bool,
     diagnostics: DiagnosticsRequestMetadata,
+    remote_sources: PrefetchedRemoteSourceBundle,
 }
 
 fn diagnostics_request_metadata(
@@ -356,7 +412,13 @@ fn parse_compile_request(
     let _embedded_roots = embedded_standard_library_roots();
     let argv = split_faustwasm_args(args);
     let parsed = ffi_common::parse_ffi_compile_args(&argv)?;
-    let diagnostics = diagnostics_request_metadata(&parsed, internal_memory);
+    let remote_sources = prefetched_remote_sources_from_argv(&argv)?;
+    let mut diagnostics = diagnostics_request_metadata(&parsed, internal_memory);
+    diagnostics.normalized_options.extend(
+        remote_sources
+            .urls()
+            .map(|url| format!("--remote-source={} <elided>", url.as_str())),
+    );
     let mut request = WasmArtifactRequest::new(name, source);
     request.import_dirs = parsed.search_paths;
     request.virtual_sources = virtual_sources_from_argv(&argv);
@@ -369,6 +431,7 @@ fn parse_compile_request(
         artifact: request,
         semantic_warnings: parsed.warnings,
         diagnostics,
+        remote_sources,
     })
 }
 
@@ -420,13 +483,20 @@ fn compile_to_stored_result(
             ));
         }
     };
-    let compiler = Compiler::new()
+    let mut compiler = Compiler::new()
         .with_real_type(if parsed.artifact.wasm_options.double_precision {
             RealType::Float64
         } else {
             RealType::Float32
         })
         .with_semantic_warnings(parsed.semantic_warnings);
+    // Install even an empty bundle so a URL import missing from the host's
+    // prefetched graph reports its canonical URL instead of falling through to
+    // a non-import-aware source-string path.
+    compiler = compiler.with_remote_source_fetcher(
+        Arc::new(parsed.remote_sources),
+        RemoteFetchPolicy::default(),
+    );
     match compiler.compile_wasm_artifact(&parsed.artifact) {
         Ok(artifact) => StoredCompileResult::Ok(StoredCompileSuccess {
             artifact,
@@ -643,7 +713,11 @@ pub extern "C" fn faust_wasm_version_len() -> usize {
 ///
 /// The `args` string follows the current C++ `libFaustWasm` convention:
 /// it is split on plain spaces before parsing the shared Rust FFI option
-/// subset (`-I`, `-cn`, `-double`).
+/// subset (`-I`, `-cn`, `-double`). In addition, a browser host may inject a
+/// fully prefetched remote graph through repeated
+/// `--remote-source <absolute-http(s)-url> <base64-encoded-utf8-source>`
+/// entries. The module validates and consumes those entries synchronously; it
+/// never performs network I/O itself.
 ///
 /// On success the returned handle exposes three independent byte payloads:
 /// compiled WASM bytes, companion JSON, and the backend-aware
@@ -959,7 +1033,14 @@ fn base64_decode(s: &[u8]) -> Result<Vec<u8>, ()> {
         }
         t
     };
-    let bytes: Vec<u8> = s.iter().copied().filter(|&b| b != b'=').collect();
+    if !s.len().is_multiple_of(4) {
+        return Err(());
+    }
+    let padding = s.iter().rev().take_while(|&&byte| byte == b'=').count();
+    if padding > 2 || s[..s.len().saturating_sub(padding)].contains(&b'=') {
+        return Err(());
+    }
+    let bytes: Vec<u8> = s[..s.len().saturating_sub(padding)].to_vec();
     let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
     for chunk in bytes.chunks(4) {
         let v: Vec<u8> = chunk
@@ -1353,6 +1434,111 @@ mod tests {
         assert!(
             matches!(result, StoredCompileResult::Ok(_)),
             "compile with --virtual-source flag should succeed"
+        );
+    }
+
+    #[test]
+    fn compile_accepts_a_prefetched_relative_remote_graph() {
+        let child_url = "https://example.test/dsp/lib/identity.lib";
+        let child_source = "identity = _;\n";
+        let encoded = super::base64_encode(child_source.as_bytes());
+        let args = format!("--remote-source {child_url} {encoded}");
+
+        let request = parse_compile_request(
+            "https://example.test/dsp/main.dsp",
+            "import(\"lib/identity.lib\");\nprocess = identity;\n",
+            &args,
+            true,
+        )
+        .expect("prefetched request should parse");
+        assert_eq!(request.remote_sources.len(), 1);
+        assert!(
+            request
+                .diagnostics
+                .normalized_options
+                .contains(&format!("--remote-source={child_url} <elided>"))
+        );
+        assert!(
+            request
+                .diagnostics
+                .normalized_options
+                .iter()
+                .all(|option| !option.contains(&encoded))
+        );
+
+        let result = compile_to_stored_result(
+            "https://example.test/dsp/main.dsp",
+            "import(\"lib/identity.lib\");\nprocess = identity;\n",
+            &args,
+            true,
+        );
+        let StoredCompileResult::Ok(success) = result else {
+            panic!("prefetched remote graph should compile");
+        };
+        assert!(success.artifact.wasm_bytes.starts_with(b"\0asm"));
+    }
+
+    #[test]
+    fn prefetched_remote_graph_reports_missing_and_malformed_entries() {
+        let missing = compile_to_stored_result(
+            "https://example.test/dsp/main.dsp",
+            "import(\"missing.lib\");\nprocess = _;\n",
+            "",
+            true,
+        );
+        let StoredCompileResult::Err(failure) = missing else {
+            panic!("an incomplete prefetched graph must fail");
+        };
+        assert!(failure.message().contains("missing.lib"));
+        assert!(failure.message().contains("absent"));
+        assert!(failure.diagnostics().is_some());
+
+        for args in [
+            "--remote-source",
+            "--remote-source https://example.test/child.lib",
+            "--remote-source not-a-url cHJvY2VzcyA9IF87",
+            "--remote-source https://example.test/child.lib !!!",
+        ] {
+            let result = compile_to_stored_result("main.dsp", "process = _;", args, true);
+            let StoredCompileResult::Err(failure) = result else {
+                panic!("malformed bundle entry `{args}` must fail");
+            };
+            assert!(failure.diagnostics().is_none(), "{args}");
+        }
+
+        let invalid_utf8 = super::base64_encode(&[0xff]);
+        let result = compile_to_stored_result(
+            "main.dsp",
+            "process = _;",
+            &format!("--remote-source https://example.test/child.lib {invalid_utf8}"),
+            true,
+        );
+        let StoredCompileResult::Err(failure) = result else {
+            panic!("non-UTF-8 remote source must fail before compilation");
+        };
+        assert!(failure.message().contains("not valid UTF-8"));
+        assert!(failure.diagnostics().is_none());
+    }
+
+    #[test]
+    fn service_diagnostics_elide_prefetched_source_payloads() {
+        let encoded = super::base64_encode(b"secret = 42;");
+        let args = format!("--remote-source https://example.test/secret.lib {encoded} --warn");
+        let request = super::service_diagnostics_request("test", &args);
+        assert_eq!(
+            request.normalized_options,
+            [
+                "--remote-source",
+                "https://example.test/secret.lib",
+                "<elided>",
+                "--warn",
+            ]
+        );
+        assert!(
+            request
+                .normalized_options
+                .iter()
+                .all(|option| !option.contains(&encoded))
         );
     }
 

@@ -124,10 +124,12 @@ bounded time, redirect count, and response size; response text must be UTF-8;
 URL credentials are rejected. A feature-off or runtime-off compiler performs
 no request and reports the stable `FRS-SRC-0005` diagnostic.
 
-Networking remains disabled for browser-WASM and the C/C++ compatibility
-facades. Remote evaluator-driven `component(...)` / `library(...)` loads and
-remote inline architecture sub-includes are currently deferred. Virtual or
-prefetched source bundles remain the supported embedded/browser mechanism.
+Native networking remains disabled for browser-WASM and the C/C++
+compatibility facades. Browser hosts can asynchronously prefetch HTTP(S)
+source graphs and inject canonical URL/content entries through `wasm-ffi`;
+the compiler then resolves URL-relative structural imports without performing
+I/O. Remote evaluator-driven `component(...)` / `library(...)` loads and
+remote inline architecture sub-includes are currently deferred.
 
 ### Lane defaults to know
 

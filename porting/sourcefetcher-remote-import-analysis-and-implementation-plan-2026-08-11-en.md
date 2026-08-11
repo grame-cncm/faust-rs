@@ -4,9 +4,9 @@ Date: 2026-08-11
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
-Status: implemented for the native structural-import and main-architecture
-scope; browser-WASM prefetched remote graphs are planned in Phase 6; other
-explicitly deferred surfaces are listed in Phase 4
+Status: implemented for the native structural-import, main-architecture, and
+browser-WASM prefetched-graph scopes; other explicitly deferred surfaces are
+listed in Phase 4
 
 ## 1. Objective
 
@@ -377,7 +377,7 @@ Public API mapping after this phase:
 | Native CLI | `adapted` | Cargo feature plus `--allow-network-imports` |
 | Rust enrobage API | `adapted` | Reuses the same injected fetch contract and limits |
 | C and C++ compatibility facades | `deferred` | Disabled; no implicit process-global networking |
-| `wasm-ffi` / browser | `adapted` after Phase 6 | No internal networking; host-prefetched URL bundle only |
+| `wasm-ffi` / browser | `adapted` | No internal networking; host-prefetched URL bundle only |
 | Evaluator `component(...)` / `library(...)` URLs | `deferred` | Local and virtual behavior unchanged; no URL fallback |
 
 ### Phase 5 — Closure and maintenance gates
@@ -398,7 +398,7 @@ deferred API surfaces.
 
 ### Phase 6 — Browser-WASM prefetched remote graphs
 
-Status: planned.
+Status: complete (implementation commit following planning commit `9ebec263`).
 
 1. Add the immutable URL-keyed fetch bundle in parser-core with normalization,
    duplicate, missing-entry, byte-bound, and relative-resolution tests.

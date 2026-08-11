@@ -11,12 +11,15 @@ use std::sync::Arc;
 use boxes::{BoxBuilder, BoxMatch, dump_box, match_box};
 use diagnostics::{LabelRole, SourceKind};
 use parser::{
-    CompilationMetadataKey, CompilationMetadataStore, FetchedSource, RemoteFetchPolicy,
-    RemoteFetchRequest, RemoteSourceFetcher, SourceFetchError, SourceLocator, SourceReaderError,
-    VirtualSourceMap, parse_file_with_imports, parse_minimal, parse_program,
-    parse_program_with_imports_and_metadata, parse_url_with_imports_and_precision_and_metadata,
+    CompilationMetadataKey, CompilationMetadataStore, FetchedSource, PrefetchedRemoteSourceBundle,
+    RemoteFetchPolicy, RemoteFetchRequest, RemoteSourceCapability, RemoteSourceFetcher,
+    SourceFetchError, SourceLocator, SourceReaderError, VirtualSourceMap, parse_file_with_imports,
+    parse_minimal, parse_program, parse_program_with_imports_and_metadata,
+    parse_program_with_remote_imports_and_precision_and_metadata,
+    parse_url_with_imports_and_precision_and_metadata,
 };
 use tlib::{TreeArena, TreeId};
+use url::Url;
 
 fn make_temp_root(name: &str) -> PathBuf {
     let mut path = std::env::temp_dir();
@@ -502,6 +505,66 @@ fn parse_url_with_imports_resolves_relative_remote_children() {
             "https://example.test/dsp/main.dsp",
             "https://example.test/dsp/lib/identity.lib",
         ]
+    );
+}
+
+#[test]
+fn supplied_remote_program_uses_its_url_as_the_relative_import_base() {
+    let bundle = PrefetchedRemoteSourceBundle::try_new([(
+        Url::parse("https://example.test/dsp/lib/identity.lib").unwrap(),
+        b"identity = _;\n".to_vec(),
+    )])
+    .unwrap();
+    let output = parse_program_with_remote_imports_and_precision_and_metadata(
+        "import(\"lib/identity.lib\");\nprocess = identity;\n",
+        "https://example.test/dsp/main.dsp",
+        &[],
+        &VirtualSourceMap::default(),
+        CompilationMetadataStore::new("https://example.test/dsp/main.dsp"),
+        1,
+        RemoteSourceCapability::new(Arc::new(bundle), RemoteFetchPolicy::default()),
+    )
+    .expect("prefetched relative remote graph should parse");
+
+    assert!(output.errors.is_empty(), "{:?}", output.errors);
+    assert_eq!(
+        output
+            .used_sources
+            .iter()
+            .map(SourceLocator::display_name)
+            .collect::<Vec<_>>(),
+        [
+            "https://example.test/dsp/main.dsp",
+            "https://example.test/dsp/lib/identity.lib",
+        ]
+    );
+}
+
+#[test]
+fn supplied_local_program_can_import_an_explicit_prefetched_url() {
+    let child_url = "https://example.test/lib/constant.lib";
+    let bundle = PrefetchedRemoteSourceBundle::try_new([(
+        Url::parse(child_url).unwrap(),
+        b"remote_constant = 42;\n".to_vec(),
+    )])
+    .unwrap();
+    let output = parse_program_with_remote_imports_and_precision_and_metadata(
+        &format!("import(\"{child_url}\");\nprocess = remote_constant;\n"),
+        "main.dsp",
+        &[],
+        &VirtualSourceMap::default(),
+        CompilationMetadataStore::new("main.dsp"),
+        1,
+        RemoteSourceCapability::new(Arc::new(bundle), RemoteFetchPolicy::default()),
+    )
+    .expect("explicit prefetched URL import should parse");
+
+    assert!(output.errors.is_empty(), "{:?}", output.errors);
+    assert!(
+        output
+            .used_sources
+            .iter()
+            .any(|source| source.display_name() == child_url)
     );
 }
 

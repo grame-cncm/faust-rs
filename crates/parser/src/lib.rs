@@ -44,8 +44,9 @@ pub use context::{
 };
 pub use metadata::{CompilationMetadataKey, CompilationMetadataSnapshot, CompilationMetadataStore};
 pub use source_reader::{
-    ExpandedSource, FetchedSource, ImportCycleEdge, ImportSite, RemoteFetchPolicy,
-    RemoteFetchRequest, RemoteSourceFetcher, SourceFetchError, SourceFetchErrorKind,
+    ExpandedSource, FetchedSource, ImportCycleEdge, ImportSite, PrefetchedRemoteSourceBundle,
+    PrefetchedRemoteSourceBundleError, RemoteFetchPolicy, RemoteFetchRequest,
+    RemoteSourceCapability, RemoteSourceFetcher, SourceFetchError, SourceFetchErrorKind,
     SourceLineOrigin, SourceLocator, SourceReader, SourceReaderError, VirtualSourceMap,
 };
 
@@ -1884,6 +1885,40 @@ pub fn parse_program_with_imports_and_precision_and_metadata(
         .parse_entry(Path::new(source_file))
 }
 
+/// Parses an in-memory root while resolving explicit remote imports through an
+/// injected capability.
+///
+/// If `source_file` is an absolute HTTP(S) URL, it becomes the root source
+/// identity and the base for relative imports; the supplied root text is not
+/// fetched again. Otherwise the root keeps its existing virtual-path identity
+/// and only explicit HTTP(S) imports enter the remote graph.
+pub fn parse_program_with_remote_imports_and_precision_and_metadata(
+    input: &str,
+    source_file: &str,
+    search_paths: &[std::path::PathBuf],
+    virtual_sources: &VirtualSourceMap,
+    metadata_store: CompilationMetadataStore,
+    float_size: u8,
+    remote: RemoteSourceCapability,
+) -> Result<ParseOutput, SourceReaderError> {
+    let remote_root =
+        url::Url::parse(source_file).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+    let bundle = if remote_root {
+        virtual_sources.clone()
+    } else {
+        virtual_sources.with_source(PathBuf::from(source_file), input.to_owned())
+    };
+    let (fetcher, policy) = remote.into_parts();
+    let reader = SourceReader::with_virtual_sources(search_paths.to_vec(), bundle)
+        .with_remote_fetcher(fetcher, policy);
+    let expander = StructuralImportExpander::new(reader, metadata_store, float_size);
+    if remote_root {
+        expander.parse_supplied_remote_entry(source_file, input)
+    } else {
+        expander.parse_entry(Path::new(source_file))
+    }
+}
+
 /// Reads a source file, parses each imported file as its own unit, then expands
 /// import-file nodes structurally like the C++ compiler.
 ///
@@ -2582,11 +2617,28 @@ impl StructuralImportExpander {
         self.parse_resolved_entry(locator)
     }
 
+    fn parse_supplied_remote_entry(
+        self,
+        url: &str,
+        source: &str,
+    ) -> Result<ParseOutput, SourceReaderError> {
+        let locator = self.reader.resolve_remote_entry_locator(url)?;
+        self.parse_supplied_entry(locator, source.to_owned())
+    }
+
     fn parse_resolved_entry(
         mut self,
         requested: SourceLocator,
     ) -> Result<ParseOutput, SourceReaderError> {
         let (source, resolved) = self.reader.read_locator(&requested)?;
+        self.parse_supplied_entry(resolved, source)
+    }
+
+    fn parse_supplied_entry(
+        mut self,
+        resolved: SourceLocator,
+        source: String,
+    ) -> Result<ParseOutput, SourceReaderError> {
         self.note_visit(&resolved);
         self.active_stack.insert(resolved.clone());
         self.active_paths.push(resolved.clone());

@@ -294,6 +294,10 @@ What is now true:
 - that compiler-module now embeds the standard Faust library set as read-only
   virtual sources, so source-string compilation can resolve imports such as
   `import("stdfaust.lib")` without an Emscripten-style filesystem
+- browser/worker hosts can also prefetch HTTP(S) source graphs asynchronously
+  and inject repeated canonical URL/source entries through `--remote-source`;
+  the synchronous compiler module performs no network I/O while preserving
+  relative URL resolution, provenance, cycle detection, and diagnostics
 - the embedded-compiler path is validated end-to-end in `faustwasm` on:
   - mono DSP compilation using the standard runtime path
   - polyphonic `faust2wasm.js` generation, including packaged internal mixer
@@ -855,7 +859,9 @@ Most importantly, the C++ compiler still has:
   architecture sub-includes, and network opt-in through the C/C++ compatibility
   facades. Native Rust/CLI direct HTTP(S) sources, structural imports, relative
   remote import graphs, and main architecture templates are supported behind
-  the explicit policy described in
+  the explicit policy described below; browser-WASM supports structural remote
+  graphs through host-prefetched URL bundles rather than internal networking.
+  See
   [`sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`](sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md),
 - the historical production path beyond the active Rust fast-lane slice.
 

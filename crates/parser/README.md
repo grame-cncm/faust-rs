@@ -28,6 +28,7 @@ errors.
 | `parse_program_with_metadata(arena, ctx, src)` | Parse + return metadata snapshot |
 | `parse_file_with_imports(path, search_paths)` | Parse a file, recursively expanding imports |
 | `parse_file_with_imports_and_metadata(path, search_paths)` | File parse + metadata |
+| `parse_program_with_remote_imports_and_precision_and_metadata(...)` | Parse an in-memory root with an injected HTTP(S) source capability; an URL-named root is the base for relative imports |
 | `parse_minimal(arena, ctx, src)` | Minimal parse for testing/tooling |
 | `lex_tokens(src)` | Lex source text and return named tokens |
 | `lexerdef()` | Returns the compiled `lrlex` lexer definition |
@@ -63,10 +64,14 @@ errors.
 
 | Item | Description |
 |---|---|
-| `SourceReader` | File-backed import expander with cycle detection and caching |
+| `SourceReader` | File, virtual, and URL import resolver with cycle detection and session caching |
 | `ExpandedSource` | Expanded source text with line-origin tracking |
 | `SourceLineOrigin` | Maps an expanded line back to its original file and line number |
-| `SourceReaderError` | Errors from file loading: `Io`, `UnresolvedImport`, `ImportCycle` |
+| `SourceLocator` | Canonical file, virtual-path, or HTTP(S) source identity |
+| `RemoteSourceFetcher` | Host-injected synchronous remote-source capability |
+| `RemoteSourceCapability` | Fetcher plus immutable per-parse resource policy |
+| `PrefetchedRemoteSourceBundle` | Immutable URL-keyed, I/O-free fetcher for browser/embedded hosts |
+| `SourceReaderError` | Errors from local/remote loading, resolution, and import cycles |
 
 ## Position in the pipeline
 

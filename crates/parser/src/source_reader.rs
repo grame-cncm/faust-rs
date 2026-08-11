@@ -215,6 +215,152 @@ pub trait RemoteSourceFetcher: fmt::Debug + Send + Sync {
     fn fetch(&self, request: &RemoteFetchRequest) -> Result<FetchedSource, SourceFetchError>;
 }
 
+/// One immutable remote-source capability and its per-request limits.
+#[derive(Clone, Debug)]
+pub struct RemoteSourceCapability {
+    fetcher: Arc<dyn RemoteSourceFetcher>,
+    policy: RemoteFetchPolicy,
+}
+
+impl RemoteSourceCapability {
+    /// Couples a host fetcher with the limits applied during this parse.
+    #[must_use]
+    pub fn new(fetcher: Arc<dyn RemoteSourceFetcher>, policy: RemoteFetchPolicy) -> Self {
+        Self { fetcher, policy }
+    }
+
+    /// Separates the owned fetcher and policy for source-reader installation.
+    #[must_use]
+    pub fn into_parts(self) -> (Arc<dyn RemoteSourceFetcher>, RemoteFetchPolicy) {
+        (self.fetcher, self.policy)
+    }
+}
+
+/// Error raised while constructing a [`PrefetchedRemoteSourceBundle`].
+#[derive(Debug)]
+pub enum PrefetchedRemoteSourceBundleError {
+    /// One key is not a supported normalized HTTP(S) locator.
+    InvalidUrl(SourceReaderError),
+    /// Two input keys normalize to the same URL identity.
+    DuplicateUrl(Url),
+}
+
+impl fmt::Display for PrefetchedRemoteSourceBundleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidUrl(error) => error.fmt(f),
+            Self::DuplicateUrl(url) => write!(f, "duplicate prefetched remote source `{url}`"),
+        }
+    }
+}
+
+impl std::error::Error for PrefetchedRemoteSourceBundleError {}
+
+/// Immutable URL-keyed source bundle supplied by a host before compilation.
+///
+/// # Browser-WASM adaptation
+///
+/// Browser `fetch()` is asynchronous while Faust's parser source-reader
+/// contract is synchronous. A browser host therefore fetches the complete
+/// graph first and injects this bundle as a [`RemoteSourceFetcher`]. The
+/// compiler performs no I/O, but remote sources retain canonical URL identity
+/// for relative joining, cycle detection, provenance, and diagnostics.
+///
+/// Keys accept only HTTP(S), are normalized through [`SourceLocator`], and
+/// reject duplicates after fragment removal. Redirects are a host concern:
+/// each stored URL is returned as both the requested and final identity.
+#[derive(Clone, Debug, Default)]
+pub struct PrefetchedRemoteSourceBundle {
+    entries: Arc<HashMap<Url, Arc<[u8]>>>,
+}
+
+impl PrefetchedRemoteSourceBundle {
+    /// Parses and builds a checked bundle from URL-string/response-byte pairs.
+    pub fn try_from_sources(
+        entries: impl IntoIterator<Item = (String, Vec<u8>)>,
+    ) -> Result<Self, PrefetchedRemoteSourceBundleError> {
+        let mut parsed = Vec::new();
+        for (url, bytes) in entries {
+            let normalized = match SourceLocator::remote(&url, None)
+                .map_err(PrefetchedRemoteSourceBundleError::InvalidUrl)?
+            {
+                SourceLocator::Url(url) => url,
+                SourceLocator::File(_) | SourceLocator::Virtual(_) => unreachable!(),
+            };
+            parsed.push((normalized, bytes));
+        }
+        Self::try_new(parsed)
+    }
+
+    /// Builds a checked immutable bundle from URL/response-byte pairs.
+    pub fn try_new(
+        entries: impl IntoIterator<Item = (Url, Vec<u8>)>,
+    ) -> Result<Self, PrefetchedRemoteSourceBundleError> {
+        let mut out = HashMap::new();
+        for (url, bytes) in entries {
+            let normalized = match SourceLocator::from_remote_url(url)
+                .map_err(PrefetchedRemoteSourceBundleError::InvalidUrl)?
+            {
+                SourceLocator::Url(url) => url,
+                SourceLocator::File(_) | SourceLocator::Virtual(_) => unreachable!(),
+            };
+            if out.insert(normalized.clone(), Arc::from(bytes)).is_some() {
+                return Err(PrefetchedRemoteSourceBundleError::DuplicateUrl(normalized));
+            }
+        }
+        Ok(Self {
+            entries: Arc::new(out),
+        })
+    }
+
+    /// Returns whether this bundle contains no remote sources.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Returns the number of canonical remote sources in this bundle.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns canonical bundle URLs in deterministic lexical order.
+    pub fn urls(&self) -> impl Iterator<Item = &Url> {
+        let mut ordered: Vec<_> = self.entries.keys().collect();
+        ordered.sort_by_key(|url| url.as_str());
+        ordered.into_iter()
+    }
+}
+
+impl RemoteSourceFetcher for PrefetchedRemoteSourceBundle {
+    fn fetch(&self, request: &RemoteFetchRequest) -> Result<FetchedSource, SourceFetchError> {
+        let Some(bytes) = self.entries.get(&request.url) else {
+            return Err(SourceFetchError {
+                kind: SourceFetchErrorKind::Transport,
+                url: request.url.clone(),
+                message: "URL is absent from the prefetched remote source bundle".into(),
+            });
+        };
+        if bytes.len() > request.policy.max_response_bytes {
+            return Err(SourceFetchError {
+                kind: SourceFetchErrorKind::ResponseTooLarge,
+                url: request.url.clone(),
+                message: format!(
+                    "prefetched response exceeds the {} byte limit",
+                    request.policy.max_response_bytes
+                )
+                .into_boxed_str(),
+            });
+        }
+        Ok(FetchedSource {
+            requested_url: request.url.clone(),
+            final_url: request.url.clone(),
+            bytes: bytes.to_vec(),
+        })
+    }
+}
+
 /// One source-origin marker for a line in expanded source text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Origin information for one expanded source line.
@@ -1122,8 +1268,9 @@ fn parse_import_line(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        FetchedSource, RemoteFetchPolicy, RemoteFetchRequest, RemoteSourceFetcher,
-        SourceFetchError, SourceLocator, SourceReader, SourceReaderError, VirtualSourceMap,
+        FetchedSource, PrefetchedRemoteSourceBundle, PrefetchedRemoteSourceBundleError,
+        RemoteFetchPolicy, RemoteFetchRequest, RemoteSourceFetcher, SourceFetchError,
+        SourceFetchErrorKind, SourceLocator, SourceReader, SourceReaderError, VirtualSourceMap,
         parse_import_line,
     };
     use std::path::Path;
@@ -1170,6 +1317,66 @@ mod tests {
         let fetched = reader.fetch_remote(&locator).unwrap();
         assert_eq!(fetched.bytes, b"process = _;\n");
         assert_eq!(fetched.requested_url, fetched.final_url);
+    }
+
+    #[test]
+    fn prefetched_bundle_normalizes_urls_and_enforces_limits() {
+        let bundle = PrefetchedRemoteSourceBundle::try_new([(
+            Url::parse("https://example.com/lib/math.lib#ignored").unwrap(),
+            b"answer = 42;\n".to_vec(),
+        )])
+        .unwrap();
+        assert_eq!(bundle.len(), 1);
+
+        let url = Url::parse("https://example.com/lib/math.lib").unwrap();
+        let fetched = bundle
+            .fetch(&RemoteFetchRequest {
+                url: url.clone(),
+                policy: RemoteFetchPolicy::default(),
+            })
+            .unwrap();
+        assert_eq!(fetched.requested_url, url);
+        assert_eq!(fetched.bytes, b"answer = 42;\n");
+
+        let error = bundle
+            .fetch(&RemoteFetchRequest {
+                url: fetched.final_url,
+                policy: RemoteFetchPolicy {
+                    max_response_bytes: 2,
+                    ..RemoteFetchPolicy::default()
+                },
+            })
+            .unwrap_err();
+        assert_eq!(error.kind, SourceFetchErrorKind::ResponseTooLarge);
+    }
+
+    #[test]
+    fn prefetched_bundle_rejects_normalized_duplicates_and_reports_missing_urls() {
+        let duplicate = PrefetchedRemoteSourceBundle::try_new([
+            (
+                Url::parse("https://example.com/child.lib#one").unwrap(),
+                b"one = 1;".to_vec(),
+            ),
+            (
+                Url::parse("https://example.com/child.lib#two").unwrap(),
+                b"two = 2;".to_vec(),
+            ),
+        ])
+        .unwrap_err();
+        assert!(matches!(
+            duplicate,
+            PrefetchedRemoteSourceBundleError::DuplicateUrl(_)
+        ));
+
+        let bundle = PrefetchedRemoteSourceBundle::default();
+        let error = bundle
+            .fetch(&RemoteFetchRequest {
+                url: Url::parse("https://example.com/missing.lib").unwrap(),
+                policy: RemoteFetchPolicy::default(),
+            })
+            .unwrap_err();
+        assert_eq!(error.kind, SourceFetchErrorKind::Transport);
+        assert!(error.message.contains("absent"));
     }
 
     /// Search paths (-I) must be checked before the local directory of the importing

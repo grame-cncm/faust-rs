@@ -301,6 +301,9 @@ embedded hosts should inject their own fetcher and URL authorization policy
 instead of using the unrestricted native convenience transport. See the
 [`compiler` HTTP(S) API documentation](crates/compiler/README.md#https-sources-and-architectures)
 and the [`--allow-network-imports` CLI reference](docs/user-cli-guide-en.md#--allow-network-imports).
+The browser compiler module remains network-free but accepts asynchronously
+prefetched URL/source graphs as documented in the
+[`wasm-ffi` README](crates/wasm-ffi/README.md#prefetched-https-source-graphs).
 
 DSP compilation examples:
 

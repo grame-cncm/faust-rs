@@ -214,9 +214,11 @@ cargo run -p compiler --features network-imports -- \
 
 The native CLI permits any HTTP(S) host after explicit opt-in. Server or
 multi-user embeddings should instead use the Rust `Compiler` API with a
-restricted `RemoteUrlPolicy`. Browser-WASM, C/C++ compatibility facades,
-remote `component(...)`/`library(...)`, and remote inline architecture
-sub-includes remain network-disabled.
+restricted `RemoteUrlPolicy`. Browser-WASM performs no network I/O internally,
+but its raw ABI accepts host-prefetched canonical URL/source bundles for
+structural remote import graphs. C/C++ compatibility facades, remote
+`component(...)`/`library(...)`, and remote inline architecture sub-includes
+remain network-disabled.
 
 ### `--double`
 
