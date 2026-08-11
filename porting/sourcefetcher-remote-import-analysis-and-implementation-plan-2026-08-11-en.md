@@ -298,6 +298,10 @@ Windows.
 
 ### Phase 3 — Compiler and CLI integration
 
+Status: complete for structural `import(...)` graphs; evaluator-driven remote
+`component(...)`/`library(...)` loading remains an explicit Phase 4 API-surface
+item.
+
 1. Thread the fetch policy through `Compiler` options without global state.
 2. Add the explicit runtime CLI option and truthful `compile_options`
    propagation where applicable.

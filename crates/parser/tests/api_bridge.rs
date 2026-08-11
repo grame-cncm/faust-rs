@@ -6,12 +6,15 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use boxes::{BoxBuilder, BoxMatch, dump_box, match_box};
 use diagnostics::{LabelRole, SourceKind};
 use parser::{
-    CompilationMetadataKey, CompilationMetadataStore, SourceReaderError, VirtualSourceMap,
-    parse_file_with_imports, parse_minimal, parse_program, parse_program_with_imports_and_metadata,
+    CompilationMetadataKey, CompilationMetadataStore, FetchedSource, RemoteFetchPolicy,
+    RemoteFetchRequest, RemoteSourceFetcher, SourceFetchError, SourceLocator, SourceReaderError,
+    VirtualSourceMap, parse_file_with_imports, parse_minimal, parse_program,
+    parse_program_with_imports_and_metadata, parse_url_with_imports_and_precision_and_metadata,
 };
 use tlib::{TreeArena, TreeId};
 
@@ -437,7 +440,7 @@ fn parse_file_with_imports_reports_the_complete_cycle_and_each_edge() {
 }
 
 #[test]
-fn parse_file_with_imports_keeps_remote_urls_out_of_scope() {
+fn parse_file_with_imports_reports_that_remote_urls_are_disabled() {
     let root = make_temp_root("remote_import_policy");
     let main = root.join("main.dsp");
     fs::write(
@@ -448,14 +451,58 @@ fn parse_file_with_imports_keeps_remote_urls_out_of_scope() {
 
     let err = parse_file_with_imports(&main, std::slice::from_ref(&root)).expect_err("must fail");
     match err {
-        SourceReaderError::UnresolvedImport { name, from, .. } => {
-            assert_eq!(&*name, "https://example.com/stdfaust.lib");
-            assert_eq!(from, main.canonicalize().expect("main should canonicalize"));
+        SourceReaderError::NetworkDisabled { url } => {
+            assert_eq!(url.as_str(), "https://example.com/stdfaust.lib");
         }
         other => panic!("unexpected error kind for remote import policy: {other:?}"),
     }
 
     fs::remove_dir_all(root).expect("temp root should be removable");
+}
+
+#[derive(Debug)]
+struct NestedRemoteFetcher;
+
+impl RemoteSourceFetcher for NestedRemoteFetcher {
+    fn fetch(&self, request: &RemoteFetchRequest) -> Result<FetchedSource, SourceFetchError> {
+        let source = match request.url.path() {
+            "/dsp/main.dsp" => "import(\"lib/identity.lib\");\nprocess = identity;\n",
+            "/dsp/lib/identity.lib" => "identity = _;\n",
+            path => panic!("unexpected remote source path: {path}"),
+        };
+        Ok(FetchedSource {
+            requested_url: request.url.clone(),
+            final_url: request.url.clone(),
+            bytes: source.as_bytes().to_vec(),
+        })
+    }
+}
+
+#[test]
+fn parse_url_with_imports_resolves_relative_remote_children() {
+    let output = parse_url_with_imports_and_precision_and_metadata(
+        "https://example.test/dsp/main.dsp",
+        &[],
+        CompilationMetadataStore::new("https://example.test/dsp/main.dsp"),
+        1,
+        Arc::new(NestedRemoteFetcher),
+        RemoteFetchPolicy::default(),
+    )
+    .expect("remote source graph should parse");
+
+    assert!(output.errors.is_empty(), "{:?}", output.errors);
+    assert!(output.used_files.is_empty());
+    assert_eq!(
+        output
+            .used_sources
+            .iter()
+            .map(SourceLocator::display_name)
+            .collect::<Vec<_>>(),
+        [
+            "https://example.test/dsp/main.dsp",
+            "https://example.test/dsp/lib/identity.lib",
+        ]
+    );
 }
 
 #[test]

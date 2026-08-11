@@ -123,7 +123,10 @@ use fir::{
     inliner::sweep_scaffolding_drop_roots_with_mapping,
 };
 use parser::VirtualSourceMap;
-use parser::{CompilationMetadataKey, CompilationMetadataSnapshot, ParseOutput, SourceReaderError};
+use parser::{
+    CompilationMetadataKey, CompilationMetadataSnapshot, ParseOutput, RemoteFetchPolicy,
+    RemoteSourceFetcher, SourceReaderError,
+};
 use propagate::{ArityCache, BoxArity, PropagateError, PropagateUiOptions};
 use signals::{SigId, SigMatch, match_sig};
 pub use sigtype::InferenceError;
@@ -504,6 +507,10 @@ pub struct Compiler {
     /// Whether a successful compilation reports non-blocking semantic
     /// observations such as potential out-of-domain math.
     semantic_warnings: bool,
+    /// Optional, session-scoped capability for explicit HTTP(S) sources.
+    remote_fetcher: Option<Arc<dyn RemoteSourceFetcher>>,
+    /// Resource limits passed unchanged to the injected transport.
+    remote_fetch_policy: RemoteFetchPolicy,
     entrypoint_name: Box<str>,
     /// Floating-point precision used for internal DSP computation in the
     /// transform fast lane. `Float32` (single precision) is the default;
@@ -581,6 +588,11 @@ fn parser_float_size(real_type: RealType) -> u8 {
     }
 }
 
+fn explicit_remote_path(path: &Path) -> Option<&str> {
+    path.to_str()
+        .filter(|value| value.starts_with("http://") || value.starts_with("https://"))
+}
+
 impl WasmArtifactBundle {
     /// Repackages a compiled [`WasmModule`] into the public artifact bundle,
     /// pairing its binary and JSON with the formatted `compile_options` string.
@@ -617,7 +629,46 @@ impl Compiler {
             cancel: None,
             timing_sink: None,
             semantic_warnings: false,
+            remote_fetcher: None,
+            remote_fetch_policy: RemoteFetchPolicy::default(),
         }
+    }
+
+    /// Enables explicit HTTP(S) entry sources and imports for this compiler.
+    ///
+    /// # Source provenance and adaptation
+    ///
+    /// This replaces C++ Faust's process-global `http_fetch` configuration
+    /// (`compiler/parser/sourcefetcher.hh`) with a per-compiler capability.
+    /// It is intentionally more general: native, test, browser-prefetched, and
+    /// policy-restricted hosts can inject different transports without global
+    /// state. No network access occurs unless this method is called.
+    #[must_use]
+    pub fn with_remote_source_fetcher(
+        mut self,
+        fetcher: Arc<dyn RemoteSourceFetcher>,
+        policy: RemoteFetchPolicy,
+    ) -> Self {
+        self.remote_fetcher = Some(fetcher);
+        self.remote_fetch_policy = policy;
+        self
+    }
+
+    /// Enables the built-in native HTTP(S) transport with unrestricted host
+    /// selection and bounded default resource limits.
+    ///
+    /// Server applications should normally call
+    /// [`Self::with_remote_source_fetcher`] with a restricted
+    /// [`remote_fetch::RemoteUrlPolicy`] instead.
+    #[cfg(all(feature = "network-imports", not(target_arch = "wasm32")))]
+    #[must_use]
+    pub fn with_native_network_imports(self) -> Self {
+        self.with_remote_source_fetcher(
+            Arc::new(remote_fetch::UreqSourceFetcher::new(Arc::new(
+                remote_fetch::AllowAllRemoteUrls,
+            ))),
+            RemoteFetchPolicy::default(),
+        )
     }
 
     /// Returns a compiler facade that collects non-blocking semantic warnings.
@@ -869,17 +920,56 @@ impl Compiler {
         path: &Path,
         search_paths: &[PathBuf],
     ) -> Result<ParseOutput, CompilerError> {
-        let import_search_paths = merge_import_search_paths(path, search_paths);
+        let remote_url = explicit_remote_path(path);
+        let search_path_anchor = if remote_url.is_some() {
+            Path::new("remote.dsp")
+        } else {
+            path
+        };
+        let import_search_paths = merge_import_search_paths(search_path_anchor, search_paths);
         let output = self
             .time_phase("parser", || {
-                parser::parse_file_with_imports_and_precision(
-                    path,
-                    &import_search_paths,
-                    parser_float_size(self.real_type),
-                )
+                if let Some(url) = remote_url {
+                    let metadata = parser::CompilationMetadataStore::new(url);
+                    if let Some(fetcher) = self.remote_fetcher.clone() {
+                        parser::parse_url_with_imports_and_precision_and_metadata(
+                            url,
+                            &import_search_paths,
+                            metadata,
+                            parser_float_size(self.real_type),
+                            fetcher,
+                            self.remote_fetch_policy,
+                        )
+                    } else {
+                        parser::parse_url_with_imports_disabled_and_precision_and_metadata(
+                            url,
+                            &import_search_paths,
+                            metadata,
+                            parser_float_size(self.real_type),
+                        )
+                    }
+                } else if let Some(fetcher) = self.remote_fetcher.clone() {
+                    parser::parse_file_with_remote_imports_and_precision_and_metadata(
+                        path,
+                        &import_search_paths,
+                        parser::CompilationMetadataStore::new(&path.display().to_string()),
+                        parser_float_size(self.real_type),
+                        fetcher,
+                        self.remote_fetch_policy,
+                    )
+                } else {
+                    parser::parse_file_with_imports_and_precision(
+                        path,
+                        &import_search_paths,
+                        parser_float_size(self.real_type),
+                    )
+                }
             })
             .map_err(CompilerError::import)?;
-        ensure_parse_success(&path.display().to_string(), output)
+        let source_name = remote_url
+            .map(str::to_owned)
+            .unwrap_or_else(|| path.display().to_string());
+        ensure_parse_success(&source_name, output)
     }
 
     /// Parses one source file using the same default library search model as the
@@ -992,39 +1082,75 @@ impl Compiler {
         path: &Path,
         search_paths: &[PathBuf],
     ) -> Result<SignalCompileOutput, CompilerError> {
-        let import_search_paths = merge_import_search_paths(path, search_paths);
-        let metadata_store = parser::CompilationMetadataStore::new(
-            &path
-                .canonicalize()
+        let remote_url = explicit_remote_path(path);
+        let search_path_anchor = if remote_url.is_some() {
+            Path::new("remote.dsp")
+        } else {
+            path
+        };
+        let import_search_paths = merge_import_search_paths(search_path_anchor, search_paths);
+        let source_name = remote_url.map(str::to_owned).unwrap_or_else(|| {
+            path.canonicalize()
                 .unwrap_or_else(|_| path.to_path_buf())
-                .to_string_lossy(),
-        );
+                .to_string_lossy()
+                .into_owned()
+        });
+        let metadata_store = parser::CompilationMetadataStore::new(&source_name);
         let output = ensure_parse_success(
-            &path.display().to_string(),
+            &source_name,
             self.time_phase("parser", || {
-                parser::parse_file_with_imports_and_precision_and_metadata(
-                    path,
-                    &import_search_paths,
-                    metadata_store.clone(),
-                    parser_float_size(self.real_type),
-                )
+                if let Some(url) = remote_url {
+                    if let Some(fetcher) = self.remote_fetcher.clone() {
+                        parser::parse_url_with_imports_and_precision_and_metadata(
+                            url,
+                            &import_search_paths,
+                            metadata_store.clone(),
+                            parser_float_size(self.real_type),
+                            fetcher,
+                            self.remote_fetch_policy,
+                        )
+                    } else {
+                        parser::parse_url_with_imports_disabled_and_precision_and_metadata(
+                            url,
+                            &import_search_paths,
+                            metadata_store.clone(),
+                            parser_float_size(self.real_type),
+                        )
+                    }
+                } else if let Some(fetcher) = self.remote_fetcher.clone() {
+                    parser::parse_file_with_remote_imports_and_precision_and_metadata(
+                        path,
+                        &import_search_paths,
+                        metadata_store.clone(),
+                        parser_float_size(self.real_type),
+                        fetcher,
+                        self.remote_fetch_policy,
+                    )
+                } else {
+                    parser::parse_file_with_imports_and_precision_and_metadata(
+                        path,
+                        &import_search_paths,
+                        metadata_store.clone(),
+                        parser_float_size(self.real_type),
+                    )
+                }
             })
             .map_err(CompilerError::import)?,
         )?;
-        let mut eval_source_context = eval::EvalSourceContext::for_file_with_metadata(
-            path,
-            &import_search_paths,
-            metadata_store,
-        );
+        let mut eval_source_context = if remote_url.is_some() {
+            eval::EvalSourceContext::memory_with_metadata(metadata_store)
+        } else {
+            eval::EvalSourceContext::for_file_with_metadata(
+                path,
+                &import_search_paths,
+                metadata_store,
+            )
+        };
         eval_source_context.sample_precision = match self.real_type {
             RealType::Float32 => eval::SamplePrecision::Float32,
             RealType::Float64 => eval::SamplePrecision::Float64,
         };
-        self.pipeline_to_signals(
-            &path.display().to_string(),
-            output,
-            Some(eval_source_context),
-        )
+        self.pipeline_to_signals(&source_name, output, Some(eval_source_context))
     }
 
     /// Parses one file with default import search path, then runs eval+propagate.

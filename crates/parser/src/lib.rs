@@ -1381,6 +1381,11 @@ pub struct ParseOutput {
     /// This list is primarily an audit/debugging artifact: it records which
     /// concrete files contributed text to the parse and in which stable order.
     pub used_files: Vec<std::path::PathBuf>,
+    /// Complete deterministic source visitation order.
+    ///
+    /// Unlike [`Self::used_files`], this includes HTTP(S) and virtual sources
+    /// without encoding their identities as platform-dependent fake paths.
+    pub used_sources: Vec<SourceLocator>,
     /// Parser context and arena retained for downstream structural checks.
     pub state: ParseState,
 }
@@ -1948,6 +1953,61 @@ pub fn parse_file_with_imports_and_precision_and_metadata(
     StructuralImportExpander::new(reader, metadata_store, float_size).parse_entry(path)
 }
 
+/// Parses an HTTP(S) entry source and structurally expands its imports.
+///
+/// # Source provenance and adaptation
+///
+/// This is the policy-injected Rust counterpart of
+/// `SourceReader::parseFile` plus `http_fetch` in C++
+/// `compiler/parser/sourcereader.cpp`. Networking is impossible unless the
+/// caller supplies a [`RemoteSourceFetcher`]. Relative imports from a remote
+/// source are joined with its final redirect URL; explicit local search paths
+/// retain their existing precedence.
+pub fn parse_url_with_imports_and_precision_and_metadata(
+    url: &str,
+    search_paths: &[std::path::PathBuf],
+    metadata_store: CompilationMetadataStore,
+    float_size: u8,
+    fetcher: std::sync::Arc<dyn RemoteSourceFetcher>,
+    policy: RemoteFetchPolicy,
+) -> Result<ParseOutput, SourceReaderError> {
+    let reader = SourceReader::new(search_paths.to_vec()).with_remote_fetcher(fetcher, policy);
+    StructuralImportExpander::new(reader, metadata_store, float_size).parse_remote_entry(url)
+}
+
+/// Parses an HTTP(S) entry with networking deliberately disabled.
+///
+/// This entry point exists so feature-off compiler builds return the same
+/// structured [`SourceReaderError::NetworkDisabled`] diagnostic instead of
+/// accidentally treating an URL as a filesystem path.
+pub fn parse_url_with_imports_disabled_and_precision_and_metadata(
+    url: &str,
+    search_paths: &[std::path::PathBuf],
+    metadata_store: CompilationMetadataStore,
+    float_size: u8,
+) -> Result<ParseOutput, SourceReaderError> {
+    StructuralImportExpander::new(
+        SourceReader::new(search_paths.to_vec()),
+        metadata_store,
+        float_size,
+    )
+    .parse_remote_entry(url)
+}
+
+/// Parses a local entry while permitting only explicit HTTP(S) imports through
+/// the supplied remote capability.
+pub fn parse_file_with_remote_imports_and_precision_and_metadata(
+    path: &std::path::Path,
+    search_paths: &[std::path::PathBuf],
+    metadata_store: CompilationMetadataStore,
+    float_size: u8,
+    fetcher: std::sync::Arc<dyn RemoteSourceFetcher>,
+    policy: RemoteFetchPolicy,
+) -> Result<ParseOutput, SourceReaderError> {
+    let reader = SourceReader::new(search_paths.to_vec()).with_remote_fetcher(fetcher, policy);
+    StructuralImportExpander::new(reader, metadata_store, float_size).parse_entry(path)
+}
+
 #[derive(Clone, Debug, Default)]
 struct ParseRecoveryDetails {
     expected_tokens: Vec<Box<str>>,
@@ -2452,6 +2512,7 @@ fn parse_program_with_origins_and_precision(
         diagnostics,
         compilation_metadata: state.metadata_store.snapshot(),
         used_files: Vec::new(),
+        used_sources: Vec::new(),
         state,
     }
 }
@@ -2476,11 +2537,19 @@ struct StructuralImportExpander {
     reader: SourceReader,
     metadata_store: CompilationMetadataStore,
     used_files: Vec<PathBuf>,
-    active_stack: HashSet<PathBuf>,
-    active_paths: Vec<PathBuf>,
-    import_edges: Vec<ImportCycleEdge>,
+    used_sources: Vec<SourceLocator>,
+    active_stack: HashSet<SourceLocator>,
+    active_paths: Vec<SourceLocator>,
+    import_edges: Vec<LocatorImportEdge>,
     source_map: SourceMapBuilder,
     float_size: u8,
+}
+
+#[derive(Clone, Debug)]
+struct LocatorImportEdge {
+    from: SourceLocator,
+    to: SourceLocator,
+    site: Option<ImportSite>,
 }
 
 struct ImportExpansionReports<'a> {
@@ -2494,6 +2563,7 @@ impl StructuralImportExpander {
             reader,
             metadata_store,
             used_files: Vec::new(),
+            used_sources: Vec::new(),
             active_stack: HashSet::new(),
             active_paths: Vec::new(),
             import_edges: Vec::new(),
@@ -2503,24 +2573,34 @@ impl StructuralImportExpander {
     }
 
     fn parse_entry(self, entry: &Path) -> Result<ParseOutput, SourceReaderError> {
-        let resolved = self.reader.resolve_entry_source_path(entry)?;
-        self.parse_resolved_entry(&resolved)
+        let locator = self.reader.resolve_entry_locator(entry)?;
+        self.parse_resolved_entry(locator)
     }
 
-    fn parse_resolved_entry(mut self, resolved: &Path) -> Result<ParseOutput, SourceReaderError> {
-        self.note_visit(resolved);
-        self.active_stack.insert(resolved.to_path_buf());
-        self.active_paths.push(resolved.to_path_buf());
+    fn parse_remote_entry(self, url: &str) -> Result<ParseOutput, SourceReaderError> {
+        let locator = self.reader.resolve_remote_entry_locator(url)?;
+        self.parse_resolved_entry(locator)
+    }
 
-        let source = self.reader.read_source_unit(resolved)?;
-        let source_name = resolved.to_string_lossy().into_owned();
-        let source_kind = if self.reader.is_virtual_source(resolved) {
-            SourceKind::Memory
-        } else {
-            SourceKind::File
+    fn parse_resolved_entry(
+        mut self,
+        requested: SourceLocator,
+    ) -> Result<ParseOutput, SourceReaderError> {
+        let (source, resolved) = self.reader.read_locator(&requested)?;
+        self.note_visit(&resolved);
+        self.active_stack.insert(resolved.clone());
+        self.active_paths.push(resolved.clone());
+
+        let source_name = resolved.display_name();
+        let source_kind = match &resolved {
+            SourceLocator::File(_) => SourceKind::File,
+            SourceLocator::Url(_) | SourceLocator::Virtual(_) => SourceKind::Memory,
         };
-        self.source_map
-            .add(resolved.to_path_buf(), source_kind, source.as_str());
+        self.source_map.add(
+            locator_diagnostic_path(&resolved),
+            source_kind,
+            source.as_str(),
+        );
         let mut output = parse_program_with_origins_and_precision(
             &source,
             &source_name,
@@ -2530,10 +2610,11 @@ impl StructuralImportExpander {
             source_kind,
         );
         let mut expanded_in_scope = HashSet::new();
-        self.expand_imports_in_output(&mut output, resolved, &mut expanded_in_scope)?;
+        self.expand_imports_in_output(&mut output, &resolved, &mut expanded_in_scope)?;
         output.used_files = self.used_files;
+        output.used_sources = self.used_sources;
         output.compilation_metadata = self.metadata_store.snapshot();
-        self.active_stack.remove(resolved);
+        self.active_stack.remove(&resolved);
         self.active_paths.pop();
         output
             .diagnostics
@@ -2544,8 +2625,8 @@ impl StructuralImportExpander {
     fn expand_imports_in_output(
         &mut self,
         output: &mut ParseOutput,
-        current_file: &Path,
-        expanded_in_scope: &mut HashSet<PathBuf>,
+        current_file: &SourceLocator,
+        expanded_in_scope: &mut HashSet<SourceLocator>,
     ) -> Result<(), SourceReaderError> {
         let Some(root) = output.root else {
             return Ok(());
@@ -2572,8 +2653,8 @@ impl StructuralImportExpander {
         arena: &mut TreeArena,
         ctx: &mut ParserCtx,
         mut defs: TreeId,
-        current_file: &Path,
-        expanded_in_scope: &mut HashSet<PathBuf>,
+        current_file: &SourceLocator,
+        expanded_in_scope: &mut HashSet<SourceLocator>,
         reports: &mut ImportExpansionReports<'_>,
     ) -> Result<TreeId, SourceReaderError> {
         let mut items = Vec::new();
@@ -2587,22 +2668,28 @@ impl StructuralImportExpander {
                     if let Some(import_name) = string_node_text_from_arena(arena, filename) {
                         let Some(resolved_import) = self
                             .reader
-                            .resolve_import_source_path(import_name, current_file.parent())
+                            .resolve_import_locator(import_name, current_file)?
                         else {
                             // Box nodes carry no source location, so recover the
                             // directive's span by re-scanning the file. Error
                             // path only.
-                            let site = std::fs::read_to_string(current_file)
+                            let site = self
+                                .reader
+                                .read_locator(current_file)
                                 .ok()
+                                .map(|(text, _)| text)
                                 .and_then(|text| ImportSite::locate_in(&text, import_name));
                             let mut searched: Vec<PathBuf> = Vec::new();
-                            if let Some(dir) = current_file.parent() {
+                            if let SourceLocator::File(path) | SourceLocator::Virtual(path) =
+                                current_file
+                                && let Some(dir) = path.parent()
+                            {
                                 searched.push(dir.to_path_buf());
                             }
                             searched.extend(self.reader.search_paths().iter().cloned());
                             return Err(SourceReaderError::UnresolvedImport {
                                 name: import_name.into(),
-                                from: current_file.to_path_buf(),
+                                from: locator_diagnostic_path(current_file),
                                 site,
                                 searched,
                             });
@@ -2610,19 +2697,20 @@ impl StructuralImportExpander {
 
                         let site = self
                             .reader
-                            .read_source_unit(current_file)
+                            .read_locator(current_file)
                             .ok()
+                            .map(|(text, _)| text)
                             .and_then(|text| ImportSite::locate_in(&text, import_name));
-                        let import_edge = ImportCycleEdge {
-                            from: current_file.to_path_buf(),
+                        let import_edge = LocatorImportEdge {
+                            from: current_file.clone(),
                             to: resolved_import.clone(),
                             site,
                         };
 
                         if self.active_stack.contains(&resolved_import) {
                             return Err(SourceReaderError::ImportCycle {
-                                path: resolved_import.clone(),
-                                cycle: source_reader::import_cycle_from_stack(
+                                path: locator_diagnostic_path(&resolved_import),
+                                cycle: locator_import_cycle_from_stack(
                                     &self.active_paths,
                                     &self.import_edges,
                                     &resolved_import,
@@ -2632,24 +2720,45 @@ impl StructuralImportExpander {
                         }
 
                         if expanded_in_scope.insert(resolved_import.clone()) {
-                            self.note_visit(&resolved_import);
-                            self.active_stack.insert(resolved_import.clone());
-                            self.active_paths.push(resolved_import.clone());
-                            self.import_edges.push(import_edge);
-                            let imported = (|| {
-                                let mut imported =
-                                    self.parse_single_source_file(&resolved_import)?;
+                            let (mut imported, final_locator) =
+                                self.parse_single_source(&resolved_import)?;
+                            let final_is_new = final_locator == resolved_import
+                                || expanded_in_scope.insert(final_locator.clone());
+                            if !final_is_new {
+                                defs = arena.tl(defs).unwrap_or_else(|| arena.nil());
+                                continue;
+                            }
+                            let final_edge = LocatorImportEdge {
+                                to: final_locator.clone(),
+                                ..import_edge
+                            };
+                            if self.active_stack.contains(&final_locator) {
+                                return Err(SourceReaderError::ImportCycle {
+                                    path: locator_diagnostic_path(&final_locator),
+                                    cycle: locator_import_cycle_from_stack(
+                                        &self.active_paths,
+                                        &self.import_edges,
+                                        &final_locator,
+                                        Some(final_edge),
+                                    ),
+                                });
+                            }
+                            self.note_visit(&final_locator);
+                            self.active_stack.insert(final_locator.clone());
+                            self.active_paths.push(final_locator.clone());
+                            self.import_edges.push(final_edge);
+                            let expanded = (|| {
                                 self.expand_imports_in_output(
                                     &mut imported,
-                                    &resolved_import,
+                                    &final_locator,
                                     expanded_in_scope,
                                 )?;
                                 Ok(imported)
                             })();
                             self.import_edges.pop();
                             self.active_paths.pop();
-                            self.active_stack.remove(&resolved_import);
-                            let imported: ParseOutput = imported?;
+                            self.active_stack.remove(&final_locator);
+                            let imported: ParseOutput = expanded?;
                             reports.errors.extend(imported.errors.iter().cloned());
                             reports
                                 .diagnostics
@@ -2707,7 +2816,7 @@ impl StructuralImportExpander {
         arena: &mut TreeArena,
         ctx: &mut ParserCtx,
         id: TreeId,
-        current_file: &Path,
+        current_file: &SourceLocator,
         reports: &mut ImportExpansionReports<'_>,
     ) -> Result<TreeId, SourceReaderError> {
         match match_box(arena, id) {
@@ -2798,35 +2907,76 @@ impl StructuralImportExpander {
         }
     }
 
-    fn parse_single_source_file(
+    fn parse_single_source(
         &mut self,
-        resolved: &Path,
-    ) -> Result<ParseOutput, SourceReaderError> {
-        let source = self.reader.read_source_unit(resolved)?;
-        let source_name = resolved.to_string_lossy().into_owned();
-        let source_kind = if self.reader.is_virtual_source(resolved) {
-            SourceKind::VirtualLibrary
-        } else {
-            SourceKind::ImportedFile
+        requested: &SourceLocator,
+    ) -> Result<(ParseOutput, SourceLocator), SourceReaderError> {
+        let (source, resolved) = self.reader.read_locator(requested)?;
+        let source_name = resolved.display_name();
+        let source_kind = match &resolved {
+            SourceLocator::Virtual(_) => SourceKind::VirtualLibrary,
+            SourceLocator::File(_) => SourceKind::ImportedFile,
+            SourceLocator::Url(_) => SourceKind::Memory,
         };
-        self.source_map
-            .add(resolved.to_path_buf(), source_kind, source.as_str());
-        Ok(parse_program_with_origins_and_precision(
-            &source,
-            &source_name,
-            None,
-            self.metadata_store.clone(),
-            self.float_size,
+        self.source_map.add(
+            locator_diagnostic_path(&resolved),
             source_kind,
+            source.as_str(),
+        );
+        Ok((
+            parse_program_with_origins_and_precision(
+                &source,
+                &source_name,
+                None,
+                self.metadata_store.clone(),
+                self.float_size,
+                source_kind,
+            ),
+            resolved,
         ))
     }
 
-    fn note_visit(&mut self, path: &Path) {
-        let path = path.to_path_buf();
-        if !self.used_files.iter().any(|existing| existing == &path) {
-            self.used_files.push(path);
+    fn note_visit(&mut self, locator: &SourceLocator) {
+        if !self.used_sources.iter().any(|existing| existing == locator) {
+            self.used_sources.push(locator.clone());
+        }
+        if let SourceLocator::File(path) | SourceLocator::Virtual(path) = locator
+            && !self.used_files.iter().any(|existing| existing == path)
+        {
+            self.used_files.push(path.clone());
         }
     }
+}
+
+fn locator_diagnostic_path(locator: &SourceLocator) -> PathBuf {
+    match locator {
+        SourceLocator::File(path) | SourceLocator::Virtual(path) => path.clone(),
+        SourceLocator::Url(url) => PathBuf::from(url.as_str()),
+    }
+}
+
+fn locator_import_cycle_from_stack(
+    active_paths: &[SourceLocator],
+    active_edges: &[LocatorImportEdge],
+    repeated: &SourceLocator,
+    closing_edge: Option<LocatorImportEdge>,
+) -> Vec<ImportCycleEdge> {
+    let start = active_paths
+        .iter()
+        .position(|locator| locator == repeated)
+        .unwrap_or(0);
+    active_edges
+        .get(start..)
+        .unwrap_or_default()
+        .iter()
+        .cloned()
+        .chain(closing_edge)
+        .map(|edge| ImportCycleEdge {
+            from: locator_diagnostic_path(&edge.from),
+            to: locator_diagnostic_path(&edge.to),
+            site: edge.site,
+        })
+        .collect()
 }
 
 fn string_node_text_from_arena(arena: &TreeArena, node: TreeId) -> Option<&str> {

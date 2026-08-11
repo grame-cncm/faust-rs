@@ -88,6 +88,14 @@ pub(crate) fn handle_fixture_listing(cli: &CliArgs) -> bool {
 /// Every rejection here exits with status 2, so the order of the checks decides
 /// which message a doubly-invalid command line reports — keep it stable.
 pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
+    #[cfg(not(all(feature = "network-imports", not(target_arch = "wasm32"))))]
+    if cli.allow_network_imports {
+        eprintln!(
+            "--allow-network-imports requires a native build with the `network-imports` Cargo feature"
+        );
+        std::process::exit(2);
+    }
+
     // Execution-option validation happens before any parsing or lowering
     // (plan §4.2): when `-lang` names the backend, consult the capability
     // table now; backend paths selected without `-lang` are enforced by the

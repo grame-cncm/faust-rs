@@ -1532,6 +1532,24 @@ fn cli_parse_accepts_execution_option_flags_and_spellings() {
 }
 
 #[test]
+fn network_import_opt_in_is_parsed_and_recorded_in_compile_options() {
+    let cli = CliArgs::parse_from([
+        "faust-rs",
+        "--allow-network-imports",
+        "https://example.test/main.dsp",
+    ]);
+    assert!(cli.allow_network_imports);
+    assert_eq!(
+        cli.input.as_deref(),
+        Some(std::path::Path::new("https://example.test/main.dsp"))
+    );
+    assert!(
+        super::runner::compile_options_full_string(&cli, Some("cpp"))
+            .contains("--allow-network-imports")
+    );
+}
+
+#[test]
 fn normalize_legacy_args_maps_single_dash_execution_options() {
     let args = ["faust-rs", "-ec", "-os", "foo.dsp"]
         .into_iter()

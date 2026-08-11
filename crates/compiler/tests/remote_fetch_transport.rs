@@ -6,7 +6,10 @@ mod support;
 
 use std::sync::Arc;
 
-use compiler::remote_fetch::{AllowAllRemoteUrls, RemoteUrlPolicy, UreqSourceFetcher};
+use compiler::{
+    Compiler,
+    remote_fetch::{AllowAllRemoteUrls, RemoteUrlPolicy, UreqSourceFetcher},
+};
 use parser::{
     RemoteFetchPolicy, RemoteFetchRequest, RemoteSourceFetcher, SourceFetchErrorKind, SourceLocator,
 };
@@ -147,4 +150,39 @@ fn rejects_user_info_before_network_io() {
         .unwrap_err();
     assert_eq!(error.kind, SourceFetchErrorKind::PolicyRejected);
     assert!(!error.url.as_str().contains("secret"));
+}
+
+#[test]
+fn compiler_requires_runtime_opt_in_for_remote_entries() {
+    let error = Compiler::new()
+        .compile_file_default(std::path::Path::new("https://example.test/main.dsp"))
+        .expect_err("remote entry must remain disabled by default");
+    assert_eq!(
+        error.diagnostic_bundle().as_slice()[0].code,
+        diagnostics::codes::SRC_NETWORK_DISABLED
+    );
+}
+
+#[test]
+fn compiler_expands_a_remote_relative_import_graph() {
+    let server = HttpFixtureServer::start([
+        (
+            "/main.dsp".to_owned(),
+            FixtureResponse::text("import(\"lib/identity.lib\");\nprocess = identity;\n"),
+        ),
+        (
+            "/lib/identity.lib".to_owned(),
+            FixtureResponse::text("identity = _;\n"),
+        ),
+    ]);
+    let url = server.url("/main.dsp");
+    let output = Compiler::new()
+        .with_native_network_imports()
+        .compile_file_default_to_signals(std::path::Path::new(&url))
+        .expect("remote graph should compile through propagation");
+
+    assert_eq!(output.process_arity.inputs, 1);
+    assert_eq!(output.process_arity.outputs, 1);
+    assert_eq!(server.requests(), ["/main.dsp", "/lib/identity.lib"]);
+    assert_eq!(output.parse.used_sources.len(), 2);
 }

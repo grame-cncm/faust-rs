@@ -634,6 +634,7 @@ pub struct SourceReader {
     expanded_files: HashSet<PathBuf>,
     remote_fetcher: Option<Arc<dyn RemoteSourceFetcher>>,
     remote_fetch_policy: RemoteFetchPolicy,
+    remote_cache: HashMap<Url, (Arc<str>, Url)>,
 }
 
 impl SourceReader {
@@ -661,6 +662,7 @@ impl SourceReader {
             expanded_files: HashSet::new(),
             remote_fetcher: None,
             remote_fetch_policy: RemoteFetchPolicy::default(),
+            remote_cache: HashMap::new(),
         }
     }
 
@@ -701,6 +703,91 @@ impl SourceReader {
             .map_err(|error| SourceReaderError::RemoteFetch { error })
     }
 
+    /// Resolves a filesystem entry into its canonical locator.
+    pub(crate) fn resolve_entry_locator(
+        &self,
+        path: &Path,
+    ) -> Result<SourceLocator, SourceReaderError> {
+        let resolved = self.resolve_entry_path(path)?;
+        Ok(if self.virtual_sources.contains(&resolved) {
+            SourceLocator::Virtual(resolved)
+        } else {
+            SourceLocator::File(resolved)
+        })
+    }
+
+    /// Resolves an explicit HTTP(S) entry source.
+    pub(crate) fn resolve_remote_entry_locator(
+        &self,
+        url: &str,
+    ) -> Result<SourceLocator, SourceReaderError> {
+        SourceLocator::remote(url, None)
+    }
+
+    /// Resolves one import without confusing URL and filesystem syntax.
+    pub(crate) fn resolve_import_locator(
+        &self,
+        name: &str,
+        parent: &SourceLocator,
+    ) -> Result<Option<SourceLocator>, SourceReaderError> {
+        if name.starts_with("http://") || name.starts_with("https://") {
+            return SourceLocator::remote(name, None).map(Some);
+        }
+
+        let local_dir = match parent {
+            SourceLocator::File(path) | SourceLocator::Virtual(path) => path.parent(),
+            SourceLocator::Url(_) => None,
+        };
+        if let Some(path) = self.resolve_import_from(name, local_dir) {
+            return Ok(Some(if self.virtual_sources.contains(&path) {
+                SourceLocator::Virtual(path)
+            } else {
+                SourceLocator::File(path)
+            }));
+        }
+
+        match parent {
+            SourceLocator::Url(base) => SourceLocator::remote(name, Some(base)).map(Some),
+            SourceLocator::File(_) | SourceLocator::Virtual(_) => Ok(None),
+        }
+    }
+
+    /// Reads one locator and returns its UTF-8 text plus canonical final identity.
+    ///
+    /// Redirect targets become the base for relative imports and aliases are
+    /// cached for the compilation session. This prevents redirects from
+    /// bypassing duplicate and cycle detection.
+    pub(crate) fn read_locator(
+        &mut self,
+        locator: &SourceLocator,
+    ) -> Result<(String, SourceLocator), SourceReaderError> {
+        match locator {
+            SourceLocator::File(path) | SourceLocator::Virtual(path) => {
+                Ok((self.read_source_text(path)?, locator.clone()))
+            }
+            SourceLocator::Url(url) => {
+                if let Some((source, final_url)) = self.remote_cache.get(url) {
+                    return Ok((source.to_string(), SourceLocator::Url(final_url.clone())));
+                }
+                let fetched = self.fetch_remote(locator)?;
+                let final_url = match SourceLocator::from_remote_url(fetched.final_url.clone())? {
+                    SourceLocator::Url(url) => url,
+                    SourceLocator::File(_) | SourceLocator::Virtual(_) => unreachable!(),
+                };
+                let requested_url = url.clone();
+                let source: Arc<str> = fetched
+                    .into_utf8()
+                    .map_err(|error| SourceReaderError::RemoteFetch { error })?
+                    .into();
+                self.remote_cache
+                    .insert(final_url.clone(), (source.clone(), final_url.clone()));
+                self.remote_cache
+                    .insert(requested_url, (source.clone(), final_url.clone()));
+                Ok((source.to_string(), SourceLocator::Url(final_url)))
+            }
+        }
+    }
+
     /// Returns search paths used by this reader.
     #[must_use]
     pub fn search_paths(&self) -> &[PathBuf] {
@@ -717,46 +804,6 @@ impl SourceReader {
     #[must_use]
     pub fn resolve_import(&self, name: &str) -> Option<PathBuf> {
         self.resolve_import_from(name, None)
-    }
-
-    /// Resolves one entry path without performing recursive import expansion.
-    ///
-    /// This helper exists for the structural C++ parity path where parsing now
-    /// loads each file as its own unit and expands `importFile` nodes from the
-    /// parsed definition tree instead of from rewritten source text.
-    pub(crate) fn resolve_entry_source_path(
-        &self,
-        path: &Path,
-    ) -> Result<PathBuf, SourceReaderError> {
-        self.resolve_entry_path(path)
-    }
-
-    /// Resolves one import relative to the current importing file directory.
-    ///
-    /// The search order matches the existing C++-style `-I`-before-local-dir`
-    /// behavior used by the reader's text-expansion path.
-    pub(crate) fn resolve_import_source_path(
-        &self,
-        name: &str,
-        local_dir: Option<&Path>,
-    ) -> Option<PathBuf> {
-        self.resolve_import_from(name, local_dir)
-    }
-
-    /// Reads one source unit without recursively expanding imports.
-    ///
-    /// This is the raw file/string loading counterpart used by the parser's
-    /// structural import expansion path.
-    pub(crate) fn read_source_unit(&self, path: &Path) -> Result<String, SourceReaderError> {
-        self.read_source_text(path)
-    }
-
-    /// Returns whether a resolved path names an immutable virtual source.
-    ///
-    /// The structural import expander uses this only to classify snapshots in
-    /// the shared diagnostic [`diagnostics::SourceMap`].
-    pub(crate) fn is_virtual_source(&self, path: &Path) -> bool {
-        self.virtual_sources.contains(path)
     }
 
     /// Reads one logical in-memory source and recursively expands imports.

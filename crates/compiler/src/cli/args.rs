@@ -254,6 +254,13 @@ pub struct CliArgs {
     /// Extra import search directories.
     #[arg(short = 'I', long = "import-dir")]
     pub import_dir: Vec<PathBuf>,
+    /// Permit explicit HTTP(S) entry sources and imports.
+    ///
+    /// This runtime opt-in is effective only in builds compiled with the
+    /// `network-imports` Cargo feature. Ordinary builds never link an HTTP
+    /// transport and all builds keep networking disabled by default.
+    #[arg(long = "allow-network-imports", action = ArgAction::SetTrue)]
+    pub allow_network_imports: bool,
     /// Specify the top-level DSP entry-point name instead of `process`
     /// (`-pn <name>`, `--process-name <name>`).
     #[arg(long = "process-name", default_value = "process")]

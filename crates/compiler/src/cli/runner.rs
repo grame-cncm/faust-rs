@@ -243,6 +243,9 @@ pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) ->
     if cli.inline_architecture_files {
         parts.push("-i".to_owned());
     }
+    if cli.allow_network_imports {
+        parts.push("--allow-network-imports".to_owned());
+    }
     if cli.one_sample {
         parts.push("-os".to_owned());
     }
@@ -468,6 +471,10 @@ pub fn compiler_from_cli(
         .with_processing_api(selected_processing_api(cli));
     if let Some(sample_rate) = cli.table_init_sample_rate {
         compiler = compiler.with_table_init_sample_rate(sample_rate);
+    }
+    #[cfg(all(feature = "network-imports", not(target_arch = "wasm32")))]
+    if cli.allow_network_imports {
+        compiler = compiler.with_native_network_imports();
     }
     if let Some(flag) = cancel {
         compiler = compiler.with_cancel(flag);
