@@ -46,6 +46,7 @@ documents.
 | `narrower` | Faust C++ supports a broader production surface; Rust rejects or defers part of it. |
 | `excluded` | The difference is frozen as a non-goal unless a planning decision explicitly reopens it. |
 | `reference-fix` | Rust intentionally avoids a known behavior or defect observed in the pinned C++ implementation. |
+| `parity-gap` | The current Rust behavior differs observably from C++ without being an intended extension; it remains a defect to close. |
 
 These labels are compatibility statements, not quality rankings. In
 particular, `adapted` must not be presented as `1:1`, and an independently
@@ -288,6 +289,22 @@ must run unchanged with Faust C++ should not pass them.
   corresponding C++ backend exists, but full long-tail lowering coverage is
   not implied.
 
+### DIFF-BACK-004 — generated C/C++ text is not a byte-identity contract
+
+- Status: `adapted`.
+- Rust-generated C and C++ preserve the public DSP/architecture contract on
+  supported lowering paths, but do not reproduce the reference emitter's
+  complete source text byte for byte. The compiler banner/version, formatting,
+  declaration layout, helper decomposition, and some internal statement names
+  and ordering can differ.
+- Compatibility must therefore be judged through lifecycle, metadata, UI,
+  arity, compilation, and execution checks rather than a raw whole-file diff.
+  Conversely, a matching module-shell signature alone is not evidence of
+  numerical equivalence.
+- Known semantic metadata and UI-order defects discovered beneath those text
+  differences are recorded separately as `DIFF-GAP-011` through
+  `DIFF-GAP-013`.
+
 ## 7. Public API and representation adaptations
 
 ### DIFF-API-001 — owned Rust compiler facade
@@ -391,10 +408,17 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-008 | `excluded` | `backend-java` is outside the Rust port target scope. |
 | DIFF-GAP-009 | `excluded` | Legacy `-lang ocpp` is outside the Rust port target scope. |
 | DIFF-GAP-010 | `narrower` | There is no direct Rust LLVM backend matching the C++ LLVM factory/target/object toolchain; Cranelift is a distinct extension, not a drop-in identity mapping. |
+| DIFF-GAP-011 | `parity-gap` | C++ sorts children of the synthesized top-level UI group by the raw label/order key. Rust sorts children inside explicit groups but currently preserves dataflow-discovery order in `UiProgramBuilder::roots`. Root-level controls can therefore be emitted in a different order. The 2026-08-11 full-corpus UI audit found this in `rep_38_sine_phasor`, `rep_55_sine_phasor_echo_feedback`, `rep_57_additive_synth`, `rep_66_variable_delay_feedback`, and `rep_75_ui_widget_family_breadth`. Labels, addresses, and control semantics remain unchanged, but generated UI and JSON item order differ. |
+| DIFF-GAP-012 | `parity-gap` | The generated C/C++ metadata callback and banner currently identify every default compilation as `name = "mydsp"` and `filename = "mydsp.dsp"`. C++ derives the filename and default name from the input DSP and honors an explicit top-level `declare name`. The audit observed this on all 102 corpus cases accepted by both compilers. Hosts that inspect `Meta::declare` receive the wrong source identity from Rust output. |
+| DIFF-GAP-013 | `parity-gap` | Although parser/eval preserve compilation-global metadata, the generated C/C++ `metadata()` method currently omits non-identity top-level and imported/library declarations. Eleven common corpus cases expose this: `rep_11`, `rep_41`, `rep_42`, `rep_43`, `rep_61_fmin_sr`, `rep_64_dynamic_rem`, `rep_69`, `rep_71`, `rep_79`, `rep_80`, and `vector_recursive_delay_fusion_pulse_countup_loop`. Widget/group metadata emitted through UI declarations is a separate path and remains covered by UI parity tests. |
 
 For a time-stamped quantitative snapshot rather than this durable registry,
 use [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),
 the reports under `porting/phases/`, and `tests/golden/METADATA.toml`.
+
+The 219-case audit that exposed `DIFF-GAP-011` through `DIFF-GAP-013`, including
+its coverage limits and reproduction commands, is recorded in
+[`faust-rs-corpus-difference-audit-2026-08-11-en.md`](faust-rs-corpus-difference-audit-2026-08-11-en.md).
 
 ## 10. Maintenance rule
 

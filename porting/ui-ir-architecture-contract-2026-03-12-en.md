@@ -659,6 +659,35 @@ Recommended internal direction:
 - keep canonical root synthesis and label/metadata extraction in the same UI IR
   construction phase so all layout decisions remain frozen before `transform`
 
+### 8.10 Known root-sibling ordering parity gap
+
+A corpus-wide generated-UI comparison on 2026-08-11 exposed one ordering gap
+outside the pathname extension itself.
+
+The C++ UI tree orders every group's children, including controls placed under
+the implicit top-level group, by the raw label/order key. Rust's
+`UiProgramBuilder` applies that ordering to children of an explicit draft group,
+but its root forest is currently a plain insertion-ordered list. When
+`UiProgram::finish` synthesizes the top-level group around otherwise ungrouped
+controls, their dataflow-discovery order is retained instead of being sorted.
+
+Confirmed corpus cases:
+
+- `rep_38_sine_phasor.dsp`: Rust starts with `gain`; C++ starts with `freq1`;
+- `rep_55_sine_phasor_echo_feedback.dsp`: Rust starts with `gain`; C++ starts
+  with `feedback`;
+- `rep_57_additive_synth.dsp`: Rust starts with `gain`; C++ starts with `freq`;
+- `rep_66_variable_delay_feedback.dsp`: Rust emits `mod_delay` before
+  `feedback`; C++ emits `feedback` first;
+- `rep_75_ui_widget_family_breadth.dsp`: Rust retains the source/dataflow order
+  `gate`, `pitch`, `delay`, `meter`; C++ emits `delay`, `gate`, `meter`, `pitch`.
+
+This is `DIFF-GAP-011`, a parity defect rather than a deliberate Rust behavior.
+It changes UI/JSON presentation order but not control labels, addresses, or DSP
+semantics. A correction must sort the synthesized root's children with the same
+raw-label key used for explicit groups while retaining stable insertion order
+for equal keys.
+
 ## 9. Transform and FIR contract
 
 ### 9.1 Transform input
