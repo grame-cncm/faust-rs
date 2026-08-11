@@ -349,6 +349,83 @@ pub(crate) fn json_meta_entries_from_snapshot(
     out
 }
 
+/// Converts compilation metadata into the key/value stream used by the C and
+/// C++ `metadata()` callbacks.
+///
+/// Identity keys are supplied separately by the backend options. Imported-file
+/// keys are displayed relative to the master DSP directory when possible,
+/// matching C++ `declareMetadata` pathname keys instead of leaking the Rust
+/// resolver's canonical absolute path.
+pub(crate) fn c_family_meta_entries_from_snapshot(
+    source_name: &str,
+    snapshot: &CompilationMetadataSnapshot,
+) -> Vec<(String, String)> {
+    let master_parent = Path::new(source_name)
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let master_parent = master_parent
+        .canonicalize()
+        .unwrap_or_else(|_| master_parent.to_path_buf());
+    let mut out = Vec::new();
+    for (key, values) in snapshot.entries() {
+        let key = match key {
+            CompilationMetadataKey::Global { key }
+                if matches!(key.as_ref(), "name" | "filename") =>
+            {
+                continue;
+            }
+            CompilationMetadataKey::Global { key } => {
+                normalize_flat_metadata_key(&master_parent, key)
+            }
+            CompilationMetadataKey::Scoped { source_file, key } => {
+                format!(
+                    "{}/{}",
+                    metadata_source_path(&master_parent, Path::new(source_file.as_ref())),
+                    key.as_ref()
+                )
+            }
+        };
+        for value in values {
+            out.push((key.clone(), value.as_ref().to_owned()));
+        }
+    }
+    out
+}
+
+fn normalize_flat_metadata_key(master_parent: &Path, key: &str) -> String {
+    let Some((source_file, suffix)) = key.rsplit_once('/') else {
+        return key.to_owned();
+    };
+    let source_file = Path::new(source_file);
+    if !source_file.is_absolute() {
+        return key.to_owned();
+    }
+    format!(
+        "{}/{}",
+        metadata_source_path(master_parent, source_file),
+        suffix
+    )
+}
+
+fn metadata_source_path(master_parent: &Path, source_path: &Path) -> String {
+    if let Ok(relative) = source_path.strip_prefix(master_parent) {
+        return metadata_pathname(relative);
+    }
+    source_path
+        .file_name()
+        .map(PathBuf::from)
+        .as_deref()
+        .map(metadata_pathname)
+        .unwrap_or_else(|| metadata_pathname(source_path))
+}
+
+/// Renders one metadata pathname with the slash separator used by Faust keys.
+fn metadata_pathname(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/")
+}
+
 /// Returns the value following the first occurrence of any of `names` in a
 /// whitespace-tokenized argv slice, e.g. `argv_value(argv, &["-cn"])` on
 /// `["-cn", "Probe"]` returns `Some("Probe")`.

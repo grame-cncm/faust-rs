@@ -80,6 +80,8 @@ pub struct CppOptions {
     pub metadata_name: Option<String>,
     /// Source basename reported by the generated metadata callback.
     pub metadata_filename: Option<String>,
+    /// Non-identity compilation metadata replayed by `metadata()`.
+    pub metadata_entries: Vec<(String, String)>,
 }
 
 impl Default for CppOptions {
@@ -97,6 +99,7 @@ impl Default for CppOptions {
             compile_options: None,
             metadata_name: None,
             metadata_filename: None,
+            metadata_entries: Vec::new(),
         }
     }
 }
@@ -510,20 +513,7 @@ fn emit_dsp_contract_methods(
     if !has_metadata {
         let _ = writeln!(out, "{tab}virtual void metadata(Meta* m) {{");
         let _ = writeln!(out, "{tab}    (void)m;");
-        let filename = options
-            .metadata_filename
-            .clone()
-            .unwrap_or_else(|| format!("{module_name}.dsp"));
-        let _ = writeln!(
-            out,
-            "{tab}    m->declare(\"filename\", {});",
-            cpp_string_literal(&filename)
-        );
-        let _ = writeln!(
-            out,
-            "{tab}    m->declare(\"name\", {});",
-            cpp_string_literal(options.metadata_name.as_deref().unwrap_or(module_name))
-        );
+        emit_compilation_metadata(out, options, module_name, indent + 1);
         let _ = writeln!(out, "{tab}}}");
     }
     if !has_build_ui {
@@ -1095,20 +1085,7 @@ fn emit_declare_fun(
         emit_compute_body(store, out, options, body, indent + 1)?;
     } else if decl.name == "metadata" && is_empty_block(store, body) {
         let _ = writeln!(out, "{tab}    (void)m;");
-        let filename = options
-            .metadata_filename
-            .clone()
-            .unwrap_or_else(|| format!("{module_name}.dsp"));
-        let _ = writeln!(
-            out,
-            "{tab}    m->declare(\"filename\", {});",
-            cpp_string_literal(&filename)
-        );
-        let _ = writeln!(
-            out,
-            "{tab}    m->declare(\"name\", {});",
-            cpp_string_literal(options.metadata_name.as_deref().unwrap_or(module_name))
-        );
+        emit_compilation_metadata(out, options, module_name, indent + 1);
     } else if decl.name == "buildUserInterface" && is_empty_block(store, body) {
         let _ = writeln!(
             out,
@@ -1134,6 +1111,33 @@ fn emit_declare_fun(
     }
     let _ = writeln!(out, "{tab}}}");
     Ok(())
+}
+
+fn emit_compilation_metadata(
+    out: &mut String,
+    options: &CppOptions,
+    module_name: &str,
+    indent: usize,
+) {
+    let filename = options
+        .metadata_filename
+        .clone()
+        .unwrap_or_else(|| format!("{module_name}.dsp"));
+    let name = options
+        .metadata_name
+        .clone()
+        .unwrap_or_else(|| module_name.to_owned());
+    let tab = "    ".repeat(indent);
+    for (key, value) in
+        c_family::ordered_compilation_metadata(&options.metadata_entries, filename, name)
+    {
+        let _ = writeln!(
+            out,
+            "{tab}m->declare({}, {});",
+            cpp_string_literal(&key),
+            cpp_string_literal(&value)
+        );
+    }
 }
 
 /// Emits the FIR `compute` body as-is.

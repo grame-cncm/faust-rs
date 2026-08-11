@@ -461,6 +461,36 @@ fn compiler_compile_file_to_signals_aggregates_component_metadata() {
 }
 
 #[test]
+fn c_family_callbacks_replay_master_and_component_metadata_with_relative_keys() {
+    let root = temp_root("c_family_metadata");
+    let entry = root.join("main.dsp");
+    let child = root.join("child.dsp");
+    fs::write(
+        &entry,
+        "declare license \"MIT\";\nprocess = component(\"child.dsp\");\n",
+    )
+    .expect("write entry");
+    fs::write(&child, "declare author \"child-author\";\nprocess = _;\n").expect("write child");
+
+    let compiler = Compiler::new();
+    let cpp = compiler
+        .compile_file_default_to_cpp(&entry, &codegen::backends::cpp::CppOptions::default())
+        .expect("C++ metadata callback should compile");
+    assert!(cpp.contains("m->declare(\"child.dsp/author\", \"child-author\");"));
+    assert!(cpp.contains("m->declare(\"license\", \"MIT\");"));
+    assert!(!cpp.contains(&root.to_string_lossy().into_owned()));
+
+    let c = compiler
+        .compile_file_default_to_c(&entry, &codegen::backends::c::COptions::default())
+        .expect("C metadata callback should compile");
+    assert!(c.contains("m->declare(m->metaInterface, \"child.dsp/author\", \"child-author\");"));
+    assert!(c.contains("m->declare(m->metaInterface, \"license\", \"MIT\");"));
+    assert!(!c.contains(&root.to_string_lossy().into_owned()));
+
+    fs::remove_dir_all(root).expect("temp root should be removable");
+}
+
+#[test]
 fn compiler_compile_source_to_wasm_emits_magic_header() {
     let compiler = Compiler::new();
     let out = compiler

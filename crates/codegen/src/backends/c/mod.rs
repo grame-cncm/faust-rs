@@ -76,6 +76,8 @@ pub struct COptions {
     pub metadata_name: Option<String>,
     /// Source basename reported by the generated metadata callback.
     pub metadata_filename: Option<String>,
+    /// Non-identity compilation metadata replayed by `metadata()`.
+    pub metadata_entries: Vec<(String, String)>,
 }
 
 impl Default for COptions {
@@ -91,6 +93,7 @@ impl Default for COptions {
             compile_options: None,
             metadata_name: None,
             metadata_filename: None,
+            metadata_entries: Vec::new(),
         }
     }
 }
@@ -859,17 +862,20 @@ fn emit_named_fun(
             .metadata_filename
             .clone()
             .unwrap_or_else(|| format!("{class_name}.dsp"));
-        let name = options.metadata_name.as_deref().unwrap_or(class_name);
-        let _ = writeln!(
-            out,
-            "    m->declare(m->metaInterface, \"filename\", {});",
-            c_string_literal(&filename)
-        );
-        let _ = writeln!(
-            out,
-            "    m->declare(m->metaInterface, \"name\", {});",
-            c_string_literal(name)
-        );
+        let name = options
+            .metadata_name
+            .clone()
+            .unwrap_or_else(|| class_name.to_owned());
+        for (key, value) in
+            c_family::ordered_compilation_metadata(&options.metadata_entries, filename, name)
+        {
+            let _ = writeln!(
+                out,
+                "    m->declare(m->metaInterface, {}, {});",
+                c_string_literal(&key),
+                c_string_literal(&value)
+            );
+        }
     } else {
         let mut mode = match decl.name.as_str() {
             "metadata" => EmitMode::Metadata,

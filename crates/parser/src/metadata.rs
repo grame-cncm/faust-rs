@@ -129,6 +129,20 @@ impl CompilationMetadataStore {
         guard.entries.entry(key).or_default().insert(value.into());
     }
 
+    /// Records metadata discovered while evaluating a used definition wrapper.
+    ///
+    /// C++ `eval.cpp` inserts the wrapper's already-qualified key directly in
+    /// `gMetaDataSet`. Rust preserves that flattened key as a global entry; the
+    /// compiler facade later normalizes its source pathname for backend display.
+    pub fn declare_evaluated(&self, key: &str, value: &str) {
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .entries
+            .entry(CompilationMetadataKey::global(key))
+            .or_default()
+            .insert(value.into());
+    }
+
     /// Returns a deterministic snapshot of the currently aggregated metadata.
     ///
     /// The snapshot is a deep clone of the current store contents, so callers

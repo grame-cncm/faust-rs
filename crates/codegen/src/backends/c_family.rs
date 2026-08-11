@@ -106,6 +106,41 @@ pub(crate) enum EmitMode {
     Compute,
 }
 
+/// Builds the C++-ordered compilation metadata stream for C-family callbacks.
+///
+/// Source provenance: C++ `CPPCodeContainer::produceMetadata` and
+/// `CCodeContainer::produceMetadata` iterate `gMetaDataSet` in key order.
+/// Rust carries source metadata explicitly in backend options and inserts the
+/// mandatory source identity entries here before applying the same stable key
+/// ordering. Equal keys use value order and duplicate entries collapse, like
+/// the C++ metadata sets (`author` followed by any derived `contributor`
+/// entries).
+pub(crate) fn ordered_compilation_metadata(
+    entries: &[(String, String)],
+    filename: String,
+    name: String,
+) -> Vec<(String, String)> {
+    let mut ordered = entries.to_vec();
+    if !ordered.iter().any(|(key, _)| key == "filename") {
+        ordered.push(("filename".to_owned(), filename));
+    }
+    if !ordered.iter().any(|(key, _)| key == "name") {
+        ordered.push(("name".to_owned(), name));
+    }
+    ordered.sort();
+    ordered.dedup();
+    let mut saw_author = false;
+    for (key, _) in &mut ordered {
+        if key == "author" {
+            if saw_author {
+                *key = "contributor".to_owned();
+            }
+            saw_author = true;
+        }
+    }
+    ordered
+}
+
 /// One scalar state-field initialization that must be replayed by the
 /// synthesized `instanceResetUserInterface` fallback when the FIR module does
 /// not supply an explicit body (shared by `c` and `cpp`; `julia` implements
@@ -1063,8 +1098,8 @@ pub(crate) fn emit_stmt_common<E>(
 #[cfg(test)]
 mod tests {
     use super::{
-        CFamilySyntax, emit_binop, emit_binop_expr, emit_type, format_float32, string_literal,
-        trim_float, unwrap_condition,
+        CFamilySyntax, emit_binop, emit_binop_expr, emit_type, format_float32,
+        ordered_compilation_metadata, string_literal, trim_float, unwrap_condition,
     };
     use fir::{FirBinOp, FirType};
 
@@ -1111,6 +1146,25 @@ mod tests {
     fn emit_binop_expr_renders_plain_infix() {
         assert_eq!(emit_binop_expr(FirBinOp::Add, "a", "b"), "(a + b)");
         assert_eq!(emit_binop_expr(FirBinOp::Lt, "x", "1"), "(x < 1)");
+    }
+
+    #[test]
+    fn compilation_metadata_orders_keys_and_maps_extra_authors_to_contributors() {
+        let entries = vec![
+            ("license".to_owned(), "MIT".to_owned()),
+            ("author".to_owned(), "Alice".to_owned()),
+            ("author".to_owned(), "Bob".to_owned()),
+        ];
+        assert_eq!(
+            ordered_compilation_metadata(&entries, "probe.dsp".to_owned(), "probe".to_owned()),
+            vec![
+                ("author".to_owned(), "Alice".to_owned()),
+                ("contributor".to_owned(), "Bob".to_owned()),
+                ("filename".to_owned(), "probe.dsp".to_owned()),
+                ("license".to_owned(), "MIT".to_owned()),
+                ("name".to_owned(), "probe".to_owned()),
+            ]
+        );
     }
 
     #[test]

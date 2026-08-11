@@ -907,15 +907,24 @@ fn eval_value_uncached(
                         .to_owned(),
             })
         }
-        BoxMatch::Metadata(body, _mdlist) => {
+        BoxMatch::Metadata(body, mdlist) => {
             // Source provenance (C++):
             // - `compiler/evaluate/eval.cpp`
-            // - `isBoxMetadata(exp, e1, e2) -> eval(e1, ...)`
+            // - `isBoxMetadata(exp, e1, e2)` adds `hd(e2) -> tl(e2)` to
+            //   `gMetaDataSet` before evaluating `e1`.
             //
             // Mapping status: `adapted`.
-            // Rust keeps the metadata wrapper in the box layer for parser parity,
-            // but `eval` has no runtime-global metadata set yet, so evaluation is
-            // transparent for the wrapped expression.
+            // Rust writes through the explicit compilation metadata store
+            // carried by the evaluation source context.
+            if let Some(metadata_store) = env.source_context().metadata_store()
+                && let (Some(key), Some(value)) = (arena.hd(mdlist), arena.tl(mdlist))
+                && let (Some(key), Some(value)) = (
+                    source_reference_name(arena, key),
+                    source_reference_name(arena, value),
+                )
+            {
+                metadata_store.declare_evaluated(&key, &value);
+            }
             eval_value(arena, body, env, loop_detector)
         }
         BoxMatch::ForwardAD(exp, seed) => {

@@ -6,8 +6,8 @@ C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
 Corpus: all 219 `tests/corpus/*.dsp` files present on the audit date
 
-Status update: the root-sibling ordering and source-identity gaps found by this
-audit were fixed on 2026-08-11; `DIFF-GAP-013` remains open.
+Status update: the root-sibling ordering, source-identity, and compilation
+metadata gaps found by this audit were fixed on 2026-08-11.
 
 ## 1. Purpose
 
@@ -98,9 +98,19 @@ C++ emits:
   `rep_80_mutual_recursion_crossed`, and
   `vector_recursive_delay_fusion_pulse_countup_loop`.
 
-The parser/eval global metadata store is implemented; the remaining defect is
-transport into generated C/C++ `metadata()`. Widget and group metadata emitted
-as UI `declare` calls use a different path and are not included in this gap.
+The compiler facade now flattens the parser/eval compilation metadata snapshot
+into C-family backend options and both emitters replay it in C++ key order.
+Imported paths retain their logical name (`metadata/imported_meta.dsp`,
+`maths.lib`, and similar) instead of exposing Rust resolver absolute paths.
+Evaluation also records metadata wrappers attached to definitions that are
+actually used, matching C++ `eval.cpp`; this covers
+`basics.lib/pulse_countup_loop:author` in the vector recursion case.
+
+A maintained differential compares the complete callback stream, excluding only
+the backend-specific `compile_options` value, for all eleven cases above plus
+the source-identity case `rep_40_metadata_master`. The keys, values, and order
+match the pinned C++ reference, so `DIFF-GAP-013` is closed. Widget and group
+metadata emitted as UI `declare` calls remain a separate, already-tested path.
 
 ## 5. UI event audit
 
@@ -136,11 +146,10 @@ relative-group extensions.
 ## 6. Whole-source comparison and limits
 
 `cargo run -p xtask -- golden-check-cpp` currently checks 34 stored C++ source
-snapshots. All 34 differ, with the first reported difference being the source
-identity described by `DIFF-GAP-012`. Further differences include the expected
-Rust compiler banner, compilation-option text, formatting, declaration layout,
-and internal emitter choices. Raw byte identity is therefore not the active
-compatibility contract (`DIFF-BACK-004`).
+snapshots. Raw files still differ because of the expected Rust compiler banner,
+compilation-option text, formatting, declaration layout, and internal emitter
+choices. Raw byte identity is therefore not the active compatibility contract
+(`DIFF-BACK-004`).
 
 This audit does not claim corpus-wide numerical equivalence. The generated
 backend report intentionally compares only a reduced shell signature, and

@@ -744,6 +744,15 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
     effective_options
         .metadata_filename
         .get_or_insert_with(|| source_name_to_filename(source_name));
+    if effective_options.metadata_entries.is_empty() {
+        effective_options.metadata_entries =
+            c_family_meta_entries_from_snapshot(source_name, &output.compilation_metadata);
+        if let Some(compile_options) = effective_options.compile_options.clone() {
+            effective_options
+                .metadata_entries
+                .push(("compile_options".to_owned(), compile_options));
+        }
+    }
     let timing_sink = ctx.timing_sink.as_ref();
     let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
         lower_signals_to_fir_transform_fastlane_with_timing(
@@ -793,6 +802,15 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
     effective_options
         .metadata_filename
         .get_or_insert_with(|| source_name_to_filename(source_name));
+    if effective_options.metadata_entries.is_empty() {
+        effective_options.metadata_entries =
+            c_family_meta_entries_from_snapshot(source_name, &output.compilation_metadata);
+        if let Some(compile_options) = effective_options.compile_options.clone() {
+            effective_options
+                .metadata_entries
+                .push(("compile_options".to_owned(), compile_options));
+        }
+    }
     let timing_sink = ctx.timing_sink.as_ref();
     let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
         lower_signals_to_fir_transform_fastlane_with_timing(

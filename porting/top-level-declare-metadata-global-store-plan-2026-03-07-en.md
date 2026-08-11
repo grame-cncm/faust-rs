@@ -328,3 +328,8 @@ This gap is now closed for the parser/eval/compiler scope because:
 - key prefix rules match the C++ compiler semantically
 - the resulting metadata is observable through stable parser/compiler output
   contracts
+- metadata wrappers on evaluated definitions update the explicit session store,
+  matching C++ `eval.cpp` without process-global state
+- the compiler facade transports the normalized snapshot into C and C++
+  `metadata()` callbacks; imported keys use logical relative/basename paths and
+  callback ordering matches the C++ metadata map
