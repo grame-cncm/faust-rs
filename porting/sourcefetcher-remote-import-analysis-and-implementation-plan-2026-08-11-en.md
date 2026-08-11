@@ -17,6 +17,9 @@ explicit security policy to native compiler hosts.
 This is an `adapted` port, not a line-by-line translation of the legacy C++
 socket client. The user-visible import behavior is the parity target; the
 transport implementation is replaced with a maintained Rust HTTP client.
+The project explicitly permits a more general and flexible Rust design where
+that improves safety, embedding, or cross-platform behavior. C++ compatibility
+is therefore one policy profile, not a restriction on the internal API.
 
 ## 2. C++ Reference Contract
 
