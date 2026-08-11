@@ -49,9 +49,16 @@ pub(crate) fn portable_report_text(text: &str) -> String {
         text
     }
 
+    // Generated reports are versioned text, so their paths use the repository
+    // separator on every host. Prefix removal can leave a Windows-relative
+    // suffix such as `tests\\corpus\\case.dsp` behind.
+    fn normalize_path_separators(text: String) -> String {
+        text.replace('\\', "/")
+    }
+
     let out = replace_prefixes(text.to_owned(), &workspace_root(), "");
     let out = replace_prefixes(out, Path::new(CPP_SOURCE_ROOT), "../faust/");
-    normalize_clocked_addresses(out)
+    normalize_clocked_addresses(normalize_path_separators(out))
 }
 
 // ---------------------------------------------------------------------------

@@ -72,6 +72,16 @@ fn generated_reports_replace_checkout_local_paths() {
 }
 
 #[test]
+fn generated_reports_normalize_windows_path_separators() {
+    let portable =
+        portable_report_text("case=tests\\corpus\\example.dsp cpp=..\\faust\\build\\bin\\faust");
+    assert_eq!(
+        portable,
+        "case=tests/corpus/example.dsp cpp=../faust/build/bin/faust"
+    );
+}
+
+#[test]
 fn unknown_command_is_a_clap_error() {
     let error = parse_xtask(["definitely-unknown"]).unwrap_err();
     assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
