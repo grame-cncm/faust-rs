@@ -44,8 +44,9 @@ pub use context::{
 };
 pub use metadata::{CompilationMetadataKey, CompilationMetadataSnapshot, CompilationMetadataStore};
 pub use source_reader::{
-    ExpandedSource, ImportCycleEdge, ImportSite, SourceLineOrigin, SourceReader, SourceReaderError,
-    VirtualSourceMap,
+    ExpandedSource, FetchedSource, ImportCycleEdge, ImportSite, RemoteFetchPolicy,
+    RemoteFetchRequest, RemoteSourceFetcher, SourceFetchError, SourceFetchErrorKind,
+    SourceLineOrigin, SourceLocator, SourceReader, SourceReaderError, VirtualSourceMap,
 };
 
 /// Primitive operator family recognized directly by the parser.

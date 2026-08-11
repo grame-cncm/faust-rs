@@ -253,6 +253,8 @@ are mapped into Rust-owned categories first.
 
 ### Phase 0 — Contract fixtures and baseline
 
+Status: complete (`6a8cdcf7`).
+
 1. Add self-contained local HTTP-server fixtures that the Rust and pinned C++
    compilers can both consume over plain HTTP.
 2. Record C++ behavior for direct URL input, URL imports, redirects, status
@@ -264,6 +266,9 @@ Pass criteria: the tested C++ contract and intentional security adaptations are
 written down before production transport code lands.
 
 ### Phase 1 — Locator model without networking
+
+Status: transport-independent boundary complete; production import expansion
+is wired to it in Phase 3.
 
 1. Introduce `SourceLocator` and migrate cache, cycle, origin, and usage
    tracking.

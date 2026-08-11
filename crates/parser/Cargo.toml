@@ -16,6 +16,7 @@ lrlex = "0.13.10"
 lrpar = "0.13.10"
 regex-automata = "0.4"
 tlib = { path = "../tlib" }
+url = "2.5"
 
 [dev-dependencies]
 regex-automata = "0.4"

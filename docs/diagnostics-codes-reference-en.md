@@ -56,13 +56,13 @@ reachability analysis. Building this table required tracing every code from
 its `diagnostics::codes::*` constant to an actual call site, and that surfaced
 real gaps, recorded here rather than papered over:
 
-- **`FRS-SRC-0001`, `FRS-SRC-0002`, `FRS-SRC-0003`** are defined in
+- **`FRS-SRC-0001` through `FRS-SRC-0006`** are defined in
   `crates/diagnostics/src/codes.rs` and listed in `codes::all_codes()`, but no
   code anywhere in the workspace ever constructs a `Diagnostic` with them.
 
   **Wired up 2026-07-21.** These were never dead reservations:
-  `parser::source_reader::SourceReaderError` has exactly three variants that map
-  one-to-one onto the three codes, and all three fire in practice.
+  `parser::source_reader::SourceReaderError` maps local and remote source
+  failures one-to-one onto these codes.
   `SourceReaderError::to_diagnostics` now builds a real bundle for each, and
   `CompilerError::import` attaches it, so source-loading failures no longer fall
   through to the `code: null` envelope:
@@ -72,6 +72,9 @@ real gaps, recorded here rather than papered over:
   | `Io { path, message }` | `FRS-SRC-0001` | path note + readability help |
   | `UnresolvedImport { .. }` | `FRS-SRC-0002` | span on the `import(...)` directive, import name, importing file, ordered list of searched directories, `-I` help |
   | `ImportCycle { path }` | `FRS-SRC-0003` | cycle note + help to break it |
+  | `InvalidUrl { .. }` | `FRS-SRC-0004` | invalid reference/scheme and URL correction help |
+  | `NetworkDisabled { .. }` | `FRS-SRC-0005` | explicit disabled-network classification and opt-in help |
+  | `RemoteFetch { .. }` | `FRS-SRC-0006` | transport-independent category, sanitized URL, and compact detail |
 
   The reference C++ compiler reports the same conditions as bare strings
   (`ERROR : unable to open file <name>`), with no location and no searched
@@ -131,13 +134,16 @@ observable in practice today.
 | `FRS-PARSE-0002` | `parser` | Parser recovered from an error and emitted recovery diagnostics (warning/remark severity). | `crates/parser/src/lib.rs:1913` |
 | `FRS-PARSE-0003` | `parser` | Parser encountered an invalid literal form. | `crates/parser/src/lib.rs:1915` |
 
-### `FRS-SRC-*` — Source reader (3 codes)
+### `FRS-SRC-*` — Source reader (6 codes)
 
 | Code | Stage | Meaning | Raised at |
 |---|---|---|---|
 | `FRS-SRC-0001` | `source_reader` | Source reader I/O failure (unreadable file, directory passed as input). | `SourceReaderError::Io` → `to_diagnostics` (`crates/parser/src/source_reader.rs`) |
 | `FRS-SRC-0002` | `source_reader` | Imported file could not be resolved. Carries a span on the `import(...)` directive and the ordered list of searched directories. | `SourceReaderError::UnresolvedImport` → `to_diagnostics` |
 | `FRS-SRC-0003` | `source_reader` | Import graph contains a cycle. | `SourceReaderError::ImportCycle` → `to_diagnostics` |
+| `FRS-SRC-0004` | `source_reader` | Remote source URL is invalid or uses an unsupported scheme. | `SourceReaderError::InvalidUrl` → `to_diagnostics` |
+| `FRS-SRC-0005` | `source_reader` | A valid remote source was requested without an injected network capability. | `SourceReaderError::NetworkDisabled` → `to_diagnostics` |
+| `FRS-SRC-0006` | `source_reader` | An injected remote transport failed. | `SourceReaderError::RemoteFetch` → `to_diagnostics` |
 
 ### `FRS-EVAL-*` — Box evaluation (8 codes)
 

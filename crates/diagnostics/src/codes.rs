@@ -11,6 +11,12 @@ pub const SRC_IO_ERROR: DiagnosticCode = DiagnosticCode("FRS-SRC-0001");
 pub const SRC_UNRESOLVED_IMPORT: DiagnosticCode = DiagnosticCode("FRS-SRC-0002");
 /// Import graph contains a cycle.
 pub const SRC_IMPORT_CYCLE: DiagnosticCode = DiagnosticCode("FRS-SRC-0003");
+/// A remote source locator is invalid or uses an unsupported scheme.
+pub const SRC_INVALID_URL: DiagnosticCode = DiagnosticCode("FRS-SRC-0004");
+/// A remote source was requested without an enabled fetch capability.
+pub const SRC_NETWORK_DISABLED: DiagnosticCode = DiagnosticCode("FRS-SRC-0005");
+/// A configured remote transport failed to return a usable source.
+pub const SRC_FETCH_FAILED: DiagnosticCode = DiagnosticCode("FRS-SRC-0006");
 
 /// Lexer encountered an invalid token sequence.
 pub const LEX_INVALID_TOKEN: DiagnosticCode = DiagnosticCode("FRS-LEX-0001");
@@ -136,6 +142,9 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         SRC_IO_ERROR,
         SRC_UNRESOLVED_IMPORT,
         SRC_IMPORT_CYCLE,
+        SRC_INVALID_URL,
+        SRC_NETWORK_DISABLED,
+        SRC_FETCH_FAILED,
         LEX_INVALID_TOKEN,
         PARSE_UNEXPECTED_TOKEN,
         PARSE_RECOVERY,
