@@ -297,6 +297,50 @@ fn compiler_double_precision_selects_doubleprecision_library_variant() {
 }
 
 #[test]
+fn c_family_source_identity_matches_cpp_and_stays_independent_from_class_name() {
+    let compiler = Compiler::new();
+    let source = "declare name \"Display DSP\";\nprocess = 0;\n";
+    let cpp_options = codegen::backends::cpp::CppOptions {
+        class_name: Some("CustomClass".to_owned()),
+        ..codegen::backends::cpp::CppOptions::default()
+    };
+    let cpp = compiler
+        .compile_source_to_cpp("nested/source-file.dsp", source, &cpp_options)
+        .expect("C++ source identity should compile");
+    assert!(cpp.contains("name: \"Display DSP\""));
+    assert!(cpp.contains("class CustomClass"));
+    assert!(cpp.contains("m->declare(\"filename\", \"source-file.dsp\");"));
+    assert!(cpp.contains("m->declare(\"name\", \"Display DSP\");"));
+
+    let c_options = codegen::backends::c::COptions {
+        class_name: Some("CustomClass".to_owned()),
+        ..codegen::backends::c::COptions::default()
+    };
+    let c = compiler
+        .compile_source_to_c("nested/source-file.dsp", source, &c_options)
+        .expect("C source identity should compile");
+    assert!(c.contains("name: \"Display DSP\""));
+    assert!(c.contains("} CustomClass;"));
+    assert!(c.contains("m->declare(m->metaInterface, \"filename\", \"source-file.dsp\");"));
+    assert!(c.contains("m->declare(m->metaInterface, \"name\", \"Display DSP\");"));
+}
+
+#[test]
+fn c_family_source_identity_defaults_to_the_source_basename() {
+    let compiler = Compiler::new();
+    let cpp = compiler
+        .compile_source_to_cpp(
+            "nested/plain-name.dsp",
+            "process = 0;",
+            &codegen::backends::cpp::CppOptions::default(),
+        )
+        .expect("default C++ identity should compile");
+    assert!(cpp.contains("name: \"plain-name\""));
+    assert!(cpp.contains("m->declare(\"filename\", \"plain-name.dsp\");"));
+    assert!(cpp.contains("m->declare(\"name\", \"plain-name\");"));
+}
+
+#[test]
 fn compiler_rejects_conflicting_zero_arity_redefinition() {
     let compiler = Compiler::new();
     let err = compiler

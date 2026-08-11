@@ -737,6 +737,13 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
     ctx: &SignalLoweringContext,
 ) -> Result<String, LowerToCppError> {
     let module_name = resolve_module_name(options.class_name.as_deref(), source_name);
+    let mut effective_options = options.clone();
+    effective_options
+        .metadata_name
+        .get_or_insert_with(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
+    effective_options
+        .metadata_filename
+        .get_or_insert_with(|| source_name_to_filename(source_name));
     let timing_sink = ctx.timing_sink.as_ref();
     let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
         lower_signals_to_fir_transform_fastlane_with_timing(
@@ -763,7 +770,7 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
         origins: lowered.origins.clone(),
     })?;
     time_phase_with_sink(timing_sink, "cpp-codegen", || {
-        generate_cpp_module(&lowered.store, lowered.module, options)
+        generate_cpp_module(&lowered.store, lowered.module, &effective_options)
     })
     .map_err(|error| LowerError::Codegen {
         error,
@@ -779,6 +786,13 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
     ctx: &SignalLoweringContext,
 ) -> Result<String, LowerToCError> {
     let module_name = resolve_module_name(options.class_name.as_deref(), source_name);
+    let mut effective_options = options.clone();
+    effective_options
+        .metadata_name
+        .get_or_insert_with(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
+    effective_options
+        .metadata_filename
+        .get_or_insert_with(|| source_name_to_filename(source_name));
     let timing_sink = ctx.timing_sink.as_ref();
     let lowered = time_phase_with_sink(timing_sink, "signal-fir", || {
         lower_signals_to_fir_transform_fastlane_with_timing(
@@ -805,7 +819,7 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
         origins: lowered.origins.clone(),
     })?;
     time_phase_with_sink(timing_sink, "c-codegen", || {
-        generate_c_module(&lowered.store, lowered.module, options)
+        generate_c_module(&lowered.store, lowered.module, &effective_options)
     })
     .map_err(|error| LowerError::Codegen {
         error,

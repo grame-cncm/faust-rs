@@ -6,8 +6,8 @@ C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
 Corpus: all 219 `tests/corpus/*.dsp` files present on the audit date
 
-Status update: the root-sibling ordering gap found by this audit was fixed on
-2026-08-11; `DIFF-GAP-012` and `DIFF-GAP-013` remain open.
+Status update: the root-sibling ordering and source-identity gaps found by this
+audit were fixed on 2026-08-11; `DIFF-GAP-013` remains open.
 
 ## 1. Purpose
 
@@ -74,11 +74,14 @@ All 102 common generated C++ outputs differ in source identity metadata:
   default `name`;
 - C++ also honors an explicit top-level `declare name`, as in
   `rep_40_metadata_master.dsp`;
-- Rust currently emits `filename = "mydsp.dsp"` and `name = "mydsp"` in both
-  the banner and `metadata()` callback.
+- Rust previously emitted `filename = "mydsp.dsp"` and `name = "mydsp"` in
+  the banner and C++ `metadata()` callback, while the C callback omitted both.
 
 This is observable to a host through `Meta::declare`; it is not merely a banner
-formatting difference.
+formatting difference. The compiler facade now transports source basename and
+the resolved top-level name into both C-family emitters independently from the
+generated class name. C and C++ banners and callbacks therefore follow the C++
+rule, including an explicit `declare name`; `DIFF-GAP-012` is closed.
 
 ### 4.2 Global and imported metadata (`DIFF-GAP-013`)
 

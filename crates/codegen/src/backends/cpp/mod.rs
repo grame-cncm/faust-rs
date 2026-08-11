@@ -75,6 +75,11 @@ pub struct CppOptions {
     /// falls back to a minimal `-lang cpp` line for callers (mostly tests)
     /// that do not thread the real CLI flags through.
     pub compile_options: Option<String>,
+    /// Source-level DSP name reported in the generated banner and metadata
+    /// callback. This is independent from [`Self::class_name`].
+    pub metadata_name: Option<String>,
+    /// Source basename reported by the generated metadata callback.
+    pub metadata_filename: Option<String>,
 }
 
 impl Default for CppOptions {
@@ -90,6 +95,8 @@ impl Default for CppOptions {
             quad_type_name: "quad".to_owned(),
             fixed_type_name: "fixed".to_owned(),
             compile_options: None,
+            metadata_name: None,
+            metadata_filename: None,
         }
     }
 }
@@ -224,6 +231,7 @@ pub fn generate_cpp_module(
     let module = decode_module(store, module)?;
     let module_name = module.name.clone();
     let effective_options = options.clone();
+    let metadata_name = options.metadata_name.as_deref().unwrap_or(&module_name);
     let declared_functions = collect_module_function_names(store, module.functions)?;
     let has_sample_rate_field = block_declares_var(store, module.dsp_struct, "fSampleRate")
         || block_declares_var(store, module.globals, "fSampleRate");
@@ -237,7 +245,7 @@ pub fn generate_cpp_module(
     emit_cpp_header(
         &mut out,
         class_name,
-        &module_name,
+        metadata_name,
         options.compile_options.as_deref(),
     );
     if let Some(namespace) = options.namespace.as_deref() {
@@ -502,12 +510,20 @@ fn emit_dsp_contract_methods(
     if !has_metadata {
         let _ = writeln!(out, "{tab}virtual void metadata(Meta* m) {{");
         let _ = writeln!(out, "{tab}    (void)m;");
+        let filename = options
+            .metadata_filename
+            .clone()
+            .unwrap_or_else(|| format!("{module_name}.dsp"));
         let _ = writeln!(
             out,
-            "{tab}    m->declare(\"filename\", \"{}.dsp\");",
-            module_name
+            "{tab}    m->declare(\"filename\", {});",
+            cpp_string_literal(&filename)
         );
-        let _ = writeln!(out, "{tab}    m->declare(\"name\", \"{module_name}\");");
+        let _ = writeln!(
+            out,
+            "{tab}    m->declare(\"name\", {});",
+            cpp_string_literal(options.metadata_name.as_deref().unwrap_or(module_name))
+        );
         let _ = writeln!(out, "{tab}}}");
     }
     if !has_build_ui {
@@ -1079,12 +1095,20 @@ fn emit_declare_fun(
         emit_compute_body(store, out, options, body, indent + 1)?;
     } else if decl.name == "metadata" && is_empty_block(store, body) {
         let _ = writeln!(out, "{tab}    (void)m;");
+        let filename = options
+            .metadata_filename
+            .clone()
+            .unwrap_or_else(|| format!("{module_name}.dsp"));
         let _ = writeln!(
             out,
-            "{tab}    m->declare(\"filename\", \"{}.dsp\");",
-            module_name
+            "{tab}    m->declare(\"filename\", {});",
+            cpp_string_literal(&filename)
         );
-        let _ = writeln!(out, "{tab}    m->declare(\"name\", \"{module_name}\");");
+        let _ = writeln!(
+            out,
+            "{tab}    m->declare(\"name\", {});",
+            cpp_string_literal(options.metadata_name.as_deref().unwrap_or(module_name))
+        );
     } else if decl.name == "buildUserInterface" && is_empty_block(store, body) {
         let _ = writeln!(
             out,

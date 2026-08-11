@@ -301,8 +301,8 @@ must run unchanged with Faust C++ should not pass them.
   arity, compilation, and execution checks rather than a raw whole-file diff.
   Conversely, a matching module-shell signature alone is not evidence of
   numerical equivalence.
-- Known semantic metadata defects discovered beneath those text differences
-  are recorded separately as `DIFF-GAP-012` and `DIFF-GAP-013`.
+- The remaining semantic metadata defect discovered beneath those text
+  differences is recorded separately as `DIFF-GAP-013`.
 
 ## 7. Public API and representation adaptations
 
@@ -407,15 +407,14 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-008 | `excluded` | `backend-java` is outside the Rust port target scope. |
 | DIFF-GAP-009 | `excluded` | Legacy `-lang ocpp` is outside the Rust port target scope. |
 | DIFF-GAP-010 | `narrower` | There is no direct Rust LLVM backend matching the C++ LLVM factory/target/object toolchain; Cranelift is a distinct extension, not a drop-in identity mapping. |
-| DIFF-GAP-012 | `parity-gap` | The generated C/C++ metadata callback and banner currently identify every default compilation as `name = "mydsp"` and `filename = "mydsp.dsp"`. C++ derives the filename and default name from the input DSP and honors an explicit top-level `declare name`. The audit observed this on all 102 corpus cases accepted by both compilers. Hosts that inspect `Meta::declare` receive the wrong source identity from Rust output. |
 | DIFF-GAP-013 | `parity-gap` | Although parser/eval preserve compilation-global metadata, the generated C/C++ `metadata()` method currently omits non-identity top-level and imported/library declarations. Eleven common corpus cases expose this: `rep_11`, `rep_41`, `rep_42`, `rep_43`, `rep_61_fmin_sr`, `rep_64_dynamic_rem`, `rep_69`, `rep_71`, `rep_79`, `rep_80`, and `vector_recursive_delay_fusion_pulse_countup_loop`. Widget/group metadata emitted through UI declarations is a separate path and remains covered by UI parity tests. |
 
 For a time-stamped quantitative snapshot rather than this durable registry,
 use [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),
 the reports under `porting/phases/`, and `tests/golden/METADATA.toml`.
 
-The 219-case audit that exposed the now-closed root-ordering gap and the open
-`DIFF-GAP-012`/`DIFF-GAP-013`, including its coverage limits and reproduction
+The 219-case audit that exposed the now-closed root-ordering and source-identity
+gaps and the open `DIFF-GAP-013`, including its coverage limits and reproduction
 commands, is recorded in
 [`faust-rs-corpus-difference-audit-2026-08-11-en.md`](faust-rs-corpus-difference-audit-2026-08-11-en.md).
 

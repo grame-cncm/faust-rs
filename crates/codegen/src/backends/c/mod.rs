@@ -71,6 +71,11 @@ pub struct COptions {
     /// `None` falls back to a minimal `-lang c` line for callers (mostly
     /// tests) that do not thread the real CLI flags through.
     pub compile_options: Option<String>,
+    /// Source-level DSP name reported in the generated banner and metadata
+    /// callback. This is independent from [`Self::class_name`].
+    pub metadata_name: Option<String>,
+    /// Source basename reported by the generated metadata callback.
+    pub metadata_filename: Option<String>,
 }
 
 impl Default for COptions {
@@ -84,6 +89,8 @@ impl Default for COptions {
             quad_type_name: "quad".to_owned(),
             fixed_type_name: "fixed".to_owned(),
             compile_options: None,
+            metadata_name: None,
+            metadata_filename: None,
         }
     }
 }
@@ -224,7 +231,10 @@ pub fn generate_c_module(
     emit_c_header(
         &mut out,
         &class_name,
-        &module.name,
+        effective_options
+            .metadata_name
+            .as_deref()
+            .unwrap_or(&module.name),
         effective_options.compile_options.as_deref(),
     );
     emit_static_tables(store, &mut out, &effective_options, module.static_decls)?;
@@ -844,6 +854,22 @@ fn emit_named_fun(
     }
     if decl.name == "compute" {
         emit_compute_body(store, out, options, body, 1)?;
+    } else if decl.name == "metadata" && is_empty_block(store, body) {
+        let filename = options
+            .metadata_filename
+            .clone()
+            .unwrap_or_else(|| format!("{class_name}.dsp"));
+        let name = options.metadata_name.as_deref().unwrap_or(class_name);
+        let _ = writeln!(
+            out,
+            "    m->declare(m->metaInterface, \"filename\", {});",
+            c_string_literal(&filename)
+        );
+        let _ = writeln!(
+            out,
+            "    m->declare(m->metaInterface, \"name\", {});",
+            c_string_literal(name)
+        );
     } else {
         let mut mode = match decl.name.as_str() {
             "metadata" => EmitMode::Metadata,
@@ -855,6 +881,10 @@ fn emit_named_fun(
     let _ = writeln!(out, "}}");
     let _ = writeln!(out);
     Ok(())
+}
+
+fn is_empty_block(store: &FirStore, body: FirId) -> bool {
+    matches!(match_fir(store, body), FirMatch::Block(items) if items.is_empty())
 }
 
 /// Emits one non-DSP helper function as a `static` C function.
