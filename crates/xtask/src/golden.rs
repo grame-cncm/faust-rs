@@ -10,18 +10,25 @@ use super::*;
 // Golden snapshot workflows
 // ---------------------------------------------------------------------------
 
-/// Returns `false` for corpus fixtures that cannot be golden-checked because
-/// they import the project-local `libraries/interleave.lib` (the spectral
-/// FFT-on-`ondemand` examples). The golden import search path contains
-/// `tests/corpus` and `/usr/local/share/faust` (see
-/// `default_import_search_paths`), but not `libraries`, so
-/// `library("interleave.lib")` never resolves.
-/// These examples are exercised by the runtime tests
+/// Returns `false` for corpus fixtures that cannot be golden-checked:
+///
+/// - fixtures importing the project-local `libraries/interleave.lib` (the
+///   spectral FFT-on-`ondemand` examples). The golden import search path
+///   contains `tests/corpus` and `/usr/local/share/faust` (see
+///   `default_import_search_paths`), but not `libraries`;
+/// - explicit HTTP(S) import fixtures, which require an opt-in network
+///   capability and are intentionally not hermetic golden inputs.
+///
+/// The interleave examples are exercised by the runtime tests
 /// (`crates/compiler/tests/interleave_fft.rs`, the impulse-runner effect
 /// checks) instead of by golden snapshots.
 pub(crate) fn is_rust_golden_eligible(source_path: &Path) -> bool {
     match fs::read_to_string(source_path) {
-        Ok(text) => !text.contains("interleave.lib"),
+        Ok(text) => {
+            !text.contains("interleave.lib")
+                && !text.contains("import(\"http://")
+                && !text.contains("import(\"https://")
+        }
         Err(_) => true,
     }
 }
