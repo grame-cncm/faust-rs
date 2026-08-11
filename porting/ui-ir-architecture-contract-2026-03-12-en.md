@@ -501,6 +501,21 @@ Important current C++ limitation:
 - C++ does not currently interpret group labels such as `../Foo` as relative
   pathname navigation for the group node itself
 
+This boundary matches the Faust manual's wording: the
+[`Labels as Pathnames`](https://faustdoc.grame.fr/manual/syntax/#labels-as-pathnames)
+section permits an absolute or relative pathname directly in the label of a
+*widget* and illustrates it with `hslider("../volume", ...)`; it does not grant
+the same behavior to group labels. It was re-verified on 2026-08-11 against the
+pinned C++ tree (`master-dev-ocpp-od-fir-2-FIR19`, `8eebea429`):
+
+- `compiler/propagate/propagate.cpp` calls `normalizePath(cons(label, path))`
+  for terminal UI elements;
+- its `isBoxVGroup`, `isBoxHGroup`, and `isBoxTGroup` branches only prepend the
+  typed group label to `path`;
+- compiling `rep_63_ui_relative_group_rebase.dsp` therefore emits
+  `openVerticalBox("../Bar")`, whereas Rust emits a root-level `Bar` sibling of
+  `Foo`.
+
 This limitation is part of the current C++ baseline and must be documented
 explicitly before any Rust extension is added on top of it.
 

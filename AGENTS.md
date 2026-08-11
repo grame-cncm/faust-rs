@@ -121,6 +121,21 @@ Guidelines for contributors and coding agents working on `faust-rs`.
   - runtime code does not duplicate `instanceClear` with ad-hoc field clearing;
   - compiled `instanceConstants` is authoritative when present.
 
+### Compatibility Difference Registry (Mandatory)
+
+- Keep `porting/faust-rs-vs-faust-cpp-differences-en.md` as the living registry
+  of compatibility-relevant differences from the pinned Faust C++ reference.
+- Update it in the same change whenever work introduces, changes, or removes:
+  - a Rust-only source form, CLI option, backend, diagnostic, API, or artifact;
+  - an intentional difference in defaults, accepted inputs, lifecycle,
+    scheduling, generated output, failure policy, or observable behavior;
+  - an `adapted`, `deferred`, narrower, or excluded public compatibility
+    surface.
+- Each entry must state compatibility impact, distinguish implemented behavior
+  from plans, and link an authoritative plan, test, fixture, or API matrix.
+- Closing a difference requires updating or removing its registry entry; a
+  stale registry is a porting defect.
+
 ## 6. Scope and Non-Goals (Frozen)
 
 - Keep these exclusions unless explicitly revised in planning docs:
