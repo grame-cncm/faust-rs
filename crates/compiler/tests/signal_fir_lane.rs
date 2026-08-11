@@ -501,6 +501,24 @@ fn fastlane_compiles_table_fixtures() {
 }
 
 #[test]
+fn fastlane_keeps_selected_waveform_reads_in_the_sample_loop() {
+    const SOURCE: &str = r#"
+index = (+(1) ~ _) - 1;
+a = rdtable(waveform{0.0, 0.25, 0.5, 0.75}, index & 3);
+b = rdtable(waveform{1.0, 0.75, 0.5, 0.25}, index & 3);
+process = a, b : select2(nentry("pick", 0, 0, 1, 1));
+"#;
+
+    let cpp = compile_cpp_source_with_lane(
+        "selected-waveform-reads",
+        SOURCE,
+        SignalFirLane::TransformFastLane,
+    );
+    assert!(cpp.contains("iSlow0 ? ftbl"));
+    assert!(cpp.contains("iTemp0"));
+}
+
+#[test]
 fn computed_table_size_compiles_in_all_scalar_vector_and_init_modes() {
     const SOURCE: &str = "process = rdtable((4 + 4) * (10 - 2), 0.25, int(_) & 63);";
 

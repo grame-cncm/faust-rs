@@ -25,7 +25,7 @@ use signals::{BinOp, SigBuilder, SigId, SigMatch, match_sig};
 use sigtype::SigType;
 use tlib::TreeArena;
 
-use crate::mterm::{self, Mterm, add_nums, gcd, is_zero, sig_order};
+use crate::mterm::{self, Mterm, add_nums, gcd, is_num, is_zero, sig_order, sub_nums};
 
 // ─── Aterm ────────────────────────────────────────────────────────────────────
 
@@ -211,11 +211,16 @@ impl Aterm {
 
         // Initial SUM = P[0] - N[0] (constant-order terms).
         //
-        // Some constant-order terms are not numeric literals after the current
-        // simplification pass (for example normalized UI-constant expressions),
-        // so we must combine them through the generic signed adder rather than
-        // assuming `sub_nums` can always subtract two literals here.
-        let (mut sign, mut sum) = add_terms_with_sign(arena, true, p[0], false, n[0]);
+        // C++ starts with `subNums(P[0], N[0])`. Some Rust constant-order terms
+        // are not numeric literals after the current pass (for example
+        // normalized UI-constant expressions), so retain the generic fallback
+        // for those while keeping the numeric path canonical. In particular,
+        // `0 - 0` must remain a positive zero rather than becoming `-1 * 0`.
+        let (mut sign, mut sum) = if is_num(arena, p[0]) && is_num(arena, n[0]) {
+            (true, sub_nums(arena, p[0], n[0]))
+        } else {
+            add_terms_with_sign(arena, true, p[0], false, n[0])
+        };
 
         // Fold from highest to lowest order.
         // C++: loop from order=3 down to 1; here from (ORDERS-1) down to 1.

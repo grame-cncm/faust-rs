@@ -1175,6 +1175,32 @@ process = comparator(dir(0));
 }
 
 #[test]
+fn eval_process_matches_case_argument_with_nested_zero_power_like_cpp() {
+    let source = r#"
+choose(l,m) = case {
+  (1,0,1) => 10;
+  (1,0,0) => 20;
+  (0,1,0) => 30;
+  (0,0,0) => 40;
+}(m==l,m==(l-1),l==0);
+process = choose(int(sqrt(0)), int(0-int(sqrt(0))^2-int(sqrt(0))));
+"#;
+
+    let parsed = parse_program(source, "<memory>");
+    assert!(
+        parsed.errors.is_empty(),
+        "parser should accept nested constant case repro: {:?}",
+        parsed.errors
+    );
+
+    let mut arena = parsed.state.arena;
+    let root = parsed.root.expect("parse should return a root");
+    let out = eval_process(&mut arena, root)
+        .expect("nested zero/power expression should select a case like Faust C++");
+    expect_int(&arena, out, 10);
+}
+
+#[test]
 fn eval_process_preserves_parser_case_rule_priority_for_recursive_local_cases() {
     let source = r#"
 process = p(0, 0, 0.0) with {

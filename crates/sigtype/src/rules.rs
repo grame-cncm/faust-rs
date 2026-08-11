@@ -30,7 +30,9 @@ use tlib::{NodeKind, TreeArena, match_sym_rec, match_sym_ref};
 use ui::{ControlId, ControlKind, UiProgram};
 
 use crate::enums::{Boolean, Computability, Nature, Variability, Vectorability};
-use crate::factory::{make_maximal, make_simple, make_table_type, make_tuplet};
+use crate::factory::{
+    make_maximal, make_simple, make_table_type, make_table_type_with, make_tuplet,
+};
 use crate::ops::{
     check_delay_interval, check_init, check_int_param, float_cast, int_cast, samp_cast, union_types,
 };
@@ -997,11 +999,22 @@ impl<'a> TypeAnnotator<'a> {
             SigMatch::RdTbl(tbl, idx) => {
                 let ttbl = self.infer(tbl)?;
                 let tidx = self.infer(idx)?;
+                // The public signal builder historically accepts a waveform
+                // directly as an RDTBL source. C++ normally reaches waveform
+                // playback without that wrapper and types SIGWAVEFORM itself
+                // as the sample-rate scalar value. Preserve the Rust builder
+                // form while retaining that scalar waveform type.
+                if matches!(match_sig(self.arena, tbl), SigMatch::Waveform(_)) {
+                    return Ok(infer_direct_waveform_read(ttbl, tidx));
+                }
                 infer_read_table(ttbl, tidx)
             }
 
             SigMatch::WrTbl(size, generator, wi, ws) => {
                 let ttbl = self.infer_write_table(sig, size, generator)?;
+                if self.arena.is_nil(wi) && self.arena.is_nil(ws) {
+                    return Ok(ttbl);
+                }
                 let twi = self.infer(wi)?;
                 let tws = self.infer(ws)?;
                 infer_write_table_type(ttbl, twi, tws)
@@ -1011,30 +1024,16 @@ impl<'a> TypeAnnotator<'a> {
 
             // ── Waveform ─────────────────────────────────────────────────────
             SigMatch::Waveform(elems) => {
-                // `SIGWAVEFORM` in the propagated signal tree represents the
-                // **cycling output**: each sample yields the next element of the
-                // table (advancing an implicit counter modulo the table length).
-                //
-                // The TABLE DATA is compile-time constant (`kKonst` in C++ Faust,
-                // and `make_table_type` hardcodes `Variability::Konst` to match
-                // that).  The OUTPUT, however, changes every sample — so the
-                // signal's variability must be `Samp`.
-                //
-                // If we leave it as `Konst`, the variability-driven placement pass
-                // in `signal_fir` hoists every expression that depends on the
-                // waveform — including `clk = reset > 0` — into `instanceConstants`.
-                // Those expressions then capture `LoadTable(fTblN, iWaveN)` at
-                // initialisation time, before `instanceClear` has zeroed `iWaveN`,
-                // producing wrong output.
-                //
-                // Promoting to `Samp` propagates through all dependents and keeps
-                // them in the sample loop where they belong.
+                // C++ `inferWaveformType`: a waveform is a scalar cycling output,
+                // not a table value. Its elements determine nature and interval;
+                // variability/computability/vectorability are fixed to
+                // `kSamp`/`kComp`/`kScal`.
                 if elems.is_empty() {
                     return Ok(make_simple(
                         Nature::Real,
                         Variability::Samp,
                         Computability::Comp,
-                        Vectorability::Vect,
+                        Vectorability::Scal,
                         Boolean::Num,
                         interval::empty(),
                     ));
@@ -1046,7 +1045,14 @@ impl<'a> TypeAnnotator<'a> {
                     itv = interval::reunion(itv, te.interval());
                     t = union_types(t, te);
                 }
-                Ok(make_table_type(t.promote_interval(itv)).promote_variability(Variability::Samp))
+                Ok(make_simple(
+                    t.nature(),
+                    Variability::Samp,
+                    Computability::Comp,
+                    Vectorability::Scal,
+                    Boolean::Num,
+                    itv,
+                ))
             }
 
             // ── UI controls ──────────────────────────────────────────────────
@@ -2062,33 +2068,67 @@ fn apply_recursive_widening(
 // Table type helpers (free functions)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Type of a table read: element type of `tbl`, with index variability joined.
+/// Type of a table read: table aggregate qualifiers joined with the index.
 ///
 /// # C++ source
 /// `inferReadTableType(Type tbl, Type ri)`
 fn infer_read_table(tbl: SigType, idx: SigType) -> Result<SigType, InferenceError> {
-    let content = match &tbl {
-        SigType::Table(tt) => *tt.content.clone(),
-        other => other.clone(),
-    };
-    // Raise variability/computability by the index type.
-    let t = content
-        .promote_variability(idx.variability())
-        .promote_computability(idx.computability());
-    Ok(t)
+    if !matches!(tbl, SigType::Table(_)) {
+        return Err(InferenceError::structure(
+            None,
+            "table read expected a table-typed source",
+        ));
+    }
+    Ok(make_simple(
+        tbl.nature(),
+        tbl.variability().join(idx.variability()),
+        tbl.computability().join(idx.computability()),
+        tbl.vectorability().join(idx.vectorability()),
+        tbl.boolean(),
+        tbl.interval(),
+    ))
 }
 
-/// Type of a table write: preserve table type, assert write-type ≤ table nature.
-///
-/// # C++ source
-/// `inferWriteTableType(Type tbl, Type wi, Type ws)`
+/// Compatibility typing for the Rust signal builder's direct
+/// `rdtbl(waveform, index)` form.
+fn infer_direct_waveform_read(waveform: SigType, idx: SigType) -> SigType {
+    make_simple(
+        waveform.nature(),
+        waveform.variability().join(idx.variability()),
+        waveform.computability().join(idx.computability()),
+        waveform.vectorability().join(idx.vectorability()),
+        waveform.boolean(),
+        waveform.interval(),
+    )
+}
+
+/// Type of a table write: preserve table content and derive aggregate
+/// qualifiers from the write index and signal, matching C++
+/// `inferWriteTableType`.
 fn infer_write_table_type(
     tbl: SigType,
-    _wi: SigType,
-    _ws: SigType,
+    wi: SigType,
+    ws: SigType,
 ) -> Result<SigType, InferenceError> {
-    // Return the table type unchanged — writes don't change the table's type.
-    Ok(tbl)
+    let table_interval = tbl.interval();
+    let content = match tbl {
+        SigType::Table(tt) => *tt.content,
+        _ => {
+            return Err(InferenceError::structure(
+                None,
+                "table write expected a table-typed source",
+            ));
+        }
+    };
+    Ok(make_table_type_with(
+        content,
+        ws.nature(),
+        wi.variability().join(ws.variability()),
+        wi.computability().join(ws.computability()),
+        wi.vectorability().join(ws.vectorability()),
+        ws.boolean(),
+        interval::reunion(table_interval, ws.interval()),
+    ))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2403,6 +2443,78 @@ mod tests {
         // singleton(-1) ∪ singleton(0) = [-1, 0]
         assert!(ty.interval().lo() <= -1.0);
         assert!(ty.interval().hi() >= 0.0);
+    }
+
+    #[test]
+    fn waveform_is_a_sample_scalar_like_cpp() {
+        let mut arena = TreeArena::new();
+        let zero = SigBuilder::new(&mut arena).int(0);
+        let one = SigBuilder::new(&mut arena).real(1.0);
+        let waveform = SigBuilder::new(&mut arena).waveform(&[zero, one]);
+
+        let types = annotate(&arena, &[waveform]);
+        let ty = &types[&waveform];
+        assert!(matches!(ty, SigType::Simple(_)));
+        assert_eq!(ty.nature(), Nature::Real);
+        assert_eq!(ty.variability(), Variability::Samp);
+        assert_eq!(ty.computability(), Computability::Comp);
+        assert_eq!(ty.vectorability(), Vectorability::Scal);
+    }
+
+    #[test]
+    fn direct_waveform_read_keeps_the_waveform_sample_rate() {
+        let mut arena = TreeArena::new();
+        let zero = SigBuilder::new(&mut arena).real(0.0);
+        let one = SigBuilder::new(&mut arena).real(1.0);
+        let waveform = SigBuilder::new(&mut arena).waveform(&[zero, one]);
+        let index = SigBuilder::new(&mut arena).int(0);
+        let read = SigBuilder::new(&mut arena).rdtbl(waveform, index);
+
+        let types = annotate(&arena, &[read]);
+        assert_eq!(types[&read].variability(), Variability::Samp);
+        assert_eq!(types[&read].computability(), Computability::Comp);
+        assert_eq!(types[&read].vectorability(), Vectorability::Scal);
+    }
+
+    #[test]
+    fn readonly_table_read_variability_comes_from_its_index() {
+        let mut arena = TreeArena::new();
+        let zero = SigBuilder::new(&mut arena).real(0.0);
+        let one = SigBuilder::new(&mut arena).real(1.0);
+        let waveform = SigBuilder::new(&mut arena).waveform(&[zero, one]);
+        let size = SigBuilder::new(&mut arena).int(2);
+        let generator = SigBuilder::new(&mut arena).generate(waveform);
+        let table = SigBuilder::new(&mut arena).wrtbl_readonly(size, generator);
+        let constant_index = SigBuilder::new(&mut arena).int(0);
+        let constant_read = SigBuilder::new(&mut arena).rdtbl(table, constant_index);
+        let sample_index = SigBuilder::new(&mut arena).input(0);
+        let sample_read = SigBuilder::new(&mut arena).rdtbl(table, sample_index);
+
+        let types = annotate(&arena, &[constant_read, sample_read]);
+        assert!(matches!(types[&constant_read], SigType::Simple(_)));
+        assert_eq!(types[&constant_read].variability(), Variability::Konst);
+        assert_eq!(types[&constant_read].computability(), Computability::Init);
+        assert_eq!(types[&sample_read].variability(), Variability::Samp);
+        assert_eq!(types[&sample_read].computability(), Computability::Exec);
+    }
+
+    #[test]
+    fn writable_table_propagates_write_rate_to_reads() {
+        let mut arena = TreeArena::new();
+        let size = SigBuilder::new(&mut arena).int(2);
+        let initial = SigBuilder::new(&mut arena).real(0.0);
+        let generator = SigBuilder::new(&mut arena).generate(initial);
+        let write_index = SigBuilder::new(&mut arena).input(0);
+        let write_signal = SigBuilder::new(&mut arena).input(1);
+        let table = SigBuilder::new(&mut arena).wrtbl(size, generator, write_index, write_signal);
+        let read_index = SigBuilder::new(&mut arena).int(0);
+        let read = SigBuilder::new(&mut arena).rdtbl(table, read_index);
+
+        let types = annotate(&arena, &[read]);
+        assert_eq!(types[&table].variability(), Variability::Samp);
+        assert_eq!(types[&table].computability(), Computability::Exec);
+        assert_eq!(types[&read].variability(), Variability::Samp);
+        assert_eq!(types[&read].computability(), Computability::Exec);
     }
 
     #[test]

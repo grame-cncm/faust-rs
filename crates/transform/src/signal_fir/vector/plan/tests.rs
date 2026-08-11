@@ -13,7 +13,9 @@ use crate::signal_fir::decoration_verify::CanonicalSigType;
 use crate::signal_fir::decoration_verify::VerifiedDecorationCertificate;
 use crate::signal_fir::decoration_verify::certify_decorations;
 use crate::signal_fir::pv_slice::build_pv_signals;
-use crate::signal_fir::vector::analysis::{DepKind, EffectAtom, ForeignPurity, StateResource};
+use crate::signal_fir::vector::analysis::{
+    DepKind, EffectAtom, ForeignPurity, StateCell, StateResource,
+};
 use crate::signal_fir::vector::schedule::schedule_vector_plan;
 use crate::signal_fir::vector::verify::{LoopEdge, LoopKind, Placement, ValueType};
 use crate::signal_prepare::prepare_signals_for_fir_verified;
@@ -305,16 +307,33 @@ fn stateful_waveform_values_use_typed_numeric_transports() {
     };
     let decorations = certify(&arena, &[left, right]);
     let plan = build_vector_plan(&decorations, 8).unwrap().into_plan();
-    let table_ids = decorations
+    let waveform_record = decorations
         .certificate()
         .records
         .iter()
-        .filter(|record| matches!(record.sig_type, CanonicalSigType::Table { .. }))
-        .map(|record| u64::from(record.signal_id))
-        .collect::<BTreeSet<_>>();
+        .find(|record| {
+            record.direct_effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    EffectAtom::ReadState(StateResource::Signal {
+                        owner,
+                        cell: StateCell::WaveformIndex,
+                    }) if *owner == record.signal_id
+                )
+            })
+        })
+        .expect("the prepared waveform should own its read-position state");
+    assert!(matches!(
+        waveform_record.sig_type,
+        CanonicalSigType::Simple {
+            variability: sigtype::Variability::Samp,
+            ..
+        }
+    ));
+    let waveform_id = u64::from(waveform_record.signal_id);
 
     assert!(plan.transports.iter().any(|transport| {
-        table_ids.contains(&transport.signal_id)
+        transport.signal_id == waveform_id
             && transport.element_type == ValueType::Real
             && transport.length == 8
     }));

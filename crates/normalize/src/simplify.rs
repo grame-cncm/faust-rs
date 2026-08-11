@@ -759,6 +759,22 @@ mod tests {
     }
 
     #[test]
+    fn simplify_nested_constant_with_pow() {
+        let mut a = arena();
+        let t = types();
+        let zero = SigBuilder::new(&mut a).int(0);
+        let two = SigBuilder::new(&mut a).int(2);
+        let pow = SigBuilder::new(&mut a).pow(zero, two);
+        let inner = SigBuilder::new(&mut a).sub(zero, pow);
+        let outer = SigBuilder::new(&mut a).sub(inner, zero);
+        let cast = SigBuilder::new(&mut a).int_cast(outer);
+        let eq = SigBuilder::new(&mut a).eq(cast, zero);
+
+        let r = simplify(&mut a, &t, eq);
+        assert_eq!(match_sig(&a, r), SigMatch::Int(1));
+    }
+
+    #[test]
     fn simplify_float_add() {
         let mut a = arena();
         let t = types();
