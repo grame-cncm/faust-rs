@@ -190,3 +190,122 @@ fn the_header_layout_is_stable() {
         );
     }
 }
+
+// ── Round trip ────────────────────────────────────────────────────────────────
+
+/// Compiles one source string to C++ with no import search path at all.
+fn compile_expansion_to_cpp(source: &str) -> String {
+    let source = source.to_owned();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            Compiler::new()
+                .compile_source_to_cpp(
+                    "expanded.dsp",
+                    &source,
+                    &codegen::backends::cpp::CppOptions::default(),
+                )
+                .expect("an expansion must compile on its own")
+        })
+        .expect("spawn")
+        .join()
+        .expect("no panic")
+}
+
+/// Compiles one fixture file to C++ with its normal search paths.
+fn compile_fixture_to_cpp(path: &Path) -> String {
+    let path = path.to_path_buf();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            Compiler::new()
+                .compile_file_to_cpp(&path, &[], &codegen::backends::cpp::CppOptions::default())
+                .unwrap_or_else(|error| panic!("{} must compile: {error}", path.display()))
+        })
+        .expect("spawn")
+        .join()
+        .expect("no panic")
+}
+
+/// Drops the lines that describe the compilation rather than the DSP, and
+/// renumbers recursion state variables densely.
+///
+/// `m->declare(...)` carries `filename`, `compile_options`, the per-library
+/// keys, `library_path*` and `version` — all of which the expansion
+/// legitimately changes.
+///
+/// The renumbering covers a faust-rs-specific artifact that C++ does not have:
+/// recursion state variables are numbered from a counter that advances with
+/// the number of recursion groups seen while evaluating, and an expansion has
+/// evaluated away the library abstractions that advanced it in the original.
+/// So `020_library_import` yields `fRec157` compiled directly and `fRec161`
+/// compiled from its expansion — the same variable, a different index. C++
+/// round-trips this fixture with byte-identical code. Mapping each index to
+/// its order of first appearance keeps the structural comparison exact while
+/// tolerating the offset.
+fn algorithm_only(generated: &str) -> Vec<String> {
+    let mut indices: Vec<String> = Vec::new();
+    generated
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.trim_start().starts_with("m->declare("))
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .filter(|line| !line.is_empty())
+        .map(|line| renumber_recursion_variables(line, &mut indices))
+        .collect()
+}
+
+/// Replaces every `Rec<n>` / `RecCur<n>` index with its first-appearance rank.
+fn renumber_recursion_variables(line: &str, indices: &mut Vec<String>) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(offset) = rest.find("Rec") {
+        let (head, tail) = rest.split_at(offset);
+        out.push_str(head);
+        let after_marker = if let Some(rest) = tail.strip_prefix("RecCur") {
+            out.push_str("RecCur");
+            rest
+        } else {
+            out.push_str("Rec");
+            tail.strip_prefix("Rec").unwrap_or(tail)
+        };
+        let digits: String = after_marker
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if digits.is_empty() {
+            rest = after_marker;
+            continue;
+        }
+        let rank = indices
+            .iter()
+            .position(|seen| *seen == digits)
+            .unwrap_or_else(|| {
+                indices.push(digits.clone());
+                indices.len() - 1
+            });
+        out.push_str(&rank.to_string());
+        rest = &after_marker[digits.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn expansions_are_self_contained_and_preserve_generated_code() {
+    // This is the property that makes expansion useful, and it is stronger
+    // than matching the reference text: an expansion must compile with no
+    // library search path, and produce the same DSP algorithm as compiling
+    // the original.
+    for fixture in fixtures() {
+        let expanded = expand(&fixture);
+        let from_expansion = compile_expansion_to_cpp(&expanded);
+        let direct = compile_fixture_to_cpp(&fixture);
+        assert_eq!(
+            algorithm_only(&direct),
+            algorithm_only(&from_expansion),
+            "compiling the expansion of {} produced different code",
+            fixture.display()
+        );
+    }
+}

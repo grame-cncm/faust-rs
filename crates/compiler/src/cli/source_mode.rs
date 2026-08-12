@@ -123,6 +123,23 @@ pub(crate) fn run_source_mode(
         return;
     }
 
+    if cli.export_dsp {
+        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
+        // The options recorded in the document are the ones this process was
+        // invoked with, so the expansion documents how it was produced.
+        let argv: Vec<String> = std::env::args().skip(1).collect();
+        match compiler.expand_file_to_dsp(input_path, &cli.import_dir, &argv) {
+            Ok(expanded) => {
+                timer.phase("export-dsp");
+                emit_output(&expanded, cli.output.as_ref());
+            }
+            Err(err) => report_pipeline_failure("Expansion failed", &err, cli),
+        }
+        timer.total();
+        return;
+    }
+
     if cli.svg {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));

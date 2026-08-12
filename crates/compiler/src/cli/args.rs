@@ -157,6 +157,13 @@ pub struct CliArgs {
     /// Parse and dump box IR.
     #[arg(long = "dump-box", action = ArgAction::SetTrue)]
     pub dump_box: bool,
+    /// Expand the DSP into a self-contained program with every import inlined.
+    ///
+    /// Spelled `-e` / `--export-dsp` as in C++ Faust. The output is Faust
+    /// source, not generated code, so it is a terminal mode: combining it with
+    /// a backend selection is rejected rather than silently ignoring one.
+    #[arg(short = 'e', long = "export-dsp", action = ArgAction::SetTrue)]
+    pub export_dsp: bool,
     /// Compile to signals and dump signal IR.
     #[arg(long = "dump-sig", action = ArgAction::SetTrue)]
     pub dump_sig: bool,

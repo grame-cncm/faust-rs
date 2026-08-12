@@ -1,0 +1,16 @@
+Usage:
+  cargo run -p compiler -- -lang asc|c|cpp|fir|julia|rust|wast <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]
+                           [--no-fir-verify] [--fir-verify-strict]
+  cargo run -p compiler -- --golden <input.dsp>
+  cargo run -p compiler -- --parse <input.dsp> [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]
+  cargo run -p compiler -- -e|--export-dsp <input.dsp> [-o <file>] [-I <dir> ...]
+  cargo run -p compiler -- --dump-box <input.dsp> [-o <file>] [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]
+  cargo run -p compiler -- --dump-sig <input.dsp> [-o <file>] [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]
+  cargo run -p compiler -- --dump-fir <input.dsp> [-o <file>] [-I <dir> ...] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]
+  cargo run -p compiler -- --json <input.dsp> [-o <file>] [-I <dir> ...] [--signal-fir-lane fast]
+  cargo run -p compiler -- --dump-fir-verify <input.dsp> [-o <file>] [-I <dir> ...] [--signal-fir-lane fast] [--fir-verify-strict]
+  cargo run -p compiler -- --check <input.dsp> [-I <dir> ...] [--signal-fir-lane fast] [--fir-verify-strict] [--error-format human|json] [--error-verbosity standard|debug]
+  cargo run -p compiler -- --dump-cpp <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--super-class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]
+  cargo run -p compiler -- --dump-cpp-from-fbc <input.fbc> [-o <file>] [--cpp-class-name <name>]
+  cargo run -p compiler -- --dump-c <input.dsp> [-o <file>] [-I <dir> ...] [--class-name <name>] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]
+EXIT=2

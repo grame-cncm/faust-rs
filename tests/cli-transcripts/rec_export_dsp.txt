@@ -1,0 +1,13 @@
+declare version "0.7.0";
+declare compile_options "-single -scal --export-dsp target/cli-transcript-inputs/rec.dsp";
+declare filename "rec.dsp";
+declare name "rec";
+ID_0 = _, 0.5f;
+ID_1 = (ID_0 : *);
+ID_2 = + ~ ID_1;
+ID_3 = _, 3;
+ID_4 = ID_3 : @;
+ID_5 = ID_2 : ID_4;
+ID_6 = _ : ID_5;
+process = ID_6;
+EXIT=0

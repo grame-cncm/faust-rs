@@ -48,6 +48,7 @@ pub fn print_global_usage_and_exit() -> ! {
     eprintln!(
         "  cargo run -p compiler -- --parse <input.dsp> [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]"
     );
+    eprintln!("  cargo run -p compiler -- -e|--export-dsp <input.dsp> [-o <file>] [-I <dir> ...]");
     eprintln!(
         "  cargo run -p compiler -- --dump-box <input.dsp> [-o <file>] [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]"
     );

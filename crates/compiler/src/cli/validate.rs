@@ -127,6 +127,7 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         cli.golden,
         cli.parse,
         cli.dump_box,
+        cli.export_dsp,
         cli.dump_sig,
         cli.dump_cpp,
         cli.dump_cpp_from_fbc,

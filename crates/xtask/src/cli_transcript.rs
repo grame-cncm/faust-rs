@@ -109,7 +109,8 @@ const LANGS: [&str; 12] = [
 ];
 
 /// Single-flag modes that do not take a value.
-const DUMP_FLAGS: [&str; 12] = [
+const DUMP_FLAGS: [&str; 13] = [
+    "--export-dsp",
     "--dump-cpp",
     "--dump-c",
     "--dump-fir",
@@ -143,7 +144,11 @@ const OPTION_RUNS: [(&str, &[&str]); 8] = [
 
 /// Invalid command lines. Which message wins is part of the contract, because
 /// the order of the checks in `validate_cli_arguments` decides it.
-const ERROR_RUNS: [(&str, &[&str]); 9] = [
+const ERROR_RUNS: [(&str, &[&str]); 10] = [
+    // `-e` emits Faust source, not generated code, so pairing it with a
+    // backend has no meaning; it must be rejected rather than have one of the
+    // two silently win.
+    ("err_export_with_lang", &["-e", "--lang", "cpp", "INPUT"]),
     ("err_no_input", &["--lang", "cpp"]),
     ("err_two_modes", &["--dump-cpp", "--dump-c", "INPUT"]),
     ("err_empty_cn", &["--lang", "cpp", "-cn", "", "INPUT"]),
