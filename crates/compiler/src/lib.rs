@@ -209,6 +209,47 @@ pub struct SignalCompileOutput {
     pub warnings: DiagnosticBundle,
 }
 
+/// Parse + eval output package, stopping before propagation.
+///
+/// This is what the compiler knows about a program at the point C++
+/// `libcode.cpp:1378` branches for `-e`: the process box is evaluated, its
+/// arity is known, and no signal has been propagated yet.
+///
+/// Mapping status: `adapted`. C++ has no such value — its `-e` branch reads
+/// the same information from `gGlobal` and local variables inside one long
+/// function. Naming the boundary is what lets the expansion path reuse the
+/// evaluation rules instead of reimplementing them.
+#[derive(Debug)]
+pub struct BoxCompileOutput {
+    /// Full parser output (arena + metadata + diagnostics from parse stage).
+    pub parse: ParseOutput,
+    /// Aggregated top-level `declare key "value";` metadata visible after the
+    /// whole parse + eval file-loading session.
+    pub compilation_metadata: parser::CompilationMetadataSnapshot,
+    /// Additional Faust source files loaded through evaluator-side
+    /// `component(...)` / `library(...)` resolution during this session.
+    pub loaded_files: Vec<PathBuf>,
+    /// Evaluated `process` box expression after `eval`.
+    pub process_box: BoxId,
+    /// Definition-list root used for occurrence-aware diagnostic ownership.
+    pub definitions_root: BoxId,
+    /// Selected Faust entrypoint name for binding/source traces.
+    pub entrypoint_name: Box<str>,
+    /// Inferred process arity (`inputs`/`outputs`) from `propagate::box_arity_typed`.
+    pub process_arity: BoxArity,
+    /// Flattened box consumed by propagation.
+    ///
+    /// Private continuation state: it exists so completing the pipeline does
+    /// not re-flatten, and it is not the tree a serializer should print —
+    /// `process_box` is.
+    process_flat: propagate::FlatBoxId,
+    /// Arity memo shared with propagation, kept for the same reason.
+    arity_cache: ArityCache,
+    /// Evaluated `BoxId` → source definition name, forwarded to the signal
+    /// output package.
+    def_names: std::collections::HashMap<boxes::BoxId, String>,
+}
+
 impl SignalCompileOutput {
     /// Returns the effective propagated output arity seen by FIR/backends.
     ///
@@ -1208,12 +1249,34 @@ impl Compiler {
     /// - top-level metadata aggregation rules,
     /// - diagnostic enrichment policy,
     /// - process arity inference and signal propagation contract.
+    ///
+    /// It is the composition of [`Self::pipeline_to_boxes`] and
+    /// [`Self::pipeline_boxes_to_signals`]; callers that stop at the box level
+    /// — `-e` expansion is the one in tree — use the first half directly and
+    /// still observe every rule above that applies before propagation.
     fn pipeline_to_signals(
+        &self,
+        source: &str,
+        output: ParseOutput,
+        eval_source_context: Option<eval::EvalSourceContext>,
+    ) -> Result<SignalCompileOutput, CompilerError> {
+        let boxes = self.pipeline_to_boxes(source, output, eval_source_context)?;
+        self.pipeline_boxes_to_signals(source, boxes)
+    }
+
+    /// Runs the `parse output -> eval -> arity` prefix of the pipeline.
+    ///
+    /// Stops where C++ `libcode.cpp:1378` branches for `-e`: after the process
+    /// box has been evaluated and its arity inferred, before any signal is
+    /// propagated. Every diagnostic enrichment rule that applies to evaluation
+    /// lives here, so a caller that stops at this boundary reports evaluation
+    /// failures exactly as a full compilation would.
+    fn pipeline_to_boxes(
         &self,
         source: &str,
         mut output: ParseOutput,
         eval_source_context: Option<eval::EvalSourceContext>,
-    ) -> Result<SignalCompileOutput, CompilerError> {
+    ) -> Result<BoxCompileOutput, CompilerError> {
         let source_map = output.diagnostics.source_map().clone();
         let root = output.root.ok_or_else(|| {
             CompilerError::missing_root(source).with_source_map(source_map.clone())
@@ -1344,6 +1407,49 @@ impl Compiler {
             || output.compilation_metadata.clone(),
             eval::EvalSourceContext::metadata_snapshot,
         );
+
+        Ok(BoxCompileOutput {
+            parse: output,
+            compilation_metadata,
+            loaded_files: eval_source_context
+                .as_ref()
+                .map_or_else(Vec::new, eval::EvalSourceContext::loaded_files),
+            process_box,
+            definitions_root: root,
+            entrypoint_name: ep.into(),
+            process_arity,
+            process_flat,
+            arity_cache,
+            def_names: eval_stats.def_names,
+        })
+    }
+
+    /// Runs the `propagate -> validate` suffix of the pipeline.
+    ///
+    /// Consumes the [`BoxCompileOutput`] produced by [`Self::pipeline_to_boxes`],
+    /// reusing its arity cache and flattened box so the split costs no repeated
+    /// work.
+    fn pipeline_boxes_to_signals(
+        &self,
+        source: &str,
+        boxes: BoxCompileOutput,
+    ) -> Result<SignalCompileOutput, CompilerError> {
+        let BoxCompileOutput {
+            mut parse,
+            compilation_metadata,
+            loaded_files,
+            process_box,
+            definitions_root: root,
+            entrypoint_name,
+            process_arity,
+            process_flat,
+            mut arity_cache,
+            def_names,
+        } = boxes;
+        let output = &mut parse;
+        let source_map = output.diagnostics.source_map().clone();
+        let ep = entrypoint_name.as_ref();
+
         let ui_options =
             PropagateUiOptions::new(resolve_ui_root_label(source, &compilation_metadata));
         let inputs = propagate::make_sig_input_list(&mut output.state.arena, process_arity.inputs);
@@ -1404,18 +1510,16 @@ impl Compiler {
 
         Ok(SignalCompileOutput {
             compilation_metadata,
-            parse: output,
+            parse,
             definitions_root: root,
-            entrypoint_name: ep.into(),
-            loaded_files: eval_source_context
-                .as_ref()
-                .map_or_else(Vec::new, eval::EvalSourceContext::loaded_files),
+            entrypoint_name,
+            loaded_files,
             process_box,
             process_arity,
             signals: propagated.signals,
             signal_origins: propagated.signal_origins,
             ui: propagated.ui,
-            def_names: eval_stats.def_names,
+            def_names,
             clock_domains: propagated.clock_domains,
             warnings,
         })
