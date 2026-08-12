@@ -105,12 +105,14 @@ impl Compiler {
             reorganize_compilation_options(argv)
         );
         for (index, path) in library_paths(boxes).iter().enumerate() {
+            let path = declare_string(path)
+                .map_err(|reason| CompilerError::expand_failed(boxes.source_name(), reason))?;
             let _ = writeln!(out, "declare library_path{index} \"{path}\";");
         }
-        out.push_str(&declare_header(
-            boxes.source_name(),
-            &boxes.compilation_metadata,
-        ));
+        out.push_str(
+            &declare_header(boxes.source_name(), &boxes.compilation_metadata)
+                .map_err(|reason| CompilerError::expand_failed(boxes.source_name(), reason))?,
+        );
 
         let program = box_pp_shared(
             &boxes.parse.state.arena,
@@ -169,7 +171,10 @@ fn library_paths(boxes: &BoxCompileOutput) -> Vec<String> {
 /// - `filename` and `name` are synthesized when the program did not declare
 ///   them, matching what C++ `initDocumentNames()` puts in the metadata set
 ///   before the header is printed.
-fn declare_header(source_name: &str, metadata: &parser::CompilationMetadataSnapshot) -> String {
+fn declare_header(
+    source_name: &str,
+    metadata: &parser::CompilationMetadataSnapshot,
+) -> Result<String, String> {
     // Library-scoped keys are rendered relative to the master DSP directory,
     // falling back to the file name. The parser records canonical absolute
     // paths, and C++ keys the same entries by library file name — so without
@@ -228,9 +233,9 @@ fn declare_header(source_name: &str, metadata: &parser::CompilationMetadataSnaps
 
     let mut out = String::new();
     for (key, value) in entries {
-        let _ = writeln!(out, "declare {key} \"{}\";", escape_declare_value(&value));
+        let _ = writeln!(out, "declare {key} \"{}\";", declare_string(&value)?);
     }
-    out
+    Ok(out)
 }
 
 /// Replaces the characters a `declare` key may not contain.
@@ -240,12 +245,31 @@ fn mangle_declare_key(key: &str) -> String {
     key.replace(['.', ':', '/'], "_")
 }
 
-/// Escapes a metadata value for a double-quoted Faust string.
-fn escape_declare_value(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
+/// Validates one value for emission inside a `declare` string.
+///
+/// The Faust lexer's string rule is `\"[^\"]*\"` — a quote, a run of
+/// anything that is not a quote, a quote. It performs **no escape
+/// processing**, so a value must be emitted verbatim: escaping a backslash
+/// would store the escape itself as data.
+///
+/// That asymmetry was a real defect. Emitting a Windows library path as
+/// `D:\\a\\faust-rs\\...` made the next expansion read the doubled
+/// backslashes as content and double them again, so the document never
+/// converged — the failure only surfaced on the Windows CI runner, where paths
+/// contain backslashes at all.
+///
+/// A value containing a quote cannot be represented: `\"` would still end the
+/// string. It also cannot arise, since every value comes from parsing a Faust
+/// string that could not have contained one. Reaching that case means a
+/// non-source metadata path exists, and emitting an unparseable document would
+/// be the worse answer.
+fn declare_string(value: &str) -> Result<&str, String> {
+    if value.contains('"') {
+        return Err(format!(
+            "metadata value {value:?} contains a quote, which a Faust string cannot carry"
+        ));
+    }
+    Ok(value)
 }
 
 /// Normalizes an argument vector into the `compile_options` string.

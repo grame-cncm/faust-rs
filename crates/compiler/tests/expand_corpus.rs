@@ -412,3 +412,45 @@ fn compile_expansion_fallible(source: &str) -> Result<String, String> {
         .join()
         .expect("no panic")
 }
+
+#[test]
+fn declare_values_containing_backslashes_survive_re_expansion() {
+    // Regression: `declare` values were emitted with backslashes escaped while
+    // the Faust lexer's string rule (`"[^"]*"`) performs no escape processing.
+    // Reading an expansion back therefore saw the escape itself as data and
+    // escaped it again, so the value doubled on every pass and the document
+    // never converged.
+    //
+    // On Unix no path contains a backslash, so nothing exercised it and only
+    // the Windows CI runner failed — on `library_path` entries holding paths
+    // like `D:\a\faust-rs\faustlibraries\stdfaust.lib`. This drives the same
+    // shape through ordinary metadata so any platform catches a relapse.
+    // A raw string so the DSP text holds single backslashes, exactly as a
+    // Windows path does.
+    let source = r#"declare winpath "D:\a\faust-rs\libs\stdfaust.lib";
+process = 0;"#;
+
+    let once = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            Compiler::new()
+                .expand_source_to_dsp("win.dsp", source, &[], &[])
+                .expect("expansion must succeed")
+        })
+        .expect("spawn")
+        .join()
+        .expect("no panic");
+
+    let declared = once
+        .lines()
+        .find(|line| line.starts_with("declare winpath "))
+        .expect("the value must survive into the header");
+    assert!(
+        declared.contains(r"D:\a\faust-rs\libs\stdfaust.lib"),
+        "the value was altered on the way out: {declared}"
+    );
+
+    let twice = re_expand(&once);
+    let thrice = re_expand(&twice);
+    assert_eq!(twice, thrice, "backslash values must reach a fixed point");
+}
