@@ -343,3 +343,29 @@ fn referenced_identifiers(expression: &str) -> Vec<String> {
     }
     out
 }
+
+#[test]
+fn definitions_are_numbered_densely_and_in_order() {
+    // The `n` in `ID_n` is the definition's own index in the list, so reading
+    // an expansion top to bottom yields ID_0, ID_1, ID_2, … with no gaps and
+    // no reordering. Tooling that parses `-e` output can rely on it, and the
+    // C++ compiler produces the same shape.
+    //
+    // This is structural rather than lucky: the number is taken from
+    // `definitions.len()` at push time, so it cannot drift from the position.
+    // C++ keeps a separate `gBoxCounter` alongside `gBoxTrace`, which could.
+    let mut arena = TreeArena::new();
+    let root = shared_dag(&mut arena);
+    let program = box_pp_shared(&arena, root, FloatSize::Single).expect("printable program");
+
+    assert!(
+        !program.definitions.is_empty(),
+        "the fixture must produce definitions"
+    );
+    for (index, definition) in program.definitions.iter().enumerate() {
+        assert!(
+            definition.starts_with(&format!("ID_{index} = ")),
+            "definition at position {index} is {definition:?}"
+        );
+    }
+}
