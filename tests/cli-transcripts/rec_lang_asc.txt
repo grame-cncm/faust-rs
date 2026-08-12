@@ -1,4 +1,5 @@
-// Code generated with faust-rs (https://faust.grame.fr)
+// Code generated with faust-rs 0.7.0 (https://faust.grame.fr)
+// Compilation options: -lang asc -single
 // Language: AssemblyScript (experimental)
 // name: mydsp
 
@@ -81,7 +82,7 @@ declare function _soundfileBuffer(slot: i32, chan: i32, part: i32, idx: i32): f6
 
 export class mydsp {
     fSampleRate: i32;
-    fRec40: StaticArray<f32> = new StaticArray<f32>(4);
+    fRec0: StaticArray<f32> = new StaticArray<f32>(4);
 
     getSampleRate(): i32 {
         return this.fSampleRate;
@@ -104,7 +105,7 @@ export class mydsp {
     }
     instanceClear(): void {
         for (let lRec0: i32 = 0; lRec0 < <i32>(4); lRec0 = lRec0 + 1) {
-            this.fRec40[lRec0] = 0.0;
+            this.fRec0[lRec0] = 0.0;
         }
     }
     instanceConstants(sample_rate: i32): void {
@@ -123,10 +124,10 @@ export class mydsp {
         let input0: StaticArray<f32> = inputs[<i32>(0)];
         let output0: StaticArray<f32> = outputs[<i32>(0)];
         for (let i0: i32 = 0; i0 < count; i0 = i0 + 1) {
-            this.fRec40[<i32>(0)] = (<f32>(input0[i0]) + (0.5 * this.fRec40[<i32>(1)]));
-            output0[i0] = <f32>(this.fRec40[<i32>(3)]);
+            this.fRec0[<i32>(0)] = (<f32>(input0[i0]) + (0.5 * this.fRec0[<i32>(1)]));
+            output0[i0] = <f32>(this.fRec0[<i32>(3)]);
             for (let jRec1: i32 = <i32>(3); jRec1 > <i32>(0); jRec1 = jRec1 + <i32>(-1)) {
-                this.fRec40[jRec1] = this.fRec40[(jRec1 - <i32>(1))];
+                this.fRec0[jRec1] = this.fRec0[(jRec1 - <i32>(1))];
             }
         }
     }

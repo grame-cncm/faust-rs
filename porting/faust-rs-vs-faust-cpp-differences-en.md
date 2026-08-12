@@ -250,15 +250,28 @@ must run unchanged with Faust C++ should not pass them.
   `version` and `compile_options`, which the next pass reads as ordinary
   metadata) and can shrink the body (re-evaluating `(65536 : int)` folds it to
   `65536`). The third pass equals the second.
-- Known faust-rs-specific artifact: compiling an expansion can renumber
-  recursion state variables relative to compiling the original
-  (`fRec157` against `fRec161` for `tests/expand/dsp/020_library_import.dsp`).
-  The generated algorithm is otherwise identical. C++ round-trips the same
-  fixture with byte-identical code, so the numbering there is program-local.
+- Generated state-carrier names are program-local, as in C++: compiling a
+  program and compiling its expansion produce the same `fRec`/`iRec` names.
+  (Until 2026-08-12 they were numbered by arena node id and drifted; see
+  `DIFF-BEH-009`.)
 - `generateAuxFiles` returns owned artifact descriptions in the Rust facade;
   the C entry points in `crates/libfaust-ffi` write them to disk or return the
   single requested one, and report rather than guess when a request selects
   none, several, or a binary output.
+
+### DIFF-BEH-009 — generated variable numbering
+
+- Status: `adapted`.
+- Generated names are numbered densely and in allocation order, per family:
+  `fConst`, `iConst`, `fSlow`, `fTemp`, `tbl`, `Wave`, `SIG`, and — since
+  2026-08-12 — the recursion carriers `fRec`/`iRec`/`fRecCur`/`iRecCur`. The
+  numbering describes the program, not the compilation session.
+- The numbers themselves are **not** expected to equal the C++ ones: both
+  compilers assign in traversal order, and the traversals differ. What is
+  guaranteed is that recompiling the same program — directly, or from its `-e`
+  expansion — yields the same names.
+- Evidence:
+  `crates/compiler/tests/expand_corpus.rs::generated_names_do_not_depend_on_what_was_evaluated_first`.
 
 ### DIFF-BEH-007 — import delivery environments
 

@@ -204,9 +204,40 @@ pub(super) struct RecursionState {
         HashMap<(u32, usize, Option<u32>), RecursionCurrentValueBinding>,
     /// Group occurrences whose recursive body pass has been scheduled this sample.
     pub(super) scheduled_groups: HashSet<(SigId, Option<u32>)>,
+    /// Dense per-program numbering behind `fRec`/`iRec`/`fRecCur`/`iRecCur`.
+    ///
+    /// See [`RecursionState::carrier_ordinal`] for why these names cannot be
+    /// numbered by arena node id.
+    carrier_ordinals: HashMap<u32, u32>,
 }
 
 impl RecursionState {
+    /// Returns the dense program-local number naming one recursion carrier.
+    ///
+    /// Numbers are assigned in first-request order and are stable for one
+    /// lowering: every site that names the same carrier — the struct array
+    /// (`fRec<n>`), its current-sample binding (`fRecCur<n>`), and the
+    /// two-element state slot — asks for the same node and gets the same
+    /// number.
+    ///
+    /// # Why not the arena node id
+    /// Naming a carrier `fRec{node.as_u32()}` makes the generated variable
+    /// depend on how many nodes happened to be interned before it, which is a
+    /// property of the whole compilation session rather than of the program.
+    /// Compiling `tests/expand/dsp/020_library_import.dsp` directly produced
+    /// `fRec157`; compiling its `-e` expansion — the same DSP, fewer nodes
+    /// interned on the way — produced `fRec161`. C++ numbers these with
+    /// `getFreshID`, densely and in allocation order, and round-trips that
+    /// fixture with byte-identical code.
+    ///
+    /// The numbering is shared by every carrier family so that two distinct
+    /// nodes can never collide on one name, which is the invariant the node id
+    /// provided for free.
+    pub(super) fn carrier_ordinal(&mut self, node: SigId) -> u32 {
+        let next = u32::try_from(self.carrier_ordinals.len()).unwrap_or(u32::MAX);
+        *self.carrier_ordinals.entry(node.as_u32()).or_insert(next)
+    }
+
     /// Registers one symbolic recursion binder before scheduled lowering.
     pub(super) fn register_group(&mut self, var: SigId, group: SigId) -> Option<SigId> {
         self.group_by_var.insert(var.as_u32(), group)
@@ -605,10 +636,11 @@ impl RecursionAllocCtx<'_> {
         } else {
             "fRec"
         };
+        let ordinal = self.recursion.carrier_ordinal(group);
         let base_name = if index == 0 {
-            format!("{prefix}{}", group.as_u32())
+            format!("{prefix}{ordinal}")
         } else {
-            format!("{prefix}{}_{}", group.as_u32(), index)
+            format!("{prefix}{ordinal}_{index}")
         };
         let name = match self.clock_context {
             Some(domain) => format!("{base_name}_d{domain}"),

@@ -3,6 +3,7 @@ Usage:
                            [--no-fir-verify] [--fir-verify-strict]
   cargo run -p compiler -- --golden <input.dsp>
   cargo run -p compiler -- --parse <input.dsp> [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]
+  cargo run -p compiler -- -e|--export-dsp <input.dsp> [-o <file>] [-I <dir> ...]
   cargo run -p compiler -- --dump-box <input.dsp> [-o <file>] [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]
   cargo run -p compiler -- --dump-sig <input.dsp> [-o <file>] [-I <dir> ...] [--error-format human|json] [--error-verbosity standard|debug]
   cargo run -p compiler -- --dump-fir <input.dsp> [-o <file>] [-I <dir> ...] [--signal-fir-lane fast] [--error-format human|json] [--error-verbosity standard|debug]

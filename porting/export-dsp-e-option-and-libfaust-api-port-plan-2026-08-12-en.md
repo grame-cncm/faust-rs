@@ -456,12 +456,13 @@ Two further findings, neither anticipated here:
   `boxppShared` pads them (`compiler/boxes/ppbox.cpp:311-319` against
   `:592-600`). An abstraction body therefore prints `\(x1).(x1,x1 : +)`, not
   `\(x1).(x1, x1 : +)`. Only the recorded corpus caught this.
-- *[corrected]* Compiling an expansion can **renumber recursion state
+- *[corrected, then fixed]* Compiling an expansion **renumbered recursion state
   variables** relative to compiling the original (`fRec157` against `fRec161`
-  for `020_library_import`). The algorithm is otherwise identical, and C++
-  round-trips the same fixture byte-identically, so the counter is
-  program-local there and not here. The round-trip check renumbers by first
-  appearance; making the counter program-local is separate work.
+  for `020_library_import`), because the carriers were named after their arena
+  node id. Fixed on 2026-08-12: they now use a dense program-local ordinal, the
+  round-trip check compares raw text, and
+  `generated_names_do_not_depend_on_what_was_evaluated_first` pins the
+  property.
 
 ## 6. Implementation Phases
 

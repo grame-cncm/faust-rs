@@ -1,3 +1,9 @@
+/* ------------------------------------------------------------
+name: "gain_bias_ui_meta"
+Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Compilation options: -lang c -single
+------------------------------------------------------------ */
+
 #ifndef  __gain_bias_ui_meta_H__
 #define  __gain_bias_ui_meta_H__
 

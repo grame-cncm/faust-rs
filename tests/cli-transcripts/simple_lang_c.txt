@@ -1,3 +1,9 @@
+/* ------------------------------------------------------------
+name: "simple"
+Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Compilation options: -lang c -single
+------------------------------------------------------------ */
+
 #ifndef  __mydsp_H__
 #define  __mydsp_H__
 
@@ -47,6 +53,9 @@ void deletemydsp(mydsp* dsp) {
 }
 
 void metadatamydsp(MetaGlue* m) {
+    m->declare(m->metaInterface, "compile_options", "-lang c -single");
+    m->declare(m->metaInterface, "filename", "simple.dsp");
+    m->declare(m->metaInterface, "name", "simple");
 }
 
 int getSampleRatemydsp(mydsp* RESTRICT dsp) {

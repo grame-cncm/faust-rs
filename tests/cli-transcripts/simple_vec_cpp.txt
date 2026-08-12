@@ -1,6 +1,7 @@
 /* ------------------------------------------------------------
-name: "mydsp"
-Code generated with Faust (https://faust.grame.fr)
+name: "simple"
+Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Compilation options: -lang cpp -vec -lv 0 -vs 8 -single
 ------------------------------------------------------------ */
 
 #ifndef  __mydsp_H__
@@ -70,8 +71,9 @@ public:
     }
     virtual void metadata(Meta* m) {
         (void)m;
-        m->declare("filename", "mydsp.dsp");
-        m->declare("name", "mydsp");
+        m->declare("compile_options", "-lang cpp -vec -lv 0 -vs 8 -single");
+        m->declare("filename", "simple.dsp");
+        m->declare("name", "simple");
     }
     virtual void instanceConstants(int sample_rate) {
         fSampleRate = sample_rate;

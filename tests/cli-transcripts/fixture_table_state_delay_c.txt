@@ -1,3 +1,9 @@
+/* ------------------------------------------------------------
+name: "table_state_delay"
+Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Compilation options: -lang c -single
+------------------------------------------------------------ */
+
 #ifndef  __table_state_delay_H__
 #define  __table_state_delay_H__
 

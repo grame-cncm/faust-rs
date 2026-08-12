@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------
-Code generated with Faust Rust backend (faust-rs)
-Compilation options: -lang rust
+Code generated with Faust 0.7.0 Rust backend (faust-rs)
+Compilation options: -lang rust -single
 ------------------------------------------------------------ */
 
 

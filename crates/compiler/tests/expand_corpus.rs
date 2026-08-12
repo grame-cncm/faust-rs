@@ -227,68 +227,21 @@ fn compile_fixture_to_cpp(path: &Path) -> String {
         .expect("no panic")
 }
 
-/// Drops the lines that describe the compilation rather than the DSP, and
-/// renumbers recursion state variables densely.
+/// Drops the lines that describe the compilation rather than the DSP.
 ///
 /// `m->declare(...)` carries `filename`, `compile_options`, the per-library
 /// keys, `library_path*` and `version` — all of which the expansion
-/// legitimately changes.
-///
-/// The renumbering covers a faust-rs-specific artifact that C++ does not have:
-/// recursion state variables are numbered from a counter that advances with
-/// the number of recursion groups seen while evaluating, and an expansion has
-/// evaluated away the library abstractions that advanced it in the original.
-/// So `020_library_import` yields `fRec157` compiled directly and `fRec161`
-/// compiled from its expansion — the same variable, a different index. C++
-/// round-trips this fixture with byte-identical code. Mapping each index to
-/// its order of first appearance keeps the structural comparison exact while
-/// tolerating the offset.
-fn algorithm_only(generated: &str) -> Vec<String> {
-    let mut indices: Vec<String> = Vec::new();
+/// legitimately changes. Everything else is the algorithm, compared verbatim:
+/// generated variable names describe the program, so an expansion and its
+/// original must produce the same ones.
+fn algorithm_only(generated: &str) -> Vec<&str> {
     generated
         .lines()
         .map(str::trim_end)
         .filter(|line| !line.trim_start().starts_with("m->declare("))
         .filter(|line| !line.trim_start().starts_with("//"))
         .filter(|line| !line.is_empty())
-        .map(|line| renumber_recursion_variables(line, &mut indices))
         .collect()
-}
-
-/// Replaces every `Rec<n>` / `RecCur<n>` index with its first-appearance rank.
-fn renumber_recursion_variables(line: &str, indices: &mut Vec<String>) -> String {
-    let mut out = String::with_capacity(line.len());
-    let mut rest = line;
-    while let Some(offset) = rest.find("Rec") {
-        let (head, tail) = rest.split_at(offset);
-        out.push_str(head);
-        let after_marker = if let Some(rest) = tail.strip_prefix("RecCur") {
-            out.push_str("RecCur");
-            rest
-        } else {
-            out.push_str("Rec");
-            tail.strip_prefix("Rec").unwrap_or(tail)
-        };
-        let digits: String = after_marker
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        if digits.is_empty() {
-            rest = after_marker;
-            continue;
-        }
-        let rank = indices
-            .iter()
-            .position(|seen| *seen == digits)
-            .unwrap_or_else(|| {
-                indices.push(digits.clone());
-                indices.len() - 1
-            });
-        out.push_str(&rank.to_string());
-        rest = &after_marker[digits.len()..];
-    }
-    out.push_str(rest);
-    out
 }
 
 #[test]
@@ -308,4 +261,154 @@ fn expansions_are_self_contained_and_preserve_generated_code() {
             fixture.display()
         );
     }
+}
+
+#[test]
+fn generated_names_do_not_depend_on_what_was_evaluated_first() {
+    // Recursion carriers used to be numbered by arena node id, so the same
+    // DSP compiled directly and compiled from its own expansion produced
+    // `fRec157` and `fRec161`. The names must describe the program, not the
+    // session that compiled it.
+    for fixture in fixtures() {
+        let direct = compile_fixture_to_cpp(&fixture);
+        let from_expansion = compile_expansion_to_cpp(&expand(&fixture));
+        assert_eq!(
+            generated_state_names(&direct),
+            generated_state_names(&from_expansion),
+            "{} names differ between a direct compilation and its expansion",
+            fixture.display()
+        );
+    }
+}
+
+/// Collects the generated state-carrier names appearing in one C++ module.
+fn generated_state_names(generated: &str) -> std::collections::BTreeSet<String> {
+    const PREFIXES: [&str; 6] = ["fRec", "iRec", "fRecCur", "iRecCur", "fVec", "iVec"];
+    let mut out = std::collections::BTreeSet::new();
+    let bytes = generated.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index].is_ascii_alphabetic() || bytes[index] == b'_' {
+            let start = index;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            let word = &generated[start..index];
+            if PREFIXES.iter().any(|prefix| word.starts_with(prefix)) {
+                out.insert(word.to_owned());
+            }
+        } else {
+            index += 1;
+        }
+    }
+    out
+}
+
+#[test]
+fn every_corpus_program_expands_into_something_that_compiles() {
+    // `tests/expand/` is organized by construct family, which makes it a good
+    // differential against the reference but a narrow test of the printer: it
+    // held one simple `fad` fixture and no `rad` at all, so an expansion that
+    // dropped parentheses around AD call arguments — and therefore re-parsed
+    // with the wrong arity — passed every check while thirteen `tests/corpus`
+    // programs could not be expanded at all. Breadth belongs here.
+    let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("tests")
+        .join("corpus");
+    let mut programs: Vec<PathBuf> = std::fs::read_dir(&corpus)
+        .expect("the DSP corpus must exist")
+        .map(|entry| entry.expect("readable directory entry").path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("dsp"))
+        .collect();
+    programs.sort();
+
+    let mut expanded_count = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    for program in &programs {
+        // The property is that expansion preserves compilability, so the
+        // subject is the programs that compile. The corpus deliberately holds
+        // some that do not (the `err_*` family, and shapes the lowering does
+        // not support), and their expansions must fail too — as they do.
+        if compile_fixture_fallible(program).is_err() {
+            continue;
+        }
+        match expand_fallible(program) {
+            Ok(expansion) => {
+                if let Err(error) = compile_expansion_fallible(&expansion) {
+                    failures.push(format!(
+                        "{}: expansion does not compile: {error}",
+                        program.display()
+                    ));
+                }
+            }
+            Err(error) => {
+                failures.push(format!("{}: does not expand: {error}", program.display()));
+            }
+        }
+        expanded_count += 1;
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} of {expanded_count} expansions do not compile on their own:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    assert!(
+        expanded_count > 150,
+        "only {expanded_count} corpus programs expanded; the corpus looks truncated"
+    );
+}
+
+/// Compiles one fixture file, returning the error as text instead of panicking.
+fn compile_fixture_fallible(path: &Path) -> Result<String, String> {
+    let path = path.to_path_buf();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            Compiler::new()
+                .compile_file_to_cpp(&path, &[], &codegen::backends::cpp::CppOptions::default())
+                .map_err(|error| error.to_string())
+        })
+        .expect("spawn")
+        .join()
+        .expect("no panic")
+}
+
+/// Expands one program, returning the compiler's error instead of panicking.
+fn expand_fallible(path: &Path) -> Result<String, String> {
+    let path = path.to_path_buf();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            Compiler::new()
+                .expand_file_to_dsp(&path, &[], &[])
+                .map_err(|error| error.to_string())
+        })
+        .expect("spawn")
+        .join()
+        .expect("no panic")
+}
+
+/// Compiles one expansion with no search path, returning the error as text.
+fn compile_expansion_fallible(source: &str) -> Result<String, String> {
+    let source = source.to_owned();
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            Compiler::new()
+                .compile_source_to_cpp(
+                    "expanded.dsp",
+                    &source,
+                    &codegen::backends::cpp::CppOptions::default(),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .expect("spawn")
+        .join()
+        .expect("no panic")
 }

@@ -1,7 +1,7 @@
 interpreter_dsp_factory float
 file_version 9
-Faust version 2.85.0-rust
-compile_options 
+Faust version 0.7.0
+compile_options -lang interp -single
 name table_state_delay
 sha_key 
 opt_level 0

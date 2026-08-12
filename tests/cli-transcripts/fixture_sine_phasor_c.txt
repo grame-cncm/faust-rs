@@ -1,3 +1,9 @@
+/* ------------------------------------------------------------
+name: "mydsp"
+Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Compilation options: -lang c -single
+------------------------------------------------------------ */
+
 #ifndef  __mydsp_H__
 #define  __mydsp_H__
 

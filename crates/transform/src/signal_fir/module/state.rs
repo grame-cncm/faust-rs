@@ -214,10 +214,13 @@ impl<'a> SignalToFirLower<'a> {
         } else {
             "fRecCur"
         };
+        // Same numbering as the struct array this binding shadows: both ask
+        // `carrier_ordinal` about the same group node.
+        let ordinal = self.recursion.carrier_ordinal(group);
         let name = if index == 0 {
-            format!("{prefix}{}", group.as_u32())
+            format!("{prefix}{ordinal}")
         } else {
-            format!("{prefix}{}_{}", group.as_u32(), index)
+            format!("{prefix}{ordinal}_{index}")
         };
         let mut b = FirBuilder::new(&mut self.store);
         self.regions
@@ -282,9 +285,10 @@ impl<'a> SignalToFirLower<'a> {
         } else {
             "fRec"
         };
+        let ordinal = self.recursion.carrier_ordinal(node);
         let name = match clock_context {
-            Some(domain) => format!("{prefix}{}_d{domain}", node.as_u32()),
-            None => format!("{prefix}{}", node.as_u32()),
+            Some(domain) => format!("{prefix}{ordinal}_d{domain}"),
+            None => format!("{prefix}{ordinal}"),
         };
         // Allocate a 2-element circular buffer (matching C++ signalFIRCompiler DelayLine).
         let array_ty = FirType::Array(Box::new(typ), 2);

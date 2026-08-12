@@ -1,3 +1,9 @@
+/* ------------------------------------------------------------
+name: "heavy_bench"
+Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Compilation options: -lang c -single
+------------------------------------------------------------ */
+
 #ifndef  __heavy_bench_H__
 #define  __heavy_bench_H__
 

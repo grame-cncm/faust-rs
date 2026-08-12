@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------
-Code generated with Faust Rust backend (faust-rs)
-Compilation options: -lang rust
+Code generated with Faust 0.7.0 Rust backend (faust-rs)
+Compilation options: -lang rust -single
 ------------------------------------------------------------ */
 
 
@@ -32,7 +32,7 @@ fn rint_f32(val: f32) -> f32 {
 #[repr(C)]
 pub struct mydsp {
     fSampleRate: i32,
-    fRec40: [f32; 4],
+    fRec0: [f32; 4],
 }
 
 pub const FAUST_INPUTS: usize = 1;
@@ -44,7 +44,7 @@ impl mydsp {
     pub fn new() -> mydsp {
         mydsp {
             fSampleRate: 0,
-            fRec40: [0.0f32; 4],
+            fRec0: [0.0f32; 4],
         }
     }
 
@@ -75,7 +75,7 @@ impl mydsp {
 
     pub fn instance_clear(&mut self) {
         for lRec0 in 0..4i32 {
-            self.fRec40[(lRec0) as usize] = 0.0f32;
+            self.fRec0[(lRec0) as usize] = 0.0f32;
         }
     }
 
@@ -121,12 +121,12 @@ impl mydsp {
         let mut outputs_iter = outputs.iter_mut();
         let output0 = outputs_iter.nth(0).expect("missing output channel").as_mut();
         for i0 in 0..count {
-            self.fRec40[(0i32) as usize] = (((input0[(i0) as usize]) as f32) + (0.5f32 * self.fRec40[(1i32) as usize]));
-            output0[(i0) as usize] = ((self.fRec40[(3i32) as usize]) as FaustFloat);
+            self.fRec0[(0i32) as usize] = (((input0[(i0) as usize]) as f32) + (0.5f32 * self.fRec0[(1i32) as usize]));
+            output0[(i0) as usize] = ((self.fRec0[(3i32) as usize]) as FaustFloat);
             {
                 let mut jRec1: i32 = 3i32;
                 while jRec1 > 0i32 {
-                    self.fRec40[(jRec1) as usize] = self.fRec40[((jRec1).wrapping_sub(1i32)) as usize];
+                    self.fRec0[(jRec1) as usize] = self.fRec0[((jRec1).wrapping_sub(1i32)) as usize];
                     jRec1 = jRec1.wrapping_add(-1i32);
                 }
             }

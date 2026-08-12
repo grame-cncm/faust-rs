@@ -1,7 +1,7 @@
 {
 	"name": "simple",
 	"filename": "simple.dsp",
-	"version": "0.5.0",
+	"version": "0.7.0",
 	"compile_options": "-single",
 	"include_pathnames": ["target/cli-transcript-inputs","/Users/letz/Developpements/RUST/faust-rs/target/share/faust","/usr/local/share/faust","/usr/share/faust"],
 	"size": 8,

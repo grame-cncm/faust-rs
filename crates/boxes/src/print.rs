@@ -186,6 +186,13 @@ const PRIORITY_PAR: u8 = 2;
 const PRIORITY_REC: u8 = 4;
 /// Priority used for a context that never parenthesizes its operand.
 const PRIORITY_TOP: u8 = 0;
+/// Priority for an operand that must be parenthesized whatever it contains.
+///
+/// A comma-separated call argument cannot be printed at [`PRIORITY_TOP`]: an
+/// operand whose own top-level operator is `,` would merge with the argument
+/// separator and the call would re-parse with the wrong arity. Being above
+/// every operator priority, this forces parentheses around any composition.
+const PRIORITY_ARGUMENT: u8 = 5;
 
 // ── Public entry points ───────────────────────────────────────────────────────
 
@@ -747,9 +754,12 @@ impl Printer<'_> {
             | BoxMatch::Downsampling(inner)
             | BoxMatch::Inputs(inner)
             | BoxMatch::Outputs(inner) => vec![ChildRef::new(inner, PRIORITY_TOP)],
+            // Both operands sit in a comma-separated argument list, so neither
+            // may be printed unparenthesized: `rad(a, b : *, seeds)` re-parses
+            // as a three-argument call.
             BoxMatch::ForwardAD(expr, seeds) | BoxMatch::ReverseAD(expr, seeds) => vec![
-                ChildRef::new(expr, PRIORITY_TOP),
-                ChildRef::new(seeds, PRIORITY_TOP),
+                ChildRef::new(expr, PRIORITY_ARGUMENT),
+                ChildRef::new(seeds, PRIORITY_ARGUMENT),
             ],
             BoxMatch::Modulation(_ident, body) => vec![ChildRef::new(body, PRIORITY_TOP)],
             BoxMatch::Metadata(expr, _mdlist) => vec![ChildRef::new(expr, PRIORITY_TOP)],

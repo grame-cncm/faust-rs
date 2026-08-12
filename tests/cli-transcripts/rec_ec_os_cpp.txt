@@ -1,6 +1,7 @@
 /* ------------------------------------------------------------
-name: "mydsp"
-Code generated with Faust (https://faust.grame.fr)
+name: "rec"
+Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Compilation options: -lang cpp -os -ec -single
 ------------------------------------------------------------ */
 
 #ifndef  __mydsp_H__
@@ -33,7 +34,7 @@ Code generated with Faust (https://faust.grame.fr)
 class mydsp : public dsp {
 private:
     int fSampleRate;
-    float fRec40[4];
+    float fRec0[4];
 public:
     mydsp() {
     }
@@ -70,8 +71,9 @@ public:
     }
     virtual void metadata(Meta* m) {
         (void)m;
-        m->declare("filename", "mydsp.dsp");
-        m->declare("name", "mydsp");
+        m->declare("compile_options", "-lang cpp -os -ec -single");
+        m->declare("filename", "rec.dsp");
+        m->declare("name", "rec");
     }
     virtual void instanceConstants(int sample_rate) {
         fSampleRate = sample_rate;
@@ -80,7 +82,7 @@ public:
     }
     virtual void instanceClear() {
         for (int lRec0 = 0; lRec0 < 4; ++lRec0) {
-            fRec40[lRec0] = 0.0f;
+            fRec0[lRec0] = 0.0f;
         }
     }
     virtual void buildUserInterface(UI* ui_interface) {
@@ -90,10 +92,10 @@ public:
     void control() {
     }
     virtual void frame(FAUSTFLOAT* RESTRICT inputs, FAUSTFLOAT* RESTRICT outputs) {
-        fRec40[0] = (((float)(inputs[0])) + (0.5f * fRec40[1]));
-        outputs[0] = ((FAUSTFLOAT)(fRec40[3]));
+        fRec0[0] = (((float)(inputs[0])) + (0.5f * fRec0[1]));
+        outputs[0] = ((FAUSTFLOAT)(fRec0[3]));
         for (int jRec1 = 3; jRec1 > 0; jRec1 = jRec1 + -1) {
-            fRec40[jRec1] = fRec40[(jRec1 - 1)];
+            fRec0[jRec1] = fRec0[(jRec1 - 1)];
         }
     }
     virtual void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs) {

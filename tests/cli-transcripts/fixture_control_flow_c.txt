@@ -1,3 +1,9 @@
+/* ------------------------------------------------------------
+name: "control_flow"
+Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Compilation options: -lang c -single
+------------------------------------------------------------ */
+
 #ifndef  __control_flow_H__
 #define  __control_flow_H__
 

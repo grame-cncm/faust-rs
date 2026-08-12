@@ -1,7 +1,7 @@
 #157 Module { num_inputs: 1, num_outputs: 1, name: "rec", dsp_struct: TreeId(12), globals: TreeId(13), functions: TreeId(156), static_decls: TreeId(13), sub_modules: TreeId(13) }
   #12 Block([TreeId(4), TreeId(9)])
     #4 DeclareVar { name: "fSampleRate", typ: Int32, access: Struct, init: None }
-    #9 DeclareVar { name: "fRec40", typ: Array(Float32, 4), access: Struct, init: None }
+    #9 DeclareVar { name: "fRec0", typ: Array(Float32, 4), access: Struct, init: None }
   #13 Block([])
   #156 Block([TreeId(29), TreeId(43), TreeId(48), TreeId(60), TreeId(76), TreeId(149)])
     #29 DeclareFun { name: "metadata", typ: Fun { args: [Ptr(Obj), Meta], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "m", typ: Meta }], body: Some(TreeId(13)), is_inline: false }
@@ -17,7 +17,7 @@
         #56 SimpleForLoop { var: "lRec0", upper: TreeId(49), body: TreeId(55), is_reverse: false }
           #49 Int32 { value: 4, typ: Int32 }
           #55 Block([TreeId(53)])
-            #53 StoreTable { name: "fRec40", access: Struct, index: TreeId(51), value: TreeId(52) }
+            #53 StoreTable { name: "fRec0", access: Struct, index: TreeId(51), value: TreeId(52) }
               #51 LoadVar { name: "lRec0", access: Loop, typ: Int32 }
               #52 Float32 { value: 0.0, typ: Float32 }
     #76 DeclareFun { name: "buildUserInterface", typ: Fun { args: [Ptr(Obj), UI], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "ui_interface", typ: UI }], body: Some(TreeId(66)), is_inline: false }
@@ -38,7 +38,7 @@
         #127 SimpleForLoop { var: "i0", upper: TreeId(95), body: TreeId(126), is_reverse: false }
           #95 LoadVar { name: "count", access: FunArgs, typ: Int32 }
           #126 Block([TreeId(107), TreeId(111), TreeId(122)])
-            #107 StoreTable { name: "fRec40", access: Struct, index: TreeId(83), value: TreeId(106) }
+            #107 StoreTable { name: "fRec0", access: Struct, index: TreeId(83), value: TreeId(106) }
               #83 Int32 { value: 0, typ: Int32 }
               #106 BinOp { op: Add, lhs: TreeId(99), rhs: TreeId(105), typ: Float32 }
                 #99 Cast { typ: Float32, value: TreeId(98) }
@@ -46,12 +46,12 @@
                     #97 LoadVar { name: "i0", access: Loop, typ: Int32 }
                 #105 BinOp { op: Mul, lhs: TreeId(101), rhs: TreeId(103), typ: Float32 }
                   #101 Float32 { value: 0.5, typ: Float32 }
-                  #103 LoadTable { name: "fRec40", access: Struct, index: TreeId(102), typ: Float32 }
+                  #103 LoadTable { name: "fRec0", access: Struct, index: TreeId(102), typ: Float32 }
                     #102 Int32 { value: 1, typ: Int32 }
             #111 StoreTable { name: "output0", access: Stack, index: TreeId(97), value: TreeId(110) }
               #97 LoadVar { name: "i0", access: Loop, typ: Int32 }
               #110 Cast { typ: FaustFloat, value: TreeId(109) }
-                #109 LoadTable { name: "fRec40", access: Struct, index: TreeId(108), typ: Float32 }
+                #109 LoadTable { name: "fRec0", access: Struct, index: TreeId(108), typ: Float32 }
                   #108 Int32 { value: 3, typ: Int32 }
             #122 ForLoop { var: "jRec1", init: TreeId(113), end: TreeId(83), step: TreeId(115), body: TreeId(121), is_reverse: true }
               #113 DeclareVar { name: "jRec1", typ: Int32, access: Loop, init: Some(TreeId(108)) }
@@ -59,9 +59,9 @@
               #83 Int32 { value: 0, typ: Int32 }
               #115 Int32 { value: -1, typ: Int32 }
               #121 Block([TreeId(119)])
-                #119 StoreTable { name: "fRec40", access: Struct, index: TreeId(116), value: TreeId(118) }
+                #119 StoreTable { name: "fRec0", access: Struct, index: TreeId(116), value: TreeId(118) }
                   #116 LoadVar { name: "jRec1", access: Loop, typ: Int32 }
-                  #118 LoadTable { name: "fRec40", access: Struct, index: TreeId(117), typ: Float32 }
+                  #118 LoadTable { name: "fRec0", access: Struct, index: TreeId(117), typ: Float32 }
                     #117 BinOp { op: Sub, lhs: TreeId(116), rhs: TreeId(102), typ: Int32 }
                       #116 LoadVar { name: "jRec1", access: Loop, typ: Int32 }
                       #102 Int32 { value: 1, typ: Int32 }

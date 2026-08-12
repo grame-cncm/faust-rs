@@ -1,6 +1,6 @@
 #=
-Code generated with faust-rs
-Compilation options: -lang julia
+Code generated with faust-rs 0.7.0
+Compilation options: -lang julia -single
 =#
 
 using StaticArrays
@@ -17,12 +17,12 @@ faust_fmax(x, y) = isnan(x) ? y : (isnan(y) ? x : max(x, y))
 
 mutable struct mydsp{T} <: dsp
 	fSampleRate::Int32
-	fRec40::MVector{4, Float32}
+	fRec0::MVector{4, Float32}
 
 	function mydsp{T}() where {T}
 		dsp = new{T}()
 		dsp.fSampleRate = faust_wrap_int32(0)
-		dsp.fRec40 = MVector{4, Float32}(MVector{4, Float32}(undef))
+		dsp.fRec0 = MVector{4, Float32}(MVector{4, Float32}(undef))
 		return dsp
 	end
 end
@@ -47,7 +47,7 @@ end
 
 function instanceClear!(dsp::mydsp{T}) where {T}
 	for lRec0 in 0:((4) - 1)
-		dsp.fRec40[(lRec0) + 1] = REAL(0.0)
+		dsp.fRec0[(lRec0) + 1] = REAL(0.0)
 	end
 end
 
@@ -76,11 +76,11 @@ function compute!(dsp::mydsp{T}, count::Int32, inputs::AbstractMatrix{FAUSTFLOAT
 	input0 = (@view inputs[:, (0) + 1])
 	output0 = (@view outputs[:, (0) + 1])
 	for i0 in 0:((count) - 1)
-		dsp.fRec40[(0) + 1] = (T(input0[(i0) + 1]) + (REAL(0.5) * dsp.fRec40[(1) + 1]))
-		output0[(i0) + 1] = FAUSTFLOAT(dsp.fRec40[(3) + 1])
+		dsp.fRec0[(0) + 1] = (T(input0[(i0) + 1]) + (REAL(0.5) * dsp.fRec0[(1) + 1]))
+		output0[(i0) + 1] = FAUSTFLOAT(dsp.fRec0[(3) + 1])
 		jRec1 = 3
 		while jRec1 > 0
-			dsp.fRec40[(jRec1) + 1] = dsp.fRec40[((jRec1 - 1)) + 1]
+			dsp.fRec0[(jRec1) + 1] = dsp.fRec0[((jRec1 - 1)) + 1]
 			jRec1 = jRec1 + -1
 		end
 	end

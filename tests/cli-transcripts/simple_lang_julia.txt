@@ -1,6 +1,6 @@
 #=
-Code generated with faust-rs
-Compilation options: -lang julia
+Code generated with faust-rs 0.7.0
+Compilation options: -lang julia -single
 =#
 
 using StaticArrays
