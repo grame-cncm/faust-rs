@@ -27,12 +27,14 @@ mod complexity;
 mod dump;
 pub(crate) mod internals;
 mod matcher;
+mod print;
 pub(crate) mod tags;
 
 pub use builder::BoxBuilder;
 pub use complexity::box_complexity;
 pub use dump::dump_box;
 pub use matcher::{BoxMatch, match_box};
+pub use print::{BoxPrintError, FloatSize, SharedBoxProgram, box_pp, box_pp_shared, format_real};
 
 /// Stable crate identifier used in workspace-level tooling and diagnostics.
 pub const CRATE_NAME: &str = "boxes";
