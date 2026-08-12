@@ -1515,27 +1515,22 @@ pub unsafe extern "C" fn generateCCraneliftAuxFilesFromString(
     }
 }
 
-/// Write SHA-256 hex of `text` (first 63 chars + NUL) into `buf` if non-null.
+/// Writes the SHA-1 key of `text` into `buf` (40 characters plus NUL).
+///
+/// Mirrors C++ `generateSHA1`, whose result the caller receives in the
+/// 64-character buffer the libfaust C API documents. The buffer is larger than
+/// the digest; the extra room is not filled, exactly as in C++.
 unsafe fn write_sha_key(buf: *mut c_char, text: &str) {
     if buf.is_null() {
         return;
     }
-    let hash = sha256_hex(text.as_bytes());
+    let hash = ffi_common::sha1_hex(text.as_bytes());
     let bytes = hash.as_bytes();
     let len = bytes.len().min(63);
     unsafe {
         std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, buf, len);
         *buf.add(len) = 0;
     }
-}
-
-/// Minimal SHA-256 computation returning a lower-hex string (64 chars).
-fn sha256_hex(data: &[u8]) -> String {
-    // FNV-1a 64-bit used as a lightweight stand-in (SHA-256 would need a dep).
-    let hash = data.iter().fold(0xcbf29ce484222325u64, |h, &b| {
-        (h ^ b as u64).wrapping_mul(0x100000001b3)
-    });
-    format!("{hash:016x}{hash:016x}{hash:016x}{hash:016x}")
 }
 
 /// Writes `artifacts` to the directory extracted from `-O <path>` in `argv`
