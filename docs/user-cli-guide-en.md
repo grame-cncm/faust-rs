@@ -65,8 +65,11 @@ cargo run -p compiler -- -e tests/corpus/rep_01_passthrough.dsp -o expanded.dsp
 ```
 
 The result compiles with no library search path and produces the same DSP as
-compiling the original. It is Faust source rather than generated code, so this
-is a terminal mode: `-e --lang cpp` is rejected.
+compiling the original.
+
+`-lang` is accepted alongside `-e` and recorded in `compile_options`, as in
+C++: it selects a backend the expansion does not use. Two emitters do conflict,
+so `-e --dump-cpp` is rejected.
 
 Two lines head every expansion — `declare version` then
 `declare compile_options` — followed by one `declare library_path<i>` per

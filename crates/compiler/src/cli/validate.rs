@@ -144,8 +144,13 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
     .filter(|v| *v)
     .count();
 
-    let json_plus_lang_only = cli.dump_json && cli.lang.is_some() && backend_mode_count == 2;
-    let mode_count = if json_plus_lang_only {
+    // `--json` and `-e` do not emit backend code: one writes a description,
+    // the other Faust source. Pairing either with `-lang` is what a caller
+    // does when `-lang` lives in a fixed flag set, and C++ accepts it — the
+    // backend it selects is simply unused. Two *emitters* still conflict, so
+    // `-e --dump-cpp` is rejected as before.
+    let lang_is_inert = (cli.dump_json || cli.export_dsp) && cli.lang.is_some();
+    let mode_count = if lang_is_inert && backend_mode_count == 2 {
         1
     } else {
         backend_mode_count

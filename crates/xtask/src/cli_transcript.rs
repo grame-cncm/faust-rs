@@ -126,7 +126,11 @@ const DUMP_FLAGS: [&str; 13] = [
 ];
 
 /// Option combinations worth pinning because they cross backend boundaries.
-const OPTION_RUNS: [(&str, &[&str]); 8] = [
+const OPTION_RUNS: [(&str, &[&str]); 9] = [
+    // `-e` with `-lang` is accepted, as in C++: `-lang` selects a backend the
+    // expansion does not use. It is recorded in `compile_options` rather than
+    // dropped without trace.
+    ("export_with_lang", &["-e", "--lang", "cpp"]),
     ("double_cpp", &["--lang", "cpp", "-double"]),
     ("vec_cpp", &["--lang", "cpp", "-vec", "-vs", "8"]),
     ("ec_os_cpp", &["--lang", "cpp", "-ec", "-os"]),
@@ -145,10 +149,9 @@ const OPTION_RUNS: [(&str, &[&str]); 8] = [
 /// Invalid command lines. Which message wins is part of the contract, because
 /// the order of the checks in `validate_cli_arguments` decides it.
 const ERROR_RUNS: [(&str, &[&str]); 10] = [
-    // `-e` emits Faust source, not generated code, so pairing it with a
-    // backend has no meaning; it must be rejected rather than have one of the
-    // two silently win.
-    ("err_export_with_lang", &["-e", "--lang", "cpp", "INPUT"]),
+    // Two emitters genuinely conflict: `-e` writes Faust source and
+    // `--dump-cpp` writes C++, so one would have to silently win.
+    ("err_export_with_dump_cpp", &["-e", "--dump-cpp", "INPUT"]),
     ("err_no_input", &["--lang", "cpp"]),
     ("err_two_modes", &["--dump-cpp", "--dump-c", "INPUT"]),
     ("err_empty_cn", &["--lang", "cpp", "-cn", "", "INPUT"]),

@@ -726,6 +726,13 @@ pub(crate) fn run_source_mode(
 /// rather than re-reading process arguments.
 fn expansion_option_argv(cli: &CliArgs) -> Vec<String> {
     let mut argv: Vec<String> = Vec::new();
+    // `-lang` selects a backend the expansion does not use, but recording it
+    // keeps the document honest about the command line that produced it
+    // rather than dropping the flag without trace.
+    if let Some(lang) = cli.lang {
+        argv.push("-lang".to_owned());
+        argv.push(format!("{lang:?}").to_lowercase());
+    }
     if cli.double {
         argv.push("-double".to_owned());
     }
