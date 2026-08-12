@@ -79,6 +79,7 @@ pub(crate) fn libfaust_export_check(
     }
 
     syntax_check_headers(&workspace)?;
+    run_libfaust_cpp_client(&workspace, &dynamic_library)?;
 
     println!(
         "libfaust-rs export check: {} exports, {} header declarations, baseline {}{}",
@@ -230,6 +231,7 @@ fn expected_header_symbols(
         workspace.join("crates/signal-ffi/include/libfaust-signal-c.h"),
         workspace.join("crates/interp-ffi/include/interpreter-dsp-c.h"),
         workspace.join("crates/cranelift-ffi/include/cranelift-dsp-c.h"),
+        workspace.join("crates/libfaust-ffi/include/libfaust-c.h"),
     ];
     let mut symbols = BTreeSet::new();
     for header in headers {
@@ -540,12 +542,139 @@ int main() {
 "#,
     )?;
 
+    let libfaust_c_file = out_dir.join("smoke-libfaust.c");
+    fs::write(
+        &libfaust_c_file,
+        r#"#include <stddef.h>
+#include "libfaust-c.h"
+
+int main(void) {
+    char sha_key[64] = {0};
+    char error_msg[4096] = {0};
+    const char* expanded = expandCDSPFromString("probe", "process = 0;", 0, NULL, sha_key, error_msg);
+    return expanded == NULL ? 1 : 0;
+}
+"#,
+    )?;
+
+    let libfaust_cpp_file = out_dir.join("smoke-libfaust.cpp");
+    fs::write(
+        &libfaust_cpp_file,
+        r#"#include <string>
+#include "libfaust.h"
+
+int main() {
+    std::string sha_key;
+    std::string error_msg;
+    std::string expanded = expandDSPFromString("probe", "process = 0;", 0, nullptr, sha_key, error_msg);
+    return expanded.empty() ? 1 : 0;
+}
+"#,
+    )?;
+
     syntax_check_c_like(&c_file, "c")?;
     syntax_check_c_like(&interpreter_c_file, "c")?;
     syntax_check_c_like(&cranelift_c_file, "c")?;
+    syntax_check_c_like(&libfaust_c_file, "c")?;
     syntax_check_c_like(&cpp_file, "c++")?;
     syntax_check_c_like(&interpreter_cpp_file, "c++")?;
     syntax_check_c_like(&cranelift_cpp_file, "c++")?;
+    syntax_check_c_like(&libfaust_cpp_file, "c++")?;
+    Ok(())
+}
+
+/// Builds, links and runs a C++ client of `libfaust.h` against the real library.
+///
+/// The other header checks are syntax-only, which proves the declarations
+/// parse but nothing about the contract behind them. `libfaust.h` is entirely
+/// inline wrappers over the C ABI — including the `freeCMemory` hand-off for
+/// every returned string — so a client that only compiles would leave the part
+/// most likely to be wrong untested. This one calls `expandDSPFromString` and
+/// checks the answer.
+fn run_libfaust_cpp_client(
+    workspace: &Path,
+    dynamic_library: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = workspace.join("target/libfaust-export-check");
+    fs::create_dir_all(&out_dir)?;
+    let source = out_dir.join("call-libfaust.cpp");
+    fs::write(
+        &source,
+        r#"#include <iostream>
+#include <string>
+#include "libfaust.h"
+
+int main() {
+    std::string sha_key;
+    std::string error_msg;
+    std::string expanded =
+        expandDSPFromString("probe", "process = 0;", 0, nullptr, sha_key, error_msg);
+    if (expanded.empty()) {
+        std::cerr << "expansion failed: " << error_msg << std::endl;
+        return 1;
+    }
+    if (expanded.find("process = 0;") == std::string::npos) {
+        std::cerr << "unexpected expansion: " << expanded << std::endl;
+        return 1;
+    }
+    if (sha_key.size() != 40) {
+        std::cerr << "unexpected sha key: " << sha_key << std::endl;
+        return 1;
+    }
+    if (generateSHA1("abc") != "A9993E364706816ABA3E25717850C26C9CD0D89D") {
+        std::cerr << "unexpected sha1: " << generateSHA1("abc") << std::endl;
+        return 1;
+    }
+    std::cout << "ok" << std::endl;
+    return 0;
+}
+"#,
+    )?;
+
+    if cfg!(target_os = "windows") {
+        // The MSVC link step needs an import library the build does not
+        // publish; the syntax check still covers the header there.
+        println!("libfaust C++ client: skipped on Windows (no import library published)");
+        return Ok(());
+    }
+
+    let binary = out_dir.join("call-libfaust");
+    let compiler = std::env::var("CXX").unwrap_or_else(|_| "c++".to_owned());
+    let library_dir = dynamic_library
+        .parent()
+        .ok_or("the dynamic library has no parent directory")?;
+    let output = Command::new(&compiler)
+        .arg("-std=c++17")
+        .arg("-I")
+        .arg(workspace.join("crates/libfaust-ffi/include"))
+        .arg(&source)
+        .arg("-o")
+        .arg(&binary)
+        .arg("-L")
+        .arg(library_dir)
+        .arg("-lfaust-rs")
+        .arg("-Wl,-rpath")
+        .arg(library_dir)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "linking the libfaust C++ client failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
+    let run = Command::new(&binary).output()?;
+    if !run.status.success() {
+        return Err(format!(
+            "the libfaust C++ client failed at run time:\n{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        )
+        .into());
+    }
+    println!("libfaust C++ client: expandDSPFromString and generateSHA1 verified");
     Ok(())
 }
 
@@ -556,6 +685,7 @@ fn syntax_check_c_like(path: &Path, language: &str) -> Result<(), Box<dyn std::e
         workspace.join("crates/signal-ffi/include"),
         workspace.join("crates/interp-ffi/include"),
         workspace.join("crates/cranelift-ffi/include"),
+        workspace.join("crates/libfaust-ffi/include"),
     ];
 
     let compiler_var = if language == "c" { "CC" } else { "CXX" };

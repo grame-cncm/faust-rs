@@ -27,6 +27,7 @@ members = [
   "crates/cranelift-ffi",
   "crates/box-ffi",
   "crates/signal-ffi",
+  "crates/libfaust-ffi",
   "crates/faust-ffi",
   "crates/wasm-ffi",
   "crates/impulse-runner",

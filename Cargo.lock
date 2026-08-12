@@ -579,6 +579,7 @@ dependencies = [
  "box-ffi",
  "cranelift-ffi",
  "interp-ffi",
+ "libfaust-ffi",
  "mimalloc",
  "signal-ffi",
 ]
@@ -896,6 +897,14 @@ name = "libc"
 version = "0.2.182"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
+
+[[package]]
+name = "libfaust-ffi"
+version = "0.7.0"
+dependencies = [
+ "compiler",
+ "ffi-common",
+]
 
 [[package]]
 name = "libmimalloc-sys"

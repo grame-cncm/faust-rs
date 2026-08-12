@@ -17,6 +17,7 @@ interp_ffi = { package = "interp-ffi", path = "../interp-ffi" }
 cranelift_ffi = { package = "cranelift-ffi", path = "../cranelift-ffi", default-features = false }
 box_ffi = { package = "box-ffi", path = "../box-ffi", default-features = false }
 signal_ffi = { package = "signal-ffi", path = "../signal-ffi", default-features = false }
+libfaust_ffi = { package = "libfaust-ffi", path = "../libfaust-ffi" }
 
 # `faust-ffi` is a cdylib/staticlib — the final artifact for its Rust code, not
 # an rlib whose consumer picks the allocator — so selecting one here is the

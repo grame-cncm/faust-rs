@@ -1,0 +1,24 @@
+[package]
+name = "libfaust-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# Cannot combine `workspace = true` with lint overrides in the same table.
+# Reproduce workspace lints here, then override unsafe_code for FFI.
+[lints.rust]
+unsafe_code = "allow"           # FFI requires raw pointer operations
+unused_attributes = "warn"
+unused_lifetimes = "warn"
+
+[lints.clippy]
+all = "warn"
+
+[lib]
+name = "faust_libfaust"
+crate-type = ["rlib"]
+
+[dependencies]
+compiler = { path = "../compiler" }
+ffi-common = { path = "../ffi-common" }

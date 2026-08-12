@@ -29,5 +29,8 @@ pub use box_ffi as box_api;
 pub use cranelift_ffi as cranelift;
 /// Interpreter backend C API surface.
 pub use interp_ffi as interp;
+/// Backend-agnostic libfaust C API surface (`expandDSP*`, `generateAuxFiles*`,
+/// `generateSHA1`).
+pub use libfaust_ffi as libfaust;
 /// Signal manipulation C API surface.
 pub use signal_ffi as signal_api;
