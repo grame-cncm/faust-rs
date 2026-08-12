@@ -1,5 +1,5 @@
 declare version "0.7.0";
-declare compile_options "-single -scal --export-dsp target/cli-transcript-inputs/rec.dsp";
+declare compile_options "-single -scal -mcd 16";
 declare filename "rec.dsp";
 declare name "rec";
 ID_0 = _, 0.5f;

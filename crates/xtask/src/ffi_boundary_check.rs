@@ -16,24 +16,28 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-const ADAPTER_CRATES: [&str; 6] = [
+const ADAPTER_CRATES: [&str; 7] = [
     "ffi-common",
     "tree-ffi",
     "box-ffi",
     "signal-ffi",
     "interp-ffi",
     "cranelift-ffi",
+    // Backend-agnostic libfaust C API. An adapter like the others: it exports
+    // C symbols over the compiler facade and owns no compiler logic.
+    "libfaust-ffi",
 ];
 
 const DISTRIBUTION_CRATES: [&str; 2] = ["faust-ffi", "wasm-ffi"];
 
-const UNSAFE_ALLOWLIST: [&str; 7] = [
+const UNSAFE_ALLOWLIST: [&str; 8] = [
     "ffi-common",
     "tree-ffi",
     "box-ffi",
     "signal-ffi",
     "interp-ffi",
     "cranelift-ffi",
+    "libfaust-ffi",
     "wasm-ffi",
 ];
 

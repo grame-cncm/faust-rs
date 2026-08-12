@@ -107,6 +107,7 @@ verified Rust extension must not be presented as a proof of C++ parity.
 |---|---|---|---|
 | DIFF-CLI-001 | `--table-init runtime|const` | `extension` | C++ behavior corresponds to `runtime`: every generated table is filled by a sub-container during initialization. Rust additionally keeps `const`, which evaluates the generator during compilation and emits literal table contents. The default is `runtime`. |
 | DIFF-CLI-002 | `--table-init-sample-rate HZ` | `extension` | Required when `--table-init const` folds a generator that reads `ma.SR`. The positive integer is embedded permanently in the table. There is no implicit default. Under `--warn`, `FRS-COMP-0006` reports the frozen value and suggests `runtime` when the host SR must remain authoritative. |
+| DIFF-CLI-009 | `-e` / `--export-dsp` | `1:1` | Expands a DSP into a self-contained program, as C++ `-e`. Terminal mode: combining it with `-lang` is rejected instead of letting one silently win. With no `-o` faust-rs prints to standard output, where C++ produces nothing; see `DIFF-BEH-006` for the full list of deviations. |
 | DIFF-CLI-003 | `--dlt N` | `extension` | Selects the delay-line threshold at which Rust changes from power-of-two circular storage to exact-size if-wrapped storage. The compiler records it in `compile_options`; the pinned C++ CLI has no direct counterpart. |
 
 `--table-init const` remains a permanent supported mode, not migration
@@ -211,14 +212,53 @@ must run unchanged with Faust C++ should not pass them.
   and
   [`docs/diagnostics-codes-reference-en.md`](../docs/diagnostics-codes-reference-en.md).
 
-### DIFF-BEH-006 — `expandDSP` result representation
+### DIFF-BEH-006 — `-e` expansion and `expandDSP` result
 
 - Status: `adapted`.
-- Rust validates and expands imports for compilation, but its public
-  `expandDSP` helper returns the original source string rather than serializing
-  the evaluated Box tree back to normalized DSP text as C++ `printBox` can.
+- Rust serializes the evaluated Box tree back to Faust source, as C++
+  `boxppShared` does. On the 33-fixture corpus that has a recorded C++
+  expansion, the two compilers produce byte-identical documents apart from the
+  values listed below. Corpus and capture tool:
+  [`tests/expand/`](../tests/expand/README.md),
+  `cargo run -p xtask -- expand-oracle`.
+- Values that differ by construction, and cannot match:
+  - `declare version` carries the faust-rs version;
+  - `declare compile_options` carries the faust-rs option spelling;
+  - `declare library_path<i>` carries installation-dependent absolute paths.
+- Deliberate deviations:
+  - with no `-o`, faust-rs prints the expansion to standard output. C++ writes
+    to `ofstream(gOutpath)` and, with `gOutpath` empty, produces nothing while
+    exiting 0.
+  - real literals take their suffix from the precision alone. C++ derives it
+    from `gOutputLang` too (`compiler/generator/floats.cpp:49`), so
+    `-lang rust -e` drops the `f` that `-lang cpp -e` emits for the same
+    program — a backend leak into a document that is Faust source.
+  - box shapes with no Faust source syntax (`with { ... }`, `letrec`, evaluator
+    closures, partially-applied pattern matchers) are refused with
+    `FRS-COMP-0007` rather than printed as the placeholders C++ emits
+    (`closure[...]`, `PM[...]`, a raw tree dump inside `with { }`), none of
+    which re-parse. They cannot occur in a successfully evaluated `process`.
+  - `downsampling(...)` is printed. C++ cannot expand any program containing
+    it: `boxppShared::print` tests `isBoxUpsampling` twice
+    (`compiler/boxes/ppbox.cpp:615-617`) and throws on `BoxDownsampling`. The
+    non-shared `boxpp` printer handles the node correctly at
+    `compiler/boxes/ppbox.cpp:467`, so the defect is reachable only through
+    `-e`.
+- Shared behavior worth stating, because it looks like a defect and is not:
+  expansion converges after the *second* pass, not the first, in both
+  compilers. The second pass grows the header (an expansion declares its own
+  `version` and `compile_options`, which the next pass reads as ordinary
+  metadata) and can shrink the body (re-evaluating `(65536 : int)` folds it to
+  `65536`). The third pass equals the second.
+- Known faust-rs-specific artifact: compiling an expansion can renumber
+  recursion state variables relative to compiling the original
+  (`fRec157` against `fRec161` for `tests/expand/dsp/020_library_import.dsp`).
+  The generated algorithm is otherwise identical. C++ round-trips the same
+  fixture with byte-identical code, so the numbering there is program-local.
 - `generateAuxFiles` returns owned artifact descriptions in the Rust facade;
-  FFI wrappers provide filesystem-oriented compatibility where implemented.
+  the C entry points in `crates/libfaust-ffi` write them to disk or return the
+  single requested one, and report rather than guess when a request selects
+  none, several, or a binary output.
 
 ### DIFF-BEH-007 — import delivery environments
 
@@ -346,6 +386,27 @@ must run unchanged with Faust C++ should not pass them.
   IR/machine/object serialization remains deferred without exported V1 symbols.
 - Evidence:
   [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md).
+
+### DIFF-API-004 — `libfaust.h` as inline C++ wrappers
+
+- Status: `adapted`.
+- The backend-agnostic libfaust API (`generateSHA1`,
+  `expandDSPFrom{File,String}`, `generateAuxFilesFrom{File,String}[2]`) is
+  exported as C symbols from `crates/libfaust-ffi`; the C++ header
+  [`crates/libfaust-ffi/include/libfaust.h`](../crates/libfaust-ffi/include/libfaust.h)
+  reproduces the reference signatures as header-only inline wrappers over that
+  C ABI.
+- This is forced, not chosen: the reference functions take and return
+  `std::string`, whose symbols are mangled and whose layout has no stable ABI,
+  so Rust cannot export them. `libfaust-box.h` already uses the same shape.
+- Each wrapper adopts its returned `const char*` and releases it through
+  `freeCMemory` before returning, so no allocation crosses back over the
+  boundary and callers see only `std::string`.
+- Compatibility impact: source-compatible for C++ callers that include the
+  header; not ABI-compatible with a C++ libfaust built from the reference
+  sources, since the symbols are the C ones.
+- Evidence: `cargo run -p xtask -- libfaust-export-check`, which links and runs
+  a C++ client of this header against the built library.
 
 ## 8. Internal architectural adaptations
 

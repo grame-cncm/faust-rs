@@ -54,6 +54,32 @@ Parse one DSP file and print parser status.
 cargo run -p compiler -- --parse tests/corpus/rep_01_passthrough.dsp
 ```
 
+### `-e, --export-dsp`
+
+Expand one DSP into a self-contained program: every `import`, every library
+definition and every user abstraction is evaluated away, leaving a flat list of
+`ID_<n>` definitions and a `process` binding.
+
+```bash
+cargo run -p compiler -- -e tests/corpus/rep_01_passthrough.dsp -o expanded.dsp
+```
+
+The result compiles with no library search path and produces the same DSP as
+compiling the original. It is Faust source rather than generated code, so this
+is a terminal mode: `-e --lang cpp` is rejected.
+
+Two lines head every expansion — `declare version` then
+`declare compile_options` — followed by one `declare library_path<i>` per
+library the program used, the whole `declare` metadata set, and the serialized
+program.
+
+Differences from C++ `faust -e`, both deliberate:
+
+- with no `-o`, faust-rs prints to standard output; C++ opens an empty path and
+  produces nothing;
+- the version string, the option spelling, and the absolute library paths
+  differ by construction. The serialized program does not.
+
 ### `--dump-box`
 
 Parse and dump Box IR text.
@@ -310,7 +336,7 @@ Valid with:
 
 Invalid with:
 
-- `--parse`, `--dump-box`, `--dump-sig`, `--golden`
+- `--parse`, `--dump-box`, `--dump-sig`, `--golden`, `-e`
 
 Examples:
 

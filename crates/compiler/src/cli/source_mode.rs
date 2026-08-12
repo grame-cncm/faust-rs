@@ -126,9 +126,12 @@ pub(crate) fn run_source_mode(
     if cli.export_dsp {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        // The options recorded in the document are the ones this process was
-        // invoked with, so the expansion documents how it was produced.
-        let argv: Vec<String> = std::env::args().skip(1).collect();
+        // The recorded `compile_options` are rebuilt from the parsed model
+        // rather than read back from `std::env::args`. C++ records its raw
+        // argv, which is why its expansions carry the input and output file
+        // names; the effective options are what the declaration is for, and
+        // deriving them keeps this path inside the typed CLI contract.
+        let argv = expansion_option_argv(cli);
         match compiler.expand_file_to_dsp(input_path, &cli.import_dir, &argv) {
             Ok(expanded) => {
                 timer.phase("export-dsp");
@@ -710,4 +713,44 @@ pub(crate) fn run_source_mode(
     }
 
     print_global_usage_and_exit();
+}
+
+/// Rebuilds the compilation options an expansion records, from the parsed CLI.
+///
+/// C++ writes its raw `argv` into `declare compile_options`, which is why an
+/// expansion produced on the command line carries the input and output file
+/// names it was invoked with. Those say nothing about how the program was
+/// compiled. This rebuilds the options that actually shaped the compilation,
+/// in the spelling the normalizer expects, so the declaration answers the
+/// question it exists for and this path stays inside the typed CLI contract
+/// rather than re-reading process arguments.
+fn expansion_option_argv(cli: &CliArgs) -> Vec<String> {
+    let mut argv: Vec<String> = Vec::new();
+    if cli.double {
+        argv.push("-double".to_owned());
+    }
+    if cli.vec {
+        argv.push("-vec".to_owned());
+        argv.push("-vs".to_owned());
+        argv.push(cli.vs.to_string());
+        argv.push("-lv".to_owned());
+        argv.push(cli.lv.to_string());
+    }
+    if cli.scheduling_strategy != 0 {
+        argv.push("-ss".to_owned());
+        argv.push(cli.scheduling_strategy.to_string());
+    }
+    if cli.external_control {
+        argv.push("-ec".to_owned());
+    }
+    if cli.one_sample {
+        argv.push("-os".to_owned());
+    }
+    argv.push("-mcd".to_owned());
+    argv.push(cli.mcd.to_string());
+    if cli.dlt != u32::MAX {
+        argv.push("-dlt".to_owned());
+        argv.push(cli.dlt.to_string());
+    }
+    argv
 }

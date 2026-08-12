@@ -5,7 +5,9 @@ Date: 2026-08-12
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 (cross-checked against the installed `faust 2.87.4` binary for observed output)
 
-Status: planned — no implementation yet
+Status: **implemented 2026-08-12**, phases E0–E7. Three claims in this plan
+were corrected by the implementation; each is marked *[corrected]* below and
+recorded in `porting/journal/2026-08-12.md`.
 
 ## 1. Objective
 
@@ -427,7 +429,7 @@ enumerated so a diff is never mistaken for a bug:
 | `declare version` value | faust-rs version vs `FAUSTVERSION` |
 | `compile_options` tail | faust-rs argv spelling differs (`--lang cpp`, `--table-init`, ...) |
 | absolute library paths | installation-dependent on both sides |
-| `ID_` numbering | equal only if the evaluated DAG and traversal order match; asserted per fixture, not assumed |
+| `ID_` numbering | equal only if the evaluated DAG and traversal order match; asserted per fixture, not assumed. In practice it matched on all 33 fixtures with a recorded oracle. |
 
 What **is** promised, and is the acceptance criterion:
 
@@ -438,7 +440,28 @@ What **is** promised, and is the acceptance criterion:
    (the same modulo established for C++ in §2.7);
 3. the expanded file is *self-contained*: compiling it with an empty library
    search path succeeds;
-4. `expand(expand(prog)) == expand(prog)` up to the `compile_options` line.
+4. *[corrected]* Expansion **converges at the second pass**, not the first.
+   The original claim — `expand(expand(prog)) == expand(prog)` up to the
+   options line — is false, and false for the reference compiler too, verified
+   against it on this corpus. The second pass grows the header (an expansion
+   declares its own `version` and `compile_options`, which the next pass reads
+   as ordinary metadata) and can shrink the body (re-evaluating
+   `(65536 : int)` folds it to `65536`). The third pass equals the second, and
+   that is what `expansion_settles_after_the_second_pass` asserts.
+
+Two further findings, neither anticipated here:
+
+- *[corrected]* The two printers use **different composition-operator
+  spellings**: `boxpp` writes `,`, `<:`, `:>` and `~` unpadded where
+  `boxppShared` pads them (`compiler/boxes/ppbox.cpp:311-319` against
+  `:592-600`). An abstraction body therefore prints `\(x1).(x1,x1 : +)`, not
+  `\(x1).(x1, x1 : +)`. Only the recorded corpus caught this.
+- *[corrected]* Compiling an expansion can **renumber recursion state
+  variables** relative to compiling the original (`fRec157` against `fRec161`
+  for `020_library_import`). The algorithm is otherwise identical, and C++
+  round-trips the same fixture byte-identically, so the counter is
+  program-local there and not here. The round-trip check renumbers by first
+  appearance; making the counter program-local is separate work.
 
 ## 6. Implementation Phases
 
@@ -460,7 +483,7 @@ assertions), and mutations that must make the checker fail.
   C++ expansion is already broken).
 - Mutation: delete a fixture's `process` → capture must fail, not record empty.
 
-### Phase E1 — `boxes::print`
+### Phase E1 — `boxes::print` *(done)*
 
 - Producer: `box_pp` + `box_pp_shared` per §4.1, `format_real` per §4.2.
 - Checker: an independent `printed_dag_is_wellformed` checker that re-parses
@@ -475,7 +498,7 @@ assertions), and mutations that must make the checker fail.
   hoist an `Abstr` body into a shared `ID_` — caught by (d) and by a
   free-variable check; return `_` for `BoxMatch::Unknown`.
 
-### Phase E2 — Eval-only pipeline split
+### Phase E2 — Eval-only pipeline split *(done)*
 
 - Producer: `pipeline_to_boxes` / `pipeline_to_signals` split per §4.3.
 - Checker: the existing compiler and CLI suites must pass unchanged; plus an
@@ -484,7 +507,7 @@ assertions), and mutations that must make the checker fail.
 - Mutation: skip metadata aggregation in the box path → the `-e` header tests
   of E3 must fail.
 
-### Phase E3 — Document assembly
+### Phase E3 — Document assembly *(done)*
 
 - Producer: `compiler::expand` per §4.4, including
   `reorganize_compilation_options`.
@@ -494,7 +517,7 @@ assertions), and mutations that must make the checker fail.
 - Mutations: reorder `version`/`compile_options`; drop the `.`→`_` mangling;
   keep the first source file in `library_path*`.
 
-### Phase E4 — CLI `-e`
+### Phase E4 — CLI `-e` *(done)*
 
 - Producer: the flag, the branch, `mode_count` participation.
 - Checker: `tests/cli-transcripts/` entries for `-e` success, `-e` with no
@@ -504,14 +527,14 @@ assertions), and mutations that must make the checker fail.
 - Mutation: place the `-e` branch after the backend dispatch → the conflict
   transcript must fail.
 
-### Phase E5 — SHA-1
+### Phase E5 — SHA-1 *(done)*
 
 - Producer: real SHA-1, replacing the FNV stand-in.
 - Checker: RFC 3174 test vectors plus a differential against C++
   `generateSHA1` for every expanded fixture.
 - Mutation: truncate the digest to 32 chars → vectors fail.
 
-### Phase E6 — FFI crate and headers
+### Phase E6 — FFI crate and headers *(done)*
 
 - Producer: `crates/libfaust-ffi/` + `include/libfaust-c.h` +
   `include/libfaust.h`; `faust-ffi` wiring; baseline re-bless.
@@ -523,7 +546,7 @@ assertions), and mutations that must make the checker fail.
   returned `const char*` in a wrapper (checked under a leak-detecting build);
   redefine `freeCMemory` in the new crate (must fail to link the cdylib).
 
-### Phase E7 — Documentation and registry
+### Phase E7 — Documentation and registry *(done)*
 
 - `porting/faust-rs-vs-faust-cpp-differences-en.md`: `DIFF-BEH-006` moves from
   "returns the original source string" to `adapted` with the §5 table as its
@@ -569,12 +592,27 @@ assertions), and mutations that must make the checker fail.
 
 ## 9. Completion Definition
 
-1. `faust-rs -e` produces self-contained, re-compilable, idempotent DSP for the
-   whole `tests/expand/` corpus, with codegen equality after round-trip.
-2. `Compiler::expand_dsp` no longer returns its input, and `DIFF-BEH-006` is
-   updated with the enumerated residual divergences.
-3. `crates/libfaust-ffi/include/libfaust.h` and `libfaust-c.h` are shipped,
-   covered by `xtask libfaust-export-check`, and exercised by a calling C++
-   smoke client.
-4. SHA keys are real SHA-1 and match C++ for identical expanded text.
-5. Journal and differences registry updated in English.
+All five items are met.
+
+1. ✅ `faust-rs -e` produces self-contained, re-compilable DSP for the whole
+   `tests/expand/` corpus (35 fixtures), with codegen equality after
+   round-trip. "Idempotent" was corrected to "convergent at the second pass" —
+   see §5.
+2. ✅ `Compiler::expand_dsp` no longer returns its input; `DIFF-BEH-006` lists
+   the residual divergences and `DIFF-CLI-009` / `DIFF-API-004` were added.
+3. ✅ `crates/libfaust-ffi/include/libfaust.h` and `libfaust-c.h` are shipped,
+   covered by `xtask libfaust-export-check`, and exercised by a C++ client that
+   links against the built library and calls `expandDSPFromString`.
+4. ✅ SHA keys are real SHA-1, in libfaust's uppercase form.
+5. ✅ Journal, differences registry, CLI guide, diagnostics reference and error
+   model updated in English.
+
+## 10. Result
+
+33 of the 33 fixtures with a recorded C++ expansion expand **byte-identically**
+to the reference, modulo the three lines that cannot match by construction
+(version, option spelling, absolute library paths). The two remaining fixtures
+exercise behavior the reference does not have: `031_fad` uses a faust-rs
+primitive, and `034_downsampling` is a program `faust -e` cannot expand at all
+because of the `isBoxUpsampling` duplication at
+`compiler/boxes/ppbox.cpp:615-617`.

@@ -1,5 +1,5 @@
 declare version "0.7.0";
-declare compile_options "-single -scal --export-dsp target/cli-transcript-inputs/simple.dsp";
+declare compile_options "-single -scal -mcd 16";
 declare filename "simple.dsp";
 declare name "simple";
 ID_0 = hslider("g", 0.5f, 0.0f, 1.0f, 0.01f);
