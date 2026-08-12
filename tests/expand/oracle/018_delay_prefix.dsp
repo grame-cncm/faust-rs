@@ -1,0 +1,11 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "018_delay_prefix.dsp";
+declare name "018_delay_prefix";
+ID_0 = _, 3;
+ID_1 = ID_0 : @;
+ID_2 = 0, _;
+ID_3 = ID_2 : prefix;
+ID_4 = mem : ID_3;
+ID_5 = ID_1 : ID_4;
+process = ID_5;

@@ -1,0 +1,18 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "017_select.dsp";
+declare name "017_select";
+ID_0 = _, 0;
+ID_1 = (ID_0 : >);
+ID_2 = _, -1;
+ID_3 = (ID_2 : *);
+ID_4 = _, ID_3;
+ID_5 = ID_1, ID_4;
+ID_6 = (ID_5 : select2);
+ID_7 = (_ : int);
+ID_8 = 1, 2;
+ID_9 = 0, ID_8;
+ID_10 = ID_7, ID_9;
+ID_11 = (ID_10 : select3);
+ID_12 = ID_6, ID_11;
+process = ID_12;

@@ -1,0 +1,17 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "029_bitops.dsp";
+declare name "029_bitops";
+ID_0 = (_ : int);
+ID_1 = ID_0, 3;
+ID_2 = (ID_1 : &);
+ID_3 = (ID_1 : |);
+ID_4 = (ID_1 : xor);
+ID_5 = ID_0, 2;
+ID_6 = (ID_5 : <<);
+ID_7 = (ID_5 : >>);
+ID_8 = ID_6, ID_7;
+ID_9 = ID_4, ID_8;
+ID_10 = ID_3, ID_9;
+ID_11 = ID_2, ID_10;
+process = ID_11;

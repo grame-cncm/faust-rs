@@ -1,0 +1,17 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "028_comparisons.dsp";
+declare name "028_comparisons";
+ID_0 = _, 0;
+ID_1 = (ID_0 : >);
+ID_2 = (ID_0 : <);
+ID_3 = (ID_0 : >=);
+ID_4 = (ID_0 : <=);
+ID_5 = (ID_0 : ==);
+ID_6 = (ID_0 : !=);
+ID_7 = ID_5, ID_6;
+ID_8 = ID_4, ID_7;
+ID_9 = ID_3, ID_8;
+ID_10 = ID_2, ID_9;
+ID_11 = ID_1, ID_10;
+process = ID_11;

@@ -1,0 +1,15 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "015_tables.dsp";
+declare name "015_tables";
+ID_0 = waveform{0.0f,1.0f,2.0f,3.0f};
+ID_1 = (_ : int);
+ID_2 = ID_0, ID_1;
+ID_3 = (ID_2 : rdtable);
+ID_4 = _, ID_1;
+ID_5 = ID_1, ID_4;
+ID_6 = 0.0f, ID_5;
+ID_7 = 16, ID_6;
+ID_8 = (ID_7 : rwtable);
+ID_9 = ID_3, ID_8;
+process = ID_9;

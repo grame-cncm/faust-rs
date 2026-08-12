@@ -1,0 +1,14 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "019_shared_dag.dsp";
+declare name "019_shared_dag";
+ID_0 = _, 2;
+ID_1 = ID_0 : *;
+ID_2 = _, 0.5f;
+ID_3 = (ID_2 : *);
+ID_4 = + ~ ID_3;
+ID_5 = (ID_1 : ID_4);
+ID_6 = ID_5, ID_5;
+ID_7 = ID_5, ID_6;
+ID_8 = ID_7 :> _;
+process = ID_8;

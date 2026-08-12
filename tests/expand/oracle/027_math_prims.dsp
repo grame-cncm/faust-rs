@@ -1,0 +1,14 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "027_math_prims.dsp";
+declare name "027_math_prims";
+ID_0 = ceil : rint;
+ID_1 = floor : ID_0;
+ID_2 = tan : ID_1;
+ID_3 = cos : ID_2;
+ID_4 = sin : ID_3;
+ID_5 = log : ID_4;
+ID_6 = exp : ID_5;
+ID_7 = sqrt : ID_6;
+ID_8 = abs : ID_7;
+process = ID_8;

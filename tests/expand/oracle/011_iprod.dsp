@@ -1,0 +1,15 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "011_iprod.dsp";
+declare name "011_iprod";
+ID_0 = _, 0;
+ID_1 = (ID_0 : *);
+ID_2 = _, 1;
+ID_3 = (ID_2 : *);
+ID_4 = ID_1, ID_3;
+ID_5 = (ID_4 : *);
+ID_6 = _, 2;
+ID_7 = (ID_6 : *);
+ID_8 = ID_5, ID_7;
+ID_9 = ID_8 : *;
+process = ID_9;

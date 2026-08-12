@@ -1,0 +1,13 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "004_arith.dsp";
+declare name "004_arith";
+ID_0 = _, 2;
+ID_1 = ID_0 : *;
+ID_2 = _, 1;
+ID_3 = ID_2 : +;
+ID_4 = _, 0.5f;
+ID_5 = ID_4 : -;
+ID_6 = ID_3 : ID_5;
+ID_7 = ID_1 : ID_6;
+process = ID_7;

@@ -70,6 +70,8 @@ pub(crate) enum XtaskCommand {
     LexerDifferential(LexerDifferentialArgs),
     /// Compare faust-rs and C++ Faust over a DSP tree.
     ExamplesCompare(ExamplesCompareArgs),
+    /// Capture or verify the C++ `-e` expansions backing `tests/expand`.
+    ExpandOracle(ExpandOracleArgs),
 }
 
 /// Options for comparing provenance storage representations.
@@ -467,4 +469,14 @@ fn non_negative_f32(value: &str) -> Result<f32, String> {
     } else {
         Err("value must be finite and non-negative".to_owned())
     }
+}
+
+/// Options for the `-e` expansion oracle capture.
+#[derive(Clone, Copy, Debug, Args)]
+pub(crate) struct ExpandOracleArgs {
+    /// Compare the recorded oracle against a fresh capture instead of
+    /// rewriting it. Recording is explicit because a changed expansion is a
+    /// change in the reference contract, not a routine refresh.
+    #[arg(long)]
+    pub(crate) check: bool,
 }

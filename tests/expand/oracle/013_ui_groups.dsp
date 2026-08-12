@@ -1,0 +1,15 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "013_ui_groups.dsp";
+declare name "013_ui_groups";
+ID_0 = hslider("s", 0.0f, 0.0f, 1.0f, 0.01f);
+ID_1 = _, ID_0;
+ID_2 = ID_1 : *;
+ID_3 = tgroup("t", ID_2);
+ID_4 = vgroup("v", ID_3);
+ID_5 = hgroup("h", ID_4);
+ID_6 = vbargraph("vb", 0.0f, 1.0f);
+ID_7 = hbargraph("hb", 0.0f, 1.0f);
+ID_8 = ID_6 : ID_7;
+ID_9 = ID_5 : ID_8;
+process = ID_9;

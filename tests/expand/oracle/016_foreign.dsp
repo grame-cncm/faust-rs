@@ -1,0 +1,14 @@
+declare version "<version>";
+declare compile_options "<options>";
+declare filename "016_foreign.dsp";
+declare name "016_foreign";
+ID_0 = ffunction(float myfun(float),<math.h>,"");
+ID_1 = fconstant(int fSamplingFreq, <math.h>);
+ID_2 = _, ID_1;
+ID_3 = ID_2 : +;
+ID_4 = fvariable(int count, <math.h>);
+ID_5 = _, ID_4;
+ID_6 = ID_5 : +;
+ID_7 = ID_3 : ID_6;
+ID_8 = ID_0 : ID_7;
+process = ID_8;
