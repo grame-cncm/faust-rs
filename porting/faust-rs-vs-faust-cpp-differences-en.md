@@ -230,9 +230,12 @@ must run unchanged with Faust C++ should not pass them.
     to `ofstream(gOutpath)` and, with `gOutpath` empty, produces nothing while
     exiting 0.
   - real literals take their suffix from the precision alone. C++ derives it
-    from `gOutputLang` too (`compiler/generator/floats.cpp:49`), so
-    `-lang rust -e` drops the `f` that `-lang cpp -e` emits for the same
-    program — a backend leak into a document that is Faust source.
+    from `gOutputLang` too (`compiler/generator/floats.cpp:49`), so the same
+    program expands to `3.1415927f` under `-lang cpp`, `3.1415927` under
+    `-lang rust`, and `3.1415927f0` under `-lang julia` — the last being Julia
+    literal syntax in a `.dsp` file, which the Faust parser rejects with
+    `syntax error, unexpected INT`. A backend must not leak into a document
+    that is Faust source.
   - box shapes with no Faust source syntax (`with { ... }`, `letrec`, evaluator
     closures, partially-applied pattern matchers) are refused with
     `FRS-COMP-0007` rather than printed as the placeholders C++ emits
