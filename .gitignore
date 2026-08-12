@@ -5,3 +5,24 @@
 # Scratch trees left behind by the C++ `faustbench` tool, which creates them
 # with `mktemp -d faust.XXX` in its working directory (tools/benchmark/faustbench:152).
 tests/impulse-tests/faust.???/
+
+# The repository root doubles as a scratch area for DSP experiments, generated
+# code, reports and screenshots. Nothing there is part of the project, and some
+# names contain characters Windows forbids (`:`), which breaks checkout there.
+# Track deliberately with `git add -f` if something graduates into the project.
+/*.dsp
+/*.cpp
+/*.c
+/*.json
+/*.wasm
+/*.png
+/*.pdf
+/*.rtf
+/*.csv
+/*.txt
+/*.patch
+/*.py
+/*.lib
+/*.dot
+/*.cmajor
+
