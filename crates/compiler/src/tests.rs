@@ -804,17 +804,84 @@ fn compiler_get_faustwasm_info_supports_cpp_directory_keys() {
 }
 
 #[test]
-fn compiler_expand_dsp_returns_source_when_valid() {
+fn compiler_expand_dsp_emits_a_self_contained_document() {
     let compiler = Compiler::new();
-    let source = "process = 0;".to_owned();
+    let expanded = compiler
+        .expand_dsp(&ExpandDspRequest {
+            source_name: "zero.dsp".to_owned(),
+            source: "process = 0;".to_owned(),
+            args: String::new(),
+        })
+        .expect("expand_dsp should succeed for valid source");
+
+    let lines: Vec<&str> = expanded.lines().collect();
+    // The header order is part of the contract: the version line must come
+    // first, and the options line immediately after it.
+    assert!(lines[0].starts_with("declare version "), "{expanded}");
+    assert_eq!(
+        lines[1], "declare compile_options \"-single -scal\";",
+        "{expanded}"
+    );
+    assert!(
+        lines.contains(&"declare filename \"zero.dsp\";"),
+        "the document must name its source: {expanded}"
+    );
+    assert!(
+        expanded.ends_with("process = 0;\n"),
+        "the entry point must be the last binding: {expanded}"
+    );
+}
+
+#[test]
+fn compiler_expand_dsp_keeps_an_already_expanded_source() {
+    // A source whose first statement is a matching `compile_options`
+    // declaration is returned unchanged — the C++ short-circuit.
+    let compiler = Compiler::new();
+    let source = "declare compile_options \"-single -scal\";\nprocess = 0;".to_owned();
     let expanded = compiler
         .expand_dsp(&ExpandDspRequest {
             source_name: "zero.dsp".to_owned(),
             source: source.clone(),
             args: String::new(),
         })
-        .expect("expand_dsp should succeed for valid source");
+        .expect("an already-expanded source is accepted");
     assert_eq!(expanded, source);
+}
+
+#[test]
+fn compiler_expand_dsp_prepends_options_when_they_differ() {
+    let compiler = Compiler::new();
+    let source = "declare compile_options \"-double -scal\";\nprocess = 0;".to_owned();
+    let expanded = compiler
+        .expand_dsp(&ExpandDspRequest {
+            source_name: "zero.dsp".to_owned(),
+            source: source.clone(),
+            args: String::new(),
+        })
+        .expect("an already-expanded source is accepted");
+    assert_eq!(
+        expanded,
+        format!("declare compile_options \"-single -scal\";\n{source}")
+    );
+}
+
+#[test]
+fn compiler_expand_dsp_rejects_a_program_without_outputs() {
+    // C++ refuses this before its `-e` branch, so expansion never produces a
+    // document for a program a normal compilation would reject.
+    let compiler = Compiler::new();
+    let error = compiler
+        .expand_dsp(&ExpandDspRequest {
+            source_name: "silent.dsp".to_owned(),
+            source: "process = !;".to_owned(),
+            args: String::new(),
+        })
+        .expect_err("a program with no output signal must be rejected");
+    assert!(
+        error.message.contains("no output signal"),
+        "unexpected message: {}",
+        error.message
+    );
 }
 
 #[test]

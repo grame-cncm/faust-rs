@@ -1540,6 +1540,7 @@ fn rust_case_status_inner(compiler: &compiler::Compiler, input: &Path) -> CaseSt
                 compiler::CompilerError::CodegenCranelift { .. } => ("codegen", err.to_string()),
                 compiler::CompilerError::CodegenWasm { .. } => ("codegen", err.to_string()),
                 compiler::CompilerError::MissingRoot { .. } => ("parse", err.to_string()),
+                compiler::CompilerError::Expand { .. } => ("expand", err.to_string()),
             };
             CaseStatus {
                 ok: false,

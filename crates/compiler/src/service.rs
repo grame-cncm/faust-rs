@@ -38,24 +38,46 @@ impl Compiler {
         }
     }
 
-    /// Validate and expand one Faust DSP source.
+    /// Expands one Faust DSP source into a self-contained program.
     ///
     /// Parses and evaluates the program using any `-I` search paths carried in
-    /// `request.args`.  If compilation succeeds the original source text is
-    /// returned verbatim; the Rust compiler currently has no box→DSP serializer
-    /// analogous to C++ `printBox`, so the expanded form equals the input.
+    /// `request.args`, then serializes the evaluated box back to Faust source
+    /// with every import and abstraction inlined. See [`crate::expand`] for the
+    /// document layout and the values that legitimately differ from a C++
+    /// expansion.
+    ///
+    /// A source that already begins with a `compile_options` declaration takes
+    /// the short path: it is returned unchanged when the options match, and
+    /// with a fresh options line prepended when they do not. This mirrors C++
+    /// `expandDSPFromString`, including the fact that the test never matches a
+    /// real expansion — see [`expand::starts_with_compilation_options`].
     ///
     /// Mirrors: `expandDSPFromString` / `expandDSPFromFile` (C++ Faust API).
+    ///
+    /// # Errors
+    /// Returns [`FaustwasmServiceError`] when the program does not compile or
+    /// cannot be serialized.
     pub fn expand_dsp(&self, request: &ExpandDspRequest) -> Result<String, FaustwasmServiceError> {
         let argv: Vec<String> = request.args.split_whitespace().map(str::to_owned).collect();
+
+        if expand::starts_with_compilation_options(&request.source) {
+            let normalized = expand::reorganize_compilation_options(&argv);
+            return Ok(
+                if expand::extract_compilation_options(&request.source) == Some(normalized.as_str())
+                {
+                    request.source.clone()
+                } else {
+                    format!(
+                        "declare compile_options \"{normalized}\";\n{}",
+                        request.source
+                    )
+                },
+            );
+        }
+
         let search_paths = parse_search_paths_from_argv(&argv);
-        self.compile_source_to_signals_with_search_paths(
-            &request.source_name,
-            &request.source,
-            &search_paths,
-        )
-        .map(|_| request.source.clone())
-        .map_err(FaustwasmServiceError::compile_failure)
+        self.expand_source_to_dsp(&request.source_name, &request.source, &search_paths, &argv)
+            .map_err(FaustwasmServiceError::compile_failure)
     }
 
     /// Returns a copy of this compiler with the compilation options found in a

@@ -939,6 +939,7 @@ may be correct and your search path wrong.
 | `FRS-COMP-0004` | `type_inference` | A signal type or interval violates a typing rule: an out-of-range `soundfile` part, an unbounded variable delay, an invalid table operand, a math operand outside its domain. Also the severity-`warning` form of the last one under `--warn`. |
 | `FRS-COMP-0005` | `compiler` | An internal invariant guard. Reaching it means a compiler bug, not a DSP mistake. |
 | `FRS-COMP-0006` | `transform` | Under `--warn`, a const generated table has frozen `ma.SR` to the explicitly requested `--table-init-sample-rate` value rather than using the host initialization rate. |
+| `FRS-COMP-0007` | `compiler` | `-e` expansion cannot serialize the evaluated program: no output signal, or a box shape with no Faust source syntax. |
 | `FRS-UI-0001` | `propagate` | Two or more controls claim the same runtime address. Every conflicting declaration is located. |
 
 ### 7.5 Lowering and code generation (`FRS-SFIR-*`, `FRS-FIR-*`, `FRS-CODEGEN-*`)

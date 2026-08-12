@@ -483,7 +483,7 @@ impl<'a> Printer<'a> {
         let child_count = self.render_children(node)?.len();
         let at = self.values.len() - child_count;
         let parts = self.values.split_off(at);
-        let text = self.compose(node, priority, &parts)?;
+        let text = self.compose(node, priority, sharing, &parts)?;
 
         if sharing == Sharing::On && shares_identifier(self.arena, node) {
             #[expect(
@@ -798,18 +798,20 @@ impl Printer<'_> {
         &self,
         node: BoxId,
         priority: u8,
+        sharing: Sharing,
         parts: &[String],
     ) -> Result<String, BoxPrintError> {
         if matches!(self.arena.kind(node), Some(NodeKind::Cons)) {
             return Ok(format!("({})", parts.join(",")));
         }
 
+        let separators = Separators::for_sharing(sharing);
         let text = match match_box(self.arena, node) {
-            BoxMatch::Seq(_, _) => binop(parts, " : ", PRIORITY_COMPOSE, priority),
-            BoxMatch::Split(_, _) => binop(parts, " <: ", PRIORITY_COMPOSE, priority),
-            BoxMatch::Merge(_, _) => binop(parts, " :> ", PRIORITY_COMPOSE, priority),
-            BoxMatch::Par(_, _) => binop(parts, ", ", PRIORITY_PAR, priority),
-            BoxMatch::Rec(_, _) => binop(parts, " ~ ", PRIORITY_REC, priority),
+            BoxMatch::Seq(_, _) => binop(parts, separators.seq, PRIORITY_COMPOSE, priority),
+            BoxMatch::Split(_, _) => binop(parts, separators.split, PRIORITY_COMPOSE, priority),
+            BoxMatch::Merge(_, _) => binop(parts, separators.merge, PRIORITY_COMPOSE, priority),
+            BoxMatch::Par(_, _) => binop(parts, separators.par, PRIORITY_PAR, priority),
+            BoxMatch::Rec(_, _) => binop(parts, separators.rec, PRIORITY_REC, priority),
             BoxMatch::Appl(_, _) => format!("{}{}", parts[0], parts[1]),
             BoxMatch::Access(_, _) => format!("{}.{}", parts[0], parts[1]),
             BoxMatch::Abstr(_, _) => format!("\\{}.({})", parts[0], parts[1]),
@@ -900,6 +902,42 @@ impl Printer<'_> {
             other => return Err(unprintable(node, other)),
         };
         Ok(text)
+    }
+}
+
+/// Composition-operator spellings, which differ between the two printers.
+///
+/// `boxpp` writes `,`, `<:`, `:>` and `~` unpadded while `boxppShared` pads
+/// all four (`compiler/boxes/ppbox.cpp:311-319` against `:592-600`). The
+/// difference is cosmetic — both re-parse identically — but reproducing it is
+/// what lets an expansion be diffed against the C++ compiler's own output.
+struct Separators {
+    seq: &'static str,
+    split: &'static str,
+    merge: &'static str,
+    par: &'static str,
+    rec: &'static str,
+}
+
+impl Separators {
+    /// Returns the spellings the given printer uses.
+    fn for_sharing(sharing: Sharing) -> Self {
+        match sharing {
+            Sharing::On => Self {
+                seq: " : ",
+                split: " <: ",
+                merge: " :> ",
+                par: ", ",
+                rec: " ~ ",
+            },
+            Sharing::Off => Self {
+                seq: " : ",
+                split: "<:",
+                merge: ":>",
+                par: ",",
+                rec: "~",
+            },
+        }
     }
 }
 

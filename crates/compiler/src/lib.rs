@@ -41,6 +41,7 @@
 
 pub mod diagnostics_json;
 pub mod enrobage;
+pub mod expand;
 #[cfg(all(feature = "network-imports", not(target_arch = "wasm32")))]
 pub mod remote_fetch;
 
@@ -221,6 +222,12 @@ pub struct SignalCompileOutput {
 /// evaluation rules instead of reimplementing them.
 #[derive(Debug)]
 pub struct BoxCompileOutput {
+    /// Compiled source name, as reported in diagnostics and metadata keys.
+    ///
+    /// Carried on the value because the propagation half needs the same name
+    /// the evaluation half used; deriving it twice from a path is how the two
+    /// halves would silently disagree for remote and canonicalized sources.
+    pub source_name: String,
     /// Full parser output (arena + metadata + diagnostics from parse stage).
     pub parse: ParseOutput,
     /// Aggregated top-level `declare key "value";` metadata visible after the
@@ -248,6 +255,14 @@ pub struct BoxCompileOutput {
     /// Evaluated `BoxId` → source definition name, forwarded to the signal
     /// output package.
     def_names: std::collections::HashMap<boxes::BoxId, String>,
+}
+
+impl BoxCompileOutput {
+    /// Returns the source name this program was compiled under.
+    #[must_use]
+    pub fn source_name(&self) -> &str {
+        &self.source_name
+    }
 }
 
 impl SignalCompileOutput {
@@ -409,8 +424,8 @@ impl AuxFileArtifact {
 
 /// Request payload for [`Compiler::expand_dsp`].
 ///
-/// Mapping status: `adapted` — see that method for the one behavioral gap
-/// (no box→DSP serializer yet, so the expansion returns the input verbatim).
+/// Mapping status: `adapted` — see [`crate::expand`] for the values that
+/// legitimately differ from a C++ expansion of the same program.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpandDspRequest {
     /// Logical source name reported in diagnostics.
@@ -1067,6 +1082,27 @@ impl Compiler {
         search_paths: &[PathBuf],
         virtual_sources: &VirtualSourceMap,
     ) -> Result<SignalCompileOutput, CompilerError> {
+        let boxes = self.compile_source_to_boxes_with_import_context(
+            source_name,
+            source,
+            search_paths,
+            virtual_sources,
+        )?;
+        self.pipeline_boxes_to_signals(source_name, boxes)
+    }
+
+    /// Parses one source string and evaluates its entry point, stopping before
+    /// propagation.
+    ///
+    /// The box-level counterpart of
+    /// [`Self::compile_source_to_signals_with_import_context`].
+    pub(crate) fn compile_source_to_boxes_with_import_context(
+        &self,
+        source_name: &str,
+        source: &str,
+        search_paths: &[PathBuf],
+        virtual_sources: &VirtualSourceMap,
+    ) -> Result<BoxCompileOutput, CompilerError> {
         let metadata_store = parser::CompilationMetadataStore::new(source_name);
         let output = if search_paths.is_empty()
             && virtual_sources.is_empty()
@@ -1128,7 +1164,7 @@ impl Compiler {
             RealType::Float32 => eval::SamplePrecision::Float32,
             RealType::Float64 => eval::SamplePrecision::Float64,
         };
-        self.pipeline_to_signals(source_name, output, Some(eval_source_context))
+        self.pipeline_to_boxes(source_name, output, Some(eval_source_context))
     }
 
     /// Parses one file, evaluates `process`, then propagates boxes to output signals.
@@ -1142,6 +1178,21 @@ impl Compiler {
         path: &Path,
         search_paths: &[PathBuf],
     ) -> Result<SignalCompileOutput, CompilerError> {
+        let boxes = self.compile_file_to_boxes(path, search_paths)?;
+        let source_name = boxes.source_name().to_owned();
+        self.pipeline_boxes_to_signals(&source_name, boxes)
+    }
+
+    /// Parses one file and evaluates its entry point, stopping before propagation.
+    ///
+    /// The box-level counterpart of [`Self::compile_file_to_signals`], sharing
+    /// its import-resolution, remote-source and metadata behavior exactly
+    /// because both run the same body up to the evaluation boundary.
+    pub fn compile_file_to_boxes(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+    ) -> Result<BoxCompileOutput, CompilerError> {
         let remote_url = explicit_remote_path(path);
         let search_path_anchor = if remote_url.is_some() {
             Path::new("remote.dsp")
@@ -1210,7 +1261,7 @@ impl Compiler {
             RealType::Float32 => eval::SamplePrecision::Float32,
             RealType::Float64 => eval::SamplePrecision::Float64,
         };
-        self.pipeline_to_signals(&source_name, output, Some(eval_source_context))
+        self.pipeline_to_boxes(&source_name, output, Some(eval_source_context))
     }
 
     /// Parses one file with default import search path, then runs eval+propagate.
@@ -1409,6 +1460,7 @@ impl Compiler {
         );
 
         Ok(BoxCompileOutput {
+            source_name: source.to_owned(),
             parse: output,
             compilation_metadata,
             loaded_files: eval_source_context
@@ -1435,6 +1487,7 @@ impl Compiler {
         boxes: BoxCompileOutput,
     ) -> Result<SignalCompileOutput, CompilerError> {
         let BoxCompileOutput {
+            source_name: _,
             mut parse,
             compilation_metadata,
             loaded_files,
@@ -1723,6 +1776,16 @@ pub enum CompilerError {
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
+    /// `-e` expansion could not serialize the evaluated program.
+    Expand {
+        /// Program provenance; see the shared field convention.
+        source: Box<str>,
+        /// What blocked serialization, carried on the variant so the `Display`
+        /// form is actionable for callers that only propagate a message.
+        reason: Box<str>,
+        /// Rendered diagnostics for this failure.
+        diagnostics: DiagnosticBundle,
+    },
     /// Parse failed (`errors` or `recoveries` present).
     Parse {
         /// Program provenance; see the shared field convention.
@@ -1899,6 +1962,9 @@ impl std::fmt::Display for CompilerError {
         match self {
             Self::Import(err, _) => write!(f, "{err}"),
             Self::MissingRoot { source, .. } => write!(f, "parse returned no root for {source}"),
+            Self::Expand { source, reason, .. } => {
+                write!(f, "cannot expand {source}: {reason}")
+            }
             Self::Parse {
                 source,
                 parse_errors,
@@ -1980,6 +2046,9 @@ impl std::error::Error for CompilerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Import(error, _) => Some(error.as_ref()),
+            // Expansion failures are self-describing: the reason lives in the
+            // diagnostic, not in a wrapped error.
+            Self::Expand { .. } => None,
             Self::Eval { error, .. } => Some(error.as_ref()),
             Self::Propagate { error, .. } => Some(error),
             Self::Type { error, .. } => Some(error.as_ref()),
@@ -2027,6 +2096,7 @@ impl CompilerError {
             | Self::CodegenInterp { diagnostics, .. }
             | Self::CodegenWasm { diagnostics, .. }
             | Self::MissingRoot { diagnostics, .. }
+            | Self::Expand { diagnostics, .. }
             | Self::FirVerify { diagnostics, .. } => diagnostics,
             #[cfg(not(target_arch = "wasm32"))]
             Self::CodegenCranelift { diagnostics, .. } => diagnostics,
@@ -2128,6 +2198,31 @@ impl CompilerError {
         }
     }
 
+    /// Builds the error raised when `-e` cannot serialize a program.
+    ///
+    /// The message states what blocked serialization; the notes say why the
+    /// expansion refuses to emit anything rather than approximate.
+    #[must_use]
+    pub fn expand_failed(source: &str, reason: impl std::fmt::Display) -> Self {
+        let reason = reason.to_string();
+        let mut diagnostics = DiagnosticBundle::new();
+        diagnostics.push(
+            Diagnostic::new(
+                Severity::Error,
+                Stage::Compiler,
+                diagnostics::codes::COMP_EXPAND_FAILED,
+                format!("cannot expand {source}: {reason}"),
+            )
+            .with_note("expansion must produce a DSP that compiles on its own")
+            .with_help("compile the program normally to see the underlying error"),
+        );
+        Self::Expand {
+            source: source.into(),
+            reason: reason.into(),
+            diagnostics,
+        }
+    }
+
     /// Returns the structured diagnostics carried by this error.
     ///
     /// The exhaustive match is deliberate: adding a variant without a bundle
@@ -2142,6 +2237,7 @@ impl CompilerError {
             Self::UiLayout { diagnostics, .. } => diagnostics,
             Self::Type { diagnostics, .. } => diagnostics,
             Self::Transform { diagnostics, .. } => diagnostics,
+            Self::Expand { diagnostics, .. } => diagnostics,
             Self::ExecutionOptions { diagnostics, .. } => diagnostics,
             Self::FirVerify { diagnostics, .. } => diagnostics,
             Self::Import(_, diagnostics) => diagnostics,

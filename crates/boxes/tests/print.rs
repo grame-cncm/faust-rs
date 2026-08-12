@@ -270,13 +270,14 @@ fn operand_priority_drives_parentheses() {
         (scaled, under_rec)
     };
 
+    // The unshared printer writes `,` and `~` unpadded, unlike the shared one.
     // At the top level a `:` node needs no parentheses.
     let plain = box_pp(&arena, loose, 0, FloatSize::Single).expect("printable");
-    assert_eq!(plain, "_, 2 : *");
+    assert_eq!(plain, "_,2 : *");
 
     // As the operand of `~` (priority 4) the same node is parenthesized.
     let nested = box_pp(&arena, tight, 0, FloatSize::Single).expect("printable");
-    assert_eq!(nested, "+ ~ (_, 2 : *)");
+    assert_eq!(nested, "+~(_,2 : *)");
 }
 
 // ── Binders ───────────────────────────────────────────────────────────────────
@@ -301,7 +302,7 @@ fn abstraction_bodies_are_never_hoisted() {
         "nothing inside a binder may be hoisted: {:?}",
         program.definitions
     );
-    assert_eq!(program.root, "\\(x0).(x0, x0 : +)");
+    assert_eq!(program.root, "\\(x0).(x0,x0 : +)");
 }
 
 // ── Rejection ─────────────────────────────────────────────────────────────────

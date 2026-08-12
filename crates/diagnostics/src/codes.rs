@@ -124,6 +124,12 @@ pub const COMP_TYPE_FAILED: DiagnosticCode = DiagnosticCode("FRS-COMP-0004");
 pub const COMP_MISSING_ROOT: DiagnosticCode = DiagnosticCode("FRS-COMP-0005");
 /// A const table folds a host-dependent sample-rate value.
 pub const COMP_TABLE_INIT_SAMPLE_RATE: DiagnosticCode = DiagnosticCode("FRS-COMP-0006");
+/// `-e` expansion cannot serialize the evaluated program.
+///
+/// Raised when the program has no output signal, or when its evaluated box
+/// contains a shape with no Faust source syntax — the expansion's contract is
+/// that its output re-compiles, so emitting a placeholder is not an option.
+pub const COMP_EXPAND_FAILED: DiagnosticCode = DiagnosticCode("FRS-COMP-0007");
 
 /// Backend code generation failed while emitting from FIR.
 ///
@@ -177,6 +183,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         COMP_TYPE_FAILED,
         COMP_MISSING_ROOT,
         COMP_TABLE_INIT_SAMPLE_RATE,
+        COMP_EXPAND_FAILED,
         CODEGEN_EMISSION_FAILED,
     ]
 }

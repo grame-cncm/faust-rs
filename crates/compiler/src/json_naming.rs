@@ -393,7 +393,7 @@ pub(crate) fn c_family_meta_entries_from_snapshot(
     out
 }
 
-fn normalize_flat_metadata_key(master_parent: &Path, key: &str) -> String {
+pub(crate) fn normalize_flat_metadata_key(master_parent: &Path, key: &str) -> String {
     let Some((source_file, suffix)) = key.rsplit_once('/') else {
         return key.to_owned();
     };
@@ -408,7 +408,7 @@ fn normalize_flat_metadata_key(master_parent: &Path, key: &str) -> String {
     )
 }
 
-fn metadata_source_path(master_parent: &Path, source_path: &Path) -> String {
+pub(crate) fn metadata_source_path(master_parent: &Path, source_path: &Path) -> String {
     if let Ok(relative) = source_path.strip_prefix(master_parent) {
         return metadata_pathname(relative);
     }
