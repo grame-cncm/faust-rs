@@ -188,10 +188,16 @@ const PRIORITY_REC: u8 = 4;
 const PRIORITY_TOP: u8 = 0;
 /// Priority for an operand that must be parenthesized whatever it contains.
 ///
-/// A comma-separated call argument cannot be printed at [`PRIORITY_TOP`]: an
-/// operand whose own top-level operator is `,` would merge with the argument
-/// separator and the call would re-parse with the wrong arity. Being above
-/// every operator priority, this forces parentheses around any composition.
+/// The grammar reserves `,` as the separator inside a call's argument list —
+/// `Argument` has alternatives for `:`, `<:` and `:>` but none for `,` — so an
+/// argument may not contain an unparenthesized comma at any depth.
+///
+/// [`PRIORITY_TOP`] does not achieve that. A comma escapes from *below* the
+/// operand's own top-level operator, because `,` binds looser than `:` and so
+/// is never wrapped inside one: `Seq(Par(a, b), Mul)` prints `a,b : *`, and
+/// `rad(a,b : *, seeds)` then re-parses as a three-argument call. Being above
+/// every operator priority, this wraps the outermost node — which encloses
+/// everything beneath it, so one wrap is enough.
 const PRIORITY_ARGUMENT: u8 = 5;
 
 // ── Public entry points ───────────────────────────────────────────────────────
@@ -755,8 +761,8 @@ impl Printer<'_> {
             | BoxMatch::Inputs(inner)
             | BoxMatch::Outputs(inner) => vec![ChildRef::new(inner, PRIORITY_TOP)],
             // Both operands sit in a comma-separated argument list, so neither
-            // may be printed unparenthesized: `rad(a, b : *, seeds)` re-parses
-            // as a three-argument call.
+            // may be printed unparenthesized: `rad(a,b : *, seeds)` re-parses
+            // as a three-argument call. See `PRIORITY_ARGUMENT`.
             BoxMatch::ForwardAD(expr, seeds) | BoxMatch::ReverseAD(expr, seeds) => vec![
                 ChildRef::new(expr, PRIORITY_ARGUMENT),
                 ChildRef::new(seeds, PRIORITY_ARGUMENT),
