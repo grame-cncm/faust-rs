@@ -1,3 +1,7 @@
 /target
 **/*.rs.bk
 .DS_Store
+
+# Scratch trees left behind by the C++ `faustbench` tool, which creates them
+# with `mktemp -d faust.XXX` in its working directory (tools/benchmark/faustbench:152).
+tests/impulse-tests/faust.???/
