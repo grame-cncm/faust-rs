@@ -1059,15 +1059,13 @@ impl Compiler {
 
     /// Compiles one file-backed DSP source into an owned artifact bundle.
     ///
-    /// Compared with [`Self::compile_file_to_wasm_with_lane`], this packages the
-    /// result in the artifact-centric shape expected by the `faustwasm`
-    /// dual-mode integration plan, so downstream code can treat compile mode
-    /// and precompiled-artifact mode uniformly.
-    ///
-    /// Unlike its source-based sibling [`Self::compile_wasm_artifact`], the
-    /// returned bundle's `warnings` is always empty here, regardless of
-    /// [`Self::with_semantic_warnings`] — this file-backed path does not yet
-    /// thread semantic warnings through.
+    /// Packages the result in the artifact-centric shape expected by the
+    /// `faustwasm` dual-mode integration plan, so downstream code can treat
+    /// compile mode and precompiled-artifact mode uniformly. This inlines the
+    /// same pipeline as [`Self::compile_file_to_wasm_with_lane`] — rather than
+    /// calling it — so it can retain `signals` long enough to forward its
+    /// `warnings`, the same way [`Self::compile_wasm_artifact`] does for the
+    /// source-based path.
     pub fn compile_file_to_wasm_artifact_with_lane(
         &self,
         path: &Path,
@@ -1076,11 +1074,23 @@ impl Compiler {
         lane: SignalFirLane,
     ) -> Result<WasmArtifactBundle, CompilerError> {
         let compile_options = compile_options_json_string(Some("wasm"), options.double_precision);
-        let module = self.compile_file_to_wasm_with_lane(path, search_paths, options, lane)?;
+        let source = path.display().to_string();
+        let signals = self.compile_file_to_signals(path, search_paths)?;
+        let warnings = signals.warnings.clone();
+        let lowered = self.lower_to_fir(&source, &signals, lane)?;
+        let json_context =
+            wasm_json_context_for_file(path, search_paths, &signals, compile_options.clone());
+        let module = generate_wasm_module_with_context(
+            &lowered.store,
+            lowered.module,
+            options,
+            &json_context,
+        )
+        .map_err(|error| wasm_error_to_compiler(&source, &signals, &lowered, error))?;
         Ok(WasmArtifactBundle::from_wasm_module(
             module,
             compile_options,
-            DiagnosticBundle::new(),
+            warnings,
         ))
     }
 

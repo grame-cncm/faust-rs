@@ -716,6 +716,31 @@ fn compiler_compile_file_to_wasm_artifact_preserves_file_provenance_and_options(
 }
 
 #[test]
+fn compiler_compile_file_to_wasm_artifact_forwards_semantic_warnings_when_enabled() {
+    // The file-backed artifact path used to always discard signals.warnings,
+    // unlike its source-based sibling compile_wasm_artifact; this proves the
+    // fix threads it through the same way.
+    let root = temp_root("wasm_artifact_file_warnings");
+    let entry = root.join("main.dsp");
+    fs::write(&entry, "process = sqrt;\n").expect("write entry");
+
+    let quiet = Compiler::new()
+        .compile_file_default_to_wasm_artifact(&entry, &WasmOptions::default())
+        .expect("a potential domain problem must not block compilation");
+    assert!(quiet.warnings.is_empty(), "warnings are opt-in");
+
+    let loud = Compiler::new()
+        .with_semantic_warnings(true)
+        .compile_file_default_to_wasm_artifact(&entry, &WasmOptions::default())
+        .expect("enabling warnings must not change the compilation result");
+    assert_eq!(
+        loud.warnings.len(),
+        1,
+        "sqrt over a signed input may leave its domain"
+    );
+}
+
+#[test]
 fn compiler_compile_source_to_json_emits_strict_json_without_widget_indices() {
     let compiler = Compiler::new();
     let json = compiler
