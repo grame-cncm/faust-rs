@@ -1051,7 +1051,8 @@ can consume the common subset:
     "abi": {
       "target": "native",
       "pointer_size": 8,
-      "pointer_alignment": 8
+      "pointer_alignment": 8,
+      "maximum_allocation_alignment": 16
     },
     "access_metric": "static_accesses_per_scalar_frame"
   },
@@ -1069,7 +1070,8 @@ can consume the common subset:
       "runtime_allocated": true,
       "allocation_phase": "create_object",
       "allocation_order": 0,
-      "size_exact": true
+      "size_exact": true,
+      "size_source": "compiler_expression"
     }
   ],
   "compute_cost_version": 2,
@@ -1127,6 +1129,18 @@ Rules:
   accidentally borrowed from Wasm;
 - all integers use checked serialization and cannot wrap;
 - `size_exact` plus ABI metadata exposes any target-layout limitation;
+- `size_source` names the provenance behind `size_exact`: `computed` (derived
+  exactly from the explicit target ABI model), `compiler_expression` (the
+  generated language emits `sizeof`/`alignof` as the runtime authority and
+  this JSON number is a non-authoritative companion estimate — the usual case
+  for `dsp_object`/`subcontainer` zones), or `estimated` (best available
+  number, explicitly not exact);
+- `abi.maximum_allocation_alignment` is a fixed per-target ceiling (16 on
+  native 64-bit targets), not a per-DSP maximum; layout construction rejects
+  any zone whose alignment would exceed it, so every zone's `alignment` in a
+  successfully analyzed layout is guaranteed to be at most this value — a
+  manager only needs to satisfy alignments up to this bound to be a complete
+  implementation for any DSP on this target;
 - top-level legacy `size` retains its existing meaning until a separately
   versioned migration is approved; it is not relabeled as object size.
 

@@ -375,8 +375,11 @@ faust-rs -lang interp foo.dsp -o foo.fbc
 `-mem`, `-mem0`, `--memory-manager`, and `--memory-manager0` are equivalent.
 Only mode zero is currently supported, for scalar C, C++, and Cranelift. Its
 JSON companion includes a versioned target layout and `compute_cost`; see the
+[`-mem0` custom memory manager guide](docs/user-mem0-guide-en.md) for how to
+write a custom allocator against it, the
 [porting analysis](porting/custom-memory-manager-mem0-analysis-and-porting-plan-2026-08-13-en.md)
-and the [Cranelift C/C++ API guide](crates/cranelift-ffi/README.md).
+for the full design rationale, and the
+[Cranelift C/C++ API guide](crates/cranelift-ffi/README.md).
 
 Scheduling and vector code generation:
 
@@ -558,6 +561,7 @@ Use the following variables to increase the evaluation depth stack:
 
 - [User CLI reference](docs/user-cli-guide-en.md)
 - [User diagnostics guide](docs/user-diagnostics-guide-en.md)
+- [`-mem0` custom memory manager guide](docs/user-mem0-guide-en.md)
 - Clock domains (`ondemand`/`upsampling`/`downsampling`): [English](docs/ondemand-note-en.md) / [French](docs/ondemand-note-fr.md)
 - Automatic differentiation (`fad`/`rad`): [English](docs/fad-rad-synthesis-en.md) / [French](docs/fad-rad-synthesis-fr.md)
 - [Supported Faust subset](porting/faust-rs-supported-faust-subset-en.md)
