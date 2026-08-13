@@ -571,10 +571,10 @@ The rules above preserve the following invariants:
 ## 10. Source locations
 
 - `transform_uncached` and the `DEBRUIJNREC` arm:
-  [crates/propagate/src/forward_ad.rs:564](crates/propagate/src/forward_ad.rs:564)
+  [crates/propagate/src/forward_ad.rs](../crates/propagate/src/forward_ad.rs)
 - `SigMatch::Proj` arm and `GroupKind` classifier:
-  [crates/propagate/src/forward_ad.rs:971](crates/propagate/src/forward_ad.rs:971)
+  [crates/propagate/src/forward_ad.rs](../crates/propagate/src/forward_ad.rs)
 - Module-level discussion of de Bruijn handling, including a compact
   rewrite-rule table that summarises §6 in the format used throughout the
   header:
-  [crates/propagate/src/forward_ad.rs:261](crates/propagate/src/forward_ad.rs:261)
+  [crates/propagate/src/forward_ad.rs](../crates/propagate/src/forward_ad.rs)
