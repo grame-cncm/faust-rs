@@ -26,6 +26,7 @@
 
 pub mod backend_error;
 pub mod backends;
+pub mod compute_cost;
 pub mod fixtures;
 pub mod json;
 pub mod memory_layout;
