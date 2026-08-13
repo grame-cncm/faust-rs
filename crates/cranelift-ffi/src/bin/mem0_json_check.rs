@@ -5,14 +5,27 @@
 //! `compute_cost` values must be identical.
 
 use std::collections::{HashMap, HashSet};
-use std::env;
 use std::fs;
 use std::process::ExitCode;
 
+use clap::Parser;
 use serde_json::Value;
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "mem0-json-check",
+    version,
+    about = "Semantic checker for JSON artifacts produced by the mem0 impulse lane"
+)]
+struct CliArgs {
+    /// `backend=path.json` documents to check together (e.g. `cpp=out.json c=out.json`).
+    #[arg(value_name = "BACKEND=PATH")]
+    documents: Vec<String>,
+}
+
 fn main() -> ExitCode {
-    match run(env::args().skip(1)) {
+    let args = CliArgs::parse();
+    match run(args.documents) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("mem0-json-check: {error}");
