@@ -14,7 +14,7 @@ use codegen::backends::julia::JuliaRealType;
 use codegen::backends::rust::RustRealType;
 use codegen::backends::wasm::WasmOptions;
 use codegen::fixtures::backend_test_fixtures;
-use codegen::memory_layout::MemoryManagerMode;
+use codegen::memory_layout::{MemoryLayoutFlavor, MemoryManagerMode};
 use compiler::{
     Compiler, CompilerError, ComputeMode, ControlRateMode, FaustInstallPaths, FirVerifyOptions,
     ProcessingApi, RealType, SchedulingStrategy, TableInitMode,
@@ -619,6 +619,9 @@ pub fn compile_fixture_to_json_text(
         &function_items,
         codegen::json::JsonBuildOptions {
             name,
+            backend: None,
+            jit_compiled: None,
+            compute_body_lowered: None,
             filename: None,
             version: Some(Compiler::version().to_owned()),
             compile_options: Some(compile_options),
@@ -629,6 +632,7 @@ pub fn compile_fixture_to_json_text(
             inputs: num_inputs,
             outputs: num_outputs,
             sr_index: None,
+            memory: None,
         },
         |_var| None,
     )
@@ -649,18 +653,27 @@ pub fn emit_cli_json_companion_for_backend(
     backend_lang: CliLang,
 ) {
     let compile_options = compile_options_full_string(cli, Some(cli_lang_name(backend_lang)));
+    let memory_flavor = selected_memory_manager_mode(cli)
+        .is_mem0()
+        .then_some(match backend_lang {
+            CliLang::C => MemoryLayoutFlavor::C,
+            CliLang::Cranelift => MemoryLayoutFlavor::Cranelift,
+            _ => MemoryLayoutFlavor::Cpp,
+        });
     let result = if cli.import_dir.is_empty() {
-        compiler.compile_file_default_to_json_with_lane_and_compile_options(
+        compiler.compile_file_default_to_json_with_lane_compile_options_and_memory(
             input_path,
             selected_codegen_lane(cli).into_compiler_lane(),
             compile_options,
+            memory_flavor,
         )
     } else {
-        compiler.compile_file_to_json_with_compile_options(
+        compiler.compile_file_to_json_with_compile_options_and_memory(
             input_path,
             &cli.import_dir,
             selected_codegen_lane(cli).into_compiler_lane(),
             compile_options,
+            memory_flavor,
         )
     };
 

@@ -23,6 +23,7 @@ use box_ffi::{BoxFfiFirModule, export_fir_from_box_handle, export_fir_from_signa
 use codegen::backends::cranelift::{
     CraneliftOptLevel, CraneliftOptions, JitDspModule, generate_cranelift_module,
 };
+use codegen::json::{JsonBuildOptions, JsonMemoryDescription, build_json_description_from_fir};
 use codegen::memory_layout::MemoryManagerMode;
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, ComputeMode, ExpandDspRequest,
@@ -894,21 +895,56 @@ fn build_scaffold_factory_common(
     let runtime = build_runtime_descriptor(&fir.store, fir.module)?;
     let num_inputs = fir.num_inputs;
     let num_outputs = fir.num_outputs;
+    let function_items = match match_fir(&fir.store, fir.module) {
+        FirMatch::Module { functions, .. } => match match_fir(&fir.store, functions) {
+            FirMatch::Block(items) => items,
+            other => {
+                return Err(format!(
+                    "Cranelift JSON expected function block, got {other:?}"
+                ));
+            }
+        },
+        other => return Err(format!("Cranelift JSON expected module, got {other:?}")),
+    };
+    let memory = jit
+        .as_ref()
+        .and_then(JitDspModule::mem0_analysis)
+        .cloned()
+        .map(|analysis| JsonMemoryDescription {
+            backend: "cranelift".to_owned(),
+            manager_abi: "faust_memory_manager_v1".to_owned(),
+            analysis,
+        });
+    let json = build_json_description_from_fir(
+        &fir.store,
+        &function_items,
+        JsonBuildOptions {
+            name: name.to_owned(),
+            backend: Some("cranelift".to_owned()),
+            jit_compiled: Some(jit.is_some()),
+            compute_body_lowered: Some(compute_body_lowered),
+            filename: None,
+            version: Some(CRANELIFT_FFI_VERSION.to_owned()),
+            compile_options: Some(compile_options.clone()),
+            library_list: Vec::new(),
+            include_pathnames: Vec::new(),
+            top_level_meta: Vec::new(),
+            size: None,
+            inputs: num_inputs,
+            outputs: num_outputs,
+            sr_index: None,
+            memory,
+        },
+        |_var| None,
+    )
+    .map_err(|error| format!("cannot build Cranelift factory JSON: {error}"))?
+    .render();
     Ok(CraneliftDspFactory {
         name: name.to_owned(),
         sha_key,
         dsp_code: dsp_code.to_owned(),
         compile_options,
-        json: format!(
-            "{{\"name\":\"{}\",\"backend\":\"cranelift\",\"jit_compiled\":{},\"compute_body_lowered\":{}}}",
-            json_escape(name),
-            if jit.is_some() { "true" } else { "false" },
-            if compute_body_lowered {
-                "true"
-            } else {
-                "false"
-            }
-        ),
+        json,
         source_is_faust,
         source_name: name.to_owned(),
         compile_argv: argv.to_vec(),
@@ -1693,11 +1729,6 @@ fn extract_output_dir(argv: &[String]) -> PathBuf {
     PathBuf::from(".")
 }
 
-/// Minimal JSON string escaping for scaffold metadata text.
-fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
 #[cfg(test)]
 mod tests {
     use std::ffi::{CStr, CString};
@@ -1768,14 +1799,14 @@ mod tests {
         let json_s = unsafe { CStr::from_ptr(json_ptr) }.to_str().unwrap();
         let opts_s = unsafe { CStr::from_ptr(opts_ptr) }.to_str().unwrap();
         assert_eq!(name_s, "mydsp");
-        assert!(json_s.contains("\"backend\":\"cranelift\""));
+        assert!(json_s.contains("\"backend\": \"cranelift\""));
         assert!(opts_s.contains("opt_level=2"));
 
         unsafe {
             assert!((*factory).compiled_jit.is_some());
             let lowered = (*factory).compute_body_lowered;
             assert!(json_s.contains(&format!(
-                "\"compute_body_lowered\":{}",
+                "\"compute_body_lowered\": {}",
                 if lowered { "true" } else { "false" }
             )));
             freeCMemory(name_ptr.cast());

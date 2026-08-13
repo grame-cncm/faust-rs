@@ -160,6 +160,8 @@ pub(crate) struct StrictJsonContext {
     pub(crate) compile_options: String,
     /// Whether the session targets double-precision output.
     pub(crate) double_precision: bool,
+    /// Effective native memory backend when `-mem0` JSON is requested.
+    pub(crate) memory_flavor: Option<MemoryLayoutFlavor>,
 }
 
 /// Builds the strict (Faust-compatible) JSON description of a compiled module.
@@ -202,11 +204,45 @@ pub(crate) fn build_strict_json_description(
         },
         0,
     )?;
+    let memory = context
+        .memory_flavor
+        .map(|flavor| {
+            let analysis = analyze_effective_mem0(
+                store,
+                module,
+                &Mem0AnalysisOptions::native(flavor, context.double_precision),
+            )
+            .map_err(|error| {
+                WasmBackendError::new(
+                    codegen::backends::wasm::WasmBackendErrorCode::UnsupportedFirNode,
+                    error.to_string(),
+                )
+            })?;
+            Ok(JsonMemoryDescription {
+                backend: match flavor {
+                    MemoryLayoutFlavor::C => "c",
+                    MemoryLayoutFlavor::Cpp => "cpp",
+                    MemoryLayoutFlavor::Cranelift => "cranelift",
+                }
+                .to_owned(),
+                manager_abi: if flavor == MemoryLayoutFlavor::Cpp {
+                    "dsp_memory_manager_v1"
+                } else {
+                    "faust_memory_manager_v1"
+                }
+                .to_owned(),
+                analysis,
+            })
+        })
+        .transpose()?;
     build_json_description_from_fir(
         store,
         &function_items,
         JsonBuildOptions {
             name,
+            backend: None,
+            jit_compiled: None,
+            compute_body_lowered: None,
             filename: Some(context.filename),
             version: Some(Compiler::version().to_owned()),
             compile_options: Some(context.compile_options),
@@ -217,6 +253,7 @@ pub(crate) fn build_strict_json_description(
             inputs: num_inputs,
             outputs: num_outputs,
             sr_index: None,
+            memory,
         },
         |_var| None,
     )

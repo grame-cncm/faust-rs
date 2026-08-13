@@ -1132,6 +1132,30 @@ impl Compiler {
         lane: SignalFirLane,
         compile_options: String,
     ) -> Result<String, CompilerError> {
+        self.compile_source_to_json_with_lane_compile_options_and_memory(
+            source_name,
+            source,
+            lane,
+            compile_options,
+            None,
+        )
+    }
+
+    /// Emits strict JSON for source text with an optional native `-mem0`
+    /// analysis selected by its effective backend layout.
+    ///
+    /// Mapping status: `adapted`. C++ exposes memory metadata through its
+    /// global compiler option state; this facade makes the backend flavor an
+    /// explicit request value and leaves ordinary JSON byte-stable with
+    /// `None`.
+    pub fn compile_source_to_json_with_lane_compile_options_and_memory(
+        &self,
+        source_name: &str,
+        source: &str,
+        lane: SignalFirLane,
+        compile_options: String,
+        memory_flavor: Option<MemoryLayoutFlavor>,
+    ) -> Result<String, CompilerError> {
         let signals = self.compile_source_to_signals(source_name, source)?;
         let lowered = self.lower_to_fir(source_name, &signals, lane)?;
         let json = build_strict_json_description(
@@ -1144,6 +1168,7 @@ impl Compiler {
                 top_level_meta: json_meta_entries_from_snapshot(&signals.compilation_metadata),
                 compile_options,
                 double_precision: self.real_type == RealType::Float64,
+                memory_flavor,
             },
         )
         .map_err(|error| wasm_error_to_compiler(source_name, &signals, &lowered, error))?;
@@ -1174,6 +1199,27 @@ impl Compiler {
         lane: SignalFirLane,
         compile_options: String,
     ) -> Result<String, CompilerError> {
+        self.compile_file_to_json_with_compile_options_and_memory(
+            path,
+            search_paths,
+            lane,
+            compile_options,
+            None,
+        )
+    }
+
+    /// Emits strict JSON with an optional effective native `-mem0` layout.
+    ///
+    /// The explicit flavor prevents a JSON companion from accidentally using
+    /// Wasm or host-default layout semantics for C, C++, or Cranelift.
+    pub fn compile_file_to_json_with_compile_options_and_memory(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        lane: SignalFirLane,
+        compile_options: String,
+        memory_flavor: Option<MemoryLayoutFlavor>,
+    ) -> Result<String, CompilerError> {
         let source = path.display().to_string();
         let signals = self.compile_file_to_signals(path, search_paths)?;
         let lowered = self.lower_to_fir(&source, &signals, lane)?;
@@ -1195,6 +1241,7 @@ impl Compiler {
                 top_level_meta: json_meta_entries_from_snapshot(&signals.compilation_metadata),
                 compile_options,
                 double_precision: self.real_type == RealType::Float64,
+                memory_flavor,
             },
         )
         .map_err(|error| wasm_error_to_compiler(&source, &signals, &lowered, error))?;
@@ -1230,5 +1277,23 @@ impl Compiler {
         compile_options: String,
     ) -> Result<String, CompilerError> {
         self.compile_file_to_json_with_compile_options(path, &[], lane, compile_options)
+    }
+
+    /// Default-search-path companion of
+    /// [`Compiler::compile_file_to_json_with_compile_options_and_memory`].
+    pub fn compile_file_default_to_json_with_lane_compile_options_and_memory(
+        &self,
+        path: &Path,
+        lane: SignalFirLane,
+        compile_options: String,
+        memory_flavor: Option<MemoryLayoutFlavor>,
+    ) -> Result<String, CompilerError> {
+        self.compile_file_to_json_with_compile_options_and_memory(
+            path,
+            &[],
+            lane,
+            compile_options,
+            memory_flavor,
+        )
     }
 }

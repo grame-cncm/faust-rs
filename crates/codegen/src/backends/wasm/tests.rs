@@ -45,6 +45,9 @@ fn wasm_compute_lowers_local_array_buffers() {
 fn wasm_json_description_renders_stable_scaffold_shape() {
     let json = WasmJsonDescription {
         name: "passthrough".to_owned(),
+        backend: None,
+        jit_compiled: None,
+        compute_body_lowered: None,
         filename: None,
         version: None,
         compile_options: None,
@@ -54,6 +57,7 @@ fn wasm_json_description_renders_stable_scaffold_shape() {
         inputs: 1,
         outputs: 2,
         sr_index: None,
+        memory: None,
         meta: Vec::new(),
         ui: Vec::new(),
     }
@@ -69,6 +73,9 @@ fn wasm_json_description_renders_stable_scaffold_shape() {
 fn wasm_json_description_escapes_string_fields() {
     let json = WasmJsonDescription {
         name: "quote\"slash\\tab\tline\n".to_owned(),
+        backend: None,
+        jit_compiled: None,
+        compute_body_lowered: None,
         filename: None,
         version: None,
         compile_options: None,
@@ -78,6 +85,7 @@ fn wasm_json_description_escapes_string_fields() {
         inputs: 0,
         outputs: 0,
         sr_index: None,
+        memory: None,
         meta: Vec::new(),
         ui: Vec::new(),
     }

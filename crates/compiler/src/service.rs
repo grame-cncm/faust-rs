@@ -330,6 +330,7 @@ impl Compiler {
                 top_level_meta: json_meta_entries_from_snapshot(&signals.compilation_metadata),
                 compile_options: compile_options.clone(),
                 double_precision,
+                memory_flavor: None,
             },
         )
         .ok()

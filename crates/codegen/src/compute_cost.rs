@@ -550,8 +550,8 @@ mod tests {
         );
         assert_eq!(cost.binops["Int(+)"], 1);
         assert_eq!(cost.mathops["sin"], 1);
-        assert_eq!(cost.binop_total, cost.binops.values().sum());
-        assert_eq!(cost.mathop_total, cost.mathops.values().sum());
+        assert_eq!(cost.binop_total, cost.binops.values().sum::<u64>());
+        assert_eq!(cost.mathop_total, cost.mathops.values().sum::<u64>());
     }
 
     #[test]

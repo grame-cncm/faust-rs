@@ -15,6 +15,11 @@ use std::fmt::Write as _;
 
 use fir::{FirId, FirMatch, FirStore, match_fir};
 
+use crate::compute_cost::COMPUTE_COST_METRIC;
+use crate::memory_layout::{
+    AllocationPhase, LayoutValueSource, Mem0Analysis, MemoryRole, MemoryScope,
+};
+
 /// Backend-agnostic Faust JSON description reconstructed from FIR.
 ///
 /// This mirrors the logical payload produced by the C++ JSON pipeline
@@ -34,6 +39,12 @@ pub struct JsonDescription {
     /// Root DSP name. FIR/UI metadata may override the initially requested
     /// module name through `declare name`.
     pub name: String,
+    /// Optional backend identity used by runtime factory JSON.
+    pub backend: Option<String>,
+    /// Optional Cranelift JIT compilation status.
+    pub jit_compiled: Option<bool>,
+    /// Optional Cranelift subset-lowering status.
+    pub compute_body_lowered: Option<bool>,
     /// Optional source filename emitted by the CLI/compiler facade.
     pub filename: Option<String>,
     /// Optional compiler version string.
@@ -53,6 +64,9 @@ pub struct JsonDescription {
     pub outputs: usize,
     /// Optional sample-rate slot offset for WASM-style runtime ABIs.
     pub sr_index: Option<u32>,
+    /// Versioned custom-memory and compute-cost description, present only for
+    /// an effective `-mem0` request.
+    pub memory: Option<JsonMemoryDescription>,
     /// Root metadata declarations after top-level/compiler metadata and FIR
     /// metadata have been merged.
     pub meta: Vec<JsonMetaEntry>,
@@ -75,6 +89,15 @@ impl JsonDescription {
         out.push_str("{\n");
         let mut first = true;
         push_pretty_field_string(&mut out, &mut first, 1, "name", &self.name);
+        if let Some(backend) = &self.backend {
+            push_pretty_field_string(&mut out, &mut first, 1, "backend", backend);
+        }
+        if let Some(value) = self.jit_compiled {
+            push_pretty_field_bool(&mut out, &mut first, 1, "jit_compiled", value);
+        }
+        if let Some(value) = self.compute_body_lowered {
+            push_pretty_field_bool(&mut out, &mut first, 1, "compute_body_lowered", value);
+        }
         if let Some(filename) = &self.filename {
             push_pretty_field_string(&mut out, &mut first, 1, "filename", filename);
         }
@@ -110,12 +133,26 @@ impl JsonDescription {
         if let Some(sr_index) = self.sr_index {
             push_pretty_field_u32(&mut out, &mut first, 1, "sr_index", sr_index);
         }
+        if let Some(memory) = &self.memory {
+            push_pretty_memory_description(&mut out, &mut first, 1, memory);
+        }
         push_pretty_field_meta_array(&mut out, &mut first, 1, "meta", &self.meta);
         push_pretty_field_ui_array(&mut out, &mut first, 1, "ui", &self.ui);
         out.push('\n');
         out.push('}');
         out
     }
+}
+
+/// Backend identity and manager ABI paired with one canonical `mem0` snapshot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JsonMemoryDescription {
+    /// Effective native backend (`c`, `cpp`, or `cranelift`).
+    pub backend: String,
+    /// Manager callback contract used by that backend.
+    pub manager_abi: String,
+    /// Canonical layout and compute cost retained by the selected backend.
+    pub analysis: Mem0Analysis,
 }
 
 /// One Faust metadata declaration (`declare key "value"`).
@@ -179,6 +216,12 @@ pub struct JsonRange {
 pub struct JsonBuildOptions {
     /// Requested module name before any `declare name` override.
     pub name: String,
+    /// Optional runtime backend identity.
+    pub backend: Option<String>,
+    /// Optional runtime JIT status.
+    pub jit_compiled: Option<bool>,
+    /// Optional runtime subset-lowering status.
+    pub compute_body_lowered: Option<bool>,
     /// Optional source filename attached by the compiler facade.
     pub filename: Option<String>,
     /// Optional compiler version string.
@@ -199,6 +242,8 @@ pub struct JsonBuildOptions {
     pub outputs: usize,
     /// Backend-specific sample-rate slot offset.
     pub sr_index: Option<u32>,
+    /// Optional versioned `-mem0` description.
+    pub memory: Option<JsonMemoryDescription>,
 }
 
 /// FIR-to-JSON reconstruction error.
@@ -253,6 +298,9 @@ where
         .or(metadata.declared_filename);
     Ok(JsonDescription {
         name: declared_name.unwrap_or(options.name),
+        backend: options.backend,
+        jit_compiled: options.jit_compiled,
+        compute_body_lowered: options.compute_body_lowered,
         filename: declared_filename.or(options.filename),
         version: options.version,
         compile_options: options.compile_options,
@@ -262,6 +310,7 @@ where
         inputs: options.inputs,
         outputs: options.outputs,
         sr_index: options.sr_index,
+        memory: options.memory,
         meta: merged_meta,
         ui: {
             let mut ui = parse_ui(
@@ -395,6 +444,283 @@ fn push_pretty_field_usize(
 fn push_pretty_field_u32(out: &mut String, first: &mut bool, depth: usize, key: &str, value: u32) {
     push_pretty_key(out, first, depth, key);
     let _ = write!(out, "{value}");
+}
+
+fn push_pretty_field_u64(out: &mut String, first: &mut bool, depth: usize, key: &str, value: u64) {
+    push_pretty_key(out, first, depth, key);
+    let _ = write!(out, "{value}");
+}
+
+fn push_pretty_field_bool(
+    out: &mut String,
+    first: &mut bool,
+    depth: usize,
+    key: &str,
+    value: bool,
+) {
+    push_pretty_key(out, first, depth, key);
+    out.push_str(if value { "true" } else { "false" });
+}
+
+/// Serializes the version-2 memory description and corrected legacy-shaped
+/// compute cost from the same retained analysis consumed by native emission.
+fn push_pretty_memory_description(
+    out: &mut String,
+    first: &mut bool,
+    depth: usize,
+    memory: &JsonMemoryDescription,
+) {
+    let analysis = &memory.analysis;
+    push_pretty_field_u32(
+        out,
+        first,
+        depth,
+        "memory_layout_version",
+        analysis.memory_layout.version,
+    );
+    push_pretty_key(out, first, depth, "memory_manager");
+    out.push_str("{\n");
+    let mut manager_first = true;
+    push_pretty_field_string(out, &mut manager_first, depth + 1, "mode", "mem0");
+    push_pretty_field_string(
+        out,
+        &mut manager_first,
+        depth + 1,
+        "backend",
+        &memory.backend,
+    );
+    push_pretty_field_string(
+        out,
+        &mut manager_first,
+        depth + 1,
+        "manager_abi",
+        &memory.manager_abi,
+    );
+    push_pretty_key(out, &mut manager_first, depth + 1, "abi");
+    out.push_str("{\n");
+    let mut abi_first = true;
+    let abi = &analysis.memory_layout.target_abi;
+    push_pretty_field_string(out, &mut abi_first, depth + 2, "target", &abi.target);
+    push_pretty_field_u64(
+        out,
+        &mut abi_first,
+        depth + 2,
+        "pointer_size",
+        abi.pointer.size,
+    );
+    push_pretty_field_u64(
+        out,
+        &mut abi_first,
+        depth + 2,
+        "pointer_alignment",
+        abi.pointer.alignment,
+    );
+    push_pretty_field_u64(
+        out,
+        &mut abi_first,
+        depth + 2,
+        "maximum_allocation_alignment",
+        abi.maximum_allocation_alignment,
+    );
+    out.push('\n');
+    push_indent(out, depth + 1);
+    out.push('}');
+    push_pretty_field_string(
+        out,
+        &mut manager_first,
+        depth + 1,
+        "access_metric",
+        analysis.memory_layout.access_metric.as_str(),
+    );
+    out.push('\n');
+    push_indent(out, depth);
+    out.push('}');
+
+    push_pretty_key(out, first, depth, "memory_layout");
+    out.push_str("[\n");
+    for (index, zone) in analysis.memory_layout.zones.iter().enumerate() {
+        push_indent(out, depth + 1);
+        out.push_str("{\n");
+        let mut zone_first = true;
+        push_pretty_field_string(out, &mut zone_first, depth + 2, "name", &zone.name);
+        push_pretty_field_string(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "type",
+            zone.memory_type.legacy_name(),
+        );
+        push_pretty_field_u64(out, &mut zone_first, depth + 2, "size", zone.element_count);
+        push_pretty_field_u64(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "size_bytes",
+            zone.size_bytes,
+        );
+        push_pretty_field_u64(out, &mut zone_first, depth + 2, "read", zone.reads);
+        push_pretty_field_u64(out, &mut zone_first, depth + 2, "write", zone.writes);
+        push_pretty_field_string(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "scope",
+            memory_scope_name(zone.scope),
+        );
+        push_pretty_field_string(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "role",
+            memory_role_name(zone.role),
+        );
+        push_pretty_field_u64(out, &mut zone_first, depth + 2, "alignment", zone.alignment);
+        push_pretty_field_bool(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "runtime_allocated",
+            zone.runtime_allocated,
+        );
+        push_pretty_field_string(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "allocation_phase",
+            allocation_phase_name(zone.allocation_phase),
+        );
+        push_pretty_field_u32(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "allocation_order",
+            zone.allocation_order,
+        );
+        push_pretty_field_bool(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "size_exact",
+            zone.size_exact,
+        );
+        push_pretty_field_string(
+            out,
+            &mut zone_first,
+            depth + 2,
+            "size_source",
+            layout_source_name(zone.size_source),
+        );
+        out.push('\n');
+        push_indent(out, depth + 1);
+        out.push('}');
+        if index + 1 < analysis.memory_layout.zones.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    push_indent(out, depth);
+    out.push(']');
+
+    push_pretty_field_u32(
+        out,
+        first,
+        depth,
+        "compute_cost_version",
+        analysis.compute_cost.version,
+    );
+    push_pretty_field_string(
+        out,
+        first,
+        depth,
+        "compute_cost_metric",
+        COMPUTE_COST_METRIC,
+    );
+    push_pretty_key(out, first, depth, "compute_cost");
+    out.push_str("[{\n");
+    let cost = &analysis.compute_cost;
+    let mut cost_first = true;
+    push_pretty_field_u64(out, &mut cost_first, depth + 1, "load", cost.load);
+    push_pretty_field_u64(out, &mut cost_first, depth + 1, "store", cost.store);
+    push_pretty_field_u64(out, &mut cost_first, depth + 1, "declare", cost.declare);
+    push_pretty_field_u64(out, &mut cost_first, depth + 1, "number", cost.number);
+    push_pretty_field_u64(out, &mut cost_first, depth + 1, "cast", cost.cast);
+    push_pretty_field_u64(out, &mut cost_first, depth + 1, "select", cost.select);
+    push_pretty_field_u64(out, &mut cost_first, depth + 1, "loop", cost.loops);
+    push_pretty_cost_map(
+        out,
+        &mut cost_first,
+        depth + 1,
+        "binop",
+        cost.binop_total,
+        &cost.binops,
+    );
+    push_pretty_cost_map(
+        out,
+        &mut cost_first,
+        depth + 1,
+        "mathop",
+        cost.mathop_total,
+        &cost.mathops,
+    );
+    out.push('\n');
+    push_indent(out, depth);
+    out.push_str("}]");
+}
+
+fn push_pretty_cost_map(
+    out: &mut String,
+    first: &mut bool,
+    depth: usize,
+    key: &str,
+    total: u64,
+    entries: &std::collections::BTreeMap<String, u64>,
+) {
+    push_pretty_key(out, first, depth, key);
+    out.push_str("[{\n");
+    let mut map_first = true;
+    push_pretty_field_u64(out, &mut map_first, depth + 1, "total", total);
+    for (name, value) in entries {
+        push_pretty_field_u64(out, &mut map_first, depth + 1, name, *value);
+    }
+    out.push('\n');
+    push_indent(out, depth);
+    out.push_str("}]");
+}
+
+const fn memory_scope_name(scope: MemoryScope) -> &'static str {
+    match scope {
+        MemoryScope::Temporary => "temporary",
+        MemoryScope::Class => "class",
+        MemoryScope::Instance => "instance",
+    }
+}
+
+const fn memory_role_name(role: MemoryRole) -> &'static str {
+    match role {
+        MemoryRole::Subcontainer => "subcontainer",
+        MemoryRole::StaticTable => "static_table",
+        MemoryRole::DspObject => "dsp_object",
+        MemoryRole::InstanceBuffer => "instance_buffer",
+        MemoryRole::EmbeddedScalar => "embedded_scalar",
+    }
+}
+
+const fn allocation_phase_name(phase: AllocationPhase) -> &'static str {
+    match phase {
+        AllocationPhase::DescribeOnly => "describe_only",
+        AllocationPhase::ClassCreate => "class_create",
+        AllocationPhase::ClassInit => "class_init",
+        AllocationPhase::CreateObject => "create_object",
+        AllocationPhase::InstanceCreate => "instance_create",
+    }
+}
+
+const fn layout_source_name(source: LayoutValueSource) -> &'static str {
+    match source {
+        LayoutValueSource::Computed => "computed",
+        LayoutValueSource::CompilerExpression => "compiler_expression",
+        LayoutValueSource::Estimated => "estimated",
+    }
 }
 
 fn push_pretty_field_f64(out: &mut String, first: &mut bool, depth: usize, key: &str, value: f64) {

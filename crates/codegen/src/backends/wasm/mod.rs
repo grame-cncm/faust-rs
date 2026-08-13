@@ -655,6 +655,9 @@ fn build_wasm_json_description(
         function_items,
         JsonBuildOptions {
             name: module_name.to_owned(),
+            backend: None,
+            jit_compiled: None,
+            compute_body_lowered: None,
             filename: json_context.filename.clone(),
             version: json_context.version.clone(),
             compile_options: json_context.compile_options.clone(),
@@ -672,6 +675,7 @@ fn build_wasm_json_description(
                 .field_offsets
                 .get("fSampleRate")
                 .map(|field| field.offset),
+            memory: None,
         },
         |var| {
             memory_layout

@@ -4,7 +4,7 @@ Date: 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
-Status: implementation active; M0–M5 complete.
+Status: implementation active; M0–M6 complete.
 
 ## 1. Goal and scope
 
@@ -1522,6 +1522,8 @@ release destroys instances then class state then the JIT module, and ordinary
 non-`mem0` Cranelift behavior remains unchanged.
 
 ### M6 — JSON v2 memory and `compute_cost` description
+
+Implementation status: **complete (2026-08-13)**.
 
 Deliverables:
 

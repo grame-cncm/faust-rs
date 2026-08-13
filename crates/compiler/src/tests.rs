@@ -8,11 +8,11 @@ use super::CraneliftBackendError;
 use super::{
     AscCodegenError, CCodegenError, CodeboxCodegenError, Compiler, CompilerError, ComputeMode,
     CppCodegenError, DiagnosticBundle, ExpandDspRequest, GenerateAuxFilesRequest, InferenceError,
-    InterpCodegenError, InterpCodegenErrorCode, JuliaCodegenError, PropagateError, RealType,
-    RustCodegenError, SchedulingStrategy, SignalFirError, SignalFirErrorCode, SignalFirLane,
-    SourceReaderError, WasmArtifactRequest, WasmBackendError, build_import_search_paths,
-    compile_options_json_string, default_import_search_paths, golden_snapshot, resolve_module_name,
-    resolve_ui_root_label,
+    InterpCodegenError, InterpCodegenErrorCode, JuliaCodegenError, MemoryLayoutFlavor,
+    PropagateError, RealType, RustCodegenError, SchedulingStrategy, SignalFirError,
+    SignalFirErrorCode, SignalFirLane, SourceReaderError, WasmArtifactRequest, WasmBackendError,
+    build_import_search_paths, compile_options_json_string, default_import_search_paths,
+    golden_snapshot, resolve_module_name, resolve_ui_root_label,
 };
 use codegen::backends::wasm::WasmOptions;
 use parser::VirtualSourceMap;
@@ -733,6 +733,52 @@ fn compiler_compile_source_to_json_emits_strict_json_without_widget_indices() {
         compile_options_json_string(None, false)
     )));
     assert!(!json.contains("\"index\":"));
+}
+
+#[test]
+fn compiler_source_json_emits_mem0_layout_for_each_native_backend_only_when_requested() {
+    let compiler = Compiler::new();
+    let source = "process = _ : @(7);";
+    let ordinary = compiler
+        .compile_source_to_json("delay.dsp", source)
+        .expect("ordinary JSON should compile");
+    let ordinary_value: Value = serde_json::from_str(&ordinary).expect("valid ordinary JSON");
+    assert!(ordinary_value.get("memory_layout_version").is_none());
+    assert!(ordinary_value.get("compute_cost").is_none());
+
+    let mut common_cost = None;
+    for (flavor, backend, manager_abi) in [
+        (MemoryLayoutFlavor::C, "c", "faust_memory_manager_v1"),
+        (MemoryLayoutFlavor::Cpp, "cpp", "dsp_memory_manager_v1"),
+        (
+            MemoryLayoutFlavor::Cranelift,
+            "cranelift",
+            "faust_memory_manager_v1",
+        ),
+    ] {
+        let json = compiler
+            .compile_source_to_json_with_lane_compile_options_and_memory(
+                "delay.dsp",
+                source,
+                SignalFirLane::TransformFastLane,
+                format!("-lang {backend} -mem0 -single"),
+                Some(flavor),
+            )
+            .expect("mem0 JSON should compile");
+        let value: Value = serde_json::from_str(&json).expect("valid mem0 JSON");
+        assert_eq!(value["memory_layout_version"], 2);
+        assert_eq!(value["memory_manager"]["backend"], backend);
+        assert_eq!(value["memory_manager"]["manager_abi"], manager_abi);
+        assert!(
+            value["memory_layout"]
+                .as_array()
+                .is_some_and(|zones| !zones.is_empty())
+        );
+        match &common_cost {
+            Some(expected) => assert_eq!(&value["compute_cost"], expected),
+            None => common_cost = Some(value["compute_cost"].clone()),
+        }
+    }
 }
 
 #[test]

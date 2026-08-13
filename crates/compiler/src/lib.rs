@@ -105,8 +105,11 @@ use codegen::backends::rust::{
 use codegen::backends::wasm::layout::WasmMemoryLayout;
 use codegen::backends::wasm::{WasmBackendError, WasmJsonContext, WasmModule, WasmOptions};
 use codegen::json::{
-    JsonBuildOptions, JsonDescription, JsonMetaEntry, build_json_description_from_fir,
+    JsonBuildOptions, JsonDescription, JsonMemoryDescription, JsonMetaEntry,
+    build_json_description_from_fir,
 };
+pub use codegen::memory_layout::MemoryLayoutFlavor;
+use codegen::memory_layout::{Mem0AnalysisOptions, analyze_effective_mem0};
 pub use diagnostics::{
     Applicability, ContentHash, DebugContext, DetailCode, Diagnostic, DiagnosticBundle,
     DiagnosticCategory, DiagnosticCode, DiagnosticTrace, DiagnosticValue, FactKey, HumanPosition,
