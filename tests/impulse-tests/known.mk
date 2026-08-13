@@ -30,6 +30,12 @@ PRECISION_harpe            := 1e-5   # 2e-6  polyphonic pass (c backend)
 PRECISION_noise            := 1e-5   # 2e-6  polyphonic pass (c backend)
 PRECISION_noiseabs         := 1e-5   # 3e-6  polyphonic pass (c backend)
 PRECISION_comb_bug_exp     := 1e-3   # 1.1e-4 polyphonic pass (c backend)
+PRECISION_phaser_flanger   := 1e-2   # 1.419e-3 over the full 60000-frame `cpp` comparison;
+                                      # LFO-modulated feedback chain amplifies rounding noise.
+                                      # Confirmed backend-independent: the ordinary (non-mem0)
+                                      # ir/cpp/phaser_flanger.ir diverges from the same reference
+                                      # at the identical first sample (frame 883, output 1,
+                                      # delta 2e-6) as the mem0 lane, growing from there.
 
 # --- shared compile gap ------------------------------------------------------
 # Empty since 2026-08-06. `subcontainer1` lived here for the project's lifetime:
