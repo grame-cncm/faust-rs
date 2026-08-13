@@ -87,8 +87,12 @@ See the design write-up in
      compares managed output with locally generated ordinary output, poisons
      fresh allocations, audits descriptions/allocation/destruction/leaks, and
      validates the version-2 memory JSON plus `compute_cost`. The combined gate
-     also requires identical FIR costs across all three backends. It is fully
-     self-contained and does not use the C++ Faust oracle or standard library.
+     also requires identical FIR costs across all three backends and identical
+     output at C/C++ compiler `-O0`/`-O3` and Cranelift optimization levels
+     0/3. `make mem0-opt` reruns that optimization matrix alone;
+     `make mem0-sanitize` runs the C/C++ lanes under ASan and UBSan where the
+     host toolchain supports them. The lane is fully self-contained and does
+     not use the C++ Faust oracle or standard library.
 
 ## Requirements
 
@@ -130,6 +134,8 @@ make rust          # check the Rust backend (scalar prefix, rustc)
 make julia         # check the Julia backend (scalar prefix, Julia)
 make cmajor        # check scalar Cmajor via cmaj-generated C++
 make all-mem0      # audit -mem0 on C, C++, and Cranelift plus JSON/cost parity
+make mem0-opt      # rerun the C/C++/Cranelift -mem0 O0/O3 matrix
+make mem0-sanitize # audit C/C++ -mem0 ownership with ASan and UBSan
 make cpp-vec0      # check the C++ backend with -vec -lv 0
 make cpp-vec1      # check the C++ backend with -vec -lv 1
 make all-vec       # check -vec -lv 0 and -vec -lv 1 across all backends

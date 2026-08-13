@@ -75,6 +75,8 @@ struct Options {
     mem0: bool,
     /// Optional path receiving the validated factory JSON.
     json_output: Option<PathBuf>,
+    /// Cranelift optimization level passed to the factory.
+    opt_level: i32,
 }
 
 #[derive(Debug, Parser)]
@@ -134,6 +136,10 @@ struct CliArgs {
     /// Write the factory JSON after semantic validation.
     #[arg(long = "json-output", value_name = "FILE")]
     json_output: Option<PathBuf>,
+
+    /// Cranelift optimization level (`0` = none, `3` = maximum).
+    #[arg(long = "opt-level", default_value_t = 1, value_parser = clap::value_parser!(i32).range(0..=3))]
+    opt_level: i32,
 }
 
 fn parse_args() -> Result<Options, clap::Error> {
@@ -176,6 +182,7 @@ where
         compiler_argv,
         mem0: args.mem0,
         json_output: args.json_output,
+        opt_level: args.opt_level,
     })
 }
 
@@ -229,7 +236,7 @@ fn run(options: Options) -> Result<String, String> {
                 argv_ptrs.as_ptr()
             },
             err.as_mut_ptr(),
-            1,
+            options.opt_level,
         )
     };
     if factory.is_null() {
@@ -812,6 +819,17 @@ mod tests {
             Some(std::path::Path::new("layout.json"))
         );
         assert!(options.compiler_argv.is_empty());
+    }
+
+    #[test]
+    fn optimization_level_is_checked_and_not_forwarded_as_a_faust_option() {
+        for level in [0, 1, 2, 3] {
+            let options = parse(&["test.dsp", "--opt-level", &level.to_string()])
+                .expect("parse optimization level");
+            assert_eq!(options.opt_level, level);
+            assert!(options.compiler_argv.is_empty());
+        }
+        assert!(parse(&["test.dsp", "--opt-level", "4"]).is_err());
     }
 
     #[test]

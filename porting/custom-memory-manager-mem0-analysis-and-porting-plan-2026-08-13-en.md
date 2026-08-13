@@ -1579,6 +1579,8 @@ document and exact cross-backend `compute_cost` equality.
 
 ### M8 — Differential and hardening gate
 
+Implementation status: **complete (2026-08-13)**.
+
 Deliverables:
 
 - pinned-C++ differential for C++ code shape and legacy JSON fields;
@@ -1595,6 +1597,26 @@ Deliverables:
 
 Pass criterion: no unexplained differential remains, no leak/double free is
 reported, and all repository quality gates pass.
+
+Implemented gate: the live test against pinned Faust C++ `8eebea429` compares
+the generated C++ manager description and every unaffected legacy field for
+delay/table zones. Its delay fixture also compares the complete legacy
+`compute_cost` value exactly. The explicit allowlist contains only the object
+count/`sizeof` correction, real static-table element counts, lifecycle, deep
+clone, manager ownership, failure/alignment, and D6 counting fixes documented
+in section 4. Focused FIR tests cover every D6 literal/control/branch category,
+including asymmetric branch-order invariance, and exclude slow/control prelude
+statements from the scalar-loop metric just as the reference analyzes
+`fCurLoop->generateScalarLoop("count")`.
+
+`make -C tests/impulse-tests all-mem0` additionally runs all three backends at
+C/C++ `-O0`/`-O3` and Cranelift optimization levels 0/3. Backend-local JSON
+layouts and costs remain invariant, managed results match ordinary results,
+and the three backends report the same FIR cost. The optional
+`mem0-sanitize` target passes with ASan/UBSan on the supported macOS toolchain.
+Cranelift tests cover cache identity, binding/rebinding, bitcode round-trip to
+an intentionally unbound factory, fresh binding after restore, clone, failure
+unwinding, and final reverse release.
 
 ### M9 — Compatibility and documentation closeout
 

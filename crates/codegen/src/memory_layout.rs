@@ -24,7 +24,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use fir::{AccessType, FirId, FirMatch, FirStore, FirType, fir_match_children, match_fir};
 
-use crate::compute_cost::{ComputeCost, ComputeCostError, analyze_compute_cost};
+use crate::compute_cost::{
+    ComputeCost, ComputeCostError, analyze_compute_cost, effective_scalar_compute_root,
+};
 
 /// Native backend custom-memory allocation strategy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -489,7 +491,8 @@ pub fn analyze_mem0(
 
     let compute_cost = analyze_compute_cost(store, functions)?;
     let compute_body = find_compute_body(store, functions)?;
-    let accesses = analyze_field_accesses(store, compute_body)?;
+    let accesses =
+        analyze_field_accesses(store, effective_scalar_compute_root(store, compute_body))?;
     let mut builder = LayoutBuilder::new(options, accesses);
     builder.collect_module(store, &name, dsp_struct, globals, static_decls, sub_modules)?;
     Ok(Mem0Analysis {

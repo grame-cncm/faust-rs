@@ -4,7 +4,7 @@
 //! independently; when several backends are supplied their FIR-level
 //! `compute_cost` values must be identical.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::process::ExitCode;
@@ -24,6 +24,7 @@ fn main() -> ExitCode {
 fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
     let mut seen = 0usize;
     let mut common_cost = None;
+    let mut backend_layouts = HashMap::<String, Value>::new();
     for argument in args {
         let (backend, path) = argument
             .split_once('=')
@@ -33,6 +34,17 @@ fn run(args: impl IntoIterator<Item = String>) -> Result<(), String> {
         let value: Value = serde_json::from_str(&text)
             .map_err(|error| format!("invalid JSON in {path}: {error}"))?;
         validate_document(backend, &value)?;
+        match backend_layouts.get(backend) {
+            Some(expected) if expected != &value["memory_layout"] => {
+                return Err(format!(
+                    "{backend} memory_layout differs between supplied documents"
+                ));
+            }
+            None => {
+                backend_layouts.insert(backend.to_owned(), value["memory_layout"].clone());
+            }
+            _ => {}
+        }
         match &common_cost {
             Some(expected) if expected != &value["compute_cost"] => {
                 return Err(format!(
@@ -195,5 +207,15 @@ mod tests {
         let mut document = valid_document("c");
         document["compute_cost"][0]["binop"][0]["total"] = json!(4);
         assert!(validate_document("c", &document).is_err());
+    }
+
+    #[test]
+    fn checker_layout_comparison_is_backend_local() {
+        let cpp = valid_document("cpp");
+        let mut c = valid_document("c");
+        c["memory_layout"][0]["size_bytes"] = json!(16);
+        assert_ne!(cpp["memory_layout"], c["memory_layout"]);
+        validate_document("cpp", &cpp).unwrap();
+        validate_document("c", &c).unwrap();
     }
 }

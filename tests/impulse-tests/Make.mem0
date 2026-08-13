@@ -18,16 +18,24 @@ cpp_files := $(mem0_names:%=$(MEM0_IR)/cpp-mem0/%.ir)
 c_files := $(mem0_names:%=$(MEM0_IR)/c-mem0/%.ir)
 cranelift_files := $(mem0_names:%=$(MEM0_IR)/cranelift-mem0/%.ir)
 json_files := $(mem0_names:%=$(MEM0_ROOT)/json/%.checked)
+opt_files := $(mem0_names:%=$(MEM0_ROOT)/opt/%.checked)
 
-.PHONY: all cpp c cranelift json
+.PHONY: all cpp c cranelift json opt sanitize
 .DELETE_ON_ERROR:
 .SECONDARY: $(reference_files)
 
-all: cpp c cranelift json
+all: cpp c cranelift json opt
 cpp: $(cpp_files)
 c: $(c_files)
 cranelift: $(cranelift_files)
 json: $(json_files)
+opt: $(opt_files)
+
+sanitize:
+	$(MAKE) -B -f Make.mem0 cpp c MEM0_ROOT=build/mem0-sanitize \
+		MEM0_IR=ir/mem0-sanitize \
+		MEM0_CPPFLAGS='-O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -std=c++17 -Iarchs -fsanitize=address,undefined -fno-omit-frame-pointer' \
+		MEM0_CFLAGS='-O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -std=c11 -Iarchs -fsanitize=address,undefined -fno-omit-frame-pointer'
 
 $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
@@ -78,4 +86,34 @@ $(MEM0_ROOT)/json/%.checked: $(MEM0_IR)/cpp-mem0/%.ir $(MEM0_IR)/c-mem0/%.ir \
 	mkdir -p $(MEM0_ROOT)/json
 	$(MEM0_JSON_CHECK) cpp=$(MEM0_ROOT)/json/cpp/$*.json \
 		c=$(MEM0_ROOT)/json/c/$*.json cranelift=$(MEM0_ROOT)/json/cranelift/$*.json
+	touch $@
+
+$(MEM0_ROOT)/opt/%.checked: $(mem0_dspdir)/%.dsp $(MEM0_IR)/mem0-reference/%.ir \
+ archs/impulsemem0.cpp archs/impulsemem0_c.cpp archs/faust_mem0.h \
+ archs/faust_mem0_c_api.h | $(MEM0_ROOT)/.dir
+	mkdir -p $(MEM0_ROOT)/opt/cpp $(MEM0_ROOT)/opt/c $(MEM0_ROOT)/opt/cranelift
+	$(FAUST_RS) -lang cpp -double -mem0 -a archs/impulsemem0.cpp $< -o $(MEM0_ROOT)/opt/cpp/$*.cpp
+	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O0 $(MEM0_ROOT)/opt/cpp/$*.cpp -o $(MEM0_ROOT)/opt/cpp/$*-o0
+	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O3 $(MEM0_ROOT)/opt/cpp/$*.cpp -o $(MEM0_ROOT)/opt/cpp/$*-o3
+	$(MEM0_ROOT)/opt/cpp/$*-o0 -n $(mem0_frames) > $(MEM0_ROOT)/opt/cpp/$*-o0.ir
+	$(MEM0_ROOT)/opt/cpp/$*-o3 -n $(mem0_frames) > $(MEM0_ROOT)/opt/cpp/$*-o3.ir
+	$(COMPARE) $(MEM0_ROOT)/opt/cpp/$*-o0.ir $(MEM0_IR)/mem0-reference/$*.ir
+	$(COMPARE) $(MEM0_ROOT)/opt/cpp/$*-o3.ir $(MEM0_ROOT)/opt/cpp/$*-o0.ir
+	$(FAUST_RS) -lang c -double -mem0 $< -o $(MEM0_ROOT)/opt/c/$*.c
+	$(CC) $(filter-out -O%,$(MEM0_CFLAGS)) -O0 -include faust_mem0_c_api.h -c $(MEM0_ROOT)/opt/c/$*.c -o $(MEM0_ROOT)/opt/c/$*-o0.o
+	$(CC) $(filter-out -O%,$(MEM0_CFLAGS)) -O3 -include faust_mem0_c_api.h -c $(MEM0_ROOT)/opt/c/$*.c -o $(MEM0_ROOT)/opt/c/$*-o3.o
+	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O0 archs/impulsemem0_c.cpp $(MEM0_ROOT)/opt/c/$*-o0.o -o $(MEM0_ROOT)/opt/c/$*-o0
+	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O3 archs/impulsemem0_c.cpp $(MEM0_ROOT)/opt/c/$*-o3.o -o $(MEM0_ROOT)/opt/c/$*-o3
+	$(MEM0_ROOT)/opt/c/$*-o0 -n $(mem0_frames) > $(MEM0_ROOT)/opt/c/$*-o0.ir
+	$(MEM0_ROOT)/opt/c/$*-o3 -n $(mem0_frames) > $(MEM0_ROOT)/opt/c/$*-o3.ir
+	$(COMPARE) $(MEM0_ROOT)/opt/c/$*-o0.ir $(MEM0_IR)/mem0-reference/$*.ir
+	$(COMPARE) $(MEM0_ROOT)/opt/c/$*-o3.ir $(MEM0_ROOT)/opt/c/$*-o0.ir
+	$(RUNNER_CRANELIFT) $< -double -mem0 -n $(mem0_frames) --opt-level 0 \
+		--json-output $(MEM0_ROOT)/opt/cranelift/$*-o0.json > $(MEM0_ROOT)/opt/cranelift/$*-o0.ir
+	$(RUNNER_CRANELIFT) $< -double -mem0 -n $(mem0_frames) --opt-level 3 \
+		--json-output $(MEM0_ROOT)/opt/cranelift/$*-o3.json > $(MEM0_ROOT)/opt/cranelift/$*-o3.ir
+	$(COMPARE) $(MEM0_ROOT)/opt/cranelift/$*-o0.ir $(MEM0_IR)/mem0-reference/$*.ir -part
+	$(COMPARE) $(MEM0_ROOT)/opt/cranelift/$*-o3.ir $(MEM0_ROOT)/opt/cranelift/$*-o0.ir
+	$(MEM0_JSON_CHECK) cranelift=$(MEM0_ROOT)/opt/cranelift/$*-o0.json \
+		cranelift=$(MEM0_ROOT)/opt/cranelift/$*-o3.json
 	touch $@

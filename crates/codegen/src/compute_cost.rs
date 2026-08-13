@@ -152,7 +152,38 @@ pub fn analyze_compute_cost(
             } if name == "compute" => Some(body),
             _ => None,
         });
-    analyze_compute_body(store, body.ok_or(ComputeCostError::MissingCompute)?)
+    let body = body.ok_or(ComputeCostError::MissingCompute)?;
+    analyze_compute_body(store, effective_scalar_compute_root(store, body))
+}
+
+/// Selects the generated scalar loop while excluding block-rate prelude code.
+///
+/// Faust C++ applies `InstComplexityVisitor` to
+/// `fCurLoop->generateScalarLoop("count")`, not to the surrounding `compute`
+/// function. Production scalar FIR has exactly one direct loop statement after
+/// optional slow/control declarations. Synthetic FIR without that shape keeps
+/// its whole body so focused builder tests remain meaningful.
+pub(crate) fn effective_scalar_compute_root(store: &FirStore, body: FirId) -> FirId {
+    let FirMatch::Block(items) = match_fir(store, body) else {
+        return body;
+    };
+    let mut loops = items.into_iter().filter(|item| {
+        matches!(
+            match_fir(store, *item),
+            FirMatch::ForLoop { .. }
+                | FirMatch::SimpleForLoop { .. }
+                | FirMatch::WhileLoop { .. }
+                | FirMatch::IteratorForLoop { .. }
+        )
+    });
+    let Some(loop_root) = loops.next() else {
+        return body;
+    };
+    if loops.next().is_some() {
+        body
+    } else {
+        loop_root
+    }
 }
 
 /// Analyzes an already selected effective scalar compute body.
@@ -588,5 +619,101 @@ mod tests {
         let cost = analyze_compute_body(&store, body).unwrap();
         assert_eq!(cost.number, 2);
         assert_eq!(cost.store, 2);
+    }
+
+    #[test]
+    fn module_analysis_excludes_compute_prelude_outside_the_scalar_loop() {
+        let mut store = FirStore::new();
+        let functions = {
+            let mut b = FirBuilder::new(&mut store);
+            let slow_load = b.load_var("fControl", AccessType::Struct, FirType::Float32);
+            let slow = b.declare_var(
+                "fSlow",
+                FirType::Float32,
+                AccessType::Stack,
+                Some(slow_load),
+            );
+            let sample_load = b.load_var("fState", AccessType::Struct, FirType::Float32);
+            let loop_body = b.block(&[sample_load]);
+            let upper = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+            let loop_stmt = b.simple_for_loop("i", upper, loop_body, false);
+            let body = b.block(&[slow, loop_stmt]);
+            let compute = b.declare_fun(
+                "compute",
+                FirType::Fun {
+                    args: Vec::new(),
+                    ret: Box::new(FirType::Void),
+                },
+                &[],
+                Some(body),
+                false,
+            );
+            b.block(&[compute])
+        };
+
+        let cost = analyze_compute_cost(&store, functions).unwrap();
+        assert_eq!(cost.loops, 1);
+        assert_eq!(cost.declare, 1, "only the synthesized loop variable counts");
+        assert_eq!(cost.load, 4, "control prelude load is excluded");
+    }
+
+    #[test]
+    fn if_cost_is_invariant_when_the_expensive_branch_is_swapped() {
+        fn cost(expensive_is_then: bool) -> ComputeCost {
+            let mut store = FirStore::new();
+            let body = {
+                let mut b = FirBuilder::new(&mut store);
+                let cond = b.bool_(true);
+                let one = b.int32(1);
+                let cheap_store = b.store_var("cheap", AccessType::Struct, one);
+                let cheap = b.block(&[cheap_store]);
+                let arg = b.float32(0.5);
+                let sin = b.fun_call("sin", &[arg], FirType::Float32);
+                let expensive_store1 = b.store_var("x", AccessType::Struct, sin);
+                let expensive_store2 = b.store_var("y", AccessType::Struct, arg);
+                let expensive = b.block(&[expensive_store1, expensive_store2]);
+                let branch = if expensive_is_then {
+                    b.if_(cond, expensive, Some(cheap))
+                } else {
+                    b.if_(cond, cheap, Some(expensive))
+                };
+                b.block(&[branch])
+            };
+            analyze_compute_body(&store, body).unwrap()
+        }
+
+        assert_eq!(cost(true), cost(false));
+    }
+
+    #[test]
+    fn d6_counts_select_control_switch_bitcast_and_extended_literals() {
+        let mut store = FirStore::new();
+        let body = {
+            let mut b = FirBuilder::new(&mut store);
+            let cond = b.bool_(true);
+            let int64 = b.int64(7);
+            let quad = b.quad(0.25);
+            let fixed = b.fixed_point(0.5);
+            let bitcast = b.bitcast(FirType::Int64, quad);
+            let selected = b.select2(cond, int64, bitcast, FirType::Int64);
+            let selected_drop = b.drop_(selected);
+
+            let controlled_store = b.store_var("x", AccessType::Struct, fixed);
+            let controlled = b.control(cond, controlled_store);
+
+            let cheap_store = b.store_var("y", AccessType::Struct, int64);
+            let cheap = b.block(&[cheap_store]);
+            let expensive_store1 = b.store_var("z", AccessType::Struct, quad);
+            let expensive_store2 = b.store_var("w", AccessType::Struct, fixed);
+            let expensive = b.block(&[expensive_store1, expensive_store2]);
+            let switched = b.switch(int64, &[(0, cheap), (1, expensive)], None);
+            b.block(&[selected_drop, controlled, switched])
+        };
+
+        let cost = analyze_compute_body(&store, body).unwrap();
+        assert_eq!(cost.select, 3);
+        assert_eq!(cost.cast, 1);
+        assert_eq!(cost.store, 3, "control plus maximum switch branch");
+        assert!(cost.number >= 6, "all extended literal occurrences count");
     }
 }

@@ -975,7 +975,8 @@ mod tests {
     };
     use crate::factory::{
         createCCraneliftDSPFactoryFromFile, createCCraneliftDSPFactoryFromString,
-        deleteCCraneliftDSPFactory, setCCraneliftMemoryManager,
+        deleteCCraneliftDSPFactory, freeCMemory, readCCraneliftDSPFactoryFromBitcode,
+        setCCraneliftMemoryManager, writeCCraneliftDSPFactoryToBitcode,
     };
     use crate::types::{FaustFloat, MetaGlue, UIGlue};
     use ffi_common::{FAUST_MEMORY_MANAGER_ABI_VERSION, FaustMemoryManager, FaustMemoryType};
@@ -1185,6 +1186,83 @@ mod tests {
         }
         assert!(owner.allocations.is_empty());
         assert!(owner.destroys >= 4);
+    }
+
+    #[test]
+    fn serialized_mem0_factory_retains_mode_but_requires_a_fresh_binding() {
+        let _guard = crate::test_serial_guard();
+        let name = c"mem0_serialized";
+        let source = c"process = rdtable(8, 0.25, int(_)) : @(7);";
+        let mem0 = c"-mem0";
+        let argv = [mem0.as_ptr()];
+        let mut error = [0_i8; 4096];
+        let factory = unsafe {
+            createCCraneliftDSPFactoryFromString(
+                name.as_ptr(),
+                source.as_ptr(),
+                argv.len() as i32,
+                argv.as_ptr(),
+                error.as_mut_ptr(),
+                3,
+            )
+        };
+        assert!(!factory.is_null(), "{}", unsafe {
+            CStr::from_ptr(error.as_ptr()).to_string_lossy()
+        });
+
+        let mut first_owner = TestMemoryManager::default();
+        let first_table = test_memory_table(&mut first_owner);
+        assert!(unsafe { setCCraneliftMemoryManager(factory, &first_table, error.as_mut_ptr()) });
+        assert!(
+            first_owner.allocations.is_empty(),
+            "binding describes but must not allocate"
+        );
+
+        let payload = unsafe { writeCCraneliftDSPFactoryToBitcode(factory) };
+        assert!(!payload.is_null());
+        let payload_text = unsafe { CStr::from_ptr(payload) }.to_string_lossy();
+        assert!(payload_text.contains("arg0=-mem0"));
+        assert!(payload_text.contains("opt_level=3"));
+        assert!(unsafe { deleteCCraneliftDSPFactory(factory) });
+        assert!(first_owner.allocations.is_empty());
+
+        let restored = unsafe {
+            readCCraneliftDSPFactoryFromBitcode(payload.cast_const(), error.as_mut_ptr())
+        };
+        unsafe { freeCMemory(payload.cast()) };
+        assert!(!restored.is_null(), "{}", unsafe {
+            CStr::from_ptr(error.as_ptr()).to_string_lossy()
+        });
+        assert!(
+            unsafe { createCCraneliftDSPInstance(restored) }.is_null(),
+            "serialized factories never retain host callback pointers"
+        );
+
+        let mut second_owner = TestMemoryManager::default();
+        let second_table = test_memory_table(&mut second_owner);
+        assert!(unsafe { setCCraneliftMemoryManager(restored, &second_table, error.as_mut_ptr()) });
+        let dsp = unsafe { createCCraneliftDSPInstance(restored) };
+        assert!(!dsp.is_null());
+        unsafe {
+            initCCraneliftDSPInstance(dsp, 48_000);
+            deleteCCraneliftDSPInstance(dsp);
+            assert!(deleteCCraneliftDSPFactory(restored));
+        }
+        assert!(second_owner.allocations.is_empty());
+        assert!(second_owner.destroys >= 3);
+    }
+
+    fn test_memory_table(owner: &mut TestMemoryManager) -> FaustMemoryManager {
+        FaustMemoryManager {
+            abi_version: FAUST_MEMORY_MANAGER_ABI_VERSION,
+            struct_size: std::mem::size_of::<FaustMemoryManager>(),
+            context: (owner as *mut TestMemoryManager).cast(),
+            begin: Some(test_memory_begin),
+            info: Some(test_memory_info),
+            end: Some(test_memory_end),
+            allocate: Some(test_memory_allocate),
+            destroy: Some(test_memory_destroy),
+        }
     }
 
     fn render_delay_with_memory_mode(managed: bool, opt_level: i32) -> Vec<f32> {
