@@ -399,7 +399,7 @@ pub unsafe extern "C" fn getCInterpreterDSPFactoryJSON(
 /// Return library dependencies of a factory (always empty for the interpreter).
 ///
 /// # Safety
-/// `factory` must be a valid non-null factory pointer.
+/// `factory` may be null; it is ignored by the current implementation.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn getCInterpreterDSPFactoryLibraryList(
     _factory: *mut InterpreterDspFactory,

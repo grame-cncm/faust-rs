@@ -1063,6 +1063,11 @@ impl Compiler {
     /// result in the artifact-centric shape expected by the `faustwasm`
     /// dual-mode integration plan, so downstream code can treat compile mode
     /// and precompiled-artifact mode uniformly.
+    ///
+    /// Unlike its source-based sibling [`Self::compile_wasm_artifact`], the
+    /// returned bundle's `warnings` is always empty here, regardless of
+    /// [`Self::with_semantic_warnings`] — this file-backed path does not yet
+    /// thread semantic warnings through.
     pub fn compile_file_to_wasm_artifact_with_lane(
         &self,
         path: &Path,

@@ -346,8 +346,10 @@ pub(crate) fn wasm_json_context_for_file(
 /// Converts a compilation metadata snapshot into a flat list of JSON meta entries.
 ///
 /// Each `(key, [v1, v2, ...])` pair in the snapshot becomes one `JsonMetaEntry`
-/// per value.  Global keys (without a path prefix) and path-scoped keys are
-/// both included.
+/// per value, keyed by the same `key` — except `"author"`, where every value
+/// after the first is emitted under `"contributor"` instead, matching the
+/// reference compiler's convention for multiple authors. Global keys (without
+/// a path prefix) and path-scoped keys are both included.
 pub(crate) fn json_meta_entries_from_snapshot(
     snapshot: &CompilationMetadataSnapshot,
 ) -> Vec<JsonMetaEntry> {

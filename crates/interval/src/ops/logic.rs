@@ -226,7 +226,7 @@ pub fn ge(x: Interval, y: Interval) -> Interval {
     Interval::new(0.0, 1.0, 0)
 }
 
-/// `x > y`. Delegates to `ge(y, x)` swapped.
+/// `x > y`: `[0,1]` in general, or `[0]` / `[1]` when provable.
 ///
 /// # C++ source
 /// `intervalGt.cpp`

@@ -627,6 +627,7 @@ boundary plus the `foreign-call` runtime bridge.
 | `signal-ffi` | Signal manipulation C/C++ API |
 | `interp-ffi` | Interpreter backend C/C++ API |
 | `cranelift-ffi` | Experimental Cranelift backend C/C++ API |
+| `libfaust-ffi` | Backend-agnostic libfaust C/C++ API (`expandDSP*`, `generateAuxFiles*`, `generateSHA1`) |
 
 ### Distribution and tooling
 

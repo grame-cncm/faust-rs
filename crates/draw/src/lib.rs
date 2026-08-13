@@ -7,14 +7,17 @@
 //! # Architecture
 //!
 //! ```text
-//! draw_schema(arena, process_id, config, output_path)
-//!   └── translate::generate_schema(arena, id, config)  → Box<dyn Schema>
-//!         └── schemas::{Block,Seq,Par,…}                (recursive)
-//!   └── TopSchema wrapper (title + margin)
-//!   └── SvgDevice::new(file, width, height, config)
-//!   └── schema.place(0, 0, LeftRight)
-//!   └── schema.draw(dev)
-//!   └── TraitCollector::draw(dev)                       (wires on top)
+//! draw_schema(arena, root, name, out_dir, config, def_names)
+//!   for each queued diagram (root, then any folded-out sub-diagrams):
+//!     └── translate::generate_folded_inside(arena, box_id, config, &mut fold_state)
+//!           └── schemas::{Block,Seq,Par,…}  → Box<dyn Schema>   (recursive; folds
+//!               named sub-diagrams above `config.fold_complexity` into new
+//!               queue entries instead of inlining them)
+//!     └── translate::make_top_schema(inner, diagram_name, back_link)  (title + margin)
+//!     └── SvgDevice::new(file, width, height, config)
+//!     └── schema.place(0, 0, LeftRight)
+//!     └── schema.draw(dev)
+//!     └── TraitCollector::draw(dev)                       (wires on top)
 //! ```
 //!
 //! # C++ source mapping
@@ -84,8 +87,10 @@ pub struct DrawConfig {
 
     /// Draw a solid rectangle frame around route boxes instead of cable stubs.
     ///
-    /// Without this flag, route boxes draw only the filled background + arrows.
-    /// With this flag, an explicit orientation mark is added.
+    /// Without this flag (the default), a route box draws nothing at all —
+    /// it is purely structural, and only its wire traits carry the signal.
+    /// With this flag, it draws a filled background rectangle, an orientation
+    /// mark, and input arrows.
     ///
     /// C++ global: `gDrawRouteFrame` (default false). CLI: `-drf` / `--draw-route-frame`.
     pub draw_route_frame: bool,

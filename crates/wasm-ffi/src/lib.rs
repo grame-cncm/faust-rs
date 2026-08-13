@@ -21,10 +21,9 @@
 //! - preserved semantics: compile Faust source -> `{ wasm, json }`;
 //! - adapted ABI: integer result handles + raw ptr/len accessors instead of C++
 //!   vectors/factory pointers;
-//! - partial helper compatibility:
-//!   - implemented now: `getInfos(version|help)`
-//!   - explicit stubs: `expandDSP`, `generateAuxFiles`, and the remaining
-//!     `getInfos(...)` keys
+//! - helper compatibility: `getInfos` (`version`, `help`, `libdir`,
+//!   `includedir`, `archdir`, `dspdir`, `pathslist`), `expandDSP`, and
+//!   `generateAuxFiles` all forward to the real compiler service, not stubs.
 //! - deferred: compatibility naming shim.
 //!
 //! # Packaging

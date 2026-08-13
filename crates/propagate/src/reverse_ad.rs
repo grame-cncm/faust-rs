@@ -111,7 +111,7 @@
 //! body outputs, seed signals, implicit cotangents, and a tape policy.  It does
 //! **not** allocate tape arrays, choose FIR storage types, or decide where the
 //! block sweep runs.  Those decisions happen later in
-//! `crates/transform/src/signal_fir/module.rs`, after signal preparation,
+//! `crates/transform/src/signal_fir/module/bra.rs`, after signal preparation,
 //! type reduction, recursion lowering, and backend real-type selection.
 //!
 //! This separation is important for two reasons:

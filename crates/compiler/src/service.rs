@@ -85,9 +85,9 @@ impl Compiler {
     ///
     /// Reads the same flag spellings as the `faust-rs` CLI
     /// (`crates/compiler/src/cli/args.rs`), and selects the same [`RealType`],
-    /// [`ComputeMode`], [`SchedulingStrategy`], [`ControlRateMode`], and
-    /// [`ProcessingApi`] that [`cli::runner::compiler_from_cli`] would build
-    /// for those flags:
+    /// [`ComputeMode`], [`SchedulingStrategy`], [`ControlRateMode`],
+    /// [`ProcessingApi`], and [`TableInitMode`] that
+    /// [`cli::runner::compiler_from_cli`] would build for those flags:
     ///
     /// | flag | effect |
     /// |------|--------|
@@ -97,6 +97,8 @@ impl Compiler {
     /// | `-ss N` / `--scheduling-strategy N` | statement scheduling order |
     /// | `-ec` / `--external-control` | separate `control` entry point |
     /// | `-os` / `--one-sample` | `frame` entry point |
+    /// | `--table-init runtime\|const` | generated-table initialization mode |
+    /// | `--table-init-sample-rate N` | sample rate frozen into a `const` table |
     ///
     /// These are plain Faust CLI flags rather than a dialect belonging to any
     /// one caller, which is why decoding them here — instead of only in the

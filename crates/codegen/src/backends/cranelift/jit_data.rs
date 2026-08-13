@@ -246,10 +246,11 @@ pub(crate) fn declare_extern_data_symbols_in_jit(
 ///   - finalized function address,
 ///   - whether a real body was lowered.
 ///
-/// # Why the name says `stub`
-/// Historically this helper started as pure stub emission during bring-up; it
-/// now owns both real subset lowering and stub fallback while keeping the same
-/// outer responsibility (emit/finalize `compute`).
+/// # History
+/// This helper started as pure stub emission during bring-up under the name
+/// `declare_compute_stub`; it now owns both real subset lowering and stub
+/// fallback while keeping the same outer responsibility (emit/finalize
+/// `compute`) under its current name, `declare_jit_function`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn declare_jit_function(
     symbol_name: &str,

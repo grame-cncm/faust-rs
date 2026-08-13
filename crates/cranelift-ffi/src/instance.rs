@@ -234,7 +234,9 @@ pub unsafe extern "C" fn instanceInitCCraneliftDSPInstance(
     }
 }
 
-/// Record the sample rate in the instance and run sidecar init block.
+/// Record the sample rate, then run the JIT-compiled `instanceConstants`
+/// entry point if one was finalized, falling back to the native
+/// `RuntimeDescriptor`-driven constant/sample-rate initializers otherwise.
 ///
 /// # Safety
 /// `dsp` must be a valid instance pointer.
@@ -317,7 +319,8 @@ fn apply_sample_rate(
     }
 }
 
-/// Reset UI state by executing sidecar reset-ui instructions when available.
+/// Reset UI state to its control-default values from the factory's native
+/// `RuntimeDescriptor`.
 ///
 /// # Safety
 /// `dsp` must be a valid instance pointer.
@@ -368,7 +371,8 @@ pub unsafe extern "C" fn instanceClearCCraneliftDSPInstance(dsp: *mut CraneliftD
     }
 }
 
-/// Trigger UI callbacks for the instance from sidecar UI instruction lists.
+/// Trigger UI callbacks for the instance from the factory's native
+/// `RuntimeDescriptor` UI item list.
 ///
 /// # Safety
 /// `dsp` and `ui` may be null; null values are ignored.
