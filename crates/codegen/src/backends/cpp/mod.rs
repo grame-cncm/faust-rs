@@ -535,16 +535,7 @@ fn emit_dsp_contract_methods(
             let _ = writeln!(out, "{tab}        (void)sample_rate;");
         }
         let _ = writeln!(out, "{tab}    }} catch (...) {{");
-        for zone in mem0_class_tables(mem0).iter().rev() {
-            let _ = writeln!(out, "{tab}        if ({} != nullptr) {{", zone.name);
-            let _ = writeln!(
-                out,
-                "{tab}            fClassManager->destroy({});",
-                zone.name
-            );
-            let _ = writeln!(out, "{tab}            {} = nullptr;", zone.name);
-            let _ = writeln!(out, "{tab}        }}");
-        }
+        let _ = writeln!(out, "{tab}        classDestroyTables();");
         let _ = writeln!(out, "{tab}        fClassManager = nullptr;");
         let _ = writeln!(out, "{tab}        return false;");
         let _ = writeln!(out, "{tab}    }}");
@@ -557,6 +548,7 @@ fn emit_dsp_contract_methods(
             "{tab}    if (!classInitChecked(sample_rate)) std::terminate();"
         );
         let _ = writeln!(out, "{tab}}}");
+        emit_mem0_class_table_destroy(out, mem0, indent);
     } else {
         let _ = writeln!(out, "{tab}static void classInit(int sample_rate) {{");
         if let Some(static_init_body) = static_init_body {
@@ -704,13 +696,16 @@ fn emit_mem0_constructors(
     let _ = writeln!(out, "{tab}virtual ~{class_name}() = default;");
 }
 
-/// Emits class-table allocation before semantic `staticInit`. Each completed
-/// allocation is released in reverse order on failure; a failed attempt never
-/// publishes `fClassManager`.
+/// Emits class-table allocation before semantic `staticInit`. On failure each
+/// zone's field already holds its own (possibly null/misaligned) allocation
+/// result, and every later zone is still `nullptr` (class-scope pointers are
+/// zero-initialized), so a single shared `classDestroyTables()` sweep — see
+/// [`emit_mem0_class_table_destroy`] — is enough to release everything
+/// allocated so far; a failed attempt never publishes `fClassManager`.
 fn emit_mem0_class_allocations(out: &mut String, analysis: &Mem0Analysis, indent: usize) {
     let tab = "    ".repeat(indent);
     let zones = mem0_class_tables(analysis);
-    for (index, zone) in zones.iter().enumerate() {
+    for zone in &zones {
         let _ = writeln!(
             out,
             "{tab}{} = static_cast<decltype({})>(fClassManager->allocate({}));",
@@ -721,18 +716,27 @@ fn emit_mem0_class_allocations(out: &mut String, analysis: &Mem0Analysis, indent
             "{tab}if ({0} == nullptr || (reinterpret_cast<uintptr_t>({0}) % {1}) != 0) {{",
             zone.name, zone.alignment
         );
-        let _ = writeln!(out, "{tab}    if ({} != nullptr) {{", zone.name);
-        let _ = writeln!(out, "{tab}        fClassManager->destroy({});", zone.name);
-        let _ = writeln!(out, "{tab}        {} = nullptr;", zone.name);
-        let _ = writeln!(out, "{tab}    }}");
-        for prior in zones[..index].iter().rev() {
-            let _ = writeln!(out, "{tab}    fClassManager->destroy({});", prior.name);
-            let _ = writeln!(out, "{tab}    {} = nullptr;", prior.name);
-        }
+        let _ = writeln!(out, "{tab}    classDestroyTables();");
         let _ = writeln!(out, "{tab}    fClassManager = nullptr;");
         let _ = writeln!(out, "{tab}    return false;");
         let _ = writeln!(out, "{tab}}}");
     }
+}
+
+/// Emits `classDestroyTables()`, the shared reverse-order class-table release
+/// used by both the `classInitChecked` failure paths (allocation failure and
+/// the `staticInit` exception handler) and by [`emit_mem0_class_allocations`].
+fn emit_mem0_class_table_destroy(out: &mut String, analysis: &Mem0Analysis, indent: usize) {
+    let tab = "    ".repeat(indent);
+    let zones = mem0_class_tables(analysis);
+    let _ = writeln!(out, "{tab}static void classDestroyTables() {{");
+    for zone in zones.iter().rev() {
+        let _ = writeln!(out, "{tab}    if ({} != nullptr) {{", zone.name);
+        let _ = writeln!(out, "{tab}        fClassManager->destroy({});", zone.name);
+        let _ = writeln!(out, "{tab}        {} = nullptr;", zone.name);
+        let _ = writeln!(out, "{tab}    }}");
+    }
+    let _ = writeln!(out, "{tab}}}");
 }
 
 /// Emits deep clone from the same captured allocator. Embedded scalar fields
@@ -819,7 +823,7 @@ fn emit_mem0_manager_methods(
 
     let _ = writeln!(out, "{tab}bool memoryCreate() {{");
     let _ = writeln!(out, "{tab}    if (fOwnerManager == nullptr) return false;");
-    for (index, zone) in buffers.iter().enumerate() {
+    for zone in &buffers {
         let _ = writeln!(
             out,
             "{tab}    {0} = static_cast<decltype({0})>(fOwnerManager->allocate({1}));",
@@ -830,18 +834,11 @@ fn emit_mem0_manager_methods(
             "{tab}    if ({0} == nullptr || (reinterpret_cast<uintptr_t>({0}) % {1}) != 0) {{",
             zone.name, zone.alignment
         );
-        let _ = writeln!(out, "{tab}        if ({} != nullptr) {{", zone.name);
-        let _ = writeln!(
-            out,
-            "{tab}            fOwnerManager->destroy({});",
-            zone.name
-        );
-        let _ = writeln!(out, "{tab}            {} = nullptr;", zone.name);
-        let _ = writeln!(out, "{tab}        }}");
-        for prior in buffers[..index].iter().rev() {
-            let _ = writeln!(out, "{tab}        fOwnerManager->destroy({});", prior.name);
-            let _ = writeln!(out, "{tab}        {} = nullptr;", prior.name);
-        }
+        // The field already holds this zone's own (possibly null/misaligned)
+        // allocation, and every later field is still nullptr (set by the
+        // constructors), so memoryDestroy()'s null-guarded reverse sweep
+        // releases exactly what's been allocated so far.
+        let _ = writeln!(out, "{tab}        memoryDestroy();");
         let _ = writeln!(out, "{tab}        return false;");
         let _ = writeln!(out, "{tab}    }}");
     }

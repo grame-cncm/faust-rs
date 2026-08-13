@@ -791,6 +791,7 @@ fn emit_c_api(
     let _ = writeln!(out);
 
     if let Some(analysis) = mem0 {
+        emit_mem0_class_table_destroy(out, class_name, analysis);
         emit_mem0_class_init_prefix(out, class_name, analysis);
     } else {
         let _ = writeln!(out, "void classInit{class_name}(int sample_rate) {{");
@@ -957,9 +958,32 @@ fn emit_c_api(
 ///
 /// Source provenance: Faust C++ `CodeContainer::generateMemoryMethods`. The C
 /// adaptation is transactional, preserves explicit alignment, captures the
-/// creator table, and releases completed allocations in reverse order.
+/// creator table, and releases completed allocations in reverse order via the
+/// shared `releaseInstance{class_name}` helper — safe to call from a failure
+/// midway through `create{class_name}` because `memset` zero-initializes every
+/// not-yet-allocated field to `NULL`, so the helper's null guard only ever
+/// destroys what actually got allocated.
 fn emit_mem0_instance_api(out: &mut String, class_name: &str, analysis: &Mem0Analysis) {
     let buffers = mem0_instance_buffers(analysis);
+
+    let _ = writeln!(
+        out,
+        "static void releaseInstance{class_name}(faust_memory_manager* manager, {class_name}* dsp) {{"
+    );
+    for zone in buffers.iter().rev() {
+        let _ = writeln!(
+            out,
+            "    if (dsp->{0} != NULL) manager->destroy(manager->context, dsp->{0}, {1}, {2});",
+            zone.name, zone.size_bytes, zone.alignment
+        );
+    }
+    let _ = writeln!(
+        out,
+        "    manager->destroy(manager->context, dsp, sizeof({class_name}), _Alignof({class_name}));"
+    );
+    let _ = writeln!(out, "}}");
+    let _ = writeln!(out);
+
     let _ = writeln!(
         out,
         "{class_name}* create{class_name}(faust_memory_manager* manager) {{"
@@ -987,7 +1011,7 @@ fn emit_mem0_instance_api(out: &mut String, class_name: &str, analysis: &Mem0Ana
     let _ = writeln!(out, "    memset(storage, 0, sizeof({class_name}));");
     let _ = writeln!(out, "    dsp = ({class_name}*)storage;");
     let _ = writeln!(out, "    dsp->fOwnerManager = manager;");
-    for (index, zone) in buffers.iter().enumerate() {
+    for zone in &buffers {
         let _ = writeln!(
             out,
             "    dsp->{0} = manager->allocate(manager->context, {1}, {2});",
@@ -998,22 +1022,7 @@ fn emit_mem0_instance_api(out: &mut String, class_name: &str, analysis: &Mem0Ana
             "    if (dsp->{0} == NULL || ((uintptr_t)dsp->{0} % {1}) != 0) {{",
             zone.name, zone.alignment
         );
-        let _ = writeln!(
-            out,
-            "        if (dsp->{0} != NULL) manager->destroy(manager->context, dsp->{0}, {1}, {2});",
-            zone.name, zone.size_bytes, zone.alignment
-        );
-        for prior in buffers[..index].iter().rev() {
-            let _ = writeln!(
-                out,
-                "        manager->destroy(manager->context, dsp->{0}, {1}, {2});",
-                prior.name, prior.size_bytes, prior.alignment
-            );
-        }
-        let _ = writeln!(
-            out,
-            "        manager->destroy(manager->context, dsp, sizeof({class_name}), _Alignof({class_name}));"
-        );
+        let _ = writeln!(out, "        releaseInstance{class_name}(manager, dsp);");
         let _ = writeln!(out, "        return NULL;");
         let _ = writeln!(out, "    }}");
     }
@@ -1023,19 +1032,10 @@ fn emit_mem0_instance_api(out: &mut String, class_name: &str, analysis: &Mem0Ana
     let _ = writeln!(out);
 
     let _ = writeln!(out, "void destroy{class_name}({class_name}* dsp) {{");
-    let _ = writeln!(out, "    faust_memory_manager* manager;");
     let _ = writeln!(out, "    if (dsp == NULL) return;");
-    let _ = writeln!(out, "    manager = dsp->fOwnerManager;");
-    for zone in buffers.iter().rev() {
-        let _ = writeln!(
-            out,
-            "    if (dsp->{0} != NULL) manager->destroy(manager->context, dsp->{0}, {1}, {2});",
-            zone.name, zone.size_bytes, zone.alignment
-        );
-    }
     let _ = writeln!(
         out,
-        "    manager->destroy(manager->context, dsp, sizeof({class_name}), _Alignof({class_name}));"
+        "    releaseInstance{class_name}(dsp->fOwnerManager, dsp);"
     );
     let _ = writeln!(out, "    --fLiveInstances;");
     let _ = writeln!(out, "}}");
@@ -1099,6 +1099,32 @@ fn emit_mem0_memory_info(out: &mut String, class_name: &str, analysis: &Mem0Anal
     let _ = writeln!(out);
 }
 
+/// Emits `classDestroyTables{class_name}`, the shared reverse-order release of
+/// every class-scope table. Defined ahead of `classInitChecked{class_name}` so
+/// C's declare-before-use rule is satisfied; reused by both the allocation
+/// failure path in [`emit_mem0_class_init_prefix`] and the public
+/// `classDestroyChecked{class_name}` in [`emit_mem0_class_init_suffix`]. Safe
+/// to call with only a prefix of tables allocated, since class-scope pointers
+/// start `NULL` (static storage duration) until their own `allocate` call runs.
+fn emit_mem0_class_table_destroy(out: &mut String, class_name: &str, analysis: &Mem0Analysis) {
+    let zones = mem0_class_tables(analysis);
+    let _ = writeln!(
+        out,
+        "static void classDestroyTables{class_name}(faust_memory_manager* manager) {{"
+    );
+    let _ = writeln!(out, "    (void)manager;");
+    for zone in zones.iter().rev() {
+        let _ = writeln!(
+            out,
+            "    if ({0} != NULL) manager->destroy(manager->context, {0}, {1}, {2});",
+            zone.name, zone.size_bytes, zone.alignment
+        );
+        let _ = writeln!(out, "    {} = NULL;", zone.name);
+    }
+    let _ = writeln!(out, "}}");
+    let _ = writeln!(out);
+}
+
 /// Opens the checked class-initialization transaction before semantic
 /// `staticInit` is emitted by the ordinary lifecycle path.
 fn emit_mem0_class_init_prefix(out: &mut String, class_name: &str, analysis: &Mem0Analysis) {
@@ -1117,7 +1143,7 @@ fn emit_mem0_class_init_prefix(out: &mut String, class_name: &str, analysis: &Me
     );
     let _ = writeln!(out, "    fClassManager = manager;");
     let _ = writeln!(out, "    fClassSampleRate = sample_rate;");
-    for (index, zone) in zones.iter().enumerate() {
+    for zone in &zones {
         let _ = writeln!(
             out,
             "    {0} = manager->allocate(manager->context, {1}, {2});",
@@ -1128,20 +1154,7 @@ fn emit_mem0_class_init_prefix(out: &mut String, class_name: &str, analysis: &Me
             "    if ({0} == NULL || ((uintptr_t){0} % {1}) != 0) {{",
             zone.name, zone.alignment
         );
-        let _ = writeln!(
-            out,
-            "        if ({0} != NULL) manager->destroy(manager->context, {0}, {1}, {2});",
-            zone.name, zone.size_bytes, zone.alignment
-        );
-        for prior in zones[..index].iter().rev() {
-            let _ = writeln!(
-                out,
-                "        manager->destroy(manager->context, {0}, {1}, {2});",
-                prior.name, prior.size_bytes, prior.alignment
-            );
-            let _ = writeln!(out, "        {} = NULL;", prior.name);
-        }
-        let _ = writeln!(out, "        {} = NULL;", zone.name);
+        let _ = writeln!(out, "        classDestroyTables{class_name}(manager);");
         let _ = writeln!(out, "        fClassManager = NULL;");
         let _ = writeln!(out, "        fClassSampleRate = 0;");
         let _ = writeln!(out, "        return 0;");
@@ -1150,8 +1163,7 @@ fn emit_mem0_class_init_prefix(out: &mut String, class_name: &str, analysis: &Me
 }
 
 /// Closes class initialization and emits checked/idempotent class destruction.
-fn emit_mem0_class_init_suffix(out: &mut String, class_name: &str, analysis: &Mem0Analysis) {
-    let zones = mem0_class_tables(analysis);
+fn emit_mem0_class_init_suffix(out: &mut String, class_name: &str, _analysis: &Mem0Analysis) {
     let _ = writeln!(out, "    return 1;");
     let _ = writeln!(out, "}}");
     let _ = writeln!(
@@ -1173,14 +1185,7 @@ fn emit_mem0_class_init_suffix(out: &mut String, class_name: &str, analysis: &Me
         out,
         "    if (manager != fClassManager || fLiveInstances != 0) return 0;"
     );
-    for zone in zones.iter().rev() {
-        let _ = writeln!(
-            out,
-            "    if ({0} != NULL) manager->destroy(manager->context, {0}, {1}, {2});",
-            zone.name, zone.size_bytes, zone.alignment
-        );
-        let _ = writeln!(out, "    {} = NULL;", zone.name);
-    }
+    let _ = writeln!(out, "    classDestroyTables{class_name}(manager);");
     let _ = writeln!(out, "    fClassManager = NULL;");
     let _ = writeln!(out, "    fClassSampleRate = 0;");
     let _ = writeln!(out, "    return 1;");
