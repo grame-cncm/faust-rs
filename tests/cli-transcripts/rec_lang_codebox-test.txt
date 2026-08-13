@@ -1,4 +1,4 @@
-// Code generated with faust-rs 0.7.0
+// Code generated with faust-rs 0.8.0
 // Compilation options: -lang codebox-test -single
 // Additional functions
 // Params

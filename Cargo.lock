@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "algebra"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "allocator-api2"
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "box-ffi"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "boxes",
  "codegen",
@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "boxes"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "tlib",
 ]
@@ -259,7 +259,7 @@ checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
 name = "codegen"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "cranelift-codegen",
@@ -282,7 +282,7 @@ checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
 name = "compiler"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "boxes",
  "clap",
@@ -407,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "cranelift-ffi"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "box-ffi",
  "clap",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "diagnostics"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "sha2",
  "unicode-width",
@@ -538,11 +538,11 @@ dependencies = [
 
 [[package]]
 name = "doc"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "draw"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "boxes",
  "tlib",
@@ -556,7 +556,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "eval"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "ahash",
  "boxes",
@@ -576,7 +576,7 @@ checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
 name = "faust-ffi"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "box-ffi",
  "cranelift-ffi",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "ffi-common"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "filetime"
@@ -609,7 +609,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fir"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "tlib",
 ]
@@ -638,7 +638,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "foreign-call"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "form_urlencoded"
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "graph"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "hashbrown"
@@ -837,7 +837,7 @@ dependencies = [
 
 [[package]]
 name = "impulse-runner"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "codegen",
@@ -859,7 +859,7 @@ dependencies = [
 
 [[package]]
 name = "interp-ffi"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "codegen",
  "compiler",
@@ -868,7 +868,7 @@ dependencies = [
 
 [[package]]
 name = "interval"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "is_terminal_polyfill"
@@ -902,7 +902,7 @@ checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
 name = "libfaust-ffi"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "compiler",
  "ffi-common",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "normalize"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "interval",
  "signals",
@@ -1087,7 +1087,7 @@ dependencies = [
 
 [[package]]
 name = "parser"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "boxes",
  "cfgrammar",
@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "propagate"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "ahash",
  "boxes",
@@ -1344,7 +1344,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "signal-ffi"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "box-ffi",
  "ffi-common",
@@ -1356,7 +1356,7 @@ dependencies = [
 
 [[package]]
 name = "signals"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "tlib",
  "ui",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "sigtype"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "interval",
  "signals",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "tlib"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "ahash",
  "clap",
@@ -1521,7 +1521,7 @@ dependencies = [
 
 [[package]]
 name = "transform"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "ahash",
  "boxes",
@@ -1538,7 +1538,7 @@ dependencies = [
 
 [[package]]
 name = "tree-ffi"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "ffi-common",
  "tlib",
@@ -1552,7 +1552,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "tlib",
 ]
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-ffi"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "codegen",
  "compiler",
@@ -1903,7 +1903,7 @@ checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
 [[package]]
 name = "xtask"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "clap",
  "codegen",

@@ -1,7 +1,7 @@
 {
 	"name": "rec",
 	"filename": "rec.dsp",
-	"version": "0.7.0",
+	"version": "0.8.0",
 	"compile_options": "-single",
 	"include_pathnames": ["target/cli-transcript-inputs","/Users/letz/Developpements/RUST/faust-rs/target/share/faust","/usr/local/share/faust","/usr/share/faust"],
 	"size": 20,

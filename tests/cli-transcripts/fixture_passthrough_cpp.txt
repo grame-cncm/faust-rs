@@ -1,6 +1,6 @@
 /* ------------------------------------------------------------
 name: "passthrough"
-Code generated with Faust 0.7.0 (https://faust.grame.fr)
+Code generated with Faust 0.8.0 (https://faust.grame.fr)
 Compilation options: -lang cpp -single
 ------------------------------------------------------------ */
 

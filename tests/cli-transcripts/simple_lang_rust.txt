@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------
-Code generated with Faust 0.7.0 Rust backend (faust-rs)
+Code generated with Faust 0.8.0 Rust backend (faust-rs)
 Compilation options: -lang rust -single
 ------------------------------------------------------------ */
 

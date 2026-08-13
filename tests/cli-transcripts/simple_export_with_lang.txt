@@ -1,4 +1,4 @@
-declare version "0.7.0";
+declare version "0.8.0";
 declare compile_options "-single -scal -mcd 16 -lang cpp";
 declare filename "simple.dsp";
 declare name "simple";

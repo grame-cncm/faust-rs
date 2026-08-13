@@ -1,6 +1,6 @@
 interpreter_dsp_factory float
 file_version 9
-Faust version 0.7.0
+Faust version 0.8.0
 compile_options -lang interp -single
 name heavy_bench
 sha_key 
