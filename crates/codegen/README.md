@@ -160,9 +160,15 @@ let c_source = generate_c_module(&store, root_id, &opts)?;
 
 | Item | Description |
 |---|---|
-| `COptions` | `class_name`, `quad_type_name`, `fixed_type_name` |
+| `COptions` | Class/type names, precision, and `memory_manager_mode` |
 | `generate_c_module` | `(&FirStore, FirId, &COptions) → Result<String, CodegenError>` |
 | `CodegenError` | Codes `FRS-CGEN-C-0001..0003` |
+
+With `memory_manager_mode: MemoryManagerMode::Mem0`, eligible instance buffers
+and writable generated tables are allocated through the embedded, versioned
+`faust_memory_manager` C callback table. The generated strict-C API adds
+namespaced describe/class/create/destroy functions; ordinary `new*`/`delete*`
+output is unchanged when the mode is disabled.
 
 ---
 
@@ -184,9 +190,15 @@ let cpp_source = generate_cpp_module(&store, root_id, &opts)?;
 
 | Item | Description |
 |---|---|
-| `CppOptions` | `class_name`, `namespace`, `super_class_name`, `quad_type_name`, `fixed_type_name` |
+| `CppOptions` | Class/namespace/type names, precision, and `memory_manager_mode` |
 | `generate_cpp_module` | `(&FirStore, FirId, &CppOptions) → Result<String, CodegenError>` |
 | `CodegenError` | Codes `FRS-CGEN-CPP-0001..0003` |
+
+`MemoryManagerMode::Mem0` emits the compatible `dsp_memory_manager` surface,
+external buffer/table allocation, deep clone, captured-manager destruction,
+and checked transactional companions. This is the C++ compatibility path for
+Faust `-mem0`, with the lifecycle and ownership fixes recorded in the
+compatibility registry.
 
 ---
 
@@ -207,10 +219,24 @@ let jit = generate_cranelift_module(&store, root_id, &opts)?;
 
 | Item | Description |
 |---|---|
-| `CraneliftOptions` | Optimization, target/debug, strict-subset, external data/function symbol, and precision settings |
+| `CraneliftOptions` | Optimization, target/debug, strict-subset, external symbol, precision, and `memory_manager_mode` settings |
 | `CraneliftOptLevel` | `None`, `Speed` (default), `SpeedAndSize` |
 | `generate_cranelift_module` | Main entry point; returns compiled JIT module |
 | `diagnose_cranelift_compute_subset_gap` | Reports unsupported FIR nodes |
+
+Under `MemoryManagerMode::Mem0`, eligible FIR arrays become pointer-sized JIT
+state slots. `JitDspModule::mem0_analysis` retains the target-aware allocation
+plan and backend-neutral `compute_cost`; `cranelift-ffi` binds the actual host
+callbacks and owns class and instance allocations.
+
+## Mode-zero memory analysis and JSON
+
+`memory_layout` defines the canonical target-aware zone model shared by C,
+C++, and Cranelift. `compute_cost` describes one occurrence of the effective
+scalar sample loop, with checked counters and deterministic operation maps.
+The strict JSON serializer emits these only for `mem0`, using schema version 2;
+ordinary JSON remains unchanged. Only `MemoryManagerMode::{None, Mem0}` exists
+today—later Faust memory modes are intentionally unsupported.
 
 ---
 

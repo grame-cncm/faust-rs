@@ -330,6 +330,13 @@ faust-rs -lang codebox-test foo.dsp -o foo.codebox
 # Generate C++
 faust-rs -lang cpp foo.dsp
 
+# Generate C++ with mode-zero host-managed buffers plus layout/cost JSON
+faust-rs -lang cpp -mem0 -json foo.dsp -o foo.cpp
+
+# The same scalar mode is available for C and native Cranelift
+faust-rs -lang c -mem0 foo.dsp -o foo.c
+faust-rs -lang cranelift -mem0 -json foo.dsp -o foo.cranelift
+
 # Generate experimental Cranelift backend report
 faust-rs -lang cranelift foo.dsp
 
@@ -364,6 +371,12 @@ faust-rs -svg foo.dsp
 faust-rs -lang cpp foo.dsp -o foo.cpp
 faust-rs -lang interp foo.dsp -o foo.fbc
 ```
+
+`-mem`, `-mem0`, `--memory-manager`, and `--memory-manager0` are equivalent.
+Only mode zero is currently supported, for scalar C, C++, and Cranelift. Its
+JSON companion includes a versioned target layout and `compute_cost`; see the
+[porting analysis](porting/custom-memory-manager-mem0-analysis-and-porting-plan-2026-08-13-en.md)
+and the [Cranelift C/C++ API guide](crates/cranelift-ffi/README.md).
 
 Scheduling and vector code generation:
 

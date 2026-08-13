@@ -1,4 +1,4 @@
-//! `cranelift` backend (early bring-up).
+//! Native Cranelift JIT backend.
 //!
 //! # Role
 //! - Planned native-code backend lowering Faust FIR to machine code via
@@ -11,7 +11,7 @@
 //!   behavior (`llvm_dsp` / `interpreter_dsp`-style API strategy).
 //!
 //! # Current status
-//! - Early backend bring-up with a real Cranelift JIT integration:
+//! - Real Cranelift JIT integration:
 //!   - a finalized `compute` symbol is emitted,
 //!   - finalized code is kept alive by an owned `JITModule`,
 //!   - a backend `dsp*` layout contract is derived from FIR `globals`.
@@ -20,11 +20,13 @@
 //!   intrinsics, struct globals/tables, etc.).
 //! - When the FIR body exceeds the current subset, the backend deliberately
 //!   falls back to a valid no-op `compute` stub instead of failing the whole
-//!   compilation.
+//!   compilation unless [`CraneliftOptions::fail_on_subset_gap`] is enabled.
+//! - [`MemoryManagerMode::Mem0`] replaces eligible inline array payloads with
+//!   pointer slots backed by the host manager. The resulting
+//!   [`JitDspModule::mem0_analysis`] is the canonical allocation and JSON-cost
+//!   description consumed by `cranelift-ffi`.
 //!
-//! # Design notes (current phase)
-//! - The backend prioritizes compile-path integration and diagnosability over
-//!   runtime parity completeness.
+//! # Design notes
 //! - `FAUSTFLOAT` maps to `f32` by default, or `f64` when
 //!   `CraneliftOptions::double_precision` is set (`-double`).
 //! - The exported FFI/runtime layer (`cranelift_dsp`) can consume diagnostic

@@ -60,8 +60,24 @@ Top-level compiler facade.  Wires all pipeline stages together behind a single
 | `compile_source_to_json[_with_lane]` | Strict Faust JSON string |
 | `compile_file_to_json` / `compile_file_default_to_json[_with_lane]` | Strict Faust JSON string |
 | `compile_source_to_json_with_lane_and_compile_options` / `compile_file_to_json_with_compile_options` | JSON string + explicit `compile_options` provenance |
+| `compile_*_to_json_with_*_compile_options_and_memory` | JSON string + explicit C/C++/Cranelift `MemoryLayoutFlavor` for `mem0` |
 | `compile_file_default_to_c[_with_lane]` / `compile_file_default_to_cpp[_with_lane]` | File-backed convenience wrappers without explicit search paths |
 | `get_faustwasm_info` / `expand_dsp` / `generate_aux_files` | Faustwasm-compatible helper services |
+
+### Mode-zero custom memory manager
+
+The CLI accepts the equivalent `-mem`, `-mem0`, `--memory-manager`, and
+`--memory-manager0` spellings for scalar `-lang c`, `cpp`, and `cranelift`.
+Only mode zero is implemented; vector mode, `-it`, other backends, and
+`mem1`–`mem3` fail closed. Adding `-json` emits the version-2
+`memory_manager`/`memory_layout` description and the effective scalar FIR
+`compute_cost` next to the backend artifact.
+
+The regular C/C++ facade methods carry the typed mode through `COptions` and
+`CppOptions`. Strict JSON callers use
+`MemoryLayoutFlavor::{C, Cpp, Cranelift}` with the explicit
+`*_compile_options_and_memory` methods so target ABI metadata cannot be inferred
+from a filename or host default.
 
 ## HTTP(S) sources and architectures
 

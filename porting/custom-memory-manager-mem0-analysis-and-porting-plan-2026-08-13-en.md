@@ -1396,6 +1396,8 @@ rates before implementation.
 
 ### M0 — Baseline and contract freeze
 
+Implementation status: **complete (2026-08-13)**.
+
 Deliverables:
 
 - complete the Phase 0 items;
@@ -1415,6 +1417,8 @@ Pass criterion: no public ABI, JSON schema, or lifecycle ambiguity remains.
 
 ### M1 — Typed option plumbing
 
+Implementation status: **complete (2026-08-13)**.
+
 Deliverables:
 
 - add `MemoryManagerMode::{None, Mem0}`;
@@ -1430,6 +1434,8 @@ Pass criterion: the option reaches a test backend context without changing
 ordinary generated code. All four aliases produce the same effective options.
 
 ### M2 — Canonical memory and compute-cost analyses
+
+Implementation status: **complete (2026-08-13)**.
 
 Deliverables:
 
@@ -1452,6 +1458,8 @@ backend reconstructs its own zone list or recomputes the cost report.
 
 ### M3 — C++ emitter
 
+Implementation status: **complete (2026-08-13)**.
+
 Deliverables:
 
 - pointer-field emission for eligible arrays;
@@ -1468,6 +1476,8 @@ tests, and is numerically identical to ordinary C++ output on the selected
 impulse corpus.
 
 ### M4 — C emitter and ABI
+
+Implementation status: **complete (2026-08-13)**.
 
 Deliverables:
 
@@ -1620,6 +1630,8 @@ unwinding, and final reverse release.
 
 ### M9 — Compatibility and documentation closeout
 
+Implementation status: **complete (2026-08-13)**.
+
 Deliverables:
 
 - update the compiler/backend/Cranelift FFI README and CLI help;
@@ -1634,6 +1646,24 @@ Deliverables:
 
 Pass criterion: no implemented behavioral difference or public ABI is missing
 from the registry and documentation.
+
+Final public-surface classification:
+
+| Surface | Mapping | Compatibility statement |
+|---|---|---|
+| four CLI mode-zero aliases | `adapted` | same selection semantics, typed per request; limited to scalar C/C++/Cranelift |
+| generated C++ `dsp_memory_manager` names | `1:1` + `reference-fix` | source-compatible legacy surface plus checked lifecycle/ownership companions |
+| generated C `faust_memory_manager` ABI | `adapted` | Rust extension with version/context/alignment and strict-C generated entry points |
+| Cranelift C/C++ manager binding | `adapted` | Rust-native backend using the shared C ABI and a legacy C++ adapter |
+| legacy JSON zone/cost keys | `1:1` | retained shapes and common-subset counter parity |
+| JSON version/ABI/role/exactness fields | `adapted` | additive target-aware schema emitted only under `mem0` |
+| D6 branch/literal/control accounting | `reference-fix` | version-2 deterministic upper-envelope semantics |
+
+The compiler, codegen, Cranelift FFI, root, impulse-test, parity-matrix, and
+compatibility-registry documentation now link the operational contract and its
+validation targets. Rustdoc records C++ provenance and invariants on the typed
+mode, canonical layout, compute-cost visitor, generated C/C++ options, JIT
+pointer-slot model, and FFI ownership paths.
 
 ## 10. Test plan
 

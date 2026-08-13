@@ -24,9 +24,12 @@ What is already implemented:
 - factory/instance opaque types
 - owned, reference-counted factory and DSP-instance cache
 - source factory creation through `compiler -> FIR -> codegen::cranelift`
-- bitcode family scaffold (temporary text format, for API-path validation)
+- source-backed bitcode-family payload with deterministic factory rebuild
 - FIR-derived native runtime descriptor for state/UI/meta handling
 - native JIT-backed `compute` path for file/string factory constructors
+- mode-zero custom memory ownership for object, instance-buffer, and generated
+  class-table zones
+- strict version-2 factory JSON with memory layout and `compute_cost`
 - header smoke tests (C and C++)
 
 What is not final yet:
@@ -82,7 +85,7 @@ list V1-deferred families where relevant.
 - `src/runtime.rs`
   - FIR-derived native runtime descriptor builder shared by factories/instances
 - `src/clif.rs`
-  - textual `.clif` container helpers used by the current bitcode scaffold
+  - textual `.clif` container helpers used by factory persistence
 
 ## Shared FFI helpers (factorized)
 
@@ -96,7 +99,7 @@ This crate uses shared backend-agnostic FFI helpers from `crates/ffi-common`:
 - C-string argument decoding helpers
 - empty `char**` helper
 - FFI option parsing (`-I`, `-cn`, `-double`, `-vec`, `-vs`, `-lv`, and
-  `-ss`)
+  `-ss`, and the four `mem0` aliases)
 
 Cranelift-specific factory/runtime state and backend semantics remain local to
 this crate.
@@ -124,6 +127,27 @@ still keep distinct backend preflight paths:
 
 This is intentional and matches the interpreter FFI refactor strategy.
 
+## Mode-zero custom memory manager
+
+Factories created with `-mem`, `-mem0`, `--memory-manager`, or
+`--memory-manager0` retain the canonical mode in their compile options, cache
+identity, JSON, and source-backed serialization. Before instance creation, the
+host must call `setCCraneliftMemoryManager` with a compatible
+`faust_memory_manager` ABI-v1 table. Binding copies and describes the callbacks
+but performs no allocation; an unbound `mem0` factory cannot create an
+instance.
+
+The manager owns the logical DSP object, eligible instance buffers, and
+writable generated class tables. Allocation is checked and transactional;
+clone deep-copies instance zones; destruction uses the originally captured
+callbacks in reverse order. Final factory release destroys instances, class
+storage, then JIT state. Serialized factories never store callbacks or host
+pointers and therefore require a fresh binding after restore.
+
+The C++ wrapper's `setMemoryManager`/`getMemoryManager` adapt the legacy
+`dsp_memory_manager` contract to this aligned C ABI. The Rust wrapper object
+itself remains cache-owned and is not a manager-visible JIT zone.
+
 ## Build / test
 
 Targeted checks:
@@ -146,10 +170,11 @@ c++ -std=c++11 -fsyntax-only -I crates/cranelift-ffi/include -I /path/to/faust/a
 ## Known limitations
 
 - Some LLVM-specific API families are intentionally omitted/deferred in V1
-  (target getters, LLVM IR/machine/object serialization, and memory-manager
-  hooks). Cranelift foreign-function registration is implemented separately.
-- The bitcode API family currently uses a temporary scaffold format marker
-  (`CRANELIFT_FFI_SCAFFOLD_V1`) and is not the final backend serialization.
+  (target getters and LLVM IR/machine/object serialization). Cranelift
+  foreign-function registration and `mem0` manager hooks are implemented
+  separately.
+- The bitcode API family uses a source-backed `CRANELIFT_FFI_V2_SOURCE`
+  payload, not a portable native-code snapshot.
 - Runtime behavior is still progressing toward full Interpreter/C++ backend
   parity across the complete Faust language and runtime surface.
 

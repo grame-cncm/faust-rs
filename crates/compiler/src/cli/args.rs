@@ -331,9 +331,9 @@ pub struct CliArgs {
     /// Use the host custom memory manager for eligible native DSP state
     /// (`-mem`/`-mem0`/`--memory-manager`/`--memory-manager0`).
     ///
-    /// The four spellings select the same typed `mem0` mode. This first port is
-    /// scalar-only and restricted to C, C++, and Cranelift; later memory modes
-    /// are deliberately not accepted.
+    /// The four spellings select the same typed `mem0` mode. Only mode zero is
+    /// implemented: it is scalar-only and restricted to C, C++, and Cranelift;
+    /// `mem1` through `mem3` are deliberately rejected.
     #[arg(
         long = "memory-manager",
         alias = "memory-manager0",

@@ -61,12 +61,12 @@ Status legend used for implementation tracking:
 | Factory cache lifecycle (`get*FromSHAKey`, `deleteAll*`, `getAll*`) | `done` | Shared cache wired with SHA map and deletion APIs. |
 | Factory constructors from file/string | `done` | Fast-lane compiler path + Cranelift JIT + interp sidecar for UI/meta. |
 | Factory constructors from signals/boxes | `adapted` | Implemented via `box-ffi` handle bridge (`CboxesToSignals*` contract). |
-| Factory metadata/query surface (`JSON`, `name`, `sha`, `DSPCode`, `compile options`) | `done` | Exported and covered by runtime tests. |
+| Factory metadata/query surface (`JSON`, `name`, `sha`, `DSPCode`, `compile options`) | `done` | Exported and covered by runtime tests; `-mem0` JSON includes the shared version-2 target layout and `compute_cost`. |
 | Factory library/include/warning lists | `adapted` | Exported with empty-list behavior for current V1 runtime. |
-| Bitcode read/write family | `adapted` | Source-backed `CRANELIFT_FFI_V2_SOURCE` payload with rebuild; non-source factories (signals/boxes) return null/false on write. |
+| Bitcode read/write family | `adapted` | Source-backed `CRANELIFT_FFI_V2_SOURCE` payload with rebuild; non-source factories (signals/boxes) return null/false on write. `mem0` mode survives, callbacks/pointers do not, so restored factories are unbound. |
 | IR read/write family | `deferred-v1` | Not exported in V1. |
 | Machine/object read/write family | `deferred-v1` | Not exported in V1. |
-| Memory manager / foreign-function registration | `adapted` | Foreign registration is implemented; `-mem0` uses the shared aligned ABI v1 through `setCCraneliftMemoryManager`, while the C++ wrapper supplies functional legacy set/get glue. |
+| Memory manager / foreign-function registration | `adapted` | Foreign registration is implemented; `-mem0` uses the shared aligned ABI v1 through `setCCraneliftMemoryManager`, while the C++ wrapper supplies functional legacy set/get glue. Manager-owned object/instance/class zones, deep clone, transactional failure, reverse release, cache identity, and serialization rebinding are tested. |
 | Target/machine-target getter family | `deferred-v1` | LLVM-specific semantics intentionally deferred. |
 | DSP instance lifecycle (`create/delete/clone/init/reset/clear`) | `done` | Real instance state allocation + lifecycle hooks. |
 | DSP instance compute | `done` | Calls finalized Cranelift JIT entry with backend `dsp*` layout. |
@@ -146,7 +146,7 @@ Phase-0 implication for `cranelift_dsp`:
 
 | Family | LLVM C API | Interpreter C API | Target (Cranelift C API) | Status | Notes |
 |---|---|---|---|---|---|
-| Bitcode read/write (backend bytecode) | `readCDSPFactoryFromBitcode`, `writeCDSPFactoryToBitcode`, `...File` | `readCInterpreterDSPFactoryFromBitcode`, `writeCInterpreterDSPFactoryToBitcode`, `...File` | `readCCraneliftDSPFactoryFromBitcode`, `writeCCraneliftDSPFactoryToBitcode`, `...File` | `v1-required` | Exact backend payload format TBD (likely Cranelift-specific compiled snapshot or deferred stub with typed error) |
+| Bitcode read/write (backend bytecode) | `readCDSPFactoryFromBitcode`, `writeCDSPFactoryToBitcode`, `...File` | `readCInterpreterDSPFactoryFromBitcode`, `writeCInterpreterDSPFactoryToBitcode`, `...File` | `readCCraneliftDSPFactoryFromBitcode`, `writeCCraneliftDSPFactoryToBitcode`, `...File` | `adapted` | Implemented as source-backed `CRANELIFT_FFI_V2_SOURCE` rebuild payload; `mem0` manager callbacks are deliberately excluded. |
 | IR read/write | `readCDSPFactoryFromIR`, `writeCDSPFactoryToIR`, `...File` | n/a | `readCCraneliftDSPFactoryFromIR`, `writeCCraneliftDSPFactoryToIR`, `...File` | `v1-deferred` | Deferred in V1 **without exported symbols** |
 | Machine read/write | `readCDSPFactoryFromMachine`, `writeCDSPFactoryToMachine`, `...File` | n/a | `readCCraneliftDSPFactoryFromMachine`, `writeCCraneliftDSPFactoryToMachine`, `...File` | `v1-deferred` | Deferred in V1 **without exported symbols** |
 
@@ -155,8 +155,8 @@ Phase-0 implication for `cranelift_dsp`:
 | Family | LLVM C API | Interpreter C API | Target (Cranelift C API) | Status | Notes |
 |---|---|---|---|---|---|
 | Class init on factory | `classCInit` | n/a | `classCCraneliftInit` (naming pending) | `decision-pending` | LLVM-specific pattern; may be represented via instance APIs only |
-| Memory manager setter | `setCMemoryManager` | n/a (in current interpreter C header) | `setCCraneliftMemoryManager` | `adapted` | Implemented for factories compiled with `-mem0`; copies ABI v1 callbacks/context, describes immediately, and allocates only on instance creation. |
-| Register foreign function | `registerCForeignFunction` | n/a | `registerCCraneliftForeignFunction` | `v1-deferred` | Naming locked; family deferred in V1 |
+| Memory manager setter | `setCMemoryManager` | n/a (in current interpreter C header) | `setCCraneliftMemoryManager` | `adapted` | Implemented for factories compiled with `-mem0`; copies ABI-v1 callbacks/context, describes immediately, allocates class zones before instance zones, and allocates no state until instance creation. Restored factories require fresh binding. |
+| Register foreign function | `registerCForeignFunction` | n/a | `registerCCraneliftForeignFunction` / `unregisterCCraneliftForeignFunction` | `adapted` | Implemented with an explicit Cranelift name-to-host-pointer registry. |
 | Machine target getter | `getCDSPMachineTarget` | n/a | `getCCraneliftDSPMachineTarget` | `v1-deferred` | Naming locked; deferred in V1 |
 
 ## 3.7 DSP instance functions (C API)

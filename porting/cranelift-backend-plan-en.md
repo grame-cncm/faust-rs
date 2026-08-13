@@ -1,7 +1,8 @@
 # Cranelift Backend Plan (Faust Rust Port)
 
 **Date:** 2026-02-27  
-**Status:** Active implementation (partially implemented; finish plan below)  
+**Status:** Active implementation; scalar JIT/runtime and `mem0` complete for the supported subset
+
 **Target crates:** `codegen`, `compiler`, `xtask`, `cranelift-ffi`  
 **Primary backend module (planned):** `codegen::backends::cranelift`
 
@@ -16,7 +17,7 @@ This backend is **not a direct C++ parity backend** (unlike C/C++/Interp/Wasm/LL
 paths that map to existing Faust backends). It is a **Rust-native extension**
 that compiles Faust FIR to native machine code via the Cranelift code generator.
 
-### Current implementation snapshot (2026-02-27)
+### Current implementation snapshot (2026-08-13)
 
 What is already in place:
 
@@ -28,18 +29,43 @@ What is already in place:
   `-lang cranelift`).
 - `cranelift-ffi` can compile through the compiler facade and stores a compiled
   `JitDspModule` in factory objects.
+- The instance runtime executes finalized JIT lifecycle/compute functions and
+  dispatches UI/metadata through the retained sidecar.
+- File, string, signal, and box factory paths plus source-backed persistence
+  are implemented.
+- The scalar mode-zero memory-manager path is complete as detailed below.
 
 What is still blocking v1 completion:
 
-- `cranelift-ffi` instance runtime is still scaffolded:
-  `compute/buildUserInterface/metadata` are placeholders and do not execute the
-  real generated DSP code path.
-- Factory APIs from signals/boxes are not implemented.
-- Bitcode read/write in `cranelift-ffi` is scaffold serialization, not a real
-  backend serialization contract.
 - Subset fallback policy (`compute` stub on unsupported FIR) is still used; v1
   completion requires explicit corpus-level coverage and strict diagnostics
   policy.
+- LLVM-specific target, IR, machine, and object APIs remain deliberately
+  deferred, and the source-backed payload is not a native-code snapshot.
+
+### `mem0` implementation update (2026-08-13)
+
+The scalar Cranelift path now implements the mode-zero custom memory-manager
+family described by
+`custom-memory-manager-mem0-analysis-and-porting-plan-2026-08-13-en.md`:
+
+- `CraneliftOptions::memory_manager_mode` retains the typed mode in JIT output,
+  cache identity, compile options, strict JSON, and source-backed persistence;
+- eligible instance arrays use pointer slots in `StructLayoutPlan`, while
+  writable generated tables use factory-owned class pointer slots;
+- `cranelift-ffi` binds the shared aligned `faust_memory_manager` ABI, performs
+  transactional allocations, deep clone, and reverse instance/class release;
+- C and C++ factory set/get surfaces are functional; restored factories are
+  deliberately unbound because callbacks and addresses are never serialized;
+- version-2 JSON exposes the effective target layout and backend-neutral
+  `compute_cost` before allocation;
+- `tests/impulse-tests/Make.mem0` runs strict lowering, ownership audits,
+  ordinary/mem0 numeric parity, cross-backend JSON parity, and optimization
+  levels 0/3.
+
+This is an `adapted` Rust extension: upstream Faust has no Cranelift backend.
+Only scalar `mem0` is in scope; `mem1`–`mem3` and vector custom-memory lowering
+remain unsupported.
 
 ### Why add a Cranelift backend?
 

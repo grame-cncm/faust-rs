@@ -1,109 +1,105 @@
 # Session Handoff
 
-Date: 2026-08-04
+Date: 2026-08-13
 
 ## Repo State
 
 - Branch: `main-dev`
-- Implementation base: `440c5466` (`Correct Cmajor impulse blocker analysis`).
-- The current implementation commit adds shared precedence-aware textual
-  expression layout and removes `bells` from the Cmajor exclusions.
+- Implementation HEAD at handoff preparation: `6c15283b0a0b694344c0ed0c0184e20c67d06c5a`
+  (`Harden mem0 differential and optimization gates`); the M9 documentation
+  closeout commit contains this handoff.
 
-Recent commits (most recent first):
+Recent implementation commits (most recent first):
 
-- `440c5466` Correct Cmajor impulse blocker analysis
-- `c9bfd9d3` Record Cmajor impulse handoff
-- `274bc934` Integrate Cmajor impulse gate
-- `74b5ef05` Add Cmajor impulse harness
-- `35b6e755` Specify Cmajor impulse test lane
-- `aa0fc0fa` Qualify scalar Cmajor backend
-- `be817b06` Activate scalar Cmajor facade and CLI
-- `b85d7d5f` Validate concrete Cmajor table lowering
-- `ac2c5daa` Add Cmajor UI events and bargraphs
-- `0ef0c895` Add scalar Cmajor emitter core
-- `ccc3e5ee` Plan scalar Cmajor backend port
+- `6c15283b` Harden mem0 differential and optimization gates
+- `b8b883b7` Integrate audited mem0 impulse tests
+- `14d64464` Emit versioned mem0 JSON and compute cost
+- `63693b8f` Implement mem0 Cranelift memory ownership
+- `d141f6c5` Implement mem0 C ABI and generated allocation
+- `f729f0e5` Implement transactional mem0 C++ code generation
+- `da372d80` Add canonical mem0 layout and compute cost analysis
+- `41b577a6` Thread typed mem0 option through native backends
+- `fc8b5689` Validate mem0 phase zero contracts
+- `8e6f0c1b` Plan mem0 memory manager port across native backends
 
 ## Working Tree
 
-- Tracked changes at handoff preparation: this handoff and its daily journal
-  index/entry only.
-- Numerous pre-existing untracked user DSPs, patches, reports, generated files,
-  and impulse scratch directories remain untouched and uncommitted.
+- Tracked changes at preparation: M9 documentation, journal, plan closeout,
+  Rustdoc/CLI wording, and this handoff only.
+- Pre-existing untracked user files/directories remain untouched:
+  `OSS.md`, `PROMPTS.md`, `Test C++ fad_biquad_spectral_v3/`, `build_all`,
+  `fad_use_cases.md`, `push_main.sh`,
+  `signal-fir-siggen-completeness-plan-2026-03-12-en.md`,
+  `spec_interleave_uz.md`, and `usage-energy-co2-report-2026-08-08.md`.
 
 ## Current Goal
 
-- Complete C6 by adding direct runtime validation of Cmajor output events and
-  bargraph cadence, while reducing the explicit impulse exclusions.
+- The requested scalar `-mem0` port is complete for generated C, generated
+  C++, and native Cranelift, including JSON memory description,
+  `compute_cost`, impulse tests, Rustdoc, journal, and staged commits.
 
 ## What Changed This Session
 
-- Implemented and documented a scalar canonical-FIR-to-Cmajor backend with
-  facade, CLI, f32/f64, lifecycle, UI, bargraphs, state, tables, and typed
-  errors.
-- Added pinned-C++ structural differentials and Cmajor-generated-C++ runtime
-  optimization parity.
-- Added an opt-in, parallel-safe `tests/impulse-tests/Make.cmajor` lane and the
-  top-level `make cmajor` target.
-- Fixed comparison result typing, lifecycle-time bargraph endpoint writes, and
-  repeated UI display-address handling as discovered by the impulse corpus.
-- Added reusable precedence-aware textual expression layout and migrated
-  Cmajor to it; `bells` now passes the external impulse lane.
+- Added typed option propagation and fail-closed capability validation for the
+  four mode-zero aliases; `mem1`–`mem3` remain unsupported.
+- Added one canonical, checked, target-aware memory layout and corrected scalar
+  FIR cost analysis shared by all three backends.
+- Implemented transactional generated C++ and strict-C ownership surfaces,
+  plus Cranelift pointer-slot lowering and factory/instance/class ownership.
+- Added version-2 strict JSON with legacy fields, explicit ABI/layout metadata,
+  and deterministic `compute_cost`.
+- Added self-contained audited impulse lanes, pinned-C++ differentials,
+  Cranelift persistence/rebinding coverage, O0/O3 parity, and sanitizers.
 
 ## Decisions / Constraints
 
-- Reference Faust C++ is
-  `8eebea4294a44a5260484c750d332781ed9f8ffd`; tested Cmajor is 1.0.3175.
-- Cmajor is an external scalar lane, intentionally outside default `make all`
-  and the vector/scheduling matrix.
-- Each DSP owns `build/cmajor/<dsp>/` so `make -j` is collision-free.
-- The pinned C++ impulse architecture and `cmajor_cpp_dsp` adapter are referenced
-  in place and are not copied into faust-rs.
-- The adapter validates audio and input controls but does not drain bargraph
-  output events; a separate runtime test is still required.
+- Scope is scalar `mem0` only. Vector custom-memory lowering, `-it`, other
+  backends, and `mem1`–`mem3` fail closed.
+- Generated C++ preserves the legacy `dsp_memory_manager` names but fixes the
+  pinned reference's lifecycle, clone, owner, failure, alignment, and sentinel
+  defects.
+- Generated C and Cranelift use the shared, versioned, context-carrying,
+  alignment-aware `faust_memory_manager` ABI; these are documented Rust
+  extensions.
+- Serialized Cranelift factories retain mode/layout inputs but never callback
+  pointers, so restored `mem0` factories require a fresh manager binding.
+- `compute_cost` version 2 describes the effective scalar loop; branch costs
+  use a component-wise upper envelope. Common-subset counts match pinned Faust
+  C++, while D6 corrections are explicitly allowlisted.
 
 ## Validation Run
 
-- Direct `bells` Cmajor impulse target -> pass: frontend accepted the generated
-  source and its runtime trace matched `reference/bells.ir`; maximum source
-  parenthesis depth fell from 111 to 3.
-- `make -f Make.cmajor all` -> pass/no pending targets; 126 supported Cmajor
-  traces are present after removing `bells` from the exclusions.
-- Cmajor backend unit tests and 17 compiler integration tests -> pass.
-- `RUSTDOCFLAGS=-Dwarnings cargo doc -p codegen -p compiler --no-deps` -> pass.
-- `cargo fmt --all -- --check` -> pass.
+- `cargo fmt --all` -> pass.
+- `cargo doc -p codegen -p compiler -p cranelift-ffi --no-deps` -> pass.
 - `cargo clippy --workspace --all-targets -- -D warnings` -> pass.
-- `cargo test --workspace --all-targets` -> pass.
+- `cargo test --workspace --all-targets` -> pass, including the permitted
+  hermetic loopback test.
 - `cargo run -p xtask -- golden-check` -> pass.
-- `cargo run --release -p xtask -- compile-budget-check` -> pass, no baseline
-  update; final `bells` front-end measurement 13.800 units against an unchanged
-  18.318-unit ceiling.
+- `cargo run --release -p xtask -- compile-budget-check` -> pass for five
+  scalar/vector codegen and eight normalized front-end cases; no baseline
+  update.
+- `make -B -C tests/impulse-tests all-mem0` -> pass for C, C++, Cranelift,
+  JSON/cost parity, and O0/O3.
+- `make -C tests/impulse-tests mem0-sanitize` -> pass with ASan/UBSan on the
+  supported macOS toolchain.
+- `cargo test -p compiler --test mem0_cpp_differential -- --nocapture` -> all
+  three live tests pass against pinned Faust C++ `8eebea429`.
 
 ## Open Issues / Blockers
 
-- Seven impulse exclusions are explicit in `tests/impulse-tests/known.mk`:
-  shared `subcontainer1`; one-sample-incompatible `bs`; unsupported `sound`;
-  and generated tables expanded into oversized literal initializers in
-  `modulations`, `osci`, `tester`, and `tester2`.
-- The upstream adapter prints lifecycle `checkDefaults` warnings for some DSPs
-  because its reset methods are no-ops. Traces still match; direct generated
-  lifecycle tests remain authoritative.
-- `golden-check-cpp` still has the previously recorded 34 unrelated metadata
-  name mismatches; no snapshot was changed.
+- None within the approved `mem0` scope.
+- Broader Cranelift FIR subset completion and native-code serialization remain
+  pre-existing backend work, not blockers for strict-lowered `mem0` fixtures.
 
 ## Next Steps
 
-1. Add Cmajor runtime event capture for UI mutation and bargraph cadence.
-2. Preserve table-generator provenance and emit compact `SIG0`/`fill..._<size>`
-   code to remove `modulations`, `osci`, `tester`, and `tester2`.
-3. Reassess soundfile support and the shared subcontainer gap separately.
+1. Let CI repeat the cross-platform workspace/golden gates.
+2. Treat any future `mem1`–`mem3` or vector support as a separately planned
+   compatibility phase; do not silently map it to `mem0`.
 
 ## Useful Commands to Resume
 
-- `make -C tests/impulse-tests -j4 cmajor CMAJ_BIN=/usr/local/bin/cmaj FAUST_CPP=/Users/letz/Developpements/RUST/faust/build/bin/faust`
-- `make -C tests/impulse-tests -f Make.cmajor all dspfiles='dsp/APF.dsp' CMAJ_BIN=/usr/local/bin/cmaj`
-- `CMAJ_BIN=/usr/local/bin/cmaj FAUST_CPP_BIN=/Users/letz/Developpements/RUST/faust/build/bin/faust cargo test -p compiler --test cmajor_backend`
-
-## Notes
-
-- The 126 passing traces include every current `upsampling_*` and
-  `downsampling_*` impulse fixture.
+- `make -C tests/impulse-tests all-mem0`
+- `make -C tests/impulse-tests mem0-sanitize`
+- `cargo test -p compiler --test mem0_cpp_differential -- --nocapture`
+- `cargo run --release -p xtask -- compile-budget-check`
