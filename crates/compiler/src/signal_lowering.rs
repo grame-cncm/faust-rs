@@ -779,6 +779,7 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
         origins: lowered.origins.clone(),
     })?;
     time_phase_with_sink(timing_sink, "cpp-codegen", || {
+        effective_options.double_precision = ctx.real_type == crate::RealType::Float64;
         generate_cpp_module(&lowered.store, lowered.module, &effective_options)
     })
     .map_err(|error| LowerError::Codegen {
