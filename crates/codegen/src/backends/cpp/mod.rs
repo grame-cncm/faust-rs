@@ -26,6 +26,7 @@ use fir::{FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
 
 use crate::backends::c_family::{self, CFamilySyntax, EmitMode};
 use crate::backends::faust_api;
+use crate::memory_layout::MemoryManagerMode;
 
 pub const BACKEND_NAME: &str = "cpp";
 
@@ -51,6 +52,12 @@ const SYNTAX: CFamilySyntax = CFamilySyntax {
 /// C++ backend options for module-first emission.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CppOptions {
+    /// Custom memory-manager layout selected for generated state.
+    ///
+    /// Source provenance: Faust C++ `global::gMemoryManager` and
+    /// `CPPCodeContainer`. Passing it explicitly is an `adapted` replacement
+    /// for the reference compiler's process-global option.
+    pub memory_manager_mode: MemoryManagerMode,
     /// Optional namespace wrapping generated code.
     pub namespace: Option<String>,
     /// Optional class name override for the FIR module name.
@@ -91,6 +98,7 @@ impl Default for CppOptions {
     /// convention for deterministic generated type names.
     fn default() -> Self {
         Self {
+            memory_manager_mode: MemoryManagerMode::None,
             namespace: None,
             class_name: Some("mydsp".to_owned()),
             super_class_name: Some("dsp".to_owned()),

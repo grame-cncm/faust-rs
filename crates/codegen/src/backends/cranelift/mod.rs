@@ -43,6 +43,8 @@ use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 use std::collections::HashMap;
 use std::ffi::c_void;
 
+use crate::memory_layout::MemoryManagerMode;
+
 mod api;
 mod core;
 mod host;

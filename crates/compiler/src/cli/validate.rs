@@ -96,6 +96,11 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         std::process::exit(2);
     }
 
+    if let Err(error) = validate_memory_manager_options(cli) {
+        eprintln!("ERROR : {error}");
+        std::process::exit(1);
+    }
+
     // Execution-option validation happens before any parsing or lowering
     // (plan §4.2): when `-lang` names the backend, consult the capability
     // table now; backend paths selected without `-lang` are enforced by the
@@ -274,4 +279,55 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         }
     }
     Some(mode_count)
+}
+
+/// Validates the scalar native-backend capability boundary for `mem0`.
+///
+/// Kept as a pure helper so aliases and backend combinations can be tested
+/// without exercising the process-exit orchestration. The C++ reference
+/// accepts only its C++ backend; C and Cranelift are deliberate faust-rs
+/// extensions frozen by the mem0 Phase 0 report.
+pub(crate) fn validate_memory_manager_options(cli: &CliArgs) -> Result<(), String> {
+    if !cli.memory_manager {
+        return Ok(());
+    }
+    if cli.vec {
+        return Err("-mem0 is currently supported only in scalar mode; remove -vec".to_owned());
+    }
+
+    let backend = if let Some(lang) = cli.lang {
+        Some(cli_backend_id(lang))
+    } else if cli.dump_c {
+        Some("c")
+    } else if cli.dump_cranelift {
+        Some("cranelift")
+    } else if cli.dump_cpp || cli.dump_json {
+        Some("cpp")
+    } else if cli.golden
+        || cli.parse
+        || cli.dump_box
+        || cli.export_dsp
+        || cli.dump_sig
+        || cli.dump_cpp_from_fbc
+        || cli.dump_fir
+        || cli.dump_fir_verify
+        || cli.check
+        || cli.dump_interp
+    {
+        None
+    } else {
+        // No explicit output mode means the default C++ backend.
+        Some("cpp")
+    };
+
+    match backend {
+        Some("c" | "cpp" | "cranelift") => Ok(()),
+        Some(backend) => Err(format!(
+            "-mem0 cannot be used with the '{backend}' backend; supported backends are 'c', 'cpp', and 'cranelift'"
+        )),
+        None => Err(
+            "-mem0 requires C, C++, or Cranelift code generation (or backend-specific JSON)"
+                .to_owned(),
+        ),
+    }
 }

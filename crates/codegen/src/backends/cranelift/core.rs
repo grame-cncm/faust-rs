@@ -35,6 +35,12 @@ pub enum CraneliftOptLevel {
 /// but no codegen semantics are implemented yet.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CraneliftOptions {
+    /// Custom host-managed state layout.
+    ///
+    /// API mapping status: `adapted`; Faust C++ has no Cranelift backend.
+    /// The value is retained in the compiled module/factory path and changes
+    /// JIT layout only when it is [`MemoryManagerMode::Mem0`].
+    pub memory_manager_mode: MemoryManagerMode,
     /// Optimization level requested for Cranelift.
     pub opt_level: CraneliftOptLevel,
     /// Optional explicit target triple (string form for portability at the

@@ -328,6 +328,18 @@ pub struct CliArgs {
     /// compiler.
     #[arg(long = "double", action = ArgAction::SetTrue)]
     pub double: bool,
+    /// Use the host custom memory manager for eligible native DSP state
+    /// (`-mem`/`-mem0`/`--memory-manager`/`--memory-manager0`).
+    ///
+    /// The four spellings select the same typed `mem0` mode. This first port is
+    /// scalar-only and restricted to C, C++, and Cranelift; later memory modes
+    /// are deliberately not accepted.
+    #[arg(
+        long = "memory-manager",
+        alias = "memory-manager0",
+        action = ArgAction::SetTrue
+    )]
+    pub memory_manager: bool,
     /// Maximum delay (in samples) below which the shift/copy strategy is used
     /// instead of a circular ring buffer (`-mcd N`).
     ///
@@ -500,6 +512,10 @@ pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<Stri
         }
         if arg == "-json" {
             normalized.push("--json".to_owned());
+            continue;
+        }
+        if arg == "-mem" || arg == "-mem0" {
+            normalized.push("--memory-manager".to_owned());
             continue;
         }
         if arg == "-version" {

@@ -83,8 +83,14 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     if cli.dump_cranelift || matches!(cli.lang, Some(CliLang::Cranelift)) {
         let subset_gap =
             diagnose_cranelift_compute_subset_gap(&store, module).map_err(|err| err.to_string());
-        let compiled = match generate_cranelift_module(&store, module, &CraneliftOptions::default())
-        {
+        let compiled = match generate_cranelift_module(
+            &store,
+            module,
+            &CraneliftOptions {
+                memory_manager_mode: selected_memory_manager_mode(cli),
+                ..CraneliftOptions::default()
+            },
+        ) {
             Ok(compiled) => compiled,
             Err(err) => {
                 eprintln!("Cranelift fixture codegen failed: {err}");
@@ -303,6 +309,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
 
     if cli.dump_cpp || matches!(cli.lang, Some(CliLang::Cpp)) || mode_count == 0 {
         let options = CppOptions {
+            memory_manager_mode: selected_memory_manager_mode(cli),
             class_name: selected_class_name(cli),
             super_class_name: selected_super_class_name(cli),
             compile_options: Some(compile_options_full_string(
@@ -329,6 +336,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
 
     if cli.dump_c || matches!(cli.lang, Some(CliLang::C)) {
         let options = COptions {
+            memory_manager_mode: selected_memory_manager_mode(cli),
             class_name: selected_class_name(cli),
             compile_options: Some(compile_options_full_string(
                 cli,

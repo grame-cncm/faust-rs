@@ -26,6 +26,7 @@ use super::diagnostics::{
 use super::runner::{
     emit_wasm_output, render_directory_info, render_version_text, render_wast_output,
 };
+use super::validate::validate_memory_manager_options;
 
 #[test]
 fn normalize_legacy_args_maps_dash_fir_to_lang_fir() {
@@ -80,6 +81,82 @@ fn vec_flags_map_to_compute_mode() {
     assert_eq!(cli.vs, ComputeMode::DEFAULT_VEC_SIZE);
     assert_eq!(cli.vs, 32);
     assert_eq!(selected_compute_mode(&cli), ComputeMode::Scalar);
+}
+
+#[test]
+fn all_documented_mem0_aliases_select_one_typed_mode() {
+    use codegen::memory_layout::MemoryManagerMode;
+
+    for argv in [
+        vec!["faust-rs", "-mem", "foo.dsp"],
+        vec!["faust-rs", "-mem0", "foo.dsp"],
+        vec!["faust-rs", "--memory-manager", "foo.dsp"],
+        vec!["faust-rs", "--memory-manager0", "foo.dsp"],
+    ] {
+        let normalized = normalize_legacy_args(argv.iter().map(ToString::to_string));
+        let cli = CliArgs::parse_from(normalized);
+        assert!(cli.memory_manager, "{argv:?}");
+        assert_eq!(
+            super::runner::selected_memory_manager_mode(&cli),
+            MemoryManagerMode::Mem0,
+            "{argv:?}"
+        );
+        assert_eq!(
+            super::runner::compile_options_full_string(&cli, Some("cpp")),
+            "-lang cpp -mem0 -single",
+            "{argv:?}"
+        );
+    }
+}
+
+#[test]
+fn mem0_capability_is_scalar_c_cpp_and_cranelift_only() {
+    for backend in ["c", "cpp", "cranelift"] {
+        let cli =
+            CliArgs::parse_from(["faust-rs", "--memory-manager", "--lang", backend, "foo.dsp"]);
+        validate_memory_manager_options(&cli)
+            .unwrap_or_else(|error| panic!("{backend} should accept mem0: {error}"));
+    }
+
+    let vector = CliArgs::parse_from([
+        "faust-rs",
+        "--memory-manager",
+        "--vec",
+        "--lang",
+        "cpp",
+        "foo.dsp",
+    ]);
+    assert!(
+        validate_memory_manager_options(&vector)
+            .unwrap_err()
+            .contains("scalar mode")
+    );
+
+    let rust = CliArgs::parse_from(["faust-rs", "--memory-manager", "--lang", "rust", "foo.dsp"]);
+    assert!(
+        validate_memory_manager_options(&rust)
+            .unwrap_err()
+            .contains("'rust' backend")
+    );
+
+    let parse = CliArgs::parse_from(["faust-rs", "--memory-manager", "--parse", "foo.dsp"]);
+    assert!(
+        validate_memory_manager_options(&parse)
+            .unwrap_err()
+            .contains("requires C, C++, or Cranelift")
+    );
+}
+
+#[test]
+fn unported_memory_manager_modes_are_parse_errors() {
+    for spelling in ["-mem1", "-mem2", "-mem3", "--memory-manager3"] {
+        let normalized = normalize_legacy_args(
+            ["faust-rs", spelling, "foo.dsp"]
+                .into_iter()
+                .map(str::to_owned),
+        );
+        assert!(CliArgs::try_parse_from(normalized).is_err(), "{spelling}");
+    }
 }
 
 // ── `-ss` / `--scheduling-strategy` (vectorization port plan P2) ─────────────

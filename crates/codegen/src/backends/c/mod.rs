@@ -29,6 +29,7 @@ use fir::{AccessType, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
 use crate::backends::c_family::{self, CFamilySyntax, EmitMode, StructInit, TableInit};
 use crate::backends::faust_api;
+use crate::memory_layout::MemoryManagerMode;
 
 pub const BACKEND_NAME: &str = "c";
 
@@ -54,6 +55,12 @@ const SYNTAX: CFamilySyntax = CFamilySyntax {
 /// C backend options for module-first emission.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct COptions {
+    /// Custom memory-manager layout selected for generated state.
+    ///
+    /// Source provenance: Faust C++ `global::gMemoryManager` and
+    /// `CCodeContainer` memory-manager branches. The typed per-request value is
+    /// an `adapted` replacement for mutable global state.
+    pub memory_manager_mode: MemoryManagerMode,
     /// Optional C struct name override for the FIR module name.
     pub class_name: Option<String>,
     /// C spelling used for FIR `Quad` values.
@@ -87,6 +94,7 @@ impl Default for COptions {
     /// convention for deterministic generated type names.
     fn default() -> Self {
         Self {
+            memory_manager_mode: MemoryManagerMode::None,
             class_name: Some("mydsp".to_owned()),
             quad_type_name: "quad".to_owned(),
             fixed_type_name: "fixed".to_owned(),

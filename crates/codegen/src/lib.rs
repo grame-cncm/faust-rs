@@ -28,6 +28,7 @@ pub mod backend_error;
 pub mod backends;
 pub mod fixtures;
 pub mod json;
+pub mod memory_layout;
 pub mod shortname;
 
 pub const CRATE_NAME: &str = "codegen";

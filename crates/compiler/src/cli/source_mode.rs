@@ -369,7 +369,10 @@ pub(crate) fn run_source_mode(
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let lane = selected_codegen_lane(cli).into_compiler_lane();
-        let options = CraneliftOptions::default();
+        let options = CraneliftOptions {
+            memory_manager_mode: selected_memory_manager_mode(cli),
+            ..CraneliftOptions::default()
+        };
         let result = compiler.compile_file_to_cranelift_report_with_lane(
             input_path,
             &cli.import_dir,
@@ -649,6 +652,7 @@ pub(crate) fn run_source_mode(
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = CppOptions {
+            memory_manager_mode: selected_memory_manager_mode(cli),
             class_name: selected_class_name(cli),
             super_class_name: selected_super_class_name(cli),
             compile_options: Some(compile_options_full_string(
@@ -683,6 +687,7 @@ pub(crate) fn run_source_mode(
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = COptions {
+            memory_manager_mode: selected_memory_manager_mode(cli),
             class_name: selected_class_name(cli),
             compile_options: Some(compile_options_full_string(
                 cli,

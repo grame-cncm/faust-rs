@@ -23,6 +23,7 @@ use box_ffi::{BoxFfiFirModule, export_fir_from_box_handle, export_fir_from_signa
 use codegen::backends::cranelift::{
     CraneliftOptLevel, CraneliftOptions, JitDspModule, generate_cranelift_module,
 };
+use codegen::memory_layout::MemoryManagerMode;
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, ComputeMode, ExpandDspRequest,
     GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane, TableInitMode,
@@ -302,10 +303,13 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromSignals(
         create_cranelift_factory_with_argv(&args, error_msg, |args| {
             let fir = export_fir_from_signal_array_handle(&source_name, signals)?;
             let fir_dump = fir::dump_fir(&fir.store, fir.module);
-            let double = parse_ffi_compile_args(args)
-                .map(|a| a.double)
-                .unwrap_or(false);
-            let jit = compile_fir_module_to_cranelift(&fir, opt_level, double)?;
+            let parsed = parse_ffi_compile_args(args)?;
+            let jit = compile_fir_module_to_cranelift(
+                &fir,
+                opt_level,
+                parsed.double,
+                memory_manager_mode(parsed.memory_manager0),
+            )?;
             let foreign_function_fingerprint = foreign_function_registry_fingerprint();
             build_scaffold_factory_common(
                 FactoryBuildSpec {
@@ -362,10 +366,13 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromBoxes(
         create_cranelift_factory_with_argv(&args, error_msg, |args| {
             let fir = export_fir_from_box_handle(&source_name, box_expr)?;
             let fir_dump = fir::dump_fir(&fir.store, fir.module);
-            let double = parse_ffi_compile_args(args)
-                .map(|a| a.double)
-                .unwrap_or(false);
-            let jit = compile_fir_module_to_cranelift(&fir, opt_level, double)?;
+            let parsed = parse_ffi_compile_args(args)?;
+            let jit = compile_fir_module_to_cranelift(
+                &fir,
+                opt_level,
+                parsed.double,
+                memory_manager_mode(parsed.memory_manager0),
+            )?;
             let foreign_function_fingerprint = foreign_function_registry_fingerprint();
             build_scaffold_factory_common(
                 FactoryBuildSpec {
@@ -797,6 +804,16 @@ fn canonicalize_cache_identity_argv(argv: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(argv.len());
     let mut i = 0;
     while i < argv.len() {
+        if matches!(
+            argv[i].as_str(),
+            "-mem" | "-mem0" | "--memory-manager" | "--memory-manager0"
+        ) {
+            if !out.iter().any(|arg| arg == "-mem0") {
+                out.push("-mem0".to_owned());
+            }
+            i += 1;
+            continue;
+        }
         out.push(argv[i].clone());
         if argv[i] == "-ss"
             && let Some(value) = argv.get(i + 1)
@@ -925,8 +942,8 @@ struct CompiledCraneliftFactory {
 /// `-ss` selects the scheduling strategy (vectorization port plan phase P2:
 /// plumbing only — the strategy is stored but not yet acted on).
 /// Returns the compiler plus the parsed `double` flag (needed by the JIT).
-fn compiler_from_argv(argv: &[String]) -> (FaustCompiler, bool) {
-    let parsed = parse_ffi_compile_args(argv).unwrap_or_default();
+fn compiler_from_argv(argv: &[String]) -> Result<(FaustCompiler, bool, MemoryManagerMode), String> {
+    let parsed = parse_ffi_compile_args(argv)?;
     let compute_mode = if parsed.vec_mode {
         ComputeMode::Vector {
             vec_size: parsed.vec_size,
@@ -952,7 +969,11 @@ fn compiler_from_argv(argv: &[String]) -> (FaustCompiler, bool) {
         Some(sample_rate) => compiler.with_table_init_sample_rate(sample_rate),
         None => compiler,
     };
-    (compiler, parsed.double)
+    Ok((
+        compiler,
+        parsed.double,
+        memory_manager_mode(parsed.memory_manager0),
+    ))
 }
 
 fn preflight_compile_file_to_cranelift(
@@ -960,7 +981,7 @@ fn preflight_compile_file_to_cranelift(
     argv: &[String],
     opt_level: c_int,
 ) -> Result<CompiledCraneliftFactory, String> {
-    let (compiler, double) = compiler_from_argv(argv);
+    let (compiler, double, memory_manager_mode) = compiler_from_argv(argv)?;
     let search_paths = collect_search_paths_for_file(path, argv);
     let fir = compiler
         .compile_file_to_fir_with_lane(path, &search_paths, SignalFirLane::TransformFastLane)
@@ -973,7 +994,7 @@ fn preflight_compile_file_to_cranelift(
         num_inputs,
         num_outputs,
     };
-    let jit = compile_fir_module_to_cranelift(&fir, opt_level, double)?;
+    let jit = compile_fir_module_to_cranelift(&fir, opt_level, double, memory_manager_mode)?;
     Ok(CompiledCraneliftFactory {
         fir,
         jit,
@@ -989,7 +1010,7 @@ fn preflight_compile_source_to_cranelift(
     opt_level: c_int,
     argv: &[String],
 ) -> Result<CompiledCraneliftFactory, String> {
-    let (compiler, double) = compiler_from_argv(argv);
+    let (compiler, double, memory_manager_mode) = compiler_from_argv(argv)?;
     let fir = compiler
         .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
         .map_err(|e| e.to_string())?;
@@ -1001,7 +1022,7 @@ fn preflight_compile_source_to_cranelift(
         num_inputs,
         num_outputs,
     };
-    let jit = compile_fir_module_to_cranelift(&fir, opt_level, double)?;
+    let jit = compile_fir_module_to_cranelift(&fir, opt_level, double, memory_manager_mode)?;
     Ok(CompiledCraneliftFactory {
         fir,
         jit,
@@ -1017,15 +1038,27 @@ fn compile_fir_module_to_cranelift(
     fir: &BoxFfiFirModule,
     opt_level: c_int,
     double: bool,
+    memory_manager_mode: MemoryManagerMode,
 ) -> Result<JitDspModule, String> {
     let extern_function_symbols = snapshot_registered_foreign_functions();
     let options = CraneliftOptions {
+        memory_manager_mode,
         opt_level: map_c_opt_level(opt_level),
         extern_function_symbols,
         double_precision: double,
         ..CraneliftOptions::default()
     };
     generate_cranelift_module(&fir.store, fir.module, &options).map_err(|e| e.to_string())
+}
+
+/// Converts the dependency-light FFI parser bit into the canonical codegen
+/// mode before JIT compilation.
+const fn memory_manager_mode(enabled: bool) -> MemoryManagerMode {
+    if enabled {
+        MemoryManagerMode::Mem0
+    } else {
+        MemoryManagerMode::None
+    }
 }
 
 /// Maps C integer optimization levels to the current Cranelift backend scaffold enum.
@@ -1692,6 +1725,25 @@ mod tests {
                 "-vs".to_owned(),
                 "64".to_owned(),
             ]
+        );
+    }
+
+    #[test]
+    fn cache_identity_canonicalizes_all_mem0_aliases() {
+        for spelling in ["-mem", "-mem0", "--memory-manager", "--memory-manager0"] {
+            assert_eq!(
+                canonicalize_cache_identity_argv(&[spelling.to_owned()]),
+                vec!["-mem0".to_owned()],
+                "{spelling}"
+            );
+        }
+        assert_ne!(
+            canonicalize_cache_identity_argv(&[]),
+            canonicalize_cache_identity_argv(&["-mem0".to_owned()])
+        );
+        assert_eq!(
+            canonicalize_cache_identity_argv(&["-mem".to_owned(), "--memory-manager0".to_owned(),]),
+            vec!["-mem0".to_owned()]
         );
     }
 

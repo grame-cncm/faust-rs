@@ -14,6 +14,7 @@ use codegen::backends::julia::JuliaRealType;
 use codegen::backends::rust::RustRealType;
 use codegen::backends::wasm::WasmOptions;
 use codegen::fixtures::backend_test_fixtures;
+use codegen::memory_layout::MemoryManagerMode;
 use compiler::{
     Compiler, CompilerError, ComputeMode, ControlRateMode, FaustInstallPaths, FirVerifyOptions,
     ProcessingApi, RealType, SchedulingStrategy, TableInitMode,
@@ -258,6 +259,9 @@ pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) ->
     if cli.external_control {
         parts.push("-ec".to_owned());
     }
+    if cli.memory_manager {
+        parts.push("-mem0".to_owned());
+    }
     if let Some(name) = cli.class_name.as_deref()
         && name != codegen::DEFAULT_CLASS_NAME
     {
@@ -434,6 +438,20 @@ pub fn selected_compute_mode(cli: &CliArgs) -> ComputeMode {
         }
     } else {
         ComputeMode::Scalar
+    }
+}
+
+/// Maps the four accepted CLI spellings to the one typed backend mode.
+///
+/// Source provenance: Faust C++ `compiler/global.cpp` assigns each spelling to
+/// `gMemoryManager = 0`. This explicit return value prevents that option from
+/// becoming process-global state in the Rust compiler.
+#[must_use]
+pub fn selected_memory_manager_mode(cli: &CliArgs) -> MemoryManagerMode {
+    if cli.memory_manager {
+        MemoryManagerMode::Mem0
+    } else {
+        MemoryManagerMode::None
     }
 }
 
