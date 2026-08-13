@@ -89,6 +89,8 @@ pub enum CraneliftBackendErrorCode {
     MissingCompute,
     /// Failed to initialize or use the Cranelift JIT toolchain.
     JitFailure,
+    /// Custom-memory layout analysis or lowering failed.
+    MemoryLayout,
 }
 
 impl CraneliftBackendErrorCode {
@@ -99,6 +101,7 @@ impl CraneliftBackendErrorCode {
             Self::UnsupportedModuleShape => "FRS-CGEN-CLIF-0002",
             Self::MissingCompute => "FRS-CGEN-CLIF-0003",
             Self::JitFailure => "FRS-CGEN-CLIF-0004",
+            Self::MemoryLayout => "FRS-CGEN-CLIF-0005",
         }
     }
 }
@@ -145,6 +148,14 @@ impl CraneliftBackendError {
             message: message.into(),
         }
     }
+
+    /// Builds a `MemoryLayout` backend error.
+    pub(crate) fn memory_layout(message: impl Into<String>) -> Self {
+        Self {
+            code: CraneliftBackendErrorCode::MemoryLayout,
+            message: message.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for CraneliftBackendError {
@@ -186,6 +197,8 @@ pub struct JitDspModule {
     pub(crate) compute_body_lowered: bool,
     pub(crate) generated_functions_clif: Vec<(String, String)>,
     pub(crate) struct_layout: StructLayoutPlan,
+    pub(crate) mem0_analysis: Option<Mem0Analysis>,
+    pub(crate) static_memory_slots: Vec<StaticMemorySlot>,
     pub(crate) jit_module: JITModule,
 }
 
@@ -300,6 +313,21 @@ impl JitDspModule {
         &self.struct_layout
     }
 
+    /// Returns the canonical custom-memory snapshot retained by a `-mem0` JIT.
+    ///
+    /// The FFI runtime consumes this exact snapshot for manager description and
+    /// allocation; it never reclassifies FIR after machine code generation.
+    #[must_use]
+    pub fn mem0_analysis(&self) -> Option<&Mem0Analysis> {
+        self.mem0_analysis.as_ref()
+    }
+
+    /// Returns manager-backed static-table pointer slots owned by this JIT.
+    #[must_use]
+    pub fn static_memory_slots(&self) -> &[StaticMemorySlot] {
+        &self.static_memory_slots
+    }
+
     /// Internal guard used by tests to ensure the JIT module stays owned/alive.
     ///
     /// This method intentionally touches the private `jit_module` field so test
@@ -390,6 +418,26 @@ pub enum StructFieldKind {
     ///
     /// `len` is the number of elements (not bytes).
     Table { elem_type: FirType, len: u32 },
+    /// Pointer slot whose payload is allocated by the host memory manager.
+    ExternalTable {
+        /// Scalar representation stored in the manager-owned payload.
+        elem_type: FirType,
+        /// Logical payload length in elements.
+        len: u32,
+        /// Stable identity in the retained canonical memory layout.
+        zone_id: MemoryZoneId,
+    },
+}
+
+/// Finalized JIT data slot used to publish one manager-owned static table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaticMemorySlot {
+    /// FIR/JIT data symbol name.
+    pub name: String,
+    /// Stable identity of the matching class allocation.
+    pub zone_id: MemoryZoneId,
+    /// Finalized address of the JIT-owned pointer slot.
+    pub address: usize,
 }
 
 impl StructFieldLayout {
@@ -401,7 +449,7 @@ impl StructFieldLayout {
     pub fn scalar_type(&self) -> Option<&FirType> {
         match &self.kind {
             StructFieldKind::Scalar(t) => Some(t),
-            StructFieldKind::Table { .. } => None,
+            StructFieldKind::Table { .. } | StructFieldKind::ExternalTable { .. } => None,
         }
     }
 }
@@ -586,6 +634,7 @@ pub(crate) fn build_struct_layout_for_module(
     module: FirId,
     ptr_size: u32,
     double: bool,
+    mem0: Option<&Mem0Analysis>,
 ) -> Result<StructLayoutPlan, CraneliftBackendError> {
     let (dsp_struct, globals) = match match_fir(store, module) {
         FirMatch::Module {
@@ -619,9 +668,17 @@ pub(crate) fn build_struct_layout_for_module(
         }
     };
 
+    let external_zones: HashMap<_, _> = mem0
+        .into_iter()
+        .flat_map(|analysis| analysis.memory_layout.zones.iter())
+        .filter(|zone| {
+            zone.scope == MemoryScope::Instance && zone.role == MemoryRole::InstanceBuffer
+        })
+        .map(|zone| (zone.name.as_str(), zone.id))
+        .collect();
     let mut fields = Vec::new();
     let mut offset = 0u32;
-    let mut struct_align = 1u32;
+    let mut struct_align = if mem0.is_some() { ptr_size } else { 1 };
     for item in dsp_struct_items.into_iter().chain(global_items) {
         match match_fir(store, item) {
             FirMatch::DeclareVar {
@@ -638,25 +695,44 @@ pub(crate) fn build_struct_layout_for_module(
                             "Cranelift dsp* array field length does not fit in u32",
                         )
                     })?;
-                    let size = scalar.size.checked_mul(len).ok_or_else(|| {
+                    let payload_size = scalar.size.checked_mul(len).ok_or_else(|| {
                         CraneliftBackendError::unsupported_module_shape(
                             "Cranelift dsp* array field size overflow",
                         )
                     })?;
-                    offset = align_up(offset, scalar.align);
+                    let external_zone = external_zones.get(name.as_str()).copied();
+                    let storage = if external_zone.is_some() {
+                        LayoutScalar {
+                            size: ptr_size,
+                            align: ptr_size,
+                        }
+                    } else {
+                        LayoutScalar {
+                            size: payload_size,
+                            align: scalar.align,
+                        }
+                    };
+                    offset = align_up(offset, storage.align);
                     fields.push(StructFieldLayout {
                         name,
-                        kind: StructFieldKind::Table { elem_type, len },
+                        kind: match external_zone {
+                            Some(zone_id) => StructFieldKind::ExternalTable {
+                                elem_type,
+                                len,
+                                zone_id,
+                            },
+                            None => StructFieldKind::Table { elem_type, len },
+                        },
                         offset_bytes: offset,
-                        size_bytes: size,
-                        align_bytes: scalar.align,
+                        size_bytes: storage.size,
+                        align_bytes: storage.align,
                     });
-                    offset = offset.checked_add(size).ok_or_else(|| {
+                    offset = offset.checked_add(storage.size).ok_or_else(|| {
                         CraneliftBackendError::unsupported_module_shape(
                             "Cranelift dsp* layout size overflow",
                         )
                     })?;
-                    struct_align = struct_align.max(scalar.align);
+                    struct_align = struct_align.max(storage.align);
                 }
                 scalar_ty => {
                     let scalar = fir_type_layout_scalar(ptr_size, &scalar_ty, double)?;
@@ -701,25 +777,44 @@ pub(crate) fn build_struct_layout_for_module(
                         "Cranelift dsp* table length does not fit in u32",
                     )
                 })?;
-                let size = scalar.size.checked_mul(len).ok_or_else(|| {
+                let payload_size = scalar.size.checked_mul(len).ok_or_else(|| {
                     CraneliftBackendError::unsupported_module_shape(
                         "Cranelift dsp* table size overflow",
                     )
                 })?;
-                offset = align_up(offset, scalar.align);
+                let external_zone = external_zones.get(name.as_str()).copied();
+                let storage = if external_zone.is_some() {
+                    LayoutScalar {
+                        size: ptr_size,
+                        align: ptr_size,
+                    }
+                } else {
+                    LayoutScalar {
+                        size: payload_size,
+                        align: scalar.align,
+                    }
+                };
+                offset = align_up(offset, storage.align);
                 fields.push(StructFieldLayout {
                     name,
-                    kind: StructFieldKind::Table { elem_type, len },
+                    kind: match external_zone {
+                        Some(zone_id) => StructFieldKind::ExternalTable {
+                            elem_type,
+                            len,
+                            zone_id,
+                        },
+                        None => StructFieldKind::Table { elem_type, len },
+                    },
                     offset_bytes: offset,
-                    size_bytes: size,
-                    align_bytes: scalar.align,
+                    size_bytes: storage.size,
+                    align_bytes: storage.align,
                 });
-                offset = offset.checked_add(size).ok_or_else(|| {
+                offset = offset.checked_add(storage.size).ok_or_else(|| {
                     CraneliftBackendError::unsupported_module_shape(
                         "Cranelift dsp* layout size overflow",
                     )
                 })?;
-                struct_align = struct_align.max(scalar.align);
+                struct_align = struct_align.max(storage.align);
             }
             FirMatch::DeclareTable {
                 access: AccessType::Static | AccessType::Global,
@@ -743,7 +838,11 @@ pub(crate) fn build_struct_layout_for_module(
             }
         }
     }
-    let size_bytes = align_up(offset, struct_align);
+    let size_bytes = if mem0.is_some() {
+        align_up(offset, struct_align).max(1)
+    } else {
+        align_up(offset, struct_align)
+    };
     Ok(StructLayoutPlan {
         fields,
         size_bytes,

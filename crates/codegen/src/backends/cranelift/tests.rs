@@ -3,6 +3,7 @@ use super::{
     generate_cranelift_module,
 };
 use crate::fixtures::build_sine_phasor_test_module;
+use crate::memory_layout::MemoryManagerMode;
 use fir::{AccessType, FirBinOp, FirBuilder, FirId, FirType, NamedType};
 use std::ffi::c_void;
 
@@ -1855,6 +1856,37 @@ fn compile_module_lowers_struct_array_var_subset_body() {
             len: 2
         }
     ));
+}
+
+#[test]
+fn mem0_layout_replaces_struct_array_payload_with_a_linked_pointer_slot() {
+    let (store, module) = build_struct_array_var_subset_module();
+    let options = CraneliftOptions {
+        memory_manager_mode: MemoryManagerMode::Mem0,
+        ..CraneliftOptions::default()
+    };
+    let compiled = generate_cranelift_module(&store, module, &options)
+        .expect("mem0 struct-array fixture should compile");
+    let field = compiled
+        .struct_layout()
+        .field("fRec0")
+        .expect("externalized array field");
+    let StructFieldKind::ExternalTable {
+        elem_type,
+        len,
+        zone_id,
+    } = &field.kind
+    else {
+        panic!("mem0 array must be a pointer slot: {field:?}");
+    };
+    assert_eq!(elem_type, &FirType::Float32);
+    assert_eq!(*len, 2);
+    assert_eq!(field.size_bytes as usize, std::mem::size_of::<*mut u8>());
+    let analysis = compiled.mem0_analysis().expect("retained mem0 snapshot");
+    assert_eq!(
+        analysis.memory_layout.zones[zone_id.0 as usize].name,
+        "fRec0"
+    );
 }
 
 #[test]

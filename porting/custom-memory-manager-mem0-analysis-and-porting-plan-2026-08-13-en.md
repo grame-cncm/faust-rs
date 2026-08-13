@@ -4,7 +4,7 @@ Date: 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
-Status: implementation active; M0–M4 complete.
+Status: implementation active; M0–M5 complete.
 
 ## 1. Goal and scope
 
@@ -416,34 +416,33 @@ Count every supported scalar literal kind, document `mathop` as function-call
 count for compatibility, and reject unknown executable FIR nodes rather than
 silently undercounting. The exact reference-fix policy is decision D6.
 
-### 4.12 Current Cranelift storage and FFI gaps
+### 4.12 Cranelift storage and FFI gap closure
 
 These are not defects in the pinned C++ reference, because that compiler has no
-Cranelift backend. They are current `faust-rs` limitations that block a real
-`mem0` implementation:
+Cranelift backend. M5 closed the following former `faust-rs` limitations:
 
-- `CraneliftOptions` has no memory-manager mode;
-- `StructLayoutPlan` stores all tables inline as
-  `StructFieldKind::Table`, and lowering indexes directly into that payload;
-- `DspStateBuffer` performs one `alloc_zeroed`/`dealloc` pair and its current
-  clone copies only that contiguous block;
-- writable runtime-generated static tables are JIT-owned data objects, not
-  factory/class allocations owned by the host manager;
-- the C++ wrapper implements `setMemoryManager` as a no-op and always returns
-  `nullptr` from `getMemoryManager`;
-- the C API has no `setCCraneliftMemoryManager` entry point, and the Cranelift
-  FFI parity matrix currently marks the family deferred;
+- `CraneliftOptions` carries the typed mode and `JitDspModule` retains the
+  canonical analysis used by its layout and runtime;
+- `StructFieldKind::ExternalTable` links pointer slots to stable memory-zone
+  identities, and lowering dereferences them for every struct-table access;
+- `DspStateBuffer` transactionally owns the managed object and instance zones,
+  deep clone recreates every allocation, and destruction uses captured copied
+  callbacks in reverse ownership order;
+- writable generated static tables use finalized JIT pointer slots backed by
+  factory-owned class allocations, while literal tables remain JIT constants;
+- the C API exports `setCCraneliftMemoryManager`, and the C++ wrapper adapts its
+  legacy manager through factory-lived callback glue with functional set/get;
 - factory JSON is a minimal hand-built status object and cannot describe a
   target layout or `compute_cost`;
-- source/serialized factory rebuild and cache identity do not yet carry a
-  memory layout mode;
+- source/serialized factory identity carries canonical `-mem0`; callback
+  addresses are never serialized and rebuilt factories intentionally start
+  unbound;
 - unsupported lowering may produce a no-op compute stub, which must never be
   mistaken for successful `mem0` runtime validation.
 
-Plan: treat Cranelift as a third consumer of the canonical `Mem0Analysis`, not
-as a separate allocator feature. The JIT layout, lowering, factory lifecycle,
-FFI glue, JSON, cache/serialization policy, clone path, and impulse runner all
-change together under the decisions in sections 6.7 and 8.
+The remaining Cranelift work is M6 shared strict JSON and M7 impulse-runner
+coverage. Unsupported lowering remains an independent pre-existing fallback;
+strict mem0 runtime tests require a genuinely lowered body.
 
 ## 5. Current `faust-rs` boundary
 
@@ -1487,6 +1486,8 @@ DSPs can use independent manager contexts; runtime output matches the ordinary
 C backend.
 
 ### M5 — Cranelift JIT layout, runtime ownership, and FFI
+
+Implementation status: **complete (2026-08-13)**.
 
 Deliverables:
 

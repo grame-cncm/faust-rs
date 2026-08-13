@@ -9,7 +9,11 @@ use super::*;
 /// Pre-declared JIT data for the module's `AccessType::Static` tables: the
 /// `name -> DataId` handles function bodies reference, and the declared element
 /// type of each table.
-pub(crate) type StaticTableJitData = (HashMap<String, DataId>, HashMap<String, FirType>);
+pub(crate) struct StaticTableJitData {
+    pub(crate) ids: HashMap<String, DataId>,
+    pub(crate) elem_types: HashMap<String, FirType>,
+    pub(crate) external: HashMap<String, MemoryZoneId>,
+}
 
 /// Declares and defines every `AccessType::Static` table from the FIR
 /// `static_decls` block as a JIT data object.
@@ -28,18 +32,38 @@ pub(crate) fn define_static_tables_in_jit(
     module: FirId,
     jit: &mut JITModule,
     double: bool,
+    mem0: Option<&Mem0Analysis>,
 ) -> Result<StaticTableJitData, CraneliftBackendError> {
     let static_decls_block = match match_fir(store, module) {
         FirMatch::Module { static_decls, .. } => static_decls,
-        _ => return Ok((HashMap::new(), HashMap::new())),
+        _ => {
+            return Ok(StaticTableJitData {
+                ids: HashMap::new(),
+                elem_types: HashMap::new(),
+                external: HashMap::new(),
+            });
+        }
     };
     let items = match match_fir(store, static_decls_block) {
         FirMatch::Block(ids) => ids,
-        _ => return Ok((HashMap::new(), HashMap::new())),
+        _ => {
+            return Ok(StaticTableJitData {
+                ids: HashMap::new(),
+                elem_types: HashMap::new(),
+                external: HashMap::new(),
+            });
+        }
     };
 
     let mut result = HashMap::new();
     let mut elem_types = HashMap::new();
+    let external_zones: HashMap<_, _> = mem0
+        .into_iter()
+        .flat_map(|analysis| analysis.memory_layout.zones.iter())
+        .filter(|zone| zone.scope == MemoryScope::Class && zone.role == MemoryRole::StaticTable)
+        .map(|zone| (zone.name.as_str(), zone.id))
+        .collect();
+    let mut external = HashMap::new();
     for id in items {
         // A generated table arrives as an uninitialized `Static` array: no
         // contents, because `staticInit` computes them. It still needs a data
@@ -63,6 +87,7 @@ pub(crate) fn define_static_tables_in_jit(
                     )));
                 }
             };
+            let external_zone = external_zones.get(name.as_str()).copied();
             let data_id = jit
                 .declare_data(&name, Linkage::Local, true, false)
                 .map_err(|e| {
@@ -70,13 +95,20 @@ pub(crate) fn define_static_tables_in_jit(
                 })?;
             let mut desc = DataDescription::new();
             desc.init = Init::Zeros {
-                size: size * elem_bytes,
+                size: external_zone.map_or(size * elem_bytes, |_| {
+                    jit.target_config().pointer_type().bytes() as usize
+                }),
             };
-            desc.align = Some(align);
+            desc.align = Some(external_zone.map_or(align, |_| {
+                u64::from(jit.target_config().pointer_type().bytes())
+            }));
             jit.define_data(data_id, &desc).map_err(|e| {
                 CraneliftBackendError::jit_failure(format!("define_data `{name}` failed: {e}"))
             })?;
             elem_types.insert(name.clone(), elem.as_ref().clone());
+            if let Some(zone_id) = external_zone {
+                external.insert(name.clone(), zone_id);
+            }
             result.insert(name, data_id);
             continue;
         }
@@ -172,7 +204,11 @@ pub(crate) fn define_static_tables_in_jit(
         elem_types.insert(name.clone(), elem_type);
         result.insert(name, data_id);
     }
-    Ok((result, elem_types))
+    Ok(StaticTableJitData {
+        ids: result,
+        elem_types,
+        external,
+    })
 }
 
 /// Declares imported data symbols for FIR `AccessType::Global` scalar loads.
@@ -229,6 +265,7 @@ pub(crate) fn declare_jit_function(
     jit: &mut JITModule,
     static_data_ids: &HashMap<String, DataId>,
     static_table_elem_types: &HashMap<String, FirType>,
+    external_static_tables: &HashSet<String>,
     extern_data_ids: &HashMap<String, DataId>,
     double: bool,
 ) -> Result<(String, usize, bool, String), CraneliftBackendError> {
@@ -302,6 +339,7 @@ pub(crate) fn declare_jit_function(
                     ptr_ty,
                     static_data_ids,
                     static_table_elem_types,
+                    external_static_tables,
                     extern_data_ids,
                     extern_function_symbols,
                     double,

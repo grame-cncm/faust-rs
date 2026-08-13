@@ -40,10 +40,13 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, DataId, Init, Linkage, Module, default_libcall_names};
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 
-use crate::memory_layout::MemoryManagerMode;
+use crate::memory_layout::{
+    Mem0Analysis, Mem0AnalysisOptions, MemoryLayoutFlavor, MemoryManagerMode, MemoryRole,
+    MemoryScope, MemoryZoneId, analyze_mem0,
+};
 
 mod api;
 mod core;
@@ -55,8 +58,8 @@ mod subset;
 pub use api::{diagnose_cranelift_compute_subset_gap, generate_cranelift_module};
 pub use core::{
     BACKEND_NAME, CraneliftBackendError, CraneliftBackendErrorCode, CraneliftOptLevel,
-    CraneliftOptions, JitDspModule, StructFieldKind, StructFieldLayout, StructLayoutPlan,
-    backend_id,
+    CraneliftOptions, JitDspModule, StaticMemorySlot, StructFieldKind, StructFieldLayout,
+    StructLayoutPlan, backend_id,
 };
 
 pub(crate) use core::*;

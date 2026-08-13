@@ -66,7 +66,7 @@ Status legend used for implementation tracking:
 | Bitcode read/write family | `adapted` | Source-backed `CRANELIFT_FFI_V2_SOURCE` payload with rebuild; non-source factories (signals/boxes) return null/false on write. |
 | IR read/write family | `deferred-v1` | Not exported in V1. |
 | Machine/object read/write family | `deferred-v1` | Not exported in V1. |
-| Memory manager / foreign-function registration | `deferred-v1` | Not exported in V1. |
+| Memory manager / foreign-function registration | `adapted` | Foreign registration is implemented; `-mem0` uses the shared aligned ABI v1 through `setCCraneliftMemoryManager`, while the C++ wrapper supplies functional legacy set/get glue. |
 | Target/machine-target getter family | `deferred-v1` | LLVM-specific semantics intentionally deferred. |
 | DSP instance lifecycle (`create/delete/clone/init/reset/clear`) | `done` | Real instance state allocation + lifecycle hooks. |
 | DSP instance compute | `done` | Calls finalized Cranelift JIT entry with backend `dsp*` layout. |
@@ -155,7 +155,7 @@ Phase-0 implication for `cranelift_dsp`:
 | Family | LLVM C API | Interpreter C API | Target (Cranelift C API) | Status | Notes |
 |---|---|---|---|---|---|
 | Class init on factory | `classCInit` | n/a | `classCCraneliftInit` (naming pending) | `decision-pending` | LLVM-specific pattern; may be represented via instance APIs only |
-| Memory manager setter | `setCMemoryManager` | n/a (in current interpreter C header) | `setCCraneliftMemoryManager` | `v1-deferred` | Naming locked; family deferred in V1 |
+| Memory manager setter | `setCMemoryManager` | n/a (in current interpreter C header) | `setCCraneliftMemoryManager` | `adapted` | Implemented for factories compiled with `-mem0`; copies ABI v1 callbacks/context, describes immediately, and allocates only on instance creation. |
 | Register foreign function | `registerCForeignFunction` | n/a | `registerCCraneliftForeignFunction` | `v1-deferred` | Naming locked; family deferred in V1 |
 | Machine target getter | `getCDSPMachineTarget` | n/a | `getCCraneliftDSPMachineTarget` | `v1-deferred` | Naming locked; deferred in V1 |
 
@@ -302,7 +302,7 @@ Most factory methods overlap; LLVM adds target/class-init specific APIs.
 | Include pathnames | `getIncludePathnames()` | `getIncludePathnames()` | `getIncludePathnames()` | `v1-required` | |
 | Warning messages | `getWarningMessages()` | `getWarningMessages()` | `getWarningMessages()` | `v1-required` | |
 | Create instance | `createDSPInstance()` | `createDSPInstance()` | `createDSPInstance()` | `v1-required` | |
-| Memory manager set/get | `setMemoryManager/getMemoryManager` | same | same | `v1-deferred` | Family deferred in V1 (C and C++ wrappers) |
+| Memory manager set/get | `setMemoryManager/getMemoryManager` | same | same | `adapted` | C++ wrapper adapts `dsp_memory_manager` to the aligned C table and returns the effective legacy binding; invalid/conflicting replacement preserves the prior manager. |
 | Target getter | `getTarget()` | n/a | `getTarget()`? | `decision-pending` | Depends on Cranelift target exposure semantics |
 | `classInit(sample_rate)` | present | n/a | `classInit(sample_rate)`? | `decision-pending` | LLVM-only in wrapper |
 

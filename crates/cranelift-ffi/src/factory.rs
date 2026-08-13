@@ -30,8 +30,9 @@ use compiler::{
     default_import_search_paths,
 };
 use ffi_common::{
-    decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only, null_c_string_array,
-    optional_c_string_arg, parse_ffi_compile_args, required_c_string_arg, write_error_4096,
+    FaustMemoryManager, decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only,
+    null_c_string_array, optional_c_string_arg, parse_ffi_compile_args, required_c_string_arg,
+    write_error_4096,
 };
 use fir::{FirMatch, match_fir};
 
@@ -40,7 +41,7 @@ use crate::cache::{
 };
 use crate::clif::{CLIF_MAGIC, decode_factory_clif, encode_factory_clif};
 use crate::runtime::build_runtime_descriptor;
-use crate::types::{CraneliftDspFactory, alloc_c_string};
+use crate::types::{CraneliftDspFactory, FactoryMemoryState, MemoryManagerBinding, alloc_c_string};
 
 /// Stable version string returned by [`getCLibFaustVersion`].
 const CRANELIFT_FFI_VERSION: &str = concat!("faust-rs-cranelift-ffi/", env!("CARGO_PKG_VERSION"));
@@ -912,12 +913,102 @@ fn build_scaffold_factory_common(
         source_name: name.to_owned(),
         compile_argv: argv.to_vec(),
         opt_level,
+        memory_state: Mutex::new(FactoryMemoryState::default()),
         compiled_jit: jit,
         runtime,
         compute_body_lowered,
         num_inputs,
         num_outputs,
     })
+}
+
+/// Binds a versioned custom memory manager to a `-mem0` Cranelift factory.
+///
+/// The callback table is copied; the caller may release the temporary table
+/// after this call, but its context and callback targets must remain valid
+/// until the factory and all its instances are destroyed. Description is a
+/// complete transaction and happens before the binding is published.
+///
+/// # Safety
+/// `factory` and `manager` must point to live values. `error_msg`, when
+/// non-null, must reference the standard 4096-byte Faust error buffer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn setCCraneliftMemoryManager(
+    factory: *mut CraneliftDspFactory,
+    manager: *const FaustMemoryManager,
+    error_msg: *mut c_char,
+) -> bool {
+    unsafe {
+        let Some(factory) = factory.as_ref() else {
+            write_error(error_msg, "null Cranelift factory");
+            return false;
+        };
+        let Some(manager) = manager.as_ref() else {
+            write_error(error_msg, "null faust_memory_manager table");
+            return false;
+        };
+        let Some(analysis) = factory
+            .compiled_jit
+            .as_ref()
+            .and_then(JitDspModule::mem0_analysis)
+        else {
+            write_error(error_msg, "factory was not compiled with -mem0");
+            return false;
+        };
+        let binding = match MemoryManagerBinding::copy_from(manager) {
+            Ok(binding) => binding,
+            Err(error) => {
+                write_error(error_msg, &error);
+                return false;
+            }
+        };
+        {
+            let state = match factory.memory_state.lock() {
+                Ok(state) => state,
+                Err(_) => {
+                    write_error(error_msg, "Cranelift memory-manager state is poisoned");
+                    return false;
+                }
+            };
+            if let Some(current) = state.binding {
+                if current.same_identity(binding) {
+                    return true;
+                }
+                if state.class_storage.is_some() || state.live_instances != 0 || state.class_busy {
+                    write_error(
+                        error_msg,
+                        "cannot replace a Cranelift memory manager after allocation",
+                    );
+                    return false;
+                }
+            }
+        }
+        if let Err(error) = binding.describe(analysis) {
+            write_error(error_msg, &error);
+            return false;
+        }
+        let mut state = match factory.memory_state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                write_error(error_msg, "Cranelift memory-manager state is poisoned");
+                return false;
+            }
+        };
+        if let Some(current) = state.binding {
+            if current.same_identity(binding) {
+                return true;
+            }
+            if state.class_storage.is_some() || state.live_instances != 0 || state.class_busy {
+                write_error(
+                    error_msg,
+                    "cannot replace a Cranelift memory manager after allocation",
+                );
+                return false;
+            }
+        }
+        state.binding = Some(binding);
+        true
+    }
 }
 
 /// Decode a conventional `argc`/`argv` C array into owned Rust strings.
@@ -2511,5 +2602,20 @@ mod tests {
             )
         );
         assert!(header.contains("inline void clearCraneliftForeignFunctions()"));
+        assert!(header.contains("setCCraneliftMemoryManager"));
+        assert!(header.contains("return memory_manager_;"));
+        assert!(!header.contains("setMemoryManager(dsp_memory_manager* /*manager*/)"));
+    }
+
+    #[test]
+    fn cranelift_header_mirrors_the_canonical_memory_manager_abi() {
+        assert_eq!(
+            include_str!("../include/faust-memory-manager.h"),
+            include_str!("../../ffi-common/include/faust-memory-manager.h")
+        );
+        assert!(
+            include_str!("../include/cranelift-dsp-c.h")
+                .contains("#include \"faust-memory-manager.h\"")
+        );
     }
 }

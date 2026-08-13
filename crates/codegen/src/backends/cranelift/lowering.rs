@@ -196,6 +196,8 @@ pub(crate) struct ComputeLowering<'a, 'b, 'c> {
     /// Declared element type of each `AccessType::Static` table, so a store
     /// writes exactly the width the matching load reads.
     pub(crate) static_table_elem_types: &'a HashMap<String, FirType>,
+    /// Static JIT data objects that contain a manager-owned payload pointer.
+    pub(crate) external_static_tables: &'a HashSet<String>,
     /// Imported JIT data IDs for FIR `AccessType::Global` scalar symbols.
     pub(crate) extern_data_ids: &'a HashMap<String, DataId>,
     /// Registered host addresses for foreign function symbols resolved through
@@ -373,6 +375,35 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 "struct field `{name}` not present in Cranelift dsp* layout contract"
             ))
         })
+    }
+
+    /// Resolves the payload base for inline and manager-externalized tables.
+    fn struct_table_base(&mut self, field: &StructFieldLayout) -> Result<Value, LoweringError> {
+        let dsp = self.dsp_base_ptr()?;
+        let slot = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
+        Ok(match field.kind {
+            StructFieldKind::ExternalTable { .. } => {
+                self.fb.ins().load(self.ptr_ty, MemFlags::new(), slot, 0)
+            }
+            StructFieldKind::Table { .. } => slot,
+            StructFieldKind::Scalar(_) => {
+                return Err(LoweringError::Unsupported(format!(
+                    "scalar field `{}` has no table payload",
+                    field.name
+                )));
+            }
+        })
+    }
+
+    /// Resolves a static table data object, dereferencing a mem0 pointer slot.
+    fn static_table_base(&mut self, name: &str, data_id: DataId) -> Value {
+        let gv = self.jit.declare_data_in_func(data_id, self.fb.func);
+        let slot = self.fb.ins().global_value(self.ptr_ty, gv);
+        if self.external_static_tables.contains(name) {
+            self.fb.ins().load(self.ptr_ty, MemFlags::new(), slot, 0)
+        } else {
+            slot
+        }
     }
 
     /// Coerces a CLIF value to the CLIF type expected by a target FIR type.
@@ -734,7 +765,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let field = self.struct_field(name)?.clone();
         let scalar_ty = match &field.kind {
             StructFieldKind::Scalar(typ) => typ.clone(),
-            StructFieldKind::Table { .. } => {
+            StructFieldKind::Table { .. } | StructFieldKind::ExternalTable { .. } => {
                 return Err(LoweringError::Unsupported(format!(
                     "`StoreVar` cannot target table field `{name}`"
                 )));
@@ -757,15 +788,15 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     ) -> Result<(), LoweringError> {
         let field = self.struct_field(name)?.clone();
         let elem_type = match &field.kind {
-            StructFieldKind::Table { elem_type, .. } => elem_type.clone(),
+            StructFieldKind::Table { elem_type, .. }
+            | StructFieldKind::ExternalTable { elem_type, .. } => elem_type.clone(),
             StructFieldKind::Scalar(_) => {
                 return Err(LoweringError::Unsupported(format!(
                     "`StoreTable` cannot target scalar field `{name}`"
                 )));
             }
         };
-        let dsp = self.dsp_base_ptr()?;
-        let base = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
+        let base = self.struct_table_base(&field)?;
         let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
         let mut value_v = self.lower_expr(value, Some(&elem_type))?.value();
         value_v = self.coerce_value_to_fir_type(value_v, &elem_type)?;
@@ -803,8 +834,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                     "static table `{name}` has no declared element type"
                 ))
             })?;
-        let gv = self.jit.declare_data_in_func(data_id, self.fb.func);
-        let base = self.fb.ins().global_value(self.ptr_ty, gv);
+        let base = self.static_table_base(name, data_id);
         let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
         let mut value_v = self.lower_expr(value, Some(&elem_type))?.value();
         value_v = self.coerce_value_to_fir_type(value_v, &elem_type)?;
@@ -826,7 +856,8 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     ) -> Result<(), LoweringError> {
         let field = self.struct_field(name)?.clone();
         let (elem_type, len) = match &field.kind {
-            StructFieldKind::Table { elem_type, len } => (elem_type.clone(), *len),
+            StructFieldKind::Table { elem_type, len }
+            | StructFieldKind::ExternalTable { elem_type, len, .. } => (elem_type.clone(), *len),
             StructFieldKind::Scalar(_) => {
                 return Err(LoweringError::Unsupported(format!(
                     "`ShiftArrayVar` cannot target scalar field `{name}`"
@@ -842,8 +873,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             return Ok(());
         }
 
-        let dsp = self.dsp_base_ptr()?;
-        let base = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
+        let base = self.struct_table_base(&field)?;
         let elem_clif = self.fir_type_to_clif(&elem_type)?;
         let elem_bytes = i64::from(elem_clif.bytes());
 
@@ -1144,7 +1174,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 let field = self.struct_field(&name)?.clone();
                 let scalar_ty = match &field.kind {
                     StructFieldKind::Scalar(t) => t.clone(),
-                    StructFieldKind::Table { .. } => {
+                    StructFieldKind::Table { .. } | StructFieldKind::ExternalTable { .. } => {
                         return Err(LoweringError::Unsupported(format!(
                             "`LoadVar` cannot target table field `{name}`"
                         )));
@@ -1240,15 +1270,15 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             } => {
                 let field = self.struct_field(&name)?.clone();
                 let elem_type = match &field.kind {
-                    StructFieldKind::Table { elem_type, .. } => elem_type.clone(),
+                    StructFieldKind::Table { elem_type, .. }
+                    | StructFieldKind::ExternalTable { elem_type, .. } => elem_type.clone(),
                     StructFieldKind::Scalar(_) => {
                         return Err(LoweringError::Unsupported(format!(
                             "`LoadTable` cannot target scalar field `{name}`"
                         )));
                     }
                 };
-                let dsp = self.dsp_base_ptr()?;
-                let base = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
+                let base = self.struct_table_base(&field)?;
                 let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
                 let elem_clif = self.fir_type_to_clif(&elem_type)?;
                 let addr = self.indexed_addr(base, index_v, i64::from(elem_clif.bytes()));
@@ -1267,8 +1297,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                         "static table `{name}` not found in pre-declared JIT data"
                     ))
                 })?;
-                let gv = self.jit.declare_data_in_func(data_id, self.fb.func);
-                let base = self.fb.ins().global_value(self.ptr_ty, gv);
+                let base = self.static_table_base(&name, data_id);
                 let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
                 let elem_clif = self.fir_type_to_clif(&typ)?;
                 let addr = self.indexed_addr(base, index_v, i64::from(elem_clif.bytes()));
@@ -1919,6 +1948,7 @@ pub(crate) struct FunctionBodyLoweringContext<'a> {
     /// Declared element type of each `AccessType::Static` table, so a store
     /// writes exactly the width the matching load reads.
     pub(crate) static_table_elem_types: &'a HashMap<String, FirType>,
+    pub(crate) external_static_tables: &'a HashSet<String>,
     pub(crate) extern_data_ids: &'a HashMap<String, DataId>,
     pub(crate) extern_function_symbols: &'a HashMap<String, *const c_void>,
     /// 64-bit (`double`) precision: resolves `FaustFloat` to `F64`.
@@ -1981,6 +2011,7 @@ pub(crate) fn try_lower_function_body(
         import_refs: HashMap::new(),
         static_data_ids: cx.static_data_ids,
         static_table_elem_types: cx.static_table_elem_types,
+        external_static_tables: cx.external_static_tables,
         extern_data_ids: cx.extern_data_ids,
         extern_function_symbols: cx.extern_function_symbols,
         double: cx.double,

@@ -71,6 +71,7 @@ pub type FaustMemoryManagerDestroyFn = unsafe extern "C" fn(
 /// the same host context even if another factory is compiled later. Hosts must
 /// keep the table and context alive through the last DSP/class destruction.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct FaustMemoryManager {
     /// Must equal [`FAUST_MEMORY_MANAGER_ABI_VERSION`].
     pub abi_version: u32,

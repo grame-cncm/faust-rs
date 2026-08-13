@@ -127,12 +127,38 @@ pub(crate) fn try_generate_cranelift_module(
     }
     let mut jit = JITModule::new(jit_builder);
     let ptr_size = jit.target_config().pointer_type().bytes();
-    let struct_layout =
-        build_struct_layout_for_module(store, module, ptr_size, options.double_precision)?;
+    let mem0_analysis = if options.memory_manager_mode.is_mem0() {
+        Some(
+            analyze_mem0(
+                store,
+                module,
+                &Mem0AnalysisOptions::native(
+                    MemoryLayoutFlavor::Cranelift,
+                    options.double_precision,
+                ),
+            )
+            .map_err(|error| CraneliftBackendError::memory_layout(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let struct_layout = build_struct_layout_for_module(
+        store,
+        module,
+        ptr_size,
+        options.double_precision,
+        mem0_analysis.as_ref(),
+    )?;
     // Define file-scope static tables as JIT read-only data objects before
     // compiling `compute`, so function bodies can reference them by DataId.
-    let (static_data_ids, static_table_elem_types) =
-        define_static_tables_in_jit(store, module, &mut jit, options.double_precision)?;
+    let static_data = define_static_tables_in_jit(
+        store,
+        module,
+        &mut jit,
+        options.double_precision,
+        mem0_analysis.as_ref(),
+    )?;
+    let external_static_tables: HashSet<_> = static_data.external.keys().cloned().collect();
     let extern_data_ids =
         declare_extern_data_symbols_in_jit(&mut jit, &options.extern_data_symbols)?;
     let (compute_symbol_name, compute_entry_addr, compute_body_lowered, compute_clif_text) =
@@ -146,8 +172,9 @@ pub(crate) fn try_generate_cranelift_module(
             &options.extern_function_symbols,
             force_stub,
             &mut jit,
-            &static_data_ids,
-            &static_table_elem_types,
+            &static_data.ids,
+            &static_data.elem_types,
+            &external_static_tables,
             &extern_data_ids,
             options.double_precision,
         )?;
@@ -166,8 +193,9 @@ pub(crate) fn try_generate_cranelift_module(
                         &options.extern_function_symbols,
                         false,
                         &mut jit,
-                        &static_data_ids,
-                        &static_table_elem_types,
+                        &static_data.ids,
+                        &static_data.elem_types,
+                        &external_static_tables,
                         &extern_data_ids,
                         options.double_precision,
                     )?;
@@ -194,8 +222,9 @@ pub(crate) fn try_generate_cranelift_module(
                 &options.extern_function_symbols,
                 false,
                 &mut jit,
-                &static_data_ids,
-                &static_table_elem_types,
+                &static_data.ids,
+                &static_data.elem_types,
+                &external_static_tables,
                 &extern_data_ids,
                 options.double_precision,
             )?;
@@ -218,8 +247,9 @@ pub(crate) fn try_generate_cranelift_module(
                 &options.extern_function_symbols,
                 false,
                 &mut jit,
-                &static_data_ids,
-                &static_table_elem_types,
+                &static_data.ids,
+                &static_data.elem_types,
+                &external_static_tables,
                 &extern_data_ids,
                 options.double_precision,
             )?;
@@ -235,6 +265,25 @@ pub(crate) fn try_generate_cranelift_module(
         ));
     }
 
+    let static_memory_slots = static_data
+        .external
+        .iter()
+        .map(|(name, zone_id)| {
+            let data_id = static_data.ids[name];
+            let (address, size) = jit.get_finalized_data(data_id);
+            if size < ptr_size as usize {
+                return Err(CraneliftBackendError::memory_layout(format!(
+                    "mem0 static slot `{name}` is {size} bytes, expected at least {ptr_size}"
+                )));
+            }
+            Ok(StaticMemorySlot {
+                name: name.clone(),
+                zone_id: *zone_id,
+                address: address as usize,
+            })
+        })
+        .collect::<Result<Vec<_>, CraneliftBackendError>>()?;
+
     Ok(JitDspModule {
         static_init_entry_addr,
         module_name: module_name.to_owned(),
@@ -245,6 +294,8 @@ pub(crate) fn try_generate_cranelift_module(
         compute_body_lowered,
         generated_functions_clif,
         struct_layout,
+        mem0_analysis,
+        static_memory_slots,
         jit_module: jit,
     })
 }

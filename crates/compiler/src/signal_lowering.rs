@@ -384,6 +384,11 @@ pub fn render_cranelift_module_report(compiled: &JitDspModule, subset_gap: Optio
             StructFieldKind::Table { elem_type, len } => {
                 format!("table:{elem_type:?}[{len}]")
             }
+            StructFieldKind::ExternalTable {
+                elem_type,
+                len,
+                zone_id,
+            } => format!("external-table:{elem_type:?}[{len}] zone={}", zone_id.0),
         };
         out.push_str(&format!(
             "  - {} @{} size={} align={} {}\n",

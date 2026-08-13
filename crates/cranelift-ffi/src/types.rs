@@ -12,10 +12,21 @@
 //!   `porting/cranelift-dsp-ffi-parity-matrix-en.md`.
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
-use std::ffi::c_char;
+use std::ffi::{CString, c_char, c_void};
 use std::ptr::NonNull;
+use std::sync::Mutex;
 
-use codegen::backends::cranelift::JitDspModule;
+use codegen::backends::cranelift::{
+    JitDspModule, StaticMemorySlot, StructFieldKind, StructLayoutPlan,
+};
+use codegen::memory_layout::{
+    Mem0Analysis, MemoryRole, MemoryScope, MemoryType, MemoryZone, MemoryZoneId,
+};
+use ffi_common::{
+    FaustMemoryManager, FaustMemoryManagerAllocateFn, FaustMemoryManagerBeginFn,
+    FaustMemoryManagerDestroyFn, FaustMemoryManagerEndFn, FaustMemoryManagerInfoFn,
+    FaustMemoryType,
+};
 
 use crate::runtime::RuntimeDescriptor;
 
@@ -55,6 +66,11 @@ pub struct CraneliftDspFactory {
     pub(crate) compile_argv: Vec<String>,
     /// Original FFI compile optimization level.
     pub(crate) opt_level: i32,
+    /// Custom-manager binding and class allocation lifecycle.
+    ///
+    /// This field precedes `compiled_jit` so its drop clears and destroys all
+    /// class allocations before the JIT data slots cease to exist.
+    pub(crate) memory_state: Mutex<FactoryMemoryState>,
     /// Compiled Cranelift JIT module (present for real file/string compilation paths).
     pub(crate) compiled_jit: Option<JitDspModule>,
     /// Native runtime descriptor derived from FIR for UI/meta/state handling.
@@ -85,6 +101,16 @@ pub struct CraneliftDspInstance {
     pub(crate) dsp_state: DspStateBuffer,
 }
 
+impl Drop for CraneliftDspInstance {
+    fn drop(&mut self) {
+        if let Some(factory) = unsafe { self.factory.as_ref() }
+            && let Ok(mut state) = factory.memory_state.lock()
+        {
+            state.live_instances = state.live_instances.saturating_sub(1);
+        }
+    }
+}
+
 // SAFETY: Instances are opaque and not internally synchronized. The C API
 // contract does not require shared concurrent access to the same instance.
 unsafe impl Send for CraneliftDspInstance {}
@@ -95,10 +121,14 @@ unsafe impl Send for CraneliftDspInstance {}
 /// - size and alignment come from [`codegen::backends::cranelift::StructLayoutPlan`],
 /// - bytes are zero-initialized on allocation,
 /// - the memory is released when the instance is dropped.
-#[derive(Debug)]
+///
+/// Under `-mem0` this is an adapted Rust-native ownership boundary: Faust C++
+/// has no Cranelift backend oracle. The host manager owns the logical JIT state
+/// object and external payloads, while this Rust value retains only their drop
+/// metadata inside the opaque cache-owned instance wrapper.
 pub(crate) struct DspStateBuffer {
-    ptr: Option<NonNull<u8>>,
-    layout: Option<Layout>,
+    main: OwnedAllocation,
+    external: Vec<ExternalAllocation>,
 }
 
 impl DspStateBuffer {
@@ -120,9 +150,78 @@ impl DspStateBuffer {
             format!("failed to allocate Cranelift DSP state ({size} bytes, align {align})")
         })?;
         Ok(Self {
-            ptr: Some(ptr),
-            layout: Some(layout),
+            main: OwnedAllocation {
+                ptr,
+                size,
+                align,
+                owner: AllocationOwner::Rust(layout),
+            },
+            external: Vec::new(),
         })
+    }
+
+    /// Allocates the object and every non-empty instance zone through `manager`.
+    pub(crate) unsafe fn new_managed(
+        layout: &StructLayoutPlan,
+        analysis: &Mem0Analysis,
+        manager: MemoryManagerBinding,
+    ) -> Result<Self, String> {
+        let object = analysis
+            .memory_layout
+            .zones
+            .iter()
+            .find(|zone| zone.role == MemoryRole::DspObject)
+            .ok_or_else(|| "mem0 layout has no DSP object zone".to_owned())?;
+        if object.size_bytes != u64::from(layout.size_bytes())
+            || object.alignment != u64::from(layout.align_bytes())
+        {
+            return Err(format!(
+                "mem0 DSP object/layout mismatch: analysis={}/{} JIT={}/{}",
+                object.size_bytes,
+                object.alignment,
+                layout.size_bytes(),
+                layout.align_bytes()
+            ));
+        }
+        let main = unsafe { OwnedAllocation::manager(manager, object)? };
+        let mut result = Self {
+            main,
+            external: Vec::new(),
+        };
+        for zone in analysis.memory_layout.zones.iter().filter(|zone| {
+            zone.runtime_allocated
+                && zone.scope == MemoryScope::Instance
+                && zone.role == MemoryRole::InstanceBuffer
+        }) {
+            let field = layout
+                .field(&zone.name)
+                .ok_or_else(|| format!("mem0 instance zone `{}` has no JIT field", zone.name))?;
+            let StructFieldKind::ExternalTable { zone_id, .. } = field.kind else {
+                return Err(format!(
+                    "mem0 instance zone `{}` is not an external JIT table",
+                    zone.name
+                ));
+            };
+            if zone_id != zone.id {
+                return Err(format!("mem0 zone identity mismatch for `{}`", zone.name));
+            }
+            let allocation = unsafe { OwnedAllocation::manager(manager, zone)? };
+            unsafe {
+                result
+                    .main
+                    .ptr
+                    .as_ptr()
+                    .add(field.offset_bytes as usize)
+                    .cast::<*mut u8>()
+                    .write_unaligned(allocation.ptr.as_ptr());
+            }
+            result.external.push(ExternalAllocation {
+                zone_id: zone.id,
+                slot_offset: field.offset_bytes as usize,
+                allocation,
+            });
+        }
+        Ok(result)
     }
 
     /// Returns the mutable base pointer to pass as `dsp*` to JIT code.
@@ -130,7 +229,7 @@ impl DspStateBuffer {
     /// For empty buffers this returns null.
     #[must_use]
     pub(crate) fn as_mut_ptr(&self) -> *mut u8 {
-        self.ptr.map_or(std::ptr::null_mut(), NonNull::as_ptr)
+        self.main.ptr.as_ptr()
     }
 
     #[must_use]
@@ -144,28 +243,287 @@ impl DspStateBuffer {
 
     /// Clones the allocation and bytes into a new owned buffer.
     pub(crate) fn deep_clone(&self) -> Result<Self, String> {
-        let (Some(src_ptr), Some(layout)) = (self.ptr, self.layout) else {
-            return Self::new(0, 1);
+        let mut cloned = Self {
+            main: unsafe { self.main.allocate_like()? },
+            external: Vec::new(),
         };
-        let cloned = Self::new(layout.size(), layout.align())?;
-        if let (Some(dst_ptr), Some(dst_layout)) = (cloned.ptr, cloned.layout) {
-            debug_assert_eq!(layout, dst_layout);
-            // SAFETY: source/destination are valid non-overlapping buffers of equal size.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                self.main.ptr.as_ptr(),
+                cloned.main.ptr.as_ptr(),
+                self.main.size,
+            );
+        }
+        for source in &self.external {
+            let allocation = unsafe { source.allocation.allocate_like()? };
             unsafe {
-                std::ptr::copy_nonoverlapping(src_ptr.as_ptr(), dst_ptr.as_ptr(), layout.size());
+                std::ptr::copy_nonoverlapping(
+                    source.allocation.ptr.as_ptr(),
+                    allocation.ptr.as_ptr(),
+                    source.allocation.size,
+                );
+                cloned
+                    .main
+                    .ptr
+                    .as_ptr()
+                    .add(source.slot_offset)
+                    .cast::<*mut u8>()
+                    .write_unaligned(allocation.ptr.as_ptr());
             }
+            cloned.external.push(ExternalAllocation {
+                zone_id: source.zone_id,
+                slot_offset: source.slot_offset,
+                allocation,
+            });
         }
         Ok(cloned)
     }
+
+    /// Resolves an inline payload or the pointer stored in an external slot.
+    pub(crate) fn field_ptr(
+        &self,
+        field: &codegen::backends::cranelift::StructFieldLayout,
+    ) -> *mut u8 {
+        match field.kind {
+            StructFieldKind::ExternalTable { .. } => unsafe {
+                self.ptr_at(field.offset_bytes as usize)
+                    .cast::<*mut u8>()
+                    .read_unaligned()
+            },
+            _ => self.ptr_at(field.offset_bytes as usize),
+        }
+    }
 }
 
-impl Drop for DspStateBuffer {
-    fn drop(&mut self) {
-        let (Some(ptr), Some(layout)) = (self.ptr.take(), self.layout.take()) else {
-            return;
+#[derive(Clone, Copy)]
+pub(crate) struct MemoryManagerBinding {
+    context: *mut c_void,
+    begin: FaustMemoryManagerBeginFn,
+    info: FaustMemoryManagerInfoFn,
+    end: FaustMemoryManagerEndFn,
+    allocate: FaustMemoryManagerAllocateFn,
+    destroy: FaustMemoryManagerDestroyFn,
+}
+
+unsafe impl Send for MemoryManagerBinding {}
+unsafe impl Sync for MemoryManagerBinding {}
+
+impl MemoryManagerBinding {
+    pub(crate) fn copy_from(table: &FaustMemoryManager) -> Result<Self, String> {
+        if !table.is_compatible_v1() {
+            return Err("incompatible faust_memory_manager ABI v1 table".to_owned());
+        }
+        Ok(Self {
+            context: table.context,
+            begin: table.begin.expect("validated callback"),
+            info: table.info.expect("validated callback"),
+            end: table.end.expect("validated callback"),
+            allocate: table.allocate.expect("validated callback"),
+            destroy: table.destroy.expect("validated callback"),
+        })
+    }
+
+    pub(crate) fn same_identity(self, other: Self) -> bool {
+        self.context == other.context
+            && self.begin as usize == other.begin as usize
+            && self.info as usize == other.info as usize
+            && self.end as usize == other.end as usize
+            && self.allocate as usize == other.allocate as usize
+            && self.destroy as usize == other.destroy as usize
+    }
+
+    pub(crate) unsafe fn describe(self, analysis: &Mem0Analysis) -> Result<(), String> {
+        let zones: Vec<_> = analysis
+            .memory_layout
+            .zones
+            .iter()
+            .filter(|zone| zone.runtime_allocated)
+            .collect();
+        unsafe { (self.begin)(self.context, zones.len()) };
+        for zone in zones {
+            let name = CString::new(zone.name.as_str())
+                .map_err(|_| format!("mem0 zone name contains NUL: `{}`", zone.name))?;
+            unsafe {
+                (self.info)(
+                    self.context,
+                    name.as_ptr(),
+                    memory_type_to_ffi(zone.memory_type),
+                    usize::try_from(zone.element_count)
+                        .map_err(|_| format!("mem0 count too large for `{}`", zone.name))?,
+                    usize::try_from(zone.size_bytes)
+                        .map_err(|_| format!("mem0 size too large for `{}`", zone.name))?,
+                    usize::try_from(zone.alignment)
+                        .map_err(|_| format!("mem0 alignment too large for `{}`", zone.name))?,
+                    zone.reads,
+                    zone.writes,
+                )
+            };
+        }
+        unsafe { (self.end)(self.context) };
+        Ok(())
+    }
+}
+
+enum AllocationOwner {
+    Rust(Layout),
+    Manager(MemoryManagerBinding),
+}
+
+struct OwnedAllocation {
+    ptr: NonNull<u8>,
+    size: usize,
+    align: usize,
+    owner: AllocationOwner,
+}
+
+// SAFETY: ownership is unique and callback access is serialized by the
+// factory cache / per-factory mutex. The host manager must satisfy the same
+// cross-thread contract as the public Cranelift factory API.
+unsafe impl Send for OwnedAllocation {}
+
+impl OwnedAllocation {
+    unsafe fn manager(binding: MemoryManagerBinding, zone: &MemoryZone) -> Result<Self, String> {
+        let size = usize::try_from(zone.size_bytes)
+            .map_err(|_| format!("mem0 allocation too large for `{}`", zone.name))?;
+        let align = usize::try_from(zone.alignment)
+            .map_err(|_| format!("mem0 alignment too large for `{}`", zone.name))?;
+        let raw = unsafe { (binding.allocate)(binding.context, size, align) }.cast::<u8>();
+        let Some(ptr) = NonNull::new(raw) else {
+            return Err(format!("memory manager failed to allocate `{}`", zone.name));
         };
-        // SAFETY: pointer/layout pair originated from `alloc_zeroed` with same layout.
-        unsafe { dealloc(ptr.as_ptr(), layout) };
+        if !(ptr.as_ptr() as usize).is_multiple_of(align) {
+            unsafe { (binding.destroy)(binding.context, raw.cast(), size, align) };
+            return Err(format!(
+                "memory manager returned misaligned storage for `{}`",
+                zone.name
+            ));
+        }
+        unsafe { ptr.as_ptr().write_bytes(0, size) };
+        Ok(Self {
+            ptr,
+            size,
+            align,
+            owner: AllocationOwner::Manager(binding),
+        })
+    }
+
+    unsafe fn allocate_like(&self) -> Result<Self, String> {
+        match self.owner {
+            AllocationOwner::Rust(_) => DspStateBuffer::new(self.size, self.align).map(|v| v.main),
+            AllocationOwner::Manager(binding) => {
+                let raw = unsafe { (binding.allocate)(binding.context, self.size, self.align) }
+                    .cast::<u8>();
+                let ptr = NonNull::new(raw)
+                    .ok_or_else(|| "memory manager failed while cloning DSP storage".to_owned())?;
+                if !(ptr.as_ptr() as usize).is_multiple_of(self.align) {
+                    unsafe {
+                        (binding.destroy)(binding.context, raw.cast(), self.size, self.align)
+                    };
+                    return Err("memory manager returned misaligned clone storage".to_owned());
+                }
+                Ok(Self {
+                    ptr,
+                    size: self.size,
+                    align: self.align,
+                    owner: AllocationOwner::Manager(binding),
+                })
+            }
+        }
+    }
+}
+
+impl Drop for OwnedAllocation {
+    fn drop(&mut self) {
+        unsafe {
+            match self.owner {
+                AllocationOwner::Rust(layout) => dealloc(self.ptr.as_ptr(), layout),
+                AllocationOwner::Manager(binding) => (binding.destroy)(
+                    binding.context,
+                    self.ptr.as_ptr().cast(),
+                    self.size,
+                    self.align,
+                ),
+            }
+        }
+    }
+}
+
+struct ExternalAllocation {
+    zone_id: MemoryZoneId,
+    slot_offset: usize,
+    allocation: OwnedAllocation,
+}
+
+pub(crate) struct ManagedClassStorage {
+    allocations: Vec<(usize, OwnedAllocation)>,
+}
+
+impl ManagedClassStorage {
+    pub(crate) unsafe fn create(
+        binding: MemoryManagerBinding,
+        analysis: &Mem0Analysis,
+        slots: &[StaticMemorySlot],
+    ) -> Result<Self, String> {
+        let mut result = Self {
+            allocations: Vec::new(),
+        };
+        for zone in analysis.memory_layout.zones.iter().filter(|zone| {
+            zone.runtime_allocated
+                && zone.scope == MemoryScope::Class
+                && zone.role == MemoryRole::StaticTable
+        }) {
+            let slot = slots
+                .iter()
+                .find(|slot| slot.zone_id == zone.id)
+                .ok_or_else(|| format!("mem0 class zone `{}` has no JIT slot", zone.name))?;
+            let allocation = unsafe { OwnedAllocation::manager(binding, zone)? };
+            unsafe {
+                (slot.address as *mut *mut u8).write_unaligned(allocation.ptr.as_ptr());
+            }
+            result.allocations.push((slot.address, allocation));
+        }
+        Ok(result)
+    }
+}
+
+impl Drop for ManagedClassStorage {
+    fn drop(&mut self) {
+        for (slot, _) in self.allocations.iter().rev() {
+            unsafe { (*slot as *mut *mut u8).write_unaligned(std::ptr::null_mut()) };
+        }
+        self.allocations.clear();
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct FactoryMemoryState {
+    pub(crate) binding: Option<MemoryManagerBinding>,
+    pub(crate) class_storage: Option<ManagedClassStorage>,
+    pub(crate) class_sample_rate: Option<i32>,
+    pub(crate) class_busy: bool,
+    pub(crate) live_instances: usize,
+}
+
+fn memory_type_to_ffi(memory_type: MemoryType) -> FaustMemoryType {
+    match memory_type {
+        MemoryType::Int32 => FaustMemoryType::Int32,
+        MemoryType::Int32Ptr => FaustMemoryType::Int32Ptr,
+        MemoryType::Float32 => FaustMemoryType::Float32,
+        MemoryType::Float32Ptr => FaustMemoryType::Float32Ptr,
+        MemoryType::Float64 => FaustMemoryType::Float64,
+        MemoryType::Float64Ptr => FaustMemoryType::Float64Ptr,
+        MemoryType::Quad => FaustMemoryType::Quad,
+        MemoryType::QuadPtr => FaustMemoryType::QuadPtr,
+        MemoryType::FixedPoint => FaustMemoryType::FixedPoint,
+        MemoryType::FixedPointPtr => FaustMemoryType::FixedPointPtr,
+        MemoryType::Object => FaustMemoryType::Object,
+        MemoryType::ObjectPtr => FaustMemoryType::ObjectPtr,
+        MemoryType::Sound => FaustMemoryType::Sound,
+        MemoryType::SoundPtr => FaustMemoryType::SoundPtr,
+        MemoryType::Int64 => FaustMemoryType::Int64,
+        MemoryType::Int64Ptr => FaustMemoryType::Int64Ptr,
+        MemoryType::Bool => FaustMemoryType::Bool,
+        MemoryType::BoolPtr => FaustMemoryType::BoolPtr,
     }
 }
 

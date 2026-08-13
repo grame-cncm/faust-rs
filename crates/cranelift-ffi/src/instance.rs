@@ -18,7 +18,8 @@ use fir::FirType;
 use crate::cache::{cache_register_instance, cache_remove_instance};
 use crate::runtime::{RuntimeDescriptor, RuntimeFieldInit, RuntimeUiItem};
 use crate::types::{
-    CraneliftDspFactory, CraneliftDspInstance, DspStateBuffer, FaustFloat, MetaGlue, UIGlue,
+    CraneliftDspFactory, CraneliftDspInstance, DspStateBuffer, FaustFloat, ManagedClassStorage,
+    MetaGlue, UIGlue,
 };
 
 /// Typed JIT `compute` signature used by the standalone Cranelift runtime.
@@ -56,14 +57,34 @@ pub unsafe extern "C" fn createCCraneliftDSPInstance(
         let Some(jit) = (*factory).compiled_jit.as_ref() else {
             return std::ptr::null_mut();
         };
+        if ensure_class_storage(factory).is_err() {
+            return std::ptr::null_mut();
+        }
         let layout = jit.struct_layout();
-        let state = match DspStateBuffer::new(
-            layout.size_bytes() as usize,
-            layout.align_bytes() as usize,
-        ) {
+        let state_result = match jit.mem0_analysis() {
+            Some(analysis) => {
+                let binding = match (*factory).memory_state.lock() {
+                    Ok(state) => state.binding,
+                    Err(_) => return std::ptr::null_mut(),
+                };
+                let Some(binding) = binding else {
+                    return std::ptr::null_mut();
+                };
+                DspStateBuffer::new_managed(layout, analysis, binding)
+            }
+            None => {
+                DspStateBuffer::new(layout.size_bytes() as usize, layout.align_bytes() as usize)
+            }
+        };
+        let state = match state_result {
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
         };
+        if let Ok(mut memory) = (*factory).memory_state.lock() {
+            memory.live_instances = memory.live_instances.saturating_add(1);
+        } else {
+            return std::ptr::null_mut();
+        }
         cache_register_instance(
             factory,
             CraneliftDspInstance {
@@ -105,6 +126,13 @@ pub unsafe extern "C" fn cloneCCraneliftDSPInstance(
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
         };
+        if let Some(factory) = (*dsp).factory.as_ref() {
+            if let Ok(mut memory) = factory.memory_state.lock() {
+                memory.live_instances = memory.live_instances.saturating_add(1);
+            } else {
+                return std::ptr::null_mut();
+            }
+        }
         cache_register_instance(
             (*dsp).factory.cast_mut(),
             CraneliftDspInstance {
@@ -179,9 +207,11 @@ pub unsafe extern "C" fn initCCraneliftDSPInstance(
         if dsp.is_null() {
             return;
         }
-        (*dsp).initialized = true;
-        class_init_instance(dsp, sample_rate);
+        if !class_init_instance(dsp, sample_rate) {
+            return;
+        }
         instanceInitCCraneliftDSPInstance(dsp, sample_rate);
+        (*dsp).initialized = true;
     }
 }
 
@@ -464,21 +494,95 @@ pub fn instance_status() -> &'static str {
 ///
 /// Modules with no generated table have no `staticInit`, so the address is 0
 /// and this is the no-op it has always been.
-unsafe fn class_init_instance(dsp: *mut CraneliftDspInstance, sample_rate: c_int) {
+unsafe fn class_init_instance(dsp: *mut CraneliftDspInstance, sample_rate: c_int) -> bool {
     unsafe {
         let Some(factory) = (*dsp).factory.as_ref() else {
-            return;
+            return false;
         };
         let Some(jit) = factory.compiled_jit.as_ref() else {
-            return;
+            return false;
         };
-        let Some(static_init) = instance_constants_fn_from_addr(jit.static_init_entry_addr())
-        else {
-            return;
-        };
+        if jit.mem0_analysis().is_none() {
+            if let Some(static_init) = instance_constants_fn_from_addr(jit.static_init_entry_addr())
+            {
+                let dsp_ptr = (*dsp).dsp_state.as_mut_ptr().cast::<c_void>();
+                if !dsp_ptr.is_null() {
+                    static_init(dsp_ptr, sample_rate);
+                }
+            }
+            return true;
+        }
+        {
+            let Ok(mut state) = factory.memory_state.lock() else {
+                return false;
+            };
+            if state.class_sample_rate == Some(sample_rate) {
+                return true;
+            }
+            if state.class_sample_rate.is_some() || state.class_busy {
+                return false;
+            }
+            state.class_busy = true;
+        }
         let dsp_ptr = (*dsp).dsp_state.as_mut_ptr().cast::<c_void>();
-        if !dsp_ptr.is_null() {
+        if let Some(static_init) = instance_constants_fn_from_addr(jit.static_init_entry_addr())
+            && !dsp_ptr.is_null()
+        {
             static_init(dsp_ptr, sample_rate);
+        }
+        let Ok(mut state) = factory.memory_state.lock() else {
+            return false;
+        };
+        state.class_sample_rate = Some(sample_rate);
+        state.class_busy = false;
+        true
+    }
+}
+
+/// Allocates factory-owned generated tables exactly once, outside locks while
+/// invoking host callbacks. A `-mem0` factory remains intentionally unbound
+/// after compilation/deserialization and cannot create instances until its
+/// manager has been set.
+unsafe fn ensure_class_storage(factory: *mut CraneliftDspFactory) -> Result<(), String> {
+    unsafe {
+        let factory_ref = factory
+            .as_ref()
+            .ok_or_else(|| "null Cranelift factory".to_owned())?;
+        let Some(jit) = factory_ref.compiled_jit.as_ref() else {
+            return Err("Cranelift factory has no JIT module".to_owned());
+        };
+        let Some(analysis) = jit.mem0_analysis() else {
+            return Ok(());
+        };
+        let binding = {
+            let mut state = factory_ref
+                .memory_state
+                .lock()
+                .map_err(|_| "Cranelift memory-manager state is poisoned".to_owned())?;
+            if state.class_storage.is_some() {
+                return Ok(());
+            }
+            if state.class_busy {
+                return Err("Cranelift class allocation is already in progress".to_owned());
+            }
+            let binding = state
+                .binding
+                .ok_or_else(|| "-mem0 factory has no bound memory manager".to_owned())?;
+            state.class_busy = true;
+            binding
+        };
+        let storage = ManagedClassStorage::create(binding, analysis, jit.static_memory_slots());
+        let mut state = factory_ref
+            .memory_state
+            .lock()
+            .map_err(|_| "Cranelift memory-manager state is poisoned".to_owned())?;
+        state.class_busy = false;
+        match storage {
+            Ok(storage) => {
+                state.class_storage = Some(storage);
+                Ok(())
+            }
+            Err(error) => Err(error),
         }
     }
 }
@@ -780,18 +884,21 @@ fn write_field_init(
         RuntimeFieldInit::F64(v) => write_f64(dsp_state, field.offset_bytes as usize, *v),
         RuntimeFieldInit::Bool(v) => write_bool(dsp_state, field.offset_bytes as usize, *v),
         RuntimeFieldInit::I32Array(values) => {
+            let base = dsp_state.field_ptr(field);
             for (i, v) in values.iter().enumerate() {
-                write_i32(dsp_state, field.offset_bytes as usize + i * 4, *v);
+                unsafe { std::ptr::write_unaligned(base.add(i * 4).cast::<i32>(), *v) };
             }
         }
         RuntimeFieldInit::F32Array(values) => {
+            let base = dsp_state.field_ptr(field);
             for (i, v) in values.iter().enumerate() {
-                write_f32(dsp_state, field.offset_bytes as usize + i * 4, *v);
+                unsafe { std::ptr::write_unaligned(base.add(i * 4).cast::<f32>(), *v) };
             }
         }
         RuntimeFieldInit::F64Array(values) => {
+            let base = dsp_state.field_ptr(field);
             for (i, v) in values.iter().enumerate() {
-                write_f64(dsp_state, field.offset_bytes as usize + i * 8, *v);
+                unsafe { std::ptr::write_unaligned(base.add(i * 8).cast::<f64>(), *v) };
             }
         }
     }
@@ -855,6 +962,8 @@ fn instance_clear_fn_from_addr(addr: usize) -> Option<InstanceClearFn> {
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::{Layout, alloc_zeroed, dealloc};
+    use std::collections::HashMap;
     use std::ffi::{CStr, CString, c_char, c_void};
 
     use super::{
@@ -866,9 +975,10 @@ mod tests {
     };
     use crate::factory::{
         createCCraneliftDSPFactoryFromFile, createCCraneliftDSPFactoryFromString,
-        deleteCCraneliftDSPFactory,
+        deleteCCraneliftDSPFactory, setCCraneliftMemoryManager,
     };
     use crate::types::{FaustFloat, MetaGlue, UIGlue};
+    use ffi_common::{FAUST_MEMORY_MANAGER_ABI_VERSION, FaustMemoryManager, FaustMemoryType};
 
     fn workspace_root() -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -910,7 +1020,7 @@ mod tests {
             "pub unsafe extern \"C\" fn initCCraneliftDSPInstance",
         );
         let init_class_i = init_body
-            .find("class_init_instance(dsp, sample_rate);")
+            .find("class_init_instance(dsp, sample_rate)")
             .expect("init should call classInit");
         let init_instance_i = init_body
             .find("instanceInitCCraneliftDSPInstance(dsp, sample_rate);")
@@ -950,6 +1060,211 @@ mod tests {
             !clear_body.contains("clear_runtime_state"),
             "instanceClear must delegate to the compiled FIR body, not a runtime-side clear policy"
         );
+    }
+
+    #[derive(Default)]
+    struct TestMemoryManager {
+        described: usize,
+        infos: usize,
+        allocations: HashMap<usize, Layout>,
+        destroys: usize,
+    }
+
+    unsafe extern "C" fn test_memory_begin(context: *mut c_void, count: usize) {
+        unsafe {
+            let manager = &mut *context.cast::<TestMemoryManager>();
+            manager.described = count;
+            manager.infos = 0;
+        }
+    }
+
+    unsafe extern "C" fn test_memory_info(
+        context: *mut c_void,
+        _name: *const c_char,
+        _typ: FaustMemoryType,
+        _elements: usize,
+        _size: usize,
+        _alignment: usize,
+        _reads: u64,
+        _writes: u64,
+    ) {
+        unsafe { (&mut *context.cast::<TestMemoryManager>()).infos += 1 };
+    }
+
+    unsafe extern "C" fn test_memory_end(_context: *mut c_void) {}
+
+    unsafe extern "C" fn test_memory_allocate(
+        context: *mut c_void,
+        size: usize,
+        alignment: usize,
+    ) -> *mut c_void {
+        unsafe {
+            let layout = Layout::from_size_align(size.max(1), alignment.max(1)).unwrap();
+            let pointer = alloc_zeroed(layout);
+            if !pointer.is_null() {
+                (&mut *context.cast::<TestMemoryManager>())
+                    .allocations
+                    .insert(pointer as usize, layout);
+            }
+            pointer.cast()
+        }
+    }
+
+    unsafe extern "C" fn test_memory_destroy(
+        context: *mut c_void,
+        address: *mut c_void,
+        _size: usize,
+        _alignment: usize,
+    ) {
+        unsafe {
+            let manager = &mut *context.cast::<TestMemoryManager>();
+            let layout = manager
+                .allocations
+                .remove(&(address as usize))
+                .expect("destroy matches one manager allocation");
+            dealloc(address.cast(), layout);
+            manager.destroys += 1;
+        }
+    }
+
+    #[test]
+    fn mem0_factory_requires_binding_and_owns_deep_clone_allocations() {
+        let _guard = crate::test_serial_guard();
+        let name = CString::new("mem0_delay").unwrap();
+        let source = CString::new("process = rdtable(8, 0.25, int(_)) : @(7);").unwrap();
+        let mem0 = CString::new("-mem0").unwrap();
+        let argv = [mem0.as_ptr()];
+        let mut error = [0_i8; 4096];
+        let factory = unsafe {
+            createCCraneliftDSPFactoryFromString(
+                name.as_ptr(),
+                source.as_ptr(),
+                argv.len() as i32,
+                argv.as_ptr(),
+                error.as_mut_ptr(),
+                0,
+            )
+        };
+        assert!(!factory.is_null(), "{}", unsafe {
+            CStr::from_ptr(error.as_ptr()).to_string_lossy()
+        });
+        assert!(unsafe { createCCraneliftDSPInstance(factory) }.is_null());
+
+        let mut owner = TestMemoryManager::default();
+        let table = FaustMemoryManager {
+            abi_version: FAUST_MEMORY_MANAGER_ABI_VERSION,
+            struct_size: std::mem::size_of::<FaustMemoryManager>(),
+            context: (&mut owner as *mut TestMemoryManager).cast(),
+            begin: Some(test_memory_begin),
+            info: Some(test_memory_info),
+            end: Some(test_memory_end),
+            allocate: Some(test_memory_allocate),
+            destroy: Some(test_memory_destroy),
+        };
+        assert!(unsafe { setCCraneliftMemoryManager(factory, &table, error.as_mut_ptr()) });
+        assert_eq!(owner.infos, owner.described);
+        assert!(
+            owner.described >= 3,
+            "object, generated table, and delay buffer are described"
+        );
+
+        let dsp = unsafe { createCCraneliftDSPInstance(factory) };
+        assert!(!dsp.is_null());
+        unsafe { initCCraneliftDSPInstance(dsp, 48_000) };
+        let cloned = unsafe { cloneCCraneliftDSPInstance(dsp) };
+        assert!(!cloned.is_null());
+        assert!(
+            owner.allocations.len() >= 4,
+            "class table plus object and buffer per instance"
+        );
+
+        unsafe {
+            deleteCCraneliftDSPInstance(cloned);
+            deleteCCraneliftDSPInstance(dsp);
+            assert!(deleteCCraneliftDSPFactory(factory));
+        }
+        assert!(owner.allocations.is_empty());
+        assert!(owner.destroys >= 4);
+    }
+
+    fn render_delay_with_memory_mode(managed: bool, opt_level: i32) -> Vec<f32> {
+        let name = CString::new(format!(
+            "delay_{}_opt{opt_level}",
+            if managed { "mem0" } else { "ordinary" }
+        ))
+        .unwrap();
+        let source = CString::new("process = _ : @(7);").unwrap();
+        let mem0 = CString::new("-mem0").unwrap();
+        let argv = [mem0.as_ptr()];
+        let mut error = [0_i8; 4096];
+        let factory = unsafe {
+            createCCraneliftDSPFactoryFromString(
+                name.as_ptr(),
+                source.as_ptr(),
+                i32::from(managed),
+                if managed {
+                    argv.as_ptr()
+                } else {
+                    std::ptr::null()
+                },
+                error.as_mut_ptr(),
+                opt_level,
+            )
+        };
+        assert!(!factory.is_null(), "{}", unsafe {
+            CStr::from_ptr(error.as_ptr()).to_string_lossy()
+        });
+        assert!(unsafe { (*factory).compute_body_lowered });
+
+        let mut owner = TestMemoryManager::default();
+        if managed {
+            let table = FaustMemoryManager {
+                abi_version: FAUST_MEMORY_MANAGER_ABI_VERSION,
+                struct_size: std::mem::size_of::<FaustMemoryManager>(),
+                context: (&mut owner as *mut TestMemoryManager).cast(),
+                begin: Some(test_memory_begin),
+                info: Some(test_memory_info),
+                end: Some(test_memory_end),
+                allocate: Some(test_memory_allocate),
+                destroy: Some(test_memory_destroy),
+            };
+            assert!(unsafe { setCCraneliftMemoryManager(factory, &table, error.as_mut_ptr()) });
+        }
+        let dsp = unsafe { createCCraneliftDSPInstance(factory) };
+        assert!(!dsp.is_null());
+        unsafe { initCCraneliftDSPInstance(dsp, 48_000) };
+
+        let frames = 32;
+        let mut input = vec![0.0_f32; frames];
+        input[0] = 1.0;
+        let mut output = vec![0.0_f32; frames];
+        let mut inputs = [input.as_mut_ptr()];
+        let mut outputs = [output.as_mut_ptr()];
+        unsafe {
+            computeCCraneliftDSPInstance(
+                dsp,
+                frames as i32,
+                inputs.as_mut_ptr(),
+                outputs.as_mut_ptr(),
+            );
+            deleteCCraneliftDSPInstance(dsp);
+            assert!(deleteCCraneliftDSPFactory(factory));
+        }
+        assert!(owner.allocations.is_empty());
+        output
+    }
+
+    #[test]
+    fn mem0_delay_matches_ordinary_at_minimum_and_maximum_optimization() {
+        let _guard = crate::test_serial_guard();
+        let ordinary_none = render_delay_with_memory_mode(false, 0);
+        let ordinary_max = render_delay_with_memory_mode(false, 3);
+        let managed_none = render_delay_with_memory_mode(true, 0);
+        let managed_max = render_delay_with_memory_mode(true, 3);
+        assert_eq!(ordinary_none, ordinary_max);
+        assert_eq!(ordinary_none, managed_none);
+        assert_eq!(ordinary_none, managed_max);
+        assert_eq!(ordinary_none[7], 1.0);
     }
 
     unsafe extern "C" fn capture_meta(ctx: *mut c_void, key: *const c_char, value: *const c_char) {

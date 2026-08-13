@@ -196,6 +196,10 @@ impl<T, I> FactoryCache<T, I> {
             .values_mut()
             .find(|entry| std::ptr::eq(entry.factory.as_ref(), factory.as_ptr().cast_const()))
         else {
+            // Host-backed instance destructors may call arbitrary callbacks;
+            // never run them while the process-global cache mutex is held.
+            drop(guard);
+            drop(instance);
             return std::ptr::null_mut();
         };
 

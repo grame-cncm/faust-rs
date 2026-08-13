@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "faust-memory-manager.h"
 
 #ifndef FAUSTFLOAT
 #define FAUSTFLOAT float
@@ -176,6 +177,11 @@ cranelift_dsp_factory* getCCraneliftDSPFactoryFromSHAKey(const char* sha_key);
  * @return true only if this was the final reference
  */
 bool deleteCCraneliftDSPFactory(cranelift_dsp_factory* factory);
+
+/** Bind and describe a custom allocator for a factory compiled with `-mem0`. */
+bool setCCraneliftMemoryManager(cranelift_dsp_factory* factory,
+                                const faust_memory_manager* manager,
+                                char* error_msg);
 
 /**
  * Delete all factories and remaining DSP instances in the global cache.

@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include "faust/gui/CInterface.h"
 #include "faust/gui/CGlue.h"
+#include "faust-memory-manager.h"
 
 // Self-contained C API declarations (mirrors crates/cranelift-ffi/include/cranelift-dsp-c.h)
 // This header intentionally does not include cranelift-dsp-c.h so it can be
@@ -63,6 +64,9 @@ char* writeCCraneliftDSPFactoryToBitcode(ccranelift_dsp_factory* factory);
 bool writeCCraneliftDSPFactoryToBitcodeFile(
     ccranelift_dsp_factory* factory, const char* bit_code_path);
 bool deleteCCraneliftDSPFactory(ccranelift_dsp_factory* factory);
+bool setCCraneliftMemoryManager(ccranelift_dsp_factory* factory,
+                                const faust_memory_manager* manager,
+                                char* error_msg);
 void deleteAllCCraneliftDSPFactories(void);
 char** getAllCCraneliftDSPFactories(void);
 char* getCCraneliftDSPFactoryName(ccranelift_dsp_factory* factory);
@@ -180,8 +184,17 @@ class cranelift_dsp;
 class LIBFAUST_API cranelift_dsp_factory : public dsp_factory {
 public:
     explicit cranelift_dsp_factory(ccranelift_dsp_factory* impl)
-        : impl_(impl)
-    {}
+        : impl_(impl), memory_manager_(nullptr)
+    {
+        memory_api_.abi_version = FAUST_MEMORY_MANAGER_ABI_VERSION;
+        memory_api_.struct_size = sizeof(memory_api_);
+        memory_api_.context = this;
+        memory_api_.begin = memory_begin;
+        memory_api_.info = memory_info;
+        memory_api_.end = memory_end;
+        memory_api_.allocate = memory_allocate;
+        memory_api_.destroy = memory_destroy;
+    }
 
     ~cranelift_dsp_factory() override = default;
 
@@ -240,12 +253,72 @@ public:
 
     ::dsp* createDSPInstance() override;
 
-    void setMemoryManager(dsp_memory_manager* /*manager*/) override {}
+    void setMemoryManager(dsp_memory_manager* manager) override
+    {
+        char error_msg[4096] = {0};
+        dsp_memory_manager* previous = memory_manager_;
+        memory_manager_ = manager;
+        if (!manager || !setCCraneliftMemoryManager(impl_, &memory_api_, error_msg)) {
+            memory_manager_ = previous;
+        }
+    }
 
-    dsp_memory_manager* getMemoryManager() override { return nullptr; }
+    dsp_memory_manager* getMemoryManager() override { return memory_manager_; }
 
 private:
+    static cranelift_dsp_factory* self(void* context)
+    {
+        return static_cast<cranelift_dsp_factory*>(context);
+    }
+
+    static void memory_begin(void* context, size_t count)
+    {
+        self(context)->memory_manager_->begin(count);
+    }
+
+    static void memory_info(void* context, const char* name,
+                            faust_memory_type type, size_t count,
+                            size_t size_bytes, size_t /*alignment*/,
+                            uint64_t reads, uint64_t writes)
+    {
+        self(context)->memory_manager_->info(
+            name, legacy_memory_type(type), count,
+            size_bytes, static_cast<size_t>(reads), static_cast<size_t>(writes));
+    }
+
+    static dsp_memory_manager::MemType legacy_memory_type(faust_memory_type type)
+    {
+        switch (type) {
+            case kMemInt64:
+            case kMemBool:
+                return dsp_memory_manager::kObj;
+            case kMemInt64Ptr:
+            case kMemBoolPtr:
+                return dsp_memory_manager::kObj_ptr;
+            default:
+                return static_cast<dsp_memory_manager::MemType>(type);
+        }
+    }
+
+    static void memory_end(void* context)
+    {
+        self(context)->memory_manager_->end();
+    }
+
+    static void* memory_allocate(void* context, size_t size_bytes, size_t /*alignment*/)
+    {
+        return self(context)->memory_manager_->allocate(size_bytes);
+    }
+
+    static void memory_destroy(void* context, void* address,
+                               size_t /*size_bytes*/, size_t /*alignment*/)
+    {
+        self(context)->memory_manager_->destroy(address);
+    }
+
     ccranelift_dsp_factory* impl_;
+    dsp_memory_manager* memory_manager_;
+    faust_memory_manager memory_api_;
 };
 
 // ── cranelift_dsp ──────────────────────────────────────────────────────────

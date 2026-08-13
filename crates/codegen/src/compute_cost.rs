@@ -243,7 +243,7 @@ impl CostVisitor<'_> {
                 cost.checked_add_assign(&self.visit(value)?)?;
             }
             M::Drop(value) => cost.checked_add_assign(&self.visit(value)?)?,
-            M::NullStatement | M::Return(None) => {}
+            M::NullStatement | M::Return(None) | M::Label(_) => {}
             M::Return(Some(value)) => cost.checked_add_assign(&self.visit(value)?)?,
             M::Block(items) => self.add_children(&mut cost, items)?,
             M::If {
@@ -327,6 +327,17 @@ impl CostVisitor<'_> {
                 cost.checked_add_assign(&self.visit(cond)?)?;
                 cost.checked_add_assign(&self.visit(body)?)?;
             }
+            M::ShiftArrayVar { delay, .. } => {
+                // Scalar FIR spells a delay-line shift as one dedicated node,
+                // but emitted native code performs a bounded loop containing
+                // one table load and store. Keep this syntactic (not multiplied
+                // by `delay`) like all other per-frame cost entries.
+                if delay > 0 {
+                    increment(&mut cost.loops, "loops")?;
+                    increment(&mut cost.load, "load")?;
+                    increment(&mut cost.store, "store")?;
+                }
+            }
             M::Switch {
                 cond,
                 cases,
@@ -355,7 +366,6 @@ impl CostVisitor<'_> {
             | M::DeclareFun { .. }
             | M::DeclareStructType { .. }
             | M::DeclareBufferIterators { .. }
-            | M::ShiftArrayVar { .. }
             | M::IteratorForLoop { .. }
             | M::OpenBox { .. }
             | M::CloseBox
@@ -364,7 +374,6 @@ impl CostVisitor<'_> {
             | M::AddBargraph { .. }
             | M::AddSoundfile { .. }
             | M::AddMetaDeclare { .. }
-            | M::Label(_)
             | M::Module { .. }
             | M::SubModule { .. }) => {
                 return Err(ComputeCostError::UnsupportedFirNode {
