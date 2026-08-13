@@ -4,7 +4,7 @@ Date: 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
-Status: implementation active; M0–M6 complete.
+Status: implementation active; M0–M7 complete.
 
 ## 1. Goal and scope
 
@@ -1550,6 +1550,8 @@ counts. JSON parses with `serde_json` and remains deterministic across runs.
 
 ### M7 — `tests/impulse-tests` integration
 
+Implementation status: **complete (2026-08-13)**.
+
 Deliverables are detailed in section 10. At minimum add:
 
 - `Make.mem0`;
@@ -1563,6 +1565,17 @@ Deliverables are detailed in section 10. At minimum add:
 Pass criterion: all three backends run the representative supported corpus
 through manager allocation and produce the same impulse output as their
 non-`mem0` forms. Cranelift runs strict lowering and accepts no compute stub.
+
+Implemented gate: `make -C tests/impulse-tests all-mem0` uses three import-free
+DSPs covering scalar/UI state, delay buffers, and generated tables. Ordinary
+faust-rs C++ output is the local numeric reference, so this lane does not depend
+on an installed Faust compiler or standard library. The generated C is compiled
+as strict C11 before linking to its C++ driver. All managers poison fresh
+allocations, reconcile description and allocation facts, reject invalid
+destruction, and require an empty live set; the C and Cranelift ownership paths
+also enforce global reverse destruction. The Cranelift runner validates strict
+lowering before instance creation. A Rust semantic checker validates each JSON
+document and exact cross-backend `compute_cost` equality.
 
 ### M8 — Differential and hardening gate
 

@@ -20,6 +20,7 @@ codegen = { path = "../codegen" }
 compiler = { path = "../compiler" }
 fir = { path = "../fir" }
 ffi-common = { path = "../ffi-common" }
+serde_json = "1"
 
 [dev-dependencies]
 interp_ffi = { package = "interp-ffi", path = "../interp-ffi" }

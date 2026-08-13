@@ -127,8 +127,10 @@ unsafe impl Send for CraneliftDspInstance {}
 /// object and external payloads, while this Rust value retains only their drop
 /// metadata inside the opaque cache-owned instance wrapper.
 pub(crate) struct DspStateBuffer {
+    // Declared before `main` so Rust drops the external allocation owner first.
+    // Its custom `Drop` then releases individual buffers in reverse order.
+    external: ExternalAllocations,
     main: OwnedAllocation,
-    external: Vec<ExternalAllocation>,
 }
 
 impl DspStateBuffer {
@@ -150,13 +152,13 @@ impl DspStateBuffer {
             format!("failed to allocate Cranelift DSP state ({size} bytes, align {align})")
         })?;
         Ok(Self {
+            external: ExternalAllocations::default(),
             main: OwnedAllocation {
                 ptr,
                 size,
                 align,
                 owner: AllocationOwner::Rust(layout),
             },
-            external: Vec::new(),
         })
     }
 
@@ -185,8 +187,8 @@ impl DspStateBuffer {
         }
         let main = unsafe { OwnedAllocation::manager(manager, object)? };
         let mut result = Self {
+            external: ExternalAllocations::default(),
             main,
-            external: Vec::new(),
         };
         for zone in analysis.memory_layout.zones.iter().filter(|zone| {
             zone.runtime_allocated
@@ -215,7 +217,7 @@ impl DspStateBuffer {
                     .cast::<*mut u8>()
                     .write_unaligned(allocation.ptr.as_ptr());
             }
-            result.external.push(ExternalAllocation {
+            result.external.0.push(ExternalAllocation {
                 zone_id: zone.id,
                 slot_offset: field.offset_bytes as usize,
                 allocation,
@@ -244,8 +246,8 @@ impl DspStateBuffer {
     /// Clones the allocation and bytes into a new owned buffer.
     pub(crate) fn deep_clone(&self) -> Result<Self, String> {
         let mut cloned = Self {
+            external: ExternalAllocations::default(),
             main: unsafe { self.main.allocate_like()? },
-            external: Vec::new(),
         };
         unsafe {
             std::ptr::copy_nonoverlapping(
@@ -254,7 +256,7 @@ impl DspStateBuffer {
                 self.main.size,
             );
         }
-        for source in &self.external {
+        for source in &self.external.0 {
             let allocation = unsafe { source.allocation.allocate_like()? };
             unsafe {
                 std::ptr::copy_nonoverlapping(
@@ -270,7 +272,7 @@ impl DspStateBuffer {
                     .cast::<*mut u8>()
                     .write_unaligned(allocation.ptr.as_ptr());
             }
-            cloned.external.push(ExternalAllocation {
+            cloned.external.0.push(ExternalAllocation {
                 zone_id: source.zone_id,
                 slot_offset: source.slot_offset,
                 allocation,
@@ -454,6 +456,18 @@ struct ExternalAllocation {
     allocation: OwnedAllocation,
 }
 
+#[derive(Default)]
+struct ExternalAllocations(Vec<ExternalAllocation>);
+
+impl Drop for ExternalAllocations {
+    fn drop(&mut self) {
+        // Instance buffers are allocated in canonical zone order. Pop rather
+        // than relying on `Vec` element-drop order so the callback contract is
+        // explicitly the reverse of allocation.
+        while self.0.pop().is_some() {}
+    }
+}
+
 pub(crate) struct ManagedClassStorage {
     allocations: Vec<(usize, OwnedAllocation)>,
 }
@@ -491,7 +505,7 @@ impl Drop for ManagedClassStorage {
         for (slot, _) in self.allocations.iter().rev() {
             unsafe { (*slot as *mut *mut u8).write_unaligned(std::ptr::null_mut()) };
         }
-        self.allocations.clear();
+        while self.allocations.pop().is_some() {}
     }
 }
 

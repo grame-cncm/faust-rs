@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -55,6 +55,18 @@ all-vec: all-vec0 all-vec1
 # other target: switching execution options must not move the impulse response
 # by one bit.
 all-execopts: cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os
+
+cpp-mem0:
+	$(MAKE) -f Make.mem0 cpp
+
+c-mem0:
+	$(MAKE) -f Make.mem0 c
+
+cranelift-mem0:
+	$(MAKE) -f Make.mem0 cranelift
+
+all-mem0:
+	$(MAKE) -f Make.mem0 all
 
 all-ss: $(SCALAR_SS_TARGETS)
 
@@ -286,8 +298,8 @@ compile-bench:
 
 # Build the faust-rs binaries the harness drives.
 build:
-	cd ../.. && cargo build --release -p compiler -p impulse-runner
-	cd ../.. && cargo build --release -p cranelift-ffi --bin impulse_cranelift
+	cd ../.. && cargo build --release -p compiler --bin faust-rs -p impulse-runner
+	cd ../.. && cargo build --release -p cranelift-ffi --bin impulse_cranelift --bin mem0_json_check
 
 tools: $(COMPARE)
 
@@ -321,6 +333,8 @@ help:
 	@echo "  all-vec-ss     : -lv 0/1 x -ss 0..3 across all eight backends"
 	@echo "  <backend>-ec/-os/-ec-os: check the execution options (cpp/c/rust only)"
 	@echo "  all-execopts   : the nine execution-option shapes (self-contained arch)"
+	@echo "  cpp-mem0/c-mem0/cranelift-mem0: audit mode-zero managed impulse output"
+	@echo "  all-mem0       : all three mem0 lanes plus cross-backend semantic JSON"
 	@echo "  rad-reference  : build the RAD lane reference (faust-rs interpreter)"
 	@echo "  rad-<backend>  : check RAD gradients against that reference"
 	@echo "  all-rad        : every backend that emits RAD code (needs rad-reference)"

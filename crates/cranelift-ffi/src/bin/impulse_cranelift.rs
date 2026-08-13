@@ -7,6 +7,8 @@
 //!
 //! Usage: `impulse_cranelift <file.dsp> [-n <frames>] [-I <dir>]... [-ss <n>]`
 
+use std::alloc::{Layout, alloc, dealloc};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, OsString, c_char, c_int, c_void};
 use std::iter;
 use std::path::PathBuf;
@@ -14,13 +16,17 @@ use std::process::ExitCode;
 use std::thread;
 
 use clap::Parser;
-use cranelift_ffi::factory::{createCCraneliftDSPFactoryFromFile, deleteCCraneliftDSPFactory};
+use cranelift_ffi::factory::{
+    createCCraneliftDSPFactoryFromFile, deleteCCraneliftDSPFactory, freeCMemory,
+    getCCraneliftDSPFactoryJSON, setCCraneliftMemoryManager,
+};
 use cranelift_ffi::instance::{
     buildUserInterfaceCCraneliftDSPInstance, computeCCraneliftDSPInstance,
     createCCraneliftDSPInstance, deleteCCraneliftDSPInstance, getNumInputsCCraneliftDSPInstance,
     getNumOutputsCCraneliftDSPInstance, initCCraneliftDSPInstance,
 };
 use cranelift_ffi::types::{FaustFloat, UIGlue};
+use ffi_common::abi::{FAUST_MEMORY_MANAGER_ABI_VERSION, FaustMemoryManager, FaustMemoryType};
 
 const SAMPLE_RATE: i32 = 44100;
 const BLOCK_SIZE: usize = 64;
@@ -65,6 +71,10 @@ struct Options {
     import_dirs: Vec<String>,
     /// Compiler-mode flags forwarded to the FFI factory argv.
     compiler_argv: Vec<String>,
+    /// Install and audit the shared custom-memory manager.
+    mem0: bool,
+    /// Optional path receiving the validated factory JSON.
+    json_output: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -116,6 +126,14 @@ struct CliArgs {
     /// sub-module that fills the table at initialization.
     #[arg(long = "table-init", value_name = "MODE")]
     table_init: Option<String>,
+
+    /// Use the mode-zero custom memory manager and reject JIT fallback stubs.
+    #[arg(long = "memory-manager0")]
+    mem0: bool,
+
+    /// Write the factory JSON after semantic validation.
+    #[arg(long = "json-output", value_name = "FILE")]
+    json_output: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Options, clap::Error> {
@@ -146,6 +164,9 @@ where
     if let Some(value) = args.table_init {
         compiler_argv.extend(["--table-init".to_owned(), value]);
     }
+    if args.mem0 {
+        compiler_argv.push("-mem0".to_owned());
+    }
 
     Ok(Options {
         dsp: args.dsp,
@@ -153,6 +174,8 @@ where
         double: args.double,
         import_dirs: args.import_dirs,
         compiler_argv,
+        mem0: args.mem0,
+        json_output: args.json_output,
     })
 }
 
@@ -164,6 +187,7 @@ fn normalize_legacy_arg(arg: OsString) -> OsString {
         Some("-vs") => OsString::from("--vector-size"),
         Some("-lv") => OsString::from("--loop-variant"),
         Some("-ss") => OsString::from("--scheduling-strategy"),
+        Some("-mem" | "-mem0" | "--memory-manager") => OsString::from("--memory-manager0"),
         _ => arg,
     }
 }
@@ -213,6 +237,46 @@ fn run(options: Options) -> Result<String, String> {
             "Cranelift factory creation failed: {}",
             unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy()
         ));
+    }
+
+    let mut audit = options.mem0.then(|| Box::new(AuditMemoryState::default()));
+    if let Some(state) = audit.as_mut() {
+        let json = match validate_mem0_factory_json(factory) {
+            Ok(json) => json,
+            Err(error) => {
+                unsafe {
+                    let _ = deleteCCraneliftDSPFactory(factory);
+                }
+                return Err(error);
+            }
+        };
+        if let Some(path) = &options.json_output
+            && let Err(error) = std::fs::write(path, json)
+        {
+            unsafe {
+                let _ = deleteCCraneliftDSPFactory(factory);
+            }
+            return Err(format!("cannot write Cranelift factory JSON: {error}"));
+        }
+        let manager = FaustMemoryManager {
+            abi_version: FAUST_MEMORY_MANAGER_ABI_VERSION,
+            struct_size: std::mem::size_of::<FaustMemoryManager>(),
+            context: (&mut **state as *mut AuditMemoryState).cast(),
+            begin: Some(audit_begin),
+            info: Some(audit_info),
+            end: Some(audit_end),
+            allocate: Some(audit_allocate),
+            destroy: Some(audit_destroy),
+        };
+        if !unsafe { setCCraneliftMemoryManager(factory, &manager, err.as_mut_ptr()) } {
+            unsafe {
+                let _ = deleteCCraneliftDSPFactory(factory);
+            }
+            return Err(format!(
+                "Cranelift memory-manager binding failed: {}",
+                unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy()
+            ));
+        }
     }
 
     // The factory's concrete type is private to the crate; keep it inferred by
@@ -318,7 +382,196 @@ fn run(options: Options) -> Result<String, String> {
         deleteCCraneliftDSPInstance(dsp);
         let _ = deleteCCraneliftDSPFactory(factory);
     }
+    if let Some(state) = audit {
+        state.verify()?;
+    }
     Ok(out)
+}
+
+#[derive(Debug)]
+struct DescribedZone {
+    name: String,
+    size_bytes: usize,
+    alignment: usize,
+}
+
+#[derive(Debug)]
+struct LiveAllocation {
+    layout: Layout,
+    requested_size: usize,
+    requested_alignment: usize,
+}
+
+/// Audits the shared Cranelift manager contract used by the impulse lane.
+///
+/// The callbacks never panic across FFI. They record the first violation and
+/// let the runner report it after factory destruction, when every allocation
+/// must have been released in global reverse order.
+#[derive(Debug, Default)]
+struct AuditMemoryState {
+    expected_descriptions: usize,
+    descriptions: Vec<DescribedZone>,
+    next_allocation: usize,
+    live: HashMap<usize, LiveAllocation>,
+    allocation_stack: Vec<usize>,
+    failure: Option<String>,
+}
+
+impl AuditMemoryState {
+    fn fail(&mut self, message: impl Into<String>) {
+        if self.failure.is_none() {
+            self.failure = Some(message.into());
+        }
+    }
+
+    fn verify(self) -> Result<(), String> {
+        if let Some(error) = self.failure {
+            return Err(format!("mem0 allocation audit failed: {error}"));
+        }
+        if self.descriptions.len() != self.expected_descriptions {
+            return Err("mem0 description count did not close".to_owned());
+        }
+        if self.next_allocation != self.descriptions.len() {
+            return Err(format!(
+                "mem0 described {} zones but allocated {}",
+                self.descriptions.len(),
+                self.next_allocation
+            ));
+        }
+        if !self.live.is_empty() || !self.allocation_stack.is_empty() {
+            return Err("mem0 manager retained live allocations after factory release".to_owned());
+        }
+        Ok(())
+    }
+}
+
+unsafe extern "C" fn audit_begin(context: *mut c_void, count: usize) {
+    let state = unsafe { &mut *context.cast::<AuditMemoryState>() };
+    state.expected_descriptions = count;
+    state.descriptions.clear();
+    state.next_allocation = 0;
+}
+
+unsafe extern "C" fn audit_info(
+    context: *mut c_void,
+    name: *const c_char,
+    _memory_type: FaustMemoryType,
+    _element_count: usize,
+    size_bytes: usize,
+    alignment: usize,
+    _reads: u64,
+    _writes: u64,
+) {
+    let state = unsafe { &mut *context.cast::<AuditMemoryState>() };
+    let name = if name.is_null() {
+        "<null>".to_owned()
+    } else {
+        unsafe { CStr::from_ptr(name) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    state.descriptions.push(DescribedZone {
+        name,
+        size_bytes,
+        alignment,
+    });
+}
+
+unsafe extern "C" fn audit_end(context: *mut c_void) {
+    let state = unsafe { &mut *context.cast::<AuditMemoryState>() };
+    if state.descriptions.len() != state.expected_descriptions {
+        state.fail(format!(
+            "begin announced {} zones but info reported {}",
+            state.expected_descriptions,
+            state.descriptions.len()
+        ));
+    }
+}
+
+unsafe extern "C" fn audit_allocate(
+    context: *mut c_void,
+    size_bytes: usize,
+    alignment: usize,
+) -> *mut c_void {
+    let state = unsafe { &mut *context.cast::<AuditMemoryState>() };
+    if let Some(zone) = state.descriptions.get(state.next_allocation) {
+        if zone.size_bytes != size_bytes || zone.alignment != alignment {
+            state.fail(format!(
+                "allocation {} requested {size_bytes}/{alignment}, description `{}` says {}/{}",
+                state.next_allocation, zone.name, zone.size_bytes, zone.alignment
+            ));
+        }
+    } else {
+        state.fail("allocation has no matching description");
+    }
+    state.next_allocation += 1;
+    let Ok(layout) = Layout::from_size_align(size_bytes.max(1), alignment) else {
+        state.fail(format!(
+            "invalid allocation layout {size_bytes}/{alignment}"
+        ));
+        return std::ptr::null_mut();
+    };
+    let address = unsafe { alloc(layout) };
+    if address.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe { address.write_bytes(0xa5, layout.size()) };
+    let key = address as usize;
+    state.live.insert(
+        key,
+        LiveAllocation {
+            layout,
+            requested_size: size_bytes,
+            requested_alignment: alignment,
+        },
+    );
+    state.allocation_stack.push(key);
+    address.cast()
+}
+
+unsafe extern "C" fn audit_destroy(
+    context: *mut c_void,
+    address: *mut c_void,
+    size_bytes: usize,
+    alignment: usize,
+) {
+    let state = unsafe { &mut *context.cast::<AuditMemoryState>() };
+    let key = address as usize;
+    if state.allocation_stack.pop() != Some(key) {
+        state.fail("allocations were not destroyed in reverse order");
+    }
+    let Some(live) = state.live.remove(&key) else {
+        state.fail("destroy received an unknown or already released pointer");
+        return;
+    };
+    if live.requested_size != size_bytes || live.requested_alignment != alignment {
+        state.fail("destroy size/alignment differs from allocate");
+    }
+    unsafe { dealloc(address.cast(), live.layout) };
+}
+
+fn validate_mem0_factory_json<T>(factory: *mut T) -> Result<String, String> {
+    let json_ptr = unsafe { getCCraneliftDSPFactoryJSON(factory.cast()) };
+    if json_ptr.is_null() {
+        return Err("Cranelift mem0 factory returned no JSON".to_owned());
+    }
+    let json = unsafe { CStr::from_ptr(json_ptr) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe { freeCMemory(json_ptr.cast()) };
+    let value: serde_json::Value =
+        serde_json::from_str(&json).map_err(|error| format!("invalid factory JSON: {error}"))?;
+    if value["memory_layout_version"] != 2
+        || value["memory_manager"]["backend"] != "cranelift"
+        || value["memory_manager"]["manager_abi"] != "faust_memory_manager_v1"
+        || value["compute_cost_version"] != 2
+        || value["compute_body_lowered"] != true
+    {
+        return Err(
+            "Cranelift mem0 JSON reports an invalid layout or fallback compute body".to_owned(),
+        );
+    }
+    Ok(json)
 }
 
 /// Zero-clamps tiny magnitudes exactly like `controlTools.h::normalize`.
@@ -539,6 +792,26 @@ mod tests {
         assert!(!options.double);
         assert_eq!(options.frames, 8);
         assert_eq!(options.import_dirs, ["lib"]);
+    }
+
+    #[test]
+    fn every_mem0_alias_is_canonicalized_for_the_factory() {
+        for alias in ["-mem", "-mem0", "--memory-manager", "--memory-manager0"] {
+            let options = parse(&["test.dsp", alias]).expect("parse mem0 alias");
+            assert!(options.mem0);
+            assert_eq!(options.compiler_argv, ["-mem0"]);
+        }
+    }
+
+    #[test]
+    fn json_output_is_runner_only_and_not_forwarded() {
+        let options =
+            parse(&["test.dsp", "--json-output", "layout.json"]).expect("parse JSON output");
+        assert_eq!(
+            options.json_output.as_deref(),
+            Some(std::path::Path::new("layout.json"))
+        );
+        assert!(options.compiler_argv.is_empty());
     }
 
     #[test]

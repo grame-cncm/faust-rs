@@ -81,16 +81,27 @@ See the design write-up in
      `CPP_TESTS` pointed at nonexistent paths. Producing `reference/*.ir` in the
      first place still needs the C++ oracle, exactly as for every other
      target.
+   - `make cpp-mem0` / `c-mem0` / `cranelift-mem0` — the mode-zero custom
+     memory-manager lanes. `make all-mem0` runs all three on a compact,
+     import-free corpus covering scalar/UI state, delays, and tables. Each lane
+     compares managed output with locally generated ordinary output, poisons
+     fresh allocations, audits descriptions/allocation/destruction/leaks, and
+     validates the version-2 memory JSON plus `compute_cost`. The combined gate
+     also requires identical FIR costs across all three backends. It is fully
+     self-contained and does not use the C++ Faust oracle or standard library.
 
 ## Requirements
 
 - A built faust-rs workspace: `make build` (builds `compiler`,
-  `impulse-runner`, and the `impulse_cranelift` binary in release mode).
+  `impulse-runner`, `impulse_cranelift`, and the mem0 JSON checker in release
+  mode).
 - A C++ Faust checkout for the reference oracle and the native C/C++ paths
   (architecture headers + `impulsearch.cpp`). Paths are configured in
   [`common.mk`](common.mk) and overridable:
   `CPP_TESTS`, `FAUST_ARCH`, `FAUST_CPP`, `FAUSTLIBS`.
 - `c++` and the Faust standard libraries (default `/usr/local/share/faust`).
+- The self-contained `all-mem0` target only needs C and C++ compilers; it does
+  not require a C++ Faust checkout or installed Faust libraries.
 - Node.js for the WASM and AssemblyScript impulse runners.
 - `rustc` (already required to build the workspace) for the Rust backend gate.
 - Julia with the `StaticArrays` package for the Julia backend gate.
@@ -118,6 +129,7 @@ make assemblyscript # check the AssemblyScript backend (scalar prefix)
 make rust          # check the Rust backend (scalar prefix, rustc)
 make julia         # check the Julia backend (scalar prefix, Julia)
 make cmajor        # check scalar Cmajor via cmaj-generated C++
+make all-mem0      # audit -mem0 on C, C++, and Cranelift plus JSON/cost parity
 make cpp-vec0      # check the C++ backend with -vec -lv 0
 make cpp-vec1      # check the C++ backend with -vec -lv 1
 make all-vec       # check -vec -lv 0 and -vec -lv 1 across all backends
@@ -157,6 +169,9 @@ supported responses.
 | `Make.cranelift` | faust-rs Cranelift JIT backend (scalar prefix, 64-bit, `-part`) |
 | `Make.wasm` | faust-rs WASM backend (scalar prefix, 64-bit, Node WebAssembly, `-part`) |
 | `Make.assemblyscript` | faust-rs AssemblyScript backend (scalar prefix, `asc` + Node WebAssembly, `-part`) |
+| `dsp-mem0/` | compact import-free memory-manager corpus (state/UI, delays, tables) |
+| `Make.mem0` | self-contained C/C++/Cranelift `-mem0` runtime and JSON gate |
+| `archs/faust_mem0*.h`, `archs/impulsemem0*.cpp` | audited custom-manager contracts and native drivers |
 | `Make.bench` | generated-code performance comparison with `faustbench -single` |
 | `tools/filesCompare.cpp` | the comparator |
 | `tools/impulsewasm.js` | Node WebAssembly scalar impulse runner |

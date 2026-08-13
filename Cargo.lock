@@ -416,6 +416,7 @@ dependencies = [
  "ffi-common",
  "fir",
  "interp-ffi",
+ "serde_json",
 ]
 
 [[package]]

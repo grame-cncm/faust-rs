@@ -45,3 +45,21 @@ every other target: the oracle is unchanged.
 Extending this to a full self-contained *poly/MIDI* harness (which is what would
 remove the C++ Faust dependency from the classic `cpp`/`c` targets) remains a
 future phase in the porting plan.
+
+## Self-contained files (`-mem0`)
+
+The `Make.mem0` lane is also self-contained and deliberately uses a smaller
+scalar driver because its subject is manager ownership rather than polyphony:
+
+- `faust_mem0.h` implements the legacy C++ `dsp_memory_manager` contract plus
+  faust-rs checked allocation extensions;
+- `faust_mem0_c_api.h` publishes the versioned context-carrying C callback ABI
+  and is force-included while compiling generated C as strict C11;
+- `impulsemem0.cpp` and `impulsemem0_c.cpp` poison fresh memory, reconcile each
+  runtime allocation with the compiler description, reject unknown or duplicate
+  destruction, and require no live allocation at shutdown.
+
+The C++ driver does not require global LIFO destruction: generated temporary
+subcontainers have lexical lifetimes that can end before the owning DSP. It
+still verifies each allocation is destroyed exactly once. The C and Cranelift
+paths additionally enforce their explicit reverse-order ownership contracts.

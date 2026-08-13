@@ -1,0 +1,81 @@
+# Self-contained mode-zero custom-memory impulse lane.
+
+include common.mk
+
+mem0_dspdir ?= dsp-mem0
+mem0_frames ?= 512
+mem0_names := $(patsubst $(mem0_dspdir)/%.dsp,%,$(wildcard $(mem0_dspdir)/*.dsp))
+
+MEM0_ROOT ?= build/mem0
+MEM0_IR ?= ir
+MEM0_CPPFLAGS ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -std=c++17 -Iarchs
+MEM0_CFLAGS ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -std=c11 -Iarchs
+MEM0_JSON_CHECK ?= ../../target/release/mem0_json_check
+CC ?= cc
+
+reference_files := $(mem0_names:%=$(MEM0_IR)/mem0-reference/%.ir)
+cpp_files := $(mem0_names:%=$(MEM0_IR)/cpp-mem0/%.ir)
+c_files := $(mem0_names:%=$(MEM0_IR)/c-mem0/%.ir)
+cranelift_files := $(mem0_names:%=$(MEM0_IR)/cranelift-mem0/%.ir)
+json_files := $(mem0_names:%=$(MEM0_ROOT)/json/%.checked)
+
+.PHONY: all cpp c cranelift json
+.DELETE_ON_ERROR:
+.SECONDARY: $(reference_files)
+
+all: cpp c cranelift json
+cpp: $(cpp_files)
+c: $(c_files)
+cranelift: $(cranelift_files)
+json: $(json_files)
+
+$(COMPARE): tools/filesCompare.cpp
+	$(CXX) -O2 -std=c++11 $< -o $@
+
+$(MEM0_ROOT)/.dir $(MEM0_IR)/mem0-reference/.dir $(MEM0_IR)/cpp-mem0/.dir \
+$(MEM0_IR)/c-mem0/.dir $(MEM0_IR)/cranelift-mem0/.dir:
+	mkdir -p $(@D)
+	touch $@
+
+$(MEM0_IR)/mem0-reference/%.ir: $(mem0_dspdir)/%.dsp archs/impulseexecopts.cpp \
+ archs/impulseexecopts_driver.h archs/faust_minimal.h | $(MEM0_ROOT)/.dir $(MEM0_IR)/mem0-reference/.dir
+	mkdir -p $(MEM0_ROOT)/reference
+	$(FAUST_RS) -lang cpp -double -a archs/impulseexecopts.cpp $< -o $(MEM0_ROOT)/reference/$*.cpp
+	$(CXX) $(MEM0_CPPFLAGS) $(MEM0_ROOT)/reference/$*.cpp -o $(MEM0_ROOT)/reference/$*
+	$(MEM0_ROOT)/reference/$* -n $(mem0_frames) > $@
+
+$(MEM0_IR)/cpp-mem0/%.ir: $(mem0_dspdir)/%.dsp $(MEM0_IR)/mem0-reference/%.ir \
+ archs/impulsemem0.cpp archs/faust_mem0.h | $(MEM0_ROOT)/.dir $(MEM0_IR)/cpp-mem0/.dir
+	mkdir -p $(MEM0_ROOT)/cpp $(MEM0_ROOT)/json/cpp
+	$(FAUST_RS) -lang cpp -double -mem0 -a archs/impulsemem0.cpp $< -o $(MEM0_ROOT)/cpp/$*.cpp
+	$(FAUST_RS) -lang cpp -double -mem0 -json $< -o $(MEM0_ROOT)/json/cpp/$*.cpp
+	$(CXX) $(MEM0_CPPFLAGS) $(MEM0_ROOT)/cpp/$*.cpp -o $(MEM0_ROOT)/cpp/$*
+	$(MEM0_ROOT)/cpp/$* -n $(mem0_frames) > $@
+	$(COMPARE) $@ $(MEM0_IR)/mem0-reference/$*.ir
+	$(MEM0_JSON_CHECK) cpp=$(MEM0_ROOT)/json/cpp/$*.json
+
+$(MEM0_IR)/c-mem0/%.ir: $(mem0_dspdir)/%.dsp $(MEM0_IR)/mem0-reference/%.ir \
+ archs/impulsemem0_c.cpp archs/faust_mem0_c_api.h | $(MEM0_ROOT)/.dir $(MEM0_IR)/c-mem0/.dir
+	mkdir -p $(MEM0_ROOT)/c $(MEM0_ROOT)/json/c
+	$(FAUST_RS) -lang c -double -mem0 $< -o $(MEM0_ROOT)/c/$*.c
+	$(FAUST_RS) -lang c -double -mem0 -json $< -o $(MEM0_ROOT)/json/c/$*.c
+	$(CC) $(MEM0_CFLAGS) -include faust_mem0_c_api.h -c $(MEM0_ROOT)/c/$*.c -o $(MEM0_ROOT)/c/$*.o
+	$(CXX) $(MEM0_CPPFLAGS) archs/impulsemem0_c.cpp $(MEM0_ROOT)/c/$*.o -o $(MEM0_ROOT)/c/$*
+	$(MEM0_ROOT)/c/$* -n $(mem0_frames) > $@
+	$(COMPARE) $@ $(MEM0_IR)/mem0-reference/$*.ir
+	$(MEM0_JSON_CHECK) c=$(MEM0_ROOT)/json/c/$*.json
+
+$(MEM0_IR)/cranelift-mem0/%.ir: $(mem0_dspdir)/%.dsp $(MEM0_IR)/mem0-reference/%.ir \
+ | $(MEM0_ROOT)/.dir $(MEM0_IR)/cranelift-mem0/.dir
+	mkdir -p $(MEM0_ROOT)/json/cranelift
+	$(RUNNER_CRANELIFT) $< -double -mem0 -n $(mem0_frames) \
+		--json-output $(MEM0_ROOT)/json/cranelift/$*.json > $@
+	$(COMPARE) $@ $(MEM0_IR)/mem0-reference/$*.ir -part
+	$(MEM0_JSON_CHECK) cranelift=$(MEM0_ROOT)/json/cranelift/$*.json
+
+$(MEM0_ROOT)/json/%.checked: $(MEM0_IR)/cpp-mem0/%.ir $(MEM0_IR)/c-mem0/%.ir \
+ $(MEM0_IR)/cranelift-mem0/%.ir | $(MEM0_ROOT)/.dir
+	mkdir -p $(MEM0_ROOT)/json
+	$(MEM0_JSON_CHECK) cpp=$(MEM0_ROOT)/json/cpp/$*.json \
+		c=$(MEM0_ROOT)/json/c/$*.json cranelift=$(MEM0_ROOT)/json/cranelift/$*.json
+	touch $@
