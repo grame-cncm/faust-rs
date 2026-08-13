@@ -12,8 +12,12 @@ Compilation options: -lang cpp -single
 #endif
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <exception>
+#include <new>
 
 #ifndef FAUSTCLASS
 #define FAUSTCLASS heavy_bench

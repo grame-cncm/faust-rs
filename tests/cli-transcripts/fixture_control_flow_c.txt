@@ -11,6 +11,12 @@ Compilation options: -lang c -single
 #define FAUSTFLOAT float
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+#define FAUST_UNUSED __attribute__((unused))
+#else
+#define FAUST_UNUSED
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -24,6 +30,7 @@ extern "C" {
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifndef FAUSTCLASS
 #define FAUSTCLASS control_flow
@@ -34,8 +41,8 @@ extern "C" {
 #define exp10 __exp10
 #endif
 
-static inline int faustmini(int a, int b) { return (a < b) ? a : b; }
-static inline int faustmaxi(int a, int b) { return (a > b) ? a : b; }
+static inline FAUST_UNUSED int faustmini(int a, int b) { return (a < b) ? a : b; }
+static inline FAUST_UNUSED int faustmaxi(int a, int b) { return (a > b) ? a : b; }
 
 
 typedef struct {
