@@ -247,6 +247,9 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
                 cli,
                 Some(cli_lang_name(CliLang::Julia)),
             )),
+            // A FIR fixture has no source session behind it: there is no
+            // filename, no metadata snapshot, and no JSON description to embed.
+            ..JuliaOptions::default()
         };
         match generate_julia_module(&store, module, &options) {
             Ok(julia) => {

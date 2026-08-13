@@ -61,6 +61,27 @@ pub struct JuliaOptions {
     /// [`Self::real_type`], for callers (mostly tests) that do not thread the
     /// real CLI flags through.
     pub compile_options: Option<String>,
+    /// Source-level DSP name reported by the generated `metadata!` callback.
+    ///
+    /// Independent from [`Self::class_name`]: `-cn` renames the Julia struct,
+    /// while this follows the source basename or an explicit `declare name`.
+    pub metadata_name: Option<String>,
+    /// Source basename reported by the generated `metadata!` callback.
+    pub metadata_filename: Option<String>,
+    /// Non-identity compilation metadata replayed by `metadata!`.
+    ///
+    /// Same transport as `CppOptions::metadata_entries`: the facade flattens the
+    /// parser/evaluator metadata snapshot into it, and the emitter replays it in
+    /// C++ key order together with the identity entries.
+    pub metadata_entries: Vec<(String, String)>,
+    /// Pre-rendered one-line JSON description returned by the generated
+    /// `getJSON`.
+    ///
+    /// The description is built by the compiler facade rather than here because
+    /// it carries session context (source filename, library provenance) that the
+    /// FIR module does not. `None` keeps the empty `"{}"` payload used by
+    /// fixture-level backend tests.
+    pub dsp_json: Option<String>,
 }
 
 impl Default for JuliaOptions {
@@ -69,6 +90,10 @@ impl Default for JuliaOptions {
             class_name: Some("mydsp".to_owned()),
             real_type: JuliaRealType::Float32,
             compile_options: None,
+            metadata_name: None,
+            metadata_filename: None,
+            metadata_entries: Vec::new(),
+            dsp_json: None,
         }
     }
 }
@@ -313,6 +338,8 @@ pub fn generate_julia_module(
         &mut out,
         JuliaApiEmitInput {
             class_name: &class_name,
+            module_name: module.name.as_str(),
+            options,
             num_inputs: module.num_inputs,
             num_outputs: module.num_outputs,
             declared_functions: &functions,
@@ -524,6 +551,12 @@ fn emit_struct_default_initializers(
 struct JuliaApiEmitInput<'a> {
     /// Effective Julia DSP struct name.
     class_name: &'a str,
+    /// FIR module name, used as the metadata fallback identity when the facade
+    /// supplied no explicit source name/filename.
+    module_name: &'a str,
+    /// Backend options carrying the metadata transport and the `getJSON`
+    /// payload.
+    options: &'a JuliaOptions,
     /// Propagated input arity reported by the FIR module.
     num_inputs: usize,
     /// Propagated output arity reported by the FIR module.
@@ -553,6 +586,8 @@ fn emit_julia_api(
 ) -> Result<(), CodegenError> {
     let JuliaApiEmitInput {
         class_name,
+        module_name,
+        options,
         num_inputs,
         num_outputs,
         declared_functions,
@@ -560,7 +595,14 @@ fn emit_julia_api(
         table_inits,
     } = spec;
 
-    emit_metadata(store, out, class_name, declared_functions)?;
+    emit_metadata(
+        store,
+        out,
+        class_name,
+        module_name,
+        options,
+        declared_functions,
+    )?;
 
     let _ = writeln!(
         out,
@@ -677,9 +719,13 @@ fn emit_julia_api(
     let _ = writeln!(out, "end");
     let _ = writeln!(out);
 
+    // Source provenance: C++ `JuliaCodeContainer::produceClass` embeds
+    // `flattenJSON(generateJSONAux())`. An absent payload keeps the previous
+    // empty object so fixture-level backend tests stay valid Julia.
     let _ = writeln!(
         out,
-        "getJSON(dsp::{class_name}{{T}}) where {{T}} = \"{{}}\""
+        "getJSON(dsp::{class_name}{{T}}) where {{T}} = {}",
+        julia_string_literal(options.dsp_json.as_deref().unwrap_or("{}"))
     );
     let _ = writeln!(out);
 
@@ -703,7 +749,10 @@ fn emit_julia_api(
     } else {
         let _ = writeln!(
             out,
-            "function compute!(dsp::{class_name}{{T}}, count::Int32, inputs::AbstractMatrix{{FAUSTFLOAT}}, outputs::AbstractMatrix{{FAUSTFLOAT}}) where {{T}}"
+            // `@inbounds` on the definition covers the whole body, as in C++
+            // `JuliaCodeContainer::generateCompute`. Without it every table and
+            // buffer access in the audio loop pays a bounds check.
+            "@inbounds function compute!(dsp::{class_name}{{T}}, count::Int32, inputs::AbstractMatrix{{FAUSTFLOAT}}, outputs::AbstractMatrix{{FAUSTFLOAT}}) where {{T}}"
         );
         let _ = writeln!(out, "\tnothing");
         let _ = writeln!(out, "end");
@@ -753,34 +802,76 @@ where
     }
 }
 
-/// Emits `metadata!` or a small default metadata callback.
+/// Emits `metadata!` or a synthesized metadata callback.
 ///
-/// A FIR `metadata` function is preferred because it preserves parser/evaluator
-/// metadata order. The fallback exists so even minimal modules expose the
-/// expected Julia API surface.
+/// A FIR `metadata` function with a non-empty body is preferred because it
+/// preserves parser/evaluator metadata order. When the body is empty — the
+/// ordinary case, since the pipeline transports compilation metadata through
+/// backend options rather than through FIR — the callback is synthesized from
+/// the options, exactly like the C-family emitters do.
 ///
-/// The fallback does not attempt to synthesize full JSON or UI metadata; strict
-/// JSON generation remains owned by the JSON backend path.
+/// Source provenance: C++ `JuliaCodeContainer::produceMetadata`, which walks
+/// `gGlobal->gMetaDataSet` and always includes the compiler-synthesized
+/// `compile_options`, `filename`, and `name` entries.
 fn emit_metadata(
     store: &FirStore,
     out: &mut String,
     class_name: &str,
+    module_name: &str,
+    options: &JuliaOptions,
     functions: &[DeclareFunView],
 ) -> Result<(), CodegenError> {
-    if let Some(f) = functions.iter().find(|f| f.name == "metadata") {
-        emit_named_fun(store, out, class_name, f)
-    } else {
+    if let Some(f) = functions
+        .iter()
+        .find(|f| f.name == "metadata" && !is_empty_metadata_body(store, f))
+    {
+        return emit_named_fun(store, out, class_name, f);
+    }
+    let _ = writeln!(
+        out,
+        "function metadata!(dsp::{class_name}{{T}}, m::FMeta) where {{T}}"
+    );
+    emit_compilation_metadata(out, options, module_name);
+    let _ = writeln!(out, "end");
+    let _ = writeln!(out);
+    Ok(())
+}
+
+/// Returns `true` when a FIR function has no body statements.
+///
+/// The lowering always declares `metadata`, so "absent" and "present but empty"
+/// must lead to the same synthesized callback.
+fn is_empty_metadata_body(store: &FirStore, decl: &DeclareFunView) -> bool {
+    decl.body.is_none_or(
+        |body| matches!(match_fir(store, body), FirMatch::Block(items) if items.is_empty()),
+    )
+}
+
+/// Replays the compilation metadata carried by the backend options.
+///
+/// Shares [`crate::backends::c_family::ordered_compilation_metadata`] with the C
+/// and C++ emitters, so the three backends declare the same keys, in the same
+/// C++ order, from the same transport.
+fn emit_compilation_metadata(out: &mut String, options: &JuliaOptions, module_name: &str) {
+    let filename = options
+        .metadata_filename
+        .clone()
+        .unwrap_or_else(|| format!("{module_name}.dsp"));
+    let name = options
+        .metadata_name
+        .clone()
+        .unwrap_or_else(|| module_name.to_owned());
+    for (key, value) in crate::backends::c_family::ordered_compilation_metadata(
+        &options.metadata_entries,
+        filename,
+        name,
+    ) {
         let _ = writeln!(
             out,
-            "function metadata!(dsp::{class_name}{{T}}, m::FMeta) where {{T}}"
+            "\tdeclare!(m, {}, {});",
+            julia_string_literal(&key),
+            julia_string_literal(&value)
         );
-        let _ = writeln!(
-            out,
-            "\tdeclare!(m, \"faust-rs\", \"module-first julia backend prototype\")"
-        );
-        let _ = writeln!(out, "end");
-        let _ = writeln!(out);
-        Ok(())
     }
 }
 
@@ -820,7 +911,10 @@ fn emit_named_fun(
             )
         }
         "compute" => format!(
-            "function compute!(dsp::{class_name}{{T}}, count::Int32, inputs::AbstractMatrix{{FAUSTFLOAT}}, outputs::AbstractMatrix{{FAUSTFLOAT}}) where {{T}}"
+            // `@inbounds` on the definition covers the whole body, as in C++
+            // `JuliaCodeContainer::generateCompute`. Without it every table and
+            // buffer access in the audio loop pays a bounds check.
+            "@inbounds function compute!(dsp::{class_name}{{T}}, count::Int32, inputs::AbstractMatrix{{FAUSTFLOAT}}, outputs::AbstractMatrix{{FAUSTFLOAT}}) where {{T}}"
         ),
         _ => format!(
             "function {}!(dsp::{class_name}{{T}}) where {{T}}",
@@ -1799,6 +1893,11 @@ fn julia_string_literal(input: &str) -> String {
         .flat_map(|c| match c {
             '\\' => "\\\\".chars().collect::<Vec<_>>(),
             '"' => "\\\"".chars().collect::<Vec<_>>(),
+            // Deliberate deviation from C++ `flattenJSON`, which leaves `$`
+            // alone: Julia interpolates it inside a double-quoted literal, so an
+            // unescaped `$` in a label or in the embedded JSON produces source
+            // that does not compile.
+            '$' => "\\$".chars().collect::<Vec<_>>(),
             '\n' => "\\n".chars().collect::<Vec<_>>(),
             '\r' => "\\r".chars().collect::<Vec<_>>(),
             '\t' => "\\t".chars().collect::<Vec<_>>(),
@@ -1858,6 +1957,85 @@ mod tests {
         assert!(out.contains("instanceConstants!(dsp, sample_rate)"));
         assert!(out.contains("instanceResetUserInterface!(dsp)"));
         assert!(out.contains("instanceClear!(dsp)"));
+    }
+
+    #[test]
+    fn metadata_callback_replays_the_options_transport_in_cpp_key_order() {
+        let (store, module) = build_sine_phasor_test_module();
+        let options = JuliaOptions {
+            metadata_name: Some("Demo".to_owned()),
+            metadata_filename: Some("demo.dsp".to_owned()),
+            metadata_entries: vec![
+                ("version".to_owned(), "1.2".to_owned()),
+                ("author".to_owned(), "Alice".to_owned()),
+                (
+                    "compile_options".to_owned(),
+                    "-lang julia -single".to_owned(),
+                ),
+            ],
+            ..JuliaOptions::default()
+        };
+        let out = generate_julia_module(&store, module, &options)
+            .expect("julia module generation should succeed");
+
+        let body = out
+            .split("function metadata!")
+            .nth(1)
+            .expect("metadata! callback should be emitted");
+        let body = body.split("\nend").next().expect("callback should close");
+        let declared: Vec<&str> = body
+            .lines()
+            .filter(|line| line.contains("declare!"))
+            .map(str::trim)
+            .collect();
+        // C++ `JuliaCodeContainer::produceMetadata` walks the metadata set in
+        // key order, identity entries included.
+        assert_eq!(
+            declared,
+            vec![
+                "declare!(m, \"author\", \"Alice\");",
+                "declare!(m, \"compile_options\", \"-lang julia -single\");",
+                "declare!(m, \"filename\", \"demo.dsp\");",
+                "declare!(m, \"name\", \"Demo\");",
+                "declare!(m, \"version\", \"1.2\");",
+            ]
+        );
+    }
+
+    #[test]
+    fn metadata_callback_falls_back_to_the_module_identity() {
+        let (store, module) = build_sine_phasor_test_module();
+        let out = generate_julia_module(&store, module, &JuliaOptions::default())
+            .expect("julia module generation should succeed");
+
+        assert!(out.contains("declare!(m, \"filename\", \"mydsp.dsp\");"));
+        assert!(out.contains("declare!(m, \"name\", \"mydsp\");"));
+    }
+
+    #[test]
+    fn get_json_embeds_the_supplied_description_as_a_julia_literal() {
+        let (store, module) = build_sine_phasor_test_module();
+        let options = JuliaOptions {
+            dsp_json: Some("{\"name\": \"a$b\",\"inputs\": 0}".to_owned()),
+            ..JuliaOptions::default()
+        };
+        let out = generate_julia_module(&store, module, &options)
+            .expect("julia module generation should succeed");
+
+        // Quotes are escaped for the literal, and `$` must not survive raw:
+        // Julia would interpolate it and the generated source would not compile.
+        assert!(out.contains(
+            "getJSON(dsp::mydsp{T}) where {T} = \"{\\\"name\\\": \\\"a\\$b\\\",\\\"inputs\\\": 0}\""
+        ));
+    }
+
+    #[test]
+    fn get_json_keeps_the_empty_object_without_a_description() {
+        let (store, module) = build_sine_phasor_test_module();
+        let out = generate_julia_module(&store, module, &JuliaOptions::default())
+            .expect("julia module generation should succeed");
+
+        assert!(out.contains("getJSON(dsp::mydsp{T}) where {T} = \"{}\""));
     }
 
     #[test]

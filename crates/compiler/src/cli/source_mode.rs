@@ -526,6 +526,9 @@ pub(crate) fn run_source_mode(
                 cli,
                 Some(cli_lang_name(CliLang::Julia)),
             )),
+            // Metadata transport and the embedded JSON description are filled
+            // by the lowering, which is where the compilation snapshot lives.
+            ..JuliaOptions::default()
         };
         let result = compiler.compile_file_to_julia_with_lane(
             input_path,

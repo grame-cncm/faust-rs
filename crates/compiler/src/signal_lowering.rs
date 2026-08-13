@@ -763,6 +763,64 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane_with_timing(
     })
 }
 
+/// Builds the one-line JSON description embedded in generated source by
+/// backends that expose a `getJSON`-style accessor.
+///
+/// Source provenance: C++ `CodeContainer::generateJSONAux`, called by the
+/// textual backends that carry their own description (Julia, Rust, and the
+/// others in that family).
+///
+/// Two deliberate narrowings against the reference, both recorded in
+/// `porting/wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md`:
+///
+/// - `include_pathnames` stays empty. The reference bakes the compiling
+///   machine's absolute import roots into the generated source; that is
+///   provenance no host reads and it makes generated artifacts machine-specific.
+/// - a failure to describe the module is not fatal. The description is a
+///   secondary artifact, and the layout step it needs can reject shapes the
+///   textual backend itself emits happily; degrading to the previous empty
+///   object keeps such a DSP compiling. The degradation is visible in the
+///   artifact — `getJSON` returns `"{}"` — rather than silently wrong.
+fn embedded_json_description(
+    store: &FirStore,
+    module: FirId,
+    source_name: &str,
+    dsp_name: &str,
+    output: &SignalCompileOutput,
+    compile_options: Option<&str>,
+    real_type: RealType,
+) -> Option<String> {
+    let compile_options = compile_options.map_or_else(
+        || compile_options_json_string(None, real_type == RealType::Float64),
+        str::to_owned,
+    );
+    build_strict_json_description(
+        store,
+        module,
+        StrictJsonContext {
+            filename: source_name_to_filename(source_name),
+            include_pathnames: Vec::new(),
+            library_list: library_list_from_signals(output),
+            top_level_meta: json_meta_entries_from_snapshot(&output.compilation_metadata),
+            compile_options,
+            double_precision: real_type == RealType::Float64,
+            memory_flavor: None,
+        },
+    )
+    .ok()
+    .map(|mut description| {
+        // The FIR module carries the *class* identity (`-cn`, default
+        // `"mydsp"`), which is a codegen name, not the DSP name. A description
+        // built from it would advertise `"name": "mydsp"` next to
+        // `"filename": "simple.dsp"`, and would disagree with the `metadata!`
+        // callback generated from the same session. The same confusion produced
+        // the `-mem0` `memory_layout` zone-naming defect fixed on 2026-08-13,
+        // in the other direction.
+        description.name = dsp_name.to_owned();
+        description.render_flat()
+    })
+}
+
 /// Lowers signals through the transform fast lane, verifies FIR, then emits C++.
 pub(crate) fn lower_signals_to_cpp_transform_fastlane(
     source_name: &str,
@@ -919,6 +977,36 @@ pub(crate) fn lower_signals_to_julia_transform_fastlane(
         RealType::Float32 => JuliaRealType::Float32,
         RealType::Float64 => JuliaRealType::Float64,
     };
+    codegen_options
+        .metadata_name
+        .get_or_insert_with(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
+    codegen_options
+        .metadata_filename
+        .get_or_insert_with(|| source_name_to_filename(source_name));
+    if codegen_options.metadata_entries.is_empty() {
+        codegen_options.metadata_entries =
+            c_family_meta_entries_from_snapshot(source_name, &output.compilation_metadata);
+        if let Some(compile_options) = codegen_options.compile_options.clone() {
+            codegen_options
+                .metadata_entries
+                .push(("compile_options".to_owned(), compile_options));
+        }
+    }
+    if codegen_options.dsp_json.is_none() {
+        let dsp_name = codegen_options
+            .metadata_name
+            .clone()
+            .unwrap_or_else(|| resolve_ui_root_label(source_name, &output.compilation_metadata));
+        codegen_options.dsp_json = embedded_json_description(
+            &lowered.store,
+            lowered.module,
+            source_name,
+            &dsp_name,
+            output,
+            codegen_options.compile_options.as_deref(),
+            ctx.real_type,
+        );
+    }
     time_phase_with_sink(timing_sink, "julia-codegen", || {
         generate_julia_module(&lowered.store, lowered.module, &codegen_options)
     })

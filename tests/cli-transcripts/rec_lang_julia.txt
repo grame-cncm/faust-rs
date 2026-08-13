@@ -28,6 +28,9 @@ mutable struct mydsp{T} <: dsp
 end
 
 function metadata!(dsp::mydsp{T}, m::FMeta) where {T}
+	declare!(m, "compile_options", "-lang julia -single");
+	declare!(m, "filename", "rec.dsp");
+	declare!(m, "name", "rec");
 end
 
 getSampleRate(dsp::mydsp{T}) where {T} = dsp.fSampleRate
@@ -62,14 +65,14 @@ function init!(dsp::mydsp{T}, sample_rate::Int32) where {T}
 	instanceInit!(dsp, sample_rate)
 end
 
-getJSON(dsp::mydsp{T}) where {T} = "{}"
+getJSON(dsp::mydsp{T}) where {T} = "{\"name\": \"rec\",\"filename\": \"rec.dsp\",\"version\": \"0.8.0\",\"compile_options\": \"-lang julia -single\",\"size\": 20,\"inputs\": 1,\"outputs\": 1,\"meta\": [],\"ui\": [ {\"type\": \"vgroup\",\"label\": \"rec\",\"items\": []}]}"
 
 function buildUserInterface!(dsp::mydsp{T}, ui_interface::UI) where {T}
 	openVerticalBox!(ui_interface, "rec")
 	closeBox!(ui_interface)
 end
 
-function compute!(dsp::mydsp{T}, count::Int32, inputs::AbstractMatrix{FAUSTFLOAT}, outputs::AbstractMatrix{FAUSTFLOAT}) where {T}
+@inbounds function compute!(dsp::mydsp{T}, count::Int32, inputs::AbstractMatrix{FAUSTFLOAT}, outputs::AbstractMatrix{FAUSTFLOAT}) where {T}
 	# signal_fir_fastlane_step2a: executable base slice
 	# io: inputs=1 outputs=1
 	# signals: 1

@@ -127,6 +127,95 @@ fn fastlane_julia_emits_faust_style_shell() {
     assert!(julia.contains("outputs::AbstractMatrix{FAUSTFLOAT}"));
 }
 
+/// Julia hosts read the DSP through `metadata!` and `getJSON`, exactly as C++
+/// Faust `-lang julia` hosts do. Both callbacks used to be emitted empty, so a
+/// Julia host got nothing back. See
+/// `porting/wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md`
+/// (`G5-J1`, `G5-J2`).
+#[test]
+fn fastlane_julia_emits_metadata_and_json_description() {
+    let compiler = Compiler::new();
+    let source = r#"
+        declare name "Demo";
+        declare author "Alice";
+        declare version "1.2";
+        process = _ * hslider("gain", 0.5, 0, 1, 0.01);
+    "#;
+    let julia = compiler
+        .compile_source_to_julia(
+            "demo.dsp",
+            source,
+            &codegen::backends::julia::JuliaOptions::default(),
+        )
+        .unwrap_or_else(|e| panic!("Julia compilation failed: {e}"));
+
+    // Source declarations plus the compiler-synthesized identity entries, in
+    // the C++ key order.
+    let metadata = julia
+        .split("function metadata!")
+        .nth(1)
+        .expect("metadata! callback should be emitted");
+    let metadata = metadata
+        .split("\nend")
+        .next()
+        .expect("callback should close");
+    let declared: Vec<&str> = metadata
+        .lines()
+        .filter(|line| line.contains("declare!"))
+        .map(str::trim)
+        .collect();
+    assert_eq!(
+        declared,
+        vec![
+            "declare!(m, \"author\", \"Alice\");",
+            "declare!(m, \"filename\", \"demo.dsp\");",
+            "declare!(m, \"name\", \"Demo\");",
+            "declare!(m, \"version\", \"1.2\");",
+        ]
+    );
+
+    let json = julia
+        .lines()
+        .find(|line| line.starts_with("getJSON("))
+        .expect("getJSON should be emitted");
+    assert!(
+        !json.contains("= \"{}\""),
+        "getJSON must carry a description"
+    );
+    assert!(json.contains("\\\"name\\\": \\\"Demo\\\""));
+    assert!(json.contains("\\\"filename\\\": \\\"demo.dsp\\\""));
+    assert!(json.contains("\\\"inputs\\\": 1"));
+    assert!(json.contains("\\\"outputs\\\": 1"));
+    assert!(json.contains("\\\"label\\\": \\\"gain\\\""));
+}
+
+/// The embedded description must name the DSP, not the generated struct. `-cn`
+/// renames the Julia type only; a JSON advertising the class name would also
+/// disagree with the `metadata!` callback built from the same session.
+#[test]
+fn fastlane_julia_json_reports_the_dsp_name_not_the_class_name() {
+    let compiler = Compiler::new();
+    let julia = compiler
+        .compile_source_to_julia(
+            "demo.dsp",
+            "process = _;",
+            &codegen::backends::julia::JuliaOptions {
+                class_name: Some("customdsp".to_owned()),
+                ..codegen::backends::julia::JuliaOptions::default()
+            },
+        )
+        .unwrap_or_else(|e| panic!("Julia compilation failed: {e}"));
+
+    assert!(julia.contains("mutable struct customdsp{T} <: dsp"));
+    assert!(julia.contains("declare!(m, \"name\", \"demo\");"));
+    let json = julia
+        .lines()
+        .find(|line| line.starts_with("getJSON("))
+        .expect("getJSON should be emitted");
+    assert!(json.contains("\\\"name\\\": \\\"demo\\\""));
+    assert!(!json.contains("\\\"name\\\": \\\"customdsp\\\""));
+}
+
 #[test]
 fn fastlane_julia_honors_double_precision_real_alias() {
     let compiler = Compiler::new().with_real_type(RealType::Float64);

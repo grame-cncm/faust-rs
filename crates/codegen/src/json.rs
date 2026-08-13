@@ -142,6 +142,23 @@ impl JsonDescription {
         out.push('}');
         out
     }
+
+    /// Render the description as one line, for backends that embed the JSON
+    /// inside generated source.
+    ///
+    /// Source provenance: C++ `JSONInstVisitor::JSON(true)`, used by
+    /// `JuliaCodeContainer::produceClass` (`getJSON`) and its sibling textual
+    /// backends. The C++ flat mode is the same serializer with indentation
+    /// suppressed, so dropping the layout characters from [`Self::render`]
+    /// reproduces it exactly: separators, spacing after colons, and field order
+    /// are already shared.
+    #[must_use]
+    pub fn render_flat(&self) -> String {
+        self.render()
+            .chars()
+            .filter(|c| *c != '\n' && *c != '\t')
+            .collect()
+    }
 }
 
 /// Backend identity and manager ABI paired with one canonical `mem0` snapshot.

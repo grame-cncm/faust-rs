@@ -317,6 +317,26 @@ pub(crate) fn wasm_json_context_for_file(
         .and_then(std::ffi::OsStr::to_str)
         .map(str::to_owned)
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let library_list = library_list_from_signals(signals);
+    WasmJsonContext {
+        filename: Some(filename),
+        version: Some(Compiler::version().to_owned()),
+        compile_options: Some(compile_options),
+        library_list,
+        include_pathnames: merge_import_search_paths(path, search_paths)
+            .into_iter()
+            .map(|dir| dir.to_string_lossy().into_owned())
+            .collect(),
+        top_level_meta: json_meta_entries_from_snapshot(&signals.compilation_metadata),
+    }
+}
+
+/// Collects the imported library files seen during one compilation.
+///
+/// The master document is skipped (`used_files[0]`), then any file the evaluator
+/// loaded later is appended once. Shared by every JSON-carrying backend so the
+/// `library_list` array has one definition.
+pub(crate) fn library_list_from_signals(signals: &SignalCompileOutput) -> Vec<String> {
     let mut library_list: Vec<String> = signals
         .parse
         .used_files
@@ -330,17 +350,7 @@ pub(crate) fn wasm_json_context_for_file(
             library_list.push(file);
         }
     }
-    WasmJsonContext {
-        filename: Some(filename),
-        version: Some(Compiler::version().to_owned()),
-        compile_options: Some(compile_options),
-        library_list,
-        include_pathnames: merge_import_search_paths(path, search_paths)
-            .into_iter()
-            .map(|dir| dir.to_string_lossy().into_owned())
-            .collect(),
-        top_level_meta: json_meta_entries_from_snapshot(&signals.compilation_metadata),
-    }
+    library_list
 }
 
 /// Converts a compilation metadata snapshot into a flat list of JSON meta entries.
