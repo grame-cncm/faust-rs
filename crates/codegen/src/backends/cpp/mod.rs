@@ -323,7 +323,7 @@ pub fn generate_cpp_module(
         &module_name,
         "dsp_struct",
         module.dsp_struct,
-        1,
+        true,
     )?;
     emit_section(
         store,
@@ -332,7 +332,7 @@ pub fn generate_cpp_module(
         &module_name,
         "globals",
         module.globals,
-        1,
+        true,
     )?;
     let _ = writeln!(out, "public:");
     if mem0.is_some() {
@@ -379,7 +379,7 @@ pub fn generate_cpp_module(
         &module_name,
         "functions",
         module.functions,
-        1,
+        true,
     )?;
     let _ = writeln!(out, "}};");
 
@@ -792,10 +792,10 @@ fn emit_mem0_manager_methods(
     let _ = writeln!(out, "{tab}    if (manager == nullptr) return false;");
     let _ = writeln!(out, "{tab}    manager->begin({});", runtime_zones.len());
     for zone in &runtime_zones {
-        let size_bytes = if zone.role == MemoryRole::DspObject {
-            format!("sizeof({class_name})")
-        } else {
-            zone.size_bytes.to_string()
+        let size_bytes = match zone.role {
+            MemoryRole::DspObject => format!("sizeof({class_name})"),
+            MemoryRole::Subcontainer => format!("sizeof({})", zone.name),
+            _ => zone.size_bytes.to_string(),
         };
         let _ = writeln!(
             out,
@@ -1048,7 +1048,7 @@ fn emit_section(
     module_name: &str,
     section_name: &str,
     section_id: FirId,
-    _indent: usize,
+    externalize_mem0_arrays: bool,
 ) -> Result<(), CodegenError> {
     let FirMatch::Block(items) = match_fir(store, section_id) else {
         return Err(CodegenError::new(
@@ -1074,7 +1074,29 @@ fn emit_section(
         {
             continue;
         }
-        emit_stmt(store, out, options, module_name, item, _indent)?;
+        if options.memory_manager_mode.is_mem0()
+            && !externalize_mem0_arrays
+            && matches!(
+                match_fir(store, item),
+                FirMatch::DeclareVar {
+                    typ: FirType::Array(_, _) | FirType::Vector(_, _),
+                    access: fir::AccessType::Struct,
+                    ..
+                } | FirMatch::DeclareTable {
+                    access: fir::AccessType::Struct,
+                    ..
+                }
+            )
+        {
+            // Faust mode zero externalizes the main DSP arrays, while
+            // generated-table helper arrays remain embedded in the temporary
+            // helper object covered by its single manager allocation.
+            let mut embedded_options = options.clone();
+            embedded_options.memory_manager_mode = MemoryManagerMode::None;
+            emit_stmt(store, out, &embedded_options, module_name, item, 1)?;
+        } else {
+            emit_stmt(store, out, options, module_name, item, 1)?;
+        }
     }
     Ok(())
 }
@@ -1414,9 +1436,9 @@ fn emit_sub_modules(
             module_name,
             "dsp_struct",
             dsp_struct,
-            1,
+            false,
         )?;
-        emit_section(store, out, options, module_name, "globals", globals, 1)?;
+        emit_section(store, out, options, module_name, "globals", globals, false)?;
         let _ = writeln!(out);
         let _ = writeln!(out, "  public:");
         let _ = writeln!(out);
@@ -1440,7 +1462,15 @@ fn emit_sub_modules(
         let _ = writeln!(out, "        return 1;");
         let _ = writeln!(out, "    }}");
         let _ = writeln!(out);
-        emit_section(store, out, options, module_name, "functions", functions, 1)?;
+        emit_section(
+            store,
+            out,
+            options,
+            module_name,
+            "functions",
+            functions,
+            false,
+        )?;
         let _ = writeln!(out, "}};");
         let _ = writeln!(out);
         if options.memory_manager_mode.is_mem0() {
@@ -1571,6 +1601,9 @@ fn emit_declare_fun(
             let _ = writeln!(out, "{tab}    fSampleRate = sample_rate;");
         }
         emit_block(store, out, options, module_name, body, indent + 1)?;
+        for (var, sub) in allocated_sub_containers(store, body) {
+            let _ = writeln!(out, "{tab}    delete{sub}({var});");
+        }
     } else if decl.name == "compute" {
         emit_compute_body(store, out, options, body, indent + 1)?;
     } else if decl.name == "metadata" && is_empty_block(store, body) {
@@ -2488,11 +2521,18 @@ mod tests {
                     false,
                 );
                 let functions = b.block(&[init, fill]);
+                let helper_array = b.declare_var(
+                    "iVec0",
+                    FirType::Array(Box::new(FirType::Int32), 2),
+                    fir::AccessType::Struct,
+                    None,
+                );
+                let helper_state = b.block(&[helper_array]);
                 let empty = b.block(&[]);
                 b.sub_module(
                     "mydspSIG0",
                     FirType::Float32,
-                    empty,
+                    helper_state,
                     empty,
                     empty,
                     functions,
@@ -2548,6 +2588,25 @@ mod tests {
                 Some(static_init_body),
                 false,
             );
+            let instance_constants = b.declare_fun(
+                "instanceConstants",
+                FirType::Fun {
+                    args: vec![obj_ty.clone(), FirType::Int32],
+                    ret: Box::new(FirType::Void),
+                },
+                &[
+                    NamedType {
+                        name: "dsp".into(),
+                        typ: obj_ty.clone(),
+                    },
+                    NamedType {
+                        name: "sample_rate".into(),
+                        typ: FirType::Int32,
+                    },
+                ],
+                Some(static_init_body),
+                false,
+            );
             let compute_body = b.block(&[]);
             let buffers = FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat))));
             let compute = b.declare_fun(
@@ -2582,7 +2641,7 @@ mod tests {
                 Some(compute_body),
                 false,
             );
-            let functions = b.block(&[static_init, compute]);
+            let functions = b.block(&[static_init, instance_constants, compute]);
             let empty = b.block(&[]);
             b.module(0, 1, "mydsp", empty, empty, functions, static_decls, &[sub])
         };
@@ -2643,11 +2702,17 @@ mod tests {
             mem_text.contains("newmydspSIG0(fClassManager)"),
             "{mem_text}"
         );
+        assert!(mem_text.contains("int iVec0[2];"), "{mem_text}");
+        assert!(!mem_text.contains("int* iVec0;"), "{mem_text}");
         assert!(
             mem_text.contains("fClassManager->allocate(32)"),
             "{mem_text}"
         );
         assert!(mem_text.contains("owner->destroy(dsp);"), "{mem_text}");
+        assert!(
+            mem_text.matches("deletemydspSIG0(sig0);").count() >= 2,
+            "class and instance table helpers must both be released: {mem_text}"
+        );
     }
 
     #[test]

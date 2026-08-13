@@ -1,30 +1,51 @@
-# Self-contained mode-zero custom-memory impulse lane.
+# Mode-zero custom-memory impulse lanes.
+#
+# The default invocation covers the ordinary dsp/ corpus and compares its
+# scalar output with the prefix of the genuine C++ reference. The top-level
+# *-mem0-smoke targets override the variables below to retain the focused,
+# self-contained allocation/JSON/optimization audit on dsp-mem0/.
 
 include common.mk
 
-mem0_dspdir ?= dsp-mem0
-mem0_frames ?= 512
-mem0_names := $(patsubst $(mem0_dspdir)/%.dsp,%,$(wildcard $(mem0_dspdir)/*.dsp))
+mem0_frames ?= $(SCALARFRAMES)
+mem0_local_reference ?= 0
+mem0_allnames := $(dspfiles:$(dspdir)/%.dsp=%)
+cpp_mem0_names := $(filter-out $(call known_fail_for,cpp),$(mem0_allnames))
+c_mem0_names := $(filter-out $(call known_fail_for,c),$(mem0_allnames))
+cranelift_mem0_names := $(filter-out $(call known_fail_for,cranelift),$(mem0_allnames))
+# Cross-backend JSON/cost and optimization checks require a DSP accepted by
+# every lane. Backend-only targets retain their own, potentially wider lists.
+mem0_names := $(filter-out $(call known_fail_for,cpp) $(call known_fail_for,c) \
+ $(call known_fail_for,cranelift),$(mem0_allnames))
 
 MEM0_ROOT ?= build/mem0
 MEM0_IR ?= ir
 MEM0_CPPFLAGS ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -std=c++17 -Iarchs
 MEM0_CFLAGS ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -std=c11 -Iarchs
 MEM0_JSON_CHECK ?= ../../target/release/mem0_json_check
+MEM0_FAUST_INCLUDES ?= -I $(dspdir) -I $(FAUSTLIBS)
 CC ?= cc
 
-reference_files := $(mem0_names:%=$(MEM0_IR)/mem0-reference/%.ir)
-cpp_files := $(mem0_names:%=$(MEM0_IR)/cpp-mem0/%.ir)
-c_files := $(mem0_names:%=$(MEM0_IR)/c-mem0/%.ir)
-cranelift_files := $(mem0_names:%=$(MEM0_IR)/cranelift-mem0/%.ir)
+ifeq ($(mem0_local_reference),1)
+mem0_reference_dir := $(MEM0_IR)/mem0-reference
+reference_files := $(mem0_allnames:%=$(mem0_reference_dir)/%.ir)
+else
+mem0_reference_dir := $(refdir)
+reference_files :=
+endif
+
+cpp_files := $(cpp_mem0_names:%=$(MEM0_IR)/cpp-mem0/%.ir)
+c_files := $(c_mem0_names:%=$(MEM0_IR)/c-mem0/%.ir)
+cranelift_files := $(cranelift_mem0_names:%=$(MEM0_IR)/cranelift-mem0/%.ir)
 json_files := $(mem0_names:%=$(MEM0_ROOT)/json/%.checked)
 opt_files := $(mem0_names:%=$(MEM0_ROOT)/opt/%.checked)
 
-.PHONY: all cpp c cranelift json opt sanitize
+.PHONY: all audit cpp c cranelift json opt sanitize
 .DELETE_ON_ERROR:
 .SECONDARY: $(reference_files)
 
-all: cpp c cranelift json opt
+all: cpp c cranelift json
+audit: all opt
 cpp: $(cpp_files)
 c: $(c_files)
 cranelift: $(cranelift_files)
@@ -40,45 +61,47 @@ sanitize:
 $(COMPARE): tools/filesCompare.cpp
 	$(CXX) -O2 -std=c++11 $< -o $@
 
-$(MEM0_ROOT)/.dir $(MEM0_IR)/mem0-reference/.dir $(MEM0_IR)/cpp-mem0/.dir \
+$(MEM0_ROOT)/.dir $(mem0_reference_dir)/.dir $(MEM0_IR)/cpp-mem0/.dir \
 $(MEM0_IR)/c-mem0/.dir $(MEM0_IR)/cranelift-mem0/.dir:
 	mkdir -p $(@D)
 	touch $@
 
-$(MEM0_IR)/mem0-reference/%.ir: $(mem0_dspdir)/%.dsp archs/impulseexecopts.cpp \
- archs/impulseexecopts_driver.h archs/faust_minimal.h | $(MEM0_ROOT)/.dir $(MEM0_IR)/mem0-reference/.dir
+ifeq ($(mem0_local_reference),1)
+$(mem0_reference_dir)/%.ir: $(dspdir)/%.dsp archs/impulseexecopts.cpp \
+ archs/impulseexecopts_driver.h archs/faust_minimal.h | $(MEM0_ROOT)/.dir $(mem0_reference_dir)/.dir
 	mkdir -p $(MEM0_ROOT)/reference
-	$(FAUST_RS) -lang cpp -double -a archs/impulseexecopts.cpp $< -o $(MEM0_ROOT)/reference/$*.cpp
+	$(FAUST_RS) -lang cpp -double -a archs/impulseexecopts.cpp $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/reference/$*.cpp
 	$(CXX) $(MEM0_CPPFLAGS) $(MEM0_ROOT)/reference/$*.cpp -o $(MEM0_ROOT)/reference/$*
 	$(MEM0_ROOT)/reference/$* -n $(mem0_frames) > $@
+endif
 
-$(MEM0_IR)/cpp-mem0/%.ir: $(mem0_dspdir)/%.dsp $(MEM0_IR)/mem0-reference/%.ir \
+$(MEM0_IR)/cpp-mem0/%.ir: $(dspdir)/%.dsp $(mem0_reference_dir)/%.ir \
  archs/impulsemem0.cpp archs/faust_mem0.h | $(MEM0_ROOT)/.dir $(MEM0_IR)/cpp-mem0/.dir
 	mkdir -p $(MEM0_ROOT)/cpp $(MEM0_ROOT)/json/cpp
-	$(FAUST_RS) -lang cpp -double -mem0 -a archs/impulsemem0.cpp $< -o $(MEM0_ROOT)/cpp/$*.cpp
-	$(FAUST_RS) -lang cpp -double -mem0 -json $< -o $(MEM0_ROOT)/json/cpp/$*.cpp
+	$(FAUST_RS) -lang cpp -double -mem0 -a archs/impulsemem0.cpp $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/cpp/$*.cpp
+	$(FAUST_RS) -lang cpp -double -mem0 -json $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/json/cpp/$*.cpp
 	$(CXX) $(MEM0_CPPFLAGS) $(MEM0_ROOT)/cpp/$*.cpp -o $(MEM0_ROOT)/cpp/$*
 	$(MEM0_ROOT)/cpp/$* -n $(mem0_frames) > $@
-	$(COMPARE) $@ $(MEM0_IR)/mem0-reference/$*.ir
+	$(COMPARE) $@ $(mem0_reference_dir)/$*.ir -part $(call dsp_precision,$*)
 	$(MEM0_JSON_CHECK) cpp=$(MEM0_ROOT)/json/cpp/$*.json
 
-$(MEM0_IR)/c-mem0/%.ir: $(mem0_dspdir)/%.dsp $(MEM0_IR)/mem0-reference/%.ir \
+$(MEM0_IR)/c-mem0/%.ir: $(dspdir)/%.dsp $(mem0_reference_dir)/%.ir \
  archs/impulsemem0_c.cpp archs/faust_mem0_c_api.h | $(MEM0_ROOT)/.dir $(MEM0_IR)/c-mem0/.dir
 	mkdir -p $(MEM0_ROOT)/c $(MEM0_ROOT)/json/c
-	$(FAUST_RS) -lang c -double -mem0 $< -o $(MEM0_ROOT)/c/$*.c
-	$(FAUST_RS) -lang c -double -mem0 -json $< -o $(MEM0_ROOT)/json/c/$*.c
+	$(FAUST_RS) -lang c -double -mem0 $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/c/$*.c
+	$(FAUST_RS) -lang c -double -mem0 -json $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/json/c/$*.c
 	$(CC) $(MEM0_CFLAGS) -include faust_mem0_c_api.h -c $(MEM0_ROOT)/c/$*.c -o $(MEM0_ROOT)/c/$*.o
 	$(CXX) $(MEM0_CPPFLAGS) archs/impulsemem0_c.cpp $(MEM0_ROOT)/c/$*.o -o $(MEM0_ROOT)/c/$*
 	$(MEM0_ROOT)/c/$* -n $(mem0_frames) > $@
-	$(COMPARE) $@ $(MEM0_IR)/mem0-reference/$*.ir
+	$(COMPARE) $@ $(mem0_reference_dir)/$*.ir -part $(call dsp_precision,$*)
 	$(MEM0_JSON_CHECK) c=$(MEM0_ROOT)/json/c/$*.json
 
-$(MEM0_IR)/cranelift-mem0/%.ir: $(mem0_dspdir)/%.dsp $(MEM0_IR)/mem0-reference/%.ir \
+$(MEM0_IR)/cranelift-mem0/%.ir: $(dspdir)/%.dsp $(mem0_reference_dir)/%.ir \
  | $(MEM0_ROOT)/.dir $(MEM0_IR)/cranelift-mem0/.dir
 	mkdir -p $(MEM0_ROOT)/json/cranelift
-	$(RUNNER_CRANELIFT) $< -double -mem0 -n $(mem0_frames) \
+	$(RUNNER_CRANELIFT) $< -double -mem0 $(MEM0_FAUST_INCLUDES) -n $(mem0_frames) \
 		--json-output $(MEM0_ROOT)/json/cranelift/$*.json > $@
-	$(COMPARE) $@ $(MEM0_IR)/mem0-reference/$*.ir -part
+	$(COMPARE) $@ $(mem0_reference_dir)/$*.ir -part $(call dsp_precision,$*)
 	$(MEM0_JSON_CHECK) cranelift=$(MEM0_ROOT)/json/cranelift/$*.json
 
 $(MEM0_ROOT)/json/%.checked: $(MEM0_IR)/cpp-mem0/%.ir $(MEM0_IR)/c-mem0/%.ir \
@@ -88,31 +111,31 @@ $(MEM0_ROOT)/json/%.checked: $(MEM0_IR)/cpp-mem0/%.ir $(MEM0_IR)/c-mem0/%.ir \
 		c=$(MEM0_ROOT)/json/c/$*.json cranelift=$(MEM0_ROOT)/json/cranelift/$*.json
 	touch $@
 
-$(MEM0_ROOT)/opt/%.checked: $(mem0_dspdir)/%.dsp $(MEM0_IR)/mem0-reference/%.ir \
+$(MEM0_ROOT)/opt/%.checked: $(dspdir)/%.dsp $(mem0_reference_dir)/%.ir \
  archs/impulsemem0.cpp archs/impulsemem0_c.cpp archs/faust_mem0.h \
  archs/faust_mem0_c_api.h | $(MEM0_ROOT)/.dir
 	mkdir -p $(MEM0_ROOT)/opt/cpp $(MEM0_ROOT)/opt/c $(MEM0_ROOT)/opt/cranelift
-	$(FAUST_RS) -lang cpp -double -mem0 -a archs/impulsemem0.cpp $< -o $(MEM0_ROOT)/opt/cpp/$*.cpp
+	$(FAUST_RS) -lang cpp -double -mem0 -a archs/impulsemem0.cpp $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/opt/cpp/$*.cpp
 	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O0 $(MEM0_ROOT)/opt/cpp/$*.cpp -o $(MEM0_ROOT)/opt/cpp/$*-o0
 	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O3 $(MEM0_ROOT)/opt/cpp/$*.cpp -o $(MEM0_ROOT)/opt/cpp/$*-o3
 	$(MEM0_ROOT)/opt/cpp/$*-o0 -n $(mem0_frames) > $(MEM0_ROOT)/opt/cpp/$*-o0.ir
 	$(MEM0_ROOT)/opt/cpp/$*-o3 -n $(mem0_frames) > $(MEM0_ROOT)/opt/cpp/$*-o3.ir
-	$(COMPARE) $(MEM0_ROOT)/opt/cpp/$*-o0.ir $(MEM0_IR)/mem0-reference/$*.ir
+	$(COMPARE) $(MEM0_ROOT)/opt/cpp/$*-o0.ir $(mem0_reference_dir)/$*.ir -part $(call dsp_precision,$*)
 	$(COMPARE) $(MEM0_ROOT)/opt/cpp/$*-o3.ir $(MEM0_ROOT)/opt/cpp/$*-o0.ir
-	$(FAUST_RS) -lang c -double -mem0 $< -o $(MEM0_ROOT)/opt/c/$*.c
+	$(FAUST_RS) -lang c -double -mem0 $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/opt/c/$*.c
 	$(CC) $(filter-out -O%,$(MEM0_CFLAGS)) -O0 -include faust_mem0_c_api.h -c $(MEM0_ROOT)/opt/c/$*.c -o $(MEM0_ROOT)/opt/c/$*-o0.o
 	$(CC) $(filter-out -O%,$(MEM0_CFLAGS)) -O3 -include faust_mem0_c_api.h -c $(MEM0_ROOT)/opt/c/$*.c -o $(MEM0_ROOT)/opt/c/$*-o3.o
 	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O0 archs/impulsemem0_c.cpp $(MEM0_ROOT)/opt/c/$*-o0.o -o $(MEM0_ROOT)/opt/c/$*-o0
 	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O3 archs/impulsemem0_c.cpp $(MEM0_ROOT)/opt/c/$*-o3.o -o $(MEM0_ROOT)/opt/c/$*-o3
 	$(MEM0_ROOT)/opt/c/$*-o0 -n $(mem0_frames) > $(MEM0_ROOT)/opt/c/$*-o0.ir
 	$(MEM0_ROOT)/opt/c/$*-o3 -n $(mem0_frames) > $(MEM0_ROOT)/opt/c/$*-o3.ir
-	$(COMPARE) $(MEM0_ROOT)/opt/c/$*-o0.ir $(MEM0_IR)/mem0-reference/$*.ir
+	$(COMPARE) $(MEM0_ROOT)/opt/c/$*-o0.ir $(mem0_reference_dir)/$*.ir -part $(call dsp_precision,$*)
 	$(COMPARE) $(MEM0_ROOT)/opt/c/$*-o3.ir $(MEM0_ROOT)/opt/c/$*-o0.ir
-	$(RUNNER_CRANELIFT) $< -double -mem0 -n $(mem0_frames) --opt-level 0 \
+	$(RUNNER_CRANELIFT) $< -double -mem0 $(MEM0_FAUST_INCLUDES) -n $(mem0_frames) --opt-level 0 \
 		--json-output $(MEM0_ROOT)/opt/cranelift/$*-o0.json > $(MEM0_ROOT)/opt/cranelift/$*-o0.ir
-	$(RUNNER_CRANELIFT) $< -double -mem0 -n $(mem0_frames) --opt-level 3 \
+	$(RUNNER_CRANELIFT) $< -double -mem0 $(MEM0_FAUST_INCLUDES) -n $(mem0_frames) --opt-level 3 \
 		--json-output $(MEM0_ROOT)/opt/cranelift/$*-o3.json > $(MEM0_ROOT)/opt/cranelift/$*-o3.ir
-	$(COMPARE) $(MEM0_ROOT)/opt/cranelift/$*-o0.ir $(MEM0_IR)/mem0-reference/$*.ir -part
+	$(COMPARE) $(MEM0_ROOT)/opt/cranelift/$*-o0.ir $(mem0_reference_dir)/$*.ir -part $(call dsp_precision,$*)
 	$(COMPARE) $(MEM0_ROOT)/opt/cranelift/$*-o3.ir $(MEM0_ROOT)/opt/cranelift/$*-o0.ir
 	$(MEM0_JSON_CHECK) cranelift=$(MEM0_ROOT)/opt/cranelift/$*-o0.json \
 		cranelift=$(MEM0_ROOT)/opt/cranelift/$*-o3.json

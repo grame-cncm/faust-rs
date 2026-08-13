@@ -8,7 +8,15 @@
 
 #include "../../../crates/ffi-common/include/faust-memory-manager.h"
 
-typedef struct Soundfile Soundfile;
+/* Keep this C layout in lockstep with `faust_minimal.h`: generated soundfile
+ * code indexes these fields directly, so an opaque forward declaration is not
+ * sufficient for the full impulse corpus. */
+typedef struct Soundfile {
+    void* fBuffers;
+    int* fLength;
+    int* fSR;
+    int* fOffset;
+} Soundfile;
 
 typedef struct {
     void* metaInterface;

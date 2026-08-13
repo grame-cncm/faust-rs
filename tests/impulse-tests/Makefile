@@ -36,7 +36,7 @@ SCALAR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach ss,$(SS_VALUES),$(b
 VECTOR_SS_TARGETS := $(foreach backend,$(BACKENDS),$(foreach lv,0 1,$(foreach ss,$(SS_VALUES),$(backend)-vec$(lv)-ss$(ss))))
 BACKEND_MATRIX_SMOKE_DSPFILES ?= dsp/APF.dsp dsp/delays.dsp dsp/select2.dsp
 
-.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
+.PHONY: all all-vec0 all-vec1 all-vec all-ss all-vec-ss backend-matrix backend-matrix-smoke backend-matrix-clean backend-matrix-report backend-matrix-full reference reference-report interp interp-vec0 interp-vec1 c c-vec0 c-vec1 cpp cpp-vec0 cpp-vec1 cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 julia julia-vec0 julia-vec1 cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0 cpp-mem0-smoke c-mem0-smoke cranelift-mem0-smoke mem0-smoke mem0-opt mem0-sanitize bench bench-self-test vec-bench compile-bench build tools help clean distclean
 
 all: cpp c interp cranelift wasm assemblyscript rust julia
 
@@ -67,12 +67,28 @@ cranelift-mem0:
 
 all-mem0:
 	$(MAKE) -f Make.mem0 all
+	$(MAKE) -f Make.mem0 audit $(MEM0_SMOKE_ARGS)
+
+MEM0_SMOKE_ARGS := dspdir=dsp-mem0 mem0_frames=512 mem0_local_reference=1 \
+	MEM0_ROOT=build/mem0-smoke MEM0_IR=ir/mem0-smoke
+
+cpp-mem0-smoke:
+	$(MAKE) -f Make.mem0 cpp $(MEM0_SMOKE_ARGS)
+
+c-mem0-smoke:
+	$(MAKE) -f Make.mem0 c $(MEM0_SMOKE_ARGS)
+
+cranelift-mem0-smoke:
+	$(MAKE) -f Make.mem0 cranelift $(MEM0_SMOKE_ARGS)
+
+mem0-smoke:
+	$(MAKE) -f Make.mem0 audit $(MEM0_SMOKE_ARGS)
 
 mem0-opt:
-	$(MAKE) -f Make.mem0 opt
+	$(MAKE) -f Make.mem0 opt $(MEM0_SMOKE_ARGS)
 
 mem0-sanitize:
-	$(MAKE) -f Make.mem0 sanitize
+	$(MAKE) -f Make.mem0 sanitize $(MEM0_SMOKE_ARGS)
 
 all-ss: $(SCALAR_SS_TARGETS)
 
@@ -131,7 +147,7 @@ CPP_ORACLE_CHECK_TARGETS := all all-vec0 all-vec1 all-vec all-ss all-vec-ss back
 	cranelift cranelift-vec0 cranelift-vec1 wasm wasm-vec0 wasm-vec1 \
 	assemblyscript assemblyscript-vec0 assemblyscript-vec1 rust rust-vec0 rust-vec1 \
 	julia julia-vec0 julia-vec1 cmajor cpp-ec cpp-os cpp-ec-os c-ec c-os c-ec-os \
-	rust-ec rust-os rust-ec-os all-execopts
+	rust-ec rust-os rust-ec-os all-execopts cpp-mem0 c-mem0 cranelift-mem0 all-mem0
 $(CPP_ORACLE_CHECK_TARGETS): reference
 
 # ── RAD lane ─────────────────────────────────────────────────────────────────
@@ -339,10 +355,12 @@ help:
 	@echo "  all-vec-ss     : -lv 0/1 x -ss 0..3 across all eight backends"
 	@echo "  <backend>-ec/-os/-ec-os: check the execution options (cpp/c/rust only)"
 	@echo "  all-execopts   : the nine execution-option shapes (self-contained arch)"
-	@echo "  cpp-mem0/c-mem0/cranelift-mem0: audit mode-zero managed impulse output"
-	@echo "  all-mem0       : all three mem0 lanes, JSON, and O0/O3 parity"
-	@echo "  mem0-opt       : rerun only the mem0 O0/O3 parity matrix"
-	@echo "  mem0-sanitize  : run C/C++ mem0 lanes with ASan and UBSan"
+	@echo "  cpp-mem0/c-mem0/cranelift-mem0: check -mem0 on the full supported dsp/ corpus"
+	@echo "  *-mem0-smoke   : audit one mem0 backend on the focused dsp-mem0/ corpus"
+	@echo "  mem0-smoke     : audit all mem0 backends, JSON, and O0/O3 on dsp-mem0/"
+	@echo "  all-mem0       : full supported corpus plus the focused mem0 audit"
+	@echo "  mem0-opt       : rerun the focused mem0 O0/O3 parity matrix"
+	@echo "  mem0-sanitize  : run the focused C/C++ mem0 audit with ASan and UBSan"
 	@echo "  rad-reference  : build the RAD lane reference (faust-rs interpreter)"
 	@echo "  rad-<backend>  : check RAD gradients against that reference"
 	@echo "  all-rad        : every backend that emits RAD code (needs rad-reference)"

@@ -98,7 +98,16 @@ class AuditCppMemoryManager : public dsp_memory_manager {
             }
         }
         if (!match) {
-            fail("allocation without description");
+            std::string unused;
+            for (const Description& zone : fDescriptions) {
+                if (!zone.used) {
+                    if (!unused.empty()) unused += ", ";
+                    unused += zone.name + "=" + std::to_string(zone.sizeBytes);
+                }
+            }
+            fail("allocation " + std::to_string(fNext + 1) + " of "
+                 + std::to_string(fDescriptions.size()) + " has no description for "
+                 + std::to_string(size) + " bytes; unused: " + unused);
         } else {
             match->used = true;
         }

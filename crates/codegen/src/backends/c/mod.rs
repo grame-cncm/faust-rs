@@ -448,8 +448,8 @@ fn emit_struct_definition(
     if options.memory_manager_mode.is_mem0() {
         let _ = writeln!(out, "    faust_memory_manager* fOwnerManager;");
     }
-    emit_struct_fields(store, out, options, dsp_struct)?;
-    emit_struct_fields(store, out, options, globals)?;
+    emit_struct_fields(store, out, options, dsp_struct, true)?;
+    emit_struct_fields(store, out, options, globals, true)?;
     if !has_sample_rate_field {
         let _ = writeln!(out, "    int fSampleRate;");
     }
@@ -505,8 +505,8 @@ fn emit_sub_modules(
         if options.memory_manager_mode.is_mem0() {
             let _ = writeln!(out, "    faust_memory_manager* fOwnerManager;");
         }
-        emit_struct_fields(store, out, options, dsp_struct)?;
-        emit_struct_fields(store, out, options, globals)?;
+        emit_struct_fields(store, out, options, dsp_struct, false)?;
+        emit_struct_fields(store, out, options, globals, false)?;
         let _ = writeln!(out, "}} {name};");
         let _ = writeln!(out);
         if options.memory_manager_mode.is_mem0() {
@@ -632,6 +632,7 @@ fn emit_struct_fields(
     out: &mut String,
     options: &COptions,
     block_id: FirId,
+    externalize_mem0_arrays: bool,
 ) -> Result<(), CodegenError> {
     let FirMatch::Block(items) = match_fir(store, block_id) else {
         return Err(CodegenError::new(
@@ -648,6 +649,7 @@ fn emit_struct_fields(
         match match_fir(store, item) {
             FirMatch::DeclareVar { name, typ, .. } => {
                 if options.memory_manager_mode.is_mem0()
+                    && externalize_mem0_arrays
                     && let FirType::Array(elem, _) | FirType::Vector(elem, _) = typ
                 {
                     let _ = write!(out, "    {}* {name}", emit_type(&elem, options));
@@ -662,7 +664,7 @@ fn emit_struct_fields(
                 values,
                 ..
             } => {
-                if options.memory_manager_mode.is_mem0() {
+                if options.memory_manager_mode.is_mem0() && externalize_mem0_arrays {
                     let _ = writeln!(out, "    {}* {name};", emit_type(&elem_type, options));
                 } else {
                     let _ = writeln!(
@@ -1318,6 +1320,11 @@ fn emit_named_fun(
             _ => EmitMode::Default,
         };
         emit_block_with_mode(store, out, options, body, 1, &mut mode)?;
+        if decl.name == "instanceConstants" {
+            for (var, sub) in allocated_sub_containers(store, body) {
+                let _ = writeln!(out, "    delete{sub}({var});");
+            }
+        }
     }
     let _ = writeln!(out, "}}");
     let _ = writeln!(out);
@@ -2300,11 +2307,18 @@ int main(void) {
                     false,
                 );
                 let functions = b.block(&[init, fill]);
+                let helper_array = b.declare_var(
+                    "iVec0",
+                    FirType::Array(Box::new(FirType::Int32), 2),
+                    fir::AccessType::Struct,
+                    None,
+                );
+                let helper_state = b.block(&[helper_array]);
                 let empty = b.block(&[]);
                 b.sub_module(
                     "mydspSIG0",
                     FirType::Float32,
-                    empty,
+                    helper_state,
                     empty,
                     empty,
                     functions,
@@ -2350,7 +2364,7 @@ int main(void) {
                 &[
                     NamedType {
                         name: "dsp".into(),
-                        typ: obj_ty,
+                        typ: obj_ty.clone(),
                     },
                     NamedType {
                         name: "sample_rate".into(),
@@ -2360,7 +2374,60 @@ int main(void) {
                 Some(static_init_body),
                 false,
             );
-            let functions = b.block(&[static_init]);
+            let instance_constants = b.declare_fun(
+                "instanceConstants",
+                FirType::Fun {
+                    args: vec![obj_ty.clone(), FirType::Int32],
+                    ret: Box::new(FirType::Void),
+                },
+                &[
+                    NamedType {
+                        name: "dsp".into(),
+                        typ: obj_ty.clone(),
+                    },
+                    NamedType {
+                        name: "sample_rate".into(),
+                        typ: FirType::Int32,
+                    },
+                ],
+                Some(static_init_body),
+                false,
+            );
+            let compute_body = b.block(&[]);
+            let buffers = FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat))));
+            let compute = b.declare_fun(
+                "compute",
+                FirType::Fun {
+                    args: vec![
+                        obj_ty.clone(),
+                        FirType::Int32,
+                        buffers.clone(),
+                        buffers.clone(),
+                    ],
+                    ret: Box::new(FirType::Void),
+                },
+                &[
+                    NamedType {
+                        name: "dsp".into(),
+                        typ: obj_ty,
+                    },
+                    NamedType {
+                        name: "count".into(),
+                        typ: FirType::Int32,
+                    },
+                    NamedType {
+                        name: "inputs".into(),
+                        typ: buffers.clone(),
+                    },
+                    NamedType {
+                        name: "outputs".into(),
+                        typ: buffers,
+                    },
+                ],
+                Some(compute_body),
+                false,
+            );
+            let functions = b.block(&[static_init, instance_constants, compute]);
             let empty = b.block(&[]);
             b.module(0, 1, "mydsp", empty, empty, functions, static_decls, &[sub])
         };
@@ -2400,6 +2467,22 @@ int main(void) {
         assert!(
             !text.contains("static void staticInit("),
             "staticInit leaked as a function: {text}"
+        );
+
+        let mem_text = generate_c_module(
+            &store,
+            module,
+            &COptions {
+                memory_manager_mode: MemoryManagerMode::Mem0,
+                ..COptions::default()
+            },
+        )
+        .expect("mem0 sub-module emission must succeed");
+        assert!(mem_text.contains("int iVec0[2];"), "{mem_text}");
+        assert!(!mem_text.contains("int* iVec0;"), "{mem_text}");
+        assert!(
+            mem_text.matches("deletemydspSIG0(sig0);").count() >= 2,
+            "class and instance table helpers must both be released: {mem_text}"
         );
     }
 }

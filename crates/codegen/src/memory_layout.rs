@@ -671,7 +671,7 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         let (object_size, object_alignment, object_exact, object_source) =
-            self.object_layout(store, &state_items)?;
+            self.object_layout(store, &state_items, true)?;
         let scalar_accesses = state_items.iter().try_fold(
             AccessCount::default(),
             |mut total, item| -> Result<_, MemoryLayoutError> {
@@ -750,7 +750,7 @@ impl<'a> LayoutBuilder<'a> {
             block_items(store, globals, "submodule globals")?,
         ]
         .concat();
-        let (size, alignment, exact, source) = self.object_layout(store, &state_items)?;
+        let (size, alignment, exact, source) = self.object_layout(store, &state_items, false)?;
         self.push_zone(ZoneSpec {
             name,
             memory_type: MemoryType::ObjectPtr,
@@ -940,6 +940,7 @@ impl<'a> LayoutBuilder<'a> {
         &self,
         store: &FirStore,
         declarations: &[FirId],
+        is_main_dsp: bool,
     ) -> Result<(u64, u64, bool, LayoutValueSource), MemoryLayoutError> {
         let pointer = self.options.target_abi.pointer;
         let (mut offset, mut alignment, exact, source) = match self.options.flavor {
@@ -950,13 +951,16 @@ impl<'a> LayoutBuilder<'a> {
                 true,
                 self.options.target_abi.source,
             ),
-            // Virtual dsp base/vptr plus captured manager. C++ object-model
-            // padding is target-compiler authoritative, so the numeric JSON
-            // companion is explicitly non-exact.
+            // The main DSP has a virtual `dsp` base/vptr plus the captured
+            // manager. Generated table helpers are plain classes and capture
+            // only the manager pointer: charging them for a vptr makes the
+            // description disagree with `sizeof(Subcontainer)`. C++
+            // object-model padding remains target-compiler authoritative, so
+            // the numeric JSON companion is explicitly non-exact.
             MemoryLayoutFlavor::Cpp => (
                 pointer
                     .size
-                    .checked_mul(2)
+                    .checked_mul(if is_main_dsp { 2 } else { 1 })
                     .ok_or(MemoryLayoutError::Overflow("C++ object prefix"))?,
                 pointer.alignment,
                 false,
@@ -969,14 +973,46 @@ impl<'a> LayoutBuilder<'a> {
         for declaration in declarations {
             let layout = match match_fir(store, *declaration) {
                 FirMatch::DeclareVar {
-                    typ: FirType::Array(_, _) | FirType::Vector(_, _),
+                    typ: FirType::Array(elem, count) | FirType::Vector(elem, count),
                     access: AccessType::Struct,
                     ..
+                } => {
+                    if is_main_dsp {
+                        pointer
+                    } else {
+                        let element = self.type_layout(&elem)?;
+                        let count = u64::try_from(count)
+                            .map_err(|_| MemoryLayoutError::Overflow("subcontainer array count"))?;
+                        TypeLayout::new(
+                            element
+                                .size
+                                .checked_mul(count)
+                                .ok_or(MemoryLayoutError::Overflow("subcontainer array size"))?,
+                            element.alignment,
+                        )
+                    }
                 }
-                | FirMatch::DeclareTable {
+                FirMatch::DeclareTable {
                     access: AccessType::Struct,
+                    elem_type,
+                    values,
                     ..
-                } => pointer,
+                } => {
+                    if is_main_dsp {
+                        pointer
+                    } else {
+                        let element = self.type_layout(&elem_type)?;
+                        let count = u64::try_from(values.len())
+                            .map_err(|_| MemoryLayoutError::Overflow("subcontainer table count"))?;
+                        TypeLayout::new(
+                            element
+                                .size
+                                .checked_mul(count)
+                                .ok_or(MemoryLayoutError::Overflow("subcontainer table size"))?,
+                            element.alignment,
+                        )
+                    }
+                }
                 FirMatch::DeclareVar {
                     typ,
                     access: AccessType::Struct,
@@ -1456,5 +1492,72 @@ mod tests {
         assert_eq!(table.element_count, 16);
         assert_eq!((table.reads, table.writes), (1, 0));
         assert!(table.runtime_allocated);
+    }
+
+    #[test]
+    fn cpp_subcontainer_layout_does_not_charge_the_main_dsp_vptr() {
+        let mut store = FirStore::new();
+        let module = {
+            let mut b = FirBuilder::new(&mut store);
+            let empty = b.block(&[]);
+            let helper_array = b.declare_var(
+                "iVec0",
+                FirType::Array(Box::new(FirType::Int32), 2),
+                AccessType::Struct,
+                None,
+            );
+            let helper_state = b.block(&[helper_array]);
+            let sub = b.sub_module(
+                "mydspSIG0",
+                FirType::Float64,
+                helper_state,
+                empty,
+                empty,
+                empty,
+                &[],
+            );
+            let compute = b.declare_fun(
+                "compute",
+                FirType::Fun {
+                    args: Vec::new(),
+                    ret: Box::new(FirType::Void),
+                },
+                &[],
+                Some(empty),
+                false,
+            );
+            let functions = b.block(&[compute]);
+            b.module(0, 0, "mydsp", empty, empty, functions, empty, &[sub])
+        };
+
+        let analysis = analyze_mem0(
+            &store,
+            module,
+            &Mem0AnalysisOptions::native(MemoryLayoutFlavor::Cpp, true),
+        )
+        .unwrap();
+        let helper = analysis
+            .memory_layout
+            .zones
+            .iter()
+            .find(|zone| zone.role == MemoryRole::Subcontainer)
+            .unwrap();
+        let object = analysis
+            .memory_layout
+            .zones
+            .iter()
+            .find(|zone| zone.role == MemoryRole::DspObject)
+            .unwrap();
+
+        assert_eq!(
+            helper.size_bytes, 16,
+            "helper embeds its manager and int[2]"
+        );
+        assert_eq!(
+            object.size_bytes, 16,
+            "main DSP also carries its virtual base/vptr"
+        );
+        assert!(!helper.size_exact);
+        assert!(!object.size_exact);
     }
 }

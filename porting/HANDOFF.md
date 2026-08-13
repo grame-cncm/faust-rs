@@ -5,12 +5,13 @@ Date: 2026-08-13
 ## Repo State
 
 - Branch: `main-dev`
-- Implementation HEAD at handoff preparation: `6c15283b0a0b694344c0ed0c0184e20c67d06c5a`
-  (`Harden mem0 differential and optimization gates`); the M9 documentation
-  closeout commit contains this handoff.
+- Implementation HEAD before the full-corpus correction: `1543b70d`
+  (`Document and close mem0 port`); the correction commit contains this updated
+  handoff.
 
 Recent implementation commits (most recent first):
 
+- `1543b70d` Document and close mem0 port
 - `6c15283b` Harden mem0 differential and optimization gates
 - `b8b883b7` Integrate audited mem0 impulse tests
 - `14d64464` Emit versioned mem0 JSON and compute cost
@@ -24,8 +25,9 @@ Recent implementation commits (most recent first):
 
 ## Working Tree
 
-- Tracked changes at preparation: M9 documentation, journal, plan closeout,
-  Rustdoc/CLI wording, and this handoff only.
+- Tracked changes at preparation: full-corpus `mem0` impulse integration,
+  subcontainer codegen/layout corrections, C soundfile architecture support,
+  documentation, journal, and this handoff.
 - Pre-existing untracked user files/directories remain untouched:
   `OSS.md`, `PROMPTS.md`, `Test C++ fad_biquad_spectral_v3/`, `build_all`,
   `fad_use_cases.md`, `push_main.sh`,
@@ -48,8 +50,10 @@ Recent implementation commits (most recent first):
   plus Cranelift pointer-slot lowering and factory/instance/class ownership.
 - Added version-2 strict JSON with legacy fields, explicit ABI/layout metadata,
   and deterministic `compute_cost`.
-- Added self-contained audited impulse lanes, pinned-C++ differentials,
-  Cranelift persistence/rebinding coverage, O0/O3 parity, and sanitizers.
+- Added full-corpus audited impulse lanes, a separate self-contained smoke
+  audit, pinned-C++ differentials, Cranelift persistence/rebinding coverage,
+  O0/O3 parity, and sanitizers. The full corpus found and now guards C/C++
+  subcontainer layout/lifetime defects and the strict-C soundfile contract.
 
 ## Decisions / Constraints
 
@@ -75,11 +79,19 @@ Recent implementation commits (most recent first):
 - `cargo test --workspace --all-targets` -> pass, including the permitted
   hermetic loopback test.
 - `cargo run -p xtask -- golden-check` -> pass.
-- `cargo run --release -p xtask -- compile-budget-check` -> pass for five
-  scalar/vector codegen and eight normalized front-end cases; no baseline
-  update.
-- `make -B -C tests/impulse-tests all-mem0` -> pass for C, C++, Cranelift,
-  JSON/cost parity, and O0/O3.
+- `cargo run --release -p xtask -- compile-budget-check` -> three runs each
+  reproduce only the pre-existing noisy `reverb_designer` vector overage (about
+  1,022 normalized units against 953.982 twice, then 5,505 ms against the 5,411
+  ms absolute/ratio allowance); all other cases pass and the baseline remains
+  unchanged.
+- `make -j8 -C tests/impulse-tests all-mem0` -> pass for all 94
+  oracle-supported `dsp/` inputs on C, C++, and Cranelift over 15,000 frames,
+  per-DSP JSON/cost parity, and the focused O0/O3 audit; 39 inputs are
+  explicitly classified as oracle-unsupported.
+- `make -B -j8 -C tests/impulse-tests -f Make.mem0 all
+  mem0_local_reference=1 MEM0_ROOT=build/mem0-full-local
+  MEM0_IR=ir/mem0-full-local` -> pass after regenerating both the ordinary
+  faust-rs C++ references and every managed artifact for all 94 inputs.
 - `make -C tests/impulse-tests mem0-sanitize` -> pass with ASan/UBSan on the
   supported macOS toolchain.
 - `cargo test -p compiler --test mem0_cpp_differential -- --nocapture` -> all

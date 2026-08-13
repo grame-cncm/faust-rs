@@ -4,7 +4,7 @@ Date: 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
-Status: implementation active; M0–M7 complete.
+Status: complete; M0–M9 and the full-corpus impulse correction are implemented.
 
 ## 1. Goal and scope
 
@@ -1576,16 +1576,22 @@ Pass criterion: all three backends run the representative supported corpus
 through manager allocation and produce the same impulse output as their
 non-`mem0` forms. Cranelift runs strict lowering and accepts no compute stub.
 
-Implemented gate: `make -C tests/impulse-tests all-mem0` uses three import-free
-DSPs covering scalar/UI state, delay buffers, and generated tables. Ordinary
-faust-rs C++ output is the local numeric reference, so this lane does not depend
-on an installed Faust compiler or standard library. The generated C is compiled
-as strict C11 before linking to its C++ driver. All managers poison fresh
-allocations, reconcile description and allocation facts, reject invalid
-destruction, and require an empty live set; the C and Cranelift ownership paths
-also enforce global reverse destruction. The Cranelift runner validates strict
-lowering before instance creation. A Rust semantic checker validates each JSON
-document and exact cross-backend `compute_cost` equality.
+Implemented gate: `cpp-mem0`, `c-mem0`, and `cranelift-mem0` use the ordinary
+`dsp/` corpus, the generated C++ oracle support manifest and backend-specific
+known-failure filters. Every supported DSP compares a 15,000-frame managed
+prefix with `reference/*.ir` and receives a semantic JSON check. On the
+2026-08-13 qualification run this exercised 94 DSPs and explicitly classified
+39 inputs as unsupported by the pinned oracle. `all-mem0` also checks exact
+cross-backend `compute_cost` equality, then runs `mem0-smoke`.
+
+The focused smoke gate retains the three import-free DSPs covering scalar/UI
+state, delay buffers, and generated tables. It uses ordinary faust-rs C++ output
+as its local numeric reference and therefore needs neither the C++ Faust oracle
+nor installed libraries. Generated C is compiled as strict C11. All managers
+poison fresh allocations, reconcile description and allocation facts, reject
+invalid destruction, and require an empty live set; the C and Cranelift paths
+also enforce global reverse destruction. The Cranelift runner rejects a compute
+stub. A Rust checker validates every JSON document and cross-backend cost.
 
 ### M8 — Differential and hardening gate
 
@@ -1619,10 +1625,11 @@ including asymmetric branch-order invariance, and exclude slow/control prelude
 statements from the scalar-loop metric just as the reference analyzes
 `fCurLoop->generateScalarLoop("count")`.
 
-`make -C tests/impulse-tests all-mem0` additionally runs all three backends at
-C/C++ `-O0`/`-O3` and Cranelift optimization levels 0/3. Backend-local JSON
-layouts and costs remain invariant, managed results match ordinary results,
-and the three backends report the same FIR cost. The optional
+`make -C tests/impulse-tests all-mem0` runs the full supported corpus at the
+normal optimized settings, followed by the focused three-DSP audit at C/C++
+`-O0`/`-O3` and Cranelift optimization levels 0/3. Backend-local JSON layouts
+and costs remain invariant, managed results match ordinary results, and the
+three backends report the same FIR cost. The optional
 `mem0-sanitize` target passes with ASan/UBSan on the supported macOS toolchain.
 Cranelift tests cover cache identity, binding/rebinding, bitcode round-trip to
 an intentionally unbound factory, fresh binding after restore, clone, failure
@@ -1715,8 +1722,8 @@ can silently detach allocation metadata from the owning field.
 
 ### 10.2 Impulse fixtures
 
-Add a small import-free group under `tests/impulse-tests/dsp/`. The exact names
-can follow local naming convention, but the corpus must cover:
+Add a small import-free group under `tests/impulse-tests/dsp-mem0/`. The exact
+names can follow local naming convention, but the corpus must cover:
 
 1. a DSP with scalar state and no externalizable array;
 2. multiple delay buffers of different sizes;
@@ -1768,8 +1775,10 @@ gate may use the existing scalar/double Cranelift subset; single precision is a
 separate required unit/runtime case even if the historical impulse target stays
 `-double`.
 
-Reuse the minimal local Faust API headers already present where appropriate;
-do not depend on `/usr/local/share/faust`.
+Reuse the minimal local Faust API headers already present where appropriate.
+The focused smoke gate must not depend on `/usr/local/share/faust`; the full
+gate intentionally reuses the ordinary corpus, include paths, oracle manifest,
+references, tolerances, and backend exclusions.
 
 The normal impulse `.ir` output remains the numeric oracle. Memory placement is
 not allowed to change samples, UI evolution, or lifecycle-visible state.
@@ -1895,7 +1904,7 @@ tests/impulse-tests/Make.mem0                        new integration
 tests/impulse-tests/Makefile                         targets/help
 tests/impulse-tests/README.md                        usage
 tests/impulse-tests/archs/*mem0*                     C/C++ audit drivers
-tests/impulse-tests/dsp/*mem0*                       import-free fixtures
+tests/impulse-tests/dsp-mem0/*                       import-free fixtures
 tests/impulse-tests/tools/*mem0*                     shared trace/JSON checker glue
 porting/cranelift-dsp-ffi-parity-matrix-en.md         manager family status
 porting/cranelift-backend-plan-en.md                  implemented contract cross-link
@@ -2009,7 +2018,8 @@ The `mem0` port is complete only when all of the following are true:
   pinned compiler, and D6 corrections are explicitly allowlisted;
 - JSON without `mem0` is unchanged;
 - C, C++, and strict-lowered Cranelift `mem0` impulse tests pass in
-  `tests/impulse-tests` using self-contained fixtures;
+  `tests/impulse-tests` over the full oracle-supported `dsp/` corpus, with the
+  self-contained fixtures retained for allocation and optimization auditing;
 - ordinary vs `mem0`, and optimized vs unoptimized, samples agree;
 - lifecycle, unit, structural, differential, golden, cost, and workspace gates
   are green;

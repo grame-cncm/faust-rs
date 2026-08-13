@@ -81,18 +81,18 @@ See the design write-up in
      `CPP_TESTS` pointed at nonexistent paths. Producing `reference/*.ir` in the
      first place still needs the C++ oracle, exactly as for every other
      target.
-   - `make cpp-mem0` / `c-mem0` / `cranelift-mem0` — the mode-zero custom
-     memory-manager lanes. `make all-mem0` runs all three on a compact,
-     import-free corpus covering scalar/UI state, delays, and tables. Each lane
-     compares managed output with locally generated ordinary output, poisons
-     fresh allocations, audits descriptions/allocation/destruction/leaks, and
-     validates the version-2 memory JSON plus `compute_cost`. The combined gate
-     also requires identical FIR costs across all three backends and identical
-     output at C/C++ compiler `-O0`/`-O3` and Cranelift optimization levels
-     0/3. `make mem0-opt` reruns that optimization matrix alone;
-     `make mem0-sanitize` runs the C/C++ lanes under ASan and UBSan where the
-     host toolchain supports them. The lane is fully self-contained and does
-     not use the C++ Faust oracle or standard library.
+   - `make cpp-mem0` / `c-mem0` / `cranelift-mem0` — mode-zero custom
+     memory-manager lanes over every `dsp/` input supported by both the C++
+     oracle and the selected backend. Each lane compares the managed 15,000
+     frame prefix with `reference/*.ir` and validates the version-2 memory JSON
+     plus `compute_cost`. `make all-mem0` runs all three full-corpus lanes,
+     requires identical FIR costs across backends, then runs the focused
+     `dsp-mem0/` audit. That audit poisons allocations, reconciles descriptions,
+     allocations, reverse destruction and leaks, and compares C/C++ `-O0`/`-O3`
+     with Cranelift optimization levels 0/3. `make mem0-smoke` runs only this
+     self-contained audit; `make mem0-opt` reruns its optimization matrix;
+     `make mem0-sanitize` runs its C/C++ lanes under ASan and UBSan where the
+     host toolchain supports them.
 
 ## Requirements
 
@@ -104,8 +104,11 @@ See the design write-up in
   [`common.mk`](common.mk) and overridable:
   `CPP_TESTS`, `FAUST_ARCH`, `FAUST_CPP`, `FAUSTLIBS`.
 - `c++` and the Faust standard libraries (default `/usr/local/share/faust`).
-- The self-contained `all-mem0` target only needs C and C++ compilers; it does
-  not require a C++ Faust checkout or installed Faust libraries.
+- The full `*-mem0` and `all-mem0` targets use the standard `dsp/` reference
+  corpus and therefore have the same C++ oracle and Faust-library requirements
+  as the ordinary impulse lanes. `mem0-smoke`, the three `*-mem0-smoke`
+  targets, `mem0-opt`, and `mem0-sanitize` use only the import-free
+  `dsp-mem0/` fixtures.
 - Node.js for the WASM and AssemblyScript impulse runners.
 - `rustc` (already required to build the workspace) for the Rust backend gate.
 - Julia with the `StaticArrays` package for the Julia backend gate.
@@ -133,8 +136,9 @@ make assemblyscript # check the AssemblyScript backend (scalar prefix)
 make rust          # check the Rust backend (scalar prefix, rustc)
 make julia         # check the Julia backend (scalar prefix, Julia)
 make cmajor        # check scalar Cmajor via cmaj-generated C++
-make all-mem0      # audit -mem0 on C, C++, and Cranelift plus JSON/cost parity
-make mem0-opt      # rerun the C/C++/Cranelift -mem0 O0/O3 matrix
+make all-mem0      # full dsp/ corpus on C, C++, Cranelift, then focused audit
+make mem0-smoke    # focused allocation/JSON/O0-O3 audit on dsp-mem0/
+make mem0-opt      # rerun the focused C/C++/Cranelift -mem0 O0/O3 matrix
 make mem0-sanitize # audit C/C++ -mem0 ownership with ASan and UBSan
 make cpp-vec0      # check the C++ backend with -vec -lv 0
 make cpp-vec1      # check the C++ backend with -vec -lv 1
@@ -164,7 +168,7 @@ supported responses.
 
 | Path | Purpose |
 |---|---|
-| `dsp/` | 132 test DSP programs (93 baseline + 21 ondemand + 18 multirate) |
+| `dsp/` | 133 test DSP programs used by the ordinary and full `mem0` lanes |
 | `common.mk` | shared, overridable configuration |
 | `known.mk` | per-DSP tolerances + faust-rs known-failure exclusion lists |
 | `build/ref/cpp-oracle-manifest.mk` | generated C++ oracle support classification |
@@ -175,8 +179,8 @@ supported responses.
 | `Make.cranelift` | faust-rs Cranelift JIT backend (scalar prefix, 64-bit, `-part`) |
 | `Make.wasm` | faust-rs WASM backend (scalar prefix, 64-bit, Node WebAssembly, `-part`) |
 | `Make.assemblyscript` | faust-rs AssemblyScript backend (scalar prefix, `asc` + Node WebAssembly, `-part`) |
-| `dsp-mem0/` | compact import-free memory-manager corpus (state/UI, delays, tables) |
-| `Make.mem0` | self-contained C/C++/Cranelift `-mem0` runtime and JSON gate |
+| `dsp-mem0/` | focused import-free memory-manager audit corpus (state/UI, delays, tables) |
+| `Make.mem0` | full-corpus and focused C/C++/Cranelift `-mem0` runtime/JSON gates |
 | `archs/faust_mem0*.h`, `archs/impulsemem0*.cpp` | audited custom-manager contracts and native drivers |
 | `Make.bench` | generated-code performance comparison with `faustbench -single` |
 | `tools/filesCompare.cpp` | the comparator |
