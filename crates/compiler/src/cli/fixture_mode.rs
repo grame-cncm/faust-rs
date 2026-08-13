@@ -338,6 +338,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     if cli.dump_c || matches!(cli.lang, Some(CliLang::C)) {
         let options = COptions {
             memory_manager_mode: selected_memory_manager_mode(cli),
+            double_precision: cli.double,
             class_name: selected_class_name(cli),
             compile_options: Some(compile_options_full_string(
                 cli,

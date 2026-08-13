@@ -21,7 +21,11 @@ pub mod memory;
 pub mod sha1;
 pub mod strings;
 
-pub use abi::{FfiFaustFloat, MetaGlue, UIGlue};
+pub use abi::{
+    FAUST_MEMORY_MANAGER_ABI_VERSION, FaustMemoryManager, FaustMemoryManagerAllocateFn,
+    FaustMemoryManagerBeginFn, FaustMemoryManagerDestroyFn, FaustMemoryManagerEndFn,
+    FaustMemoryManagerInfoFn, FaustMemoryType, FfiFaustFloat, MetaGlue, UIGlue,
+};
 pub use args::{FfiCompileArgs, parse_ffi_compile_args};
 pub use factory_cache::{FactoryCache, FactoryHandle, FactoryRelease};
 pub use memory::{alloc_opaque, free_opaque};

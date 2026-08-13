@@ -294,6 +294,35 @@ impl MemoryType {
             Self::BoolPtr => "kBool_ptr",
         }
     }
+
+    /// Enumerator in the versioned plain-C `faust_memory_manager` ABI.
+    ///
+    /// This is deliberately separate from [`Self::legacy_name`]: the C++
+    /// architecture contract retains its historical spellings, while C and
+    /// Cranelift share the guarded header from `ffi-common`.
+    #[must_use]
+    pub const fn c_abi_name(self) -> &'static str {
+        match self {
+            Self::Int32 => "kMemInt32",
+            Self::Int32Ptr => "kMemInt32Ptr",
+            Self::Float32 => "kMemFloat32",
+            Self::Float32Ptr => "kMemFloat32Ptr",
+            Self::Float64 => "kMemFloat64",
+            Self::Float64Ptr => "kMemFloat64Ptr",
+            Self::Quad => "kMemQuad",
+            Self::QuadPtr => "kMemQuadPtr",
+            Self::FixedPoint => "kMemFixedPoint",
+            Self::FixedPointPtr => "kMemFixedPointPtr",
+            Self::Object => "kMemObject",
+            Self::ObjectPtr => "kMemObjectPtr",
+            Self::Sound => "kMemSound",
+            Self::SoundPtr => "kMemSoundPtr",
+            Self::Int64 => "kMemInt64",
+            Self::Int64Ptr => "kMemInt64Ptr",
+            Self::Bool => "kMemBool",
+            Self::BoolPtr => "kMemBoolPtr",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

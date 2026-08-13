@@ -2682,6 +2682,24 @@ mod tests {
     }
 
     #[test]
+    fn mem0_cpp_uses_the_effective_single_or_double_sample_width() {
+        let (store, module) = crate::fixtures::build_table_state_delay_test_module();
+        let text = generate_cpp_module(
+            &store,
+            module,
+            &CppOptions {
+                memory_manager_mode: MemoryManagerMode::Mem0,
+                double_precision: true,
+                ..CppOptions::default()
+            },
+        )
+        .unwrap();
+        assert!(text.contains("#define FAUSTFLOAT float"));
+        assert!(text.contains("fOwnerManager->allocate(32)"));
+        assert!(text.contains("std::memcpy(copy->fDelay, fDelay, 32)"));
+    }
+
+    #[test]
     fn ordinary_cpp_output_has_no_memory_manager_surface() {
         let (store, module) = crate::fixtures::build_table_state_delay_test_module();
         let text = generate_cpp_module(&store, module, &CppOptions::default()).unwrap();

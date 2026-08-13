@@ -838,6 +838,7 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
         origins: lowered.origins.clone(),
     })?;
     time_phase_with_sink(timing_sink, "c-codegen", || {
+        effective_options.double_precision = ctx.real_type == crate::RealType::Float64;
         generate_c_module(&lowered.store, lowered.module, &effective_options)
     })
     .map_err(|error| LowerError::Codegen {

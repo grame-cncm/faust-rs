@@ -4,7 +4,7 @@ Date: 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
-Status: implementation active; M0–M3 complete.
+Status: implementation active; M0–M4 complete.
 
 ## 1. Goal and scope
 
