@@ -127,6 +127,7 @@ reference only ever emits six: `name`, `type`, `size`, `size_bytes`, `read`,
 
 | Field | Values | Meaning |
 |---|---|---|
+| `name` | identifier | The exact identifier the generated source uses for this zone, so you can grep the emitted `.c`/`.cpp` for it. The `dsp_object`, `subcontainer`, and `static_table` zones are named from the **class name** (`-cn`, default `mydsp`), *not* from the `.dsp` filename: `osc.dsp` yields `mydsp`, `mydspSIG0`, `ftbl0mydspSIG0`, and `-cn Foo` renames all three. Field zones (`instance_buffer`, `embedded_scalar`) carry their own generated names (`fRec0`, `fVec2`, `fSampleRate`) and are unaffected by `-cn`. See the Cranelift caveat in §8. |
 | `scope` | `temporary`, `class`, `instance` | `class` zones are shared by every instance (allocated once, on the first `classInit`); `instance` zones are per-DSP-instance. |
 | `role` | `subcontainer`, `static_table`, `dsp_object`, `instance_buffer`, `embedded_scalar` | `dsp_object` is the main DSP block itself; `instance_buffer` is an externalized array (a delay line, a `rec` recursion buffer); `static_table` is a generated class-scope table (e.g. a waveform); `subcontainer` is the small helper object that fills a `static_table` during `classInit`; `embedded_scalar` is a plain field with no separate allocation (`fSampleRate`). |
 | `alignment` | bytes | What this zone's own allocation must satisfy — the exact number generated code now passes to `allocate`. |
@@ -348,3 +349,11 @@ actually reached when available) are `DIFF-API-005` and the
   `faust_mem0_detail` (C++)** are internal generated helpers, not a public
   contract — their names and signatures are not stable across faust-rs
   versions. Only the entry points named in §4 are the public surface.
+- **Zone `name`s are not comparable across backends.** C and C++ name their
+  zones from the class name (`mydsp`, `mydspSIG0`, `ftbl0mydspSIG0`), while
+  Cranelift names its own from the source stem (`osc`, `ftbl0oscSIG0`),
+  because its module name is a JIT identity and it has no `-cn`. Cranelift
+  also flattens table-helper subcontainers into the DSP object, so it reports
+  no `subcontainer` zone where C/C++ report one — which shifts every later
+  `allocation_order` as well. Correlate backends by `role`, not by `name` or
+  `allocation_order`; both are per-backend.
