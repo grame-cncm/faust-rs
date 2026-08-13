@@ -426,6 +426,55 @@ must run unchanged with Faust C++ should not pass them.
 - Evidence: `cargo run -p xtask -- libfaust-export-check`, which links and runs
   a C++ client of this header against the built library.
 
+### DIFF-API-005 — alignment-aware `dsp_memory_manager` overloads under `-mem0`
+
+- Status: `adapted`.
+- The pinned reference's `dsp_memory_manager` (`architecture/faust/dsp/dsp.h`)
+  declares only `allocate(size_t)` and `destroy(void*)`; unlike the Rust-only
+  C ABI (`faust_memory_manager` in `crates/ffi-common/include/faust-memory-manager.h`,
+  DIFF-CLI-010's M4), it never asks for alignment on `allocate` and never hands
+  size/alignment back on `destroy`. Generated C++ under `-mem0` now additionally
+  recognizes `allocate(size_t, size_t)` and `destroy(void*, size_t, size_t)` — a
+  faust-rs `dsp_memory_manager` extension — and prefers them over the legacy
+  overloads whenever the linked header declares them.
+- Mechanism: every allocation/destruction call site routes through a
+  `faust_mem0_detail::{allocate,destroy}` compile-time dispatch shim (one
+  `int`/`long`-tagged SFINAE overload pair per operation) emitted once per
+  `-mem0` translation unit. SFINAE probes the static type of
+  `dsp_memory_manager`, not the concrete manager subclass, so the choice is
+  made once at compile time with no runtime branch. Against the genuine,
+  unextended upstream header the probe fails and generated code falls back to
+  the legacy one-argument overloads unchanged — this is a strict superset, not
+  a replacement, and needs no host-side change to keep compiling.
+- A manager may adopt the extension two ways: declare the two additive
+  overloads with a body that forwards to the legacy ones (so an existing
+  subclass that overrides only `allocate(size_t)`/`destroy(void*)` keeps
+  working through the base class's default, exercised by
+  `mem0_generated_cpp_compiles_and_clone_is_independent`), or override the
+  additive overloads directly to receive the requested alignment up front and
+  the original size/alignment pair back on release (exercised by the same
+  test's `aligned_manager`, which asserts the legacy overloads are never
+  reached). `tests/impulse-tests/archs/faust_mem0.h`'s
+  `AuditCppMemoryManager` does the latter, additionally auditing that the
+  returned address satisfies the requested alignment and that `destroy`'s size
+  argument matches what was recorded at allocation.
+- The legacy one-argument overloads are the obsolete path from here on: kept
+  for source compatibility with hosts still built against the unextended
+  upstream header, and marked as such in the generated comment inside
+  `faust_mem0_detail`. New memory managers should implement the alignment-aware
+  overloads instead.
+- Compatibility impact: none for existing hosts — an unmodified reference
+  `dsp_memory_manager` still compiles and runs generated `-mem0` C++ code
+  unchanged, proven by
+  `mem0_generated_cpp_compiles_against_the_unextended_legacy_manager_header`,
+  which defines the header exactly as documented in the reference manual and
+  nothing else. Hosts that want the richer contract opt in by declaring the
+  two additive overloads; nothing in the generated code requires it.
+- Evidence: `crates/codegen/src/backends/cpp/mod.rs`
+  (`emit_mem0_detail_namespace`), `tests/impulse-tests/archs/faust_mem0.h`,
+  and the three compile-and-run C++ tests named above in
+  `crates/codegen/src/backends/cpp/mod.rs`.
+
 ## 8. Internal architectural adaptations
 
 These differences normally preserve Faust semantics, but matter to maintainers

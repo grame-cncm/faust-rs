@@ -294,6 +294,10 @@ pub fn generate_cpp_module(
         let _ = writeln!(out);
     }
 
+    if mem0.is_some() {
+        emit_mem0_detail_namespace(&mut out);
+    }
+
     // Emit compile-time constant waveform tables at file scope.
     emit_static_tables(store, &mut out, &effective_options, module.static_decls)?;
     let _ = writeln!(out);
@@ -708,8 +712,8 @@ fn emit_mem0_class_allocations(out: &mut String, analysis: &Mem0Analysis, indent
     for zone in &zones {
         let _ = writeln!(
             out,
-            "{tab}{} = static_cast<decltype({})>(fClassManager->allocate({}));",
-            zone.name, zone.name, zone.size_bytes
+            "{tab}{} = static_cast<decltype({})>(faust_mem0_detail::allocate(fClassManager, {}, {}, 0));",
+            zone.name, zone.name, zone.size_bytes, zone.alignment
         );
         let _ = writeln!(
             out,
@@ -732,7 +736,11 @@ fn emit_mem0_class_table_destroy(out: &mut String, analysis: &Mem0Analysis, inde
     let _ = writeln!(out, "{tab}static void classDestroyTables() {{");
     for zone in zones.iter().rev() {
         let _ = writeln!(out, "{tab}    if ({} != nullptr) {{", zone.name);
-        let _ = writeln!(out, "{tab}        fClassManager->destroy({});", zone.name);
+        let _ = writeln!(
+            out,
+            "{tab}        faust_mem0_detail::destroy(fClassManager, {}, {}, {}, 0);",
+            zone.name, zone.size_bytes, zone.alignment
+        );
         let _ = writeln!(out, "{tab}        {} = nullptr;", zone.name);
         let _ = writeln!(out, "{tab}    }}");
     }
@@ -770,6 +778,87 @@ fn emit_mem0_clone(out: &mut String, class_name: &str, analysis: &Mem0Analysis, 
     let _ = writeln!(out, "{tab}}}");
 }
 
+/// Emits `faust_mem0_detail`, the compile-time dispatch shim every `-mem0`
+/// allocation/destruction call site routes through instead of calling
+/// `dsp_memory_manager::allocate`/`destroy` directly.
+///
+/// The legacy interface documented in the upstream `architecture/faust/dsp/dsp.h`
+/// only declares `allocate(size_t)` and `destroy(void*)`. The faust-rs mem0
+/// extension adds alignment-aware overloads — `allocate(size_t, size_t)` and
+/// `destroy(void*, size_t, size_t)` — that a host may additionally implement to
+/// receive the requested alignment up front and the original size/alignment
+/// pair back on release, instead of only learning about a misalignment after
+/// the fact. Generated code must keep compiling against an unmodified upstream
+/// header that has never heard of the extension, so it cannot call the richer
+/// overloads unconditionally; the two-argument `int`/`long` tag overloads below
+/// are the classic SFINAE trick that picks whichever overload set the
+/// `dsp_memory_manager` static type actually declares, at compile time, with
+/// zero runtime cost. The one-argument fallback is the obsolete legacy path,
+/// kept only for that source compatibility.
+fn emit_mem0_detail_namespace(out: &mut String) {
+    let _ = writeln!(out, "namespace faust_mem0_detail {{");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "template <typename T>");
+    let _ = writeln!(
+        out,
+        "inline auto allocate(T* manager, size_t size, size_t alignment, int)"
+    );
+    let _ = writeln!(out, "    -> decltype(manager->allocate(size, alignment))");
+    let _ = writeln!(out, "{{");
+    let _ = writeln!(out, "    return manager->allocate(size, alignment);");
+    let _ = writeln!(out, "}}");
+    let _ = writeln!(out, "template <typename T>");
+    let _ = writeln!(
+        out,
+        "inline void* allocate(T* manager, size_t size, size_t /*alignment*/, long)"
+    );
+    let _ = writeln!(out, "{{");
+    let _ = writeln!(
+        out,
+        "    // Legacy dsp_memory_manager::allocate(size_t) -- obsolete, retained only"
+    );
+    let _ = writeln!(
+        out,
+        "    // for source compatibility with the unextended upstream"
+    );
+    let _ = writeln!(out, "    // architecture/faust/dsp/dsp.h.");
+    let _ = writeln!(out, "    return manager->allocate(size);");
+    let _ = writeln!(out, "}}");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "template <typename T>");
+    let _ = writeln!(
+        out,
+        "inline auto destroy(T* manager, void* address, size_t size, size_t alignment, int)"
+    );
+    let _ = writeln!(
+        out,
+        "    -> decltype(manager->destroy(address, size, alignment))"
+    );
+    let _ = writeln!(out, "{{");
+    let _ = writeln!(out, "    manager->destroy(address, size, alignment);");
+    let _ = writeln!(out, "}}");
+    let _ = writeln!(out, "template <typename T>");
+    let _ = writeln!(
+        out,
+        "inline void destroy(T* manager, void* address, size_t /*size*/, size_t /*alignment*/, long)"
+    );
+    let _ = writeln!(out, "{{");
+    let _ = writeln!(
+        out,
+        "    // Legacy dsp_memory_manager::destroy(void*) -- obsolete, retained only for"
+    );
+    let _ = writeln!(
+        out,
+        "    // source compatibility with the unextended upstream"
+    );
+    let _ = writeln!(out, "    // architecture/faust/dsp/dsp.h.");
+    let _ = writeln!(out, "    manager->destroy(address);");
+    let _ = writeln!(out, "}}");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "}} // namespace faust_mem0_detail");
+    let _ = writeln!(out);
+}
+
 /// Emits the source-compatible C++ manager surface plus additive checked
 /// methods. The legacy void entry points terminate on contract violations;
 /// hosts that need failure recovery use the `*Checked` variants.
@@ -781,7 +870,6 @@ fn emit_mem0_manager_methods(
 ) {
     let tab = "    ".repeat(indent);
     let buffers = mem0_instance_buffers(analysis);
-    let class_tables = mem0_class_tables(analysis);
     let runtime_zones: Vec<_> = analysis
         .memory_layout
         .zones
@@ -826,8 +914,8 @@ fn emit_mem0_manager_methods(
     for zone in &buffers {
         let _ = writeln!(
             out,
-            "{tab}    {0} = static_cast<decltype({0})>(fOwnerManager->allocate({1}));",
-            zone.name, zone.size_bytes
+            "{tab}    {0} = static_cast<decltype({0})>(faust_mem0_detail::allocate(fOwnerManager, {1}, {2}, 0));",
+            zone.name, zone.size_bytes, zone.alignment
         );
         let _ = writeln!(
             out,
@@ -848,7 +936,11 @@ fn emit_mem0_manager_methods(
     let _ = writeln!(out, "{tab}void memoryDestroy() {{");
     for zone in buffers.iter().rev() {
         let _ = writeln!(out, "{tab}    if ({} != nullptr) {{", zone.name);
-        let _ = writeln!(out, "{tab}        fOwnerManager->destroy({});", zone.name);
+        let _ = writeln!(
+            out,
+            "{tab}        faust_mem0_detail::destroy(fOwnerManager, {}, {}, {}, 0);",
+            zone.name, zone.size_bytes, zone.alignment
+        );
         let _ = writeln!(out, "{tab}        {} = nullptr;", zone.name);
         let _ = writeln!(out, "{tab}    }}");
     }
@@ -861,7 +953,7 @@ fn emit_mem0_manager_methods(
     let _ = writeln!(out, "{tab}    if (manager == nullptr) return nullptr;");
     let _ = writeln!(
         out,
-        "{tab}    void* storage = manager->allocate(sizeof({class_name}));"
+        "{tab}    void* storage = faust_mem0_detail::allocate(manager, sizeof({class_name}), alignof({class_name}), 0);"
     );
     let _ = writeln!(
         out,
@@ -869,7 +961,7 @@ fn emit_mem0_manager_methods(
     );
     let _ = writeln!(
         out,
-        "{tab}        if (storage != nullptr) manager->destroy(storage);"
+        "{tab}        if (storage != nullptr) faust_mem0_detail::destroy(manager, storage, sizeof({class_name}), alignof({class_name}), 0);"
     );
     let _ = writeln!(out, "{tab}        return nullptr;");
     let _ = writeln!(out, "{tab}    }}");
@@ -879,7 +971,10 @@ fn emit_mem0_manager_methods(
     );
     let _ = writeln!(out, "{tab}    if (!dsp->memoryCreate()) {{");
     let _ = writeln!(out, "{tab}        dsp->~{class_name}();");
-    let _ = writeln!(out, "{tab}        manager->destroy(storage);");
+    let _ = writeln!(
+        out,
+        "{tab}        faust_mem0_detail::destroy(manager, storage, sizeof({class_name}), alignof({class_name}), 0);"
+    );
     let _ = writeln!(out, "{tab}        return nullptr;");
     let _ = writeln!(out, "{tab}    }}");
     let _ = writeln!(out, "{tab}    ++fLiveInstances;");
@@ -901,19 +996,17 @@ fn emit_mem0_manager_methods(
     );
     let _ = writeln!(out, "{tab}    typed->memoryDestroy();");
     let _ = writeln!(out, "{tab}    typed->~{class_name}();");
-    let _ = writeln!(out, "{tab}    owner->destroy(typed);");
+    let _ = writeln!(
+        out,
+        "{tab}    faust_mem0_detail::destroy(owner, typed, sizeof({class_name}), alignof({class_name}), 0);"
+    );
     let _ = writeln!(out, "{tab}    --fLiveInstances;");
     let _ = writeln!(out, "{tab}}}");
 
     let _ = writeln!(out, "{tab}static bool classDestroyChecked() {{");
     let _ = writeln!(out, "{tab}    if (fLiveInstances != 0) return false;");
     let _ = writeln!(out, "{tab}    if (fClassManager == nullptr) return true;");
-    for zone in class_tables.iter().rev() {
-        let _ = writeln!(out, "{tab}    if ({} != nullptr) {{", zone.name);
-        let _ = writeln!(out, "{tab}        fClassManager->destroy({});", zone.name);
-        let _ = writeln!(out, "{tab}        {} = nullptr;", zone.name);
-        let _ = writeln!(out, "{tab}    }}");
-    }
+    let _ = writeln!(out, "{tab}    classDestroyTables();");
     let _ = writeln!(out, "{tab}    fClassManager = nullptr;");
     let _ = writeln!(out, "{tab}    fClassSampleRate = 0;");
     let _ = writeln!(out, "{tab}    return true;");
@@ -1477,7 +1570,7 @@ fn emit_sub_modules(
             );
             let _ = writeln!(
                 out,
-                "    void* storage = manager->allocate(sizeof({name}));"
+                "    void* storage = faust_mem0_detail::allocate(manager, sizeof({name}), alignof({name}), 0);"
             );
             let _ = writeln!(
                 out,
@@ -1485,7 +1578,7 @@ fn emit_sub_modules(
             );
             let _ = writeln!(
                 out,
-                "        if (storage != nullptr) manager->destroy(storage);"
+                "        if (storage != nullptr) faust_mem0_detail::destroy(manager, storage, sizeof({name}), alignof({name}), 0);"
             );
             let _ = writeln!(out, "        throw std::bad_alloc();");
             let _ = writeln!(out, "    }}");
@@ -1495,7 +1588,10 @@ fn emit_sub_modules(
             let _ = writeln!(out, "    if (dsp == nullptr) return;");
             let _ = writeln!(out, "    dsp_memory_manager* owner = dsp->ownerManager();");
             let _ = writeln!(out, "    dsp->~{name}();");
-            let _ = writeln!(out, "    owner->destroy(dsp);");
+            let _ = writeln!(
+                out,
+                "    faust_mem0_detail::destroy(owner, dsp, sizeof({name}), alignof({name}), 0);"
+            );
             let _ = writeln!(out, "}}");
         } else {
             let _ = writeln!(
@@ -2702,10 +2798,15 @@ mod tests {
         assert!(mem_text.contains("int iVec0[2];"), "{mem_text}");
         assert!(!mem_text.contains("int* iVec0;"), "{mem_text}");
         assert!(
-            mem_text.contains("fClassManager->allocate(32)"),
+            mem_text.contains("faust_mem0_detail::allocate(fClassManager, 32, 4, 0)"),
             "{mem_text}"
         );
-        assert!(mem_text.contains("owner->destroy(dsp);"), "{mem_text}");
+        assert!(
+            mem_text.contains(
+                "faust_mem0_detail::destroy(owner, dsp, sizeof(mydspSIG0), alignof(mydspSIG0), 0);"
+            ),
+            "{mem_text}"
+        );
         assert!(
             mem_text.matches("deletemydspSIG0(sig0);").count() >= 2,
             "class and instance table helpers must both be released: {mem_text}"
@@ -2757,7 +2858,10 @@ mod tests {
         )
         .unwrap();
         assert!(text.contains("#define FAUSTFLOAT float"));
-        assert!(text.contains("fOwnerManager->allocate(32)"));
+        assert!(
+            text.contains("faust_mem0_detail::allocate(fOwnerManager, 32, 8, 0)"),
+            "{text}"
+        );
         assert!(text.contains("std::memcpy(copy->fDelay, fDelay, 32)"));
     }
 
@@ -2800,6 +2904,7 @@ mod tests {
         let prelude = r#"
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <new>
 #include <unordered_set>
@@ -2816,9 +2921,18 @@ struct dsp_memory_manager {
     virtual void begin(size_t) {}
     virtual void info(const char*, MemType, size_t, size_t, size_t, size_t) {}
     virtual void end() {}
+    // Legacy overloads from the upstream architecture/faust/dsp/dsp.h.
     virtual void* allocate(size_t size) = 0;
     virtual void destroy(void* ptr) = 0;
+    // Alignment-aware faust-rs mem0 extension. Default implementations
+    // forward to the legacy overloads above, so a subclass that only
+    // overrides those (like `manager` below) keeps working unchanged.
+    virtual void* allocate(size_t size, size_t) { return allocate(size); }
+    virtual void destroy(void* ptr, size_t, size_t) { destroy(ptr); }
 };
+// Only overrides the legacy overloads, exactly like a host built against the
+// unextended upstream header. Generated code must reach these through the
+// base class's default-forwarding alignment-aware overloads.
 struct manager final : dsp_memory_manager {
     std::unordered_set<void*> live;
     size_t described = 0;
@@ -2834,6 +2948,28 @@ struct manager final : dsp_memory_manager {
     void destroy(void* ptr) override {
         assert(live.erase(ptr) == 1);
         ::operator delete(ptr);
+    }
+};
+// Overrides the alignment-aware overloads directly and aborts if the legacy
+// ones are ever called, proving generated code prefers the richer overload
+// set when the linked dsp_memory_manager provides it.
+struct aligned_manager final : dsp_memory_manager {
+    std::unordered_set<void*> live;
+    size_t described = 0;
+    void* allocate(size_t) override { assert(false && "legacy allocate must not be reached"); return nullptr; }
+    void destroy(void*) override { assert(false && "legacy destroy must not be reached"); }
+    void begin(size_t count) override { described = count; }
+    void* allocate(size_t size, size_t alignment) override {
+        void* ptr = ::operator new(size, std::align_val_t(alignment), std::nothrow);
+        if (ptr) {
+            assert(reinterpret_cast<uintptr_t>(ptr) % alignment == 0);
+            live.insert(ptr);
+        }
+        return ptr;
+    }
+    void destroy(void* ptr, size_t, size_t alignment) override {
+        assert(live.erase(ptr) == 1);
+        ::operator delete(ptr, std::align_val_t(alignment));
     }
 };
 "#;
@@ -2876,6 +3012,25 @@ int main() {
     mydsp::destroy(original);
     assert(mydsp::classDestroyChecked());
     assert(mem.live.empty());
+
+    // Same lifecycle again, this time against a manager that overrides the
+    // alignment-aware overloads directly (and aborts if the legacy ones are
+    // reached), proving generated code prefers them when available.
+    aligned_manager aligned_mem;
+    mydsp::fManager = &aligned_mem;
+    assert(mydsp::memoryInfoChecked(&aligned_mem));
+    assert(aligned_mem.described == 2);
+    mydsp* aligned_dsp = mydsp::create();
+    assert(aligned_dsp != nullptr);
+    aligned_dsp->init(48000);
+    float aligned_in[4] = {5, 6, 7, 8};
+    float aligned_out[4] = {};
+    float* aligned_inputs[] = {aligned_in};
+    float* aligned_outputs[] = {aligned_out};
+    aligned_dsp->compute(4, aligned_inputs, aligned_outputs);
+    mydsp::destroy(aligned_dsp);
+    assert(mydsp::classDestroyChecked());
+    assert(aligned_mem.live.empty());
 }
 "#;
 
@@ -2906,6 +3061,123 @@ int main() {
         assert!(
             run.status.success(),
             "C++ runtime failed:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let _ = std::fs::remove_file(source);
+        let _ = std::fs::remove_file(binary);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mem0_generated_cpp_compiles_against_the_unextended_legacy_manager_header() {
+        use std::process::Command;
+
+        let cxx = std::env::var("CXX").unwrap_or_else(|_| "c++".to_owned());
+        if Command::new(&cxx).arg("--version").output().is_err() {
+            eprintln!("skipping mem0 legacy-header C++ smoke test: `{cxx}` is unavailable");
+            return;
+        }
+
+        let (store, module) = crate::fixtures::build_table_state_delay_test_module();
+        let generated = generate_cpp_module(
+            &store,
+            module,
+            &CppOptions {
+                memory_manager_mode: MemoryManagerMode::Mem0,
+                ..CppOptions::default()
+            },
+        )
+        .unwrap();
+
+        // `dsp_memory_manager` exactly as documented in the upstream
+        // architecture/faust/dsp/dsp.h, with no knowledge of the faust-rs
+        // mem0 alignment-aware extension: only the legacy single-argument
+        // `allocate`/`destroy` are declared. Generated code must still
+        // compile and run correctly against this header, via the
+        // `faust_mem0_detail` SFINAE fallback rather than any additive
+        // overload the base class does not provide.
+        let prelude = r#"
+#include <cassert>
+#include <cstddef>
+#include <new>
+#include <unordered_set>
+struct UI { void openVerticalBox(const char*) {} void closeBox() {} };
+struct Meta { void declare(const char*, const char*) {} };
+struct Soundfile {};
+struct dsp { virtual ~dsp() = default; };
+struct dsp_memory_manager {
+    enum MemType { kInt32, kInt32_ptr, kFloat, kFloat_ptr, kDouble,
+        kDouble_ptr, kQuad, kQuad_ptr, kFixedPoint, kFixedPoint_ptr,
+        kObj, kObj_ptr, kSound, kSound_ptr, kInt64, kInt64_ptr,
+        kBool, kBool_ptr };
+    virtual ~dsp_memory_manager() = default;
+    virtual void begin(size_t) {}
+    virtual void info(const char*, MemType, size_t, size_t, size_t, size_t) {}
+    virtual void end() {}
+    virtual void* allocate(size_t size) = 0;
+    virtual void destroy(void* ptr) = 0;
+};
+struct manager final : dsp_memory_manager {
+    std::unordered_set<void*> live;
+    size_t described = 0;
+    void begin(size_t count) override { described = count; }
+    void* allocate(size_t size) override {
+        void* ptr = ::operator new(size, std::nothrow);
+        if (ptr) live.insert(ptr);
+        return ptr;
+    }
+    void destroy(void* ptr) override {
+        assert(live.erase(ptr) == 1);
+        ::operator delete(ptr);
+    }
+};
+"#;
+        let main = r#"
+int main() {
+    manager mem;
+    mydsp::fManager = &mem;
+    assert(mydsp::memoryInfoChecked(&mem));
+    mydsp* dsp = mydsp::create();
+    assert(dsp != nullptr);
+    dsp->init(48000);
+    float in_buf[4] = {1, 2, 3, 4};
+    float out_buf[4] = {};
+    float* in[] = {in_buf};
+    float* out[] = {out_buf};
+    dsp->compute(4, in, out);
+    mydsp::destroy(dsp);
+    assert(mydsp::classDestroyChecked());
+    assert(mem.live.empty());
+}
+"#;
+
+        let stem = format!("faust-rs-mem0-cpp-legacy-{}", std::process::id());
+        let source = std::env::temp_dir().join(format!("{stem}.cpp"));
+        let binary = std::env::temp_dir().join(if cfg!(windows) {
+            format!("{stem}.exe")
+        } else {
+            stem
+        });
+        std::fs::write(&source, format!("{prelude}\n{generated}\n{main}"))
+            .expect("write C++ legacy-header smoke source");
+        let compile = Command::new(&cxx)
+            .args(["-std=c++17", "-Wall", "-Wextra", "-Werror"])
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .expect("run C++ compiler");
+        assert!(
+            compile.status.success(),
+            "C++ compile failed against the legacy-only header:\n{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        let run = Command::new(&binary)
+            .output()
+            .expect("run C++ legacy-header smoke binary");
+        assert!(
+            run.status.success(),
+            "C++ runtime failed against the legacy-only header:\n{}",
             String::from_utf8_lossy(&run.stderr)
         );
         let _ = std::fs::remove_file(source);

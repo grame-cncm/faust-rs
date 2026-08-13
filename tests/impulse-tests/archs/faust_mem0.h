@@ -3,6 +3,7 @@
 #define FAUST_RS_MEM0_AUDIT_H
 
 #include <cstddef>
+#include <cstdint>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -37,8 +38,15 @@ struct dsp_memory_manager {
     virtual void begin(size_t) {}
     virtual void info(const char*, MemType, size_t, size_t, size_t, size_t) {}
     virtual void end() {}
+    // Legacy overloads from the upstream architecture/faust/dsp/dsp.h.
     virtual void* allocate(size_t size) = 0;
     virtual void destroy(void* ptr) = 0;
+    // Alignment-aware faust-rs mem0 extension: default implementations
+    // forward to the legacy overloads above, so a manager that only
+    // overrides those keeps working unchanged. Generated code prefers these
+    // overloads when a manager provides them directly.
+    virtual void* allocate(size_t size, size_t /*alignment*/) { return allocate(size); }
+    virtual void destroy(void* ptr, size_t /*size*/, size_t /*alignment*/) { destroy(ptr); }
 };
 
 class AuditCppMemoryManager : public dsp_memory_manager {
@@ -129,6 +137,34 @@ class AuditCppMemoryManager : public dsp_memory_manager {
         else fStack.erase(found);
         if (fLive.erase(ptr) != 1) fail("unknown or double-freed pointer");
         std::free(ptr);
+    }
+
+    // Alignment-aware faust-rs mem0 extension. Reuses the legacy matching and
+    // bookkeeping logic above; additionally verifies the returned address
+    // satisfies the requested alignment, and (on destroy) that the size
+    // handed back matches what was recorded at allocation -- proof that
+    // generated code is actually reaching this richer overload rather than
+    // the legacy one.
+    void* allocate(size_t size, size_t alignment) override
+    {
+        void* ptr = allocate(size);
+        if (ptr != nullptr && alignment != 0
+            && reinterpret_cast<std::uintptr_t>(ptr) % alignment != 0) {
+            fail("allocate(size, alignment) returned an address that does not satisfy alignment "
+                 + std::to_string(alignment));
+        }
+        return ptr;
+    }
+
+    void destroy(void* ptr, size_t size, size_t /*alignment*/) override
+    {
+        std::map<void*, size_t>::const_iterator recorded = fLive.find(ptr);
+        if (recorded != fLive.end() && recorded->second != size) {
+            fail("destroy(ptr, size, alignment) size " + std::to_string(size)
+                 + " does not match the " + std::to_string(recorded->second)
+                 + " bytes recorded at allocation");
+        }
+        destroy(ptr);
     }
 
     void verify() const
