@@ -276,6 +276,7 @@ mod tests {
         }
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "normalize_add_term received an incoherent De Bruijn tree")]
     fn normalize_add_term_debug_rejects_incoherent_de_bruijn_input() {
