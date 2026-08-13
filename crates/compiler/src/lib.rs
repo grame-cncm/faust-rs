@@ -923,6 +923,21 @@ impl Compiler {
         signals: &SignalCompileOutput,
         lane: SignalFirLane,
     ) -> Result<FirCompileOutput, CompilerError> {
+        self.lower_to_fir_with_name(source, signals, lane, None)
+    }
+
+    /// [`Self::lower_to_fir`] with an optional module-name override; `None`
+    /// derives the name from `source`, as the FIR dump and the Cranelift JIT
+    /// identity expect. Native-backend-flavored JSON passes an explicit name
+    /// so its `-mem0` `memory_layout` describes the identifiers that backend
+    /// really emits — see [`signal_lowering::json_memory_layout_module_name`].
+    fn lower_to_fir_with_name(
+        &self,
+        source: &str,
+        signals: &SignalCompileOutput,
+        lane: SignalFirLane,
+        module_name: Option<String>,
+    ) -> Result<FirCompileOutput, CompilerError> {
         lower_signals_to_fir(
             source,
             signals,
@@ -937,6 +952,7 @@ impl Compiler {
             self.processing_api,
             self.table_init_mode,
             self.table_init_sample_rate,
+            module_name,
         )
         .map_err(|error| lower_fir_error_to_compiler(source, signals, error))
     }

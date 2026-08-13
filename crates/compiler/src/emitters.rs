@@ -1172,7 +1172,11 @@ impl Compiler {
         memory_flavor: Option<MemoryLayoutFlavor>,
     ) -> Result<String, CompilerError> {
         let signals = self.compile_source_to_signals(source_name, source)?;
-        let lowered = self.lower_to_fir(source_name, &signals, lane)?;
+        // A C/C++-flavored `memory_layout` names its zones like that backend's
+        // own class-name convention, not like the source stem. This entry
+        // point has no `-cn` to forward, so it gets the default (`"mydsp"`).
+        let module_name = json_memory_layout_module_name(memory_flavor, None, source_name);
+        let lowered = self.lower_to_fir_with_name(source_name, &signals, lane, module_name)?;
         let json = build_strict_json_description(
             &lowered.store,
             lowered.module,
@@ -1235,9 +1239,40 @@ impl Compiler {
         compile_options: String,
         memory_flavor: Option<MemoryLayoutFlavor>,
     ) -> Result<String, CompilerError> {
+        self.compile_file_to_json_with_compile_options_memory_and_class_name(
+            path,
+            search_paths,
+            lane,
+            compile_options,
+            memory_flavor,
+            None,
+        )
+    }
+
+    /// Same as [`Self::compile_file_to_json_with_compile_options_and_memory`],
+    /// with an explicit `-cn` class name.
+    ///
+    /// The C and C++ backends name every generated identifier (class, `SIG0`
+    /// helpers, `ftbl0` static tables) from the class name — `-cn`, default
+    /// `"mydsp"` — so a C/C++-flavored `-mem0` `memory_layout` has to be
+    /// lowered under that same name, or its zones describe identifiers the
+    /// generated source does not contain. `class_name` is ignored for the
+    /// Cranelift flavor and for plain JSON, which keep their source-derived
+    /// module name.
+    pub fn compile_file_to_json_with_compile_options_memory_and_class_name(
+        &self,
+        path: &Path,
+        search_paths: &[PathBuf],
+        lane: SignalFirLane,
+        compile_options: String,
+        memory_flavor: Option<MemoryLayoutFlavor>,
+        class_name: Option<String>,
+    ) -> Result<String, CompilerError> {
         let source = path.display().to_string();
         let signals = self.compile_file_to_signals(path, search_paths)?;
-        let lowered = self.lower_to_fir(&source, &signals, lane)?;
+        let module_name =
+            json_memory_layout_module_name(memory_flavor, class_name.as_deref(), &source);
+        let lowered = self.lower_to_fir_with_name(&source, &signals, lane, module_name)?;
         let library_list = collect_library_list(&signals);
         let json = build_strict_json_description(
             &lowered.store,

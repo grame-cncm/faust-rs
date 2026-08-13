@@ -310,7 +310,7 @@ pub(crate) fn run_source_mode(
     if cli.dump_json && cli.lang.is_none() {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
-        let result = compiler.compile_file_to_json_with_compile_options_and_memory(
+        let result = compiler.compile_file_to_json_with_compile_options_memory_and_class_name(
             input_path,
             &cli.import_dir,
             selected_codegen_lane(cli).into_compiler_lane(),
@@ -318,6 +318,7 @@ pub(crate) fn run_source_mode(
             selected_memory_manager_mode(cli)
                 .is_mem0()
                 .then_some(codegen::memory_layout::MemoryLayoutFlavor::Cpp),
+            selected_class_name(cli),
         );
         timer.phase("json");
 

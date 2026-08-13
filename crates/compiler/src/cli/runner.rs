@@ -660,22 +660,16 @@ pub fn emit_cli_json_companion_for_backend(
             CliLang::Cranelift => MemoryLayoutFlavor::Cranelift,
             _ => MemoryLayoutFlavor::Cpp,
         });
-    let result = if cli.import_dir.is_empty() {
-        compiler.compile_file_default_to_json_with_lane_compile_options_and_memory(
-            input_path,
-            selected_codegen_lane(cli).into_compiler_lane(),
-            compile_options,
-            memory_flavor,
-        )
-    } else {
-        compiler.compile_file_to_json_with_compile_options_and_memory(
-            input_path,
-            &cli.import_dir,
-            selected_codegen_lane(cli).into_compiler_lane(),
-            compile_options,
-            memory_flavor,
-        )
-    };
+    // An empty `--import-dir` list is already the default-search-path case, so
+    // this needs no separate branch for it.
+    let result = compiler.compile_file_to_json_with_compile_options_memory_and_class_name(
+        input_path,
+        &cli.import_dir,
+        selected_codegen_lane(cli).into_compiler_lane(),
+        compile_options,
+        memory_flavor,
+        selected_class_name(cli),
+    );
 
     match result {
         Ok(json) => emit_json_companion_output(&json, require_companion_output_path(cli)),

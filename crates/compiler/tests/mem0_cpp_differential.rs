@@ -238,3 +238,49 @@ fn delay_compute_cost_matches_pinned_cpp_exactly() {
     assert_eq!(rust["compute_cost"][0]["declare"], 2);
     assert_eq!(rust["compute_cost"][0]["number"], 8);
 }
+
+/// The JSON `memory_layout` must name the very identifiers the `-mem0` C++ it
+/// describes actually emits — which both compilers derive from the class name
+/// (default `"mydsp"`), never from the source stem. A mismatch means the JSON
+/// companion documents zones that do not exist in the generated `.cpp`.
+#[test]
+fn json_memory_layout_names_the_identifiers_the_generated_cpp_emits() {
+    let Some(faust) = reference_binary() else {
+        eprintln!("skipping mem0 C++ differential: pinned Faust binary unavailable");
+        return;
+    };
+    let dsp = fixture("mem0_delays.dsp");
+    let zone_names = |source: &str| -> Vec<String> {
+        parse_zones(source)
+            .into_iter()
+            .map(|zone| zone.name)
+            .collect()
+    };
+    let cpp_names = zone_names(&rust_cpp(&dsp));
+    let json_names = rust_json(&dsp)["memory_layout"]
+        .as_array()
+        .expect("memory_layout array")
+        .iter()
+        .map(|zone| zone["name"].as_str().expect("zone name").to_owned())
+        .collect::<Vec<_>>();
+
+    // The pinned reference anchors the convention this fixture must follow.
+    assert_eq!(zone_names(&reference_cpp(&faust, &dsp))[0], "mydsp");
+
+    // Every zone the C++ registers with the manager must appear in the JSON
+    // under the same name. The JSON additionally describes non-allocated
+    // scalars, so this is containment rather than equality.
+    assert_eq!(cpp_names[0], "mydsp");
+    for name in &cpp_names {
+        assert!(
+            json_names.contains(name),
+            "JSON memory_layout {json_names:?} is missing C++ zone {name:?}"
+        );
+    }
+    assert!(
+        json_names
+            .iter()
+            .all(|name| !name.starts_with("mem0_delays")),
+        "zone named after the source stem: {json_names:?}"
+    );
+}

@@ -593,6 +593,11 @@ pub(crate) fn lower_signals_to_interp(
 ///
 /// This is the shared implementation behind FIR dump/verification flows and is
 /// also used as the backend-independent boundary for lane comparisons.
+///
+/// `module_name` of `None` derives the name from `source_name`, which is what
+/// the FIR dump and the Cranelift JIT identity want. Callers that must agree
+/// with a C/C++ backend's own class-name convention pass an explicit name —
+/// see [`json_memory_layout_module_name`].
 // The parameters are exactly the facade-owned lowering knobs; bundling them is
 // a separate refactor (they also flow individually through the C++/C/Julia
 // paths). Kept explicit for now.
@@ -611,10 +616,12 @@ pub(crate) fn lower_signals_to_fir(
     processing_api: ProcessingApi,
     table_init_mode: transform::signal_fir::TableInitMode,
     table_init_sample_rate: Option<i32>,
+    module_name: Option<String>,
 ) -> Result<FirCompileOutput, LowerToFirError> {
     validate_execution_options("fir", control_rate_mode, processing_api, compute_mode)
         .map_err(LowerToFirError::ExecutionOptions)?;
-    let module_name = sanitize_cpp_ident(source_name_to_class(source_name).as_str());
+    let module_name = module_name
+        .unwrap_or_else(|| sanitize_cpp_ident(source_name_to_class(source_name).as_str()));
     let lowered = lower_signals_to_fir_transform_fastlane(
         output,
         module_name,
@@ -641,6 +648,28 @@ pub(crate) fn resolve_module_name(class_name: Option<&str>, _source_name: &str) 
     class_name
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| "mydsp".to_owned())
+}
+
+/// Module name a `-mem0` JSON `memory_layout` must lower with to describe
+/// `flavor` faithfully, or `None` to keep the source-derived default.
+///
+/// C and C++ name every generated identifier (class, `SIG0` helpers, `ftbl0`
+/// static tables) from [`resolve_module_name`] — `-cn`, default `"mydsp"` —
+/// so a `memory_layout` claiming to describe one of them must use the same
+/// name, or its zones (`"mydspSIG0"`, `"ftbl0mydspSIG0"`, ...) name
+/// identifiers the generated source does not contain. Cranelift is
+/// deliberately excluded: its module name is a JIT identity derived from the
+/// source name and it has no `-cn` convention.
+pub(crate) fn json_memory_layout_module_name(
+    flavor: Option<MemoryLayoutFlavor>,
+    class_name: Option<&str>,
+    source_name: &str,
+) -> Option<String> {
+    matches!(
+        flavor,
+        Some(MemoryLayoutFlavor::C | MemoryLayoutFlavor::Cpp)
+    )
+    .then(|| resolve_module_name(class_name, source_name))
 }
 
 /// Transform fast-lane FIR lowering used by native backends and FIR dumps.
