@@ -1232,6 +1232,24 @@ pub(crate) fn import_cycle_from_stack(
 }
 
 fn normalize_logical_path(path: &Path) -> PathBuf {
+    // Only `.` components have to go. A path without any is returned exactly as
+    // given, and that identity matters beyond saving the allocation: rebuilding
+    // it below re-joins the components with the platform separator, so on
+    // Windows `nested/a.dsp` came back as `nested\a.dsp`. As a lookup key the
+    // rebuilt form is equivalent — Windows compares `/` and `\` as the same
+    // separator — but `resolve_entry_path` also turns it into the source
+    // identity through `SourceLocator::display_name`, and that identity is
+    // compared *as a string* against the name the caller handed
+    // `CompilationMetadataStore::new`. With the separator flipped the two
+    // disagreed, so `declare_top_level` filed every top-level `declare` of a
+    // virtual source under imported scope instead of global, and
+    // `declare name "..."` no longer reached the generated code.
+    if !path
+        .components()
+        .any(|component| matches!(component, std::path::Component::CurDir))
+    {
+        return path.to_path_buf();
+    }
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
@@ -1271,7 +1289,7 @@ mod tests {
         FetchedSource, PrefetchedRemoteSourceBundle, PrefetchedRemoteSourceBundleError,
         RemoteFetchPolicy, RemoteFetchRequest, RemoteSourceFetcher, SourceFetchError,
         SourceFetchErrorKind, SourceLocator, SourceReader, SourceReaderError, VirtualSourceMap,
-        parse_import_line,
+        normalize_logical_path, parse_import_line,
     };
     use std::path::Path;
     use std::sync::Arc;
@@ -1288,6 +1306,35 @@ mod tests {
                 bytes: b"process = _;\n".to_vec(),
             })
         }
+    }
+
+    // A logical path that has nothing to strip must come back byte-identical,
+    // separators included. `SourceLocator::display_name` publishes this value as
+    // the source identity, and `CompilationMetadataStore` matches that identity
+    // against the caller-supplied name by string equality to tell a top-level
+    // `declare` from an imported one. Rebuilding the path re-joined it with the
+    // platform separator, which is invisible on Unix and turned `nested/a.dsp`
+    // into `nested\a.dsp` on Windows — so this assertion only has teeth there,
+    // where CI runs it.
+    #[test]
+    fn normalize_logical_path_preserves_a_path_with_nothing_to_strip() {
+        for raw in ["nested/a.dsp", "a.dsp", "nested/deeper/a.dsp"] {
+            assert_eq!(
+                normalize_logical_path(Path::new(raw)).as_os_str(),
+                Path::new(raw).as_os_str(),
+                "identity must survive normalization: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_logical_path_strips_current_directory_components() {
+        assert_eq!(
+            normalize_logical_path(Path::new("./nested/a.dsp")),
+            Path::new("nested").join("a.dsp")
+        );
+        // Stripping everything leaves the input rather than an empty path.
+        assert_eq!(normalize_logical_path(Path::new(".")), Path::new("."));
     }
 
     #[test]
