@@ -39,6 +39,7 @@
 //!   like `render`, with the FFI wiring living in `engine::PolyProbe`.
 //! - [`protocol`] — the reference impulse-test protocol and `.ir` format.
 //! - [`soundfile`] — the in-memory soundfile fixture both runners install.
+//! - [`schedule`] — frame-scheduled parameter changes and note events.
 //! - [`sweep`] — parameter sweeps and the reductions applied to each point.
 //! - [`spectrum`] — the radix-2 FFT behind the `f0` reduction.
 
@@ -47,6 +48,7 @@ pub mod params;
 pub mod poly;
 pub mod protocol;
 pub mod render;
+pub mod schedule;
 pub mod soundfile;
 pub mod spectrum;
 pub mod sweep;

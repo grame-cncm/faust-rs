@@ -13,6 +13,7 @@ use cranelift_ffi::probe::engine::{PolyProbe, Probe, RenderSpec};
 use cranelift_ffi::probe::poly;
 use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::InputMode;
+use cranelift_ffi::probe::schedule::{Event, Schedule, parse_at, parse_chord, parse_note};
 use cranelift_ffi::probe::spectrum::dominant_frequency;
 use cranelift_ffi::probe::sweep::{Reduction, cartesian, parse_axis, parse_reduction};
 
@@ -111,6 +112,25 @@ struct Args {
     #[arg(long = "reduce", value_name = "R")]
     reduce: Option<String>,
 
+    /// Set a control at an exact frame: `--at FRAME PATH=VALUE` (repeatable).
+    ///
+    /// The render splits its block so the change lands on the requested frame
+    /// rather than the next block boundary.
+    #[arg(long = "at", value_names = ["FRAME", "PATH=VALUE"], num_args = 2)]
+    ats: Vec<String>,
+
+    /// Play a note: `PITCH[:VEL]@ON[..OFF]` (repeatable). Requires `--nvoices` > 0.
+    ///
+    /// Velocity defaults to 100. Omitting `..OFF` holds the note to the end of
+    /// the render, which is how an attack is measured without a release in the
+    /// way.
+    #[arg(long = "note", value_name = "PITCH[:VEL]@ON[..OFF]")]
+    notes: Vec<String>,
+
+    /// Play several pitches at once: `P1,P2,...[:VEL]@ON[..OFF]` (repeatable).
+    #[arg(long = "chord", value_name = "P1,P2,...[:VEL]@ON[..OFF]")]
+    chords: Vec<String>,
+
     /// Rendering protocol.
     ///
     /// `impulse-test` reproduces the reference protocol exactly — sample rate
@@ -191,6 +211,12 @@ fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
     }
     if args.reduce.is_some() {
         offenders.push("--reduce");
+    }
+    if !args.ats.is_empty() {
+        offenders.push("--at");
+    }
+    if !args.notes.is_empty() || !args.chords.is_empty() {
+        offenders.push("--note/--chord");
     }
     if args.nvoices != 0 {
         offenders.push("--nvoices");
@@ -302,6 +328,7 @@ fn run_poly(args: &Args) -> Result<(), String> {
     for (path, value) in &fixed {
         poly.set_all(path, *value)?;
     }
+    let schedule = build_schedule(args)?;
 
     let every = args.every.max(1);
     let mut peak = vec![0.0_f64; poly.outputs()];
@@ -319,7 +346,27 @@ fn run_poly(args: &Args) -> Result<(), String> {
 
     let mut written = 0usize;
     while written < args.render {
-        let n = args.block.min(args.render - written);
+        // Apply what is due exactly here, then shorten the block so the next
+        // event also lands on a boundary — the note timing is what a release
+        // measurement reads, so rounding it to the block grid would put a
+        // systematic error straight into the result.
+        for event in schedule.at(written) {
+            match event {
+                Event::NoteOn { pitch, velocity } => {
+                    poly.key_on(*pitch, *velocity);
+                }
+                Event::NoteOff { pitch } => {
+                    poly.key_off(*pitch, false);
+                }
+                Event::SetParam { path, value } => poly.set_all(path, *value)?,
+            }
+        }
+        let mut n = args.block.min(args.render - written);
+        if let Some(next) = schedule.next_after(written)
+            && next > written
+        {
+            n = n.min(next - written);
+        }
         let block_out = poly.compute(n);
         for j in 0..n {
             let frame = written + j;
@@ -441,6 +488,16 @@ fn run(mut args: Args) -> Result<(), String> {
         .map(|a| parse_axis(a))
         .collect::<Result<Vec<_>, _>>()?;
     let reduction = args.reduce.as_deref().map(parse_reduction).transpose()?;
+    let schedule = build_schedule(&args)?;
+    if schedule.needs_poly() {
+        return Err("--note/--chord require --nvoices > 0".to_owned());
+    }
+    if !schedule.is_empty() && !axes.is_empty() {
+        // Each sweep point resets the instance, so a schedule would replay
+        // identically per point while the swept value changed underneath —
+        // representable, but almost certainly not what the caller meant.
+        return Err("--at cannot be combined with --sweep".to_owned());
+    }
     let fixed = args
         .sets
         .iter()
@@ -452,6 +509,7 @@ fn run(mut args: Args) -> Result<(), String> {
         block: args.block,
         input: parse_input(&args.input)?,
         skip: args.skip,
+        schedule: schedule.clone(),
         drive_buttons: impulse_test,
     };
 
@@ -627,6 +685,34 @@ fn run(mut args: Args) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Collect `--at`, `--note` and `--chord` into one ordered schedule.
+///
+/// # Errors
+/// Returns the first parse failure, naming the offending argument.
+fn build_schedule(args: &Args) -> Result<Schedule, String> {
+    let mut schedule = Schedule::new();
+    for pair in args.ats.chunks(2) {
+        // clap's `num_args = 2` guarantees pairs; be defensive anyway rather
+        // than indexing past the end on a future flag-parsing change.
+        let [frame, assignment] = pair else {
+            return Err("--at takes FRAME PATH=VALUE".to_owned());
+        };
+        let (at, event) = parse_at(frame, assignment)?;
+        schedule.push(at, event);
+    }
+    for note in &args.notes {
+        for (frame, event) in parse_note(note)? {
+            schedule.push(frame, event);
+        }
+    }
+    for chord in &args.chords {
+        for (frame, event) in parse_chord(chord)? {
+            schedule.push(frame, event);
+        }
+    }
+    Ok(schedule)
 }
 
 /// JSON number, mapping a non-finite value to `null`.

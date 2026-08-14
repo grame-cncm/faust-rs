@@ -38,6 +38,7 @@ use ffi_common::abi::FfiFaustFloat;
 use crate::probe::params::{ControlKind, ControlMap, Resolution};
 use crate::probe::poly;
 use crate::probe::render::{InputMode, RenderStats, StatsAccumulator};
+use crate::probe::schedule::{Event, Schedule};
 
 /// How a render should be driven.
 #[derive(Debug, Clone)]
@@ -50,6 +51,13 @@ pub struct RenderSpec {
     pub input: InputMode,
     /// First frame included in statistics and dump.
     pub skip: usize,
+    /// Events to apply at exact frames during the render.
+    ///
+    /// Only [`Event::SetParam`] is meaningful on a scalar `Probe`; note
+    /// events need [`PolyProbe`]. The render loop shortens its block so a
+    /// boundary always lands on the next scheduled frame, which is what makes
+    /// the timing sample-exact rather than rounded to the block grid.
+    pub schedule: Schedule,
     /// Hold every `button` at 1.0 for the first block, then release it.
     ///
     /// This is `FUI::setButtons` as the reference impulse protocol drives it:
@@ -66,6 +74,7 @@ impl Default for RenderSpec {
             block: 64,
             input: InputMode::Impulse,
             skip: 0,
+            schedule: Schedule::new(),
             drive_buttons: false,
         }
     }
@@ -411,7 +420,19 @@ impl Probe {
                 let mut written = 0usize;
                 let mut cycle = 0usize;
                 while written < spec.frames {
-                    let n = block.min(spec.frames - written);
+                    // Apply anything due exactly here, then shorten the block
+                    // so the next event also lands on a boundary.
+                    for event in spec.schedule.at(written) {
+                        if let Event::SetParam { path, value } = event {
+                            let _ = self.set(path, *value);
+                        }
+                    }
+                    let mut n = block.min(spec.frames - written);
+                    if let Some(next) = spec.schedule.next_after(written) {
+                        if next > written {
+                            n = n.min(next - written);
+                        }
+                    }
                     if spec.drive_buttons {
                         let value = f64::from(u8::from(cycle == 0));
                         for &zone in &buttons {
