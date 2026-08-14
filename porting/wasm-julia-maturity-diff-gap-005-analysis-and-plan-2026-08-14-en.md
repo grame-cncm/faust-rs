@@ -74,7 +74,7 @@ qualification for WASM and Julia rests on the impulse gates alone.
 | `G5-J4` | hygiene | Internal pipeline comments leak into the shipped artifact (`# signal_fir_fastlane_step2a: executable base slice`, `# io: inputs=1 outputs=1`, `# signals: 1`). | generated `.jl` |
 | `G5-J5` | cosmetic | `instanceResetUserInterface!` assigns `REAL(0.5)` into a field declared `FAUSTFLOAT`, where C++ assigns `FAUSTFLOAT(0.5f0)`. **Initially filed as a correctness defect; it is not.** Julia's `setproperty!` converts the assigned value to the declared field type, so the store is correct even when the host defines `FAUSTFLOAT ≠ REAL`. Only the spelling differs. | generated `.jl`, Julia field-assignment semantics |
 | `G5-J6` | cosmetic | The runtime preamble (`fmod`, `atan2`, `faust_wrap_int32`, `faust_fmin`, `faust_fmax`) is emitted unconditionally, including for DSPs that use none of it. | generated `.jl` |
-| `G5-J7` | qualification | Julia has a `make julia` impulse gate but no row in the impulse-test status table, unlike the seven backends recorded there. | `tests/impulse-tests/README.md` §Status |
+| `G5-J7` | **closed 2026-08-14** | ~~Julia has a `make julia` impulse gate but no row in the impulse-test status table, unlike the seven backends recorded there.~~ Table re-derived on one corpus; Julia has a row. | `tests/impulse-tests/README.md` §Status |
 
 ### 3.3 Not owned by this document
 
@@ -219,20 +219,46 @@ The remaining three are deliberately left open, with their reasons:
 Field-ordering study against C++ plus the strict-JSON identity entries. Both are
 cross-backend and each needs its own differential and re-record.
 
-### P6 — Qualification widening (`G5-W6`, `G5-J7`)
+### P6 — Qualification widening (`G5-W6`, `G5-J7`) — **`G5-J7` done 2026-08-14**
 
 Add the Julia row to the impulse status table, and state explicitly what the
 vector gates do and do not prove in the absence of a C++ oracle.
 
-Measured on 2026-08-14 while validating P1/`G5-J3`: `make -f Make.julia -j8`
-runs 94 comparisons against genuine C++ references and all 94 pass with the new
-emitter. That is a current-corpus number, not the historical 93-DSP sweep the
-README's status table records, so it is *not* written into that table here:
-mixing the two baselines in one table would make both unreadable. `G5-J7` stays
-open until the table itself is re-derived on one corpus.
+`G5-J7` needed the table re-derived on one corpus before Julia's row could be
+added without producing two incompatible baselines side by side (see the
+2026-08-14 note directly above for why: at the time, `make -f Make.julia -j8`
+reported 94/94 while the README's stored table reported 92/93, and mixing them
+would have been unreadable). Re-deriving it surfaced a second, larger issue
+than the one being fixed: `Make.ref`'s `FAUST_CPP ?= faust` was resolving
+through `$PATH` to an unrelated, newer system Faust install (2.87.4) rather
+than the pinned dev checkout, so the 94-DSP oracle-supported count that both
+this document and `known.mk` had been citing all day was itself wrong — the
+correct pinned build (`8eebea429`) supports all 133 corpus DSPs, clock-domain
+fixtures included, since that branch is where `ondemand` clock domains are
+developed. Passing `FAUST_CPP` explicitly and rebuilding the full reference set
+confirmed **133/133, 0 mismatch, 0 compile-fail across all 8 backends**
+(cpp, c, interp, cranelift, wasm, assemblyscript, rust, julia). One DSP that
+appeared to diverge under the wrong oracle (`bells`, a 0-input,
+high-feedback physical model sensitive to exact button-excitation timing)
+matched exactly once compared against the correct one — not a faust-rs defect,
+a version-mismatch artifact.
+
+`tests/impulse-tests/README.md` §Status is now one table over the full current
+corpus, replacing the historical-93-DSP table plus the two separate prose
+paragraphs that had validated the `ondemand_*`/multirate fixtures outside it
+(their content is kept, reframed as supplementary characterization of cases
+now inside the main sweep). The methodology trap is documented inline in that
+section and in `known.mk`'s corrected `KNOWN_FAIL_all` comment, and
+`README.md`'s Requirements section now tells a new contributor to set
+`FAUST_CPP` explicitly rather than trust the `$PATH` default.
+
+`G5-W6` remains open: it is a distinct claim (no C++ oracle exists for
+*vector*-mode WASM output on the pinned branch, `-vec` being rejected outright
+there) that this re-derivation does not touch — the 133-DSP sweep above is
+scalar-only.
 
 ## 5. Maintenance
 
-When P1–P4 land, `DIFF-GAP-005` is rewritten from a two-backend disclaimer into
-the residual items only (`G5-W5`, `G5-W6`, `G5-J7` and whatever P5 leaves open),
+When P1–P4/P6 land, `DIFF-GAP-005` is rewritten from a two-backend disclaimer
+into the residual items only (`G5-W5`, `G5-W6` and whatever P5 leaves open),
 each with its own identifier.
