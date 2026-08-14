@@ -1123,6 +1123,23 @@ impl Compiler {
         virtual_sources: &VirtualSourceMap,
     ) -> Result<BoxCompileOutput, CompilerError> {
         let metadata_store = parser::CompilationMetadataStore::new(source_name);
+        // Merge the built-in import search paths, exactly as
+        // `compile_file_to_boxes` does for a file. Without this a string
+        // source took the branch below, whose parser does not resolve
+        // `import(...)` at all: the statement survived into the box tree and
+        // the evaluator rejected it as "malformed definition node N", with N
+        // tracking its position. The name of the imported library was
+        // irrelevant — a non-existent one failed identically — and passing
+        // `-I` did not help, because nothing forwarded it this far.
+        //
+        // `source_name` is the anchor. It is not a real path for a string
+        // source, so it contributes only its parent directory (`.`), while the
+        // defaults and any caller-supplied paths do the real work.
+        let search_paths = crate::paths::merge_import_search_paths(
+            std::path::Path::new(source_name),
+            search_paths,
+        );
+        let search_paths = search_paths.as_slice();
         let output = if search_paths.is_empty()
             && virtual_sources.is_empty()
             && self.remote_fetcher.is_none()
