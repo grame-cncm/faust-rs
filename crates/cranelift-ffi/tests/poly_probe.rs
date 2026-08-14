@@ -14,11 +14,15 @@ use cranelift_ffi::probe::engine::PolyProbe;
 
 /// Minimal polyphonic instrument: a sine at `freq`, gated, scaled by `gain`.
 ///
-/// Written without `import("stdfaust.lib")` on purpose. AGENTS.md section 3
-/// requires tests to be self-contained, and the string-factory path does not
-/// resolve the standard library the way the file path does — a source with an
-/// import compiles from a `.dsp` on disk but fails from a string with
-/// "malformed definition node". Everything here is a Faust primitive.
+/// Written from Faust primitives only, for two reasons.
+///
+/// AGENTS.md section 3 requires tests to be self-contained rather than lean on
+/// an installed Faust. And `createCCraneliftDSPFactoryFromString` does not
+/// handle the `import(...)` statement at all: any import fails with
+/// "malformed definition node N", where N tracks the statement's position,
+/// whether or not the named library exists and regardless of `-I`. The
+/// `library(...)` form does work on that path, so this fixture could use it —
+/// primitives keep the first reason satisfied too.
 ///
 /// The envelope is a one-pole follower on the gate rather than `en.ar`: it
 /// rises while the gate is held and decays exponentially after release, which
