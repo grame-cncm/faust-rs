@@ -19,6 +19,7 @@ use crate::instance::{
     buildUserInterfaceCCraneliftDSPInstance, computeCCraneliftDSPInstance,
     createCCraneliftDSPInstance, deleteCCraneliftDSPInstance, getNumInputsCCraneliftDSPInstance,
     getNumOutputsCCraneliftDSPInstance, initCCraneliftDSPInstance,
+    instanceClearCCraneliftDSPInstance, instanceResetUserInterfaceCCraneliftDSPInstance,
 };
 use crate::types::{CraneliftDspFactory, CraneliftDspInstance, FaustFloat};
 use ffi_common::abi::FfiFaustFloat;
@@ -196,6 +197,22 @@ impl Probe {
             } else {
                 *zone = value as FfiFaustFloat;
             }
+        }
+    }
+
+    /// Return the instance to the state it had just after `init`.
+    ///
+    /// Controls go back to their declared defaults and every piece of internal
+    /// state — delay lines, filter integrators, phase accumulators — is
+    /// zeroed. A sweep must do this between points: without it a resonant
+    /// filter carries its ringing into the next configuration, and every
+    /// measurement after the first silently describes the previous one as much
+    /// as its own.
+    pub fn reset(&self) {
+        // SAFETY: `self.dsp` is a live instance owned by this `Probe`.
+        unsafe {
+            instanceResetUserInterfaceCCraneliftDSPInstance(self.dsp);
+            instanceClearCCraneliftDSPInstance(self.dsp);
         }
     }
 

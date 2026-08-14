@@ -37,9 +37,13 @@
 //! - [`engine`] — JIT lifecycle and the block loop.
 //! - [`protocol`] — the reference impulse-test protocol and `.ir` format.
 //! - [`soundfile`] — the in-memory soundfile fixture both runners install.
+//! - [`sweep`] — parameter sweeps and the reductions applied to each point.
+//! - [`spectrum`] — the radix-2 FFT behind the `f0` reduction.
 
 pub mod engine;
 pub mod params;
 pub mod protocol;
 pub mod render;
 pub mod soundfile;
+pub mod spectrum;
+pub mod sweep;

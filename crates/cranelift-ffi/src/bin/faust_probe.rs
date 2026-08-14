@@ -12,6 +12,8 @@ use clap::{Parser, ValueEnum};
 use cranelift_ffi::probe::engine::{Probe, RenderSpec};
 use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::InputMode;
+use cranelift_ffi::probe::spectrum::dominant_frequency;
+use cranelift_ffi::probe::sweep::{Reduction, cartesian, parse_axis, parse_reduction};
 
 /// How rendered frames are printed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -20,6 +22,8 @@ enum Format {
     Csv,
     /// The reference impulse-test `.ir` text, with its zero-clamp.
     Ir,
+    /// One versioned JSON object; the only format that carries a sweep.
+    Json,
 }
 
 /// Which rendering protocol to follow.
@@ -94,6 +98,18 @@ struct Args {
     #[arg(long, value_enum, default_value_t = Format::Csv)]
     format: Format,
 
+    /// Sweep a control over several values, as `PATH=V1,V2,...` (repeatable).
+    ///
+    /// Repeating the flag takes the cartesian product, with the last axis
+    /// varying fastest. Every point renders from a cleared instance, so one
+    /// configuration cannot contaminate the next.
+    #[arg(long = "sweep", value_name = "PATH=V1,V2,...")]
+    sweeps: Vec<String>,
+
+    /// Reduce each render to one number per channel: rms, peak, energy, dc, f0.
+    #[arg(long = "reduce", value_name = "R")]
+    reduce: Option<String>,
+
     /// Rendering protocol.
     ///
     /// `impulse-test` reproduces the reference protocol exactly — sample rate
@@ -130,6 +146,12 @@ fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
     }
     if args.format != Format::Ir {
         offenders.push("--format");
+    }
+    if !args.sweeps.is_empty() {
+        offenders.push("--sweep");
+    }
+    if args.reduce.is_some() {
+        offenders.push("--reduce");
     }
     if offenders.is_empty() {
         Ok(())
@@ -215,10 +237,17 @@ fn run(mut args: Args) -> Result<(), String> {
         return Ok(());
     }
 
-    for assignment in &args.sets {
-        let (path, value) = parse_assignment(assignment)?;
-        probe.set(path, value)?;
-    }
+    let axes = args
+        .sweeps
+        .iter()
+        .map(|a| parse_axis(a))
+        .collect::<Result<Vec<_>, _>>()?;
+    let reduction = args.reduce.as_deref().map(parse_reduction).transpose()?;
+    let fixed = args
+        .sets
+        .iter()
+        .map(|a| parse_assignment(a))
+        .collect::<Result<Vec<_>, _>>()?;
 
     let spec = RenderSpec {
         frames: args.render,
@@ -228,70 +257,186 @@ fn run(mut args: Args) -> Result<(), String> {
         drive_buttons: impulse_test,
     };
 
+    let points = cartesian(&axes);
+    let sweeping = !axes.is_empty();
+    if sweeping && args.format != Format::Json {
+        // A sweep produces one row per point; CSV and .ir describe a single
+        // render and would concatenate them into something unreadable.
+        return Err("--sweep requires --format json".to_owned());
+    }
+
     let every = args.every.max(1);
-    if !args.quiet {
-        match args.format {
-            Format::Csv => {
-                print!("frame");
-                for ch in 0..probe.outputs() {
-                    print!(",out{ch}");
+    let mut runs: Vec<serde_json::Value> = Vec::new();
+
+    for point in &points {
+        // Every point starts from the same known state (see probe::sweep).
+        probe.reset();
+        for (path, value) in &fixed {
+            probe.set(path, *value)?;
+        }
+        for (path, value) in &point.assignments {
+            probe.set(path, *value)?;
+        }
+
+        let header_needed = !args.quiet && args.format != Format::Json;
+        if header_needed {
+            match args.format {
+                Format::Csv => {
+                    print!("frame");
+                    for ch in 0..probe.outputs() {
+                        print!(",out{ch}");
+                    }
+                    println!();
                 }
-                println!();
+                Format::Ir => print!(
+                    "{}",
+                    protocol::header(probe.inputs(), probe.outputs(), args.render)
+                ),
+                Format::Json => {}
             }
-            Format::Ir => print!(
-                "{}",
-                protocol::header(probe.inputs(), probe.outputs(), args.render)
-            ),
+        }
+
+        // `f0` needs the samples, so collect them only when it is asked for.
+        let want_samples = reduction == Some(Reduction::F0);
+        let mut collected: Vec<Vec<f64>> = if want_samples {
+            vec![Vec::new(); probe.outputs()]
+        } else {
+            Vec::new()
+        };
+
+        let stats = probe.render(&spec, |frame, samples| {
+            if want_samples {
+                for (ch, value) in samples.iter().enumerate() {
+                    collected[ch].push(*value);
+                }
+            }
+            if args.quiet || args.format == Format::Json {
+                return;
+            }
+            if !(frame - spec.skip).is_multiple_of(every) {
+                return;
+            }
+            match args.format {
+                Format::Csv => {
+                    let mut line = frame.to_string();
+                    for value in samples {
+                        line.push(',');
+                        line.push_str(&format!("{value:.9}"));
+                    }
+                    println!("{line}");
+                }
+                Format::Ir => print!("{}", protocol::frame_line(frame, samples)),
+                Format::Json => {}
+            }
+        });
+
+        // A non-finite sample invalidates a measurement, so the free path
+        // fails on it. The `.ir` path must not: the reference corpus contains
+        // DSPs whose expected output has NaN in it (`sound.dsp`, frames 41 and
+        // 845), and the artifact is what `filesCompare` judges — the exit code
+        // says whether the render was produced, not whether the DSP diverged.
+        // `impulse_cranelift` exits 0 there, and the probe must match it to be
+        // a drop-in replacement.
+        if args.format != Format::Ir && !stats.all_finite() {
+            return Err("render produced non-finite samples".to_owned());
+        }
+
+        if args.format == Format::Json {
+            let mut entry = serde_json::Map::new();
+            let mut set = serde_json::Map::new();
+            for (path, value) in &point.assignments {
+                set.insert(path.clone(), json_number(*value));
+            }
+            entry.insert("set".to_owned(), serde_json::Value::Object(set));
+            entry.insert(
+                "window".to_owned(),
+                serde_json::json!({
+                    "start": stats.window_start,
+                    "frames": stats.window_len,
+                }),
+            );
+            if let Some(r) = reduction {
+                let values: Vec<serde_json::Value> = (0..probe.outputs())
+                    .map(|ch| {
+                        let v = match r {
+                            Reduction::Rms => stats.channels[ch].rms,
+                            Reduction::Peak => stats.channels[ch].peak,
+                            Reduction::Energy => {
+                                stats.channels[ch].rms.powi(2) * stats.window_len as f64
+                            }
+                            Reduction::Dc => stats.channels[ch].dc,
+                            Reduction::F0 => {
+                                dominant_frequency(&collected[ch], f64::from(probe.sample_rate()))
+                            }
+                        };
+                        json_number(v)
+                    })
+                    .collect();
+                entry.insert(r.to_string(), serde_json::Value::Array(values));
+            } else {
+                // Without an explicit reduction, report the full statistics
+                // rather than nothing: a sweep with no numbers is useless.
+                let channels: Vec<serde_json::Value> = stats
+                    .channels
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "peak": json_number(c.peak),
+                            "rms": json_number(c.rms),
+                            "dc": json_number(c.dc),
+                        })
+                    })
+                    .collect();
+                entry.insert("channels".to_owned(), serde_json::Value::Array(channels));
+            }
+            runs.push(serde_json::Value::Object(entry));
+        } else if args.format == Format::Ir {
+            // The .ir text is compared byte for byte; emit nothing else.
+        } else {
+            eprintln!(
+                "# frames={} sr={} window={}..{} ({} frames)",
+                args.render,
+                args.sr,
+                stats.window_start,
+                stats.window_start + stats.window_len,
+                stats.window_len
+            );
+            for (ch, channel) in stats.channels.iter().enumerate() {
+                eprintln!(
+                    "# out{ch}: peak={:.9} rms={:.9} dc={:.9} finite={}",
+                    channel.peak,
+                    channel.rms,
+                    channel.dc,
+                    if channel.finite { "yes" } else { "no" }
+                );
+            }
         }
     }
 
-    let stats = probe.render(&spec, |frame, samples| {
-        if args.quiet || !(frame - spec.skip).is_multiple_of(every) {
-            return;
-        }
-        match args.format {
-            Format::Csv => {
-                let mut line = frame.to_string();
-                for value in samples {
-                    line.push(',');
-                    line.push_str(&format!("{value:.9}"));
-                }
-                println!("{line}");
-            }
-            Format::Ir => print!("{}", protocol::frame_line(frame, samples)),
-        }
-    });
-
-    if args.format == Format::Ir && !args.quiet {
-        // The `.ir` text is compared byte for byte; nothing else may be
-        // emitted alongside it, not even on stderr.
-        return Ok(());
-    }
-
-    // To stderr so a CSV dump stays pipeable.
-    eprintln!(
-        "# frames={} sr={} window={}..{} ({} frames)",
-        args.render,
-        args.sr,
-        stats.window_start,
-        stats.window_start + stats.window_len,
-        stats.window_len
-    );
-    for (ch, channel) in stats.channels.iter().enumerate() {
-        eprintln!(
-            "# out{ch}: peak={:.9} rms={:.9} dc={:.9} finite={}",
-            channel.peak,
-            channel.rms,
-            channel.dc,
-            if channel.finite { "yes" } else { "no" }
+    if args.format == Format::Json {
+        let document = serde_json::json!({
+            "schema_version": 1,
+            "dsp": args.file,
+            "sr": args.sr,
+            "frames": args.render,
+            "reduce": reduction.map(|r| r.to_string()),
+            "runs": runs,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?
         );
     }
 
-    if stats.all_finite() {
-        Ok(())
-    } else {
-        Err("render produced non-finite samples".to_owned())
-    }
+    Ok(())
+}
+
+/// JSON number, mapping a non-finite value to `null`.
+///
+/// `serde_json` cannot represent NaN or infinity, and silently dropping such a
+/// point would hide exactly the runs worth looking at.
+fn json_number(value: f64) -> serde_json::Value {
+    serde_json::Number::from_f64(value).map_or(serde_json::Value::Null, serde_json::Value::Number)
 }
 
 fn main() -> ExitCode {
