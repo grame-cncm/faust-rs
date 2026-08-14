@@ -1,6 +1,6 @@
 //! Semantic checker for JSON artifacts produced by the mem0 impulse lane.
 //!
-//! Usage: `mem0_json_check backend=path.json [...]`. Every document is checked
+//! Usage: `mem0-json-check backend=path.json [...]`. Every document is checked
 //! independently; when several backends are supplied their FIR-level
 //! `compute_cost` values must be identical.
 

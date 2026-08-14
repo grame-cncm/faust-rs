@@ -22,7 +22,7 @@ MEM0_ROOT ?= build/mem0
 MEM0_IR ?= ir
 MEM0_CPPFLAGS ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -std=c++17 -Iarchs
 MEM0_CFLAGS ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -std=c11 -Iarchs
-MEM0_JSON_CHECK ?= ../../target/release/mem0_json_check
+MEM0_JSON_CHECK ?= ../../target/release/mem0-json-check
 MEM0_FAUST_INCLUDES ?= -I $(dspdir) -I $(FAUSTLIBS)
 CC ?= cc
 
