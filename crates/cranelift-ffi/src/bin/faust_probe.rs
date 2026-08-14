@@ -70,7 +70,7 @@ struct Args {
     #[arg(long = "set", value_name = "PATH=VALUE")]
     sets: Vec<String>,
 
-    /// Input excitation: zero, impulse, impulse:CH, dc, white[:SEED], sine:HZ.
+    /// Input excitation: zero, impulse, impulse:CH, dc, `white[:SEED]`, sine:HZ.
     #[arg(long = "in", value_name = "MODE", default_value = "impulse")]
     input: String,
 
