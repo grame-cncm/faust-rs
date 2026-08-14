@@ -60,7 +60,7 @@ qualification for WASM and Julia rests on the impulse gates alone.
 | `G5-W1` | host-blocking | `-lang wasm-i`, `wasm-e`, `wast-i`, `wast-e` are rejected by the Rust CLI. C++ accepts all four. The Rust backend already implements both memory modes (`WasmOptions::internal_memory`), so only the selector is missing: there is no way to request an external-memory module, which is what polyphonic and soundfile-carrying web hosts need. | `error: invalid value 'wasm-e' for '--lang <LANG>'` vs C++ `OK` |
 | `G5-W2` | **closed 2026-08-14** | ~~The companion JSON `meta` array omits the three identity entries C++ always injects (`compile_options`, `filename`, `name`). Source `declare`s are transported correctly; the compiler-synthesized ones are not.~~ Fixed — see P3. | `s2.dsp`/`s3.dsp`: key set/order now match C++ exactly |
 | `G5-W3` | host-visible | The companion JSON has no `code` key. C++ embeds the base64 of the DSP source (`base64_encode(dsp_code)` in `WASMCodeContainer::generateJSON`). | key present in C++ JSON, absent in Rust JSON |
-| `G5-W4` | extension | Rust emits `sr_index` (byte offset of `fSampleRate`); the C++ WASM container passes `sr_index = -1` and the key is omitted. This is a deliberate Rust addition, not a defect — it must be *declared* rather than left to look like drift. | Rust JSON `"sr_index": 0`, absent in C++ |
+| `G5-W4` | **closed 2026-08-14** | ~~Rust emits `sr_index` (byte offset of `fSampleRate`); the C++ WASM container passes `sr_index = -1` and the key is omitted. This is a deliberate Rust addition, not a defect — it must be *declared* rather than left to look like drift.~~ Documented — see below. | `DIFF-BACK-005` |
 | `G5-W5` | layout | DSP struct field order differs: Rust places `fSampleRate` first, C++ follows FIR declaration order. Struct `size` agrees (8 = 8 on the probe) but widget byte offsets do not (`ui[0].index` = 4 in Rust, 0 in C++). The `.wasm`/JSON pair stays self-consistent, so hosts reading offsets from the JSON are correct either way; only a host hardcoding C++ offsets breaks. The cause is FIR-level declaration order shared with every backend (the same order is visible in the Julia struct), not a WASM emitter choice. | probe JSON diff |
 | `G5-W6` | qualification | Vector WASM is emitted and gated by `make wasm-vec0` / `wasm-vec1`, but has no C++ oracle on the pinned branch (see §2). | `known.mk` |
 
@@ -182,8 +182,17 @@ change.
 `G5-W3` (embedded base64 `code`) is not implemented by this change; it is
 independent of the identity-entry fix and left for its own pass.
 
-`G5-W4` (`sr_index` as a declared Rust extension) is not yet written into the
-differences registry as its own entry; still open.
+**`G5-W4` closed 2026-08-14, separately from `G5-W2`/`G5-W3`.** No code
+changed — `sr_index` was already correct, only undocumented. Registered as
+[`DIFF-BACK-005`](faust-rs-vs-faust-cpp-differences-en.md#6-additional-backends-and-delivery-forms)
+in the differences registry: Rust always fills `sr_index` with the byte offset
+of `fSampleRate`, while the C++ WASM backend passes `sr_index = -1` and the
+shared JSON serializer (`architecture/faust/gui/JSONUI.h`) omits the key for
+that sentinel. The field is part of the general Faust JSON schema and has a
+real host-side reader (`JSONUIDecoder.h` uses it to read the sample rate
+straight out of WASM linear memory, the same mechanism as widget `index`
+offsets) — C++ simply never populates it for this specific backend. Additive,
+not narrower: nothing the C++ JSON promises is missing from Rust's.
 
 ### P4 — Julia codegen hygiene (`G5-J3`…`G5-J6`) — **`G5-J3` done 2026-08-14**
 

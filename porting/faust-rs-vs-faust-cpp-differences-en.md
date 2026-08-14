@@ -373,6 +373,29 @@ must run unchanged with Faust C++ should not pass them.
 - The semantic metadata defects discovered beneath those text differences were
   closed by the C-family metadata transport work recorded in the corpus audit.
 
+### DIFF-BACK-005 — WASM companion JSON always populates `sr_index`
+
+- Status: `extension`.
+- The WASM/WAST companion JSON's optional `sr_index` field is part of the
+  shared Faust JSON schema (`architecture/faust/gui/JSONUI.h`) and has a real
+  reader on the host side (`JSONUIDecoder.h` uses it to read the sample rate
+  straight out of WASM linear memory, the same way `ui[*].index` is used for
+  widget parameters). The C++ WASM backend never populates it for this
+  backend: `WASMCodeContainer::generateJSON()` constructs its `JSONInstVisitor`
+  with `sr_index = -1`, and the shared serializer omits the key whenever the
+  value is `-1`.
+- Rust always fills it with the byte offset of `fSampleRate` in the module's
+  memory layout (`WasmMemoryLayout::field_offsets`), because that offset is
+  already computed for other struct-layout purposes and costs nothing extra to
+  expose. A host reading the field gets a working, schema-conformant answer;
+  a host that does not look for it is unaffected either way.
+- This is additive, not a narrowing: no C++-documented consumer is broken by
+  the extra key, and nothing the C++ JSON promises is missing from the Rust
+  JSON. It is recorded here so a byte-level comparison against the C++
+  companion JSON does not read the extra key as drift.
+- Evidence: `porting/wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md`
+  (`G5-W4`).
+
 ## 7. Public API and representation adaptations
 
 ### DIFF-API-001 — owned Rust compiler facade
@@ -538,7 +561,7 @@ remain visible until closed or explicitly reclassified.
 |---|---|---|
 | DIFF-GAP-001 | `narrower` | Full non-trivial stream-wrapper lowering remains less complete than the mature C++ route; the shared-runtime differential confirms different outputs for `rep_18_stream_wrappers` under impulse, ramp, and sine inputs. |
 | DIFF-GAP-004 | `narrower` | `getInfos` and some embedded-compiler/filesystem helper semantics remain partial or adapted. |
-| DIFF-GAP-005 | `narrower` | WASM and Julia are functional on validated paths but do not claim the complete semantic, layout, packaging, or upstream impulse-suite maturity of the C++ implementations. The two backends were audited on 2026-08-14 and this blanket entry is now backed by an enumerated inventory (`G5-W1`…`G5-W6`, `G5-J1`…`G5-J7`) in [`wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md`](wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md). Closed so far: Julia's host-visible description surfaces — `metadata!` and `getJSON` now carry the same content as the reference (`G5-J1`, `G5-J2`, `G5-J3`) — and the WASM companion JSON identity entries, `compile_options`/`filename`/`name` now appear in `meta` in C++ key order (`G5-W2`). Still open: `G5-W1`, `G5-W3`…`G5-W6`, `G5-J4`, `G5-J7`. This entry may only be removed when the inventory is empty; until then it must point at it. |
+| DIFF-GAP-005 | `narrower` | WASM and Julia are functional on validated paths but do not claim the complete semantic, layout, packaging, or upstream impulse-suite maturity of the C++ implementations. The two backends were audited on 2026-08-14 and this blanket entry is now backed by an enumerated inventory (`G5-W1`…`G5-W6`, `G5-J1`…`G5-J7`) in [`wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md`](wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md). Closed so far: Julia's host-visible description surfaces — `metadata!` and `getJSON` now carry the same content as the reference (`G5-J1`, `G5-J2`, `G5-J3`) — the WASM companion JSON identity entries, `compile_options`/`filename`/`name` now appear in `meta` in C++ key order (`G5-W2`) — and `sr_index` (`G5-W4`), which needed no code change, only its own registry entry: `DIFF-BACK-005`. Still open: `G5-W1`, `G5-W3`, `G5-W5`, `G5-W6`, `G5-J4`, `G5-J7`. This entry may only be removed when the inventory is empty; until then it must point at it. |
 | DIFF-GAP-006 | `narrower` | The specialized reverse-time recursive RAD path is disabled; Rust uses `BlockReverseAD` for temporal/recursive AD and still rejects mutable-table, soundfile, and unsupported foreign-function derivatives. |
 | DIFF-GAP-007 | `narrower` | The Rust CLI/backend set is smaller than the complete Faust C++ backend catalog; unsupported `-lang` values are rejected. |
 | DIFF-GAP-008 | `excluded` | `backend-java` is outside the Rust port target scope. |
