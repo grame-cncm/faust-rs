@@ -34,3 +34,7 @@ unused_lifetimes = "warn"
 
 [lints.clippy]
 all = "warn"
+
+[[bin]]
+name = "faust-probe"
+path = "src/bin/faust_probe.rs"

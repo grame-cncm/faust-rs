@@ -30,6 +30,7 @@ pub mod cache;
 pub(crate) mod clif;
 pub mod factory;
 pub mod instance;
+pub mod probe;
 pub(crate) mod runtime;
 pub mod types;
 
