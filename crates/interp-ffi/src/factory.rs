@@ -562,11 +562,18 @@ fn compile_factory_from_string_fastlane(
         table_init.as_deref(),
         parsed.table_init_sample_rate,
     );
+    // Forward `-I` as import search paths, as the Cranelift string factory
+    // does. `parsed.search_paths` already holds them; without passing them on,
+    // only the built-in defaults are searched, so `import("stdfaust.lib")`
+    // resolves while a project-local `library("mine.lib")` does not — and the
+    // failure is deferred until the library is used, because an unused
+    // `library(...)` binding is never loaded.
     let fbc = compiler
-        .compile_source_to_interp_with_lane(
+        .compile_source_to_interp_with_lane_and_search_paths(
             source_name,
             source,
             &interp_options,
+            &parsed.search_paths,
             SignalFirLane::TransformFastLane,
         )
         .map_err(|e| format!("{e}"))?;

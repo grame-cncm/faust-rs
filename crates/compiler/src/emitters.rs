@@ -677,6 +677,33 @@ impl Compiler {
             .map_err(|e| lower_interp_error_to_compiler(source_name, &signals, e))
     }
 
+    /// Parses + evaluates + propagates one source with explicit import search
+    /// paths, then emits `.fbc` bytecode text using the selected lane.
+    ///
+    /// The string counterpart of the file-backed interpreter entry point, and
+    /// the one an embedding layer must call when the caller supplied `-I`.
+    /// See [`Self::compile_source_to_fir_with_lane_and_search_paths`] for why
+    /// the pathless variant is not enough: without the paths a project-local
+    /// `library(...)` is unreachable, and the failure only surfaces when the
+    /// library is actually used, since an unused binding is never loaded.
+    ///
+    /// # Errors
+    /// As [`Self::compile_source_to_interp_with_lane`].
+    pub fn compile_source_to_interp_with_lane_and_search_paths(
+        &self,
+        source_name: &str,
+        source: &str,
+        options: &InterpOptions,
+        search_paths: &[PathBuf],
+        lane: SignalFirLane,
+    ) -> Result<String, CompilerError> {
+        let signals =
+            self.compile_source_to_signals_with_search_paths(source_name, source, search_paths)?;
+        let ctx = self.lowering_ctx(lane);
+        lower_signals_to_interp(source_name, &signals, options, ctx)
+            .map_err(|e| lower_interp_error_to_compiler(source_name, &signals, e))
+    }
+
     /// Parses + evaluates + propagates one file, then emits `.fbc` bytecode
     /// text via the interpreter backend using the transform fast lane.
     pub fn compile_file_to_interp(
@@ -860,6 +887,30 @@ impl Compiler {
         lane: SignalFirLane,
     ) -> Result<FirCompileOutput, CompilerError> {
         let signals = self.compile_source_to_signals(source_name, source)?;
+        self.lower_to_fir(source_name, &signals, lane)
+    }
+
+    /// Parses + evaluates + propagates one source with explicit import search
+    /// paths, then lowers to FIR using the selected lane.
+    ///
+    /// The string counterpart of [`Self::compile_file_to_fir_with_lane`].
+    /// Embedding layers must use this rather than
+    /// [`Self::compile_source_to_fir_with_lane`] whenever the caller supplied
+    /// `-I`: without the paths, `library(...)` resolution falls back to the
+    /// built-in defaults only, so a DSP importing a project-local library
+    /// compiles from a file and fails from a string.
+    ///
+    /// # Errors
+    /// As [`Self::compile_source_to_fir_with_lane`].
+    pub fn compile_source_to_fir_with_lane_and_search_paths(
+        &self,
+        source_name: &str,
+        source: &str,
+        search_paths: &[PathBuf],
+        lane: SignalFirLane,
+    ) -> Result<FirCompileOutput, CompilerError> {
+        let signals =
+            self.compile_source_to_signals_with_search_paths(source_name, source, search_paths)?;
         self.lower_to_fir(source_name, &signals, lane)
     }
 

@@ -1138,8 +1138,21 @@ fn preflight_compile_source_to_cranelift(
     argv: &[String],
 ) -> Result<CompiledCraneliftFactory, String> {
     let (compiler, double, memory_manager_mode) = compiler_from_argv(argv)?;
+    // Forward `-I` as import search paths. Without this the string path sees
+    // only the built-in defaults, so `import("stdfaust.lib")` resolves while a
+    // project-local `library("mine.lib")` does not — and the failure is
+    // deferred until the library is actually *used*, since an unused
+    // `library(...)` binding is never loaded.
+    let search_paths = ffi_common::args::parse_ffi_compile_args(argv)
+        .map(|parsed| parsed.search_paths)
+        .unwrap_or_default();
     let fir = compiler
-        .compile_source_to_fir_with_lane(source_name, source, SignalFirLane::TransformFastLane)
+        .compile_source_to_fir_with_lane_and_search_paths(
+            source_name,
+            source,
+            &search_paths,
+            SignalFirLane::TransformFastLane,
+        )
         .map_err(|e| e.to_string())?;
     let num_inputs = fir_module_num_inputs(&fir.store, fir.module)?;
     let num_outputs = fir_module_num_outputs(&fir.store, fir.module)?;
