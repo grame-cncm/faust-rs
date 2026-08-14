@@ -222,6 +222,6 @@
     local.get 2
     f32.store
   )
-  (data (;0;) (i32.const 65564) "{\0a\09\22name\22: \22rec\22,\0a\09\22filename\22: \22rec.dsp\22,\0a\09\22version\22: \220.8.0\22,\0a\09\22compile_options\22: \22-lang wasm -single\22,\0a\09\22include_pathnames\22: [\22target/cli-transcript-inputs\22,\22/Users/letz/Developpements/RUST/faust-rs/target/share/faust\22,\22/usr/local/share/faust\22,\22/usr/share/faust\22],\0a\09\22size\22: 20,\0a\09\22inputs\22: 1,\0a\09\22outputs\22: 1,\0a\09\22sr_index\22: 0,\0a\09\22meta\22: [],\0a\09\22ui\22: [ \0a\09\09{\0a\09\09\09\22type\22: \22vgroup\22,\0a\09\09\09\22label\22: \22rec\22,\0a\09\09\09\22items\22: []\0a\09\09}\0a\09]\0a}")
+  (data (;0;) (i32.const 65564) "{\0a\09\22name\22: \22rec\22,\0a\09\22filename\22: \22rec.dsp\22,\0a\09\22version\22: \220.8.0\22,\0a\09\22compile_options\22: \22-lang wasm -single\22,\0a\09\22include_pathnames\22: [\22target/cli-transcript-inputs\22,\22/Users/letz/Developpements/RUST/faust-rs/target/share/faust\22,\22/usr/local/share/faust\22,\22/usr/share/faust\22],\0a\09\22size\22: 20,\0a\09\22inputs\22: 1,\0a\09\22outputs\22: 1,\0a\09\22sr_index\22: 0,\0a\09\22meta\22: [ \0a\09\09{ \22compile_options\22: \22-lang wasm -single\22 },\0a\09\09{ \22filename\22: \22rec.dsp\22 },\0a\09\09{ \22name\22: \22rec\22 }\0a\09],\0a\09\22ui\22: [ \0a\09\09{\0a\09\09\09\22type\22: \22vgroup\22,\0a\09\09\09\22label\22: \22rec\22,\0a\09\09\09\22items\22: []\0a\09\09}\0a\09]\0a}")
 )
 EXIT=0

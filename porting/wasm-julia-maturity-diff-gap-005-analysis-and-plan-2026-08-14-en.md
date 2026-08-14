@@ -58,7 +58,7 @@ qualification for WASM and Julia rests on the impulse gates alone.
 | ID | Severity | Difference | Evidence |
 |---|---|---|---|
 | `G5-W1` | host-blocking | `-lang wasm-i`, `wasm-e`, `wast-i`, `wast-e` are rejected by the Rust CLI. C++ accepts all four. The Rust backend already implements both memory modes (`WasmOptions::internal_memory`), so only the selector is missing: there is no way to request an external-memory module, which is what polyphonic and soundfile-carrying web hosts need. | `error: invalid value 'wasm-e' for '--lang <LANG>'` vs C++ `OK` |
-| `G5-W2` | host-visible | The companion JSON `meta` array omits the three identity entries C++ always injects (`compile_options`, `filename`, `name`). Source `declare`s are transported correctly; the compiler-synthesized ones are not. | `s2.dsp`: C++ `meta` has 3 entries, Rust `meta` is `[]` |
+| `G5-W2` | **closed 2026-08-14** | ~~The companion JSON `meta` array omits the three identity entries C++ always injects (`compile_options`, `filename`, `name`). Source `declare`s are transported correctly; the compiler-synthesized ones are not.~~ Fixed — see P3. | `s2.dsp`/`s3.dsp`: key set/order now match C++ exactly |
 | `G5-W3` | host-visible | The companion JSON has no `code` key. C++ embeds the base64 of the DSP source (`base64_encode(dsp_code)` in `WASMCodeContainer::generateJSON`). | key present in C++ JSON, absent in Rust JSON |
 | `G5-W4` | extension | Rust emits `sr_index` (byte offset of `fSampleRate`); the C++ WASM container passes `sr_index = -1` and the key is omitted. This is a deliberate Rust addition, not a defect — it must be *declared* rather than left to look like drift. | Rust JSON `"sr_index": 0`, absent in C++ |
 | `G5-W5` | layout | DSP struct field order differs: Rust places `fSampleRate` first, C++ follows FIR declaration order. Struct `size` agrees (8 = 8 on the probe) but widget byte offsets do not (`ui[0].index` = 4 in Rust, 0 in C++). The `.wasm`/JSON pair stays self-consistent, so hosts reading offsets from the JSON are correct either way; only a host hardcoding C++ offsets breaks. The cause is FIR-level declaration order shared with every backend (the same order is visible in the Julia struct), not a WASM emitter choice. | probe JSON diff |
@@ -92,10 +92,10 @@ qualification for WASM and Julia rests on the impulse gates alone.
 
 Each phase ships producer + test in the same change, per the porting discipline.
 
-Scope decision (2026-08-14): the WASM emitter is **not** to be modified in this
-stream. `G5-W1`…`G5-W4` stay as inventory — the enumeration is what replaces the
-vague registry entry — but P2 and P3 below are specifications held for a later
-owner, not work scheduled here. Only the Julia phases are executed.
+Scope decision (2026-08-14, revised same day): the WASM emitter was initially
+held out of this stream — `G5-W1`…`G5-W4` were inventory only, P2/P3 held as
+specification for a later owner. That restriction was explicitly lifted the
+same day so `G5-W2` could be implemented; see the P3 entry below.
 
 ### P1 — Julia description surfaces (`G5-J1`, `G5-J2`) — **done 2026-08-14**
 
@@ -150,6 +150,40 @@ extension so it stops reading as drift.
 
 Pass criteria: for `s2.dsp` and `s3.dsp` the Rust and C++ WASM JSON agree on
 `meta` (keys, values, order) and on the presence and decoded value of `code`.
+
+**`G5-W2` done 2026-08-14.** `build_wasm_json_description` now injects
+`compile_options`/`filename`/`name` into `meta` through the same
+`c_family::ordered_compilation_metadata` helper the C/C++/Julia emitters share,
+so all four backends declare identity in the same C++ key order from the same
+transport. Verified against C++ on `s2.dsp` (no `declare`) and `s3.dsp`
+(`declare name/author/version`): key set, values, and order match exactly,
+modulo `compile_options`' content (`DIFF-CLI-006`, pre-existing and out of
+scope). `make -f Make.wasm -j8` still passes 94/94 against genuine C++
+references.
+
+One correctness trap surfaced during implementation and is guarded against:
+`build_json_description_from_fir` appends the FIR module's own `metadata`
+function body *after* the injected identity set, without deduplicating across
+the two. Production DSPs never populate that body (`signal_fir` lowering always
+emits it empty and carries source `declare`s through
+`WasmJsonContext::top_level_meta` instead — the same split already relied on
+for Julia's `G5-J1`/`G5-J2`), but the codegen-level fixture
+`build_gain_bias_ui_meta_test_module` hand-builds a real declaring `metadata`
+body to test FIR-driven replay directly, bypassing the compiler facade
+entirely. Unconditional injection would have doubled `name`/`filename` for that
+fixture (and any caller in the same style). `wasm_meta_with_identity_entries`
+therefore skips injection whenever the FIR module already declares a non-empty
+`metadata` body — the same mutual-exclusion rule `has_metadata` already
+enforces in the C-family emitters and `is_empty_metadata_body` enforces in
+Julia, now applied to JSON `meta` construction as well. The existing
+`wasm_json_description_replays_fir_ui_and_metadata` fixture test needed no
+change.
+
+`G5-W3` (embedded base64 `code`) is not implemented by this change; it is
+independent of the identity-entry fix and left for its own pass.
+
+`G5-W4` (`sr_index` as a declared Rust extension) is not yet written into the
+differences registry as its own entry; still open.
 
 ### P4 — Julia codegen hygiene (`G5-J3`…`G5-J6`) — **`G5-J3` done 2026-08-14**
 

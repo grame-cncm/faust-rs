@@ -637,6 +637,85 @@ fn function_index(imported_function_count: u32, func: WasmFunc) -> u32 {
             .expect("function present in static WASM function list") as u32
 }
 
+/// Injects the compiler-synthesized identity entries C++ always writes into
+/// the WASM companion JSON `meta` array.
+///
+/// Source provenance: C++ `WASMCodeContainer::generateJSON` builds its
+/// `JSONInstVisitor` from `gGlobal->gMetaDataSet`, which always carries
+/// `compile_options`, `filename`, and `name` alongside any source `declare`s —
+/// they are recorded there before the DSP is even parsed. Rust keeps the
+/// compiler-synthesized identity as separate top-level `filename`/`name`/
+/// `compile_options` JSON fields ([`build_wasm_json_description`]'s
+/// `JsonBuildOptions`), so without this step the `meta` array carried only
+/// source `declare`s (or was empty for a DSP with none), and any host reading
+/// identity from `meta` rather than the top-level fields saw nothing.
+///
+/// Shares [`crate::backends::c_family::ordered_compilation_metadata`] with the
+/// C/C++/Julia emitters: `filename`/`name` are pushed only if a source
+/// `declare` did not already claim that key (so `declare name` still wins over
+/// the module identity), then the whole set is sorted into the same C++ key
+/// order. `compile_options` is not defaulted by that helper — it is pushed
+/// here first, exactly as the C-family facade does before calling it — so it
+/// sorts into place alongside the other two.
+///
+/// Skipped entirely when the FIR module already declares a non-empty
+/// `metadata` function body: [`crate::json::build_json_description_from_fir`]
+/// appends that body's own declares *after* this synthesized set without
+/// deduplicating across the two sources, so injecting here would double up
+/// `name`/`filename` for the (compiler-facade-external) callers that hand-build
+/// a full metadata body directly in FIR — the C-family/Julia emitters draw the
+/// same line via their `has_metadata`/`is_empty_metadata_body` checks. The
+/// production pipeline never hits this: `signal_fir` lowering always emits an
+/// empty `metadata` body and carries source `declare`s through
+/// [`WasmJsonContext::top_level_meta`] instead.
+fn wasm_meta_with_identity_entries(
+    store: &FirStore,
+    module_name: &str,
+    function_items: &[FirId],
+    json_context: &WasmJsonContext,
+) -> Vec<JsonMetaEntry> {
+    if fir_module_has_declared_metadata(store, function_items) {
+        return json_context.top_level_meta.clone();
+    }
+    let mut entries: Vec<(String, String)> = json_context
+        .top_level_meta
+        .iter()
+        .map(|entry| (entry.key.clone(), entry.value.clone()))
+        .collect();
+    if let Some(compile_options) = &json_context.compile_options {
+        entries.push(("compile_options".to_owned(), compile_options.clone()));
+    }
+    let filename = json_context
+        .filename
+        .clone()
+        .unwrap_or_else(|| format!("{module_name}.dsp"));
+    crate::backends::c_family::ordered_compilation_metadata(
+        &entries,
+        filename,
+        module_name.to_owned(),
+    )
+    .into_iter()
+    .map(|(key, value)| JsonMetaEntry { key, value })
+    .collect()
+}
+
+/// Returns `true` when the FIR module declares a `metadata` function with at
+/// least one statement in its body.
+fn fir_module_has_declared_metadata(store: &FirStore, function_items: &[FirId]) -> bool {
+    function_items.iter().copied().any(|id| {
+        let FirMatch::DeclareFun {
+            name,
+            body: Some(body),
+            ..
+        } = match_fir(store, id)
+        else {
+            return false;
+        };
+        name == "metadata"
+            && !matches!(match_fir(store, body), FirMatch::Block(items) if items.is_empty())
+    })
+}
+
 /// Builds the companion JSON object for one lowered WASM module.
 ///
 /// This is the point where backend-specific layout facts become externally
@@ -663,7 +742,12 @@ fn build_wasm_json_description(
             compile_options: json_context.compile_options.clone(),
             library_list: json_context.library_list.clone(),
             include_pathnames: json_context.include_pathnames.clone(),
-            top_level_meta: json_context.top_level_meta.clone(),
+            top_level_meta: wasm_meta_with_identity_entries(
+                store,
+                module_name,
+                function_items,
+                json_context,
+            ),
             // C++ parity: the WASM companion JSON `size` is the start of the
             // host audio heap, not just the raw DSP-struct byte size.
             // Standard Faust wrappers place their input/output pointer tables

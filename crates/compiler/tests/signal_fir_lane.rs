@@ -189,6 +189,56 @@ fn fastlane_julia_emits_metadata_and_json_description() {
     assert!(json.contains("\\\"label\\\": \\\"gain\\\""));
 }
 
+/// The WASM companion JSON `meta` array used to carry only source `declare`s
+/// (or nothing at all, for a DSP without any), while C++ always injects
+/// `compile_options`/`filename`/`name` alongside them. See
+/// `porting/wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md`
+/// (`G5-W2`).
+#[test]
+fn fastlane_wasm_json_meta_carries_the_identity_entries() {
+    let compiler = Compiler::new();
+    let source = r#"
+        declare name "Demo";
+        declare author "Alice";
+        declare version "1.2";
+        process = _ * hslider("gain", 0.5, 0, 1, 0.01);
+    "#;
+    let wasm = compiler
+        .compile_source_to_wasm(
+            "demo.dsp",
+            source,
+            &codegen::backends::wasm::WasmOptions::default(),
+        )
+        .unwrap_or_else(|e| panic!("WASM compilation failed: {e}"));
+
+    // Same C++ key order as the metadata transport shared with the C/C++/Julia
+    // emitters: source declares plus the three compiler-synthesized identity
+    // entries, sorted by key.
+    assert!(wasm.dsp_json.contains("{ \"author\": \"Alice\" },"));
+    assert!(wasm.dsp_json.contains("{ \"compile_options\": "));
+    assert!(wasm.dsp_json.contains("{ \"filename\": \"demo.dsp\" },"));
+    assert!(wasm.dsp_json.contains("{ \"name\": \"Demo\" },"));
+    assert!(wasm.dsp_json.contains("{ \"version\": \"1.2\" }"));
+}
+
+/// A DSP without any `declare` must still get the three identity entries: the
+/// gap was not conditional on the DSP having other metadata.
+#[test]
+fn fastlane_wasm_json_meta_carries_identity_entries_without_declares() {
+    let compiler = Compiler::new();
+    let wasm = compiler
+        .compile_source_to_wasm(
+            "plain.dsp",
+            "process = _;",
+            &codegen::backends::wasm::WasmOptions::default(),
+        )
+        .unwrap_or_else(|e| panic!("WASM compilation failed: {e}"));
+
+    assert!(wasm.dsp_json.contains("{ \"compile_options\": "));
+    assert!(wasm.dsp_json.contains("{ \"filename\": \"plain.dsp\" },"));
+    assert!(wasm.dsp_json.contains("{ \"name\": \"plain\" }"));
+}
+
 /// The embedded description must name the DSP, not the generated struct. `-cn`
 /// renames the Julia type only; a JSON advertising the class name would also
 /// disagree with the `metadata!` callback built from the same session.
