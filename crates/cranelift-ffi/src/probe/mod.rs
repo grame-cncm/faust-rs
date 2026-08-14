@@ -35,7 +35,11 @@
 //! - [`params`] — control discovery, the `UIGlue` walk producing a path map.
 //! - [`render`] — excitation and reductions; FFI-free, so unit-testable.
 //! - [`engine`] — JIT lifecycle and the block loop.
+//! - [`protocol`] — the reference impulse-test protocol and `.ir` format.
+//! - [`soundfile`] — the in-memory soundfile fixture both runners install.
 
 pub mod engine;
 pub mod params;
+pub mod protocol;
 pub mod render;
+pub mod soundfile;

@@ -28,6 +28,8 @@ use std::ffi::{CStr, c_char, c_void};
 
 use ffi_common::abi::{FfiFaustFloat, UIGlue};
 
+use crate::probe::soundfile::{TestSoundfile, soundfile_part_count};
+
 /// What kind of widget a control came from.
 ///
 /// The distinction matters to callers: a [`ControlKind::Button`] is momentary
@@ -99,6 +101,13 @@ pub struct ControlMap {
     controls: BTreeMap<String, Control>,
     /// Group stack maintained during the walk; empty once it completes.
     groups: Vec<String>,
+    /// Soundfile fixtures kept alive for as long as the DSP may read them.
+    ///
+    /// A DSP declaring `soundfile(...)` gets a pointer the host must fill in.
+    /// Leaving it null is a segfault on the first `compute`, not a diagnostic,
+    /// so the same in-memory reader the impulse runner installs is installed
+    /// here — and owned here, because the DSP holds a bare pointer to it.
+    soundfiles: Vec<TestSoundfile>,
 }
 
 /// How a lookup by fragment resolved.
@@ -237,7 +246,7 @@ impl ControlMap {
             add_num_entry: Some(add_num_entry),
             add_horizontal_bargraph: Some(add_bargraph),
             add_vertical_bargraph: Some(add_bargraph),
-            add_soundfile: None,
+            add_soundfile: Some(add_soundfile),
             declare: None,
         }
     }
@@ -395,6 +404,36 @@ unsafe extern "C" fn add_num_entry(
         f64::from(step),
     ) {
         map.insert(&name, c);
+    }
+}
+
+unsafe extern "C" fn add_soundfile(
+    ui: *mut c_void,
+    label: *const c_char,
+    url: *const c_char,
+    zone: *mut *mut c_void,
+) {
+    let Some(map) = (unsafe { map_of(ui) }) else {
+        return;
+    };
+    if zone.is_null() {
+        return;
+    }
+    let _ = unsafe { label_of(label) };
+    let url = unsafe { label_of(url) };
+    map.soundfiles
+        .push(TestSoundfile::impulse_test_memory_reader(
+            soundfile_part_count(&url),
+        ));
+    let fixture = map
+        .soundfiles
+        .last_mut()
+        .expect("just pushed soundfile")
+        .as_mut_ptr();
+    // SAFETY: `zone` is the DSP's soundfile slot, and the fixture outlives the
+    // instance because the map owns it.
+    unsafe {
+        *zone = fixture;
     }
 }
 

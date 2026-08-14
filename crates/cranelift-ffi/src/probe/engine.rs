@@ -23,7 +23,7 @@ use crate::instance::{
 use crate::types::{CraneliftDspFactory, CraneliftDspInstance, FaustFloat};
 use ffi_common::abi::FfiFaustFloat;
 
-use crate::probe::params::ControlMap;
+use crate::probe::params::{ControlKind, ControlMap};
 use crate::probe::render::{InputMode, RenderStats, StatsAccumulator};
 
 /// How a render should be driven.
@@ -37,6 +37,13 @@ pub struct RenderSpec {
     pub input: InputMode,
     /// First frame included in statistics and dump.
     pub skip: usize,
+    /// Hold every `button` at 1.0 for the first block, then release it.
+    ///
+    /// This is `FUI::setButtons` as the reference impulse protocol drives it:
+    /// buttons only, not checkboxes or sliders, and for exactly one block.
+    /// Without it an instrument renders silence, because nothing ever gates a
+    /// voice.
+    pub drive_buttons: bool,
 }
 
 impl Default for RenderSpec {
@@ -46,6 +53,7 @@ impl Default for RenderSpec {
             block: 64,
             input: InputMode::Impulse,
             skip: 0,
+            drive_buttons: false,
         }
     }
 }
@@ -231,9 +239,25 @@ impl Probe {
             ($elem:ty) => {{
                 let mut ins = vec![vec![<$elem>::default(); block]; self.inputs];
                 let mut outs = vec![vec![<$elem>::default(); block]; self.outputs];
+                let buttons: Vec<*mut FfiFaustFloat> = if spec.drive_buttons {
+                    self.controls
+                        .iter()
+                        .filter(|c| c.kind == ControlKind::Button)
+                        .map(|c| c.zone)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 let mut written = 0usize;
+                let mut cycle = 0usize;
                 while written < spec.frames {
                     let n = block.min(spec.frames - written);
+                    if spec.drive_buttons {
+                        let value = f64::from(u8::from(cycle == 0));
+                        for &zone in &buttons {
+                            self.set_zone(zone, value);
+                        }
+                    }
                     for (ch, channel) in ins.iter_mut().enumerate() {
                         for (j, sample) in channel.iter_mut().enumerate().take(n) {
                             *sample = spec.input.sample(ch, written + j, sample_rate) as $elem;
@@ -269,6 +293,7 @@ impl Probe {
                         }
                     }
                     written += n;
+                    cycle += 1;
                 }
             }};
         }

@@ -7,10 +7,29 @@
 use std::process::ExitCode;
 use std::thread;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 use cranelift_ffi::probe::engine::{Probe, RenderSpec};
+use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::InputMode;
+
+/// How rendered frames are printed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Format {
+    /// `frame,out0,out1` with full precision — the default, pipeable.
+    Csv,
+    /// The reference impulse-test `.ir` text, with its zero-clamp.
+    Ir,
+}
+
+/// Which rendering protocol to follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Protocol {
+    /// Whatever the individual flags say.
+    Free,
+    /// Pin every knob to the reference impulse-test values.
+    ImpulseTest,
+}
 
 /// Probe a Faust DSP: set controls, render offline, report samples and statistics.
 #[derive(Debug, Parser)]
@@ -70,6 +89,56 @@ struct Args {
     /// Print statistics only, no per-frame dump.
     #[arg(long)]
     quiet: bool,
+
+    /// Output format for rendered frames.
+    #[arg(long, value_enum, default_value_t = Format::Csv)]
+    format: Format,
+
+    /// Rendering protocol.
+    ///
+    /// `impulse-test` reproduces the reference protocol exactly — sample rate
+    /// 44100, block 64, impulse on every input, buttons held for the first
+    /// block, `.ir` output — and rejects any flag that would perturb it, so a
+    /// regression run cannot be silently mis-configured.
+    #[arg(long, value_enum, default_value_t = Protocol::Free)]
+    protocol: Protocol,
+}
+
+/// Flags a caller must not combine with `--protocol impulse-test`.
+///
+/// Rejecting rather than overriding: a protocol run whose sample rate was
+/// quietly ignored would produce a `.ir` that looks valid and compares wrong.
+fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
+    let mut offenders = Vec::new();
+    if args.sr != protocol::SAMPLE_RATE {
+        offenders.push("--sr");
+    }
+    if args.block != protocol::BLOCK_SIZE {
+        offenders.push("--block");
+    }
+    if args.input != "impulse" {
+        offenders.push("--in");
+    }
+    if args.skip != 0 {
+        offenders.push("--skip");
+    }
+    if args.every != 1 {
+        offenders.push("--every");
+    }
+    if !args.sets.is_empty() {
+        offenders.push("--set");
+    }
+    if args.format != Format::Ir {
+        offenders.push("--format");
+    }
+    if offenders.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "--protocol impulse-test fixes the rendering conditions; remove {}",
+            offenders.join(", ")
+        ))
+    }
 }
 
 /// Parse an `--in` value into an excitation mode.
@@ -110,7 +179,20 @@ fn parse_assignment(text: &str) -> Result<(&str, f64), String> {
     Ok((path, parsed))
 }
 
-fn run(args: Args) -> Result<(), String> {
+fn run(mut args: Args) -> Result<(), String> {
+    let impulse_test = args.protocol == Protocol::ImpulseTest;
+    if impulse_test {
+        // Defaults are the reference values already, so only an explicitly
+        // conflicting flag is an error. `--format ir` is implied.
+        if args.format == Format::Csv {
+            args.format = Format::Ir;
+        }
+        reject_protocol_conflicts(&args)?;
+        if args.render == 15_000 {
+            args.render = protocol::DEFAULT_FRAMES;
+        }
+    }
+
     let probe = Probe::compile(
         &args.file,
         &args.import_dirs,
@@ -143,28 +225,48 @@ fn run(args: Args) -> Result<(), String> {
         block: args.block,
         input: parse_input(&args.input)?,
         skip: args.skip,
+        drive_buttons: impulse_test,
     };
 
     let every = args.every.max(1);
     if !args.quiet {
-        print!("frame");
-        for ch in 0..probe.outputs() {
-            print!(",out{ch}");
+        match args.format {
+            Format::Csv => {
+                print!("frame");
+                for ch in 0..probe.outputs() {
+                    print!(",out{ch}");
+                }
+                println!();
+            }
+            Format::Ir => print!(
+                "{}",
+                protocol::header(probe.inputs(), probe.outputs(), args.render)
+            ),
         }
-        println!();
     }
 
     let stats = probe.render(&spec, |frame, samples| {
         if args.quiet || !(frame - spec.skip).is_multiple_of(every) {
             return;
         }
-        let mut line = frame.to_string();
-        for value in samples {
-            line.push(',');
-            line.push_str(&format!("{value:.9}"));
+        match args.format {
+            Format::Csv => {
+                let mut line = frame.to_string();
+                for value in samples {
+                    line.push(',');
+                    line.push_str(&format!("{value:.9}"));
+                }
+                println!("{line}");
+            }
+            Format::Ir => print!("{}", protocol::frame_line(frame, samples)),
         }
-        println!("{line}");
     });
+
+    if args.format == Format::Ir && !args.quiet {
+        // The `.ir` text is compared byte for byte; nothing else may be
+        // emitted alongside it, not even on stderr.
+        return Ok(());
+    }
 
     // To stderr so a CSV dump stays pipeable.
     eprintln!(
