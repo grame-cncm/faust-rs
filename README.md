@@ -626,7 +626,7 @@ boundary plus the `foreign-call` runtime bridge.
 | `box-ffi` | Box manipulation C/C++ API |
 | `signal-ffi` | Signal manipulation C/C++ API |
 | `interp-ffi` | Interpreter backend C/C++ API |
-| `cranelift-ffi` | Experimental Cranelift backend C/C++ API; also hosts the `impulse_cranelift` and `faust-probe` binaries, which drive its runtime |
+| `cranelift-ffi` | Experimental Cranelift backend C/C++ API; also hosts the `impulse-cranelift` and `faust-probe` binaries, which drive its runtime |
 | `libfaust-ffi` | Backend-agnostic libfaust C/C++ API (`expandDSP*`, `generateAuxFiles*`, `generateSHA1`) |
 
 ### Distribution and tooling

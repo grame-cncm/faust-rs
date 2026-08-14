@@ -10,7 +10,7 @@
 # the workspace with `cargo build --release -p compiler -p impulse-runner`.
 FAUST_RS  ?= ../../target/release/faust-rs
 RUNNER    ?= ../../target/release/impulse-runner
-RUNNER_CRANELIFT ?= ../../target/release/impulse_cranelift
+RUNNER_CRANELIFT ?= ../../target/release/impulse-cranelift
 
 # --- C++ reference oracle ---------------------------------------------------
 # The reference `.ir` files are produced by the genuine C++ Faust compiler

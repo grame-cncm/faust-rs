@@ -32,7 +32,7 @@ See the design write-up in
      with `filesCompare -part` (same approach the C++ suite uses for its Rust
      target).
    - `make cranelift` — the faust-rs Cranelift JIT runs in-process via
-     `impulse_cranelift` in 64-bit (`-double`), scalar prefix, `-part`.
+     `impulse-cranelift` in 64-bit (`-double`), scalar prefix, `-part`.
    - `make wasm` — the faust-rs WASM backend is compiled to `.wasm + .json`
      and executed through Node's native WebAssembly runtime in 64-bit
      (`-double`), scalar prefix, `-part`.
@@ -97,7 +97,7 @@ See the design write-up in
 ## Requirements
 
 - A built faust-rs workspace: `make build` (builds `compiler`,
-  `impulse-runner`, `impulse_cranelift`, and the mem0 JSON checker in release
+  `impulse-runner`, `impulse-cranelift`, and the mem0 JSON checker in release
   mode).
 - A C++ Faust checkout for the reference oracle and the native C/C++ paths
   (architecture headers + `impulsearch.cpp`). Paths are configured in

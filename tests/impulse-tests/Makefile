@@ -321,7 +321,7 @@ compile-bench:
 # Build the faust-rs binaries the harness drives.
 build:
 	cd ../.. && cargo build --release -p compiler --bin faust-rs -p impulse-runner
-	cd ../.. && cargo build --release -p cranelift-ffi --bin impulse_cranelift --bin mem0_json_check
+	cd ../.. && cargo build --release -p cranelift-ffi --bin impulse-cranelift --bin mem0_json_check
 
 tools: $(COMPARE)
 

@@ -1,7 +1,7 @@
 #
 # Test the faust-rs Cranelift JIT backend against the reference.
 #
-# Like the interpreter backend, `impulse_cranelift` reproduces only the scalar
+# Like the interpreter backend, `impulse-cranelift` reproduces only the scalar
 # impulse pass (the first 15000 reference frames) and is compared with
 # `filesCompare -part`. The backend runs in 64-bit (`-double`) so it can be
 # compared directly against the `-double` reference.

@@ -148,7 +148,7 @@ struct Args {
     /// mixing, reclamation below `--voice-stop-level`). The design's `-n`
     /// short form is not used here: `-n` already names `--render` (frames),
     /// including in this tool's own regression check against
-    /// `impulse_cranelift`, which this phase must not disturb.
+    /// `impulse-cranelift`, which this phase must not disturb.
     ///
     /// This phase exposes no `--note`/`--chord`/`--at` scheduling (design
     /// phase P5): the polyphonic engine is driven at the library level
@@ -591,7 +591,7 @@ fn run(mut args: Args) -> Result<(), String> {
         // DSPs whose expected output has NaN in it (`sound.dsp`, frames 41 and
         // 845), and the artifact is what `filesCompare` judges — the exit code
         // says whether the render was produced, not whether the DSP diverged.
-        // `impulse_cranelift` exits 0 there, and the probe must match it to be
+        // `impulse-cranelift` exits 0 there, and the probe must match it to be
         // a drop-in replacement.
         if args.format != Format::Ir && !stats.all_finite() {
             return Err("render produced non-finite samples".to_owned());
@@ -726,7 +726,7 @@ fn json_number(value: f64) -> serde_json::Value {
 fn main() -> ExitCode {
     let args = Args::parse();
     // Cranelift JIT plus the faust-rs front end recurse deeply; run on a large
-    // stack, as `impulse_cranelift` and the differential tests do.
+    // stack, as `impulse-cranelift` and the differential tests do.
     let result = thread::Builder::new()
         .name("faust-probe".to_owned())
         .stack_size(256 * 1024 * 1024)

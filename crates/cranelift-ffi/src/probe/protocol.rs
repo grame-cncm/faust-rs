@@ -6,7 +6,7 @@
 //! could not also emit the reference format would force every regression run
 //! through a second binary. `--protocol impulse-test` pins every knob to the
 //! reference values and emits the same text, so the probe subsumes
-//! `impulse_cranelift` rather than competing with it.
+//! `impulse-cranelift` rather than competing with it.
 //!
 //! The protocol is defined by `controlTools.h::runDSP` in the C++ test suite
 //! and mirrored by both existing runners:

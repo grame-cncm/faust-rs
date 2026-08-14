@@ -7,11 +7,11 @@
 //! the `UIGlue` callback table this crate exports. The workspace layering
 //! contract (`cargo run -p xtask -- ffi-boundary-check`) forbids a core crate
 //! from depending rightward on an FFI adapter, which settles the question the
-//! design left open: the probe belongs beside `impulse_cranelift`, inside the
+//! design left open: the probe belongs beside `impulse-cranelift`, inside the
 //! adapter that owns the runtime it drives.
 //!
 //! # Why a third runner
-//! `impulse-runner` and `impulse_cranelift` answer *did the behaviour change?*
+//! `impulse-runner` and `impulse-cranelift` answer *did the behaviour change?*
 //! They render a fixed protocol — sample rate 44100, block 64, an impulse on
 //! frame 0, buttons held for the first block only, sliders left at their
 //! defaults — and emit `.ir` for `filesCompare -part` against the C++ oracle.
