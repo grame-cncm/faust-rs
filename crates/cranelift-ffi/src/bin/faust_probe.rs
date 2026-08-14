@@ -9,7 +9,8 @@ use std::thread;
 
 use clap::{Parser, ValueEnum};
 
-use cranelift_ffi::probe::engine::{Probe, RenderSpec};
+use cranelift_ffi::probe::engine::{PolyProbe, Probe, RenderSpec};
+use cranelift_ffi::probe::poly;
 use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::InputMode;
 use cranelift_ffi::probe::spectrum::dominant_frequency;
@@ -118,6 +119,44 @@ struct Args {
     /// regression run cannot be silently mis-configured.
     #[arg(long, value_enum, default_value_t = Protocol::Free)]
     protocol: Protocol,
+
+    /// Polyphonic voice count; 0 renders the DSP directly (default, and the
+    /// only mode `--protocol impulse-test` accepts).
+    ///
+    /// N > 0 compiles N instances from one JIT and drives them through the
+    /// polyphonic wrapper ported from `poly-dsp.h` (allocation, stealing,
+    /// mixing, reclamation below `--voice-stop-level`). The design's `-n`
+    /// short form is not used here: `-n` already names `--render` (frames),
+    /// including in this tool's own regression check against
+    /// `impulse_cranelift`, which this phase must not disturb.
+    ///
+    /// This phase exposes no `--note`/`--chord`/`--at` scheduling (design
+    /// phase P5): the polyphonic engine is driven at the library level
+    /// (`PolyProbe::key_on`/`key_off`), not from this command line yet, so a
+    /// poly render with no `--set` broadcast onto a voice's own gate/freq/gain
+    /// is silence — every voice starts and stays free.
+    #[arg(long = "nvoices", default_value_t = 0)]
+    nvoices: usize,
+
+    /// Separate effect DSP, run once on the voices' mixed output.
+    ///
+    /// Without this, a single-file instrument that declares both `process`
+    /// and `effect` has its effect extracted automatically the way
+    /// `FaustPolyDspGenerator` does — wrap the source in `environment{}` and
+    /// take `dsp_code.effect` — and this flag is unnecessary; pass it to
+    /// override that guess or to pair a process DSP with an effect declared
+    /// in a different file. Requires `--nvoices` > 0.
+    #[arg(long = "effect", value_name = "FILE")]
+    effect: Option<String>,
+
+    /// RMS level below which a releasing voice is reclaimed as free.
+    ///
+    /// Default `0.00003162` (-90 dB) is `poly-dsp.h`'s `VOICE_STOP_LEVEL` —
+    /// the one number in the polyphonic wrapper with an audible consequence
+    /// (design §3.2): too high truncates long releases, too low never
+    /// reclaims a voice under sustained play. Requires `--nvoices` > 0.
+    #[arg(long = "voice-stop-level", default_value_t = poly::DEFAULT_VOICE_STOP_LEVEL)]
+    voice_stop_level: f64,
 }
 
 /// Flags a caller must not combine with `--protocol impulse-test`.
@@ -152,6 +191,9 @@ fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
     }
     if args.reduce.is_some() {
         offenders.push("--reduce");
+    }
+    if args.nvoices != 0 {
+        offenders.push("--nvoices");
     }
     if offenders.is_empty() {
         Ok(())
@@ -201,6 +243,155 @@ fn parse_assignment(text: &str) -> Result<(&str, f64), String> {
     Ok((path, parsed))
 }
 
+/// Render `args.nvoices` > 0 through the polyphonic wrapper.
+///
+/// Split from [`run`] because the two paths share almost nothing below
+/// compilation: a poly render mixes N voices and an optional effect rather
+/// than driving one `Probe`, and this phase has no `--note`/`--chord`/`--at`
+/// scheduling (design phase P5), so `--set` broadcasting to every voice is
+/// the only way this entry point can make a render produce sound — genuine
+/// note-driven verification goes through [`PolyProbe::key_on`]/`key_off`
+/// directly, exercised by this crate's tests rather than this binary.
+fn run_poly(args: &Args) -> Result<(), String> {
+    if !args.sweeps.is_empty() || args.reduce.is_some() {
+        return Err(
+            "--sweep/--reduce operate on the scalar Probe only; use --nvoices 0".to_owned(),
+        );
+    }
+    if args.format == Format::Ir {
+        return Err("--format ir is scoped to the scalar impulse-test protocol".to_owned());
+    }
+
+    let mut poly = PolyProbe::compile(
+        &args.file,
+        &args.import_dirs,
+        args.sr,
+        args.double,
+        args.opt_level,
+        args.nvoices,
+        args.effect.as_deref(),
+        args.voice_stop_level,
+    )?;
+
+    if args.list_params {
+        println!(
+            "{} voice(s), {} input(s)/voice, {} output(s), effect: {}",
+            poly.voice_count(),
+            poly.inputs(),
+            poly.outputs(),
+            if poly.has_effect() { "yes" } else { "no" }
+        );
+        println!(
+            "{:<44} {:>10} {:>10} {:>10} {:>10}",
+            "path (per voice)", "init", "min", "max", "step"
+        );
+        for control in poly.voice_controls().iter() {
+            println!(
+                "{:<44} {:>10} {:>10} {:>10} {:>10}",
+                control.path, control.init, control.min, control.max, control.step
+            );
+        }
+        return Ok(());
+    }
+
+    let fixed = args
+        .sets
+        .iter()
+        .map(|a| parse_assignment(a))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (path, value) in &fixed {
+        poly.set_all(path, *value)?;
+    }
+
+    let every = args.every.max(1);
+    let mut peak = vec![0.0_f64; poly.outputs()];
+    let mut sum_sq = vec![0.0_f64; poly.outputs()];
+    let mut counted = 0usize;
+
+    let header_needed = !args.quiet && args.format == Format::Csv;
+    if header_needed {
+        print!("frame");
+        for ch in 0..poly.outputs() {
+            print!(",out{ch}");
+        }
+        println!();
+    }
+
+    let mut written = 0usize;
+    while written < args.render {
+        let n = args.block.min(args.render - written);
+        let block_out = poly.compute(n);
+        for j in 0..n {
+            let frame = written + j;
+            if frame < args.skip {
+                continue;
+            }
+            for (ch, channel) in block_out.iter().enumerate() {
+                let value = channel[j];
+                if value.is_finite() {
+                    peak[ch] = peak[ch].max(value.abs());
+                    sum_sq[ch] = value.mul_add(value, sum_sq[ch]);
+                }
+            }
+            counted += 1;
+            if !args.quiet
+                && args.format == Format::Csv
+                && (frame - args.skip).is_multiple_of(every)
+            {
+                let mut line = frame.to_string();
+                for channel in &block_out {
+                    line.push(',');
+                    line.push_str(&format!("{:.9}", channel[j]));
+                }
+                println!("{line}");
+            }
+        }
+        written += n;
+    }
+
+    let denom = counted.max(1) as f64;
+    if args.format == Format::Json {
+        let channels: Vec<serde_json::Value> = (0..poly.outputs())
+            .map(|ch| {
+                serde_json::json!({
+                    "peak": json_number(peak[ch]),
+                    "rms": json_number((sum_sq[ch] / denom).sqrt()),
+                })
+            })
+            .collect();
+        let document = serde_json::json!({
+            "schema_version": 1,
+            "dsp": args.file,
+            "sr": args.sr,
+            "nvoices": args.nvoices,
+            "frames": args.render,
+            "active_voices": poly.active_voice_count(),
+            "channels": channels,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?
+        );
+    } else if !args.quiet {
+        eprintln!(
+            "# frames={} sr={} nvoices={} active_voices={}",
+            args.render,
+            args.sr,
+            args.nvoices,
+            poly.active_voice_count()
+        );
+        for ch in 0..poly.outputs() {
+            eprintln!(
+                "# out{ch}: peak={:.9} rms={:.9}",
+                peak[ch],
+                (sum_sq[ch] / denom).sqrt()
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn run(mut args: Args) -> Result<(), String> {
     let impulse_test = args.protocol == Protocol::ImpulseTest;
     if impulse_test {
@@ -213,6 +404,13 @@ fn run(mut args: Args) -> Result<(), String> {
         if args.render == 15_000 {
             args.render = protocol::DEFAULT_FRAMES;
         }
+    }
+
+    if args.effect.is_some() && args.nvoices == 0 {
+        return Err("--effect requires --nvoices > 0".to_owned());
+    }
+    if args.nvoices > 0 {
+        return run_poly(&args);
     }
 
     let probe = Probe::compile(
