@@ -14,7 +14,7 @@ use cranelift_ffi::probe::poly;
 use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::{InputMode, RenderStats};
 use cranelift_ffi::probe::schedule::{Event, Schedule, parse_at, parse_chord, parse_note};
-use cranelift_ffi::probe::spectrum::dominant_frequency;
+use cranelift_ffi::probe::spectrum::{dominant_frequency, sfdr_db, thd_db};
 use cranelift_ffi::probe::sweep::{Reduction, cartesian, parse_axis, parse_reduction};
 
 /// How rendered frames are printed.
@@ -108,9 +108,23 @@ struct Args {
     #[arg(long = "sweep", value_name = "PATH=V1,V2,...")]
     sweeps: Vec<String>,
 
-    /// Reduce each render to one number per channel: rms, peak, energy, dc, f0.
+    /// Reduce each render to one number per channel: rms, peak, energy, dc, f0,
+    /// `sfdr` or `thd`.
+    ///
+    /// `sfdr` and `thd` need a fundamental. It is estimated from the strongest
+    /// bin unless `--f0` says otherwise, and both want a stationary window:
+    /// measuring while the spectrum decays smears every partial and reads as
+    /// off-grid energy..
     #[arg(long = "reduce", value_name = "R")]
     reduce: Option<String>,
+
+    /// Fundamental in Hz for `--reduce sfdr` / `--reduce thd`.
+    ///
+    /// Pins what the estimator would otherwise guess. Worth setting whenever
+    /// the fundamental is known: a signal whose loudest partial is not the
+    /// fundamental — a bright pluck, a filtered saw — is misread without it.
+    #[arg(long = "f0", value_name = "HZ")]
+    f0: Option<f64>,
 
     /// Set a control at an exact frame: `--at FRAME PATH=VALUE` (repeatable).
     ///
@@ -580,7 +594,10 @@ fn run(mut args: Args) -> Result<(), String> {
         }
 
         // `f0` needs the samples, so collect them only when it is asked for.
-        let want_samples = reduction == Some(Reduction::F0);
+        let want_samples = matches!(
+            reduction,
+            Some(Reduction::F0 | Reduction::Sfdr | Reduction::Thd)
+        );
         let mut collected: Vec<Vec<f64>> = if want_samples {
             vec![Vec::new(); probe.outputs()]
         } else {
@@ -647,6 +664,7 @@ fn run(mut args: Args) -> Result<(), String> {
                             ch,
                             &collected,
                             probe.sample_rate(),
+                            args.f0,
                         ))
                     })
                     .collect();
@@ -680,7 +698,7 @@ fn run(mut args: Args) -> Result<(), String> {
                 match reduction {
                     Some(r) => row.push(format!(
                         "{:.9}",
-                        reduce_channel(r, &stats, ch, &collected, probe.sample_rate())
+                        reduce_channel(r, &stats, ch, &collected, probe.sample_rate(), args.f0)
                     )),
                     None => {
                         row.push(format!("{:.9}", stats.channels[ch].peak));
@@ -749,13 +767,17 @@ fn reduce_channel(
     ch: usize,
     collected: &[Vec<f64>],
     sample_rate: i32,
+    f0: Option<f64>,
 ) -> f64 {
+    let sr = f64::from(sample_rate);
     match r {
         Reduction::Rms => stats.channels[ch].rms,
         Reduction::Peak => stats.channels[ch].peak,
         Reduction::Energy => stats.channels[ch].rms.powi(2) * stats.window_len as f64,
         Reduction::Dc => stats.channels[ch].dc,
-        Reduction::F0 => dominant_frequency(&collected[ch], f64::from(sample_rate)),
+        Reduction::F0 => dominant_frequency(&collected[ch], sr),
+        Reduction::Sfdr => sfdr_db(&collected[ch], sr, f0.unwrap_or(0.0)),
+        Reduction::Thd => thd_db(&collected[ch], sr, f0.unwrap_or(0.0)),
     }
 }
 

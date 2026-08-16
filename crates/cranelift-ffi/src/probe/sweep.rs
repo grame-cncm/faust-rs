@@ -39,6 +39,13 @@ pub enum Reduction {
     Dc,
     /// Frequency of the strongest non-DC bin, per channel.
     F0,
+    /// Spurious-free dynamic range: dB from the fundamental down to the loudest
+    /// component off its harmonic grid. Answers "how much aliasing is left".
+    Sfdr,
+    /// Total harmonic distortion: dB of harmonics 2, 3, … relative to the
+    /// fundamental. The companion question to `Sfdr`, where the harmonics are
+    /// what is measured rather than what is excluded.
+    Thd,
 }
 
 impl fmt::Display for Reduction {
@@ -49,6 +56,8 @@ impl fmt::Display for Reduction {
             Self::Energy => "energy",
             Self::Dc => "dc",
             Self::F0 => "f0",
+            Self::Sfdr => "sfdr",
+            Self::Thd => "thd",
         })
     }
 }
@@ -127,8 +136,10 @@ pub fn parse_reduction(name: &str) -> Result<Reduction, String> {
         "energy" => Ok(Reduction::Energy),
         "dc" => Ok(Reduction::Dc),
         "f0" => Ok(Reduction::F0),
+        "sfdr" => Ok(Reduction::Sfdr),
+        "thd" => Ok(Reduction::Thd),
         other => Err(format!(
-            "unknown reduction `{other}`; expected rms, peak, energy, dc or f0"
+            "unknown reduction `{other}`; expected rms, peak, energy, dc, f0, sfdr or thd"
         )),
     }
 }
