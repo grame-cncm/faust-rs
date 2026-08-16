@@ -60,6 +60,23 @@ impl Schedule {
         Self::default()
     }
 
+    /// Paths written by scheduled `SetParam` events, in frame order.
+    ///
+    /// Used to reject a schedule that writes a control a sweep is also
+    /// driving: the later write would silently win and the swept axis would
+    /// report values the render never used.
+    #[must_use]
+    pub fn param_paths(&self) -> Vec<&str> {
+        self.events
+            .values()
+            .flatten()
+            .filter_map(|e| match e {
+                Event::SetParam { path, .. } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Whether nothing is scheduled.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -384,5 +401,39 @@ mod tests {
             },
         );
         assert!(s.needs_poly());
+    }
+
+    /// `--at` targets must be discoverable so a sweep can refuse to be
+    /// overridden by one.
+    #[test]
+    fn param_paths_lists_only_scheduled_writes() {
+        let mut sched = Schedule::new();
+        sched.push(
+            10,
+            Event::SetParam {
+                path: "freq".to_owned(),
+                value: 440.0,
+            },
+        );
+        sched.push(
+            20,
+            Event::NoteOn {
+                pitch: 60,
+                velocity: 100,
+            },
+        );
+        sched.push(
+            30,
+            Event::SetParam {
+                path: "gain".to_owned(),
+                value: 0.5,
+            },
+        );
+        assert_eq!(sched.param_paths(), vec!["freq", "gain"]);
+    }
+
+    #[test]
+    fn param_paths_is_empty_without_a_schedule() {
+        assert!(Schedule::new().param_paths().is_empty());
     }
 }

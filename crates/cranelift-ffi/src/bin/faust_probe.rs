@@ -12,7 +12,7 @@ use clap::{Parser, ValueEnum};
 use cranelift_ffi::probe::engine::{PolyProbe, Probe, RenderSpec};
 use cranelift_ffi::probe::poly;
 use cranelift_ffi::probe::protocol;
-use cranelift_ffi::probe::render::InputMode;
+use cranelift_ffi::probe::render::{InputMode, RenderStats};
 use cranelift_ffi::probe::schedule::{Event, Schedule, parse_at, parse_chord, parse_note};
 use cranelift_ffi::probe::spectrum::dominant_frequency;
 use cranelift_ffi::probe::sweep::{Reduction, cartesian, parse_axis, parse_reduction};
@@ -492,11 +492,21 @@ fn run(mut args: Args) -> Result<(), String> {
     if schedule.needs_poly() {
         return Err("--note/--chord require --nvoices > 0".to_owned());
     }
-    if !schedule.is_empty() && !axes.is_empty() {
-        // Each sweep point resets the instance, so a schedule would replay
-        // identically per point while the swept value changed underneath —
-        // representable, but almost certainly not what the caller meant.
-        return Err("--at cannot be combined with --sweep".to_owned());
+    // A schedule replays identically at every sweep point, which is exactly
+    // what measuring a triggered instrument needs: strike the note once per
+    // point while the swept parameter changes. The one genuine conflict is a
+    // schedule that writes a control the sweep is also driving, where the
+    // scheduled write would silently override the swept value.
+    if !axes.is_empty() {
+        for path in schedule.param_paths() {
+            if let Some(axis) = axes.iter().find(|a| a.path == path) {
+                return Err(format!(
+                    "--at writes `{}`, which --sweep is also driving; \
+                     the scheduled write would override the swept value",
+                    axis.path
+                ));
+            }
+        }
     }
     let fixed = args
         .sets
@@ -515,10 +525,27 @@ fn run(mut args: Args) -> Result<(), String> {
 
     let points = cartesian(&axes);
     let sweeping = !axes.is_empty();
-    if sweeping && args.format != Format::Json {
-        // A sweep produces one row per point; CSV and .ir describe a single
-        // render and would concatenate them into something unreadable.
-        return Err("--sweep requires --format json".to_owned());
+    // A sweep produces one row per point. In CSV that row *is* the output —
+    // the swept values and what each render reduced to — so the per-frame dump
+    // is suppressed. `.ir` describes exactly one render and cannot hold a
+    // sweep at all.
+    if sweeping && args.format == Format::Ir {
+        return Err("--sweep cannot be combined with --format ir".to_owned());
+    }
+    let sweep_csv = sweeping && args.format == Format::Csv;
+    if sweep_csv && !args.quiet {
+        let mut header: Vec<String> = axes.iter().map(|a| a.path.clone()).collect();
+        for ch in 0..probe.outputs() {
+            match reduction {
+                Some(r) => header.push(format!("{r}_out{ch}")),
+                None => {
+                    header.push(format!("peak_out{ch}"));
+                    header.push(format!("rms_out{ch}"));
+                    header.push(format!("dc_out{ch}"));
+                }
+            }
+        }
+        println!("{}", header.join(","));
     }
 
     let every = args.every.max(1);
@@ -534,7 +561,7 @@ fn run(mut args: Args) -> Result<(), String> {
             probe.set(path, *value)?;
         }
 
-        let header_needed = !args.quiet && args.format != Format::Json;
+        let header_needed = !args.quiet && args.format != Format::Json && !sweep_csv;
         if header_needed {
             match args.format {
                 Format::Csv => {
@@ -566,7 +593,7 @@ fn run(mut args: Args) -> Result<(), String> {
                     collected[ch].push(*value);
                 }
             }
-            if args.quiet || args.format == Format::Json {
+            if args.quiet || args.format == Format::Json || sweep_csv {
                 return;
             }
             if !(frame - spec.skip).is_multiple_of(every) {
@@ -614,18 +641,13 @@ fn run(mut args: Args) -> Result<(), String> {
             if let Some(r) = reduction {
                 let values: Vec<serde_json::Value> = (0..probe.outputs())
                     .map(|ch| {
-                        let v = match r {
-                            Reduction::Rms => stats.channels[ch].rms,
-                            Reduction::Peak => stats.channels[ch].peak,
-                            Reduction::Energy => {
-                                stats.channels[ch].rms.powi(2) * stats.window_len as f64
-                            }
-                            Reduction::Dc => stats.channels[ch].dc,
-                            Reduction::F0 => {
-                                dominant_frequency(&collected[ch], f64::from(probe.sample_rate()))
-                            }
-                        };
-                        json_number(v)
+                        json_number(reduce_channel(
+                            r,
+                            &stats,
+                            ch,
+                            &collected,
+                            probe.sample_rate(),
+                        ))
                     })
                     .collect();
                 entry.insert(r.to_string(), serde_json::Value::Array(values));
@@ -648,23 +670,53 @@ fn run(mut args: Args) -> Result<(), String> {
             runs.push(serde_json::Value::Object(entry));
         } else if args.format == Format::Ir {
             // The .ir text is compared byte for byte; emit nothing else.
+        } else if sweep_csv {
+            let mut row: Vec<String> = point
+                .assignments
+                .iter()
+                .map(|(_, v)| format!("{v}"))
+                .collect();
+            for ch in 0..probe.outputs() {
+                match reduction {
+                    Some(r) => row.push(format!(
+                        "{:.9}",
+                        reduce_channel(r, &stats, ch, &collected, probe.sample_rate())
+                    )),
+                    None => {
+                        row.push(format!("{:.9}", stats.channels[ch].peak));
+                        row.push(format!("{:.9}", stats.channels[ch].rms));
+                        row.push(format!("{:.9}", stats.channels[ch].dc));
+                    }
+                }
+            }
+            println!("{}", row.join(","));
         } else {
-            eprintln!(
+            // With `--quiet` the statistics are the whole output, so they go to
+            // stdout and can be redirected; otherwise they annotate a dump that
+            // already owns stdout, and belong on stderr.
+            let emit = |line: String| {
+                if args.quiet {
+                    println!("{line}");
+                } else {
+                    eprintln!("{line}");
+                }
+            };
+            emit(format!(
                 "# frames={} sr={} window={}..{} ({} frames)",
                 args.render,
                 args.sr,
                 stats.window_start,
                 stats.window_start + stats.window_len,
                 stats.window_len
-            );
+            ));
             for (ch, channel) in stats.channels.iter().enumerate() {
-                eprintln!(
+                emit(format!(
                     "# out{ch}: peak={:.9} rms={:.9} dc={:.9} finite={}",
                     channel.peak,
                     channel.rms,
                     channel.dc,
                     if channel.finite { "yes" } else { "no" }
-                );
+                ));
             }
         }
     }
@@ -685,6 +737,26 @@ fn run(mut args: Args) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// One channel of a rendered window, reduced to a single number.
+///
+/// Shared by the JSON and CSV sweep paths so the two cannot report different
+/// numbers for the same render.
+fn reduce_channel(
+    r: Reduction,
+    stats: &RenderStats,
+    ch: usize,
+    collected: &[Vec<f64>],
+    sample_rate: i32,
+) -> f64 {
+    match r {
+        Reduction::Rms => stats.channels[ch].rms,
+        Reduction::Peak => stats.channels[ch].peak,
+        Reduction::Energy => stats.channels[ch].rms.powi(2) * stats.window_len as f64,
+        Reduction::Dc => stats.channels[ch].dc,
+        Reduction::F0 => dominant_frequency(&collected[ch], f64::from(sample_rate)),
+    }
 }
 
 /// Collect `--at`, `--note` and `--chord` into one ordered schedule.
