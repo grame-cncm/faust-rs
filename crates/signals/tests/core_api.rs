@@ -6,9 +6,9 @@
 
 use signals::{
     BinOp, BlockRevPolicy, SigBuilder, SigMatch, add_sig_fir, add_sig_iir, concerned_iir,
-    convert_fir_to_sig, delay_sig_fir, delay_sig_iir, div_sig_iir, dump_sig, dump_sig_readable,
-    embedded_iir, make_sig_fir, match_sig, mul_sig_iir, neg_sig_fir, proj_to_sig_iir, simplify_fir,
-    sub_sig_fir, sub_sig_iir,
+    convert_fir_to_sig, delay_sig_fir, delay_sig_iir, div_sig_iir, dump_sig, dump_sig_annotated,
+    dump_sig_readable, embedded_iir, make_sig_fir, match_sig, mul_sig_iir, neg_sig_fir,
+    proj_to_sig_iir, simplify_fir, sub_sig_fir, sub_sig_iir,
 };
 use tlib::{TreeArena, list_to_vec};
 
@@ -591,4 +591,53 @@ fn builder_rejects_negative_proj_index_in_debug() {
     };
     let mut b = SigBuilder::new(&mut arena);
     let _ = b.proj(-1, rec);
+}
+
+/// `dump_sig_annotated` resolves the declared range of slider-like controls,
+/// which the plain dumps cannot: a signal node stores only a `ControlId`.
+#[test]
+fn annotated_dump_resolves_control_ranges() {
+    use ui::{ControlKind, ControlRange, ControlSpec, UiProgram};
+
+    let mut program = UiProgram::empty();
+    program.controls.push(ControlSpec::synthetic(
+        0,
+        ControlKind::HSlider,
+        "cutoff".to_owned(),
+        Vec::new(),
+        Some(ControlRange {
+            init: 440.0,
+            min: 20.0,
+            max: 20000.0,
+            step: 0.5,
+        }),
+    ));
+    // A control without a range must be left exactly as the plain dump has it.
+    program.controls.push(ControlSpec::synthetic(
+        1,
+        ControlKind::Button,
+        "gate".to_owned(),
+        Vec::new(),
+        None,
+    ));
+
+    let mut arena = TreeArena::new();
+    let mut b = SigBuilder::new(&mut arena);
+    let slider = b.hslider(0);
+    let button = b.button(1);
+    let sig = b.add(slider, button);
+
+    assert_eq!(
+        dump_sig_annotated(&arena, sig, &program),
+        "SIGBINOP(op=add (+), \
+         SIGHSLIDER(int(0), init=440.0, min=20.0, max=20000.0, step=0.5), \
+         SIGBUTTON(int(1)))"
+    );
+    // The unannotated dumps stay byte-identical: they are the reference for
+    // structural differential checks and are called from crates that own no
+    // `UiProgram`.
+    assert_eq!(
+        dump_sig_readable(&arena, sig),
+        "SIGBINOP(op=add (+), SIGHSLIDER(int(0)), SIGBUTTON(int(1)))"
+    );
 }

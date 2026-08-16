@@ -16,7 +16,7 @@ use codegen::backends::rust::{RustOptions, generate_rust_module};
 use codegen::backends::wasm::WasmOptions;
 use compiler::{Compiler, FirVerifyOptions, golden_snapshot_from_file};
 use fir::{checker::verify_fir_module, dump_fir};
-use signals::dump_sig_readable;
+use signals::dump_sig_annotated;
 
 use super::args::{CliArgs, CliLang};
 use super::runner::*;
@@ -208,7 +208,7 @@ pub(crate) fn run_source_mode(
                     rendered.push('\n');
                     rendered.push_str(&format!(
                         "[{index}] {}",
-                        dump_sig_readable(&out.parse.state.arena, *sig)
+                        dump_sig_annotated(&out.parse.state.arena, *sig, &out.ui)
                     ));
                 }
                 rendered.push('\n');

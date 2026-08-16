@@ -1393,7 +1393,7 @@ pub fn match_sig<'a>(arena: &'a TreeArena, id: SigId) -> SigMatch<'a> {
 #[must_use]
 pub fn dump_sig(arena: &TreeArena, root: SigId) -> String {
     let mut out = String::new();
-    dump_node_iter(arena, root, &mut out, false);
+    dump_node_iter(arena, root, &mut out, false, None);
     out
 }
 
@@ -1404,8 +1404,39 @@ pub fn dump_sig(arena: &TreeArena, root: SigId) -> String {
 #[must_use]
 pub fn dump_sig_readable(arena: &TreeArena, root: SigId) -> String {
     let mut out = String::new();
-    dump_node_iter(arena, root, &mut out, true);
+    dump_node_iter(arena, root, &mut out, true, None);
     out
+}
+
+/// Readable dump that also resolves UI control ranges.
+///
+/// A signal node stores only a stable [`ui::ControlId`]; the declared
+/// `init`/`min`/`max`/`step` live in the UI registry. Without them, a consumer
+/// of the dump cannot tell a slider bounded to `0..15` from one bounded to
+/// `0..100`, which is exactly what any range or index analysis over the graph
+/// needs. This variant annotates slider, numeric-entry and bargraph nodes with
+/// their [`ui::ControlRange`], leaving every other node byte-identical to
+/// [`dump_sig_readable`].
+///
+/// [`dump_sig`] and [`dump_sig_readable`] are deliberately left unchanged: they
+/// are the reference for structural differential checks.
+#[must_use]
+pub fn dump_sig_annotated(arena: &TreeArena, root: SigId, controls: &ui::UiProgram) -> String {
+    let mut out = String::new();
+    dump_node_iter(arena, root, &mut out, true, Some(controls));
+    out
+}
+
+/// UI tags whose control carries a numeric range worth annotating.
+fn ui_range_tag(tag: &str) -> bool {
+    matches!(
+        tag,
+        SIG_VSLIDER_TAG
+            | SIG_HSLIDER_TAG
+            | SIG_NUMENTRY_TAG
+            | SIG_VBARGRAPH_TAG
+            | SIG_HBARGRAPH_TAG
+    )
 }
 
 /// Interns a tagged signal node with deterministic child ordering.
@@ -1432,7 +1463,13 @@ enum DumpTask {
     Owned(String),
 }
 
-fn dump_node_iter(arena: &TreeArena, id: SigId, out: &mut String, readable: bool) {
+fn dump_node_iter(
+    arena: &TreeArena,
+    id: SigId,
+    out: &mut String,
+    readable: bool,
+    controls: Option<&ui::UiProgram>,
+) {
     let mut stack = vec![DumpTask::Node(id)];
     while let Some(task) = stack.pop() {
         match task {
@@ -1471,6 +1508,30 @@ fn dump_node_iter(arena: &TreeArena, id: SigId, out: &mut String, readable: bool
                     }
                     NodeKind::Tag(tag_id) => {
                         let tag_name = arena.tag_name(*tag_id).unwrap_or("<unknown-tag>");
+                        if let Some(range) = controls
+                            .filter(|_| ui_range_tag(tag_name))
+                            .zip(node.children.get(0))
+                            .and_then(|(ui, id)| {
+                                decode_control_id(arena, id).and_then(|cid| ui.control(cid))
+                            })
+                            .and_then(|spec| spec.range.as_ref())
+                        {
+                            let first = node.children.get(0).unwrap_or_else(|| arena.nil());
+                            stack.push(DumpTask::Static(")"));
+                            for child in node.children.as_slice().iter().skip(1).rev() {
+                                stack.push(DumpTask::Node(*child));
+                                stack.push(DumpTask::Static(", "));
+                            }
+                            // `{:?}` on f64 is the shortest round-tripping form,
+                            // so the annotation stays both readable and exact.
+                            stack.push(DumpTask::Owned(format!(
+                                ", init={:?}, min={:?}, max={:?}, step={:?}",
+                                range.init, range.min, range.max, range.step
+                            )));
+                            stack.push(DumpTask::Node(first));
+                            stack.push(DumpTask::Owned(format!("{tag_name}(")));
+                            continue;
+                        }
                         if readable && tag_name == SIG_BINOP_TAG && node.children.len() == 3 {
                             let op_id = node.children.get(0).unwrap_or_else(|| arena.nil());
                             let x_id = node.children.get(1).unwrap_or_else(|| arena.nil());
