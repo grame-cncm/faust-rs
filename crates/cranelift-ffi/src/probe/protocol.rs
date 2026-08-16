@@ -1,7 +1,7 @@
 //! The reference impulse-test protocol, and the `.ir` text format.
 //!
 //! # Why the probe reproduces it
-//! `faust-probe` exists to vary things, which is the opposite of what a
+//! `faustprobe` exists to vary things, which is the opposite of what a
 //! regression corpus needs. But the two jobs share a runtime, and a tool that
 //! could not also emit the reference format would force every regression run
 //! through a second binary. `--protocol impulse-test` pins every knob to the

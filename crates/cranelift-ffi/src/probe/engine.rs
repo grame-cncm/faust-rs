@@ -778,7 +778,7 @@ impl PolyProbe {
              process = adaptor(dsp_code.process, dsp_code.effect) : dsp_code.effect;\n"
         );
         let factory = Factory::compile_from_string(
-            "faust-probe-effect",
+            "faustprobe-effect",
             &wrapped,
             import_dirs,
             double,

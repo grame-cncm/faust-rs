@@ -1,4 +1,4 @@
-//! `faust-probe` — generic DSP probing: set controls, render offline, measure.
+//! `faustprobe` — generic DSP probing: set controls, render offline, measure.
 //!
 //! # Why this lives here
 //! `impulse-runner` can be its own crate because the interpreter it drives is
@@ -29,7 +29,7 @@
 //! sweeps inside one process worthwhile rather than merely possible.
 //!
 //! Full rationale, phases and validation criteria:
-//! `porting/faust-probe-generic-test-tool-design-2026-08-14-en.md`.
+//! `porting/faustprobe-generic-test-tool-design-2026-08-14-en.md`.
 //!
 //! # Layout
 //! - [`params`] — control discovery, the `UIGlue` walk producing a path map.

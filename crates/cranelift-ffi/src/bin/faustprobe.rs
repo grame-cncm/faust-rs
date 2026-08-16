@@ -1,7 +1,7 @@
-//! `faust-probe` command-line entry point.
+//! `faustprobe` command-line entry point.
 //!
 //! See the crate documentation for why this exists alongside the two impulse
-//! runners, and `porting/faust-probe-generic-test-tool-design-2026-08-14-en.md`
+//! runners, and `porting/faustprobe-generic-test-tool-design-2026-08-14-en.md`
 //! for the full design.
 
 use std::process::ExitCode;
@@ -39,7 +39,7 @@ enum Protocol {
 
 /// Probe a Faust DSP: set controls, render offline, report samples and statistics.
 #[derive(Debug, Parser)]
-#[command(name = "faust-probe", version, about, long_about = None)]
+#[command(name = "faustprobe", version, about, long_about = None)]
 struct Args {
     /// Faust DSP source file.
     file: String,
@@ -832,7 +832,7 @@ fn main() -> ExitCode {
     // Cranelift JIT plus the faust-rs front end recurse deeply; run on a large
     // stack, as `impulse-cranelift` and the differential tests do.
     let result = thread::Builder::new()
-        .name("faust-probe".to_owned())
+        .name("faustprobe".to_owned())
         .stack_size(256 * 1024 * 1024)
         .spawn(move || run(args))
         .expect("spawn worker thread")
@@ -842,7 +842,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("faust-probe: {error}");
+            eprintln!("faustprobe: {error}");
             ExitCode::FAILURE
         }
     }

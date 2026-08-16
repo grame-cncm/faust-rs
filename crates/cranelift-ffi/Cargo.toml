@@ -49,5 +49,5 @@ name = "mem0-json-check"
 path = "src/bin/mem0_json_check.rs"
 
 [[bin]]
-name = "faust-probe"
-path = "src/bin/faust_probe.rs"
+name = "faustprobe"
+path = "src/bin/faustprobe.rs"

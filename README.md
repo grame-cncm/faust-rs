@@ -626,7 +626,7 @@ boundary plus the `foreign-call` runtime bridge.
 | `box-ffi` | Box manipulation C/C++ API |
 | `signal-ffi` | Signal manipulation C/C++ API |
 | `interp-ffi` | Interpreter backend C/C++ API |
-| `cranelift-ffi` | Experimental Cranelift backend C/C++ API; also hosts the `impulse-cranelift` and `faust-probe` binaries, which drive its runtime |
+| `cranelift-ffi` | Experimental Cranelift backend C/C++ API; also hosts the `impulse-cranelift` and `faustprobe` binaries, which drive its runtime |
 | `libfaust-ffi` | Backend-agnostic libfaust C/C++ API (`expandDSP*`, `generateAuxFiles*`, `generateSHA1`) |
 
 ### Distribution and tooling
@@ -634,24 +634,24 @@ boundary plus the `foreign-call` runtime bridge.
 | Crate | Role |
 |---|---|
 | `impulse-runner` | Interpreter-backed scalar impulse-test runner |
-| `faust-probe` | Generic DSP probe: set controls, render offline, measure (see below) |
+| `faustprobe` | Generic DSP probe: set controls, render offline, measure (see below) |
 | `xtask` | Developer and CI automation |
 | `faust-ffi` | Unified `libfaust-rs` distribution crate |
 | `wasm-ffi` | Raw WASM ABI for `faustwasm` embedded compiler mode |
 
-### Probing a DSP with `faust-probe`
+### Probing a DSP with `faustprobe`
 
 The two impulse runners answer *did the behaviour change?* — a fixed protocol
-compared against a stored reference. `faust-probe` answers *is the behaviour
+compared against a stored reference. `faustprobe` answers *is the behaviour
 correct?*, by setting controls to a chosen operating point and reporting what
 comes out:
 
 ```bash
 # What can be set, with ranges
-cargo run --release -p cranelift-ffi --bin faust-probe -- filter.dsp -I lib --list-params
+cargo run --release -p cranelift-ffi --bin faustprobe -- filter.dsp -I lib --list-params
 
 # Steady-state level of a 1 kHz sine through a filter, transient excluded
-cargo run --release -p cranelift-ffi --bin faust-probe -- filter.dsp -I lib \
+cargo run --release -p cranelift-ffi --bin faustprobe -- filter.dsp -I lib \
     --set cutoff=1000 --set resonance=0 \
     --sr 48000 -n 96000 --skip 48000 --in sine:1000 --quiet
 ```
@@ -667,8 +667,9 @@ with its candidates rather than resolved arbitrarily. Addresses follow the same
 rule as C++ `MapUI`, so they match what other Faust hosts report for the same
 DSP.
 
+Full reference: [`docs/faustprobe-user-guide-en.md`](docs/faustprobe-user-guide-en.md).
 Design and phases:
-[`porting/faust-probe-generic-test-tool-design-2026-08-14-en.md`](porting/faust-probe-generic-test-tool-design-2026-08-14-en.md).
+[`porting/faustprobe-generic-test-tool-design-2026-08-14-en.md`](porting/faustprobe-generic-test-tool-design-2026-08-14-en.md).
 
 ## Generate API docs
 

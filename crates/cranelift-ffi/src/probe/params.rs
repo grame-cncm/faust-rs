@@ -201,7 +201,7 @@ impl ControlMap {
     /// 3. a second pass over the *whole* path replaces the characters that
     ///    would be awkward in an OSC address.
     ///
-    /// Skipping step 1 was the first bug this function had: `faust-probe`
+    /// Skipping step 1 was the first bug this function had: `faustprobe`
     /// reported `/TIMBRE/amp_env/attack_s` where the C++ host reports
     /// `/TIMBRE/amp_env_attack_s`, so every address a user had from another
     /// tool failed to resolve.

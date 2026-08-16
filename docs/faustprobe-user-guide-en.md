@@ -1,5 +1,5 @@
 ---
-title: "faust-probe: user guide"
+title: "faustprobe: user guide"
 date: 2026-08-16
 page-size: A4
 margins: 20 22
@@ -17,14 +17,14 @@ alias, that a compressor's attack lands where it should, or that a change to a
 library function did not move its output.
 
 **Companion:** the design note
-[`faust-probe-generic-test-tool-design-2026-08-14-en.md`](../porting/faust-probe-generic-test-tool-design-2026-08-14-en.md),
+[`faustprobe-generic-test-tool-design-2026-08-14-en.md`](../porting/faustprobe-generic-test-tool-design-2026-08-14-en.md),
 which explains why the tool exists and what it deliberately does not do.
 
 ---
 
 ## 1. What it is
 
-`faust-probe` compiles a `.dsp` through the Cranelift JIT, renders it offline
+`faustprobe` compiles a `.dsp` through the Cranelift JIT, renders it offline
 with a chosen excitation, and prints either the samples or a summary. It sets
 controls, schedules changes at exact frames, sweeps parameters, and reduces a
 render to a single number per channel.
@@ -34,7 +34,7 @@ does not compare against a reference, and stops short of anything that needs a
 spectrum rather than a number. Where that boundary falls is §9.
 
 ```
-faust-probe [OPTIONS] <FILE>
+faustprobe [OPTIONS] <FILE>
 ```
 
 Exit status is `0` on success and `1` on any error — an unresolvable control, a
@@ -44,7 +44,7 @@ usable directly in a shell gate.
 ## 2. First contact
 
 ```bash
-faust-probe -I /path/to/faustlibraries filter.dsp
+faustprobe -I /path/to/faustlibraries filter.dsp
 ```
 
 With no other flag this renders 15 000 frames at 44 100 Hz, feeds an impulse to
@@ -96,9 +96,9 @@ itself a finding.
 | `sine:HZ` | a sine at `HZ` |
 
 ```bash
-faust-probe --in zero -n 4 gen.dsp          # a generator drives itself
-faust-probe --in "white:7" reverb.dsp       # reproducible noise
-faust-probe --in "sine:1000" clipper.dsp    # drive a nonlinearity
+faustprobe --in zero -n 4 gen.dsp          # a generator drives itself
+faustprobe --in "white:7" reverb.dsp       # reproducible noise
+faustprobe --in "sine:1000" clipper.dsp    # drive a nonlinearity
 ```
 
 `--skip N` drops the first `N` frames from both the dump and the statistics,
@@ -110,7 +110,7 @@ which is how a start-up transient is excluded. `--every N` prints one frame in
 `--list-params` shows what the DSP exposes and exits:
 
 ```
-$ faust-probe --list-params synth.dsp
+$ faustprobe --list-params synth.dsp
 path                                               init        min        max       step
 /osc/freq                                           440         50       2000       0.01
 /osc/gain                                           0.5          0          1      0.001
@@ -121,8 +121,8 @@ a full address or a trailing fragment of one, so `--set freq=100` finds
 `/osc/freq`. An ambiguous fragment is reported rather than resolved arbitrarily:
 
 ```
-$ faust-probe --set gain=1 stereo.dsp
-faust-probe: `gain` is ambiguous, matches: /amb/left/gain, /amb/right/gain
+$ faustprobe --set gain=1 stereo.dsp
+faustprobe: `gain` is ambiguous, matches: /amb/left/gain, /amb/right/gain
 ```
 
 `--at FRAME PATH=VALUE` writes a control at an exact frame. The render splits
@@ -130,7 +130,7 @@ its block so the change lands on the requested frame rather than at the next
 block boundary — which is what makes an attack measurable:
 
 ```bash
-faust-probe --at 0 gate=1 --at 1 gate=0 --in zero -n 5000 pluck.dsp
+faustprobe --at 0 gate=1 --at 1 gate=0 --in zero -n 5000 pluck.dsp
 ```
 
 That pair is the idiom for a one-sample trigger on a `button`.
@@ -165,7 +165,7 @@ stderr.
 cartesian product, with the **last axis varying fastest**:
 
 ```
-$ faust-probe --sweep freq=100,200 --sweep gain=0.1,0.9 --reduce peak dsp.dsp
+$ faustprobe --sweep freq=100,200 --sweep gain=0.1,0.9 --reduce peak dsp.dsp
 freq,gain,peak_out0
 100,0.1,0.099999368
 100,0.9,0.899994314
@@ -209,7 +209,7 @@ antialiased waveshaper, where the harmonics are wanted and everything else is
 not:
 
 ```
-$ faust-probe --f0 187.5 --sweep k=1,3,6,14 --reduce sfdr --skip 2048 -n 10240 gen.dsp
+$ faustprobe --f0 187.5 --sweep k=1,3,6,14 --reduce sfdr --skip 2048 -n 10240 gen.dsp
 k,sfdr_out0
 1,303.736996229
 3,304.525727177
@@ -259,7 +259,7 @@ reclamation of a releasing voice once it falls below `--voice-stop-level`
 (default `0.00003162`, i.e. −90 dB, the value from `poly-dsp.h`).
 
 ```bash
-faust-probe --nvoices 4 --note "60@0" --note "64@2000" -n 8000 --quiet synth.dsp
+faustprobe --nvoices 4 --note "60@0" --note "64@2000" -n 8000 --quiet synth.dsp
 ```
 
 `--note PITCH[:VEL]@ON[..OFF]` plays one note; velocity defaults to 100, and
@@ -279,8 +279,8 @@ values — 44 100 Hz, block 64, impulse on every input, buttons held for the fir
 block, `.ir` output — and **rejects any flag that would perturb them**:
 
 ```
-$ faust-probe --protocol impulse-test --sr 48000 dsp.dsp
-faust-probe: --protocol impulse-test fixes the rendering conditions; remove --sr
+$ faustprobe --protocol impulse-test --sr 48000 dsp.dsp
+faustprobe: --protocol impulse-test fixes the rendering conditions; remove --sr
 ```
 
 Refusing rather than silently overriding is the point: a regression run that
@@ -296,7 +296,7 @@ code says whether the render was produced, not whether the DSP diverged.
 **Is this filter stable?**
 
 ```bash
-faust-probe --in impulse -n 200000 --quiet filter.dsp
+faustprobe --in impulse -n 200000 --quiet filter.dsp
 ```
 
 A `peak` that grows with `-n`, or `finite=no`, is the answer.
@@ -304,7 +304,7 @@ A `peak` that grows with `-n`, or `finite=no`, is the answer.
 **Does this oscillator alias?**
 
 ```bash
-faust-probe --in zero --f0 3000 --reduce sfdr --skip 4096 -n 12288 osc.dsp
+faustprobe --in zero --f0 3000 --reduce sfdr --skip 4096 -n 12288 osc.dsp
 ```
 
 Read §8 first: pin `--f0`, and prefer a frame count that puts it on a bin
@@ -313,17 +313,17 @@ centre.
 **Where does this compressor's gain settle?**
 
 ```bash
-faust-probe --in "sine:1000" --at 0 "threshold=-20" --skip 20000 --reduce rms comp.dsp
+faustprobe --in "sine:1000" --at 0 "threshold=-20" --skip 20000 --reduce rms comp.dsp
 ```
 
 **Did this library change move anything?**
 
 ```bash
-faust-probe --protocol impulse-test dsp.dsp > new.ir && diff old.ir new.ir
+faustprobe --protocol impulse-test dsp.dsp > new.ir && diff old.ir new.ir
 ```
 
 **How does a parameter affect the output?**
 
 ```bash
-faust-probe --sweep cutoff=100,200,400,800,1600 --reduce rms --in "white:1" filt.dsp
+faustprobe --sweep cutoff=100,200,400,800,1600 --reduce rms --in "white:1" filt.dsp
 ```

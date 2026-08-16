@@ -1,4 +1,4 @@
-# `faust-probe` — Generic DSP Probing Tool (Cranelift, Polyphonic) — Design
+# `faustprobe` — Generic DSP Probing Tool (Cranelift, Polyphonic) — Design
 
 Date: 2026-08-14
 
@@ -41,7 +41,7 @@ eight validation properties that port needed, four were unreachable with
 | **Delay ping-pong** | **no** — impulse goes to *every* input channel |
 | **M/S width collapse** | **no** — same reason |
 
-`faust-probe` is the tool that answers both questions: the controllability of a
+`faustprobe` is the tool that answers both questions: the controllability of a
 bespoke harness, the zero-build execution of the existing runners, and — new to
 both — parameter sweeps inside a single process.
 
@@ -170,7 +170,7 @@ rather than half-ported.
 ## 4. Interface
 
 ```
-faust-probe <file.dsp> [options]
+faustprobe <file.dsp> [options]
 
 Compilation
   -I, --import-dir <DIR>        library path (repeatable)
@@ -213,7 +213,7 @@ Three points are load-bearing:
 - **`--protocol impulse-test`** — pins SR 44100, block 64, impulse on all
   inputs, buttons on for the first block, `.ir` format and the `|x| < 1e-6`
   zero-clamp of `controlTools.h::normalize`, rejecting any flag that would
-  perturb it. With this, `faust-probe` **subsumes** both existing runners
+  perturb it. With this, `faustprobe` **subsumes** both existing runners
   instead of competing with them, and stays usable against the existing corpus
   and `filesCompare -part`.
 
@@ -222,7 +222,7 @@ Three points are load-bearing:
 A sweep must emit one row per configuration, not concatenated renders:
 
 ```
-$ faust-probe timbre.dsp -I lib --set osc0_volume=1 --set filter_resonance=0 \
+$ faustprobe timbre.dsp -I lib --set osc0_volume=1 --set filter_resonance=0 \
     --sweep filter_cutoff_hz=250,500,1000,2000,4000 \
     --render 96000 --skip 48000 --reduce rms --format json
 ```
@@ -266,7 +266,7 @@ instrument that silently misreports is worse than none.
    sine input must match to float precision. This is the test that catches a
    wrong `--skip` semantic — see §7.2.
 3. **Against the C++ poly engine.** For a small polyphonic DSP, note-on/note-off
-   sequences rendered by `faust-probe` and by a `poly-dsp.h`-based C++ harness
+   sequences rendered by `faustprobe` and by a `poly-dsp.h`-based C++ harness
    must agree. Voice stealing order is the interesting case.
 4. **Determinism.** Two runs of the same command produce identical bytes,
    including with `--in white` (hence `white[:SEED]`).
@@ -301,7 +301,7 @@ the window it used, so the output is self-describing.
 ## 8. Open questions
 
 - **Where it lives.** A third binary in `crates/cranelift-ffi/src/bin/`
-  alongside `impulse_cranelift`, or its own `crates/faust-probe` with the
+  alongside `impulse_cranelift`, or its own `crates/faustprobe` with the
   Cranelift crate as a dependency. The latter is better if the tool is ever to
   gain an interpreter backend for comparison (`--backend cranelift|interp`),
   which §6.1 arguably wants.
