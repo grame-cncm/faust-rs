@@ -433,20 +433,30 @@ fn run_poly(args: &Args) -> Result<(), String> {
             "{}",
             serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?
         );
-    } else if !args.quiet {
-        eprintln!(
+    } else {
+        // Same rule as the scalar path: under `--quiet` the statistics are the
+        // output and go to stdout; otherwise they annotate a dump that already
+        // owns stdout, and belong on stderr.
+        let emit = |line: String| {
+            if args.quiet {
+                println!("{line}");
+            } else {
+                eprintln!("{line}");
+            }
+        };
+        emit(format!(
             "# frames={} sr={} nvoices={} active_voices={}",
             args.render,
             args.sr,
             args.nvoices,
             poly.active_voice_count()
-        );
+        ));
         for ch in 0..poly.outputs() {
-            eprintln!(
+            emit(format!(
                 "# out{ch}: peak={:.9} rms={:.9}",
                 peak[ch],
                 (sum_sq[ch] / denom).sqrt()
-            );
+            ));
         }
     }
 
