@@ -46,6 +46,7 @@
 //! - Underlying arena storage remains `NodeKind::Int(i64)`; this crate owns the
 //!   narrowing conversion at decode boundaries.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use tlib::{NodeKind, TreeArena, TreeId};
@@ -1425,6 +1426,181 @@ pub fn dump_sig_annotated(arena: &TreeArena, root: SigId, controls: &ui::UiProgr
     let mut out = String::new();
     dump_node_iter(arena, root, &mut out, true, Some(controls));
     out
+}
+
+/// Shared-structure dump: one numbered binding per interior node.
+///
+/// [`dump_sig_readable`] and [`dump_sig_annotated`] print a *tree*. The arena is
+/// hash-consed, so a shared subgraph is one node, but printing re-expands it at
+/// every occurrence: `fi.tf2` names its single recursion three times under the
+/// numerator, and the cost compounds with depth. This variant walks the graph in
+/// post-order, gives each interior node a dense index, and prints each exactly
+/// once:
+///
+/// ```text
+/// n0 = SIGINPUT(int(0))
+/// n1 = SIGDELAY1(n0)
+/// n2 = SIGBINOP(op=add (+), n0, n1)
+/// [0] = n2
+/// ```
+///
+/// Two properties the tree dumps cannot offer:
+///
+/// * output size is linear in the number of nodes rather than in the number of
+///   paths, so deep shared graphs stay printable;
+/// * node identity is *syntactic*, so a consumer can tell two occurrences of one
+///   node from two structurally equal but distinct ones without re-deriving
+///   hash-consing on its side.
+///
+/// All roots share one numbering, so structure shared *between* outputs is also
+/// printed once. Atomic leaves (`int`, `float_bits`, `sym`, `str`, `nil`) stay
+/// inline: binding them would double the line count for no gain in sharing.
+///
+/// Numbering is a dense post-order counter rather than the arena `SigId`, which
+/// is allocation-ordered and would leak unrelated compilation history into the
+/// output.
+#[must_use]
+pub fn dump_sig_dag(
+    arena: &TreeArena,
+    roots: &[SigId],
+    controls: Option<&ui::UiProgram>,
+) -> String {
+    enum Visit {
+        Enter(SigId),
+        Exit(SigId),
+    }
+
+    let mut number: HashMap<SigId, usize> = HashMap::new();
+    let mut seen: HashSet<SigId> = HashSet::new();
+    let mut out = String::new();
+    let mut stack: Vec<Visit> = roots.iter().rev().map(|r| Visit::Enter(*r)).collect();
+
+    while let Some(visit) = stack.pop() {
+        match visit {
+            Visit::Enter(id) => {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let Some(node) = arena.node(id) else { continue };
+                if inline_leaf(&node.kind) {
+                    continue;
+                }
+                stack.push(Visit::Exit(id));
+                for child in node.children.as_slice().iter().rev() {
+                    stack.push(Visit::Enter(*child));
+                }
+            }
+            Visit::Exit(id) => {
+                let index = number.len();
+                let mut line = String::new();
+                write_dag_node(arena, id, &mut line, controls, &number);
+                writeln!(out, "n{index} = {line}").expect("String write cannot fail");
+                number.insert(id, index);
+            }
+        }
+    }
+
+    for (slot, root) in roots.iter().enumerate() {
+        let rendered = match number.get(root) {
+            Some(index) => format!("n{index}"),
+            // A root that is itself an atomic leaf has no binding.
+            None => {
+                let mut leaf = String::new();
+                dump_node_iter(arena, *root, &mut leaf, true, controls);
+                leaf
+            }
+        };
+        writeln!(out, "[{slot}] = {rendered}").expect("String write cannot fail");
+    }
+    out
+}
+
+/// Atomic payloads are inlined into their parent binding.
+fn inline_leaf(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Nil
+            | NodeKind::Int(_)
+            | NodeKind::FloatBits(_)
+            | NodeKind::Symbol(_)
+            | NodeKind::StringLiteral(_)
+    )
+}
+
+/// Renders one interior node with its children as `nN` references.
+fn write_dag_node(
+    arena: &TreeArena,
+    id: SigId,
+    out: &mut String,
+    controls: Option<&ui::UiProgram>,
+    number: &HashMap<SigId, usize>,
+) {
+    let Some(node) = arena.node(id) else {
+        write!(out, "<invalid:{}>", id.as_u32()).expect("String write cannot fail");
+        return;
+    };
+    let mut child_text = |child: SigId| -> String {
+        match number.get(&child) {
+            Some(index) => format!("n{index}"),
+            None => {
+                let mut leaf = String::new();
+                dump_node_iter(arena, child, &mut leaf, true, controls);
+                leaf
+            }
+        }
+    };
+
+    match &node.kind {
+        NodeKind::Cons => {
+            let head = node
+                .children
+                .get(0)
+                .map(&mut child_text)
+                .unwrap_or_else(|| "<missing>".to_owned());
+            let tail = node
+                .children
+                .get(1)
+                .map(&mut child_text)
+                .unwrap_or_else(|| "<missing>".to_owned());
+            write!(out, "cons({head}, {tail})").expect("String write cannot fail");
+        }
+        NodeKind::Tag(tag_id) => {
+            let tag_name = arena.tag_name(*tag_id).unwrap_or("<unknown-tag>");
+            let mut parts: Vec<String> = Vec::with_capacity(node.children.len() + 1);
+            let mut children = node.children.as_slice().iter();
+
+            if tag_name == SIG_BINOP_TAG && node.children.len() == 3 {
+                let op_id = children.next().copied().unwrap_or_else(|| arena.nil());
+                let op_desc = match arena.kind(op_id) {
+                    Some(NodeKind::Int(raw)) => match BinOp::from_raw(*raw) {
+                        Some(op) => format!("{} ({})", op.name(), op.symbol()),
+                        None => format!("unknown({raw})"),
+                    },
+                    _ => "unknown".to_owned(),
+                };
+                parts.push(format!("op={op_desc}"));
+            } else if let Some(range) = controls
+                .filter(|_| ui_range_tag(tag_name))
+                .zip(node.children.get(0))
+                .and_then(|(ui, first)| {
+                    decode_control_id(arena, first).and_then(|cid| ui.control(cid))
+                })
+                .and_then(|spec| spec.range.as_ref())
+            {
+                let first = children.next().copied().unwrap_or_else(|| arena.nil());
+                parts.push(child_text(first));
+                parts.push(format!(
+                    "init={:?}, min={:?}, max={:?}, step={:?}",
+                    range.init, range.min, range.max, range.step
+                ));
+            }
+            for child in children {
+                parts.push(child_text(*child));
+            }
+            write!(out, "{tag_name}({})", parts.join(", ")).expect("String write cannot fail");
+        }
+        _ => dump_node_iter(arena, id, out, true, controls),
+    }
 }
 
 /// UI tags whose control carries a numeric range worth annotating.

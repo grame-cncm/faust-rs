@@ -16,7 +16,7 @@ use codegen::backends::rust::{RustOptions, generate_rust_module};
 use codegen::backends::wasm::WasmOptions;
 use compiler::{Compiler, FirVerifyOptions, golden_snapshot_from_file};
 use fir::{checker::verify_fir_module, dump_fir};
-use signals::dump_sig_annotated;
+use signals::{dump_sig_annotated, dump_sig_dag};
 
 use super::args::{CliArgs, CliLang};
 use super::runner::*;
@@ -212,6 +212,31 @@ pub(crate) fn run_source_mode(
                     ));
                 }
                 rendered.push('\n');
+                emit_output(&rendered, cli.output.as_ref());
+            }
+            Err(err) => report_pipeline_failure("Signal pipeline failed", &err, cli),
+        }
+        timer.total();
+        return;
+    }
+
+    if cli.dump_sig_dag {
+        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
+        let result = compiler.compile_file_to_signals(input_path, &cli.import_dir);
+        timer.phase("signals");
+
+        match result {
+            Ok(out) => {
+                let mut rendered = format!(
+                    "Signals OK: inputs={} outputs={}\n",
+                    out.process_arity.inputs, out.process_arity.outputs
+                );
+                rendered.push_str(&dump_sig_dag(
+                    &out.parse.state.arena,
+                    &out.signals,
+                    Some(&out.ui),
+                ));
                 emit_output(&rendered, cli.output.as_ref());
             }
             Err(err) => report_pipeline_failure("Signal pipeline failed", &err, cli),

@@ -167,6 +167,13 @@ pub struct CliArgs {
     /// Compile to signals and dump signal IR.
     #[arg(long = "dump-sig", action = ArgAction::SetTrue)]
     pub dump_sig: bool,
+    /// Compile to signals and dump the signal IR as a numbered DAG.
+    ///
+    /// Same information as `--dump-sig`, printed as one binding per interior
+    /// node instead of one tree per output, so shared structure appears once
+    /// and node identity is readable off the text.
+    #[arg(long = "dump-sig-dag", action = ArgAction::SetTrue)]
+    pub dump_sig_dag: bool,
     /// Compile to C++ and print generated code.
     #[arg(long = "dump-cpp", action = ArgAction::SetTrue)]
     pub dump_cpp: bool,
