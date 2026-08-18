@@ -609,6 +609,6 @@ fn unsupported_soundfile_is_a_typed_error() {
         .expect("soundfile reaches FIR so the backend can reject it");
     let error = generate_cmajor_module(&fir.store, fir.module, &CmajorOptions::default())
         .expect_err("Cmajor must reject soundfiles");
-    assert_eq!(error.code, CodegenErrorCode::Unsupported);
-    assert_eq!(error.code.as_str(), "FRS-CGEN-CMAJ-0002");
+    assert_eq!(error.code(), CodegenErrorCode::Unsupported);
+    assert_eq!(error.code().as_str(), "FRS-CGEN-CMAJ-0002");
 }

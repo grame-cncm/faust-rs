@@ -107,8 +107,8 @@ impl_backend_error_via_methods!(crate::backends::julia::CodegenError);
 impl_backend_error_via_methods!(crate::backends::asc::CodegenError);
 impl_backend_error_via_methods!(crate::backends::rust::CodegenError);
 impl_backend_error_via_methods!(crate::backends::wasm::WasmBackendError);
-impl_backend_error_via_fields!(crate::backends::codebox::CodegenError);
-impl_backend_error_via_fields!(crate::backends::cmajor::CodegenError);
+impl_backend_error_via_methods!(crate::backends::codebox::CodegenError);
+impl_backend_error_via_methods!(crate::backends::cmajor::CodegenError);
 impl_backend_error_via_fields!(crate::backends::interp::CodegenError);
 #[cfg(not(target_arch = "wasm32"))]
 impl_backend_error_via_fields!(crate::backends::cranelift::CraneliftBackendError);

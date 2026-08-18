@@ -219,8 +219,8 @@ fn soundfiles_are_rejected_with_a_typed_error() {
         .expect("FIR lowering must succeed");
     let error = generate_codebox_module(&fir.store, fir.module, &CodeboxOptions::default())
         .expect_err("codebox must reject soundfiles");
-    assert_eq!(error.code, CodegenErrorCode::Unsupported);
-    assert_eq!(error.code.as_str(), "FRS-CGEN-CBOX-0002");
+    assert_eq!(error.code(), CodegenErrorCode::Unsupported);
+    assert_eq!(error.code().as_str(), "FRS-CGEN-CBOX-0002");
 }
 
 /// Prints the emitted codebox for eyeball comparison against the reference.

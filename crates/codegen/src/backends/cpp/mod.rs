@@ -25,6 +25,7 @@
 
 use std::fmt::Write as _;
 
+use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use fir::{FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
 
 use crate::backends::c_family::{self, CFamilySyntax, EmitMode};
@@ -147,58 +148,17 @@ impl CodegenErrorCode {
     }
 }
 
-/// Typed backend error returned by the C++ emitter.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CodegenError {
-    code: CodegenErrorCode,
-    message: String,
-    fir_node: Option<FirId>,
-}
-
-impl CodegenError {
-    /// Creates a typed C++ backend code generation error.
-    #[must_use]
-    pub fn new(code: CodegenErrorCode, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
-            fir_node: None,
-        }
-    }
-
-    /// Associates the error with the FIR node rejected by the emitter.
-    #[must_use]
-    pub fn at_node(mut self, node: FirId) -> Self {
-        self.fir_node = Some(node);
-        self
-    }
-
-    /// Returns the offending FIR node when the emitter retained it.
-    #[must_use]
-    pub const fn fir_node(&self) -> Option<FirId> {
-        self.fir_node
-    }
-
-    /// Returns the stable backend error code.
-    #[must_use]
-    pub fn code(&self) -> CodegenErrorCode {
-        self.code
-    }
-
-    /// Returns the backend-specific message without the bracketed code.
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
+impl BackendErrorCode for CodegenErrorCode {
+    fn as_str(&self) -> &'static str {
+        Self::as_str(*self)
     }
 }
 
-impl std::fmt::Display for CodegenError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] {}", self.code.as_str(), self.message)
-    }
-}
-
-impl std::error::Error for CodegenError {}
+/// One emission failure of this backend.
+///
+/// Alias of the shared [`crate::backends::codegen_error::BackendError`]
+/// carrier; only the code enum above is specific to this backend.
+pub type CodegenError = BackendError<CodegenErrorCode>;
 
 /// Decoded FIR module header used by the text emitter.
 ///

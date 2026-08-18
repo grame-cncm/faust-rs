@@ -50,9 +50,9 @@
 //! sizes, plus repeated generation to guard request-local determinism.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::fmt::Write as _;
 
+use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
 use super::textual::{OperandSide, c_like_fir_operator, infix_operand_needs_parentheses};
@@ -135,33 +135,17 @@ impl CodegenErrorCode {
     }
 }
 
-/// Typed Cmajor backend failure.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CodegenError {
-    /// Stable machine-readable error class.
-    pub code: CodegenErrorCode,
-    /// Actionable human-readable detail.
-    pub message: String,
-}
-
-impl CodegenError {
-    /// Builds a Cmajor backend error.
-    #[must_use]
-    pub fn new(code: CodegenErrorCode, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
-        }
+impl BackendErrorCode for CodegenErrorCode {
+    fn as_str(&self) -> &'static str {
+        Self::as_str(*self)
     }
 }
 
-impl fmt::Display for CodegenError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.code.as_str(), self.message)
-    }
-}
-
-impl std::error::Error for CodegenError {}
+/// One emission failure of this backend.
+///
+/// Alias of the shared [`crate::backends::codegen_error::BackendError`]
+/// carrier; only the code enum above is specific to this backend.
+pub type CodegenError = BackendError<CodegenErrorCode>;
 
 /// Decoded FIR module sections needed by the Cmajor container.
 struct ModuleView {
@@ -2014,7 +1998,7 @@ mod tests {
         };
         let error = generate_cmajor_module(&store, module, &options)
             .expect_err("invalid processor name must fail");
-        assert_eq!(error.code, CodegenErrorCode::InvalidIdentifier);
-        assert_eq!(error.code.as_str(), "FRS-CGEN-CMAJ-0003");
+        assert_eq!(error.code(), CodegenErrorCode::InvalidIdentifier);
+        assert_eq!(error.code().as_str(), "FRS-CGEN-CMAJ-0003");
     }
 }

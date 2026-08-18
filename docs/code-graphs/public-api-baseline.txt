@@ -202,11 +202,11 @@ enum SampleType
 enum StructFieldKind
 enum WasmBackendErrorCode
 enum WasmValType
+fn BackendError::at_node
+fn BackendError::code
+fn BackendError::message
+fn BackendError::new
 fn BlockId::as_u32
-fn CodegenError::at_node
-fn CodegenError::code
-fn CodegenError::message
-fn CodegenError::new
 fn CodegenErrorCode::as_str
 fn CraneliftBackendErrorCode::as_str
 fn FbcBlock::is_empty
@@ -383,6 +383,7 @@ mod bytecode
 mod c
 mod cmajor
 mod codebox
+mod codegen_error
 mod compiler
 mod compute_cost
 mod cpp
@@ -416,6 +417,7 @@ mod vhdl
 mod wasm
 static FBC_INSTRUCTION_NAMES
 struct AscOptions
+struct BackendError
 struct BlockId
 struct COptions
 struct CmajorOptions
@@ -469,7 +471,9 @@ struct WasmMemoryLayout
 struct WasmModule
 struct WasmOptions
 trait BackendCodegenError
+trait CodegenErrorCode
 trait FbcReal
+type CodegenError
 type CompilerParts
 type FirFixtureBuilder
 use api
