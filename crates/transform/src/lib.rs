@@ -36,7 +36,14 @@
 //! - `clk_env`/`hgraph`/`schedule` internals are `adapted` analysis stages
 //!   exposed for diagnostics and workspace tests.
 
-#![warn(missing_docs)]
+// `missing_docs` must be `deny`, not `warn`: an inner `#![warn(...)]`
+// attribute overrides the command-line `-D warnings` clippy and CI already
+// pass, so a plain `warn` here is invisible to every existing gate. `deny`
+// makes an undocumented `pub` item fail `cargo build`/`check`/`clippy`/`test`
+// directly, no extra command needed. Verified 2026-08-18 with a rejecting
+// mutation: an undocumented `pub struct` compiled clean under `warn` and was
+// rejected only after switching to `deny`.
+#![deny(missing_docs)]
 
 pub mod clk_env;
 pub mod hgraph;

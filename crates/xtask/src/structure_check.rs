@@ -1,5 +1,6 @@
-//! Lightweight structural checks for the `transform` crate (cleanup plan R9.3)
-//! and the line threshold for `compiler` (cleanup plan 2026-07-26, phase P5).
+//! Lightweight structural checks for the crates this readability campaign
+//! restructured (plan `porting/faust-rs-structure-readability-plan-2026-08-18-{en,fr}.md`,
+//! phases P1–P5), plus the vector producer/checker rules from cleanup plan R9.3.
 //!
 //! Deterministic, filesystem-only checks (findings sorted, repo-relative
 //! paths only — never absolute paths):
@@ -7,9 +8,13 @@
 //! 1. no stale legacy internal `vector_*` import paths (R3 migrated the
 //!    workspace to `signal_fir::vector::{...}`; the `pub use` facade
 //!    re-exports in `signal_fir/mod.rs` are the only allowed mention);
-//! 2. no production file above the review threshold in `crates/transform` or
-//!    `crates/compiler` ([`MAX_PRODUCTION_LINES`] lines, `tests.rs` and
-//!    `tests/` excluded);
+//! 2. no production file above the review threshold in `crates/transform`,
+//!    `crates/compiler`, `crates/fir`, or `crates/codegen`
+//!    ([`MAX_PRODUCTION_LINES`] lines, `tests.rs` and `tests/` excluded)
+//!    unless the file is named in [`KNOWN_OVERSIZED_FILES`] with a reason.
+//!    That list is cross-checked both ways: every entry must name a file that
+//!    actually exists and is actually over the threshold, so an exception a
+//!    later split has resolved gets flagged for removal instead of lingering;
 //! 3. no checker file importing a producer entry point (the producer entry
 //!    points listed in [`PRODUCER_ENTRY_POINTS`] must never be callable
 //!    from a `check`/`verify` module), and [`PRODUCER_ENTRY_POINTS`] itself
@@ -22,35 +27,97 @@
 //!    re-derives with its own code, and the allowlist
 //!    [`CHECKER_PRODUCER_IMPORT_ALLOWLIST`] is empty by design — a new
 //!    entry is an architecture regression, not a freeze candidate;
-//! 5. Rustdoc `missing_docs` cleanliness is enforced separately by
-//!    `cargo rustdoc -p transform --lib -- -D missing-docs` (see plan R9.2);
-//!    this check does not shell out to cargo so it stays fast and
-//!    deterministic across platforms.
+//! 5. every crate in [`DOCUMENTED_CRATES`] declares `#![deny(missing_docs)]`
+//!    verbatim in its `lib.rs`. `deny` is required, not `warn`: an inner
+//!    `#![warn(missing_docs)]` attribute overrides the command-line
+//!    `-D warnings` that clippy and CI already pass, so a `warn` there is
+//!    invisible to every existing gate — exactly the shape of a documented
+//!    guarantee (`transform`'s plan R9.2, `compiler`'s own doc comment) that
+//!    was never actually enforced until this was caught with a rejecting
+//!    mutation on 2026-08-18. `deny` needs no separate command: it fails
+//!    `cargo build`/`check`/`clippy`/`test` directly for that crate.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Review threshold for production files (plan R9.3).
+/// Review threshold for production files not named in [`KNOWN_OVERSIZED_FILES`].
 ///
-/// The number is anchored to one file: `vector/lower/signal.rs`, a single
-/// lowerer `impl` kept intact by design. It was 2100 lines when this
-/// threshold was first raised from 2000, then 2200 when the S6 generated-
-/// table work (2026-08-06) grew it to 2332 and the choice, again, was to
-/// raise the threshold rather than split a numerically-sensitive lowering
-/// path without the context that work was done under.
+/// Lowered from 2400 to 2000 on 2026-08-18 (readability campaign P6), after
+/// P3 and P5 split every file that had been driving the old threshold up:
+/// `fir/checker.rs` (3336 lines), `codegen/backends/interp/compiler.rs`
+/// (2225), and `codegen/backends/interp/fbc_to_cpp.rs` (2255) are all under
+/// 1000 lines now. 2000 leaves real margin above the largest *unexcepted*
+/// file in the scanned crates, `signal_fir/loop_graph.rs` at 1792 — it is a
+/// deliberate value, not one backed into by whatever remains largest, which
+/// is the trap this threshold fell into twice before P6 (see git history for
+/// the 2100 → 2200 → 2400 progression this const used to describe).
 ///
-/// Raising it rather than splitting that file costs less than it looks: the
-/// second-largest production file is `signal_fir/loop_graph.rs` at 1792
-/// lines, so every other file still has to grow by 500+ lines before the
-/// guard fires. The threshold constrains the rest of the tree; `signal.rs`
-/// is what sets its value.
+/// Every file still over this line count is named in
+/// [`KNOWN_OVERSIZED_FILES`] with a reason instead of raising the number
+/// again: raising the general threshold to fit one file hides every other
+/// file's growth behind it, which is exactly what happened to the old 2400.
+const MAX_PRODUCTION_LINES: usize = 2_000;
+
+/// Production files that stay over [`MAX_PRODUCTION_LINES`] on purpose,
+/// each with the reason splitting it is not this campaign's job.
 ///
-/// This is the second time the threshold moved to accommodate `signal.rs`
-/// rather than splitting it. If it grows past this again, splitting should
-/// win by default — a threshold that only ever tracks its largest violator
-/// has stopped being a threshold.
-const MAX_PRODUCTION_LINES: usize = 2_400;
+/// Checked both ways by [`structure_check`]: every path here must resolve to
+/// a file that (a) exists among the scanned crates and (b) is still actually
+/// over the threshold. A file that shrinks below it no longer needs the
+/// exception — leaving it here would let the list silently accumulate dead
+/// entries, so a shrunk file is flagged as a stale exception to remove
+/// rather than passing silently.
+const KNOWN_OVERSIZED_FILES: [(&str, &str); 12] = [
+    (
+        "crates/transform/src/signal_fir/vector/lower/signal.rs",
+        "numerically sensitive lowering path, kept structurally intact by          design (readability plan §7); this is the file that drove the old          threshold up twice before P6 named it as an exception instead",
+    ),
+    (
+        "crates/compiler/src/lib.rs",
+        "facade file dense with types and free functions, not one          collapsible block like `checker.rs`/`compiler.rs` were; not          targeted by P1–P5, splitting it is separate future work",
+    ),
+    (
+        "crates/fir/src/inliner.rs",
+        "not touched by this campaign (P5 covered `checker.rs` only);          backlog for a future FIR-crate phase",
+    ),
+    (
+        "crates/codegen/src/backends/rust/mod.rs",
+        "textual backend emitter; readability plan §2.9 measured the seven          textual backends at 21-57% pairwise similarity (not near-duplicates)          with 7-34% inline test code each — legitimate size, not addressed          by P3/P4",
+    ),
+    (
+        "crates/codegen/src/backends/cpp/mod.rs",
+        "textual backend emitter, see the `rust/mod.rs` entry above",
+    ),
+    (
+        "crates/codegen/src/backends/wasm/mod.rs",
+        "textual backend emitter, see the `rust/mod.rs` entry above",
+    ),
+    (
+        "crates/codegen/src/backends/c/mod.rs",
+        "textual backend emitter, see the `rust/mod.rs` entry above",
+    ),
+    (
+        "crates/codegen/src/backends/julia/mod.rs",
+        "textual backend emitter, see the `rust/mod.rs` entry above",
+    ),
+    (
+        "crates/codegen/src/backends/asc/mod.rs",
+        "textual backend emitter, see the `rust/mod.rs` entry above",
+    ),
+    (
+        "crates/codegen/src/backends/cmajor/mod.rs",
+        "textual backend emitter, see the `rust/mod.rs` entry above",
+    ),
+    (
+        "crates/codegen/src/backends/interp/executor.rs",
+        "interpreter dispatch loop, deliberately not split in P3: splitting          it by opcode family the way `fbc_to_cpp.rs` was split would add a          second match per executed instruction in the hottest loop of the          product, and no gate in this repository measures interpreter          throughput to prove that cost absent (see the P3 journal entry,          commit 11fd5c40)",
+    ),
+    (
+        "crates/codegen/src/backends/cranelift/lowering.rs",
+        "not analyzed by this campaign; backlog for a future codegen phase",
+    ),
+];
 
 /// Legacy internal alias paths that R3 retired for workspace-internal use.
 const LEGACY_VECTOR_SEGMENTS: [&str; 4] = [
@@ -99,6 +166,20 @@ const PRODUCER_SIBLING_MODULES: [&str; 5] =
 /// File names whose `pub fn`s are scanned for the entry-point cross-check.
 const PRODUCER_FILE_NAMES: [&str; 4] = ["build.rs", "produce.rs", "materialize.rs", "signal.rs"];
 
+/// Crates required to declare `#![deny(missing_docs)]` verbatim in their
+/// `lib.rs`. Every entry here measured at zero `missing_docs` errors under
+/// `cargo rustdoc -p <crate> --lib -- -D missing-docs` on 2026-08-18.
+///
+/// This is deliberately short: it lists the crates this readability campaign
+/// structurally restructured and confirmed clean (P1's `transform`, and
+/// `compiler` via its call-site migrations), not every crate that should
+/// eventually have one. `fir`, `codegen`, `parser`, `eval`, and `propagate`
+/// carry real, pre-existing documentation debt — into the hundreds of items
+/// for `codegen` and `fir` — that this phase did not write. Adding a crate
+/// here is a commitment to it *already* being clean; writing the missing
+/// docs for the rest is separate work for whoever takes it on.
+const DOCUMENTED_CRATES: [&str; 2] = ["transform", "compiler"];
+
 /// Runs every structural check and fails with a sorted finding list.
 pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new("crates/transform/src");
@@ -113,7 +194,13 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
     // transform-specific and skip these files by construction, since none of
     // their patterns can match outside `signal_fir/vector/`.
     collect_rust_files(Path::new("crates/compiler/src"), &mut files)?;
+    collect_rust_files(Path::new("crates/fir/src"), &mut files)?;
+    collect_rust_files(Path::new("crates/codegen/src"), &mut files)?;
     files.sort();
+
+    let known_oversized: std::collections::BTreeMap<&str, &str> =
+        KNOWN_OVERSIZED_FILES.iter().copied().collect();
+    let mut oversized_seen: BTreeSet<&str> = BTreeSet::new();
 
     let mut findings: Vec<String> = Vec::new();
     let mut scanned_entry_points: BTreeSet<String> = BTreeSet::new();
@@ -125,9 +212,13 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
         if !is_test_file {
             let lines = text.lines().count();
             if lines > MAX_PRODUCTION_LINES {
-                findings.push(format!(
-                    "{rel}: {lines} lines exceeds the {MAX_PRODUCTION_LINES}-line review threshold"
-                ));
+                if let Some(&exception_path) = known_oversized.keys().find(|k| **k == rel) {
+                    oversized_seen.insert(exception_path);
+                } else {
+                    findings.push(format!(
+                        "{rel}: {lines} lines exceeds the {MAX_PRODUCTION_LINES}-line review                          threshold and is not in KNOWN_OVERSIZED_FILES"
+                    ));
+                }
             }
         }
 
@@ -198,6 +289,36 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
+    // Cross-check KNOWN_OVERSIZED_FILES against the scan both ways: a path
+    // that does not exist among the scanned crates is a typo or a stale
+    // rename, and a path that exists but is no longer over the threshold is
+    // a resolved exception that should be removed instead of lingering.
+    let scanned_paths: BTreeSet<String> = files
+        .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    findings.extend(stale_oversized_exceptions(
+        &KNOWN_OVERSIZED_FILES,
+        &scanned_paths,
+        &oversized_seen,
+        MAX_PRODUCTION_LINES,
+    ));
+
+    // Every crate in DOCUMENTED_CRATES must declare `#![deny(missing_docs)]`
+    // verbatim. `warn` here would compile clean and silently stop enforcing
+    // anything, since an inner attribute overrides the command-line
+    // `-D warnings` clippy and CI already pass — the exact regression a
+    // rejecting mutation caught on 2026-08-18.
+    for crate_name in DOCUMENTED_CRATES {
+        let lib_path = Path::new("crates").join(crate_name).join("src/lib.rs");
+        let contents = fs::read_to_string(&lib_path).ok();
+        if let Some(finding) =
+            missing_deny_attribute(crate_name, &lib_path.to_string_lossy(), contents.as_deref())
+        {
+            findings.push(finding);
+        }
+    }
+
     findings.sort();
     if findings.is_empty() {
         println!(
@@ -252,4 +373,60 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()>
         }
     }
     Ok(())
+}
+
+/// Findings for [`KNOWN_OVERSIZED_FILES`] entries that no longer match reality.
+///
+/// An entry is stale in one of two ways: it names a path absent from the
+/// scanned files (typo, rename, or the file was deleted), or it names a path
+/// that exists but measured at or under `max_lines` this run (the split that
+/// resolved it landed, and the exception is dead weight). `seen` is the set of
+/// exception paths whose file was actually found over the threshold during the
+/// scan; a path not in `seen` but present in `scanned_paths` falls into the
+/// second case.
+pub(crate) fn stale_oversized_exceptions(
+    known: &[(&str, &str)],
+    scanned_paths: &BTreeSet<String>,
+    seen: &BTreeSet<&str>,
+    max_lines: usize,
+) -> Vec<String> {
+    let mut findings = Vec::new();
+    for (exception_path, _reason) in known {
+        if !scanned_paths.contains(*exception_path) {
+            findings.push(format!(
+                "KNOWN_OVERSIZED_FILES is stale: `{exception_path}` does not exist \
+                 among the scanned crates"
+            ));
+        } else if !seen.contains(exception_path) {
+            findings.push(format!(
+                "KNOWN_OVERSIZED_FILES is stale: `{exception_path}` is no longer over \
+                 the {max_lines}-line threshold; remove its exception"
+            ));
+        }
+    }
+    findings
+}
+
+/// One finding if `crate_name`'s `lib.rs` does not declare
+/// `#![deny(missing_docs)]` verbatim, or `None` if it does.
+///
+/// `lib_rs_contents` is `None` when the file could not be read (a
+/// [`DOCUMENTED_CRATES`] entry naming a crate whose `lib.rs` moved or was
+/// deleted), which is itself a finding rather than a silent pass.
+pub(crate) fn missing_deny_attribute(
+    crate_name: &str,
+    lib_rs_path: &str,
+    lib_rs_contents: Option<&str>,
+) -> Option<String> {
+    match lib_rs_contents {
+        Some(text) if text.contains("#![deny(missing_docs)]") => None,
+        Some(_) => Some(format!(
+            "{lib_rs_path}: DOCUMENTED_CRATES requires `#![deny(missing_docs)]` \
+             verbatim, and it is missing (a `#![warn(missing_docs)]` attribute \
+             compiles clean but enforces nothing)"
+        )),
+        None => Some(format!(
+            "DOCUMENTED_CRATES lists `{crate_name}`, but {lib_rs_path} does not exist"
+        )),
+    }
 }

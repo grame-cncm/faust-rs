@@ -6,6 +6,7 @@
 
 use super::*;
 use clap::{CommandFactory, Parser};
+use std::collections::BTreeSet;
 
 fn parse_xtask<I, T>(args: I) -> Result<XtaskCli, clap::Error>
 where
@@ -912,4 +913,74 @@ fn brace_balance_ignores_strings_and_comments() {
     assert_eq!(brace_balance(r#"write!(f, "[{}] {}", a, b);"#), 0);
     assert_eq!(brace_balance("let x = 1; // a { brace in a comment"), 0);
     assert_eq!(brace_balance(r#"let s = "{";"#), 0);
+}
+
+/// A `KNOWN_OVERSIZED_FILES` entry naming a file the scan never found is a
+/// typo or a stale rename — it must be flagged, not silently ignored.
+#[test]
+fn stale_oversized_exceptions_flags_a_path_absent_from_the_scan() {
+    let known = [("crates/does/not/exist.rs", "reason")];
+    let scanned: BTreeSet<String> = BTreeSet::new();
+    let seen: BTreeSet<&str> = BTreeSet::new();
+    let findings = stale_oversized_exceptions(&known, &scanned, &seen, 2000);
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].contains("does not exist"));
+}
+
+/// A file that shrank below the threshold no longer needs its exception; the
+/// exception must be flagged for removal instead of lingering forever.
+#[test]
+fn stale_oversized_exceptions_flags_a_resolved_split() {
+    let known = [("crates/codegen/src/backends/cmajor/mod.rs", "reason")];
+    let scanned: BTreeSet<String> = ["crates/codegen/src/backends/cmajor/mod.rs".to_owned()].into();
+    let seen: BTreeSet<&str> = BTreeSet::new(); // present but not over threshold this run
+    let findings = stale_oversized_exceptions(&known, &scanned, &seen, 2000);
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].contains("no longer over"));
+}
+
+/// An exception that still names a real, still-oversized file is not a
+/// finding: this is the ordinary steady state, not a mutation.
+#[test]
+fn stale_oversized_exceptions_accepts_a_live_exception() {
+    let known = [("crates/codegen/src/backends/rust/mod.rs", "reason")];
+    let scanned: BTreeSet<String> = ["crates/codegen/src/backends/rust/mod.rs".to_owned()].into();
+    let seen: BTreeSet<&str> = ["crates/codegen/src/backends/rust/mod.rs"].into();
+    assert!(stale_oversized_exceptions(&known, &scanned, &seen, 2000).is_empty());
+}
+
+/// `#![warn(missing_docs)]` compiles clean but enforces nothing, since an
+/// inner attribute overrides the command-line `-D warnings` clippy and CI
+/// already pass. This is the exact regression a rejecting mutation caught on
+/// 2026-08-18: the check must reject `warn`, not just accept any mention of
+/// `missing_docs`.
+#[test]
+fn missing_deny_attribute_rejects_warn_instead_of_deny() {
+    let finding = missing_deny_attribute(
+        "transform",
+        "crates/transform/src/lib.rs",
+        Some("#![warn(missing_docs)]\n"),
+    );
+    assert!(finding.is_some());
+    assert!(finding.unwrap().contains("verbatim"));
+}
+
+/// `#![deny(missing_docs)]` verbatim passes.
+#[test]
+fn missing_deny_attribute_accepts_deny() {
+    let finding = missing_deny_attribute(
+        "transform",
+        "crates/transform/src/lib.rs",
+        Some("#![deny(missing_docs)]\n"),
+    );
+    assert!(finding.is_none());
+}
+
+/// A `DOCUMENTED_CRATES` entry whose `lib.rs` cannot be read is itself a
+/// finding, not a silent pass.
+#[test]
+fn missing_deny_attribute_flags_an_unreadable_lib_rs() {
+    let finding = missing_deny_attribute("ghost", "crates/ghost/src/lib.rs", None);
+    assert!(finding.is_some());
+    assert!(finding.unwrap().contains("does not exist"));
 }

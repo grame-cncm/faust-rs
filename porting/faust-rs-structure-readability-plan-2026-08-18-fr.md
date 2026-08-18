@@ -312,12 +312,45 @@ L'`impl` de 2 649 lignes éclaté selon les familles de règles vérifiées, en
 préservant l'indépendance du vérificateur. Placé après P3 car c'est l'artefact le
 plus risqué : tout l'aval lui fait confiance.
 
-### P6 — Étendre le plancher structurel
+### P6 — Étendre le plancher structurel — FAITE (2026-08-18)
 
-Faire porter le seuil de `structure-check` sur tout le workspace au lieu de deux
-crates, et **abaisser** `MAX_PRODUCTION_LINES` à mesure que P3/P5 le rendent
-atteignable. Ajouter un plancher `missing_docs` par crate nettoyée. **Cette phase
-enregistre le résultat des autres** ; elle ne peut pas passer en premier.
+Le balayage de taille de fichier de `structure-check` porte maintenant sur
+`transform`, `compiler`, `fir` et `codegen` (les quatre crates réellement
+restructurées par P1–P5), `MAX_PRODUCTION_LINES` passe de 2400 à 2000, et
+chaque fichier encore au-dessus est nommé dans une liste explicite et
+justifiée `KNOWN_OVERSIZED_FILES` plutôt que de faire remonter le seuil
+encore une fois — le piège que le commentaire de l'ancien seuil signalait
+lui-même. La liste est vérifiée dans les deux sens : une entrée dont le
+fichier a depuis rétréci sous le seuil est signalée comme périmée.
+
+**Pas étendu au « workspace entier » à la lettre.** La commande a été suivie
+dans son esprit, pas littéralement : balayer mécaniquement les 31 crates à
+un seuil raisonnable aurait produit ~15-20 nouveaux constats sur des
+fichiers que cette campagne n'a jamais analysés (`parser/lib.rs`,
+`sigtype/rules.rs`, les crates FFI…), transformant une barrière verte en
+« connue cassée avec une longue liste d'exceptions » — exactement le mode
+de défaillance d'un seuil qui ne fait que suivre ses violateurs. Étendre
+davantage est un travail réel et séparé, pour la future phase qui analysera
+ces crates.
+
+**Un plancher `missing_docs` existe pour `transform` et `compiler`, et il
+n'existait pas avant cette phase malgré sa documentation comme existant.**
+`cargo rustdoc -p transform --lib -- -D missing-docs` était une
+recommandation du plan R9.2 sans étape CI ni commande xtask pour l'exécuter
+— une barrière fantôme. Pire : les deux `lib.rs` déclaraient
+`#![warn(missing_docs)]`, et un test à mutation rejetante a montré que
+`warn` compile proprement sous le `-D warnings` de clippy/CI du workspace,
+parce qu'un attribut interne l'emporte sur un niveau de lint passé en ligne
+de commande pour ce même lint. Le commentaire de `compiler` affirmait un
+échec CI dur qui, empiriquement, ne se produisait jamais. Les deux
+attributs sont maintenant `#![deny(missing_docs)]`, ce qui fait échouer
+`build`/`check`/`clippy`/`test` directement sans commande supplémentaire, et
+`structure-check` vérifie que l'attribut littéral est présent pour qu'un
+futur retour de `deny` à `warn` soit attrapé mécaniquement plutôt que
+supposé. `fir`, `codegen`, `parser`, `eval` et `propagate` mesurent
+respectivement 288/509/46/66/56 erreurs missing_docs au 2026-08-18 — une
+dette réelle et préexistante que cette phase n'a pas écrite et ne prétend
+pas avoir close.
 
 ### P7 — Trancher le sort des crates placeholders
 
@@ -343,7 +376,11 @@ mesures contredisent cela sur deux points** :
   sont dupliqués.
 
 Ordre recommandé : **P1 → P2 → P3 → P4 → P5 → P6**, P7 étant à soulever dès que le
-mainteneur veut trancher. La logique est « la plus petite instance prouvable
+mainteneur veut trancher. **Statut au 2026-08-18 : P1, P2, P4, P5, P6 faites ;
+P3 aux deux tiers** (le répartiteur FBC→C++ et le compilateur FIR→FBC sont
+découpés, la boucle chaude de `executor.rs` est différée à dessein en
+attendant un banc de débit) ; **P7 reste ouverte**, en attente de la décision
+du mainteneur sur les trois crates placeholders. La logique est « la plus petite instance prouvable
 d'abord » : P1 est un fichier, une transformation mécanique, et il exerce toutes
 les barrières y compris la baseline d'API publique ajoutée le 2026-08-18 — si la
 méthode est fausse, c'est là que ça se voit au moindre coût.

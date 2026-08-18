@@ -315,7 +315,7 @@ pub enum VectorEffectiveMode {
     CertifiedVector,
 }
 
-/// Configuration options for [`compile_signals_to_fir_fastlane_with_ui`].
+/// Configuration options for [`compile_signals_to_fir_fastlane`].
 ///
 /// These options describe the externally visible module contract.
 /// Resource planning and lowering policies stay internal to the fast-lane until
@@ -441,7 +441,7 @@ impl Default for SignalFirOptions {
     }
 }
 
-/// Output bundle produced by [`compile_signals_to_fir_fastlane_with_ui`].
+/// Output bundle produced by [`compile_signals_to_fir_fastlane`].
 ///
 /// The fast-lane returns ownership of the FIR store together with the module
 /// root so downstream backends can keep using normal `fir` builder/matcher APIs

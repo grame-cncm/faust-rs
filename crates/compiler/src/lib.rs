@@ -33,11 +33,15 @@
 //! - The active signal->FIR lowering route is [`SignalFirLane::TransformFastLane`],
 //!   owned by `crates/transform`.
 
-// Every public item carries documentation, as in `crates/transform`. The
-// workspace CI gate (`cargo clippy --workspace --all-targets -- -D warnings`)
-// turns this into a hard failure, so the surface cannot silently drift back to
-// undocumented.
-#![warn(missing_docs)]
+// Every public item carries documentation, as in `crates/transform`.
+//
+// This must be `deny`, not `warn`: an inner `#![warn(...)]` attribute
+// overrides the command-line `-D warnings` clippy and CI already pass, so a
+// plain `warn` here was invisible to every existing gate — this comment
+// claimed a hard CI failure that a rejecting mutation on 2026-08-18 showed did
+// not happen. `deny` makes an undocumented `pub` item fail
+// `cargo build`/`check`/`clippy`/`test` directly.
+#![deny(missing_docs)]
 
 pub mod diagnostics_json;
 pub mod enrobage;
