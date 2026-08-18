@@ -820,13 +820,13 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `Compiler::compile_file_to_boxes` | `crates/compiler/src/lib.rs:1244` |
 | `fn` | `Compiler::compile_file_default_to_signals` | `crates/compiler/src/lib.rs:1333` |
 | `fn` | `Compiler::compile_parsed_to_signals` | `crates/compiler/src/lib.rs:1347` |
-| `enum` | `CompilerError` | `crates/compiler/src/lib.rs:1819` |
-| `fn` | `CompilerError::import` | `crates/compiler/src/lib.rs:2172` |
-| `fn` | `CompilerError::codegen_wasm` | `crates/compiler/src/lib.rs:2222` |
-| `fn` | `CompilerError::missing_root` | `crates/compiler/src/lib.rs:2243` |
-| `fn` | `CompilerError::expand_failed` | `crates/compiler/src/lib.rs:2267` |
-| `fn` | `CompilerError::diagnostic_bundle` | `crates/compiler/src/lib.rs:2293` |
-| `fn` | `CompilerError::diagnostics` | `crates/compiler/src/lib.rs:2323` |
+| `enum` | `CompilerError` | `crates/compiler/src/lib.rs:1817` |
+| `fn` | `CompilerError::import` | `crates/compiler/src/lib.rs:2170` |
+| `fn` | `CompilerError::codegen_wasm` | `crates/compiler/src/lib.rs:2220` |
+| `fn` | `CompilerError::missing_root` | `crates/compiler/src/lib.rs:2241` |
+| `fn` | `CompilerError::expand_failed` | `crates/compiler/src/lib.rs:2265` |
+| `fn` | `CompilerError::diagnostic_bundle` | `crates/compiler/src/lib.rs:2291` |
+| `fn` | `CompilerError::diagnostics` | `crates/compiler/src/lib.rs:2321` |
 | `struct` | `FaustInstallPaths` | `crates/compiler/src/paths.rs:23` |
 | `fn` | `FaustInstallPaths::from_parts` | `crates/compiler/src/paths.rs:47` |
 | `fn` | `FaustInstallPaths::from_environment` | `crates/compiler/src/paths.rs:107` |
@@ -1264,16 +1264,13 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `type` | `SymId` | `crates/eval/src/lib.rs:227` |
 | `type` | `EnvId` | `crates/eval/src/lib.rs:235` |
 | `fn` | `eval_process` | `crates/eval/src/lib.rs:274` |
-| `fn` | `eval_entrypoint` | `crates/eval/src/lib.rs:280` |
-| `fn` | `eval_process_with_source_context` | `crates/eval/src/lib.rs:297` |
-| `fn` | `eval_entrypoint_with_source_context` | `crates/eval/src/lib.rs:306` |
-| `fn` | `eval_process_with_stats` | `crates/eval/src/lib.rs:335` |
-| `fn` | `eval_entrypoint_with_stats` | `crates/eval/src/lib.rs:343` |
-| `fn` | `eval_process_with_stats_and_source_context` | `crates/eval/src/lib.rs:364` |
-| `fn` | `eval_entrypoint_with_stats_and_source_context` | `crates/eval/src/lib.rs:373` |
-| `fn` | `eval_entrypoint_with_source_context_and_cancel` | `crates/eval/src/lib.rs:389` |
-| `fn` | `eval_box` | `crates/eval/src/lib.rs:720` |
-| `fn` | `crate_id` | `crates/eval/src/lib.rs:1757` |
+| `struct` | `EvalRequest` | `crates/eval/src/lib.rs:291` |
+| `fn` | `EvalRequest::with_entrypoint` | `crates/eval/src/lib.rs:324` |
+| `fn` | `EvalRequest::with_source_context` | `crates/eval/src/lib.rs:331` |
+| `fn` | `EvalRequest::with_cancel` | `crates/eval/src/lib.rs:338` |
+| `fn` | `eval` | `crates/eval/src/lib.rs:354` |
+| `fn` | `eval_box` | `crates/eval/src/lib.rs:689` |
+| `fn` | `crate_id` | `crates/eval/src/lib.rs:1726` |
 | `struct` | `LoopDetector` | `crates/eval/src/loop_detector.rs:52` |
 | `fn` | `LoopDetector::new` | `crates/eval/src/loop_detector.rs:236` |
 | `fn` | `LoopDetector::with_cancel` | `crates/eval/src/loop_detector.rs:251` |
@@ -2003,9 +2000,8 @@ _No direct public items found by the source scan._
 
 | Kind | Name | Location |
 |---|---|---|
-| `fn` | `propagate_typed_with_ui` | `crates/propagate/src/api.rs:24` |
-| `fn` | `propagate_typed_with_ui_options` | `crates/propagate/src/api.rs:41` |
-| `fn` | `propagate_typed` | `crates/propagate/src/api.rs:114` |
+| `fn` | `propagate_typed_with_ui` | `crates/propagate/src/api.rs:27` |
+| `fn` | `propagate_typed` | `crates/propagate/src/api.rs:100` |
 | `fn` | `make_sig_input_list` | `crates/propagate/src/arity.rs:13` |
 | `fn` | `box_arity_typed` | `crates/propagate/src/arity.rs:37` |
 | `struct` | `ClockDomainId` | `crates/propagate/src/clock_domain.rs:38` |

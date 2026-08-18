@@ -21,24 +21,10 @@ use crate::context_id::{SlotEnv, UiPathContext};
 ///   `[autodiff:false]`,
 /// - `rad(expr)` returns [`PropagateError::RadUnsupportedNode`] for unsupported
 ///   signal shapes.
+///
+/// Grouped-UI construction is configured by `ui_options`;
+/// [`PropagateUiOptions::default`] is the ordinary choice.
 pub fn propagate_typed_with_ui(
-    arena: &mut TreeArena,
-    box_tree: FlatBoxId,
-    inputs: &[SigId],
-    cache: &mut ArityCache,
-) -> Result<PropagateOutput, PropagateError> {
-    propagate_typed_with_ui_options(
-        arena,
-        box_tree,
-        inputs,
-        cache,
-        &PropagateUiOptions::default(),
-    )
-}
-
-/// Propagates input signals and grouped UI through one validated flat box expression
-/// using explicit grouped-UI construction options.
-pub fn propagate_typed_with_ui_options(
     arena: &mut TreeArena,
     box_tree: FlatBoxId,
     inputs: &[SigId],

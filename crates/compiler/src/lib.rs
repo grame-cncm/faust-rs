@@ -1396,27 +1396,25 @@ impl Compiler {
 
         let eval_result = self.time_phase("evaluation", || {
             match (&eval_source_context, &self.cancel) {
-                (Some(source_context), Some(cancel)) => {
-                    eval::eval_entrypoint_with_source_context_and_cancel(
-                        &mut output.state.arena,
-                        root,
-                        self.entrypoint_name.as_ref(),
-                        source_context.clone(),
-                        std::sync::Arc::clone(cancel),
-                    )
-                }
-                (Some(source_context), None) => {
-                    eval::eval_entrypoint_with_stats_and_source_context(
-                        &mut output.state.arena,
-                        root,
-                        self.entrypoint_name.as_ref(),
-                        source_context.clone(),
-                    )
-                }
-                (None, _) => eval::eval_entrypoint_with_stats(
+                (Some(source_context), Some(cancel)) => eval::eval(
                     &mut output.state.arena,
                     root,
-                    self.entrypoint_name.as_ref(),
+                    &eval::EvalRequest::default()
+                        .with_entrypoint(self.entrypoint_name.as_ref())
+                        .with_source_context(source_context.clone())
+                        .with_cancel(std::sync::Arc::clone(cancel)),
+                ),
+                (Some(source_context), None) => eval::eval(
+                    &mut output.state.arena,
+                    root,
+                    &eval::EvalRequest::default()
+                        .with_entrypoint(self.entrypoint_name.as_ref())
+                        .with_source_context(source_context.clone()),
+                ),
+                (None, _) => eval::eval(
+                    &mut output.state.arena,
+                    root,
+                    &eval::EvalRequest::default().with_entrypoint(self.entrypoint_name.as_ref()),
                 ),
             }
         });
@@ -1569,7 +1567,7 @@ impl Compiler {
         let inputs = propagate::make_sig_input_list(&mut output.state.arena, process_arity.inputs);
         let propagated = self
             .time_phase("propagation", || {
-                propagate::propagate_typed_with_ui_options(
+                propagate::propagate_typed_with_ui(
                     &mut output.state.arena,
                     process_flat,
                     &inputs,

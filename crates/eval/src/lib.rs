@@ -270,130 +270,99 @@ pub type EnvId = usize;
 /// - Returns `Result<TreeId, EvalError>` instead of throwing `faustexception`.
 /// - Redefinition errors are caught via `bind_definitions` instead of propagating globally.
 ///
-/// For performance statistics, use [`eval_process_with_stats`] instead.
+/// For performance statistics or a non-default entry point, use [`eval`].
 pub fn eval_process(arena: &mut TreeArena, definitions: TreeId) -> Result<TreeId, EvalError> {
-    Ok(eval_process_with_stats(arena, definitions)?.0)
+    Ok(eval(arena, definitions, &EvalRequest::default())?.0)
 }
 
-/// Evaluates one Faust program root list using a custom top-level DSP
-/// entry-point name instead of the default `process`.
-pub fn eval_entrypoint(
-    arena: &mut TreeArena,
-    definitions: TreeId,
-    entrypoint: &str,
-) -> Result<TreeId, EvalError> {
-    Ok(eval_entrypoint_with_stats(arena, definitions, entrypoint)?.0)
-}
-
-/// Evaluates one Faust program root list using an explicit file-resolution context.
+/// Everything one evaluation run may vary, in one named place.
 ///
-/// This is the file-backed counterpart of [`eval_process`]. It keeps the legacy
-/// API intact for in-memory callers while letting file-oriented frontends mirror
-/// the C++ contract where `eval.cpp` sees a configured source reader.
+/// Before 2026-08-18 this crate exposed nine entry points spanning two names
+/// (`eval_process` for the default `process` entry, `eval_entrypoint` for a
+/// custom one) crossed with three optional concerns — statistics, a source
+/// context, cancellation — spelled out in the function names
+/// (`_with_stats`, `_with_source_context`, `_with_stats_and_source_context`,
+/// `_with_source_context_and_cancel`). Three of the nine had no caller at all.
 ///
-/// Use this entry point when the evaluated program may contain
-/// `component("...")` or `library("...")` forms that must resolve relative to
-/// an on-disk Faust source file.
-pub fn eval_process_with_source_context(
-    arena: &mut TreeArena,
-    definitions: TreeId,
-    source_context: EvalSourceContext,
-) -> Result<TreeId, EvalError> {
-    Ok(eval_process_with_stats_and_source_context(arena, definitions, source_context)?.0)
+/// The concerns are fields here instead, and [`eval`] always returns the
+/// statistics: discarding them is the caller's `?.0`, which is exactly what the
+/// non-instrumented wrappers did.
+#[derive(Clone, Debug)]
+pub struct EvalRequest<'a> {
+    /// Top-level DSP entry-point name. Defaults to `"process"`.
+    pub entrypoint: &'a str,
+    /// File-resolution context for `component("…")` and `library("…")` forms.
+    ///
+    /// Defaults to [`EvalSourceContext::memory()`]. The context becomes part of
+    /// the root evaluation environment and is captured by any closure value
+    /// created while evaluating the loaded program, mirroring the C++ contract
+    /// where `eval.cpp` sees a configured source reader.
+    pub source_context: EvalSourceContext,
+    /// Cooperative cancellation flag.
+    ///
+    /// When present, the evaluator checks it on every recursive `eval_value`
+    /// call and returns [`EvalError::Cancelled`] once set. This is the
+    /// library-safe timeout mechanism: the CLI spawns a watchdog thread that
+    /// sets it after `--timeout`, and libfaust hosts can set it from any thread
+    /// on user abort without killing the process.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
-/// File-backed counterpart of [`eval_entrypoint`].
-pub fn eval_entrypoint_with_source_context(
+impl Default for EvalRequest<'_> {
+    fn default() -> Self {
+        Self {
+            entrypoint: "process",
+            source_context: EvalSourceContext::memory(),
+            cancel: None,
+        }
+    }
+}
+
+impl<'a> EvalRequest<'a> {
+    /// Evaluates a top-level entry point other than `process`.
+    #[must_use]
+    pub fn with_entrypoint(mut self, entrypoint: &'a str) -> Self {
+        self.entrypoint = entrypoint;
+        self
+    }
+
+    /// Resolves `component`/`library` forms against an explicit context.
+    #[must_use]
+    pub fn with_source_context(mut self, source_context: EvalSourceContext) -> Self {
+        self.source_context = source_context;
+        self
+    }
+
+    /// Makes the run cancellable through the supplied flag.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+}
+
+/// Evaluates one Faust program root list, returning the lowered box and the
+/// evaluation statistics.
+///
+/// This is the single entry point of the crate; everything optional travels in
+/// [`EvalRequest`]. [`eval_process`] is the shorthand for the dominant case —
+/// the `process` entry, in memory, uncancellable — and discards the statistics.
+///
+/// # Errors
+/// Returns [`EvalError`] when the requested entry point is not defined, when
+/// evaluation fails, or when the run was cancelled.
+pub fn eval(
     arena: &mut TreeArena,
     definitions: TreeId,
-    entrypoint: &str,
-    source_context: EvalSourceContext,
-) -> Result<TreeId, EvalError> {
-    Ok(eval_entrypoint_with_stats_and_source_context(
+    request: &EvalRequest<'_>,
+) -> Result<(TreeId, EvalStats), EvalError> {
+    eval_entrypoint_full(
         arena,
         definitions,
-        entrypoint,
-        source_context,
-    )?
-    .0)
-}
-
-/// Evaluates one Faust program root list and returns the resolved `process` expression together
-/// with performance statistics collected during evaluation.
-///
-/// This is the instrumented variant of [`eval_process`]. The returned [`EvalStats`] provides
-/// profiling data parallel to C++ `gGlobal->gStats` fields (`fEnvLayersPushed`,
-/// `fEnvLookups`, `fEnvLookupTotalDepth`), without requiring global mutable state.
-///
-/// # Example (profiling a program)
-/// ```ignore
-/// let (process, stats) = eval_process_with_stats(&mut arena, defs)?;
-/// println!("lookups: {}, avg depth: {:.1}",
-///     stats.env_lookups,
-///     stats.env_lookup_total_depth as f64 / stats.env_lookups.max(1) as f64);
-/// ```
-pub fn eval_process_with_stats(
-    arena: &mut TreeArena,
-    definitions: TreeId,
-) -> Result<(TreeId, EvalStats), EvalError> {
-    eval_entrypoint_with_stats(arena, definitions, "process")
-}
-
-/// Instrumented variant of [`eval_entrypoint`].
-pub fn eval_entrypoint_with_stats(
-    arena: &mut TreeArena,
-    definitions: TreeId,
-    entrypoint: &str,
-) -> Result<(TreeId, EvalStats), EvalError> {
-    eval_entrypoint_with_stats_and_source_context(
-        arena,
-        definitions,
-        entrypoint,
-        EvalSourceContext::memory(),
+        request.entrypoint,
+        request.source_context.clone(),
+        request.cancel.clone(),
     )
-}
-
-/// Instrumented variant of [`eval_process_with_source_context`].
-///
-/// File-backed callers should prefer this entry point when they need both
-/// profile counters and evaluator-level source loading semantics.
-///
-/// The passed [`EvalSourceContext`] becomes part of the root evaluation
-/// environment and is subsequently captured by any closure value created while
-/// evaluating the loaded program.
-pub fn eval_process_with_stats_and_source_context(
-    arena: &mut TreeArena,
-    definitions: TreeId,
-    source_context: EvalSourceContext,
-) -> Result<(TreeId, EvalStats), EvalError> {
-    eval_entrypoint_with_stats_and_source_context(arena, definitions, "process", source_context)
-}
-
-/// Instrumented variant of [`eval_entrypoint_with_source_context`].
-pub fn eval_entrypoint_with_stats_and_source_context(
-    arena: &mut TreeArena,
-    definitions: TreeId,
-    entrypoint: &str,
-    source_context: EvalSourceContext,
-) -> Result<(TreeId, EvalStats), EvalError> {
-    eval_entrypoint_full(arena, definitions, entrypoint, source_context, None)
-}
-
-/// Full entry point with cooperative cancellation support.
-///
-/// When `cancel` is `Some`, the evaluator checks the flag on every recursive
-/// `eval_value` call and returns `EvalError::Cancelled` if it has been set.
-/// This is the library-safe timeout mechanism: the CLI spawns a watchdog
-/// thread that sets the flag after `--timeout`, and libfaust hosts can set
-/// it from any thread (e.g. on user abort) without killing the process.
-pub fn eval_entrypoint_with_source_context_and_cancel(
-    arena: &mut TreeArena,
-    definitions: TreeId,
-    entrypoint: &str,
-    source_context: EvalSourceContext,
-    cancel: Arc<AtomicBool>,
-) -> Result<(TreeId, EvalStats), EvalError> {
-    eval_entrypoint_full(arena, definitions, entrypoint, source_context, Some(cancel))
 }
 
 /// Shared implementation behind every `eval_entrypoint_*` entry point.

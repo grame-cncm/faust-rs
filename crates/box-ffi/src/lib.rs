@@ -39,7 +39,7 @@ use compiler::Compiler;
 use fir::{FirId, FirStore};
 use propagate::{
     ArityCache, PropagateUiOptions, box_arity_typed, make_sig_input_list, propagate_typed,
-    propagate_typed_with_ui_options, try_build_flat_box,
+    propagate_typed_with_ui, try_build_flat_box,
 };
 use tlib::{
     NodeKind, TreeArena, TreeId, de_bruijn_to_sym, tree_to_double, tree_to_int, tree_to_str,
@@ -291,7 +291,7 @@ pub unsafe fn export_fir_from_box_handle(
         let mut cache = ArityCache::new();
         let arity = box_arity_typed(&ctx.arena, flat, &mut cache).map_err(|e| e.to_string())?;
         let inputs = make_sig_input_list(&mut ctx.arena, arity.inputs);
-        let propagated = propagate_typed_with_ui_options(
+        let propagated = propagate_typed_with_ui(
             &mut ctx.arena,
             flat,
             &inputs,

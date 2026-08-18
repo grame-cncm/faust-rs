@@ -11,10 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use boxes::{BoxBuilder, BoxMatch, match_box};
 use diagnostics::{Severity, Stage, ToDiagnostic, codes};
-use eval::{
-    Environment, EvalError, EvalSourceContext, LoopDetector, eval_box, eval_process,
-    eval_process_with_source_context, eval_process_with_stats,
-};
+use eval::{Environment, EvalError, EvalSourceContext, LoopDetector, eval_box, eval_process};
 use parser::{CompilationMetadataKey, parse_file, parse_program};
 use propagate::ArityCache;
 use tlib::{NodeKind, TreeArena, TreeId};
@@ -303,8 +300,13 @@ fn eval_process_route_spec_lowers_computed_connections_like_cpp() {
     let root = parsed.root.expect("parse should return a root");
     let ctx = EvalSourceContext::memory();
 
-    let out = eval_process_with_source_context(&mut arena, root, ctx)
-        .expect("route spec should evaluate after a2sb lowering");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("route spec should evaluate after a2sb lowering");
     assert!(
         !matches!(match_box(&arena, out), BoxMatch::Int(_) | BoxMatch::Real(_)),
         "computed route specifications must not collapse to a scalar constant"
@@ -327,8 +329,13 @@ fn eval_process_component_loads_file_in_captured_source_context() {
     let root = make_defs(&mut arena, &[process]);
     let ctx = EvalSourceContext::for_file(&entry, std::slice::from_ref(&root_dir));
 
-    let out = eval_process_with_source_context(&mut arena, root, ctx)
-        .expect("component should load child file");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("component should load child file");
     assert!(matches!(match_box(&arena, out), BoxMatch::Wire));
 }
 
@@ -348,8 +355,13 @@ fn eval_process_component_reuses_cached_loaded_source_in_same_context() {
     let nil = arena_first.nil();
     let process = make_def(&mut arena_first, "process", nil, component);
     let root = make_defs(&mut arena_first, &[process]);
-    let first = eval_process_with_source_context(&mut arena_first, root, ctx.clone())
-        .expect("first component load should succeed");
+    let first = eval::eval(
+        &mut arena_first,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx.clone()),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("first component load should succeed");
     assert!(matches!(match_box(&arena_first, first), BoxMatch::Wire));
 
     fs::remove_file(&child).expect("remove cached child file");
@@ -360,8 +372,13 @@ fn eval_process_component_reuses_cached_loaded_source_in_same_context() {
     let nil = arena_second.nil();
     let process = make_def(&mut arena_second, "process", nil, component);
     let root = make_defs(&mut arena_second, &[process]);
-    let second = eval_process_with_source_context(&mut arena_second, root, ctx)
-        .expect("second component load should reuse cached source");
+    let second = eval::eval(
+        &mut arena_second,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("second component load should reuse cached source");
     assert!(matches!(match_box(&arena_second, second), BoxMatch::Wire));
 }
 
@@ -389,8 +406,13 @@ fn eval_process_library_loads_environment_from_file() {
     let root = make_defs(&mut arena, &[lib_def, process]);
     let ctx = EvalSourceContext::for_file(&entry, std::slice::from_ref(&root_dir));
 
-    let out =
-        eval_process_with_source_context(&mut arena, root, ctx).expect("library should load child");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("library should load child");
     assert!(matches!(match_box(&arena, out), BoxMatch::Wire));
 }
 
@@ -410,8 +432,13 @@ fn eval_source_context_collects_top_level_metadata_from_loaded_component() {
     let root = make_defs(&mut arena, &[process]);
     let ctx = EvalSourceContext::for_file(&entry, std::slice::from_ref(&root_dir));
 
-    let out = eval_process_with_source_context(&mut arena, root, ctx.clone())
-        .expect("component should load child and collect metadata");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx.clone()),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("component should load child and collect metadata");
     assert!(matches!(match_box(&arena, out), BoxMatch::Wire));
 
     let key = CompilationMetadataKey::scoped(
@@ -452,8 +479,13 @@ fn eval_component_load_accepts_inline_environment_import_in_loaded_file() {
     let root = make_defs(&mut arena, &[process]);
     let ctx = EvalSourceContext::for_file(&entry, std::slice::from_ref(&root_dir));
 
-    let out = eval_process_with_source_context(&mut arena, root, ctx)
-        .expect("component should load child with inline environment import");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("component should load child with inline environment import");
     assert!(matches!(match_box(&arena, out), BoxMatch::Wire));
 }
 
@@ -487,8 +519,13 @@ fn eval_library_load_accepts_inline_environment_import_in_loaded_file() {
     let root = make_defs(&mut arena, &[lib_def, process]);
     let ctx = EvalSourceContext::for_file(&entry, std::slice::from_ref(&root_dir));
 
-    let out = eval_process_with_source_context(&mut arena, root, ctx)
-        .expect("library should load child with inline environment import");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("library should load child with inline environment import");
     assert!(matches!(match_box(&arena, out), BoxMatch::Wire));
 }
 
@@ -1277,8 +1314,13 @@ process = p(0, 0, 0.0) with {
     let root = parsed.root.expect("parse should return a root");
     let ctx = EvalSourceContext::for_file(&entry, std::slice::from_ref(&root_dir));
 
-    let out = eval_process_with_source_context(&mut arena, root, ctx)
-        .expect("Rust eval should accept same recursive local case priority fixture as C++");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("Rust eval should accept same recursive local case priority fixture as C++");
     expect_int(&arena, out, 1);
 }
 
@@ -1578,8 +1620,13 @@ fn eval_process_tupled_higher_order_locals_match_cpp_reference() {
     let root = parsed.root.expect("parse should return a root");
     let ctx = EvalSourceContext::for_file(&entry, std::slice::from_ref(&root_dir));
 
-    let out = eval_process_with_source_context(&mut arena, root, ctx)
-        .expect("Rust eval should accept same higher-order tuple case as C++");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("Rust eval should accept same higher-order tuple case as C++");
     expect_int(&arena, out, 123);
 }
 
@@ -1662,8 +1709,13 @@ fn eval_process_unapplied_local_case_higher_order_matches_cpp_reference() {
     let root = parsed.root.expect("parse should return a root");
     let ctx = EvalSourceContext::for_file(&entry, std::slice::from_ref(&root_dir));
 
-    let out = eval_process_with_source_context(&mut arena, root, ctx)
-        .expect("Rust eval should accept same higher-order local case as C++");
+    let out = eval::eval(
+        &mut arena,
+        root,
+        &eval::EvalRequest::default().with_source_context(ctx),
+    )
+    .map(|(box_id, _)| box_id)
+    .expect("Rust eval should accept same higher-order local case as C++");
     assert!(matches!(match_box(&arena, out), BoxMatch::Par(_, _)));
 }
 
@@ -1896,8 +1948,8 @@ fn eval_process_with_stats_returns_consistent_result_and_stats() {
     let def_process = make_def(&mut arena, "process", nil, wire);
     let defs = make_defs(&mut arena, &[def_process]);
 
-    let (out, stats) =
-        eval_process_with_stats(&mut arena, defs).expect("eval_process_with_stats should succeed");
+    let (out, stats) = eval::eval(&mut arena, defs, &eval::EvalRequest::default())
+        .expect("eval_process_with_stats should succeed");
     assert!(
         matches!(match_box(&arena, out), BoxMatch::Wire),
         "result should be the wire node"

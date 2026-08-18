@@ -136,8 +136,14 @@ fn propagation_retains_all_box_origins_for_a_hash_consed_signal() {
     let duplicated = BoxBuilder::new(&mut arena).par(constant, constant);
     let flat = try_build_flat_box(&arena, duplicated).expect("flat constant pair");
 
-    let output = propagate_typed_with_ui(&mut arena, flat, &[], &mut ArityCache::new())
-        .expect("constant pair should propagate");
+    let output = propagate_typed_with_ui(
+        &mut arena,
+        flat,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("constant pair should propagate");
 
     assert_eq!(output.signals.len(), 2);
     assert_eq!(output.signals[0], output.signals[1]);

@@ -488,7 +488,7 @@ mod error;
 mod flat;
 mod ui_build;
 
-pub use api::{propagate_typed, propagate_typed_with_ui, propagate_typed_with_ui_options};
+pub use api::{propagate_typed, propagate_typed_with_ui};
 pub use arity::{box_arity_typed, make_sig_input_list};
 pub use error::PropagateError;
 pub use flat::{FlatBoxBuildError, FlatBoxId, try_build_flat_box};

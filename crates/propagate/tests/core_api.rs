@@ -8,8 +8,7 @@ use boxes::{BoxBuilder, BoxMatch, match_box};
 use diagnostics::{Severity, Stage, ToDiagnostic, codes};
 use propagate::{
     ArityCache, FlatBoxBuildError, FlatBoxId, PropagateError, PropagateUiOptions, box_arity_typed,
-    make_sig_input_list, propagate_typed, propagate_typed_with_ui, propagate_typed_with_ui_options,
-    try_build_flat_box,
+    make_sig_input_list, propagate_typed, propagate_typed_with_ui, try_build_flat_box,
 };
 use signals::{BinOp, SigBuilder, SigMatch, match_sig};
 use tlib::{DEBRUIJNREC_TAG, NodeKind, TreeArena, TreeId, list_to_vec};
@@ -316,8 +315,14 @@ fn propagate_with_ui_collects_nested_groups_and_control_specs() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("grouped slider should propagate with UI");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("grouped slider should propagate with UI");
 
     assert_eq!(out.signals.len(), 1);
     assert_eq!(out.ui.root_origin, UiRootOrigin::Explicit);
@@ -358,8 +363,14 @@ fn propagate_with_ui_extracts_group_and_widget_label_metadata() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("metadata-bearing grouped slider should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("metadata-bearing grouped slider should propagate");
 
     let UiMatch::Group {
         kind,
@@ -403,8 +414,14 @@ fn propagate_with_ui_synthesizes_root_group_for_multiple_ui_roots() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("multiple grouped UI roots should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("multiple grouped UI roots should propagate");
 
     assert_eq!(out.ui.root_origin, UiRootOrigin::Synthesized);
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Vertical, "");
@@ -440,7 +457,7 @@ fn propagate_with_ui_options_assigns_canonical_root_label() {
         try_build_flat_box(&arena, group).expect("root group should be flat")
     };
 
-    let out = propagate_typed_with_ui_options(
+    let out = propagate_typed_with_ui(
         &mut arena,
         process,
         &[],
@@ -484,8 +501,14 @@ fn propagate_with_ui_keeps_deterministic_control_order_across_mixed_nested_contr
         bb.vgroup(root_label, content)
     };
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("mixed grouped UI should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("mixed grouped UI should propagate");
 
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Vertical, "root");
     assert_eq!(root_children.len(), 3);
@@ -529,8 +552,14 @@ fn propagate_with_ui_collects_soundfile_control_spec() {
     let inputs = make_sig_input_list(&mut arena, 2);
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &inputs, &mut ArityCache::new())
-        .expect("soundfile grouped UI should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &inputs,
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("soundfile grouped UI should propagate");
 
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Vertical, "files");
     assert_eq!(root_children.len(), 1);
@@ -565,8 +594,14 @@ fn propagate_with_ui_rebases_relative_widget_path_to_parent_group() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("relative widget path should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("relative widget path should propagate");
 
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Horizontal, "Foo");
     assert_eq!(root_children.len(), 1);
@@ -592,8 +627,14 @@ fn propagate_with_ui_lowers_typed_widget_path_into_canonical_group() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("typed widget path should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("typed widget path should propagate");
 
     let root_children =
         expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Horizontal, "Oscillator");
@@ -624,8 +665,14 @@ fn propagate_with_ui_extracts_metadata_after_relative_widget_rebase() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("relative widget path with metadata should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("relative widget path with metadata should propagate");
 
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Horizontal, "Foo");
     assert_eq!(root_children.len(), 1);
@@ -658,8 +705,14 @@ fn propagate_with_ui_rebases_explicit_group_label_to_parent() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("relative group label should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("relative group label should propagate");
 
     assert_eq!(out.ui.root_origin, UiRootOrigin::Synthesized);
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Vertical, "");
@@ -694,8 +747,14 @@ fn propagate_with_ui_clamps_relative_group_label_navigation_at_root() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("clamped relative group label should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("clamped relative group label should propagate");
 
     assert_eq!(out.ui.root_origin, UiRootOrigin::Synthesized);
     let root_children = expect_ui_group(&out.ui, out.ui.root, UiGroupKind::Vertical, "");
@@ -1140,8 +1199,14 @@ fn propagate_typed_enforces_flat_boundary() {
     let inputs = make_sig_input_list(&mut arena, 2);
     let typed_out = propagate_typed(&mut arena, flat, &inputs, &mut ArityCache::new())
         .expect("typed propagation should succeed");
-    let typed_with_ui = propagate_typed_with_ui(&mut arena, flat, &inputs, &mut ArityCache::new())
-        .expect("typed propagation with UI should succeed");
+    let typed_with_ui = propagate_typed_with_ui(
+        &mut arena,
+        flat,
+        &inputs,
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("typed propagation with UI should succeed");
     assert_eq!(typed_with_ui.signals, typed_out);
 
     let err = try_build_flat_box(&arena, bad_case)
@@ -1447,8 +1512,14 @@ fn propagate_forward_ad_expands_outputs_for_single_control() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("forward-ad process should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("forward-ad process should propagate");
 
     assert_eq!(out.signals.len(), 2);
     assert_eq!(out.ui.controls.len(), 1);
@@ -1490,8 +1561,14 @@ fn propagate_forward_ad_emits_one_tangent_per_seed() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("forward-ad product should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("forward-ad product should propagate");
 
     // fad(exp, f) always produces (primal, tangent_wrt_f) — 2 outputs.
     assert_eq!(out.signals.len(), 2);
@@ -1524,8 +1601,14 @@ fn propagate_forward_ad_differentiates_wrt_explicit_seed_only() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("forward-ad product should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("forward-ad product should propagate");
 
     // fad(exp, g) always produces (primal, tangent_wrt_g) — 2 outputs.
     assert_eq!(out.signals.len(), 2);
@@ -1565,8 +1648,14 @@ fn propagate_forward_ad_emits_one_tangent_per_seed_output_when_seed_has_multiple
     // body_outputs = 1, seed_outputs = 2 → 1 * (1 + 2) = 3
     assert_eq!(arity.outputs, 3);
 
-    let out = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("multi-seed forward-ad should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("multi-seed forward-ad should propagate");
 
     assert_eq!(out.signals.len(), 3);
 
@@ -1626,8 +1715,14 @@ fn propagate_reverse_ad_succeeds_on_feed_forward_unary_call() {
     };
 
     let flat_process = try_build_flat_box(&arena, process).unwrap();
-    let outs = propagate_typed_with_ui(&mut arena, flat_process, &[], &mut ArityCache::new())
-        .expect("rad(sin(slider), seed) must propagate cleanly");
+    let outs = propagate_typed_with_ui(
+        &mut arena,
+        flat_process,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("rad(sin(slider), seed) must propagate cleanly");
     assert_eq!(outs.signals.len(), 2, "rad bundle = [primal, gradient]");
 }
 
@@ -2143,8 +2238,14 @@ fn propagate_forward_ad_on_recursive_circuit_expands_outputs() {
     // `(k * _) ~ _` with seed = k produces 2 outputs: primal and tangent.
     let mut arena = TreeArena::new();
     let (flat, _) = make_fad_one_pole(&mut arena);
-    let out = propagate_typed_with_ui(&mut arena, flat, &[], &mut ArityCache::new())
-        .expect("fad on recursive circuit should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("fad on recursive circuit should propagate");
     assert_eq!(out.signals.len(), 2, "expected primal + tangent");
 }
 
@@ -2154,8 +2255,14 @@ fn propagate_forward_ad_on_recursive_circuit_has_interleaved_debruijn_structure(
     // interleaved recursive group.
     let mut arena = TreeArena::new();
     let (flat, _) = make_fad_one_pole(&mut arena);
-    let out = propagate_typed_with_ui(&mut arena, flat, &[], &mut ArityCache::new())
-        .expect("fad on recursive circuit should propagate");
+    let out = propagate_typed_with_ui(
+        &mut arena,
+        flat,
+        &[],
+        &mut ArityCache::new(),
+        &crate::PropagateUiOptions::default(),
+    )
+    .expect("fad on recursive circuit should propagate");
 
     let SigMatch::Proj(primal_idx, primal_group) = match_sig(&arena, out.signals[0]) else {
         panic!("primal should be a projection");
