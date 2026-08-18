@@ -1803,116 +1803,188 @@ pub fn lex_tokens(input: &str) -> Result<Vec<LexedToken>, String> {
     Ok(out)
 }
 
-/// Parses one input with Slice-1 grammar and returns parser state.
-#[must_use]
-/// Parses one Faust source string into a [`ParseOutput`].
-pub fn parse_program(input: &str, source_file: &str) -> ParseOutput {
-    parse_program_with_metadata(
-        input,
-        source_file,
-        CompilationMetadataStore::new(source_file),
-    )
-}
-
-/// Parses one in-memory source using the provided shared metadata store.
-pub fn parse_program_with_metadata(
-    input: &str,
-    source_file: &str,
-    metadata_store: CompilationMetadataStore,
-) -> ParseOutput {
-    parse_program_with_precision_and_metadata(input, source_file, 1, metadata_store)
-}
-
-/// Parses one in-memory source using the selected Faust precision variant.
+/// Optional inputs shared by every parser entry point.
 ///
-/// `float_size` follows the C++ parser convention: `1=single`, `2=double`,
-/// `3=quad`, `4=fixed`.  The value is applied while parsing so definitions
-/// guarded by `singleprecision`/`doubleprecision` are selected correctly.
-pub fn parse_program_with_precision_and_metadata(
+/// Before 2026-08-18 the parser exposed fourteen entry points whose names
+/// spelled out which optional arguments they carried — `_with_metadata`,
+/// `_with_precision_and_metadata`, `_with_imports_and_precision_and_metadata`,
+/// `_with_remote_imports_and_precision_and_metadata`, and so on across the
+/// `parse_program` / `parse_file` / `parse_url` families. Each name was one
+/// point in a combinatorial space, and a caller had to find the point matching
+/// the arguments it happened to have.
+///
+/// The options travel in this struct instead, and the remaining entry points
+/// name the *operation* — parse a string, expand a string's imports, read a
+/// file, fetch a URL — because those genuinely differ: the in-memory no-import
+/// parse cannot fail, while anything resolving imports returns
+/// [`SourceReaderError`].
+#[derive(Clone, Debug)]
+pub struct ParseOptions {
+    /// Shared top-level metadata store.
+    ///
+    /// `None` makes the entry point create a fresh store whose master source is
+    /// the entry's own identity, which is what the short former variants did.
+    pub metadata_store: Option<CompilationMetadataStore>,
+    /// Faust precision variant, following the C++ parser convention:
+    /// `1=single`, `2=double`, `3=quad`, `4=fixed`. Applied while parsing so
+    /// definitions guarded by `singleprecision`/`doubleprecision` are selected
+    /// correctly. Defaults to `1`.
+    pub float_size: u8,
+    /// Explicit import search paths, in precedence order.
+    pub search_paths: Vec<std::path::PathBuf>,
+    /// In-memory source bundle consulted before the filesystem.
+    ///
+    /// Used by embedded compiler services such as `faustwasm`, where the
+    /// standard library set is embedded as logical assets rather than files.
+    pub virtual_sources: VirtualSourceMap,
+    /// Remote-source capability.
+    ///
+    /// Networking is impossible while this is `None`: a URL entry then yields
+    /// the structured [`SourceReaderError::NetworkDisabled`] diagnostic instead
+    /// of being mistaken for a filesystem path.
+    pub remote: Option<RemoteSourceCapability>,
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self {
+            metadata_store: None,
+            float_size: 1,
+            search_paths: Vec::new(),
+            virtual_sources: VirtualSourceMap::default(),
+            remote: None,
+        }
+    }
+}
+
+impl ParseOptions {
+    /// Options carrying only an explicit precision.
+    #[must_use]
+    pub fn with_float_size(mut self, float_size: u8) -> Self {
+        self.float_size = float_size;
+        self
+    }
+
+    /// Options carrying an explicit shared metadata store.
+    #[must_use]
+    pub fn with_metadata_store(mut self, metadata_store: CompilationMetadataStore) -> Self {
+        self.metadata_store = Some(metadata_store);
+        self
+    }
+
+    /// Options carrying explicit import search paths.
+    #[must_use]
+    pub fn with_search_paths(mut self, search_paths: &[std::path::PathBuf]) -> Self {
+        self.search_paths = search_paths.to_vec();
+        self
+    }
+
+    /// Options consulting an in-memory source bundle before the filesystem.
+    #[must_use]
+    pub fn with_virtual_sources(mut self, virtual_sources: VirtualSourceMap) -> Self {
+        self.virtual_sources = virtual_sources;
+        self
+    }
+
+    /// Options permitting HTTP(S) fetches through the supplied capability.
+    #[must_use]
+    pub fn with_remote(mut self, remote: RemoteSourceCapability) -> Self {
+        self.remote = Some(remote);
+        self
+    }
+
+    /// Resolves the metadata store, creating the default one for `master` when
+    /// the caller supplied none.
+    fn metadata_store_or_default(&self, master: &str) -> CompilationMetadataStore {
+        self.metadata_store
+            .clone()
+            .unwrap_or_else(|| CompilationMetadataStore::new(master))
+    }
+
+    /// Builds the source reader these options describe.
+    fn reader(&self, virtual_sources: Option<VirtualSourceMap>) -> SourceReader {
+        let reader = match virtual_sources {
+            Some(bundle) => SourceReader::with_virtual_sources(self.search_paths.clone(), bundle),
+            None => SourceReader::new(self.search_paths.clone()),
+        };
+        match self.remote.clone() {
+            Some(remote) => {
+                let (fetcher, policy) = remote.into_parts();
+                reader.with_remote_fetcher(fetcher, policy)
+            }
+            None => reader,
+        }
+    }
+}
+
+/// Parses one Faust source string into a [`ParseOutput`].
+///
+/// This is the shorthand for the dominant case — in-memory text, no import
+/// expansion — and is infallible by construction: with nothing to resolve there
+/// is no [`SourceReaderError`] to report. Callers needing precision or a shared
+/// metadata store use [`parse_program_with_options`].
+#[must_use]
+pub fn parse_program(input: &str, source_file: &str) -> ParseOutput {
+    parse_program_with_options(input, source_file, &ParseOptions::default())
+}
+
+/// Parses one in-memory source without expanding imports, under explicit options.
+///
+/// Only [`ParseOptions::metadata_store`] and [`ParseOptions::float_size`] are
+/// consulted: with no import expansion there is nothing for search paths, the
+/// virtual bundle, or the remote capability to act on.
+#[must_use]
+pub fn parse_program_with_options(
     input: &str,
     source_file: &str,
-    float_size: u8,
-    metadata_store: CompilationMetadataStore,
+    options: &ParseOptions,
 ) -> ParseOutput {
     parse_program_with_origins_and_precision(
         input,
         source_file,
         None,
-        metadata_store,
-        float_size,
+        options.metadata_store_or_default(source_file),
+        options.float_size,
         SourceKind::Memory,
     )
 }
 
-/// Parses one in-memory source and expands imports structurally from the parsed
-/// definition tree against explicit search paths plus an optional in-memory
-/// source bundle.
+/// Parses one in-memory source and expands its imports structurally.
 ///
-/// This is the source-string counterpart of
-/// [`parse_file_with_imports_and_metadata`]. It is primarily used by embedded
-/// compiler services such as `faustwasm`, where the root DSP comes from a
-/// string but the standard library set may be embedded as logical assets
-/// rather than files on disk.
-pub fn parse_program_with_imports_and_metadata(
-    input: &str,
-    source_file: &str,
-    search_paths: &[std::path::PathBuf],
-    virtual_sources: &VirtualSourceMap,
-    metadata_store: CompilationMetadataStore,
-) -> Result<ParseOutput, SourceReaderError> {
-    parse_program_with_imports_and_precision_and_metadata(
-        input,
-        source_file,
-        search_paths,
-        virtual_sources,
-        metadata_store,
-        1,
-    )
-}
-
-/// Parses an in-memory source bundle using the selected Faust precision
-/// variant while expanding imports structurally.
-pub fn parse_program_with_imports_and_precision_and_metadata(
-    input: &str,
-    source_file: &str,
-    search_paths: &[std::path::PathBuf],
-    virtual_sources: &VirtualSourceMap,
-    metadata_store: CompilationMetadataStore,
-    float_size: u8,
-) -> Result<ParseOutput, SourceReaderError> {
-    let bundle = virtual_sources.with_source(PathBuf::from(source_file), input.to_owned());
-    let reader = SourceReader::with_virtual_sources(search_paths.to_vec(), bundle);
-    StructuralImportExpander::new(reader, metadata_store, float_size)
-        .parse_entry(Path::new(source_file))
-}
-
-/// Parses an in-memory root while resolving explicit remote imports through an
-/// injected capability.
+/// This is the source-string counterpart of [`parse_file`], used by embedded
+/// compiler services such as `faustwasm` where the root DSP arrives as a string
+/// while the standard library set is embedded in
+/// [`ParseOptions::virtual_sources`].
 ///
-/// If `source_file` is an absolute HTTP(S) URL, it becomes the root source
-/// identity and the base for relative imports; the supplied root text is not
-/// fetched again. Otherwise the root keeps its existing virtual-path identity
-/// and only explicit HTTP(S) imports enter the remote graph.
-pub fn parse_program_with_remote_imports_and_precision_and_metadata(
+/// When [`ParseOptions::remote`] is present and `source_file` is an absolute
+/// HTTP(S) URL, that URL becomes the root identity and the base for relative
+/// imports, and the supplied text is used as-is rather than fetched again.
+///
+/// # Errors
+/// Returns [`SourceReaderError`] when an import cannot be located, read, or
+/// fetched.
+pub fn parse_program_with_imports(
     input: &str,
     source_file: &str,
-    search_paths: &[std::path::PathBuf],
-    virtual_sources: &VirtualSourceMap,
-    metadata_store: CompilationMetadataStore,
-    float_size: u8,
-    remote: RemoteSourceCapability,
+    options: &ParseOptions,
 ) -> Result<ParseOutput, SourceReaderError> {
-    let remote_root =
-        url::Url::parse(source_file).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+    // The remote-root branch stays gated on an actual remote capability so a
+    // local caller whose source identity happens to parse as a URL keeps the
+    // filesystem behaviour it had before the entry points were merged.
+    let remote_root = options.remote.is_some()
+        && url::Url::parse(source_file).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
     let bundle = if remote_root {
-        virtual_sources.clone()
+        options.virtual_sources.clone()
     } else {
-        virtual_sources.with_source(PathBuf::from(source_file), input.to_owned())
+        options
+            .virtual_sources
+            .with_source(PathBuf::from(source_file), input.to_owned())
     };
-    let (fetcher, policy) = remote.into_parts();
-    let reader = SourceReader::with_virtual_sources(search_paths.to_vec(), bundle)
-        .with_remote_fetcher(fetcher, policy);
-    let expander = StructuralImportExpander::new(reader, metadata_store, float_size);
+    let expander = StructuralImportExpander::new(
+        options.reader(Some(bundle)),
+        options.metadata_store_or_default(source_file),
+        options.float_size,
+    );
     if remote_root {
         expander.parse_supplied_remote_entry(source_file, input)
     } else {
@@ -1923,125 +1995,54 @@ pub fn parse_program_with_remote_imports_and_precision_and_metadata(
 /// Reads a source file, parses each imported file as its own unit, then expands
 /// import-file nodes structurally like the C++ compiler.
 ///
-/// This convenience entry point creates a fresh top-level metadata store whose
-/// master source is the canonicalized entry path. Imported files encountered
-/// during structural expansion will therefore contribute scoped metadata
-/// entries relative to that master.
-pub fn parse_file_with_imports(
-    path: &std::path::Path,
-    search_paths: &[std::path::PathBuf],
-) -> Result<ParseOutput, SourceReaderError> {
-    parse_file_with_imports_and_metadata(
-        path,
-        search_paths,
-        CompilationMetadataStore::new(
-            &path
-                .canonicalize()
-                .unwrap_or_else(|_| path.to_path_buf())
-                .to_string_lossy(),
-        ),
-    )
-}
-
-/// Reads and expands a file using the selected Faust precision variant.
-pub fn parse_file_with_imports_and_precision(
-    path: &std::path::Path,
-    search_paths: &[std::path::PathBuf],
-    float_size: u8,
-) -> Result<ParseOutput, SourceReaderError> {
-    parse_file_with_imports_and_precision_and_metadata(
-        path,
-        search_paths,
-        CompilationMetadataStore::new(
-            &path
-                .canonicalize()
-                .unwrap_or_else(|_| path.to_path_buf())
-                .to_string_lossy(),
-        ),
-        float_size,
-    )
-}
-
-/// Reads a source file, parses imported files as separate parse units, then
-/// expands import-file nodes structurally using the provided shared top-level
-/// metadata store.
+/// [`ParseOutput::used_files`] preserves the deterministic recursive structural
+/// import visitation order. When [`ParseOptions::metadata_store`] is absent, a
+/// fresh top-level store is created whose master source is the canonicalized
+/// entry path, so imported files contribute scoped metadata relative to it.
 ///
-/// This is the file-backed parser entry point used by later compilation stages
-/// that need top-level metadata continuity across parse/eval boundaries. The
-/// returned [`ParseOutput::used_files`] preserves the deterministic recursive
-/// structural import visitation order.
-pub fn parse_file_with_imports_and_metadata(
+/// # Errors
+/// Returns [`SourceReaderError`] when the entry or an import cannot be located,
+/// read, or fetched.
+pub fn parse_file(
     path: &std::path::Path,
-    search_paths: &[std::path::PathBuf],
-    metadata_store: CompilationMetadataStore,
+    options: &ParseOptions,
 ) -> Result<ParseOutput, SourceReaderError> {
-    parse_file_with_imports_and_precision_and_metadata(path, search_paths, metadata_store, 1)
-}
-
-/// Reads and expands a file using the selected Faust precision variant.
-pub fn parse_file_with_imports_and_precision_and_metadata(
-    path: &std::path::Path,
-    search_paths: &[std::path::PathBuf],
-    metadata_store: CompilationMetadataStore,
-    float_size: u8,
-) -> Result<ParseOutput, SourceReaderError> {
-    let reader = SourceReader::new(search_paths.to_vec());
-    StructuralImportExpander::new(reader, metadata_store, float_size).parse_entry(path)
+    let master = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    StructuralImportExpander::new(
+        options.reader(None),
+        options.metadata_store_or_default(&master),
+        options.float_size,
+    )
+    .parse_entry(path)
 }
 
 /// Parses an HTTP(S) entry source and structurally expands its imports.
 ///
 /// # Source provenance and adaptation
 ///
-/// This is the policy-injected Rust counterpart of
-/// `SourceReader::parseFile` plus `http_fetch` in C++
-/// `compiler/parser/sourcereader.cpp`. Networking is impossible unless the
-/// caller supplies a [`RemoteSourceFetcher`]. Relative imports from a remote
-/// source are joined with its final redirect URL; explicit local search paths
-/// retain their existing precedence.
-pub fn parse_url_with_imports_and_precision_and_metadata(
-    url: &str,
-    search_paths: &[std::path::PathBuf],
-    metadata_store: CompilationMetadataStore,
-    float_size: u8,
-    fetcher: std::sync::Arc<dyn RemoteSourceFetcher>,
-    policy: RemoteFetchPolicy,
-) -> Result<ParseOutput, SourceReaderError> {
-    let reader = SourceReader::new(search_paths.to_vec()).with_remote_fetcher(fetcher, policy);
-    StructuralImportExpander::new(reader, metadata_store, float_size).parse_remote_entry(url)
-}
-
-/// Parses an HTTP(S) entry with networking deliberately disabled.
+/// This is the policy-injected Rust counterpart of `SourceReader::parseFile`
+/// plus `http_fetch` in C++ `compiler/parser/sourcereader.cpp`. Networking is
+/// impossible unless [`ParseOptions::remote`] supplies a
+/// [`RemoteSourceFetcher`]; without one this entry point returns the structured
+/// [`SourceReaderError::NetworkDisabled`] diagnostic rather than treating the
+/// URL as a filesystem path. Relative imports from a remote source are joined
+/// with its final redirect URL; explicit local search paths retain their
+/// existing precedence.
 ///
-/// This entry point exists so feature-off compiler builds return the same
-/// structured [`SourceReaderError::NetworkDisabled`] diagnostic instead of
-/// accidentally treating an URL as a filesystem path.
-pub fn parse_url_with_imports_disabled_and_precision_and_metadata(
-    url: &str,
-    search_paths: &[std::path::PathBuf],
-    metadata_store: CompilationMetadataStore,
-    float_size: u8,
-) -> Result<ParseOutput, SourceReaderError> {
+/// # Errors
+/// Returns [`SourceReaderError`] when networking is disabled, or when the entry
+/// or an import cannot be fetched.
+pub fn parse_url(url: &str, options: &ParseOptions) -> Result<ParseOutput, SourceReaderError> {
     StructuralImportExpander::new(
-        SourceReader::new(search_paths.to_vec()),
-        metadata_store,
-        float_size,
+        options.reader(None),
+        options.metadata_store_or_default(url),
+        options.float_size,
     )
     .parse_remote_entry(url)
-}
-
-/// Parses a local entry while permitting only explicit HTTP(S) imports through
-/// the supplied remote capability.
-pub fn parse_file_with_remote_imports_and_precision_and_metadata(
-    path: &std::path::Path,
-    search_paths: &[std::path::PathBuf],
-    metadata_store: CompilationMetadataStore,
-    float_size: u8,
-    fetcher: std::sync::Arc<dyn RemoteSourceFetcher>,
-    policy: RemoteFetchPolicy,
-) -> Result<ParseOutput, SourceReaderError> {
-    let reader = SourceReader::new(search_paths.to_vec()).with_remote_fetcher(fetcher, policy);
-    StructuralImportExpander::new(reader, metadata_store, float_size).parse_entry(path)
 }
 
 #[derive(Clone, Debug, Default)]

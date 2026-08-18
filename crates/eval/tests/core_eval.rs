@@ -15,7 +15,7 @@ use eval::{
     Environment, EvalError, EvalSourceContext, LoopDetector, eval_box, eval_process,
     eval_process_with_source_context, eval_process_with_stats,
 };
-use parser::{CompilationMetadataKey, parse_file_with_imports, parse_program};
+use parser::{CompilationMetadataKey, parse_file, parse_program};
 use propagate::ArityCache;
 use tlib::{NodeKind, TreeArena, TreeId};
 
@@ -1263,8 +1263,11 @@ process = p(0, 0, 0.0) with {
         );
     }
 
-    let parsed = parse_file_with_imports(&entry, std::slice::from_ref(&root_dir))
-        .expect("file-backed parse should succeed");
+    let parsed = parse_file(
+        &entry,
+        &parser::ParseOptions::default().with_search_paths(std::slice::from_ref(&root_dir)),
+    )
+    .expect("file-backed parse should succeed");
     assert!(
         parsed.errors.is_empty(),
         "parser should accept recursive local case priority parity fixture: {:?}",
@@ -1561,8 +1564,11 @@ fn eval_process_tupled_higher_order_locals_match_cpp_reference() {
         );
     }
 
-    let parsed = parse_file_with_imports(&entry, std::slice::from_ref(&root_dir))
-        .expect("file-backed parse should succeed");
+    let parsed = parse_file(
+        &entry,
+        &parser::ParseOptions::default().with_search_paths(std::slice::from_ref(&root_dir)),
+    )
+    .expect("file-backed parse should succeed");
     assert!(
         parsed.errors.is_empty(),
         "parser should accept higher-order tuple parity fixture: {:?}",
@@ -1642,8 +1648,11 @@ fn eval_process_unapplied_local_case_higher_order_matches_cpp_reference() {
         );
     }
 
-    let parsed = parse_file_with_imports(&entry, std::slice::from_ref(&root_dir))
-        .expect("file-backed parse should succeed");
+    let parsed = parse_file(
+        &entry,
+        &parser::ParseOptions::default().with_search_paths(std::slice::from_ref(&root_dir)),
+    )
+    .expect("file-backed parse should succeed");
     assert!(
         parsed.errors.is_empty(),
         "parser should accept local case higher-order parity fixture: {:?}",

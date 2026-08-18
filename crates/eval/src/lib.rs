@@ -1339,7 +1339,7 @@ fn eval_access_value(
 /// `boxIdent("process")` (`component`) or `boxEnvironment()` (`library`).
 /// Rust reproduces the same semantic contract by:
 /// - resolving the target against the captured [`EvalSourceContext`],
-/// - parsing the loaded file through `parser::parse_file_with_imports(...)`,
+/// - parsing the loaded file through `parser::parse_file(...)`,
 ///   which now preserves `importFile(...)` nodes through parse and expands them
 ///   structurally from the parsed definition tree like C++
 ///   `gReader.expandList(gReader.getList(fname))`,
@@ -1393,38 +1393,44 @@ fn eval_loaded_source_value(
             let parse = match source_context.metadata_store() {
                 Some(metadata_store) => {
                     if let Some(source) = source_context.virtual_sources().get(&resolved_path) {
-                        parser::parse_program_with_imports_and_precision_and_metadata(
+                        parser::parse_program_with_imports(
                             source,
                             &resolved_path.to_string_lossy(),
-                            source_context.search_paths(),
-                            source_context.virtual_sources(),
-                            metadata_store.clone(),
-                            float_size,
+                            &parser::ParseOptions::default()
+                                .with_search_paths(source_context.search_paths())
+                                .with_virtual_sources(source_context.virtual_sources().clone())
+                                .with_metadata_store(metadata_store.clone())
+                                .with_float_size(float_size),
                         )
                     } else {
-                        parser::parse_file_with_imports_and_precision_and_metadata(
+                        parser::parse_file(
                             &resolved_path,
-                            source_context.search_paths(),
-                            metadata_store.clone(),
-                            float_size,
+                            &parser::ParseOptions::default()
+                                .with_search_paths(source_context.search_paths())
+                                .with_metadata_store(metadata_store.clone())
+                                .with_float_size(float_size),
                         )
                     }
                 }
                 None => {
                     if let Some(source) = source_context.virtual_sources().get(&resolved_path) {
-                        parser::parse_program_with_imports_and_precision_and_metadata(
+                        parser::parse_program_with_imports(
                             source,
                             &resolved_path.to_string_lossy(),
-                            source_context.search_paths(),
-                            source_context.virtual_sources(),
-                            parser::CompilationMetadataStore::new(&resolved_path.to_string_lossy()),
-                            float_size,
+                            &parser::ParseOptions::default()
+                                .with_search_paths(source_context.search_paths())
+                                .with_virtual_sources(source_context.virtual_sources().clone())
+                                .with_metadata_store(parser::CompilationMetadataStore::new(
+                                    &resolved_path.to_string_lossy(),
+                                ))
+                                .with_float_size(float_size),
                         )
                     } else {
-                        parser::parse_file_with_imports_and_precision(
+                        parser::parse_file(
                             &resolved_path,
-                            source_context.search_paths(),
-                            float_size,
+                            &parser::ParseOptions::default()
+                                .with_search_paths(source_context.search_paths())
+                                .with_float_size(float_size),
                         )
                     }
                 }

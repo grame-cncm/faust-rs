@@ -620,10 +620,16 @@ fn compiler_memory_eval_source_context_preserves_ui_widgets() {
     let source = "process = *(hslider(\"gain\", 0.5, 0.0, 1.0, 0.01));";
     let store_without_ctx = parser::CompilationMetadataStore::new("gain");
     let store_with_ctx = parser::CompilationMetadataStore::new("gain");
-    let output_without_ctx =
-        parser::parse_program_with_metadata(source, "gain", store_without_ctx.clone());
-    let output_with_ctx =
-        parser::parse_program_with_metadata(source, "gain", store_with_ctx.clone());
+    let output_without_ctx = parser::parse_program_with_options(
+        source,
+        "gain",
+        &parser::ParseOptions::default().with_metadata_store(store_without_ctx.clone()),
+    );
+    let output_with_ctx = parser::parse_program_with_options(
+        source,
+        "gain",
+        &parser::ParseOptions::default().with_metadata_store(store_with_ctx.clone()),
+    );
 
     let without_ctx = compiler
         .pipeline_to_signals("gain", output_without_ctx, None)

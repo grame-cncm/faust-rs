@@ -972,11 +972,12 @@ impl Compiler {
         source: &str,
     ) -> Result<ParseOutput, CompilerError> {
         let output = self.time_phase("parser", || {
-            parser::parse_program_with_precision_and_metadata(
+            parser::parse_program_with_options(
                 source,
                 source_name,
-                parser_float_size(self.real_type),
-                parser::CompilationMetadataStore::new(source_name),
+                &parser::ParseOptions::default()
+                    .with_float_size(parser_float_size(self.real_type))
+                    .with_metadata_store(parser::CompilationMetadataStore::new(source_name)),
             )
         });
         ensure_parse_success(source_name, output)
@@ -1007,36 +1008,46 @@ impl Compiler {
                 if let Some(url) = remote_url {
                     let metadata = parser::CompilationMetadataStore::new(url);
                     if let Some(fetcher) = self.remote_fetcher.clone() {
-                        parser::parse_url_with_imports_and_precision_and_metadata(
+                        parser::parse_url(
                             url,
-                            &import_search_paths,
-                            metadata,
-                            parser_float_size(self.real_type),
-                            fetcher,
-                            self.remote_fetch_policy,
+                            &parser::ParseOptions::default()
+                                .with_search_paths(&import_search_paths)
+                                .with_metadata_store(metadata)
+                                .with_float_size(parser_float_size(self.real_type))
+                                .with_remote(parser::RemoteSourceCapability::new(
+                                    fetcher,
+                                    self.remote_fetch_policy,
+                                )),
                         )
                     } else {
-                        parser::parse_url_with_imports_disabled_and_precision_and_metadata(
+                        parser::parse_url(
                             url,
-                            &import_search_paths,
-                            metadata,
-                            parser_float_size(self.real_type),
+                            &parser::ParseOptions::default()
+                                .with_search_paths(&import_search_paths)
+                                .with_metadata_store(metadata)
+                                .with_float_size(parser_float_size(self.real_type)),
                         )
                     }
                 } else if let Some(fetcher) = self.remote_fetcher.clone() {
-                    parser::parse_file_with_remote_imports_and_precision_and_metadata(
+                    parser::parse_file(
                         path,
-                        &import_search_paths,
-                        parser::CompilationMetadataStore::new(&path.display().to_string()),
-                        parser_float_size(self.real_type),
-                        fetcher,
-                        self.remote_fetch_policy,
+                        &parser::ParseOptions::default()
+                            .with_search_paths(&import_search_paths)
+                            .with_metadata_store(parser::CompilationMetadataStore::new(
+                                &path.display().to_string(),
+                            ))
+                            .with_float_size(parser_float_size(self.real_type))
+                            .with_remote(parser::RemoteSourceCapability::new(
+                                fetcher,
+                                self.remote_fetch_policy,
+                            )),
                     )
                 } else {
-                    parser::parse_file_with_imports_and_precision(
+                    parser::parse_file(
                         path,
-                        &import_search_paths,
-                        parser_float_size(self.real_type),
+                        &parser::ParseOptions::default()
+                            .with_search_paths(&import_search_paths)
+                            .with_float_size(parser_float_size(self.real_type)),
                     )
                 }
             })
@@ -1147,11 +1158,12 @@ impl Compiler {
             ensure_parse_success(
                 source_name,
                 self.time_phase("parser", || {
-                    parser::parse_program_with_precision_and_metadata(
+                    parser::parse_program_with_options(
                         source,
                         source_name,
-                        parser_float_size(self.real_type),
-                        metadata_store.clone(),
+                        &parser::ParseOptions::default()
+                            .with_float_size(parser_float_size(self.real_type))
+                            .with_metadata_store(metadata_store.clone()),
                     )
                 }),
             )?
@@ -1159,14 +1171,18 @@ impl Compiler {
             ensure_parse_success(
                 source_name,
                 self.time_phase("parser", || {
-                    parser::parse_program_with_remote_imports_and_precision_and_metadata(
+                    parser::parse_program_with_imports(
                         source,
                         source_name,
-                        search_paths,
-                        virtual_sources,
-                        metadata_store.clone(),
-                        parser_float_size(self.real_type),
-                        parser::RemoteSourceCapability::new(fetcher, self.remote_fetch_policy),
+                        &parser::ParseOptions::default()
+                            .with_search_paths(search_paths)
+                            .with_virtual_sources(virtual_sources.clone())
+                            .with_metadata_store(metadata_store.clone())
+                            .with_float_size(parser_float_size(self.real_type))
+                            .with_remote(parser::RemoteSourceCapability::new(
+                                fetcher,
+                                self.remote_fetch_policy,
+                            )),
                     )
                 })
                 .map_err(CompilerError::import)?,
@@ -1175,13 +1191,14 @@ impl Compiler {
             ensure_parse_success(
                 source_name,
                 self.time_phase("parser", || {
-                    parser::parse_program_with_imports_and_precision_and_metadata(
+                    parser::parse_program_with_imports(
                         source,
                         source_name,
-                        search_paths,
-                        virtual_sources,
-                        metadata_store.clone(),
-                        parser_float_size(self.real_type),
+                        &parser::ParseOptions::default()
+                            .with_search_paths(search_paths)
+                            .with_virtual_sources(virtual_sources.clone())
+                            .with_metadata_store(metadata_store.clone())
+                            .with_float_size(parser_float_size(self.real_type)),
                     )
                 })
                 .map_err(CompilerError::import)?,
@@ -1248,37 +1265,45 @@ impl Compiler {
             self.time_phase("parser", || {
                 if let Some(url) = remote_url {
                     if let Some(fetcher) = self.remote_fetcher.clone() {
-                        parser::parse_url_with_imports_and_precision_and_metadata(
+                        parser::parse_url(
                             url,
-                            &import_search_paths,
-                            metadata_store.clone(),
-                            parser_float_size(self.real_type),
-                            fetcher,
-                            self.remote_fetch_policy,
+                            &parser::ParseOptions::default()
+                                .with_search_paths(&import_search_paths)
+                                .with_metadata_store(metadata_store.clone())
+                                .with_float_size(parser_float_size(self.real_type))
+                                .with_remote(parser::RemoteSourceCapability::new(
+                                    fetcher,
+                                    self.remote_fetch_policy,
+                                )),
                         )
                     } else {
-                        parser::parse_url_with_imports_disabled_and_precision_and_metadata(
+                        parser::parse_url(
                             url,
-                            &import_search_paths,
-                            metadata_store.clone(),
-                            parser_float_size(self.real_type),
+                            &parser::ParseOptions::default()
+                                .with_search_paths(&import_search_paths)
+                                .with_metadata_store(metadata_store.clone())
+                                .with_float_size(parser_float_size(self.real_type)),
                         )
                     }
                 } else if let Some(fetcher) = self.remote_fetcher.clone() {
-                    parser::parse_file_with_remote_imports_and_precision_and_metadata(
+                    parser::parse_file(
                         path,
-                        &import_search_paths,
-                        metadata_store.clone(),
-                        parser_float_size(self.real_type),
-                        fetcher,
-                        self.remote_fetch_policy,
+                        &parser::ParseOptions::default()
+                            .with_search_paths(&import_search_paths)
+                            .with_metadata_store(metadata_store.clone())
+                            .with_float_size(parser_float_size(self.real_type))
+                            .with_remote(parser::RemoteSourceCapability::new(
+                                fetcher,
+                                self.remote_fetch_policy,
+                            )),
                     )
                 } else {
-                    parser::parse_file_with_imports_and_precision_and_metadata(
+                    parser::parse_file(
                         path,
-                        &import_search_paths,
-                        metadata_store.clone(),
-                        parser_float_size(self.real_type),
+                        &parser::ParseOptions::default()
+                            .with_search_paths(&import_search_paths)
+                            .with_metadata_store(metadata_store.clone())
+                            .with_float_size(parser_float_size(self.real_type)),
                     )
                 }
             })

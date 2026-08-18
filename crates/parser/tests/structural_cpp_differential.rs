@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use boxes::{BoxMatch, dump_box, match_box};
-use parser::{parse_file_with_imports, parse_program};
+use parser::{parse_file, parse_program};
 use tlib::{NodeKind, TreeArena, TreeId};
 
 fn list_head(arena: &TreeArena, list: TreeId) -> TreeId {
@@ -321,7 +321,11 @@ fn production_parser_import_heavy_fixture_matches_cpp_acceptance() {
     fs::write(&lib, "import(\"core/base.lib\");\ngain = base;\n").expect("lib should be written");
     fs::write(&core, "base = _;\n").expect("core should be written");
 
-    let out = parse_file_with_imports(&main, &[root.join("libs")]).expect("parse should succeed");
+    let out = parse_file(
+        &main,
+        &parser::ParseOptions::default().with_search_paths(&[root.join("libs")]),
+    )
+    .expect("parse should succeed");
     assert!(out.root.is_some(), "root should be present");
     assert!(
         out.errors.is_empty(),
@@ -377,8 +381,11 @@ fn production_file_parser_expands_inline_environment_import_structurally() {
     .expect("main should be written");
     fs::write(&child, "process = _;\n").expect("child should be written");
 
-    let output =
-        parse_file_with_imports(&main, std::slice::from_ref(&root)).expect("parse should succeed");
+    let output = parse_file(
+        &main,
+        &parser::ParseOptions::default().with_search_paths(std::slice::from_ref(&root)),
+    )
+    .expect("parse should succeed");
     assert!(
         output.errors.is_empty(),
         "unexpected parse errors: {:?}",
@@ -693,8 +700,11 @@ fn production_parser_prepare_pattern_keeps_component_opaque_like_cpp() {
         let _ = fs::remove_file(out_c);
     }
 
-    let output =
-        parse_file_with_imports(&main, std::slice::from_ref(&root)).expect("parse should succeed");
+    let output = parse_file(
+        &main,
+        &parser::ParseOptions::default().with_search_paths(std::slice::from_ref(&root)),
+    )
+    .expect("parse should succeed");
     assert!(
         output.errors.is_empty(),
         "unexpected parse errors for opaque component pattern: {:?}",
