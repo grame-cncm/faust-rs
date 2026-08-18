@@ -877,3 +877,39 @@ fn code_graphs_check_flag_parses() {
         other => panic!("unexpected command: {other:?}"),
     }
 }
+
+/// Methods are recorded under their implementing type.
+///
+/// Without qualification every constructor collapses onto the single name
+/// `new` — 18 of the 31 crates already had a bare `fn new` entry — so adding a
+/// constructor to a new type produced no baseline diff and `--check` stayed
+/// silent. This is the blind spot P1 exposed on 2026-08-18.
+#[test]
+fn impl_headers_name_the_implementing_type() {
+    assert_eq!(
+        parse_impl_header("impl SignalFirRequest<'_> {").as_deref(),
+        Some("SignalFirRequest")
+    );
+    assert_eq!(
+        parse_impl_header("impl<'a> SignalFirRequest<'a> {").as_deref(),
+        Some("SignalFirRequest")
+    );
+    assert_eq!(
+        parse_impl_header("impl std::fmt::Display for CodegenError {").as_deref(),
+        Some("CodegenError"),
+        "a trait impl is looked up by its type, not its trait"
+    );
+    assert_eq!(parse_impl_header("    impl Nested {"), None);
+    assert_eq!(parse_impl_header("pub fn new() -> Self {"), None);
+}
+
+/// Brace counting must ignore braces inside strings and line comments,
+/// otherwise one format string desynchronises every `impl` after it.
+#[test]
+fn brace_balance_ignores_strings_and_comments() {
+    assert_eq!(brace_balance("impl Foo {"), 1);
+    assert_eq!(brace_balance("}"), -1);
+    assert_eq!(brace_balance(r#"write!(f, "[{}] {}", a, b);"#), 0);
+    assert_eq!(brace_balance("let x = 1; // a { brace in a comment"), 0);
+    assert_eq!(brace_balance(r#"let s = "{";"#), 0);
+}

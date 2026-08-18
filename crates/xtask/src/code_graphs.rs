@@ -585,14 +585,32 @@ pub(crate) fn public_items_for_package(
     let mut items = Vec::new();
     for file in files {
         let text = fs::read_to_string(&file)?;
+        // Track the enclosing `impl` so methods are recorded as `Type::method`.
+        // Without this, `SignalFirRequest::new` and every other constructor
+        // collapse onto the single name `new` in the baseline, and adding a
+        // method to a new type is invisible to `--check`.
+        let mut depth: i32 = 0;
+        let mut impl_type: Option<String> = None;
         for (idx, line) in text.lines().enumerate() {
+            if depth == 0 {
+                impl_type = parse_impl_header(line);
+            }
             if let Some((kind, name)) = parse_public_item_line(line) {
+                let name = match impl_type.as_deref() {
+                    Some(ty) if depth > 0 && kind == "fn" => format!("{ty}::{name}"),
+                    _ => name,
+                };
                 items.push(PublicItem {
                     kind,
                     name,
                     path: file.clone(),
                     line: idx + 1,
                 });
+            }
+            depth += brace_balance(line);
+            if depth <= 0 {
+                depth = 0;
+                impl_type = None;
             }
         }
     }
@@ -616,6 +634,80 @@ pub(crate) fn collect_rs_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Extracts the implementing type from an `impl` header line.
+///
+/// Handles the shapes this workspace uses: `impl Type {`, `impl<'a> Type<'a> {`,
+/// and `impl Trait for Type {` — the last one yielding `Type`, since that is the
+/// item a reader looks up. Returns `None` for any line that does not open an
+/// `impl` at the start of the line, which keeps nested or indented blocks out.
+pub(crate) fn parse_impl_header(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("impl")?;
+    let rest = match rest.strip_prefix('<') {
+        // Skip the generic parameter list introduced right after `impl`.
+        Some(after) => {
+            let mut depth = 1usize;
+            let mut end = 0usize;
+            for (offset, ch) in after.char_indices() {
+                match ch {
+                    '<' => depth += 1,
+                    '>' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = offset + ch.len_utf8();
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            &after[end..]
+        }
+        None => rest,
+    };
+    let rest = rest.trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+    // `impl Trait for Type` names the type after `for`.
+    let target = rest.rsplit(" for ").next().unwrap_or(rest).trim_start();
+    let target = target
+        .split_whitespace()
+        .next()?
+        .split('<')
+        .next()?
+        .split('{')
+        .next()?;
+    let name = target.rsplit("::").next()?.trim();
+    if name.is_empty() || !name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+        return None;
+    }
+    Some(name.to_owned())
+}
+
+/// Net brace balance of one source line, ignoring string literals and the
+/// trailing line comment.
+///
+/// Deliberately crude, consistent with the rest of this scanner: it is enough to
+/// tell whether the current line still sits inside an `impl` body.
+pub(crate) fn brace_balance(line: &str) -> i32 {
+    let mut balance = 0;
+    let mut in_string = false;
+    let mut chars = line.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        match ch {
+            '\\' if in_string => {
+                chars.next();
+            }
+            '"' => in_string = !in_string,
+            '/' if !in_string && line[idx..].starts_with("//") => break,
+            '{' if !in_string => balance += 1,
+            '}' if !in_string => balance -= 1,
+            _ => {}
+        }
+    }
+    balance
 }
 
 /// Parses one source line as a top-level public item declaration.
