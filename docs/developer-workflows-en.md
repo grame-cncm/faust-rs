@@ -59,25 +59,41 @@ See:
 
 The compiler currently supports:
 
+- `-lang asc`
 - `-lang c`
+- `-lang cmajor`
+- `-lang codebox` / `-lang codebox-test`
 - `-lang cpp`
+- `-lang cranelift`
 - `-lang fir`
 - `-lang interp`
-- `-lang cranelift`
+- `-lang julia`
+- `-lang rust`
 - `-lang wasm`
 - `-lang wast`
 
 ```bash
+cargo run -p compiler -- -lang asc tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang c tests/corpus/rep_01_passthrough.dsp
+cargo run -p compiler -- -lang cmajor tests/corpus/rep_01_passthrough.dsp
+cargo run -p compiler -- -lang codebox tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang cpp tests/corpus/rep_01_passthrough.dsp
+cargo run -p compiler -- -lang cranelift tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang fir tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang interp tests/corpus/rep_01_passthrough.dsp
+cargo run -p compiler -- -lang julia tests/corpus/rep_01_passthrough.dsp
+cargo run -p compiler -- -lang rust tests/corpus/rep_01_passthrough.dsp
 cargo run -p compiler -- -lang wasm tests/corpus/rep_01_passthrough.dsp -o /tmp/out.wasm
 cargo run -p compiler -- -lang wast tests/corpus/rep_01_passthrough.dsp
 ```
 
+See `docs/user-cli-guide-en.md` for the full flag surface (`-vec`, `-ec`/`-os`,
+`--table-init`, `--svg`, architecture wrapping, legacy flag spellings, etc.).
+
 Useful current CLI extras for developer workflows:
 
+- `--check` for front-end + FIR verification with no codegen, the preferred
+  mode for CI/tooling validity checks (schema shared with success and failure)
 - `--json` for strict Faust JSON output, optionally alongside `-lang <backend>`
 - `--dump-fir-verify` for FIR verifier reports without backend emission
 - `--dump-cranelift` for the experimental backend status report

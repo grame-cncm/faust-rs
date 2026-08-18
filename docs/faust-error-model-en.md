@@ -906,6 +906,9 @@ name — both are listed below.
 | `FRS-SRC-0001` | `source_reader` | A source file could not be read. |
 | `FRS-SRC-0002` | `source_reader` | An `import(...)` could not be resolved. Lists every directory searched. |
 | `FRS-SRC-0003` | `source_reader` | The imports form a cycle. Reports the complete cycle, one location per edge. |
+| `FRS-SRC-0004` | `source_reader` | A remote source URL is invalid or uses an unsupported scheme. |
+| `FRS-SRC-0005` | `source_reader` | A remote source was requested without an injected network capability. |
+| `FRS-SRC-0006` | `source_reader` | An injected remote transport failed to fetch a source. |
 
 `FRS-SRC-*` diagnostics are categorized `environment`, not `user_code`: your DSP
 may be correct and your search path wrong.
