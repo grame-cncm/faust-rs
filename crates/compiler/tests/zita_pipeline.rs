@@ -4,7 +4,9 @@ use compiler::{Compiler, CompilerError, SignalCompileOutput};
 use parser::SourceReaderError;
 use std::path::PathBuf;
 use std::thread;
-use transform::signal_fir::{RealType, SignalFirOptions, compile_signals_to_fir_fastlane_with_ui};
+use transform::signal_fir::{
+    RealType, SignalFirOptions, SignalFirRequest, compile_signals_to_fir_fastlane,
+};
 use transform::signal_prepare::prepare_signals_for_fir;
 use ui::UiProgram;
 
@@ -94,7 +96,7 @@ fn zita_min_fastlane_fir_lowering_completes() {
         let Some(output) = compile_zita_signals() else {
             return;
         };
-        let fir = compile_signals_to_fir_fastlane_with_ui(
+        let fir = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
             &output.parse.state.arena,
             &output.signals,
             output.process_arity.inputs,
@@ -105,7 +107,7 @@ fn zita_min_fastlane_fir_lowering_completes() {
                 real_type: RealType::Float32,
                 ..SignalFirOptions::default()
             },
-        )
+        ))
         .expect("fast-lane FIR lowering should succeed for zita_min");
         assert!(fir.module.as_u32() > 0);
     });

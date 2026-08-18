@@ -734,18 +734,20 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane_with_timing(
         table_init_mode,
         table_init_sample_rate,
     };
-    let lowered =
-        transform::signal_fir::compile_signals_to_fir_fastlane_clocked_with_timing_and_origins(
-            &output.parse.state.arena,
-            &output.signals,
-            output.process_arity.inputs,
-            output.propagated_output_count(),
-            &output.ui,
-            &output.clock_domains,
-            &signal_fir_options,
-            timing_sink.map(|sink| sink.as_ref()),
-            Some(&output.signal_origins),
-        )?;
+    let mut request = transform::signal_fir::SignalFirRequest::new(
+        &output.parse.state.arena,
+        &output.signals,
+        output.process_arity.inputs,
+        output.propagated_output_count(),
+        &output.ui,
+        &signal_fir_options,
+    )
+    .with_clock_domains(&output.clock_domains)
+    .with_signal_origins(&output.signal_origins);
+    if let Some(sink) = timing_sink {
+        request = request.with_timing_sink(sink.as_ref());
+    }
+    let lowered = transform::signal_fir::compile_signals_to_fir_fastlane(&request)?;
     // Canonicalize every FIR artifact before it reaches any backend or FIR
     // dump. This is deliberately independent of `--no-fir-verify`: pure Drop
     // roots are construction scaffolding, not an optional backend optimization.

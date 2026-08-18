@@ -2280,11 +2280,7 @@ fn clauses
 fn code
 fn commit_recursion_step
 fn compare_emission_order
-fn compile_signals_to_fir_fastlane_clocked
-fn compile_signals_to_fir_fastlane_clocked_with_timing
-fn compile_signals_to_fir_fastlane_clocked_with_timing_and_origins
-fn compile_signals_to_fir_fastlane_with_ui
-fn compile_signals_to_fir_fastlane_with_ui_and_shadow
+fn compile_signals_to_fir_fastlane
 fn condition
 fn condition_children
 fn conditions
@@ -2414,6 +2410,10 @@ fn verify_vector_plan
 fn verify_vector_state_plan
 fn verify_vector_state_plan_with_clock
 fn with_box_origins
+fn with_clock_domains
+fn with_forced_shadow_report
+fn with_signal_origins
+fn with_timing_sink
 fn wrtbl_is_readonly
 mod analysis
 mod assemble
@@ -2528,6 +2528,7 @@ struct SignalDependencies
 struct SignalFirError
 struct SignalFirOptions
 struct SignalFirOutput
+struct SignalFirRequest
 struct SignalRecord
 struct SignalUseInfo
 struct SignalUseRecord

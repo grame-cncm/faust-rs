@@ -10,7 +10,8 @@
 
 use super::fixtures::*;
 use crate::signal_fir::{
-    ControlRateMode, ProcessingApi, SignalFirOptions, compile_signals_to_fir_fastlane_with_ui,
+    ControlRateMode, ProcessingApi, SignalFirOptions, SignalFirRequest,
+    compile_signals_to_fir_fastlane,
 };
 use fir::checker::verify_fir_module;
 use fir::{AccessType, FirId, FirMatch, FirStore, match_fir};
@@ -39,7 +40,7 @@ fn compile_slider_gain(options: &SignalFirOptions) -> crate::signal_fir::SignalF
         false,
         false,
     );
-    compile_signals_to_fir_fastlane_with_ui(&arena, &[sig0], 1, 1, &ui, options)
+    compile_signals_to_fir_fastlane(&SignalFirRequest::new(&arena, &[sig0], 1, 1, &ui, options))
         .expect("slider gain fixture must compile in every execution shape")
 }
 

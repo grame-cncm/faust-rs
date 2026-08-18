@@ -28,6 +28,7 @@ use crate::signal_prepare::prepare_signals_for_fir_verified;
 use super::super::verify::{
     Placement, Rate, SignalRecord, VECTOR_PLAN_SCHEMA_VERSION, ValueType, Vectorability,
 };
+use crate::signal_fir::SignalFirRequest;
 
 #[test]
 fn final_materialization_removes_pure_drops_but_retains_foreign_calls() {
@@ -436,14 +437,14 @@ fn production_selector_certifies_pure_and_fixed_delay() {
         ..super::super::super::SignalFirOptions::default()
     };
     let (arena, roots) = raw_pure_fixture();
-    let pure = super::super::super::compile_signals_to_fir_fastlane_with_ui(
+    let pure = super::super::super::compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &roots,
         1,
         1,
         &ui::UiProgram::empty(),
         &options,
-    )
+    ))
     .expect("production pure vector compile");
     assert_eq!(pure.vector_pipeline_status, VectorPipelineStatus::Certified);
 
@@ -455,14 +456,14 @@ fn production_selector_certifies_pure_and_fixed_delay() {
         let delayed = builder.delay(input, amount);
         vec![builder.output(0, delayed)]
     };
-    let stateful = super::super::super::compile_signals_to_fir_fastlane_with_ui(
+    let stateful = super::super::super::compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &roots,
         1,
         1,
         &ui::UiProgram::empty(),
         &options,
-    )
+    ))
     .expect("transitional stateful vector compile");
     assert_eq!(
         stateful.vector_pipeline_status,

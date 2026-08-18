@@ -4,7 +4,8 @@
 use super::fixtures::*;
 use crate::schedule::SchedulingStrategy;
 use crate::signal_fir::{
-    RealType, SignalFirErrorCode, SignalFirOptions, compile_signals_to_fir_fastlane_with_ui,
+    RealType, SignalFirErrorCode, SignalFirOptions, SignalFirRequest,
+    compile_signals_to_fir_fastlane,
 };
 use fir::{AccessType, FirBinOp, FirMatch, FirType, match_fir};
 use signals::{BinOp, SigBuilder};
@@ -119,14 +120,14 @@ fn enable_with_checkbox_lowers_select2_condition_to_int32() {
         b.enable(input, gate)
     };
     let ui = one_control_ui(ControlKind::Checkbox, "gate", None, false, false);
-    let out = compile_signals_to_fir_fastlane_with_ui(
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         1,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("checkbox-driven enable should lower through fast-lane");
 
     let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {
@@ -441,14 +442,14 @@ fn left_shift_binop_lowers_to_int32_fir_shift() {
         b.binop(BinOp::Lsh, lhs, rhs)
     };
 
-    let out = compile_signals_to_fir_fastlane_with_ui(
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[shifted],
         0,
         1,
         &UiProgram::empty(),
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("lsh should lower through the fast-lane");
 
     let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {
@@ -495,14 +496,14 @@ fn right_shift_binops_lower_to_int32_fir_shifts() {
             b.binop(source_op, lhs, rhs)
         };
 
-        let out = compile_signals_to_fir_fastlane_with_ui(
+        let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
             &arena,
             &[shifted],
             0,
             1,
             &UiProgram::empty(),
             &SignalFirOptions::default(),
-        )
+        ))
         .expect("right shift should lower through the fast-lane");
 
         let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {

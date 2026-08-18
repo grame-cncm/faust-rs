@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use compiler::Compiler;
 use signals::{SigMatch, match_sig};
 use tlib::TreeArena;
-use transform::signal_fir::{SignalFirOptions, compile_signals_to_fir_fastlane_with_ui};
+use transform::signal_fir::{SignalFirOptions, SignalFirRequest, compile_signals_to_fir_fastlane};
 use transform::signal_prepare::prepare_signals_for_fir;
 
 fn compile_inline(name: &str, source: &str) -> compiler::SignalCompileOutput {
@@ -85,14 +85,14 @@ fn ondemand_signal_fir_rejects_with_clocked_not_lowered() {
         "od_gate_times_two_fir",
         r#"process = (button("gate"), _) : ondemand(*(2));"#,
     );
-    let err = compile_signals_to_fir_fastlane_with_ui(
+    let err = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &out.parse.state.arena,
         &out.signals,
         out.process_arity.inputs,
         out.process_arity.outputs,
         &out.ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect_err("clocked graphs must be rejected until the P3 lowering lands");
     assert_eq!(err.code().as_str(), "FRS-SFIR-0007", "got: {err}");
 }
@@ -256,20 +256,22 @@ fn run_interp_with_inputs(stem: &str, source: &str, inputs: &[Vec<f32>]) -> Vec<
 
 #[test]
 fn boolean_ondemand_compiles_to_fir_through_clocked_entry() {
-    use transform::signal_fir::compile_signals_to_fir_fastlane_clocked;
+    use transform::signal_fir::compile_signals_to_fir_fastlane;
 
     let out = compile_inline(
         "od_bool_fir",
         r#"process = ((_ != 0), _) : ondemand(*(2));"#,
     );
-    compile_signals_to_fir_fastlane_clocked(
-        &out.parse.state.arena,
-        &out.signals,
-        out.process_arity.inputs,
-        out.process_arity.outputs,
-        &out.ui,
-        &out.clock_domains,
-        &SignalFirOptions::default(),
+    compile_signals_to_fir_fastlane(
+        &SignalFirRequest::new(
+            &out.parse.state.arena,
+            &out.signals,
+            out.process_arity.inputs,
+            out.process_arity.outputs,
+            &out.ui,
+            &SignalFirOptions::default(),
+        )
+        .with_clock_domains(&out.clock_domains),
     )
     .expect("boolean ondemand must lower through the clocked entry (P3 slice 1)");
 }
@@ -1018,7 +1020,7 @@ fn inner_ifwrapping_delay_lowers_through_clocked_entry() {
     // moves inside the guarded block (roadmap P3 slice 4) instead of being
     // rejected. The FIR must build (and pass the backend verifier via the
     // C++ path exercised elsewhere).
-    use transform::signal_fir::compile_signals_to_fir_fastlane_clocked;
+    use transform::signal_fir::compile_signals_to_fir_fastlane;
 
     let out = compile_inline(
         "od_ifwrap",
@@ -1028,14 +1030,16 @@ fn inner_ifwrapping_delay_lowers_through_clocked_entry() {
         delay_line_threshold: 8,
         ..SignalFirOptions::default()
     };
-    compile_signals_to_fir_fastlane_clocked(
-        &out.parse.state.arena,
-        &out.signals,
-        out.process_arity.inputs,
-        out.process_arity.outputs,
-        &out.ui,
-        &out.clock_domains,
-        &options,
+    compile_signals_to_fir_fastlane(
+        &SignalFirRequest::new(
+            &out.parse.state.arena,
+            &out.signals,
+            out.process_arity.inputs,
+            out.process_arity.outputs,
+            &out.ui,
+            &options,
+        )
+        .with_clock_domains(&out.clock_domains),
     )
     .expect("inner IfWrapping delay must lower (P3 slice 4), not be rejected");
 }

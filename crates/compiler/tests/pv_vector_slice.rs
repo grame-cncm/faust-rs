@@ -23,7 +23,9 @@ use fir::{FirId, FirStore};
 use transform::signal_fir::pv_slice::{
     PvLoopId, PvLoopVariant, build_pv_plan, build_pv_signals, pv_schedule, route_pv_vector_fir,
 };
-use transform::signal_fir::{RealType, SignalFirOptions, compile_signals_to_fir_fastlane_with_ui};
+use transform::signal_fir::{
+    RealType, SignalFirOptions, SignalFirRequest, compile_signals_to_fir_fastlane,
+};
 use transform::signal_prepare::prepare_signals_for_fir;
 use ui::UiProgram;
 
@@ -111,7 +113,7 @@ fn pv_vector_slice_is_bit_exact_for_both_loop_variants() {
     let (arena, y, z) = build_pv_signals(DELAY_AMOUNT);
     let _prepared = prepare_signals_for_fir(&arena, &[y, z], &UiProgram::empty())
         .expect("PV signal forest should prepare");
-    let scalar_fir = compile_signals_to_fir_fastlane_with_ui(
+    let scalar_fir = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[y, z],
         1,
@@ -122,7 +124,7 @@ fn pv_vector_slice_is_bit_exact_for_both_loop_variants() {
             real_type: RealType::Float32,
             ..SignalFirOptions::default()
         },
-    )
+    ))
     .expect("scalar fast-lane lowering should succeed for the PV DSP");
     let (scalar_y, scalar_z) = run_module(&scalar_fir.store, scalar_fir.module, &input);
 

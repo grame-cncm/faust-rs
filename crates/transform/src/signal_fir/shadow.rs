@@ -167,7 +167,7 @@ mod tests {
     use ui::UiProgram;
 
     use crate::signal_fir::{
-        RealType, SignalFirOptions, compile_signals_to_fir_fastlane_with_ui_and_shadow,
+        RealType, SignalFirOptions, SignalFirRequest, compile_signals_to_fir_fastlane,
     };
 
     fn compile(
@@ -175,17 +175,20 @@ mod tests {
         outputs: &[signals::SigId],
         num_out: usize,
     ) -> super::ShadowReport {
-        let out = compile_signals_to_fir_fastlane_with_ui_and_shadow(
-            arena,
-            outputs,
-            1,
-            num_out,
-            &UiProgram::empty(),
-            &SignalFirOptions {
-                module_name: "shadow_probe".to_owned(),
-                real_type: RealType::Float32,
-                ..SignalFirOptions::default()
-            },
+        let out = compile_signals_to_fir_fastlane(
+            &SignalFirRequest::new(
+                arena,
+                outputs,
+                1,
+                num_out,
+                &UiProgram::empty(),
+                &SignalFirOptions {
+                    module_name: "shadow_probe".to_owned(),
+                    real_type: RealType::Float32,
+                    ..SignalFirOptions::default()
+                },
+            )
+            .with_forced_shadow_report(),
         )
         .expect("flat program lowers");
         out.shadow_report

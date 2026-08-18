@@ -15,10 +15,10 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 
 | Kind | Name | Location |
 |---|---|---|
-| `use` | `tree_ffi` | `crates/box-ffi/src/lib.rs:54` |
-| `struct` | `BoxFfiFirModule` | `crates/box-ffi/src/lib.rs:67` |
-| `fn` | `signal_only_root_ui` | `crates/box-ffi/src/lib.rs:155` |
-| `fn` | `render_fir_module_source` | `crates/box-ffi/src/lib.rs:340` |
+| `use` | `tree_ffi` | `crates/box-ffi/src/lib.rs:56` |
+| `struct` | `BoxFfiFirModule` | `crates/box-ffi/src/lib.rs:69` |
+| `fn` | `signal_only_root_ui` | `crates/box-ffi/src/lib.rs:157` |
+| `fn` | `render_fir_module_source` | `crates/box-ffi/src/lib.rs:342` |
 
 ## `boxes`
 
@@ -2551,11 +2551,13 @@ _No direct public items found by the source scan._
 | `enum` | `TableInitMode` | `crates/transform/src/signal_fir/mod.rs:389` |
 | `type` | `SignalFirTimingSink` | `crates/transform/src/signal_fir/mod.rs:423` |
 | `struct` | `SignalFirOutput` | `crates/transform/src/signal_fir/mod.rs:450` |
-| `fn` | `compile_signals_to_fir_fastlane_with_ui` | `crates/transform/src/signal_fir/mod.rs:508` |
-| `fn` | `compile_signals_to_fir_fastlane_with_ui_and_shadow` | `crates/transform/src/signal_fir/mod.rs:536` |
-| `fn` | `compile_signals_to_fir_fastlane_clocked` | `crates/transform/src/signal_fir/mod.rs:567` |
-| `fn` | `compile_signals_to_fir_fastlane_clocked_with_timing` | `crates/transform/src/signal_fir/mod.rs:594` |
-| `fn` | `compile_signals_to_fir_fastlane_clocked_with_timing_and_origins` | `crates/transform/src/signal_fir/mod.rs:623` |
+| `struct` | `SignalFirRequest` | `crates/transform/src/signal_fir/mod.rs:506` |
+| `fn` | `new` | `crates/transform/src/signal_fir/mod.rs:549` |
+| `fn` | `with_clock_domains` | `crates/transform/src/signal_fir/mod.rs:573` |
+| `fn` | `with_timing_sink` | `crates/transform/src/signal_fir/mod.rs:580` |
+| `fn` | `with_signal_origins` | `crates/transform/src/signal_fir/mod.rs:587` |
+| `fn` | `with_forced_shadow_report` | `crates/transform/src/signal_fir/mod.rs:594` |
+| `fn` | `compile_signals_to_fir_fastlane` | `crates/transform/src/signal_fir/mod.rs:615` |
 | `struct` | `FirSignalOrigin` | `crates/transform/src/signal_fir/origins.rs:19` |
 | `struct` | `FirOrigins` | `crates/transform/src/signal_fir/origins.rs:32` |
 | `fn` | `new` | `crates/transform/src/signal_fir/origins.rs:39` |

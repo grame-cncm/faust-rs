@@ -44,7 +44,9 @@ use propagate::{
 use tlib::{
     NodeKind, TreeArena, TreeId, de_bruijn_to_sym, tree_to_double, tree_to_int, tree_to_str,
 };
-use transform::signal_fir::{RealType, SignalFirOptions, compile_signals_to_fir_fastlane_with_ui};
+use transform::signal_fir::{
+    RealType, SignalFirOptions, SignalFirRequest, compile_signals_to_fir_fastlane,
+};
 use tree_ffi::{
     FfiSignalControl, FfiSignalControlKind, FfiTreeContext as BoxContext,
     read_c_string as unsafe_read_label, reset_global_context as reset_shared_context,
@@ -220,7 +222,7 @@ fn lower_signal_roots_to_fir(
     let num_inputs = infer_num_inputs_from_signals(&ctx.arena, signal_roots);
     let num_outputs = signal_roots.len();
     let ui = signal_only_root_ui(ctx, module_name);
-    let lowered = compile_signals_to_fir_fastlane_with_ui(
+    let lowered = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &ctx.arena,
         signal_roots,
         num_inputs,
@@ -231,7 +233,7 @@ fn lower_signal_roots_to_fir(
             real_type: RealType::Float32,
             ..SignalFirOptions::default()
         },
-    )
+    ))
     .map_err(|e| e.to_string())?;
     Ok(BoxFfiFirModule {
         store: lowered.store,
@@ -297,7 +299,7 @@ pub unsafe fn export_fir_from_box_handle(
             &PropagateUiOptions::new(module_name),
         )
         .map_err(|e| e.to_string())?;
-        let lowered = compile_signals_to_fir_fastlane_with_ui(
+        let lowered = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
             &ctx.arena,
             &propagated.signals,
             arity.inputs,
@@ -308,7 +310,7 @@ pub unsafe fn export_fir_from_box_handle(
                 real_type: RealType::Float32,
                 ..SignalFirOptions::default()
             },
-        )
+        ))
         .map_err(|e| e.to_string())?;
         Ok(BoxFfiFirModule {
             store: lowered.store,

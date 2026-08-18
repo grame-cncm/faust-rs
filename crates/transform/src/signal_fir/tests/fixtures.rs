@@ -2,7 +2,7 @@
 //! FIR navigation helpers, and the UI fixture used across the groups.
 
 use crate::signal_fir::{
-    SignalFirOptions, compile_signals_to_fir_fastlane_with_ui,
+    SignalFirOptions, SignalFirRequest, compile_signals_to_fir_fastlane,
     delay::{DelayManager, DelayOptions, plan_delays},
 };
 use fir::{FirMatch, FirType, match_fir};
@@ -122,14 +122,14 @@ pub(super) fn compile_fastlane_without_ui(
     options: &SignalFirOptions,
 ) -> Result<crate::signal_fir::SignalFirOutput, crate::signal_fir::SignalFirError> {
     let empty_ui = UiProgram::empty();
-    compile_signals_to_fir_fastlane_with_ui(
+    compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         arena,
         signals,
         num_inputs,
         num_outputs,
         &empty_ui,
         options,
-    )
+    ))
 }
 pub(super) fn analyze_delays_for_prepared(
     prepared: &crate::signal_prepare::PreparedSignals,

@@ -3,8 +3,8 @@
 
 use super::fixtures::*;
 use crate::signal_fir::{
-    SignalFirOptions, SignalFirOutput, TableInitMode, compile_signals_to_fir_fastlane_with_ui,
-    siggen::interpret_generator_for_test,
+    SignalFirOptions, SignalFirOutput, SignalFirRequest, TableInitMode,
+    compile_signals_to_fir_fastlane, siggen::interpret_generator_for_test,
 };
 
 /// Options pinning the folded `const` table-init mode.
@@ -48,14 +48,14 @@ fn section_routing_places_ui_and_state_resets_in_distinct_functions() {
         let in0 = b.input(0);
         b.binop(BinOp::Add, delayed, in0)
     };
-    let out = compile_signals_to_fir_fastlane_with_ui(
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         1,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("sectioned module should compile");
 
     let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {
@@ -135,14 +135,14 @@ fn ui_only_slider_still_emits_reset_init() {
     );
     let sig0 = SigBuilder::new(&mut arena).real(0.0);
 
-    let out = compile_signals_to_fir_fastlane_with_ui(
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         0,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("UI-only slider should still compile");
 
     let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {
@@ -238,14 +238,14 @@ fn bargraph_emits_runtime_zone_store_in_compute() {
         let in0 = b.input(0);
         b.hbargraph(0, in0)
     };
-    let out = compile_signals_to_fir_fastlane_with_ui(
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         1,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("bargraph signal should compile");
 
     let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {

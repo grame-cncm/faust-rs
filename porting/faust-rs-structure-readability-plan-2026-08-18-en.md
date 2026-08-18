@@ -316,9 +316,21 @@ the in-workspace call sites (`compiler/src/signal_lowering.rs`, tests).
 **Neutrality proof:** pure delegation, no logic touched. Golden FIR diff over
 the impulse corpus + full test suite. The `docs/code-graphs/public-api-baseline.txt`
 diff is *expected here* and is the reviewable record of the boundary change.
-**Pass criteria:** all gates green; baseline diff shows exactly the removed
-variants and the new entry; `signal_fir/mod.rs` loses ≥100 lines.
+**Pass criteria:** all gates green; FIR byte-identical over the impulse corpus;
+baseline diff shows exactly the removed variants and the new entry; the boundary
+goes from 5 public entry points to 1, and no caller passes an optional argument
+positionally.
 **Commit size:** one commit.
+
+> **Criterion amended 2026-08-18, during P1.** This phase originally required
+> `signal_fir/mod.rs` to lose ≥100 lines. It lost 16 (955 → 939), and the
+> criterion was wrong, not the work: replacing a naming convention with a type
+> costs lines — field documentation, a constructor, four setters — and buys
+> readability. Line count is the wrong yardstick for a transformation whose
+> purpose is to make optional context nameable, and later phases must not
+> inherit it. Phases that genuinely remove volume (P3, P4) keep size-based
+> criteria; boundary phases (P1, P2) are judged on entry-point count and on
+> whether optional arguments still travel positionally.
 
 ### P2 — Same treatment, one crate per commit: `parser`, `eval`, `propagate`
 

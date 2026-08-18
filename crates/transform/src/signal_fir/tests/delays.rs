@@ -3,7 +3,7 @@
 
 use super::fixtures::*;
 use crate::signal_fir::{
-    SignalFirErrorCode, SignalFirOptions, compile_signals_to_fir_fastlane_with_ui,
+    SignalFirErrorCode, SignalFirOptions, SignalFirRequest, compile_signals_to_fir_fastlane,
     delay::{DelayOptions, plan_delays},
 };
 use fir::{FirBinOp, FirMatch, FirType, match_fir};
@@ -912,14 +912,14 @@ fn variable_delay_with_strictly_negative_hi_is_rejected() {
         let shifted = b.binop(BinOp::Sub, slider, offset);
         b.delay(in0, shifted)
     };
-    let err = compile_signals_to_fir_fastlane_with_ui(
+    let err = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         1,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect_err("slider with hi<0 interval must be rejected as delay amount");
     assert_eq!(err.code(), SignalFirErrorCode::UnsupportedSignalNode);
 }
@@ -951,14 +951,14 @@ fn variable_delay_with_slider_bound_lowers_to_interval_sized_delay_line() {
         let slider_amount = b.int_cast(raw_slider);
         b.delay(delayed_fixed, slider_amount)
     };
-    let out = compile_signals_to_fir_fastlane_with_ui(
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         1,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("variable delay with bounded slider should lower successfully");
 
     let FirMatch::Module { dsp_struct, .. } = match_fir(&out.store, out.module) else {
@@ -1023,13 +1023,13 @@ fn variable_delay_with_zero_hi_interval_uses_zero_delay_passthrough() {
         let shifted = b.binop(BinOp::Sub, slider, offset);
         b.delay(stage1, shifted)
     };
-    compile_signals_to_fir_fastlane_with_ui(
+    compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         1,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("delay with hi=0 interval should lower as zero-delay (passthrough)");
 }

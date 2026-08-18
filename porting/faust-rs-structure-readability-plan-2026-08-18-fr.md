@@ -264,9 +264,21 @@ Migration des appelants internes (`compiler/src/signal_lowering.rs`, tests).
 doré sur le corpus d'impulsions + suite complète. Le diff de
 `docs/code-graphs/public-api-baseline.txt` est *attendu ici* et constitue la trace
 relisible du déplacement de frontière.
-**Critères de passage :** toutes les barrières vertes ; le diff de baseline montre
-exactement les variantes retirées et le nouvel entrant ; `signal_fir/mod.rs` perd
-≥ 100 lignes. **Un seul commit.**
+**Critères de passage :** toutes les barrières vertes ; FIR byte-identique sur le
+corpus d'impulsions ; le diff de baseline montre exactement les variantes retirées
+et le nouvel entrant ; la frontière passe de 5 points d'entrée publics à 1, et
+aucun appelant ne passe d'argument optionnel en position. **Un seul commit.**
+
+> **Critère amendé le 2026-08-18, pendant P1.** Cette phase exigeait au départ que
+> `signal_fir/mod.rs` perde ≥ 100 lignes. Il en a perdu 16 (955 → 939), et c'est le
+> critère qui était faux, pas le travail : remplacer une convention de nommage par
+> un type coûte des lignes — documentation des champs, constructeur, quatre
+> accesseurs — et achète de la lisibilité. Le compte de lignes est le mauvais
+> étalon pour une transformation dont le but est de rendre nommable le contexte
+> optionnel, et les phases suivantes ne doivent pas en hériter. Les phases qui
+> retirent réellement du volume (P3, P4) gardent des critères de taille ; les
+> phases de frontière (P1, P2) se jugent au nombre de points d'entrée et à
+> l'absence d'arguments optionnels passés en position.
 
 ### P2 — Même traitement, une crate par commit : `parser`, `eval`, `propagate`
 

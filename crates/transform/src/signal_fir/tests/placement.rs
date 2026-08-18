@@ -2,7 +2,7 @@
 //! monolithic `tests.rs`; test names unchanged).
 
 use super::fixtures::*;
-use crate::signal_fir::{SignalFirOptions, compile_signals_to_fir_fastlane_with_ui};
+use crate::signal_fir::{SignalFirOptions, SignalFirRequest, compile_signals_to_fir_fastlane};
 use fir::{AccessType, FirMatch, match_fir};
 use signals::{BinOp, SigBuilder};
 use tlib::{TreeArena, de_bruijn_rec, de_bruijn_ref};
@@ -32,14 +32,14 @@ fn slider_cast_hoisted_to_control_as_fslow() {
         let in0 = b.input(0);
         b.binop(BinOp::Mul, slider, in0)
     };
-    let out = compile_signals_to_fir_fastlane_with_ui(
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         1,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("slider*input should compile");
 
     let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {
@@ -328,14 +328,14 @@ fn integer_block_subexpr_uses_islow_prefix() {
         let one = b.int(1);
         b.binop(BinOp::Add, int_slider, one)
     };
-    let out = compile_signals_to_fir_fastlane_with_ui(
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
         &arena,
         &[sig0],
         1,
         1,
         &ui,
         &SignalFirOptions::default(),
-    )
+    ))
     .expect("integer block-rate subtree should compile");
 
     let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {

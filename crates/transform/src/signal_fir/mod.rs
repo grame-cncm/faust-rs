@@ -478,14 +478,129 @@ pub struct SignalFirOutput {
     pub vector_pipeline_detail: Option<String>,
 }
 
-/// Compiles propagated signals plus canonical grouped UI into a FIR module.
+/// Everything one fast-lane lowering run needs, in one named place.
 ///
-/// This is the grouped-UI-aware fast-lane entry point used by the compiler
-/// facade once `propagate` owns explicit `UiProgram` output.
+/// Before 2026-08-18 this crate exposed five entry points whose names spelled
+/// out which optional arguments they carried
+/// (`..._with_ui`, `..._with_ui_and_shadow`, `..._clocked`,
+/// `..._clocked_with_timing`, `..._clocked_with_timing_and_origins`), all
+/// delegating to one private function with eleven positional parameters. A
+/// reader had to know which of five near-identical names carried the argument
+/// they needed, and three of the eleven positions were `Option`s passed as
+/// `None`. The request struct replaces the naming convention with types: the
+/// six inputs every run requires are constructor arguments, and each optional
+/// input is one documented, individually attachable field.
+///
+/// # Ownership contract
+/// - `signals` must already be the propagated DSP outputs for the same source
+///   program that produced `ui`,
+/// - `ui` is the sole source of truth for grouped layout, labels, and UI
+///   metadata,
+/// - signal leaf widgets are expected to carry only stable `ControlId`
+///   references back into `ui`.
 ///
 /// Callers that intentionally compile UI-free signal forests must pass an
 /// explicit placeholder [`UiProgram`] such as [`UiProgram::empty()`] or a
-/// root-only synthetic program constructed by the owning integration layer.
+/// root-only synthetic program built by the owning integration layer.
+#[derive(Clone, Copy)]
+pub struct SignalFirRequest<'a> {
+    /// Arena owning the propagated signal nodes.
+    pub arena: &'a TreeArena,
+    /// Propagated DSP output signals, in output order.
+    pub signals: &'a [SigId],
+    /// Declared audio input count of the compiled program.
+    pub num_inputs: usize,
+    /// Declared audio output count of the compiled program.
+    pub num_outputs: usize,
+    /// Canonical grouped UI owned by propagation.
+    pub ui: &'a UiProgram,
+    /// Lowering options: real type, table-init mode, vector settings, …
+    pub options: &'a SignalFirOptions,
+    /// Propagation-owned clock-domain side table ([`propagate::ClockDomainTable`],
+    /// roadmap P0.2).
+    ///
+    /// When present and the program contains clocked wrappers, lowering runs
+    /// clock-environment inference ([`crate::clk_env`]) and hierarchical-graph
+    /// validation ([`crate::hgraph`]) on the prepared forest, then lowers
+    /// boolean `ondemand` blocks as guarded regions (roadmap P3). Programs
+    /// without clocked wrappers behave exactly as if this were `None`.
+    pub clock_domains: Option<&'a propagate::ClockDomainTable>,
+    /// Observation-only per-stage timing sink.
+    ///
+    /// Absent by default so the regular lowering path keeps its zero-overhead,
+    /// no-timing contract.
+    pub timing_sink: Option<&'a SignalFirTimingSink>,
+    /// Box-origin provenance used to enrich preparation diagnostics.
+    pub signal_origins: Option<&'a propagate::SignalOrigins>,
+    /// Forces the post-lowering scheduling shadow report on.
+    ///
+    /// The report is also produced when `FAUST_RS_SHADOW_REPORT` is set in the
+    /// environment; this field is the programmatic equivalent used by
+    /// scheduling conformance tests, and the two are OR-ed.
+    pub force_shadow_report: bool,
+}
+
+impl<'a> SignalFirRequest<'a> {
+    /// Builds a request carrying only the inputs every lowering run requires.
+    ///
+    /// Optional inputs are attached afterwards with [`Self::with_clock_domains`],
+    /// [`Self::with_timing_sink`], [`Self::with_signal_origins`], and
+    /// [`Self::with_forced_shadow_report`].
+    pub fn new(
+        arena: &'a TreeArena,
+        signals: &'a [SigId],
+        num_inputs: usize,
+        num_outputs: usize,
+        ui: &'a UiProgram,
+        options: &'a SignalFirOptions,
+    ) -> Self {
+        Self {
+            arena,
+            signals,
+            num_inputs,
+            num_outputs,
+            ui,
+            options,
+            clock_domains: None,
+            timing_sink: None,
+            signal_origins: None,
+            force_shadow_report: false,
+        }
+    }
+
+    /// Attaches the propagation-owned clock-domain table.
+    #[must_use]
+    pub fn with_clock_domains(mut self, clock_domains: &'a propagate::ClockDomainTable) -> Self {
+        self.clock_domains = Some(clock_domains);
+        self
+    }
+
+    /// Attaches an observation-only per-stage timing sink.
+    #[must_use]
+    pub fn with_timing_sink(mut self, timing_sink: &'a SignalFirTimingSink) -> Self {
+        self.timing_sink = Some(timing_sink);
+        self
+    }
+
+    /// Attaches box-origin provenance for preparation diagnostics.
+    #[must_use]
+    pub fn with_signal_origins(mut self, signal_origins: &'a propagate::SignalOrigins) -> Self {
+        self.signal_origins = Some(signal_origins);
+        self
+    }
+
+    /// Forces the scheduling shadow report on regardless of the environment.
+    #[must_use]
+    pub fn with_forced_shadow_report(mut self) -> Self {
+        self.force_shadow_report = true;
+        self
+    }
+}
+
+/// Compiles propagated signals plus canonical grouped UI into a FIR module.
+///
+/// This is the single fast-lane entry point of the crate; everything optional
+/// travels in [`SignalFirRequest`].
 ///
 /// # Current behavior (Step 2A/2B/2C/2D/2E/2F/2G/2H)
 /// - validates options and top-level signal/arity contract,
@@ -497,151 +612,20 @@ pub struct SignalFirOutput {
 /// # Errors
 /// Returns [`SignalFirError`] when options are invalid or the top-level
 /// signal/arity contract is inconsistent.
-///
-/// # Ownership contract
-/// - `signals` must already be the propagated DSP outputs for the same source
-///   program that produced `ui`,
-/// - `ui` is the sole source of truth for grouped layout, labels, and UI
-///   metadata,
-/// - signal leaf widgets are expected to carry only stable `ControlId`
-///   references back into `ui`.
-pub fn compile_signals_to_fir_fastlane_with_ui(
-    _arena: &TreeArena,
-    signals: &[SigId],
-    num_inputs: usize,
-    num_outputs: usize,
-    ui: &UiProgram,
-    options: &SignalFirOptions,
+pub fn compile_signals_to_fir_fastlane(
+    request: &SignalFirRequest<'_>,
 ) -> Result<SignalFirOutput, SignalFirError> {
     compile_fastlane_inner(
-        _arena,
-        signals,
-        num_inputs,
-        num_outputs,
-        ui,
-        options,
-        None,
-        None,
-        None,
-        std::env::var_os("FAUST_RS_SHADOW_REPORT").is_some(),
-    )
-}
-
-/// Compiles with the post-lowering scheduling shadow report enabled.
-///
-/// This diagnostic entry point exists for scheduling conformance tests. Normal
-/// compilation avoids the extra graph/report traversal; developers can request
-/// the same report from regular entry points with `FAUST_RS_SHADOW_REPORT=1`.
-#[doc(hidden)]
-pub fn compile_signals_to_fir_fastlane_with_ui_and_shadow(
-    arena: &TreeArena,
-    signals: &[SigId],
-    num_inputs: usize,
-    num_outputs: usize,
-    ui: &UiProgram,
-    options: &SignalFirOptions,
-) -> Result<SignalFirOutput, SignalFirError> {
-    compile_fastlane_inner(
-        arena,
-        signals,
-        num_inputs,
-        num_outputs,
-        ui,
-        options,
-        None,
-        None,
-        None,
-        true,
-    )
-}
-
-/// Clock-domain-aware variant of [`compile_signals_to_fir_fastlane_with_ui`].
-///
-/// `clock_domains` is the propagation-owned side table
-/// ([`propagate::ClockDomainTable`], roadmap P0.2). When the program contains
-/// clocked wrappers, this entry runs the clock-environment inference
-/// ([`crate::clk_env`]) and the hierarchical-graph validation
-/// ([`crate::hgraph`]) on the prepared forest, then lowers boolean `ondemand`
-/// blocks as guarded regions (roadmap P3, first slice). Programs without
-/// clocked wrappers behave exactly like the plain entry point.
-pub fn compile_signals_to_fir_fastlane_clocked(
-    arena: &TreeArena,
-    signals: &[SigId],
-    num_inputs: usize,
-    num_outputs: usize,
-    ui: &UiProgram,
-    clock_domains: &propagate::ClockDomainTable,
-    options: &SignalFirOptions,
-) -> Result<SignalFirOutput, SignalFirError> {
-    compile_signals_to_fir_fastlane_clocked_with_timing(
-        arena,
-        signals,
-        num_inputs,
-        num_outputs,
-        ui,
-        clock_domains,
-        options,
-        None,
-    )
-}
-
-/// Clock-domain-aware fast-lane entry point with observation-only stage timing.
-///
-/// This is the timed counterpart of
-/// [`compile_signals_to_fir_fastlane_clocked`].  It is separate so the regular
-/// lowering API keeps its zero-overhead, no-timing contract.
-#[allow(clippy::too_many_arguments)]
-pub fn compile_signals_to_fir_fastlane_clocked_with_timing(
-    arena: &TreeArena,
-    signals: &[SigId],
-    num_inputs: usize,
-    num_outputs: usize,
-    ui: &UiProgram,
-    clock_domains: &propagate::ClockDomainTable,
-    options: &SignalFirOptions,
-    timing_sink: Option<&SignalFirTimingSink>,
-) -> Result<SignalFirOutput, SignalFirError> {
-    compile_signals_to_fir_fastlane_clocked_with_timing_and_origins(
-        arena,
-        signals,
-        num_inputs,
-        num_outputs,
-        ui,
-        clock_domains,
-        options,
-        timing_sink,
-        None,
-    )
-}
-
-/// Clocked/timed lowering with explicit propagated Signal origins.
-///
-/// This adapted Rust entry point keeps provenance outside the hash-consed
-/// Signal and FIR arenas. Callers that do not own provenance should use
-/// [`compile_signals_to_fir_fastlane_clocked_with_timing`].
-#[allow(clippy::too_many_arguments)]
-pub fn compile_signals_to_fir_fastlane_clocked_with_timing_and_origins(
-    arena: &TreeArena,
-    signals: &[SigId],
-    num_inputs: usize,
-    num_outputs: usize,
-    ui: &UiProgram,
-    clock_domains: &propagate::ClockDomainTable,
-    options: &SignalFirOptions,
-    timing_sink: Option<&SignalFirTimingSink>,
-    signal_origins: Option<&propagate::SignalOrigins>,
-) -> Result<SignalFirOutput, SignalFirError> {
-    compile_fastlane_inner(
-        arena,
-        signals,
-        num_inputs,
-        num_outputs,
-        ui,
-        options,
-        Some(clock_domains),
-        timing_sink,
-        signal_origins,
-        std::env::var_os("FAUST_RS_SHADOW_REPORT").is_some(),
+        request.arena,
+        request.signals,
+        request.num_inputs,
+        request.num_outputs,
+        request.ui,
+        request.options,
+        request.clock_domains,
+        request.timing_sink,
+        request.signal_origins,
+        request.force_shadow_report || std::env::var_os("FAUST_RS_SHADOW_REPORT").is_some(),
     )
 }
 
