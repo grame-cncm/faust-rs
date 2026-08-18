@@ -19,6 +19,7 @@ digraph workspace_crates {
     "impulse-runner";
     "interp-ffi";
     "interval";
+    "libfaust-ffi";
     "normalize";
     "parser";
     "propagate";

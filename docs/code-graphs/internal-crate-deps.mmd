@@ -17,6 +17,7 @@ flowchart LR
     crate_impulse_runner["impulse-runner"]
     crate_interp_ffi["interp-ffi"]
     crate_interval["interval"]
+    crate_libfaust_ffi["libfaust-ffi"]
     crate_normalize["normalize"]
     crate_parser["parser"]
     crate_propagate["propagate"]
@@ -74,6 +75,7 @@ flowchart LR
     crate_faust_ffi --> crate_box_ffi
     crate_faust_ffi --> crate_cranelift_ffi
     crate_faust_ffi --> crate_interp_ffi
+    crate_faust_ffi --> crate_libfaust_ffi
     crate_faust_ffi --> crate_signal_ffi
     crate_fir --> crate_tlib
     crate_impulse_runner --> crate_codegen
@@ -82,6 +84,8 @@ flowchart LR
     crate_interp_ffi --> crate_codegen
     crate_interp_ffi --> crate_compiler
     crate_interp_ffi --> crate_ffi_common
+    crate_libfaust_ffi --> crate_compiler
+    crate_libfaust_ffi --> crate_ffi_common
     crate_normalize --> crate_interval
     crate_normalize --> crate_signals
     crate_normalize --> crate_sigtype
@@ -126,4 +130,5 @@ flowchart LR
     crate_xtask --> crate_codegen
     crate_xtask --> crate_compiler
     crate_xtask --> crate_fir
+    crate_xtask --> crate_parser
     crate_xtask --> crate_tlib

@@ -19,6 +19,7 @@ digraph workspace_crates {
     "impulse-runner";
     "interp-ffi";
     "interval";
+    "libfaust-ffi";
     "normalize";
     "parser";
     "propagate";
@@ -76,6 +77,7 @@ digraph workspace_crates {
     "faust-ffi" -> "box-ffi";
     "faust-ffi" -> "cranelift-ffi";
     "faust-ffi" -> "interp-ffi";
+    "faust-ffi" -> "libfaust-ffi";
     "faust-ffi" -> "signal-ffi";
     "fir" -> "tlib";
     "impulse-runner" -> "codegen";
@@ -84,6 +86,8 @@ digraph workspace_crates {
     "interp-ffi" -> "codegen";
     "interp-ffi" -> "compiler";
     "interp-ffi" -> "ffi-common";
+    "libfaust-ffi" -> "compiler";
+    "libfaust-ffi" -> "ffi-common";
     "normalize" -> "interval";
     "normalize" -> "signals";
     "normalize" -> "sigtype";
@@ -128,5 +132,6 @@ digraph workspace_crates {
     "xtask" -> "codegen";
     "xtask" -> "compiler";
     "xtask" -> "fir";
+    "xtask" -> "parser";
     "xtask" -> "tlib";
 }

@@ -106,6 +106,7 @@ jobs:
           cargo run -p xtask -- error-model-check
           cargo run -p xtask -- ffi-boundary-check
           cargo run -p xtask -- structure-check
+          cargo run -p xtask -- code-graphs --check
 
       - name: Backend alignment smoke (PR only)
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest'

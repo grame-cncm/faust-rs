@@ -262,6 +262,12 @@ pub(crate) struct BackendAlignNightlyArgs {
 pub(crate) struct CodeGraphArgs {
     #[arg(long, value_name = "DIR")]
     pub(crate) out_dir: Option<PathBuf>,
+    /// Verify the checked-in artifacts instead of rewriting them.
+    ///
+    /// Regenerating is the bless path: run `code-graphs` without `--check`,
+    /// review the diff, and commit it.
+    #[arg(long)]
+    pub(crate) check: bool,
 }
 
 /// Output format for corpus status queries.

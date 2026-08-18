@@ -29,13 +29,16 @@ Guidelines for contributors and coding agents working on `faust-rs`.
   - `cargo fmt --all`
   - `cargo clippy --workspace --all-targets -- -D warnings`
   - `cargo test --workspace --all-targets`
-  - the four static structure gates CI runs as its "Structure check" step —
+  - the five static structure gates CI runs as its "Structure check" step —
     pure text/metadata analysis with no OS-dependent behavior, so any
-    machine settles all three CI runners at once:
+    machine settles all three CI runners at once (the artifacts
+    `code-graphs --check` compares hold crate and item names only, never
+    paths, so they are byte-identical on every platform):
     - `cargo run -p xtask -- cli-parser-check`
     - `cargo run -p xtask -- error-model-check`
     - `cargo run -p xtask -- ffi-boundary-check`
     - `cargo run -p xtask -- structure-check`
+    - `cargo run -p xtask -- code-graphs --check`
 - Avoid introducing `unsafe` unless strictly required and documented.
 - Tests must be self-contained: they must not depend on a locally installed
   Faust (e.g. `/usr/local/share/faust`), and copies of the Faust standard
@@ -51,11 +54,18 @@ Guidelines for contributors and coding agents working on `faust-rs`.
 - CI also runs golden parity guardrails via `cargo run -p xtask -- golden-check`.
 - CI also runs the compilation-cost gate via
   `cargo run --release -p xtask -- compile-budget-check`.
-- CI also runs a Ubuntu-only "Structure check" step (see §3 for the four
+- CI also runs a Ubuntu-only "Structure check" step (see §3 for the five
   commands) enforcing the `clap`-only CLI policy, the error-model contract,
-  the FFI-boundary/dependency-direction rule, and file-size structure
-  thresholds. It runs on one OS only because it is pure text/metadata
-  analysis with no platform-dependent outcome — run it locally on any OS.
+  the FFI-boundary/dependency-direction rule, file-size structure
+  thresholds, and the checked-in code graphs plus the public-API baseline.
+  It runs on one OS only because it is pure text/metadata analysis with no
+  platform-dependent outcome — run it locally on any OS.
+- `docs/code-graphs/public-api-baseline.txt` is the inventory of every crate's
+  public items. When a change adds or removes one, regenerate with
+  `cargo run -p xtask -- code-graphs` and review the diff in the commit: a new
+  entry means a crate boundary widened, which is a design decision, not a
+  side effect. Widening `pub(crate)` to `pub` merely to make a code move
+  compile is the case this gate exists to surface.
 - A change is not considered ready unless CI is green.
 - Code that constructs, normalizes, displays, or compares filesystem paths must
   be checked for cross-platform behavior. Prefer `Path`/`PathBuf` operations,

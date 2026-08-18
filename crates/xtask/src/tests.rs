@@ -803,3 +803,77 @@ fn corpus_status_query_counts_are_internally_consistent() {
     let actual_corpus_file_count = corpus_files().unwrap().len();
     assert_eq!(response.corpus_file_count_seen, actual_corpus_file_count);
 }
+
+/// The public-API baseline must be blind to code motion.
+///
+/// Two scans of the same crate whose items differ only by source line render
+/// identical baselines; otherwise the gate fires on every commit a
+/// restructuring produces and gets disabled.
+#[test]
+fn public_api_baseline_ignores_source_locations() {
+    let at_line = |line: usize| PublicItem {
+        kind: "fn".to_owned(),
+        name: "lower_signal".to_owned(),
+        path: PathBuf::from("crates/transform/src/lib.rs"),
+        line,
+    };
+
+    assert_eq!(
+        render_baseline_section("transform", vec![at_line(12)]),
+        render_baseline_section("transform", vec![at_line(4210)]),
+        "moving an item must not change the baseline"
+    );
+}
+
+/// The baseline must still react to the surface itself changing.
+///
+/// This is the `pub` leak: a helper widened to `pub` so a code move compiles.
+#[test]
+fn public_api_baseline_detects_a_widened_item() {
+    let item = |name: &str| PublicItem {
+        kind: "fn".to_owned(),
+        name: name.to_owned(),
+        path: PathBuf::from("crates/transform/src/lib.rs"),
+        line: 12,
+    };
+
+    let before = render_baseline_section("transform", vec![item("lower_signal")]);
+    let after = render_baseline_section(
+        "transform",
+        vec![item("lower_signal"), item("leaked_helper")],
+    );
+
+    assert_ne!(before, after, "a new public item must change the baseline");
+    assert!(after.contains("fn leaked_helper"));
+}
+
+/// Duplicate `(kind, name)` pairs collapse, so re-exporting an item under two
+/// paths does not make the baseline churn.
+#[test]
+fn public_api_baseline_deduplicates_entries() {
+    let item = |line: usize| PublicItem {
+        kind: "fn".to_owned(),
+        name: "lower_signal".to_owned(),
+        path: PathBuf::from("crates/transform/src/lib.rs"),
+        line,
+    };
+
+    let section = render_baseline_section("transform", vec![item(12), item(99)]);
+    assert_eq!(section.matches("fn lower_signal").count(), 1);
+}
+
+/// `--check` is opt-in: the bare command still regenerates.
+#[test]
+fn code_graphs_check_flag_parses() {
+    let cli = parse_xtask(["code-graphs", "--check"]).unwrap();
+    match cli.command {
+        XtaskCommand::CodeGraphs(args) => assert!(args.check),
+        other => panic!("unexpected command: {other:?}"),
+    }
+
+    let cli = parse_xtask(["code-graphs"]).unwrap();
+    match cli.command {
+        XtaskCommand::CodeGraphs(args) => assert!(!args.check),
+        other => panic!("unexpected command: {other:?}"),
+    }
+}
