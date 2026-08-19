@@ -18,10 +18,16 @@
 #       Detailed and per-DSP winning configurations are written to
 #       VEC_BENCH_CSV and VEC_BENCH_SUMMARY_CSV.
 #
-# Both targets iterate over `testnames`, i.e. all `dsp/*.dsp` inputs except the
-# DSPs listed as known C++ backend failures in known.mk. They are intentionally
-# not correctness gates: failures are reported in the CSV and logs, and the run
-# continues so the corpus gives a complete comparison table.
+# Both targets iterate over `testnames`, i.e. all `*.dsp` inputs found anywhere
+# under `dspdir` (recursively) except the DSPs listed as known C++ backend
+# failures in known.mk. They are intentionally not correctness gates: failures
+# are reported in the CSV and logs, and the run continues so the corpus gives a
+# complete comparison table.
+#
+# `bench` and `compile-bench` need no `.ir` reference and no per-DSP
+# certification, so they run against ANY DSP corpus, not just `dsp/`: point
+# `dspdir` at it. DSPs may be nested in subdirectories (their name in the CSV
+# and in logs/ is then the path relative to `dspdir`, e.g. `misc/tester`).
 #
 # Run from this directory:
 #
@@ -34,6 +40,10 @@
 #   make bench BENCH_OPTIONS="-double -run 5 -bs 512"  # normal comparison
 #   make vec-bench
 #   make compile-bench
+#
+#   # Arbitrary corpus, e.g. the C++ Faust examples tree:
+#   make bench dspdir=/Users/letz/faust/examples
+#   make compile-bench dspdir=/Users/letz/faust/examples
 #
 # Relevant knobs come from common.mk:
 #
@@ -55,7 +65,16 @@
 
 include common.mk
 
-allnames  := $(dspfiles:dsp/%.dsp=%)
+# `common.mk`'s `dspfiles` is a single-level `wildcard`, which is all the flat
+# internal `dsp/` corpus needs. `bench`/`compile-bench` require neither a
+# `.ir` reference nor per-DSP certification, so they double as a throughput/
+# compile-time comparison against ANY DSP corpus (`make bench
+# dspdir=/path/to/corpus`) — including ones organized in per-category
+# subdirectories, like the C++ Faust `examples/` tree. Recomputing it with a
+# recursive `find` is a strict superset that leaves the flat corpus unchanged.
+dspfiles := $(shell find $(dspdir) -name '*.dsp' 2>/dev/null | sort)
+
+allnames  := $(dspfiles:$(dspdir)/%.dsp=%)
 testnames := $(filter-out $(call known_fail_for,cpp),$(allnames))
 vector_allnames := $(vector_certified_dspfiles:dsp/%.dsp=%)
 vector_testnames := $(filter-out $(call known_fail_for,cpp),$(vector_allnames))
@@ -120,7 +139,8 @@ $(BENCH_CSV): force | $(cppbindir)/faust $(cppbindir)/uname $(rsbindir)/faust $(
 		compiler_path="$$1"; \
 		dsp="$$2"; \
 		log="$$3"; \
-		CXX="$(cxx_wrapper_abs)" CXXFLAGS="$${CXXFLAGS:--Ofast -fbracket-depth=512}" PATH="$$compiler_path:$$PATH" $(FAUSTBENCH) $(BENCH_OPTIONS) -I dsp -I $(FAUSTLIBS) "$$dsp" > "$$log" 2>&1 || return 1; \
+		mkdir -p "$$(dirname "$$log")"; \
+		CXX="$(cxx_wrapper_abs)" CXXFLAGS="$${CXXFLAGS:--Ofast -fbracket-depth=512}" PATH="$$compiler_path:$$PATH" $(FAUSTBENCH) $(BENCH_OPTIONS) -I $(dspdir) -I $(FAUSTLIBS) "$$dsp" > "$$log" 2>&1 || return 1; \
 		LC_ALL=C awk '$$1 == "Best" && $$2 == "value" && $$3 == "is" && $$4 == ":" { value = tolower($$5) } END { if (value != "") print value }' "$$log"; \
 	}; \
 	is_finite_positive() { \
@@ -129,7 +149,7 @@ $(BENCH_CSV): force | $(cppbindir)/faust $(cppbindir)/uname $(rsbindir)/faust $(
 	index=0; \
 	for name in $(testnames); do \
 		index=$$((index + 1)); \
-		dsp="dsp/$$name.dsp"; \
+		dsp="$(dspdir)/$$name.dsp"; \
 		printf '[bench] %s\n' "$$name"; \
 		cpp_log="$(logdir)/$$name.cpp.log"; \
 		rs_log="$(logdir)/$$name.faust-rs.log"; \
@@ -291,13 +311,13 @@ $(COMPILE_BENCH_CSV): force | $(logdir)/.dir
 		dsp="$$2"; \
 		out="$$3"; \
 		log="$$4"; \
-		mkdir -p "$$(dirname "$$out")"; \
+		mkdir -p "$$(dirname "$$out")" "$$(dirname "$$log")"; \
 		rm -f "$$out"; \
-		perl -MTime::HiRes=time -e '$$t=time; system @ARGV; $$c=$$?; printf STDERR "real %.6f\n", time - $$t; exit($$c >> 8)' "$$compiler" -lang cpp -double -I dsp -I "$(FAUSTLIBS)" "$$dsp" -o "$$out" > /dev/null 2> "$$log" || return 1; \
+		perl -MTime::HiRes=time -e '$$t=time; system @ARGV; $$c=$$?; printf STDERR "real %.6f\n", time - $$t; exit($$c >> 8)' "$$compiler" -lang cpp -double -I $(dspdir) -I "$(FAUSTLIBS)" "$$dsp" -o "$$out" > /dev/null 2> "$$log" || return 1; \
 		sed -nE 's/^real[[:space:]]+([0-9]+([.,][0-9]+)?)$$/\1/p' "$$log" | tail -1 | tr ',' '.'; \
 	}; \
 	for name in $(testnames); do \
-		dsp="dsp/$$name.dsp"; \
+		dsp="$(dspdir)/$$name.dsp"; \
 		printf '[compile-bench] %s\n' "$$name"; \
 		cpp_log="$(logdir)/$$name.compile.cpp.log"; \
 		rs_log="$(logdir)/$$name.compile.faust-rs.log"; \

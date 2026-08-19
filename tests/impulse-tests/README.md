@@ -316,9 +316,21 @@ make bench BENCH_OPTIONS="-double -run 5 -bs 512"
 ```
 
 This is the recommended command for results intended to guide optimization or
-report a regression. The recipe also passes `-I dsp -I $(FAUSTLIBS)`.
+report a regression. The recipe also passes `-I $(dspdir) -I $(FAUSTLIBS)`.
 `BENCH_WARN_MIN` remains independently overridable when a different reporting
 threshold is wanted.
+
+`bench` and `compile-bench` need neither a `.ir` reference nor per-DSP
+certification (unlike `vec-bench` below), so they run against any DSP corpus,
+not just `dsp/`. Point `dspdir` at it; DSPs may be nested in per-category
+subdirectories — every `*.dsp` file under `dspdir` is found recursively, and
+its name in the CSV and under `build/bench/logs/` is the path relative to
+`dspdir` (e.g. `misc/tester`):
+
+```bash
+make bench dspdir=/Users/letz/faust/examples BENCH_OPTIONS="-double -run 5 -bs 512"
+make compile-bench dspdir=/Users/letz/faust/examples
+```
 
 `make bench-self-test` uses a synthetic `faustbench` fixture to verify
 alternating order, all principal statuses, geometric-mean/median calculation,
