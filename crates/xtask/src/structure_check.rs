@@ -46,7 +46,15 @@
 //! 7. no file-level `#![allow(dead_code)]` in `crates/transform`: a blanket
 //!    allowance hides real dead clusters (the `loop_graph.rs` case E1
 //!    removed masked 11 dead items); scope allowances to items, with a
-//!    reason.
+//!    reason;
+//! 8. no production function in `crates/transform` above
+//!    [`MAX_PRODUCTION_FN_LINES`] lines unless it is named in
+//!    [`OVERSIZED_FUNCTIONS`] with a ceiling — the legibility campaign E2
+//!    ratchet (`porting/transform-legibility-analysis-2026-08-25-en.md`).
+//!    The list is cross-checked both ways: every entry must name a function
+//!    that exists, still exceeds the threshold (a decomposed function must
+//!    be removed from the list), and has not grown past its recorded
+//!    ceiling.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -193,6 +201,100 @@ const DOCUMENTED_CRATES: [&str; 2] = ["transform", "compiler"];
 
 /// Runs every structural check and fails with a sorted finding list.
 
+/// Review threshold for one production function body in `crates/transform`
+/// (E2 of the legibility campaign). Functions above it must be named in
+/// [`OVERSIZED_FUNCTIONS`]; the list shrinks as recipe decompositions land
+/// and must end empty.
+const MAX_PRODUCTION_FN_LINES: usize = 200;
+
+/// Functions still over [`MAX_PRODUCTION_FN_LINES`], each with the ceiling
+/// it measured when listed. Cross-checked both ways: an entry whose function
+/// no longer exists, no longer exceeds the threshold, or exceeds its ceiling
+/// is a finding. Decomposing a function removes its entry; the ceiling only
+/// ever goes down.
+const OVERSIZED_FUNCTIONS: [(&str, &str, usize); 20] = [
+    ("crates/transform/src/signal_fir/module/build.rs", "build_module", 757),
+    ("crates/transform/src/signal_fir/vector/verify/check.rs", "verify_vector_plan", 643),
+    ("crates/transform/src/signal_fir/vector/plan/build.rs", "build_vector_plan", 585),
+    ("crates/transform/src/signal_prepare/verify.rs", "verify_prepared_signal", 558),
+    ("crates/transform/src/signal_fir/vector/plan/fusion.rs", "build_fused_serial_groups", 536),
+    ("crates/transform/src/signal_fir/vector/verify/fused_groups.rs", "verify_fused_serial_groups_after_plan", 447),
+    ("crates/transform/src/signal_fir/vector/lower/signal.rs", "lower_raw", 345),
+    ("crates/transform/src/signal_fir/vector/lower/signal.rs", "lower_vector_program_impl", 306),
+    ("crates/transform/src/signal_fir/module/bra.rs", "propagate_bra_adj", 300),
+    ("crates/transform/src/signal_fir/mod.rs", "compile_fastlane_inner", 282),
+    ("crates/transform/src/signal_fir/module/clocked.rs", "ensure_guarded_block", 277),
+    ("crates/transform/src/signal_fir/module/core_lowering.rs", "lower_signal", 274),
+    ("crates/transform/src/clk_env/mod.rs", "infer_uncached", 261),
+    ("crates/transform/src/signal_fir/vector/assemble/materialize.rs", "materialize_action", 260),
+    ("crates/transform/src/signal_fir/module/arithmetic.rs", "lower_proj", 258),
+    ("crates/transform/src/signal_fir/vector/assemble/check.rs", "verify_assembled_fused_serial_groups", 252),
+    ("crates/transform/src/signal_fir/vector/analysis/dependencies.rs", "signal_dependencies", 249),
+    ("crates/transform/src/signal_fir/vector/verify/error.rs", "fmt", 238),
+    ("crates/transform/src/signal_fir/vector/module/build.rs", "build_verified_vector_module_with_evidence", 230),
+    ("crates/transform/src/signal_fir/vector/module/lifecycle.rs", "assemble_module", 209),
+];
+
+/// Scans one production file's text for function spans `(name, line_count)`.
+///
+/// Brace-balance measurement from the `fn` line to its closing brace; the
+/// inline `#[cfg(test)] mod …` region (by convention the tail of a file) is
+/// excluded. Brace counting is textual — the same deliberate approximation
+/// the review threshold uses for files.
+fn production_fn_spans(text: &str) -> Vec<(String, usize)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut test_start = lines.len();
+    for i in 0..lines.len().saturating_sub(1) {
+        if lines[i].trim() == "#[cfg(test)]" && lines[i + 1].trim_start().starts_with("mod ") {
+            test_start = i;
+            break;
+        }
+    }
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < test_start {
+        if let Some(name) = fn_decl_name(lines[i]) {
+            let mut depth = 0i64;
+            let mut opened = false;
+            let mut j = i;
+            while j < lines.len() {
+                depth += lines[j].matches('{').count() as i64;
+                depth -= lines[j].matches('}').count() as i64;
+                if lines[j].contains('{') {
+                    opened = true;
+                }
+                if opened && depth <= 0 {
+                    break;
+                }
+                j += 1;
+            }
+            spans.push((name, j - i + 1));
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    spans
+}
+
+/// The declared name when a line starts a `fn` item (any visibility).
+fn fn_decl_name(line: &str) -> Option<String> {
+    let mut rest = line.trim_start();
+    if let Some(after) = rest.strip_prefix("pub") {
+        rest = after.trim_start();
+        if rest.starts_with('(') {
+            rest = &rest[rest.find(')')? + 1..];
+            rest = rest.trim_start();
+        }
+    }
+    let after_fn = rest.strip_prefix("fn ")?;
+    let name: String = after_fn
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then_some(name)
+}
+
 /// Allowance markers that make a comment block a provenance context: a block
 /// containing any of these may cite plan codenames (check 6).
 const PROVENANCE_MARKERS: [&str; 5] = ["porting/", "-en.md", "-fr.md", "provenance", "history"];
@@ -297,6 +399,7 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
     let known_oversized: std::collections::BTreeMap<&str, &str> =
         KNOWN_OVERSIZED_FILES.iter().copied().collect();
     let mut oversized_seen: BTreeSet<&str> = BTreeSet::new();
+    let mut oversized_fn_seen: BTreeSet<(String, String)> = BTreeSet::new();
 
     let mut findings: Vec<String> = Vec::new();
     let mut scanned_entry_points: BTreeSet<String> = BTreeSet::new();
@@ -320,6 +423,40 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
 
         if rel.starts_with("crates/transform/") {
             findings.extend(codename_findings(&rel, &text));
+            if !is_test_file {
+                // A file may declare several functions with one name (trait
+                // impls — `fmt`); the exemption governs the longest of them.
+                let mut longest: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
+                for (name, len) in production_fn_spans(&text) {
+                    let slot = longest.entry(name).or_insert(0);
+                    *slot = (*slot).max(len);
+                }
+                for (name, len) in &longest {
+                    let entry = OVERSIZED_FUNCTIONS
+                        .iter()
+                        .find(|(f, n, _)| *f == rel && n == name);
+                    if entry.is_some() {
+                        oversized_fn_seen.insert((rel.clone(), name.clone()));
+                    }
+                    match entry {
+                        None if *len > MAX_PRODUCTION_FN_LINES => findings.push(format!(
+                            "{rel}: fn `{name}` is {len} lines, over the \
+                             {MAX_PRODUCTION_FN_LINES}-line function threshold and not in \
+                             OVERSIZED_FUNCTIONS (decompose it, or list it with a ceiling)"
+                        )),
+                        Some((_, _, ceiling)) if len > ceiling => findings.push(format!(
+                            "{rel}: fn `{name}` grew to {len} lines, past its recorded \
+                             {ceiling}-line ceiling in OVERSIZED_FUNCTIONS"
+                        )),
+                        Some((_, _, _)) if *len <= MAX_PRODUCTION_FN_LINES => findings.push(format!(
+                            "OVERSIZED_FUNCTIONS is stale: `{name}` in {rel} is {len} lines, \
+                             no longer over the threshold — remove its entry"
+                        )),
+                        _ => {}
+                    }
+                }
+            }
             if text.contains("#![allow(dead_code)]") {
                 findings.push(format!(
                     "{rel}: file-level `#![allow(dead_code)]` (blanket allowances hide \
@@ -373,6 +510,16 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
         }
         if in_vector_stage && PRODUCER_FILE_NAMES.contains(&file_name.as_str()) && !is_test_file {
             collect_producer_entry_points(&text, &mut scanned_entry_points);
+        }
+    }
+
+    // Cross-check OVERSIZED_FUNCTIONS existence: an entry whose file or
+    // function the scan never saw is a typo or a stale rename.
+    for (file, name, _) in &OVERSIZED_FUNCTIONS {
+        if !oversized_fn_seen.contains(&((*file).to_owned(), (*name).to_owned())) {
+            findings.push(format!(
+                "OVERSIZED_FUNCTIONS is stale: no fn `{name}` found in {file}"
+            ));
         }
     }
 
