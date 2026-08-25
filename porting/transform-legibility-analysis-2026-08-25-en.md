@@ -8,10 +8,12 @@ is an independently landable, behavior-preserving campaign.
 `transform-legibility-e1` (commits `9fa67e0e` loop_graph truth fix + dead
 cluster, `41c83228` diagnostics quarantine, `a6bb1c6d` codename sweep +
 `structure-check` gates 6/7 + reading order — see the 2026-08-25 journal).
-E2 and E3 remain proposed. E1 also surfaced one follow-up: the scalar-side
-`-vec` chunk-driver machinery (`emit_sample_loop`'s vector branch and the
-chunking half of `loop_graph.rs`) is provably unreachable in production and
-can be deleted behavior-neutrally (separate task).
+E2 and E3 remain proposed. E1 also surfaced one follow-up, since executed
+(`6a22b043`): the scalar-side `-vec` chunk-driver machinery
+(`emit_sample_loop`'s vector branch and the chunking half of
+`loop_graph.rs`) was provably unreachable in production and was deleted
+behavior-neutrally — golden-check 199/199 byte-identical before and after,
+net −1,214 lines.
 **Goal:** identify why the crate is still costly for a *human* to read after the June 2026
 decompositions and the July 2026 R0–R9 cleanup, and propose three **independent** restructuring
 experiments that reduce reading cost while keeping **byte-identical emitted FIR ⇒ identical

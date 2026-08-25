@@ -9,10 +9,12 @@ immédiat ; chaque expérience ci-dessous est une campagne indépendante et pré
 loop_graph + amas mort, `41c83228` quarantaine des diagnostics, `a6bb1c6d`
 passe des noms de code + gardes 6/7 de `structure-check` + ordre de lecture
 — voir le journal du 2026-08-25). E2 et E3 restent proposées. E1 a aussi
-fait émerger un suivi : la machinerie de chunk-driver `-vec` côté scalaire
-(la branche vectorielle d'`emit_sample_loop` et la moitié chunking de
-`loop_graph.rs`) est prouvablement inatteignable en production et peut être
-supprimée sans changement de comportement (tâche séparée).
+fait émerger un suivi, depuis exécuté (`6a22b043`) : la machinerie de
+chunk-driver `-vec` côté scalaire (la branche vectorielle
+d'`emit_sample_loop` et la moitié chunking de `loop_graph.rs`) était
+prouvablement inatteignable en production et a été supprimée sans
+changement de comportement — golden-check 199/199 identique à l'octet
+avant/après, −1 214 lignes nettes.
 **Objectif :** identifier pourquoi le crate reste coûteux à lire pour un *humain* après les
 décompositions de juin 2026 et le nettoyage R0–R9 de juillet 2026, et proposer trois expériences
 de restructuration **indépendantes** qui réduisent le coût de lecture tout en gardant un **FIR
