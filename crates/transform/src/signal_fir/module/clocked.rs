@@ -483,16 +483,20 @@ impl<'a> SignalToFirLower<'a> {
     ///
     /// Returns a dummy value: the wrapper "returns no expression" (C++);
     /// consumers read the hold fields through `Seq`.
-    pub(super) fn ensure_guarded_block(&mut self, wrapper: SigId) -> Result<FirId, SignalFirError> {
-        let dummy = self.lower_int32_const(0);
-        if self
-            .clocked
-            .as_ref()
-            .is_some_and(|c| c.emitted_blocks.contains(&wrapper))
-        {
-            return Ok(dummy);
-        }
-
+    /// Decodes one OD/US/DS wrapper: its domain kind, the hold outputs, the
+    /// clock signal, and the wrapper's clock-domain identity.
+    fn decode_clocked_wrapper(
+        &self,
+        wrapper: SigId,
+    ) -> Result<
+        (
+            Vec<SigId>,
+            SigId,
+            propagate::ClockDomainId,
+            propagate::ClockDomainKind,
+        ),
+        SignalFirError,
+    > {
         // ── Decode the wrapper payload ───────────────────────────────────
         let (children, kind): (Vec<SigId>, propagate::ClockDomainKind) =
             match match_sig(self.arena, wrapper) {
@@ -526,9 +530,19 @@ impl<'a> SignalToFirLower<'a> {
         };
         let domain = propagate::ClockDomainId::from_u32(domain_id);
 
+        Ok((holds.to_vec(), clock, domain, kind))
+    }
+
+    /// Selects the guard shape from the domain kind and the clock's type:
+    /// boolean OD `if`, integer OD / US counted loop, DS modulo.
+    fn select_guard_shape(
+        &self,
+        kind: propagate::ClockDomainKind,
+        clock: SigId,
+        clock_is_int: bool,
+    ) -> Result<GuardShape, SignalFirError> {
         // ── Guard shape selection ────────────────────────────────────────
-        let clock_is_int = matches!(self.types.get(&clock), Some(SimpleSigType::Int));
-        let shape = match kind {
+        Ok(match kind {
             propagate::ClockDomainKind::OnDemand => {
                 let clock_interval = self
                     .sig_types
@@ -565,8 +579,19 @@ impl<'a> SignalToFirLower<'a> {
                 }
                 GuardShape::DsModulo
             }
-        };
+        })
+    }
 
+    /// Emits the guard precondition in the outer region: the lowered clock,
+    /// the boolean/modulo condition when one exists, and the counted-loop
+    /// context when the shape is a loop.
+    fn emit_guard_precondition(
+        &mut self,
+        shape: &GuardShape,
+        clock: SigId,
+        clock_is_int: bool,
+        domain: propagate::ClockDomainId,
+    ) -> Result<(FirId, Option<FirId>, Option<LoopCtx>), SignalFirError> {
         // ── Clock and guard precondition (outer region) ──────────────────
         let clock_fir = self.lower_signal(clock)?;
         let guard_cond = match shape {
@@ -611,6 +636,15 @@ impl<'a> SignalToFirLower<'a> {
             GuardShape::BoolIf | GuardShape::DsModulo => None,
         };
 
+        Ok((clock_fir, guard_cond, loop_ctx))
+    }
+
+    /// Declares one persistent zero-cleared `fPerm<i>` hold field per wrapper
+    /// output and returns `(held value, field name)` pairs.
+    fn declare_hold_fields(
+        &mut self,
+        holds: &[SigId],
+    ) -> Result<Vec<(SigId, String)>, SignalFirError> {
         // ── Hold fields: persistent struct fields cleared to 0 ───────────
         let mut hold_stores: Vec<(SigId, String)> = Vec::with_capacity(holds.len());
         for &hold in holds {
@@ -646,6 +680,19 @@ impl<'a> SignalToFirLower<'a> {
             hold_stores.push((inner, name));
         }
 
+        Ok(hold_stores)
+    }
+
+    /// Lowers the wrapper's scheduled subgraph and hold stores inside a
+    /// child region (fire time), then appends the per-domain cursor and
+    /// inner `IfWrapping` counter advances to the block's sample-end phase.
+    fn lower_guarded_body(
+        &mut self,
+        wrapper: SigId,
+        domain: propagate::ClockDomainId,
+        loop_ctx: Option<LoopCtx>,
+        hold_stores: &[(SigId, String)],
+    ) -> Result<super::region::RegionPhases, SignalFirError> {
         // ── Body: lower the held values inside the child region ──────────
         self.regions.open_child();
         self.cache.open_child();
@@ -660,7 +707,7 @@ impl<'a> SignalToFirLower<'a> {
         if let Err(error) = self.lower_scheduled_graph(crate::hgraph::GraphKey::Wrapper(wrapper)) {
             body_result = Err(error);
         }
-        for (value, field) in &hold_stores {
+        for (value, field) in hold_stores.iter() {
             if body_result.is_err() {
                 break;
             }
@@ -724,6 +771,28 @@ impl<'a> SignalToFirLower<'a> {
                 super::super::delay::emit_if_wrapping_advance(&mut self.store, &counter_name, size);
             body_phases.sample_end.push(advance);
         }
+
+        Ok(body_phases)
+    }
+
+    pub(super) fn ensure_guarded_block(&mut self, wrapper: SigId) -> Result<FirId, SignalFirError> {
+        let dummy = self.lower_int32_const(0);
+        if self
+            .clocked
+            .as_ref()
+            .is_some_and(|c| c.emitted_blocks.contains(&wrapper))
+        {
+            return Ok(dummy);
+        }
+
+        let (holds, clock, domain, kind) = self.decode_clocked_wrapper(wrapper)?;
+        let clock_is_int = matches!(self.types.get(&clock), Some(SimpleSigType::Int));
+        let shape = self.select_guard_shape(kind, clock, clock_is_int)?;
+        let (clock_fir, guard_cond, loop_ctx) =
+            self.emit_guard_precondition(&shape, clock, clock_is_int, domain)?;
+        let hold_stores = self.declare_hold_fields(&holds)?;
+        let body_phases =
+            self.lower_guarded_body(wrapper, domain, loop_ctx.clone(), &hold_stores)?;
 
         // ── Wrap the body in the guard and append to the outer region ────
         let body_stmts = body_phases.flattened();

@@ -426,6 +426,228 @@ impl<'a> SignalToFirLower<'a> {
     /// trivially reverse-evaluable signals).
     ///
     /// Unsupported node kinds return a `SignalFirError::UnsupportedSignalNode`.
+    /// `Delay1` adjoint: `adj[x][n-1] += adj[y][n]` through a struct carry
+    /// (store now, load next reverse step); the recursive-feedback form's
+    /// load was already accumulated by the backward-sweep pre-scan.
+    fn propagate_bra_delay1_adj(
+        &mut self,
+        sig: SigId,
+        x: SigId,
+        y_bar: FirId,
+        adj: &mut std::collections::HashMap<SigId, FirId>,
+        group: SigId,
+    ) -> Result<(), SignalFirError> {
+        let real_ty = self.real_ty.clone();
+
+        // y[n] = x[n-1].  Adjoint: adj[x][n-1] += adj[y][n].
+        //
+        // In the reverse sample loop at step n:
+        //   carry_load  = struct field written at step n+1  → adj[x] contribution
+        //   carry_store = y_bar → struct field for step n-1 to read
+        //
+        // Ordering: `immediate` runs before `post_output` within one
+        // iteration, so the load always reads the value stored at n+1.
+        //
+        // Special case — `Delay1(Proj(slot, SYMREF(var)))`:
+        //   This is the one-sample feedback in a recursive body.  The carry
+        //   load was already emitted during the pre-scan in
+        //   `ensure_bra_backward_sweep` (step 3a) and accumulated into
+        //   `adj[body_sigs[slot]]` so that the total TBPTT adjoint
+        //   `cotangent[n] + carry_from_n+1` is set before the Proj-SYMREC
+        //   node is processed in the reverse postorder.  Here we only need
+        //   to store the new carry for step n-1.
+        let is_recursive_feedback =
+            if let SigMatch::Proj(_slot, inner_group) = match_sig(self.arena, x) {
+                match_sym_ref(self.arena, inner_group).is_some()
+            } else {
+                false
+            };
+        let carry_name = self.ensure_bra_delay1_carry(sig, group)?;
+        let carry_store = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.store_var(carry_name.clone(), AccessType::Struct, y_bar)
+        };
+        self.regions
+            .current_phases_mut()
+            .post_output
+            .push(carry_store);
+        if !is_recursive_feedback {
+            let carry_load = {
+                let rt = self.real_ty();
+                let mut b = FirBuilder::new(&mut self.store);
+                b.load_var(carry_name, AccessType::Struct, rt)
+            };
+            Self::add_to_adjoint(&mut self.store, adj, x, carry_load, real_ty);
+        }
+
+        Ok(())
+    }
+
+    /// `Delay(c, x)` adjoint: `adj[x][n] += adj[y][n+c]` through a circular
+    /// `c`-slot carry array indexed by `i0 % c`; zero delay is the identity.
+    fn propagate_bra_delay_adj(
+        &mut self,
+        sig: SigId,
+        sig_inner: SigId,
+        amount: SigId,
+        y_bar: FirId,
+        adj: &mut std::collections::HashMap<SigId, FirId>,
+    ) -> Result<(), SignalFirError> {
+        let real_ty = self.real_ty.clone();
+
+        // Forward: y[n] = x[n-c].  Backward: adj[x][n] += adj[y][n+c].
+        //
+        // At reverse step n:
+        //   carry[n % c] holds adj[y][n+c] written c steps ago.
+        //   We load it → adj[sig_inner] += carry[n%c].
+        //   We store y_bar to carry[n%c] for step n-c to read.
+        let c_raw = tree_to_int(self.arena, amount).unwrap_or(0);
+        let c = usize::try_from(c_raw).unwrap_or(0);
+        if c == 0 {
+            // Zero delay: y = x.
+            Self::add_to_adjoint(&mut self.store, adj, sig_inner, y_bar, real_ty);
+        } else {
+            let carry_name = self.ensure_bra_delay_array_carry(sig, c)?;
+            let c_fir = {
+                let mut b = FirBuilder::new(&mut self.store);
+                b.int32(i32::try_from(c).unwrap_or(i32::MAX))
+            };
+            let i0 = {
+                let mut b = FirBuilder::new(&mut self.store);
+                b.load_var("i0", AccessType::Loop, FirType::Int32)
+            };
+            let slot = {
+                let mut b = FirBuilder::new(&mut self.store);
+                b.binop(FirBinOp::Rem, i0, c_fir, FirType::Int32)
+            };
+            let rt = self.real_ty();
+            let carry_load = {
+                let mut b = FirBuilder::new(&mut self.store);
+                b.load_table(carry_name.clone(), AccessType::Struct, slot, rt)
+            };
+            let carry_store = {
+                let mut b = FirBuilder::new(&mut self.store);
+                b.store_table(carry_name, AccessType::Struct, slot, y_bar)
+            };
+            self.regions
+                .current_phases_mut()
+                .post_output
+                .push(carry_store);
+            Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty);
+        }
+
+        Ok(())
+    }
+
+    /// `Prefix(init, x)` adjoint: `Delay1` semantics for `x` plus the
+    /// frame-0 contribution `adj[init] += adj[y][0]`, emitted as a Select2
+    /// on `i0 == 0`.
+    fn propagate_bra_prefix_adj(
+        &mut self,
+        sig: SigId,
+        init: SigId,
+        sig_inner: SigId,
+        y_bar: FirId,
+        adj: &mut std::collections::HashMap<SigId, FirId>,
+    ) -> Result<(), SignalFirError> {
+        let real_ty = self.real_ty.clone();
+
+        // Forward: y[0] = init, y[n] = x[n-1] for n ≥ 1.
+        // Backward (same as Delay1 for x):
+        //   adj[sig_inner][n] += adj[y][n+1]  (anti-causal carry)
+        //   adj[init]         += adj[y][0]    (only at frame 0)
+        //
+        // The i0==0 condition for the init contribution is emitted as
+        // a FIR Select2: contrib = y_bar * (i0 == 0 ? 1 : 0).
+        let carry_name = self.ensure_bra_delay1_carry(sig, sig)?;
+        let rt = self.real_ty();
+        let carry_load = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.load_var(carry_name.clone(), AccessType::Struct, rt)
+        };
+        let carry_store = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.store_var(carry_name, AccessType::Struct, y_bar)
+        };
+        self.regions
+            .current_phases_mut()
+            .post_output
+            .push(carry_store);
+        Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty.clone());
+        // Conditional init contribution: y_bar when i0 == 0, else 0.
+        let i0 = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.load_var("i0", AccessType::Loop, FirType::Int32)
+        };
+        let zero_i = self.lower_int32_const(0);
+        let is_frame0 = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.binop(FirBinOp::Eq, i0, zero_i, FirType::Int32)
+        };
+        let zero_r = self.float_const(0.0);
+        let init_contrib = {
+            let mut b = FirBuilder::new(&mut self.store);
+            // Select2(cond, y_bar, 0.0): when is_frame0 != 0, use y_bar
+            b.select2(is_frame0, y_bar, zero_r, real_ty.clone())
+        };
+        Self::add_to_adjoint(&mut self.store, adj, init, init_contrib, real_ty);
+
+        Ok(())
+    }
+
+    /// `Proj` over a symbolic recursion carrier: the SYMREC top-level output
+    /// forwards the full TBPTT adjoint to its body (identity Jacobian); a
+    /// SYMREF back-reference was pre-loaded by the sweep pre-scan.
+    fn propagate_bra_proj_adj(
+        &mut self,
+        slot: i32,
+        group_sig: SigId,
+        y_bar: FirId,
+        adj: &mut std::collections::HashMap<SigId, FirId>,
+    ) -> Result<(), SignalFirError> {
+        let real_ty = self.real_ty.clone();
+
+        if let Some((_var, body_list)) = match_sym_rec(self.arena, group_sig) {
+            // SYMREC top-level output: propagate adjoint to body[slot].
+            let slot_usize = usize::try_from(slot).map_err(|_| {
+                SignalFirError::new(
+                    SignalFirErrorCode::UnsupportedSignalNode,
+                    format!("negative Proj slot {slot} in BlockReverseAD backward pass (B6)"),
+                )
+            })?;
+            let bodies = list_to_vec(self.arena, body_list).ok_or_else(|| {
+                SignalFirError::new(
+                    SignalFirErrorCode::UnsupportedSignalNode,
+                    "malformed SYMREC body list in BlockReverseAD backward pass (B6)".to_string(),
+                )
+            })?;
+            let &body = bodies.get(slot_usize).ok_or_else(|| {
+                SignalFirError::new(
+                    SignalFirErrorCode::UnsupportedSignalNode,
+                    format!(
+                        "Proj slot {slot_usize} out of range (SYMREC body count \
+                                 {}) in BlockReverseAD backward pass (B6)",
+                        bodies.len()
+                    ),
+                )
+            })?;
+            Self::add_to_adjoint(&mut self.store, adj, body, y_bar, real_ty);
+        } else if match_sym_ref(self.arena, group_sig).is_some() {
+            // SYMREF back-reference: carry pre-loaded in pre-scan; nothing to do.
+        } else {
+            return Err(SignalFirError::new(
+                SignalFirErrorCode::UnsupportedSignalNode,
+                format!(
+                    "Proj over non-SYMREC/SYMREF group ({:?}) not supported in \
+                             BlockReverseAD backward pass (B6)",
+                    match_sig(self.arena, group_sig)
+                ),
+            ));
+        }
+
+        Ok(())
+    }
+
     pub(super) fn propagate_bra_adj(
         &mut self,
         sig: SigId,
@@ -521,45 +743,7 @@ impl<'a> SignalToFirLower<'a> {
             }
 
             // ── Delay1: anti-causal carry ───────────────────────────────────
-            SigMatch::Delay1(x) => {
-                // y[n] = x[n-1].  Adjoint: adj[x][n-1] += adj[y][n].
-                //
-                // In the reverse sample loop at step n:
-                //   carry_load  = struct field written at step n+1  → adj[x] contribution
-                //   carry_store = y_bar → struct field for step n-1 to read
-                //
-                // Ordering: `immediate` runs before `post_output` within one
-                // iteration, so the load always reads the value stored at n+1.
-                //
-                // Special case — `Delay1(Proj(slot, SYMREF(var)))`:
-                //   This is the one-sample feedback in a recursive body.  The carry
-                //   load was already emitted during the pre-scan in
-                //   `ensure_bra_backward_sweep` (step 3a) and accumulated into
-                //   `adj[body_sigs[slot]]` so that the total TBPTT adjoint
-                //   `cotangent[n] + carry_from_n+1` is set before the Proj-SYMREC
-                //   node is processed in the reverse postorder.  Here we only need
-                //   to store the new carry for step n-1.
-                let is_recursive_feedback =
-                    if let SigMatch::Proj(_slot, inner_group) = match_sig(self.arena, x) {
-                        match_sym_ref(self.arena, inner_group).is_some()
-                    } else {
-                        false
-                    };
-                let carry_name = self.ensure_bra_delay1_carry(sig, group)?;
-                let carry_store = {
-                    let mut b = FirBuilder::new(&mut self.store);
-                    b.store_var(carry_name.clone(), AccessType::Struct, y_bar)
-                };
-                self.regions.current_phases_mut().post_output.push(carry_store);
-                if !is_recursive_feedback {
-                    let carry_load = {
-                        let rt = self.real_ty();
-                        let mut b = FirBuilder::new(&mut self.store);
-                        b.load_var(carry_name, AccessType::Struct, rt)
-                    };
-                    Self::add_to_adjoint(&mut self.store, adj, x, carry_load, real_ty);
-                }
-            }
+            SigMatch::Delay1(x) => self.propagate_bra_delay1_adj(sig, x, y_bar, adj, group)?,
 
             // ── Floor / Ceil / Rint / Round: zero gradient ──────────────────
             SigMatch::Floor(x) | SigMatch::Ceil(x) | SigMatch::Rint(x) | SigMatch::Round(x) => {
@@ -578,83 +762,12 @@ impl<'a> SignalToFirLower<'a> {
 
             // ── Delay(c, x): anti-causal carry with circular buffer ──────────
             SigMatch::Delay(sig_inner, amount) => {
-                // Forward: y[n] = x[n-c].  Backward: adj[x][n] += adj[y][n+c].
-                //
-                // At reverse step n:
-                //   carry[n % c] holds adj[y][n+c] written c steps ago.
-                //   We load it → adj[sig_inner] += carry[n%c].
-                //   We store y_bar to carry[n%c] for step n-c to read.
-                let c_raw = tree_to_int(self.arena, amount).unwrap_or(0);
-                let c = usize::try_from(c_raw).unwrap_or(0);
-                if c == 0 {
-                    // Zero delay: y = x.
-                    Self::add_to_adjoint(&mut self.store, adj, sig_inner, y_bar, real_ty);
-                } else {
-                    let carry_name = self.ensure_bra_delay_array_carry(sig, c)?;
-                    let c_fir = {
-                        let mut b = FirBuilder::new(&mut self.store);
-                        b.int32(i32::try_from(c).unwrap_or(i32::MAX))
-                    };
-                    let i0 = {
-                        let mut b = FirBuilder::new(&mut self.store);
-                        b.load_var("i0", AccessType::Loop, FirType::Int32)
-                    };
-                    let slot = {
-                        let mut b = FirBuilder::new(&mut self.store);
-                        b.binop(FirBinOp::Rem, i0, c_fir, FirType::Int32)
-                    };
-                    let rt = self.real_ty();
-                    let carry_load = {
-                        let mut b = FirBuilder::new(&mut self.store);
-                        b.load_table(carry_name.clone(), AccessType::Struct, slot, rt)
-                    };
-                    let carry_store = {
-                        let mut b = FirBuilder::new(&mut self.store);
-                        b.store_table(carry_name, AccessType::Struct, slot, y_bar)
-                    };
-                    self.regions.current_phases_mut().post_output.push(carry_store);
-                    Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty);
-                }
+                self.propagate_bra_delay_adj(sig, sig_inner, amount, y_bar, adj)?;
             }
 
             // ── Prefix(init, sig): Delay1 semantics + init contribution ─────
             SigMatch::Prefix(init, sig_inner) => {
-                // Forward: y[0] = init, y[n] = x[n-1] for n ≥ 1.
-                // Backward (same as Delay1 for x):
-                //   adj[sig_inner][n] += adj[y][n+1]  (anti-causal carry)
-                //   adj[init]         += adj[y][0]    (only at frame 0)
-                //
-                // The i0==0 condition for the init contribution is emitted as
-                // a FIR Select2: contrib = y_bar * (i0 == 0 ? 1 : 0).
-                let carry_name = self.ensure_bra_delay1_carry(sig, sig)?;
-                let rt = self.real_ty();
-                let carry_load = {
-                    let mut b = FirBuilder::new(&mut self.store);
-                    b.load_var(carry_name.clone(), AccessType::Struct, rt)
-                };
-                let carry_store = {
-                    let mut b = FirBuilder::new(&mut self.store);
-                    b.store_var(carry_name, AccessType::Struct, y_bar)
-                };
-                self.regions.current_phases_mut().post_output.push(carry_store);
-                Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty.clone());
-                // Conditional init contribution: y_bar when i0 == 0, else 0.
-                let i0 = {
-                    let mut b = FirBuilder::new(&mut self.store);
-                    b.load_var("i0", AccessType::Loop, FirType::Int32)
-                };
-                let zero_i = self.lower_int32_const(0);
-                let is_frame0 = {
-                    let mut b = FirBuilder::new(&mut self.store);
-                    b.binop(FirBinOp::Eq, i0, zero_i, FirType::Int32)
-                };
-                let zero_r = self.float_const(0.0);
-                let init_contrib = {
-                    let mut b = FirBuilder::new(&mut self.store);
-                    // Select2(cond, y_bar, 0.0): when is_frame0 != 0, use y_bar
-                    b.select2(is_frame0, y_bar, zero_r, real_ty.clone())
-                };
-                Self::add_to_adjoint(&mut self.store, adj, init, init_contrib, real_ty);
+                self.propagate_bra_prefix_adj(sig, init, sig_inner, y_bar, adj)?;
             }
 
             // ── Proj(slot, SYMREC/SYMREF) — recursive carrier projection ────────
@@ -675,46 +788,7 @@ impl<'a> SignalToFirLower<'a> {
             //   the pre-scan.  The `Delay1` arm above stores the new carry to the
             //   struct field (for step n-1).  Nothing more to propagate here.
             SigMatch::Proj(slot, group_sig) => {
-                if let Some((_var, body_list)) = match_sym_rec(self.arena, group_sig) {
-                    // SYMREC top-level output: propagate adjoint to body[slot].
-                    let slot_usize = usize::try_from(slot).map_err(|_| {
-                        SignalFirError::new(
-                            SignalFirErrorCode::UnsupportedSignalNode,
-                            format!(
-                                "negative Proj slot {slot} in BlockReverseAD backward pass (B6)"
-                            ),
-                        )
-                    })?;
-                    let bodies = list_to_vec(self.arena, body_list).ok_or_else(|| {
-                        SignalFirError::new(
-                            SignalFirErrorCode::UnsupportedSignalNode,
-                            "malformed SYMREC body list in BlockReverseAD backward pass (B6)"
-                                .to_string(),
-                        )
-                    })?;
-                    let &body = bodies.get(slot_usize).ok_or_else(|| {
-                        SignalFirError::new(
-                            SignalFirErrorCode::UnsupportedSignalNode,
-                            format!(
-                                "Proj slot {slot_usize} out of range (SYMREC body count \
-                                 {}) in BlockReverseAD backward pass (B6)",
-                                bodies.len()
-                            ),
-                        )
-                    })?;
-                    Self::add_to_adjoint(&mut self.store, adj, body, y_bar, real_ty);
-                } else if match_sym_ref(self.arena, group_sig).is_some() {
-                    // SYMREF back-reference: carry pre-loaded in pre-scan; nothing to do.
-                } else {
-                    return Err(SignalFirError::new(
-                        SignalFirErrorCode::UnsupportedSignalNode,
-                        format!(
-                            "Proj over non-SYMREC/SYMREF group ({:?}) not supported in \
-                             BlockReverseAD backward pass (B6)",
-                            match_sig(self.arena, group_sig)
-                        ),
-                    ));
-                }
+                self.propagate_bra_proj_adj(slot, group_sig, y_bar, adj)?;
             }
 
             other => {
