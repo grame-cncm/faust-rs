@@ -23,7 +23,16 @@ the `Display` family formatters, and the vector module assembly). The
 extraction of `compile_fastlane_inner`'s clock analysis also removed a
 genuine ~55-line duplicated hgraph/effects/schedule sequence. Every landing
 passed transform 404 tests, golden-check 199/199, and structure-check.
-E3 remains proposed. E1 also surfaced one follow-up, since executed
+**E3 executed 2026-08-25** (`a460c36e`): the stateless leaf families —
+binops with the fast-lane typing contract, unary/binary math intrinsics,
+integer-vs-real `min`/`max`/`abs`, internal-precision constants, and
+`map_binop` itself — now live once in `signal_fir/leaf_emit.rs`, consumed
+by both production lowerers through a statically dispatched
+`LeafPrototypes` trait; each path maps the shared `LeafBinopError` back to
+its exact prior diagnostics, and `structure-check` flags any checker
+referencing `leaf_emit`. Golden-check stayed 199/199 byte-identical.
+**All three experiments of this analysis are now executed**, on branch
+`transform-legibility-e1`. E1 also surfaced one follow-up, since executed
 (`6a22b043`): the scalar-side `-vec` chunk-driver machinery
 (`emit_sample_loop`'s vector branch and the chunking half of
 `loop_graph.rs`) was provably unreachable in production and was deleted

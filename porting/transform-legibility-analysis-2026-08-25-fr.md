@@ -24,7 +24,17 @@ l'assemblage du module vectoriel). L'extraction de l'analyse d'horloge de
 `compile_fastlane_inner` a aussi supprimé une vraie duplication de
 ~55 lignes (séquence hgraph/effets/ordonnancement). Chaque atterrissage a
 passé transform 404 tests, golden-check 199/199 et structure-check.
-E3 reste proposée. E1 a aussi
+**E3 exécutée le 2026-08-25** (`a460c36e`) : les familles de feuilles sans
+état — binops avec le contrat de typage fast-lane, intrinsèques math
+unaires/binaires, `min`/`max`/`abs` entier-vs-réel, constantes à la
+précision interne, et `map_binop` lui-même — vivent désormais une seule
+fois dans `signal_fir/leaf_emit.rs`, consommées par les deux lowerers de
+production via un trait `LeafPrototypes` à dispatch statique ; chaque
+chemin reconstruit ses diagnostics exacts depuis la `LeafBinopError`
+partagée, et `structure-check` signale tout checker référençant
+`leaf_emit`. Golden-check est resté à 199/199 identique à l'octet.
+**Les trois expériences de cette analyse sont désormais exécutées**, sur
+la branche `transform-legibility-e1`. E1 a aussi
 fait émerger un suivi, depuis exécuté (`6a22b043`) : la machinerie de
 chunk-driver `-vec` côté scalaire (la branche vectorielle
 d'`emit_sample_loop` et la moitié chunking de `loop_graph.rs`) était
