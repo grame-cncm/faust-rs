@@ -74,8 +74,7 @@ pub(super) struct RadReverseState {
 ///   state-free tail is hoisted into a second, vectorizable inner loop fed by
 ///   chunk buffers, leaving only the recursive core serial — otherwise it stays
 ///   one plain serial loop (chunking a loop-carried body as one block is pure
-///   overhead the C compiler cannot vectorize);
-/// - a **`Island`** (clocked scalar domain) stays a plain serial loop.
+///   overhead the C compiler cannot vectorize).
 ///
 /// The chunk driver has two layouts, selected by `-lv` (`loop_variant`, as Faust
 /// C++), both bit-exact vs scalar (the inner loop keeps the *global* sample index
@@ -132,13 +131,11 @@ fn emit_sample_loop(
             }
             None => vec![plain_sample_loop(store, exec, false)],
         },
-        // Clocked scalar island (vector doc §6 D1): plain serial loop.
-        LoopKind::Island => vec![plain_sample_loop(store, exec, false)],
     }
 }
 
 /// A single `for (i0 = 0; i0 < count; i0++) { <exec> }` (scalar / reverse / the
-/// non-splittable-recursive and island fallbacks).
+/// non-splittable-recursive fallback).
 fn plain_sample_loop(store: &mut FirStore, exec: &[FirId], is_reverse: bool) -> FirId {
     let mut b = FirBuilder::new(store);
     let upper = b.load_var("count", AccessType::FunArgs, FirType::Int32);

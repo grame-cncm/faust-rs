@@ -1,32 +1,41 @@
-//! Loop graph for vector mode (`-vec`) — roadmap P6, vector doc V2.
+//! Loop-DAG data model and deterministic loop ordering for `compute` emission.
 //!
-//! Scalar mode compiles the whole per-sample block into one `for i in 0..count`
-//! loop. Vector mode restructures it into an **outer chunk loop** of `vec_size`
-//! samples containing a **DAG of small inner loops** — one per recursive group,
-//! per delayed-or-shared signal, etc. — so the C compiler can auto-vectorize the
-//! non-recursive ones (SIMD), while recursive computations stay in serial loops.
+//! This module owns the [`LoopGraph`]: nodes are per-sample loops (each with
+//! `pre`/`exec`/`post` phase statement lists), edges are backward
+//! dependencies, and [`LoopGraph::topological_order`] serializes them
+//! deterministically — loops are keyed by insertion-ordered [`LoopId`] and
+//! every set is `LoopId`-ordered, unlike the C++ `sortGraph` whose
+//! `std::set<Loop*>` is pointer-ordered and therefore non-deterministic
+//! across runs.
 //!
-//! This module owns the loop-DAG **data model** and its **deterministic
-//! levelization** (a port of the C++ `sortGraph`, whose `std::set<Loop*>` is
-//! pointer-ordered and therefore non-deterministic across runs — here loops are
-//! keyed by insertion-ordered [`LoopId`], so emission order is stable). Two
-//! later slices consume it:
+//! # Who uses what today
+//! - **Scalar lowering (live):** `module::build_module` routes every
+//!   per-sample slice through this graph — one node per non-empty slice,
+//!   classified by [`slice_has_persistent_state`], emitted in insertion
+//!   order via `topological_order`.
+//! - **Chunked emission (currently unreachable in production):** the
+//!   `-vec` chunk-driver half of this file ([`ChunkBuffer`],
+//!   [`partition_recursive_body`], [`rewrite_var_loads`], and the split
+//!   emission consumed by `module::build::emit_sample_loop`) predates the
+//!   checked vector pipeline (`signal_fir::vector`), which now owns every
+//!   accepted `-vec` compile; a rejected `-vec` compile falls back to
+//!   *scalar* lowering. No production caller passes a vector compute mode
+//!   into `build_module` anymore, so this half executes only under its
+//!   in-file tests. Removing it (together with its `build.rs` consumers)
+//!   is a separate, behavior-neutral decision.
+//! - **Loop-separation criterion (diagnostic):** [`needs_separate_loop`]
+//!   (the C++ `needSeparateLoop` port) is consumed by the `pv_slice`
+//!   diagnostic surface and by its exhaustive in-file tests.
 //!
-//! - **V3–V4** populate it from the signal lowering (a current-loop stack
-//!   mirroring the C++ `openLoop`/`closeLoop`, the `needSeparateLoop` criterion,
-//!   cross-loop chunk buffers, and vector delay-line layouts);
-//! - **V5** emits it (each [`LoopNode`] becomes a chunk `for` with its
-//!   pre/exec/post phases; levels drive `// Section : n` grouping).
-//!
-//! Nothing here is wired into scalar codegen yet, so it cannot affect existing
-//! output; the `dead_code` allowance is removed when V3 starts populating it.
-#![allow(dead_code)]
+//! Plan provenance: vectorization roadmap P6, vector doc V2–V5b
+//! (`porting/vector-mode-analysis-port-plan-2026-06-10-en.md`); the
+//! superseding checked pipeline is
+//! `porting/vector-mode-signal-level-analysis-cpp-port-plan-2026-07-10-en.md`.
 
 use std::collections::BTreeSet;
 
 use ahash::AHashMap;
 use fir::{AccessType, FirBinOp, FirBuilder, FirId, FirMatch, FirStore, FirType, match_fir};
-use signals::SigId;
 use sigtype::Variability;
 
 use crate::schedule::ScheduleDag;
@@ -47,14 +56,12 @@ pub(crate) enum LoopKind {
     /// A recursive group (`maxDelay > 0` back-edge / recursive projection):
     /// must run serially, one sample after another.
     Recursive,
-    /// A clocked-domain block (`ondemand`/`upsampling`/`downsampling`): a serial
-    /// **scalar island** (vector doc §6, rule D1). Its externals are chunk
-    /// buffers; its inner-domain state stays scalar.
-    Island,
 }
 
 impl LoopKind {
     /// Whether the C backend may auto-vectorize this loop's inner body.
+    /// Test-only assertion helper; production code matches on the variants.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn is_vectorizable(self) -> bool {
         matches!(self, Self::Vectorizable)
@@ -69,7 +76,7 @@ impl LoopKind {
 /// index save. Scalar-equivalent loops leave `pre`/`post` empty.
 #[derive(Clone, Debug)]
 pub(crate) struct LoopNode {
-    /// Vectorizable / recursive / island classification.
+    /// Vectorizable / recursive classification.
     pub(crate) kind: LoopKind,
     /// Whether the chunk `for` runs in reverse sample time (RAD/BRA).
     pub(crate) is_reverse: bool,
@@ -125,13 +132,15 @@ impl LoopGraph {
         id
     }
 
-    /// Number of loops.
+    /// Number of loops. Test-only assertion helper.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.nodes.len()
     }
 
-    /// Whether the graph has no loops.
+    /// Whether the graph has no loops. Test-only assertion helper.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.nodes.is_empty()
@@ -154,6 +163,12 @@ impl LoopGraph {
 
     /// Records that `from` must run after `to` (`from` reads `to`'s output).
     /// A self-edge is ignored; edges within one loop are not dependencies.
+    ///
+    /// Test-only today: the scalar path builds edgeless graphs (slices are
+    /// already emitted in dependency-safe insertion order), and the tests use
+    /// this to pin `topological_order`'s deterministic tie-breaking for the
+    /// day a producer adds real edges.
+    #[cfg(test)]
     pub(crate) fn add_dep(&mut self, from: LoopId, to: LoopId) {
         if from != to {
             self.nodes[Self::index(from)].deps.insert(to);
@@ -279,6 +294,8 @@ pub(crate) enum LoopSeparation {
 
 impl LoopSeparation {
     /// The [`LoopKind`] a *separated* verdict maps to (`None` for `Inline`).
+    /// Test-only projection used by the `needs_separate_loop` tests.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn loop_kind(self) -> Option<LoopKind> {
         match self {
@@ -378,120 +395,6 @@ fn node_writes_struct_state(store: &FirStore, node: FirId) -> bool {
     }
 }
 
-// ── loop_env — signal-level loop assignment (vector doc S-A) ─────────────────
-//
-// The loop analog of `clk_env::annotate`: a memoized DFS over the sample-signal
-// DAG that assigns each signal to a [`LoopId`] via [`needs_separate_loop`] and
-// records the loop dependency edges into a [`LoopGraph`] *shape* (no statements
-// yet — those are routed in a later slice). Kept pure — signal properties come in
-// through a caller-supplied closure, exactly as [`needs_separate_loop`] takes its
-// props — so the assignment algorithm is unit-testable without the lowering's
-// delay/sharing/variability analyses. Cycles (recursive back-edges) terminate on
-// the memo: a revisit only records the dependency edge.
-
-/// Result of [`assign_loops`]: which loop each visited signal lives in, plus the
-/// populated (statement-free) loop graph with its dependency edges.
-#[derive(Debug)]
-pub(crate) struct LoopAssignment {
-    /// `SigId → LoopId`. A separated signal maps to its own loop; an inlined one
-    /// maps to its consumer's loop.
-    pub(crate) map: AHashMap<SigId, LoopId>,
-    /// The loop graph (nodes = loops, edges = "reads the output of").
-    pub(crate) graph: LoopGraph,
-    /// The root loop every output starts in.
-    pub(crate) root: LoopId,
-}
-
-impl LoopAssignment {
-    /// The loop a signal was assigned to, if it was visited.
-    #[must_use]
-    pub(crate) fn loop_of(&self, sig: SigId) -> Option<LoopId> {
-        self.map.get(&sig).copied()
-    }
-}
-
-/// The **sample-value operands** of a signal — the edges [`assign_loops`] should
-/// follow. `match_sig` already decodes the op-code / control ids out of the enum,
-/// so this returns only the `SigId` value fields, never the raw arena children
-/// (which include the op-code atom and constant indices — following those, since
-/// `int(0)` is hash-consed, would fabricate a spurious cross-loop edge).
-///
-/// The decoded rules are shared with Hgraph and PV through
-/// [`super::vector::analysis::signal_dependencies`]. Malformed list payloads and
-/// unsupported legacy recursion are reported instead of becoming silent leaves.
-pub(crate) fn signal_value_children(
-    analysis: &super::vector::analysis::SignalAnalysisContext<'_>,
-    sig: SigId,
-) -> Result<Vec<SigId>, super::vector::analysis::AnalysisError> {
-    super::vector::analysis::signal_dependencies(analysis, sig).map(|dependencies| {
-        dependencies
-            .scheduling()
-            .iter()
-            .map(|dependency| dependency.to)
-            .collect()
-    })
-}
-
-/// Assigns every sample signal reachable from `outputs` to a loop.
-///
-/// `children(sig)` yields the signal's **sample-value operands** — the edges to
-/// follow. Non-value children (an op-code atom, a constant delay/index, a
-/// clock-env token) must be excluded: a shared constant node would otherwise
-/// fabricate a spurious cross-loop edge (and a cycle). `props(sig)` supplies the
-/// [`SignalLoopProps`] the [`needs_separate_loop`] verdict is computed from. Both
-/// are caller-supplied so the assignment stays a pure, testable graph algorithm
-/// decoupled from the signal-specific value-child extraction (wired later).
-///
-/// A signal that needs a separate loop opens a new [`LoopNode`] (serial for a
-/// recursive projection, vectorizable otherwise) and the enclosing loop gains a
-/// dependency edge on it; the rest inline into their consumer's loop. Cycles
-/// (recursive back-edges) terminate on the memo — a revisit only records an edge.
-pub(crate) fn assign_loops(
-    outputs: &[SigId],
-    mut children: impl FnMut(SigId) -> Vec<SigId>,
-    mut props: impl FnMut(SigId) -> SignalLoopProps,
-) -> LoopAssignment {
-    let mut graph = LoopGraph::new();
-    // Every output starts in the top-level sample loop.
-    let root = graph.add_loop(LoopKind::Vectorizable, false);
-    let mut map = AHashMap::new();
-    for &out in outputs {
-        assign_one(&mut graph, &mut map, &mut children, &mut props, out, root);
-    }
-    LoopAssignment { map, graph, root }
-}
-
-fn assign_one(
-    graph: &mut LoopGraph,
-    map: &mut AHashMap<SigId, LoopId>,
-    children: &mut impl FnMut(SigId) -> Vec<SigId>,
-    props: &mut impl FnMut(SigId) -> SignalLoopProps,
-    sig: SigId,
-    current: LoopId,
-) {
-    if let Some(&loop_s) = map.get(&sig) {
-        // Already placed; the current loop reads it → a cross-loop edge (a
-        // self-edge, i.e. same loop, is ignored by `add_dep`).
-        graph.add_dep(current, loop_s);
-        return;
-    }
-    let child_loop = match needs_separate_loop(&props(sig)).loop_kind() {
-        Some(kind) => {
-            let l = graph.add_loop(kind, false);
-            graph.add_dep(current, l);
-            map.insert(sig, l);
-            l
-        }
-        None => {
-            map.insert(sig, current);
-            current
-        }
-    };
-    for child in children(sig) {
-        assign_one(graph, map, children, props, child, child_loop);
-    }
-}
-
 // ── Cross-loop chunk buffers (vector doc §4, S-C) ────────────────────────────
 //
 // A sample value produced in one loop and consumed in another is materialized in
@@ -519,7 +422,8 @@ impl ChunkBuffer {
         }
     }
 
-    /// The buffer's variable name.
+    /// The buffer's variable name. Test-only assertion helper.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn name(&self) -> &str {
         &self.name
@@ -1061,7 +965,6 @@ pub(crate) fn rewrite_var_loads(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tlib::TreeArena;
 
     /// A sample-rate, non-shared, non-delayed, non-recursive, non-trivial signal
     /// (the "otherwise" row) — the base other rows tweak one field from.
@@ -1240,7 +1143,7 @@ mod tests {
         let mut g = LoopGraph::new();
         let a = g.add_loop(LoopKind::Vectorizable, false);
         let b = g.add_loop(LoopKind::Recursive, false);
-        let c = g.add_loop(LoopKind::Island, true);
+        let c = g.add_loop(LoopKind::Recursive, true);
         assert_eq!(g.len(), 3);
         // No edges → insertion order, deterministically.
         assert_eq!(g.topological_order().unwrap(), vec![a, b, c]);
@@ -1330,179 +1233,6 @@ mod tests {
             vec![a, b, c]
         );
         assert_eq!(g.topological_order().unwrap(), vec![a, b, c]);
-    }
-
-    // ── loop_env assignment (S-A) ──
-    use signals::SigBuilder;
-
-    /// Three distinct signal ids to wire a mock value-child graph with.
-    fn three_sigs() -> (TreeArena, SigId, SigId, SigId) {
-        let mut arena = TreeArena::new();
-        let a = SigBuilder::new(&mut arena).input(0);
-        let b = SigBuilder::new(&mut arena).input(1);
-        let c = SigBuilder::new(&mut arena).input(2);
-        (arena, a, b, c)
-    }
-
-    #[test]
-    fn all_inline_signals_share_the_root_loop() {
-        // out reads a; both inline (base props → Inline).
-        let (_arena, a, _b, out) = three_sigs();
-        let asn = assign_loops(
-            &[out],
-            |sig| if sig == out { vec![a] } else { vec![] },
-            |_| base_props(),
-        );
-        assert_eq!(asn.graph.len(), 1, "only the root loop is created");
-        assert_eq!(asn.loop_of(out), Some(asn.root));
-        assert_eq!(asn.loop_of(a), Some(asn.root));
-    }
-
-    #[test]
-    fn a_shared_signal_opens_its_own_loop_with_an_edge() {
-        // out reads `shared`; `shared` reads `a`; `shared` is marked shared.
-        let (_arena, a, shared, out) = three_sigs();
-        let asn = assign_loops(
-            &[out],
-            |sig| {
-                if sig == out {
-                    vec![shared]
-                } else if sig == shared {
-                    vec![a]
-                } else {
-                    vec![]
-                }
-            },
-            |sig| {
-                if sig == shared {
-                    SignalLoopProps {
-                        is_shared: true,
-                        ..base_props()
-                    }
-                } else {
-                    base_props()
-                }
-            },
-        );
-        assert_eq!(asn.graph.len(), 2, "root + the shared signal's loop");
-        assert_eq!(asn.loop_of(out), Some(asn.root), "out inlines into root");
-        let shared_loop = asn.loop_of(shared).expect("shared signal is placed");
-        assert_ne!(shared_loop, asn.root);
-        assert!(
-            asn.graph.node(asn.root).deps.contains(&shared_loop),
-            "root must depend on the shared loop"
-        );
-    }
-
-    #[test]
-    fn recursive_projection_opens_a_serial_loop() {
-        let (_arena, _a, _b, out) = three_sigs();
-        let asn = assign_loops(
-            &[out],
-            |_| vec![],
-            |_| SignalLoopProps {
-                is_recursive_proj: true,
-                ..base_props()
-            },
-        );
-        let out_loop = asn.loop_of(out).expect("output is placed");
-        assert_ne!(out_loop, asn.root);
-        assert_eq!(asn.graph.node(out_loop).kind, LoopKind::Recursive);
-        assert!(asn.graph.node(asn.root).deps.contains(&out_loop));
-    }
-
-    #[test]
-    fn separated_chain_topologically_orders_dependencies_first() {
-        // out(root) reads mid(own loop) which reads leaf(own loop).
-        let (_arena, leaf, mid, out) = three_sigs();
-        let asn = assign_loops(
-            &[out],
-            |sig| {
-                if sig == out {
-                    vec![mid]
-                } else if sig == mid {
-                    vec![leaf]
-                } else {
-                    vec![]
-                }
-            },
-            |sig| {
-                if sig == mid || sig == leaf {
-                    SignalLoopProps {
-                        is_shared: true,
-                        ..base_props()
-                    }
-                } else {
-                    base_props()
-                }
-            },
-        );
-        let mid_loop = asn.loop_of(mid).unwrap();
-        let leaf_loop = asn.loop_of(leaf).unwrap();
-        assert!(asn.graph.node(asn.root).deps.contains(&mid_loop));
-        assert!(asn.graph.node(mid_loop).deps.contains(&leaf_loop));
-        let order = asn.graph.topological_order().unwrap();
-        let pos = |l: LoopId| order.iter().position(|&x| x == l).unwrap();
-        assert!(pos(leaf_loop) < pos(mid_loop), "leaf loop emits before mid");
-        assert!(pos(mid_loop) < pos(asn.root), "mid loop emits before root");
-    }
-
-    #[test]
-    fn value_children_drive_a_real_signal_graph_without_the_op_atom_cycle() {
-        // out = (in0 + in1) * sin(in0).
-        let mut arena = TreeArena::new();
-        let in0 = SigBuilder::new(&mut arena).input(0);
-        let in1 = SigBuilder::new(&mut arena).input(1);
-        let sum = SigBuilder::new(&mut arena).add(in0, in1);
-        let s = SigBuilder::new(&mut arena).sin(in0);
-        let out = SigBuilder::new(&mut arena).mul(sum, s);
-        let sig_types = sigtype::TypeAnnotator::new(&arena, &ui::UiProgram::empty())
-            .annotate(&[out])
-            .unwrap();
-        let analysis =
-            super::super::vector::analysis::SignalAnalysisContext::new(&arena, &sig_types, &[out])
-                .unwrap();
-
-        // Only value operands — no op-code atom, no input index.
-        assert_eq!(signal_value_children(&analysis, out).unwrap(), vec![sum, s]);
-        assert_eq!(
-            signal_value_children(&analysis, sum).unwrap(),
-            vec![in0, in1]
-        );
-        assert_eq!(signal_value_children(&analysis, s).unwrap(), vec![in0]);
-        assert!(signal_value_children(&analysis, in0).unwrap().is_empty());
-
-        // All-inline on the real graph: one loop, and — the S-A bug — no cycle.
-        let asn = assign_loops(
-            &[out],
-            |sig| signal_value_children(&analysis, sig).unwrap(),
-            |_| base_props(),
-        );
-        assert_eq!(asn.graph.len(), 1);
-        assert!(asn.graph.topological_order().is_ok());
-
-        // in0 is genuinely shared (read by both `sum` and `s`) → its own loop,
-        // still acyclic.
-        let asn = assign_loops(
-            &[out],
-            |sig| signal_value_children(&analysis, sig).unwrap(),
-            |sig| {
-                if sig == in0 {
-                    SignalLoopProps {
-                        is_shared: true,
-                        ..base_props()
-                    }
-                } else {
-                    base_props()
-                }
-            },
-        );
-        let in0_loop = asn.loop_of(in0).expect("in0 is placed");
-        assert_ne!(in0_loop, asn.root);
-        assert!(
-            asn.graph.topological_order().is_ok(),
-            "sharing must not create a cycle"
-        );
     }
 
     /// `index` must be the chunk-local `i0 - vindex`.

@@ -30,7 +30,7 @@
 //!   history spanning the *current* chunk) is `P6` scope, not `PV`.
 //! - Occurrence counting and `max_delay` extraction are a genuine (if
 //!   narrow) walk of the `SigId` forest via
-//!   `loop_graph::signal_value_children`, not hardcoded
+//!   `vector::analysis::signal_dependencies`, not hardcoded
 //!   facts. Variability is asserted `Samp` for this DSP shape rather than
 //!   re-run through the full type inferencer — a full context-sensitive
 //!   `SignalUseInfo` pass is `P4` scope (see the port plan, section 4.3).
@@ -77,7 +77,9 @@ pub fn build_pv_signals(delay_amount: i32) -> (TreeArena, SigId, SigId) {
 /// `SigId`-level facts needed by [`needs_separate_loop`] for this slice:
 /// how many distinct use sites reference each signal, and the largest
 /// constant delay amount any reader applies to it. Computed by a genuine walk
-/// of the reachable forest via [`signal_value_children`] — not hardcoded.
+/// of the reachable forest via
+/// [`signal_dependencies`](super::vector::analysis::signal_dependencies) —
+/// not hardcoded.
 struct PvFacts {
     occurrences: AHashMap<SigId, u32>,
     max_delay: AHashMap<SigId, i32>,
