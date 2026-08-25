@@ -39,6 +39,91 @@ pub(crate) fn effects_sample_reorderable(effects: &[EffectAtom]) -> bool {
         .iter()
         .any(|effect| matches!(effect, EffectAtom::ReadState(_) | EffectAtom::WriteState(_)))
 }
+/// Everything the per-obligation checks share, derived once from the plan.
+///
+/// Construction validates root identities and edge endpoints first, so the
+/// reachability and effect summaries it builds are panic-free on a hostile
+/// DTO; every later check may index these maps freely.
+struct PlanIndex<'a> {
+    /// Canonical loop ids, in plan order.
+    loop_ids: Vec<u64>,
+    /// Set view of the plan's signal ids.
+    signal_set: AHashSet<u64>,
+    /// Set view of the plan's loop ids.
+    loop_set: AHashSet<u64>,
+    /// Signal records by id.
+    signal_by_id: AHashMap<u64, &'a SignalRecord>,
+    /// Loop records by id.
+    loop_by_id: AHashMap<u64, &'a LoopRecord>,
+    /// Loop-to-loop reachability over the plan's edges.
+    reachability: CheckedReachability,
+    /// Per-loop effect summary used by the conflict checks.
+    effects_by_loop: AHashMap<u64, CheckedEffectConflictSummary>,
+}
+
+impl<'a> PlanIndex<'a> {
+    fn new(plan: &'a VectorPlan) -> Result<Self, VectorPlanError> {
+        let signal_ids: Vec<u64> = plan.signals.iter().map(|s| s.signal_id).collect();
+        let loop_ids: Vec<u64> = plan.loops.iter().map(|l| l.loop_id).collect();
+    let signal_set: AHashSet<u64> = signal_ids.iter().copied().collect();
+    let loop_set: AHashSet<u64> = loop_ids.iter().copied().collect();
+    let signal_by_id: AHashMap<u64, &SignalRecord> =
+        plan.signals.iter().map(|s| (s.signal_id, s)).collect();
+    let loop_by_id: AHashMap<u64, &LoopRecord> =
+        plan.loops.iter().map(|l| (l.loop_id, l)).collect();
+
+    // Root identities and edge endpoints are validated first, so building
+    // the reachability and per-loop effect summaries below cannot panic on a
+    // hostile DTO.
+    for loop_record in &plan.loops {
+        if let Some(&signal_id) = loop_record
+            .roots
+            .iter()
+            .find(|signal_id| !signal_set.contains(signal_id))
+        {
+            return Err(VectorPlanError::RootUnknownSignal {
+                loop_id: loop_record.loop_id,
+                signal_id,
+            });
+        }
+    }
+    for edge in plan.data_edges.iter().chain(&plan.effect_edges) {
+        if !loop_set.contains(&edge.consumer) {
+            return Err(VectorPlanError::EdgeEndpointUnknown {
+                edge: *edge,
+                missing: edge.consumer,
+            });
+        }
+        if !loop_set.contains(&edge.dependency) {
+            return Err(VectorPlanError::EdgeEndpointUnknown {
+                edge: *edge,
+                missing: edge.dependency,
+            });
+        }
+    }
+    let reachability = CheckedReachability::new(plan);
+    let effects_by_loop = plan
+        .loops
+        .iter()
+        .map(|loop_record| {
+            (
+                loop_record.loop_id,
+                CheckedEffectConflictSummary::new(&signal_by_id, loop_record),
+            )
+        })
+        .collect::<AHashMap<_, _>>();
+    Ok(Self {
+            loop_ids,
+            signal_set,
+            loop_set,
+            signal_by_id,
+            loop_by_id,
+            reachability,
+            effects_by_loop,
+        })
+    }
+}
+
 /// Independent verifier for a [`VectorPlan`] (plan provenance: §5.5/§5.10
 /// `verify_vector_plan`; Lean `VectorPlanCertificate`). Re-derives every
 /// invariant from the plan's own fields; never runs a planner.
@@ -47,6 +132,22 @@ pub(crate) fn effects_sample_reorderable(effects: &[EffectAtom]) -> bool {
 /// The first [`VectorPlanError`] found (checks ordered so identity/coverage
 /// problems surface before the graph/transport checks that assume them).
 pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
+    check_schema_and_canonical_orders(plan)?;
+    let index = PlanIndex::new(plan)?;
+    check_lockstep_bundles(plan, &index)?;
+    check_fused_group_shape(plan, &index)?;
+    let epoch_of_loop = check_epoch_coverage(plan, &index)?;
+    check_placement_and_roots(plan, &index)?;
+    check_edges_and_barriers(plan, &index, &epoch_of_loop)?;
+    check_epoch_acyclicity(plan)?;
+    check_effect_conflict_ordering(plan, &index)?;
+    check_transports(plan, &index)?;
+    check_vec_safe_witnesses(plan, &index)
+}
+
+/// Schema version, non-zero `vec_size`, and the canonical (strictly
+/// ascending, hence duplicate-free) order of every id-carrying plan array.
+fn check_schema_and_canonical_orders(plan: &VectorPlan) -> Result<(), VectorPlanError> {
     if plan.schema_version != VECTOR_PLAN_SCHEMA_VERSION {
         return Err(VectorPlanError::UnsupportedSchema {
             found: plan.schema_version,
@@ -109,53 +210,25 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         at,
     })?;
 
-    let signal_set: AHashSet<u64> = signal_ids.iter().copied().collect();
-    let loop_set: AHashSet<u64> = loop_ids.iter().copied().collect();
-    let signal_by_id: AHashMap<u64, &SignalRecord> =
-        plan.signals.iter().map(|s| (s.signal_id, s)).collect();
-    let loop_by_id: AHashMap<u64, &LoopRecord> =
-        plan.loops.iter().map(|l| (l.loop_id, l)).collect();
+    Ok(())
+}
 
-    // ── Lockstep finite shape. Prepared-signal skeletons are re-traversed by
-    // `verify_lockstep_isomorphism`; this plan-local gate checks every graph,
-    // effect, epoch, ownership, and canonical witness obligation first.
-    for loop_record in &plan.loops {
-        if let Some(&signal_id) = loop_record
-            .roots
-            .iter()
-            .find(|signal_id| !signal_set.contains(signal_id))
-        {
-            return Err(VectorPlanError::RootUnknownSignal {
-                loop_id: loop_record.loop_id,
-                signal_id,
-            });
-        }
-    }
-    for edge in plan.data_edges.iter().chain(&plan.effect_edges) {
-        if !loop_set.contains(&edge.consumer) {
-            return Err(VectorPlanError::EdgeEndpointUnknown {
-                edge: *edge,
-                missing: edge.consumer,
-            });
-        }
-        if !loop_set.contains(&edge.dependency) {
-            return Err(VectorPlanError::EdgeEndpointUnknown {
-                edge: *edge,
-                missing: edge.dependency,
-            });
-        }
-    }
-    let reachability = CheckedReachability::new(plan);
-    let effects_by_loop = plan
-        .loops
-        .iter()
-        .map(|loop_record| {
-            (
-                loop_record.loop_id,
-                CheckedEffectConflictSummary::new(&signal_by_id, loop_record),
-            )
-        })
-        .collect::<AHashMap<_, _>>();
+/// Lockstep bundles: finite shape, canonical members, per-lane isomorphism
+/// witnesses, lane independence, matching clock domains, and no effect
+/// conflict between lanes. Prepared-signal skeletons are re-traversed
+/// separately by `verify_lockstep_isomorphism`; this is the plan-local gate.
+fn check_lockstep_bundles(
+    plan: &VectorPlan,
+    index: &PlanIndex<'_>,
+) -> Result<(), VectorPlanError> {
+    let PlanIndex {
+        signal_set,
+        loop_by_id,
+        signal_by_id,
+        reachability,
+        effects_by_loop,
+        ..
+    } = index;
     let mut bundled_loops = AHashSet::new();
     for bundle in &plan.lockstep_bundles {
         if bundle.member_loop_ids.len() < 2 || bundle.lanes.len() != bundle.member_loop_ids.len() {
@@ -299,6 +372,23 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
+    Ok(())
+}
+
+/// Fused serial groups: finite shape, canonical member arrays, ownership of
+/// every named signal inside the group, and internal transports staying
+/// inside the group. Semantic delay/recursion facts are checked
+/// independently by `verify_fused_serial_groups` against decorations.
+fn check_fused_group_shape(
+    plan: &VectorPlan,
+    index: &PlanIndex<'_>,
+) -> Result<(), VectorPlanError> {
+    let PlanIndex {
+        signal_set: _,
+        loop_set,
+        signal_by_id,
+        ..
+    } = index;
     // ── Fused-group finite shape. Semantic delay/recursion facts are checked
     // independently by `verify_fused_serial_groups` against decorations.
     let transport_by_id = plan
@@ -422,6 +512,19 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
+    Ok(())
+}
+
+/// Epoch coverage: every loop lives in exactly one epoch, every epoch names
+/// only known loops, and each loop's declared epoch agrees. Returns the
+/// derived loop-to-epoch map for the barrier checks.
+fn check_epoch_coverage(
+    plan: &VectorPlan,
+    index: &PlanIndex<'_>,
+) -> Result<AHashMap<u64, u64>, VectorPlanError> {
+    let PlanIndex {
+        loop_ids, loop_set, ..
+    } = index;
     // ── Epoch coverage: every loop in exactly one epoch, epoch loops known.
     let mut epoch_of_loop: AHashMap<u64, u64> = AHashMap::new();
     for epoch in &plan.epochs {
@@ -442,7 +545,7 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
-    for &l in &loop_ids {
+    for &l in loop_ids {
         if !epoch_of_loop.contains_key(&l) {
             return Err(VectorPlanError::EpochCoverageMismatch { loop_id: l });
         }
@@ -458,6 +561,22 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
+    Ok(epoch_of_loop)
+}
+
+/// Placement and roots agreement: duplicability matches the effect-derived
+/// rule, inline placement is justified, and every owned signal is a root of
+/// exactly its owning loop.
+fn check_placement_and_roots(
+    plan: &VectorPlan,
+    index: &PlanIndex<'_>,
+) -> Result<(), VectorPlanError> {
+    let PlanIndex {
+        signal_set,
+        signal_by_id,
+        loop_by_id,
+        ..
+    } = index;
     // ── Placement / roots agreement (P-Unique, P-Root, P-Duplicate). ─────
     for sig in &plan.signals {
         let derived_duplicable = effects_duplicable(&sig.effects);
@@ -524,6 +643,17 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
+    Ok(())
+}
+
+/// Edges: endpoints exist, no self-edges, and every edge respects the epoch
+/// barrier (dependency rank never exceeds consumer rank).
+fn check_edges_and_barriers(
+    plan: &VectorPlan,
+    index: &PlanIndex<'_>,
+    epoch_of_loop: &AHashMap<u64, u64>,
+) -> Result<(), VectorPlanError> {
+    let PlanIndex { loop_set, .. } = index;
     // ── Edges: endpoints exist, no self-edge, barriers monotone. ─────────
     for edge in plan.data_edges.iter().chain(plan.effect_edges.iter()) {
         if !loop_set.contains(&edge.consumer) {
@@ -551,6 +681,11 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
+    Ok(())
+}
+
+/// Per-epoch induced-graph acyclicity.
+fn check_epoch_acyclicity(plan: &VectorPlan) -> Result<(), VectorPlanError> {
     // ── Per-epoch induced-graph acyclicity (L-DAG). ──────────────────────
     for epoch in &plan.epochs {
         let members: AHashSet<u64> = epoch.loops.iter().copied().collect();
@@ -562,20 +697,23 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
+    Ok(())
+}
+
+/// Effect conflicts: every pair of loops with conflicting effects must be
+/// ordered by reachability in one direction.
+fn check_effect_conflict_ordering(
+    plan: &VectorPlan,
+    index: &PlanIndex<'_>,
+) -> Result<(), VectorPlanError> {
+    let PlanIndex {
+        effects_by_loop,
+        reachability,
+        ..
+    } = index;
     // ── Effect conflicts: every conflicting loop pair is comparable. ──
     // Root identities and graph endpoints are known valid at this point, so
     // this check cannot panic when presented with a hostile DTO.
-    let effects_by_loop = plan
-        .loops
-        .iter()
-        .map(|loop_record| {
-            (
-                loop_record.loop_id,
-                CheckedEffectConflictSummary::new(&signal_by_id, loop_record),
-            )
-        })
-        .collect::<AHashMap<_, _>>();
-    let reachability = CheckedReachability::new(plan);
     for (index, left) in plan.loops.iter().enumerate() {
         for right in &plan.loops[index + 1..] {
             if effects_by_loop[&left.loop_id].conflicts(&effects_by_loop[&right.loop_id])
@@ -590,6 +728,19 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
+    Ok(())
+}
+
+/// Transports: known endpoints, no self-transport, element type and length
+/// agree with the plan, and interleaved layouts name a matching lockstep
+/// bundle.
+fn check_transports(plan: &VectorPlan, index: &PlanIndex<'_>) -> Result<(), VectorPlanError> {
+    let PlanIndex {
+        signal_set,
+        loop_set,
+        signal_by_id,
+        ..
+    } = index;
     // ── Transports well-typed (T-TRANSPORT). ─────────────────────────────
     for t in &plan.transports {
         if !signal_set.contains(&t.signal_id) {
@@ -641,6 +792,21 @@ pub fn verify_vector_plan(plan: &VectorPlan) -> Result<(), VectorPlanError> {
         }
     }
 
+    Ok(())
+}
+
+/// `VecSafe` witnesses versus loop kinds: every vectorizable loop carries a
+/// vectorizing witness and satisfies the derived per-root safety rule;
+/// serial loops never claim a pointwise witness.
+fn check_vec_safe_witnesses(
+    plan: &VectorPlan,
+    index: &PlanIndex<'_>,
+) -> Result<(), VectorPlanError> {
+    let PlanIndex {
+        loop_set,
+        signal_by_id,
+        ..
+    } = index;
     // ── VecSafe witnesses vs loop kinds. ─────────────────────────────────
     let mut witness_of: AHashMap<u64, WitnessKind> = AHashMap::new();
     for w in &plan.vec_safe_witnesses {

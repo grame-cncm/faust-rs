@@ -212,9 +212,8 @@ const MAX_PRODUCTION_FN_LINES: usize = 200;
 /// no longer exists, no longer exceeds the threshold, or exceeds its ceiling
 /// is a finding. Decomposing a function removes its entry; the ceiling only
 /// ever goes down.
-const OVERSIZED_FUNCTIONS: [(&str, &str, usize); 20] = [
+const OVERSIZED_FUNCTIONS: [(&str, &str, usize); 19] = [
     ("crates/transform/src/signal_fir/module/build.rs", "build_module", 757),
-    ("crates/transform/src/signal_fir/vector/verify/check.rs", "verify_vector_plan", 643),
     ("crates/transform/src/signal_fir/vector/plan/build.rs", "build_vector_plan", 585),
     ("crates/transform/src/signal_prepare/verify.rs", "verify_prepared_signal", 558),
     ("crates/transform/src/signal_fir/vector/plan/fusion.rs", "build_fused_serial_groups", 536),
