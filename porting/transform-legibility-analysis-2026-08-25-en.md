@@ -4,7 +4,14 @@
 **Scope:** the whole `crates/transform` crate (150 `.rs` files), with `signal_fir/` as the main
 subject. Analysis only — no code change is proposed for immediate landing; each experiment below
 is an independently landable, behavior-preserving campaign.
-**Status:** proposed.
+**Status:** proposed; **E1 executed 2026-08-25** on branch
+`transform-legibility-e1` (commits `9fa67e0e` loop_graph truth fix + dead
+cluster, `41c83228` diagnostics quarantine, `a6bb1c6d` codename sweep +
+`structure-check` gates 6/7 + reading order — see the 2026-08-25 journal).
+E2 and E3 remain proposed. E1 also surfaced one follow-up: the scalar-side
+`-vec` chunk-driver machinery (`emit_sample_loop`'s vector branch and the
+chunking half of `loop_graph.rs`) is provably unreachable in production and
+can be deleted behavior-neutrally (separate task).
 **Goal:** identify why the crate is still costly for a *human* to read after the June 2026
 decompositions and the July 2026 R0–R9 cleanup, and propose three **independent** restructuring
 experiments that reduce reading cost while keeping **byte-identical emitted FIR ⇒ identical
