@@ -875,11 +875,9 @@ fn compile_fastlane_inner(
         }
     }
 
-    let fallback_compute_mode = if vector_fallback.is_some() {
-        ComputeMode::Scalar
-    } else {
-        options.compute_mode
-    };
+    // `build_module` is scalar-only: an accepted `-vec` compile already
+    // returned from the checked vector pipeline above, and a rejected one
+    // falls back here in scalar shape.
     let mut output = time_signal_fir_phase(timing_sink, "fir-lowering", || {
         module::build_module(
             &plan,
@@ -893,18 +891,13 @@ fn compile_fastlane_inner(
             options.real_type.as_fir_type(),
             options.max_copy_delay,
             options.delay_line_threshold,
-            fallback_compute_mode,
             options.control_rate_mode,
             options.processing_api,
             options.table_init_mode,
             options.table_init_sample_rate,
             options.scheduling_strategy,
             clocked,
-            if matches!(fallback_compute_mode, ComputeMode::Scalar) {
-                gate_graphs.as_ref().map(|(_, schedule)| schedule)
-            } else {
-                None
-            },
+            gate_graphs.as_ref().map(|(_, schedule)| schedule),
             None,
         )
     })

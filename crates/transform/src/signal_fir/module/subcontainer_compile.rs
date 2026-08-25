@@ -155,7 +155,6 @@ pub(crate) fn compile_generator_sub_module(
         spec.real_ty.clone(),
         spec.max_copy_delay,
         spec.delay_line_threshold,
-        crate::signal_fir::ComputeMode::Scalar,
         crate::signal_fir::ControlRateMode::InlinePerBlock,
         crate::signal_fir::ProcessingApi::Block,
         spec.table_init_mode,
