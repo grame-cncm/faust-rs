@@ -392,7 +392,7 @@ impl PreparedSignalWalk<'_> {
         for body in bodies {
             self.verify(body)?;
         }
-        return Ok(());
+        Ok(())
     }
 
     /// A write table: size/generator verified, and the write pair is either

@@ -271,9 +271,8 @@ pub(super) fn lower_vector_program_impl<'a>(
         static_init_statements: Vec::new(),
     };
 
-    let (control_ids, control_values) = lowerer.lower_control_roots().map_err(|error| {
+    let (control_ids, control_values) = lowerer.lower_control_roots().inspect_err(|_error| {
         trace_stage("control-lowering-failed");
-        error
     })?;
     trace_stage("control-lowering");
     let external_control = lowerer.control_rate_mode.is_external();
@@ -414,13 +413,13 @@ impl PureVectorLowerer<'_> {
         let (mut control_statements, rewritten_control_values) = if external_control {
             let (statements, rewritten, fields) = materialize_region_roots_promoted(
                 &mut self.store,
-                &control_values,
+                control_values,
                 VectorRegion::Control,
             )?;
             self.promoted_control_fields.extend(fields);
             (statements, rewritten)
         } else {
-            materialize_region_roots(&mut self.store, &control_values, VectorRegion::Control)?
+            materialize_region_roots(&mut self.store, control_values, VectorRegion::Control)?
         };
         control_statements.extend(
             self.ui_stores

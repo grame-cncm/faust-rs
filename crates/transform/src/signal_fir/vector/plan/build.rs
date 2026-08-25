@@ -541,7 +541,7 @@ fn derive_dependency_edges(
     for dependency in &certificate.dependencies {
         add_dependency_edges(
             dependency,
-            &state,
+            state,
             &mut cross_uses,
             &mut delayed_edges,
             &mut immediate_delay_edges,

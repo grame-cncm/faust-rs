@@ -199,8 +199,6 @@ const PRODUCER_FILE_NAMES: [&str; 4] = ["build.rs", "produce.rs", "materialize.r
 /// docs for the rest is separate work for whoever takes it on.
 const DOCUMENTED_CRATES: [&str; 2] = ["transform", "compiler"];
 
-/// Runs every structural check and fails with a sorted finding list.
-
 /// Review threshold for one production function body in `crates/transform`
 /// (E2 of the legibility campaign). Functions above it must be named in
 /// [`OVERSIZED_FUNCTIONS`]; the list shrinks as recipe decompositions land
@@ -371,6 +369,7 @@ fn codename_findings(rel: &str, text: &str) -> Vec<String> {
     findings
 }
 
+/// Runs every structural check and fails with a sorted finding list.
 pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new("crates/transform/src");
     if !root.is_dir() {

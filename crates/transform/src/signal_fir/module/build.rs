@@ -533,7 +533,7 @@ fn emit_lifecycle_functions(
                 args: vec![dsp_arg_type.clone()],
                 ret: Box::new(FirType::Void),
             },
-            std::slice::from_ref(&dsp_arg),
+            std::slice::from_ref(dsp_arg),
             Some(reset_body),
             false,
         )
@@ -551,7 +551,7 @@ fn emit_lifecycle_functions(
                 args: vec![dsp_arg_type.clone()],
                 ret: Box::new(FirType::Void),
             },
-            std::slice::from_ref(&dsp_arg),
+            std::slice::from_ref(dsp_arg),
             Some(clear_body),
             false,
         )
@@ -770,12 +770,12 @@ fn emit_entry_points(
         if one_sample {
             b.block(&[])
         } else {
-            b.block(&compute_statements)
+            b.block(compute_statements)
         }
     };
     let frame = one_sample.then(|| {
         let mut b = FirBuilder::new(&mut lower.store);
-        let frame_body = b.block(&compute_statements);
+        let frame_body = b.block(compute_statements);
         let flat_ty = FirType::Ptr(Box::new(FirType::FaustFloat));
         let frame_args = [
             dsp_arg.clone(),
@@ -805,14 +805,14 @@ fn emit_entry_points(
     });
     let control = external_control.then(|| {
         let mut b = FirBuilder::new(&mut lower.store);
-        let control_body = b.block(&control_fn_statements);
+        let control_body = b.block(control_fn_statements);
         b.declare_fun(
             "control",
             FirType::Fun {
                 args: vec![FirType::Ptr(Box::new(FirType::Obj))],
                 ret: Box::new(FirType::Void),
             },
-            std::slice::from_ref(&dsp_arg),
+            std::slice::from_ref(dsp_arg),
             Some(control_body),
             false,
         )
@@ -913,7 +913,7 @@ fn assemble_module_output(
     // `count` — which is exactly `compute_statements`, since the output sink
     // already redirected the single output to `table[i0]`.
     if let Some(spec) = fill {
-        let module = assemble_sub_module(&mut lower, spec, &compute_statements)?;
+        let module = assemble_sub_module(&mut lower, spec, compute_statements)?;
         lower.fir_origins.derive_reachable(&lower.store, module);
         return Ok(SignalFirOutput {
             store: lower.store,
