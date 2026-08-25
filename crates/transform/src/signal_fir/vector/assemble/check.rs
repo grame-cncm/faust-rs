@@ -248,6 +248,291 @@ pub(super) fn state_cursor_advance_matches(
 /// body, so absence from the whole assembly is accepted while any surviving
 /// occurrence outside the body is still rejected. Writes stay presence rules —
 /// they are statements and that cleanup never removes them.
+/// Locates the one physical statement that executes a fused group: at the
+/// top rate, the single `i0` loop whose block is exactly the members'
+/// iteration statements (with every pre/post action placed around it);
+/// inside a clock island, the island statement with the members as
+/// consecutive nested lanes and no pre/post actions.
+fn locate_physical_group_body(
+    routed: &VerifiedRoutedFir,
+    assembly: &VectorFirAssembly,
+    store: &FirStore,
+    loop_by_id: &BTreeMap<u64, &AssembledVectorLoop>,
+    signal_by_id: &BTreeMap<u64, &crate::signal_fir::vector::verify::SignalRecord>,
+    top_level: &[FirId],
+    group: &crate::signal_fir::vector::verify::FusedSerialGroupRecord,
+) -> Result<FirId, VectorFirAssemblyError> {
+    let reject = || VectorFirAssemblyError::FusedGroupShape {
+        group_id: group.group_id,
+    };
+    if !group.member_loop_ids.contains(&group.owner_loop_id)
+        || group
+            .member_loop_ids
+            .iter()
+            .any(|loop_id| !loop_by_id.contains_key(loop_id))
+    {
+        return Err(reject());
+    }
+    let members = routed
+        .layout()
+        .loops()
+        .iter()
+        .filter_map(|region| {
+            group
+                .member_loop_ids
+                .binary_search(&region.loop_id)
+                .is_ok()
+                .then_some(region.loop_id)
+        })
+        .collect::<Vec<_>>();
+    if members.len() != group.member_loop_ids.len() {
+        return Err(reject());
+    }
+    let expected_iterations = members
+        .iter()
+        .map(|loop_id| loop_by_id[loop_id].iteration_statement)
+        .collect::<Vec<_>>();
+    let group_clock = group
+        .state_carrier_signal_ids
+        .first()
+        .and_then(|signal_id| signal_by_id.get(signal_id))
+        .map(|signal| signal.clock_id)
+        .ok_or_else(reject)?;
+    let owning_islands = assembly
+        .islands
+        .iter()
+        .filter(|island| {
+            group
+                .member_loop_ids
+                .iter()
+                .any(|loop_id| island.nested_loop_ids.contains(loop_id))
+        })
+        .collect::<Vec<_>>();
+    let physical_body = if group_clock == 0 {
+        if !owning_islands.is_empty() {
+            return Err(reject());
+        }
+        let physical_loops = top_level
+                .iter()
+                .enumerate()
+                .filter_map(|(position, &statement)| match match_fir(store, statement) {
+                    FirMatch::ForLoop {
+                        var,
+                        body,
+                        is_reverse: false,
+                        ..
+                    } if var == "i0"
+                        && matches!(match_fir(store, body), FirMatch::Block(words) if words == expected_iterations) =>
+                    {
+                        Some((position, body))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+        let [(physical_position, physical_body)] = physical_loops.as_slice() else {
+            return Err(reject());
+        };
+        for &loop_id in &members {
+            let assembled = loop_by_id[&loop_id];
+            for action in &assembled.pre {
+                if !top_level[..*physical_position].contains(&action.statement) {
+                    return Err(reject());
+                }
+            }
+            for action in &assembled.post {
+                if !top_level[*physical_position + 1..].contains(&action.statement) {
+                    return Err(reject());
+                }
+            }
+        }
+        *physical_body
+    } else {
+        let [island] = owning_islands.as_slice() else {
+            return Err(reject());
+        };
+        let positions = members
+            .iter()
+            .map(|loop_id| island.nested_loop_ids.iter().position(|id| id == loop_id))
+            .collect::<Option<Vec<_>>>();
+        let Some(positions) = positions else {
+            return Err(reject());
+        };
+        if island.domain_id + 1 != group_clock
+            || positions.windows(2).any(|pair| pair[1] != pair[0] + 1)
+            || members.iter().any(|loop_id| {
+                let assembled = loop_by_id[loop_id];
+                !assembled.pre.is_empty() || !assembled.post.is_empty()
+            })
+        {
+            return Err(reject());
+        }
+        island.statement
+    };
+    Ok(physical_body)
+}
+
+/// Every delayed read has exactly one member definition, and that value
+/// lives inside the physical body (a removed dead read is fine; a value
+/// escaping into the rest of the module is not).
+fn check_group_delayed_reads(
+    routed: &VerifiedRoutedFir,
+    assembly: &VectorFirAssembly,
+    store: &FirStore,
+    group: &crate::signal_fir::vector::verify::FusedSerialGroupRecord,
+    body_nodes: &BTreeSet<FirId>,
+    assembled_nodes: &mut Option<BTreeSet<FirId>>,
+) -> Result<(), VectorFirAssemblyError> {
+    let reject = || VectorFirAssemblyError::FusedGroupShape {
+        group_id: group.group_id,
+    };
+    for &signal_id in &group.delayed_read_signal_ids {
+        let definitions = routed
+                .trace()
+                .definitions()
+                .iter()
+                .filter(|definition| {
+                    definition.signal_id == signal_id
+                        && matches!(definition.region, VectorRegion::Loop(loop_id) if group.member_loop_ids.contains(&loop_id))
+                })
+                .collect::<Vec<_>>();
+        let [definition] = definitions.as_slice() else {
+            return Err(reject());
+        };
+        if !body_nodes.contains(&definition.value) {
+            let assembled = assembled_nodes
+                .get_or_insert_with(|| fir_reachable(store, assembly.top_level_statement));
+            if assembled.contains(&definition.value) {
+                return Err(reject());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Every state writer is defined exactly once in its owning member loop
+/// inside the physical body, and each planned delayed writer has exactly
+/// one in-body `DelayWrite` action.
+fn check_group_state_writers(
+    routed: &VerifiedRoutedFir,
+    state_plan: Option<&VerifiedVectorStatePlan>,
+    loop_by_id: &BTreeMap<u64, &AssembledVectorLoop>,
+    group: &crate::signal_fir::vector::verify::FusedSerialGroupRecord,
+    body_nodes: &BTreeSet<FirId>,
+) -> Result<(), VectorFirAssemblyError> {
+    let reject = || VectorFirAssemblyError::FusedGroupShape {
+        group_id: group.group_id,
+    };
+    let members = &group.member_loop_ids;
+    let Some(state_plan) = state_plan else {
+        return Err(reject());
+    };
+    for &signal_id in &group.state_write_signal_ids {
+        let Some(signal) = routed
+            .plan()
+            .signals
+            .iter()
+            .find(|signal| signal.signal_id == signal_id)
+        else {
+            return Err(reject());
+        };
+        let Placement::Owned(owner_loop_id) = signal.placement else {
+            return Err(reject());
+        };
+        let definitions = routed
+            .trace()
+            .definitions()
+            .iter()
+            .filter(|definition| {
+                definition.signal_id == signal_id
+                    && definition.region == VectorRegion::Loop(owner_loop_id)
+            })
+            .collect::<Vec<_>>();
+        if definitions.len() != 1
+            || !body_nodes.contains(&definitions[0].value)
+            || group.member_loop_ids.binary_search(&owner_loop_id).is_err()
+        {
+            return Err(reject());
+        }
+    }
+    let delayed_writer_ids = state_plan
+        .plan()
+        .delays
+        .iter()
+        .filter(|delay| {
+            group
+                .state_write_signal_ids
+                .binary_search(&delay.signal_id)
+                .is_ok()
+        })
+        .map(|delay| delay.signal_id)
+        .collect::<Vec<_>>();
+    if delayed_writer_ids.is_empty() {
+        return Err(reject());
+    }
+    for signal_id in delayed_writer_ids {
+        let writes = members
+            .iter()
+            .flat_map(|loop_id| loop_by_id[loop_id].exec_actions.iter())
+            .filter(|action| action.action == (VectorStateAction::DelayWrite { signal_id }))
+            .collect::<Vec<_>>();
+        if writes.len() != 1 || !body_nodes.contains(&writes[0].statement) {
+            return Err(reject());
+        }
+    }
+
+    Ok(())
+}
+
+/// Every internal transport runs in fused-scalar mode with its store inside
+/// the physical body; a surviving load outside the body is an escape.
+fn check_group_internal_transports(
+    routed: &VerifiedRoutedFir,
+    assembly: &VectorFirAssembly,
+    store: &FirStore,
+    group: &crate::signal_fir::vector::verify::FusedSerialGroupRecord,
+    body_nodes: &BTreeSet<FirId>,
+    assembled_nodes: &mut Option<BTreeSet<FirId>>,
+) -> Result<(), VectorFirAssemblyError> {
+    let reject = || VectorFirAssemblyError::FusedGroupShape {
+        group_id: group.group_id,
+    };
+    for &transport_id in &group.internal_transport_ids {
+        let Some(transport) = routed
+            .trace()
+            .transports()
+            .iter()
+            .find(|transport| transport.transport_id == transport_id)
+        else {
+            return Err(reject());
+        };
+        if transport.mode
+            != (ClockTransportMode::FusedScalar {
+                group_id: group.group_id,
+            })
+            || transport
+                .store
+                .is_none_or(|statement| !body_nodes.contains(&statement))
+        {
+            return Err(reject());
+        }
+        // The load is a pure value and follows the delayed-read rule: an
+        // unconsumed one is removed with the dead pure roots, so only a
+        // surviving load outside the physical body is an escape.
+        let Some(load) = transport.load else {
+            return Err(reject());
+        };
+        if !body_nodes.contains(&load) {
+            let assembled = assembled_nodes
+                .get_or_insert_with(|| fir_reachable(store, assembly.top_level_statement));
+            if assembled.contains(&load) {
+                return Err(reject());
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn verify_assembled_fused_serial_groups(
     routed: &VerifiedRoutedFir,
     state_plan: Option<&VerifiedVectorStatePlan>,
@@ -277,226 +562,34 @@ pub(super) fn verify_assembled_fused_serial_groups(
     let mut assembled_nodes: Option<BTreeSet<FirId>> = None;
 
     for group in &routed.plan().fused_serial_groups {
-        let reject = || VectorFirAssemblyError::FusedGroupShape {
-            group_id: group.group_id,
-        };
-        if !group.member_loop_ids.contains(&group.owner_loop_id)
-            || group
-                .member_loop_ids
-                .iter()
-                .any(|loop_id| !loop_by_id.contains_key(loop_id))
-        {
-            return Err(reject());
-        }
-        let members = routed
-            .layout()
-            .loops()
-            .iter()
-            .filter_map(|region| {
-                group
-                    .member_loop_ids
-                    .binary_search(&region.loop_id)
-                    .is_ok()
-                    .then_some(region.loop_id)
-            })
-            .collect::<Vec<_>>();
-        if members.len() != group.member_loop_ids.len() {
-            return Err(reject());
-        }
-        let expected_iterations = members
-            .iter()
-            .map(|loop_id| loop_by_id[loop_id].iteration_statement)
-            .collect::<Vec<_>>();
-        let group_clock = group
-            .state_carrier_signal_ids
-            .first()
-            .and_then(|signal_id| signal_by_id.get(signal_id))
-            .map(|signal| signal.clock_id)
-            .ok_or_else(reject)?;
-        let owning_islands = assembly
-            .islands
-            .iter()
-            .filter(|island| {
-                group
-                    .member_loop_ids
-                    .iter()
-                    .any(|loop_id| island.nested_loop_ids.contains(loop_id))
-            })
-            .collect::<Vec<_>>();
-        let physical_body = if group_clock == 0 {
-            if !owning_islands.is_empty() {
-                return Err(reject());
-            }
-            let physical_loops = top_level
-                .iter()
-                .enumerate()
-                .filter_map(|(position, &statement)| match match_fir(store, statement) {
-                    FirMatch::ForLoop {
-                        var,
-                        body,
-                        is_reverse: false,
-                        ..
-                    } if var == "i0"
-                        && matches!(match_fir(store, body), FirMatch::Block(words) if words == expected_iterations) =>
-                    {
-                        Some((position, body))
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>();
-            let [(physical_position, physical_body)] = physical_loops.as_slice() else {
-                return Err(reject());
-            };
-            for &loop_id in &members {
-                let assembled = loop_by_id[&loop_id];
-                for action in &assembled.pre {
-                    if !top_level[..*physical_position].contains(&action.statement) {
-                        return Err(reject());
-                    }
-                }
-                for action in &assembled.post {
-                    if !top_level[*physical_position + 1..].contains(&action.statement) {
-                        return Err(reject());
-                    }
-                }
-            }
-            *physical_body
-        } else {
-            let [island] = owning_islands.as_slice() else {
-                return Err(reject());
-            };
-            let positions = members
-                .iter()
-                .map(|loop_id| island.nested_loop_ids.iter().position(|id| id == loop_id))
-                .collect::<Option<Vec<_>>>();
-            let Some(positions) = positions else {
-                return Err(reject());
-            };
-            if island.domain_id + 1 != group_clock
-                || positions.windows(2).any(|pair| pair[1] != pair[0] + 1)
-                || members.iter().any(|loop_id| {
-                    let assembled = loop_by_id[loop_id];
-                    !assembled.pre.is_empty() || !assembled.post.is_empty()
-                })
-            {
-                return Err(reject());
-            }
-            island.statement
-        };
+        let physical_body = locate_physical_group_body(
+            routed,
+            assembly,
+            store,
+            &loop_by_id,
+            &signal_by_id,
+            &top_level,
+            group,
+        )?;
         let body_nodes = fir_reachable(store, physical_body);
 
-        for &signal_id in &group.delayed_read_signal_ids {
-            let definitions = routed
-                .trace()
-                .definitions()
-                .iter()
-                .filter(|definition| {
-                    definition.signal_id == signal_id
-                        && matches!(definition.region, VectorRegion::Loop(loop_id) if group.member_loop_ids.contains(&loop_id))
-                })
-                .collect::<Vec<_>>();
-            let [definition] = definitions.as_slice() else {
-                return Err(reject());
-            };
-            if !body_nodes.contains(&definition.value) {
-                let assembled = assembled_nodes
-                    .get_or_insert_with(|| fir_reachable(store, assembly.top_level_statement));
-                if assembled.contains(&definition.value) {
-                    return Err(reject());
-                }
-            }
-        }
-
-        let Some(state_plan) = state_plan else {
-            return Err(reject());
-        };
-        for &signal_id in &group.state_write_signal_ids {
-            let Some(signal) = routed
-                .plan()
-                .signals
-                .iter()
-                .find(|signal| signal.signal_id == signal_id)
-            else {
-                return Err(reject());
-            };
-            let Placement::Owned(owner_loop_id) = signal.placement else {
-                return Err(reject());
-            };
-            let definitions = routed
-                .trace()
-                .definitions()
-                .iter()
-                .filter(|definition| {
-                    definition.signal_id == signal_id
-                        && definition.region == VectorRegion::Loop(owner_loop_id)
-                })
-                .collect::<Vec<_>>();
-            if definitions.len() != 1
-                || !body_nodes.contains(&definitions[0].value)
-                || group.member_loop_ids.binary_search(&owner_loop_id).is_err()
-            {
-                return Err(reject());
-            }
-        }
-        let delayed_writer_ids = state_plan
-            .plan()
-            .delays
-            .iter()
-            .filter(|delay| {
-                group
-                    .state_write_signal_ids
-                    .binary_search(&delay.signal_id)
-                    .is_ok()
-            })
-            .map(|delay| delay.signal_id)
-            .collect::<Vec<_>>();
-        if delayed_writer_ids.is_empty() {
-            return Err(reject());
-        }
-        for signal_id in delayed_writer_ids {
-            let writes = members
-                .iter()
-                .flat_map(|loop_id| loop_by_id[loop_id].exec_actions.iter())
-                .filter(|action| action.action == (VectorStateAction::DelayWrite { signal_id }))
-                .collect::<Vec<_>>();
-            if writes.len() != 1 || !body_nodes.contains(&writes[0].statement) {
-                return Err(reject());
-            }
-        }
-
-        for &transport_id in &group.internal_transport_ids {
-            let Some(transport) = routed
-                .trace()
-                .transports()
-                .iter()
-                .find(|transport| transport.transport_id == transport_id)
-            else {
-                return Err(reject());
-            };
-            if transport.mode
-                != (ClockTransportMode::FusedScalar {
-                    group_id: group.group_id,
-                })
-                || transport
-                    .store
-                    .is_none_or(|statement| !body_nodes.contains(&statement))
-            {
-                return Err(reject());
-            }
-            // The load is a pure value and follows the delayed-read rule: an
-            // unconsumed one is removed with the dead pure roots, so only a
-            // surviving load outside the physical body is an escape.
-            let Some(load) = transport.load else {
-                return Err(reject());
-            };
-            if !body_nodes.contains(&load) {
-                let assembled = assembled_nodes
-                    .get_or_insert_with(|| fir_reachable(store, assembly.top_level_statement));
-                if assembled.contains(&load) {
-                    return Err(reject());
-                }
-            }
-        }
+        check_group_delayed_reads(
+            routed,
+            assembly,
+            store,
+            group,
+            &body_nodes,
+            &mut assembled_nodes,
+        )?;
+        check_group_state_writers(routed, state_plan, &loop_by_id, group, &body_nodes)?;
+        check_group_internal_transports(
+            routed,
+            assembly,
+            store,
+            group,
+            &body_nodes,
+            &mut assembled_nodes,
+        )?;
     }
     Ok(())
 }

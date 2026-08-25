@@ -400,10 +400,27 @@ impl<'a> SignalToFirLower<'a> {
 
         let (_, _, group_arrays) = self.ensure_recursion_group_carriers(group)?;
 
+        self.schedule_recursion_group_bodies(group, var, &bodies, &group_arrays, clock_context)?;
+
+        self.load_projection_result(node, group, canonical_index, &group_arrays)
+    }
+
+    /// Schedules one symbolic group's simultaneous body pass exactly once
+    /// per clock context: lowers every body inside the active-group scope,
+    /// snapshots multi-output lanes before the carrier stores, emits the
+    /// carrier updates, and persists scalar carriers in post-output.
+    fn schedule_recursion_group_bodies(
+        &mut self,
+        group: SigId,
+        var: SigId,
+        bodies: &[SigId],
+        group_arrays: &[RecArrayInfo],
+        clock_context: Option<u32>,
+    ) -> Result<(), SignalFirError> {
         // ── Push group context, lower ALL bodies, emit stores ──
         // Use recursion-owned scheduling so each group's body pass runs only once.
         if self.recursion.mark_group_scheduled(group, clock_context) {
-            self.with_active_recursion_group(var, group_arrays.clone(), |this, active_arrays| {
+            self.with_active_recursion_group(var, group_arrays.to_vec(), |this, active_arrays| {
                 let zero = this.lower_int32_const(0);
                 let mut body_values = Vec::with_capacity(bodies.len());
                 let mut current_indexes = Vec::with_capacity(active_arrays.len());
@@ -495,8 +512,18 @@ impl<'a> SignalToFirLower<'a> {
                 Ok(())
             })?;
         }
+        Ok(())
+    }
 
-        // ── Return the result for the requested index ──
+    /// Loads the requested projection's current value from its carrier:
+    /// scalar binding, exact-shift slot 0, or the circular current index.
+    fn load_projection_result(
+        &mut self,
+        node: SigId,
+        group: SigId,
+        canonical_index: usize,
+        group_arrays: &[RecArrayInfo],
+    ) -> Result<FirId, SignalFirError> {
         let info = &group_arrays[canonical_index];
         let out_ty = self.signal_fir_type(node)?;
         if info.storage_strategy() == RecursionStorageStrategy::SingleScalar {

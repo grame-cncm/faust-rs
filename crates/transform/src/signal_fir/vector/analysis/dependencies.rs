@@ -231,6 +231,106 @@ pub struct RecursiveProjection {
     /// Symbolic recursion group read by the projection.
     pub group: SigId,
 }
+/// A `SYMREC` group node: every definition is an immediate occurrence and a
+/// condition root; the projections' schedule edges are produced per `Proj`.
+fn sym_rec_dependencies(
+    context: &SignalAnalysisContext<'_>,
+    sig: SigId,
+    body_list: SigId,
+    result: &mut SignalDependencies,
+) -> Result<(), AnalysisError> {
+    let arena = context.arena;
+    let definitions = list_to_vec(arena, body_list).ok_or_else(|| AnalysisError::Malformed {
+        sig,
+        detail: "malformed SYMREC body list".to_owned(),
+    })?;
+    for definition in definitions {
+        push_occurrence(result, sig, definition, 0);
+        push_condition(result, definition);
+    }
+    Ok(())
+}
+
+/// A `Delay(x, amount)` read: the interval-checked maximum delay decides
+/// between an immediate schedule edge (lower bound below one sample) and a
+/// delayed edge, while the occurrence always records the maximum.
+fn delay_dependencies(
+    context: &SignalAnalysisContext<'_>,
+    sig: SigId,
+    x: SigId,
+    amount: SigId,
+    result: &mut SignalDependencies,
+) -> Result<(), AnalysisError> {
+    let amount_type = context.sig_type(amount)?;
+    let max_delay =
+        check_delay_interval(amount_type).map_err(|error| AnalysisError::InvalidDelayInterval {
+            sig,
+            amount,
+            detail: error.to_string(),
+        })?;
+    let max_delay = u32::try_from(max_delay).map_err(|_| AnalysisError::InvalidDelayInterval {
+        sig,
+        amount,
+        detail: format!("negative maximum delay {max_delay}"),
+    })?;
+    // The validated lower bound is non-negative. C++ converts it to
+    // `int`, so exactly the interval [0, 1) can still schedule the
+    // value as an immediate dependency.
+    let schedule_kind = if amount_type.interval().lo() < 1.0 {
+        DepKind::Immediate
+    } else {
+        DepKind::Delayed {
+            amount: max_delay.max(1),
+        }
+    };
+    push_schedule(result, sig, x, schedule_kind);
+    push_schedule(result, sig, amount, DepKind::Immediate);
+    push_occurrence(result, sig, x, max_delay);
+    push_occurrence(result, sig, amount, 0);
+    push_condition(result, x);
+    push_condition(result, amount);
+    Ok(())
+}
+
+/// A table read: immediate schedule edges on the read index (and, for a
+/// writable table, on its write pair), with occurrences on table and index.
+fn rdtbl_dependencies(
+    context: &SignalAnalysisContext<'_>,
+    sig: SigId,
+    table: SigId,
+    read_index: SigId,
+    result: &mut SignalDependencies,
+) {
+    let arena = context.arena;
+    push_schedule(result, sig, read_index, DepKind::Immediate);
+    if let SigMatch::WrTbl(_, _, write_index, write_value) = match_sig(arena, table)
+        && !arena.is_nil(write_index)
+    {
+        push_schedule(result, sig, write_index, DepKind::Immediate);
+        push_schedule(result, sig, write_value, DepKind::Immediate);
+    }
+    push_occurrence(result, sig, table, 0);
+    push_occurrence(result, sig, read_index, 0);
+    push_condition(result, table);
+    push_condition(result, read_index);
+}
+
+/// One OD/US/DS wrapper: the clock child is a clock-boundary schedule edge,
+/// the payload children are immediate, and every child is an occurrence and
+/// condition root.
+fn clock_wrapper_dependencies(sig: SigId, children: &[SigId], result: &mut SignalDependencies) {
+    if let Some((&clock, payload)) = children.split_first() {
+        push_schedule(result, sig, clock, DepKind::ClockBoundary);
+        for &child in payload {
+            push_schedule(result, sig, child, DepKind::Immediate);
+        }
+        for &child in children {
+            push_occurrence(result, sig, child, 0);
+            push_condition(result, child);
+        }
+    }
+}
+
 /// Canonically decodes the scheduling dependencies and occurrence uses of one
 /// typed signal. This is the sole `SigMatch` child enumeration for Hgraph,
 /// LoopGraph, PV, and [`analyze_signal_uses`].
@@ -242,15 +342,7 @@ pub fn signal_dependencies(
     let mut result = SignalDependencies::default();
 
     if let Some((_, body_list)) = match_sym_rec(arena, sig) {
-        let definitions =
-            list_to_vec(arena, body_list).ok_or_else(|| AnalysisError::Malformed {
-                sig,
-                detail: "malformed SYMREC body list".to_owned(),
-            })?;
-        for definition in definitions {
-            push_occurrence(&mut result, sig, definition, 0);
-            push_condition(&mut result, definition);
-        }
+        sym_rec_dependencies(context, sig, body_list, &mut result)?;
         return Ok(result);
     }
     if match_sym_ref(arena, sig).is_some() {
@@ -287,36 +379,7 @@ pub fn signal_dependencies(
             push_condition(&mut result, value);
         }
         SigMatch::Delay(x, amount) => {
-            let amount_type = context.sig_type(amount)?;
-            let max_delay = check_delay_interval(amount_type).map_err(|error| {
-                AnalysisError::InvalidDelayInterval {
-                    sig,
-                    amount,
-                    detail: error.to_string(),
-                }
-            })?;
-            let max_delay =
-                u32::try_from(max_delay).map_err(|_| AnalysisError::InvalidDelayInterval {
-                    sig,
-                    amount,
-                    detail: format!("negative maximum delay {max_delay}"),
-                })?;
-            // The validated lower bound is non-negative. C++ converts it to
-            // `int`, so exactly the interval [0, 1) can still schedule the
-            // value as an immediate dependency.
-            let schedule_kind = if amount_type.interval().lo() < 1.0 {
-                DepKind::Immediate
-            } else {
-                DepKind::Delayed {
-                    amount: max_delay.max(1),
-                }
-            };
-            push_schedule(&mut result, sig, x, schedule_kind);
-            push_schedule(&mut result, sig, amount, DepKind::Immediate);
-            push_occurrence(&mut result, sig, x, max_delay);
-            push_occurrence(&mut result, sig, amount, 0);
-            push_condition(&mut result, x);
-            push_condition(&mut result, amount);
+            delay_dependencies(context, sig, x, amount, &mut result)?;
         }
         SigMatch::Prefix(init, x) => {
             push_schedule(&mut result, sig, init, DepKind::Immediate);
@@ -364,17 +427,7 @@ pub fn signal_dependencies(
             push_condition(&mut result, group);
         }
         SigMatch::RdTbl(table, read_index) => {
-            push_schedule(&mut result, sig, read_index, DepKind::Immediate);
-            if let SigMatch::WrTbl(_, _, write_index, write_value) = match_sig(arena, table)
-                && !arena.is_nil(write_index)
-            {
-                push_schedule(&mut result, sig, write_index, DepKind::Immediate);
-                push_schedule(&mut result, sig, write_value, DepKind::Immediate);
-            }
-            push_occurrence(&mut result, sig, table, 0);
-            push_occurrence(&mut result, sig, read_index, 0);
-            push_condition(&mut result, table);
-            push_condition(&mut result, read_index);
+            rdtbl_dependencies(context, sig, table, read_index, &mut result);
         }
         SigMatch::Control(value, gate) => {
             push_both(&mut result, sig, value);
@@ -428,16 +481,7 @@ pub fn signal_dependencies(
         SigMatch::OnDemand(children)
         | SigMatch::Upsampling(children)
         | SigMatch::Downsampling(children) => {
-            if let Some((&clock, payload)) = children.split_first() {
-                push_schedule(&mut result, sig, clock, DepKind::ClockBoundary);
-                for &child in payload {
-                    push_schedule(&mut result, sig, child, DepKind::Immediate);
-                }
-                for &child in children {
-                    push_occurrence(&mut result, sig, child, 0);
-                    push_condition(&mut result, child);
-                }
-            }
+            clock_wrapper_dependencies(sig, children, &mut result);
         }
         SigMatch::Fir(children) => {
             decode_fir(context, sig, children, &mut result)?;
