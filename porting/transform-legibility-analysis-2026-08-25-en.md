@@ -8,7 +8,16 @@ is an independently landable, behavior-preserving campaign.
 `transform-legibility-e1` (commits `9fa67e0e` loop_graph truth fix + dead
 cluster, `41c83228` diagnostics quarantine, `a6bb1c6d` codename sweep +
 `structure-check` gates 6/7 + reading order — see the 2026-08-25 journal).
-E2 and E3 remain proposed. E1 also surfaced one follow-up, since executed
+**E2 first waves executed 2026-08-25** on the same branch: the ratcheting
+function-length gate is live (`structure-check` check 8, mutation-validated)
+and every function over 300 lines is decomposed — `build_module` 757→~140,
+`verify_vector_plan` 643→13, `build_vector_plan` 585→~60,
+`verify_prepared_signal` 558→189, `build_fused_serial_groups` 536→15,
+`verify_fused_serial_groups_after_plan` 447→10, `lower_raw` 345→194,
+`lower_vector_program_impl` 306→183 — plus the prescribed `LowerCursor`
+bundling (16 signatures, 83 call sites). Twelve functions in the 209–300
+band remain in the gate's `OVERSIZED_FUNCTIONS` list, which must end empty.
+E3 remains proposed. E1 also surfaced one follow-up, since executed
 (`6a22b043`): the scalar-side `-vec` chunk-driver machinery
 (`emit_sample_loop`'s vector branch and the chunking half of
 `loop_graph.rs`) was provably unreachable in production and was deleted
