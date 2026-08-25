@@ -8,16 +8,23 @@ immédiat ; chaque expérience ci-dessous est une campagne indépendante et pré
 `transform-legibility-e1` (commits `9fa67e0e` correction de vérité
 loop_graph + amas mort, `41c83228` quarantaine des diagnostics, `a6bb1c6d`
 passe des noms de code + gardes 6/7 de `structure-check` + ordre de lecture
-— voir le journal du 2026-08-25). **Premières vagues d'E2 exécutées le 2026-08-25** sur la même branche : la
-garde à cliquet de longueur de fonction est en place (contrôle 8 de
-`structure-check`, validé par mutations) et toute fonction de plus de
-300 lignes est décomposée — `build_module` 757→~140, `verify_vector_plan`
-643→13, `build_vector_plan` 585→~60, `verify_prepared_signal` 558→189,
-`build_fused_serial_groups` 536→15, `verify_fused_serial_groups_after_plan`
-447→10, `lower_raw` 345→194, `lower_vector_program_impl` 306→183 — plus le
-regroupement `LowerCursor` prescrit (16 signatures, 83 sites d'appel).
-Douze fonctions de la bande 209–300 restent dans la liste
-`OVERSIZED_FUNCTIONS` de la garde, qui doit finir vide. E3 reste proposée. E1 a aussi
+— voir le journal du 2026-08-25). **E2 exécutée en totalité le 2026-08-25** sur la même branche : la garde à
+cliquet est en place (contrôle 8 de `structure-check`, validée par
+mutations) et sa liste `OVERSIZED_FUNCTIONS` **a fini la journée vide** —
+les 21 fonctions de plus de 200 lignes ont été décomposées, corps verbatim
+et en-têtes de contrat, de `build_module` (757→~140, huit phases) et
+`verify_vector_plan` (643→13, `PlanIndex` + dix obligations) en passant par
+`verify_prepared_signal` (558→189, walker), `build_fused_serial_groups`
+(536→15, `FusionContext`), le regroupement `LowerCursor` du lowerer
+vectoriel (16 signatures, 83 sites), jusqu'à la bande 209–300
+(`propagate_bra_adj`, `ensure_guarded_block`, `lower_signal`,
+`infer_uncached`, `materialize_action`, `lower_proj`,
+`signal_dependencies`, les formateurs de familles du `Display`, et
+l'assemblage du module vectoriel). L'extraction de l'analyse d'horloge de
+`compile_fastlane_inner` a aussi supprimé une vraie duplication de
+~55 lignes (séquence hgraph/effets/ordonnancement). Chaque atterrissage a
+passé transform 404 tests, golden-check 199/199 et structure-check.
+E3 reste proposée. E1 a aussi
 fait émerger un suivi, depuis exécuté (`6a22b043`) : la machinerie de
 chunk-driver `-vec` côté scalaire (la branche vectorielle
 d'`emit_sample_loop` et la moitié chunking de `loop_graph.rs`) était

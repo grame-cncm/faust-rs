@@ -8,15 +8,21 @@ is an independently landable, behavior-preserving campaign.
 `transform-legibility-e1` (commits `9fa67e0e` loop_graph truth fix + dead
 cluster, `41c83228` diagnostics quarantine, `a6bb1c6d` codename sweep +
 `structure-check` gates 6/7 + reading order — see the 2026-08-25 journal).
-**E2 first waves executed 2026-08-25** on the same branch: the ratcheting
+**E2 executed in full 2026-08-25** on the same branch: the ratcheting
 function-length gate is live (`structure-check` check 8, mutation-validated)
-and every function over 300 lines is decomposed — `build_module` 757→~140,
-`verify_vector_plan` 643→13, `build_vector_plan` 585→~60,
-`verify_prepared_signal` 558→189, `build_fused_serial_groups` 536→15,
-`verify_fused_serial_groups_after_plan` 447→10, `lower_raw` 345→194,
-`lower_vector_program_impl` 306→183 — plus the prescribed `LowerCursor`
-bundling (16 signatures, 83 call sites). Twelve functions in the 209–300
-band remain in the gate's `OVERSIZED_FUNCTIONS` list, which must end empty.
+and its `OVERSIZED_FUNCTIONS` list **ended the day empty** — all 21
+functions over 200 lines were decomposed with verbatim bodies and contract
+headers, from `build_module` (757→~140, eight phases) and
+`verify_vector_plan` (643→13, `PlanIndex` + ten obligations) through
+`verify_prepared_signal` (558→189, the `PreparedSignalWalk` bundling),
+`build_fused_serial_groups` (536→15, `FusionContext`), the `LowerCursor`
+bundling in the vector lowerer (16 signatures, 83 call sites), down to the
+209–300 band (`propagate_bra_adj`, `ensure_guarded_block`, `lower_signal`,
+`infer_uncached`, `materialize_action`, `lower_proj`, `signal_dependencies`,
+the `Display` family formatters, and the vector module assembly). The
+extraction of `compile_fastlane_inner`'s clock analysis also removed a
+genuine ~55-line duplicated hgraph/effects/schedule sequence. Every landing
+passed transform 404 tests, golden-check 199/199, and structure-check.
 E3 remains proposed. E1 also surfaced one follow-up, since executed
 (`6a22b043`): the scalar-side `-vec` chunk-driver machinery
 (`emit_sample_loop`'s vector branch and the chunking half of
