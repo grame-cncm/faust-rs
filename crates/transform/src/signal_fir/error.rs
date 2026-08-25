@@ -26,10 +26,10 @@ pub enum SignalFirErrorCode {
     /// Encountered a clocked node (`ondemand` / `upsampling` / `downsampling`
     /// machinery) that the FIR fast-lane cannot lower yet.
     ///
-    /// This is a deliberate, structured rejection (roadmap P0.1): the front
-    /// half of the clock-domain port (propagation + `signal_prepare`) accepts
-    /// clocked graphs, while the back half (clock inference, guarded blocks,
-    /// per-domain local time — roadmap P1–P3) has not landed. Distinct from
+    /// This is a deliberate, structured rejection: propagation and
+    /// `signal_prepare` accept clocked graphs, and this fires when the
+    /// lowering runs without an active clocked-lowering state or meets a
+    /// clocked shape the guarded-block lowering does not cover. Distinct from
     /// [`Self::UnsupportedSignalNode`] so callers and tests can tell "not
     /// ported yet by design" apart from "unexpected node".
     ClockedNotLowered,

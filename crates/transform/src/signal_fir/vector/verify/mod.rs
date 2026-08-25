@@ -1,11 +1,11 @@
 //! Strategy-independent `VectorPlan` DTO and its independent verifier
 //! (`verify_vector_plan`).
 //!
-//! Vectorization port plan phases P4.4/P5 (formal gate: "before emission,
-//! `verify_vector_plan` establishes `L-*`, typed transports, region
-//! visibility, `VecSafe`…") and certified plan "R3 - Vector plan certificate
-//! at L2/L3". This is the vector-plan analogue of the R1 schedule certificate
-//! (`crate::schedule::certificate`): a canonical DTO mirroring the
+//! Before emission, `verify_vector_plan` establishes the formal gate: the
+//! `L-*` obligations, typed transports, region visibility, and a `VecSafe`
+//! witness per vectorizable loop. This is the vector-plan analogue of the
+//! schedule certificate (`crate::schedule::certificate`): a canonical DTO
+//! mirroring the
 //! `vectorPlan` shape of
 //! `porting/schemas/vector-verification-certificate-v2.schema.json`, plus a
 //! checker that re-derives every invariant from the plan's own fields. Schema
@@ -25,12 +25,13 @@
 //! the routing/lowering stages consume them in production. Two obligations
 //! remain deferred, matching the certified plan's own staging:
 //! - **effect commutation** (`L-Effects` for incomparable loops): the DTO
-//!   retains P4.3a's exact effect identities and the verifier derives
+//!   retains the decoration analysis's exact effect identities and the verifier derives
 //!   duplicability and local `VecSafe` instead of trusting producer booleans,
 //!   but it does not yet prove pairwise commutation of independent effectful
 //!   loops (the plan calls this the hard case; effect edges are
 //!   producer-supplied here);
-//! - **JSON (de)serialization / `plan_hash`** (R2 canonical-boundary work): a
+//! - **JSON (de)serialization / `plan_hash`** (the deferred canonical-JSON
+//!   boundary): a
 //!   plan is identified by its Rust type, not a runtime tag or hash.
 
 pub mod check;

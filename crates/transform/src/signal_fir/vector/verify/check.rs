@@ -39,7 +39,7 @@ pub(crate) fn effects_sample_reorderable(effects: &[EffectAtom]) -> bool {
         .iter()
         .any(|effect| matches!(effect, EffectAtom::ReadState(_) | EffectAtom::WriteState(_)))
 }
-/// Independent verifier for a [`VectorPlan`] (plan §5.5/§5.10
+/// Independent verifier for a [`VectorPlan`] (plan provenance: §5.5/§5.10
 /// `verify_vector_plan`; Lean `VectorPlanCertificate`). Re-derives every
 /// invariant from the plan's own fields; never runs a planner.
 ///

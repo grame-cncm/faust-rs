@@ -14,8 +14,9 @@
 //! `SchedulingStrategy` parameter. `-ss` is applied later, independently in
 //! each fixed epoch. Delayed inter-loop uses contribute ordering edges but no
 //! immediate-value transports: this is the Rust counterpart of the C++ delay
-//! line loop preceding its readers within a vector chunk. P5 still owns
-//! region-aware FIR routing; P6 owns complete clock-domain epochs and
+//! line loop preceding its readers within a vector chunk. The routing stage
+//! still owns region-aware FIR routing; the state/clock stages own complete
+//! clock-domain epochs and
 //! delay/recursion storage geometry.
 //!
 //! Fused serial groups are an adapted representation of the C++ mutable
@@ -42,7 +43,7 @@ use super::verify::{VectorPlan, VectorPlanError};
 use std::fmt;
 
 const EFFECT_ISLAND_TAG: u64 = 1 << 63;
-/// Opaque evidence that P4.4 constructed and independently verified a plan.
+/// Opaque evidence that plan construction was independently verified.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedVectorPlan {
     plan: VectorPlan,
@@ -65,7 +66,7 @@ pub(crate) fn verified_vector_plan_for_test(plan: VectorPlan) -> VerifiedVectorP
     verify_vector_plan(&plan).expect("test vector plan must satisfy the production verifier");
     VerifiedVectorPlan { plan }
 }
-/// Why production P4.4 plan construction failed closed.
+/// Why production vector-plan construction failed closed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorPlanBuildError {
     /// Chunk size must be positive.

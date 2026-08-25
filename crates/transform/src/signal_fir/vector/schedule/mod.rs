@@ -3,7 +3,7 @@
 //! Production scheduling stage (history: P5 slice of
 //! `vector-mode-signal-level-analysis-cpp-port-plan-2026-07-10-en.md`): the
 //! strategy-independent plan is verified first, then each epoch's induced DAG
-//! is serialized in ascending rank. The R3 plan certificate remains unchanged
+//! is serialized in ascending rank. The plan certificate remains unchanged
 //! when the scheduling strategy changes.
 //!
 //! The implementation delegates every ordering decision to the generic
@@ -55,7 +55,7 @@ pub struct VectorExecutionSchedule {
 /// schedule.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorScheduleError {
-    /// The strategy-independent plan failed its R3/P5 verification gate.
+    /// The strategy-independent plan failed its certificate verification gate.
     PlanVerification(VectorPlanError),
     /// The generic scheduler rejected an induced epoch DAG.
     EpochScheduling {
@@ -107,10 +107,10 @@ impl std::error::Error for VectorScheduleError {
 /// Verification is deliberately the first operation. Once it succeeds,
 /// cross-epoch edges are treated only as already-checked rank barriers and do
 /// not enter any epoch DAG. The input is borrowed read-only, so changing
-/// `strategy` cannot change the [`VectorPlan`] structurally (R3/P5 invariant).
+/// `strategy` cannot change the [`VectorPlan`] structurally (certificate invariant).
 ///
 /// # Errors
-/// Returns [`VectorScheduleError::PlanVerification`] for the first failed R3
+/// Returns [`VectorScheduleError::PlanVerification`] for the first failed certificate
 /// plan obligation, or [`VectorScheduleError::EpochScheduling`] with the
 /// original generic scheduler error and epoch ID. A scheduler result that
 /// fails the independent checker returns [`VectorScheduleError::Postcondition`].

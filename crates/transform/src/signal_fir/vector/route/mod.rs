@@ -4,9 +4,9 @@
 //! # C++ provenance and adaptation
 //! C++ `DAGInstructionsCompiler` combines loop ownership, value caching, and
 //! vector buffer allocation while recursively compiling signals. Rust keeps
-//! those concerns explicit: P4.4 freezes a [`VectorPlan`](crate::signal_fir::vector::verify::VectorPlan), this module resolves
+//! those concerns explicit: the vector plan freezes a [`VectorPlan`](crate::signal_fir::vector::verify::VectorPlan), this module resolves
 //! values through three visibility scopes, and later lowering emits the loop
-//! bodies. A cross-loop read can only use a transport already named by P4.4;
+//! bodies. A cross-loop read can only use a transport already named by the plan;
 //! no buffer identity is allocated on demand.
 //!
 //! C++ compiles a recursive tuple through its individual `sigProj` values; it

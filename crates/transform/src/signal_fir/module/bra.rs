@@ -959,7 +959,8 @@ impl<'a> SignalToFirLower<'a> {
     /// wrapped slot — instead of reading/writing past the tape array. The
     /// out-of-range tail then carries aliased (approximate) gradients rather than
     /// triggering undefined behaviour; the exact fix is chunked TBPTT or a
-    /// dynamically sized tape (analysis W5 / rewriting-calculus §8.5).
+    /// dynamically sized tape (plan provenance: analysis W5 /
+    /// rewriting-calculus §8.5).
     fn bra_tape_index(&mut self) -> FirId {
         let i0 = {
             let mut b = FirBuilder::new(&mut self.store);

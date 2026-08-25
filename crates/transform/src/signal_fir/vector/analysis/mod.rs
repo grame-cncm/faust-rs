@@ -10,8 +10,9 @@
 //! intentionally differ for FIR/IIR carriers, tables, `seq`, generators, and
 //! clock wrappers.
 //!
-//! P4.3a adds the C++ `conditionAnnotation` DNF producer and conservative
-//! effect decoration without activating either scalar or vector scheduling.
+//! The analysis ports the C++ `conditionAnnotation` DNF producer and adds
+//! conservative effect decoration without activating either scalar or
+//! vector scheduling.
 //! Effects in this table describe compute-time behavior. `Gen` remains a
 //! lifecycle boundary, so table-initialization effects require a separate
 //! decoration before a certificate can establish full lifecycle coverage.
@@ -37,7 +38,7 @@ use crate::signal_prepare::VerifiedPreparedSignals;
 use signals::SigId;
 use std::fmt;
 
-/// Canonical P4.3a result coupling real execution conditions with decorated
+/// Canonical decoration-analysis result coupling real execution conditions with decorated
 /// signal-use facts from the same prepared forest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VectorSignalAnalysis {
@@ -46,7 +47,7 @@ pub struct VectorSignalAnalysis {
     /// Decorated signal-use facts from the same prepared forest.
     pub uses: SignalUseTable,
 }
-/// Typed P4.2 analysis errors.
+/// Typed analysis errors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AnalysisError {
     /// A required list-shaped signal payload was malformed, or legacy `SIGREC`
@@ -118,7 +119,7 @@ impl fmt::Display for AnalysisError {
     }
 }
 impl std::error::Error for AnalysisError {}
-/// Builds the canonical P4.3a condition/effect analysis for a verified forest.
+/// Builds the canonical condition/effect analysis for a verified forest.
 pub fn analyze_vector_signals(
     prepared: &VerifiedPreparedSignals,
     clk_envs: &ClkEnvMap,

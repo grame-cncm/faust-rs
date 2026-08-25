@@ -32,7 +32,8 @@ use crate::signal_fir::recursion::RecursionCurrentValueBinding;
 use crate::signal_fir::recursion::RecursionDelayRef;
 use crate::signal_fir::recursion::match_recursion_delay_key;
 
-/// Execution ownership of one `compute`-preamble statement (plan §4.3).
+/// Execution ownership of one `compute`-preamble statement (plan provenance:
+/// execution-options port §4.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ControlOwnership {
     /// Control-rate computation or effect: moves to the `control` entry
@@ -76,7 +77,7 @@ pub(super) struct ModuleSections {
     /// `instanceClear` body: delay-line and recursion-state zero-init loops.
     pub(super) clear_statements: Vec<FirId>,
     /// `compute`-preamble statements, each tagged with its execution
-    /// ownership (execution-options port plan §4.3).
+    /// ownership (plan provenance: execution-options port §4.3).
     ///
     /// One interleaved list, not two: slow-value declarations, I/O aliases,
     /// and per-compute resets are pushed in lowering-encounter order, and
@@ -361,7 +362,7 @@ impl<'a> SignalToFirLower<'a> {
     }
 
     /// Declares/advances the global `fIOTA` cursor iff some planned delay
-    /// line still uses it (roadmap P3 slice 4). Run after
+    /// line still uses it. Run after
     /// `assign_clocked_delay_cursors` so in-domain `CircularPow2` lines that
     /// moved to a per-domain `fIOTA_d<i>` cursor no longer force a dead global
     /// field + advance.
@@ -376,7 +377,7 @@ impl<'a> SignalToFirLower<'a> {
     ///
     /// At the top rate this is the shared `fIOTA`; inside a guarded clocked
     /// block it is the effective domain's per-domain `fIOTA_d<i>` cursor
-    /// (roadmap P3 slice 4), so circular recursion carriers and delay-states
+    /// in fire time, so circular recursion carriers and delay-states
     /// inside a block advance in fire time.
     pub(super) fn global_circular_current_index(&mut self, size: usize) -> FirId {
         let cursor = self.active_circular_cursor_name();

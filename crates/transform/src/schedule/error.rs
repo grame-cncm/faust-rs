@@ -18,7 +18,7 @@ use std::fmt;
 pub enum ScheduleError<N> {
     /// A node depends on itself, directly. Reported before the general
     /// cycle check: an instantaneous self-dependency is never a legal
-    /// same-loop edge (plan §4.1) — an adapter that intends a same-node loop
+    /// same-loop edge (plan provenance: §4.1) — an adapter that intends a same-node loop
     /// edge must normalize it away before presenting the DAG here.
     SelfEdge {
         /// The offending node (the first one found in `nodes()` order).
@@ -50,7 +50,7 @@ impl<N: fmt::Debug> std::error::Error for ScheduleError<N> {}
 
 /// Why [`crate::schedule::verify_schedule`] rejected a candidate order.
 ///
-/// This is the small independent checker (plan §5.10 `verify_schedule`,
+/// This is the small independent checker (plan provenance: §5.10 `verify_schedule`,
 /// mirrored by the Lean `verifySchedule`/`coversB`/`respectsDependenciesB` in
 /// `porting/vector-mode-scheduling-formal-spec.lean`): it never re-runs a
 /// scheduling algorithm, only checks the two S-Sound/S-Complete properties

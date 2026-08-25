@@ -18,8 +18,9 @@
 //! cross-loop carried state is rejected even when a static effect edge happens
 //! to order the two loops.
 //!
-//! The model is deliberately bounded. Its base form is the structural P5 gate;
-//! its state-refined form consumes P6.1 `DelaySim`/`RecStep` evidence and
+//! The model is deliberately bounded. Its base form is the structural gate on
+//! the routed chunk; its state-refined form consumes the state plan's
+//! `DelaySim`/`RecStep` evidence and
 //! replaces the corresponding conservative effects with explicit
 //! `LoopPre`/sample/`LoopPost` events. Neither form proves complete DSP
 //! semantics. Production construction and independent checking require an

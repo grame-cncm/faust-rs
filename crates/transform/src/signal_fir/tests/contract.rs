@@ -175,9 +175,9 @@ fn invalid_options_return_typed_error_code() {
 }
 #[test]
 fn clocked_signal_family_returns_dedicated_error_code() {
-    // Roadmap P0.1: the clocked family no longer falls into the generic
-    // `FRS-SFIR-0004` bucket — it gets the dedicated `ClockedNotLowered`
-    // rejection until the clock-domain lowering (P1-P3) lands.
+    // The clocked family never falls into the generic `FRS-SFIR-0004`
+    // bucket — it gets the dedicated `ClockedNotLowered` rejection when no
+    // clocked-lowering state is active for the run.
     let mut arena = TreeArena::new();
     let sig0 = {
         let mut b = SigBuilder::new(&mut arena);
@@ -367,7 +367,7 @@ fn delay_prefix_select_and_cast_nodes_are_supported() {
 fn foreign_var_count_is_rejected_under_execution_options() {
     // C++ `generateFVar` rejects `fFullCount` when gOneSample || gExtControl:
     // neither `control` nor `frame` supplies a block count (execution-options
-    // port plan §3.5).
+    // port plan, plan provenance: §3.5).
     use crate::signal_fir::{ControlRateMode, ProcessingApi};
 
     for (control, api) in [
@@ -545,10 +545,10 @@ fn right_shift_binops_lower_to_int32_fir_shifts() {
         );
     }
 }
-// ─── P2: `-ss` / `--scheduling-strategy` option plumbing ──────────────────────
+// ─── `-ss` / `--scheduling-strategy` option plumbing ──────────────────────────
 //
-// Vectorization port plan phase P2 threads `SchedulingStrategy` into
-// `SignalFirOptions` without activating scheduling. These tests only check
+// The vectorization port threads `SchedulingStrategy` into
+// `SignalFirOptions`. These tests only check
 // that the field is present, defaults to `DepthFirst` (matching `-ss 0` in
 // scalar and vector modes alike), and round-trips through struct-update
 // syntax like every other option in this struct.

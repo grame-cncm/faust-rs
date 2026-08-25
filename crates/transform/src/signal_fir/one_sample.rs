@@ -1,5 +1,5 @@
-//! One-sample compatibility classifier (execution-options port plan §3.5,
-//! decision D2).
+//! One-sample compatibility classifier (plan provenance: execution-options
+//! port §3.5, decision D2).
 //!
 //! `-os` removes the block boundary: `frame` processes exactly one sample and
 //! receives no `count`. Operations whose current semantics are defined

@@ -2,11 +2,12 @@
 //!
 //! `verify_vector_fir_assembly` is called by BOTH the producer's terminal
 //! step (`materialize.rs`) and standalone callers, so its admission
-//! guards remain on both paths after the R7 split (plan §4.8). The
+//! guards remain on both paths (the shared-guard rule of the
+//! producer/checker doctrine in `vector/mod.rs`). The
 //! independent re-derivations here (independently_expected_clock_cursor,
 //! state_cursor_advance_matches, expected_island_declarations, shape
 //! matchers) must NOT be merged with their producer counterparts in
-//! `materialize.rs` — the duplication IS the assurance boundary (plan §3.2).
+//! `materialize.rs` — the duplication IS the assurance boundary (plan provenance: §3.2).
 
 use super::model::*;
 use crate::signal_fir::vector::clock_ad::{
@@ -21,7 +22,7 @@ use crate::signal_fir::vector::verify::Placement;
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, match_fir};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Independently validates P6.3b coverage and the concrete FIR word shapes.
+/// Independently validates assembly coverage and the concrete FIR word shapes.
 pub fn verify_vector_fir_assembly(
     routed: &VerifiedRoutedFir,
     state_plan: Option<&VerifiedVectorStatePlan>,

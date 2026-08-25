@@ -5,7 +5,7 @@
 //! decoration certificate, vector plan) using its own checker-owned
 //! helpers. The shared terminal verify
 //! (`verify_vector_clock_ad_plan_after_vector_plan`) then runs on both this
-//! producer path and the standalone checker path (plan §4.8), so it is now
+//! producer path and the standalone checker path (plan provenance: §4.8), so it is now
 //! a genuine producer-vs-checker cross-check rather than a replay.
 
 use super::check::{verify_source_alignment, verify_vector_clock_ad_plan_after_vector_plan};
@@ -22,7 +22,7 @@ use signals::{SigId, SigMatch, match_sig};
 use sigtype::Nature;
 use std::collections::BTreeMap;
 
-/// Builds and independently checks the P6.2 island/AD policy.
+/// Builds and independently checks the clock-island/AD policy.
 pub fn build_vector_clock_ad_plan(
     prepared: &VerifiedPreparedSignals,
     domains: &ClockDomainTable,

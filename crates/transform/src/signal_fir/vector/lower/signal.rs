@@ -1,7 +1,7 @@
 //! Signal lowering (producer): the pure-vector lowerer and the program
 //! entry points. The terminal step calls the boundary/body checks in
 //! `check.rs`, so every admission guard there also binds the producer
-//! (plan §4.8).
+//! (plan provenance: §4.8).
 
 use super::check::collect_prepared_ids;
 use super::check::{verify_plan_prepared_boundary, verify_pure_vector_bodies};
@@ -78,7 +78,7 @@ struct PureVectorLowerer<'a> {
     promoted_control_fields: Vec<(String, FirType)>,
     /// Counter for `fSlow` snapshot names.
     snapshot_counter: u32,
-    /// Whether table generators are folded or compiled into sub-modules (S6).
+    /// Whether table generators are folded or compiled into sub-modules.
     table_init_mode: crate::signal_fir::TableInitMode,
     table_init_sample_rate: Option<i32>,
     /// Enclosing module name, for `{module}SIG{k}`.
@@ -98,7 +98,7 @@ struct PureVectorLowerer<'a> {
     /// is filled once per class, exactly as in the scalar path.
     static_init_statements: Vec<FirId>,
 }
-/// Lowers actual effect-free prepared signals into P4.4 vector regions.
+/// Lowers actual effect-free prepared signals into planned vector regions.
 ///
 /// CSE is run once per control/loop region with loop-id-derived temporary names.
 /// No stateful or effectful node is accepted, and this artifact is not yet
@@ -117,7 +117,7 @@ pub fn lower_pure_vector_program(
         real_type,
         num_inputs,
         control_rate_mode: ControlRateMode::InlinePerBlock,
-        // `lower_pure_vector_program` is the P5.2 unit-test entry point: it
+        // `lower_pure_vector_program` is the pure-lowering unit-test entry point: it
         // exercises the pure lowering in isolation, with no enclosing module,
         // so it keeps the folding mode and never builds a sub-module.
         module_name: "mydsp",
@@ -128,7 +128,7 @@ pub fn lower_pure_vector_program(
     };
     lower_vector_program_impl(prepared, verified_plan, None, None, &context)
 }
-/// Lowers the P6-supported vector subset using authoritative state and clock
+/// Lowers the supported vector subset using authoritative state and clock
 /// artifacts. Forward AD needs no special carrier after propagation and enters
 /// through the ordinary pointwise cases below.
 pub fn lower_vector_program(
@@ -285,7 +285,8 @@ pub(super) fn lower_vector_program_impl<'a>(
     // Phase 5: under external control the shared control-root temporaries are
     // promoted to DSP struct fields (their stores move to `control`, while
     // vector transport fills in `compute` read them back), mirroring the
-    // scalar konst-escape promotion (§4.4). Classic mode keeps stack locals.
+    // scalar konst-escape promotion (plan provenance: §4.4). Classic mode
+        // keeps stack locals.
     let external_control = lowerer.control_rate_mode.is_external();
     let (mut control_statements, rewritten_control_values) = if external_control {
         let (statements, rewritten, fields) = materialize_region_roots_promoted(
@@ -727,7 +728,7 @@ impl PureVectorLowerer<'_> {
                     // C++ `getSignalDependencies` gives a symbolic back-edge
                     // previous-sample semantics even when the selected body
                     // has no explicit `sigDelay` occurrence. Use that implicit
-                    // history only when the accepted P6.1 plan proves this is
+                    // history only when the accepted state plan proves this is
                     // the X2b cross-loop alias shape; ordinary same-loop
                     // recursion keeps its established lowering.
                     let body_id = u64::from(body.as_u32());

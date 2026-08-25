@@ -438,7 +438,8 @@ impl<'a> SignalToFirLower<'a> {
         let n = self.next_materialized_counter(prefix);
         let access = match bucket {
             Bucket::Constants if self.konst_escapes(sig) => AccessType::Struct,
-            // Execution-options port §4.4: under external control the store
+            // Plan provenance: execution-options port §4.4 — under external
+            // control the store
             // moves to `control`, so the value must live in DSP-owned storage
             // for sample-rate code to read it across the function boundary —
             // the same escape promotion the Konst arm above already applies.

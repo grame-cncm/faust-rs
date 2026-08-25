@@ -15,9 +15,10 @@
 //! `LoopKind::Recursive` loop and advances once per sample. Prefix cells and
 //! cycling waveform indexes carry explicit lifecycle and update transitions;
 //! zero-history delay effects are explicit no-ops. The artifact is derived
-//! from the verified prepared forest, checked P4.3b decorations, and the
-//! checked P4.4 vector plan; it does not inspect FIR statements. P6.6 composes that plan
-//! with the checked P6.2 clock artifact: state local to an OD/US/DS island uses
+//! from the verified prepared forest, the checked decoration certificate, and
+//! the checked vector plan; it does not inspect FIR statements. Clocked
+//! composition pairs that plan with the checked clock/AD artifact: state
+//! local to an OD/US/DS island uses
 //! one persistent ring cursor per domain and advances in fire time. Reverse
 //! time and AD state remain fail-closed.
 

@@ -3,7 +3,8 @@
 //! `verify_routed_fir_with_policies_after_plan` is called by BOTH the
 //! producer session's terminal verification (`session.rs`) and the
 //! standalone checker entries below, so its admission guards remain on
-//! both paths after the R6 split (plan §4.8).
+//! both paths (the shared-guard rule of the producer/checker doctrine in
+//! `vector/mod.rs`).
 
 use super::model::*;
 use crate::signal_fir::vector::clock_ad::{
@@ -15,7 +16,7 @@ use crate::signal_fir::vector::verify::{
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Independently checks a complete P5 routed-FIR trace.
+/// Independently checks a complete routed-FIR trace.
 pub fn verify_routed_fir(
     plan: &VectorPlan,
     trace: &RoutedFirTrace,
@@ -35,7 +36,7 @@ pub fn verify_routed_fir(
         .collect::<Vec<_>>();
     verify_routed_fir_with_policies(plan, &policies, trace, real_type, store)
 }
-/// Independently checks routed FIR against the exact P6.2 transport policy.
+/// Independently checks routed FIR against the exact clock-plan transport policy.
 pub fn verify_routed_fir_with_clock_plan(
     plan: &VectorPlan,
     clock_plan: &VerifiedVectorClockAdPlan,

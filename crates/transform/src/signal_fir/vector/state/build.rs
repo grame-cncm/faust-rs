@@ -1,6 +1,6 @@
 //! Producer construction of the vector state plan. The terminal step
 //! calls the shared verify path in `check.rs`, so every admission guard
-//! there also binds the producer (plan §4.8).
+//! there also binds the producer (plan provenance: §4.8).
 
 use super::check::*;
 use super::model::*;
@@ -14,7 +14,7 @@ use crate::signal_fir::vector::verify::Placement;
 use crate::signal_prepare::VerifiedPreparedSignals;
 use std::collections::BTreeMap;
 
-/// Builds and independently checks the P6.1 transition plan.
+/// Builds and independently checks the state-transition plan.
 pub fn build_vector_state_plan(
     decorations: &VerifiedDecorationCertificate,
     vector_plan: &VerifiedVectorPlan,
@@ -22,8 +22,8 @@ pub fn build_vector_state_plan(
 ) -> Result<VerifiedVectorStatePlan, VectorStateError> {
     build_vector_state_plan_with_resources(None, decorations, vector_plan, None, max_copy_delay)
 }
-/// Builds P6.1 state transitions while delegating clock/hold resources to an
-/// independently accepted P6.2 artifact.
+/// Builds state transitions while delegating clock/hold resources to an
+/// independently accepted clock/AD-plan artifact.
 pub fn build_vector_state_plan_with_clock(
     prepared: &VerifiedPreparedSignals,
     decorations: &VerifiedDecorationCertificate,
@@ -149,7 +149,7 @@ pub(super) fn build_vector_state_plan_with_resources(
     // A symbolic-recursion carrier aggregates a read/write effect for every
     // body slot, including identity/pass-through slots which have no reachable
     // `SIGPROJ`. Those aggregate effects describe the group, not physical
-    // state. Only a reachable projection needs a P6.1 recursion transition;
+    // state. Only a reachable projection needs a recursion transition;
     // otherwise C++ emits the body as an ordinary direct value (for example
     // `(_*0.5,_*0.5,_,_)~(_,_)` emits only two `fRec` lines).
     let prepared_ids = prepared.map(collect_prepared_ids);
@@ -246,7 +246,7 @@ pub(super) fn build_vector_state_plan_with_resources(
 /// C++ `getSignalDependencies` marks `sigProj(..., sigRef(...))` as a
 /// one-sample dependency on the selected recursive body, while `OccMarkup`
 /// marks the structural recursion carrier and can therefore leave that body
-/// at `max_delay == 0`. P6.1 closes that intentional projection gap locally
+/// at `max_delay == 0`. The state plan closes that intentional projection gap locally
 /// when the projection and selected body have distinct loop owners (the
 /// cross-loop pass-through alias case): the delayed scheduling edge then
 /// requires storage for the selected producer. Same-loop and explicitly

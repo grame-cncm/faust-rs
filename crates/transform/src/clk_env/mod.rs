@@ -1,4 +1,4 @@
-//! Clock-environment inference over the prepared signal forest (roadmap P1.1).
+//! Clock-environment inference over the prepared signal forest.
 //!
 //! # Source provenance (C++)
 //! - `compiler/signals/clkEnvInference.cpp` (`ClkEnvInference`, 638 lines,
@@ -13,7 +13,7 @@
 //! hierarchical dependency graph ([`crate::hgraph`]) and, later, guarded-block
 //! code generation need.
 //!
-//! The system is a deliberately simplified clock calculus (plan §4.1): no
+//! The system is a deliberately simplified clock calculus (plan provenance: §4.1): no
 //! clock polymorphism, no boolean-clock unification. Domains form a **finite
 //! tree rooted at `nil`** (the audio rate, bottom element), so clock checking
 //! reduces to order checking on the [`ClockDomainTable`] parent chains.
@@ -42,7 +42,7 @@
 //! - C++ attaches results as a tree property (`CLKENVPROPERTY`); Rust returns
 //!   a side map `SigId → ClkEnv` (house style, no tree mutation).
 //! - C++ walks the `(parent, slotenv, path, box, inputs...)` cons tuple;
-//!   Rust decodes the opaque `SIGCLOCKENV` token (P0.2) against the
+//!   Rust decodes the opaque `SIGCLOCKENV` token against the
 //!   propagation-owned [`ClockDomainTable`].
 //! - Runs on the **prepared** forest (symbolic `SYMREC`/`SYMREF` recursion);
 //!   de Bruijn recursion is not supported here, mirroring C++ where inference
@@ -66,13 +66,13 @@ const MAX_ITERATIONS: usize = 1000;
 /// Structured inference errors.
 ///
 /// Every error names the offending signal (and the domains involved) so the
-/// compiler facade can enrich the diagnostic (roadmap P1.1: "structured error
-/// naming the two incomparable domains *and* the offending signal").
+/// compiler facade can enrich the diagnostic ("structured error naming the
+/// two incomparable domains *and* the offending signal").
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClkEnvError {
     /// `max_clk_env` was asked to join two domains on different branches of
     /// the domain tree — sibling domains may not exchange un-annotated
-    /// signals (plan §4.1 scoping rule).
+    /// signals (plan provenance: §4.1 scoping rule).
     Incomparable {
         /// The signal at which the incomparable join was attempted.
         sig: SigId,
@@ -276,7 +276,7 @@ pub fn is_ancestor_clk_env(domains: &ClockDomainTable, a: ClkEnv, b: ClkEnv) -> 
 
 /// `maxClkEnv{c1, c2}` — join restricted to chains: the deeper of two
 /// *comparable* domains; incomparable domains are the scoping error of the
-/// system (plan §4.1).
+/// system (plan provenance: §4.1).
 pub fn max_clk_env(
     domains: &ClockDomainTable,
     sig: SigId,

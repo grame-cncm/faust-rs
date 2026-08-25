@@ -64,7 +64,7 @@ impl GlobalCircularCursor {
     }
 }
 
-// ─── Name-parametrized cursor primitives (roadmap P3: per-domain IOTA) ───────
+// ─── Name-parametrized cursor primitives (per-domain IOTA) ───────────────────
 
 /// Loads one circular cursor field.
 pub(crate) fn cursor_load(store: &mut FirStore, name: &str) -> FirId {

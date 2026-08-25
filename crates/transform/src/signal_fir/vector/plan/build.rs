@@ -94,13 +94,14 @@ impl<'a> PlacementState<'a> {
         Ok(())
     }
 }
-/// Builds the production P4.4 plan exclusively from accepted P4.3b facts.
+/// Builds the production vector plan exclusively from facts of the accepted
+/// decoration certificate.
 ///
 /// Loop, epoch, transport, and stable-name identities depend only on the
 /// certificate and `vec_size`; no scheduling strategy or FIR traversal is
 /// consulted. Every non-duplicable sample value is materialized exactly once.
 /// Recursive projections of one symbolic group share one serial loop. Other
-/// non-`VecSafe` loops use a conservative serial `Island` until P6 supplies a
+/// non-`VecSafe` loops use a conservative serial `Island` until clock planning supplies a
 /// more precise clock/state execution model.
 pub fn build_vector_plan(
     verified: &VerifiedDecorationCertificate,

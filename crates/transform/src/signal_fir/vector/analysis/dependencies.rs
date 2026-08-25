@@ -18,11 +18,11 @@ pub enum DepKind {
         /// The known positive delay amount in samples.
         amount: u32,
     },
-    /// Reserved for the P4.3 control-dependency distinction.
+    /// Reserved for the control-dependency distinction (not produced yet).
     Control,
     /// Boundary between a wrapper and its outer-domain clock.
     ClockBoundary,
-    /// Reserved for P4.3 effect dependencies.
+    /// Reserved for effect dependencies (not produced yet).
     Effect,
 }
 /// One decoded dependency, keyed by source-local child order.
@@ -176,7 +176,7 @@ impl<'a> SignalAnalysisContext<'a> {
         };
         let Some(group) = group else {
             // Rust-only tuple carriers such as BlockReverseAD and
-            // ReverseTimeRec also use Proj. They retain the pre-P4 dependency
+            // ReverseTimeRec also use Proj. They retain the pre-analysis dependency
             // on the carrier itself; only symbolic recursion selects a body.
             return Ok((group_ref, DepKind::Immediate));
         };

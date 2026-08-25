@@ -1,5 +1,6 @@
 //! Structural tests for the four execution shapes of the `-ec`/`-os` port
-//! (execution-options port plan §7.1): classic block, external control,
+//! (plan provenance: execution-options port §7.1): classic block, external
+//! control,
 //! one-sample, and the combined mode.
 //!
 //! Each test compiles `input(0) * hslider(0)` — one sample-rate input, one
@@ -139,7 +140,8 @@ fn external_control_moves_slow_values_to_control_with_state_promotion() {
     let control = body_of(&funs, "control").expect("-ec must emit a control function");
     let compute = body_of(&funs, "compute").expect("compute body");
     assert!(funs.iter().all(|(n, _)| n != "frame"));
-    // §4.4 promotion: the slow value is stored to DSP state in `control` and
+    // External-control promotion (plan provenance: §4.4): the slow value is
+    // stored to DSP state in `control` and
     // never remains a stack local in either function.
     assert!(contains_slow_struct_store(&out.store, control));
     assert!(!contains_slow_stack_decl(&out.store, control));
@@ -164,7 +166,8 @@ fn one_sample_shape_emits_frame_and_empty_compute() {
     assert!(body_of(&funs, "control").is_none());
     let frame = body_of(&funs, "frame").expect("-os must emit a frame function");
     let compute = body_of(&funs, "compute").expect("compute body");
-    // §2.3: canonical compute is kept but emitted empty.
+    // One-sample mode: canonical compute is kept but emitted empty (plan
+    // provenance: §2.3).
     assert!(matches!(
         match_fir(&out.store, compute),
         FirMatch::Block(stmts) if stmts.is_empty()
@@ -187,7 +190,8 @@ fn one_sample_shape_emits_frame_and_empty_compute() {
         match_fir(&out.store, *id),
         FirMatch::LoadVar { ref name, .. } if name == "count" || name == "i0"
     )));
-    // Without -ec, the slow value is recomputed inside frame (§2.4).
+    // Without -ec, the slow value is recomputed inside frame (plan
+    // provenance: §2.4).
     assert!(contains_slow_stack_decl(&out.store, frame));
     assert_no_scope_errors(&out.store, out.module);
 }

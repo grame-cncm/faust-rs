@@ -1,4 +1,4 @@
-//! Unit tests for the hierarchical dependency graph and schedule (P1.2).
+//! Unit tests for the hierarchical dependency graph and schedule.
 //!
 //! Fixtures mirror the shapes `propagate_clocked_wrapper` emits:
 //! `Seq(OnDemand([Clocked(env, clock), PermVar(Clocked(env, body))...]), permvar_i)`.
@@ -318,7 +318,7 @@ fn conflicting_unknown_effects_receive_a_strategy_independent_order() {
     }
 }
 
-// ── Control graph (plan §4.6) ────────────────────────────────────────────────
+// ── Control graph (plan provenance: §4.6) ────────────────────────────────────────────────
 
 fn sig_type(variability: sigtype::Variability) -> sigtype::SigType {
     sigtype::SigType::Simple(sigtype::SimpleType {
@@ -378,7 +378,7 @@ fn control_owns_top_level_konst_signal_and_precondition_edge_is_implicit() {
     assert_eq!(s_edges[0].to, x);
 
     // Every strategy still schedules Top and Control independently and
-    // validly (P1 integration, not just the literal DFS this module used to
+    // validly (generic-scheduler integration, not just the literal DFS this module used to
     // hand-roll).
     for strategy in [
         SchedulingStrategy::DepthFirst,
@@ -445,7 +445,7 @@ fn audit_control_variability_rejects_a_samp_signal_in_control() {
     );
 }
 
-// ── contains_wrapper (P3 unconditional-gate guard) ───────────────────────────
+// ── contains_wrapper (unconditional-gate guard) ──────────────────────────────
 
 #[test]
 fn contains_wrapper_is_false_for_a_flat_program() {

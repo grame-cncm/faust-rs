@@ -145,9 +145,7 @@ impl RealType {
 /// containing a DAG of small inner loops, so the C compiler can auto-vectorize
 /// the non-recursive ones (SIMD); recursive computations stay in serial loops.
 ///
-/// Roadmap P6, vector doc V1
-/// (`porting/vector-mode-analysis-port-plan-2026-06-10-en.md`). P6.6 activates
-/// the independently checked signal-level path for pure graphs, fixed and
+/// The checked pipeline accepts pure graphs, fixed and
 /// bounded-variable delays, symbolic recursion, stateful clock islands, and
 /// expanded FAD graphs. Other shapes fail closed to scalar lowering with an
 /// observable [`VectorPipelineStatus::Fallback`] reason.
@@ -246,18 +244,18 @@ pub enum VectorFallbackReason {
     ClockAnalysis,
     /// Building or verifying the analysis decorations failed.
     Decorations,
-    /// Building or verifying the P4.4 vector plan failed.
+    /// Building or verifying the vector plan failed.
     VectorPlan,
-    /// Building or verifying the P6.1 state plan failed.
+    /// Building or verifying the state plan failed.
     StatePlan,
     /// Building or verifying the clocked-audio-domain plan failed.
     ClockAdPlan,
     /// A reverse-audio-domain signal requires fixed epochs, so the program
     /// is lowered as scalar.
     ReverseAd,
-    /// Pure P5.2 lowering failed.
+    /// Pure signal lowering failed.
     PureLowering,
-    /// Building or verifying the P5.3 event-order certificate failed.
+    /// Building or verifying the event-order certificate failed.
     EventCertificate,
     /// Assembling the vector FIR bodies failed.
     FirAssembly,
@@ -294,7 +292,7 @@ pub enum VectorPipelineStatus {
     /// Vector-mode codegen was not requested; the scalar path was used.
     #[default]
     NotRequested,
-    /// The P4/P5/P6 producer/checker chain accepted the emitted module.
+    /// The producer/checker chain accepted the emitted module.
     Certified,
     /// A named unsupported shape failed closed to scalar lowering.
     Fallback(VectorFallbackReason),
@@ -356,7 +354,7 @@ pub struct SignalFirOptions {
     /// or above `max_copy_delay` use circular-pow2).
     pub delay_line_threshold: u32,
     /// Codegen strategy for `compute()`: scalar (default) or vector mode
-    /// (`-vec`). Accepted P6.6 programs use the checked P4/P5/P6 path; named
+    /// (`-vec`). Accepted programs use the checked pipeline; named
     /// unsupported shapes fail closed to scalar lowering.
     pub compute_mode: ComputeMode,
     /// Signal/loop dependency scheduling policy (`-ss` /
@@ -395,7 +393,7 @@ pub enum TableInitMode {
     /// rate or on a foreign function, and it keeps the emitted source small:
     /// a 65536-entry table costs a loop instead of 65536 literals.
     ///
-    /// The default since 2026-08-06 (plan phase S7): it matches the C++
+    /// The default since 2026-08-06: it matches the C++
     /// reference and is the only mode that compiles every program the
     /// reference compiles.
     #[default]
@@ -434,8 +432,6 @@ impl Default for SignalFirOptions {
             scheduling_strategy: SchedulingStrategy::DepthFirst,
             control_rate_mode: ControlRateMode::InlinePerBlock,
             processing_api: ProcessingApi::Block,
-            // S2..S6 keep `Const` as the effective default; S7 flips it to
-            // `Runtime` once every backend emits sub-modules.
             table_init_mode: TableInitMode::Runtime,
             table_init_sample_rate: None,
         }
@@ -461,7 +457,7 @@ pub struct SignalFirOutput {
     /// values. The trace is exported only for conformance diagnostics via
     /// [`shadow::compare_emission_order`].
     pub emission_order: Vec<SigId>,
-    /// P3 schedule-conformance report comparing [`Self::emission_order`] with
+    /// Schedule-conformance report comparing [`Self::emission_order`] with
     /// the selected `Hsched`. Present only when the internal diagnostic entry
     /// point or `FAUST_RS_SHADOW_REPORT` requested it and a hierarchical graph
     /// was built. The report is observation-only; computing it never changes
@@ -517,13 +513,13 @@ pub struct SignalFirRequest<'a> {
     pub ui: &'a UiProgram,
     /// Lowering options: real type, table-init mode, vector settings, …
     pub options: &'a SignalFirOptions,
-    /// Propagation-owned clock-domain side table ([`propagate::ClockDomainTable`],
-    /// roadmap P0.2).
+    /// Propagation-owned clock-domain side table
+    /// ([`propagate::ClockDomainTable`]).
     ///
     /// When present and the program contains clocked wrappers, lowering runs
     /// clock-environment inference ([`crate::clk_env`]) and hierarchical-graph
     /// validation ([`crate::hgraph`]) on the prepared forest, then lowers
-    /// boolean `ondemand` blocks as guarded regions (roadmap P3). Programs
+    /// boolean `ondemand` blocks as guarded regions. Programs
     /// without clocked wrappers behave exactly as if this were `None`.
     pub clock_domains: Option<&'a propagate::ClockDomainTable>,
     /// Observation-only per-stage timing sink.
@@ -603,7 +599,7 @@ impl<'a> SignalFirRequest<'a> {
 /// This is the single fast-lane entry point of the crate; everything optional
 /// travels in [`SignalFirRequest`].
 ///
-/// # Current behavior (Step 2A/2B/2C/2D/2E/2F/2G/2H)
+/// # Current behavior
 /// - validates options and top-level signal/arity contract,
 /// - builds a deterministic planning snapshot,
 /// - prepares and verifies the whole output forest in a private staging arena,
@@ -688,7 +684,7 @@ fn compile_fastlane_inner(
     // Execution-options port D2: `-os` has no meaning for block-sensitive
     // reverse-AD carriers (block-scoped tape/carry state, reverse-order
     // block traversal). Reject with a typed diagnostic instead of inventing
-    // a persistent one-sample semantics (plan §3.5).
+    // a persistent one-sample semantics.
     if options.processing_api.is_one_sample()
         && one_sample::contains_block_sensitive_operation(prepared.arena(), prepared.outputs())
     {
@@ -698,7 +694,7 @@ fn compile_fastlane_inner(
         ));
     }
 
-    // P3: build the hierarchical dependency graph, orient conflicting effects
+    // Build the hierarchical dependency graph, orient conflicting effects
     // independently of strategy, and schedule every prepared scalar forest.
     // The accepted Hsched drives scalar forward lowering; vector mode instead
     // schedules its strategy-independent LoopGraph.

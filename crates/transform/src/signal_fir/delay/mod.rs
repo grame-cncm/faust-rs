@@ -175,12 +175,12 @@ pub(super) struct DelayLineInfo {
     /// Buffer-geometry strategy selected for this line.
     pub(super) strategy: DelayKind,
     /// Circular-cursor override for `CircularPow2` lines whose carrier lives
-    /// inside a clock domain: the per-domain `fIOTA_d<i>` field name
-    /// (roadmap P3). `None` = the shared global `fIOTA`.
+    /// inside a clock domain: the per-domain `fIOTA_d<i>` field name.
+    /// `None` = the shared global `fIOTA`.
     pub(super) cursor: Option<String>,
     /// `true` when the carrier lives inside a clocked block: the line's
     /// end-of-sample maintenance is emitted inside the guarded region
-    /// (fire-gated), not at the top sample end (roadmap P3 slice 4).
+    /// (fire-gated), not at the top sample end.
     pub(super) inner_clocked: bool,
 }
 

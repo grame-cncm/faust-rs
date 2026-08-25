@@ -18,7 +18,7 @@ use super::error::VerifyError;
 
 /// `dag.nodes()` is duplicate-free, `order` is a duplicate-free permutation
 /// of it, and every dependency precedes its consumer (S-Sound + S-Complete,
-/// plan §5.4; Lean `coversB` + `respectsDependenciesB`).
+/// plan provenance: §5.4; Lean `coversB` + `respectsDependenciesB`).
 ///
 /// # Errors
 /// [`VerifyError`] describing the first violation found: a graph node list

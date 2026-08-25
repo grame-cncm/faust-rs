@@ -2,7 +2,7 @@
 //! fixture, each cross-checked with [`verify_schedule`] (item 2: every
 //! produced order must itself be accepted by the independent checker).
 //!
-//! Every derivation below follows the plan §5.4 pseudocode directly:
+//! Every derivation below follows the plan-provenance §5.4 pseudocode directly:
 //! `roots(G)` = nodes nobody depends on; `DepthFirst` = postorder from
 //! `roots(G)`; `BreadthFirst` = sort by `(height, key)` with
 //! `height(v) = 1 + max(height(dep))`; `Special` = interleave-and-reverse-

@@ -225,7 +225,7 @@ impl LoopGraph {
     }
 }
 
-/// [`crate::schedule::ScheduleDag`] adapter (roadmap P1). `LoopGraph` is
+/// [`crate::schedule::ScheduleDag`] adapter. `LoopGraph` is
 /// `pub(crate)` behind a private `signal_fir::loop_graph` module path, so
 /// this impl lives here rather than alongside the generic scheduler core:
 /// `crate::schedule` cannot name `LoopGraph` at all, while every item in
@@ -248,12 +248,12 @@ impl ScheduleDag for LoopGraph {
     }
 }
 
-// ── Loop-separation criterion (V3) ──────────────────────────────────────────
+// ── Loop-separation criterion ────────────────────────────────────────────────
 //
 // A port of the C++ `needSeparateLoop` (`compile_vect.cpp:304-339`,
-// `dag_instructions_compiler.cpp:370-393`; the table is in the vector doc §2).
+// `dag_instructions_compiler.cpp:370-393`; provenance: vector doc §2 table).
 // This is the *decision*: given a sample signal's properties, does it get its
-// own chunk loop, and may that loop vectorize? The lowering (V4) extracts the
+// own chunk loop, and may that loop vectorize? The chunked lowering extracts the
 // [`SignalLoopProps`] and consumes the [`LoopSeparation`] verdict; keeping the
 // decision pure makes it exhaustively testable without the lowering machinery.
 
@@ -306,7 +306,8 @@ impl LoopSeparation {
     }
 }
 
-/// Decides whether `props` requires its own chunk loop (vector doc §2 table;
+/// Decides whether `props` requires its own chunk loop (provenance: vector
+/// doc §2 table;
 /// C++ `DAGInstructionsCompiler::needSeparateLoop`).
 ///
 /// Precedence (first match wins):
@@ -344,7 +345,7 @@ pub(crate) fn needs_separate_loop(props: &SignalLoopProps) -> LoopSeparation {
     LoopSeparation::Inline
 }
 
-// ── Loop-carried classification (V5b, separation foundation) ─────────────────
+// ── Loop-carried classification (separation foundation) ──────────────────────
 //
 // Actually *splitting* a slice's recursive core out from its vectorizable
 // pre/post parts (with cross-loop chunk buffers) requires loop-aware lowering:
@@ -395,12 +396,12 @@ fn node_writes_struct_state(store: &FirStore, node: FirId) -> bool {
     }
 }
 
-// ── Cross-loop chunk buffers (vector doc §4, S-C) ────────────────────────────
+// ── Cross-loop chunk buffers ─────────────────────────────────────────────────
 //
 // A sample value produced in one loop and consumed in another is materialized in
 // a `vec_size`-element array, indexed by the **chunk-local** `i0 - vindex` so the
 // producing store and the consuming load address the same slot within the chunk.
-// This keeps V5's "global `i0`, no I/O rebasing" bit-exactness. The mechanism is
+// This keeps the "global `i0`, no I/O rebasing" bit-exactness. The mechanism is
 // pure FIR building; S-D wires it into the split emission.
 
 /// A cross-loop chunk buffer `<elem> vbufN[vec_size]`.
@@ -636,7 +637,7 @@ fn stmt_reads_writes(store: &FirStore, stmt: FirId) -> Option<(VarRefs, VarRefs)
 }
 
 /// Partitions a **flat** recursive sample-loop body into a serial core and a
-/// vectorizable tail (vector doc §5 S-D). Returns `None` — "keep the single fused
+/// vectorizable tail. Returns `None` — "keep the single fused
 /// loop" — when the body has an unsupported statement shape or no state-free
 /// statement worth hoisting.
 #[must_use]
@@ -1197,7 +1198,7 @@ mod tests {
         assert_eq!(err.unscheduled, vec![a, b]);
     }
 
-    /// The generic scheduler core (roadmap P1) must agree with
+    /// The generic scheduler core must agree with
     /// `LoopGraph`'s own `topological_order` on the same DAG: build one
     /// through the existing `add_loop`/`add_dep` API, run all four
     /// `crate::schedule` strategies over it, and check every result against

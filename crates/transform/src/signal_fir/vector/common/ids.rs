@@ -1,4 +1,4 @@
-//! Prepared-signal and artifact ID indexing (plan R4.2).
+//! Prepared-signal and artifact ID indexing shared by the checked stages.
 //!
 //! Every vector stage builds `key -> record` maps over certificate rows.
 //! The raw `.map(|x| (x.id, x)).collect::<BTreeMap<_, _>>()` idiom silently

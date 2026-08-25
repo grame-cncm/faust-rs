@@ -47,20 +47,19 @@
 //! | [`SchedulingStrategy`] | `adapted` | Same four strategies as `-ss`, as a Rust `enum` instead of an integer flag; [`SchedulingStrategy::decode`] matches the C++ `0 / 1 / 2 / n>=3` split exactly. |
 //! | [`ScheduleDag`] | `adapted` | C++ has no such trait — `digraph<N>` is used directly by every algorithm. The trait is the Rust seam letting one algorithm implementation serve every graph shape (`hgraph::Digraph`, `signal_fir::LoopGraph`, future callers) instead of copying the four algorithms per graph type. |
 //! | [`schedule`] | `adapted` | Literal port of the four algorithms, plus typed, total cycle/self-edge detection that C++ does not perform (C++ assumes a DAG and recurses/loops unconditionally). |
-//! | [`verify_schedule`] | `adapted` | No C++ equivalent; mirrors the Lean `verifySchedule` as an independent postcondition checker (plan §5.10) never reusing a scheduling algorithm. |
+//! | [`verify_schedule`] | `adapted` | No C++ equivalent; mirrors the Lean `verifySchedule` as an independent postcondition checker (plan provenance: §5.10) never reusing a scheduling algorithm. |
 //!
 //! [`certificate`] adds the canonical, hashable `GraphSnapshot` /
 //! `ScheduleCertificate` artifact layer around [`schedule`] /
-//! [`verify_schedule`] (certified plan "R1 - Schedule certificate at L2").
+//! [`verify_schedule`] (plan provenance: certified plan "R1 - Schedule
+//! certificate at L2").
 //!
 //! # Status
-//! Purely additive: nothing in the production compile path constructs a
-//! [`ScheduleDag`] or calls [`schedule`] yet. Phase P2 (done) threads the
-//! public `-ss` / `--scheduling-strategy` option through the compiler down
-//! to `SignalFirOptions`, but no lowering path invokes this scheduler; phase
-//! P3 activates scalar scheduling. `hgraph::schedule` keeps its own literal
-//! depth-first walk unchanged; it is not yet expressed in terms of this
-//! module.
+//! Production-authoritative: `hgraph::schedule` serializes every scalar
+//! hierarchical graph through this scheduler (via the `Digraph` adapter),
+//! and the checked vector pipeline schedules every planned epoch with it.
+//! The public `-ss` / `--scheduling-strategy` option selects the strategy
+//! on both paths.
 
 mod adapters;
 mod breadth_first;
@@ -81,7 +80,7 @@ pub use dag::ScheduleDag;
 pub use error::{ScheduleError, VerifyError};
 pub use verify::verify_schedule;
 
-/// The `-ss` / `--scheduling-strategy` policy (plan §2.5, C++
+/// The `-ss` / `--scheduling-strategy` policy (plan provenance: §2.5, C++
 /// `compiler/DirectedGraph/Schedule.hh`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SchedulingStrategy {
@@ -115,7 +114,7 @@ impl SchedulingStrategy {
 /// once (S-Complete), computed deterministically from `(strategy, dag)`
 /// (S-Deterministic), and always returning `Ok` or a typed error — never
 /// hanging or emitting a partial order (S-Terminating). These are the four
-/// scheduler obligations of plan §5.4.
+/// scheduler obligations (plan provenance: §5.4).
 ///
 /// Cycle/self-edge detection (`validate::ensure_schedulable`) runs once,
 /// before dispatching to the selected literal algorithm, so it is uniform

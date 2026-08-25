@@ -257,7 +257,7 @@ impl<'a> SignalToFirLower<'a> {
         target.extend([alloc, init, fill]);
     }
 
-    /// Allocates the next generated-table name, `{i|f}tbl{k}` (§5.6).
+    /// Allocates the next generated-table name, `{i|f}tbl{k}`.
     ///
     /// One counter serves both element types, matching C++ `getTypedNames`:
     /// the `i`/`f` letter is a prefix, not part of the counter key. The

@@ -9,7 +9,7 @@ use propagate::ClockDomainKind;
 use std::collections::BTreeSet;
 use std::fmt;
 
-/// Current canonical P6.2 clock/AD-plan schema.
+/// Current canonical clock/AD-plan schema.
 pub const VECTOR_CLOCK_AD_PLAN_VERSION: u32 = 1;
 /// Concrete guard shape used to implement `fires(c, i)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -23,10 +23,10 @@ pub enum ClockGuard {
     /// Downsampling domain: fires when the running counter modulo the factor is zero.
     DownsampleModulo,
 }
-/// Whether a pre-planned P5 transport may use the outer chunk index.
+/// Whether a planned chunk transport may use the outer chunk index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ClockTransportMode {
-    /// Audio-rate value: the P5 `i0 - vindex` chunk route remains valid.
+    /// Audio-rate value: the routed `i0 - vindex` chunk route remains valid.
     OuterChunk,
     /// Per-sample value crossing logical loops in one certified fused group.
     /// The route is a scalar stack temporary inside the group's sole sample
@@ -47,15 +47,15 @@ pub enum ClockTransportMode {
         domain_id: u64,
     },
 }
-/// Complete policy for one existing P5 transport.
+/// Complete policy for one existing planned transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClockTransportPolicy {
-    /// Identifier of the P5 transport this policy applies to.
+    /// Identifier of the planned transport this policy applies to.
     pub transport_id: u64,
     /// Route mode chosen for the transport under clock/AD planning.
     pub mode: ClockTransportMode,
 }
-/// One serial OD/US/DS region and the P4 loops nested below it.
+/// One serial OD/US/DS region and the planned loops nested below it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClockIsland {
     /// Stable identifier of this clock domain.
@@ -68,7 +68,7 @@ pub struct ClockIsland {
     pub clock_signal_id: u64,
     /// Clock wrapper signal marking the domain boundary in Signal IR.
     pub wrapper_signal_id: u64,
-    /// Serial P4 loop that owns the domain boundary.
+    /// Serial planned loop that owns the domain boundary.
     pub boundary_loop_id: u64,
     /// Concrete guard shape implementing the domain's fire condition.
     pub guard: ClockGuard,
@@ -76,7 +76,7 @@ pub struct ClockIsland {
     pub signal_ids: Vec<u64>,
     /// Signals that own clock guard/counter state for this domain.
     pub clock_state_signal_ids: Vec<u64>,
-    /// Existing P4 loops with at least one root in this domain.
+    /// Existing planned loops with at least one root in this domain.
     pub nested_loop_ids: Vec<u64>,
 }
 /// FAD policy at the prepared-signal boundary.
@@ -140,7 +140,7 @@ pub struct ReverseAdFallback {
     /// Stable reason the carrier is excluded from vector mode.
     pub diagnostic: ReverseAdDiagnostic,
 }
-/// Canonical finite P6.2 artifact.
+/// Canonical finite clock/AD-plan artifact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VectorClockAdPlan {
     /// Schema version; must equal [`VECTOR_CLOCK_AD_PLAN_VERSION`].
@@ -149,14 +149,14 @@ pub struct VectorClockAdPlan {
     pub vec_size: u64,
     /// Exact set of serial clock islands, one per clock domain.
     pub clock_islands: Vec<ClockIsland>,
-    /// One routing policy per existing P5 transport, in transport order.
+    /// One routing policy per existing planned transport, in transport order.
     pub transports: Vec<ClockTransportPolicy>,
     /// Forward-mode AD policy at the prepared-signal boundary.
     pub forward_ad: ForwardAdPolicy,
     /// Exact set of scalar fallbacks for reverse-mode carriers.
     pub reverse_ad_fallbacks: Vec<ReverseAdFallback>,
 }
-/// Opaque evidence that P6.2 construction passed its checker.
+/// Opaque evidence that clock/AD-plan construction passed its checker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedVectorClockAdPlan {
     pub(super) plan: VectorClockAdPlan,
@@ -181,7 +181,7 @@ impl VerifiedVectorClockAdPlan {
         self.plan
     }
 
-    /// State resources whose execution is completely owned by P6.2 guards or
+    /// State resources whose execution is completely owned by clock/AD-plan guards or
     /// persistent held-output transports.
     #[must_use]
     pub fn managed_state_resources(&self) -> BTreeSet<StateResource> {
@@ -222,10 +222,10 @@ pub(crate) fn verified_vector_clock_ad_plan_for_test(
         vector_plan: vector_plan.plan().clone(),
     }
 }
-/// Typed producer/checker failure at the P6.2 boundary.
+/// Typed producer/checker failure at the clock/AD-plan boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorClockAdError {
-    /// The underlying P5 vector plan failed verification.
+    /// The underlying vector plan failed verification.
     Plan(VectorPlanError),
     /// Clock-environment inference over the Signal IR failed.
     ClockInference(ClkEnvError),
@@ -312,7 +312,7 @@ pub enum VectorClockAdError {
     },
     /// Declared clock islands do not exactly match the derived island facts.
     IslandCoverageMismatch,
-    /// Declared transport policies do not exactly match the P5 transports.
+    /// Declared transport policies do not exactly match the planned transports.
     TransportCoverageMismatch,
     /// A reverse-mode carrier has no owned scalar loop.
     ReverseCarrierNotOwned {

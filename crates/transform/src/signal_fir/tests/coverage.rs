@@ -25,8 +25,8 @@ enum LoweringCoverage {
     Unsupported,
     /// Has its own arm in `lower_signal` that returns the dedicated
     /// `ClockedNotLowered` (`FRS-SFIR-0007`) rejection: clocked machinery
-    /// accepted by `signal_prepare` but awaiting the clock-domain back half
-    /// (roadmap P1–P3).
+    /// accepted by `signal_prepare`, rejected when no clocked-lowering state
+    /// is active for the run.
     ClockedRejection,
 }
 /// Exhaustive classification of every `SigMatch` constructor against the
@@ -101,8 +101,8 @@ fn lowering_coverage(m: &SigMatch<'_>) -> LoweringCoverage {
         // Reverse-mode-AD carriers: no top-level arm; lowered through `Proj`.
         SigMatch::BlockReverseAD { .. } | SigMatch::ReverseTimeRec(_) => ViaParent,
 
-        // Clocked machinery: dedicated structured rejection until the
-        // clock-domain lowering (roadmap P1-P3) lands.
+        // Clocked machinery: dedicated structured rejection when no
+        // clocked-lowering state is active.
         SigMatch::TempVar(_)
         | SigMatch::PermVar(_)
         | SigMatch::Seq(..)

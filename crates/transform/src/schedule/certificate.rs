@@ -5,7 +5,7 @@
 //! "R1 - Schedule certificate at L2"): "Implement the generic Rust
 //! `GraphSnapshot`, `ScheduleCertificate`, and `verify_schedule` before
 //! activating generalized `-ss`." [`super::verify_schedule`]
-//! already exists (phase P1); this module adds the canonical, hashable
+//! already exists; this module adds the canonical, hashable
 //! artifact layer around it.
 //!
 //! Field shapes mirror the `graphSnapshot` / `scheduleCertificate`
@@ -70,7 +70,7 @@ impl SchedulingStrategy {
 /// `$defs/dependencyEdge`'s `kind` enum. Declared in the schema's own
 /// `["data", "effect", "control"]` order so the derived [`Ord`] matches the
 /// canonical edge sort key `(consumer, dependency, kind)` (plan
-/// §4.3) without a separate ordinal table.
+/// plan-provenance §4.3) without a separate ordinal table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EdgeKind {
     /// A value dependency: the consumer reads the dependency's output.
@@ -135,8 +135,9 @@ impl GraphSnapshot {
     /// insignificant whitespace, neither of which `serde_json`'s default
     /// output guarantees). The full cross-language canonical-JSON layer
     /// (arbitrary artifact shapes, Lean-side recomputation, multi-OS byte
-    /// identity) is R2 scope; this hash is self-consistent within Rust
-    /// today, which is what R1's "graph hash recomputation succeeds" bullet
+    /// identity) is deferred canonical-boundary scope (plan provenance:
+    /// certified plan R2); this hash is self-consistent within Rust today,
+    /// which is what the "graph hash recomputation succeeds" bullet
     /// requires.
     #[must_use]
     pub fn graph_hash(&self) -> String {
@@ -258,7 +259,8 @@ pub struct ScheduleCertificate {
 }
 
 /// Why [`verify_schedule_certificate`] rejected a certificate. Each variant
-/// corresponds to one bullet of the R1 "Required checks" list.
+/// corresponds to one bullet of the plan's "Required checks" list (plan
+/// provenance: certified plan R1).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CertificateError {
     /// `schema_version` is not the one version this module accepts.
@@ -372,8 +374,8 @@ impl std::error::Error for CertificateError {}
 ///
 /// # Errors
 /// Whatever [`super::schedule`] returns for a malformed or cyclic `dag`
-/// (typed cycle/self-edge errors — the last R1 bullet: "all four strategies
-/// return typed cycle/malformed-graph errors").
+/// (typed cycle/self-edge errors — the plan's last required check: "all
+/// four strategies return typed cycle/malformed-graph errors").
 pub fn certify_schedule<D: ScheduleDag>(
     dag: &D,
     strategy: SchedulingStrategy,
@@ -426,8 +428,9 @@ pub fn certify_schedule<D: ScheduleDag>(
     })
 }
 
-/// The independent checker (plan §5.10 `verify_schedule`, R1's own
-/// "Required checks" list). Never calls [`super::schedule`] or any of the
+/// The independent checker implementing the plan's "Required checks" list
+/// (plan provenance: §5.10 `verify_schedule`, certified plan R1). Never
+/// calls [`super::schedule`] or any of the
 /// four literal strategies.
 ///
 /// # Errors
@@ -461,7 +464,7 @@ pub fn verify_schedule_certificate(cert: &ScheduleCertificate) -> Result<(), Cer
         return Err(CertificateError::OutOfRange { value: id });
     }
 
-    // Canonical node ordering (plan §4.3: "The verifier rejects noncanonical
+    // Canonical node ordering (plan provenance: §4.3: "The verifier rejects noncanonical
     // set ordering even when the represented set is equivalent").
     for (i, w) in cert.graph.nodes.windows(2).enumerate() {
         if w[0] >= w[1] {
@@ -668,7 +671,7 @@ mod tests {
 
     // ---- negative mutation tests: one per CertificateError variant ----
     // "A checker without a demonstrated rejecting mutation is not complete
-    // enough to serve as a trust boundary" (plan §8).
+    // enough to serve as a trust boundary" (plan provenance: §8).
 
     #[test]
     fn rejects_wrong_schema_version() {

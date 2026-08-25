@@ -12,11 +12,13 @@
 //!
 //! Clock guards follow the scalar `SignalFIRLowerer` implementation of OD, US,
 //! and DS. Unlike the C++ compiler's mutable `CodeLoop` tree, Rust assembles an
-//! immutable, checked artifact from the accepted P4.4/P5/P6.1/P6.2 artifacts.
-//! P6.5 keeps recursion-step declarations in the enclosing sample scope and
+//! immutable, checked artifact from the accepted plan/route/state/clock
+//! artifacts, keeps recursion-step declarations in the enclosing sample
+//! scope, and
 //! places held clock outputs after the island guard, so a non-firing sample
 //! observes the previous held value. Final lifecycle placement is checked by
-//! `vector_module`. P6.6 adds one checked shared state cursor per clock domain;
+//! `vector_module`. Clocked composition adds one checked shared state cursor
+//! per clock domain;
 //! it advances at the end of each guarded fire. Section 8 lockstep bundles are
 //! adapted as one physical `i0` loop whose body contains the unchanged scalar
 //! iteration of every lane in canonical order. This preserves each lane's IEEE

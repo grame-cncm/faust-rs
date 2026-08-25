@@ -1,6 +1,6 @@
 //! Event-order vocabulary: limits, event/dependency DTOs, certificates,
 //! error taxonomy, and total helper conversions shared by producer and
-//! checker (plan §4.6: vocabulary and total conversions are shareable).
+//! checker (plan provenance: §4.6: vocabulary and total conversions are shareable).
 
 use crate::signal_fir::vector::analysis::EffectAtom;
 use crate::signal_fir::vector::route::{RoutedUseSource, VectorRegion};
@@ -65,7 +65,7 @@ pub enum EventUseSource {
     Control,
     /// A definition in the same loop scope.
     Loop(u64),
-    /// A named P4.4 chunk transport.
+    /// A named planned chunk transport.
     Transport(u64),
 }
 /// One operation represented by the bounded event model.
@@ -114,7 +114,7 @@ pub enum VectorEventKind {
         /// Epoch being exited.
         epoch_id: u64,
     },
-    /// One checked P6.1 delay or recursion transition.
+    /// One checked state-plan delay or recursion transition.
     StateTransition {
         /// The exact checked state transition.
         action: VectorStateAction,
@@ -198,7 +198,7 @@ impl EventOrderCertificate {
         &self.dependencies
     }
 }
-/// Opaque evidence that [`verify_event_order_certificate`](super::check::verify_event_order_certificate) accepted P5.3.
+/// Opaque evidence that [`verify_event_order_certificate`](super::check::verify_event_order_certificate) accepted the certificate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedEventOrderCertificate {
     pub(super) certificate: EventOrderCertificate,
@@ -216,14 +216,14 @@ impl VerifiedEventOrderCertificate {
         self.certificate
     }
 }
-/// Typed producer/checker failure for the P5.3 event-order gate.
+/// Typed producer/checker failure for the event-order gate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorEventError {
-    /// The P4.4 plan is not independently valid.
+    /// The vector plan is not independently valid.
     Plan(VectorPlanError),
     /// The routed artifact was produced from a different plan.
     RoutedPlanMismatch,
-    /// The P6.1 state artifact was produced from a different vector plan.
+    /// The state artifact was produced from a different vector plan.
     StatePlanMismatch,
     /// The route layout does not exactly and topologically cover the plan.
     InvalidLayout {

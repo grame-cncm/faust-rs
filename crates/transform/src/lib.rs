@@ -35,6 +35,24 @@
 //!   parity-driven behavior with Rust typed errors/options.
 //! - `clk_env`/`hgraph`/`schedule` internals are `adapted` analysis stages
 //!   exposed for diagnostics and workspace tests.
+//!
+//! # How to read this crate
+//! Follow the data, in pipeline order — each module header is written to be
+//! read on its own:
+//! 1. [`signal_prepare`] — what a *verified prepared forest* guarantees;
+//! 2. [`clk_env`] — the clock-domain calculus over that forest;
+//! 3. [`hgraph`] — how signals partition into per-domain dependency graphs;
+//! 4. [`schedule`] — the generic `-ss` scheduler both paths share;
+//! 5. `signal_fir/module/` — the scalar lowerer, starting from
+//!    `SignalToFirLower`'s field table in `module/mod.rs`;
+//! 6. `signal_fir/vector/mod.rs` — the checked pipeline's stage map, then
+//!    any one stage in its `model.rs` → `build.rs` → `check.rs` order.
+//!
+//! Anything under `signal_fir/diagnostics/` is observation-only and can be
+//! skipped on a first read. Historical plan codenames (`P4.3b`, `R1`, …)
+//! appear only in `Plan provenance:` mentions and the stage-map glossary;
+//! the mechanical gate `cargo run -p xtask -- structure-check` keeps it
+//! that way.
 
 // `missing_docs` must be `deny`, not `warn`: an inner `#![warn(...)]`
 // attribute overrides the command-line `-D warnings` clippy and CI already

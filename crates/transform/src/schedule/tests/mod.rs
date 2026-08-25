@@ -1,9 +1,9 @@
-//! Unit tests for the generic scheduler core (P1).
+//! Unit tests for the generic scheduler core.
 //!
 //! - `fixtures`: the minimal [`super::ScheduleDag`] test double (`VecDag`)
 //!   and the hand-built graphs every other file schedules.
 //! - `exact_orders`: item 1/2 — literal snapshots derived by hand from the
-//!   plan §5.4 pseudocode for each strategy on each fixture, each also
+//!   plan-provenance §5.4 pseudocode for each strategy on each fixture, each also
 //!   passed through `verify_schedule`.
 //! - `verify_tests`: item 3 — `verify_schedule` rejection scenarios.
 //! - `cycles`: item 6 — self-edge and cycle diagnostics, uniform across all

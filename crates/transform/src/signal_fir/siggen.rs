@@ -45,7 +45,7 @@ use super::error::{SignalFirError, SignalFirErrorCode};
 /// Interprets a generator signal for `size` steps, returning one `f64` sample
 /// per step.
 ///
-/// This is the entry point used by Step 2H table lowering when handling
+/// This is the entry point used by table lowering when handling
 /// `SIGWRTBL(size, SIGGEN(...), _, _)` forms that can be evaluated fully at
 /// compile time.
 pub(super) fn interpret_generator(

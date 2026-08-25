@@ -1,6 +1,7 @@
-//! Flattening of generator sub-modules (`fir::subcontainer`), S3.
+//! Flattening of generator sub-modules (`fir::subcontainer`).
 //!
-//! These run the real S2 producer and then flatten its output, rather than
+//! These run the real sub-module producer and then flatten its output,
+//! rather than
 //! hand-building a module: the pass exists to consume what the producer emits,
 //! and a hand-built fixture would only prove the pass agrees with my idea of
 //! that shape.

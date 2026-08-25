@@ -343,7 +343,7 @@ fn reverse_window_cannot_interleave_fixed_epochs() {
 }
 
 /// Like `clock_fixture`, but the in-domain value reads a *top-rate stateful*
-/// producer (`delay1(input)`) at fire time — the exact shape the §4.8
+/// producer (`delay1(input)`) at fire time — the exact shape the shared-guard (plan provenance: §4.8)
 /// admission guard `reject_unadopted_stateful_reads` must refuse (corpus
 /// analogue: the `downsampling_02_domain_free_counter` fallback).
 fn unadopted_stateful_read_fixture() -> (

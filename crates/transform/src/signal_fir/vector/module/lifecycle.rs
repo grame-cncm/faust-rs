@@ -171,7 +171,7 @@ pub(super) fn assemble_module(
 
     // Execution-options port phase 5: emit `control(dsp)` when externalized
     // control statements exist. The host owns its scheduling; compute never
-    // calls it implicitly (§2.3).
+    // calls it implicitly (plan provenance: §2.3).
     let control = (!context.external_control_statements.is_empty()).then(|| {
         let control_body = FirBuilder::new(store).block(context.external_control_statements);
         FirBuilder::new(store).declare_fun(
@@ -187,7 +187,7 @@ pub(super) fn assemble_module(
     });
     let globals = build_prototypes(store, real_type, math_ops, int_helpers);
     // `staticInit` is emitted only when there is something to fill. A module
-    // with no generated table keeps the shape it had before S6, so nothing in
+    // with no generated table keeps the pre-sub-module shape, so nothing in
     // the 16-mode certification sees a new function.
     let static_init = (!context.static_init_statements.is_empty()).then(|| {
         let body = FirBuilder::new(store).block(context.static_init_statements);

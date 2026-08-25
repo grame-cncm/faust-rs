@@ -11,7 +11,7 @@ use crate::signal_fir::vector::verify::{ValueType, VectorPlan, VectorPlanError};
 use std::collections::BTreeSet;
 use std::fmt;
 
-/// Current canonical P6.1 state-plan schema.
+/// Current canonical state-plan schema.
 pub const VECTOR_STATE_PLAN_VERSION: u32 = 4;
 /// One `CodeLoop` execution phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -267,7 +267,7 @@ pub struct LoopStatePhases {
     /// Actions executed once after the loop body, in canonical order.
     pub post: Vec<VectorStateAction>,
 }
-/// Canonical finite P6.1 transition artifact.
+/// Canonical finite state-transition artifact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VectorStatePlan {
     /// Schema stamp; must equal [`VECTOR_STATE_PLAN_VERSION`].
@@ -292,7 +292,7 @@ pub struct VectorStatePlan {
     /// They require no storage or runtime action (`x @ 0 == x`).
     pub no_op_resources: Vec<StateResource>,
 }
-/// Opaque evidence that P6.1 construction passed its independent checker.
+/// Opaque evidence that state-plan construction passed its independent checker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedVectorStatePlan {
     pub(super) plan: VectorStatePlan,
@@ -318,7 +318,7 @@ impl VerifiedVectorStatePlan {
         self.plan
     }
 
-    /// State resources whose generic P5.3 effects are refined by this plan.
+    /// State resources whose generic event-certificate effects are refined by this plan.
     #[must_use]
     pub fn managed_resources(&self) -> BTreeSet<StateResource> {
         let mut resources = managed_resources(&self.plan);
@@ -338,7 +338,7 @@ pub(crate) fn verified_vector_state_plan_for_test(
         delegated_resources: BTreeSet::new(),
     }
 }
-/// Typed producer/checker failure at the P6.1 boundary.
+/// Typed producer/checker failure at the state-plan boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VectorStateError {
     /// Verification of the underlying vector plan itself failed.
@@ -384,14 +384,14 @@ pub enum VectorStateError {
         /// Loop that fails to serially own the group.
         loop_id: u64,
     },
-    /// Clocked state was encountered without P6.2 support in scope.
+    /// Clocked state was encountered without clock/AD-plan support in scope.
     UnsupportedClockState {
         /// Signal carrying the clocked state.
         signal_id: u64,
         /// Clock domain the state belongs to.
         clock_id: u32,
     },
-    /// Clocked state was encountered without a checked P6.2 clock plan.
+    /// Clocked state was encountered without a checked clock/AD plan.
     ClockPlanRequired {
         /// Signal carrying the clocked state.
         signal_id: u64,
@@ -407,7 +407,7 @@ pub enum VectorStateError {
         /// Owning loop that lies outside the domain.
         loop_id: u64,
     },
-    /// A state resource has no transition model in this P6 stage.
+    /// A state resource has no transition model in this stage.
     UnsupportedStateResource {
         /// Resource requiring a later transition model.
         resource: StateResource,

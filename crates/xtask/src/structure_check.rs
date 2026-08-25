@@ -35,7 +35,18 @@
 //!    guarantee (`transform`'s plan R9.2, `compiler`'s own doc comment) that
 //!    was never actually enforced until this was caught with a rejecting
 //!    mutation on 2026-08-18. `deny` needs no separate command: it fails
-//!    `cargo build`/`check`/`clippy`/`test` directly for that crate.
+//!    `cargo build`/`check`/`clippy`/`test` directly for that crate;
+//! 6. no bare porting-plan codename (`P4.3b`, `R1`, `V5`, `S7`, `§4.8`, …)
+//!    in a `crates/transform` comment outside a provenance context: a
+//!    comment block (contiguous `//`/`///`/`//!` lines) may cite codenames
+//!    only if it also names a `porting/` document, a `*-en.md`/`*-fr.md`
+//!    file, or contains `provenance`/`history`. Codenames must not carry
+//!    the explanation — present-tense semantic names do (legibility
+//!    campaign E1, `porting/transform-legibility-analysis-2026-08-25-en.md`);
+//! 7. no file-level `#![allow(dead_code)]` in `crates/transform`: a blanket
+//!    allowance hides real dead clusters (the `loop_graph.rs` case E1
+//!    removed masked 11 dead items); scope allowances to items, with a
+//!    reason.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -48,7 +59,7 @@ use std::path::{Path, PathBuf};
 /// `fir/checker.rs` (3336 lines), `codegen/backends/interp/compiler.rs`
 /// (2225), and `codegen/backends/interp/fbc_to_cpp.rs` (2255) are all under
 /// 1000 lines now. 2000 leaves real margin above the largest *unexcepted*
-/// file in the scanned crates, `signal_fir/loop_graph.rs` at 1792 — it is a
+/// file in the scanned crates — it is a
 /// deliberate value, not one backed into by whatever remains largest, which
 /// is the trap this threshold fell into twice before P6 (see git history for
 /// the 2100 → 2200 → 2400 progression this const used to describe).
@@ -181,6 +192,91 @@ const PRODUCER_FILE_NAMES: [&str; 4] = ["build.rs", "produce.rs", "materialize.r
 const DOCUMENTED_CRATES: [&str; 2] = ["transform", "compiler"];
 
 /// Runs every structural check and fails with a sorted finding list.
+
+/// Allowance markers that make a comment block a provenance context: a block
+/// containing any of these may cite plan codenames (check 6).
+const PROVENANCE_MARKERS: [&str; 5] = ["porting/", "-en.md", "-fr.md", "provenance", "history"];
+
+/// Returns the first bare plan codename in a comment line, if any.
+///
+/// A codename is `P`/`R`/`V`/`S` followed by digits, an optional `.digits`,
+/// and an optional trailing lowercase letter (`P4.3b`, `R1`, `V5b`, `S7`),
+/// delimited by non-alphanumeric characters — or `§` followed by a digit.
+fn find_plan_codename(line: &str) -> Option<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '§' {
+            if chars.get(i + 1).is_some_and(char::is_ascii_digit) {
+                return Some("§...".to_owned());
+            }
+            i += 1;
+            continue;
+        }
+        if matches!(c, 'P' | 'R' | 'V' | 'S')
+            && chars.get(i + 1).is_some_and(char::is_ascii_digit)
+            && (i == 0 || !chars[i - 1].is_ascii_alphanumeric())
+        {
+            let mut j = i + 2;
+            while chars.get(j).is_some_and(char::is_ascii_digit) {
+                j += 1;
+            }
+            if chars.get(j) == Some(&'.') && chars.get(j + 1).is_some_and(char::is_ascii_digit) {
+                j += 2;
+                while chars.get(j).is_some_and(char::is_ascii_digit) {
+                    j += 1;
+                }
+            }
+            if chars.get(j).is_some_and(|c| c.is_ascii_lowercase()) {
+                j += 1;
+            }
+            if !chars.get(j).is_some_and(|c| c.is_ascii_alphanumeric()) {
+                return Some(chars[i..j].iter().collect());
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Check 6: bare plan codenames in `crates/transform` comments outside a
+/// provenance context. Blocks are contiguous comment lines; a block naming a
+/// `porting/` document or containing a provenance/history marker may cite
+/// codenames freely.
+fn codename_findings(rel: &str, text: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    let lines: Vec<(usize, &str)> = text.lines().enumerate().collect();
+    let mut block: Vec<(usize, &str)> = Vec::new();
+    let flush = |block: &mut Vec<(usize, &str)>, findings: &mut Vec<String>| {
+        let allowed = block.iter().any(|(_, l)| {
+            let lower = l.to_ascii_lowercase();
+            PROVENANCE_MARKERS.iter().any(|m| lower.contains(m))
+        });
+        if !allowed {
+            for (n, l) in block.iter() {
+                if let Some(token) = find_plan_codename(l) {
+                    findings.push(format!(
+                        "{rel}:{}: bare plan codename `{token}` in a comment without                          provenance context (name the behavior; demote the codename to a                          `Plan provenance:` mention)",
+                        n + 1
+                    ));
+                }
+            }
+        }
+        block.clear();
+    };
+    for (n, raw) in lines {
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("//") {
+            block.push((n, trimmed));
+        } else {
+            flush(&mut block, &mut findings);
+        }
+    }
+    flush(&mut block, &mut findings);
+    findings
+}
+
 pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new("crates/transform/src");
     if !root.is_dir() {
@@ -219,6 +315,16 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
                         "{rel}: {lines} lines exceeds the {MAX_PRODUCTION_LINES}-line review                          threshold and is not in KNOWN_OVERSIZED_FILES"
                     ));
                 }
+            }
+        }
+
+        if rel.starts_with("crates/transform/") {
+            findings.extend(codename_findings(&rel, &text));
+            if text.contains("#![allow(dead_code)]") {
+                findings.push(format!(
+                    "{rel}: file-level `#![allow(dead_code)]` (blanket allowances hide \
+                     real dead clusters; scope the allowance to items, with a reason)"
+                ));
             }
         }
 

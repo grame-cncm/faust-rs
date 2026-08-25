@@ -1,4 +1,4 @@
-//! Guarded-block lowering for clocked wrappers (roadmap P3, complete).
+//! Guarded-block lowering for clocked wrappers (`ondemand`/US/DS).
 //!
 //! # Source provenance (C++)
 //! - `compiler/generator/compile_scal.cpp` (`generateOD`, `generateTempVar`,
@@ -7,15 +7,15 @@
 //! - `compiler/parallelize/loop.cpp` (`CodeIFblock`)
 //!
 //! # Scope
-//! Guard shapes (plan §3.8): boolean `ondemand` → `if (clock != 0) { … }`
+//! Guard shapes (plan provenance: ondemand port §3.8): boolean `ondemand` → `if (clock != 0) { … }`
 //! (C++ `CodeIFblock`); integer `ondemand` / `upsampling` → counted
 //! `SimpleForLoop`; `downsampling` → `if (fDSCounter == 0)` + modulo post-code.
 //! All reuse the generic FIR `If` / `SimpleForLoop` / `Block` statements per
-//! the P2.1 vocabulary decision.
+//! the region-tree FIR-vocabulary decision (`region.rs`).
 //!
 //! **State inside a block advances in fire time.** Every stateful shape whose
 //! state lives in the domain has its end-of-sample maintenance routed into the
-//! guarded region (roadmap P3 slices 3-4): shift delays and scalar recursion
+//! guarded region: shift delays and scalar recursion
 //! emit their updates inline; `CircularPow2` lines and delay-states use the
 //! domain's per-domain `fIOTA_d<i>` cursor (advanced once per fire); inner
 //! `IfWrapping` lines advance their per-line counter in the block; a
@@ -41,7 +41,7 @@
 //! read-index update to the top rate made the scale advance every sample
 //! instead of once per fire.
 //!
-//! # Node generators (plan §3.8)
+//! # Node generators (plan provenance: ondemand port §3.8)
 //! - `Seq(od, y)` → `CS(od); return CS(y)`;
 //! - `Clocked(env, y)` → passthrough (annotation only);
 //! - `TempVar(x)` → passthrough: evaluated inside the guard, the expression
@@ -70,9 +70,9 @@ use crate::signal_prepare::SimpleSigType;
 /// Per-compilation clocked-lowering state (present only when the program
 /// actually contains clocked wrappers).
 pub(super) struct ClockedState<'a> {
-    /// Propagation-owned clock-domain table (P0.2).
+    /// Propagation-owned clock-domain table.
     pub(super) domains: &'a propagate::ClockDomainTable,
-    /// Clock-environment side map from `clk_env::annotate` (P1.1).
+    /// Clock-environment side map from `clk_env::annotate`.
     pub(super) envs: crate::clk_env::ClkEnvMap,
     /// Domains of the open guarded blocks, innermost last (parallel to
     /// `RegionTree::child_depth`).
@@ -85,11 +85,10 @@ pub(super) struct ClockedState<'a> {
     /// Wrapper nodes whose guarded block has been emitted.
     pub(super) emitted_blocks: HashSet<SigId>,
     /// Domains owning a per-domain circular cursor (`fIOTA_d<i>`): their
-    /// guarded blocks advance it once per fire (roadmap P3).
+    /// guarded blocks advance it once per fire.
     pub(super) iota_domains: HashSet<propagate::ClockDomainId>,
     /// Per-domain inner `IfWrapping` delay-line counters `(name, size)`: their
-    /// advance is emitted inside the guarded block, not at the top sample end
-    /// (roadmap P3 slice 4).
+    /// advance is emitted inside the guarded block, not at the top sample end.
     pub(super) domain_ifwrap: HashMap<propagate::ClockDomainId, Vec<(String, usize)>>,
     /// Monotonic counter for `fPerm<i>` hold-field names.
     pub(super) next_perm_id: usize,
@@ -127,7 +126,7 @@ pub(super) struct LoopCtx {
 }
 
 /// Guard statement shape selected from the wrapper kind and clock type
-/// (plan §3.8: boolean OD `if`, integer OD / US counted loop, DS modulo).
+/// (boolean OD `if`, integer OD / US counted loop, DS modulo).
 enum GuardShape {
     /// `if (clock != 0) { body }`
     BoolIf,
@@ -312,7 +311,7 @@ impl<'a> SignalToFirLower<'a> {
     }
 
     /// Name of the circular cursor to use for a circular structure lowered in
-    /// the current append-target region (roadmap P3 slice 4): the shared
+    /// the current append-target region: the shared
     /// `fIOTA` at the top rate, or the effective domain's `fIOTA_d<i>` inside
     /// a guarded block. Declares the per-domain field and marks its domain so
     /// the block advances the cursor once per fire.
@@ -350,7 +349,7 @@ impl<'a> SignalToFirLower<'a> {
 
     /// Routes the end-of-sample maintenance of every delay line whose carrier
     /// lives inside a clock domain into that domain's guarded block, so it
-    /// happens in **fire time** (roadmap P3 slice 4). Called once after delay
+    /// happens in **fire time**. Called once after delay
     /// planning:
     ///
     /// - `CircularPow2` lines switch from the shared `fIOTA` to the domain's
@@ -420,7 +419,7 @@ impl<'a> SignalToFirLower<'a> {
 
     /// Lowers `ZeroPad(x, h)` inside a counted upsampling block:
     /// `((loop_idx == bound - 1) ? x : 0)` — the input value is exposed on
-    /// the **last** inner iteration only (plan §3.8 `generateZeroPad`).
+    /// the **last** inner iteration only (C++ `generateZeroPad`).
     pub(super) fn lower_zero_pad_clocked(
         &mut self,
         sig: SigId,
@@ -527,7 +526,7 @@ impl<'a> SignalToFirLower<'a> {
         };
         let domain = propagate::ClockDomainId::from_u32(domain_id);
 
-        // ── Guard shape selection (plan §3.8) ────────────────────────────
+        // ── Guard shape selection ────────────────────────────────────────
         let clock_is_int = matches!(self.types.get(&clock), Some(SimpleSigType::Int));
         let shape = match kind {
             propagate::ClockDomainKind::OnDemand => {

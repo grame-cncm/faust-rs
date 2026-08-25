@@ -1,6 +1,6 @@
 //! Assembly artifact DTOs, the verified wrapper, the error taxonomy,
 //! and total helper conversions shared by producer and checker
-//! (plan §4.6: vocabulary and total conversions are shareable).
+//! (plan provenance: §4.6: vocabulary and total conversions are shareable).
 
 use crate::signal_fir::vector::clock_ad::{ClockGuard, ClockIsland};
 use crate::signal_fir::vector::route::VerifiedRoutedFir;
@@ -9,9 +9,9 @@ use crate::signal_fir::vector::verify::VectorPlan;
 use fir::FirId;
 use std::collections::BTreeSet;
 use std::fmt;
-/// Current canonical P6.3b/P6.5 assembly schema.
+/// Current canonical assembly schema.
 pub const VECTOR_FIR_ASSEMBLY_VERSION: u32 = 3;
-/// Already-lowered non-state statements owned by one checked P4 loop.
+/// Already-lowered non-state statements owned by one checked planned loop.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VectorLoopFirInput {
     /// Stable loop id from the vector plan.
@@ -30,10 +30,10 @@ pub struct VectorClockOutputStore {
     /// FIR store writing the held island value to the output.
     pub statement: FirId,
 }
-/// Concrete statement implementing one accepted P6.1 action.
+/// Concrete statement implementing one accepted state-plan action.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VectorStateFirAction {
-    /// Accepted P6.1 state action being implemented.
+    /// Accepted state-plan action being implemented.
     pub action: VectorStateAction,
     /// FIR statement implementing the action.
     pub statement: FirId,
@@ -62,7 +62,7 @@ pub struct AssembledVectorLoop {
 /// One nested serial clock domain after guard construction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AssembledClockIsland {
-    /// Stable clock-domain id from the P6.2 plan.
+    /// Stable clock-domain id from the clock/AD plan.
     pub domain_id: u64,
     /// Enclosing clock domain, if this island is nested.
     pub parent_domain: Option<u64>,
@@ -70,9 +70,9 @@ pub struct AssembledClockIsland {
     pub guard: ClockGuard,
     /// Scheduled loops executed serially inside this island.
     pub nested_loop_ids: Vec<u64>,
-    /// P6.2 `IslandScalar` declarations whose lifetime begins below this guard.
+    /// Clock-plan `IslandScalar` declarations whose lifetime begins below this guard.
     pub local_declarations: Vec<FirId>,
-    /// Optional shared P6.6 state-cursor advance inside this domain guard.
+    /// Optional shared state-cursor advance inside this domain guard.
     pub state_cursor_advance: Option<FirId>,
     /// Complete guarded FIR statement for the island.
     pub statement: FirId,
@@ -97,7 +97,7 @@ pub struct VectorFirAssembly {
     /// Root FIR block containing the whole assembly.
     pub top_level_statement: FirId,
 }
-/// Opaque evidence that the P6.3b checker accepted an assembly.
+/// Opaque evidence that the assembly checker accepted an assembly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedVectorFirAssembly {
     pub(super) assembly: VectorFirAssembly,
@@ -122,7 +122,7 @@ impl VerifiedVectorFirAssembly {
         self.assembly
     }
 }
-/// Typed producer/checker failure at the P6.3b boundary.
+/// Typed producer/checker failure at the assembly boundary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum VectorFirAssemblyError {
     /// An input artifact does not belong to the routed vector plan.
@@ -159,7 +159,7 @@ pub enum VectorFirAssemblyError {
         /// Projection index within the group.
         index: u64,
     },
-    /// Assembled state actions disagree with the accepted P6.1 phases.
+    /// Assembled state actions disagree with the accepted state-plan phases.
     LoopStateCoverage {
         /// Stable loop id.
         loop_id: u64,

@@ -23,7 +23,7 @@ pub struct UseContext {
     /// Execution condition supplied by [`ExecutionConditions`].
     pub condition: CondId,
 }
-/// P4.2 facts for one reachable prepared signal.
+/// Occurrence/use facts for one reachable prepared signal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignalUseInfo {
     /// Full type copied from the verified preparation boundary.
@@ -64,7 +64,7 @@ pub struct SignalUseInfo {
     /// sorted subset of `effects`.
     pub direct_effects: Vec<EffectAtom>,
 }
-/// Deterministic record pairing a `SigId` with its P4.2 facts.
+/// Deterministic record pairing a `SigId` with its occurrence/use facts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignalUseRecord {
     /// Signal identity.
@@ -72,7 +72,7 @@ pub struct SignalUseRecord {
     /// Its analysis facts.
     pub info: SignalUseInfo,
 }
-/// Deterministic P4.2 output: records by numeric `SigId`, dependencies by
+/// Deterministic analysis output: records by numeric `SigId`, dependencies by
 /// numeric source `SigId` then source-local `edge_key`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignalUseTable {

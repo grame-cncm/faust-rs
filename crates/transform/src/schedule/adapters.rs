@@ -59,7 +59,7 @@ mod tests {
 
     /// Builds `Digraph`s only through the existing public pipeline
     /// (`clk_env::annotate` + `hgraph::build_hgraph`): `Digraph` itself
-    /// exposes no public mutator, by design (plan §4.2 — the partition
+    /// exposes no public mutator, by design (plan provenance: §4.2 — the partition
     /// property is a builder invariant, not something callers may violate).
     /// A flat program with no `ondemand`/`upsampling`/`downsampling` wrapper
     /// stays entirely in the `Top` graph, giving a plain immediate-edge DAG:

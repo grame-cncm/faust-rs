@@ -1,14 +1,15 @@
-//! Canonical P4.3b signal-decoration certificate and independent verifier.
+//! Canonical signal-decoration certificate and independent verifier.
 //!
 //! # Trust boundary
-//! [`export_decoration_certificate`] projects the P4.3a in-memory analysis into
+//! [`export_decoration_certificate`] projects the in-memory decoration
+//! analysis into
 //! a stable, planner-independent DTO. [`verify_decorations`] does not trust
 //! that DTO: it reruns the canonical analysis from the verified prepared
 //! forest, reads authoritative type and clock maps directly, and checks every
 //! exported fact before vector placement can consume it.
 //!
 //! This certificate is deliberately compute-scoped. C++ `OccMarkup` and the
-//! Rust P4.3a walk both stop at `Gen`; [`DecorationCertificate::lifecycle_boundaries`]
+//! Rust analysis walk both stop at `Gen`; [`DecorationCertificate::lifecycle_boundaries`]
 //! records those leaves explicitly. A full-lifecycle certificate remains
 //! unavailable until generator initialization receives its own decoration.
 //!
@@ -16,8 +17,8 @@
 //! Facts come from `compiler/generator/occurrences.cpp::OccMarkup`,
 //! `compiler/signals/conditionAnnotation.cpp`, and
 //! `compiler/Dependencies/DependenciesUtils.cpp::getSignalDependencies`.
-//! Rust keeps the certificate as an internal value for P4.3b; canonical JSON
-//! and hashing are deferred to the R2 boundary. [`CanonicalSigType`] uses exact
+//! Rust keeps the certificate as an internal value; canonical JSON and
+//! hashing are deferred to the canonical-JSON boundary. [`CanonicalSigType`] uses exact
 //! field snapshots because `SigType::PartialEq` intentionally ignores fixed
 //! precision and aggregate qualifiers to reproduce C++ inference convergence.
 
@@ -43,7 +44,7 @@ pub const DECORATION_CERTIFICATE_VERSION: u32 = 2;
 pub enum DecorationScope {
     /// Runtime compute graph, treating `Gen` as a lifecycle boundary.
     Compute,
-    /// Initialization and compute. Not produced or accepted in P4.3b.
+    /// Initialization and compute. Not produced or accepted today.
     FullLifecycle,
 }
 
@@ -204,7 +205,7 @@ pub struct OccurrenceDependencyFact {
     pub edge_key: u64,
 }
 
-/// Canonical projection of the real P4.3a prepared-signal analysis.
+/// Canonical projection of the real prepared-signal decoration analysis.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecorationCertificate {
     /// Schema this certificate was exported under; must match the current one.
@@ -491,7 +492,7 @@ fn decoration_record(arena: &TreeArena, sig: SigId, info: &SignalUseInfo) -> Dec
     }
 }
 
-/// Exports a canonical certificate from the real P4.3a analysis.
+/// Exports a canonical certificate from the real decoration analysis.
 #[must_use]
 pub fn export_decoration_certificate(
     prepared: &VerifiedPreparedSignals,
@@ -743,7 +744,7 @@ fn verify_record(
     Ok(())
 }
 
-/// Recomputes and verifies every P4.3b fact before vector planning.
+/// Recomputes and verifies every certificate fact before vector planning.
 pub fn verify_decorations(
     prepared: &VerifiedPreparedSignals,
     clocks: &ClkEnvMap,
@@ -877,7 +878,8 @@ pub fn verify_decorations(
     })
 }
 
-/// Runs P4.3a, exports its DTO, and returns only independently accepted facts.
+/// Runs the analysis, exports its DTO, and returns only independently
+/// accepted facts.
 pub fn certify_decorations(
     prepared: &VerifiedPreparedSignals,
     clocks: &ClkEnvMap,

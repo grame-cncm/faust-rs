@@ -246,7 +246,8 @@ fn verify_prepared_signal(
         // `Clocked(env, y)`: the first child is an opaque clock-environment
         // annotation (nil at the top-level rate or a `SIGCLOCKENV` token into
         // the propagation-owned clock-domain table), NOT a signal. Visiting it
-        // as a signal is exactly the P0.1 bug: the env is not a signal node,
+        // as a signal is exactly the historical clocked-verifier bug: the env
+        // is not a signal node,
         // carries no type annotation, and must never enter the typed
         // reachability set. Only the wrapped signal `y` is verified.
         SigMatch::Clocked(env, y) => {

@@ -1,4 +1,4 @@
-//! Unit tests for clock-environment inference (roadmap P1.1).
+//! Unit tests for clock-environment inference.
 //!
 //! One test per rule (`R_PROJ`, `R_CLOCKED`, `R_CD`, `R_SEQ`,
 //! `R_COMPOSITE`), a fixpoint-convergence test (recursion spanning a

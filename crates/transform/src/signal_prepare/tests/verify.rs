@@ -142,7 +142,7 @@ fn prepared_signals_verify_rejects_missing_ui_control_reference() {
     };
     assert!(message.contains("missing UI control id 0"));
 }
-// ── Promotion-invariant / one-sample-delay boundary checks (§8.1) ─────────────
+// ── Promotion-invariant / one-sample-delay boundary checks ────────────────────
 //
 // These exercise `verify_promotion_invariant` directly: the public `prepare`
 // path always establishes `P`/`D1`, so a violation can only be constructed by

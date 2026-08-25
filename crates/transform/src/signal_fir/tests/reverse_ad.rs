@@ -471,7 +471,7 @@ fn bra_body_with_integer_float_cast_compiles() {
 fn block_reverse_ad_program_is_rejected_under_one_sample() {
     // Execution-options port D2: `-os` has no meaning for block-scoped
     // reverse-AD carriers; the pipeline rejects them with FRS-SFIR-0010
-    // before lowering (plan §3.5).
+    // before lowering (plan provenance: §3.5).
     use crate::signal_fir::ProcessingApi;
 
     let mut arena = TreeArena::new();

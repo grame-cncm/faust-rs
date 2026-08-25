@@ -67,10 +67,10 @@ pub(super) struct RadReverseState {
 
 /// Emits one sample-loop slice's statements. Scalar mode — and any reverse-time
 /// loop — stays a single `for (i0 = 0; i0 < count; i0++)`. Vector mode (`-vec`)
-/// restructures a forward slice into a chunk driver (roadmap P6, V5 / S-D):
+/// restructures a forward slice into a chunk driver:
 ///
 /// - a **`Vectorizable`** (state-free) slice is chunked whole;
-/// - a **`Recursive`** slice is *split* when possible (vector doc §5 S-D): its
+/// - a **`Recursive`** slice is *split* when possible: its
 ///   state-free tail is hoisted into a second, vectorizable inner loop fed by
 ///   chunk buffers, leaving only the recursive core serial — otherwise it stays
 ///   one plain serial loop (chunking a loop-carried body as one block is pure
@@ -93,7 +93,7 @@ pub(super) struct RadReverseState {
 /// the C compiler fully unroll / SIMD the (vectorizable) inner loops; the simple
 /// variant's runtime `min` bound is easier to read but vectorizes less well.
 /// Reverse-time loops force scalar mode (chunking would change the implicit TBPTT
-/// window from `count` to `vec_size`, vector doc §5).
+/// window from `count` to `vec_size`).
 ///
 /// Returns the slice's statements: for the split path, the chunk-buffer
 /// declarations followed by the chunk driver; otherwise one loop.
@@ -144,7 +144,7 @@ fn plain_sample_loop(store: &mut FirStore, exec: &[FirId], is_reverse: bool) -> 
 }
 
 /// Splits a recursive slice into `(serial core + buffer stores, rewritten tail,
-/// chunk-buffer declarations)` (vector doc §5 S-D), or `None` when the body is
+/// chunk-buffer declarations)`, or `None` when the body is
 /// not splittable (→ one plain serial loop). The serial core buffers each
 /// boundary carrier into `vbufN[i0 - vindex]`; the tail reads it back.
 ///
@@ -366,7 +366,7 @@ fn assemble_sub_module(
         // nested table is populated before the loop that reads it.
         //
         // Dropping these is not a missing optimization but a wrong answer: it
-        // is precisely the upstream defect of §2.4, where the inner table is
+        // is precisely the upstream defect where the inner table is
         // declared and never filled, and the outer table is computed from
         // zeros. Rule FIR-SM05 keeps it from coming back.
         let mut statements = lower.sections.static_init_statements.clone();
@@ -450,7 +450,7 @@ fn assemble_sub_module(
 
 /// Lowers a prepared signal forest into a complete FIR module.
 ///
-/// Entry point for the fast-lane Step 2A–2G boundary: accepts pre-validated
+/// Entry point for the fast-lane lowering boundary: accepts pre-validated
 /// planning data and a prepared signal forest, returns a [`SignalFirOutput`]
 /// with all Faust lifecycle sections (`metadata`, `instanceConstants`,
 /// `instanceResetUserInterface`, `instanceClear`, `buildUserInterface`,
@@ -637,7 +637,8 @@ pub(crate) fn build_module<'a>(
     let mut sample_loops = Vec::new();
 
     // Reverse AD owns a fixed forward/reverse epoch split and is deliberately
-    // outside P3's flat same-tick Hgraph. P6 keeps that driver authoritative.
+    // outside the flat same-tick Hgraph. Vector mode keeps that driver
+    // authoritative.
     // Every ordinary scalar forward program, including clock islands, is
     // previsited through the selected hierarchical schedule.
     if !has_reverse_outputs {
@@ -952,7 +953,8 @@ pub(crate) fn build_module<'a>(
         )
     };
 
-    // Execution-options port §4.3/§4.6: split the tagged compute-preamble
+    // Plan provenance: execution-options port §4.3/§4.6 — split the tagged
+    // compute-preamble
     // list by ownership. In classic mode everything stays in the block entry
     // point in original interleaved order; under external control the
     // externalizable statements move — in their original relative order —
@@ -987,7 +989,7 @@ pub(crate) fn build_module<'a>(
     let compute_statements = {
         use crate::signal_fir::loop_graph::{LoopGraph, LoopKind, slice_has_persistent_state};
 
-        // Route the per-sample slices through the loop graph (roadmap P6, V4/V5b).
+        // Route the per-sample slices through the loop graph.
         // One loop node per non-empty slice, classified `Recursive` when the
         // slice writes cross-sample state (a recursion carrier / delay line) and
         // `Vectorizable` otherwise. Emitted in insertion order via
@@ -1029,7 +1031,7 @@ pub(crate) fn build_module<'a>(
             all.extend(pre);
             if !exec.is_empty() {
                 if one_sample {
-                    // §4.6: `frame` processes exactly one sample — the slice
+                    // One-sample mode: `frame` processes exactly one sample — the slice
                     // body is emitted directly, with no enclosing loop and no
                     // `count`. I/O accesses were lowered as direct channel
                     // loads/stores above.
@@ -1044,7 +1046,7 @@ pub(crate) fn build_module<'a>(
         }
         all
     };
-    // §2.3: in one-sample mode the canonical `compute` is kept but emitted
+    // In one-sample mode the canonical `compute` is kept but emitted
     // empty — it never delegates to `frame`.
     let compute_body = {
         let mut b = FirBuilder::new(&mut lower.store);
@@ -1233,7 +1235,7 @@ pub(crate) fn build_module<'a>(
             instance_clear,
             build_ui,
         ]);
-        // C++ emission order (§2.3): `control` then `frame` precede the
+        // C++ emission order: `control` then `frame` precede the
         // canonical `compute`.
         function_items.extend(control);
         function_items.extend(frame);

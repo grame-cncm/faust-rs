@@ -1,4 +1,4 @@
-//! Hierarchical dependency graph and schedule (roadmap P1.2).
+//! Hierarchical dependency graph and schedule.
 //!
 //! # Source provenance (C++)
 //! - `compiler/Dependencies/DependenciesGraph.cpp` (`dependenciesGraphs`,
@@ -31,9 +31,9 @@
 //! A `delay ≥ 1` dependency imposes no intra-tick ordering (the value is read
 //! from state) but is still traversed so its defining computation lands in
 //! the right domain. `Seq(od, y)` depends **only on `od`** — reading the held
-//! `PermVar` is free once the block ran (plan §3.7).
+//! `PermVar` is free once the block ran (plan provenance: §3.7).
 //!
-//! # Control graph (plan §4.6)
+//! # Control graph (plan provenance: §4.6)
 //! [`GraphKey::Control`] holds slower-than-sample (`Konst`/`Block`
 //! [`sigtype::Variability`]) signals reached while traversing the **top**
 //! domain — the global lifecycle/control section, run before `Top` exactly
@@ -41,7 +41,7 @@
 //! `Top`: see [`build_hgraph`]). A reference from `Top` to a `Control` value
 //! is *not* recorded as a same-graph ordering edge: `Control` is an
 //! unconditional precondition of every other graph, not a schedule-dependent
-//! one (plan §4.2 "controls are compiled first as a fixed outer phase").
+//! one (plan provenance: §4.2 "controls are compiled first as a fixed outer phase").
 //!
 //! Scope, deliberately narrower than full C++ parity: only *top-level*
 //! Konst/Block signals are hoisted to the single global `Control` graph.
@@ -77,7 +77,7 @@ use crate::schedule::SchedulingStrategy;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum GraphKey {
     /// The global control/lifecycle graph: slower-than-sample (`Konst`/
-    /// `Block`) signals reached at the top domain (plan §4.6). Declared
+    /// `Block`) signals reached at the top domain (plan provenance: §4.6). Declared
     /// first so the derived [`Ord`] places it before every other key,
     /// matching its role as an unconditional precondition.
     Control,
@@ -326,7 +326,7 @@ pub fn is_external(
     sig_env != cur_env && is_ancestor_clk_env(domains, sig_env, cur_env)
 }
 
-/// `getSignalDependencies`: immediate/delayed dependency split (plan §3.7).
+/// `getSignalDependencies`: immediate/delayed dependency split (plan provenance: §3.7).
 ///
 /// Returns the dependency targets of `sig` in deterministic child order. The
 /// opaque clock-env child of `Clocked` is never a dependency.
@@ -384,7 +384,7 @@ struct Builder<'a> {
     analysis: crate::signal_fir::vector::analysis::SignalAnalysisContext<'a>,
     domains: &'a ClockDomainTable,
     envs: &'a ClkEnvMap,
-    /// Variability source for the `Control` redirect (plan §4.6). A signal
+    /// Variability source for the `Control` redirect (plan provenance: §4.6). A signal
     /// missing from this map is conservatively treated as `Samp` (stays
     /// wherever clock-domain routing would already place it).
     sig_types: &'a HashMap<SigId, SigType>,
@@ -393,7 +393,7 @@ struct Builder<'a> {
     /// inner domain maps to its subgraph once the wrapper is visited.
     domain_key: AHashMap<ClkEnv, GraphKey>,
     /// Global visited set: with the env dispatch, guarantees the partition
-    /// property (plan §4.2).
+    /// property (plan provenance: §4.2).
     visited: AHashSet<SigId>,
 }
 
@@ -411,7 +411,7 @@ impl<'a> Builder<'a> {
     }
 
     /// Redirects a `Top`-routed, non-`Samp`-variability ordinary signal to
-    /// [`GraphKey::Control`] (plan §4.6). Never redirects out of a wrapper
+    /// [`GraphKey::Control`] (plan provenance: §4.6). Never redirects out of a wrapper
     /// subgraph — see the module docs' "Control graph" section for why that
     /// is deliberately out of scope here.
     fn effective_key(&self, base: GraphKey, sig: SigId) -> GraphKey {
@@ -533,11 +533,11 @@ fn wrapper_inner_env(arena: &TreeArena, sig: SigId) -> ClkEnv {
 
 /// Builds the hierarchical dependency graph from the prepared outputs.
 ///
-/// `sig_types` drives the [`GraphKey::Control`] redirect (plan §4.6): pass
+/// `sig_types` drives the [`GraphKey::Control`] redirect (plan provenance: §4.6): pass
 /// the prepared forest's full `SigType` map (e.g.
 /// `PreparedSignals::sig_types_map`) so control/lifecycle signals separate
 /// from the top graph. An empty map is safe — every signal is then
-/// conservatively treated as `Samp` and routing degrades to the pre-P3
+/// conservatively treated as `Samp` and routing degrades to the historical
 /// behavior (no `Control` graph populated).
 pub fn build_hgraph(
     arena: &TreeArena,
@@ -560,7 +560,7 @@ pub fn build_hgraph(
         visited: AHashSet::new(),
     };
     // Materialize the top graph first for deterministic ordering, matching
-    // pre-P3 behavior. `Control` is deliberately *not* eagerly materialized
+    // the historical behavior. `Control` is deliberately *not* eagerly materialized
     // here: unlike `Top`, most programs redirect nothing to it, and an
     // always-present (possibly empty) `Control` entry would silently change
     // `Hgraph::graphs().len()` for every caller — including ones with no
@@ -598,7 +598,7 @@ pub fn audit_hgraph(hgraph: &Hgraph) -> Result<(), HgraphError> {
     Ok(())
 }
 
-/// Extended audit (plan §4.6): [`GraphKey::Control`] never owns a
+/// Extended audit (plan provenance: §4.6): [`GraphKey::Control`] never owns a
 /// `Samp`-variability signal. A signal absent from `sig_types` cannot
 /// violate this (the builder's redirect only ever *adds to* `Control` when
 /// it positively knows a non-`Samp` variability; a missing entry keeps a
@@ -642,11 +642,11 @@ impl Hsched {
 }
 
 /// Serializes each per-domain graph independently under `strategy`, using
-/// the shared generic scheduler (`crate::schedule`, plan phase P1) through
+/// the shared generic scheduler (`crate::schedule`) through
 /// the [`Digraph`] [`crate::schedule::ScheduleDag`] adapter — the same four
 /// `-ss` strategies as everywhere else, replacing this module's former
 /// hand-rolled depth-first walk (C++ `dfschedule` was the only strategy
-/// available here before P1 existed).
+/// available before the generic scheduler core existed).
 ///
 /// Instantaneous in-graph cycles are causality errors, reported per graph.
 /// [`crate::schedule::ScheduleError::SelfEdge`] and

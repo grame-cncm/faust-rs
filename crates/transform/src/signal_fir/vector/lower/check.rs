@@ -1,5 +1,5 @@
 //! Boundary and body verification for lowered pure-vector programs.
-//! Called from the producer's terminal step in `signal.rs` (plan §4.8).
+//! Called from the producer's terminal step in `signal.rs` (plan provenance: §4.8).
 
 use super::program::*;
 use super::tables::{mutable_table_signal, readonly_table_signal};
@@ -88,7 +88,7 @@ pub(super) fn verify_plan_prepared_boundary(
                 managed_resources.contains(resource)
                     // Recursive projection records inherit the full `SYMREC`
                     // effect set, including unreferenced identity body slots.
-                    // P6.1 independently proves that every reachable
+                    // The state plan independently proves that every reachable
                     // projection has a transition; an unmanaged recursion
                     // resource at this later lowering boundary is therefore
                     // aggregate metadata, not a missing physical state word.
@@ -117,7 +117,7 @@ pub(super) fn verify_plan_prepared_boundary(
     }
     Ok(())
 }
-/// Independently reconnects final region bodies to the accepted P5.1 route.
+/// Independently reconnects final region bodies to the accepted route.
 pub fn verify_pure_vector_bodies(
     plan: &VectorPlan,
     routed: &VerifiedRoutedFir,

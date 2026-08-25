@@ -1,8 +1,8 @@
 //! Producer materialization of the vector FIR assembly (state storage,
 //! loops, clock islands, top level). The terminal step calls
 //! `check::verify_vector_fir_assembly`, so every admission guard there
-//! also binds the producer (plan §4.8). Checker re-derivations live in
-//! `check.rs` and must NOT be merged with these producer paths (plan §3.2).
+//! also binds the producer (plan provenance: §4.8). Checker re-derivations live in
+//! `check.rs` and must NOT be merged with these producer paths (plan provenance: §3.2).
 
 use super::check::verify_vector_fir_assembly;
 use super::model::*;
@@ -18,7 +18,8 @@ use crate::signal_fir::vector::verify::{ValueType, VectorPlan};
 use fir::{AccessType, FirBinOp, FirBuilder, FirId, FirMatch, FirStore, FirType, match_fir};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Materializes checked P6.1 phases and P6.2 serial islands into concrete FIR.
+/// Materializes checked state-plan phases and clock-plan serial islands into
+/// concrete FIR.
 pub fn assemble_vector_fir(
     routed: &VerifiedRoutedFir,
     state_plan: Option<&VerifiedVectorStatePlan>,

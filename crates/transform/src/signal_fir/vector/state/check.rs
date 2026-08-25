@@ -3,7 +3,8 @@
 //! `verify_vector_state_plan_after_vector_plan` is called by BOTH the
 //! producer's terminal verification (`build.rs`) and the standalone
 //! checker entry points below, so its admission guards remain on both
-//! paths after the R6 split (plan §4.8).
+//! paths (the shared-guard rule of the producer/checker doctrine in
+//! `vector/mod.rs`).
 
 use super::model::*;
 use crate::signal_fir::vector::analysis::{DepKind, EffectAtom, StateCell, StateResource};
@@ -28,7 +29,8 @@ pub fn verify_vector_state_plan(
 ) -> Result<(), VectorStateError> {
     verify_vector_state_plan_with_resources(None, decorations, vector_plan, None, state_plan)
 }
-/// Checks P6.1 while accepting only the clock/hold resources named by P6.2.
+/// Checks the state plan while accepting only the clock/hold resources named
+/// by the clock/AD plan.
 pub fn verify_vector_state_plan_with_clock(
     prepared: &VerifiedPreparedSignals,
     decorations: &VerifiedDecorationCertificate,
@@ -181,7 +183,7 @@ pub(super) fn verify_supported_state(
             // effects. An unreferenced identity body slot therefore appears
             // here even though it has no reachable `SIGPROJ` and C++ emits no
             // recursion storage for it. It is descriptive group metadata, not
-            // a resource the P6.1 transition plan must materialize.
+            // a resource the state-transition plan must materialize.
             if matches!(resource, StateResource::Recursion { .. })
                 && !reachable_recursions.contains(resource)
             {
@@ -234,7 +236,7 @@ pub(super) fn verify_supported_state(
     }
     Ok(())
 }
-/// Re-derives delay coverage for the P6.1 checker without calling the
+/// Re-derives delay coverage for the state-plan checker without calling the
 /// producer's projection helper.
 pub(super) fn independently_expected_delay_requirements(
     source: &DecorationCertificate,

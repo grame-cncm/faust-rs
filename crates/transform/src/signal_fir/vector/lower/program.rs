@@ -18,7 +18,7 @@ pub struct PureVectorRegionBody {
     pub(super) statements: Vec<FirId>,
 }
 impl PureVectorRegionBody {
-    /// Stable P4.4 loop identity.
+    /// Stable planned-loop identity.
     #[must_use]
     pub fn loop_id(&self) -> u64 {
         self.loop_id
@@ -30,11 +30,11 @@ impl PureVectorRegionBody {
         &self.statements
     }
 }
-/// Opaque P5.2/P6.5 result accepted by routing and region-body verification.
+/// Opaque lowering result accepted by routing and region-body verification.
 ///
 /// The historical `Pure` name is retained for source compatibility. The
-/// representation now also carries programs accepted through explicit P6.1
-/// state and P6.2 clock policies; it does not imply that those programs are
+/// representation now also carries programs accepted through explicit state
+/// and clock policies; it does not imply that those programs are
 /// pure.
 pub struct VerifiedPureVectorProgram {
     pub(super) store: FirStore,
@@ -151,7 +151,7 @@ impl VerifiedPureVectorProgram {
         &self.regions
     }
 
-    /// Independently accepted P5.1 route evidence.
+    /// Independently accepted route evidence.
     #[must_use]
     pub fn routed(&self) -> &VerifiedRoutedFir {
         &self.routed
@@ -169,14 +169,14 @@ impl VerifiedPureVectorProgram {
         &self.int_helpers
     }
 }
-/// P5.2 lowering or final-body verification failure.
+/// Pure-lowering or final-body verification failure.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PureVectorLowerError {
-    /// P5.1 route construction or verification failed.
+    /// Route construction or verification failed.
     Route(VectorRouteError),
     /// Internal real precision is outside the active fast-lane contract.
     InvalidRealType(FirType),
-    /// A P4.4 signal id is absent from the verified prepared forest.
+    /// A planned signal id is absent from the verified prepared forest.
     MissingPreparedSignal {
         /// The planned signal id with no prepared counterpart.
         signal_id: u64,
@@ -190,7 +190,7 @@ pub enum PureVectorLowerError {
         /// Scalar type recorded by the prepared forest, if any.
         prepared: Option<SimpleSigType>,
     },
-    /// The pure P5.2 slice cannot execute an effect-bearing signal.
+    /// The pure lowering slice cannot execute an effect-bearing signal.
     EffectfulSignal {
         /// The effect-bearing signal.
         signal_id: u64,
@@ -199,7 +199,7 @@ pub enum PureVectorLowerError {
         /// The effect atoms that make the signal impure.
         effects: Vec<EffectAtom>,
     },
-    /// The pure P5.2 slice has no state/effect semantics for this node.
+    /// The pure lowering slice has no state/effect semantics for this node.
     UnsupportedSignal {
         /// The unsupported signal.
         signal_id: u64,
@@ -211,7 +211,7 @@ pub enum PureVectorLowerError {
         /// The control signal with the sample-region dependency.
         signal_id: u64,
     },
-    /// A pure signal cycle escaped the P4/P6 recursion boundary.
+    /// A pure signal cycle escaped the planned recursion boundary.
     PureCycle {
         /// A signal on the escaped cycle.
         signal_id: u64,
@@ -239,7 +239,7 @@ pub enum PureVectorLowerError {
         /// The region whose root coverage is broken.
         region: VectorRegion,
     },
-    /// Final bodies do not contain the evidence accepted by P5.1.
+    /// Final bodies do not contain the evidence accepted by routing.
     BodyEvidence {
         /// Which piece of evidence is missing or different.
         detail: String,
@@ -341,7 +341,7 @@ pub struct VectorLoweringContext<'a> {
     pub control_rate_mode: ControlRateMode,
     /// Enclosing module name; a generator sub-module is named `{module}SIG{k}`.
     pub module_name: &'a str,
-    /// Whether table generators are folded or compiled into sub-modules (S6).
+    /// Whether table generators are folded or compiled into sub-modules.
     pub table_init_mode: crate::signal_fir::TableInitMode,
     /// Explicit SR used to fold `ma.SR` in const table generators.
     pub table_init_sample_rate: Option<i32>,

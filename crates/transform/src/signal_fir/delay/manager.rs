@@ -140,7 +140,7 @@ impl DelayManager {
         }
 
         // Strategy-specific ancillary declarations. The global `fIOTA`
-        // cursor is declared lazily (roadmap P3 slice 4): a `CircularPow2`
+        // cursor is declared lazily: a `CircularPow2`
         // line whose carrier lives in a clock domain is reassigned to a
         // per-domain `fIOTA_d<i>` cursor before emission, so declaring the
         // global cursor here would leave a dead field + advance. It is
@@ -186,8 +186,8 @@ impl DelayManager {
         self.delay_lines.iter()
     }
 
-    /// Overrides the circular cursor of one planned line (per-domain IOTA,
-    /// roadmap P3). Later `get_delay_line_in_context` clones observe the cursor.
+    /// Overrides the circular cursor of one planned line (per-domain IOTA).
+    /// Later `get_delay_line_in_context` clones observe the cursor.
     pub(in crate::signal_fir) fn set_line_cursor(
         &mut self,
         carried: SigId,
@@ -201,7 +201,7 @@ impl DelayManager {
 
     /// Returns the carriers of every planned `CircularPow2` line still using
     /// the shared global cursor (`cursor == None`) — i.e. the lines that
-    /// require the global `fIOTA` to be declared/advanced (roadmap P3 slice 4).
+    /// require the global `fIOTA` to be declared/advanced.
     pub(in crate::signal_fir) fn global_circular_carriers(&self) -> Vec<(SigId, Option<u32>)> {
         self.delay_lines
             .iter()
@@ -213,8 +213,8 @@ impl DelayManager {
     }
 
     /// Marks one planned line as living inside a clocked block: its
-    /// end-of-sample maintenance moves into the guarded region (roadmap P3
-    /// slice 4), so `emit_sample_end_updates` skips it at the top level.
+    /// end-of-sample maintenance moves into the guarded region, so
+    /// `emit_sample_end_updates` skips it at the top level.
     pub(in crate::signal_fir) fn mark_line_inner(
         &mut self,
         carried: SigId,
@@ -253,7 +253,7 @@ impl DelayManager {
         }
         updates.extend(self.delay_lines.values().filter_map(|info| {
             // Inner (in-block) IfWrapping counters advance inside the guarded
-            // region, not at the top sample end (roadmap P3 slice 4).
+            // region, not at the top sample end.
             if info.inner_clocked {
                 return None;
             }

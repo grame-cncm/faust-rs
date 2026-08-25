@@ -1,4 +1,4 @@
-//! P3 schedule-conformance comparison (observation-only).
+//! Schedule-conformance comparison (observation-only).
 //!
 //! This module was introduced for the pre-activation shadow audit required by
 //! `vector-mode-signal-level-analysis-cpp-port-plan-2026-07-10-en.md` P3. The

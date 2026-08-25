@@ -4,9 +4,9 @@
 //! C++ `DAGInstructionsCompiler::compileMultiSignal` recursively lowers one
 //! loop root and its inline closure while its current loop owns cache lookup.
 //! This adapted Rust slice consumes the already verified prepared forest and
-//! P4.4 plan, plus P6.1/P6.2 state and clock policies when requested. It runs
+//! vector plan, plus the state and clock policies when requested. It runs
 //! CSE independently in each routed region, then checks the final bodies
-//! against P5.1 routing evidence. Storage and transport geometry are never
+//! against the routing evidence. Storage and transport geometry are never
 //! inferred here: fixed or bounded-variable delays, symbolic recursion, and
 //! clock wrappers are lowered only through their accepted state/clock
 //! artifacts, and table/soundfile reads through their admitted decorations.

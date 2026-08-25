@@ -1,5 +1,5 @@
 //! Pre-flight validation shared by all four scheduling strategies (plan
-//! §4.1, §5.4). The C++ originals (`compiler/DirectedGraph/Schedule.hh`)
+//! plan-provenance §4.1, §5.4). The C++ originals (`compiler/DirectedGraph/Schedule.hh`)
 //! assume a DAG and never check; this runs once, independently of the
 //! selected strategy, so a malformed graph is rejected identically
 //! regardless of which of the four algorithms was requested — and so a

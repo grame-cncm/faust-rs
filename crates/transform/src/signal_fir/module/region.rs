@@ -1,6 +1,6 @@
-//! Compute-region tree for `compute()` assembly (roadmap P2).
+//! Compute-region tree for `compute()` assembly.
 //!
-//! # Design note (P2.1)
+//! # Design note
 //!
 //! The FIR `compute()` body is assembled from a tree of **regions**. A region
 //! is a lexical execution scope with its own statement lists; the full model
@@ -9,31 +9,30 @@
 //!
 //! - **scalar mode**: `SampleLoop ⊃ GuardedBlock(OD/US/DS, nested)` — one
 //!   guarded region per clocked-wrapper instance, strictly nested like the
-//!   clock domains themselves (roadmap P3);
-//! - **vector mode**: `ChunkLoop ⊃ { LoopNode | Island ⊃ GuardedBlock }`
-//!   (roadmap P6/P7).
+//!   clock domains themselves;
+//! - **vector mode**: `ChunkLoop ⊃ { LoopNode | Island ⊃ GuardedBlock }`.
 //!
 //! **The visibility rule** (single rule for CSE / occurrences / placement):
 //! *a value computed in region `R` is reusable only in `R` and its
 //! descendants; cross-region reuse goes through named storage* (stack locals,
 //! struct fields, chunk buffers). While the tree holds exactly one region per
-//! sample loop (the P2.2 state), per-bucket CSE (`cse.rs`) and
+//! sample loop (the current state), per-bucket CSE (`cse.rs`) and
 //! variability-driven placement (`placement.rs`) already respect the rule
-//! trivially — bucket and region coincide. Guarded child regions (P3) extend
+//! trivially — bucket and region coincide. Guarded child regions extend
 //! the rule by *narrowing* reuse, never widening it.
 //!
-//! **FIR-vocabulary decision** (P2.1 checklist): guarded blocks reuse the
+//! **FIR-vocabulary decision**: guarded blocks reuse the
 //! existing generic `If` / `SimpleForLoop` / `Block` FIR statements (the
 //! vector-doc §4 finding) rather than introducing dedicated block nodes;
 //! this module therefore stays a pure *assembly-side* structure with no new
 //! FIR node kinds.
 //!
-//! # Current state (P2.2)
+//! # Current state
 //!
 //! [`RegionTree`] is instantiated with exactly one [`RegionKind::SampleLoop`]
 //! region, plus the reverse-time loop as a sibling region opened by
 //! `reset_sample_loop_state`. The tree API is the **only** way lowering code
-//! appends compute statements (the P2 exit criterion): the former flat
+//! appends compute statements: the former flat
 //! `SamplePhases` accumulator lives on as [`RegionPhases`], owned by the
 //! current region.
 
@@ -140,10 +139,10 @@ impl RegionPhases {
 
 /// One compute region: a lexical scope with its own phased statement lists.
 ///
-/// Child regions (guarded OD/US/DS blocks) arrive with P3; until then a
-/// region is a leaf.
+/// Guarded OD/US/DS blocks are emitted as open child frames of the tree
+/// (see [`RegionTree`]); a region node itself stays a leaf.
 struct Region {
-    #[allow(dead_code, reason = "read once guarded blocks (P3) emit per-kind")]
+    #[allow(dead_code, reason = "model-only: guarded blocks are emitted via open frames and never consult the region kind")]
     kind: RegionKind,
     phases: RegionPhases,
 }
@@ -153,18 +152,18 @@ struct Region {
 ///
 /// Regions at the top level are the sibling per-loop slices (forward sample
 /// loop, reverse-time loop) emitted in creation order by `build_module`.
-/// Guarded clocked blocks (P3) nest as a stack of **open child frames** under
+/// Guarded clocked blocks nest as a stack of **open child frames** under
 /// the current top-level region; the innermost open frame is the default
 /// append target.
 ///
 /// # Redirection
 /// Clocked lowering must place a signal computed in an *ancestor* domain in
 /// the ancestor's region even when a descendant block is currently open (the
-/// visibility rule of the P2.1 design note, applied in the emission
+/// visibility rule of the design note above, applied in the emission
 /// direction). [`Self::set_redirect`] retargets the append surface to an
 /// outer depth: `0` = the current top-level region, `k > 0` = the `k`-th open
 /// child frame. Non-clocked lowering never opens children nor redirects, so
-/// the P2.2 behavior is unchanged.
+/// its behavior is unchanged.
 pub(super) struct RegionTree {
     regions: Vec<Region>,
     current: usize,

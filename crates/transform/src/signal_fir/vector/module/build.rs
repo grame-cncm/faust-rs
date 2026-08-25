@@ -1,7 +1,7 @@
 //! Top-level vector module orchestration (producer): runs the full
 //! checked pipeline stage chain and carries the fail-closed fallback
 //! evidence. Its terminal step calls `check::verify_final_module`, so
-//! every admission guard there also binds the producer (plan §4.8).
+//! every admission guard there also binds the producer (plan provenance: §4.8).
 //! `reject_cross_loop_delay_read_transports` is a producer-side
 //! admission guard with its single call site here.
 
@@ -35,7 +35,7 @@ use fir::inliner::is_obviously_side_effect_free_value;
 use fir::{FirId, FirMatch, FirStore, FirType, match_fir};
 use propagate::ClockDomainTable;
 
-/// Runs the complete checked vector path for the supported P6.5 subset and
+/// Runs the complete checked vector path for the supported subset and
 /// returns a final FIR module.
 pub(crate) struct VectorModuleContext<'a> {
     pub domains: &'a ClockDomainTable,
@@ -50,7 +50,7 @@ pub(crate) struct VectorModuleContext<'a> {
     /// Control-rate evaluation scheduling (`-ec`), plan phase 5.
     pub control_rate_mode: ControlRateMode,
     /// Whether a table generator is folded at compile time or compiled into a
-    /// sub-module that fills the table at initialization (S6). The generator
+    /// sub-module that fills the table at initialization. The generator
     /// sub-module is built by the same compiler the scalar path uses.
     pub table_init_mode: crate::signal_fir::TableInitMode,
     pub table_init_sample_rate: Option<i32>,

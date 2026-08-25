@@ -1,4 +1,4 @@
-//! Item 8: `Special`'s growth guardrail (plan §4.1: "benchmark `Special` on
+//! Item 8: `Special`'s growth guardrail (plan provenance: §4.1: "benchmark `Special` on
 //! path-heavy DAGs before accepting its literal duplicate list construction
 //! as production-safe"). `special.rs`'s module docs derive the closed form:
 //! a `layers`-layer, two-wide `ladder` (`2 * layers` nodes) produces a

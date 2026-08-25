@@ -33,9 +33,11 @@
 //!   `vector::analysis::signal_dependencies`, not hardcoded
 //!   facts. Variability is asserted `Samp` for this DSP shape rather than
 //!   re-run through the full type inferencer — a full context-sensitive
-//!   `SignalUseInfo` pass is `P4` scope (see the port plan, section 4.3).
+//!   `SignalUseInfo` pass belongs to the production analysis stage (see
+//!   the port plan, section 4.3).
 //! - `PvPlan` has exactly two loop nodes and one transport; there is no
-//!   general `VectorPlan`/certificate schema here yet (that is `R3`/`P5`).
+//!   general `VectorPlan`/certificate schema here (that is the production
+//!   plan/verify stages' job).
 //!
 //! Not wired into any production compile path (no CLI/API consumes this
 //! module), matching the additive pattern of the `P1`/`P2` phases already
@@ -158,8 +160,8 @@ pub struct PvTransport {
 }
 
 /// The strategy-independent plan for this slice: exactly two loops and one
-/// transport. Deliberately not a general `VectorPlan` (that is `R3`/`P5`
-/// scope) — see the module docs.
+/// transport. Deliberately not a general `VectorPlan` (that is the
+/// production plan stage's job) — see the module docs.
 #[derive(Debug, Clone)]
 pub struct PvPlan {
     /// The shared signal owned by the first loop.
@@ -178,8 +180,8 @@ impl PvPlan {
     /// Projects this slice's plan into the strategy-independent
     /// [`crate::signal_fir::vector::verify::VectorPlan`] DTO and — by
     /// construction — a plan that [`crate::signal_fir::vector::verify::verify_vector_plan`]
-    /// accepts. This closes the loop between the executed PV slice and the P5
-    /// vector-plan verifier: the same two-loop, one-transport shape the PV
+    /// accepts. This closes the loop between the executed PV slice and the
+    /// production vector-plan verifier: the same two-loop, one-transport shape the PV
     /// test runs bit-exactly is here shown to be a *valid* vector plan, so the
     /// verifier is exercised on a real produced plan rather than only on
     /// hand-written fixtures.
@@ -670,7 +672,8 @@ mod tests {
         let vplan = plan.to_vector_plan();
 
         // The executed PV plan is a valid strategy-independent vector plan:
-        // this exercises the P5 verifier on a real produced plan, not a
+        // this exercises the production plan verifier on a real produced
+        // plan, not a
         // hand-written fixture.
         verify_vector_plan(&vplan).expect("the PV slice's plan must satisfy verify_vector_plan");
 

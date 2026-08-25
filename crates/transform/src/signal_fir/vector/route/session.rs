@@ -1,6 +1,6 @@
 //! Mutable routing session (producer). Its terminal step calls the
 //! shared verify path in `check.rs`, so every admission guard there also
-//! binds the producer (plan §4.8).
+//! binds the producer (plan provenance: §4.8).
 
 use super::check::*;
 use super::model::*;
@@ -21,7 +21,7 @@ struct VectorValueCache {
     inline: BTreeMap<(u64, u64), FirId>,
     transport_loads: BTreeMap<u64, FirId>,
 }
-/// Stateful P5 routing surface used by a signal lowerer.
+/// Stateful routing surface used by a signal lowerer.
 pub struct VectorRouteSession<'a> {
     pub(super) plan: &'a VectorPlan,
     layout: VectorRegionLayout,
@@ -56,7 +56,7 @@ impl<'a> VectorRouteSession<'a> {
         Self::new_with_policies(verified, strategy, real_type, &policies, store)
     }
 
-    /// Creates routes using the exact P6.2 transport lifetimes.
+    /// Creates routes using the exact clock-plan transport lifetimes.
     pub fn new_with_clock_plan(
         verified: &'a VerifiedVectorPlan,
         clock_plan: &VerifiedVectorClockAdPlan,
@@ -155,7 +155,7 @@ impl<'a> VectorRouteSession<'a> {
         &self.layout
     }
 
-    /// Returns the immutable P4.4 plan that owns all route identities.
+    /// Returns the immutable vector plan that owns all route identities.
     #[must_use]
     pub fn plan(&self) -> &VectorPlan {
         self.plan
@@ -273,7 +273,7 @@ impl<'a> VectorRouteSession<'a> {
         Ok(stores)
     }
 
-    /// Resolves one signal use from `consumer_loop` according to P5 visibility.
+    /// Resolves one signal use from `consumer_loop` according to routing visibility.
     pub fn resolve_in_loop(
         &mut self,
         consumer_loop: u64,

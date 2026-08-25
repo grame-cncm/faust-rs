@@ -651,7 +651,7 @@ fn fused_checker_rejects_incompatible_clock_islands() {
     ));
 }
 
-// ── one rejecting mutation per obligation (plan §8) ──────────────────
+// ── one rejecting mutation per obligation (plan provenance: §8) ──────────────────
 
 #[test]
 fn rejects_zero_vec_size() {

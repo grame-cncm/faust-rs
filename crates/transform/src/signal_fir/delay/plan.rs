@@ -214,7 +214,7 @@ impl<'a> DelayPlanner<'a> {
                 if let SigMatch::ClockEnvToken(domain) = match_sig(self.arena, env) {
                     self.node(inner, accumulated_delay, Some(domain))?;
                 } else {
-                    // Pre-P0/direct fast-lane callers can still carry the
+                    // Direct fast-lane callers can still carry the
                     // legacy `Clocked(clock, value)` shape. It has no domain
                     // instance identity, so preserve the enclosing context and
                     // let the normal lowering boundary report support status.

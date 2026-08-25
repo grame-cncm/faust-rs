@@ -2,11 +2,12 @@
 //!
 //! `verify_event_order_certificate_impl` is called by BOTH the producer's
 //! terminal verification (`produce.rs`) and the standalone checker entries
-//! below, so its admission guards remain on both paths after the R7 split
-//! (plan §4.8). The independent re-derivations here (independently_*,
+//! below, so its admission guards remain on both paths (the shared-guard rule
+//! of the producer/checker doctrine in `vector/mod.rs`). The independent
+//! re-derivations here (independently_*,
 //! checker_required_effect_dependencies, independent_checked_sample_count)
 //! must NOT be merged with their producer counterparts in `produce.rs` —
-//! the duplication IS the assurance boundary (plan §3.2).
+//! the duplication IS the assurance boundary (plan provenance: §3.2).
 
 use super::model::*;
 use crate::signal_fir::vector::analysis::{EffectAtom, ForeignPurity, StateResource};
@@ -25,7 +26,7 @@ pub fn verify_event_order_certificate(
 ) -> Result<(), VectorEventError> {
     verify_event_order_certificate_impl(plan, routed, None, certificate, limits)
 }
-/// Independently checks a state-refined P5.3/P6.1 event certificate.
+/// Independently checks a state-refined event-order certificate.
 pub fn verify_state_event_order_certificate(
     plan: &VectorPlan,
     routed: &VerifiedRoutedFir,

@@ -1,4 +1,4 @@
-//! Per-clock-domain runtime counters (roadmap P2.3).
+//! Per-clock-domain runtime counters.
 //!
 //! # Source provenance (C++)
 //! - `compiler/generator/compile_scal.cpp` (`declareRetrieveIotaName`,
@@ -12,14 +12,13 @@
 //! `downsampling` block owns a modulo counter (`DSCounter`) implementing the
 //! `1/H` firing guard. Both are persistent struct fields, cleared to 0,
 //! **keyed by [`ClockDomainId`]** — the same clock domain always retrieves
-//! the same field, two domains never share one (P0.2 made domain identity
+//! the same field, two domains never share one (domain identity is
 //! per-instance, so hash-consing cannot alias them).
 //!
 //! The top-level (audio-rate) cursor stays the historical `fIOTA` field
 //! owned by `GlobalCircularCursor`; this module only manages the clocked
-//! domains. Increment statements are returned as plain FIR statements so the
-//! P3 guarded-block lowering can append them to the block's post-code
-//! (plan §2.4 reference code).
+//! domains. Increment statements are returned as plain FIR statements so
+//! the guarded-block lowering can append them to the block's post-code.
 
 use ahash::AHashMap;
 use fir::{AccessType, FirBinOp, FirBuilder, FirId, FirStore, FirType};
@@ -30,8 +29,7 @@ use super::DelayFirCtx;
 /// Declare/retrieve registry for per-domain `IOTA` and `DSCounter` fields.
 ///
 /// Owned by the lowering state; consulted by delay planning (per-domain
-/// delay lines, P3.1) and by guarded-block emission (post-code increments,
-/// P3.2).
+/// delay lines) and by guarded-block emission (post-code increments).
 #[derive(Debug)]
 pub(crate) struct DomainCounters {
     iota_names: AHashMap<ClockDomainId, String>,
@@ -102,7 +100,7 @@ impl DomainCounters {
 
     /// Emits `counter = counter + 1` for one per-domain counter.
     ///
-    /// The caller (P3 guarded-block lowering) appends the statement to the
+    /// The caller (guarded-block lowering) appends the statement to the
     /// guarded block's post-code, so the counter advances only when the
     /// block fires — this is what makes the domain's time *local*.
     pub(crate) fn emit_increment(store: &mut FirStore, name: &str) -> FirId {

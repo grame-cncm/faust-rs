@@ -98,7 +98,7 @@ impl<'a> SignalToFirLower<'a> {
             return Ok(id);
         }
 
-        // P3 clocked emission: a signal computed in a strict-ancestor clock
+        // Clocked emission: a signal computed in a strict-ancestor clock
         // domain must have its statements placed in the ancestor's region,
         // even while a guarded block is open (see `clocked.rs`). The
         // recursive re-entry cannot loop: with the redirection installed,
@@ -214,7 +214,7 @@ impl<'a> SignalToFirLower<'a> {
                 self.lower_soundfile_buffer(sig, sf, chan, part, ridx)?
             }
             // Clocked machinery under an active clocked-lowering state
-            // (roadmap P3, boolean-ondemand slice — see `clocked.rs`):
+            // (see `clocked.rs`):
             // `Seq(od, y)` compiles the block then reads the hold;
             // `Clocked`/`TempVar` are annotations/snapshots (passthrough);
             // `PermVar` reads its registered hold field; `OnDemand` emits
@@ -242,10 +242,10 @@ impl<'a> SignalToFirLower<'a> {
             }
             // Clocked machinery (`ondemand` / `upsampling` / `downsampling`
             // wrappers and their glue nodes): accepted by propagation and
-            // `signal_prepare`, but the guarded-block lowering (roadmap
-            // P1–P3) has not landed. Reject with the dedicated structured
-            // code so no clocked program falls into the generic
-            // `FRS-SFIR-0004` bucket or panics (roadmap P0.1).
+            // `signal_prepare`, but this run carries no clocked-lowering state
+            // (the guarded arms above require `self.clocked`). Reject with
+            // the dedicated structured code so no clocked program falls
+            // into the generic `FRS-SFIR-0004` bucket or panics.
             SigMatch::OnDemand(_)
             | SigMatch::Upsampling(_)
             | SigMatch::Downsampling(_)
@@ -355,7 +355,7 @@ impl<'a> SignalToFirLower<'a> {
 
         if !self.is_recursive_projection(sig) {
             // First materialization of `sig`: the sole cache-insertion site
-            // and therefore the exact P3 conformance trace compared with the
+            // and therefore the exact schedule-conformance trace compared with the
             // selected Hsched (`crate::signal_fir::shadow`).
             self.cache
                 .insert_at(self.regions.effective_depth(), sig, lowered);
@@ -651,7 +651,7 @@ impl<'a> SignalToFirLower<'a> {
             ));
         }
 
-        // One-sample mode (§4.6): `frame` receives flat channel arrays, so
+        // One-sample mode: `frame` receives flat channel arrays, so
         // the sample read is a direct `inputs[channel]` load — no block
         // pointer alias, no sample index.
         if self.processing_api.is_one_sample() {

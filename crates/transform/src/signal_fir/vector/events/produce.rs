@@ -1,12 +1,12 @@
 //! Producer construction of event-order certificates. The terminal step
 //! calls the shared verify path in `check.rs`, so every admission guard
-//! there also binds the producer (plan §4.8). Producer-side derivations
+//! there also binds the producer (plan provenance: §4.8). Producer-side derivations
 //! (event_templates, build_order, build_dependencies,
 //! producer_effect_dependencies, producer_checked_sample_count) must NOT
 //! be merged with their independent checker counterparts in `check.rs`
 //! (independently_*, checker_required_effect_dependencies,
 //! independent_checked_sample_count) — the duplication IS the assurance
-//! boundary (plan §3.2).
+//! boundary (plan provenance: §3.2).
 
 use super::check::{
     append_state_event_keys, canonical_scalar_loops, context_events, effect_is_managed,
@@ -115,7 +115,7 @@ pub fn precheck_state_event_bound(
     }
     Ok(())
 }
-/// Produces and independently checks bounded P5.3 evidence.
+/// Produces and independently checks bounded event-order evidence.
 ///
 /// `limits.complete` applies to full `vec_size` expansion and `limits.compact`
 /// applies only to the canonical two-sample basis. Neither form changes the
@@ -130,7 +130,7 @@ pub fn build_event_order_certificate(
     verify_event_order_certificate(plan, routed, &certificate, limits)?;
     Ok(VerifiedEventOrderCertificate { certificate })
 }
-/// Produces P5.3 evidence refined by checked P6.1 state transitions.
+/// Produces event-order evidence refined by checked state transitions.
 pub fn build_state_event_order_certificate(
     verified_plan: &VerifiedVectorPlan,
     routed: &VerifiedRoutedFir,

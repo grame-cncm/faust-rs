@@ -1,6 +1,6 @@
 //! FIR module emission for the signal->FIR fast-lane.
 //!
-//! Step 2A..2G lowers an executable fast-lane slice:
+//! The scalar lowerer covers this executable fast-lane slice:
 //! - `SIGINPUT`, integer/real constants,
 //! - `SIGBINOP` (arithmetic/comparison/bitwise subset),
 //! - `SIGPOW`/`SIGMIN`/`SIGMAX`,
@@ -366,16 +366,16 @@ struct SignalToFirLower<'a> {
     /// FIR statement buckets for each Faust lifecycle section.
     sections: state::ModuleSections,
     /// Compute-region tree: per-loop regions carrying the phased statement
-    /// lists of `compute` (roadmap P2 — see `region.rs` for the design note).
+    /// lists of `compute` (see `region.rs` for the design note).
     regions: region::RegionTree,
     /// Clocked-lowering state, present only for programs with clocked
-    /// wrappers (roadmap P3 — see `clocked.rs`).
+    /// wrappers (see `clocked.rs`).
     clocked: Option<clocked::ClockedState<'a>>,
     /// Temporarily disables ancestor-domain redirection while lowering the
     /// payload of a `Clocked(env, value)` annotation. C++ emits that payload
     /// in the guarded block that consumes it.
     suppress_clocked_redirect: bool,
-    /// Per-clock-domain `IOTA`/`DSCounter` field registry (roadmap P2.3).
+    /// Per-clock-domain `IOTA`/`DSCounter` field registry.
     domain_counters: DomainCounters,
     /// Control-rate evaluation scheduling (`-ec`). With `External`, the
     /// foreign runtime variable `count` is rejected (no block count exists
@@ -433,7 +433,7 @@ struct SignalToFirLower<'a> {
     /// Grouped BRA (Block Reverse AD) lowering state.
     bra: bra::BraState,
     /// First-lowering order, recorded at the sole cache-insertion site and
-    /// exported as the P3 schedule-conformance trace.
+    /// exported as the schedule-conformance trace.
     emission_order: Vec<SigId>,
     /// Direct Signal producers recorded during lowering and later propagated
     /// across the assembled FIR graph.

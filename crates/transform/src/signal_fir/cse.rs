@@ -28,7 +28,8 @@ struct RewriteState<'a> {
     temp_decls: Vec<FirId>,
     /// Storage class for materialized temporaries. `Stack` is the classic
     /// behavior; `Struct` promotes each temporary to a DSP field written in
-    /// place (execution-options port §4.4, vector control-root promotion:
+    /// place (plan provenance: execution-options port §4.4; vector control-root
+    /// promotion:
     /// the value must be readable across the control/compute boundary).
     access: AccessType,
     /// Struct fields created by `Struct`-mode materialization.
@@ -634,7 +635,10 @@ pub(super) fn materialize_shared_values(
 /// temporary becomes a DSP struct field written in place, and the created
 /// `(name, type)` pairs are returned so the module can declare them.
 ///
-/// Execution-options port §4.4 / phase 5: external control moves these
+/// Under external control these
+/// statements move into `control` (plan provenance: execution-options port
+/// §4.4 / phase 5), so compute-side consumers must read through DSP-owned
+/// storage. External control moves these
 /// statements into `control`, so compute-side consumers (vector transport
 /// fills, loop bodies) must read the values through DSP-owned storage.
 pub(super) fn materialize_shared_values_promoted(

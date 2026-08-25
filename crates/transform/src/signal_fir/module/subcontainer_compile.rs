@@ -3,7 +3,8 @@
 //! Split out of [`super::subcontainer`] so the checked vector lowerer can build
 //! the *same* sub-module the scalar lowerer builds, rather than keeping a
 //! second, folding-only implementation of table initialization
-//! (`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`, S6).
+//! (plan provenance:
+//! `porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md` S6).
 //!
 //! The generator itself is never vectorized. It is a 0-input / 1-output program
 //! evaluated once at initialization, so compiling it in scalar mode is correct

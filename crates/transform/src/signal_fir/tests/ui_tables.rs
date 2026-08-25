@@ -9,7 +9,8 @@ use crate::signal_fir::{
 
 /// Options pinning the folded `const` table-init mode.
 ///
-/// The default flipped to `runtime` in plan phase S7, so a test that asserts
+/// The default flipped to `runtime` when generated-table sub-modules
+/// landed, so a test that asserts
 /// the folded shape — a literal `DeclareTable` in `static_decls`, no
 /// sub-module, no `staticInit` — has to say so. `const` is a permanent
 /// supported mode, so these assertions stay meaningful; they just no longer
@@ -542,10 +543,11 @@ fn int_waveform_declares_int32_table() {
 
 // ─── Generated-table sub-modules (`--table-init runtime`) ───────────────────
 //
-// S2 gate for `porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`.
-// These assert the *shape* the producer emits, which is what S4/S5 backends
-// consume. They run in `Runtime` mode explicitly, since `Const` stays the
-// effective default until S7.
+// Producer-shape gate (plan provenance:
+// `porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md` S2).
+// These assert the *shape* the producer emits, which is what the backends
+// consume. They run in `Runtime` mode explicitly rather than relying on
+// the default.
 
 /// Compiles `signals` with the sub-module producer enabled.
 fn compile_runtime_table_init(
@@ -668,7 +670,8 @@ fn runtime_mode_emits_one_sub_module_and_an_uninitialized_static_table() {
 
 #[test]
 fn runtime_mode_gives_a_constant_generator_a_sub_module_too() {
-    // Option B (§5.7): no folded fast path in runtime mode. A constant payload
+    // Option B (plan provenance: §5.7): no folded fast path in runtime mode.
+    // A constant payload
     // would otherwise emit `size` identical literals — 127x the reference on a
     // 65536-entry table.
     let mut arena = TreeArena::new();
@@ -706,7 +709,8 @@ fn runtime_mode_gives_a_waveform_generator_a_sub_module_too() {
 
 #[test]
 fn const_mode_keeps_folding_and_emits_no_sub_module() {
-    // The permanent `const` mode (§5.10) must keep its current shape.
+    // The permanent `const` mode (plan provenance: §5.10) must keep its
+    // current shape.
     let mut arena = TreeArena::new();
     let sig = {
         let mut b = SigBuilder::new(&mut arena);

@@ -13,7 +13,8 @@
 //! producer's terminal verification (`build_vector_clock_ad_plan`) and the
 //! standalone checker (`verify_vector_clock_ad_plan`), so every admission
 //! guard it hosts — including `reject_unadopted_stateful_reads` — remains on
-//! both paths after the R6 split (plan §4.8). Because the island/transport/
+//! both paths (the shared-guard rule of the producer/checker doctrine in
+//! `vector/mod.rs`). Because the island/transport/
 //! reverse-fallback checks below are now independently re-derived rather
 //! than replayed from the producer, this path is a genuine producer-vs-
 //! checker cross-check.
@@ -93,7 +94,7 @@ pub(super) fn verify_vector_clock_ad_plan_after_vector_plan(
     )?;
     Ok(())
 }
-/// Checker-owned property check for the P6.2 clock-island facts.
+/// Checker-owned property check for the clock-island facts.
 ///
 /// For every domain of the table (in table iteration order) this verifies,
 /// straight against the sources: kind/parent vs the table entry; that
@@ -279,7 +280,7 @@ pub(super) fn verify_clock_islands(
     }
     Ok(())
 }
-/// Checker-owned property check for the P6.2 transport policies: a
+/// Checker-owned property check for the transport policies: a
 /// bijection with `plan.transports`, in transport order, where each mode is
 /// independently derived from the decision table (fused-group membership,
 /// then the outer clock id, then arena `PermVar`-ness) and compared to the
@@ -343,7 +344,7 @@ pub(super) fn verify_transport_policies(
     }
     Ok(())
 }
-/// Checker-owned property check for the P6.2 reverse-AD fallbacks: a
+/// Checker-owned property check for the reverse-AD fallbacks: a
 /// bijection, in decoration-record order, with the arena's
 /// `ReverseTimeRec`/`BlockReverseAD` records, each verified against the
 /// signal's owned placement, its arena-derived kind, and the fixed
@@ -539,7 +540,7 @@ pub(super) fn verify_domain_tree(domains: &ClockDomainTable) -> Result<(), Vecto
 // `wrapper_domain_and_clock`, `clock_state_domain`, `is_owned_clock_effect`,
 // `guard_for`, and `scalar_clock_facts`. They must NOT be merged or shared
 // with the producer's copies: the duplication is the assurance boundary
-// (plan §2) that lets `verify_clock_islands` catch a defect that lives only
+// (plan provenance: §2) that lets `verify_clock_islands` catch a defect that lives only
 // inside `build.rs`'s versions.
 fn checker_wrapper_domain_and_clock(
     prepared: &VerifiedPreparedSignals,

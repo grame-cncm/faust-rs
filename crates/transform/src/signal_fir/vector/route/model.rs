@@ -7,7 +7,7 @@ use crate::signal_fir::vector::schedule::VectorScheduleError;
 use crate::signal_fir::vector::verify::{LoopKind, Placement, VectorPlan, VectorPlanError};
 use fir::{FirId, FirType};
 use std::fmt;
-/// Lexical visibility scope used by the P5 value cache.
+/// Lexical visibility scope used by the routing value cache.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum VectorRegion {
     /// Fixed control/lifecycle scope, visible from every loop.
@@ -89,10 +89,10 @@ pub struct RoutedUse {
     /// Direct value or concrete transport load.
     pub value: FirId,
 }
-/// Concrete FIR evidence for one P4.4 transport.
+/// Concrete FIR evidence for one planned transport.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoutedTransport {
-    /// Stable transport id from P4.4.
+    /// Stable transport id from the vector plan.
     pub transport_id: u64,
     /// Concrete lifetime/indexing policy selected before FIR construction.
     pub mode: ClockTransportMode,
@@ -163,7 +163,7 @@ impl VerifiedRoutedFir {
         self.trace
     }
 }
-/// Typed P5 routing or routed-FIR verification failure.
+/// Typed routing or routed-FIR verification failure.
 #[derive(Clone, Debug, PartialEq)]
 pub enum VectorRouteError {
     /// Underlying vector plan verification failed.

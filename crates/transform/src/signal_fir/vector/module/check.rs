@@ -1,6 +1,6 @@
 //! Final-module verification: sound-field immutability, mutable-table
 //! and UI-write attribution, read-only table stores, and final shape.
-//! Called from the producer's terminal step in `build.rs` (plan §4.8).
+//! Called from the producer's terminal step in `build.rs` (plan provenance: §4.8).
 
 use super::model::VectorModuleFailure;
 use crate::signal_fir::VectorFallbackReason;
