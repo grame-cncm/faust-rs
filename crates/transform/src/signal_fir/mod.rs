@@ -43,8 +43,9 @@
 //!   taped backward sweeps with C++-compatible storage.
 //! - [`decoration_verify`] — certified signal decorations consumed by the
 //!   vector pipeline.
-//! - [`pv_slice`], [`shadow`] — diagnostic/experimental surfaces (P2 vector
-//!   pre-slice; schedule-conformance shadow reports).
+//! - [`diagnostics`] — observation-only surfaces, never on the production
+//!   path (the frozen vector pre-slice prototype; schedule-conformance
+//!   shadow reports).
 //! - `loop_graph`, `placement`, `planner`, `cse`, `recursion`, `siggen`,
 //!   `error` — internal analysis/lowering support.
 //!
@@ -67,6 +68,7 @@ mod block_reverse_ad;
 mod cse;
 pub mod decoration_verify;
 mod delay;
+pub mod diagnostics;
 mod error;
 mod loop_graph;
 mod module;
@@ -74,11 +76,10 @@ mod one_sample;
 mod origins;
 mod placement;
 mod planner;
-pub mod pv_slice;
 mod recursion;
-pub mod shadow;
 mod siggen;
 pub mod vector;
+pub use diagnostics::{pv_slice, shadow};
 pub use vector::analysis as vector_analysis;
 pub use vector::assemble as vector_assemble;
 pub use vector::clock_ad as vector_clock_ad;

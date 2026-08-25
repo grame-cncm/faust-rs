@@ -78,7 +78,7 @@ pub fn build_pv_signals(delay_amount: i32) -> (TreeArena, SigId, SigId) {
 /// how many distinct use sites reference each signal, and the largest
 /// constant delay amount any reader applies to it. Computed by a genuine walk
 /// of the reachable forest via
-/// [`signal_dependencies`](super::vector::analysis::signal_dependencies) —
+/// [`signal_dependencies`](crate::signal_fir::vector::analysis::signal_dependencies) —
 /// not hardcoded.
 struct PvFacts {
     occurrences: AHashMap<SigId, u32>,
@@ -89,13 +89,13 @@ fn compute_pv_facts(arena: &TreeArena, roots: &[SigId]) -> PvFacts {
     let sig_types = sigtype::TypeAnnotator::new(arena, &ui::UiProgram::empty())
         .annotate(roots)
         .expect("PV signals have valid types");
-    let analysis = super::vector::analysis::SignalAnalysisContext::new(arena, &sig_types, roots)
+    let analysis = crate::signal_fir::vector::analysis::SignalAnalysisContext::new(arena, &sig_types, roots)
         .expect("PV symbolic recursion index is valid");
     let mut reachable: HashSet<SigId> = HashSet::new();
     let mut stack: Vec<SigId> = roots.to_vec();
     while let Some(sig) = stack.pop() {
         if reachable.insert(sig) {
-            let dependencies = super::vector::analysis::signal_dependencies(&analysis, sig)
+            let dependencies = crate::signal_fir::vector::analysis::signal_dependencies(&analysis, sig)
                 .expect("PV signals are canonical");
             for occurrence in dependencies.occurrences() {
                 stack.push(occurrence.to);
@@ -109,7 +109,7 @@ fn compute_pv_facts(arena: &TreeArena, roots: &[SigId]) -> PvFacts {
         *occurrences.entry(r).or_insert(0) += 1;
     }
     for &sig in &reachable {
-        for occurrence in super::vector::analysis::signal_dependencies(&analysis, sig)
+        for occurrence in crate::signal_fir::vector::analysis::signal_dependencies(&analysis, sig)
             .expect("PV signals are canonical")
             .occurrences()
         {
