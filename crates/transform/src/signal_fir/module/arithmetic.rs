@@ -19,10 +19,10 @@ use crate::signal_fir::FirType;
 use crate::signal_fir::SigId;
 use crate::signal_fir::SignalFirError;
 use crate::signal_fir::SignalFirErrorCode;
+use crate::signal_fir::leaf_emit;
 use crate::signal_fir::module::AccessType;
 use crate::signal_fir::module::BTreeMap;
 use crate::signal_fir::module::BinOp;
-use crate::signal_fir::module::FirBinOp;
 use crate::signal_fir::module::FirBuilder;
 use crate::signal_fir::module::FirMathOp;
 use crate::signal_fir::module::ForeignFunProto;
@@ -58,6 +58,15 @@ pub(super) struct UsedPrototypes {
     pub(super) foreign_vars: BTreeMap<String, FirType>,
 }
 
+impl leaf_emit::LeafPrototypes for UsedPrototypes {
+    fn note_math_op(&mut self, op: FirMathOp) {
+        self.math_ops.insert(op);
+    }
+    fn note_int_helper(&mut self, name: &'static str) {
+        self.int_fun_names.insert(name);
+    }
+}
+
 impl<'a> SignalToFirLower<'a> {
     /// Lowers one binary signal operator to FIR binop.
     ///
@@ -76,54 +85,34 @@ impl<'a> SignalToFirLower<'a> {
         let result_ty = self.signal_fir_type(node)?;
         let lhs = self.lower_signal(lhs_sig)?;
         let rhs = self.lower_signal(rhs_sig)?;
-        let (fir_op, typ) = map_binop(op, result_ty).ok_or_else(|| {
-            SignalFirError::new(
-                SignalFirErrorCode::UnsupportedBinOp,
-                format!("unsupported SIGBINOP operator `{}` in Step 2A", op.name()),
-            )
-        })?;
-        let lhs_ty = self.store.value_type(lhs).ok_or_else(|| {
-            SignalFirError::new(
-                SignalFirErrorCode::UnsupportedBinOp,
-                format!(
-                    "missing FIR type for left operand of `{}` in Step 2A",
-                    op.name()
+        leaf_emit::emit_binop(&mut self.store, op, result_ty, lhs, rhs).map_err(|error| {
+            match error {
+                leaf_emit::LeafBinopError::UnsupportedOperator => SignalFirError::new(
+                    SignalFirErrorCode::UnsupportedBinOp,
+                    format!("unsupported SIGBINOP operator `{}` in Step 2A", op.name()),
                 ),
-            )
-        })?;
-        let rhs_ty = self.store.value_type(rhs).ok_or_else(|| {
-            SignalFirError::new(
-                SignalFirErrorCode::UnsupportedBinOp,
-                format!(
-                    "missing FIR type for right operand of `{}` in Step 2A",
-                    op.name()
-                ),
-            )
-        })?;
-        let operands_ok = match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
-                lhs_ty == typ && rhs_ty == typ
+                leaf_emit::LeafBinopError::MissingOperandType { is_lhs, .. } => {
+                    SignalFirError::new(
+                        SignalFirErrorCode::UnsupportedBinOp,
+                        format!(
+                            "missing FIR type for {} operand of `{}` in Step 2A",
+                            if is_lhs { "left" } else { "right" },
+                            op.name()
+                        ),
+                    )
+                }
+                leaf_emit::LeafBinopError::OperandContract { lhs, rhs, expected } => {
+                    SignalFirError::new(
+                        SignalFirErrorCode::UnsupportedBinOp,
+                        format!(
+                            "prepared SIGBINOP operands for `{}` violate fast-lane typing contract: lhs={lhs:?}, rhs={rhs:?}, result={expected:?} (expr={})",
+                            op.name(),
+                            dump_sig_readable(self.arena, node)
+                        ),
+                    )
+                }
             }
-            BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Lsh | BinOp::ARsh | BinOp::LRsh => {
-                lhs_ty == FirType::Int32 && rhs_ty == FirType::Int32
-            }
-            BinOp::Gt | BinOp::Lt | BinOp::Ge | BinOp::Le | BinOp::Eq | BinOp::Ne => {
-                lhs_ty == rhs_ty
-                    && matches!(lhs_ty, FirType::Int32 | FirType::Float32 | FirType::Float64)
-            }
-        };
-        if !operands_ok {
-            return Err(SignalFirError::new(
-                SignalFirErrorCode::UnsupportedBinOp,
-                format!(
-                    "prepared SIGBINOP operands for `{}` violate fast-lane typing contract: lhs={lhs_ty:?}, rhs={rhs_ty:?}, result={typ:?} (expr={})",
-                    op.name(),
-                    dump_sig_readable(self.arena, node)
-                ),
-            ));
-        }
-        let mut b = FirBuilder::new(&mut self.store);
-        Ok(b.binop(fir_op, lhs, rhs, typ))
+        })
     }
 
     /// Lowers one unary math intrinsic call.
@@ -133,11 +122,14 @@ impl<'a> SignalToFirLower<'a> {
         value: SigId,
     ) -> Result<FirId, SignalFirError> {
         let value = self.lower_signal(value)?;
-        self.used_protos.math_ops.insert(op);
-        // Math calls operate on and return the internal real type.
         let real_ty = self.real_ty();
-        let mut b = FirBuilder::new(&mut self.store);
-        Ok(b.math_call(op, &[value], real_ty))
+        Ok(leaf_emit::emit_math_call1(
+            &mut self.store,
+            &mut self.used_protos,
+            op,
+            value,
+            real_ty,
+        ))
     }
 
     /// Lowers one binary math intrinsic call.
@@ -149,11 +141,15 @@ impl<'a> SignalToFirLower<'a> {
     ) -> Result<FirId, SignalFirError> {
         let lhs = self.lower_signal(lhs)?;
         let rhs = self.lower_signal(rhs)?;
-        self.used_protos.math_ops.insert(op);
-        // Math calls operate on and return the internal real type.
         let real_ty = self.real_ty();
-        let mut b = FirBuilder::new(&mut self.store);
-        Ok(b.math_call(op, &[lhs, rhs], real_ty))
+        Ok(leaf_emit::emit_math_call2(
+            &mut self.store,
+            &mut self.used_protos,
+            op,
+            lhs,
+            rhs,
+            real_ty,
+        ))
     }
 
     /// Lowers `min`/`max`, preserving integer recursion/state when the reduced
@@ -174,28 +170,18 @@ impl<'a> SignalToFirLower<'a> {
         is_min: bool,
     ) -> Result<FirId, SignalFirError> {
         let result_ty = self.signal_fir_type(node)?;
-        if result_ty == FirType::Int32 {
-            let lhs = self.lower_signal(lhs_sig)?;
-            let rhs = self.lower_signal(rhs_sig)?;
-            self.used_protos
-                .int_fun_names
-                .insert(if is_min { "min_i" } else { "max_i" });
-            let mut b = FirBuilder::new(&mut self.store);
-            return Ok(b.fun_call(
-                if is_min { "min_i" } else { "max_i" },
-                &[lhs, rhs],
-                FirType::Int32,
-            ));
-        }
-        self.lower_math2(
-            if is_min {
-                FirMathOp::Min
-            } else {
-                FirMathOp::Max
-            },
-            lhs_sig,
-            rhs_sig,
-        )
+        let lhs = self.lower_signal(lhs_sig)?;
+        let rhs = self.lower_signal(rhs_sig)?;
+        let real_ty = self.real_ty();
+        Ok(leaf_emit::emit_minmax(
+            &mut self.store,
+            &mut self.used_protos,
+            is_min,
+            &result_ty,
+            real_ty,
+            lhs,
+            rhs,
+        ))
     }
 
     /// Lowers `abs`, preserving integer recursion/state when the reduced typer
@@ -212,13 +198,15 @@ impl<'a> SignalToFirLower<'a> {
         value_sig: SigId,
     ) -> Result<FirId, SignalFirError> {
         let result_ty = self.signal_fir_type(node)?;
-        if result_ty == FirType::Int32 {
-            let value = self.lower_signal(value_sig)?;
-            self.used_protos.int_fun_names.insert("abs");
-            let mut b = FirBuilder::new(&mut self.store);
-            return Ok(b.fun_call("abs", &[value], FirType::Int32));
-        }
-        self.lower_math1(FirMathOp::Abs, value_sig)
+        let value = self.lower_signal(value_sig)?;
+        let real_ty = self.real_ty();
+        Ok(leaf_emit::emit_abs(
+            &mut self.store,
+            &mut self.used_protos,
+            &result_ty,
+            real_ty,
+            value,
+        ))
     }
 
     /// Lowers one numeric cast.
@@ -628,40 +616,5 @@ impl<'a> SignalToFirLower<'a> {
             next_loop_var_id: &mut self.name_gen.next_loop_var_id,
         };
         Ok(recursion_ctx.load_feedback_carrier(&rec_ref.info, current_index, real_ty))
-    }
-}
-
-/// Maps signal-level operators to FIR operators with result typing policy.
-///
-/// `real_ty` is the internal DSP computation type (e.g. `Float32` / `Float64`).
-/// It is used for arithmetic operators whose result is a real-valued sample.
-/// Comparison operators produce `Int32` in the fast-lane, matching the normal
-/// C++ signal typing path where comparisons are "boolean int" values. This is
-/// distinct from the optional backend-specific `SignalBool2IntPromotion` pass:
-/// the fast-lane does not rely on that pass and must preserve the standard
-/// signal semantics directly. Bitwise operators also produce `Int32`.
-pub(in crate::signal_fir) fn map_binop(op: BinOp, real_ty: FirType) -> Option<(FirBinOp, FirType)> {
-    match op {
-        // Arithmetic operators: result is the internal real type.
-        BinOp::Add => Some((FirBinOp::Add, real_ty)),
-        BinOp::Sub => Some((FirBinOp::Sub, real_ty)),
-        BinOp::Mul => Some((FirBinOp::Mul, real_ty)),
-        BinOp::Div => Some((FirBinOp::Div, real_ty)),
-        BinOp::Rem => Some((FirBinOp::Rem, real_ty)),
-        // Comparison operators: result is Int32 ("boolean int") for parity
-        // with the standard C++ signal typing path.
-        BinOp::Gt => Some((FirBinOp::Gt, FirType::Int32)),
-        BinOp::Lt => Some((FirBinOp::Lt, FirType::Int32)),
-        BinOp::Ge => Some((FirBinOp::Ge, FirType::Int32)),
-        BinOp::Le => Some((FirBinOp::Le, FirType::Int32)),
-        BinOp::Eq => Some((FirBinOp::Eq, FirType::Int32)),
-        BinOp::Ne => Some((FirBinOp::Ne, FirType::Int32)),
-        // Bitwise operators: result is Int32 — independent of real_ty.
-        BinOp::And => Some((FirBinOp::And, FirType::Int32)),
-        BinOp::Or => Some((FirBinOp::Or, FirType::Int32)),
-        BinOp::Xor => Some((FirBinOp::Xor, FirType::Int32)),
-        BinOp::Lsh => Some((FirBinOp::Lsh, FirType::Int32)),
-        BinOp::ARsh => Some((FirBinOp::ARsh, FirType::Int32)),
-        BinOp::LRsh => Some((FirBinOp::LRsh, FirType::Int32)),
     }
 }

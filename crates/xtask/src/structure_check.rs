@@ -472,6 +472,15 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
                     ));
                 }
             }
+            // The shared leaf emitters are producer-side vocabulary (E3 of
+            // the legibility campaign): a checker deriving evidence through
+            // them would stop being independent of the producers.
+            if text.contains("leaf_emit") {
+                findings.push(format!(
+                    "{rel}: checker file references the producer-side `leaf_emit` module \
+                     (checkers re-derive their own evidence)"
+                ));
+            }
         }
 
         let in_vector_stage = rel.contains("signal_fir/vector/");

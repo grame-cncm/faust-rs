@@ -134,7 +134,6 @@ use super::error::{SignalFirError, SignalFirErrorCode};
 use super::recursion::RecursionState;
 
 mod arithmetic;
-pub(in crate::signal_fir) use arithmetic::map_binop;
 mod bra;
 mod build;
 mod clocked;

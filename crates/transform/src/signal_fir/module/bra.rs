@@ -1081,11 +1081,7 @@ impl<'a> SignalToFirLower<'a> {
     /// Uses `Float32` or `Float64` depending on `real_ty`.  Never emits
     /// `FaustFloat` — that type is reserved for external interface points.
     pub(super) fn float_const(&mut self, value: f64) -> FirId {
-        let mut b = FirBuilder::new(&mut self.store);
-        match self.real_ty {
-            FirType::Float64 => b.float64(value),
-            _ => b.float32(value as f32),
-        }
+        crate::signal_fir::leaf_emit::emit_real_const(&mut self.store, &self.real_ty, value)
     }
 
     /// Derives an initial state value from a signal if constant, otherwise `0`.

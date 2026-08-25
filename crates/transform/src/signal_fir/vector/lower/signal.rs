@@ -10,7 +10,7 @@ use super::tables::mutable_table_name;
 use crate::schedule::SchedulingStrategy;
 use crate::signal_fir::ControlRateMode;
 use crate::signal_fir::FirOrigins;
-use crate::signal_fir::module::map_binop;
+use crate::signal_fir::leaf_emit;
 use crate::signal_fir::vector::analysis::wrtbl_is_readonly;
 use crate::signal_fir::vector::clock_ad::{ClockGuard, VerifiedVectorClockAdPlan};
 use crate::signal_fir::vector::cse::{
@@ -54,6 +54,24 @@ struct LowerCursor<'c> {
     cache: &'c mut BTreeMap<u64, FirId>,
     /// Signals currently being lowered, per scope (cycle guard).
     active: &'c mut BTreeSet<(LowerScope, u64)>,
+}
+
+/// Adapter implementing [`leaf_emit::LeafPrototypes`] over the vector
+/// lowerer's prototype containers.
+struct VectorProtoSink<'a> {
+    /// Used math intrinsics.
+    math_ops: &'a mut HashSet<FirMathOp>,
+    /// Used integer helper names.
+    int_helpers: &'a mut BTreeSet<&'static str>,
+}
+
+impl leaf_emit::LeafPrototypes for VectorProtoSink<'_> {
+    fn note_math_op(&mut self, op: FirMathOp) {
+        self.math_ops.insert(op);
+    }
+    fn note_int_helper(&mut self, name: &'static str) {
+        self.int_helpers.insert(name);
+    }
 }
 struct PureVectorLowerer<'a> {
     prepared: &'a VerifiedPreparedSignals,
@@ -1982,37 +2000,30 @@ impl PureVectorLowerer<'_> {
         let lhs = self.lower_dep(scope, operands.0, cur)?;
         let rhs = self.lower_dep(scope, operands.1, cur)?;
         let result_type = self.fir_type(signal_id)?;
-        let (fir_op, typ) = map_binop(op, result_type.clone()).ok_or_else(|| {
-            PureVectorLowerError::UnsupportedSignal {
-                signal_id,
-                expression: format!("unsupported binary operator {}", op.name()),
+        leaf_emit::emit_binop(&mut self.store, op, result_type, lhs, rhs).map_err(|error| {
+            match error {
+                leaf_emit::LeafBinopError::UnsupportedOperator => {
+                    PureVectorLowerError::UnsupportedSignal {
+                        signal_id,
+                        expression: format!("unsupported binary operator {}", op.name()),
+                    }
+                }
+                leaf_emit::LeafBinopError::MissingOperandType { lhs, expected, .. } => {
+                    PureVectorLowerError::FirTypeMismatch {
+                        signal_id,
+                        expected,
+                        actual: lhs,
+                    }
+                }
+                leaf_emit::LeafBinopError::OperandContract { lhs, expected, .. } => {
+                    PureVectorLowerError::FirTypeMismatch {
+                        signal_id,
+                        expected,
+                        actual: Some(lhs),
+                    }
+                }
             }
-        })?;
-        let lhs_type = self.store.value_type(lhs);
-        let rhs_type = self.store.value_type(rhs);
-        let operands_ok = match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
-                lhs_type == Some(result_type.clone()) && rhs_type == Some(result_type)
-            }
-            BinOp::And | BinOp::Or | BinOp::Xor | BinOp::Lsh | BinOp::ARsh | BinOp::LRsh => {
-                lhs_type == Some(FirType::Int32) && rhs_type == Some(FirType::Int32)
-            }
-            BinOp::Gt | BinOp::Lt | BinOp::Ge | BinOp::Le | BinOp::Eq | BinOp::Ne => {
-                lhs_type == rhs_type
-                    && matches!(
-                        lhs_type,
-                        Some(FirType::Int32 | FirType::Float32 | FirType::Float64)
-                    )
-            }
-        };
-        if !operands_ok {
-            return Err(PureVectorLowerError::FirTypeMismatch {
-                signal_id,
-                expected: typ,
-                actual: lhs_type,
-            });
-        }
-        Ok(FirBuilder::new(&mut self.store).binop(fir_op, lhs, rhs, typ))
+        })
     }
 
     fn lower_math1(
@@ -2023,8 +2034,16 @@ impl PureVectorLowerer<'_> {
         cur: &mut LowerCursor<'_>,
     ) -> Result<FirId, PureVectorLowerError> {
         let value = self.lower_dep(scope, value, cur)?;
-        self.math_ops.insert(op);
-        Ok(FirBuilder::new(&mut self.store).math_call(op, &[value], self.real_type.clone()))
+        Ok(leaf_emit::emit_math_call1(
+            &mut self.store,
+            &mut VectorProtoSink {
+                math_ops: &mut self.math_ops,
+                int_helpers: &mut self.int_helpers,
+            },
+            op,
+            value,
+            self.real_type.clone(),
+        ))
     }
 
     fn lower_math2(
@@ -2037,8 +2056,17 @@ impl PureVectorLowerer<'_> {
     ) -> Result<FirId, PureVectorLowerError> {
         let lhs = self.lower_dep(scope, lhs, cur)?;
         let rhs = self.lower_dep(scope, rhs, cur)?;
-        self.math_ops.insert(op);
-        Ok(FirBuilder::new(&mut self.store).math_call(op, &[lhs, rhs], self.real_type.clone()))
+        Ok(leaf_emit::emit_math_call2(
+            &mut self.store,
+            &mut VectorProtoSink {
+                math_ops: &mut self.math_ops,
+                int_helpers: &mut self.int_helpers,
+            },
+            op,
+            lhs,
+            rhs,
+            self.real_type.clone(),
+        ))
     }
 
     fn lower_minmax(
@@ -2049,28 +2077,22 @@ impl PureVectorLowerer<'_> {
         is_min: bool,
         cur: &mut LowerCursor<'_>,
     ) -> Result<FirId, PureVectorLowerError> {
-        if self.fir_type(signal_id)? == FirType::Int32 {
-            let lhs = self.lower_dep(scope, operands.0, cur)?;
-            let rhs = self.lower_dep(scope, operands.1, cur)?;
-            let name = if is_min { "min_i" } else { "max_i" };
-            self.int_helpers.insert(name);
-            return Ok(FirBuilder::new(&mut self.store).fun_call(
-                name,
-                &[lhs, rhs],
-                FirType::Int32,
-            ));
-        }
-        self.lower_math2(
-            scope,
-            if is_min {
-                FirMathOp::Min
-            } else {
-                FirMathOp::Max
+        let result_ty = self.fir_type(signal_id)?;
+        let lhs = self.lower_dep(scope, operands.0, cur)?;
+        let rhs = self.lower_dep(scope, operands.1, cur)?;
+        let real_ty = self.real_type.clone();
+        Ok(leaf_emit::emit_minmax(
+            &mut self.store,
+            &mut VectorProtoSink {
+                math_ops: &mut self.math_ops,
+                int_helpers: &mut self.int_helpers,
             },
-            operands.0,
-            operands.1,
-            cur,
-        )
+            is_min,
+            &result_ty,
+            real_ty,
+            lhs,
+            rhs,
+        ))
     }
 
     fn lower_abs(
@@ -2080,12 +2102,19 @@ impl PureVectorLowerer<'_> {
         value: SigId,
         cur: &mut LowerCursor<'_>,
     ) -> Result<FirId, PureVectorLowerError> {
-        if self.fir_type(signal_id)? == FirType::Int32 {
-            let value = self.lower_dep(scope, value, cur)?;
-            self.int_helpers.insert("abs");
-            return Ok(FirBuilder::new(&mut self.store).fun_call("abs", &[value], FirType::Int32));
-        }
-        self.lower_math1(scope, FirMathOp::Abs, value, cur)
+        let result_ty = self.fir_type(signal_id)?;
+        let value = self.lower_dep(scope, value, cur)?;
+        let real_ty = self.real_type.clone();
+        Ok(leaf_emit::emit_abs(
+            &mut self.store,
+            &mut VectorProtoSink {
+                math_ops: &mut self.math_ops,
+                int_helpers: &mut self.int_helpers,
+            },
+            &result_ty,
+            real_ty,
+            value,
+        ))
     }
 
     fn lower_input(&mut self, index: i32) -> Result<FirId, PureVectorLowerError> {
@@ -2122,12 +2151,7 @@ impl PureVectorLowerer<'_> {
     }
 
     fn float_const(&mut self, value: f64) -> FirId {
-        let mut builder = FirBuilder::new(&mut self.store);
-        match self.real_type {
-            FirType::Float32 => builder.float32(value as f32),
-            FirType::Float64 => builder.float64(value),
-            _ => unreachable!("real type checked at entry"),
-        }
+        leaf_emit::emit_real_const(&mut self.store, &self.real_type, value)
     }
 
     /// Mirrors scalar `SignalFirLower::lower_fconst` for the canonical Faust

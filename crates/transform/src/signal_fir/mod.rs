@@ -70,6 +70,7 @@ pub mod decoration_verify;
 mod delay;
 pub mod diagnostics;
 mod error;
+mod leaf_emit;
 mod loop_graph;
 mod module;
 mod one_sample;
