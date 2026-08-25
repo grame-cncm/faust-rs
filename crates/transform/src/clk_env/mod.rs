@@ -452,7 +452,7 @@ impl<'a> Inference<'a> {
             let def_env = self.infer(def)?;
             acc = self.max(sig, acc, def_env)?;
         }
-        return Ok(acc);
+        Ok(acc)
     }
 
     /// `R_CD` over one OD/US/DS wrapper: the first child must be

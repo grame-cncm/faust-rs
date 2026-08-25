@@ -35,30 +35,18 @@ pub(super) struct FinalModuleContext<'a> {
     /// Generated-table `SubModule` nodes carried by this module.
     pub(super) sub_modules: &'a [FirId],
 }
-pub(super) fn assemble_module(
+/// Declares the instance lifecycle functions: an empty `metadata`,
+/// `instanceConstants` (sample-rate store plus once-at-init table fills),
+/// `instanceResetUserInterface`, `instanceClear`, and `buildUserInterface`.
+fn declare_instance_functions(
     store: &mut FirStore,
     context: &FinalModuleContext<'_>,
-) -> Result<FirId, VectorModuleFailure> {
-    let module_name = context.module_name;
-    let num_inputs = context.num_inputs;
-    let num_outputs = context.num_outputs;
-    let real_type = context.real_type.clone();
-    let vec_size = context.vec_size;
-    let loop_variant = context.loop_variant;
-    let control_statements = context.control_statements;
-    let table_declarations = context.table_declarations;
+    dsp_arg: &NamedType,
+    dsp_arg_type: &FirType,
+) -> (FirId, FirId, FirId, FirId, FirId) {
     let table_init_statements = context.table_init_statements;
-    let math_ops = context.math_ops;
-    let int_helpers = context.int_helpers;
-    let assembly = context.assembly;
-    let control_output_stores = context.control_output_stores;
     let ui_fir = context.ui_fir;
-    let static_declarations = context.static_declarations;
-    let dsp_arg_type = FirType::Ptr(Box::new(FirType::Obj));
-    let dsp_arg = NamedType {
-        name: "dsp".to_owned(),
-        typ: dsp_arg_type.clone(),
-    };
+    let assembly = context.assembly;
     let empty = FirBuilder::new(store).block(&[]);
     let metadata = FirBuilder::new(store).declare_fun(
         "metadata",
@@ -106,9 +94,9 @@ pub(super) fn assemble_module(
 
     let reset_body = FirBuilder::new(store).block(&ui_fir.reset_statements);
     let instance_reset_ui =
-        lifecycle_function(store, "instanceResetUserInterface", &dsp_arg, reset_body);
+        lifecycle_function(store, "instanceResetUserInterface", dsp_arg, reset_body);
     let clear_body = FirBuilder::new(store).block(&assembly.clear_statements);
-    let instance_clear = lifecycle_function(store, "instanceClear", &dsp_arg, clear_body);
+    let instance_clear = lifecycle_function(store, "instanceClear", dsp_arg, clear_body);
     let ui_body = FirBuilder::new(store).block(&ui_fir.build_statements);
     let build_ui = FirBuilder::new(store).declare_fun(
         "buildUserInterface",
@@ -127,6 +115,29 @@ pub(super) fn assemble_module(
         false,
     );
 
+    (
+        metadata,
+        instance_constants,
+        instance_reset_ui,
+        instance_clear,
+        build_ui,
+    )
+}
+
+/// Declares the vector `compute` entry point: the control preamble, the
+/// assembly's local declarations, and the `-lv`-selected chunk driver over
+/// the assembled top-level statement (plus the control-output fill loop).
+fn declare_compute_function(
+    store: &mut FirStore,
+    context: &FinalModuleContext<'_>,
+    dsp_arg: &NamedType,
+    dsp_arg_type: &FirType,
+) -> Result<FirId, VectorModuleFailure> {
+    let assembly = context.assembly;
+    let control_statements = context.control_statements;
+    let control_output_stores = context.control_output_stores;
+    let vec_size = context.vec_size;
+    let loop_variant = context.loop_variant;
     let chunk = if control_output_stores.is_empty() {
         assembly.top_level_statement
     } else {
@@ -169,6 +180,30 @@ pub(super) fn assemble_module(
         false,
     );
 
+    Ok(compute)
+}
+
+pub(super) fn assemble_module(
+    store: &mut FirStore,
+    context: &FinalModuleContext<'_>,
+) -> Result<FirId, VectorModuleFailure> {
+    let module_name = context.module_name;
+    let num_inputs = context.num_inputs;
+    let num_outputs = context.num_outputs;
+    let real_type = context.real_type.clone();
+    let table_declarations = context.table_declarations;
+    let math_ops = context.math_ops;
+    let int_helpers = context.int_helpers;
+    let assembly = context.assembly;
+    let static_declarations = context.static_declarations;
+    let dsp_arg_type = FirType::Ptr(Box::new(FirType::Obj));
+    let dsp_arg = NamedType {
+        name: "dsp".to_owned(),
+        typ: dsp_arg_type.clone(),
+    };
+    let (metadata, instance_constants, instance_reset_ui, instance_clear, build_ui) =
+        declare_instance_functions(store, context, &dsp_arg, &dsp_arg_type);
+    let compute = declare_compute_function(store, context, &dsp_arg, &dsp_arg_type)?;
     // Execution-options port phase 5: emit `control(dsp)` when externalized
     // control statements exist. The host owns its scheduling; compute never
     // calls it implicitly (plan provenance: §2.3).
@@ -223,7 +258,7 @@ pub(super) fn assemble_module(
     let sample_rate_field =
         FirBuilder::new(store).declare_var("fSampleRate", FirType::Int32, AccessType::Struct, None);
     let mut fields = vec![sample_rate_field];
-    fields.extend(ui_fir.struct_declarations.iter().copied());
+    fields.extend(context.ui_fir.struct_declarations.iter().copied());
     for (name, typ) in context.control_state_fields {
         let decl =
             FirBuilder::new(store).declare_var(name.clone(), typ.clone(), AccessType::Struct, None);

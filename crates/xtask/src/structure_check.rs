@@ -54,7 +54,9 @@
 //!    The list is cross-checked both ways: every entry must name a function
 //!    that exists, still exceeds the threshold (a decomposed function must
 //!    be removed from the list), and has not grown past its recorded
-//!    ceiling.
+//!    ceiling. The list has been empty since 2026-08-25 — E2 decomposed all
+//!    twenty original entries — so a new oversized function is decomposed,
+//!    not listed;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -208,13 +210,10 @@ const MAX_PRODUCTION_FN_LINES: usize = 200;
 /// Functions still over [`MAX_PRODUCTION_FN_LINES`], each with the ceiling
 /// it measured when listed. Cross-checked both ways: an entry whose function
 /// no longer exists, no longer exceeds the threshold, or exceeds its ceiling
-/// is a finding. Decomposing a function removes its entry; the ceiling only
-/// ever goes down.
-const OVERSIZED_FUNCTIONS: [(&str, &str, usize); 3] = [
-    ("crates/transform/src/signal_fir/vector/verify/error.rs", "fmt", 238),
-    ("crates/transform/src/signal_fir/vector/module/build.rs", "build_verified_vector_module_with_evidence", 230),
-    ("crates/transform/src/signal_fir/vector/module/lifecycle.rs", "assemble_module", 209),
-];
+/// is a finding. Empty since 2026-08-25 (E2 decomposed all twenty original
+/// entries, from `build_module` at 757 lines down): keep it empty by
+/// decomposing, and list a function again only as a last resort.
+const OVERSIZED_FUNCTIONS: [(&str, &str, usize); 0] = [];
 
 /// Scans one production file's text for function spans `(name, line_count)`.
 ///

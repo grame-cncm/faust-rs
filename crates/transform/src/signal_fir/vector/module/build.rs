@@ -96,120 +96,25 @@ pub(super) struct BuiltVectorModule {
     /// DSP struct fields created by external-control promotion.
     pub(super) control_state_fields: Vec<(String, FirType)>,
 }
-pub(super) fn build_verified_vector_module_with_evidence(
+/// Materializes the outputs, assembles the final FIR module, verifies it
+/// against the accepted artifacts, and packages the built module with its
+/// evidence.
+#[allow(clippy::too_many_arguments)]
+fn finish_vector_module(
     prepared: &VerifiedPreparedSignals,
     context: &VectorModuleContext<'_>,
+    mut program: crate::signal_fir::vector::lower::VerifiedPureVectorProgram,
+    state_plan: &crate::signal_fir::vector::state::VerifiedVectorStatePlan,
+    clock_plan: &crate::signal_fir::vector::clock_ad::VerifiedVectorClockAdPlan,
+    vec_size: u32,
+    loop_variant: u8,
+    trace_stage: &mut dyn FnMut(&str),
 ) -> Result<BuiltVectorModule, VectorModuleFailure> {
-    let domains = context.domains;
     let ui = context.ui;
     let num_inputs = context.num_inputs;
     let num_outputs = context.num_outputs;
     let module_name = context.module_name;
     let real_type = context.real_type.clone();
-    let max_copy_delay = context.max_copy_delay;
-    let compute_mode = context.compute_mode;
-    let strategy = context.strategy;
-    let ComputeMode::Vector {
-        vec_size,
-        loop_variant,
-    } = compute_mode
-    else {
-        return Err(VectorModuleFailure::new(
-            VectorFallbackReason::VectorPlan,
-            "checked vector module requested for scalar compute mode",
-        ));
-    };
-    let timing_enabled = std::env::var_os("FAUST_RS_VECTOR_TIMING").is_some();
-    let mut stage_started = std::time::Instant::now();
-    let mut trace_stage = |stage: &str| {
-        if timing_enabled {
-            eprintln!(
-                "[vector-stage] {stage}: {:.3}s",
-                stage_started.elapsed().as_secs_f64()
-            );
-        }
-        stage_started = std::time::Instant::now();
-    };
-
-    let clocks = crate::clk_env::annotate(prepared.arena(), domains, prepared.outputs()).map_err(
-        |error| VectorModuleFailure::new(VectorFallbackReason::ClockAnalysis, error.to_string()),
-    )?;
-    trace_stage("clock-analysis");
-    let decorations = certify_decorations(prepared, &clocks).map_err(|error| {
-        VectorModuleFailure::new(VectorFallbackReason::Decorations, error.to_string())
-    })?;
-    trace_stage("decorations");
-    let vector_plan = build_vector_plan_with_lockstep(prepared, &decorations, u64::from(vec_size))
-        .map_err(|error| {
-            VectorModuleFailure::new(VectorFallbackReason::VectorPlan, error.to_string())
-        })?;
-    trace_stage("vector-plan");
-    reject_cross_loop_delay_read_transports(&decorations, vector_plan.plan())?;
-    trace_stage("recursive-transport-guard");
-    let clock_plan = build_vector_clock_ad_plan(prepared, domains, &decorations, &vector_plan)
-        .map_err(|error| {
-            VectorModuleFailure::new(VectorFallbackReason::ClockAdPlan, error.to_string())
-        })?;
-    if let Some(fallback) = clock_plan.plan().reverse_ad_fallbacks.first() {
-        return Err(VectorModuleFailure::new(
-            VectorFallbackReason::ReverseAd,
-            format!(
-                "{}: signal {} requires fixed {:?} epochs",
-                fallback.diagnostic.message(),
-                fallback.signal_id,
-                fallback.epochs
-            ),
-        ));
-    }
-    trace_stage("clock-ad-plan");
-    let state_plan = build_vector_state_plan_with_clock(
-        prepared,
-        &decorations,
-        &vector_plan,
-        &clock_plan,
-        u64::from(max_copy_delay),
-    )
-    .map_err(|error| {
-        VectorModuleFailure::new(VectorFallbackReason::StatePlan, error.to_string())
-    })?;
-    trace_stage("state-plan");
-    precheck_state_event_bound(&vector_plan, &state_plan, DEFAULT_EVENT_LIMITS).map_err(
-        |error| VectorModuleFailure::new(VectorFallbackReason::EventCertificate, error.to_string()),
-    )?;
-    trace_stage("event-bound-precheck");
-    let mut program = lower_vector_program(
-        prepared,
-        &vector_plan,
-        &state_plan,
-        &clock_plan,
-        &VectorLoweringContext {
-            ui,
-            strategy,
-            real_type: real_type.clone(),
-            num_inputs,
-            control_rate_mode: context.control_rate_mode,
-            module_name,
-            table_init_mode: context.table_init_mode,
-            table_init_sample_rate: context.table_init_sample_rate,
-            max_copy_delay,
-            delay_line_threshold: context.delay_line_threshold,
-        },
-    )
-    .map_err(|error| {
-        VectorModuleFailure::new(VectorFallbackReason::PureLowering, error.to_string())
-    })?;
-    trace_stage("vector-lowering");
-    build_state_event_order_certificate(
-        &vector_plan,
-        program.routed(),
-        &state_plan,
-        DEFAULT_EVENT_LIMITS,
-    )
-    .map_err(|error| {
-        VectorModuleFailure::new(VectorFallbackReason::EventCertificate, error.to_string())
-    })?;
-    trace_stage("event-certificate");
-
     let routed = program.routed().clone();
     let mut loop_inputs = program
         .regions()
@@ -233,7 +138,7 @@ pub(super) fn build_verified_vector_module_with_evidence(
             control_statements: &mut control_statements,
             control_output_stores: &mut control_output_stores,
             clock_output_stores: &mut clock_output_stores,
-            clock_plan: &clock_plan,
+            clock_plan,
             store: program.store_mut(),
         },
     )?;
@@ -244,8 +149,8 @@ pub(super) fn build_verified_vector_module_with_evidence(
     }
     let assembly = assemble_vector_fir(
         &routed,
-        Some(&state_plan),
-        Some(&clock_plan),
+        Some(state_plan),
+        Some(clock_plan),
         &loop_inputs,
         &clock_output_stores,
         real_type.clone(),
@@ -325,6 +230,132 @@ pub(super) fn build_verified_vector_module_with_evidence(
         external_control_statements,
         control_state_fields,
     })
+}
+
+pub(super) fn build_verified_vector_module_with_evidence(
+    prepared: &VerifiedPreparedSignals,
+    context: &VectorModuleContext<'_>,
+) -> Result<BuiltVectorModule, VectorModuleFailure> {
+    let domains = context.domains;
+    let ui = context.ui;
+    let num_inputs = context.num_inputs;
+    let _num_outputs = context.num_outputs;
+    let module_name = context.module_name;
+    let real_type = context.real_type.clone();
+    let max_copy_delay = context.max_copy_delay;
+    let compute_mode = context.compute_mode;
+    let strategy = context.strategy;
+    let ComputeMode::Vector {
+        vec_size,
+        loop_variant,
+    } = compute_mode
+    else {
+        return Err(VectorModuleFailure::new(
+            VectorFallbackReason::VectorPlan,
+            "checked vector module requested for scalar compute mode",
+        ));
+    };
+    let timing_enabled = std::env::var_os("FAUST_RS_VECTOR_TIMING").is_some();
+    let mut stage_started = std::time::Instant::now();
+    let mut trace_stage = |stage: &str| {
+        if timing_enabled {
+            eprintln!(
+                "[vector-stage] {stage}: {:.3}s",
+                stage_started.elapsed().as_secs_f64()
+            );
+        }
+        stage_started = std::time::Instant::now();
+    };
+
+    let clocks = crate::clk_env::annotate(prepared.arena(), domains, prepared.outputs()).map_err(
+        |error| VectorModuleFailure::new(VectorFallbackReason::ClockAnalysis, error.to_string()),
+    )?;
+    trace_stage("clock-analysis");
+    let decorations = certify_decorations(prepared, &clocks).map_err(|error| {
+        VectorModuleFailure::new(VectorFallbackReason::Decorations, error.to_string())
+    })?;
+    trace_stage("decorations");
+    let vector_plan = build_vector_plan_with_lockstep(prepared, &decorations, u64::from(vec_size))
+        .map_err(|error| {
+            VectorModuleFailure::new(VectorFallbackReason::VectorPlan, error.to_string())
+        })?;
+    trace_stage("vector-plan");
+    reject_cross_loop_delay_read_transports(&decorations, vector_plan.plan())?;
+    trace_stage("recursive-transport-guard");
+    let clock_plan = build_vector_clock_ad_plan(prepared, domains, &decorations, &vector_plan)
+        .map_err(|error| {
+            VectorModuleFailure::new(VectorFallbackReason::ClockAdPlan, error.to_string())
+        })?;
+    if let Some(fallback) = clock_plan.plan().reverse_ad_fallbacks.first() {
+        return Err(VectorModuleFailure::new(
+            VectorFallbackReason::ReverseAd,
+            format!(
+                "{}: signal {} requires fixed {:?} epochs",
+                fallback.diagnostic.message(),
+                fallback.signal_id,
+                fallback.epochs
+            ),
+        ));
+    }
+    trace_stage("clock-ad-plan");
+    let state_plan = build_vector_state_plan_with_clock(
+        prepared,
+        &decorations,
+        &vector_plan,
+        &clock_plan,
+        u64::from(max_copy_delay),
+    )
+    .map_err(|error| {
+        VectorModuleFailure::new(VectorFallbackReason::StatePlan, error.to_string())
+    })?;
+    trace_stage("state-plan");
+    precheck_state_event_bound(&vector_plan, &state_plan, DEFAULT_EVENT_LIMITS).map_err(
+        |error| VectorModuleFailure::new(VectorFallbackReason::EventCertificate, error.to_string()),
+    )?;
+    trace_stage("event-bound-precheck");
+    let program = lower_vector_program(
+        prepared,
+        &vector_plan,
+        &state_plan,
+        &clock_plan,
+        &VectorLoweringContext {
+            ui,
+            strategy,
+            real_type: real_type.clone(),
+            num_inputs,
+            control_rate_mode: context.control_rate_mode,
+            module_name,
+            table_init_mode: context.table_init_mode,
+            table_init_sample_rate: context.table_init_sample_rate,
+            max_copy_delay,
+            delay_line_threshold: context.delay_line_threshold,
+        },
+    )
+    .map_err(|error| {
+        VectorModuleFailure::new(VectorFallbackReason::PureLowering, error.to_string())
+    })?;
+    trace_stage("vector-lowering");
+    build_state_event_order_certificate(
+        &vector_plan,
+        program.routed(),
+        &state_plan,
+        DEFAULT_EVENT_LIMITS,
+    )
+    .map_err(|error| {
+        VectorModuleFailure::new(VectorFallbackReason::EventCertificate, error.to_string())
+    })?;
+    trace_stage("event-certificate");
+
+    finish_vector_module(
+        prepared,
+        context,
+        program,
+        &state_plan,
+        &clock_plan,
+        vec_size,
+        loop_variant,
+        &mut trace_stage,
+    )
 }
 
 /// Removes the pure `Drop` roots used to seed CSE after the checked lowering

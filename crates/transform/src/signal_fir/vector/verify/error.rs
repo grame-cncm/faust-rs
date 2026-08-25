@@ -338,76 +338,10 @@ pub enum VectorPlanError {
         consumer: u64,
     },
 }
-impl fmt::Display for VectorPlanError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnsupportedSchema { found } => {
-                write!(f, "unsupported vector-plan schema {found}")
-            }
-            Self::VecSizeZero => write!(f, "vec_size must be positive"),
-            Self::NotCanonical { what, at } => {
-                write!(f, "{what} is not strictly ascending at index {at}")
-            }
-            Self::EpochCoverageMismatch { loop_id } => {
-                write!(f, "loop {loop_id} is not owned by exactly one epoch")
-            }
-            Self::EpochLoopUnknown { epoch_id, loop_id } => {
-                write!(f, "epoch {epoch_id} lists unknown loop {loop_id}")
-            }
-            Self::OwnedSignalNotRoot { signal_id, loop_id } => write!(
-                f,
-                "signal {signal_id} is Owned({loop_id}) but not a root of that loop"
-            ),
-            Self::RootWithoutOwnership { signal_id, loop_id } => write!(
-                f,
-                "signal {signal_id} is a root of loop {loop_id} but not placed Owned({loop_id})"
-            ),
-            Self::RootUnknownSignal { loop_id, signal_id } => {
-                write!(f, "loop {loop_id} root {signal_id} is not a plan signal")
-            }
-            Self::InlineNotDuplicable { signal_id } => {
-                write!(f, "Inline signal {signal_id} is not duplicable")
-            }
-            Self::DuplicabilityMismatch { signal_id } => write!(
-                f,
-                "signal {signal_id} duplicable bit disagrees with its effects"
-            ),
-            Self::LoopEpochMismatch {
-                loop_id,
-                declared,
-                actual,
-            } => write!(
-                f,
-                "loop {loop_id} declares epoch {declared} but belongs to epoch {actual}"
-            ),
-            Self::EdgeEndpointUnknown { edge, missing } => {
-                write!(f, "edge {edge:?} references unknown loop {missing}")
-            }
-            Self::LoopSelfEdge { loop_id } => write!(f, "loop {loop_id} depends on itself"),
-            Self::EpochNotAcyclic {
-                epoch_id,
-                remaining,
-            } => write!(
-                f,
-                "epoch {epoch_id} induced graph has a cycle: {remaining:?}"
-            ),
-            Self::UnorderedEffectConflict { left, right } => write!(
-                f,
-                "loops {left} and {right} have conflicting unordered effects"
-            ),
-            Self::TransportSelfLoop { transport_id } => {
-                write!(f, "transport {transport_id} producer == consumer")
-            }
-            Self::TransportTypeMismatch { transport_id } => write!(
-                f,
-                "transport {transport_id} element type != its signal's value type"
-            ),
-            Self::TransportLengthMismatch { transport_id } => {
-                write!(f, "transport {transport_id} length != vec_size")
-            }
-            Self::TransportLayoutMismatch { transport_id } => {
-                write!(f, "transport {transport_id} has an invalid lockstep layout")
-            }
+impl VectorPlanError {
+    /// Formats the lockstep-bundle error family; `None` for other variants.
+    fn fmt_lockstep(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+        Some(match self {
             Self::LockstepWidthMismatch { bundle_id } => {
                 write!(f, "lockstep bundle {bundle_id} has an inconsistent width")
             }
@@ -447,31 +381,14 @@ impl fmt::Display for VectorPlanError {
                 f,
                 "lockstep bundle {bundle_id} lane {loop_id} has an invalid isomorphism witness"
             ),
-            Self::BarrierViolation { edge } => {
-                write!(f, "cross-epoch edge {edge:?} runs a barrier backwards")
-            }
-            Self::SerialLoopNotSerial { loop_id } => {
-                write!(
-                    f,
-                    "serial (recursive/island) loop {loop_id} asserted vector-safe"
-                )
-            }
-            Self::VectorizableWithoutWitness { loop_id } => {
-                write!(f, "vectorizable loop {loop_id} has no VecSafe witness")
-            }
-            Self::VectorizableNotSafe { loop_id } => {
-                write!(f, "vectorizable loop {loop_id} does not satisfy VecSafe")
-            }
-            Self::WitnessUnknownLoop { loop_id } => {
-                write!(f, "VecSafe witness references unknown loop {loop_id}")
-            }
-            Self::TransportUnknownRef {
-                transport_id,
-                missing,
-            } => write!(
-                f,
-                "transport {transport_id} references unknown id {missing}"
-            ),
+            _ => return None,
+        })
+    }
+
+    /// Formats the fused-serial-group error family; `None` for other
+    /// variants.
+    fn fmt_fused_group(&self, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+        Some(match self {
             Self::FusedGroupEmpty { group_id, what } => {
                 write!(f, "fused group {group_id} has empty {what}")
             }
@@ -574,6 +491,117 @@ impl fmt::Display for VectorPlanError {
             Self::FusedGroupDangerousCrossingMissing { producer, consumer } => write!(
                 f,
                 "state-mediated immediate delay crossing {producer} -> {consumer} is not covered by a fused group"
+            ),
+            _ => return None,
+        })
+    }
+}
+
+impl fmt::Display for VectorPlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(done) = self.fmt_lockstep(f) {
+            return done;
+        }
+        if let Some(done) = self.fmt_fused_group(f) {
+            return done;
+        }
+        match self {
+            Self::UnsupportedSchema { found } => {
+                write!(f, "unsupported vector-plan schema {found}")
+            }
+            Self::VecSizeZero => write!(f, "vec_size must be positive"),
+            Self::NotCanonical { what, at } => {
+                write!(f, "{what} is not strictly ascending at index {at}")
+            }
+            Self::EpochCoverageMismatch { loop_id } => {
+                write!(f, "loop {loop_id} is not owned by exactly one epoch")
+            }
+            Self::EpochLoopUnknown { epoch_id, loop_id } => {
+                write!(f, "epoch {epoch_id} lists unknown loop {loop_id}")
+            }
+            Self::OwnedSignalNotRoot { signal_id, loop_id } => write!(
+                f,
+                "signal {signal_id} is Owned({loop_id}) but not a root of that loop"
+            ),
+            Self::RootWithoutOwnership { signal_id, loop_id } => write!(
+                f,
+                "signal {signal_id} is a root of loop {loop_id} but not placed Owned({loop_id})"
+            ),
+            Self::RootUnknownSignal { loop_id, signal_id } => {
+                write!(f, "loop {loop_id} root {signal_id} is not a plan signal")
+            }
+            Self::InlineNotDuplicable { signal_id } => {
+                write!(f, "Inline signal {signal_id} is not duplicable")
+            }
+            Self::DuplicabilityMismatch { signal_id } => write!(
+                f,
+                "signal {signal_id} duplicable bit disagrees with its effects"
+            ),
+            Self::LoopEpochMismatch {
+                loop_id,
+                declared,
+                actual,
+            } => write!(
+                f,
+                "loop {loop_id} declares epoch {declared} but belongs to epoch {actual}"
+            ),
+            Self::EdgeEndpointUnknown { edge, missing } => {
+                write!(f, "edge {edge:?} references unknown loop {missing}")
+            }
+            Self::LoopSelfEdge { loop_id } => write!(f, "loop {loop_id} depends on itself"),
+            Self::EpochNotAcyclic {
+                epoch_id,
+                remaining,
+            } => write!(
+                f,
+                "epoch {epoch_id} induced graph has a cycle: {remaining:?}"
+            ),
+            Self::UnorderedEffectConflict { left, right } => write!(
+                f,
+                "loops {left} and {right} have conflicting unordered effects"
+            ),
+            Self::TransportSelfLoop { transport_id } => {
+                write!(f, "transport {transport_id} producer == consumer")
+            }
+            Self::TransportTypeMismatch { transport_id } => write!(
+                f,
+                "transport {transport_id} element type != its signal's value type"
+            ),
+            Self::TransportLengthMismatch { transport_id } => {
+                write!(f, "transport {transport_id} length != vec_size")
+            }
+            Self::TransportLayoutMismatch { transport_id } => {
+                write!(f, "transport {transport_id} has an invalid lockstep layout")
+            }
+            Self::BarrierViolation { edge } => {
+                write!(f, "cross-epoch edge {edge:?} runs a barrier backwards")
+            }
+            Self::SerialLoopNotSerial { loop_id } => {
+                write!(
+                    f,
+                    "serial (recursive/island) loop {loop_id} asserted vector-safe"
+                )
+            }
+            Self::VectorizableWithoutWitness { loop_id } => {
+                write!(f, "vectorizable loop {loop_id} has no VecSafe witness")
+            }
+            Self::VectorizableNotSafe { loop_id } => {
+                write!(f, "vectorizable loop {loop_id} does not satisfy VecSafe")
+            }
+            Self::WitnessUnknownLoop { loop_id } => {
+                write!(f, "VecSafe witness references unknown loop {loop_id}")
+            }
+            Self::TransportUnknownRef {
+                transport_id,
+                missing,
+            } => write!(
+                f,
+                "transport {transport_id} references unknown id {missing}"
+            ),
+            // Exhaustiveness lives in the two family formatters above; a
+            // variant reaching this arm means one of them lost its case.
+            other => unreachable!(
+                "lockstep/fused-group variant {other:?} must be formatted by its family formatter"
             ),
         }
     }
