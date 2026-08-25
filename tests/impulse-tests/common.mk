@@ -33,7 +33,15 @@ FAUSTLIBS ?= /usr/local/share/faust
 
 # --- native build / comparison ---------------------------------------------
 CXX      ?= c++
-CXXFLAGS ?= -O3 -I$(FAUST_ARCH) -I$(CPP_TESTS)/archs -pthread -std=c++11
+# `-fwrapv`: Faust-generated code assumes two's-complement wrapping for the
+# integer noise LCG (`1103515245 * i + 12345` overflows `int`, which is UB
+# in C/C++). Apple clang 21 started exploiting that UB at -O2/-O3 — the
+# fill-loop variant miscompiles (caught by `make cpp` on table.dsp, where
+# the C++ reference, our interpreter, and our -O0/-fwrapv builds all agree
+# and only the optimized no-wrapv build diverges). Applies to reference
+# builds too: rebuilding the reference without it produces the same wrong
+# values.
+CXXFLAGS ?= -O3 -fwrapv -I$(FAUST_ARCH) -I$(CPP_TESTS)/archs -pthread -std=c++11
 COMPARE  ?= ./tools/filesCompare
 
 # Total reference frames (4 passes of 15000) and the scalar-only prefix the

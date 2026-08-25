@@ -44,7 +44,7 @@ EXECDEFS ?=
 # `archs/faust_minimal*.h`, so unlike `common.mk`'s CXXFLAGS they do NOT include
 # the C++ Faust `architecture/` tree. Keeping FAUST_ARCH out is deliberate — it
 # is what makes `-ec`/`-os` runnable without a C++ Faust checkout.
-CXXFLAGS_EXECOPTS ?= -O3 -Iarchs -pthread -std=c++11
+CXXFLAGS_EXECOPTS ?= -O3 -fwrapv -Iarchs -pthread -std=c++11
 
 allnames  := $(dspfiles:$(dspdir)/%.dsp=%)
 testnames := $(filter-out $(call known_fail_for,$(outdir)),$(allnames))

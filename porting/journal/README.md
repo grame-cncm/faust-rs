@@ -146,3 +146,4 @@ Files are listed chronologically (oldest day first). Inside each file, entries a
 - [2026-08-18](./2026-08-18.md) (12 entries)
 - [2026-08-19](./2026-08-19.md) (3 entries)
 - [2026-08-25](./2026-08-25.md) (18 entries)
+- [2026-08-26](./2026-08-26.md) (1 entry)

@@ -479,7 +479,7 @@ fn recursive_short_delay_cpp_has_one_fused_read_compute_write_loop() {
         .find("transport_s23_l2_l1 = vstate_s22_tmp")
         .expect("recursive delayed read in fused loop");
     let write = fused
-        .find("vstate_s22_tmp[(4 + (i0 - vindex))] =")
+        .find("vstate_s22_tmp[faust_wrap_add(4, faust_wrap_sub(i0, vindex))] =")
         .expect("recursive state write in fused loop");
     assert!(read < write, "delayed read must precede the state write");
     let tail = fused

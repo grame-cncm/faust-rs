@@ -366,9 +366,20 @@ pub(crate) fn unwrap_condition(cond: &str) -> &str {
     cond
 }
 
-pub(crate) fn emit_binop_expr(op: FirBinOp, lhs: &str, rhs: &str) -> String {
+pub(crate) fn emit_binop_expr(op: FirBinOp, lhs: &str, rhs: &str, typ: &FirType) -> String {
     match op {
         FirBinOp::LRsh => format!("((int32_t)(((uint32_t)({lhs})) >> ({rhs})))"),
+        // Integer add/sub/mul must wrap in two's complement — the semantics
+        // every other backend already makes explicit (Rust `wrapping_*`,
+        // Julia `faust_wrap_int32`, WASM/Cranelift by spec) and that the
+        // noise LCG (`1103515245 * i + 12345`) relies on. Signed overflow is
+        // UB in C/C++ (Apple clang 21 miscompiles the table-fill LCG at
+        // -O2/-O3 without this), so these render as the `faust_wrap_*`
+        // helpers both preambles define: the arithmetic runs on `uint32_t`
+        // (defined modulo 2^32) and converts back.
+        FirBinOp::Add if *typ == FirType::Int32 => format!("faust_wrap_add({lhs}, {rhs})"),
+        FirBinOp::Sub if *typ == FirType::Int32 => format!("faust_wrap_sub({lhs}, {rhs})"),
+        FirBinOp::Mul if *typ == FirType::Int32 => format!("faust_wrap_mul({lhs}, {rhs})"),
         _ => format!("({lhs} {} {rhs})", emit_binop(op)),
     }
 }
@@ -588,8 +599,8 @@ pub(crate) fn emit_value_common<E>(
             Ok(value) => Ok(format!("({} = {value})", (ctx.var_ref)(&name, access))),
             Err(err) => Err(err),
         },
-        FirMatch::BinOp { op, lhs, rhs, .. } => match ((ctx.recurse)(lhs), (ctx.recurse)(rhs)) {
-            (Ok(lhs), Ok(rhs)) => Ok(emit_binop_expr(op, &lhs, &rhs)),
+        FirMatch::BinOp { op, lhs, rhs, typ } => match ((ctx.recurse)(lhs), (ctx.recurse)(rhs)) {
+            (Ok(lhs), Ok(rhs)) => Ok(emit_binop_expr(op, &lhs, &rhs, &typ)),
             (Err(err), _) | (_, Err(err)) => Err(err),
         },
         FirMatch::Neg { value, .. } => match (ctx.recurse)(value) {
@@ -1144,8 +1155,38 @@ mod tests {
 
     #[test]
     fn emit_binop_expr_renders_plain_infix() {
-        assert_eq!(emit_binop_expr(FirBinOp::Add, "a", "b"), "(a + b)");
-        assert_eq!(emit_binop_expr(FirBinOp::Lt, "x", "1"), "(x < 1)");
+        assert_eq!(
+            emit_binop_expr(FirBinOp::Add, "a", "b", &FirType::Float64),
+            "(a + b)"
+        );
+        assert_eq!(
+            emit_binop_expr(FirBinOp::Lt, "x", "1", &FirType::Int32),
+            "(x < 1)"
+        );
+    }
+
+    #[test]
+    fn emit_binop_expr_wraps_integer_arithmetic_in_unsigned_round_trips() {
+        // Signed overflow is UB in C/C++; integer add/sub/mul run on
+        // `uint32_t` (defined modulo 2^32) and convert back, so the noise
+        // LCG keeps the wrapping semantics every other backend spells out.
+        assert_eq!(
+            emit_binop_expr(FirBinOp::Mul, "1103515245", "iRec0", &FirType::Int32),
+            "faust_wrap_mul(1103515245, iRec0)"
+        );
+        assert_eq!(
+            emit_binop_expr(FirBinOp::Add, "a", "b", &FirType::Int32),
+            "faust_wrap_add(a, b)"
+        );
+        assert_eq!(
+            emit_binop_expr(FirBinOp::Sub, "a", "b", &FirType::Int32),
+            "faust_wrap_sub(a, b)"
+        );
+        // Integer division and comparisons stay plain infix.
+        assert_eq!(
+            emit_binop_expr(FirBinOp::Div, "a", "b", &FirType::Int32),
+            "(a / b)"
+        );
     }
 
     #[test]
@@ -1180,7 +1221,7 @@ mod tests {
     #[test]
     fn emit_binop_expr_renders_logical_right_shift_specially() {
         assert_eq!(
-            emit_binop_expr(FirBinOp::LRsh, "n", "3"),
+            emit_binop_expr(FirBinOp::LRsh, "n", "3", &FirType::Int32),
             "((int32_t)(((uint32_t)(n)) >> (3)))"
         );
     }

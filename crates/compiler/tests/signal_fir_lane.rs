@@ -461,11 +461,11 @@ fn fastlane_delay_echo_uses_circular_delay_line_and_iota_in_c_and_cpp() {
         "C++ fast-lane should use 2-element shift buffer for delay1, not fIOTA & 1"
     );
     assert!(
-        fast_cpp.contains("[((fIOTA - 2205) & 4095)]"),
+        fast_cpp.contains("[(faust_wrap_sub(fIOTA, 2205) & 4095)]"),
         "C++ fast-lane should read the delay line through a masked circular index"
     );
     assert!(
-        fast_cpp.contains("fIOTA = (fIOTA + 1);"),
+        fast_cpp.contains("fIOTA = faust_wrap_add(fIOTA, 1);"),
         "C++ fast-lane should increment fIOTA once per sample"
     );
     assert!(
@@ -486,11 +486,11 @@ fn fastlane_delay_echo_uses_circular_delay_line_and_iota_in_c_and_cpp() {
         "C fast-lane should use 2-element shift buffer for delay1, not fIOTA & 1"
     );
     assert!(
-        fast_c.contains("[((dsp->fIOTA - 2205) & 4095)]"),
+        fast_c.contains("[(faust_wrap_sub(dsp->fIOTA, 2205) & 4095)]"),
         "C fast-lane should read the delay line through a masked circular index"
     );
     assert!(
-        fast_c.contains("dsp->fIOTA = (dsp->fIOTA + 1);"),
+        fast_c.contains("dsp->fIOTA = faust_wrap_add(dsp->fIOTA, 1);"),
         "C fast-lane should increment fIOTA once per sample"
     );
     assert!(

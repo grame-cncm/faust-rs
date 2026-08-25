@@ -1088,6 +1088,23 @@ fn emit_cpp_header(
     let _ = writeln!(out, "#define RESTRICT __restrict__");
     let _ = writeln!(out, "#endif");
     let _ = writeln!(out);
+    // Two's-complement wrapping integer arithmetic: signed overflow is UB in
+    // C++, so add/sub/mul run on `uint32_t` (defined modulo 2^32) and
+    // convert back — the semantics Faust-generated code (the noise LCG in
+    // particular) has always assumed.
+    let _ = writeln!(
+        out,
+        "inline int faust_wrap_add(int a, int b) {{ return int(uint32_t(a) + uint32_t(b)); }}"
+    );
+    let _ = writeln!(
+        out,
+        "inline int faust_wrap_sub(int a, int b) {{ return int(uint32_t(a) - uint32_t(b)); }}"
+    );
+    let _ = writeln!(
+        out,
+        "inline int faust_wrap_mul(int a, int b) {{ return int(uint32_t(a) * uint32_t(b)); }}"
+    );
+    let _ = writeln!(out);
 }
 
 /// Emits one FIR module section (`dsp_struct`, `globals`, or `functions`).

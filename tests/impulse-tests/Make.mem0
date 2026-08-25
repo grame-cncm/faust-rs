@@ -20,8 +20,8 @@ mem0_names := $(filter-out $(call known_fail_for,cpp) $(call known_fail_for,c) \
 
 MEM0_ROOT ?= build/mem0
 MEM0_IR ?= ir
-MEM0_CPPFLAGS ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -std=c++17 -Iarchs
-MEM0_CFLAGS ?= -O2 -Wall -Wextra -Werror -Wno-unused-parameter -std=c11 -Iarchs
+MEM0_CPPFLAGS ?= -O2 -fwrapv -Wall -Wextra -Werror -Wno-unused-parameter -std=c++17 -Iarchs
+MEM0_CFLAGS ?= -O2 -fwrapv -Wall -Wextra -Werror -Wno-unused-parameter -std=c11 -Iarchs
 MEM0_JSON_CHECK ?= ../../target/release/mem0-json-check
 MEM0_FAUST_INCLUDES ?= -I $(dspdir) -I $(FAUSTLIBS)
 CC ?= cc
@@ -117,16 +117,16 @@ $(MEM0_ROOT)/opt/%.checked: $(dspdir)/%.dsp $(mem0_reference_dir)/%.ir \
 	mkdir -p $(MEM0_ROOT)/opt/cpp $(MEM0_ROOT)/opt/c $(MEM0_ROOT)/opt/cranelift
 	$(FAUST_RS) -lang cpp -double -mem0 -a archs/impulsemem0.cpp $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/opt/cpp/$*.cpp
 	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O0 $(MEM0_ROOT)/opt/cpp/$*.cpp -o $(MEM0_ROOT)/opt/cpp/$*-o0
-	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O3 $(MEM0_ROOT)/opt/cpp/$*.cpp -o $(MEM0_ROOT)/opt/cpp/$*-o3
+	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O3 -fwrapv $(MEM0_ROOT)/opt/cpp/$*.cpp -o $(MEM0_ROOT)/opt/cpp/$*-o3
 	$(MEM0_ROOT)/opt/cpp/$*-o0 -n $(mem0_frames) > $(MEM0_ROOT)/opt/cpp/$*-o0.ir
 	$(MEM0_ROOT)/opt/cpp/$*-o3 -n $(mem0_frames) > $(MEM0_ROOT)/opt/cpp/$*-o3.ir
 	$(COMPARE) $(MEM0_ROOT)/opt/cpp/$*-o0.ir $(mem0_reference_dir)/$*.ir -part $(call dsp_precision,$*)
 	$(COMPARE) $(MEM0_ROOT)/opt/cpp/$*-o3.ir $(MEM0_ROOT)/opt/cpp/$*-o0.ir
 	$(FAUST_RS) -lang c -double -mem0 $(MEM0_FAUST_INCLUDES) $< -o $(MEM0_ROOT)/opt/c/$*.c
 	$(CC) $(filter-out -O%,$(MEM0_CFLAGS)) -O0 -include faust_mem0_c_api.h -c $(MEM0_ROOT)/opt/c/$*.c -o $(MEM0_ROOT)/opt/c/$*-o0.o
-	$(CC) $(filter-out -O%,$(MEM0_CFLAGS)) -O3 -include faust_mem0_c_api.h -c $(MEM0_ROOT)/opt/c/$*.c -o $(MEM0_ROOT)/opt/c/$*-o3.o
+	$(CC) $(filter-out -O%,$(MEM0_CFLAGS)) -O3 -fwrapv -include faust_mem0_c_api.h -c $(MEM0_ROOT)/opt/c/$*.c -o $(MEM0_ROOT)/opt/c/$*-o3.o
 	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O0 archs/impulsemem0_c.cpp $(MEM0_ROOT)/opt/c/$*-o0.o -o $(MEM0_ROOT)/opt/c/$*-o0
-	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O3 archs/impulsemem0_c.cpp $(MEM0_ROOT)/opt/c/$*-o3.o -o $(MEM0_ROOT)/opt/c/$*-o3
+	$(CXX) $(filter-out -O%,$(MEM0_CPPFLAGS)) -O3 -fwrapv archs/impulsemem0_c.cpp $(MEM0_ROOT)/opt/c/$*-o3.o -o $(MEM0_ROOT)/opt/c/$*-o3
 	$(MEM0_ROOT)/opt/c/$*-o0 -n $(mem0_frames) > $(MEM0_ROOT)/opt/c/$*-o0.ir
 	$(MEM0_ROOT)/opt/c/$*-o3 -n $(mem0_frames) > $(MEM0_ROOT)/opt/c/$*-o3.ir
 	$(COMPARE) $(MEM0_ROOT)/opt/c/$*-o0.ir $(mem0_reference_dir)/$*.ir -part $(call dsp_precision,$*)
