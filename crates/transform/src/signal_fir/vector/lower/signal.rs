@@ -286,7 +286,7 @@ pub(super) fn lower_vector_program_impl<'a>(
     // promoted to DSP struct fields (their stores move to `control`, while
     // vector transport fills in `compute` read them back), mirroring the
     // scalar konst-escape promotion (plan provenance: §4.4). Classic mode
-        // keeps stack locals.
+    // keeps stack locals.
     let external_control = lowerer.control_rate_mode.is_external();
     let (mut control_statements, rewritten_control_values) = if external_control {
         let (statements, rewritten, fields) = materialize_region_roots_promoted(

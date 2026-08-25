@@ -142,7 +142,10 @@ impl RegionPhases {
 /// Guarded OD/US/DS blocks are emitted as open child frames of the tree
 /// (see [`RegionTree`]); a region node itself stays a leaf.
 struct Region {
-    #[allow(dead_code, reason = "model-only: guarded blocks are emitted via open frames and never consult the region kind")]
+    #[allow(
+        dead_code,
+        reason = "model-only: guarded blocks are emitted via open frames and never consult the region kind"
+    )]
     kind: RegionKind,
     phases: RegionPhases,
 }

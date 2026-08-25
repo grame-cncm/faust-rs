@@ -426,10 +426,7 @@ mod tests {
             ..base_props()
         };
         assert_eq!(needs_separate_loop(&p), LoopSeparation::SeparateSerial);
-        assert_eq!(
-            needs_separate_loop(&p),
-            LoopSeparation::SeparateSerial
-        );
+        assert_eq!(needs_separate_loop(&p), LoopSeparation::SeparateSerial);
     }
 
     #[test]

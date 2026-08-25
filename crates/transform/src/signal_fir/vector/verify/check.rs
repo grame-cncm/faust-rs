@@ -65,54 +65,54 @@ impl<'a> PlanIndex<'a> {
     fn new(plan: &'a VectorPlan) -> Result<Self, VectorPlanError> {
         let signal_ids: Vec<u64> = plan.signals.iter().map(|s| s.signal_id).collect();
         let loop_ids: Vec<u64> = plan.loops.iter().map(|l| l.loop_id).collect();
-    let signal_set: AHashSet<u64> = signal_ids.iter().copied().collect();
-    let loop_set: AHashSet<u64> = loop_ids.iter().copied().collect();
-    let signal_by_id: AHashMap<u64, &SignalRecord> =
-        plan.signals.iter().map(|s| (s.signal_id, s)).collect();
-    let loop_by_id: AHashMap<u64, &LoopRecord> =
-        plan.loops.iter().map(|l| (l.loop_id, l)).collect();
+        let signal_set: AHashSet<u64> = signal_ids.iter().copied().collect();
+        let loop_set: AHashSet<u64> = loop_ids.iter().copied().collect();
+        let signal_by_id: AHashMap<u64, &SignalRecord> =
+            plan.signals.iter().map(|s| (s.signal_id, s)).collect();
+        let loop_by_id: AHashMap<u64, &LoopRecord> =
+            plan.loops.iter().map(|l| (l.loop_id, l)).collect();
 
-    // Root identities and edge endpoints are validated first, so building
-    // the reachability and per-loop effect summaries below cannot panic on a
-    // hostile DTO.
-    for loop_record in &plan.loops {
-        if let Some(&signal_id) = loop_record
-            .roots
+        // Root identities and edge endpoints are validated first, so building
+        // the reachability and per-loop effect summaries below cannot panic on a
+        // hostile DTO.
+        for loop_record in &plan.loops {
+            if let Some(&signal_id) = loop_record
+                .roots
+                .iter()
+                .find(|signal_id| !signal_set.contains(signal_id))
+            {
+                return Err(VectorPlanError::RootUnknownSignal {
+                    loop_id: loop_record.loop_id,
+                    signal_id,
+                });
+            }
+        }
+        for edge in plan.data_edges.iter().chain(&plan.effect_edges) {
+            if !loop_set.contains(&edge.consumer) {
+                return Err(VectorPlanError::EdgeEndpointUnknown {
+                    edge: *edge,
+                    missing: edge.consumer,
+                });
+            }
+            if !loop_set.contains(&edge.dependency) {
+                return Err(VectorPlanError::EdgeEndpointUnknown {
+                    edge: *edge,
+                    missing: edge.dependency,
+                });
+            }
+        }
+        let reachability = CheckedReachability::new(plan);
+        let effects_by_loop = plan
+            .loops
             .iter()
-            .find(|signal_id| !signal_set.contains(signal_id))
-        {
-            return Err(VectorPlanError::RootUnknownSignal {
-                loop_id: loop_record.loop_id,
-                signal_id,
-            });
-        }
-    }
-    for edge in plan.data_edges.iter().chain(&plan.effect_edges) {
-        if !loop_set.contains(&edge.consumer) {
-            return Err(VectorPlanError::EdgeEndpointUnknown {
-                edge: *edge,
-                missing: edge.consumer,
-            });
-        }
-        if !loop_set.contains(&edge.dependency) {
-            return Err(VectorPlanError::EdgeEndpointUnknown {
-                edge: *edge,
-                missing: edge.dependency,
-            });
-        }
-    }
-    let reachability = CheckedReachability::new(plan);
-    let effects_by_loop = plan
-        .loops
-        .iter()
-        .map(|loop_record| {
-            (
-                loop_record.loop_id,
-                CheckedEffectConflictSummary::new(&signal_by_id, loop_record),
-            )
-        })
-        .collect::<AHashMap<_, _>>();
-    Ok(Self {
+            .map(|loop_record| {
+                (
+                    loop_record.loop_id,
+                    CheckedEffectConflictSummary::new(&signal_by_id, loop_record),
+                )
+            })
+            .collect::<AHashMap<_, _>>();
+        Ok(Self {
             loop_ids,
             signal_set,
             loop_set,
@@ -217,10 +217,7 @@ fn check_schema_and_canonical_orders(plan: &VectorPlan) -> Result<(), VectorPlan
 /// witnesses, lane independence, matching clock domains, and no effect
 /// conflict between lanes. Prepared-signal skeletons are re-traversed
 /// separately by `verify_lockstep_isomorphism`; this is the plan-local gate.
-fn check_lockstep_bundles(
-    plan: &VectorPlan,
-    index: &PlanIndex<'_>,
-) -> Result<(), VectorPlanError> {
+fn check_lockstep_bundles(plan: &VectorPlan, index: &PlanIndex<'_>) -> Result<(), VectorPlanError> {
     let PlanIndex {
         signal_set,
         loop_by_id,

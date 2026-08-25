@@ -91,14 +91,16 @@ fn compute_pv_facts(arena: &TreeArena, roots: &[SigId]) -> PvFacts {
     let sig_types = sigtype::TypeAnnotator::new(arena, &ui::UiProgram::empty())
         .annotate(roots)
         .expect("PV signals have valid types");
-    let analysis = crate::signal_fir::vector::analysis::SignalAnalysisContext::new(arena, &sig_types, roots)
-        .expect("PV symbolic recursion index is valid");
+    let analysis =
+        crate::signal_fir::vector::analysis::SignalAnalysisContext::new(arena, &sig_types, roots)
+            .expect("PV symbolic recursion index is valid");
     let mut reachable: HashSet<SigId> = HashSet::new();
     let mut stack: Vec<SigId> = roots.to_vec();
     while let Some(sig) = stack.pop() {
         if reachable.insert(sig) {
-            let dependencies = crate::signal_fir::vector::analysis::signal_dependencies(&analysis, sig)
-                .expect("PV signals are canonical");
+            let dependencies =
+                crate::signal_fir::vector::analysis::signal_dependencies(&analysis, sig)
+                    .expect("PV signals are canonical");
             for occurrence in dependencies.occurrences() {
                 stack.push(occurrence.to);
             }

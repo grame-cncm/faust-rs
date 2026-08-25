@@ -69,7 +69,6 @@ fn plain_sample_loop(store: &mut FirStore, exec: &[FirId], is_reverse: bool) -> 
     b.simple_for_loop("i0", upper, body, is_reverse)
 }
 
-
 /// Names and element type of the table one generator sub-module fills.
 pub(crate) struct FillSpec {
     /// Sub-module class name, `{module}SIG{k}`.
