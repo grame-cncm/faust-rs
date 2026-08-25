@@ -93,6 +93,100 @@ impl<'a> SignalToFirLower<'a> {
     /// [`Self::sections`]).
     ///
     /// Returns a typed `FRS-SFIR-*` error for unsupported signal families.
+    /// The structured rejection for clocked machinery reached without an
+    /// active clocked-lowering state (the guarded arms above require
+    /// `self.clocked`), so no clocked program falls into the generic
+    /// `FRS-SFIR-0004` bucket or panics.
+    fn clocked_machinery_rejection(&self, sig: SigId) -> SignalFirError {
+        let construct = match match_sig(self.arena, sig) {
+            SigMatch::OnDemand(_) => "ondemand",
+            SigMatch::Upsampling(_) => "upsampling",
+            SigMatch::Downsampling(_) => "downsampling",
+            SigMatch::Clocked(_, _) => "clocked wrapper",
+            SigMatch::ClockEnvToken(_) => "clock-env token",
+            SigMatch::Seq(_, _) => "clocked sequencing (Seq)",
+            SigMatch::TempVar(_) => "clock-boundary input (TempVar)",
+            SigMatch::PermVar(_) => "clock-boundary output (PermVar)",
+            _ => "zero-padded upsampling input (ZeroPad)",
+        };
+        SignalFirError::new(
+            SignalFirErrorCode::ClockedNotLowered,
+            format!(
+                "{construct} is not lowered to FIR yet: the clock-domain \
+                         back half (inference, guarded blocks, per-domain local \
+                 time — roadmap P1–P3) has not been ported"
+            ),
+        )
+        .at_signal(sig)
+    }
+
+    /// Variability-driven placement (Phase 1).
+    ///
+    /// Non-trivial expressions whose variability is slower than sample
+    /// rate are hoisted into the appropriate execution-tier bucket:
+    ///   Konst → constants_statements (instanceConstants, once at init)
+    ///   Block → control_statements   (compute preamble, once per call)
+    ///   Samp  → shared nodes are materialized at their Hsched position
+    ///
+    /// To avoid creating unnecessary temporaries for intermediate
+    /// sub-expressions, only nodes referenced ≥ 2 times in the signal
+    /// DAG are materialized into named variables (`iConst*`/`fConst*`,
+    /// `iSlow*`/`fSlow*`).
+    /// Single-use nodes at the same variability tier stay inline inside
+    /// their parent's expression.  This matches C++ Faust behavior
+    /// where compound expressions like `fConst6 * cos(fConst7 * fSlow2)`
+    /// are emitted as one variable instead of three.
+    ///
+    /// However, at a **variability boundary** (Block→Samp or
+    /// Konst→Block/Samp), even single-use nodes must be materialized
+    /// to ensure they execute in the correct bucket.  Without this,
+    /// a single-use Block-rate sub-expression of a Samp parent would
+    /// be inlined into the per-sample loop body, re-evaluated every
+    /// sample.
+    ///
+    /// Guards:
+    /// - Trivial nodes (literals, loads) are never hoisted — they are
+    ///   free to duplicate and hoisting them wastes a variable name.
+    /// - Recursive projections must stay in the sample loop; the type
+    ///   system ensures they are always Samp, but the guard is kept as
+    ///   a defensive check.
+    /// - SIGWRTBL nodes: the type system assigns Konst variability
+    ///   (from `make_table_type`) reflecting the static table content,
+    ///   but `lower_wrtbl` returns the write signal's value which may
+    ///   reference Samp-rate state (e.g. `iWave*` cycling counters).
+    ///   Hoisting would place `LoadVar("iWave*")` inside
+    ///   `instanceConstants`, before `instanceClear` has initialized it.
+    fn place_by_variability(&mut self, sig: SigId, lowered: FirId) -> FirId {
+        let sig_shared = self
+            .placement
+            .sig_ref_counts
+            .get(&sig)
+            .copied()
+            .unwrap_or(0)
+            >= 2;
+        let at_boundary = self.placement.sig_at_boundary.contains(&sig);
+        if !is_trivial_fir(&self.store, lowered)
+            && !self.is_recursive_projection(sig)
+            && !matches!(match_sig(self.arena, sig), SigMatch::WrTbl(..))
+            && (sig_shared || at_boundary)
+        {
+            match self.variability_of(sig) {
+                Some(Variability::Konst) => {
+                    self.materialize_in_bucket(sig, lowered, Bucket::Constants)
+                }
+                Some(Variability::Block) => {
+                    self.materialize_in_bucket(sig, lowered, Bucket::Control)
+                }
+                Some(Variability::Samp) if self.scalar_schedule.is_some() => {
+                    self.materialize_scheduled_sample(lowered)
+                }
+                _ => lowered,
+            }
+        } else {
+            lowered
+        }
+    }
+
     pub(super) fn lower_signal(&mut self, sig: SigId) -> Result<FirId, SignalFirError> {
         if let Some(id) = self.cache.get_at(self.regions.effective_depth(), sig) {
             return Ok(id);
@@ -240,12 +334,6 @@ impl<'a> SignalToFirLower<'a> {
             {
                 self.ensure_guarded_block(sig)?
             }
-            // Clocked machinery (`ondemand` / `upsampling` / `downsampling`
-            // wrappers and their glue nodes): accepted by propagation and
-            // `signal_prepare`, but this run carries no clocked-lowering state
-            // (the guarded arms above require `self.clocked`). Reject with
-            // the dedicated structured code so no clocked program falls
-            // into the generic `FRS-SFIR-0004` bucket or panics.
             SigMatch::OnDemand(_)
             | SigMatch::Upsampling(_)
             | SigMatch::Downsampling(_)
@@ -254,28 +342,7 @@ impl<'a> SignalToFirLower<'a> {
             | SigMatch::Seq(_, _)
             | SigMatch::TempVar(_)
             | SigMatch::PermVar(_)
-            | SigMatch::ZeroPad(_, _) => {
-                let construct = match match_sig(self.arena, sig) {
-                    SigMatch::OnDemand(_) => "ondemand",
-                    SigMatch::Upsampling(_) => "upsampling",
-                    SigMatch::Downsampling(_) => "downsampling",
-                    SigMatch::Clocked(_, _) => "clocked wrapper",
-                    SigMatch::ClockEnvToken(_) => "clock-env token",
-                    SigMatch::Seq(_, _) => "clocked sequencing (Seq)",
-                    SigMatch::TempVar(_) => "clock-boundary input (TempVar)",
-                    SigMatch::PermVar(_) => "clock-boundary output (PermVar)",
-                    _ => "zero-padded upsampling input (ZeroPad)",
-                };
-                return Err(SignalFirError::new(
-                    SignalFirErrorCode::ClockedNotLowered,
-                    format!(
-                        "{construct} is not lowered to FIR yet: the clock-domain \
-                         back half (inference, guarded blocks, per-domain local \
-                         time — roadmap P1–P3) has not been ported"
-                    ),
-                )
-                .at_signal(sig));
-            }
+            | SigMatch::ZeroPad(_, _) => return Err(self.clocked_machinery_rejection(sig)),
             other => {
                 return Err(SignalFirError::new(
                     SignalFirErrorCode::UnsupportedSignalNode,
@@ -288,70 +355,7 @@ impl<'a> SignalToFirLower<'a> {
             }
         };
 
-        // ── Variability-driven placement (Phase 1) ──────────────────────
-        //
-        // Non-trivial expressions whose variability is slower than sample
-        // rate are hoisted into the appropriate execution-tier bucket:
-        //   Konst → constants_statements (instanceConstants, once at init)
-        //   Block → control_statements   (compute preamble, once per call)
-        //   Samp  → shared nodes are materialized at their Hsched position
-        //
-        // To avoid creating unnecessary temporaries for intermediate
-        // sub-expressions, only nodes referenced ≥ 2 times in the signal
-        // DAG are materialized into named variables (`iConst*`/`fConst*`,
-        // `iSlow*`/`fSlow*`).
-        // Single-use nodes at the same variability tier stay inline inside
-        // their parent's expression.  This matches C++ Faust behavior
-        // where compound expressions like `fConst6 * cos(fConst7 * fSlow2)`
-        // are emitted as one variable instead of three.
-        //
-        // However, at a **variability boundary** (Block→Samp or
-        // Konst→Block/Samp), even single-use nodes must be materialized
-        // to ensure they execute in the correct bucket.  Without this,
-        // a single-use Block-rate sub-expression of a Samp parent would
-        // be inlined into the per-sample loop body, re-evaluated every
-        // sample.
-        //
-        // Guards:
-        // - Trivial nodes (literals, loads) are never hoisted — they are
-        //   free to duplicate and hoisting them wastes a variable name.
-        // - Recursive projections must stay in the sample loop; the type
-        //   system ensures they are always Samp, but the guard is kept as
-        //   a defensive check.
-        // - SIGWRTBL nodes: the type system assigns Konst variability
-        //   (from `make_table_type`) reflecting the static table content,
-        //   but `lower_wrtbl` returns the write signal's value which may
-        //   reference Samp-rate state (e.g. `iWave*` cycling counters).
-        //   Hoisting would place `LoadVar("iWave*")` inside
-        //   `instanceConstants`, before `instanceClear` has initialized it.
-        let sig_shared = self
-            .placement
-            .sig_ref_counts
-            .get(&sig)
-            .copied()
-            .unwrap_or(0)
-            >= 2;
-        let at_boundary = self.placement.sig_at_boundary.contains(&sig);
-        let lowered = if !is_trivial_fir(&self.store, lowered)
-            && !self.is_recursive_projection(sig)
-            && !matches!(match_sig(self.arena, sig), SigMatch::WrTbl(..))
-            && (sig_shared || at_boundary)
-        {
-            match self.variability_of(sig) {
-                Some(Variability::Konst) => {
-                    self.materialize_in_bucket(sig, lowered, Bucket::Constants)
-                }
-                Some(Variability::Block) => {
-                    self.materialize_in_bucket(sig, lowered, Bucket::Control)
-                }
-                Some(Variability::Samp) if self.scalar_schedule.is_some() => {
-                    self.materialize_scheduled_sample(lowered)
-                }
-                _ => lowered,
-            }
-        } else {
-            lowered
-        };
+        let lowered = self.place_by_variability(sig, lowered);
 
         if !self.is_recursive_projection(sig) {
             // First materialization of `sig`: the sole cache-insertion site

@@ -570,6 +570,123 @@ pub(super) fn materialize_loop(
         iteration_statement,
     })
 }
+/// One recursion step: declare each projection's stack value from its fused
+/// member definition, register the loads for later delay writes, and return
+/// the declarations in projection order.
+fn materialize_recursion_step(
+    loop_id: u64,
+    group: u64,
+    context: &StateMaterializationContext<'_>,
+    recursion_values: &mut BTreeMap<u64, FirId>,
+    builder: &mut FirBuilder<'_>,
+) -> Result<Vec<FirId>, VectorFirAssemblyError> {
+    let recursions = context.recursions;
+    let signal_types = context.signal_types;
+    let real_type = context.real_type.clone();
+    let group = &group;
+    let recursion = recursions[group];
+    let mut declarations = Vec::with_capacity(recursion.projections.len());
+    for projection in &recursion.projections {
+        let value = projection
+            .signal_ids
+            .iter()
+            .find_map(|signal_id| fused_member_definition(loop_id, *signal_id, context))
+            .or_else(|| fused_member_definition(loop_id, projection.value_signal_id, context));
+        let value = value.ok_or(VectorFirAssemblyError::MissingRecursionProjection {
+            group: *group,
+            index: projection.index,
+        })?;
+        let signal_id = projection
+            .signal_ids
+            .first()
+            .copied()
+            .unwrap_or(projection.value_signal_id);
+        let typ = value_type_to_fir(
+            signal_types.get(&signal_id).ok_or(
+                VectorFirAssemblyError::MissingRecursionProjection {
+                    group: *group,
+                    index: projection.index,
+                },
+            )?,
+            real_type.clone(),
+            signal_id,
+        )
+        .map_err(|_| VectorFirAssemblyError::MissingRecursionProjection {
+            group: *group,
+            index: projection.index,
+        })?;
+        let name = recursion_name(*group, projection.index);
+        declarations.push(builder.declare_var(&name, typ.clone(), AccessType::Stack, Some(value)));
+        let load = builder.load_var(name, AccessType::Stack, typ);
+        for signal_id in &projection.signal_ids {
+            recursion_values.insert(*signal_id, load);
+        }
+    }
+    Ok(declarations)
+}
+
+/// One per-sample delay write into the planned storage shape: register
+/// store, copy-history slot, masked ring slot, or clock-ring cursor slot.
+fn materialize_delay_write(
+    loop_id: u64,
+    signal_id: u64,
+    context: &StateMaterializationContext<'_>,
+    recursion_values: &BTreeMap<u64, FirId>,
+    builder: &mut FirBuilder<'_>,
+) -> Result<FirId, VectorFirAssemblyError> {
+    let delays = context.delays;
+    let definitions = context.definitions;
+    let signal_id = &signal_id;
+    let delay = delays[signal_id];
+    let value = recursion_values.get(signal_id).copied().or_else(|| {
+        definitions
+            .get(&(VectorRegion::Loop(loop_id), *signal_id))
+            .copied()
+    });
+    let value = value.ok_or(VectorFirAssemblyError::MissingDefinition {
+        signal_id: *signal_id,
+        loop_id,
+    })?;
+    let local = local_index(builder);
+    Ok(match &delay.storage {
+        VectorDelayStorage::Register { local_name, .. } => {
+            builder.store_var(local_name, AccessType::Stack, value)
+        }
+        VectorDelayStorage::Copy {
+            temporary_name,
+            history_length,
+            ..
+        } => {
+            let history = fir_i32(builder, "copy history", *history_length)?;
+            let index = builder.binop(FirBinOp::Add, history, local, FirType::Int32);
+            builder.store_table(temporary_name, AccessType::Stack, index, value)
+        }
+        VectorDelayStorage::Ring {
+            buffer_name,
+            index_name,
+            mask,
+            ..
+        } => {
+            let index = builder.load_var(index_name, AccessType::Struct, FirType::Int32);
+            let added = builder.binop(FirBinOp::Add, index, local, FirType::Int32);
+            let mask = fir_i32(builder, "ring mask", *mask)?;
+            let masked = builder.binop(FirBinOp::And, added, mask, FirType::Int32);
+            builder.store_table(buffer_name, AccessType::Struct, masked, value)
+        }
+        VectorDelayStorage::ClockRing {
+            buffer_name,
+            cursor_name,
+            mask,
+            ..
+        } => {
+            let cursor = builder.load_var(cursor_name, AccessType::Struct, FirType::Int32);
+            let mask = fir_i32(builder, "clock-ring mask", *mask)?;
+            let index = builder.binop(FirBinOp::And, cursor, mask, FirType::Int32);
+            builder.store_table(buffer_name, AccessType::Struct, index, value)
+        }
+    })
+}
+
 pub(super) fn materialize_action(
     loop_id: u64,
     action: &VectorStateAction,
@@ -578,11 +695,9 @@ pub(super) fn materialize_action(
     builder: &mut FirBuilder<'_>,
 ) -> Result<VectorStateFirAction, VectorFirAssemblyError> {
     let delays = context.delays;
-    let recursions = context.recursions;
     let prefixes = context.prefixes;
     let waveforms = context.waveforms;
     let definitions = context.definitions;
-    let signal_types = context.signal_types;
     let real_type = context.real_type.clone();
     let mut execution_statements = None;
     let statement = match action {
@@ -647,105 +762,13 @@ pub(super) fn materialize_action(
             builder.store_var(index_name, AccessType::Struct, masked)
         }
         VectorStateAction::RecursionStep { group } => {
-            let recursion = recursions[group];
-            let mut declarations = Vec::with_capacity(recursion.projections.len());
-            for projection in &recursion.projections {
-                let value = projection
-                    .signal_ids
-                    .iter()
-                    .find_map(|signal_id| fused_member_definition(loop_id, *signal_id, context))
-                    .or_else(|| {
-                        fused_member_definition(loop_id, projection.value_signal_id, context)
-                    });
-                let value = value.ok_or(VectorFirAssemblyError::MissingRecursionProjection {
-                    group: *group,
-                    index: projection.index,
-                })?;
-                let signal_id = projection
-                    .signal_ids
-                    .first()
-                    .copied()
-                    .unwrap_or(projection.value_signal_id);
-                let typ = value_type_to_fir(
-                    signal_types.get(&signal_id).ok_or(
-                        VectorFirAssemblyError::MissingRecursionProjection {
-                            group: *group,
-                            index: projection.index,
-                        },
-                    )?,
-                    real_type.clone(),
-                    signal_id,
-                )
-                .map_err(|_| {
-                    VectorFirAssemblyError::MissingRecursionProjection {
-                        group: *group,
-                        index: projection.index,
-                    }
-                })?;
-                let name = recursion_name(*group, projection.index);
-                declarations.push(builder.declare_var(
-                    &name,
-                    typ.clone(),
-                    AccessType::Stack,
-                    Some(value),
-                ));
-                let load = builder.load_var(name, AccessType::Stack, typ);
-                for signal_id in &projection.signal_ids {
-                    recursion_values.insert(*signal_id, load);
-                }
-            }
+            let declarations =
+                materialize_recursion_step(loop_id, *group, context, recursion_values, builder)?;
             execution_statements = Some(declarations.clone());
             builder.block(&declarations)
         }
         VectorStateAction::DelayWrite { signal_id } => {
-            let delay = delays[signal_id];
-            let value = recursion_values.get(signal_id).copied().or_else(|| {
-                definitions
-                    .get(&(VectorRegion::Loop(loop_id), *signal_id))
-                    .copied()
-            });
-            let value = value.ok_or(VectorFirAssemblyError::MissingDefinition {
-                signal_id: *signal_id,
-                loop_id,
-            })?;
-            let local = local_index(builder);
-            match &delay.storage {
-                VectorDelayStorage::Register { local_name, .. } => {
-                    builder.store_var(local_name, AccessType::Stack, value)
-                }
-                VectorDelayStorage::Copy {
-                    temporary_name,
-                    history_length,
-                    ..
-                } => {
-                    let history = fir_i32(builder, "copy history", *history_length)?;
-                    let index = builder.binop(FirBinOp::Add, history, local, FirType::Int32);
-                    builder.store_table(temporary_name, AccessType::Stack, index, value)
-                }
-                VectorDelayStorage::Ring {
-                    buffer_name,
-                    index_name,
-                    mask,
-                    ..
-                } => {
-                    let index = builder.load_var(index_name, AccessType::Struct, FirType::Int32);
-                    let added = builder.binop(FirBinOp::Add, index, local, FirType::Int32);
-                    let mask = fir_i32(builder, "ring mask", *mask)?;
-                    let masked = builder.binop(FirBinOp::And, added, mask, FirType::Int32);
-                    builder.store_table(buffer_name, AccessType::Struct, masked, value)
-                }
-                VectorDelayStorage::ClockRing {
-                    buffer_name,
-                    cursor_name,
-                    mask,
-                    ..
-                } => {
-                    let cursor = builder.load_var(cursor_name, AccessType::Struct, FirType::Int32);
-                    let mask = fir_i32(builder, "clock-ring mask", *mask)?;
-                    let index = builder.binop(FirBinOp::And, cursor, mask, FirType::Int32);
-                    builder.store_table(buffer_name, AccessType::Struct, index, value)
-                }
-            }
+            materialize_delay_write(loop_id, *signal_id, context, recursion_values, builder)?
         }
         VectorStateAction::PrefixWrite { signal_id } => {
             let transition = prefixes[signal_id];
