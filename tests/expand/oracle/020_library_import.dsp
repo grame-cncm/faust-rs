@@ -7,7 +7,7 @@ declare library_path3 "<path>";
 declare library_path4 "<path>";
 declare author "GRAME";
 declare basics_lib_name "Faust Basic Element Library";
-declare basics_lib_version "1.22.0";
+declare basics_lib_version "1.23.0";
 declare filename "020_library_import.dsp";
 declare maths_lib_author "GRAME";
 declare maths_lib_copyright "GRAME";
