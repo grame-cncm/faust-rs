@@ -360,6 +360,16 @@ pub struct CliArgs {
     /// Default: disabled (all delays above `mcd` use circular-pow2).
     #[arg(long = "dlt", default_value_t = u32::MAX)]
     pub dlt: u32,
+    /// Check table index range and generate safe accesses (`-ct <0|1>`,
+    /// `--check-table <0|1>`).
+    ///
+    /// With `1` (the default, matching the reference compiler), table
+    /// indexes the interval analysis cannot prove in-bounds are clamped at
+    /// the signal level to `max(0, min(index, size-1))`. With `0`, accesses
+    /// are generated raw and out-of-range indexes are undefined behavior —
+    /// the reference `-ct 0` contract.
+    #[arg(long = "check-table", default_value_t = 1, value_parser = clap::value_parser!(u8).range(0..=1))]
+    pub check_table: u8,
     /// How the initial content of `rdtable`/`rwtable` tables is produced.
     ///
     /// `runtime` compiles each table generator into a sub-module whose `fill`
@@ -551,6 +561,13 @@ pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<Stri
         }
         if arg == "-mcd" {
             normalized.push("--mcd".to_owned());
+            if let Some(value) = it.next() {
+                normalized.push(value);
+            }
+            continue;
+        }
+        if arg == "-ct" {
+            normalized.push("--check-table".to_owned());
             if let Some(value) = it.next() {
                 normalized.push(value);
             }

@@ -281,6 +281,9 @@ pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) ->
     if cli.dlt != d.dlt {
         parts.push(format!("-dlt {}", cli.dlt));
     }
+    if cli.check_table != d.check_table {
+        parts.push(format!("-ct {}", cli.check_table));
+    }
     if cli.table_init != d.table_init {
         parts.push(format!(
             "-table-init {}",
@@ -516,7 +519,8 @@ pub fn compiler_from_cli(
         .with_compute_mode(selected_compute_mode(cli))
         .with_scheduling_strategy(selected_scheduling_strategy(cli))
         .with_control_rate_mode(selected_control_rate_mode(cli))
-        .with_processing_api(selected_processing_api(cli));
+        .with_processing_api(selected_processing_api(cli))
+        .with_check_table(cli.check_table != 0);
     if let Some(sample_rate) = cli.table_init_sample_rate {
         compiler = compiler.with_table_init_sample_rate(sample_rate);
     }
@@ -756,6 +760,12 @@ pub(crate) fn report_semantic_warnings(
     let Ok(output) = compiler.compile_file_to_signals(input_path, &cli.import_dir) else {
         return;
     };
+    // Check-table (`-ct`) out-of-range reports, the class C++ prints under
+    // `-wall` from `SignalTablePromotion`. Plain-text by design: they have
+    // no source span yet, so they bypass the diagnostic bundle.
+    for message in compiler.table_range_warning_messages(&output) {
+        eprintln!("{message}");
+    }
     if output.warnings.is_empty() {
         return;
     }

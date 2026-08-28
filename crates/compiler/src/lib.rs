@@ -979,6 +979,37 @@ impl Compiler {
         .map_err(|error| lower_fir_error_to_compiler(source, signals, error))
     }
 
+    /// Runs the check-table pass on an already compiled signal forest and
+    /// returns its out-of-range warnings as printable messages.
+    ///
+    /// This is the `--warn` surface of the `-ct` clamp (the reference
+    /// compiler reports the same class under `-wall` from
+    /// `SignalTablePromotion`): each message describes one table access
+    /// whose index interval could not be proven in-bounds and was clamped.
+    /// Runs the signal-preparation staging pipeline once; preparation
+    /// failures yield an empty list here because the subsequent real
+    /// compilation reports them as errors.
+    #[must_use]
+    pub fn table_range_warning_messages(&self, signals: &SignalCompileOutput) -> Vec<String> {
+        if !self.check_table {
+            return Vec::new();
+        }
+        let options = transform::signal_prepare::PrepareOptions { check_table: true };
+        match transform::signal_prepare::prepare_signals_for_fir_verified_with_options(
+            &signals.parse.state.arena,
+            &signals.signals,
+            &signals.ui,
+            &options,
+        ) {
+            Ok(prepared) => prepared
+                .table_warnings()
+                .iter()
+                .map(|warning| format!("WARNING : {warning}"))
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     #[must_use]
     /// Returns the crate package version used by this binary/library build.
     pub fn version() -> &'static str {

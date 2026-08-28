@@ -29,6 +29,38 @@ use super::runner::{
 use super::validate::validate_memory_manager_options;
 
 #[test]
+fn normalize_legacy_args_maps_dash_ct_to_check_table() {
+    let args = vec![
+        "faust-rs".to_owned(),
+        "-ct".to_owned(),
+        "0".to_owned(),
+        "foo.dsp".to_owned(),
+    ];
+    let normalized = normalize_legacy_args(args);
+    assert_eq!(
+        normalized,
+        vec![
+            "faust-rs".to_owned(),
+            "--check-table".to_owned(),
+            "0".to_owned(),
+            "foo.dsp".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn check_table_defaults_to_on_and_parses_both_values() {
+    let cli = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
+    assert_eq!(cli.check_table, 1, "-ct defaults to 1 like the C++ compiler");
+    let cli = CliArgs::parse_from(["faust-rs", "--check-table", "0", "foo.dsp"]);
+    assert_eq!(cli.check_table, 0);
+    let cli = CliArgs::parse_from(["faust-rs", "--check-table", "1", "foo.dsp"]);
+    assert_eq!(cli.check_table, 1);
+    // Out-of-range values are rejected, not silently truncated.
+    assert!(CliArgs::try_parse_from(["faust-rs", "--check-table", "2", "foo.dsp"]).is_err());
+}
+
+#[test]
 fn normalize_legacy_args_maps_dash_fir_to_lang_fir() {
     let args = vec![
         "faust-rs".to_owned(),
