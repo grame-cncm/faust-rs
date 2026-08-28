@@ -22,6 +22,8 @@
 //! 2.8  merge_iso_rec           (merge isomorphic SYMREC groups)
 //! 2.9  retype #3               (sig_types fresh before simplify #2)
 //! 2.10 simplify #2             (algebraic simplification)
+//! 2.10a retype                 (sig_types fresh before table promotion; -ct only)
+//! 2.10b promote_tables         (clamp unprovable table indexes; -ct only)
 //! 2.11 canon_one_sample_delays (Delay(x,1) → Delay1(x))
 //!      └─ assert_d1            (W4: no Delay(_, 1) remains)
 //! 2.12 retype #4               (sig_types fresh before promote #2)
@@ -32,10 +34,11 @@
 //! 2.16 verify                  (postconditions; _verified entry only)
 //! ```
 //!
-//! The five re-types (steps 2.4 / 2.6 / 2.9 / 2.12 / 2.14) are driven by the
-//! private `Staging` driver, which owns `sig_types` and guarantees it is fresh
-//! before every typed pass.  No `sig_types_*` snapshot locals are threaded by
-//! hand — the schedule is structural.
+//! The five re-types (steps 2.4 / 2.6 / 2.9 / 2.12 / 2.14) — plus the
+//! optional 2.10a one preceding table promotion under `-ct` — are driven by
+//! the private `Staging` driver, which owns `sig_types` and guarantees it is
+//! fresh before every typed pass.  No `sig_types_*` snapshot locals are
+//! threaded by hand — the schedule is structural.
 //!
 //! Reduced typing deliberately stops short of the full C++ type lattice. The
 //! goal is only to support the upcoming promotion pass and to feed `signal_fir`
@@ -84,6 +87,8 @@ use std::error::Error;
 use std::fmt;
 
 use normalize::normalform::{NormalFormError, promote_signals_fastlane, simplify_signals_fastlane};
+pub use normalize::table_promote::TableRangeWarning;
+use normalize::table_promote::promote_table_signals;
 use signals::{SigId, SigMatch, match_sig};
 use sigtype::{Nature, SigType, TypeAnnotator};
 use tlib::{RecursionError, TreeArena, list_to_vec, vec_to_list};
@@ -129,6 +134,8 @@ pub struct PreparedSignals {
     /// Box derivations remapped into the private staging arena and inherited
     /// by nodes introduced by preparation rewrites.
     origins: propagate::SignalOrigins,
+    /// Out-of-range table accesses clamped by the check-table pass (2.10b).
+    table_warnings: Vec<TableRangeWarning>,
 }
 
 /// Prepared-signal forest that passed the explicit postcondition verifier.
@@ -140,6 +147,27 @@ pub struct PreparedSignals {
 #[derive(Debug)]
 pub struct VerifiedPreparedSignals {
     inner: PreparedSignals,
+}
+
+/// Options controlling the signal-preparation pipeline.
+///
+/// One value is threaded from `SignalFirOptions` down to the staging driver;
+/// the `Default` implementation reproduces the reference compiler's default
+/// behavior.
+#[derive(Debug, Clone, Copy)]
+pub struct PrepareOptions {
+    /// Run the signal-level table access protection pass (steps 2.10a/2.10b),
+    /// the Rust home of the C++ `-ct` option (`gGlobal->gCheckTable`,
+    /// default on). When disabled, unprovable table indexes reach FIR
+    /// lowering unclamped and the generated access is raw — exactly the C++
+    /// `-ct 0` contract.
+    pub check_table: bool,
+}
+
+impl Default for PrepareOptions {
+    fn default() -> Self {
+        Self { check_table: true }
+    }
 }
 
 impl PreparedSignals {
@@ -190,6 +218,14 @@ impl PreparedSignals {
     pub fn origins(&self) -> &propagate::SignalOrigins {
         &self.origins
     }
+
+    /// Out-of-range table accesses clamped by the check-table pass
+    /// (step 2.10b), for the semantic-warning channel. Empty when the pass
+    /// was disabled or every access was provably in-bounds.
+    #[must_use]
+    pub fn table_warnings(&self) -> &[TableRangeWarning] {
+        &self.table_warnings
+    }
 }
 
 impl VerifiedPreparedSignals {
@@ -235,6 +271,12 @@ impl VerifiedPreparedSignals {
         self.inner.origins()
     }
 
+    /// Out-of-range table accesses clamped by the check-table pass.
+    #[must_use]
+    pub fn table_warnings(&self) -> &[TableRangeWarning] {
+        self.inner.table_warnings()
+    }
+
     /// Releases the verified wrapper and returns the inner prepared forest.
     #[must_use]
     pub fn into_inner(self) -> PreparedSignals {
@@ -269,6 +311,12 @@ pub enum SignalPrepareError {
     /// C++ equivalent: the `faustexception` thrown by `mterm::operator/=`,
     /// which aborts compilation with `ERROR : division by 0 in ...`.
     DivisionByZero(String),
+    /// The check-table pass met a non-positive or non-constant table size.
+    ///
+    /// C++ equivalent: the `faustexception`s thrown by
+    /// `SignalTablePromotion::safeSigRDTbl` / `safeSigWRTbl`
+    /// (`ERROR : RDTbl size = N should be > 0`).
+    TableAccess(String),
 }
 
 impl fmt::Display for SignalPrepareError {
@@ -287,7 +335,7 @@ impl fmt::Display for SignalPrepareError {
                 write!(f, "signal preparation postcondition failed: {message}")
             }
             Self::Promotion(err) => write!(f, "signal preparation promotion failed: {err}"),
-            Self::DivisionByZero(msg) => write!(f, "{msg}"),
+            Self::DivisionByZero(msg) | Self::TableAccess(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -301,7 +349,8 @@ impl Error for SignalPrepareError {
             Self::Typing(_)
             | Self::Validation(_)
             | Self::ValidationAt { .. }
-            | Self::DivisionByZero(_) => None,
+            | Self::DivisionByZero(_)
+            | Self::TableAccess(_) => None,
         }
     }
 }
@@ -385,7 +434,8 @@ pub fn prepare_signals_for_fir(
     outputs: &[SigId],
     ui: &UiProgram,
 ) -> Result<PreparedSignals, SignalPrepareError> {
-    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None)?;
+    let options = PrepareOptions::default();
+    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None, &options)?;
     verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
     prepared.verify(ui)?;
     Ok(prepared)
@@ -398,7 +448,18 @@ pub fn prepare_signals_for_fir_verified(
     outputs: &[SigId],
     ui: &UiProgram,
 ) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
-    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None)?;
+    prepare_signals_for_fir_verified_with_options(src_arena, outputs, ui, &PrepareOptions::default())
+}
+
+/// Like [`prepare_signals_for_fir_verified`], with explicit
+/// [`PrepareOptions`] (the `-ct` gate).
+pub fn prepare_signals_for_fir_verified_with_options(
+    src_arena: &TreeArena,
+    outputs: &[SigId],
+    ui: &UiProgram,
+    options: &PrepareOptions,
+) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
+    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None, options)?;
     verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
     prepared.into_verified(ui)
 }
@@ -415,8 +476,10 @@ pub fn prepare_signals_for_fir_verified_with_origins(
     outputs: &[SigId],
     ui: &UiProgram,
     origins: &propagate::SignalOrigins,
+    options: &PrepareOptions,
 ) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
-    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, Some(origins))?;
+    let prepared =
+        prepare_signals_for_fir_unverified(src_arena, outputs, ui, Some(origins), options)?;
     verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
     prepared.into_verified(ui)
 }
@@ -437,6 +500,8 @@ struct Staging<'ui> {
     sig_types: HashMap<SigId, SigType>,
     ui: &'ui UiProgram,
     origins: propagate::SignalOrigins,
+    /// Out-of-range table accesses clamped by [`Self::promote_tables`].
+    table_warnings: Vec<TableRangeWarning>,
 }
 
 impl<'ui> Staging<'ui> {
@@ -453,6 +518,7 @@ impl<'ui> Staging<'ui> {
             sig_types: HashMap::new(),
             ui,
             origins,
+            table_warnings: Vec::new(),
         }
     }
 
@@ -536,6 +602,34 @@ impl<'ui> Staging<'ui> {
         self.inherit_origins();
     }
 
+    /// Pass 2.10b: signal-level table access protection (`-ct`).
+    ///
+    /// Rewrites every table index the interval analysis cannot prove
+    /// in-bounds into `max(0, min(index, size-1))`, recording one
+    /// [`TableRangeWarning`] per rewrite. Requires a fresh [`Self::retype`]
+    /// (step 2.10a): the clamp decision reads index intervals from
+    /// `sig_types`.
+    ///
+    /// Fails on a non-positive or non-constant table size, which C++
+    /// reports as a fatal `faustexception` from
+    /// `SignalTablePromotion::safeSigRDTbl` / `safeSigWRTbl`.
+    fn promote_tables(&mut self) -> Result<(), SignalPrepareError> {
+        let before = self.outputs.clone();
+        self.outputs = promote_table_signals(
+            &mut self.arena,
+            &self.sig_types,
+            &self.outputs,
+            &mut self.table_warnings,
+        )
+        .map_err(|err| match err {
+            NormalFormError::TableAccess(msg) => SignalPrepareError::TableAccess(msg),
+            other => SignalPrepareError::Promotion(other),
+        })?;
+        self.origins.inherit_replacements(&before, &self.outputs);
+        self.inherit_origins();
+        Ok(())
+    }
+
     /// Pass 2.11: rewrites every `Delay(x, 1)` to the canonical `Delay1(x)` form.
     fn canon_one_sample_delays(&mut self) -> Result<(), SignalPrepareError> {
         let before = self.outputs.clone();
@@ -577,6 +671,7 @@ impl<'ui> Staging<'ui> {
             types,
             sig_types: self.sig_types,
             origins: self.origins,
+            table_warnings: self.table_warnings,
         }
     }
 }
@@ -586,6 +681,7 @@ fn prepare_signals_for_fir_unverified(
     outputs: &[SigId],
     ui: &UiProgram,
     source_origins: Option<&propagate::SignalOrigins>,
+    options: &PrepareOptions,
 ) -> Result<PreparedSignals, SignalPrepareError> {
     // Step 2.1 — clone forest into a fresh private arena.
     let mut arena = TreeArena::new();
@@ -618,6 +714,15 @@ fn prepare_signals_for_fir_unverified(
     s.retype()?;
     // Step 2.10 — simplify #2.
     s.simplify()?;
+
+    // Steps 2.10a/2.10b — check-table (`-ct`): retype so index intervals are
+    // fresh, then clamp unprovable table accesses. Runs after simplify #2 so
+    // table sizes are integer constants, mirroring the C++ ordering
+    // (`signalTablePromote` after simplification in `simplifyToNormalForm`).
+    if options.check_table {
+        s.retype()?;
+        s.promote_tables()?;
+    }
 
     // Step 2.11 — Delay(x,1) → Delay1(x).
     s.canon_one_sample_delays()?;

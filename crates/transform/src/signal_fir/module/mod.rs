@@ -418,6 +418,10 @@ struct SignalToFirLower<'a> {
     table_fill_sink: Option<FirType>,
     /// How generated-table content is produced (`--table-init`).
     table_init_mode: crate::signal_fir::TableInitMode,
+    /// Signal-level table protection contract (`-ct`). Lowering never
+    /// re-clamps; this flag only gates the staging debug assertion in
+    /// `tables.rs` (`debug_assert_index_checked`).
+    check_table: bool,
     table_init_sample_rate: Option<i32>,
     /// Scheduling policy, carried so a table generator can be scheduled the
     /// same way as the program that owns it.

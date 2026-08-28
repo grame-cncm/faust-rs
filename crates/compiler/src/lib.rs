@@ -593,6 +593,10 @@ pub struct Compiler {
     /// Explicit host sample rate used when `--table-init const` folds a
     /// generator that reads `ma.SR`.
     table_init_sample_rate: Option<i32>,
+    /// Signal-level table access protection (`-ct`, default on). Mirrors the
+    /// reference compiler's `gGlobal->gCheckTable`: unprovable table indexes
+    /// are clamped at the signal level; off emits raw accesses (`-ct 0`).
+    check_table: bool,
     /// Codegen strategy for `compute()`: scalar (default) or vector mode
     /// (`-vec`/`-vs`/`-lv`).
     ///
@@ -684,6 +688,7 @@ impl Compiler {
             max_copy_delay: 16,
             table_init_mode: TableInitMode::default(),
             table_init_sample_rate: None,
+            check_table: true,
             delay_line_threshold: u32::MAX,
             compute_mode: ComputeMode::Scalar,
             scheduling_strategy: SchedulingStrategy::DepthFirst,
@@ -792,6 +797,17 @@ impl Compiler {
     #[must_use]
     pub fn with_table_init_sample_rate(mut self, sample_rate: i32) -> Self {
         self.table_init_sample_rate = Some(sample_rate);
+        self
+    }
+
+    #[must_use]
+    /// Sets signal-level table access protection (`-ct`; default `true`).
+    ///
+    /// `false` reproduces the reference compiler's `-ct 0` contract: table
+    /// indexes the interval analysis cannot prove in-bounds reach the
+    /// generated code unclamped.
+    pub fn with_check_table(mut self, enabled: bool) -> Self {
+        self.check_table = enabled;
         self
     }
 
@@ -914,6 +930,7 @@ impl Compiler {
             processing_api: self.processing_api,
             table_init_mode: self.table_init_mode,
             table_init_sample_rate: self.table_init_sample_rate,
+            check_table: self.check_table,
             timing_sink: self.timing_sink.clone(),
         }
     }
@@ -956,6 +973,7 @@ impl Compiler {
             self.processing_api,
             self.table_init_mode,
             self.table_init_sample_rate,
+            self.check_table,
             module_name,
         )
         .map_err(|error| lower_fir_error_to_compiler(source, signals, error))

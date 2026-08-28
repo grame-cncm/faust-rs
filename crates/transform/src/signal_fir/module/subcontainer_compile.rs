@@ -38,6 +38,10 @@ pub(crate) struct GeneratorSubModuleSpec<'a> {
     pub max_copy_delay: u32,
     pub delay_line_threshold: u32,
     pub table_init_mode: TableInitMode,
+    /// Signal-level table protection contract (`-ct`) inherited from the
+    /// enclosing module; gates the check-table pass when this generator is
+    /// itself prepared, and the lowering debug assertion.
+    pub check_table: bool,
     pub table_init_sample_rate: Option<i32>,
     pub scheduling_strategy: SchedulingStrategy,
 }
@@ -61,10 +65,13 @@ pub(crate) fn compile_generator_sub_module(
     // The generator is prepared exactly like the main program, so the
     // interpreter path and this path see the same normalized shape. This is the
     // same call `siggen::interpret_generator` already makes.
-    let prepared = crate::signal_prepare::prepare_signals_for_fir_verified(
+    let prepared = crate::signal_prepare::prepare_signals_for_fir_verified_with_options(
         arena,
         &[payload],
         &UiProgram::empty(),
+        &crate::signal_prepare::PrepareOptions {
+            check_table: spec.check_table,
+        },
     )
     .map_err(|err| {
         SignalFirError::new(
@@ -159,6 +166,7 @@ pub(crate) fn compile_generator_sub_module(
         crate::signal_fir::ProcessingApi::Block,
         spec.table_init_mode,
         spec.table_init_sample_rate,
+        spec.check_table,
         spec.scheduling_strategy,
         None,
         Some(&hsched),

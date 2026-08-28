@@ -121,6 +121,10 @@ struct PureVectorLowerer<'a> {
     sub_module_counter: u32,
     /// Scheduling strategy inherited by a generator sub-module.
     scheduling_strategy: SchedulingStrategy,
+    /// Signal-level table protection contract (`-ct`); gates the staging
+    /// debug assertion (`debug_assert_index_checked`) and is inherited by
+    /// generator sub-modules.
+    check_table: bool,
     /// Fill statements for file-scope generated tables; these belong to
     /// `staticInit`, not `instanceConstants` — a static table is shared, so it
     /// is filled once per class, exactly as in the scalar path.
@@ -153,6 +157,7 @@ pub fn lower_pure_vector_program(
         table_init_sample_rate: None,
         max_copy_delay: 0,
         delay_line_threshold: 0,
+        check_table: true,
     };
     lower_vector_program_impl(prepared, verified_plan, None, None, &context)
 }
@@ -286,6 +291,7 @@ pub(super) fn lower_vector_program_impl<'a>(
         sub_modules: Vec::new(),
         sub_module_counter: 0,
         scheduling_strategy: context.strategy,
+        check_table: context.check_table,
         static_init_statements: Vec::new(),
     };
 
@@ -1430,19 +1436,13 @@ impl PureVectorLowerer<'_> {
                 actual: self.store.value_type(value),
             });
         }
-        let length_i32 =
-            i32::try_from(length).map_err(|_| PureVectorLowerError::UnsupportedSignal {
-                signal_id,
-                expression: "mutable table length exceeds FIR i32".to_owned(),
-            })?;
-        // The scalar backend wraps the write index as ((i % n) + n) % n;
-        // mirror it exactly so both paths store to identical cells.
+        // Under `-ct` the signal-level check-table pass has already clamped
+        // an unprovable write index, and under `-ct 0` a raw store is the
+        // documented contract — either way the store is direct, exactly like
+        // the scalar path.
+        self.debug_assert_index_checked(write_index, length);
         let mut builder = FirBuilder::new(&mut self.store);
-        let len = builder.int32(length_i32);
-        let rem = builder.binop(fir::FirBinOp::Rem, raw_index, len, FirType::Int32);
-        let shifted = builder.binop(fir::FirBinOp::Add, rem, len, FirType::Int32);
-        let wrapped = builder.binop(fir::FirBinOp::Rem, shifted, len, FirType::Int32);
-        let store = builder.store_table(name, AccessType::Struct, wrapped, value);
+        let store = builder.store_table(name, AccessType::Struct, raw_index, value);
         self.table_stores.entry(loop_id).or_default().push(store);
         let typ = self.fir_type(signal_id)?;
         self.zero_value(&typ)
@@ -1501,7 +1501,7 @@ impl PureVectorLowerer<'_> {
                 actual: self.store.value_type(raw_index),
             });
         }
-        let checked_index = self.table_index_with_bounds(index, raw_index, length)?;
+        self.debug_assert_index_checked(index, length);
         let expected = self.fir_type(signal_id)?;
         if expected != elem_type {
             return Err(PureVectorLowerError::FirTypeMismatch {
@@ -1510,7 +1510,7 @@ impl PureVectorLowerer<'_> {
                 actual: Some(elem_type),
             });
         }
-        Ok(FirBuilder::new(&mut self.store).load_table(name, access, checked_index, expected))
+        Ok(FirBuilder::new(&mut self.store).load_table(name, access, raw_index, expected))
     }
 
     /// Compiles one table generator into a sub-module of this program.
@@ -1535,6 +1535,7 @@ impl PureVectorLowerer<'_> {
             delay_line_threshold: self.delay_line_threshold,
             table_init_mode: self.table_init_mode,
             table_init_sample_rate: self.table_init_sample_rate,
+            check_table: self.check_table,
             scheduling_strategy: self.scheduling_strategy,
         };
         let node = crate::signal_fir::module::subcontainer_compile::compile_generator_sub_module(
@@ -1863,48 +1864,30 @@ impl PureVectorLowerer<'_> {
         }
     }
 
-    fn table_index_with_bounds(
-        &mut self,
-        index_signal: SigId,
-        index: FirId,
-        length: usize,
-    ) -> Result<FirId, PureVectorLowerError> {
-        let length_i32 =
-            i32::try_from(length).map_err(|_| PureVectorLowerError::UnsupportedSignal {
-                signal_id: u64::from(index_signal.as_u32()),
-                expression: "read-only table length exceeds FIR i32".to_owned(),
-            })?;
-        if let Some(interval) = self
-            .prepared
-            .sig_ty(index_signal)
-            .map(sigtype::SigType::interval)
-        {
-            let lo = interval.lo();
-            let hi = interval.hi();
-            if lo.is_finite() && hi.is_finite() {
-                let lo = lo as i64;
-                let hi = hi as i64;
-                let length = i64::from(length_i32);
-                if lo >= 0 && hi >= 0 && hi < length {
-                    return Ok(index);
-                }
-                let mut builder = FirBuilder::new(&mut self.store);
-                let upper = builder.int32(length_i32 - 1);
-                self.int_helpers.insert("min_i");
-                let upper_clamped = builder.fun_call("min_i", &[upper, index], FirType::Int32);
-                if lo >= 0 {
-                    return Ok(upper_clamped);
-                }
-                let zero = builder.int32(0);
-                self.int_helpers.insert("max_i");
-                return Ok(builder.fun_call("max_i", &[upper_clamped, zero], FirType::Int32));
-            }
-        }
-        let mut builder = FirBuilder::new(&mut self.store);
-        let length = builder.int32(length_i32);
-        let rem = builder.binop(fir::FirBinOp::Rem, index, length, FirType::Int32);
-        let shifted = builder.binop(fir::FirBinOp::Add, rem, length, FirType::Int32);
-        Ok(builder.binop(fir::FirBinOp::Rem, shifted, length, FirType::Int32))
+    /// Debug-only staging check for the check-table contract (`-ct`).
+    ///
+    /// Mirrors the scalar lowerer's `debug_assert_index_checked`: with
+    /// `check_table` on, the signal-level promotion pass has already clamped
+    /// every unprovable table index, so an unclamped index here is a
+    /// staging-order bug; with `check_table` off, raw out-of-range accesses
+    /// are the documented C++ `-ct 0` contract.
+    fn debug_assert_index_checked(&self, index_signal: SigId, length: usize) {
+        debug_assert!(
+            !self.check_table || {
+                self.prepared
+                    .sig_ty(index_signal)
+                    .map(sigtype::SigType::interval)
+                    .is_some_and(|iv| {
+                        iv.lo().is_finite()
+                            && iv.hi().is_finite()
+                            && iv.lo() >= 0.0
+                            && iv.hi() < length as f64
+                    })
+            },
+            "table index reached vector lowering unclamped under -ct 1 \
+             (signal_prepare step 2.10b must run before lowering)"
+        );
+        let _ = (index_signal, length);
     }
 
     fn lower_symbolic_ref(

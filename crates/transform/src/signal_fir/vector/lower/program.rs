@@ -349,4 +349,8 @@ pub struct VectorLoweringContext<'a> {
     pub max_copy_delay: u32,
     /// Delay policy inherited by a generator sub-module.
     pub delay_line_threshold: u32,
+    /// Signal-level table protection contract (`-ct`). Lowering never
+    /// re-clamps; the flag gates the staging debug assertion and is
+    /// inherited by generator sub-modules.
+    pub check_table: bool,
 }

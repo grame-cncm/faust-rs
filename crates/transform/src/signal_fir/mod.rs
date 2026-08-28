@@ -103,7 +103,8 @@ use ui::UiProgram;
 
 use crate::schedule::SchedulingStrategy;
 use crate::signal_prepare::{
-    prepare_signals_for_fir_verified, prepare_signals_for_fir_verified_with_origins,
+    PrepareOptions, prepare_signals_for_fir_verified_with_options,
+    prepare_signals_for_fir_verified_with_origins,
 };
 
 /// Internal DSP computation precision used when lowering signals to FIR.
@@ -378,6 +379,15 @@ pub struct SignalFirOptions {
     /// [`TableInitMode::Const`]. `None` rejects such a generator, because the
     /// host-provided initialization sample rate is otherwise unknowable.
     pub table_init_sample_rate: Option<i32>,
+    /// Signal-level table access protection (`-ct`, default on).
+    ///
+    /// Gates the check-table pass in `signal_prepare` (steps 2.10a/2.10b):
+    /// table indexes the interval analysis cannot prove in-bounds are
+    /// rewritten to `max(0, min(index, size-1))` before lowering. When
+    /// disabled, unprovable indexes reach the generated code raw — the C++
+    /// `-ct 0` contract. Lowering itself never re-checks: the FIR access is
+    /// direct in both modes.
+    pub check_table: bool,
 }
 
 /// How the initial content of a generated table is produced.
@@ -435,6 +445,7 @@ impl Default for SignalFirOptions {
             processing_api: ProcessingApi::Block,
             table_init_mode: TableInitMode::Runtime,
             table_init_sample_rate: None,
+            check_table: true,
         }
     }
 }
@@ -474,6 +485,11 @@ pub struct SignalFirOutput {
     /// [`Self::vector_pipeline_status`]; this detail is intended for corpus
     /// triage and may include signal or loop identifiers.
     pub vector_pipeline_detail: Option<String>,
+    /// Out-of-range table accesses clamped by the check-table pass (`-ct`),
+    /// for the semantic-warning channel (the reference compiler reports the
+    /// same class under `-wall`). Empty when `check_table` was off or every
+    /// access was provably in-bounds.
+    pub table_warnings: Vec<crate::signal_prepare::TableRangeWarning>,
 }
 
 /// Everything one fast-lane lowering run needs, in one named place.
@@ -777,10 +793,21 @@ fn compile_fastlane_inner(
     // Preparation owns the five retyping passes, promotions, and simplify
     // normalizations.  Keep them as one atomic timing region so the measured
     // stage matches the verified preparation boundary consumed by lowering.
+    let prepare_options = PrepareOptions {
+        check_table: options.check_table,
+    };
     let prepared = time_signal_fir_phase(timing_sink, "fir-prepare-normalize", || {
         let result = signal_origins.map_or_else(
-            || prepare_signals_for_fir_verified(arena, signals, ui),
-            |origins| prepare_signals_for_fir_verified_with_origins(arena, signals, ui, origins),
+            || prepare_signals_for_fir_verified_with_options(arena, signals, ui, &prepare_options),
+            |origins| {
+                prepare_signals_for_fir_verified_with_origins(
+                    arena,
+                    signals,
+                    ui,
+                    origins,
+                    &prepare_options,
+                )
+            },
         );
         result.map_err(|err| {
             let signal = err.signal();
@@ -840,10 +867,14 @@ fn compile_fastlane_inner(
                     table_init_mode: options.table_init_mode,
                     table_init_sample_rate: options.table_init_sample_rate,
                     delay_line_threshold: options.delay_line_threshold,
+                    check_table: options.check_table,
                 },
             )
         }) {
-            Ok(output) => return Ok(output),
+            Ok(mut output) => {
+                output.table_warnings = prepared.table_warnings().to_vec();
+                return Ok(output);
+            }
             Err(failure) => vector_fallback = Some(failure),
         }
     }
@@ -868,6 +899,7 @@ fn compile_fastlane_inner(
             options.processing_api,
             options.table_init_mode,
             options.table_init_sample_rate,
+            options.check_table,
             options.scheduling_strategy,
             clocked,
             gate_graphs.as_ref().map(|(_, schedule)| schedule),
@@ -889,6 +921,7 @@ fn compile_fastlane_inner(
     });
 
     output.shadow_report = shadow_report.flatten();
+    output.table_warnings = prepared.table_warnings().to_vec();
     if let Some(failure) = vector_fallback {
         output.vector_pipeline_status = VectorPipelineStatus::Fallback(failure.reason);
         output.vector_pipeline_detail = Some(failure.detail);

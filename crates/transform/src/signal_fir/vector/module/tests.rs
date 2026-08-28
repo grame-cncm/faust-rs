@@ -390,6 +390,7 @@ fn module_context<'a>(
         table_init_mode: crate::signal_fir::TableInitMode::Const,
         table_init_sample_rate: None,
         delay_line_threshold: 0,
+        check_table: true,
     }
 }
 

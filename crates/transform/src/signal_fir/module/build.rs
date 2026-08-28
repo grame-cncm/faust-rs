@@ -924,6 +924,7 @@ fn assemble_module_output(
             vector_pipeline_status: super::super::VectorPipelineStatus::NotRequested,
             vector_effective_mode: super::super::VectorEffectiveMode::Scalar,
             vector_pipeline_detail: None,
+        table_warnings: Vec::new(),
         });
     }
 
@@ -955,6 +956,7 @@ fn assemble_module_output(
         vector_pipeline_status: super::super::VectorPipelineStatus::NotRequested,
         vector_effective_mode: super::super::VectorEffectiveMode::Scalar,
         vector_pipeline_detail: None,
+        table_warnings: Vec::new(),
     })
 }
 
@@ -1061,6 +1063,7 @@ pub(crate) fn build_module<'a>(
     processing_api: ProcessingApi,
     table_init_mode: crate::signal_fir::TableInitMode,
     table_init_sample_rate: Option<i32>,
+    check_table: bool,
     scheduling_strategy: crate::schedule::SchedulingStrategy,
     clocked: Option<clocked::ClockedPlan<'a>>,
     scalar_schedule: Option<&crate::hgraph::Hsched>,
@@ -1093,6 +1096,7 @@ pub(crate) fn build_module<'a>(
     lower.table_fill_sink = fill.map(|spec| spec.elem_ty.clone());
     lower.table_init_mode = table_init_mode;
     lower.table_init_sample_rate = table_init_sample_rate;
+    lower.check_table = check_table;
     lower.scheduling_strategy = scheduling_strategy;
     lower.clocked = clocked.map(clocked::ClockedState::new);
     lower.scalar_schedule = scalar_schedule.cloned();

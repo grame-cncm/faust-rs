@@ -57,6 +57,9 @@ pub(crate) struct VectorModuleContext<'a> {
     /// Delay policy inherited by a generator sub-module, which must match the
     /// enclosing program's.
     pub delay_line_threshold: u32,
+    /// Signal-level table protection contract (`-ct`), inherited by generator
+    /// sub-modules and by the lowering debug assertion.
+    pub check_table: bool,
 }
 pub(crate) fn build_verified_vector_module(
     prepared: &VerifiedPreparedSignals,
@@ -224,6 +227,7 @@ fn finish_vector_module(
             vector_pipeline_status: VectorPipelineStatus::Certified,
             vector_effective_mode: VectorEffectiveMode::CertifiedVector,
             vector_pipeline_detail: None,
+        table_warnings: Vec::new(),
         },
         assembly,
         output_stores,
@@ -329,6 +333,7 @@ pub(super) fn build_verified_vector_module_with_evidence(
             table_init_sample_rate: context.table_init_sample_rate,
             max_copy_delay,
             delay_line_threshold: context.delay_line_threshold,
+            check_table: context.check_table,
         },
     )
     .map_err(|error| {

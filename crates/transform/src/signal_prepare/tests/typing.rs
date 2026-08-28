@@ -49,6 +49,7 @@ fn preparation_remaps_and_inherits_signal_origins_across_rewrites() {
         &[output],
         &ui::UiProgram::empty(),
         &origins,
+        &crate::signal_prepare::PrepareOptions::default(),
     )
     .expect("provenance-aware preparation should succeed");
 
@@ -352,10 +353,21 @@ fn prepare_signals_for_fir_promotes_table_read_index_to_int() {
     let SigMatch::RdTbl(_, index) = match_sig(&prepared.arena, prepared.outputs[0]) else {
         panic!("promoted output should stay SIGRDTBL");
     };
-    let SigMatch::IntCast(inner) = match_sig(&prepared.arena, index) else {
+    // The audio-input index interval ([-1, 1]) cannot prove the access
+    // in-bounds, so the check-table pass (step 2.10b) wraps the promoted
+    // index in the full clamp `max(0, min(index, size-1))`.
+    let SigMatch::Max(zero, inner) = match_sig(&prepared.arena, index) else {
+        panic!("unprovable table read index should be clamped by -ct");
+    };
+    assert_eq!(match_sig(&prepared.arena, zero), SigMatch::Int(0));
+    let SigMatch::Min(cast, upper) = match_sig(&prepared.arena, inner) else {
+        panic!("clamp should be max(0, min(index, size-1))");
+    };
+    assert_eq!(match_sig(&prepared.arena, upper), SigMatch::Int(1));
+    let SigMatch::IntCast(raw) = match_sig(&prepared.arena, cast) else {
         panic!("table read index should be promoted to SIGINTCAST");
     };
-    assert_eq!(match_sig(&prepared.arena, inner), SigMatch::Input(0));
+    assert_eq!(match_sig(&prepared.arena, raw), SigMatch::Input(0));
 }
 #[test]
 fn prepare_signals_for_fir_promotes_real_mul_operands_before_binop() {

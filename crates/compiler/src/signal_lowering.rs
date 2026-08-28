@@ -200,6 +200,10 @@ pub(crate) struct SignalLoweringContext {
     /// point is emitted alongside an empty canonical `compute`. The default
     /// reproduces the classic contract.
     pub(crate) processing_api: ProcessingApi,
+    /// Signal-level table access protection (`-ct`, default on): gates the
+    /// check-table pass in signal preparation. Off reproduces the reference
+    /// compiler's `-ct 0` raw-access contract.
+    pub(crate) check_table: bool,
     /// Optional per-phase timing callback; `None` disables timing.
     pub(crate) timing_sink: Option<TimingSink>,
 }
@@ -229,6 +233,7 @@ pub(crate) fn lower_signals_to_interp_transform_fastlane(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })
@@ -313,6 +318,7 @@ pub(crate) fn lower_signals_to_cranelift_report(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })
@@ -616,6 +622,7 @@ pub(crate) fn lower_signals_to_fir(
     processing_api: ProcessingApi,
     table_init_mode: transform::signal_fir::TableInitMode,
     table_init_sample_rate: Option<i32>,
+    check_table: bool,
     module_name: Option<String>,
 ) -> Result<FirCompileOutput, LowerToFirError> {
     validate_execution_options("fir", control_rate_mode, processing_api, compute_mode)
@@ -634,6 +641,7 @@ pub(crate) fn lower_signals_to_fir(
         processing_api,
         table_init_mode,
         table_init_sample_rate,
+        check_table,
     )
     .map_err(LowerToFirError::Transform)?;
     maybe_verify_fir_module(&lowered, fir_verify).map_err(|report| LowerToFirError::Verify {
@@ -686,6 +694,7 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane(
     processing_api: ProcessingApi,
     table_init_mode: transform::signal_fir::TableInitMode,
     table_init_sample_rate: Option<i32>,
+    check_table: bool,
 ) -> Result<FirCompileOutput, SignalFirError> {
     lower_signals_to_fir_transform_fastlane_with_timing(
         output,
@@ -699,6 +708,7 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane(
         processing_api,
         table_init_mode,
         table_init_sample_rate,
+        check_table,
         None,
     )
 }
@@ -720,6 +730,7 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane_with_timing(
     processing_api: ProcessingApi,
     table_init_mode: transform::signal_fir::TableInitMode,
     table_init_sample_rate: Option<i32>,
+    check_table: bool,
     timing_sink: Option<&TimingSink>,
 ) -> Result<FirCompileOutput, SignalFirError> {
     let signal_fir_options = SignalFirOptions {
@@ -733,6 +744,7 @@ pub(crate) fn lower_signals_to_fir_transform_fastlane_with_timing(
         processing_api,
         table_init_mode,
         table_init_sample_rate,
+        check_table,
     };
     let mut request = transform::signal_fir::SignalFirRequest::new(
         &output.parse.state.arena,
@@ -861,6 +873,7 @@ pub(crate) fn lower_signals_to_cpp_transform_fastlane(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })
@@ -920,6 +933,7 @@ pub(crate) fn lower_signals_to_c_transform_fastlane(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })
@@ -963,6 +977,7 @@ pub(crate) fn lower_signals_to_julia_transform_fastlane(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })
@@ -1043,6 +1058,7 @@ pub(crate) fn lower_signals_to_rust_transform_fastlane(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })
@@ -1093,6 +1109,7 @@ pub(crate) fn lower_signals_to_asc_transform_fastlane(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })
@@ -1141,6 +1158,7 @@ pub(crate) fn lower_signals_to_codebox_transform_fastlane(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })
@@ -1185,6 +1203,7 @@ pub(crate) fn lower_signals_to_cmajor_transform_fastlane(
             ctx.processing_api,
             ctx.table_init_mode,
             ctx.table_init_sample_rate,
+            ctx.check_table,
             timing_sink,
         )
     })

@@ -91,9 +91,8 @@ impl<'a> SignalToFirLower<'a> {
         if table_len == 0 {
             return self.unsupported_node(node, "SIGRDTBL cannot read an empty table");
         }
-        let ridx_sig = ridx;
-        let ridx = self.lower_signal(ridx)?;
-        let index = self.table_index_with_bounds(ridx, ridx_sig, table_len);
+        self.debug_assert_index_checked(ridx, table_len);
+        let index = self.lower_signal(ridx)?;
         let real_ty = self.signal_fir_type(node)?;
         let mut b = FirBuilder::new(&mut self.store);
         Ok(b.load_table(table_name, access, index, real_ty))
@@ -125,8 +124,8 @@ impl<'a> SignalToFirLower<'a> {
             return self.unsupported_node(node, "SIGWRTBL write requires wsig when widx is set");
         }
         let wsig_value = self.lower_signal(wsig)?;
-        let widx = self.lower_signal(widx)?;
-        let index = self.normalized_table_index(widx, table_len);
+        self.debug_assert_index_checked(widx, table_len);
+        let index = self.lower_signal(widx)?;
         let mut b = FirBuilder::new(&mut self.store);
         self.regions
             .current_phases_mut()
@@ -507,86 +506,34 @@ impl<'a> SignalToFirLower<'a> {
         }
     }
 
-    /// Normalizes one table index to `[0, table_len)` with integer modulo.
-    /// Wraps a table index with `((index % size) + size) % size` to produce a
-    /// non-negative in-bounds `Int32` offset.
+    /// Debug-only staging check for the check-table contract (`-ct`).
     ///
-    /// The promoter guarantees that all table index signals are Int-typed
-    /// (wrapped in `IntCast` if necessary), so `index` is already `Int32` at the
-    /// FIR level when this function is called.  No cast is needed.
-    pub(super) fn normalized_table_index(&mut self, index: FirId, table_len: usize) -> FirId {
-        let size = {
-            let mut b = FirBuilder::new(&mut self.store);
-            b.int32(i32::try_from(table_len).unwrap_or(i32::MAX))
-        };
-        let rem = {
-            let mut b = FirBuilder::new(&mut self.store);
-            b.binop(FirBinOp::Rem, index, size, FirType::Int32)
-        };
-        let rem_plus_size = {
-            let mut b = FirBuilder::new(&mut self.store);
-            b.binop(FirBinOp::Add, rem, size, FirType::Int32)
-        };
-        let mut b = FirBuilder::new(&mut self.store);
-        b.binop(FirBinOp::Rem, rem_plus_size, size, FirType::Int32)
-    }
-
-    /// Selects the appropriate index bounds strategy based on the interval of
-    /// `index_sig`:
-    ///
-    /// - **[lo, hi] ⊆ [0, N-1]**: the interval proves the index is always
-    ///   in-bounds → emit direct access (no bounds check).
-    /// - **[lo, hi] with lo ≥ 0, hi finite but > N-1**: non-negative but may
-    ///   overflow → clamp to `min_i(N-1, index)`.
-    /// - **[lo, hi] finite with lo < 0**: signed bounds → full clamp
-    ///   `min_i(N-1, max_i(0, index))`.
-    /// - **Unknown / infinite interval**: fall back to modular wrapping
-    ///   `((index % N) + N) % N`.
-    ///
-    /// This mirrors the C++ reference compiler's interval-driven access
-    /// strategy and avoids the systematic over-conservatism of always applying
-    /// modular wrapping.
-    pub(super) fn table_index_with_bounds(
-        &mut self,
-        index_fir: FirId,
-        index_sig: SigId,
-        table_len: usize,
-    ) -> FirId {
-        let n = i32::try_from(table_len).unwrap_or(i32::MAX);
-        let iv = self.sig_types.get(&index_sig).map(|ty| ty.interval());
-
-        if let Some(iv) = iv {
-            let lo = iv.lo();
-            let hi = iv.hi();
-            if lo.is_finite() && hi.is_finite() {
-                let lo_i = lo as i64;
-                let hi_i = hi as i64;
-                let n_i = n as i64;
-                if lo_i >= 0 && hi_i >= 0 && hi_i < n_i {
-                    // Index is already provably in [0, N-1] — direct access.
-                    return index_fir;
-                }
-                if lo_i >= 0 {
-                    // Non-negative but hi may exceed N-1 — upper clamp only.
-                    let upper = self.lower_int32_const(n - 1);
-                    self.used_protos.int_fun_names.insert("min_i");
-                    let mut b = FirBuilder::new(&mut self.store);
-                    return b.fun_call("min_i", &[index_fir, upper], FirType::Int32);
-                }
-                // Signed bounds — full clamp max(0, min(N-1, x)).
-                let zero = self.lower_int32_const(0);
-                let upper = self.lower_int32_const(n - 1);
-                self.used_protos.int_fun_names.insert("min_i");
-                self.used_protos.int_fun_names.insert("max_i");
-                let clamped = {
-                    let mut b = FirBuilder::new(&mut self.store);
-                    b.fun_call("min_i", &[upper, index_fir], FirType::Int32)
-                };
-                let mut b = FirBuilder::new(&mut self.store);
-                return b.fun_call("max_i", &[clamped, zero], FirType::Int32);
-            }
-        }
-        // No interval info or infinite bounds — full modular wrapping.
-        self.normalized_table_index(index_fir, table_len)
+    /// With `check_table` on, the signal-level promotion pass (steps
+    /// 2.10a/2.10b of `signal_prepare`) has already clamped every table index
+    /// the interval analysis could not prove in-bounds, so by the time an
+    /// index reaches lowering its interval must be contained in
+    /// `[0, table_len - 1]`. An unclamped index here is a staging-order bug —
+    /// surface it instead of silently absorbing it with a second clamp.
+    /// With `check_table` off, raw out-of-range accesses are the documented
+    /// C++ `-ct 0` contract and nothing is asserted.
+    pub(super) fn debug_assert_index_checked(&self, index_sig: SigId, table_len: usize) {
+        debug_assert!(
+            !self.check_table || {
+                self.sig_types
+                    .get(&index_sig)
+                    .map(sigtype::SigType::interval)
+                    .is_some_and(|iv| {
+                        iv.lo().is_finite()
+                            && iv.hi().is_finite()
+                            && iv.lo() >= 0.0
+                            && iv.hi() < table_len as f64
+                    })
+            },
+            "table index reached FIR lowering unclamped under -ct 1 \
+             (signal_prepare step 2.10b must run before lowering)"
+        );
+        // Release builds: the parameters are otherwise unused.
+        let _ = (index_sig, table_len);
     }
 }
+
