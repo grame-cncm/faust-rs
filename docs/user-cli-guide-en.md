@@ -125,8 +125,25 @@ Same information as `--dump-sig`, printed as one binding per interior node
 instead of one tree per output, so shared structure appears once and node
 identity is readable off the text.
 
+Both `--dump-sig` and `--dump-sig-dag` show the *propagated* forest, before
+normal-form staging: promotion casts, algebraic simplification, and the
+`-ct` table clamps are not yet applied. Use `--dump-sig-dag-prepared` to see
+those.
+
 ```bash
 cargo run -p compiler -- --dump-sig-dag tests/corpus/rep_01_passthrough.dsp
+```
+
+### `--dump-sig-dag-prepared`
+
+Like `--dump-sig-dag`, but after the signal-preparation staging pipeline:
+symbolic recursion (`SYMREC`/`SYMREF`), promotion casts, algebraic
+simplification, and — under the default `--check-table 1` — the table
+clamps inserted by the check-table pass (`SIGMAX(0, SIGMIN(idx, size-1))`).
+This is the closest textual view of what FIR lowering actually consumes.
+
+```bash
+cargo run -p compiler -- --dump-sig-dag-prepared tests/corpus/rep_01_passthrough.dsp
 ```
 
 ### `--dump-fir`
@@ -394,6 +411,18 @@ instead of the default power-of-two circular buffer (`-dlt` compatibility).
 Delays > `dlt` use an exact-size buffer with a per-line counter variable.
 Default: disabled (all delays above `mcd` use circular-pow2).
 
+### `--check-table <0|1>`
+
+Check table index ranges and generate safe accesses (`-ct` compatibility).
+With `1` (the default, matching the reference compiler), every
+`rdtable`/`rwtable` index the interval analysis cannot prove in-bounds is
+clamped at the signal level to `max(0, min(index, size-1))`, before FIR
+lowering — the clamp is visible in `--dump-sig-dag-prepared` and in the
+generated code. With `0`, unprovable accesses are generated raw and an
+out-of-range index is undefined behavior, exactly the reference `-ct 0`
+contract. Under `--warn`, each clamped site is reported as a
+`WARNING : RDTbl read index [lo:hi] is outside of table size (N)` line.
+
 ### `--table-init runtime|const`
 
 How the initial content of `rdtable`/`rwtable` tables is produced (`-table-init`
@@ -488,6 +517,11 @@ may leave its domain at run time — the class the reference compiler reports
 under `-wall`/`-me`. Off by default. Warnings go to stderr in the selected
 `--error-format` and never change the exit status.
 
+Also reports each table access clamped by the check-table pass
+(`--check-table`, on by default) as a plain
+`WARNING : RDTbl read index [lo:hi] is outside of table size (N)` stderr
+line — the report C++ prints under `-wall` from its own table promotion.
+
 ### `--compilation-time` and `--timeout <secs>`
 
 `--compilation-time` (`-time` compatibility) prints per-phase timing lines to
@@ -506,8 +540,8 @@ cargo run -p compiler -- --fir-fixture <name> -lang cpp
 ```
 
 `--fir-fixture` is incompatible with a DSP input file, `--golden`, `--parse`,
-`--dump-box`, `--dump-sig`, `--dump-sig-dag`, `--check`, `--signal-fir-lane`,
-and `--import-dir`. `--list-fir-fixtures` does not accept `--fir-fixture` or
+`--dump-box`, `--dump-sig`, `--dump-sig-dag`, `--dump-sig-dag-prepared`,
+`--check`, `--signal-fir-lane`, and `--import-dir`. `--list-fir-fixtures` does not accept `--fir-fixture` or
 an input file.
 
 ## 5. Diagnostics options
@@ -576,7 +610,8 @@ Valid with:
 
 Invalid with:
 
-- `--parse`, `--dump-box`, `--dump-sig`, `--dump-sig-dag`, `--golden`, `-e`
+- `--parse`, `--dump-box`, `--dump-sig`, `--dump-sig-dag`,
+  `--dump-sig-dag-prepared`, `--golden`, `-e`
 - `--fir-fixture` (the input is already FIR)
 
 Examples:
@@ -651,6 +686,7 @@ parsing, so these historical Faust spellings keep working:
 | `-pathslist` | `--pathslist` |
 | `-mcd <n>` | `--mcd <n>` |
 | `-dlt <n>` | `--dlt <n>` |
+| `-ct <0\|1>` | `--check-table <0\|1>` |
 | `-table-init <v>` | `--table-init <v>` |
 | `-vec` | `--vec` |
 | `-vs <n>` | `--vs <n>` |
