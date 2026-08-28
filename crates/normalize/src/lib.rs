@@ -27,9 +27,11 @@ pub mod normalform;
 pub(crate) mod normalize;
 pub mod rec_merge;
 pub(crate) mod simplify;
+pub mod table_promote;
 
 pub use rec_merge::merge_isomorphic_symrec_groups;
 pub use simplify::simplify_const;
+pub use table_promote::{TableRangeWarning, promote_table_signals};
 
 pub const CRATE_NAME: &str = "normalize";
 

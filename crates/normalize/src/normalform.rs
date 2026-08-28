@@ -72,6 +72,13 @@ pub enum NormalFormError {
     /// `mterm::DivisionByZero` for why the Rust port keeps an unwind
     /// rather than threading a `Result` through the simplifier.
     DivisionByZero(String),
+    /// A table access could not be checked by the check-table (`-ct`)
+    /// promotion pass: non-positive or non-constant table size.
+    ///
+    /// C++ raises `faustexception` for both cases from
+    /// `SignalTablePromotion::safeSigRDTbl` / `safeSigWRTbl`
+    /// (`transform/sigPromotion.cpp`).
+    TableAccess(String),
 }
 
 impl std::fmt::Display for NormalFormError {
@@ -79,7 +86,7 @@ impl std::fmt::Display for NormalFormError {
         match self {
             Self::Recursion(e) => write!(f, "de-Bruijn conversion error: {e}"),
             Self::Type(e) => write!(f, "type annotation error: {e}"),
-            Self::DivisionByZero(e) => write!(f, "{e}"),
+            Self::DivisionByZero(e) | Self::TableAccess(e) => write!(f, "{e}"),
         }
     }
 }
