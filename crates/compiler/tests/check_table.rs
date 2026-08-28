@@ -1,5 +1,5 @@
 //! End-to-end tests for the `-ct`/`--check-table` option
-//! (`porting/table-clamp-signal-promotion-plan-2026-08-28-en.md`, gate G3).
+//! (`porting/table-clamp-signal-promotion-plan-2026-08-28-en.md`, gates G3/G4).
 //!
 //! The clamp itself is a signal-level rewrite (`normalize::table_promote`,
 //! staged as `signal_prepare` steps 2.10a/2.10b); these tests lock the
@@ -98,6 +98,39 @@ fn warn_surface_reports_the_clamped_accesses() {
             .any(|m| m == "WARNING : RDTbl read index [0:100] is outside of table size (16)"),
         "unexpected messages: {messages:?}"
     );
+}
+
+#[test]
+fn prepared_dump_shows_the_signal_level_clamp() {
+    // The user-visible motivation for the whole plan: the clamp must be
+    // observable at the signal level (`--dump-sig-dag-prepared`), not
+    // invented invisibly at FIR lowering.
+    let compiler = Compiler::new();
+    let signals = compiler
+        .compile_source_to_signals("check_table_test.dsp", TABLE_UNCLAMPED)
+        .expect("signal compilation must succeed");
+    let prepared = transform::signal_prepare::prepare_signals_for_fir_verified_with_options(
+        &signals.parse.state.arena,
+        &signals.signals,
+        &signals.ui,
+        &transform::signal_prepare::PrepareOptions { check_table: true },
+    )
+    .expect("preparation must succeed");
+    let dump = signals::dump_sig_dag(prepared.arena(), prepared.outputs(), Some(&signals.ui));
+    assert!(dump.contains("SIGMAX"), "clamp missing from dump:
+{dump}");
+    assert!(dump.contains("SIGMIN"), "clamp missing from dump:
+{dump}");
+
+    let raw = transform::signal_prepare::prepare_signals_for_fir_verified_with_options(
+        &signals.parse.state.arena,
+        &signals.signals,
+        &signals.ui,
+        &transform::signal_prepare::PrepareOptions { check_table: false },
+    )
+    .expect("preparation must succeed");
+    let dump = signals::dump_sig_dag(raw.arena(), raw.outputs(), Some(&signals.ui));
+    assert!(!dump.contains("SIGMAX") && !dump.contains("SIGMIN"));
 }
 
 #[test]

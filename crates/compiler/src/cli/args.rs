@@ -172,8 +172,20 @@ pub struct CliArgs {
     /// Same information as `--dump-sig`, printed as one binding per interior
     /// node instead of one tree per output, so shared structure appears once
     /// and node identity is readable off the text.
+    /// Note: dumps the *propagated* forest, before normal-form staging —
+    /// promotion casts, simplification, and the `-ct` table clamps are not
+    /// yet applied; use `--dump-sig-dag-prepared` to see those.
     #[arg(long = "dump-sig-dag", action = ArgAction::SetTrue)]
     pub dump_sig_dag: bool,
+    /// Like `--dump-sig-dag`, but after the signal-preparation staging
+    /// pipeline (`signal_prepare` steps 2.1-2.14): symbolic recursion,
+    /// promotion casts, algebraic simplification, and — under the default
+    /// `-ct 1` — the table clamps inserted by the check-table pass.
+    ///
+    /// This is the closest textual view of what FIR lowering actually
+    /// consumes.
+    #[arg(long = "dump-sig-dag-prepared", action = ArgAction::SetTrue)]
+    pub dump_sig_dag_prepared: bool,
     /// Compile to C++ and print generated code.
     #[arg(long = "dump-cpp", action = ArgAction::SetTrue)]
     pub dump_cpp: bool,

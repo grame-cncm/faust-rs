@@ -245,6 +245,51 @@ pub(crate) fn run_source_mode(
         return;
     }
 
+    if cli.dump_sig_dag_prepared {
+        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
+        let result = compiler.compile_file_to_signals(input_path, &cli.import_dir);
+        timer.phase("signals");
+
+        match result {
+            Ok(out) => {
+                // Same staging pipeline FIR lowering runs (promotion casts,
+                // simplification, and the -ct table clamps), so the dump
+                // shows what lowering actually consumes.
+                let prepare = transform::signal_prepare::prepare_signals_for_fir_verified_with_options(
+                    &out.parse.state.arena,
+                    &out.signals,
+                    &out.ui,
+                    &transform::signal_prepare::PrepareOptions {
+                        check_table: cli.check_table != 0,
+                    },
+                );
+                timer.phase("prepare");
+                match prepare {
+                    Ok(prepared) => {
+                        let mut rendered = format!(
+                            "Signals OK: inputs={} outputs={}\n",
+                            out.process_arity.inputs, out.process_arity.outputs
+                        );
+                        rendered.push_str(&dump_sig_dag(
+                            prepared.arena(),
+                            prepared.outputs(),
+                            Some(&out.ui),
+                        ));
+                        emit_output(&rendered, cli.output.as_ref());
+                    }
+                    Err(err) => {
+                        eprintln!("Signal preparation failed: {err}");
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Err(err) => report_pipeline_failure("Signal pipeline failed", &err, cli),
+        }
+        timer.total();
+        return;
+    }
+
     if cli.dump_fir_verify {
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = Compiler::new()

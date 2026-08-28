@@ -135,6 +135,7 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         cli.export_dsp,
         cli.dump_sig,
         cli.dump_sig_dag,
+        cli.dump_sig_dag_prepared,
         cli.dump_cpp,
         cli.dump_cpp_from_fbc,
         cli.dump_c,
@@ -187,7 +188,12 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
         std::process::exit(2);
     }
 
-    if (cli.dump_box || cli.dump_sig || cli.dump_sig_dag || cli.parse || cli.golden)
+    if (cli.dump_box
+        || cli.dump_sig
+        || cli.dump_sig_dag
+        || cli.dump_sig_dag_prepared
+        || cli.parse
+        || cli.golden)
         && cli.signal_fir_lane.is_some()
     {
         eprintln!(
@@ -266,7 +272,13 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
     }
 
     if cli.fir_fixture.is_some() {
-        if cli.golden || cli.parse || cli.dump_box || cli.dump_sig || cli.dump_sig_dag || cli.check
+        if cli.golden
+            || cli.parse
+            || cli.dump_box
+            || cli.dump_sig
+            || cli.dump_sig_dag
+            || cli.dump_sig_dag_prepared
+            || cli.check
         {
             eprintln!(
                 "--fir-fixture supports only FIR/backend dump modes (fir/c/cpp/interp/cranelift/wasm/wast/json)"
@@ -313,6 +325,7 @@ pub(crate) fn validate_memory_manager_options(cli: &CliArgs) -> Result<(), Strin
         || cli.export_dsp
         || cli.dump_sig
         || cli.dump_sig_dag
+        || cli.dump_sig_dag_prepared
         || cli.dump_cpp_from_fbc
         || cli.dump_fir
         || cli.dump_fir_verify

@@ -1,7 +1,7 @@
 # Table Index Clamping — Move to Signal Level + `-ct` Option
 
 **Date**: 2026-08-28
-**Status**: Ready for implementation
+**Status**: Executed — G1..G4 landed 2026-08-28 (see `porting/journal/2026-08-28.md`)
 **Motivation**: `faust-rs --dump-sig-dag tests/lean/table_unclamped.dsp` shows a raw
 `SIGRDTBL(tbl, idx)` with no bounds protection, yet the generated C++ contains
 `std::min<int>(..., 15)`. The clamp is currently invented late, during FIR
