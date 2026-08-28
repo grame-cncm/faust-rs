@@ -608,8 +608,10 @@ fn Compiler::expand_source_to_dsp
 fn Compiler::generate_aux_files
 fn Compiler::get_faustwasm_info
 fn Compiler::new
+fn Compiler::table_range_warning_messages
 fn Compiler::version
 fn Compiler::with_cancel
+fn Compiler::with_check_table
 fn Compiler::with_compute_mode
 fn Compiler::with_control_rate_mode
 fn Compiler::with_dlt
@@ -1620,14 +1622,18 @@ fn prepare_signals
 fn prepare_signals_multi
 fn promote_signals
 fn promote_signals_fastlane
+fn promote_table_signals
 fn simplify_const
 fn simplify_signals_fastlane
 mod normalform
 mod rec_merge
+mod table_promote
 struct DivisionByZero
 struct NormalFormOpts
+struct TableRangeWarning
 use rec_merge::merge_isomorphic_symrec_groups
 use simplify::simplify_const
+use table_promote
 
 ## parser
 const fn
@@ -2370,6 +2376,7 @@ fn PreparedSignals::origins
 fn PreparedSignals::outputs
 fn PreparedSignals::sig_ty
 fn PreparedSignals::sig_types_map
+fn PreparedSignals::table_warnings
 fn PreparedSignals::ty
 fn PreparedSignals::types_map
 fn PreparedSignals::verify
@@ -2435,6 +2442,7 @@ fn VerifiedPreparedSignals::origins
 fn VerifiedPreparedSignals::outputs
 fn VerifiedPreparedSignals::sig_ty
 fn VerifiedPreparedSignals::sig_types_map
+fn VerifiedPreparedSignals::table_warnings
 fn VerifiedPreparedSignals::ty
 fn VerifiedPreparedSignals::types_map
 fn VerifiedPureVectorProgram::control_state_fields
@@ -2510,6 +2518,7 @@ fn orient_effect_conflicts
 fn precheck_state_event_bound
 fn prepare_signals_for_fir
 fn prepare_signals_for_fir_verified
+fn prepare_signals_for_fir_verified_with_options
 fn prepare_signals_for_fir_verified_with_origins
 fn pv_schedule
 fn route_pv_vector_fir
@@ -2544,6 +2553,7 @@ mod clock_ad
 mod conditions
 mod decoration_verify
 mod dependencies
+mod diagnostics
 mod effects
 mod error
 mod events
@@ -2621,6 +2631,7 @@ struct OccInfo
 struct OccurrenceDependencyFact
 struct OccurrenceUse
 struct PrefixTransition
+struct PrepareOptions
 struct PreparedSignals
 struct Producer
 struct Program
@@ -2687,11 +2698,13 @@ use check
 use conditions
 use dag::ScheduleDag
 use dependencies
+use diagnostics
 use effects
 use error
 use fused_groups
 use materialize
 use model
+use normalize::table_promote::TableRangeWarning
 use origins
 use produce
 use program
