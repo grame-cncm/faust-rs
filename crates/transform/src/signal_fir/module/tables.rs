@@ -536,4 +536,3 @@ impl<'a> SignalToFirLower<'a> {
         let _ = (index_sig, table_len);
     }
 }
-

@@ -1984,7 +1984,7 @@ impl PureVectorLowerer<'_> {
         let rhs = self.lower_dep(scope, operands.1, cur)?;
         let result_type = self.fir_type(signal_id)?;
         leaf_emit::emit_binop(&mut self.store, op, result_type, lhs, rhs).map_err(|error| {
-            match error {
+            match *error {
                 leaf_emit::LeafBinopError::UnsupportedOperator => {
                     PureVectorLowerError::UnsupportedSignal {
                         signal_id,

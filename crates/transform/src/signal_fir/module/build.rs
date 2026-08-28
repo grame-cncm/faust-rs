@@ -924,7 +924,7 @@ fn assemble_module_output(
             vector_pipeline_status: super::super::VectorPipelineStatus::NotRequested,
             vector_effective_mode: super::super::VectorEffectiveMode::Scalar,
             vector_pipeline_detail: None,
-        table_warnings: Vec::new(),
+            table_warnings: Vec::new(),
         });
     }
 

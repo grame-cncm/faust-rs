@@ -227,7 +227,7 @@ fn finish_vector_module(
             vector_pipeline_status: VectorPipelineStatus::Certified,
             vector_effective_mode: VectorEffectiveMode::CertifiedVector,
             vector_pipeline_detail: None,
-        table_warnings: Vec::new(),
+            table_warnings: Vec::new(),
         },
         assembly,
         output_stores,

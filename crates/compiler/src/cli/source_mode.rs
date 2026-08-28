@@ -256,14 +256,15 @@ pub(crate) fn run_source_mode(
                 // Same staging pipeline FIR lowering runs (promotion casts,
                 // simplification, and the -ct table clamps), so the dump
                 // shows what lowering actually consumes.
-                let prepare = transform::signal_prepare::prepare_signals_for_fir_verified_with_options(
-                    &out.parse.state.arena,
-                    &out.signals,
-                    &out.ui,
-                    &transform::signal_prepare::PrepareOptions {
-                        check_table: cli.check_table != 0,
-                    },
-                );
+                let prepare =
+                    transform::signal_prepare::prepare_signals_for_fir_verified_with_options(
+                        &out.parse.state.arena,
+                        &out.signals,
+                        &out.ui,
+                        &transform::signal_prepare::PrepareOptions {
+                            check_table: cli.check_table != 0,
+                        },
+                    );
                 timer.phase("prepare");
                 match prepare {
                     Ok(prepared) => {

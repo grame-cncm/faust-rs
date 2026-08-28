@@ -104,22 +104,23 @@ pub(in crate::signal_fir) fn emit_binop(
     result_ty: FirType,
     lhs: FirId,
     rhs: FirId,
-) -> Result<FirId, LeafBinopError> {
-    let (fir_op, typ) = map_binop(op, result_ty).ok_or(LeafBinopError::UnsupportedOperator)?;
-    let lhs_ty = store
-        .value_type(lhs)
-        .ok_or_else(|| LeafBinopError::MissingOperandType {
+) -> Result<FirId, Box<LeafBinopError>> {
+    let (fir_op, typ) =
+        map_binop(op, result_ty).ok_or_else(|| Box::new(LeafBinopError::UnsupportedOperator))?;
+    let lhs_ty = store.value_type(lhs).ok_or_else(|| {
+        Box::new(LeafBinopError::MissingOperandType {
             is_lhs: true,
             lhs: None,
             expected: typ.clone(),
-        })?;
-    let rhs_ty = store
-        .value_type(rhs)
-        .ok_or_else(|| LeafBinopError::MissingOperandType {
+        })
+    })?;
+    let rhs_ty = store.value_type(rhs).ok_or_else(|| {
+        Box::new(LeafBinopError::MissingOperandType {
             is_lhs: false,
             lhs: Some(lhs_ty.clone()),
             expected: typ.clone(),
-        })?;
+        })
+    })?;
     let operands_ok = match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
             lhs_ty == typ && rhs_ty == typ
@@ -133,11 +134,11 @@ pub(in crate::signal_fir) fn emit_binop(
         }
     };
     if !operands_ok {
-        return Err(LeafBinopError::OperandContract {
+        return Err(Box::new(LeafBinopError::OperandContract {
             lhs: lhs_ty,
             rhs: rhs_ty,
             expected: typ,
-        });
+        }));
     }
     Ok(FirBuilder::new(store).binop(fir_op, lhs, rhs, typ))
 }

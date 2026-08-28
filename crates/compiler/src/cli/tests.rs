@@ -51,7 +51,10 @@ fn normalize_legacy_args_maps_dash_ct_to_check_table() {
 #[test]
 fn check_table_defaults_to_on_and_parses_both_values() {
     let cli = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
-    assert_eq!(cli.check_table, 1, "-ct defaults to 1 like the C++ compiler");
+    assert_eq!(
+        cli.check_table, 1,
+        "-ct defaults to 1 like the C++ compiler"
+    );
     let cli = CliArgs::parse_from(["faust-rs", "--check-table", "0", "foo.dsp"]);
     assert_eq!(cli.check_table, 0);
     let cli = CliArgs::parse_from(["faust-rs", "--check-table", "1", "foo.dsp"]);

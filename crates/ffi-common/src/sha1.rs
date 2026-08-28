@@ -96,8 +96,8 @@ pub fn sha1(data: &[u8]) -> [u8; 20] {
 /// Applies one 64-byte block to the running state (FIPS 180-4 §6.1.2).
 fn compress(state: &mut [u32; 5], block: &[u8; 64]) {
     let mut schedule = [0u32; 80];
-    for (index, chunk) in block.chunks_exact(4).enumerate() {
-        schedule[index] = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (index, chunk) in block.as_chunks::<4>().0.iter().enumerate() {
+        schedule[index] = u32::from_be_bytes(*chunk);
     }
     for index in 16..80 {
         let mixed =

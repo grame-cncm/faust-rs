@@ -15,7 +15,8 @@ use compiler::Compiler;
 const TABLE_UNCLAMPED: &str = r#"process = rdtable(16, 1.0, int(hslider("i",0,0,100,1)));"#;
 
 /// `rwtable` with unprovable write *and* read indexes.
-const RWTABLE_UNCLAMPED: &str = r#"process = rwtable(16, 0.0, int(hslider("w",0,0,100,1)), _, int(hslider("r",0,0,100,1)));"#;
+const RWTABLE_UNCLAMPED: &str =
+    r#"process = rwtable(16, 0.0, int(hslider("w",0,0,100,1)), _, int(hslider("r",0,0,100,1)));"#;
 
 /// `rdtable` read whose index interval `[0, 15]` is provably in-bounds.
 const TABLE_PROVABLE: &str = r#"process = rdtable(16, 1.0, int(hslider("i",0,0,15,1)));"#;
@@ -117,10 +118,16 @@ fn prepared_dump_shows_the_signal_level_clamp() {
     )
     .expect("preparation must succeed");
     let dump = signals::dump_sig_dag(prepared.arena(), prepared.outputs(), Some(&signals.ui));
-    assert!(dump.contains("SIGMAX"), "clamp missing from dump:
-{dump}");
-    assert!(dump.contains("SIGMIN"), "clamp missing from dump:
-{dump}");
+    assert!(
+        dump.contains("SIGMAX"),
+        "clamp missing from dump:
+{dump}"
+    );
+    assert!(
+        dump.contains("SIGMIN"),
+        "clamp missing from dump:
+{dump}"
+    );
 
     let raw = transform::signal_prepare::prepare_signals_for_fir_verified_with_options(
         &signals.parse.state.arena,

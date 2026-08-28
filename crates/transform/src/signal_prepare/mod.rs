@@ -448,7 +448,12 @@ pub fn prepare_signals_for_fir_verified(
     outputs: &[SigId],
     ui: &UiProgram,
 ) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
-    prepare_signals_for_fir_verified_with_options(src_arena, outputs, ui, &PrepareOptions::default())
+    prepare_signals_for_fir_verified_with_options(
+        src_arena,
+        outputs,
+        ui,
+        &PrepareOptions::default(),
+    )
 }
 
 /// Like [`prepare_signals_for_fir_verified`], with explicit

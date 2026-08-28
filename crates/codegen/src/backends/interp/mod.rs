@@ -417,7 +417,7 @@ pub fn generate_interp_module<R: real::FbcReal>(
             .collect();
         if !tbl_instrs.is_empty() {
             let si = arena.get_mut(static_init_block);
-            let existing: Vec<_> = si.instructions.drain(..).collect();
+            let existing = std::mem::take(&mut si.instructions);
             si.instructions = tbl_instrs;
             si.instructions.extend(existing);
         }

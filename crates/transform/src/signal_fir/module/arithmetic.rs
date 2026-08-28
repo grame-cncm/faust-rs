@@ -86,7 +86,7 @@ impl<'a> SignalToFirLower<'a> {
         let lhs = self.lower_signal(lhs_sig)?;
         let rhs = self.lower_signal(rhs_sig)?;
         leaf_emit::emit_binop(&mut self.store, op, result_ty, lhs, rhs).map_err(|error| {
-            match error {
+            match *error {
                 leaf_emit::LeafBinopError::UnsupportedOperator => SignalFirError::new(
                     SignalFirErrorCode::UnsupportedBinOp,
                     format!("unsupported SIGBINOP operator `{}` in Step 2A", op.name()),

@@ -430,10 +430,12 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
                             "{rel}: fn `{name}` grew to {len} lines, past its recorded \
                              {ceiling}-line ceiling in OVERSIZED_FUNCTIONS"
                         )),
-                        Some((_, _, _)) if *len <= MAX_PRODUCTION_FN_LINES => findings.push(format!(
-                            "OVERSIZED_FUNCTIONS is stale: `{name}` in {rel} is {len} lines, \
+                        Some((_, _, _)) if *len <= MAX_PRODUCTION_FN_LINES => {
+                            findings.push(format!(
+                                "OVERSIZED_FUNCTIONS is stale: `{name}` in {rel} is {len} lines, \
                              no longer over the threshold — remove its entry"
-                        )),
+                            ))
+                        }
                         _ => {}
                     }
                 }

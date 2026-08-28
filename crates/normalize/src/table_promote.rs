@@ -124,9 +124,7 @@ pub fn promote_table_signals(
         cache: HashMap::new(),
         warnings,
     };
-    sigs.iter()
-        .map(|sig| promoter.map(arena, *sig))
-        .collect()
+    sigs.iter().map(|sig| promoter.map(arena, *sig)).collect()
 }
 
 /// Memoized traversal state for one [`promote_table_signals`] run.
@@ -266,8 +264,7 @@ impl TablePromoter<'_> {
             }
             None => (f64::from(i32::MIN), f64::from(i32::MAX)),
         };
-        let in_bounds =
-            lo.is_finite() && hi.is_finite() && lo >= 0.0 && hi <= f64::from(size - 1);
+        let in_bounds = lo.is_finite() && hi.is_finite() && lo >= 0.0 && hi <= f64::from(size - 1);
         if in_bounds {
             return None;
         }

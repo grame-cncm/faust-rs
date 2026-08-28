@@ -964,17 +964,17 @@ struct WasmAuxFileArtifact {
 fn base64_encode(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    let mut chunks = bytes.chunks_exact(3);
-    for chunk in chunks.by_ref() {
-        let b0 = chunk[0] as usize;
-        let b1 = chunk[1] as usize;
-        let b2 = chunk[2] as usize;
+    let (chunks, remainder) = bytes.as_chunks::<3>();
+    for &[b0, b1, b2] in chunks {
+        let b0 = b0 as usize;
+        let b1 = b1 as usize;
+        let b2 = b2 as usize;
         out.push(ALPHABET[b0 >> 2] as char);
         out.push(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
         out.push(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
         out.push(ALPHABET[b2 & 0x3f] as char);
     }
-    match chunks.remainder() {
+    match remainder {
         [b0] => {
             let b0 = *b0 as usize;
             out.push(ALPHABET[b0 >> 2] as char);
