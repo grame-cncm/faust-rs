@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Graph algorithms crate placeholder.
 //!
 //! # Intended role

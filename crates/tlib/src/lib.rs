@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! `tlib` foundation crate for Faust tree-like compiler data.
 //!
 //! # Source provenance (C++)

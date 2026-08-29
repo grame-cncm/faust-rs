@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Signal type system for the Faust compiler.
 //!
 //! # Source provenance (C++)

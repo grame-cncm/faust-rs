@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! SVG block-diagram generation for Faust DSP programs.
 //!
 //! This crate ports the C++ `compiler/draw/` module to Rust, providing the

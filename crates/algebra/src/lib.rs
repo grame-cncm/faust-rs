@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Algebra support crate for Faust compiler passes.
 //!
 //! # Source provenance (C++)

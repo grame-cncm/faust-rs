@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Box evaluator — Phase 4 of the Faust compilation pipeline.
 //!
 //! # C++ source correspondence

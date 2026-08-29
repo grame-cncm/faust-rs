@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! UI IR construction and matching helpers backed by `tlib::TreeArena`.
 //!
 //! # Source provenance (C++)

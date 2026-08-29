@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Documentation and report-integration crate placeholder.
 //!
 //! # Intended role

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! `impulse-runner` — faust-rs analogue of the C++ `tools/impulseinterp.cpp`.
 //!
 //! It compiles one DSP file through the faust-rs library to interpreter

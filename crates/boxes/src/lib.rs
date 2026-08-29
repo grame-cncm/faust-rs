@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Box construction helpers backed by `tlib::TreeArena`.
 //!
 //! # Source provenance (C++)

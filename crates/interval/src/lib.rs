@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Interval analysis library.
 //!
 //! Ports the C++ interval subsystem from `compiler/interval/` in the Faust

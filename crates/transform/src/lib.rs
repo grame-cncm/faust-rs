@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Mid-level transform passes between signal propagation and backend emission.
 //!
 //! # Source provenance (C++)

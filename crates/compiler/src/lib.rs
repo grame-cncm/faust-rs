@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Top-level compiler facade crate.
 //!
 //! # Source provenance (C++)

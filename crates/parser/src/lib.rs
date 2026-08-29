@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Production Faust parser crate (`lrpar`/`lrlex`).
 //!
 //! # Source provenance (C++)

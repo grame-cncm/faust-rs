@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! FIR construction and matching helpers.
 //!
 //! # Source provenance (C++)

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Code generation crate for backend emission from FIR.
 //!
 //! # Source provenance (C++)

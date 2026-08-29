@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Signal normalization and algebraic simplification.
 //!
 //! Ported from `compiler/normalize/` in the Faust C++ compiler.

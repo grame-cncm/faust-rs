@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Box-to-signal propagation (Phase 4, section 2.4).
 //!
 //! # Source provenance (C++)

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Structured diagnostics report model for `faust-rs`.
 //!
 //! # Source provenance (C++)
