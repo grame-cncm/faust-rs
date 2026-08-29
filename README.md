@@ -6,7 +6,8 @@ Rust workspace for the Faust compiler port.
 > Faust compiler to Rust. It is not ready for production use, and its APIs and
 > behavior may change at any time.
 
-[![CI](https://github.com/sletz/faust-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sletz/faust-rs/actions/workflows/ci.yml)
+[![CI](https://github.com/grame-cncm/faust-rs/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/grame-cncm/faust-rs/actions/workflows/ci.yml)
+[![Security audit](https://github.com/grame-cncm/faust-rs/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/grame-cncm/faust-rs/actions/workflows/audit.yml)
 
 ## Build
 
