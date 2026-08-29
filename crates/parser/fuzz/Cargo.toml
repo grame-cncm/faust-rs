@@ -1,0 +1,25 @@
+[package]
+name = "parser-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+parser = { path = ".." }
+
+# Standalone: not a member of the root workspace.
+[workspace]
+
+[[bin]]
+name = "parse_program"
+path = "fuzz_targets/parse_program.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
