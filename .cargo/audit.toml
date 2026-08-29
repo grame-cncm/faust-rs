@@ -1,0 +1,6 @@
+[advisories]
+ignore = [
+    # bincode 1.x unmaintained; transitive via lrpar/lrlex (grmtools).
+    # Remove once grmtools moves off bincode 1.
+    "RUSTSEC-2025-0141",
+]
