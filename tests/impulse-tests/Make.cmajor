@@ -18,7 +18,15 @@ CMAJ_CXX ?= $(CXX)
 CMAJOR_PATCH ?= $(CPP_TESTS)/cmajordsp.cmajorpatch
 CMAJOR_IMPULSE_ARCH ?= $(CPP_TESTS)/archs/impulsecmajor.cpp
 CMAJOR_ADAPTER ?= $(FAUST_ARCH)/faust/dsp/cmajor-cpp-dsp.h
-CMAJOR_CXXFLAGS ?= -O3 -I$(FAUST_ARCH) -I$(CPP_TESTS)/archs -pthread -std=c++17
+# -fwrapv is required, not a tuning choice: Cmajor defines signed integer
+# arithmetic as wrapping, but the C++ that `cmaj generate --target=cpp` emits
+# writes it as plain `int32_t` operations, which makes every wrap signed
+# overflow — UB. At -O3 clang exploits that UB (e.g. keeping the widened
+# product of the noise recurrence `1103515245 * iRec + 12345` alive into the
+# following float conversion), which silently corrupts the generator: on
+# table.dsp the rdtable content became the filter's step response instead of
+# filtered noise. -fwrapv makes the emitted code's assumption hold.
+CMAJOR_CXXFLAGS ?= -O3 -fwrapv -I$(FAUST_ARCH) -I$(CPP_TESTS)/archs -pthread -std=c++17
 
 # Match the upstream Cmajor lane: `control.dsp` exercises the legacy `control`
 # primitive and is not a test of Cmajor input events.
