@@ -11,7 +11,7 @@ declare basics_lib_version "1.23.0";
 declare filename "020_library_import.dsp";
 declare maths_lib_author "GRAME";
 declare maths_lib_copyright "GRAME";
-declare maths_lib_license "LGPL with exception";
+declare maths_lib_license "LicenseRef-LGPL-2.1-or-later-with-Faust-exception";
 declare maths_lib_name "Faust Math Library";
 declare maths_lib_version "2.9.0";
 declare name "LibImport";
