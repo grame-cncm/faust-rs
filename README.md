@@ -698,8 +698,42 @@ Crate-specific entry point example:
 
 ## Porting references
 
+Status and scope:
+
+- [Supported Faust subset](porting/faust-rs-supported-faust-subset-en.md) —
+  living status document: what compiles, corpus/backend parity counts, and
+  how the subset evolved
+- [Differences from Faust C++](porting/faust-rs-vs-faust-cpp-differences-en.md)
+- [Missing features / known gaps](porting/missing.md)
+- [Overall assessment](porting/faust-rust-bilan-global-en.md) and
+  [effort report](porting/faust-rust-bilan-effort-en.md)
+
+Architecture contracts and design notes:
+
+- [Backend lifecycle contract](porting/backend-lifecycle-contract-en.md)
+- [FIR architecture contract](porting/faust-rust-fir-architecture-en.md)
+- [Unified TreeArena IR architecture](porting/treearena-unified-ir-architecture-en.md)
+- [Recursion model design note](porting/faust-rust-recursion-model-note-en.md)
+- [Diagnostics and error-reporting model](porting/faust-rust-diagnostics-model-en.md)
+  and [error flow (parser → eval → propagate)](porting/faust-rust-error-flow-en.md)
+- [Memoization roadmap](porting/MEMOIZATION.md)
+- [Cranelift DSP FFI parity matrix](porting/cranelift-dsp-ffi-parity-matrix-en.md)
+
+Formal specifications (Lean; see the
+[usage methodology](docs/lean-usage-methodology-en.md)):
+
+- [Interval arithmetic](porting/interval-arithmetic-formal-spec.lean)
+- [BDA typing](porting/bda-typing-formal-spec.lean)
+- [Normalization rewrites](porting/normalization-rewrites-formal-spec.lean)
+- [Vector-mode scheduling](porting/vector-mode-scheduling-formal-spec.lean)
+
+History and process:
+
 - [Porting plan](porting/faust-rust-porting-plan-en.md)
 - [Critical points](porting/faust-rust-points-critiques-en.md)
-- [Porting phases](porting/phases/)
-- [Supported Faust subset](porting/faust-rs-supported-faust-subset-en.md)
-- [Porting journal index](JOURNAL.md)
+- [Porting phases](porting/phases/) — generated corpus/backend parity reports
+  and phase documents
+- [Dated analysis and porting plans](porting/) — one document per work stream
+  (`*-plan-YYYY-MM-DD-en.md`)
+- [Porting journal index](JOURNAL.md) — day-by-day entries under
+  [porting/journal/](porting/journal/)

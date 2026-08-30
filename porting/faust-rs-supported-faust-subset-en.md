@@ -1,8 +1,8 @@
 # Current Faust Source Subset Supported by `faust-rs`
 
-Last updated: 2026-05-20
+Last updated: 2026-08-30
 
-Version: 0.5.0
+Version: 0.8.0
 
 Status: living document
 
@@ -196,6 +196,52 @@ This snapshot is based on:
   - `crates/transform/src/signal_fir/module.rs`
   - `porting/rad-local-rule-factorization-plan-2026-05-17-en.md`
   - `porting/journal/2026-05-17.md`
+- compiler factorization campaign, CLI entry-point consolidation, and the
+  AssemblyScript backend landed across 2026-05-21 – 2026-06-22 and reviewed
+  against:
+  - `crates/compiler/src/cli/`
+  - `crates/codegen/src/backends/asc/`
+  - `porting/cli-parser-consolidation-analysis-and-porting-plan-2026-07-28-en.md`
+  - `porting/journal/2026-06-01.md` … `porting/journal/2026-06-22.md`
+- the ported C++ impulse-response test harness (2026-06-14) and its subsequent
+  full-corpus sweeps reviewed against:
+  - `tests/impulse-tests/` (Rust-side harness drivers)
+  - `porting/journal/2026-06-14.md`
+  - `porting/journal/2026-08-14.md` (133-DSP / 8-backend sweep)
+- clock-domain primitives (`ondemand`, `upsampling`, `downsampling`) landed
+  across 2026-07-05 – 2026-07-09 and reviewed against:
+  - `docs/ondemand-note-en.md`
+  - `tests/corpus/ondemand_*.dsp`, `upsampling_*.dsp`, `downsampling_*.dsp`
+  - `porting/journal/2026-07-07.md` … `porting/journal/2026-07-09.md`
+- vector mode (`-vec` / `-vs` / `-lv`) with certified selection and a formal
+  scheduling specification, landed across 2026-07-10 – 2026-07-21 and reviewed
+  against:
+  - `docs/vector-mode-scheduling-formal-spec-guide-en.md`
+  - `docs/vector-scheduling-synthesis-en.md`
+  - `porting/journal/2026-07-10.md` … `porting/journal/2026-07-21.md`
+- Cmajor and Codebox text backends completed across 2026-07-26 – 2026-08-07 and
+  reviewed against:
+  - `crates/codegen/src/backends/cmajor/`
+  - `crates/codegen/src/backends/codebox/`
+  - `porting/cmajor-backend-port-and-test-plan-2026-08-04-en.md`
+  - `porting/codebox-backend-port-plan-2026-07-26-en.md`
+  - `porting/journal/2026-08-05.md`, `porting/journal/2026-08-06.md`
+- diagnostics v2 (source maps, JSON schema, provenance, parser recovery,
+  semantic guidance, renderers) landed 2026-07-28 and reviewed against:
+  - `docs/diagnostics-codes-reference-en.md`
+  - `docs/user-diagnostics-guide-en.md`
+  - `porting/compiler-diagnostics-v2-*.md`
+- native remote-import support (`--allow-network-imports`, browser-prefetched
+  remote graphs) landed 2026-08-11 and reviewed against:
+  - `porting/sourcefetcher-remote-import-analysis-and-implementation-plan-2026-08-11-en.md`
+- release 0.8.0, the `faustprobe` offline rendering tool, signal-level
+  `-ct`/`--check-table`, `--dump-sig-dag-prepared`, C/C++ wrapping-integer
+  semantics, and security hardening (forbid `unsafe` outside FFI, cargo-audit
+  CI, libFuzzer parser harness) landed across 2026-08-13 – 2026-08-29 and
+  reviewed against:
+  - `docs/faustprobe-user-guide-en.md`
+  - `docs/user-cli-guide-en.md`
+  - `porting/journal/2026-08-13.md` … `porting/journal/2026-08-28.md`
 
 The corresponding generated reports are:
 
@@ -215,17 +261,21 @@ classes:
   accepts programs that the pinned C++ reference rejects because those symbols
   do not exist there.
 
-- total corpus cases in the latest checked-in report: `220`
+- total corpus cases in the latest checked-in report (regenerated
+  2026-08-30): `221`
 - `OK/OK` cases accepted by both Rust and C++: `103`
-- `ERR/ERR` cases rejected by both Rust and C++: `39`
+- `ERR/ERR` cases rejected by both Rust and C++: `40`
 - `OK/ERR` mismatches: `0`
-- `ERR/OK` Rust-extension cases: `78`
+- `ERR/OK` Rust-extension cases: `78`, all classified as **expected
+  divergence** by the report itself (`0` real divergences)
 
 Important note:
 
-- the regenerated reports cover `220` files under `tests/corpus/`
+- the regenerated reports cover `221` files under `tests/corpus/`
 - many `ERR/OK` entries are intentional Rust language extensions used to test
-  FAD/RAD, not regressions against the portable Faust C++ subset
+  FAD/RAD and the clock-domain primitives (`ondemand`, `upsampling`,
+  `downsampling`), not regressions against the portable Faust C++ subset; the
+  default pinned C++ reference build rejects those symbols as undefined
 - the "portable C++ subset" still has no `OK/ERR` front-end mismatch in this
   snapshot
 
@@ -239,26 +289,37 @@ In other words:
 ### 4.2 End-to-end backend status
 
 At the current backend route (`TransformFastLane`), the supported subset is
-still narrower. The latest checked-in full backend report says:
+still narrower. The latest checked-in full backend report (regenerated
+2026-08-30) says:
 
-- total corpus cases: `220`
-- end-to-end C backend parity: `OK=103`, `DIFF=0`, `UNSUPPORTED=117`
-- end-to-end C++ backend parity: `OK=103`, `DIFF=0`, `UNSUPPORTED=117`
+- total corpus cases: `221`
+- end-to-end C backend parity: `OK=103`, `DIFF=0`, `UNSUPPORTED=118`
+- end-to-end C++ backend parity: `OK=103`, `DIFF=0`, `UNSUPPORTED=118`
 
-The `117` unsupported entries combine two situations:
+The `118` unsupported entries combine two situations:
 
 - intentionally invalid Faust programs,
-- Rust-only AD fixtures that compile in Rust but have no C++ reference backend
-  because the pinned C++ compiler rejects `fad`/`rad` as undefined symbols.
+- Rust-only fixtures (`fad`/`rad` AD fixtures and clock-domain fixtures) that
+  compile in Rust but have no C++ reference backend because the pinned C++
+  compiler rejects those symbols as undefined.
 
 So for **C++-accepted portable** corpus programs, the current backend route
 compiles:
 
 - `103 / 103` portable backend cases in the maintained corpus.
 
-This backend-shell result does not claim numerical parity. In particular,
-`rep_18_stream_wrappers.dsp` still exposes a runtime-output difference in the
-corpus numerical differential.
+The historical `rep_18_stream_wrappers.dsp` gap is now closed: it compiles
+end-to-end and its shell signature matches on both the C and C++ routes.
+
+Numerical parity is no longer an open question either, on a much stronger
+basis than the corpus shell diff: the C++ impulse-response test harness was
+ported into `faust-rs` (2026-06-14), and the 2026-08-14 sweep ran the full
+133-DSP impulse corpus through 8 backends (`cpp`, `c`, `interp`, `cranelift`,
+`wasm`, `assemblyscript`, `rust`, `julia`) against the pinned C++ reference
+build, with **133/133 passing, 0 mismatch, 0 compile failure** on every
+backend. The 39 clock-domain fixtures (`ondemand_*`, `upsampling_*`,
+`downsampling_*`) are part of that sweep and require a pinned C++ dev-branch
+oracle, since public C++ releases do not ship those primitives.
 
 ### 4.3 WASM / JSON backend status
 
@@ -361,18 +422,113 @@ What is now true:
 
 What is not yet true:
 
-- the Julia backend should be treated as a functional first slice, not as full
-  semantic parity with Faust C++ `-lang julia`;
 - it consumes the existing FIR fast-lane subset, so any upstream
   `signal_prepare`/`signal_fir` exclusion remains a Julia exclusion too;
 - it assumes the host provides the Faust Julia runtime names (`dsp`, `UI`,
   `FMeta`, `FAUSTFLOAT`, UI callback methods). The backend emits source; it
-  does not package the Julia runtime;
-- full `/Users/letz/Developpements/faust/tests/impulse-tests` `make julia`
-  coverage was not completed in the 2026-05-13 validation session, although
-  targeted generated Julia impulse checks were run for representative cases
-  including `grain3.dsp`, `noise.dsp`, `noiseabs.dsp`, `pow.dsp`,
-  `priority1.dsp`, and `math.dsp`.
+  does not package the Julia runtime.
+
+Since the 2026-05-13 first slice, the maturity picture has improved
+substantially: the Julia backend is part of the ported impulse-response
+harness, and the 2026-08-14 sweep validated it on the full 133-DSP impulse
+corpus with 0 mismatches (single-precision libm names were normalized on
+2026-08-02 as part of that hardening). The earlier caveat about incomplete
+`make julia` impulse coverage no longer applies.
+
+### 4.5 Clock-domain primitives (`ondemand`, `upsampling`, `downsampling`)
+
+Since July 2026, `faust-rs` supports the three clock-domain primitives as a
+first-class language and backend feature:
+
+- `ondemand(C)`, `upsampling(C)`, and `downsampling(C)` wrap an expression so
+  it runs at its own rate, with one extra clock input; the programmer-facing
+  semantics are documented in [docs/ondemand-note-en.md](../docs/ondemand-note-en.md)
+  (and its French twin),
+- the corpus carries dedicated `ondemand_*` / `upsampling_*` / `downsampling_*`
+  fixtures, including STFT/OLA and phase-vocoder-style programs
+  (`ondemand_stft_pv_identity_016.dsp`, `ondemand_stft_robot_ola_016.dsp`),
+- the impulse-test corpus carries 39 clock-domain DSPs, all validated in the
+  2026-08-14 133-DSP / 8-backend sweep.
+
+Because the public C++ Faust releases do not ship these primitives, the
+corpus-status report classifies clock-domain fixtures as expected `ERR/OK`
+divergences against the default pinned C++ build; impulse-level numerical
+validation uses a pinned C++ dev-branch oracle that does implement them.
+
+This closes what §5.3 used to list as the "non-trivial stream wrappers"
+exclusion: `rep_18_stream_wrappers.dsp` and the `ondemand` family now compile
+end-to-end.
+
+### 4.6 Vector mode (`-vec`, `-vs`, `-lv`)
+
+A vectorized code-generation mode landed across July 2026:
+
+- `--vec` restructures `compute()` into an outer chunk loop so the C compiler
+  can auto-vectorize inner loops; `--vs <n>` sets the vector size (default 32),
+- selection is **certified**: a program shape the vector pipeline cannot
+  certify falls back to scalar lowering instead of emitting unverified code,
+  and certified vector output is bit-exact against the scalar route,
+- vector mode is currently restricted to the `c`, `cpp`, and `cranelift`
+  backends,
+- the scheduling model is backed by a formal specification
+  ([docs/vector-mode-scheduling-formal-spec-guide-en.md](../docs/vector-mode-scheduling-formal-spec-guide-en.md))
+  and a synthesis note, with C++ parity work on identity recursion slots and
+  ordering edges recorded in the July journals.
+
+### 4.7 Additional text backends
+
+Beyond C, C++, WASM/WAST, and Julia, the CLI now accepts
+`-lang asc|c|cmajor|codebox|codebox-test|cpp|cranelift|fir|interp|julia|rust|wasm|wast`:
+
+- **AssemblyScript (`-lang asc`)**: landed 2026-06-10, validated in the
+  impulse harness (part of the 133/133 sweep as `assemblyscript`),
+- **Rust (`-lang rust`)**: emits Rust DSP source; validated in the 133/133
+  impulse sweep, with a real-world example (`examples/rust/dx7-piano`, a DX7
+  E.Piano WAV renderer) landed 2026-07-17,
+- **Cmajor (`-lang cmajor`)**: completed 2026-08-05/06 — generated tables are
+  emitted, `cmaj generate` 1.0.3175 accepts the output, and
+  `subcontainer1.dsp` matches the C++ oracle sample-for-sample through the
+  Cmajor→C++→binary path,
+- **Codebox (`-lang codebox` / `codebox-test`)**: ported per the 2026-07-26
+  plan; the `codebox-test` spelling matches the C++ test-driver parameter
+  naming,
+- text backends share a precedence-aware expression layout module
+  (2026-08-04) and a shared leaf-emission grammar (`leaf_emit`, 2026-08-25),
+  and print the compiler version and compile options in their headers
+  (2026-08-07).
+
+These backends consume the same FIR fast-lane subset as C/C++; their maturity
+is bounded by that subset plus each emitter's own FIR-node coverage. The
+`interp` (FBC interpreter) and `cranelift` JIT routes remain the executable
+in-process backends used by the differential and impulse harnesses.
+
+### 4.8 CLI, diagnostics, and tooling
+
+- The CLI surface was consolidated in July 2026 against a recorded baseline
+  (`porting/cli-parser-baseline-2026-07-28-en.md`) and is documented in
+  [docs/user-cli-guide-en.md](../docs/user-cli-guide-en.md). Notable options
+  beyond the historical set: `-mem`/`-mem0` memory-manager modes with a JSON
+  `memory_layout` report, `-ct`/`--check-table` (table-access clamping decided
+  at signal level since 2026-08-28), `--table-init runtime|const`,
+  `-ec`/`--external-control`, `-os`/`--one-sample`, `-ss` scheduling
+  strategies, `--dump-sig-dag-prepared`, and `--compilation-time`/`--timeout`.
+- Diagnostics v2 landed 2026-07-28: stable diagnostic codes
+  ([docs/diagnostics-codes-reference-en.md](../docs/diagnostics-codes-reference-en.md)),
+  a JSON error schema, box/signal/FIR provenance, parser recovery, and
+  configurable renderers (`--error-format human|json`,
+  `--error-verbosity`, `--diagnostic-paths`).
+- **faustprobe** (renamed from `faust-probe` on 2026-08-16) renders a Faust
+  DSP offline and reports numbers for stability/regression checks; see
+  [docs/faustprobe-user-guide-en.md](../docs/faustprobe-user-guide-en.md).
+- Native remote imports: direct HTTP(S) sources and structural remote import
+  graphs are supported behind the explicit `--allow-network-imports` policy;
+  browser-WASM hosts use prefetched URL bundles (`--remote-source`) instead of
+  internal networking (landed 2026-08-11).
+- Engineering hardening (August 2026): workspace release 0.8.0 (2026-08-13),
+  `#![forbid(unsafe_code)]` in all non-FFI crates, a weekly cargo-audit CI
+  workflow, a libFuzzer harness for the `.dsp` parser, compile-time budget
+  tracking in CI, and wrapping-integer semantics in generated C/C++
+  (`faust_wrap_*` helpers, `-fwrapv` in the impulse harness, 2026-08-26).
 
 ## 5. Synthetic Characterization of the Supported Subset
 
@@ -396,6 +552,11 @@ prototype subset. On the tracked corpus, it includes:
 - representative feedback and delay programs,
 - label interpolation cases used by modulation/UI paths,
 - representative noise/additive-synthesis fixtures,
+- **clock-domain primitives**: `ondemand(C)`, `upsampling(C)`, and
+  `downsampling(C)` are accepted as Rust-side language extensions (they only
+  exist on the C++ dev branch), propagate through the signal pipeline, and
+  lower end-to-end — including STFT/OLA-style programs; see
+  [docs/ondemand-note-en.md](../docs/ondemand-note-en.md),
 - **forward-mode AD**: `fad(expr, seed)` is supported at the source and
   propagation level; 39 `fad*` corpus entries cover the full rule spectrum
   (arithmetic, trig, `pow`, `min`/`max`, `atan2`, `fmod`, `remainder`,
@@ -489,9 +650,14 @@ its own documented subset in `crates/codegen/src/backends/wasm/`.
 For the Rust Julia route, the same FIR preparation pipeline is reused and the
 backend emits Julia source from the resulting FIR `Module`. Its source-language
 coverage is therefore bounded first by the shared fast-lane subset, then by the
-Julia emitter's current FIR-node coverage. The Julia backend is now useful for
-representative impulse-test DSPs, but should still be described as an initial
-backend slice rather than a complete replacement for Faust C++ `-lang julia`.
+Julia emitter's current FIR-node coverage. Since the 2026-08-14 sweep, the
+Julia backend passes the full 133-DSP impulse corpus with 0 mismatches, so
+within the fast-lane subset it can now be treated as numerically validated
+rather than as a first slice.
+
+The same structural rule applies to the AssemblyScript, Rust, Cmajor, and
+Codebox routes added since June 2026: shared FIR preparation, per-emitter
+FIR-node coverage on top (see §4.7).
 
 That slice currently includes, in broad terms:
 
@@ -532,6 +698,10 @@ That slice currently includes, in broad terms:
   - `attach`
   - `enable`
   - `control`
+- clock-domain wrappers (since July 2026):
+  - `ondemand`
+  - `upsampling`
+  - `downsampling`
 - foreign constants (`fconstant`) and foreign variables (`fvariable`), typed
   with the fully-open interval `[f64::MIN, f64::MAX]` — matching the C++
   default-constructed `interval()`.
@@ -614,22 +784,23 @@ The most important current exclusions are:
     bound; the remaining exclusion is the genuinely unbounded case, where no
     finite static capacity can be proven.
 
-- **Non-trivial stream wrappers**
-  - the current valid backend corpus gap is
-    `tests/corpus/rep_18_stream_wrappers.dsp`
-  - trivial wrappers such as `inputs(_)` / `outputs(_)` are covered,
-    but the full `ondemand(_)`, `upsampling(_)`, `downsampling(_)` family is
-    not yet fully lowered end-to-end.
+- **Stream wrappers — exclusion closed (July 2026)**
+  - the historical `rep_18_stream_wrappers.dsp` gap is closed and the
+    `ondemand(_)`, `upsampling(_)`, `downsampling(_)` family is lowered
+    end-to-end with dedicated corpus and impulse coverage (see §4.5). This
+    entry is kept as a record of a boundary that moved; it is no longer an
+    exclusion.
 
-- **Julia backend maturity**
-  - `-lang julia` is now wired and usable, including `-double` and
-    architecture wrapping, but it is still an initial FIR emitter slice.
-  - Programs outside the shared fast-lane subset are outside Julia too.
-  - The emitted source assumes a Faust Julia runtime provided by the host; Rust
-    does not package or vendor that runtime in the generated file.
-  - Full Faust impulse-test parity is not yet claimed. Current validation is a
-    mix of codegen/unit tests, CLI/enrobage tests, and selected generated Julia
-    impulse runs.
+- **Newer text backends (AssemblyScript, Rust, Cmajor, Codebox) maturity**
+  - all consume the shared fast-lane subset; programs outside that subset are
+    outside these backends too.
+  - AssemblyScript, Rust, and Julia are validated by the 133-DSP impulse
+    sweep; Cmajor is validated through `cmaj generate` plus a
+    sample-for-sample oracle comparison on representative cases; Codebox
+    validation currently relies on codegen/fixture tests rather than an
+    executable impulse run.
+  - the emitted sources assume host-provided runtimes where applicable; the
+    backends emit source, they do not package runtimes.
 
 - **Reverse-mode AD (`rad(expr, seeds)`) — feed-forward subset supported**
   - `rad(expr, seeds)` is implemented at the propagation boundary in
@@ -833,7 +1004,27 @@ Relative to the tracked corpus and the current production-oriented route:
   to match C semantics on NaN and out-of-range floats (landed 2026-05-01),
 - the normalize pipeline now runs a `rec_merge` pass that unifies isomorphic
   `SYMREC` groups before simplification, enabling the `x − x → 0` rule to
-  fire across independently-built recursive groups.
+  fire across independently-built recursive groups,
+- **stream wrappers / clock domains**: `rep_18_stream_wrappers.dsp` compiles,
+  and `ondemand` / `upsampling` / `downsampling` are lowered end-to-end with
+  impulse-level validation — here Rust matches the C++ *dev branch* and goes
+  beyond the public C++ releases, which do not ship these primitives,
+- **numerical parity at impulse level**: the ported impulse-response harness
+  validates 133 DSPs across 8 backends with 0 mismatches against the pinned
+  C++ reference (2026-08-14 sweep),
+- **vector mode**: `-vec`/`-vs`/`-lv` are supported on the `c`, `cpp`, and
+  `cranelift` routes with certified selection and bit-exact fallback to
+  scalar lowering,
+- additional text backends are wired and validated to different degrees:
+  AssemblyScript and Rust (impulse-sweep validated), Cmajor (accepted by
+  `cmaj generate`, oracle-matched on representative cases), Codebox
+  (fixture-tested),
+- structured diagnostics (stable codes, JSON schema, provenance,
+  parser recovery) and the `faustprobe` offline rendering tool extend the
+  tooling surface,
+- generated C/C++ now pins wrapping-integer semantics explicitly
+  (`faust_wrap_*` helpers), removing a class of undefined-behavior
+  divergences under optimizing C compilers.
 
 ## 6.2 Where C++ is still broader
 
@@ -848,10 +1039,11 @@ Most importantly, the C++ compiler still has:
   in the differentiated body leave the local symbolic sweep and use BRA today,
   while phase E1 LTI transposition and phase F BPTT specialization remain
   future phases (plan §20).
-- fuller support for stream-wrapper lowering,
 - broader mature transform/backend coverage on long-tail signal families,
-- a mature Julia backend with broader impulse-test coverage and runtime
-  packaging assumptions already exercised by the upstream Faust test suite,
+- a broader set of production backends and architectures (the Rust CLI covers
+  `asc`, `c`, `cmajor`, `codebox`, `cpp`, `cranelift`, `fir`, `interp`,
+  `julia`, `rust`, `wasm`, `wast`, but C++ still ships more targets and a much
+  larger architecture-file ecosystem),
 - a fuller embedded-compiler helper surface for web tooling
   (`expandDSP` and `generateAuxFiles` are now real in Rust, but `getInfos`
   is only partially implemented and packaged FS semantics differ),
@@ -2261,15 +2453,132 @@ This deliberately shares only local algebra. Signal-IR construction, BRA tape
 loads, real tape storage, reverse-loop scheduling, FIR helper registration, and
 backend typing remain owned by their respective crates.
 
+### 7.28 May 21 – June 22, 2026: factorization campaign, AssemblyScript backend, impulse harness
+
+A sustained internal-quality campaign restructured the compiler without
+changing the declared subset:
+
+- `compiler/lib.rs` was split by concern and the CLI entry point factorized
+  into `crates/compiler/src/cli/` (runner, source mode, fixture mode),
+- an xtask code-graph generator and reusable porting prompts were added,
+- large lowering files were split for legibility (`delay.rs` → `delay/`,
+  `signal_prepare.rs` → `signal_prepare/`).
+
+Two boundary-moving features also landed:
+
+- an **AssemblyScript backend** (`-lang asc`, 2026-06-10), with impulse-parity
+  fixes on 2026-06-15,
+- the **C++ impulse-response test harness was ported into `faust-rs`**
+  (2026-06-14), turning numerical parity from a corpus-shell claim into an
+  executable per-sample comparison against the pinned C++ reference.
+
+Front-end correctness: zero-arity duplicate definitions are preserved for
+redefinition checks (2026-06-16), and a signal-graph input/output latency
+analysis was planned (2026-06-19).
+
+### 7.29 July 5 – 9, 2026: clock-domain primitives
+
+`ondemand(C)`, `upsampling(C)`, and `downsampling(C)` landed as end-to-end
+features:
+
+- in-block waveform indices advance in fire time (fixing `gamme.dsp`),
+- held `ondemand` payloads are lowered like C++,
+- unparenthesized `ondemand` precedence is rejected, matching the C++ dev
+  branch grammar,
+- the programmer-facing semantics are documented in
+  [docs/ondemand-note-en.md](../docs/ondemand-note-en.md), with STFT/OLA and
+  phase-vocoder corpus fixtures added on 2026-07-22.
+
+This closed the long-standing stream-wrapper exclusion
+(`rep_18_stream_wrappers.dsp` and friends).
+
+### 7.30 July 10 – 21, 2026: vector mode
+
+The `ondemand-vec-fad-synthesis` branch delivered vector mode:
+
+- signal-level vector planning with a unified scheduling specification,
+- verified vector FIR routing with certified selection: shapes the pipeline
+  cannot certify fall back to scalar lowering, and certified output is
+  bit-exact against the scalar route,
+- C++ parity on identity recursion slots and ordering edges,
+- a Lean formalization skeleton for interval arithmetic, BDA typing, and
+  normalization (2026-07-19; see `porting/bda-typing-formal-spec.lean` and
+  [docs/lean-usage-methodology-en.md](../docs/lean-usage-methodology-en.md)).
+
+Separately, a real-world Rust-backend example landed: `examples/rust/dx7-piano`
+renders a DX7 E.Piano to WAV from generated Rust source (2026-07-17).
+
+### 7.31 July 25 – August 7, 2026: backend completion wave
+
+- `generate_aux_files` now forwards `-double`/`-mcd`/`-dlt`/`-vec`/`-ss`
+  (2026-07-25),
+- reference-counted FFI factory lifecycles hardened (2026-07-27),
+- FBC-to-C++ default class name aligned with Faust (2026-07-30),
+- Julia single-precision libm names normalized (2026-08-02),
+- text backends share a precedence-aware expression layout module
+  (2026-08-04),
+- the **Cmajor backend was completed** (2026-08-05/06): generated tables are
+  emitted via a `qualify_sub_module_bodies` FIR rewrite (`this.<name>`
+  receivers), `cmaj generate` 1.0.3175 accepts the output, and
+  `subcontainer1.dsp` matches the C++ oracle sample-for-sample through the
+  Cmajor→C++→binary path; three generated-table defects were found and fixed
+  by reading the output,
+- text backends print the compiler version and compile options in their
+  headers (2026-08-07).
+
+The **Codebox backend** was ported in the same period per
+`porting/codebox-backend-port-plan-2026-07-26-en.md`, with the
+`codebox-test` CLI spelling matching the C++ test-driver parameter naming.
+
+### 7.32 August 8 – 14, 2026: remote imports, release 0.8.0, full impulse sweep
+
+- propagation-result memoization kept off context-free paths (2026-08-08),
+- native remote-import support landed (2026-08-11): direct HTTP(S) sources
+  behind `--allow-network-imports`, browser-prefetched remote graphs via
+  `--remote-source`,
+- constant-case evaluation and waveform scheduling parity fixes (2026-08-11),
+- `declare` values are emitted verbatim, matching the Faust lexer
+  (2026-08-12),
+- **release 0.8.0** (2026-08-13), plus `-mem0` JSON `memory_layout` zones
+  named after the C/C++ class name (honoring `-cn`) instead of the source
+  stem,
+- a Windows CI path-rebuild bug that silently reclassified top-level
+  `declare`s was fixed (2026-08-14),
+- the **full impulse sweep** ran 133 DSPs through 8 backends (`cpp`, `c`,
+  `interp`, `cranelift`, `wasm`, `assemblyscript`, `rust`, `julia`) against
+  the pinned C++ reference: **133/133, 0 mismatch, 0 compile failure** on
+  every backend. The session also fixed a reference-pinning methodology bug
+  (`FAUST_CPP` resolving to a wrong system-wide Faust install through
+  `$PATH`).
+
+### 7.33 August 16 – 30, 2026: tooling, table checks, security hardening
+
+- `faust-probe` renamed to **`faustprobe`**, with a user guide
+  (2026-08-16),
+- structural line-size floor extended (P6, 2026-08-18) and a docs index added
+  (2026-08-19),
+- shared `leaf_emit` module: one leaf grammar for the scalar and vector
+  schedulers (E3, 2026-08-25),
+- **wrapping integer semantics** pinned in generated C/C++ via
+  `faust_wrap_*` helpers and `-fwrapv` in the impulse harness, closing an
+  optimizer-dependent numeric divergence on `table.dsp` (2026-08-26),
+- `-ct`/`--check-table` clamping decided at signal level (retiring the FIR
+  re-clamps) and `--dump-sig-dag-prepared` added, both documented in the user
+  CLI guide (2026-08-28),
+- security hardening (2026-08-29): `#![forbid(unsafe_code)]` in all non-FFI
+  crates, a weekly cargo-audit CI workflow, dependency updates for RUSTSEC
+  advisories, and a libFuzzer harness for the `.dsp` parser.
+
 ## 8. Practical Reading Rule
 
 Today, the simplest accurate rule is:
 
 - If a Faust program stays within the language families already exercised by
   the tracked corpus, `faust-rs` front-end support is likely good.
-- If that program also lowers to the current fast-lane signal subset
-  (no non-trivial stream wrappers), end-to-end C/C++ generation is likely
-  to work.
+- If that program also lowers to the current fast-lane signal subset,
+  end-to-end C/C++ generation is likely to work — this now includes the
+  stream-wrapper / clock-domain family (`ondemand`, `upsampling`,
+  `downsampling`).
 - Variable delays driven by a UI slider, numentry, audio-rate expression, or
   any expression with a provably bounded non-negative interval **are** now
   supported end-to-end.  This includes `de.delay(n, d)` patterns using
@@ -2289,11 +2598,15 @@ Today, the simplest accurate rule is:
   See [docs/rad-note-en.md](../docs/rad-note-en.md).
 - `-svg` produces block-diagram SVG output matching the C++ compiler output
   directory convention; hierarchical folding via `-f` splits complex diagrams.
-- `-lang julia` now emits Julia source for programs in the current FIR
-  fast-lane subset. Treat it as an initial backend slice: it supports the
-  Faust-style Julia shell, `-double`, architecture wrapping, UI symbol zones,
-  and C++-aligned numeric casts, but full upstream Julia impulse-suite parity
-  is not yet claimed.
+- `-lang julia` emits Julia source for programs in the current FIR fast-lane
+  subset, with the Faust-style Julia shell, `-double`, architecture wrapping,
+  UI symbol zones, and C++-aligned numeric casts; since the 2026-08-14 sweep
+  it passes the full 133-DSP impulse corpus with 0 mismatches.
+- The same applies to `-lang asc` and `-lang rust` (impulse-sweep validated);
+  `-lang cmajor` output is accepted by `cmaj generate` and oracle-matched on
+  representative cases; `-lang codebox` is fixture-tested.
+- `--vec` is available on the `c`, `cpp`, and `cranelift` routes; uncertifiable
+  shapes fall back to scalar lowering rather than emitting unverified code.
 - `rad(expr, seeds)` over `hslider` / `vslider` / `numentry` seeds and a
   feed-forward body drives host-side training loops and adaptive filters
   (see `crates/compiler/examples/rad_gradient_descent.rs` and
