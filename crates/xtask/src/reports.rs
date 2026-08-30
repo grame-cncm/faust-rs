@@ -1489,7 +1489,7 @@ pub(crate) fn cpp_case_status(
 /// Note this *avoids* the overflow rather than catching it: Rust aborts the
 /// process on stack exhaustion in any thread, so there is nothing to recover
 /// from once it happens.
-const CORPUS_COMPILE_STACK_BYTES: usize = 64 * 1024 * 1024;
+const CORPUS_COMPILE_STACK_BYTES: usize = 512 * 1024 * 1024;
 
 /// Runs one DSP through the Rust compile-to-signals path and summarizes the outcome.
 ///

@@ -156,15 +156,24 @@ fn eval_error_fixtures_expose_source_labels_and_readable_context() {
 #[test]
 fn diverging_recursive_case_reports_eval_error_instead_of_aborting() {
     // This test deliberately drives unbounded recursion and relies on the
-    // *default* eval budget (1024) tripping before the 64 MiB thread stack
-    // overflows. A raised ambient `FAUST_RS_DEFAULT_EVAL_MAX_DEPTH` explicitly
-    // opts into real OS-stack overflow (documented in
-    // `crates/eval/src/loop_detector.rs`): the budget then no longer protects
-    // this stack, so the process would SIGABRT here. Skip gracefully in that
-    // case rather than aborting the whole test binary — the raised budget is a
+    // profile's *default* eval budget tripping before the 512 MiB thread stack
+    // overflows: the diverging-`case` path costs ~64 KiB of real stack per
+    // logical frame in debug and ~4 KiB in release (measured in
+    // `crates/eval/src/loop_detector.rs`), so the profile defaults (1 024 /
+    // 32 768) touch at most 64 MiB / 128 MiB of this stack. A raised ambient
+    // `FAUST_RS_DEFAULT_EVAL_MAX_DEPTH` explicitly opts into real OS-stack
+    // overflow: past the safe depth below, the budget no longer protects this
+    // stack, so the process would SIGABRT here. Skip gracefully in that case
+    // rather than aborting the whole test binary — the raised budget is a
     // user choice for compiling deep programs (e.g. large FFTs), not a
     // regression. Run the suite with the variable unset for full coverage.
-    const TEST_STACK_SAFE_MAX_DEPTH: usize = 1_024;
+    const TEST_STACK_SAFE_MAX_DEPTH: usize = if cfg!(debug_assertions) {
+        // 512 MiB / ~64 KiB per frame, halved for margin.
+        4_096
+    } else {
+        // 512 MiB / ~4 KiB per frame, halved for margin.
+        65_536
+    };
     if let Some(raised) = std::env::var("FAUST_RS_DEFAULT_EVAL_MAX_DEPTH")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -172,7 +181,7 @@ fn diverging_recursive_case_reports_eval_error_instead_of_aborting() {
     {
         eprintln!(
             "skipping diverging_recursive_case: FAUST_RS_DEFAULT_EVAL_MAX_DEPTH={raised} \
-             exceeds the {TEST_STACK_SAFE_MAX_DEPTH}-frame budget this test's 64 MiB stack \
+             exceeds the {TEST_STACK_SAFE_MAX_DEPTH}-frame budget this test's 512 MiB stack \
              is sized for (unset it to run this case)"
         );
         return;
@@ -187,7 +196,7 @@ process = par(i, 3, fact(i));
 
     std::thread::Builder::new()
         .name("recursive-case-stack-overflow".to_owned())
-        .stack_size(64 * 1024 * 1024)
+        .stack_size(512 * 1024 * 1024)
         .spawn(move || {
             let compiler = Compiler::new();
             let err = compiler

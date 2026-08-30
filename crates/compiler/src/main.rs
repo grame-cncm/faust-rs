@@ -22,12 +22,17 @@ mod cli;
 
 fn main() {
     // The evaluator's structural-lowering pass (`a2sb`) can recurse deeply for
-    // large programs (e.g. auto-panning with many channels). 64 MiB is the CLI
-    // stack contract for the evaluator's guarded recursion budgets; library
-    // embedders that run the compiler on their own threads must provide
-    // comparable stack headroom or use a lower evaluator depth budget.
+    // large programs (e.g. finite-difference meshes whose route() expands to
+    // tens of thousands of connections). 512 MiB is the CLI stack contract for
+    // the evaluator's guarded recursion budgets: the release budget of 32 768
+    // logical frames costs ~4 KiB of real stack each on the diverging-`case`
+    // worst path (see `crates/eval/src/loop_detector.rs`), so 128 MiB may
+    // actually be touched; the rest is margin, and an untouched stack is
+    // virtual memory that costs nothing. Library embedders that run the
+    // compiler on their own threads must provide comparable stack headroom or
+    // use a lower evaluator depth budget.
     std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
+        .stack_size(512 * 1024 * 1024)
         .spawn(cli::runner::run_main)
         .expect("failed to spawn compiler thread")
         .join()

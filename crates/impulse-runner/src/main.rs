@@ -75,7 +75,7 @@ fn main() -> ExitCode {
     // stdfaust-based inputs do not depend on the platform's main-thread stack.
     std::thread::Builder::new()
         .name("impulse-runner".to_owned())
-        .stack_size(64 * 1024 * 1024)
+        .stack_size(512 * 1024 * 1024)
         .spawn(move || run_main(options))
         .expect("failed to spawn impulse-runner thread")
         .join()

@@ -36,8 +36,9 @@ const COMPILE_PROFILE_CORPUS_ROOT: &str = "tests/impulse-tests/dsp";
 const COMPILE_PROFILE_SCHEMA: u32 = 1;
 
 /// The compiler's recursive traversals need more than a default thread stack on
-/// library-heavy inputs; the CLI spawns 64 MiB for the same reason.
-const COMPILE_PROFILE_STACK_BYTES: usize = 64 * 1024 * 1024;
+/// library-heavy inputs; the CLI spawns 512 MiB for the same reason (its stack
+/// contract for the release eval budget — see `crates/compiler/src/main.rs`).
+const COMPILE_PROFILE_STACK_BYTES: usize = 512 * 1024 * 1024;
 
 /// One stage's contribution, as recorded by the compiler's timing sink.
 #[derive(Clone, Debug, Deserialize, Serialize)]

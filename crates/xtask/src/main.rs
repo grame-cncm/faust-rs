@@ -92,7 +92,7 @@ fn main() {
     let cli = XtaskCli::parse();
     let exit_code = std::thread::Builder::new()
         .name("xtask".to_owned())
-        .stack_size(64 * 1024 * 1024)
+        .stack_size(512 * 1024 * 1024)
         .spawn(move || {
             if let Err(err) = run(cli) {
                 eprintln!("xtask error: {err}");
