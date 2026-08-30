@@ -53,7 +53,6 @@ pub(crate) fn propagate_in_slot_env(
             ctx.ui_path.id(),
             PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, ctx.suppress_fad),
             inputs,
-            ctx.slot_env.len() != 0,
         )
     } else {
         None

@@ -23,6 +23,20 @@
 //! A 1,024-entry warm-up keeps small DSPs on the allocation-free uncached path;
 //! large traversals activate the table only after they have demonstrated enough
 //! work to amortize its hashing and retained buses.
+//!
+//! Every post-warm-up call probes the table, exactly like the C++ wrapper —
+//! including calls with an **empty slot environment**. A gate that skipped
+//! those (added 2026-08-08 for `parametric_eq` bookkeeping cost) turned out to
+//! bar the memo from the case it matters most for: a program written as
+//! top-level definitions evaluates to a DAG of shared, slot-free subtrees, and
+//! each reference re-propagated the whole subtree. On
+//! `examples/SAM/virtualAnalog/virtualAnalog.dsp` the gate meant 7.5 M
+//! propagation calls against ~8 600 for the C++ reference; removing it
+//! (2026-08-30) cut the volume to 0.97 M and the propagation stage from
+//! 1.49 s to 0.89 s, byte-identical output, with the budget basket flat to
+//! slightly faster (`parametric_eq` included) — today's canonical
+//! `SlotEnvId`/`UiPathId` keys and the bus interner make an unconditional
+//! probe cheap enough that the 2026-08-08 concern no longer holds.
 
 use std::sync::Arc;
 
@@ -162,14 +176,8 @@ impl PropagateResultMemo {
         ui_path: UiPathId,
         mode: PropagationModeKey,
         inputs: &[SigId],
-        has_slot_bindings: bool,
     ) -> Option<PropagateResultKey> {
-        // The measurements that justify this table are symbolic recursive
-        // subtrees. On ordinary closed graphs the key bookkeeping can cost
-        // more than the shallow replay it finds, so retain the uncached path
-        // until a lexical binding proves that the context-sensitive shape is
-        // present.
-        if !self.safe_root || !has_slot_bindings {
+        if !self.safe_root {
             return None;
         }
         self.eligible_calls = self.eligible_calls.saturating_add(1);
@@ -301,19 +309,19 @@ mod tests {
 
         for _ in 0..RESULT_MEMO_WARMUP_CALLS {
             assert!(
-                memo.key(box_tree, bound_slot, root_ui, mode, &[signal], true)
+                memo.key(box_tree, bound_slot, root_ui, mode, &[signal])
                     .is_none()
             );
         }
 
         let root = memo
-            .key(box_tree, bound_slot, root_ui, mode, &[signal], true)
+            .key(box_tree, bound_slot, root_ui, mode, &[signal])
             .expect("enabled key");
         let bound = memo
-            .key(box_tree, nested_slot, root_ui, mode, &[signal], true)
+            .key(box_tree, nested_slot, root_ui, mode, &[signal])
             .expect("enabled key");
         let grouped = memo
-            .key(box_tree, nested_slot, grouped_ui, mode, &[signal], true)
+            .key(box_tree, nested_slot, grouped_ui, mode, &[signal])
             .expect("enabled key");
 
         assert_ne!(root, bound);
@@ -334,17 +342,11 @@ mod tests {
         memo.set_enabled(true);
 
         for _ in 0..RESULT_MEMO_WARMUP_CALLS {
-            assert!(
-                memo.key(box_tree, slots.id(), ui.id(), mode, &[], true)
-                    .is_none()
-            );
+            assert!(memo.key(box_tree, slots.id(), ui.id(), mode, &[]).is_none());
         }
         assert!(memo.entries.is_empty());
         assert!(memo.buses.buses.is_empty());
-        assert!(
-            memo.key(box_tree, slots.id(), ui.id(), mode, &[], true)
-                .is_some()
-        );
+        assert!(memo.key(box_tree, slots.id(), ui.id(), mode, &[]).is_some());
     }
 
     #[test]
