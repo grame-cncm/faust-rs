@@ -95,6 +95,9 @@ pub struct LoopDetector {
     /// In C++, `closure(expr, genv, visited, lenv)` is a tree node. Rust keeps
     /// the closure data here and stores only a handle in the tree.
     pub(crate) closure_store: Vec<ClosureValue>,
+    /// Canonical key per distinct `(expr, environment identity)` closure, so
+    /// [`Self::store_closure`] hands equal closures the same dense key.
+    pub(crate) closure_intern: ahash::HashMap<(TreeId, EnvFrameKey), i32>,
     /// Monotonic slot id source used by `a2sb` when lowering residual closures.
     ///
     /// Source provenance (C++):
@@ -296,6 +299,7 @@ impl LoopDetector {
             automaton_cache: crate::pattern_matcher::AutomatonCache::new(),
             pm_store: Vec::new(),
             closure_store: Vec::new(),
+            closure_intern: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             next_slot_id: 0,
             symbolic_box_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             eval_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
@@ -333,9 +337,25 @@ impl LoopDetector {
     }
 
     /// Stores a `ClosureValue` and returns its dense key for `boxClosure` nodes.
+    ///
+    /// Equal closures (same expression, same environment identity — the
+    /// equality [`ClosureValue`] itself defines) receive the same key, so the
+    /// `boxClosure(boxInt(key))` handle in the tree arena is canonical the way
+    /// C++'s hash-consed `closure(exp, genv, visited, lenv)` node is. Without
+    /// this, every re-evaluation of the same residual abstraction minted a
+    /// fresh handle, `a2sb` then lowered each handle with a fresh slot, and
+    /// propagation saw thousands of structurally identical bodies under
+    /// distinct slot environments that no memo key could ever equate. The
+    /// interned `Environment` is kept alive by the stored clone, so its store
+    /// pointer cannot be recycled while the intern entry exists.
     pub(crate) fn store_closure(&mut self, cv: ClosureValue) -> i32 {
+        let intern_key = (cv.expr, cv.env.frame_key());
+        if let Some(&key) = self.closure_intern.get(&intern_key) {
+            return key;
+        }
         let key = self.closure_store.len() as i32;
         self.closure_store.push(cv);
+        self.closure_intern.insert(intern_key, key);
         key
     }
 
