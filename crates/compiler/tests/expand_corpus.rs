@@ -7,9 +7,11 @@
 //!   reference compiler cannot expand at all) are still required to expand.
 //! - Expansion is idempotent and the document layout is stable.
 //!
-//! The three host-dependent lines are normalized exactly as
-//! `xtask expand-oracle` normalizes them when recording, so a difference here
-//! is a difference in what the two compilers actually emit.
+//! Host-dependent lines (compiler version, option spelling, library paths)
+//! and the libraries' own editorial metadata (versions, license strings) are
+//! normalized exactly as `xtask expand-oracle` normalizes them when recording,
+//! so a difference here is a difference in what the two compilers actually
+//! emit — not in which faustlibraries release happens to be on the machine.
 
 use std::path::{Path, PathBuf};
 
@@ -46,7 +48,8 @@ fn fixtures() -> Vec<PathBuf> {
 /// Replaces the values that legitimately differ from a C++ expansion.
 ///
 /// Same substitutions `xtask expand-oracle` applies when recording: compiler
-/// version, option spelling, and installation-dependent library paths.
+/// version, option spelling, installation-dependent library paths, and the
+/// editorial metadata the standard libraries declare about themselves.
 fn normalize(expansion: &str) -> String {
     let mut out = String::with_capacity(expansion.len());
     for line in expansion.lines() {
@@ -58,12 +61,34 @@ fn normalize(expansion: &str) -> String {
             && let Some((index, _)) = rest.split_once(' ')
         {
             out.push_str(&format!("declare library_path{index} \"<path>\";\n"));
+        } else if let Some(key) = volatile_library_metadata_key(line) {
+            out.push_str(&format!("declare {key} \"<lib>\";\n"));
         } else {
             out.push_str(line);
             out.push('\n');
         }
     }
     out
+}
+
+/// Returns the declare key when a line carries library self-description that
+/// changes with every faustlibraries release (version bumps, license-string
+/// normalizations, copyright edits). The key survives normalization so a
+/// missing or reordered declaration still fails; only the upstream-editable
+/// value is masked.
+fn volatile_library_metadata_key(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("declare ")?;
+    let (key, _) = rest.split_once(' ')?;
+    const VOLATILE_SUFFIXES: [&str; 4] = [
+        "_lib_version",
+        "_lib_license",
+        "_lib_copyright",
+        "_lib_author",
+    ];
+    VOLATILE_SUFFIXES
+        .iter()
+        .any(|suffix| key.ends_with(suffix))
+        .then_some(key)
 }
 
 /// Expands one fixture on a thread with room for deep evaluated diagrams.

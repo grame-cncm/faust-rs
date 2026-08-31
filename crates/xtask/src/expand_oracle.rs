@@ -233,10 +233,36 @@ fn normalize_expansion(expansion: &str, stem: &str) -> String {
             out.push_str(&format!("declare library_path{index} \"<path>\";\n"));
         } else if line.starts_with("declare filename ") {
             out.push_str(&format!("declare filename \"{stem}.dsp\";\n"));
+        } else if let Some(key) = volatile_library_metadata_key(line) {
+            out.push_str(&format!("declare {key} \"<lib>\";\n"));
         } else {
             out.push_str(line);
             out.push('\n');
         }
     }
     out
+}
+
+/// Returns the declare key when a line carries library self-description that
+/// changes with every faustlibraries release (version bumps, license-string
+/// normalizations, copyright edits). Kept in lockstep with the same helper in
+/// `crates/compiler/tests/expand_corpus.rs`: recording and comparison must
+/// mask the same lines, or a libraries upgrade turns the corpus red with no
+/// compiler change anywhere — which is exactly what the 2026-08 maths.lib
+/// license-string update did to CI (its pinned checkout, a developer's
+/// installed /usr/local/share/faust, and faustlibraries master all carried
+/// different strings).
+fn volatile_library_metadata_key(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("declare ")?;
+    let (key, _) = rest.split_once(' ')?;
+    const VOLATILE_SUFFIXES: [&str; 4] = [
+        "_lib_version",
+        "_lib_license",
+        "_lib_copyright",
+        "_lib_author",
+    ];
+    VOLATILE_SUFFIXES
+        .iter()
+        .any(|suffix| key.ends_with(suffix))
+        .then_some(key)
 }
