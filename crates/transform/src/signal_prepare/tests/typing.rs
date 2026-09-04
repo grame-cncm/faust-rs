@@ -444,3 +444,90 @@ fn prepare_signals_for_fir_uses_foreign_function_return_type() {
 
     assert_eq!(prepared.ty(prepared.outputs[0]), Some(SimpleSigType::Int));
 }
+
+// C++ regression f81491f8 (2026-09-04): `fmod(int, int)` typed int made the
+// WASM backend call `$fmodf` on i32 operands. In faust-rs the promotion pass
+// casts both `fmod` operands to real by primitive (`promote_real_binary`),
+// independently of the node's nature, and the promotion invariant checker
+// refuses a prepared `fmod` whose operands or result are not real.
+#[test]
+fn prepare_signals_for_fir_promotes_fmod_int_operands_to_real() {
+    let mut arena = tlib::TreeArena::new();
+    let output = {
+        let mut b = SigBuilder::new(&mut arena);
+        let input = b.input(0);
+        let x = b.int_cast(input);
+        let y = b.int(1000);
+        b.fmod(x, y)
+    };
+
+    let prepared = prepare_signals_for_fir(&arena, &[output], &ui::UiProgram::empty())
+        .expect("fmod on integer operands should prepare");
+
+    let SigMatch::Fmod(left, right) = match_sig(&prepared.arena, prepared.outputs[0]) else {
+        panic!(
+            "prepared output should stay SIGFMOD, got {}",
+            dump_sig_readable(&prepared.arena, prepared.outputs[0])
+        );
+    };
+    assert_eq!(prepared.ty(prepared.outputs[0]), Some(SimpleSigType::Real));
+    assert_eq!(prepared.ty(left), Some(SimpleSigType::Real));
+    assert_eq!(prepared.ty(right), Some(SimpleSigType::Real));
+    assert!(
+        matches!(match_sig(&prepared.arena, left), SigMatch::FloatCast(_)),
+        "int() operand must be wrapped in an explicit float cast, got {}",
+        dump_sig_readable(&prepared.arena, left)
+    );
+    assert!(
+        matches!(
+            match_sig(&prepared.arena, right),
+            SigMatch::FloatCast(_) | SigMatch::Real(_)
+        ),
+        "integer literal operand must become real, got {}",
+        dump_sig_readable(&prepared.arena, right)
+    );
+}
+
+/// The `so.loop` / `it.raise_modulo` shape: an int-seeded recursion wrapped by
+/// `fmod`. The recursive state must come out real, never an int accumulator
+/// feeding the C `fmod`.
+#[test]
+fn prepare_signals_for_fir_keeps_fmod_recursion_real() {
+    let mut arena = tlib::TreeArena::new();
+    let self_ref = tlib::de_bruijn_ref(&mut arena, 1);
+    let body = {
+        let mut b = SigBuilder::new(&mut arena);
+        let prev = b.proj(0, self_ref);
+        let one = b.int(1);
+        let next = b.binop(BinOp::Add, prev, one);
+        let modulus = b.int(1000);
+        b.fmod(next, modulus)
+    };
+    let body_list = arena.cons(body, arena.nil());
+    let group = tlib::de_bruijn_rec(&mut arena, body_list);
+    let output = SigBuilder::new(&mut arena).proj(0, group);
+
+    let prepared = prepare_signals_for_fir(&arena, &[output], &ui::UiProgram::empty())
+        .expect("int-seeded fmod recursion should prepare");
+
+    assert_eq!(prepared.ty(prepared.outputs[0]), Some(SimpleSigType::Real));
+
+    let SigMatch::Proj(0, prepared_group) = match_sig(&prepared.arena, prepared.outputs[0]) else {
+        panic!("prepared output should remain a projection");
+    };
+    let (_, prepared_body_list) =
+        tlib::match_sym_rec(&prepared.arena, prepared_group).expect("symbolic recursion expected");
+    let prepared_body = prepared
+        .arena
+        .hd(prepared_body_list)
+        .expect("prepared recursion body head");
+    let SigMatch::Fmod(left, right) = match_sig(&prepared.arena, prepared_body) else {
+        panic!(
+            "recursion body should stay SIGFMOD, got {}",
+            dump_sig_readable(&prepared.arena, prepared_body)
+        );
+    };
+    assert_eq!(prepared.ty(prepared_body), Some(SimpleSigType::Real));
+    assert_eq!(prepared.ty(left), Some(SimpleSigType::Real));
+    assert_eq!(prepared.ty(right), Some(SimpleSigType::Real));
+}

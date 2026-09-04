@@ -2607,4 +2607,83 @@ mod tests {
         );
         assert!(err.message().contains("non-negative upper bound"));
     }
+
+    // C++ regression f81491f8 (2026-09-04): `fmod` was routed through the
+    // `%` nature rule (`x | y`), so `fmod(int, int)` was typed int and the
+    // WASM backend emitted `call $fmodf` on i32 operands, an invalid module
+    // that broke every soundfile player (`so.loop`, `it.raise_modulo`).
+    // `fmod` is the C function: real whatever its operands. `%` on two
+    // integers is an integer. The two share the modulo semantics, not the
+    // nature, and this group of tests pins that distinction.
+    #[test]
+    fn fmod_of_two_ints_is_real() {
+        let mut arena = TreeArena::new();
+        let mut b = SigBuilder::new(&mut arena);
+        let input = b.input(0);
+        let x = b.int_cast(input);
+        let y = b.int(1000);
+        let s = b.fmod(x, y);
+        let types = annotate(&arena, &[s]);
+        assert_eq!(types[&x].nature(), Nature::Int, "int() operand is int");
+        assert_eq!(types[&y].nature(), Nature::Int, "literal operand is int");
+        assert_eq!(
+            types[&s].nature(),
+            Nature::Real,
+            "fmod(int, int) must be real: it is the C function, not `%`"
+        );
+    }
+
+    #[test]
+    fn remainder_of_two_ints_is_real() {
+        let mut arena = TreeArena::new();
+        let mut b = SigBuilder::new(&mut arena);
+        let input = b.input(0);
+        let x = b.int_cast(input);
+        let y = b.int(1000);
+        let s = b.remainder(x, y);
+        let types = annotate(&arena, &[s]);
+        assert_eq!(types[&s].nature(), Nature::Real);
+    }
+
+    #[test]
+    fn rem_binop_of_two_ints_stays_int() {
+        let mut arena = TreeArena::new();
+        let mut b = SigBuilder::new(&mut arena);
+        let input = b.input(0);
+        let x = b.int_cast(input);
+        let y = b.int(1000);
+        let s = b.binop(BinOp::Rem, x, y);
+        let types = annotate(&arena, &[s]);
+        assert_eq!(
+            types[&s].nature(),
+            Nature::Int,
+            "`%` on two integers is an integer, unlike fmod"
+        );
+    }
+
+    /// The `so.loop` shape that exposed the C++ bug: the recursion fixpoint
+    /// starts from an int seed, and a wrong int answer for `fmod` would
+    /// make the whole recursive state int.
+    #[test]
+    fn fmod_recursion_with_int_seed_converges_to_real() {
+        let mut arena = TreeArena::new();
+        let var = arena.symbol("W0");
+        let body = {
+            let self_ref = sym_ref(&mut arena, var);
+            let prev = SigBuilder::new(&mut arena).proj(0, self_ref);
+            let one = SigBuilder::new(&mut arena).int(1);
+            let next = SigBuilder::new(&mut arena).binop(BinOp::Add, prev, one);
+            let modulus = SigBuilder::new(&mut arena).int(1000);
+            let wrapped = SigBuilder::new(&mut arena).fmod(next, modulus);
+            arena.cons(wrapped, arena.nil())
+        };
+        let rec = sym_rec(&mut arena, var, body);
+        let output = SigBuilder::new(&mut arena).proj(0, rec);
+
+        let types = annotate(&arena, &[output]);
+
+        assert_eq!(types[&output].nature(), Nature::Real);
+        let body_items = list_to_vec(&arena, body).expect("body list");
+        assert_eq!(types[&body_items[0]].nature(), Nature::Real);
+    }
 }

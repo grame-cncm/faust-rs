@@ -696,6 +696,24 @@ pub(super) fn verify_promotion_invariant(
                 )));
             }
         }
+        // Real-valued binary math primitives are the C functions, real whatever
+        // their operands: `fmod(int, int)` is NOT `%`. C++ regression f81491f8
+        // (2026-09-04) typed it int and emitted `call $fmodf` on i32 operands,
+        // an invalid WASM module that broke every soundfile player. The
+        // promoter must have cast both operands to real and the node itself
+        // must be real; no backend inserts that cast at lowering.
+        SigMatch::Fmod(lhs, rhs) | SigMatch::Remainder(lhs, rhs) | SigMatch::Atan2(lhs, rhs) => {
+            let real = Some(SimpleSigType::Real);
+            if dom(sig) != real || dom(lhs) != real || dom(rhs) != real {
+                return Err(SignalPrepareError::Validation(format!(
+                    "prepared real math primitive {} has non-real domains: result {:?}, operands {:?}, {:?}",
+                    sig.as_u32(),
+                    dom(sig),
+                    dom(lhs),
+                    dom(rhs)
+                )));
+            }
+        }
         SigMatch::Enable(_, gate) => {
             if dom(gate) != int {
                 return Err(SignalPrepareError::Validation(format!(
