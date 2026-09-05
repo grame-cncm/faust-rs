@@ -1,5 +1,5 @@
 declare name "Faust Differentiable Optimizers Library";
-declare version "0.5.0";
+declare version "0.6.0";
 declare author "faust-rs";
 declare license "MIT/LGPL-3.0";
 
@@ -23,7 +23,7 @@ declare license "MIT/LGPL-3.0";
 // compiled with `-I libraries` alone and exercised by the `faust-rs` tests.
 // It is a `faust-rs` library: `fad` is not known to the C++ Faust compiler.
 //
-// The Optimizers library is organized into 10 sections:
+// The Optimizers library is organized into 11 sections:
 //
 // * [Signal Helpers and Parameter State](#signal-helpers-and-parameter-state)
 // * [Losses and Regularizers](#losses-and-regularizers)
@@ -34,6 +34,7 @@ declare license "MIT/LGPL-3.0";
 // * [Least-Squares Loops](#least-squares-loops)
 // * [Loss-First Loops](#loss-first-loops)
 // * [Gauss-Newton Loops](#gauss-newton-loops)
+// * [Clocked Loops](#clocked-loops)
 // * [Newton Solver](#newton-solver)
 //
 // It should be used using the `op` environment:
@@ -43,6 +44,10 @@ declare license "MIT/LGPL-3.0";
 // process = op.descend_1D(loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
 // ```
 //
+// Changes in 0.6.0: frame accumulation (`frame_sum`, `frame_count`,
+// `frame_mean`) and the clocked loops `descend_1D_clocked` ...
+// `descend_5D_clocked`, whose update runs once per firing of an `ondemand`
+// clock on the frame-averaged gradient.
 // Changes in 0.5.0: `adam` and `nadam` apply the Adam bias correction (their
 // first steps used to be `sqrt(1 - b2) / (1 - b1) = 3.16` times larger than
 // `lr`); the library no longer imports `stdfaust.lib`; `optimize_ND` are kept
@@ -1960,6 +1965,327 @@ with {
         next1 = clip(lo1, hi1, p1 - mu * d1);
         next2 = clip(lo2, hi2, p2 - mu * d2);
         next3 = clip(lo3, hi3, p3 - mu * d3);
+    };
+};
+
+//=====================================Clocked Loops========================================
+// Learning at its own rate. `ondemand(C)` runs its body only on the samples
+// where its first input, the clock, is non-zero, and holds the outputs in
+// between; inside the body a recursion advances once per firing. The loops of
+// this section keep the model, the loss and the `fad` at audio rate, average
+// the gradient over the frame with `frame_mean`, and take the step inside an
+// `ondemand` block, so the engine's state advances once per frame: the
+// in-graph counterpart of a mini-batch step. Any loop of the previous sections
+// can also be placed inside an `ondemand` block as a whole, in which case
+// everything, gradient included, runs in fire time on the block's inputs.
+//
+// Two rules that follow from the primitive: a body receives outer signals as
+// explicit inputs (these loops do so through the block's inputs), and `ma.SR`
+// is not adapted inside `ondemand`.
+//==========================================================================================
+
+// Internal helpers of the clocked loops.
+// 1 once at least one firing happened strictly before this sample.
+_fired_before(clock) = ((+(clock)) ~ _) : mem : >(0);
+// A reset seen since the last firing, held until the sample after the next one.
+_reset_latched(clock, reset) = (+(float(reset != 0.0)) : min(1.0)) ~ *(1.0 - clock');
+// The audio-rate value of a parameter learned in a clocked block: `init` until
+// the block has fired once and while a reset is pending, `prev` otherwise.
+_clocked_state(clock, init, reset, prev) = select2(_reset_latched(clock, reset) | (_fired_before(clock) == 0), prev, init);
+
+//------------------------------`(op.)frame_sum`--------------------------------
+// Sum of `x` over the current frame: the samples since the one after the last
+// firing of `clock`, the current sample included. On a firing sample it holds
+// the sum over the frame that ends there, which is what an `ondemand` block
+// clocked by the same signal reads.
+//
+// #### Usage
+//
+// ```
+// _ : frame_sum(clock) : _
+// ```
+//
+// Where:
+//
+// * `clock`: the firing signal of the block that will read the sum
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// frame_sum_test = hslider("frame_sum:x", 0, -1, 1, 0.01) : op.frame_sum(clock)
+// with { clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+frame_sum(clock, x) = (+(x)) ~ *(1.0 - clock');
+
+//------------------------------`(op.)frame_count`------------------------------
+// Number of samples in the current frame, the current sample included:
+// `frame_sum(clock, 1.0)`. Equals the period on the firing samples of a
+// periodic clock.
+//
+// #### Usage
+//
+// ```
+// frame_count(clock) : _
+// ```
+//
+// Where:
+//
+// * `clock`: the firing signal
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// frame_count_test = op.frame_count(clock)
+// with { clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+frame_count(clock) = frame_sum(clock, 1.0);
+
+//------------------------------`(op.)frame_mean`-------------------------------
+// Mean of `x` over the current frame, `frame_sum / frame_count`. On a firing
+// sample it is the exact mean over the frame that ends there: the mini-batch
+// gradient when `x` is a per-sample gradient.
+//
+// #### Usage
+//
+// ```
+// _ : frame_mean(clock) : _
+// ```
+//
+// Where:
+//
+// * `clock`: the firing signal of the block that will read the mean
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// frame_mean_test = hslider("frame_mean:x", 0, -1, 1, 0.01) : op.frame_mean(clock)
+// with { clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+frame_mean(clock, x) = frame_sum(clock, x) / frame_count(clock);
+
+//------------------------------`(op.)descend_1D_clocked`-----------------------
+// One-parameter loss-first loop whose update runs once per firing of `clock`.
+// The loss and its gradient are computed at audio rate, the gradient is
+// averaged over the frame with `frame_mean`, and the step is taken inside an
+// `ondemand` block, so the engine's state (moments, schedules) advances in
+// fire time, once per frame. Between firings the parameter is held; until the
+// first firing it is `init1`; a `reset` shorter than a frame is latched until
+// the next firing.
+//
+// #### Usage
+//
+// ```
+// descend_1D_clocked(clock, loss, upd1, lo1, hi1, init1, reset) : _
+// ```
+//
+// Where:
+//
+// * `clock`: firing signal, non-zero on the samples where the step is taken (e.g. `il.frame_clock(64)`)
+// * `loss`: scalar loss `loss(p1)`, a function of the parameter closed over the audio-rate data
+// * `upd1`: gradient engine `upd1(g)`, instantiated in fire time
+// * `lo1`, `hi1`: bounds of the parameter
+// * `init1`: initial value
+// * `reset`: signal forcing the parameter back to `init1`
+//
+// #### Example
+//
+// ```
+// il = library("interleave.lib");
+// loss(g) = op.mse(g * x, target);
+// g = op.descend_1D_clocked(il.frame_clock(64), loss, op.sgd_g(0.5), -4, 4, 0, 0);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_1D_clocked_test = op.descend_1D_clocked(clock, \(p).(op.mse(p * x, 0.5 * x)), op.sgd_g(0.5), -4, 4, 0, 0)
+// with { x = hslider("descend_1D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//
+// #### References
+//
+// * <https://github.com/grame-cncm/faust-rs/blob/main/docs/ondemand-note-en.md>
+//------------------------------------------------------------------------------
+descend_1D_clocked(clock, loss, upd1, lo1, hi1, init1, reset) = loop ~ _
+with {
+    loop(prev1) = (clock, p1, gm1) : ondemand(step)
+    with {
+        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
+        g1 = fad(loss(p1), p1) : !, _;
+        gm1 = frame_mean(clock, g1);
+        step(q1, h1) = clip(lo1, hi1, q1 - upd1(h1));
+    };
+};
+
+//------------------------------`(op.)descend_2D_clocked`-----------------------
+// Two-parameter clocked loss-first loop; see `descend_1D_clocked`.
+//
+// #### Usage
+//
+// ```
+// descend_2D_clocked(clock, loss, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset) : _, _
+// ```
+//
+// Where:
+//
+// * `clock`: firing signal
+// * `loss`: scalar loss `loss(p1, p2)`
+// * `upd1`, `upd2`: gradient engines `upd(g)`, instantiated in fire time
+// * `lo1`, `hi1`, `lo2`, `hi2`: bounds of the parameters
+// * `init1`, `init2`: initial values
+// * `reset`: signal forcing the parameters back to their initial values
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_2D_clocked_test = op.descend_2D_clocked(clock, \(a, b).(op.mse(a * x + b, 0.5 * x + 0.1)), op.sgd_g(0.5), op.sgd_g(0.5), -4, 4, -4, 4, 0, 0, 0)
+// with { x = hslider("descend_2D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+descend_2D_clocked(clock, loss, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset) = loop ~ (_, _)
+with {
+    loop(prev1, prev2) = (clock, p1, p2, gm1, gm2) : ondemand(step)
+    with {
+        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
+        p2 = clip(lo2, hi2, _clocked_state(clock, init2, reset, prev2));
+        gs = fad(loss(p1, p2), (p1, p2)) : !, _, _;
+        gm1 = frame_mean(clock, (gs : _, !));
+        gm2 = frame_mean(clock, (gs : !, _));
+        step(q1, q2, h1, h2) = clip(lo1, hi1, q1 - upd1(h1)), clip(lo2, hi2, q2 - upd2(h2));
+    };
+};
+
+//------------------------------`(op.)descend_3D_clocked`-----------------------
+// Three-parameter clocked loss-first loop; see `descend_1D_clocked`.
+//
+// #### Usage
+//
+// ```
+// descend_3D_clocked(clock, loss, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset) : _, _, _
+// ```
+//
+// Where:
+//
+// * `clock`: firing signal
+// * `loss`: scalar loss `loss(p1, p2, p3)`
+// * `upd1` ... `upd3`: gradient engines `upd(g)`, instantiated in fire time
+// * `lo1`, `hi1` ... `lo3`, `hi3`: bounds of the parameters
+// * `init1` ... `init3`: initial values
+// * `reset`: signal forcing the parameters back to their initial values
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_3D_clocked_test = op.descend_3D_clocked(clock, \(h0, h1, h2).(op.mse(h0 * x + h1 * x' + h2 * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), -4, 4, -4, 4, -4, 4, 0, 0, 0, 0)
+// with { x = hslider("descend_3D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+descend_3D_clocked(clock, loss, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset) = loop ~ (_, _, _)
+with {
+    loop(prev1, prev2, prev3) = (clock, p1, p2, p3, gm1, gm2, gm3) : ondemand(step)
+    with {
+        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
+        p2 = clip(lo2, hi2, _clocked_state(clock, init2, reset, prev2));
+        p3 = clip(lo3, hi3, _clocked_state(clock, init3, reset, prev3));
+        gs = fad(loss(p1, p2, p3), (p1, p2, p3)) : !, _, _, _;
+        gm1 = frame_mean(clock, (gs : _, !, !));
+        gm2 = frame_mean(clock, (gs : !, _, !));
+        gm3 = frame_mean(clock, (gs : !, !, _));
+        step(q1, q2, q3, h1, h2, h3) =
+            clip(lo1, hi1, q1 - upd1(h1)), clip(lo2, hi2, q2 - upd2(h2)), clip(lo3, hi3, q3 - upd3(h3));
+    };
+};
+
+//------------------------------`(op.)descend_4D_clocked`-----------------------
+// Four-parameter clocked loss-first loop; see `descend_1D_clocked`.
+//
+// #### Usage
+//
+// ```
+// descend_4D_clocked(clock, loss, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset) : _, _, _, _
+// ```
+//
+// Where:
+//
+// * `clock`: firing signal
+// * `loss`: scalar loss `loss(p1, p2, p3, p4)`
+// * `upd1` ... `upd4`: gradient engines `upd(g)`, instantiated in fire time
+// * `lo1`, `hi1` ... `lo4`, `hi4`: bounds of the parameters
+// * `init1` ... `init4`: initial values
+// * `reset`: signal forcing the parameters back to their initial values
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_4D_clocked_test = op.descend_4D_clocked(clock, \(a, b, c, d).(op.mse(a * x + b * x' + c * x'' + d, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1)), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), -4, 4, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0)
+// with { x = hslider("descend_4D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+descend_4D_clocked(clock, loss, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset) = loop ~ (_, _, _, _)
+with {
+    loop(prev1, prev2, prev3, prev4) = (clock, p1, p2, p3, p4, gm1, gm2, gm3, gm4) : ondemand(step)
+    with {
+        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
+        p2 = clip(lo2, hi2, _clocked_state(clock, init2, reset, prev2));
+        p3 = clip(lo3, hi3, _clocked_state(clock, init3, reset, prev3));
+        p4 = clip(lo4, hi4, _clocked_state(clock, init4, reset, prev4));
+        gs = fad(loss(p1, p2, p3, p4), (p1, p2, p3, p4)) : !, _, _, _, _;
+        gm1 = frame_mean(clock, (gs : _, !, !, !));
+        gm2 = frame_mean(clock, (gs : !, _, !, !));
+        gm3 = frame_mean(clock, (gs : !, !, _, !));
+        gm4 = frame_mean(clock, (gs : !, !, !, _));
+        step(q1, q2, q3, q4, h1, h2, h3, h4) =
+            clip(lo1, hi1, q1 - upd1(h1)), clip(lo2, hi2, q2 - upd2(h2)),
+            clip(lo3, hi3, q3 - upd3(h3)), clip(lo4, hi4, q4 - upd4(h4));
+    };
+};
+
+//------------------------------`(op.)descend_5D_clocked`-----------------------
+// Five-parameter clocked loss-first loop; see `descend_1D_clocked`.
+//
+// #### Usage
+//
+// ```
+// descend_5D_clocked(clock, loss, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset) : _, _, _, _, _
+// ```
+//
+// Where:
+//
+// * `clock`: firing signal
+// * `loss`: scalar loss `loss(p1, p2, p3, p4, p5)`
+// * `upd1` ... `upd5`: gradient engines `upd(g)`, instantiated in fire time
+// * `lo1`, `hi1` ... `lo5`, `hi5`: bounds of the parameters
+// * `init1` ... `init5`: initial values
+// * `reset`: signal forcing the parameters back to their initial values
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_5D_clocked_test = op.descend_5D_clocked(clock, \(a, b, c, d, e).(op.mse(a * x + b * x' + c * x'' + d * x''' + e, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1 * x''' + 0.1)), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), -4, 4, -4, 4, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0, 0)
+// with { x = hslider("descend_5D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+descend_5D_clocked(clock, loss, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset) = loop ~ (_, _, _, _, _)
+with {
+    loop(prev1, prev2, prev3, prev4, prev5) = (clock, p1, p2, p3, p4, p5, gm1, gm2, gm3, gm4, gm5) : ondemand(step)
+    with {
+        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
+        p2 = clip(lo2, hi2, _clocked_state(clock, init2, reset, prev2));
+        p3 = clip(lo3, hi3, _clocked_state(clock, init3, reset, prev3));
+        p4 = clip(lo4, hi4, _clocked_state(clock, init4, reset, prev4));
+        p5 = clip(lo5, hi5, _clocked_state(clock, init5, reset, prev5));
+        gs = fad(loss(p1, p2, p3, p4, p5), (p1, p2, p3, p4, p5)) : !, _, _, _, _, _;
+        gm1 = frame_mean(clock, (gs : _, !, !, !, !));
+        gm2 = frame_mean(clock, (gs : !, _, !, !, !));
+        gm3 = frame_mean(clock, (gs : !, !, _, !, !));
+        gm4 = frame_mean(clock, (gs : !, !, !, _, !));
+        gm5 = frame_mean(clock, (gs : !, !, !, !, _));
+        step(q1, q2, q3, q4, q5, h1, h2, h3, h4, h5) =
+            clip(lo1, hi1, q1 - upd1(h1)), clip(lo2, hi2, q2 - upd2(h2)), clip(lo3, hi3, q3 - upd3(h3)),
+            clip(lo4, hi4, q4 - upd4(h4)), clip(lo5, hi5, q5 - upd5(h5));
     };
 };
 

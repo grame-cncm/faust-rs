@@ -146,6 +146,13 @@ fn logcosh_loss_keeps_the_gain_close_under_outliers() {
 }
 
 #[test]
+fn descend_1d_clocked_learns_a_gain_once_per_frame() {
+    // Gradient at audio rate, frame-mean over 64 samples, one SGD step per
+    // firing of the ondemand block: exact within a few frames.
+    assert_converges("opt_descend_clocked_gain", 4000, 200, 0.01);
+}
+
+#[test]
 fn newton_solves_the_cubic_on_every_frame() {
     // Six unrolled Newton steps on y^3 + y = x, x in [-1, 1]: the residual is
     // at numerical precision from the first frame on.
@@ -162,10 +169,10 @@ fn newton_solves_the_cubic_on_every_frame() {
 #[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 60 entries, 95 outputs. It only has to compile,
+    // documented function: 68 entries, 113 outputs. It only has to compile,
     // run, and stay finite.
-    let outs = run_interp_fixture("opt_all_functions", 64);
-    assert_eq!(outs.len(), 95, "expected the outputs of every Test entry");
+    let outs = run_interp_fixture("opt_all_functions", 256);
+    assert_eq!(outs.len(), 113, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(
