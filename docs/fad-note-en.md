@@ -288,6 +288,16 @@ recursive branch. The compiler now supports that by switching from the original
 "expand after recursion" model to an **augmented-state recursion** model when a
 recursive branch consumes `fad` outputs immediately.
 
+A recursion the seeds do not reach is left alone. Before rewriting a node
+the transform asks whether its subtree can depend on a seed
+(`depends_on_seed`): it contains a seed, spelled as it is under the binders
+where it appears, or a `DEBRUIJNREF` to a recursion outside the subtree,
+which may carry a tangent since only dependent recursions are entered. A
+closed subtree without a seed keeps its primal and gets zero tangents.
+Without this, an inner `fad` (the Newton slope of an implicit solver) fed
+by the output of another learning loop augmented that whole loop, with
+tangent slots exactly zero in theory and `inf * 0` in single precision.
+
 ### 5.2 Validated recursive families
 
 The implementation is strong on several recursive families:

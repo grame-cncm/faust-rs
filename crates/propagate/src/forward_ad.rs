@@ -411,7 +411,7 @@
 //! The result is the same DSP semantics with less duplicated recursive state in
 //! the emitted code.
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use signals::{BinOp, SigBuilder, SigId, SigMatch, match_sig};
 use smallvec::SmallVec;
 use tlib::{
@@ -462,6 +462,14 @@ struct ForwardADTransform<'a> {
     /// Memo for `de_bruijn_aperture`, consulted when a recursion body is
     /// entered to decide which cache entries are closed terms.
     aperture_memo: AHashMap<TreeId, i64>,
+    /// The seeds as given, before any lifting; `seed_sets[k]` is that set
+    /// lifted `k` times, built on demand by `depends_on_seed`.
+    original_seeds: Vec<SigId>,
+    seed_sets: Vec<AHashSet<SigId>>,
+    /// Memo of `depends_on_seed`, keyed by `(sig, transformer depth, walked
+    /// depth)`: a reference's meaning depends on how many binders the walk
+    /// itself entered, the seeds' spelling on the total depth.
+    dependency_memo: AHashMap<(SigId, usize, usize), bool>,
     cache: AHashMap<SigId, Dual>,
     debruijn_depth: i64,
     /// First clock-boundary violation encountered during the sweep, if any.
@@ -488,6 +496,9 @@ impl<'a> ForwardADTransform<'a> {
             diff_seed_index: Self::build_seed_index(diff_seeds),
             diff_seeds: diff_seeds.to_vec(),
             aperture_memo: AHashMap::new(),
+            original_seeds: diff_seeds.to_vec(),
+            seed_sets: Vec::new(),
+            dependency_memo: AHashMap::new(),
             cache: AHashMap::new(),
             debruijn_depth: 0,
             boundary_error: None,
@@ -539,6 +550,64 @@ impl<'a> ForwardADTransform<'a> {
     fn zero_tangent_lanes_int(&mut self) -> SmallVec<[SigId; 2]> {
         let zero = SigBuilder::new(self.arena).int(0);
         Self::repeat_lane_value(zero, self.seed_count())
+    }
+
+    /// The seed set lifted `depth` times: what the seeds are spelled like
+    /// under `depth` `DEBRUIJNREC` binders.
+    fn seed_set_at_depth(&mut self, depth: usize) -> &AHashSet<SigId> {
+        while self.seed_sets.len() <= depth {
+            let next: AHashSet<SigId> = if let Some(previous) = self.seed_sets.last() {
+                let previous: Vec<SigId> = previous.iter().copied().collect();
+                previous
+                    .into_iter()
+                    .map(|seed| lift_de_bruijn(self.arena, seed))
+                    .collect()
+            } else {
+                self.original_seeds.iter().copied().collect()
+            };
+            self.seed_sets.push(next);
+        }
+        &self.seed_sets[depth]
+    }
+
+    /// Whether the subtree of `sig`, read at the transformer's current de
+    /// Bruijn depth, can depend on a seed: it contains a seed (spelled as it
+    /// is at the depth where it appears), or a `DEBRUIJNREF` to a recursion
+    /// outside the subtree -- the transformer only enters recursions that
+    /// depend on a seed, so such a reference may carry a tangent. A closed
+    /// subtree without a seed has zero tangents and is not rewritten. Before
+    /// this check every recursion met was augmented: a loop upstream of a
+    /// Newton solver's inner `fad` was copied whole into that `fad`, with
+    /// tangent slots exactly zero in theory and `inf * 0` in single
+    /// precision.
+    fn depends_on_seed(&mut self, sig: SigId) -> bool {
+        let base = usize::try_from(self.debruijn_depth).unwrap_or(0);
+        self.depends_on_seed_at(sig, base, 0)
+    }
+
+    fn depends_on_seed_at(&mut self, sig: SigId, base: usize, walked: usize) -> bool {
+        let key = (sig, base, walked);
+        if let Some(&known) = self.dependency_memo.get(&key) {
+            return known;
+        }
+        let result = if self.seed_set_at_depth(base + walked).contains(&sig) {
+            true
+        } else if let Some(level) = match_de_bruijn_ref(self.arena, sig) {
+            usize::try_from(level).unwrap_or(usize::MAX) > walked
+        } else if let Some(body) = match_de_bruijn_rec(self.arena, sig) {
+            self.depends_on_seed_at(body, base, walked + 1)
+        } else {
+            let children: Vec<TreeId> = self
+                .arena
+                .children(sig)
+                .map(|children| children.to_vec())
+                .unwrap_or_default();
+            children
+                .into_iter()
+                .any(|child| self.depends_on_seed_at(child, base, walked))
+        };
+        self.dependency_memo.insert(key, result);
+        result
     }
 
     /// Differentiates one signal, using the shared DAG cache.
@@ -601,6 +670,12 @@ impl<'a> ForwardADTransform<'a> {
                 primal: sig,
                 tangents: self.repeated_lane_sig(sig),
             };
+        }
+
+        // A subtree no seed reaches has zero tangents and is kept as it is:
+        // in particular a recursion the seeds do not reach is not augmented.
+        if !self.depends_on_seed(sig) {
+            return self.zero_tangent(sig);
         }
 
         if let Some(body) = match_de_bruijn_rec(self.arena, sig) {
@@ -1965,8 +2040,11 @@ mod tests {
     ///   `seed      = delay1(proj(0, DEBRUIJNREF(1)))`   (same SigId as the back-edge)
     ///   `expr      = seed + inner_out`                   (seed first)
     ///
-    /// The rebuilt inner body must be `[k * back, 0 * back + k * delay1(proj(1, ref(1)))]`:
-    /// the back-edge's tangent is the group's own tangent slot, not `1.0`.
+    /// The inner recursion does not depend on the seed (its back-edge only
+    /// looks like it from outside), so it is not rebuilt at all: the tangent
+    /// of `inner_out` is the zero constant. Before the dependency check the
+    /// group was rebuilt as `[k * back, 0 * back + k * delay1(proj(1, ref(1)))]`,
+    /// its tangent slot fed by its own back-edge and not by `1.0`.
     #[test]
     fn outer_seed_does_not_leak_into_an_inner_rec_body() {
         let mut arena = TreeArena::new();
@@ -1994,32 +2072,17 @@ mod tests {
         assert_eq!(op, signals::BinOp::Add);
         let one = SigBuilder::new(&mut arena).real(1.0);
         assert_eq!(lhs, one, "tangent(seed) must be 1.0");
-        let SigMatch::Proj(slot, fad_rec) = match_sig(&arena, rhs) else {
-            panic!("tangent(inner_out) must be a Proj on the rebuilt inner rec");
-        };
-        assert_eq!(slot, 1, "tangent slot of the single-slot group");
-        let body =
-            match_de_bruijn_rec(&arena, fad_rec).expect("rebuilt group must be a DEBRUIJNREC");
-        let elems = list_to_vec(&arena, body).expect("rebuilt body must be a list");
-        assert_eq!(
-            elems.len(),
-            2,
-            "interleaved body of one slot is [primal, tangent]"
-        );
-
-        // Expected tangent element, by the Mul and Delay1 rules with the
-        // back-edge resolved *inside* the body: the group's own tangent slot.
         let zero = SigBuilder::new(&mut arena).real(0.0);
-        let zero_times_back = SigBuilder::new(&mut arena).mul(zero, back_delay);
-        let tangent_proj = SigBuilder::new(&mut arena).proj(1, ref1);
-        let tangent_back = SigBuilder::new(&mut arena).delay1(tangent_proj);
-        let k_times_tangent = SigBuilder::new(&mut arena).mul(k, tangent_back);
-        let expected = SigBuilder::new(&mut arena).add(zero_times_back, k_times_tangent);
         assert_eq!(
-            elems[1],
-            expected,
-            "inner tangent must be built from the group's own tangent slot, got {:?}",
-            tree_to_str(&arena, elems[1])
+            rhs,
+            zero,
+            "tangent(inner_out) must be the zero constant: the inner recursion does \
+             not depend on the seed and is not rebuilt, got {:?}",
+            tree_to_str(&arena, rhs)
+        );
+        assert_eq!(
+            result[0], expr,
+            "the primal is the expression itself: the inner recursion is kept as it is"
         );
     }
 
