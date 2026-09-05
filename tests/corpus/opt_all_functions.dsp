@@ -3,7 +3,8 @@
 // test suite. Generated from the library documentation; regenerate when a
 // Test entry changes.
 //
-// Requires -I libraries (project-local optimizers.lib; no stdfaust.lib).
+// Requires -I libraries (project-local optimizers.lib) and the directory of
+// the Faust standard libraries on the import path (-I <faustlibraries>).
 //
 // Outputs: the outputs of every Test entry, in library order.
 
@@ -84,6 +85,18 @@ lm_2D_test = op.lm_2D(\(a, b, x).(a * x + b), 0.01, 0.1, 0.99, -4, 4, -4, 4, 0, 
 with { x = hslider("lm_2D:x", 0, -1, 1, 0.01); };
 lm_3D_test = op.lm_3D(\(h0, h1, h2, x).(h0 * x + h1 * x' + h2 * x''), 0.01, 0.1, 0.99, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'', x)
 with { x = hslider("lm_3D:x", 0, -1, 1, 0.01); };
+lsq_N_test = op.lsq_N(3, \(a, b, c, s).(a * s + b * s' + c * s''), op.nlms(0.02, 0.000001, 0.99), -4, 4, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'', x)
+with { x = hslider("lsq_N:x", 0, -1, 1, 0.01); };
+lsq_N_rad_test = op.lsq_N_rad(3, \(a, b, c, s).(a * s + b * s' + c * s''), op.nlms(0.02, 0.000001, 0.99), -4, 4, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'', x)
+with { x = hslider("lsq_N_rad:x", 0, -1, 1, 0.01); };
+descend_N_test = op.descend_N(3, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0)
+with { x = hslider("descend_N:x", 0, -1, 1, 0.01); };
+descend_N_rad_test = op.descend_N_rad(3, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0)
+with { x = hslider("descend_N_rad:x", 0, -1, 1, 0.01); };
+descend_N_clocked_test = op.descend_N_clocked(3, clock, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.sgd_g(0.5), -4, 4, 0, 0)
+with { x = hslider("descend_N_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+descend_N_rad_clocked_test = op.descend_N_rad_clocked(3, clock, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.sgd_g(0.5), -4, 4, 0, 0)
+with { x = hslider("descend_N_rad_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 frame_sum_test = hslider("frame_sum:x", 0, -1, 1, 0.01) : op.frame_sum(clock)
 with { clock = ((+(1) : %(64)) ~ _) == 0; };
 frame_count_test = op.frame_count(clock)
@@ -104,4 +117,4 @@ newton_step_test = op.newton_step(\(y).(y * y - 2.0), hslider("newton_step:y", 1
 newton_test = op.newton(6, \(y).(y * y * y + y - x), 0.0)
 with { x = hslider("newton:x", 0, -1, 1, 0.01); };
 
-process = clip_test, sgn_test, ema_test, ema_bc_test, pstate_test, polyak_test, mse_test, pseudo_huber_test, logcosh_test, energy_loss_test, log_energy_loss_test, l2_test, l1s_test, poles_from_reflection_test, reflection_from_poles_test, sigmoid_map_test, clip_g_test, softclip_g_test, gate_g_test, lr_exp_test, lr_cos_test, warmup_test, lms_test, nlms_test, gn1_test, sgd_test, adam_test, rmsprop_test, nadam_test, sign_sgd_test, sgd_g_test, momentum_g_test, nesterov_g_test, adam_g_test, nadam_g_test, amsgrad_g_test, adabelief_g_test, rmsprop_g_test, adagrad_g_test, lion_g_test, sign_g_test, lsq_1D_test, lsq_2D_test, lsq_3D_test, lsq_4D_test, lsq_5D_test, optimize_1D_test, optimize_2D_test, optimize_3D_test, optimize_4D_test, optimize_5D_test, descend_1D_test, descend_2D_test, descend_3D_test, descend_4D_test, descend_5D_test, lm_2D_test, lm_3D_test, frame_sum_test, frame_count_test, frame_mean_test, descend_1D_clocked_test, descend_2D_clocked_test, descend_3D_clocked_test, descend_4D_clocked_test, descend_5D_clocked_test, newton_step_test, newton_test;
+process = clip_test, sgn_test, ema_test, ema_bc_test, pstate_test, polyak_test, mse_test, pseudo_huber_test, logcosh_test, energy_loss_test, log_energy_loss_test, l2_test, l1s_test, poles_from_reflection_test, reflection_from_poles_test, sigmoid_map_test, clip_g_test, softclip_g_test, gate_g_test, lr_exp_test, lr_cos_test, warmup_test, lms_test, nlms_test, gn1_test, sgd_test, adam_test, rmsprop_test, nadam_test, sign_sgd_test, sgd_g_test, momentum_g_test, nesterov_g_test, adam_g_test, nadam_g_test, amsgrad_g_test, adabelief_g_test, rmsprop_g_test, adagrad_g_test, lion_g_test, sign_g_test, lsq_1D_test, lsq_2D_test, lsq_3D_test, lsq_4D_test, lsq_5D_test, optimize_1D_test, optimize_2D_test, optimize_3D_test, optimize_4D_test, optimize_5D_test, descend_1D_test, descend_2D_test, descend_3D_test, descend_4D_test, descend_5D_test, lm_2D_test, lm_3D_test, lsq_N_test, lsq_N_rad_test, descend_N_test, descend_N_rad_test, descend_N_clocked_test, descend_N_rad_clocked_test, frame_sum_test, frame_count_test, frame_mean_test, descend_1D_clocked_test, descend_2D_clocked_test, descend_3D_clocked_test, descend_4D_clocked_test, descend_5D_clocked_test, newton_step_test, newton_test;

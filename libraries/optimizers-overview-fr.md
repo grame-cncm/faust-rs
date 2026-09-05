@@ -102,7 +102,9 @@ L'idée a une lignée : les nombres duaux (Clifford, 1873), l'AD en mode direct
 des graines explicites (`fad(expr, seeds)` : tout signal peut être une graine,
 plusieurs à la fois), couvre la récursion, les tables et les blocs à domaine
 d'horloge en mode direct, et implémente le mode inverse avec un balayage
-arrière local au bloc. Les notes techniques sont
+arrière local au bloc pour les sorties remises à un hôte, et un balayage sur
+un seul échantillon pour un gradient consommé dans le graphe. Les notes
+techniques sont
 [docs/fad-note-en.md](../docs/fad-note-en.md) et
 [docs/rad-note-en.md](../docs/rad-note-en.md).
 
@@ -111,16 +113,27 @@ arrière local au bloc. Les notes techniques sont
 | | `fad` (direct) | `rad` (inverse) |
 |---|---|---|
 | Sortie | chaque primale suivie d'une tangente par graine | toutes les primales, puis un gradient par graine |
-| Le coût croît avec | le nombre de graines (paramètres) | le nombre de sorties |
-| À travers la récursion | dérivée causale exacte (état augmenté) | balayage local au bloc : contributions sur le bloc `compute` courant, adjoint terminal nul |
-| Consommable dans le graphe | oui, le choix naturel pour un optimiseur dans le graphe | oui, mais la frontière de bloc façonne le gradient |
-| Usage typique | boucles d'apprentissage en Faust, solveurs de Newton, pentes locales | gradients remis à un hôte qui accumule sur un bloc |
+| Le coût croît avec | le nombre de graines (paramètres) | le nombre de sorties : un balayage donne tous les gradients |
+| À travers la récursion | dérivée causale exacte (état augmenté) | en sortie publique : balayage local au bloc `compute` courant, adjoint terminal nul ; consommé dans le graphe : l'échantillon lui-même, l'état passé tenu fixe (le terme direct) |
+| Consommable dans le graphe | oui, le choix naturel pour un optimiseur dans le graphe | oui : le même gradient pour un modèle sans récursion, le gradient de la régression pseudo-linéaire à travers une récursion |
+| Usage typique | boucles d'apprentissage en Faust, solveurs de Newton, pentes locales | beaucoup de paramètres sous une seule perte (les boucles à bus), gradients remis à un hôte qui accumule sur un bloc |
 
 Pour une poignée de paramètres interprétables — ce qu'a d'ordinaire un modèle
 audio — le mode direct est le bon outil pour une boucle écrite en Faust, et
-c'est ce qu'`optimizers.lib` utilise partout. Le mode inverse brille quand une
-perte scalaire dépend de nombreux paramètres et qu'un hôte tient les comptes ;
-voir [docs/rad-usage-en.md](../docs/rad-usage-en.md).
+c'est ce qu'utilisent les boucles à arité fixe d'`optimizers.lib`. Le mode
+inverse est la direction économique quand une perte scalaire dépend de
+nombreux paramètres : un balayage les donne tous, là où le mode direct
+transporte une tangente par paramètre. Les boucles à bus de la bibliothèque
+existent dans les deux modes ; sur un FIR à 16 coefficients, la version `rad`
+compile en 3× moins d'instructions d'interpréteur et tourne 2,5× plus vite,
+7× et 10× à 64 coefficients, pour la même trajectoire. Le prix, dans une
+boucle, c'est l'horizon : le gradient est consommé à l'échantillon qui le
+produit, donc le balayage inverse ne voit que cet échantillon, et à travers
+une récursion du modèle il renvoie le terme direct — l'état passé tenu fixe —
+là où `fad` transporte la dérivée exacte (section 4.7). Pour un modèle sans
+récursion (un FIR, un gain, un waveshaper), les deux sont le même nombre.
+Remis à un hôte en sortie publique, `rad` travaille bloc par bloc ; voir
+[docs/rad-usage-en.md](../docs/rad-usage-en.md).
 
 ### 2.4 Domaines d'horloge : `ondemand` et l'apprentissage à sa propre cadence
 
@@ -204,14 +217,14 @@ bibliothèque ne prétend pas le contraire :
 
 ## 3. Organisation de la bibliothèque
 
-Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.6.0) est
+Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.7.0) est
 documenté fonction par fonction selon la convention des bibliothèques Faust ;
-cette section en donne la carte. Il comporte onze sections, ordonnées des
+cette section en donne la carte. Il comporte douze sections, ordonnées des
 briques de base aux boucles prêtes à l'emploi.
 
 | Section | Contenu | Raison d'être |
 |---|---|---|
-| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak` | les quelques primitives avec lesquelles tout moteur et toute boucle sont écrits ; la bibliothèque n'importe rien |
+| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak` | les quelques primitives avec lesquelles tout moteur et toute boucle sont écrits, par-dessus `si`, `ba`, `ro`, `ma` |
 | Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `l2`, `l1s` | une perte est une fonction Faust ordinaire `loss(y, t)` ; celles-ci sont lisses |
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | apprendre dans un domaine où toute valeur est admissible (stable, positive, bornée) plutôt que borner |
 | Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `lr_exp`, `lr_cos`, `warmup` | ce qui arrive à un gradient avant le moteur, et comment une vitesse d'apprentissage évolue |
@@ -220,6 +233,7 @@ briques de base aux boucles prêtes à l'emploi.
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D` | le modèle est différencié, la perte est implicitement l'erreur quadratique |
 | Loss-first loops | `descend_1D` … `descend_5D` | la perte est différenciée, quelle qu'elle soit |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | pas de second ordre pour deux ou trois paramètres corrélés |
+| Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus avec un moteur et une paire de bornes, en mode direct ou inverse |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | le gradient à cadence audio, moyenné sur la trame, le pas une fois par tir d'une horloge `ondemand` |
 | Newton solver | `newton_step`, `newton` | pas de l'apprentissage : résoudre une équation implicite avec `F` et `F'` issus d'un seul `fad` |
 
@@ -249,7 +263,9 @@ Le paramètre vit dans l'état récursif de Faust ; `pstate` lui donne une valeu
 initiale explicite et un contrôle de remise à zéro ; `clip` le garde dans ses
 bornes ; un appel `fad` par échantillon fournit la dérivée ; le moteur
 transforme la dérivée en pas. Avec `N` paramètres, un seul appel `fad` à `N`
-graines produit les `N` dérivées d'un coup.
+graines produit les `N` dérivées d'un coup. Les boucles à bus dessinent la
+même figure avec `N` fils au lieu d'un, et `rad` à la place de `fad` dans
+leurs versions `_rad`.
 
 ### 3.2 Deux familles, et pourquoi
 
@@ -269,6 +285,14 @@ d'énergie qui ignore la phase, un modèle à plusieurs sorties réduit à un
 scalaire, une pénalité sur les paramètres ajoutée à l'erreur. Le prix : le
 moteur ne voit plus `r` et `j` séparément et ne peut donc pas normaliser par la
 sensibilité ; les moteurs adaptatifs (Adam, Lion) jouent ce rôle.
+
+Les **boucles à bus** (`lsq_N`, `descend_N`, `descend_N_clocked`) sont les
+deux mêmes familles pour `N` paramètres portés par un bus, `N` constant, avec
+un moteur et une paire de bornes pour tous — la forme d'un FIR adaptatif ou
+d'une rangée de gains — là où les boucles à arité fixe donnent à chaque
+paramètre les siens. Chacune a une jumelle `_rad` : un balayage inverse par
+échantillon pour les `N` dérivées au lieu de `N` tangentes. La section 4.7
+dit ce que ce balayage calcule à travers une récursion.
 
 Les points d'entrée d'origine `optimize_ND` sont conservés comme enveloppes de
 `lsq_ND` (valeur initiale nulle, pas de reset).
@@ -290,15 +314,18 @@ moments. Toute vitesse d'apprentissage est un signal, c'est pourquoi un
 schedule tel que `op.lr_exp(...)` se passe simplement à la place d'une
 constante.
 
-### 3.4 Autonome par construction
+### 3.4 Bibliothèques standard
 
-La bibliothèque n'importe rien, pas même `stdfaust.lib` : `smooth`, `clip` et
-le signe sont redéfinis localement. Ce n'est pas du purisme. La suite de tests
-de `faust-rs` ne peut pas dépendre d'une distribution Faust installée, donc une
-bibliothèque qui importait `stdfaust.lib` ne pouvait pas être exercée par
-elle. Sept fixtures dans `tests/corpus/opt_*.dsp` passent par l'interpréteur en CI, dont
-un généré à partir de l'entrée `#### Test` de chaque fonction documentée, si
-bien que les exemples de la documentation sont compilés eux aussi.
+La bibliothèque importe `signals.lib`, `basics.lib`, `routes.lib` et
+`maths.lib` (`si.smooth`, `si.bus`, `ba.time`, `ro.interleave`, `ma.PI`) : le
+répertoire des bibliothèques standard de Faust doit donc être sur le chemin
+d'import, à côté de `libraries`. La suite de tests de `faust-rs` le trouve par
+`FAUST_RS_FAUSTLIBRARIES_ROOT` ou par un chemin par défaut, et saute les tests
+de la bibliothèque quand ni l'un ni l'autre n'existe, si bien que la suite
+reste exécutable sans distribution Faust. Onze fixtures dans
+`tests/corpus/opt_*.dsp` passent par l'interpréteur en CI, dont un généré à
+partir de l'entrée `#### Test` de chaque fonction documentée, si bien que les
+exemples de la documentation sont compilés eux aussi.
 
 ## 4. D'où viennent les algorithmes, et pourquoi ceux-là
 
@@ -375,7 +402,7 @@ de `(a1, a2) = (1,9, -0,5)` — dans le rectangle, hors du triangle — le modè
 diverge vers `inf` et la projection n'y peut plus rien. `poles_from_reflection`
 apprend à la place deux *coefficients de réflexion* `k1, k2` dans `(-1, 1)` et
 les transforme par `a1 = k1 (1 + k2)`, `a2 = k2` : c'est la paramétrisation en
-treillis d'Itakura & Saito et de Markel & Gray (1976), une bijection sur le
+treillis d'Itakura & Saito et de   Gray (1976), une bijection sur le
 triangle, si bien qu'une boîte rectangulaire sur `(k1, k2)` ne contient que des
 filtres stables. `sigmoid_map` remplace les bornes dures par une sigmoïde
 logistique, comme le font les articles DDSP pour contraindre leurs paramètres.
@@ -402,7 +429,26 @@ même primitive mise à un autre usage, et parce que les équations implicites
 sont partout dans la modélisation analogique virtuelle (filtres à rétroaction
 sans délai, écrêteurs à diodes : Zavalishin, *The Art of VA Filter Design*).
 
-### 4.7 Ce qui a été laissé de côté, et pourquoi
+### 4.7 Le mode inverse dans une boucle : la régression pseudo-linéaire
+
+Un gradient consommé à l'échantillon qui le produit ne peut pas attendre la
+fin du bloc : le balayage inverse des boucles `_rad` ne voit qu'un
+échantillon. L'adjoint remonte les opérations du modèle de cet échantillon et
+s'arrête à son état récursif, tenu fixe. Pour un modèle récursif
+`y[n] = x[n] + p y[n-1]`, cela donne `d(perte)/dp = 2 r y[n-1]`, le *terme
+direct* ; `fad` donne `2 r dy[n]/dp` avec `dy[n]/dp = y[n-1] + p dy[n-1]/dp`,
+la dérivée à travers la récursion. En filtrage adaptatif, le terme direct est
+le gradient de la **régression pseudo-linéaire** (le LMS récursif de
+Feintuch, 1976 ; Shynk 1989) et le gradient récursif celui de l'*erreur de
+prédiction récursive* (Ljung & Söderström 1983) : le premier est moins cher
+et converge vers la même solution sous une condition de positivité sur le
+modèle, le second est la direction de descente exacte. La bibliothèque offre
+les deux — `fad` dans les boucles à arité fixe et dans `lsq_N`/`descend_N`,
+le terme direct dans les jumelles `_rad` — et pour un modèle sans récursion il
+n'y a aucune différence, ce qui est précisément là où le mode inverse paie :
+beaucoup de paramètres, un seul balayage.
+
+### 4.8 Ce qui a été laissé de côté, et pourquoi
 
 - **RLS / Gauss-Newton au-delà de trois paramètres** : Faust n'a pas de
   matrices ; `lm_2D`/`lm_3D` couvrent les modèles interprétables que vise la
@@ -442,6 +488,9 @@ programmes dans le tutoriel.
 | `descend_1D` sur une perte FFT à 8 points dans le bloc de trame | gain 0,34 (optimum des moindres carrés 0,340) |
 | `descend_1D_clocked`, SGD 0,5 par trame de 64 échantillons | gain `0,700000` à 4 000 échantillons |
 | `descend_2D_clocked`, Adam par trame sur `(log f, q)` | `(1200,2, 1,996)` à 10 000 échantillons, puis à moins de 1 % |
+| `lsq_N_rad` + `nlms`, FIR à 8 coefficients au niveau 10 | résidu sous 1e-6 à partir de 1 000 échantillons |
+| `descend_N` contre `descend_N_rad`, FIR à 16 coefficients, LMS 0,02 | même résidu à l'arrondi près ; 3 777 contre 1 182 instructions d'interpréteur, 0,10 s contre 0,04 s pour 200 000 échantillons ; 28 891 contre 4 129 et 1,32 s contre 0,13 s à 64 coefficients |
+| `rad` contre `fad` dans le graphe sur `y = 1 + p y[n-1]`, `perte = (y - 3)^2` | `rad` -3, -3,75, -3,94 (terme direct), `fad` -3, -5, -6,19 (à travers la récursion) |
 
 ## 6. Pièges à connaître
 
@@ -471,6 +520,14 @@ programmes dans le tutoriel.
 - **Double précision.** Les gradients des filtres récursifs perdent vite en
   précision en simple précision ; compiler les programmes d'apprentissage avec
   `-double`.
+- **`op.mse(_, cible)` a deux entrées.** Un `_` libre est dupliqué partout où
+  l'argument est utilisé : `(_ - t) * (_ - t)` est un bloc à deux entrées, et
+  un `:>` vers lui répartit un bus entre elles — les coefficients font une
+  marche aléatoire autour de zéro. Nommer l'entrée : `\(y).(op.mse(y, cible))`.
+- **`rad` dans une boucle ne voit qu'un échantillon.** À travers une récursion
+  il renvoie le terme direct, pas la dérivée à travers la récursion (section
+  4.7) ; apprendre les modèles récursifs avec les boucles `fad`, les modèles
+  sans récursion avec les unes ou les autres.
 
 ## 7. Références
 
@@ -488,6 +545,9 @@ programmes dans le tutoriel.
 - L. Ljung, T. Söderström, *Theory and Practice of Recursive
   Identification*, MIT Press, 1983 — méthodes récursives d'erreur de
   prédiction.
+- J. J. Shynk, « Adaptive IIR Filtering », IEEE ASSP Magazine, 1989 —
+  régression pseudo-linéaire contre erreur de prédiction récursive.
+- P. L. Feintuch, « An Adaptive Recursive LMS Filter », Proc. IEEE, 1976.
 - D. Marquardt, « An Algorithm for Least-Squares Estimation of Nonlinear
   Parameters », SIAM J. Appl. Math., 1963. <https://doi.org/10.1137/0111030>
 - D. P. Kingma, J. Ba, « Adam: A Method for Stochastic Optimization », ICLR

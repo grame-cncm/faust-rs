@@ -10,7 +10,8 @@
 //
 // Convergence: g -> g_star within ~1e-2 (mse would keep a jitter of ~0.2).
 //
-// Requires -I libraries (project-local optimizers.lib; no stdfaust.lib).
+// Requires -I libraries (project-local optimizers.lib) and the directory of the
+// Faust standard libraries on the import path (-I <faustlibraries>).
 //
 // Outputs: [g - g_star, g - g_star]
 

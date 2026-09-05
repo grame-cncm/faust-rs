@@ -1,10 +1,13 @@
 //! Runtime checks for the project-local `libraries/optimizers.lib`.
 //!
-//! The library packages in-graph optimization on top of `fad`: update
-//! engines, losses, reparameterizations and ready-made loops. It imports no
-//! Faust standard library, so its fixtures compile with `tests/corpus` and
-//! `libraries` on the import path and nothing else — the same hermetic
-//! contract as the rest of the corpus.
+//! The library packages in-graph optimization on top of `fad` and `rad`:
+//! update engines, losses, reparameterizations and ready-made loops. It
+//! imports `signals.lib`, `basics.lib`, `routes.lib` and `maths.lib`, so its
+//! fixtures compile with `tests/corpus`, `libraries` and the Faust standard
+//! libraries on the import path. The standard libraries are found through
+//! `FAUST_RS_FAUSTLIBRARIES_ROOT` or the default checkout path, and every
+//! test **skips gracefully** when neither exists, as `interleave_fft.rs`
+//! does.
 //!
 //! Each fixture in `tests/corpus/opt_*.dsp` learns a hidden parameter set
 //! sample by sample and outputs the residual (or the parameter error) as a
@@ -14,14 +17,16 @@
 //! documented function, so the documentation examples are compiled too.
 //!
 //! The tests use the interpreter fast lane through the public compiler
-//! facade, so they exercise propagation (including the `fad` expansion),
-//! transform, FIR lowering and the interp backend together.
+//! facade, so they exercise propagation (including the `fad` and `rad`
+//! expansions), transform, FIR lowering and the interp backend together.
 
 use std::io::Cursor;
 use std::path::PathBuf;
 
 use codegen::backends::interp::{FbcDspInstance, InterpOptions, read_fbc};
 use compiler::{Compiler, SignalFirLane};
+
+const DEFAULT_FAUSTLIBRARIES_ROOT: &str = "/Users/letz/Developpements/faustlibraries";
 
 fn workspace_dir(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -30,12 +35,25 @@ fn workspace_dir(rel: &str) -> PathBuf {
         .join(rel)
 }
 
-fn run_interp_fixture_inner(stem: &str, frame_count: usize) -> Vec<Vec<f32>> {
+fn faustlibraries_root() -> Option<PathBuf> {
+    std::env::var_os("FAUST_RS_FAUSTLIBRARIES_ROOT")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let default = PathBuf::from(DEFAULT_FAUSTLIBRARIES_ROOT);
+            default.exists().then_some(default)
+        })
+}
+
+fn run_interp_fixture_inner(stem: &str, frame_count: usize, root: PathBuf) -> Vec<Vec<f32>> {
     let path = workspace_dir("tests/corpus").join(format!("{stem}.dsp"));
-    // `libraries` is where `optimizers.lib` lives; the corpus directory is
-    // added for symmetry with the other corpus runners. No standard library
-    // path: the fixtures must not need one.
-    let search_paths = [workspace_dir("tests/corpus"), workspace_dir("libraries")];
+    // `libraries` is where `optimizers.lib` lives, `root` holds the standard
+    // libraries it imports; the corpus directory is added for symmetry with
+    // the other corpus runners.
+    let search_paths = [
+        workspace_dir("tests/corpus"),
+        workspace_dir("libraries"),
+        root,
+    ];
     let compiler = Compiler::new();
     let fbc = compiler
         .compile_file_to_interp_with_lane(
@@ -61,21 +79,48 @@ fn run_interp_fixture_inner(stem: &str, frame_count: usize) -> Vec<Vec<f32>> {
 
 /// Same 64 MB-stack worker pattern as `rad_runtime.rs`: the `fad` expansion
 /// of a five-parameter recursive model produces deep evaluation trees that
-/// overflow the default 2 MB test-thread stack.
-fn run_interp_fixture(stem: &'static str, frame_count: usize) -> Vec<Vec<f32>> {
-    std::thread::Builder::new()
-        .name(format!("optimizers-lib-{stem}"))
-        .stack_size(64 * 1024 * 1024)
-        .spawn(move || run_interp_fixture_inner(stem, frame_count))
-        .expect("spawn optimizers-lib worker")
-        .join()
-        .expect("optimizers-lib worker thread should finish")
+/// overflow the default 2 MB test-thread stack. `None` when the standard
+/// libraries are unavailable (the test skips).
+fn run_interp_fixture(stem: &'static str, frame_count: usize) -> Option<Vec<Vec<f32>>> {
+    let Some(root) = faustlibraries_root() else {
+        eprintln!("Skipping {stem}: faustlibraries unavailable");
+        return None;
+    };
+    Some(
+        std::thread::Builder::new()
+            .name(format!("optimizers-lib-{stem}"))
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || run_interp_fixture_inner(stem, frame_count, root))
+            .expect("spawn optimizers-lib worker")
+            .join()
+            .expect("optimizers-lib worker thread should finish"),
+    )
 }
 
 fn rms(samples: &[f32]) -> f32 {
     let n = samples.len() as f64;
     let sum: f64 = samples.iter().map(|&x| (x as f64) * (x as f64)).sum();
     ((sum / n) as f32).sqrt()
+}
+
+/// Checks that every sample of `channel` is finite and that its RMS over the
+/// last `window` frames is below `factor` times its RMS over the first
+/// `window` frames.
+fn assert_channel_converges(stem: &str, channel: &[f32], window: usize, factor: f32) {
+    for (frame, &sample) in channel.iter().enumerate() {
+        assert!(
+            sample.is_finite(),
+            "{stem}: non-finite sample at frame {frame}: {sample}"
+        );
+    }
+    let frames = channel.len();
+    let rms_start = rms(&channel[..window]);
+    let rms_end = rms(&channel[frames - window..]);
+    assert!(
+        rms_end < factor * rms_start,
+        "{stem}: residual did not converge — rms_start={rms_start:.6}, rms_end={rms_end:.6}, \
+         required rms_end < {factor} * rms_start"
+    );
 }
 
 /// Runs a fixture and checks that:
@@ -85,7 +130,9 @@ fn rms(samples: &[f32]) -> f32 {
 ///   - the RMS over the last `window` frames is below `factor` times the RMS
 ///     over the first `window` frames.
 fn assert_converges(stem: &'static str, frames: usize, window: usize, factor: f32) {
-    let outs = run_interp_fixture(stem, frames);
+    let Some(outs) = run_interp_fixture(stem, frames) else {
+        return;
+    };
     assert_eq!(
         outs.len(),
         2,
@@ -93,19 +140,9 @@ fn assert_converges(stem: &'static str, frames: usize, window: usize, factor: f3
         outs.len()
     );
     for (frame, (&left, &right)) in outs[0].iter().zip(&outs[1]).enumerate() {
-        assert!(
-            left.is_finite() && right.is_finite(),
-            "{stem}: non-finite sample at frame {frame}: {left} / {right}"
-        );
         assert_eq!(left, right, "{stem}: L/R mismatch at frame {frame}");
     }
-    let rms_start = rms(&outs[0][..window]);
-    let rms_end = rms(&outs[0][frames - window..]);
-    assert!(
-        rms_end < factor * rms_start,
-        "{stem}: residual did not converge — rms_start={rms_start:.6}, rms_end={rms_end:.6}, \
-         required rms_end < {factor} * rms_start"
-    );
+    assert_channel_converges(stem, &outs[0], window, factor);
 }
 
 #[test]
@@ -153,10 +190,49 @@ fn descend_1d_clocked_learns_a_gain_once_per_frame() {
 }
 
 #[test]
+fn lsq_n_rad_with_nlms_learns_eight_fir_taps_from_one_reverse_sweep() {
+    // Bus least-squares loop, eight taps, NLMS at level 10: the eight
+    // sensitivities come from one reverse sweep per sample.
+    assert_converges("opt_lsq_n_rad_nlms_fir8", 4000, 200, 0.01);
+}
+
+#[test]
+fn descend_n_rad_learns_sixteen_fir_taps() {
+    // Bus loss-first loop with `rad`, sixteen taps, LMS step 0.02 on white
+    // noise: one reverse sweep per sample instead of sixteen tangents.
+    assert_converges("opt_descend_n_rad_fir16", 8000, 400, 0.05);
+}
+
+#[test]
+fn bus_loops_fad_and_rad_follow_the_same_trajectory_on_an_fir() {
+    // The fixture outputs the residual of `descend_N` and of `descend_N_rad`
+    // on the same sixteen-tap FIR: both converge, and since the loss has no
+    // recursion between the taps and the output, both gradients are the same
+    // and the residuals agree to rounding.
+    let Some(outs) = run_interp_fixture("opt_bus_fad_vs_rad_fir16", 8000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2, "expected the two residuals");
+    assert_channel_converges("opt_bus_fad_vs_rad_fir16 (fad)", &outs[0], 400, 0.05);
+    assert_channel_converges("opt_bus_fad_vs_rad_fir16 (rad)", &outs[1], 400, 0.05);
+    let max_gap = outs[0]
+        .iter()
+        .zip(&outs[1])
+        .map(|(&a, &b)| (a - b).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(
+        max_gap < 1e-4,
+        "fad and rad bus loops diverged: max residual gap {max_gap}"
+    );
+}
+
+#[test]
 fn newton_solves_the_cubic_on_every_frame() {
     // Six unrolled Newton steps on y^3 + y = x, x in [-1, 1]: the residual is
     // at numerical precision from the first frame on.
-    let outs = run_interp_fixture("opt_newton_cubic", 256);
+    let Some(outs) = run_interp_fixture("opt_newton_cubic", 256) else {
+        return;
+    };
     assert_eq!(outs.len(), 2);
     for (frame, (&left, &right)) in outs[0].iter().zip(&outs[1]).enumerate() {
         assert!(
@@ -169,10 +245,12 @@ fn newton_solves_the_cubic_on_every_frame() {
 #[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 68 entries, 113 outputs. It only has to compile,
+    // documented function: 74 entries, 131 outputs. It only has to compile,
     // run, and stay finite.
-    let outs = run_interp_fixture("opt_all_functions", 256);
-    assert_eq!(outs.len(), 113, "expected the outputs of every Test entry");
+    let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
+        return;
+    };
+    assert_eq!(outs.len(), 131, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(

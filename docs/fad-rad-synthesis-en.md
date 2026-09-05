@@ -97,7 +97,11 @@ delays or recursion it uses `BlockReverseAD`: the primal runs forward over the
 current `compute(count)` block, then the adjoint runs backward with zero terminal
 adjoint state at the end of that block. Gradient outputs are consequently
 per-sample contributions to sum over the block, not already reduced scalars or
-infinite-horizon gradients.
+infinite-horizon gradients. Consumed inside the graph -- an adaptation
+recursion reading `rad(loss(p), p) : !, _` at the sample that produces it --
+the sweep sees that sample only: through a recursion it returns the direct
+term, the past state held fixed, where FAD carries the derivative through the
+recursion; for a feed-forward body both agree (section 11).
 
 ## 2. Self-Training Gain with FAD
 
@@ -498,7 +502,12 @@ process = (y_target - (h0 * x + h1 * x1 + h2 * x2)) <: _, _;
 
 RAD can be consumed inside a Faust adaptation loop, each coefficient receives
 its loss gradient, and the residual lets the user hear convergence directly.
-The tracked runtime test verifies convergence for this exact source.
+The tracked runtime test verifies convergence for this exact source. The body
+is feed-forward (the delayed inputs do not depend on the coefficients), so
+the one-sample horizon of an in-graph sweep loses nothing here: the gradient
+is the exact one. `optimizers.lib` packages this pattern for `N` taps as
+`descend_N_rad` and `lsq_N_rad`, one sweep per sample for the `N`
+derivatives.
 
 ## 10. Learning at Frame Rate with `ondemand`
 
@@ -589,11 +598,17 @@ Use **RAD** when:
 - the host can accumulate contributions over a block;
 - the task is regression, LMS, adaptive notch filtering, or externally driven
   parametric training;
-- a reverse sweep is preferable as the parameter count grows.
+- a reverse sweep is preferable as the parameter count grows;
+- many parameters share one loss inside the graph: the `_rad` bus loops of
+  `optimizers.lib` run one sweep per sample, exact for a feed-forward model
+  and the direct term (past state held fixed) through a recursion.
 
-Measure representative programs before assuming a performance advantage: the
-current simplification and common-subexpression passes can make FAD and RAD
-costs close on small graphs.
+Measure representative programs before assuming a performance advantage. On
+a 16-tap FIR learned in the graph, the `rad` bus loop compiles to 1 182
+interpreter instructions against 3 777 for `fad` (0.04 s against 0.10 s for
+200 000 samples), 4 129 against 28 891 at 64 taps (0.13 s against 1.32 s);
+on small graphs the simplification and common-subexpression passes can make
+the two costs close.
 
 ## 12. Practical Limits
 
@@ -608,7 +623,9 @@ Keep these points in mind:
 - learned parameters usually need bounds, smoothing, normalization, or
   clipping;
 - recursive filter coefficients must remain in stable regions;
-- temporal RAD uses the current `compute(count)` block as its reverse horizon;
+- temporal RAD uses the current `compute(count)` block as its reverse horizon
+  for public outputs, and the current sample when the gradient is consumed
+  inside the graph (the direct term through a recursion);
 - FAD has dual rules for valid `ondemand`/`upsampling`/`downsampling` blocks,
   with an opaque clock; current integration tests concentrate on FAD inside and
   around `ondemand` (section 10). RAD across a clock-domain boundary is still

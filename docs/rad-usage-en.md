@@ -284,6 +284,14 @@ cargo run --release -p compiler --example rad_vs_fad_perf
   bodies use the current `compute(count)` block as the reverse horizon
   through `BlockReverseAD`. This is exact for the block-local objective,
   with zero terminal adjoint state, not a cross-call infinite-horizon adjoint.
+- **One-sample horizon inside the graph.** A gradient consumed by a
+  forward-time expression -- `p_next = p - lr * (rad(loss(p), p) : !, _)`
+  in an adaptation recursion -- is produced at the sample that consumes it,
+  so the sweep sees that sample only: through a recursion it returns the
+  direct term, the past state held fixed (the pseudo-linear-regression
+  gradient of adaptive IIR filtering), where `fad` carries the derivative
+  through the recursion; for a feed-forward body both are the same. The
+  `_rad` bus loops of `libraries/optimizers.lib` are built on this.
 - **Implicit all-ones cotangent.** Multi-output `expr` produces the
   gradient of `sum(primals)`. A future `vjp(expr, cotangent, seeds)`
   primitive will expose custom output cotangents.

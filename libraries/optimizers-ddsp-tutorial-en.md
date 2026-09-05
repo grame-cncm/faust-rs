@@ -13,12 +13,12 @@ the numbers you should see are given after each one.
 
 ## 0. Setting up
 
-Compile with the project-local library directory on the import path, and in
-double precision — gradients of recursive filters lose accuracy fast in
+Compile with the project-local library directory and the Faust standard
+libraries on the import path, and in double precision — gradients of recursive filters lose accuracy fast in
 single precision:
 
 ```sh
-faust-rs -double -I libraries -lang cpp program.dsp
+faust-rs -double -I libraries -I <faustlibraries> -lang cpp program.dsp
 ```
 
 To *see* a program learn without wiring audio, `faustprobe` renders it offline
@@ -108,8 +108,8 @@ Run with `-n 1`: the six outputs are `6, 3, 2, 6, 3, 2`.
   the same numbers here, in a different layout.
 
 The seeds are whatever signals you list; for a loss with `N` parameters, one
-call gives the `N` derivatives. Everything in this tutorial uses `fad`; `rad`
-comes back in section 10.
+call gives the `N` derivatives. Most of this tutorial uses `fad`; `rad` comes
+back in section 4.1 (many parameters) and in section 10 (hosts).
 
 ## 3. The same loop with the library
 
@@ -186,6 +186,53 @@ of level 1, the same 3-tap FIR converges perfectly at level 1, is a hundred
 times too slow at level 0.1 and hits its bounds at level 10; with
 `op.nlms(0.02, 1e-6, 0.99)` it converges identically at all three levels.
 Audio levels vary by 40 dB in a session; normalize.
+
+### 4.1 Many taps: bus loops and reverse mode
+
+`lsq_3D` takes three taps as three arguments, each with its engine and its
+bounds. For sixteen taps the library carries the parameters as a *bus* and
+applies one engine and one pair of bounds to all of them: `lsq_N`, and its
+loss-first counterpart `descend_N`. The model becomes a block whose first
+`N` inputs are the taps:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+N = 16;
+x = no.noise;
+taps = x <: par(i, N, @(i));
+fir(h) = (h, taps) : ro.interleave(N, 2) : par(i, N, *) :> _;
+h_star(i) = sin(0.5 * i) * exp(-0.2 * i);
+target = fir(par(i, N, h_star(i)));
+fir_loss = fir(si.bus(N)) : sq_err with { sq_err(y) = op.mse(y, target); };
+h = op.descend_N_rad(N, fir_loss, op.sgd_g(0.02), -2.0, 2.0, 0.0, 0.0);
+process = target - fir(h);
+```
+
+`descend_N_rad` is `descend_N` with `rad` in place of `fad`: one reverse
+sweep per sample gives the sixteen gradients where forward mode carries
+sixteen tangents. Run both (`op.descend_N` is the other): the residuals are
+the same signal to rounding, and the compiled programs are not — 1 182
+interpreter instructions against 3 777, 0.04 s against 0.10 s for 200 000
+samples; 4 129 against 28 891 and 0.13 s against 1.32 s at 64 taps. The
+sensitivity of a FIR tap is its delayed input, so both loops compute the
+same gradient. Where they differ is a model with a recursion between the
+parameters and the output: a gradient consumed inside a loop cannot wait
+for the end of the block, so `rad` sees one sample and returns the *direct
+term*, the past state held fixed (`2 r y[n-1]` for the one-pole above),
+where `fad` carries the derivative through the recursion. The direct term
+is the pseudo-linear-regression gradient of adaptive IIR filtering, cheaper
+and convergent under a positivity condition on the model; `fad`'s is the
+recursive-prediction-error gradient, the exact descent direction (section
+4.7 of the overview). The rule of thumb: many parameters and a feed-forward
+model, `_rad`; a recursion to learn, `fad`.
+
+Two details of the program. `fir(si.bus(N))` is the model applied to sixteen
+open inputs, the block a bus loop expects. And the loss names its input
+(`sq_err(y)`) instead of writing `op.mse(_, target)`: a free `_` is
+duplicated wherever the argument is used, so `(_ - t) * (_ - t)` would be a
+two-input block and `:>` would split the taps between them — the loop then
+learns nothing, and nothing warns.
 
 ## 5. Two parameters with different units
 
@@ -449,10 +496,11 @@ Run with `--in sine:220 -n 5`: three outputs, `[gain * x + bias, x, 1]` — the
 output and its two gradients. The host reads them, forms the loss gradient
 (`2 * (out - target) * d/dgain`, summed over a block), and writes the sliders
 back. [docs/rad-usage-en.md](../docs/rad-usage-en.md) has the full loop in
-Rust, including an adaptive notch filter. One caveat: through delays and
-recursions `rad` works block by block (the derivative is reset at the end of
-each `compute` block), which is why the in-graph loops of this tutorial use
-`fad`.
+Rust, including an adaptive notch filter. As a public output, `rad` works
+block by block through delays and recursions: the sweep runs backwards over
+the current `compute` block with the derivative reset at its end, and the
+gradient lanes are per-sample contributions the host sums. Consumed inside
+the graph, as in section 4.1, it sees one sample instead.
 
 ## 11. Learning at its own rate: `ondemand`
 
@@ -605,10 +653,11 @@ the update in the same domain, or connect them through the block's inputs.
 
 Three last things about clock domains. `ma.SR` is not adapted inside
 `ondemand` (its rate is unknown statically), so compute rate-dependent values
-outside and pass them in. `rad` does not cross a domain boundary; the
-in-graph patterns above are `fad` patterns. And the reference for the
-primitives themselves, including `upsampling` and `downsampling`, is
-[docs/ondemand-note-en.md](../docs/ondemand-note-en.md).
+outside and pass them in. `rad` does not cross a domain boundary, but the
+bus loops have clocked `_rad` versions (`descend_N_rad_clocked`): the reverse
+sweep runs at audio rate inside the frame, only the step is clocked. And the
+reference for the primitives themselves, including `upsampling` and
+`downsampling`, is [docs/ondemand-note-en.md](../docs/ondemand-note-en.md).
 
 ## 12. Where to go next
 
@@ -620,6 +669,10 @@ primitives themselves, including `upsampling` and `downsampling`, is
 - **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   differentiates a loss computed on an FFT frame, the per-frame counterpart of
   section 7.2.
+- **Many parameters.** `tests/corpus/opt_descend_n_rad_fir16.dsp` and
+  `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` are the bus loops on FIRs;
+  `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` runs the forward and the
+  reverse version side by side.
 - **Reverse mode and hosts.** [docs/rad-note-en.md](../docs/rad-note-en.md)
   for the algorithm, [docs/rad-usage-en.md](../docs/rad-usage-en.md) for the
   workflow.
@@ -643,6 +696,8 @@ primitives themselves, including `upsampling` and `downsampling`, is
 | Convergence in double but not in float | precision loss in recursive tangents | compile with `-double` |
 | `sequential composition mismatch` around an `ondemand` block | a frame operator with free `_` inputs used several times | give the body named arguments, one per frame sample |
 | A block ignores what happens outside | the body captures an outer signal instead of receiving it | pass outer signals as explicit inputs of the block |
+| A bus loop learns nothing, the taps random-walk near zero | `op.mse(_, t)` (any function applied to a free `_`) is a two-input block: `:>` splits the taps between its inputs | name the loss input: `\(y).(op.mse(y, t))` |
+| A `_rad` loop converges slower than the `fad` one on a recursive model | inside a loop `rad` returns the direct term, the past state held fixed | the `fad` loops for recursive models, either for feed-forward ones |
 
 ## Glossary
 
@@ -651,8 +706,11 @@ primitives themselves, including `upsampling` and `downsampling`, is
 - **Loss**: a scalar measure of the error at the current sample.
 - **Gradient**: the derivative of the loss with respect to the parameters;
   **sensitivity** (`j`): the derivative of the model's output.
-- **Seed**: the signal `fad` differentiates with respect to.
+- **Seed**: the signal `fad` or `rad` differentiates with respect to.
 - **Tangent**: a derivative produced by forward-mode AD (`fad`).
+- **Direct term**: the derivative of a recursive model's output with respect
+  to a parameter, its past state held fixed; what `rad` returns inside a
+  loop, and the pseudo-linear-regression gradient of adaptive filtering.
 - **Engine**: the function that turns a gradient (or a residual and a
   sensitivity) into a step.
 - **Learning rate** (`lr`): the step size; a **schedule** makes it vary.

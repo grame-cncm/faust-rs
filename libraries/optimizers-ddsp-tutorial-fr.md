@@ -15,12 +15,12 @@ sont données après chacun.
 
 ## 0. Mise en place
 
-Compiler avec le répertoire des bibliothèques locales au projet sur le chemin
-d'import, et en double précision — les gradients des filtres récursifs perdent
+Compiler avec le répertoire des bibliothèques locales au projet et celui des
+bibliothèques standard de Faust sur le chemin d'import, et en double précision — les gradients des filtres récursifs perdent
 vite en précision en simple précision :
 
 ```sh
-faust-rs -double -I libraries -lang cpp programme.dsp
+faust-rs -double -I libraries -I <faustlibraries> -lang cpp programme.dsp
 ```
 
 Pour *voir* un programme apprendre sans brancher d'audio, `faustprobe` le rend
@@ -113,8 +113,9 @@ Exécutez avec `-n 1` : les six sorties sont `6, 3, 2, 6, 3, 2`.
   gradients : les mêmes nombres ici, dans une autre disposition.
 
 Les graines sont les signaux que vous listez ; pour une perte à `N`
-paramètres, un appel donne les `N` dérivées. Tout ce tutoriel utilise `fad` ;
-`rad` revient à la section 10.
+paramètres, un appel donne les `N` dérivées. L'essentiel de ce tutoriel
+utilise `fad` ; `rad` revient à la section 4.1 (beaucoup de paramètres) et à la
+section 10 (les hôtes).
 
 ## 3. La même boucle avec la bibliothèque
 
@@ -193,6 +194,55 @@ niveau 1, est cent fois trop lent au niveau 0,1 et bute sur ses bornes au
 niveau 10 ; avec `op.nlms(0.02, 1e-6, 0.99)` il converge à l'identique aux
 trois niveaux. Les niveaux audio varient de 40 dB dans une session :
 normalisez.
+
+### 4.1 Beaucoup de coefficients : boucles à bus et mode inverse
+
+`lsq_3D` prend trois coefficients comme trois arguments, chacun avec son
+moteur et ses bornes. Pour seize coefficients, la bibliothèque porte les
+paramètres par un *bus* et applique un moteur et une paire de bornes à tous :
+`lsq_N`, et son pendant perte d'abord `descend_N`. Le modèle devient un bloc
+dont les `N` premières entrées sont les coefficients :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+N = 16;
+x = no.noise;
+taps = x <: par(i, N, @(i));
+fir(h) = (h, taps) : ro.interleave(N, 2) : par(i, N, *) :> _;
+h_star(i) = sin(0.5 * i) * exp(-0.2 * i);
+target = fir(par(i, N, h_star(i)));
+fir_loss = fir(si.bus(N)) : sq_err with { sq_err(y) = op.mse(y, target); };
+h = op.descend_N_rad(N, fir_loss, op.sgd_g(0.02), -2.0, 2.0, 0.0, 0.0);
+process = target - fir(h);
+```
+
+`descend_N_rad` est `descend_N` avec `rad` à la place de `fad` : un balayage
+inverse par échantillon donne les seize gradients, là où le mode direct
+transporte seize tangentes. Exécutez les deux (`op.descend_N` est l'autre) :
+les résidus sont le même signal à l'arrondi près, et les programmes compilés
+ne le sont pas — 1 182 instructions d'interpréteur contre 3 777, 0,04 s
+contre 0,10 s pour 200 000 échantillons ; 4 129 contre 28 891 et 0,13 s
+contre 1,32 s à 64 coefficients. La sensibilité d'un coefficient de FIR est
+son entrée retardée, donc les deux boucles calculent le même gradient. Là où
+elles diffèrent, c'est un modèle avec une récursion entre les paramètres et la
+sortie : un gradient consommé dans une boucle ne peut pas attendre la fin du
+bloc, donc `rad` ne voit qu'un échantillon et renvoie le *terme direct*,
+l'état passé tenu fixe (`2 r y[n-1]` pour le filtre à un pôle ci-dessus), là
+où `fad` transporte la dérivée à travers la récursion. Le terme direct est le
+gradient de la régression pseudo-linéaire du filtrage adaptatif IIR, moins
+cher et convergent sous une condition de positivité sur le modèle ; celui de
+`fad` est le gradient de l'erreur de prédiction récursive, la direction de
+descente exacte (section 4.7 de la synthèse). La règle : beaucoup de
+paramètres et un modèle sans récursion, `_rad` ; une récursion à apprendre,
+`fad`.
+
+Deux détails du programme. `fir(si.bus(N))` est le modèle appliqué à seize
+entrées ouvertes, le bloc qu'attend une boucle à bus. Et la perte nomme son
+entrée (`sq_err(y)`) au lieu d'écrire `op.mse(_, target)` : un `_` libre est
+dupliqué partout où l'argument est utilisé, donc `(_ - t) * (_ - t)` serait
+un bloc à deux entrées et `:>` répartirait les coefficients entre elles — la
+boucle n'apprend alors rien, et rien ne prévient.
 
 ## 5. Deux paramètres d'unités différentes
 
@@ -465,10 +515,12 @@ Exécutez avec `--in sine:220 -n 5` : trois sorties, `[gain * x + bias, x, 1]`
 — la sortie et ses deux gradients. L'hôte les lit, forme le gradient de la
 perte (`2 * (out - cible) * d/dgain`, sommé sur un bloc), et réécrit les
 sliders. [docs/rad-usage-en.md](../docs/rad-usage-en.md) donne la boucle
-complète en Rust, y compris un filtre coupe-bande adaptatif. Une réserve : à
-travers les délais et les récursions, `rad` travaille bloc par bloc (la dérivée
-est remise à zéro à la fin de chaque bloc `compute`), et c'est pourquoi les
-boucles dans le graphe de ce tutoriel utilisent `fad`.
+complète en Rust, y compris un filtre coupe-bande adaptatif. En sortie
+publique, `rad` travaille bloc par bloc à travers les délais et les
+récursions : le balayage remonte le bloc `compute` courant, la dérivée remise
+à zéro à sa fin, et les voies de gradient sont des contributions par
+échantillon que l'hôte somme. Consommé dans le graphe, comme à la section
+4.1, il ne voit qu'un échantillon.
 
 ## 11. Apprendre à sa propre cadence : `ondemand`
 
@@ -625,9 +677,10 @@ bloc.
 Trois dernières choses sur les domaines d'horloge. `ma.SR` n'est pas adapté
 dans `ondemand` (sa cadence est inconnue statiquement) : calculez les valeurs
 qui dépendent de la cadence à l'extérieur et passez-les en entrée. `rad` ne
-traverse pas une frontière de domaine ; les motifs dans le graphe ci-dessus
-sont des motifs `fad`. Et la référence pour les primitives elles-mêmes,
-`upsampling` et `downsampling` compris, est
+traverse pas une frontière de domaine, mais les boucles à bus ont des versions
+`_rad` cadencées (`descend_N_rad_clocked`) : le balayage inverse tourne à
+cadence audio dans la trame, seul le pas est cadencé. Et la référence pour les
+primitives elles-mêmes, `upsampling` et `downsampling` compris, est
 [docs/ondemand-note-fr.md](../docs/ondemand-note-fr.md).
 
 ## 12. Pour aller plus loin
@@ -640,6 +693,10 @@ sont des motifs `fad`. Et la référence pour les primitives elles-mêmes,
 - **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   différencie une perte calculée sur une trame FFT, le pendant par trame de la
   section 7.2.
+- **Beaucoup de paramètres.** `tests/corpus/opt_descend_n_rad_fir16.dsp` et
+  `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` sont les boucles à bus sur des
+  FIR ; `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` fait tourner côte à côte
+  la version directe et la version inverse.
 - **Mode inverse et hôtes.** [docs/rad-note-en.md](../docs/rad-note-en.md)
   pour l'algorithme, [docs/rad-usage-en.md](../docs/rad-usage-en.md) pour le
   flux de travail.
@@ -662,6 +719,8 @@ sont des motifs `fad`. Et la référence pour les primitives elles-mêmes,
 | Converge en double mais pas en simple précision | perte de précision dans les tangentes récursives | compiler avec `-double` |
 | `sequential composition mismatch` autour d'un bloc `ondemand` | un opérateur de trame à entrées `_` libres utilisé plusieurs fois | donner au corps des arguments nommés, un par échantillon de la trame |
 | Un bloc ignore ce qui se passe dehors | le corps capture un signal extérieur au lieu de le recevoir | passer les signaux extérieurs en entrées explicites du bloc |
+| Une boucle à bus n'apprend rien, les coefficients errent autour de zéro | `op.mse(_, t)` (toute fonction appliquée à un `_` libre) est un bloc à deux entrées : `:>` répartit les coefficients entre elles | nommer l'entrée de la perte : `\(y).(op.mse(y, t))` |
+| Une boucle `_rad` converge moins vite que la boucle `fad` sur un modèle récursif | dans une boucle, `rad` renvoie le terme direct, l'état passé tenu fixe | les boucles `fad` pour les modèles récursifs, les unes ou les autres pour les modèles sans récursion |
 
 ## Glossaire
 
@@ -670,8 +729,12 @@ sont des motifs `fad`. Et la référence pour les primitives elles-mêmes,
 - **Perte** : une mesure scalaire de l'erreur à l'échantillon courant.
 - **Gradient** : la dérivée de la perte par rapport aux paramètres ;
   **sensibilité** (`j`) : la dérivée de la sortie du modèle.
-- **Graine** : le signal par rapport auquel `fad` dérive.
+- **Graine** : le signal par rapport auquel `fad` ou `rad` dérive.
 - **Tangente** : une dérivée produite par l'AD en mode direct (`fad`).
+- **Terme direct** : la dérivée de la sortie d'un modèle récursif par rapport
+  à un paramètre, son état passé tenu fixe ; ce que `rad` renvoie dans une
+  boucle, et le gradient de la régression pseudo-linéaire du filtrage
+  adaptatif.
 - **Moteur** : la fonction qui transforme un gradient (ou un résidu et une
   sensibilité) en pas.
 - **Vitesse d'apprentissage** (`lr`) : la taille du pas ; un **schedule** la

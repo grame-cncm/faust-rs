@@ -11,7 +11,8 @@
 //
 // Convergence: g -> g_star; residual -> 0.
 //
-// Requires -I libraries (project-local optimizers.lib; no stdfaust.lib).
+// Requires -I libraries (project-local optimizers.lib) and the directory of the
+// Faust standard libraries on the import path (-I <faustlibraries>).
 //
 // Outputs: [residual_L, residual_R]
 

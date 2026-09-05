@@ -97,7 +97,12 @@ corps avec retards ou récursion, il utilise `BlockReverseAD`: le primal est jou
 en avant sur le bloc `compute(count)` courant, puis l'adjoint est balayé en
 arrière avec un état terminal nul à la fin du bloc. Les sorties de gradient sont
 alors des contributions par échantillon à sommer sur ce bloc, et non des
-scalaires déjà réduits ni un gradient à horizon infini.
+scalaires déjà réduits ni un gradient à horizon infini. Consommé dans le
+graphe -- une récursion d'adaptation qui lit `rad(loss(p), p) : !, _` à
+l'échantillon qui le produit -- le balayage ne voit que cet échantillon: à
+travers une récursion il renvoie le terme direct, l'état passé tenu fixe, là
+où FAD transporte la dérivée à travers la récursion; pour un corps
+feed-forward, les deux coïncident (section 11).
 
 ## 2. Gain auto-apprenant avec FAD
 
@@ -546,7 +551,12 @@ Ce que montre l'exemple:
 - chaque coefficient reçoit son gradient par rapport à la perte;
 - les coefficients appris sont bornés;
 - le signal de sortie peut être le résidu, donc l'utilisateur entend directement
-  la convergence.
+  la convergence;
+- le corps est feed-forward (les entrées retardées ne dépendent pas des
+  coefficients), donc l'horizon d'un échantillon du balayage dans le graphe ne
+  perd rien: le gradient est exact. `optimizers.lib` emballe ce motif pour `N`
+  coefficients dans `descend_N_rad` et `lsq_N_rad`, un balayage par
+  échantillon pour les `N` dérivées.
 
 Ce motif couvre les usages classiques de filtrage adaptatif: identification
 d'impulsion, égalisation adaptative, annulation d'écho simplifiée, prédiction
@@ -646,11 +656,19 @@ Utiliser **RAD** quand:
 - on fait de la régression, du LMS, un notch adaptatif ou un apprentissage
   paramétrique piloté depuis l'extérieur;
 - on veut éviter de multiplier les calculs quand le nombre de paramètres
-  augmente.
+  augmente;
+- beaucoup de paramètres partagent une perte dans le graphe: les boucles à bus
+  `_rad` d'`optimizers.lib` font un balayage par échantillon, exact pour un
+  modèle feed-forward et égal au terme direct (état passé tenu fixe) à travers
+  une récursion.
 
 Il faut mesurer les programmes représentatifs avant de supposer un avantage de
-performance: sur les petits graphes, les passes actuelles de simplification et
-de partage des sous-expressions peuvent rapprocher les coûts de FAD et RAD.
+performance. Sur un FIR à 16 coefficients appris dans le graphe, la boucle à
+bus `rad` compile en 1 182 instructions d'interpréteur contre 3 777 pour `fad`
+(0,04 s contre 0,10 s pour 200 000 échantillons), 4 129 contre 28 891 à 64
+coefficients (0,13 s contre 1,32 s); sur les petits graphes, les passes de
+simplification et de partage des sous-expressions peuvent rapprocher les deux
+coûts.
 
 ## 12. Limites pratiques à garder en tête
 
@@ -668,7 +686,9 @@ Points pratiques:
 - les gradients doivent souvent être lissés, normalisés ou clippés;
 - pour les filtres récursifs, il faut respecter les zones de stabilité;
 - pour RAD sur des signaux temporels, raisonner par blocs ou par mise à jour
-  hôte reste plus simple; l'horizon inverse est le bloc `compute(count)` courant;
+  hôte reste plus simple; l'horizon inverse est le bloc `compute(count)` courant
+  pour une sortie publique, et l'échantillon courant quand le gradient est
+  consommé dans le graphe (terme direct à travers une récursion);
 - FAD possède les règles duales pour les blocs valides
   `ondemand`/`upsampling`/`downsampling`, avec une horloge opaque; les tests
   d'intégration actuels couvrent surtout les formes FAD autour et à l'intérieur

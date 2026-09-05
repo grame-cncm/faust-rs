@@ -92,7 +92,9 @@ The idea has a lineage: dual numbers (Clifford, 1873), forward-mode AD
 Rumelhart et al., 1986). `faust-rs` brings it into the language with explicit
 seeds (`fad(expr, seeds)`: any signal can be a seed, several at once), covers
 recursion, tables and clock-domain blocks in forward mode, and implements
-reverse mode with a block-local backward sweep. The technical notes are
+reverse mode with a block-local backward sweep for outputs handed to a host
+and a one-sample sweep for a gradient consumed inside the graph. The
+technical notes are
 [docs/fad-note-en.md](../docs/fad-note-en.md) and
 [docs/rad-note-en.md](../docs/rad-note-en.md).
 
@@ -101,15 +103,25 @@ reverse mode with a block-local backward sweep. The technical notes are
 | | `fad` (forward) | `rad` (reverse) |
 |---|---|---|
 | Output | each primal followed by one tangent per seed | all primals, then one gradient per seed |
-| Cost grows with | the number of seeds (parameters) | the number of outputs |
-| Through recursion | exact causal derivative (augmented state) | block-local sweep: contributions over the current `compute` block, zero terminal adjoint |
-| Consumable in the graph | yes, the natural choice for an in-graph optimizer | yes, but the block boundary shapes the gradient |
-| Typical use | learning loops in Faust, Newton solvers, local slopes | gradients handed to a host that accumulates over a block |
+| Cost grows with | the number of seeds (parameters) | the number of outputs: one sweep gives every gradient |
+| Through recursion | exact causal derivative (augmented state) | as a public output: block-local sweep over the current `compute` block, zero terminal adjoint; consumed inside the graph: the sample itself, the past state held fixed (the direct term) |
+| Consumable in the graph | yes, the natural choice for an in-graph optimizer | yes: the same gradient for a feed-forward model, the pseudo-linear-regression gradient through a recursion |
+| Typical use | learning loops in Faust, Newton solvers, local slopes | many parameters under one loss (the bus loops), gradients handed to a host that accumulates over a block |
 
 For a handful of interpretable parameters — which is what an audio model
 usually has — forward mode is the right tool for a loop written in Faust, and
-it is what `optimizers.lib` uses everywhere. Reverse mode shines when one
-scalar loss depends on many parameters and a host does the bookkeeping; see
+it is what the fixed-arity loops of `optimizers.lib` use. Reverse mode is the
+economical direction when one scalar loss depends on many parameters: one
+sweep gives them all, where forward mode carries one tangent per parameter.
+The bus loops of the library exist in both modes; on a 16-tap FIR the `rad`
+version compiles to 3x fewer interpreter instructions and runs 2.5x faster,
+7x and 10x at 64 taps, for the same trajectory. The price, inside a loop, is
+the horizon: the gradient is consumed at the sample that produces it, so the
+reverse sweep sees that sample only, and through a recursion of the model it
+returns the direct term — the past state held fixed — where `fad` carries the
+exact derivative (section 4.7). For a feed-forward model (an FIR, a gain, a
+waveshaper) the two are the same number. Handed to a host as a public output,
+`rad` works block by block; see
 [docs/rad-usage-en.md](../docs/rad-usage-en.md).
 
 ### 2.4 Clock domains: `ondemand` and learning at its own rate
@@ -189,14 +201,14 @@ does not pretend otherwise:
 
 ## 3. How the library is organized
 
-The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.6.0) is
+The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.7.0) is
 documented function by function in the Faust libraries convention; this
-section gives the map. It has eleven sections, ordered from building blocks to
+section gives the map. It has twelve sections, ordered from building blocks to
 ready-made loops.
 
 | Section | What it holds | Why it exists |
 |---|---|---|
-| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak` | the few primitives every engine and loop is written with; the library imports nothing |
+| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak` | the few primitives every engine and loop is written with, on top of `si`, `ba`, `ro`, `ma` |
 | Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `l2`, `l1s` | a loss is a plain Faust function `loss(y, t)`; these are smooth ones |
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | learn in a domain where every value is valid (stable, positive, bounded) instead of clipping |
 | Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `lr_exp`, `lr_cos`, `warmup` | what happens to a gradient before the engine, and how a learning rate evolves |
@@ -205,6 +217,7 @@ ready-made loops.
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D` | the model is differentiated, the loss is implicitly the squared error |
 | Loss-first loops | `descend_1D` … `descend_5D` | the loss is differentiated, whatever it is |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | second-order steps for two or three correlated parameters |
+| Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus with one engine and one pair of bounds, in forward or in reverse mode |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | the gradient at audio rate, averaged over the frame, the step once per firing of an `ondemand` clock |
 | Newton solver | `newton_step`, `newton` | not learning: solving an implicit equation with `F` and `F'` from one `fad` |
 
@@ -234,7 +247,8 @@ The parameter lives in Faust recursive state; `pstate` gives it an explicit
 initial value and a reset control; `clip` keeps it in bounds; one `fad` call
 per sample yields the derivative; the engine turns the derivative into a
 step. With `N` parameters, one `fad` call with `N` seeds produces the `N`
-derivatives at once.
+derivatives at once. The bus loops draw the same picture with `N` wires in
+place of one, and `rad` in place of `fad` in their `_rad` versions.
 
 ### 3.2 Two families, and why
 
@@ -255,6 +269,14 @@ The price is that the engine no longer sees `r` and `j` separately, so it
 cannot normalize by the sensitivity; adaptive engines (Adam, Lion) fill that
 role.
 
+The **bus loops** (`lsq_N`, `descend_N`, `descend_N_clocked`) are the same
+two families for `N` parameters carried as a bus, `N` a constant, with one
+engine and one pair of bounds for all of them — the shape of an adaptive FIR
+or of a bank of gains — where the fixed-arity loops give each parameter its
+own. Each has a `_rad` twin: one reverse sweep per sample for the `N`
+derivatives instead of `N` tangents. Section 4.7 says what that sweep
+computes through a recursion.
+
 The original `optimize_ND` entry points are kept as wrappers of `lsq_ND`
 (zero initial value, no reset).
 
@@ -274,16 +296,17 @@ sharing the same engine expression do not share moments. Every learning rate
 is a signal, which is why a schedule such as `op.lr_exp(...)` is simply passed
 where a constant would be.
 
-### 3.4 Self-contained by design
+### 3.4 Standard libraries
 
-The library imports nothing, not even `stdfaust.lib`: `smooth`, `clip` and
-the sign are redefined locally. This is not purism. The `faust-rs` test suite
-may not depend on an installed Faust distribution, so a library that imported
-`stdfaust.lib` could not be exercised by it. Seven fixtures in
-`tests/corpus/opt_*.dsp` run
-through the interpreter in CI, one of them generated from the `#### Test`
-entry of every documented function, so the documentation examples are
-compiled too.
+The library imports `signals.lib`, `basics.lib`, `routes.lib` and
+`maths.lib` (`si.smooth`, `si.bus`, `ba.time`, `ro.interleave`, `ma.PI`), so
+the directory of the Faust standard libraries must be on the import path
+next to `libraries`. The `faust-rs` test suite finds it through
+`FAUST_RS_FAUSTLIBRARIES_ROOT` or a default checkout path and skips the
+library's tests when neither exists, so the suite stays runnable without a
+Faust distribution. Eleven fixtures in `tests/corpus/opt_*.dsp` run through
+the interpreter in CI, one of them generated from the `#### Test` entry of
+every documented function, so the documentation examples are compiled too.
 
 ## 4. Where the algorithms come from, and why these
 
@@ -383,7 +406,25 @@ primitive put to a different use, and because implicit equations are
 everywhere in virtual-analog modelling (zero-delay-feedback filters, diode
 clippers: Zavalishin, *The Art of VA Filter Design*).
 
-### 4.7 What was left out, and why
+### 4.7 Reverse mode inside a loop: pseudo-linear regression
+
+A gradient consumed at the sample that produces it cannot wait for the end of
+the block, so the reverse sweep of the `_rad` loops sees one sample: the
+adjoint flows back through the model's operations of that sample and stops
+at its recursive state, which is held fixed. For a recursive model
+`y[n] = x[n] + p y[n-1]` that gives `d(loss)/dp = 2 r y[n-1]`, the *direct
+term*; `fad` gives `2 r dy[n]/dp` with `dy[n]/dp = y[n-1] + p dy[n-1]/dp`,
+the derivative through the recursion. In adaptive filtering the direct term
+is the **pseudo-linear regression** gradient (Feintuch's IIR LMS, 1976;
+Shynk 1989) and the recursive one the *recursive prediction error* gradient
+(Ljung & Söderström 1983): the first is cheaper and converges to the same
+solution when a positivity condition on the model holds, the second is the
+exact descent direction. The library offers both — `fad` in the fixed-arity
+loops and in `lsq_N`/`descend_N`, the direct term in the `_rad` twins — and
+for a feed-forward model there is no difference at all, which is where
+reverse mode earns its keep: many parameters, one sweep.
+
+### 4.8 What was left out, and why
 
 - **RLS / Gauss-Newton beyond three parameters**: Faust has no matrices;
   `lm_2D`/`lm_3D` cover the interpretable models this library targets, and
@@ -421,6 +462,9 @@ in the tutorial.
 | `descend_1D` on an 8-point FFT loss inside the frame block | gain 0.34 (least-squares optimum 0.340) |
 | `descend_1D_clocked`, SGD 0.5 per 64-sample frame | gain `0.700000` at 4 000 samples |
 | `descend_2D_clocked`, Adam per frame on `(log f, q)` | `(1200.2, 1.996)` at 10 000 samples, then within 1 % |
+| `lsq_N_rad` + `nlms`, 8-tap FIR at level 10 | residual below 1e-6 from 1 000 samples on |
+| `descend_N` vs `descend_N_rad`, 16-tap FIR, LMS 0.02 | same residual to rounding; 3 777 vs 1 182 interpreter instructions, 0.10 s vs 0.04 s for 200 000 samples; 28 891 vs 4 129 and 1.32 s vs 0.13 s at 64 taps |
+| in-graph `rad` vs `fad` on `y = 1 + p y[n-1]`, `loss = (y - 3)^2` | `rad` -3, -3.75, -3.94 (direct term), `fad` -3, -5, -6.19 (through the recursion) |
 
 ## 6. Pitfalls worth knowing
 
@@ -448,6 +492,13 @@ in the tutorial.
   named arguments, or its inputs are duplicated at every use.
 - **Double precision.** Gradients of recursive filters lose accuracy fast in
   single precision; compile learning programs with `-double`.
+- **`op.mse(_, target)` has two inputs.** A free `_` is duplicated wherever
+  the argument is used, so `(_ - t) * (_ - t)` is a two-input block and `:>`
+  into it splits a bus between them: the taps random-walk near zero. Name
+  the input: `\(y).(op.mse(y, target))`.
+- **`rad` inside a loop sees one sample.** Through a recursion it returns
+  the direct term, not the derivative through the recursion (section 4.7);
+  learn recursive models with the `fad` loops, feed-forward ones with either.
 
 ## 7. References
 
@@ -464,6 +515,9 @@ in the tutorial.
 - S. Haykin, *Adaptive Filter Theory*, Prentice Hall — LMS, NLMS, RLS.
 - L. Ljung, T. Söderström, *Theory and Practice of Recursive
   Identification*, MIT Press, 1983 — recursive prediction-error methods.
+- J. J. Shynk, "Adaptive IIR Filtering", IEEE ASSP Magazine, 1989 —
+  pseudo-linear regression against recursive prediction error.
+- P. L. Feintuch, "An Adaptive Recursive LMS Filter", Proc. IEEE, 1976.
 - D. Marquardt, "An Algorithm for Least-Squares Estimation of Nonlinear
   Parameters", SIAM J. Appl. Math., 1963. <https://doi.org/10.1137/0111030>
 - D. P. Kingma, J. Ba, "Adam: A Method for Stochastic Optimization", ICLR

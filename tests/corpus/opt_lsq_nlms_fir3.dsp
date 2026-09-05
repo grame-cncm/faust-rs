@@ -12,7 +12,8 @@
 //
 // Convergence: (h0, h1, h2) -> (0.5, 0.3, -0.2); residual -> 0.
 //
-// Requires -I libraries (project-local optimizers.lib; no stdfaust.lib).
+// Requires -I libraries (project-local optimizers.lib) and the directory of the
+// Faust standard libraries on the import path (-I <faustlibraries>).
 //
 // Outputs: [residual_L, residual_R]
 

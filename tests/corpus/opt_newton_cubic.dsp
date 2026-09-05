@@ -5,7 +5,8 @@
 // precision on every frame: with x in [-1, 1], six steps from 0 are more than
 // the quadratic convergence needs.
 //
-// Requires -I libraries (project-local optimizers.lib; no stdfaust.lib).
+// Requires -I libraries (project-local optimizers.lib) and the directory of the
+// Faust standard libraries on the import path (-I <faustlibraries>).
 //
 // Outputs: [residual_L, residual_R]
 

@@ -4,22 +4,25 @@ This directory contains Faust libraries that exercise `faust-rs` extensions
 and are versioned with this repository:
 
 - `optimizers.lib` (prefix `op`) provides in-graph optimization on top of
-  `fad`: update engines (LMS/NLMS, Adam and its variants, Lion, ...), losses
-  and regularizers, reparameterizations (stable biquad poles from reflection
-  coefficients), learning-rate schedules, one- to five-parameter
-  least-squares and loss-first loops, damped Gauss-Newton loops, clocked loops
-  whose update runs once per firing of an `ondemand` clock, and a Newton
-  solver. It imports no standard library, so it compiles with `-I libraries`
-  alone; `tests/corpus/opt_*.dsp` and `crates/compiler/tests/optimizers_lib.rs`
-  exercise it;
+  `fad` and `rad`: update engines (LMS/NLMS, Adam and its variants, Lion,
+  ...), losses and regularizers, reparameterizations (stable biquad poles
+  from reflection coefficients), learning-rate schedules, one- to
+  five-parameter least-squares and loss-first loops, damped Gauss-Newton
+  loops, bus loops for `N` parameters in forward or reverse mode
+  (`lsq_N`/`lsq_N_rad`, `descend_N`/`descend_N_rad`), clocked loops whose
+  update runs once per firing of an `ondemand` clock, and a Newton solver.
+  It imports `signals.lib`, `basics.lib`, `routes.lib` and `maths.lib`, so
+  the Faust standard libraries must be on the import path too;
+  `tests/corpus/opt_*.dsp` and `crates/compiler/tests/optimizers_lib.rs`
+  exercise it (the tests skip when no faustlibraries checkout is found);
 - `interleave.lib` provides frame-rate serialization around `ondemand` blocks.
 
 Add this directory to the Faust import search path when compiling a DSP that
 uses either library:
 
 ```sh
-faust-rs -I libraries -lang cpp program.dsp
-cargo run -p compiler -- --check program.dsp -I libraries
+faust-rs -I libraries -I <faustlibraries> -lang cpp program.dsp
+cargo run -p compiler -- --check program.dsp -I libraries -I <faustlibraries>
 ```
 
 The library source keeps ordinary basename imports, for example
