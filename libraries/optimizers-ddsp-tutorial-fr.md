@@ -693,6 +693,10 @@ primitives elles-mêmes, `upsampling` et `downsampling` compris, est
 - **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   différencie une perte calculée sur une trame FFT, le pendant par trame de la
   section 7.2.
+- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : six
+  programmes DDSP avec leurs tests — un notch adaptatif, un mode calibré par
+  Gauss-Newton, un modèle d'ampli (`fad`) ; un annuleur d'écho, un
+  waveshaper neuronal, des gradients par bloc pour un hôte (`rad`).
 - **Beaucoup de paramètres.** `tests/corpus/opt_descend_n_rad_fir16.dsp` et
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` sont les boucles à bus sur des
   FIR ; `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` fait tourner côte à côte

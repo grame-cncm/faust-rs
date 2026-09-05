@@ -29,7 +29,7 @@ The library source keeps ordinary basename imports, for example
 `op = library("optimizers.lib")`, `import("optimizers.lib")` or
 `il = library("interleave.lib")`.
 
-Two companion documents introduce `optimizers.lib` to readers new to
+Three companion documents introduce `optimizers.lib` to readers new to
 machine learning and differentiable DSP, in English and French:
 
 - [optimizers-overview-en.md](optimizers-overview-en.md) /
@@ -39,7 +39,13 @@ machine learning and differentiable DSP, in English and French:
 - [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md) /
   [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md) — a
   step-by-step tutorial, from a hand-written gradient to a five-coefficient
-  biquad, every program run with `faustprobe`.
+  biquad, every program run with `faustprobe`;
+- [ddsp-examples-en.md](ddsp-examples-en.md) /
+  [ddsp-examples-fr.md](ddsp-examples-fr.md) — six complete DDSP programs
+  (`tests/corpus/ddsp_*.dsp`, run by `crates/compiler/tests/ddsp_examples.rs`):
+  an adaptive notch, a mode calibrated by Gauss-Newton and an amp model with
+  `fad`; a 64-tap echo canceller, a neural waveshaper and block gradients
+  handed to a host with `rad`.
 
 Both libraries follow the Faust libraries documentation conventions
 (<https://faustlibraries.grame.fr/contributing/>): a `declare name`/`version`

@@ -669,6 +669,10 @@ reference for the primitives themselves, including `upsampling` and
 - **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   differentiates a loss computed on an FFT frame, the per-frame counterpart of
   section 7.2.
+- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): six
+  DDSP programs with their tests — an adaptive notch, a mode calibrated by
+  Gauss-Newton, an amp model (`fad`); an echo canceller, a neural
+  waveshaper, block gradients for a host (`rad`).
 - **Many parameters.** `tests/corpus/opt_descend_n_rad_fir16.dsp` and
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` are the bus loops on FIRs;
   `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` runs the forward and the

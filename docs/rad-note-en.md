@@ -421,6 +421,10 @@ parity tests in `crates/compiler/tests/rad_runtime.rs`.
   (lane by lane against `fad`; a two-tap FIR followed by `tanh` learned
   in the graph), and the block gradient of a two-pole recursion against
   finite differences.
+- **DDSP examples** ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs))
+  -- the six programs of [libraries/ddsp-examples-en.md](../libraries/ddsp-examples-en.md);
+  the host-driven one checks the block gradient of `fi.tf2` against
+  finite differences, then trains the sliders with Adam from Rust.
 - **Backend parity** ([crates/compiler/tests/signal_fir_lane.rs](../crates/compiler/tests/signal_fir_lane.rs))
   — C, C++, interpreter, and Cranelift lowering of RAD/BRA shapes within the
   current fast-lane subset.
