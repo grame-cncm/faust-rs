@@ -41,13 +41,15 @@ machine learning and differentiable DSP, in English and French:
   step-by-step tutorial, from a hand-written gradient to a five-coefficient
   biquad, every program run with `faustprobe`;
 - [ddsp-examples-en.md](ddsp-examples-en.md) /
-  [ddsp-examples-fr.md](ddsp-examples-fr.md) — nine complete DDSP programs
+  [ddsp-examples-fr.md](ddsp-examples-fr.md) — eleven complete DDSP programs
   (`tests/corpus/ddsp_*.dsp`, run by `crates/compiler/tests/ddsp_examples.rs`):
   an adaptive notch, a mode calibrated by Gauss-Newton, an amp model, a
-  diode clipper learned through its implicit Newton solver and an FDN reverb
-  calibrated to a target decay with `fad`; a 64-tap echo canceller, a neural
-  waveshaper, block gradients handed to a host and a GRU amp model trained by
-  block-truncated BPTT from the host with `rad`.
+  diode clipper learned through its implicit Newton solver, an FDN reverb
+  calibrated to a target decay and a waveguide string tuned through its
+  fractional delay with `fad`; a 64-tap echo canceller, a neural waveshaper,
+  block gradients handed to a host, a GRU amp model trained by
+  block-truncated BPTT from the host and a harmonic synthesizer fitted
+  through a per-frame spectral loss inside an `ondemand` block with `rad`.
 
 Both libraries follow the Faust libraries documentation conventions
 (<https://faustlibraries.grame.fr/contributing/>): a `declare name`/`version`

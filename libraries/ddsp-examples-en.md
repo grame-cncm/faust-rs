@@ -1,6 +1,6 @@
-# Nine DDSP examples with `fad` and `rad`
+# Eleven DDSP examples with `fad` and `rad`
 
-Nine complete differentiable-DSP programs, each one a task an audio engineer
+Eleven complete differentiable-DSP programs, each one a task an audio engineer
 recognises, written with the two automatic-differentiation primitives of
 `faust-rs` and the loops of [optimizers.lib](optimizers.lib). Three use
 `fad`, forward mode, where the exact derivative through a recursion is what
@@ -9,7 +9,10 @@ depends on many parameters or where the gradient leaves the graph for a host.
 Three more, at the end, are the state of the art of their fields: a diode
 clipper whose components are learned through its implicit solver, an FDN
 reverb calibrated to a target decay, a recurrent neural amplifier trained by
-truncated backpropagation through time.
+truncated backpropagation through time. The last two are the fragile ones,
+kept because of what they teach: the pitch of a string learned through its
+fractional delay, and the harmonic synthesizer of DDSP fitted through a
+spectral loss computed frame by frame inside an `ondemand` block.
 Every program lives in `tests/corpus/ddsp_*.dsp`, is run by the test suite
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs)),
 and can be watched with `faustprobe`:
@@ -37,6 +40,8 @@ introduction is [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md)
 | 7 | `ddsp_fad_diode_clipper_newton` | learn the components of a diode clipper through its implicit solver | `fad` in `fad` | `lm_2D` | (τ, k) exact within 8 000 samples; unrolled = implicit derivative to 2e-7 |
 | 8 | `ddsp_fad_fdn_reverb_lm` | calibrate an FDN reverb to a target decay | `fad` | `lm_2D` | (T60, damping) = (0.600, 0.300) from (0.3, 0) |
 | 9 | `ddsp_rad_gru_amp_host` | train a GRU amplifier model by block-truncated BPTT | `rad`, public | Adam in the host (Rust) | gradients = finite differences to four digits; residual 29 dB under the target |
+| 10 | `ddsp_fad_waveguide_string_pitch` | tune the pitch of a waveguide string through its fractional delay | `fad` | `lsq_1D` + `nlms` | 228 → 220.000000 Hz; the well is ±1 Hz wide, capture only from above |
+| 11 | `ddsp_rad_harmonic_spectral_frame` | fit 16 harmonic amplitudes through a per-frame spectral loss | `rad` in `ondemand` | Adam per frame, in the block | all amplitudes within 2.5e-4 of 1/h in 100 frames |
 
 ## 1. Hum cancellation with an adaptive notch (`fad`)
 
@@ -392,6 +397,81 @@ to 2.4e-4 (last 100); on fresh noise, from a fresh instance, the residual is
 several excitations per update; a recording of a real amplifier as the
 hidden model — the DSP does not change, only the host's target.
 
+## The two fragile ones: pitch through a delay, spectra through a frame
+
+## 10. A waveguide string learns its pitch through a fractional delay (`fad`)
+
+**What it does.** A plucked-string model — a loop with a fractional delay
+(4th-order Lagrange interpolation), a loss gain and a one-pole damping —
+driven by noise; the delay length, that is the pitch, is learned from a
+hidden string at 220 Hz by normalised least squares on the waveform.
+
+**What is differentiated, and why forward mode.** `fad` differentiates the
+loop output with respect to the delay length: through the interpolation
+(the derivative of an interpolated read with respect to the read position
+is the local slope of the signal) and through the feedback, sample by
+sample. Tensor frameworks have no derivative with respect to a delay
+length; here it costs one tangent.
+
+**What the landscape allows.** The waveform error between two strings is a
+well ±1 Hz wide around 220 Hz on a flat plateau: residual rms 0.10–0.11
+from 150 to 300 Hz, 0.09 at ±1 Hz, 0 at 220. On the plateau the gradient
+is not zero: the loop filter's group delay shifts the string's
+autocorrelation peak off the delay length, so the model's own output power
+depends on `d` and the normalised step drifts toward *lower* pitch whatever
+the target (a correlation loss, `−model · target`, removes that bias and
+has no pull on the plateau either). Fine tuning works — from 228 Hz the
+pitch locks to 220.000000 Hz within 60 000 samples, and from 264 Hz too
+when the model's damping is annealed from 0.70 to 0.95 (broad resonances
+first) — and from below it does not (200 → 190 Hz, 176 → 168). That is why
+DDSP systems estimate f0 with a detector and let the gradient refine it.
+
+**Optimizer.** `lsq_1D` with `nlms(0.02, 1e-6, 0.99)`.
+
+**What you see.** 228 → 219.99 Hz at 20 000 samples, 220.000000 at 60 000,
+residual 3e-8.
+
+**Try.** Learn the damping as well (`lsq_2D`); replace the noise by plucks
+and watch the well narrow; start a fifth away and watch the drift; feed a
+pitch detector's estimate as `init`.
+
+## 11. A harmonic synthesizer fitted through a per-frame spectral loss (`rad` in an `ondemand` block)
+
+**What it does.** The harmonic oscillator bank of DDSP (Engel et al. 2020):
+sixteen harmonics of 440 Hz whose amplitudes are learned, positive by
+construction (`a_h = exp(p_h)`), fitted to a target signal through a
+spectral loss computed once per 256-sample frame. The target here is a
+hidden harmonic tone with amplitudes 1/h, but any audio would do: it is
+analysed at audio rate — windowed correlations at the sixteen harmonics,
+accumulated over the frame with `frame_sum` — and enters the block as
+inputs.
+
+**What is differentiated, why reverse mode, and why a block.** Inside the
+block, fired once per frame, the synthesizer's frame is computed from the
+log-amplitudes and the frame start, its magnitudes at the harmonics are
+compared with the target's, and `rad` on that frame loss gives the sixteen
+gradients from one reverse sweep — in the block's own domain, at frame
+rate, on a feed-forward loss; one Adam step per frame. The magnitude loss
+is blind to the sign of an amplitude (a harmonic converges to −a as readily
+as to a), hence the exponentials, as in DDSP. Three things had to hold in
+the compiler and the library: the reverse sweep treats a block's boundary
+inputs and the foreign constants (`ma.SR`) as leaves and passes through the
+clocked wrapper, so a `rad` can live *inside* a block (across the boundary
+it is still rejected); and a loop's state must not depend on a
+first-sample gate captured across that boundary, which is why
+`optimizers.lib` 0.7.1 keeps the deviation from `init` in its recursions.
+
+**What you see.** All sixteen amplitudes within 2.5e-4 (relative) of 1/h
+in 100 frames, 0.6 s of audio; the resynthesis residual is 1.2e-3 rms for
+a target of rms 0.8. The frame graph — 256 × 16 sines, 32 correlations of
+256 terms — normalises in one second in a release build and in two minutes
+in an unoptimised one (the add-term factorisation C++ Faust also runs), so
+its test runs under `cargo test --release`.
+
+**Try.** A recording as the target (`--in`); more harmonics; DDSP's other
+half, a noise band through a learned filter; a multi-resolution loss (two
+frame sizes, two blocks).
+
 ## How the tests check them
 
 Each program renders through the interpreter on a fresh instance (the
@@ -406,8 +486,10 @@ after the finite-difference check; the diode clipper within 1 % of τ and k
 with a Newton residual under 1e-4 and the two derivatives within 1e-3 of
 each other, the FDN within 0.01 of T60 and damping, the GRU's gradients
 within 2 % of finite differences, its loss cut tenfold and its residual 20 dB
-under the target. The programs run in single precision there and in double
-under `faustprobe`; both converge.
+under the target; the string within 0.05 Hz of 220 with a residual under
+1e-3; the harmonic amplitudes within 2 % of 1/h with a resynthesis residual
+under 0.01 (in release builds). The programs run in single precision there
+and in double under `faustprobe`; both converge.
 
 ## Where the gradients come from
 

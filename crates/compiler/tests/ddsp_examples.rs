@@ -598,3 +598,66 @@ fn rad_gru_amp_trained_by_block_bptt_from_the_host() {
         .join()
         .expect("ddsp gru worker should finish");
 }
+
+// ───────────── the two fragile ones: pitch and spectral frames ─────────────
+
+#[test]
+fn fad_waveguide_string_tunes_its_pitch_through_the_fractional_delay() {
+    // [pitch in Hz, residual]: normalised least squares on the waveform,
+    // from 228 Hz to 220 Hz through the loop's fractional delay.
+    let Some(outs) = render("ddsp_fad_waveguide_string_pitch", 80_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2);
+    assert_finite("ddsp_fad_waveguide_string_pitch", &outs);
+    let pitch = mean(&outs[0][76_000..]);
+    let residual = rms(&outs[1][76_000..]);
+    eprintln!("string: pitch {pitch} residual {residual:.3e}");
+    assert!(
+        (pitch - 220.0).abs() < 0.05,
+        "pitch should lock on 220 Hz, got {pitch}"
+    );
+    assert!(
+        residual < 1e-3,
+        "residual should vanish, got rms {residual}"
+    );
+}
+
+#[test]
+fn rad_harmonic_synth_fits_the_target_spectrum_frame_by_frame() {
+    // [16 amplitudes, target - resynthesis]: one reverse sweep per frame
+    // inside the ondemand block; the amplitudes reach 1/h.
+    //
+    // The frame loss is a sum of 256 products of 16-term sums, and the
+    // add-term normalisation of that graph (the GCD factorisation C++ Faust
+    // also runs) takes two minutes in an unoptimised build, one second in
+    // release: this test runs under `cargo test --release`.
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "Skipping ddsp_rad_harmonic_spectral_frame: normalisation of the frame graph is too slow in a debug build (run with --release)"
+        );
+        return;
+    }
+    let Some(outs) = render("ddsp_rad_harmonic_spectral_frame", 51_200) else {
+        return;
+    };
+    assert_eq!(outs.len(), 17);
+    assert_finite("ddsp_rad_harmonic_spectral_frame", &outs);
+    let mut worst = 0.0_f64;
+    for (h, lane) in outs[..16].iter().enumerate() {
+        let target = 1.0 / (h as f64 + 1.0);
+        let learned = mean(&lane[47_000..]);
+        worst = worst.max((learned - target).abs() / target);
+        assert!(
+            (learned - target).abs() < 0.02 * target,
+            "harmonic {} should reach {target}, got {learned}",
+            h + 1
+        );
+    }
+    let residual = rms(&outs[16][43_200..]);
+    eprintln!("harmonic: worst relative amplitude error {worst:.2e}, residual rms {residual:.3e}");
+    assert!(
+        residual < 0.01,
+        "resynthesis should match the target, got rms {residual}"
+    );
+}

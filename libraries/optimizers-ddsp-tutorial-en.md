@@ -655,7 +655,9 @@ Three last things about clock domains. `ma.SR` is not adapted inside
 `ondemand` (its rate is unknown statically), so compute rate-dependent values
 outside and pass them in. `rad` does not cross a domain boundary, but the
 bus loops have clocked `_rad` versions (`descend_N_rad_clocked`): the reverse
-sweep runs at audio rate inside the frame, only the step is clocked. And the
+sweep runs at audio rate inside the frame, only the step is clocked; and a
+`rad` whose loss and seeds live inside the block runs at frame rate there
+(example 11 of [ddsp-examples-en.md](ddsp-examples-en.md)). And the
 reference for the primitives themselves, including `upsampling` and
 `downsampling`, is [docs/ondemand-note-en.md](../docs/ondemand-note-en.md).
 
@@ -669,11 +671,13 @@ reference for the primitives themselves, including `upsampling` and
 - **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   differentiates a loss computed on an FFT frame, the per-frame counterpart of
   section 7.2.
-- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): nine
+- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): eleven
   DDSP programs with their tests — an adaptive notch, a mode calibrated by
   Gauss-Newton, an amp model, a diode clipper learned through its implicit
-  solver, an FDN reverb (`fad`); an echo canceller, a neural waveshaper,
-  block gradients for a host, a GRU amp trained by block BPTT (`rad`).
+  solver, an FDN reverb, a string tuned through its fractional delay
+  (`fad`); an echo canceller, a neural waveshaper, block gradients for a
+  host, a GRU amp trained by block BPTT, a harmonic synthesizer fitted
+  through a spectral loss inside an `ondemand` block (`rad`).
 - **Many parameters.** `tests/corpus/opt_descend_n_rad_fir16.dsp` and
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` are the bus loops on FIRs;
   `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` runs the forward and the

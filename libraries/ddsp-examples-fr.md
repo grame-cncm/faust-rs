@@ -1,6 +1,6 @@
-# Neuf exemples DDSP avec `fad` et `rad`
+# Onze exemples DDSP avec `fad` et `rad`
 
-Neuf programmes complets de DSP différentiable, chacun une tâche qu'un
+Onze programmes complets de DSP différentiable, chacun une tâche qu'un
 ingénieur du son reconnaît, écrits avec les deux primitives de
 différenciation automatique de `faust-rs` et les boucles
 d'[optimizers.lib](optimizers.lib). Trois utilisent `fad`, le mode direct, là
@@ -10,7 +10,11 @@ dépend de nombreux paramètres ou là où le gradient sort du graphe vers un
 hôte. Trois autres, à la fin, sont l'état de l'art de leur domaine : un diode
 clipper dont on apprend les composants à travers son solveur implicite, une
 réverbération FDN calibrée sur une décroissance cible, un amplificateur
-neuronal récurrent entraîné par rétropropagation dans le temps tronquée.
+neuronal récurrent entraîné par rétropropagation dans le temps tronquée. Les
+deux derniers sont les fragiles, gardés pour ce qu'ils enseignent : la hauteur
+d'une corde apprise à travers son retard fractionnaire, et le synthétiseur
+harmonique de DDSP ajusté par une perte spectrale calculée trame par trame
+dans un bloc `ondemand`.
 Chaque programme vit dans `tests/corpus/ddsp_*.dsp`, est exécuté par la
 suite de tests
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs))
@@ -39,6 +43,8 @@ pas est [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md).
 | 7 | `ddsp_fad_diode_clipper_newton` | apprendre les composants d'un diode clipper à travers son solveur implicite | `fad` dans `fad` | `lm_2D` | (τ, k) exacts en 8 000 échantillons ; dérivée déroulée = implicite à 2e-7 |
 | 8 | `ddsp_fad_fdn_reverb_lm` | calibrer une réverbération FDN sur une décroissance cible | `fad` | `lm_2D` | (T60, amortissement) = (0,600, 0,300) depuis (0,3, 0) |
 | 9 | `ddsp_rad_gru_amp_host` | entraîner un ampli GRU par BPTT tronquée par blocs | `rad`, public | Adam dans l'hôte (Rust) | gradients = différences finies à quatre chiffres ; résidu 29 dB sous la cible |
+| 10 | `ddsp_fad_waveguide_string_pitch` | accorder une corde à guide d'onde à travers son retard fractionnaire | `fad` | `lsq_1D` + `nlms` | 228 → 220,000000 Hz ; puits de ±1 Hz, capture seulement par le haut |
+| 11 | `ddsp_rad_harmonic_spectral_frame` | ajuster 16 amplitudes harmoniques par une perte spectrale par trame | `rad` dans `ondemand` | Adam par trame, dans le bloc | toutes les amplitudes à 2,5e-4 de 1/h en 100 trames |
 
 ## 1. Suppression d'un ronflement par notch adaptatif (`fad`)
 
@@ -428,6 +434,85 @@ une cellule LSTM ; plusieurs excitations par mise à jour ; l'enregistrement
 d'un vrai amplificateur comme modèle caché — le DSP ne change pas, seule la
 cible de l'hôte.
 
+## Les deux fragiles : la hauteur à travers un retard, le spectre à travers une trame
+
+## 10. Une corde à guide d'onde apprend sa hauteur à travers un retard fractionnaire (`fad`)
+
+**Ce que fait le programme.** Un modèle de corde pincée — une boucle avec un
+retard fractionnaire (interpolation de Lagrange d'ordre 4), un gain de pertes
+et un amortissement à un pôle — excité par du bruit ; la longueur du retard,
+c'est-à-dire la hauteur, est apprise sur une corde cachée à 220 Hz par
+moindres carrés normalisés sur la forme d'onde.
+
+**Ce qui est dérivé, et pourquoi le mode direct.** `fad` dérive la sortie de la
+boucle par rapport à la longueur du retard : à travers l'interpolation (la
+dérivée d'une lecture interpolée par rapport à la position de lecture est la
+pente locale du signal) et à travers la rétroaction, échantillon par
+échantillon. Les frameworks à tenseurs n'ont pas de dérivée par rapport à une
+longueur de retard ; ici elle coûte une tangente.
+
+**Ce que permet le paysage.** L'erreur de forme d'onde entre deux cordes est un
+puits de ±1 Hz de large autour de 220 Hz sur un plateau plat : résidu rms
+0,10–0,11 de 150 à 300 Hz, 0,09 à ±1 Hz, 0 à 220. Sur le plateau le gradient
+n'est pas nul : le retard de groupe du filtre de boucle décale le pic
+d'autocorrélation de la corde par rapport à la longueur du retard, si bien que
+la puissance de sortie du modèle lui-même dépend de `d` et que le pas
+normalisé dérive vers une hauteur *plus basse* quelle que soit la cible (une
+perte de corrélation, `−modèle · cible`, supprime ce biais mais n'attire pas
+davantage sur le plateau). L'ajustement fin marche — depuis 228 Hz la hauteur
+se cale à 220,000000 Hz en 60 000 échantillons, et depuis 264 Hz aussi quand
+l'amortissement du modèle est recuit de 0,70 à 0,95 (résonances larges
+d'abord) — et par le bas non (200 → 190 Hz, 176 → 168). C'est pourquoi les
+systèmes DDSP estiment f0 par un détecteur et laissent le gradient affiner.
+
+**Optimiseur.** `lsq_1D` avec `nlms(0.02, 1e-6, 0.99)`.
+
+**Ce qu'on observe.** 228 → 219,99 Hz à 20 000 échantillons, 220,000000 à
+60 000, résidu 3e-8.
+
+**À essayer.** Apprendre aussi l'amortissement (`lsq_2D`) ; remplacer le bruit
+par des pincements et voir le puits se rétrécir ; partir une quinte plus loin
+et voir la dérive ; donner l'estimation d'un détecteur de hauteur comme `init`.
+
+## 11. Un synthétiseur harmonique ajusté par une perte spectrale par trame (`rad` dans un bloc `ondemand`)
+
+**Ce que fait le programme.** Le banc d'oscillateurs harmoniques de DDSP
+(Engel et al. 2020) : seize harmoniques de 440 Hz dont les amplitudes sont
+apprises, positives par construction (`a_h = exp(p_h)`), ajustées à un signal
+cible par une perte spectrale calculée une fois par trame de 256 échantillons.
+La cible est ici un son harmonique caché d'amplitudes 1/h, mais tout audio
+conviendrait : elle est analysée à cadence audio — corrélations fenêtrées aux
+seize harmoniques, accumulées sur la trame avec `frame_sum` — et entre dans le
+bloc par ses entrées.
+
+**Ce qui est dérivé, pourquoi le mode inverse, et pourquoi un bloc.** Dans le
+bloc, tiré une fois par trame, la trame du synthétiseur est calculée à partir
+des log-amplitudes et du début de trame, ses magnitudes aux harmoniques sont
+comparées à celles de la cible, et `rad` sur cette perte de trame donne les
+seize gradients en un balayage inverse — dans le domaine propre du bloc, à la
+cadence des trames, sur une perte sans récursion ; un pas d'Adam par trame. La
+perte sur les magnitudes est aveugle au signe d'une amplitude (une harmonique
+converge vers −a aussi volontiers que vers a), d'où les exponentielles, comme
+dans DDSP. Trois choses devaient tenir dans le compilateur et la
+bibliothèque : le balayage inverse traite les entrées de frontière d'un bloc
+et les constantes étrangères (`ma.SR`) comme des feuilles et traverse
+l'enveloppe d'horloge, si bien qu'un `rad` peut vivre *dans* un bloc (à
+travers la frontière il reste refusé) ; et l'état d'une boucle ne doit pas
+dépendre d'une détection du premier échantillon capturée à travers cette
+frontière, ce pour quoi `optimizers.lib` 0.7.1 garde dans ses récursions
+l'écart à `init`.
+
+**Ce qu'on observe.** Les seize amplitudes à 2,5e-4 (relatif) de 1/h en 100
+trames, 0,6 s d'audio ; le résidu de resynthèse vaut 1,2e-3 rms pour une cible
+de rms 0,8. Le graphe de trame — 256 × 16 sinus, 32 corrélations de 256
+termes — se normalise en une seconde en build release et en deux minutes en
+build non optimisé (la factorisation des termes additifs que fait aussi le
+Faust C++), son test tourne donc sous `cargo test --release`.
+
+**À essayer.** Un enregistrement comme cible (`--in`) ; plus d'harmoniques ;
+l'autre moitié de DDSP, une bande de bruit à travers un filtre appris ; une
+perte multi-résolution (deux tailles de trame, deux blocs).
+
 ## Comment les tests les vérifient
 
 Chaque programme est rendu par l'interpréteur sur une instance neuve (les
@@ -443,8 +528,10 @@ vérification par différences finies ; le diode clipper à 1 % près sur τ et 
 avec un résidu de Newton sous 1e-4 et les deux dérivées à 1e-3 l'une de
 l'autre, le FDN à 0,01 près sur T60 et l'amortissement, les gradients du GRU
 à 2 % des différences finies, sa perte divisée par dix et son résidu 20 dB
-sous la cible. Les programmes tournent en simple précision là et en double
-sous `faustprobe` ; les deux convergent.
+sous la cible ; la corde à 0,05 Hz de 220 avec un résidu sous 1e-3 ; les
+amplitudes harmoniques à 2 % de 1/h avec un résidu de resynthèse sous 0,01
+(en build release). Les programmes tournent en simple précision là et en
+double sous `faustprobe` ; les deux convergent.
 
 ## D'où viennent les gradients
 

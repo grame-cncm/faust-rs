@@ -679,7 +679,9 @@ dans `ondemand` (sa cadence est inconnue statiquement) : calculez les valeurs
 qui dépendent de la cadence à l'extérieur et passez-les en entrée. `rad` ne
 traverse pas une frontière de domaine, mais les boucles à bus ont des versions
 `_rad` cadencées (`descend_N_rad_clocked`) : le balayage inverse tourne à
-cadence audio dans la trame, seul le pas est cadencé. Et la référence pour les
+cadence audio dans la trame, seul le pas est cadencé ; et un `rad` dont la
+perte et les graines vivent dans le bloc y tourne à la cadence des trames
+(exemple 11 de [ddsp-examples-fr.md](ddsp-examples-fr.md)). Et la référence pour les
 primitives elles-mêmes, `upsampling` et `downsampling` compris, est
 [docs/ondemand-note-fr.md](../docs/ondemand-note-fr.md).
 
@@ -693,12 +695,14 @@ primitives elles-mêmes, `upsampling` et `downsampling` compris, est
 - **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   différencie une perte calculée sur une trame FFT, le pendant par trame de la
   section 7.2.
-- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : neuf
+- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : onze
   programmes DDSP avec leurs tests — un notch adaptatif, un mode calibré par
   Gauss-Newton, un modèle d'ampli, un diode clipper appris à travers son
-  solveur implicite, une réverbération FDN (`fad`) ; un annuleur d'écho, un
-  waveshaper neuronal, des gradients par bloc pour un hôte, un ampli GRU
-  entraîné par BPTT par blocs (`rad`).
+  solveur implicite, une réverbération FDN, une corde accordée à travers son
+  retard fractionnaire (`fad`) ; un annuleur d'écho, un waveshaper neuronal,
+  des gradients par bloc pour un hôte, un ampli GRU entraîné par BPTT par
+  blocs, un synthétiseur harmonique ajusté par une perte spectrale dans un
+  bloc `ondemand` (`rad`).
 - **Beaucoup de paramètres.** `tests/corpus/opt_descend_n_rad_fir16.dsp` et
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` sont les boucles à bus sur des
   FIR ; `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` fait tourner côte à côte
