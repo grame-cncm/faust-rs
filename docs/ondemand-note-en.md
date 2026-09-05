@@ -291,11 +291,15 @@ applicative motivation behind much of this machinery. See
 differentiation primitives themselves.
 
 **Learning at control rate.** A gradient step does not need to run per sample.
-Wrapping an optimizer in a domain decouples adaptation rate from audio rate:
+Wrapping an optimizer in a domain decouples adaptation rate from audio rate.
+With [`optimizers.lib`](../libraries/optimizers.lib) (prefix `op`) and the
+frame clock of `interleave.lib`:
 
 ```faust
-// One optimizer step every 64 samples instead of 48000 times a second.
-process = (64, _) : downsampling(ad.fit_adam(...));
+// The whole loop in fire time: one optimizer step every 64 samples, on the
+// block's inputs (the excitation and the target sampled at the firing).
+learn(xi, ti) = op.descend_1D(\(g).(op.mse(g * xi, ti)), op.adam_g(0.02, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
+g = (il.frame_clock(64), x, target) : ondemand(learn);
 ```
 
 **Event-triggered adaptation.** `ondemand` with a 0/1 clock gives you
@@ -303,11 +307,25 @@ process = (64, _) : downsampling(ad.fit_adam(...));
 parameter outside a training phase without adding branches to the audio path.
 
 **Decimated gradients.** Compute a loss at audio rate but update at a lower
-rate, keeping the expensive part of the backward pass in a slower domain.
+rate, keeping the expensive part of the backward pass in a slower domain. This
+is what `op.descend_1D_clocked` … `op.descend_5D_clocked` do: the gradient is
+computed on every sample, averaged over the frame by `op.frame_mean`, and the
+step is taken inside an `ondemand` block, so the engine's state advances once
+per frame — a mini-batch step:
+
+```faust
+// Gradient at audio rate, one SGD step per 64-sample frame: exact within a
+// few frames.
+g = op.descend_1D_clocked(il.frame_clock(64), loss, op.sgd_g(0.5), -4, 4, 0, 0);
+```
 
 **Frame-rate DDSP.** With `interleave`, a differentiable spectral loss becomes
 expressible: FFT the frame, compare against a target spectrum, differentiate the
-result.
+result. Section 10 of [fad-rad-synthesis-en.md](fad-rad-synthesis-en.md) and
+section 11 of
+[optimizers-ddsp-tutorial-en.md](../libraries/optimizers-ddsp-tutorial-en.md)
+show a gain learned on an 8-point FFT loss, one optimizer step per frame, with
+the frame passed to the block as named inputs.
 
 **One rule to remember:** differentiation and clock domains compose *inside* a
 domain, but a derivative does not flow **across** a domain boundary. `fad`

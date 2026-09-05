@@ -552,7 +552,82 @@ Ce motif couvre les usages classiques de filtrage adaptatif: identification
 d'impulsion, égalisation adaptative, annulation d'écho simplifiée, prédiction
 linéaire et calibration de réponse.
 
-## 10. Quand choisir FAD ou RAD ?
+## 10. Apprentissage par trame avec `ondemand`
+
+Exemples exécutables ; les boucles cadencées sont dans
+[`optimizers.lib`](../libraries/optimizers.lib) 0.6.0 et l'enrobage de trame
+dans [`interleave.lib`](../libraries/interleave.lib). Compiler avec
+`-I libraries`.
+
+Cas d'usage: adapter les paramètres une fois par trame plutôt qu'une fois par
+échantillon — pour économiser du CPU, pour avancer sur un gradient de
+mini-lot, ou parce que la perte vit sur un spectre. `ondemand(C)` n'exécute `C`
+que sur les échantillons où sa première entrée, l'horloge, est non nulle, et
+maintient les sorties entre deux; dans le corps, une récursion avance une fois
+par tir. `fad` se compose avec lui: la différenciation dans un bloc est prise
+en charge (vérifiée contre des différences finies), une graine peut entrer
+dans le bloc comme entrée explicite, et une dérivée ne traverse jamais seule
+une frontière d'horloge (`rad` à travers une frontière est refusé).
+
+La forme bibliothèque garde la perte et `fad` à cadence audio, moyenne le
+gradient sur la trame avec `op.frame_mean` (une moyenne exacte, remise à zéro
+par l'horloge), et prend le pas dans un bloc `ondemand`, si bien que l'état du
+moteur avance une fois par trame:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+il = library("interleave.lib");
+x = no.noise;
+target = 0.7 * x;
+loss(g) = op.mse(g * x, target);
+g = op.descend_1D_clocked(il.frame_clock(64), loss, op.sgd_g(0.5), -4.0, 4.0, 0.0, 0.0);
+process = g, target - g * x;
+```
+
+Rendu avec `faustprobe`, le gain vaut `0,700000` dès 4 000 échantillons, avec
+un pas SGD par trame de 64 échantillons. Placer toute une boucle dans un bloc,
+`(il.frame_clock(64), x, target) : ondemand(learn)` avec
+`learn(xi, ti) = op.descend_1D(\(g).(op.mse(g * xi, ti)), ...)`, fonctionne
+aussi: tout tourne alors en temps de tir sur les entrées du bloc (gain à
+`1e-6` de la cible après 312 pas).
+
+La forme DDSP par trame: la trame de `N` échantillons entre dans le bloc par
+ses entrées, la perte est calculée sur sa FFT, et l'optimiseur avance une fois
+par trame dans le bloc:
+
+```faust
+il = library("interleave.lib");
+an = library("analyzers.lib");
+si = library("signals.lib");
+no = library("noises.lib");
+op = library("optimizers.lib");
+N = 8;
+target_energy = 4.0;
+cmag(re, im) = sqrt(re * re + im * im + 0.000000001);
+magsum = par(m, N, cmag) :> _;
+// Le bloc reçoit les N échantillons de la trame comme arguments nommés (un
+// opérateur de trame à entrées `_` libres verrait ses entrées dupliquées à chaque usage).
+learn(x0, x1, x2, x3, x4, x5, x6, x7) =
+    op.descend_1D(loss, op.adam_g(0.02, 0.9, 0.999, 1e-8), 0.01, 10.0, 1.0, 0.0)
+with {
+    // perte spectrale de la trame mise à l'échelle par g : (somme |X_k| - cible)^2
+    loss(g) = (x0, x1, x2, x3, x4, x5, x6, x7) : par(i, N, *(g) : (_, 0)) : an.fft(N) : magsum : -(target_energy) <: _ * _;
+};
+process = no.noise : il.serialize_in(N) : (il.frame_clock(N), si.bus(N)) : ondemand(learn);
+```
+
+Le gain appris se stabilise à `0,34`; l'optimum des moindres carrés pour cette
+excitation vaut `0,340`. Deux règles sur lesquelles reposent les exemples: un
+corps reçoit les signaux extérieurs comme entrées explicites (jamais par
+capture), et un opérateur de trame à entrées `_` libres reçoit des arguments
+nommés, sinon ses entrées sont dupliquées à chaque usage. `ma.SR` n'est pas
+adapté dans `ondemand`. Les primitives sont décrites dans
+[ondemand-note-fr.md](ondemand-note-fr.md); un parcours pas à pas est la
+section 11 de
+[optimizers-ddsp-tutorial-fr.md](../libraries/optimizers-ddsp-tutorial-fr.md).
+
+## 11. Quand choisir FAD ou RAD ?
 
 Utiliser **FAD** quand:
 
@@ -577,7 +652,7 @@ Il faut mesurer les programmes représentatifs avant de supposer un avantage de
 performance: sur les petits graphes, les passes actuelles de simplification et
 de partage des sous-expressions peuvent rapprocher les coûts de FAD et RAD.
 
-## 11. Limites pratiques à garder en tête
+## 12. Limites pratiques à garder en tête
 
 Ces primitives ne transforment pas Faust en framework de deep learning général.
 Elles sont surtout utiles pour des DSP paramétriques, interprétables et
@@ -597,7 +672,8 @@ Points pratiques:
 - FAD possède les règles duales pour les blocs valides
   `ondemand`/`upsampling`/`downsampling`, avec une horloge opaque; les tests
   d'intégration actuels couvrent surtout les formes FAD autour et à l'intérieur
-  de `ondemand`. RAD à travers une frontière de domaine d'horloge reste refusé;
+  de `ondemand` (section 10). RAD à travers une frontière de domaine d'horloge
+  reste refusé;
 - les règles symboliques ne couvrent pas toutes les familles de signaux: FAD
   conserve le primal avec une tangente nulle aux frontières non modélisées,
   tandis que RAD refuse explicitement les familles dures comme les tables
@@ -618,3 +694,8 @@ de paramètres, puis d'ajouter progressivement bornes, lissage et affichage.
 - [fad-note-en.md](fad-note-en.md) — surface et implémentation de FAD.
 - [rad-usage-en.md](rad-usage-en.md) — workflows RAD pilotés par l'hôte.
 - [rad-note-en.md](rad-note-en.md) — algorithme RAD et table des règles.
+- [ondemand-note-fr.md](ondemand-note-fr.md) — les primitives de domaine d'horloge.
+- [optimizers-overview-fr.md](../libraries/optimizers-overview-fr.md) et
+  [optimizers-ddsp-tutorial-fr.md](../libraries/optimizers-ddsp-tutorial-fr.md)
+  — la bibliothèque d'optimiseurs expliquée aux débutants, et un tutoriel pas
+  à pas.

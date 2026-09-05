@@ -312,11 +312,15 @@ primitives de différentiation elles-mêmes.
 
 **Apprentissage au rythme de contrôle.** Un pas de gradient n'a pas besoin de
 s'exécuter à chaque échantillon. Envelopper un optimiseur dans un domaine
-découple le rythme d'adaptation du rythme audio :
+découple le rythme d'adaptation du rythme audio. Avec
+[`optimizers.lib`](../libraries/optimizers.lib) (préfixe `op`) et l'horloge de
+trame d'`interleave.lib` :
 
 ```faust
-// Un pas d'optimiseur tous les 64 échantillons, au lieu de 48000 par seconde.
-process = (64, _) : downsampling(ad.fit_adam(...));
+// Toute la boucle en temps de tir : un pas d'optimiseur tous les 64
+// échantillons, sur les entrées du bloc (excitation et cible échantillonnées au tir).
+learn(xi, ti) = op.descend_1D(\(g).(op.mse(g * xi, ti)), op.adam_g(0.02, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
+g = (il.frame_clock(64), x, target) : ondemand(learn);
 ```
 
 **Adaptation déclenchée par événement.** `ondemand` à horloge 0/1 donne
@@ -326,11 +330,25 @@ dans le chemin audio.
 
 **Gradients décimés.** Calculer une perte au rythme audio mais ne mettre à jour
 qu'à un rythme plus lent, en gardant la partie coûteuse de la passe arrière dans
-un domaine plus lent.
+un domaine plus lent. C'est ce que font `op.descend_1D_clocked` …
+`op.descend_5D_clocked` : le gradient est calculé à chaque échantillon,
+moyenné sur la trame par `op.frame_mean`, et le pas est pris dans un bloc
+`ondemand`, si bien que l'état du moteur avance une fois par trame — un pas de
+mini-lot :
+
+```faust
+// Gradient au rythme audio, un pas SGD par trame de 64 échantillons : exact en
+// quelques trames.
+g = op.descend_1D_clocked(il.frame_clock(64), loss, op.sgd_g(0.5), -4, 4, 0, 0);
+```
 
 **DDSP par trames.** Avec `interleave`, une perte spectrale différentiable
 devient exprimable : FFT de la trame, comparaison à un spectre cible,
-différentiation du résultat.
+différentiation du résultat. La section 10 de
+[fad-rad-synthesis-fr.md](fad-rad-synthesis-fr.md) et la section 11 de
+[optimizers-ddsp-tutorial-fr.md](../libraries/optimizers-ddsp-tutorial-fr.md)
+montrent un gain appris sur une perte FFT à 8 points, un pas d'optimiseur par
+trame, la trame étant passée au bloc comme entrées nommées.
 
 **Une règle à retenir :** différentiation et domaines d'horloge se composent
 *à l'intérieur* d'un domaine, mais une dérivée ne traverse pas une **frontière**

@@ -500,7 +500,79 @@ RAD can be consumed inside a Faust adaptation loop, each coefficient receives
 its loss gradient, and the residual lets the user hear convergence directly.
 The tracked runtime test verifies convergence for this exact source.
 
-## 10. Choosing FAD or RAD
+## 10. Learning at Frame Rate with `ondemand`
+
+Executable examples; the clocked loops are in
+[`optimizers.lib`](../libraries/optimizers.lib) 0.6.0 and the frame harness in
+[`interleave.lib`](../libraries/interleave.lib). Compile with `-I libraries`.
+
+Use case: adapt the parameters once per frame rather than once per sample —
+to save CPU, to step on a mini-batch gradient, or because the loss lives on a
+spectrum. `ondemand(C)` runs `C` only on the samples where its first input, the
+clock, is non-zero, and holds the outputs in between; inside the body a
+recursion advances once per firing. `fad` composes with it: differentiation
+inside a block is supported (checked against finite differences), a seed may
+enter the block as an explicit input, and a derivative never crosses a clock
+boundary on its own (`rad` across a boundary is rejected).
+
+The library form keeps the loss and `fad` at audio rate, averages the gradient
+over the frame with `op.frame_mean` (an exact mean, reset by the clock), and
+takes the step inside an `ondemand` block, so the engine's state advances once
+per frame:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+il = library("interleave.lib");
+x = no.noise;
+target = 0.7 * x;
+loss(g) = op.mse(g * x, target);
+g = op.descend_1D_clocked(il.frame_clock(64), loss, op.sgd_g(0.5), -4.0, 4.0, 0.0, 0.0);
+process = g, target - g * x;
+```
+
+Rendered with `faustprobe`, the gain is `0.700000` from 4 000 samples on, with
+one SGD step per 64-sample frame. Placing a whole loop inside a block,
+`(il.frame_clock(64), x, target) : ondemand(learn)` with
+`learn(xi, ti) = op.descend_1D(\(g).(op.mse(g * xi, ti)), ...)`, also works:
+everything then runs in fire time on the block's inputs (gain within `1e-6`
+of the target after 312 steps).
+
+The frame-rate DDSP form: the frame of `N` samples enters the block as
+inputs, the loss is computed on its FFT, and the optimizer steps once per
+frame inside the block:
+
+```faust
+il = library("interleave.lib");
+an = library("analyzers.lib");
+si = library("signals.lib");
+no = library("noises.lib");
+op = library("optimizers.lib");
+N = 8;
+target_energy = 4.0;
+cmag(re, im) = sqrt(re * re + im * im + 0.000000001);
+magsum = par(m, N, cmag) :> _;
+// The block receives the N samples of the frame as named arguments (a frame
+// operator with free `_` inputs would get its inputs duplicated at each use).
+learn(x0, x1, x2, x3, x4, x5, x6, x7) =
+    op.descend_1D(loss, op.adam_g(0.02, 0.9, 0.999, 1e-8), 0.01, 10.0, 1.0, 0.0)
+with {
+    // spectral loss of the frame scaled by g: (sum |X_k| - target)^2
+    loss(g) = (x0, x1, x2, x3, x4, x5, x6, x7) : par(i, N, *(g) : (_, 0)) : an.fft(N) : magsum : -(target_energy) <: _ * _;
+};
+process = no.noise : il.serialize_in(N) : (il.frame_clock(N), si.bus(N)) : ondemand(learn);
+```
+
+The learned gain settles at `0.34`; the least-squares optimum for this
+excitation is `0.340`. Two rules the examples rely on: a body receives outer
+signals as explicit inputs (never by capture), and a frame operator with free
+`_` inputs is given named arguments, or its inputs are duplicated at every
+use. `ma.SR` is not adapted inside `ondemand`. The primitives are described in
+[ondemand-note-en.md](ondemand-note-en.md); a step-by-step walk-through is
+section 11 of
+[optimizers-ddsp-tutorial-en.md](../libraries/optimizers-ddsp-tutorial-en.md).
+
+## 11. Choosing FAD or RAD
 
 Use **FAD** when:
 
@@ -523,7 +595,7 @@ Measure representative programs before assuming a performance advantage: the
 current simplification and common-subexpression passes can make FAD and RAD
 costs close on small graphs.
 
-## 11. Practical Limits
+## 12. Practical Limits
 
 These primitives do not turn Faust into a general deep-learning framework.
 They are most useful for constrained, interpretable parametric DSPs.
@@ -539,7 +611,8 @@ Keep these points in mind:
 - temporal RAD uses the current `compute(count)` block as its reverse horizon;
 - FAD has dual rules for valid `ondemand`/`upsampling`/`downsampling` blocks,
   with an opaque clock; current integration tests concentrate on FAD inside and
-  around `ondemand`. RAD across a clock-domain boundary is still rejected;
+  around `ondemand` (section 10). RAD across a clock-domain boundary is still
+  rejected;
 - the symbolic rules do not cover every signal family: FAD preserves the
   primal and uses zero tangents at unmodeled boundaries, while RAD rejects hard
   unsupported families such as mutable tables, soundfiles, and unrecognized
@@ -560,3 +633,8 @@ smoothing, and monitoring incrementally.
 - [fad-note-en.md](fad-note-en.md) — FAD surface and implementation.
 - [rad-usage-en.md](rad-usage-en.md) — host-driven RAD workflows.
 - [rad-note-en.md](rad-note-en.md) — RAD algorithm and rule table.
+- [ondemand-note-en.md](ondemand-note-en.md) — the clock-domain primitives.
+- [optimizers-overview-en.md](../libraries/optimizers-overview-en.md) and
+  [optimizers-ddsp-tutorial-en.md](../libraries/optimizers-ddsp-tutorial-en.md)
+  — the optimizer library explained for newcomers, and a step-by-step
+  tutorial.
