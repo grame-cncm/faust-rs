@@ -2467,3 +2467,45 @@ fn corpus_tbptt_biquad1_converges_to_silence() {
     // Feedback coefficients (a1, a2) need small lr — allow many frames.
     assert_tbptt_converges("rad_tbptt_biquad1", 8000, 200, 0.3);
 }
+
+#[test]
+fn rad_inside_an_ondemand_body_matches_its_fad_twin() {
+    // A `rad` whose loss and seed live inside an `ondemand` body: the block's
+    // input `u` and the clocked wrapper are met by the reverse sweep (the
+    // input is a leaf, the wrapper is passed through). The body runs one
+    // gradient step per firing (every 64 samples) on `(prev*u - u/2)^2` with
+    // `u` in {0, 1/4, 1/2, 3/4, 1}, so the parameter walks from 0 to 0.5; the
+    // `fad` twin is the reference.
+    let body = |grad: &str| {
+        format!(
+            r#"
+clock = ((+(1) : %(64)) ~ _) == 0;
+t = ((+(1) ~ _) % 5) / 4.0;
+body(u) = (step ~ _) with {{
+    step(prev) = prev - 0.1 * ({grad});
+}};
+process = (clock, t) : ondemand(body);
+"#
+        )
+    };
+    let rad_source = body("rad((prev * u - 0.5 * u) * (prev * u - 0.5 * u), prev) : !, _");
+    let fad_source = body("fad((prev * u - 0.5 * u) * (prev * u - 0.5 * u), prev) : !, _");
+    let frames = 64 * 200;
+    let rad_outs = run_interp_temp_source("rad-in-ondemand-rad", &rad_source, frames);
+    let fad_outs = run_interp_temp_source("rad-in-ondemand-fad", &fad_source, frames);
+    assert_eq!(rad_outs.len(), 1);
+    assert_eq!(fad_outs.len(), 1);
+    for frame in 0..frames {
+        assert_close(
+            rad_outs[0][frame],
+            fad_outs[0][frame],
+            1e-6,
+            &format!("rad-in-ondemand frame {frame}"),
+        );
+    }
+    let last = rad_outs[0][frames - 1];
+    assert!(
+        (last - 0.5).abs() < 1e-3,
+        "the parameter should have walked to 0.5, got {last}"
+    );
+}

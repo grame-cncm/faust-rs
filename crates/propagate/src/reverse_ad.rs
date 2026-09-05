@@ -212,7 +212,9 @@ impl<'a> ReverseADTransform<'a> {
             return Ok(out);
         }
         match decoded {
-            // Leaves — no descent.
+            // Leaves — no descent. Foreign constants and variables
+            // (`ma.SR`, `fvariable`) are external scalars, differentiable
+            // with respect to no seed.
             SigMatch::Int(_)
             | SigMatch::Real(_)
             | SigMatch::Input(_)
@@ -220,7 +222,9 @@ impl<'a> ReverseADTransform<'a> {
             | SigMatch::VSlider(_)
             | SigMatch::NumEntry(_)
             | SigMatch::Button(_)
-            | SigMatch::Checkbox(_) => {}
+            | SigMatch::Checkbox(_)
+            | SigMatch::FConst(..)
+            | SigMatch::FVar(..) => {}
             // Arithmetic / math.
             SigMatch::BinOp(_, x, y) => {
                 out.push(x);
@@ -331,16 +335,29 @@ impl<'a> ReverseADTransform<'a> {
                     kind: "clocked sequencing (Seq)",
                 });
             }
-            SigMatch::Clocked(_, _) | SigMatch::ClockEnvToken(_) => {
+            // A clocked wrapper marks a signal of the block's domain; inside
+            // the block the sweep sees it around the boundary values (a
+            // `TempVar` input), never around a seed. Pass-through, like
+            // `Attach`: the adjoint flows to the payload.
+            SigMatch::Clocked(_, payload) => {
+                out.push(payload);
+            }
+            SigMatch::ClockEnvToken(_) => {
                 return Err(PropagateError::RadUnsupportedNode {
                     node: sig,
-                    kind: "clocked wrapper",
+                    kind: "clock-env token",
                 });
             }
-            SigMatch::TempVar(_) | SigMatch::PermVar(_) | SigMatch::ZeroPad(_, _) => {
+            // A clock-boundary variable is the value a block receives from or
+            // hands to its clock domain: inside the block it is data, like an
+            // input or a slider, and a seed never lies across the boundary
+            // (the seeds of a `rad` inside a block are the block's own
+            // signals). Leaf, no descent.
+            SigMatch::TempVar(_) | SigMatch::PermVar(_) => {}
+            SigMatch::ZeroPad(_, _) => {
                 return Err(PropagateError::RadUnsupportedNode {
                     node: sig,
-                    kind: "clock-domain boundary variable (TempVar/PermVar/ZeroPad)",
+                    kind: "clock-domain boundary variable (ZeroPad)",
                 });
             }
             SigMatch::OnDemand(_) => {
@@ -430,7 +447,11 @@ impl<'a> ReverseADTransform<'a> {
             | SigMatch::VSlider(_)
             | SigMatch::NumEntry(_)
             | SigMatch::Button(_)
-            | SigMatch::Checkbox(_) => {
+            | SigMatch::Checkbox(_)
+            | SigMatch::FConst(..)
+            | SigMatch::FVar(..)
+            | SigMatch::TempVar(_)
+            | SigMatch::PermVar(_) => {
                 // Leaves; nothing downstream.
             }
             SigMatch::BinOp(op, x, z) => self.propagate_binop(op, x, z, y_bar),
@@ -540,6 +561,9 @@ impl<'a> ReverseADTransform<'a> {
                     }
                 };
                 self.add_adjoint(arg, contrib);
+            }
+            SigMatch::Clocked(_, payload) => {
+                self.add_adjoint(payload, y_bar);
             }
             SigMatch::Attach(x, _) | SigMatch::Enable(x, _) | SigMatch::Control(x, _) => {
                 // Pass-through wrappers: forward the full adjoint to the

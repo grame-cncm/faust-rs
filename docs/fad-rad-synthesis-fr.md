@@ -693,7 +693,10 @@ Points pratiques:
   `ondemand`/`upsampling`/`downsampling`, avec une horloge opaque; les tests
   d'intégration actuels couvrent surtout les formes FAD autour et à l'intérieur
   de `ondemand` (section 10). RAD à travers une frontière de domaine d'horloge
-  reste refusé;
+  reste refusé; un `rad` dont l'expression et les graines vivent dans un même
+  corps `ondemand` tourne dans ce domaine (les entrées d'un bloc et les
+  constantes étrangères sont des feuilles du balayage, l'enveloppe d'horloge
+  est traversée);
 - les règles symboliques ne couvrent pas toutes les familles de signaux: FAD
   conserve le primal avec une tangente nulle aux frontières non modélisées,
   tandis que RAD refuse explicitement les familles dures comme les tables

@@ -120,6 +120,11 @@ for every family that admits a causal reverse pass. Notation:
 | seed `s` | descent stops; final `adjoints[s]` is the gradient lane |
 | comparisons / shifts / bitwise `BinOp` | no contribution |
 
+Foreign constants and variables (`ma.SR`, `fvariable`) and the
+clock-boundary variables `TempVar`/`PermVar` are leaves as well: external
+scalars and a block's inputs are data, never on a seed path (the seeds of a
+`rad` inside an `ondemand` body are the body's own signals).
+
 ### 3.2 Arithmetic `BinOp`
 
 | `y = …` | Adjoint contributions |
@@ -220,6 +225,9 @@ differentiation: the adjoint is forwarded to the signal-carrying
 operand only. Bargraphs (`vbargraph` / `hbargraph`) are metering
 sinks — they are walked so seed-reachability is correctly classified
 but propagate no adjoint.
+
+`Clocked(env, x)` is passed through like `Attach`: inside an `ondemand`
+body it wraps the boundary values, and the adjoint flows to the payload.
 
 ## 4. Temporal boundary
 
@@ -368,7 +376,7 @@ The diagnostic kinds are:
 | `ffun` | non-unary or unrecognised foreign function |
 | `soundfile` | `Soundfile`, `SoundfileLength`, `SoundfileRate`, `SoundfileBuffer` |
 | `other` | catch-all (representation casts, generators, opaque) |
-| clock-domain kinds | `ondemand`, `upsampling`, `downsampling`, `Seq`, and boundary glue; rejected until a clock-aware reverse tape exists |
+| clock-domain kinds | `ondemand`, `upsampling`, `downsampling`, `Seq`, `ZeroPad` and clock-env tokens; crossing a boundary is rejected until a clock-aware reverse tape exists. A `rad` whose expression and seeds live inside one `ondemand` body is supported: its inputs are leaves and the clocked wrapper is passed through |
 
 Temporal/recursive kinds are normally caught by the public dispatcher
 and converted to `BlockReverseAD`. If one of those diagnostics surfaces

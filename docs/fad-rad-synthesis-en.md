@@ -629,7 +629,9 @@ Keep these points in mind:
 - FAD has dual rules for valid `ondemand`/`upsampling`/`downsampling` blocks,
   with an opaque clock; current integration tests concentrate on FAD inside and
   around `ondemand` (section 10). RAD across a clock-domain boundary is still
-  rejected;
+  rejected; a `rad` whose expression and seeds live inside one `ondemand`
+  body runs in that domain (a block's inputs and foreign constants are
+  leaves of the sweep, the clocked wrapper is passed through);
 - the symbolic rules do not cover every signal family: FAD preserves the
   primal and uses zero tangents at unmodeled boundaries, while RAD rejects hard
   unsupported families such as mutable tables, soundfiles, and unrecognized

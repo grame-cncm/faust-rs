@@ -300,7 +300,10 @@ cargo run --release -p compiler --example rad_vs_fad_perf
   recognition is Signal IR identity rather than algebraic equivalence.
 - **Clock domains.** RAD across `ondemand`, `upsampling`, or `downsampling`
   clock-domain machinery is rejected with a structured diagnostic; a
-  clock-aware reverse tape is not implemented yet.
+  clock-aware reverse tape is not implemented yet. A `rad` whose expression
+  and seeds live inside one `ondemand` body is supported: the block's inputs
+  and the foreign constants are leaves of the sweep, and the clocked wrapper
+  is passed through (`libraries/ddsp-examples-en.md`, example 11).
 - **Hard unsupported families.** Mutable tables, soundfiles, and unknown or
   non-unary foreign functions are rejected rather than assigned a fabricated
   gradient.
