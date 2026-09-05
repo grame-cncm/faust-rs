@@ -153,10 +153,21 @@ pub(super) fn is_trivially_reverse_evaluable(arena: &TreeArena, sig: SigId) -> b
 pub(super) fn collect_bra_postorder(
     arena: &TreeArena,
     root: SigId,
+    stops: &HashSet<SigId>,
     visited: &mut HashSet<SigId>,
     order: &mut Vec<SigId>,
 ) {
     if !visited.insert(root) {
+        return;
+    }
+    // A seed is a leaf of the differentiated graph, exactly as in the
+    // symbolic reverse sweep: its adjoint *is* the gradient lane, and what
+    // computes the seed (a clamp, a `select2` initialisation, the optimizer's
+    // own recursion) is outside the loss. Descending into it would both
+    // reject node kinds the backward pass has no business seeing and leak
+    // adjoint carries into the enclosing recursion.
+    if stops.contains(&root) {
+        order.push(root);
         return;
     }
     match match_sig(arena, root) {
@@ -193,7 +204,7 @@ pub(super) fn collect_bra_postorder(
         | SigMatch::Ceil(x)
         | SigMatch::Rint(x)
         | SigMatch::Round(x) => {
-            collect_bra_postorder(arena, x, visited, order);
+            collect_bra_postorder(arena, x, stops, visited, order);
         }
         // Binary operations — two children.
         SigMatch::BinOp(_, lhs, rhs)
@@ -201,29 +212,35 @@ pub(super) fn collect_bra_postorder(
         | SigMatch::Atan2(lhs, rhs)
         | SigMatch::Min(lhs, rhs)
         | SigMatch::Max(lhs, rhs) => {
-            collect_bra_postorder(arena, lhs, visited, order);
-            collect_bra_postorder(arena, rhs, visited, order);
+            collect_bra_postorder(arena, lhs, stops, visited, order);
+            collect_bra_postorder(arena, rhs, stops, visited, order);
+        }
+        // Select2(cond, else, then): both branches carry adjoint; the condition
+        // is a discrete choice and is replayed from the tape, not differentiated.
+        SigMatch::Select2(_cond, else_value, then_value) => {
+            collect_bra_postorder(arena, else_value, stops, visited, order);
+            collect_bra_postorder(arena, then_value, stops, visited, order);
         }
         // Delay1: recurse into the value child so its adjoint can be tracked.
         SigMatch::Delay1(x) => {
-            collect_bra_postorder(arena, x, visited, order);
+            collect_bra_postorder(arena, x, stops, visited, order);
         }
         // Delay(sig, amount): recurse into the delayed signal.
         // The amount is not differentiated (delay length is discrete).
         SigMatch::Delay(sig, _amount) => {
-            collect_bra_postorder(arena, sig, visited, order);
+            collect_bra_postorder(arena, sig, stops, visited, order);
         }
         // Prefix(init, sig): both init and sig contribute to the adjoint.
         SigMatch::Prefix(init, sig) => {
-            collect_bra_postorder(arena, init, visited, order);
-            collect_bra_postorder(arena, sig, visited, order);
+            collect_bra_postorder(arena, init, stops, visited, order);
+            collect_bra_postorder(arena, sig, stops, visited, order);
         }
         // Attach(value, effect) is transparent to differentiation. The
         // attached branch is forced by the forward lowering, but it does not
         // contribute to the adjoint and must not be replayed in the backward
         // sweep.
         SigMatch::Attach(value, _effect) => {
-            collect_bra_postorder(arena, value, visited, order);
+            collect_bra_postorder(arena, value, stops, visited, order);
         }
         // Proj(slot, Rec(bodies)): recurse into the corresponding body expression.
         //
@@ -257,7 +274,7 @@ pub(super) fn collect_bra_postorder(
                 if let Some(bodies) = list_to_vec(arena, body_list) {
                     let slot_usize = usize::try_from(slot).unwrap_or(usize::MAX);
                     if let Some(&body) = bodies.get(slot_usize) {
-                        collect_bra_postorder(arena, body, visited, order);
+                        collect_bra_postorder(arena, body, stops, visited, order);
                     }
                 }
             } else if match_sym_ref(arena, group_sig).is_some() {
@@ -273,6 +290,21 @@ pub(super) fn collect_bra_postorder(
         _ => {}
     }
     order.push(root);
+}
+
+/// Collects the `select2` conditions of `postorder`.
+///
+/// Conditions are integer-valued, and integer values are otherwise never
+/// taped (they are the non-differentiable islands below a `FloatCast`); a
+/// condition is the one integer the backward sweep has to replay.
+pub(super) fn collect_select2_conditions(arena: &TreeArena, postorder: &[SigId]) -> HashSet<SigId> {
+    postorder
+        .iter()
+        .filter_map(|&sig| match match_sig(arena, sig) {
+            SigMatch::Select2(cond, _, _) => Some(cond),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Collects the set of signals whose **forward** value must be stored on a
@@ -308,6 +340,13 @@ pub(super) fn collect_tape_needed_values(arena: &TreeArena, postorder: &[SigId])
     let mut needed = HashSet::new();
     for &sig in postorder {
         match match_sig(arena, sig) {
+            // Select2: the backward rule routes the adjoint to the branch that
+            // was taken, so it needs the condition's forward value.
+            SigMatch::Select2(cond, _else_value, _then_value) => {
+                if !is_trivially_reverse_evaluable(arena, cond) {
+                    needed.insert(cond);
+                }
+            }
             SigMatch::BinOp(BinOp::Mul | BinOp::Div, lhs, rhs) => {
                 if !is_trivially_reverse_evaluable(arena, lhs) {
                     needed.insert(lhs);

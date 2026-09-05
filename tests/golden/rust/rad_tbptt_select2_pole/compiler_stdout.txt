@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=rad_tbptt_select2_pole.dsp
+bytes=1384
+lines=42
+fnv1a64=d833b67b86be0c0b

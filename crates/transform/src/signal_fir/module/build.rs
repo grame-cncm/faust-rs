@@ -32,12 +32,14 @@ use crate::signal_fir::module::HashMap;
 use crate::signal_fir::module::INT_FUN_PROTO_ORDER;
 use crate::signal_fir::module::MATH_PROTO_ORDER;
 use crate::signal_fir::module::NamedType;
+use crate::signal_fir::module::SigMatch;
 use crate::signal_fir::module::SigType;
 use crate::signal_fir::module::SignalToFirLower;
 use crate::signal_fir::module::classify_reverse_time_outputs;
 use crate::signal_fir::module::clocked;
 use crate::signal_fir::module::dump_sig_readable;
 use crate::signal_fir::module::fixed_ad_internal_signals;
+use crate::signal_fir::module::match_sig;
 use crate::signal_fir::placement::analyze_signal_sharing;
 use crate::signal_fir::planner::SignalFirPlan;
 use crate::signal_fir::{ControlRateMode, ProcessingApi};
@@ -223,7 +225,19 @@ fn lower_sample_slices(
         lower.lower_scheduled_graph(crate::hgraph::GraphKey::Top)?;
     }
 
-    if has_forward_outputs {
+    // Carriers whose public projections are all gradients still need their
+    // primal to run forward over the block and to be taped: the reverse loop
+    // cannot recompute a recursion backwards. Their forward pass goes into
+    // the forward slice, which exists for them even when no forward output
+    // asks for it.
+    let gradient_only_groups =
+        bra_groups_of_reverse_outputs(lower.arena, signals, reverse_time_outputs);
+    let has_forward_slice = has_forward_outputs || !gradient_only_groups.is_empty();
+
+    if has_forward_slice {
+        for &group in &gradient_only_groups {
+            lower.ensure_bra_forward_pass(group)?;
+        }
         // Forward loop slice.  This is not necessarily "primal only": when a
         // BRA gradient projection is consumed inside a forward-time expression
         // (for example `p_next = p - lr * grad_p` inside a recursion body),
@@ -264,7 +278,7 @@ fn lower_sample_slices(
             }
         }
         lower.rad_reverse.lowering_reverse_loop = false;
-        if !has_forward_outputs {
+        if !has_forward_slice {
             lower.finalize_global_cursor();
             let delay_sample_end = lower
                 .delay
@@ -279,6 +293,46 @@ fn lower_sample_slices(
         lower.reset_sample_loop_state(region::RegionKind::SampleLoop);
     }
     Ok(sample_loops)
+}
+
+/// The `BlockReverseAD` carriers reached from the reverse-time outputs
+/// through their gradient projections, in first-seen order.
+fn bra_groups_of_reverse_outputs(
+    arena: &TreeArena,
+    signals: &[SigId],
+    reverse_time_outputs: &[bool],
+) -> Vec<SigId> {
+    use std::collections::HashSet;
+    let mut groups = Vec::new();
+    let mut seen_groups = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut stack: Vec<SigId> = signals
+        .iter()
+        .zip(reverse_time_outputs)
+        .filter(|(_, is_reverse)| **is_reverse)
+        .map(|(&sig, _)| sig)
+        .collect();
+    while let Some(sig) = stack.pop() {
+        if !visited.insert(sig) {
+            continue;
+        }
+        if let SigMatch::Proj(index, group) = match_sig(arena, sig)
+            && let SigMatch::BlockReverseAD { primal_count, .. } = match_sig(arena, group)
+        {
+            let pc = usize::try_from(primal_count).unwrap_or(0);
+            let idx = usize::try_from(index).unwrap_or(0);
+            if idx >= pc && seen_groups.insert(group) {
+                groups.push(group);
+            }
+            // The carrier's own lists are not walked: their contents are the
+            // carrier's business, lowered by `ensure_bra_forward_pass`.
+            continue;
+        }
+        if let Some(children) = arena.children(sig) {
+            stack.extend(children.iter().copied());
+        }
+    }
+    groups
 }
 
 /// Emits the compute-entry prologue: the `outputN` channel aliases (block

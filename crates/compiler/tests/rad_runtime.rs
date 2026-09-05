@@ -1578,6 +1578,155 @@ fn rad_nonlinear_one_pole_bra_total_grad_matches_fd() {
     );
 }
 
+/// `select2` inside a recursive body: the block total gradient must match a
+/// finite difference. The condition alternates every sample and does not
+/// depend on the seed, so the finite difference is smooth.
+#[test]
+fn rad_select2_in_recursive_body_bra_total_grad_matches_fd() {
+    assert_bra_block_total_grad_matches_fd(
+        "rad-select2-nl-one-pole",
+        1,
+        8,
+        &[0.1],
+        &[5e-4],
+        5e-2,
+        |s| {
+            format!(
+                r#"c = hslider("c", {}, -0.9, 0.9, 0.001);
+                   t = (+(1) ~ _) % 2;
+                   y = c : +~sin;
+                   process = rad(select2(t, y * y, 0.5 * y * y), c);"#,
+                s[0]
+            )
+        },
+        |s| {
+            format!(
+                r#"c = hslider("c", {}, -0.9, 0.9, 0.001);
+                   t = (+(1) ~ _) % 2;
+                   y = c : +~sin;
+                   process = select2(t, y * y, 0.5 * y * y);"#,
+                s[0]
+            )
+        },
+    );
+}
+
+/// A seed computed with `select2` is a leaf of the block reverse sweep.
+///
+/// `s = select2(t, a, b)` switches between two sliders every sample and seeds
+/// `rad(y, s)` with `y = s : +~sin`. The sweep stops at `s`, whatever computes
+/// it, and the gradient lane is `d(sum y)/d(s)` per sample. Since exactly one
+/// of `a`, `b` is selected at each sample, that lane summed over the block
+/// equals `d(sum y)/da + d(sum y)/db`, both of which a finite difference on
+/// the primal program measures directly.
+#[test]
+fn rad_seed_computed_with_select2_is_a_leaf_of_the_block_sweep() {
+    let frames = 8;
+    let (a, b) = (0.1_f32, 0.3_f32);
+    let eps = 5e-4_f32;
+    let rad_src = |a: f32, b: f32| {
+        format!(
+            r#"a = hslider("a", {a}, -0.9, 0.9, 0.001);
+               b = hslider("b", {b}, -0.9, 0.9, 0.001);
+               t = (+(1) ~ _) % 2;
+               s = select2(t, a, b);
+               process = rad(s : +~sin, s);"#
+        )
+    };
+    let primal_src = |a: f32, b: f32| {
+        format!(
+            r#"a = hslider("a", {a}, -0.9, 0.9, 0.001);
+               b = hslider("b", {b}, -0.9, 0.9, 0.001);
+               t = (+(1) ~ _) % 2;
+               s = select2(t, a, b);
+               process = s : +~sin;"#
+        )
+    };
+    let rad_out = run_interp_temp_source("rad-select2-seed", &rad_src(a, b), frames);
+    assert_eq!(rad_out.len(), 2, "layout must be [primal, gradient]");
+    let total_rad: f32 = rad_out[1].iter().sum();
+
+    let fd = |name: &str, up: (f32, f32), dn: (f32, f32)| -> f32 {
+        let plus = run_interp_temp_source(&format!("{name}-plus"), &primal_src(up.0, up.1), frames);
+        let minus =
+            run_interp_temp_source(&format!("{name}-minus"), &primal_src(dn.0, dn.1), frames);
+        let sum_up: f32 = plus[0].iter().sum();
+        let sum_dn: f32 = minus[0].iter().sum();
+        (sum_up - sum_dn) / (2.0 * eps)
+    };
+    let fd_a = fd("rad-select2-seed-a", (a + eps, b), (a - eps, b));
+    let fd_b = fd("rad-select2-seed-b", (a, b + eps), (a, b - eps));
+    assert_close(
+        total_rad,
+        fd_a + fd_b,
+        5e-2,
+        &format!("select2 seed: BRA total {total_rad} vs FD_a + FD_b = {fd_a} + {fd_b}"),
+    );
+}
+
+/// The recursive output sits *under* the loss, as it does in every real loss
+/// (`(y - target)^2`): the temporal adjoint carry must still reach it. Before
+/// the pre-scan looked past the carrier roots, `rad(y * y, c)` only kept the
+/// direct term of each sample (6.74 instead of 29.7 over 8 frames).
+#[test]
+fn rad_recursive_output_under_a_product_bra_total_grad_matches_fd() {
+    assert_bra_block_total_grad_matches_fd(
+        "rad-y-squared-one-pole",
+        1,
+        8,
+        &[0.1],
+        &[5e-4],
+        5e-2,
+        |s| {
+            format!(
+                r#"c = hslider("c", {}, -0.9, 0.9, 0.001); y = c : +~sin; process = rad(y * y, c);"#,
+                s[0]
+            )
+        },
+        |s| {
+            format!(
+                r#"c = hslider("c", {}, -0.9, 0.9, 0.001); y = c : +~sin; process = y * y;"#,
+                s[0]
+            )
+        },
+    );
+}
+
+/// A program that outputs only the gradient lane, `rad(...) : !, _`, still
+/// needs the primal to run forward over the block and to be taped: the reverse
+/// loop cannot recompute a recursion backwards. Before the forward pass was
+/// scheduled for gradient-only carriers, this program had a single (reverse)
+/// loop and a gradient of 36 for a true value of 29.76.
+#[test]
+fn rad_gradient_only_public_output_matches_fd() {
+    let frames = 8;
+    let c = 0.1_f32;
+    let eps = 5e-4_f32;
+    let rad = run_interp_temp_source(
+        "rad-grad-only",
+        &format!(r#"c = hslider("c", {c}, -0.9, 0.9, 0.001); process = rad(c : +~sin, c) : !, _;"#),
+        frames,
+    );
+    assert_eq!(rad.len(), 1, "gradient lane only");
+    let total_rad: f32 = rad[0].iter().sum();
+    let primal = |c: f32| {
+        run_interp_temp_source(
+            "rad-grad-only-primal",
+            &format!(r#"c = hslider("c", {c}, -0.9, 0.9, 0.001); process = c : +~sin;"#),
+            frames,
+        )
+    };
+    let up: f32 = primal(c + eps)[0].iter().sum();
+    let dn: f32 = primal(c - eps)[0].iter().sum();
+    let fd = (up - dn) / (2.0 * eps);
+    assert_close(
+        total_rad,
+        fd,
+        5e-2,
+        &format!("gradient-only public output: BRA total {total_rad} vs FD {fd}"),
+    );
+}
+
 /// BlockReverseAD cross-validation against a seed-independent LTI carrier:
 /// the block total must agree numerically on `d(Σ_n y[n])/d(a)` where
 /// `y[n] = a * y_lti[n]` and `y_lti[n] = 2 + p * y_lti[n-1]`.
@@ -1849,6 +1998,113 @@ process = (y_target - nl_filter(p_learned, noise)) <: _, _;
     assert_eq!(outs.len(), 2);
 }
 
+/// Inside an adaptation loop the gradient is consumed at the sample that
+/// produces it, so the block sweep runs in the forward loop with a
+/// one-sample horizon: the past state of the body is held fixed and `rad`
+/// returns the direct term, where `fad` carries the exact derivative through
+/// the recursion. On `y[n] = 1 + p y[n-1]`, `loss = (y - 3)^2`, `p = 0.5`:
+/// `rad` gives `2 (y[n] - 3) y[n-1]`, `fad` gives `2 (y[n] - 3) dy[n]/dp`
+/// with `dy[n]/dp = y[n-1] + p dy[n-1]/dp`. A carry stored at `n-1` and
+/// read at `n` used to give neither (-5, -7.5, -8.31 on the first frames).
+#[test]
+fn in_graph_rad_has_a_one_sample_horizon() {
+    let source = r#"
+model(p) = 1.0 : + ~ *(p);
+loss(p) = (model(p) - 3.0) * (model(p) - 3.0);
+learn = loop ~ _
+with {
+    loop(prev) = prev, g_rad, g_fad
+    with {
+        p = prev + 0.5;
+        g_rad = rad(loss(p), p) : !, _;
+        g_fad = fad(loss(p), p) : !, _;
+    };
+};
+process = learn : !, _, _;
+"#;
+    let outs = run_interp_temp_source("in-graph-rad-one-sample-horizon", source, 6);
+    assert_eq!(outs.len(), 2);
+    let p = 0.5_f64;
+    let (mut y_prev, mut dy_prev) = (0.0_f64, 0.0_f64);
+    for (n, (&got_rad, &got_fad)) in outs[0].iter().zip(&outs[1]).enumerate() {
+        let y = 1.0 + p * y_prev;
+        let dy = y_prev + p * dy_prev;
+        let slope = 2.0 * (y - 3.0);
+        let expected_rad = slope * y_prev;
+        let expected_fad = slope * dy;
+        let got_rad = f64::from(got_rad);
+        let got_fad = f64::from(got_fad);
+        assert!(
+            (got_rad - expected_rad).abs() < 1e-5,
+            "in-graph rad at frame {n}: {got_rad} vs direct term {expected_rad}"
+        );
+        assert!(
+            (got_fad - expected_fad).abs() < 1e-5,
+            "in-graph fad at frame {n}: {got_fad} vs exact derivative {expected_fad}"
+        );
+        y_prev = y;
+        dy_prev = dy;
+    }
+}
+
+/// The one-sample horizon of the in-graph sweep declares no carry; the same
+/// body under a public `rad` output runs the reverse loop and does.
+#[test]
+fn in_graph_rad_declares_no_carry_where_the_public_output_does() {
+    std::thread::Builder::new()
+        .name("rad-runtime-in-graph-no-carry".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let in_graph = r#"
+model(p) = 1.0 : + ~ *(p);
+loss(p) = (model(p) - 3.0) * (model(p) - 3.0);
+learn = loop ~ _
+with {
+    loop(prev) = prev, (rad(loss(p), p) : !, _) with { p = prev + 0.5; };
+};
+process = learn : !, _;
+"#;
+            let public = r#"
+p = hslider("p", 0.5, -0.9, 0.9, 0.001);
+model(p) = 1.0 : + ~ *(p);
+loss(p) = (model(p) - 3.0) * (model(p) - 3.0);
+process = rad(loss(p), p);
+"#;
+            let cpp_of = |stem: &str, source: &str| -> String {
+                let unique_id = NEXT_TEMP_DSP_ID.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir().join(format!(
+                    "faust-rs-rad-{stem}-{}-{unique_id}.dsp",
+                    std::process::id()
+                ));
+                fs::write(&path, source).unwrap_or_else(|e| {
+                    panic!("failed to write temporary DSP {}: {e}", path.display())
+                });
+                let cpp = Compiler::new()
+                    .compile_file_default_to_cpp_with_lane(
+                        &path,
+                        &codegen::backends::cpp::CppOptions::default(),
+                        SignalFirLane::TransformFastLane,
+                    )
+                    .unwrap_or_else(|e| panic!("{}: compilation failed: {e}", path.display()));
+                let _ = fs::remove_file(&path);
+                cpp
+            };
+            let in_graph_cpp = cpp_of("in-graph-no-carry", in_graph);
+            assert!(
+                !in_graph_cpp.contains("fBraCarry"),
+                "the in-graph sweep has a one-sample horizon and must not declare a carry"
+            );
+            let public_cpp = cpp_of("public-output-carry", public);
+            assert!(
+                public_cpp.contains("fBraCarry"),
+                "the reverse loop of a public gradient output must declare a carry"
+            );
+        })
+        .expect("spawn rad-runtime-in-graph-no-carry worker")
+        .join()
+        .expect("rad-runtime-in-graph-no-carry worker should finish")
+}
+
 #[test]
 fn bra_reverse_sweep_skips_integer_noise_tape_candidates_compile_to_cpp() {
     std::thread::Builder::new()
@@ -2016,6 +2272,13 @@ process = result;
 "#;
     let outs2 = run_interp_temp_source("softclip-grad-loop-raw", source_loop, 5);
     println!("Softclip d_raw first 5: {:?}", &outs2[0][..5]);
+}
+
+#[test]
+fn corpus_tbptt_select2_pole_converges_to_silence() {
+    // One-pole with a half-wave gain (`select2`) in the feedback path: the
+    // block reverse sweep routes the adjoint through the taken branch.
+    assert_tbptt_converges("rad_tbptt_select2_pole", 4000, 200, 0.2);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 faust-rs-golden-v1
 source=rad_tbptt_one_pole.dsp
-bytes=1665
-lines=47
-fnv1a64=833c840ac139cb1f
+bytes=1781
+lines=49
+fnv1a64=a8612e5bf549bef1

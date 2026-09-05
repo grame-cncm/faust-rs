@@ -30,7 +30,6 @@ use crate::signal_fir::module::HashSet;
 use crate::signal_fir::module::SigMatch;
 use crate::signal_fir::module::SignalToFirLower;
 use crate::signal_fir::module::dump_sig_readable;
-use crate::signal_fir::module::list_to_vec;
 use crate::signal_fir::module::match_sig;
 use crate::signal_fir::module::match_sym_ref;
 use crate::signal_fir::recursion::RecArrayInfo;
@@ -336,38 +335,11 @@ impl<'a> SignalToFirLower<'a> {
         }
 
         // ── Fast path: SigBlockReverseAD carrier ──
-        if let SigMatch::BlockReverseAD {
-            body,
-            primal_count,
-            seeds,
-            cotangents,
-            policy: _,
-        } = match_sig(self.arena, group)
-        {
-            let pc = usize::try_from(primal_count).map_err(|_| {
-                SignalFirError::new(
-                    SignalFirErrorCode::UnsupportedSignalNode,
-                    format!("negative primal_count in BlockReverseAD Proj({index})"),
-                )
-            })?;
-            let body_sigs = list_to_vec(self.arena, body).ok_or_else(|| {
-                SignalFirError::new(
-                    SignalFirErrorCode::UnsupportedSignalNode,
-                    "malformed body list in BlockReverseAD".to_string(),
-                )
-            })?;
-            let seed_sigs = list_to_vec(self.arena, seeds).ok_or_else(|| {
-                SignalFirError::new(
-                    SignalFirErrorCode::UnsupportedSignalNode,
-                    "malformed seed list in BlockReverseAD".to_string(),
-                )
-            })?;
-            let cotangent_sigs = list_to_vec(self.arena, cotangents).ok_or_else(|| {
-                SignalFirError::new(
-                    SignalFirErrorCode::UnsupportedSignalNode,
-                    "malformed cotangent list in BlockReverseAD".to_string(),
-                )
-            })?;
+        if matches!(
+            match_sig(self.arena, group),
+            SigMatch::BlockReverseAD { .. }
+        ) {
+            let (pc, body_sigs, seed_sigs, cotangent_sigs) = self.decode_bra_carrier(group)?;
             return self.lower_block_reverse_ad_proj(
                 node,
                 group,

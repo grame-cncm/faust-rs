@@ -3,15 +3,17 @@
 // Target (black box): y_target[n] = x[n] + p_star * y_target[n-1]
 // Learned model:      y_pred[n]   = x[n] + p[n]   * y_pred[n-1]
 //
-// The outer `loop ~ _` updates p every sample (BS=1 TBPTT).  The inner
-// IIR `+ ~ *(p)` is a primal recursive state inside the BRA body, which
-// introduces a Delay1 carry in the backward sweep.  With BS=1 the carry
-// approximates the future adjoint as zero within each compute() call,
-// making the effective gradient:
+// The outer `loop ~ _` updates p every sample.  The inner IIR `+ ~ *(p)`
+// is a primal recursive state inside the BRA body.  The gradient is
+// consumed at the sample that produces it, so the sweep runs in the
+// forward loop with a one-sample horizon: the past state y_pred[n-1] is
+// held fixed and no adjoint carry crosses samples.  The effective
+// gradient is the direct term
 //
-//   d(loss)/dp ≈ -2 * (y_target - y_pred) * y_pred[n-1]   (direct term)
+//   d(loss)/dp = -2 * (y_target - y_pred) * y_pred[n-1]
 //
-// plus a carry term from the previous compute() call boundary.
+// (the pseudo-linear-regression gradient of adaptive IIR filtering), not
+// the derivative through the recursion that `fad` would carry.
 //
 // Update:      p[n+1] = clip(p[n] - lr * d(loss)/dp, -0.99, 0.99)
 // Convergence: p[n] → p_star; residual → 0.

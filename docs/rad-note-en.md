@@ -249,10 +249,63 @@ unrecognized foreign functions still surface targeted diagnostics.
 
 The `BlockReverseAD` lowering evaluates the primal body forward over
 the current `compute(count)` block, records the intermediate values it
-needs in real-valued BRA tapes, then runs the backward sweep over that
-same block. The gradient lanes are per-sample contributions for the
-block-local objective; users can sum them over the block or reduce them
-in DSP code with a block length such as `ma.BS`.
+needs in BRA tapes (real-valued, plus one integer tape per `select2`
+condition), then runs the backward sweep over that same block. The
+gradient lanes are per-sample contributions for the block-local
+objective; users can sum them over the block or reduce them in DSP code
+with a block length such as `ma.BS`.
+
+Seeds are leaves of the block sweep exactly as they are of the symbolic
+sweep: the postorder records a seed and does not descend into whatever
+computes it, and no adjoint flows below it. A seed may therefore be the
+output of a clamp, of a `select2` initialisation gate, or of an
+optimizer's own recursion, and the block sweep neither rejects that
+computation nor leaks a carry into it. `select2` inside the body follows
+the symbolic rule (§3.5): the adjoint is routed to the branch that was
+taken at that sample, the condition being replayed from its tape.
+
+The carry of a recursion lands on its output wherever that output sits
+in the body. A loss is rarely the recursive output itself: `(y -
+target)^2`, `select2(t, y * y, ...)`, `2 * y` all keep `y = proj(0,
+rec)` as an interior node. Before the reverse walk, the sweep pre-seeds
+`adj[y[n]]` with the carry `adj[y[n+1]] · ∂y[n+1]/∂y[n]` stored by the
+previous reverse step, keyed by recursion variable and slot, for every
+real-valued projection of the postorder. Integer recursions in the body
+(an LCG noise source, a counter) have no temporal derivative and get no
+carry. Matching only carrier roots, as the sweep first did, cut the
+adjoint chain through time for every loss with an interior recursive
+output: each sample kept its direct term only, which the convergence
+fixtures did not notice and a finite-difference check does (6.7 vs 29.7
+for `rad(y * y, c)` with `y = c : + ~ sin`).
+
+A carrier whose public projections are all gradients -- `rad(loss, p) :
+!, _` -- has no primal output to drive its forward pass. The lowering
+collects such carriers under the reverse-time outputs
+(`bra_groups_of_reverse_outputs`), opens the forward slice for them and
+runs `ensure_bra_forward_pass`: the body is lowered at the top level
+and its tapes are planned there, so the reverse loop reads a taped
+primal instead of a recursion it cannot recompute backwards. The
+gradient lanes of `rad(loss, p) : !, _` are those of `rad(loss, p)` with
+the primal dropped.
+
+Where the sweep runs decides its horizon. A public gradient output is
+lowered in the reverse loop, which walks the block backwards: the carry
+stored at one step is the adjoint of the next sample, and the gradient
+is the block-local one described above. A gradient consumed inside the
+graph -- `p_next = p - lr * (rad(loss(p), p) : !, _)` in an adaptation
+recursion -- is lowered in the forward loop, at the sample that consumes
+it: the horizon is that sample, the past state of the body is held
+fixed, and the gradient is the direct term (`2 (y - t) y[n-1]` for a
+one-pole: the pseudo-linear-regression gradient of adaptive IIR
+filtering), not the derivative through the recursion that `fad`
+carries. No carry is declared there. A carry in the forward loop would
+be stored at `n-1` and read at `n` -- the adjoint recurrence run
+forward in time, which is neither gradient; that is what the sweep did
+before `bra_sweep_is_causal` gated the carries. Block-exact reverse
+gradients that feed back into the graph would need the update to wait
+for the end of the block: that is the host-driven pattern of
+[docs/rad-usage-en.md](rad-usage-en.md), or a future explicit-horizon
+mode.
 
 The plan still reserves `rad(expr, seeds, horizon)` and `-rad-horizon N`
 for a future explicit-horizon mode; current BRA semantics use the
@@ -337,7 +390,11 @@ parity tests in `crates/compiler/tests/rad_runtime.rs`.
   — RAD vs FAD parity, RAD vs central finite differences, repeated /
   absent seeds, multi-output sum cotangent, read-only table index,
   supported unary FFun families (`tanh`, `sinh`, `cosh`, `atanh`,
-  `asinh`, `acosh`), and recursive BRA cases.
+  `asinh`, `acosh`), and recursive BRA cases: the block gradient of an
+  interior recursive output, of a `select2` in a recursive body and of a
+  gradient-only public output against finite differences, a computed
+  seed as a leaf, and the one-sample horizon of the in-graph sweep
+  (`in_graph_rad_*`: direct term vs `fad`, no carry declared).
 - **Backend parity** ([crates/compiler/tests/signal_fir_lane.rs](../crates/compiler/tests/signal_fir_lane.rs))
   — C, C++, interpreter, and Cranelift lowering of RAD/BRA shapes within the
   current fast-lane subset.
@@ -386,8 +443,13 @@ of latency and memory footprints before merge.
 - `RadBodyArity` / `RadSeedArity` / `RadUnsupportedNode` diagnostics:
   [crates/propagate/src/error.rs](../crates/propagate/src/error.rs), in the
   `ToDiagnostic` implementation for `PropagateError`.
-- `BlockReverseAD` FIR lowering:
-  [crates/transform/src/signal_fir/block_reverse_ad.rs](../crates/transform/src/signal_fir/block_reverse_ad.rs).
+- `BlockReverseAD` FIR lowering: postorder and tape planning in
+  [crates/transform/src/signal_fir/block_reverse_ad.rs](../crates/transform/src/signal_fir/block_reverse_ad.rs),
+  the block sweep, carries and backward rules in
+  [crates/transform/src/signal_fir/module/bra.rs](../crates/transform/src/signal_fir/module/bra.rs),
+  the forward/reverse slice split in
+  [crates/transform/src/signal_fir/module/build.rs](../crates/transform/src/signal_fir/module/build.rs)
+  (`lower_sample_slices`).
 - Stateful RAD feasibility classifier:
   [crates/propagate/src/stateful_rad.rs](../crates/propagate/src/stateful_rad.rs).
 - Implementation plan:

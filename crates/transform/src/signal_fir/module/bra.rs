@@ -30,6 +30,7 @@ use crate::signal_fir::module::SigMatch;
 use crate::signal_fir::module::SignalToFirLower;
 use crate::signal_fir::module::TreeId;
 use crate::signal_fir::module::collect_bra_postorder;
+use crate::signal_fir::module::collect_select2_conditions;
 use crate::signal_fir::module::collect_tape_needed_values;
 use crate::signal_fir::module::dump_sig_readable;
 use crate::signal_fir::module::list_to_vec;
@@ -82,8 +83,16 @@ pub(super) struct BraState {
     /// `load_bra_fwd_value`.  Acts as a per-signal idempotency guard: a
     /// signal is never taped twice even when `ensure_bra_tape_stores` is
     /// called once per primal body slot.
-    pub(super) tape_store_var: HashMap<SigId, String>,
+    pub(super) tape_store_var: HashMap<SigId, (String, FirType)>,
+    /// Carriers whose primal bodies were lowered (and taped) by the forward
+    /// slice on behalf of gradient-only public projections. Keyed by the
+    /// group `SigId`; see `ensure_bra_forward_pass`.
+    pub(super) forward_scheduled: HashSet<SigId>,
 }
+
+/// The decoded lists of a `SigBlockReverseAD` carrier:
+/// `(primal_count, body_sigs, seed_sigs, cotangent_sigs)`.
+pub(super) type BraCarrierLists = (usize, Vec<SigId>, Vec<SigId>, Vec<SigId>);
 
 impl<'a> SignalToFirLower<'a> {
     /// Emits `compute()`-preamble resets for `ReverseTimeRec` (LTI adjoint)
@@ -198,6 +207,69 @@ impl<'a> SignalToFirLower<'a> {
         }
     }
 
+    /// Decodes the lists of a `SigBlockReverseAD` carrier.
+    pub(super) fn decode_bra_carrier(
+        &self,
+        group: SigId,
+    ) -> Result<BraCarrierLists, SignalFirError> {
+        let SigMatch::BlockReverseAD {
+            body,
+            primal_count,
+            seeds,
+            cotangents,
+            policy: _,
+        } = match_sig(self.arena, group)
+        else {
+            return Err(SignalFirError::new(
+                SignalFirErrorCode::UnsupportedSignalNode,
+                "expected a BlockReverseAD carrier".to_string(),
+            ));
+        };
+        let pc = usize::try_from(primal_count).map_err(|_| {
+            SignalFirError::new(
+                SignalFirErrorCode::UnsupportedSignalNode,
+                "negative primal_count in BlockReverseAD".to_string(),
+            )
+        })?;
+        let list = |list: SigId, what: &str| {
+            list_to_vec(self.arena, list).ok_or_else(|| {
+                SignalFirError::new(
+                    SignalFirErrorCode::UnsupportedSignalNode,
+                    format!("malformed {what} list in BlockReverseAD"),
+                )
+            })
+        };
+        Ok((
+            pc,
+            list(body, "body")?,
+            list(seeds, "seed")?,
+            list(cotangents, "cotangent")?,
+        ))
+    }
+
+    /// Runs the primal of `group` forward over the block and plans its tapes,
+    /// on behalf of a carrier whose public projections are all gradients.
+    ///
+    /// `rad(loss, p) : !, _` keeps the gradient and drops the primal, so no
+    /// primal projection is ever lowered: without this pass the program had
+    /// no forward loop at all (or a forward loop without the carrier's
+    /// primal), and the reverse sweep read a recursion it cannot recompute
+    /// backwards. Called from the forward slice, at the top level, so every
+    /// body is lowered in its own recursion context. Idempotent per group;
+    /// the per-signal guards of `lower_signal` and `ensure_bra_tape_stores`
+    /// make it harmless for a carrier whose primal is also a public output.
+    pub(super) fn ensure_bra_forward_pass(&mut self, group: SigId) -> Result<(), SignalFirError> {
+        if !self.bra.forward_scheduled.insert(group) {
+            return Ok(());
+        }
+        let (_pc, body_sigs, seed_sigs, cotangent_sigs) = self.decode_bra_carrier(group)?;
+        for &body in &body_sigs {
+            let _ = self.lower_signal(body)?;
+            self.ensure_bra_tape_stores(group, &[body], &seed_sigs, &cotangent_sigs)?;
+        }
+        Ok(())
+    }
+
     /// Lowers a `Proj(index, BlockReverseAD)` node.
     ///
     /// - Slots `0 .. primal_count - 1` are **primal** outputs: the body
@@ -255,16 +327,27 @@ impl<'a> SignalToFirLower<'a> {
             })
     }
 
+    /// True while the sweep is emitted in the forward sample loop: the
+    /// gradient is consumed by a forward-time expression (an in-graph
+    /// adaptation loop), so the sweep runs at the sample that consumes it
+    /// and its horizon is that single sample -- the past state of the body is
+    /// held fixed. A carry would flow *forward* in time there (the adjoint
+    /// recurrence would read at `n` what was stored at `n-1`), which is
+    /// neither the block-local gradient nor a causal derivative. Only the
+    /// reverse loop, iterating backwards over the block, can read "the
+    /// previous step" as the adjoint of the next sample.
+    fn bra_sweep_is_causal(&self) -> bool {
+        !self.rad_reverse.lowering_reverse_loop
+    }
+
     /// Ensures the TBPTT(BS, BS) backward adjoint sweep for `group` has been
     /// emitted into the current sample-loop phase.
     ///
     /// The phase may be the explicit reverse loop for public RAD gradient
-    /// outputs, or the forward loop when the gradient projection is an internal
-    /// operand of a causal expression.  This function should therefore avoid
-    /// assuming `self.lowering_reverse_loop == true`; it emits a local transpose
-    /// program against the loop variable `i0` and lets the caller's scheduling
-    /// context determine whether `i0` advances forward or backward in generated
-    /// C++.
+    /// outputs, where `i0` runs backwards over the block and carries link the
+    /// samples, or the forward loop when the gradient projection is an internal
+    /// operand of a causal expression, where the horizon is the current sample
+    /// and no carry is declared (`bra_sweep_is_causal`).
     ///
     /// The sweep is emitted **at most once** per group per loop slice; the
     /// `bra_state_scheduled` guard prevents re-emission when multiple gradient
@@ -298,11 +381,13 @@ impl<'a> SignalToFirLower<'a> {
             return Ok(());
         }
 
-        // 1. Collect unified postorder.
+        // 1. Collect unified postorder. Seeds are leaves: the walk records them
+        //    (their adjoint is the gradient) and does not descend into them.
+        let stops: HashSet<SigId> = seed_sigs.iter().copied().collect();
         let mut visited = std::collections::HashSet::new();
         let mut postorder = Vec::new();
         for &body in body_sigs {
-            collect_bra_postorder(self.arena, body, &mut visited, &mut postorder);
+            collect_bra_postorder(self.arena, body, &stops, &mut visited, &mut postorder);
         }
 
         // 2. Lower cotangent signals.
@@ -339,19 +424,35 @@ impl<'a> SignalToFirLower<'a> {
         // flat index into `body_sigs` (which would be wrong when multiple groups
         // all have slot=0).
         //
-        // Build: (SYMREC var TreeId, proj slot) → body_sig  from body_sigs.
+        // Build: (SYMREC var TreeId, proj slot) → the `Proj(slot, SYMREC)` node
+        // of the postorder. The recursive output is rarely a carrier root
+        // itself: a loss is `(y - target)^2`, `select2(t, y*y, ...)`, and so
+        // on, with `y` an interior node. The carry has to land on that node
+        // wherever it sits, or the adjoint chain through time is cut and each
+        // sample only keeps its direct term. Only real-valued projections
+        // carry an adjoint: an integer recursion in the body (an LCG noise
+        // source, a counter) has no temporal derivative, and a real carry
+        // added to it would type-clash with its integer body.
+        //
+        // In the forward sample loop (`bra_sweep_is_causal`) there is no
+        // carry at all: the horizon is the current sample.
+        let real_ty = self.real_ty.clone();
+        let causal = self.bra_sweep_is_causal();
         let mut var_slot_to_body_sig: HashMap<(TreeId, usize), SigId> = HashMap::new();
-        for &body_sig in body_sigs {
-            if let SigMatch::Proj(bslot, bgroup) = match_sig(self.arena, body_sig)
+        for &sig in &postorder {
+            if !causal
+                && let SigMatch::Proj(bslot, bgroup) = match_sig(self.arena, sig)
                 && let Some((bvar, _)) = match_sym_rec(self.arena, bgroup)
+                && self.signal_fir_type(sig)? == real_ty
             {
                 let bslot_usize = usize::try_from(bslot).unwrap_or(usize::MAX);
-                var_slot_to_body_sig.insert((bvar, bslot_usize), body_sig);
+                var_slot_to_body_sig.insert((bvar, bslot_usize), sig);
             }
         }
 
         for &sig in &postorder {
-            if let SigMatch::Delay1(x) = match_sig(self.arena, sig)
+            if !causal
+                && let SigMatch::Delay1(x) = match_sig(self.arena, sig)
                 && let SigMatch::Proj(slot, inner_group) = match_sig(self.arena, x)
                 && let Some(ref_var) = match_sym_ref(self.arena, inner_group)
             {
@@ -388,8 +489,12 @@ impl<'a> SignalToFirLower<'a> {
             );
         }
 
-        // 4. Backward propagation in reverse postorder.
+        // 4. Backward propagation in reverse postorder. A seed's adjoint is
+        //    the gradient itself; nothing flows below it.
         for &sig in postorder.iter().rev() {
+            if stops.contains(&sig) {
+                continue;
+            }
             let y_bar = match adj.get(&sig).copied() {
                 Some(fir) => fir,
                 None => continue,
@@ -438,6 +543,12 @@ impl<'a> SignalToFirLower<'a> {
         group: SigId,
     ) -> Result<(), SignalFirError> {
         let real_ty = self.real_ty.clone();
+        if self.bra_sweep_is_causal() {
+            // One-sample horizon: `x[n-1]` belongs to the previous sample,
+            // outside it. Nothing to propagate, no carry.
+            let _ = (sig, x, y_bar, adj, group);
+            return Ok(());
+        }
 
         // y[n] = x[n-1].  Adjoint: adj[x][n-1] += adj[y][n].
         //
@@ -506,7 +617,9 @@ impl<'a> SignalToFirLower<'a> {
         if c == 0 {
             // Zero delay: y = x.
             Self::add_to_adjoint(&mut self.store, adj, sig_inner, y_bar, real_ty);
-        } else {
+        } else if !self.bra_sweep_is_causal() {
+            // (In the forward sample loop the horizon is the current sample:
+            // `x[n-c]` is outside it, nothing to propagate, no carry.)
             let carry_name = self.ensure_bra_delay_array_carry(sig, c)?;
             let c_fir = {
                 let mut b = FirBuilder::new(&mut self.store);
@@ -559,21 +672,25 @@ impl<'a> SignalToFirLower<'a> {
         //
         // The i0==0 condition for the init contribution is emitted as
         // a FIR Select2: contrib = y_bar * (i0 == 0 ? 1 : 0).
-        let carry_name = self.ensure_bra_delay1_carry(sig, sig)?;
-        let rt = self.real_ty();
-        let carry_load = {
-            let mut b = FirBuilder::new(&mut self.store);
-            b.load_var(carry_name.clone(), AccessType::Struct, rt)
-        };
-        let carry_store = {
-            let mut b = FirBuilder::new(&mut self.store);
-            b.store_var(carry_name, AccessType::Struct, y_bar)
-        };
-        self.regions
-            .current_phases_mut()
-            .post_output
-            .push(carry_store);
-        Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty.clone());
+        if !self.bra_sweep_is_causal() {
+            // (In the forward sample loop the horizon is the current sample:
+            // `x[n-1]` is outside it, nothing to propagate, no carry.)
+            let carry_name = self.ensure_bra_delay1_carry(sig, sig)?;
+            let rt = self.real_ty();
+            let carry_load = {
+                let mut b = FirBuilder::new(&mut self.store);
+                b.load_var(carry_name.clone(), AccessType::Struct, rt)
+            };
+            let carry_store = {
+                let mut b = FirBuilder::new(&mut self.store);
+                b.store_var(carry_name, AccessType::Struct, y_bar)
+            };
+            self.regions
+                .current_phases_mut()
+                .post_output
+                .push(carry_store);
+            Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty.clone());
+        }
         // Conditional init contribution: y_bar when i0 == 0, else 0.
         let i0 = {
             let mut b = FirBuilder::new(&mut self.store);
@@ -791,6 +908,31 @@ impl<'a> SignalToFirLower<'a> {
                 self.propagate_bra_proj_adj(slot, group_sig, y_bar, adj)?;
             }
 
+            // ── Select2(cond, else, then): adjoint to the selected branch ───
+            //
+            // Signal `select2(cond, a, b)` is `a` when `cond == 0` and `b`
+            // otherwise. The adjoint flows to the branch that was taken at
+            // this sample, so the condition is replayed from its tape; the
+            // condition itself is a discrete choice and receives nothing.
+            SigMatch::Select2(cond, else_value, then_value) => {
+                let cond_val = self.load_bra_fwd_value(cond)?;
+                let cond_is_real = self.signal_fir_type(cond)? == real_ty;
+                let zero = self.float_const(0.0);
+                let (then_bar, else_bar) = {
+                    let mut b = FirBuilder::new(&mut self.store);
+                    let test = if cond_is_real {
+                        b.cast(FirType::Int32, cond_val)
+                    } else {
+                        cond_val
+                    };
+                    let then_bar = b.select2(test, y_bar, zero, real_ty.clone());
+                    let else_bar = b.select2(test, zero, y_bar, real_ty.clone());
+                    (then_bar, else_bar)
+                };
+                Self::add_to_adjoint(&mut self.store, adj, then_value, then_bar, real_ty.clone());
+                Self::add_to_adjoint(&mut self.store, adj, else_value, else_bar, real_ty);
+            }
+
             other => {
                 return Err(SignalFirError::new(
                     SignalFirErrorCode::UnsupportedSignalNode,
@@ -921,14 +1063,16 @@ impl<'a> SignalToFirLower<'a> {
         &mut self,
         _group: SigId,
         body_sigs: &[SigId],
-        _seed_sigs: &[SigId],
+        seed_sigs: &[SigId],
         _cotangent_sigs: &[SigId],
     ) -> Result<(), SignalFirError> {
-        // 1. Build postorder over the supplied body roots.
+        // 1. Build postorder over the supplied body roots, stopping at the
+        //    seeds as the backward sweep does.
+        let stops: HashSet<SigId> = seed_sigs.iter().copied().collect();
         let mut visited = std::collections::HashSet::new();
         let mut postorder = Vec::new();
         for &body in body_sigs {
-            collect_bra_postorder(self.arena, body, &mut visited, &mut postorder);
+            collect_bra_postorder(self.arena, body, &stops, &mut visited, &mut postorder);
         }
 
         // 2. Determine which values need to be taped.
@@ -936,6 +1080,7 @@ impl<'a> SignalToFirLower<'a> {
         if tape_needed.is_empty() {
             return Ok(());
         }
+        let select2_conditions = collect_select2_conditions(self.arena, &postorder);
 
         // 3. Emit tape stores in deterministic (postorder) order.
         let mut tape_sigs: Vec<SigId> = tape_needed.into_iter().collect();
@@ -949,7 +1094,7 @@ impl<'a> SignalToFirLower<'a> {
             }
             let real_ty = self.real_ty.clone();
             let v_ty = self.signal_fir_type(v)?;
-            if v_ty != real_ty {
+            if v_ty != real_ty && !select2_conditions.contains(&v) {
                 // `collect_tape_needed_values` is structural: it walks the full
                 // body postorder and can see integer islands below a
                 // `FloatCast`, notably LCG-style noise recursions.  Those
@@ -960,24 +1105,26 @@ impl<'a> SignalToFirLower<'a> {
                 // promoted `FloatCast` node; that node is the candidate to tape
                 // when needed.  Skip non-real candidates here rather than
                 // silently casting and hiding a missing Signal-level promotion.
+                // The one integer the sweep replays is a `select2` condition,
+                // taped with its own type.
                 continue;
             }
             let tape_name = format!("fBraTape{}", self.name_gen.next_loop_var_id);
             self.name_gen.next_loop_var_id += 1;
             // Declare as a fixed-size array struct field.
-            let tape_ty = FirType::Array(Box::new(real_ty.clone()), MAX_BRA_TAPE_BLOCK_SIZE);
+            let tape_ty = FirType::Array(Box::new(v_ty.clone()), MAX_BRA_TAPE_BLOCK_SIZE);
             self.ensure_named_struct_var(&tape_name, tape_ty, None);
-            // Lower the value in the current (forward) loop context.
-            // BRA tapes are homogeneous `real_ty` arrays because the reverse
-            // rules consume recorded forward values in real adjoint arithmetic.
+            // Lower the value in the current (forward) loop context. Real
+            // tapes feed the adjoint arithmetic; an integer tape only ever
+            // drives a `select2` in the reverse loop.
             let v_fir = self.lower_signal(v)?;
-            if self.store.value_type(v_fir) != Some(real_ty.clone()) {
+            if self.store.value_type(v_fir) != Some(v_ty.clone()) {
                 let sig_text = dump_sig_readable(self.arena, v);
                 let got = self.store.value_type(v_fir);
                 return Err(SignalFirError::new(
                     SignalFirErrorCode::UnsupportedSignalNode,
                     format!(
-                        "BlockReverseAD real tape-needed signal {sig_text} lowered to FIR type {got:?}, expected {real_ty:?}; integer/real promotion must be resolved before FIR lowering"
+                        "BlockReverseAD tape-needed signal {sig_text} lowered to FIR type {got:?}, expected {v_ty:?}; integer/real promotion must be resolved before FIR lowering"
                     ),
                 ));
             }
@@ -993,7 +1140,7 @@ impl<'a> SignalToFirLower<'a> {
                 b.store_table(tape_name.clone(), AccessType::Struct, idx, v_fir)
             };
             self.regions.current_phases_mut().immediate.push(store_stmt);
-            self.bra.tape_store_var.insert(v, tape_name);
+            self.bra.tape_store_var.insert(v, (tape_name, v_ty));
         }
         Ok(())
     }
@@ -1011,12 +1158,11 @@ impl<'a> SignalToFirLower<'a> {
     /// tape[i0] during the backward sweep at step `n` retrieves the forward
     /// value stored at forward step `n`.
     pub(super) fn load_bra_fwd_value(&mut self, sig: SigId) -> Result<FirId, SignalFirError> {
-        if let Some(tape_name) = self.bra.tape_store_var.get(&sig).cloned() {
-            let real_ty = self.real_ty();
+        if let Some((tape_name, tape_ty)) = self.bra.tape_store_var.get(&sig).cloned() {
             let idx = self.bra_tape_index();
             let load = {
                 let mut b = FirBuilder::new(&mut self.store);
-                b.load_table(tape_name, AccessType::Struct, idx, real_ty)
+                b.load_table(tape_name, AccessType::Struct, idx, tape_ty)
             };
             Ok(load)
         } else {

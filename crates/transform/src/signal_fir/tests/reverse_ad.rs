@@ -467,6 +467,93 @@ fn bra_body_with_integer_float_cast_compiles() {
         .expect("BRA body with FloatCast(int_rec) must compile without BinOp type mismatch");
 }
 
+/// A seed is a leaf of the block reverse sweep, whatever computes it.
+///
+/// Here the seed is `select2(delay1(x0) > 0, x1, x2)`: a `select2` fed by a
+/// stateful condition, the shape of an optimizer's `init`/`reset` gate. The
+/// backward pass has no rule to offer *below* a seed and must not look for
+/// one: before the postorder stopped at seeds, this circuit was rejected with
+/// `FRS-SFIR-0004` on the `Select2` node.
+#[test]
+fn bra_seed_computed_with_select2_is_a_leaf() {
+    let mut arena = TreeArena::new();
+
+    let x0 = SigBuilder::new(&mut arena).input(0);
+    let x1 = SigBuilder::new(&mut arena).input(1);
+    let x2 = SigBuilder::new(&mut arena).input(2);
+    let zero = SigBuilder::new(&mut arena).real(0.0);
+    let x0_prev = SigBuilder::new(&mut arena).delay1(x0);
+    let cond = SigBuilder::new(&mut arena).gt(x0_prev, zero);
+    let seed = SigBuilder::new(&mut arena).select2(cond, x1, x2);
+    let body = SigBuilder::new(&mut arena).binop(BinOp::Mul, seed, seed);
+    let cot = SigBuilder::new(&mut arena).real(1.0);
+
+    let carrier = SigBuilder::new(&mut arena).block_reverse_ad(
+        &[body],
+        &[seed],
+        &[cot],
+        BlockRevPolicy::TapeFull,
+    );
+    let primal = SigBuilder::new(&mut arena).proj(0, carrier);
+    let grad = SigBuilder::new(&mut arena).proj(1, carrier);
+
+    compile_fastlane_without_ui(&arena, &[primal, grad], 3, 2, &SignalFirOptions::default())
+        .expect("a seed computed with select2 must compile: the sweep stops at the seed");
+}
+
+/// `select2` inside the differentiated body: the adjoint is routed to the
+/// branch that was taken, so the condition is replayed from an integer tape.
+///
+/// Circuit: `body = select2(delay1(x0) > 0, 2 * s, 3 * s)` seeded on `s`. The
+/// condition is not trivially reverse-evaluable (it reads a delay), so a
+/// `fBraTape*` struct field must be declared for it.
+#[test]
+fn bra_select2_in_body_tapes_the_condition_and_compiles() {
+    let mut arena = TreeArena::new();
+
+    let x0 = SigBuilder::new(&mut arena).input(0);
+    let s = SigBuilder::new(&mut arena).input(1);
+    let zero = SigBuilder::new(&mut arena).real(0.0);
+    let two = SigBuilder::new(&mut arena).real(2.0);
+    let three = SigBuilder::new(&mut arena).real(3.0);
+    let x0_prev = SigBuilder::new(&mut arena).delay1(x0);
+    let cond = SigBuilder::new(&mut arena).gt(x0_prev, zero);
+    let a = SigBuilder::new(&mut arena).binop(BinOp::Mul, two, s);
+    let b = SigBuilder::new(&mut arena).binop(BinOp::Mul, three, s);
+    let body = SigBuilder::new(&mut arena).select2(cond, a, b);
+    let cot = SigBuilder::new(&mut arena).real(1.0);
+
+    let carrier = SigBuilder::new(&mut arena).block_reverse_ad(
+        &[body],
+        &[s],
+        &[cot],
+        BlockRevPolicy::TapeFull,
+    );
+    let primal = SigBuilder::new(&mut arena).proj(0, carrier);
+    let grad = SigBuilder::new(&mut arena).proj(1, carrier);
+
+    let out =
+        compile_fastlane_without_ui(&arena, &[primal, grad], 2, 2, &SignalFirOptions::default())
+            .expect("select2 in a BRA body must compile");
+
+    let FirMatch::Module { dsp_struct, .. } = match_fir(&out.store, out.module) else {
+        panic!("module root expected");
+    };
+    let FirMatch::Block(struct_items) = match_fir(&out.store, dsp_struct) else {
+        panic!("dsp_struct block expected");
+    };
+    let has_tape = struct_items.iter().any(|id| {
+        matches!(
+            match_fir(&out.store, *id),
+            FirMatch::DeclareVar { ref name, .. } if name.starts_with("fBraTape")
+        )
+    });
+    assert!(
+        has_tape,
+        "the select2 condition reads a delay and must be replayed from a fBraTape* field"
+    );
+}
+
 #[test]
 fn block_reverse_ad_program_is_rejected_under_one_sample() {
     // Execution-options port D2: `-os` has no meaning for block-scoped

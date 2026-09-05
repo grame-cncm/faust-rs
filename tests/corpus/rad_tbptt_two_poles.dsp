@@ -11,14 +11,16 @@
 //   Stage 1: z[n]      = x[n] + p1 * z[n-1]
 //   Stage 2: y_pred[n] = z[n] + p2 * y_pred[n-1]
 //
-// The backward sweep propagates through Stage 2 first, then Stage 1,
-// each carrying a Delay1 adjoint across the SYMREC boundary.  This
-// exercises the nested-IIR BRA path — two levels of `Delay1(SYMREF)`
-// carry in the same sweep.
+// The backward sweep propagates through Stage 2 first, then Stage 1.
+// The gradient is consumed at the sample that produces it, so the sweep
+// runs in the forward loop with a one-sample horizon: both
+// `Delay1(SYMREF)` back-edges are outside it and no carry crosses
+// samples.  This exercises the nested-IIR BRA path — two recursive
+// states in the same sweep.
 //
-// Gradients (approximate, BS=1 direct term):
-//   d(loss)/dp1 ≈ -2*e * (p2-filtered version of z[n-1])
-//   d(loss)/dp2 ≈ -2*e * y_pred[n-1]
+// Gradients (direct terms, past state held fixed):
+//   d(loss)/dp1 = -2*e * z[n-1]
+//   d(loss)/dp2 = -2*e * y_pred[n-1]
 // where e = y_target - y_pred.
 //
 // Update:
