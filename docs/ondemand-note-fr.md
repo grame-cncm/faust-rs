@@ -376,6 +376,22 @@ mise à jour dans le **même** domaine.
   FAD/RAD avec les domaines d'horloge** — faust-rs en définit la sémantique, et
   l'oracle est l'accord numérique avec les différences finies.
 
+Un signal du domaine englobant lu dans un corps sans être l'une de ses
+entrées est *capturé* : il n'est pas échantillonné au tir, et quand le même
+nœud est aussi passé en entrée, cette entrée lit 0 elle aussi --
+`(clock, ba.time) : ondemand(\(u).(u, float(ba.time)))` sort 0 sur les deux
+voies à chaque tir. Passez les signaux extérieurs en entrées, et seulement
+en entrées. Le code de bibliothèque doit s'y plier aussi : `optimizers.lib`
+0.7.1 garde l'état d'une boucle comme écart à sa valeur initiale parce que
+la détection du premier échantillon de `pstate` lit un compteur du domaine
+englobant, qu'un bloc capture.
+
+Un `rad` dont la perte et les graines vivent dans un corps tourne dans le
+domaine du bloc, à la cadence des trames : le synthétiseur harmonique de
+[libraries/ddsp-examples-fr.md](../libraries/ddsp-examples-fr.md) (exemple
+11) ajuste ainsi seize amplitudes par une perte spectrale calculée une fois
+par trame.
+
 ## Voir aussi
 
 - [fad-note-en.md](fad-note-en.md) — différentiation en mode direct

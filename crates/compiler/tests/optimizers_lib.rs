@@ -190,6 +190,14 @@ fn descend_1d_clocked_learns_a_gain_once_per_frame() {
 }
 
 #[test]
+fn descend_1d_inside_an_ondemand_block_learns_a_gain() {
+    // The whole optimizer inside an `ondemand` block fired every 64 samples
+    // (tutorial, section 11.1): the loop's state must not depend on a
+    // first-sample gate captured across the clock boundary.
+    assert_converges("opt_descend_in_ondemand_gain", 20_000, 500, 0.01);
+}
+
+#[test]
 fn lsq_n_rad_with_nlms_learns_eight_fir_taps_from_one_reverse_sweep() {
     // Bus least-squares loop, eight taps, NLMS at level 10: the eight
     // sensitivities come from one reverse sweep per sample.

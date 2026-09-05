@@ -350,6 +350,21 @@ seed, the loss, and the update in the **same** domain.
   domains** — faust-rs defines those semantics, and the oracle is numerical
   agreement with finite differences.
 
+A signal of the enclosing domain read inside a body without being one of
+its inputs is *captured*: it is not sampled at the firing, and when the same
+node is also passed as an input, that input reads 0 as well --
+`(clock, ba.time) : ondemand(\(u).(u, float(ba.time)))` outputs 0 on both
+lanes at every firing. Pass outer signals as inputs, and only as inputs.
+Library code has to respect it too: `optimizers.lib` 0.7.1 keeps a loop's
+state as a deviation from its initial value because `pstate`'s first-sample
+gate reads a counter of the enclosing domain, which a block captures.
+
+A `rad` whose loss and seeds live inside a body runs in the block's domain,
+at frame rate: the harmonic synthesizer of
+[libraries/ddsp-examples-en.md](../libraries/ddsp-examples-en.md) (example
+11) fits sixteen amplitudes through a spectral loss computed once per frame
+that way.
+
 ## See also
 
 - [fad-note-en.md](fad-note-en.md) — forward-mode differentiation

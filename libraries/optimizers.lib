@@ -1,5 +1,5 @@
 declare name "Faust Differentiable Optimizers Library";
-declare version "0.7.0";
+declare version "0.7.1";
 declare author "faust-rs";
 declare license "MIT/LGPL-3.0";
 
@@ -53,6 +53,9 @@ declare license "MIT/LGPL-3.0";
 // process = op.descend_1D(loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
 // ```
 //
+// Changes in 0.7.1: the loops keep the deviation from the initial value in
+// their recursion instead of detecting the first sample, so they work inside
+// an `ondemand` body whatever its first firing; same trajectories.
 // Changes in 0.7.0: the bus loops `lsq_N`, `descend_N`, `descend_N_clocked`
 // and their reverse-mode twins `lsq_N_rad`, `descend_N_rad`,
 // `descend_N_rad_clocked`, for `N` parameters carried as a bus with one
@@ -80,10 +83,20 @@ ma = library("maths.lib");
 
 // Internal helpers (not part of the public API).
 _tiny = 0.000000000001;
-// 1 on the first sample, 0 afterwards.
-_first = ba.time == 0;
+// 1 on the first sample, 0 afterwards. Spelled as a bare counter rather than
+// `ba.time == 0`: inside an `ondemand` body an outer signal read without being
+// a block input is captured, and `ba.time`'s `mem` captured across the clock
+// boundary reads 0 at every firing, which would re-initialise `pstate` each
+// time; the counter is sampled at the firing and is 1 only at the first one.
+_first = (+(1) ~ _) == 1;
 _sqsum(x) = (x * x) : + ~ _;
 _expdecay(k) = (*(k) : +(_first)) ~ _;
+// The value of a learned parameter whose recursion keeps its *deviation*
+// from `init`: the deviation starts at 0 (a recursion's initial state) and
+// is cleared while `reset` is non-zero, so no first-sample detection is
+// involved and the loops work inside an `ondemand` body whatever its first
+// firing. The loops store `next - init`.
+_from_init(init, reset, delta) = init + select2(reset != 0.0, delta, 0.0);
 
 //=========================Signal Helpers and Parameter State===============================
 // Small building blocks shared by the engines and the loops: clipping, sign,
@@ -189,10 +202,16 @@ ema_bc(a, x) = ema(a, x) / ema(a, 1.0);
 // otherwise. Every loop of this library applies it to its recursive inputs,
 // which is what gives them an explicit initial value and a reset control.
 //
+// `pstate` detects the first sample with a counter; inside an `ondemand`
+// body that counter is captured from the enclosing domain and sampled at the
+// firing, so the gate is only right for a block that fires at the first
+// sample. The loops of this library do not use it: they keep the deviation
+// from `init` in their recursion (`_from_init`), which needs no clock.
+//
 // #### Usage
 //
 // ```
-// (loop ~ _) with { loop(prev) = ... pstate(init, reset, prev) ...; }
+// (loop ~ _) with { loop(prev) = ... _from_init(init, reset, prev) ...; }
 // ```
 //
 // Where:
@@ -1295,15 +1314,15 @@ sign_g(lr, g) = lr * sgn(g);
 // with { x = hslider("lsq_1D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_1D(mdl, upd1, lo1, hi1, init1, reset, target, x) = loop ~ _
+lsq_1D(mdl, upd1, lo1, hi1, init1, reset, target, x) = (loop ~ _) : +(init1)
 with {
     loop(prev1) = next1
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
         pt = fad(mdl(p1, x), p1);
         r = (pt : _, !) - target;
         j1 = pt : !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
     };
 };
 
@@ -1333,18 +1352,18 @@ with {
 // with { x = hslider("lsq_2D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_2D(mdl, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset, target, x) = loop ~ (_, _)
+lsq_2D(mdl, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset, target, x) = (loop ~ (_, _)) : (+(init1), +(init2))
 with {
     loop(prev1, prev2) = next1, next2
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
         pt = fad(mdl(p1, p2, x), (p1, p2));
         r = (pt : _, !, !) - target;
         j1 = pt : !, _, !;
         j2 = pt : !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
-        next2 = clip(lo2, hi2, p2 - upd2(r, j2));
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
+        next2 = clip(lo2, hi2, p2 - upd2(r, j2)) - init2;
     };
 };
 
@@ -1374,21 +1393,21 @@ with {
 // with { x = hslider("lsq_3D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_3D(mdl, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset, target, x) = loop ~ (_, _, _)
+lsq_3D(mdl, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset, target, x) = (loop ~ (_, _, _)) : (+(init1), +(init2), +(init3))
 with {
     loop(prev1, prev2, prev3) = next1, next2, next3
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
-        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
+        p3 = clip(lo3, hi3, _from_init(init3, reset, prev3));
         pt = fad(mdl(p1, p2, p3, x), (p1, p2, p3));
         r = (pt : _, !, !, !) - target;
         j1 = pt : !, _, !, !;
         j2 = pt : !, !, _, !;
         j3 = pt : !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
-        next2 = clip(lo2, hi2, p2 - upd2(r, j2));
-        next3 = clip(lo3, hi3, p3 - upd3(r, j3));
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
+        next2 = clip(lo2, hi2, p2 - upd2(r, j2)) - init2;
+        next3 = clip(lo3, hi3, p3 - upd3(r, j3)) - init3;
     };
 };
 
@@ -1418,24 +1437,24 @@ with {
 // with { x = hslider("lsq_4D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_4D(mdl, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset, target, x) = loop ~ (_, _, _, _)
+lsq_4D(mdl, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset, target, x) = (loop ~ (_, _, _, _)) : (+(init1), +(init2), +(init3), +(init4))
 with {
     loop(prev1, prev2, prev3, prev4) = next1, next2, next3, next4
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
-        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
-        p4 = clip(lo4, hi4, pstate(init4, reset, prev4));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
+        p3 = clip(lo3, hi3, _from_init(init3, reset, prev3));
+        p4 = clip(lo4, hi4, _from_init(init4, reset, prev4));
         pt = fad(mdl(p1, p2, p3, p4, x), (p1, p2, p3, p4));
         r = (pt : _, !, !, !, !) - target;
         j1 = pt : !, _, !, !, !;
         j2 = pt : !, !, _, !, !;
         j3 = pt : !, !, !, _, !;
         j4 = pt : !, !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
-        next2 = clip(lo2, hi2, p2 - upd2(r, j2));
-        next3 = clip(lo3, hi3, p3 - upd3(r, j3));
-        next4 = clip(lo4, hi4, p4 - upd4(r, j4));
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
+        next2 = clip(lo2, hi2, p2 - upd2(r, j2)) - init2;
+        next3 = clip(lo3, hi3, p3 - upd3(r, j3)) - init3;
+        next4 = clip(lo4, hi4, p4 - upd4(r, j4)) - init4;
     };
 };
 
@@ -1465,15 +1484,15 @@ with {
 // with { x = hslider("lsq_5D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_5D(mdl, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset, target, x) = loop ~ (_, _, _, _, _)
+lsq_5D(mdl, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset, target, x) = (loop ~ (_, _, _, _, _)) : (+(init1), +(init2), +(init3), +(init4), +(init5))
 with {
     loop(prev1, prev2, prev3, prev4, prev5) = next1, next2, next3, next4, next5
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
-        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
-        p4 = clip(lo4, hi4, pstate(init4, reset, prev4));
-        p5 = clip(lo5, hi5, pstate(init5, reset, prev5));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
+        p3 = clip(lo3, hi3, _from_init(init3, reset, prev3));
+        p4 = clip(lo4, hi4, _from_init(init4, reset, prev4));
+        p5 = clip(lo5, hi5, _from_init(init5, reset, prev5));
         pt = fad(mdl(p1, p2, p3, p4, p5, x), (p1, p2, p3, p4, p5));
         r = (pt : _, !, !, !, !, !) - target;
         j1 = pt : !, _, !, !, !, !;
@@ -1481,11 +1500,11 @@ with {
         j3 = pt : !, !, !, _, !, !;
         j4 = pt : !, !, !, !, _, !;
         j5 = pt : !, !, !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
-        next2 = clip(lo2, hi2, p2 - upd2(r, j2));
-        next3 = clip(lo3, hi3, p3 - upd3(r, j3));
-        next4 = clip(lo4, hi4, p4 - upd4(r, j4));
-        next5 = clip(lo5, hi5, p5 - upd5(r, j5));
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
+        next2 = clip(lo2, hi2, p2 - upd2(r, j2)) - init2;
+        next3 = clip(lo3, hi3, p3 - upd3(r, j3)) - init3;
+        next4 = clip(lo4, hi4, p4 - upd4(r, j4)) - init4;
+        next5 = clip(lo5, hi5, p5 - upd5(r, j5)) - init5;
     };
 };
 
@@ -1645,13 +1664,13 @@ optimize_5D(mdl, upd1, upd2, upd3, upd4, upd5, min1, max1, min2, max2, min3, max
 // with { x = hslider("descend_1D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_1D(loss, upd1, lo1, hi1, init1, reset) = loop ~ _
+descend_1D(loss, upd1, lo1, hi1, init1, reset) = (loop ~ _) : +(init1)
 with {
     loop(prev1) = next1
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
         g1 = fad(loss(p1), p1) : !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1));
+        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
     };
 };
 
@@ -1679,17 +1698,17 @@ with {
 // with { x = hslider("descend_2D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_2D(loss, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset) = loop ~ (_, _)
+descend_2D(loss, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset) = (loop ~ (_, _)) : (+(init1), +(init2))
 with {
     loop(prev1, prev2) = next1, next2
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
         gs = fad(loss(p1, p2), (p1, p2)) : !, _, _;
         g1 = gs : _, !;
         g2 = gs : !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1));
-        next2 = clip(lo2, hi2, p2 - upd2(g2));
+        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
+        next2 = clip(lo2, hi2, p2 - upd2(g2)) - init2;
     };
 };
 
@@ -1717,20 +1736,20 @@ with {
 // with { x = hslider("descend_3D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_3D(loss, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset) = loop ~ (_, _, _)
+descend_3D(loss, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset) = (loop ~ (_, _, _)) : (+(init1), +(init2), +(init3))
 with {
     loop(prev1, prev2, prev3) = next1, next2, next3
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
-        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
+        p3 = clip(lo3, hi3, _from_init(init3, reset, prev3));
         gs = fad(loss(p1, p2, p3), (p1, p2, p3)) : !, _, _, _;
         g1 = gs : _, !, !;
         g2 = gs : !, _, !;
         g3 = gs : !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1));
-        next2 = clip(lo2, hi2, p2 - upd2(g2));
-        next3 = clip(lo3, hi3, p3 - upd3(g3));
+        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
+        next2 = clip(lo2, hi2, p2 - upd2(g2)) - init2;
+        next3 = clip(lo3, hi3, p3 - upd3(g3)) - init3;
     };
 };
 
@@ -1758,23 +1777,23 @@ with {
 // with { x = hslider("descend_4D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_4D(loss, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset) = loop ~ (_, _, _, _)
+descend_4D(loss, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset) = (loop ~ (_, _, _, _)) : (+(init1), +(init2), +(init3), +(init4))
 with {
     loop(prev1, prev2, prev3, prev4) = next1, next2, next3, next4
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
-        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
-        p4 = clip(lo4, hi4, pstate(init4, reset, prev4));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
+        p3 = clip(lo3, hi3, _from_init(init3, reset, prev3));
+        p4 = clip(lo4, hi4, _from_init(init4, reset, prev4));
         gs = fad(loss(p1, p2, p3, p4), (p1, p2, p3, p4)) : !, _, _, _, _;
         g1 = gs : _, !, !, !;
         g2 = gs : !, _, !, !;
         g3 = gs : !, !, _, !;
         g4 = gs : !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1));
-        next2 = clip(lo2, hi2, p2 - upd2(g2));
-        next3 = clip(lo3, hi3, p3 - upd3(g3));
-        next4 = clip(lo4, hi4, p4 - upd4(g4));
+        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
+        next2 = clip(lo2, hi2, p2 - upd2(g2)) - init2;
+        next3 = clip(lo3, hi3, p3 - upd3(g3)) - init3;
+        next4 = clip(lo4, hi4, p4 - upd4(g4)) - init4;
     };
 };
 
@@ -1819,26 +1838,26 @@ with {
 // with { x = hslider("descend_5D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_5D(loss, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset) = loop ~ (_, _, _, _, _)
+descend_5D(loss, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset) = (loop ~ (_, _, _, _, _)) : (+(init1), +(init2), +(init3), +(init4), +(init5))
 with {
     loop(prev1, prev2, prev3, prev4, prev5) = next1, next2, next3, next4, next5
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
-        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
-        p4 = clip(lo4, hi4, pstate(init4, reset, prev4));
-        p5 = clip(lo5, hi5, pstate(init5, reset, prev5));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
+        p3 = clip(lo3, hi3, _from_init(init3, reset, prev3));
+        p4 = clip(lo4, hi4, _from_init(init4, reset, prev4));
+        p5 = clip(lo5, hi5, _from_init(init5, reset, prev5));
         gs = fad(loss(p1, p2, p3, p4, p5), (p1, p2, p3, p4, p5)) : !, _, _, _, _, _;
         g1 = gs : _, !, !, !, !;
         g2 = gs : !, _, !, !, !;
         g3 = gs : !, !, _, !, !;
         g4 = gs : !, !, !, _, !;
         g5 = gs : !, !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1));
-        next2 = clip(lo2, hi2, p2 - upd2(g2));
-        next3 = clip(lo3, hi3, p3 - upd3(g3));
-        next4 = clip(lo4, hi4, p4 - upd4(g4));
-        next5 = clip(lo5, hi5, p5 - upd5(g5));
+        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
+        next2 = clip(lo2, hi2, p2 - upd2(g2)) - init2;
+        next3 = clip(lo3, hi3, p3 - upd3(g3)) - init3;
+        next4 = clip(lo4, hi4, p4 - upd4(g4)) - init4;
+        next5 = clip(lo5, hi5, p5 - upd5(g5)) - init5;
     };
 };
 
@@ -1895,12 +1914,12 @@ with {
 // * <https://doi.org/10.1137/0111030>
 // * <https://doi.org/10.1016/0005-1098(84)90074-2>
 //------------------------------------------------------------------------------
-lm_2D(mdl, mu, lambda, a, lo1, hi1, lo2, hi2, init1, init2, reset, target, x) = loop ~ (_, _)
+lm_2D(mdl, mu, lambda, a, lo1, hi1, lo2, hi2, init1, init2, reset, target, x) = (loop ~ (_, _)) : (+(init1), +(init2))
 with {
     loop(prev1, prev2) = next1, next2
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
         pt = fad(mdl(p1, p2, x), (p1, p2));
         r = (pt : _, !, !) - target;
         j1 = pt : !, _, !;
@@ -1913,8 +1932,8 @@ with {
         det = h11 * h22 - h12 * h12;
         d1 = (h22 * b1 - h12 * b2) / det;
         d2 = (h11 * b2 - h12 * b1) / det;
-        next1 = clip(lo1, hi1, p1 - mu * d1);
-        next2 = clip(lo2, hi2, p2 - mu * d2);
+        next1 = clip(lo1, hi1, p1 - mu * d1) - init1;
+        next2 = clip(lo2, hi2, p2 - mu * d2) - init2;
     };
 };
 
@@ -1951,13 +1970,13 @@ with {
 //
 // * <https://doi.org/10.1137/0111030>
 //------------------------------------------------------------------------------
-lm_3D(mdl, mu, lambda, a, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset, target, x) = loop ~ (_, _, _)
+lm_3D(mdl, mu, lambda, a, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset, target, x) = (loop ~ (_, _, _)) : (+(init1), +(init2), +(init3))
 with {
     loop(prev1, prev2, prev3) = next1, next2, next3
     with {
-        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
-        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
-        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p2 = clip(lo2, hi2, _from_init(init2, reset, prev2));
+        p3 = clip(lo3, hi3, _from_init(init3, reset, prev3));
         pt = fad(mdl(p1, p2, p3, x), (p1, p2, p3));
         r = (pt : _, !, !, !) - target;
         j1 = pt : !, _, !, !;
@@ -1982,9 +2001,9 @@ with {
         d1 = (c11 * b1 + c12 * b2 + c13 * b3) / det;
         d2 = (c12 * b1 + c22 * b2 + c23 * b3) / det;
         d3 = (c13 * b1 + c23 * b2 + c33 * b3) / det;
-        next1 = clip(lo1, hi1, p1 - mu * d1);
-        next2 = clip(lo2, hi2, p2 - mu * d2);
-        next3 = clip(lo3, hi3, p3 - mu * d3);
+        next1 = clip(lo1, hi1, p1 - mu * d1) - init1;
+        next2 = clip(lo2, hi2, p2 - mu * d2) - init2;
+        next3 = clip(lo3, hi3, p3 - mu * d3) - init3;
     };
 };
 
@@ -2053,13 +2072,13 @@ _spread3(N) = route(2 * N + 1, 3 * N, par(i, N, (i + 1, 3 * i + 1, N + 1, 3 * i 
 // with { x = hslider("lsq_N:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_N(N, mdl, upd, lo, hi, init, reset, target, x) = step ~ si.bus(N)
+lsq_N(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
     model = (si.bus(N), x) : mdl;
-    step = par(i, N, clip(lo, hi, pstate(init, reset)))
+    step = par(i, N, clip(lo, hi, _from_init(init, reset)))
          <: (si.bus(N), (fad(model, si.bus(N)) : (_ - target), si.bus(N)))
          : _spread3(N)
-         : par(i, N, (_, _, _ : \(p, r, j).(clip(lo, hi, p - upd(r, j)))));
+         : par(i, N, (_, _, _ : \(p, r, j).(clip(lo, hi, p - upd(r, j)) - init)));
 };
 
 //------------------------------`(op.)lsq_N_rad`--------------------------------
@@ -2097,13 +2116,13 @@ with {
 // * J. J. Shynk, "Adaptive IIR filtering", IEEE ASSP Magazine, 1989
 //   (pseudo-linear regression: the instantaneous gradient of a recursive model)
 //------------------------------------------------------------------------------
-lsq_N_rad(N, mdl, upd, lo, hi, init, reset, target, x) = step ~ si.bus(N)
+lsq_N_rad(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
     model = (si.bus(N), x) : mdl;
-    step = par(i, N, clip(lo, hi, pstate(init, reset)))
+    step = par(i, N, clip(lo, hi, _from_init(init, reset)))
          <: (si.bus(N), (rad(model, si.bus(N)) : (_ - target), si.bus(N)))
          : _spread3(N)
-         : par(i, N, (_, _, _ : \(p, r, j).(clip(lo, hi, p - upd(r, j)))));
+         : par(i, N, (_, _, _ : \(p, r, j).(clip(lo, hi, p - upd(r, j)) - init)));
 };
 
 //------------------------------`(op.)descend_N`--------------------------------
@@ -2143,12 +2162,12 @@ with {
 // with { x = hslider("descend_N:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_N(N, loss, upd, lo, hi, init, reset) = step ~ si.bus(N)
+descend_N(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
-    step = par(i, N, clip(lo, hi, pstate(init, reset)))
+    step = par(i, N, clip(lo, hi, _from_init(init, reset)))
          <: (si.bus(N), (fad(loss, si.bus(N)) : !, si.bus(N)))
          : ro.interleave(N, 2)
-         : par(i, N, (_, _ : \(p, g).(clip(lo, hi, p - upd(g)))));
+         : par(i, N, (_, _ : \(p, g).(clip(lo, hi, p - upd(g)) - init)));
 };
 
 //------------------------------`(op.)descend_N_rad`----------------------------
@@ -2188,12 +2207,12 @@ with {
 //
 // * J. J. Shynk, "Adaptive IIR filtering", IEEE ASSP Magazine, 1989
 //------------------------------------------------------------------------------
-descend_N_rad(N, loss, upd, lo, hi, init, reset) = step ~ si.bus(N)
+descend_N_rad(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
-    step = par(i, N, clip(lo, hi, pstate(init, reset)))
+    step = par(i, N, clip(lo, hi, _from_init(init, reset)))
          <: (si.bus(N), (rad(loss, si.bus(N)) : !, si.bus(N)))
          : ro.interleave(N, 2)
-         : par(i, N, (_, _ : \(p, g).(clip(lo, hi, p - upd(g)))));
+         : par(i, N, (_, _ : \(p, g).(clip(lo, hi, p - upd(g)) - init)));
 };
 
 //------------------------------`(op.)descend_N_clocked`------------------------

@@ -217,7 +217,7 @@ bibliothèque ne prétend pas le contraire :
 
 ## 3. Organisation de la bibliothèque
 
-Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.7.0) est
+Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.7.1) est
 documenté fonction par fonction selon la convention des bibliothèques Faust ;
 cette section en donne la carte. Il comporte douze sections, ordonnées des
 briques de base aux boucles prêtes à l'emploi.
@@ -244,7 +244,7 @@ Toute boucle est la même récursion, dessinée ici pour un paramètre :
 ```text
               prev (état récursif)
                 │
-        pstate(init, reset, prev)     init au premier échantillon ou sur reset
+        init + écart                 la récursion garde l'écart à init ; reset l'efface
                 │
           clip(lo, hi, ·)            projection sur les bornes
                 │
@@ -259,9 +259,12 @@ Toute boucle est la même récursion, dessinée ici pour un paramètre :
               next  ──►  mémorisé pour l'échantillon suivant
 ```
 
-Le paramètre vit dans l'état récursif de Faust ; `pstate` lui donne une valeur
-initiale explicite et un contrôle de remise à zéro ; `clip` le garde dans ses
-bornes ; un appel `fad` par échantillon fournit la dérivée ; le moteur
+Le paramètre vit dans l'état récursif de Faust sous la forme de son écart à la
+valeur initiale : la récursion part de zéro, `reset` l'efface, et aucune
+détection du premier échantillon n'intervient, si bien que la boucle marche
+aussi dans un bloc `ondemand` quel que soit son premier tir ; `clip` garde le
+paramètre dans ses bornes ; un appel `fad` par échantillon fournit la dérivée ;
+le moteur
 transforme la dérivée en pas. Avec `N` paramètres, un seul appel `fad` à `N`
 graines produit les `N` dérivées d'un coup. Les boucles à bus dessinent la
 même figure avec `N` fils au lieu d'un, et `rad` à la place de `fad` dans
