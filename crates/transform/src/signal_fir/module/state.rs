@@ -126,30 +126,73 @@ impl<'a> SignalToFirLower<'a> {
     ///
     /// Pure state-based resolution lives in `recursion.rs`; this wrapper only
     /// allocates missing carrier storage. Recursion-body computation remains
-    /// controlled by the global signal schedule.
+    /// controlled by the global signal schedule, except where that schedule
+    /// cannot reach (`schedule_unreachable_recursion_group`).
     pub(super) fn resolve_recursion_delay_ref(
         &mut self,
         value: SigId,
     ) -> Result<Option<RecursionDelayRef>, SignalFirError> {
         let clock_context = self.current_clock_context();
-        if let Some(delay_ref) =
+        let resolved = if let Some(delay_ref) =
             self.recursion
                 .resolve_delay_ref(self.arena, value, clock_context)?
         {
-            return Ok(Some(delay_ref));
+            Some(delay_ref)
+        } else {
+            let Some(key) = match_recursion_delay_key(self.arena, value) else {
+                return Ok(None);
+            };
+            let Some(rec_info) =
+                self.resolve_recursion_carrier(key.proj_node, key.proj_index, key.group)?
+            else {
+                return Ok(None);
+            };
+            Some(RecursionDelayRef {
+                carrier: rec_info,
+                implicit_delay: key.implicit_delay,
+            })
+        };
+        if resolved.is_some() {
+            self.schedule_unreachable_recursion_group(value, clock_context)?;
+        }
+        Ok(resolved)
+    }
+
+    /// A recursion read only through a delay relies on the global schedule to
+    /// lower its body pass at the projection node: the delayed read loads the
+    /// state and emits no update. Two places are outside that schedule: the
+    /// nodes of a `BlockReverseAD` carrier, which the previsit skips
+    /// (`fixed_ad_internal_signals`), and every forward output of a program
+    /// with reverse-time outputs, which has no previsit at all. A group read
+    /// only through a delay from there was never lowered and its state stayed
+    /// at zero (`ba.time` gating a `rad` seed, a `mem` counter in a loss),
+    /// while a delay-0 read schedules its bodies on demand. This schedules
+    /// such a group at its first delayed read by lowering the projection node:
+    /// the body pass lands in the current forward phase and the store into
+    /// the state in post-output, after the read. Never in the reverse loop,
+    /// where forward values are replayed from tapes.
+    fn schedule_unreachable_recursion_group(
+        &mut self,
+        value: SigId,
+        clock_context: Option<u32>,
+    ) -> Result<(), SignalFirError> {
+        if self.rad_reverse.lowering_reverse_loop {
+            return Ok(());
         }
         let Some(key) = match_recursion_delay_key(self.arena, value) else {
-            return Ok(None);
+            return Ok(());
         };
-        let Some(rec_info) =
-            self.resolve_recursion_carrier(key.proj_node, key.proj_index, key.group)?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(RecursionDelayRef {
-            carrier: rec_info,
-            implicit_delay: key.implicit_delay,
-        }))
+        if match_sym_rec(self.arena, key.group).is_none()
+            || self
+                .recursion
+                .scheduled_groups
+                .contains(&(key.group, clock_context))
+            || (self.scheduled_previsit && !self.fixed_ad_internal_signals.contains(&key.proj_node))
+        {
+            return Ok(());
+        }
+        let _ = self.lower_signal(key.proj_node)?;
+        Ok(())
     }
 
     /// Returns the canonical recursion carrier for `Proj(index, group)` whether

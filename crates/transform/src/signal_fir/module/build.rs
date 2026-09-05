@@ -220,6 +220,7 @@ fn lower_sample_slices(
     // authoritative.
     // Every ordinary scalar forward program, including clock islands, is
     // previsited through the selected hierarchical schedule.
+    lower.scheduled_previsit = !has_reverse_outputs;
     if !has_reverse_outputs {
         lower.lower_scheduled_graph(crate::hgraph::GraphKey::Control)?;
         lower.lower_scheduled_graph(crate::hgraph::GraphKey::Top)?;

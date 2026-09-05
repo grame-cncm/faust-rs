@@ -307,6 +307,13 @@ for the end of the block: that is the host-driven pattern of
 [docs/rad-usage-en.md](rad-usage-en.md), or a future explicit-horizon
 mode.
 
+A recursion inside the body or a seed that is read only through a delay
+(`ba.time`, a `mem` counter, a `pstate` gate) is scheduled at its first
+delayed read (`schedule_unreachable_recursion_group`): the scheduled
+previsit does not enter a carrier, and a program with reverse-time
+outputs has no previsit at all, so nothing else would lower its body
+pass.
+
 The plan still reserves `rad(expr, seeds, horizon)` and `-rad-horizon N`
 for a future explicit-horizon mode; current BRA semantics use the
 current compute block as the finite horizon. RAD must never silently
@@ -393,8 +400,10 @@ parity tests in `crates/compiler/tests/rad_runtime.rs`.
   `asinh`, `acosh`), and recursive BRA cases: the block gradient of an
   interior recursive output, of a `select2` in a recursive body and of a
   gradient-only public output against finite differences, a computed
-  seed as a leaf, and the one-sample horizon of the in-graph sweep
-  (`in_graph_rad_*`: direct term vs `fad`, no carry declared).
+  seed as a leaf, the one-sample horizon of the in-graph sweep
+  (`in_graph_rad_*`: direct term vs `fad`, no carry declared), and
+  recursions read only through a delay inside a carrier or next to a
+  public gradient.
 - **Backend parity** ([crates/compiler/tests/signal_fir_lane.rs](../crates/compiler/tests/signal_fir_lane.rs))
   — C, C++, interpreter, and Cranelift lowering of RAD/BRA shapes within the
   current fast-lane subset.

@@ -456,6 +456,10 @@ struct SignalToFirLower<'a> {
     clocked_payload_signals: HashSet<SigId>,
     /// Signals expanded only inside their owning reverse-AD carrier context.
     fixed_ad_internal_signals: HashSet<SigId>,
+    /// Whether the hierarchical-schedule previsit lowers this program's
+    /// forward graph. Programs with reverse-time outputs have no previsit and
+    /// are lowered on demand only; see `schedule_unreachable_recursion_group`.
+    scheduled_previsit: bool,
 }
 
 /// One extern prototype recovered from a Faust `FFUN(...)` descriptor.

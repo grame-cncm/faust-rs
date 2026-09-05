@@ -170,6 +170,7 @@ impl<'a> SignalToFirLower<'a> {
             scalar_schedule: None,
             clocked_payload_signals: HashSet::new(),
             fixed_ad_internal_signals: HashSet::new(),
+            scheduled_previsit: true,
         }
     }
 

@@ -1998,6 +1998,70 @@ process = (y_target - nl_filter(p_learned, noise)) <: _, _;
     assert_eq!(outs.len(), 2);
 }
 
+/// A recursion read only through a delay inside a `rad` -- `ba.time` gating
+/// a seed, a `mem` counter in the loss -- has no delay-0 projection to
+/// schedule its body pass on demand, and the previsit skips the carrier's
+/// nodes: its state stayed at zero. Here `first` is `mem(counter) == 0`; the
+/// gate must open after the first sample and the gain must learn `0.5`.
+#[test]
+fn in_graph_rad_runs_a_recursion_read_only_through_a_delay() {
+    let source = r#"
+x = (+(12345) ~ *(1103515245)) * 4.656612873077393e-10 * 10.0;
+target = 0.5 * x;
+first = ((+(1) ~ _) : mem) == 0;
+learn = loop ~ _
+with {
+    loop(prev) = next
+    with {
+        p = max(-4.0, min(4.0, select2(first, prev, 0.0)));
+        y = p * x;
+        r = (rad(y, p) : _, !) - target;
+        j = rad(y, p) : !, _;
+        next = max(-4.0, min(4.0, p - 0.001 * r * j));
+    };
+};
+process = target - learn * x, learn;
+"#;
+    let outs = run_interp_temp_source("rad-recursion-delayed-read", source, 3000);
+    assert_eq!(outs.len(), 2);
+    let gain = outs[1][2999];
+    assert!(
+        (gain - 0.5).abs() < 1e-3,
+        "gain should learn 0.5, got {gain}"
+    );
+    let residual = outs[0][2999];
+    assert!(
+        residual.abs() < 1e-3,
+        "residual should vanish, got {residual}"
+    );
+}
+
+/// The same read where the schedule cannot reach it either: next to a public
+/// gradient (no previsit) and in the body of a public primal.
+#[test]
+fn delayed_recursion_read_next_to_a_public_gradient_is_scheduled() {
+    let source = r#"
+x = (+(12345) ~ *(1103515245)) * 4.656612873077393e-10;
+p = hslider("p", 0.7, 0, 1, 0.01);
+gate = float(((+(1) ~ _) : mem) > 2);
+process = (rad(p * x, p) : !, _), ((+(1) ~ _) : mem), (rad(p * x * gate, p) : _, !), p * x * gate;
+"#;
+    let outs = run_interp_temp_source("rad-delayed-read-outside", source, 6);
+    assert_eq!(outs.len(), 4);
+    for (n, ((&count, &gated), &reference)) in
+        outs[1].iter().zip(&outs[2]).zip(&outs[3]).enumerate()
+    {
+        assert!(
+            (count - n as f32).abs() < 1e-6,
+            "counter at frame {n}: {count}"
+        );
+        assert!(
+            (gated - reference).abs() < 1e-6,
+            "gated primal at frame {n}: {gated} vs {reference}"
+        );
+    }
+}
+
 /// Inside an adaptation loop the gradient is consumed at the sample that
 /// produces it, so the block sweep runs in the forward loop with a
 /// one-sample horizon: the past state of the body is held fixed and `rad`
