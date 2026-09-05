@@ -1,193 +1,2027 @@
-// optimizers.lib - Factorized FAD Library
-// Version 4.2 - Harmonized return layout (faust-rs safe)
+declare name "Faust Differentiable Optimizers Library";
+declare version "0.5.0";
+declare author "faust-rs";
+declare license "MIT/LGPL-3.0";
 
-import("stdfaust.lib");
+//################################ optimizers.lib ##########################################
+// Optimizers library. Its official prefix is `op`.
+//
+// This library provides in-graph optimization built on the `faust-rs`
+// forward-mode automatic differentiation primitive `fad(expr, seeds)`:
+// parameter-update engines, losses, reparameterizations, learning-rate
+// schedules and ready-made optimization loops that learn the parameters of
+// a Faust model sample by sample, entirely inside the DSP graph.
+//
+// Two families of loops are provided. The *least-squares* loops
+// (`lsq_ND`, `lm_ND`, and the legacy `optimize_ND`) differentiate the model
+// and hand each engine the residual `r = model - target` together with the
+// sensitivity `j = d(model)/dp`. The *loss-first* loops (`descend_ND`)
+// differentiate a scalar loss closed over the data and hand each engine the
+// gradient `g = d(loss)/dp`, so any differentiable loss can be used.
+//
+// The library has no dependency on the Faust standard libraries, so it can be
+// compiled with `-I libraries` alone and exercised by the `faust-rs` tests.
+// It is a `faust-rs` library: `fad` is not known to the C++ Faust compiler.
+//
+// The Optimizers library is organized into 10 sections:
+//
+// * [Signal Helpers and Parameter State](#signal-helpers-and-parameter-state)
+// * [Losses and Regularizers](#losses-and-regularizers)
+// * [Reparameterizations](#reparameterizations)
+// * [Gradient Conditioning and Schedules](#gradient-conditioning-and-schedules)
+// * [Least-Squares Engines](#least-squares-engines)
+// * [Gradient Engines](#gradient-engines)
+// * [Least-Squares Loops](#least-squares-loops)
+// * [Loss-First Loops](#loss-first-loops)
+// * [Gauss-Newton Loops](#gauss-newton-loops)
+// * [Newton Solver](#newton-solver)
+//
+// It should be used using the `op` environment:
+//
+// ```
+// op = library("optimizers.lib");
+// process = op.descend_1D(loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
+// ```
+//
+// Changes in 0.5.0: `adam` and `nadam` apply the Adam bias correction (their
+// first steps used to be `sqrt(1 - b2) / (1 - b1) = 3.16` times larger than
+// `lr`); the library no longer imports `stdfaust.lib`; `optimize_ND` are kept
+// as wrappers of `lsq_ND` with a zero initial value and no reset.
+//
+// #### References
+//
+// * <https://github.com/grame-cncm/faust-rs/blob/main/libraries/optimizers.lib>
+// * <https://github.com/grame-cncm/faust-rs/blob/main/docs/fad-rad-synthesis-en.md>
+//##########################################################################################
 
-/* ==============================================================================
-   PART 1: UPDATE ENGINES
-   ============================================================================== */
+// Internal helpers (not part of the public API).
+_PI = 3.14159265358979323846;
+_tiny = 0.000000000001;
+_smooth(a) = *(1.0 - a) : + ~ *(a);
+_counter = +(1) ~ _;
+_time = _counter - 1;
+_first = _counter == 1;
+_sqsum(x) = (x * x) : + ~ _;
+_expdecay(k) = (*(k) : +(_first)) ~ _;
 
-sgd(lr, max_step, err, grad) = max(-max_step, min(max_step, lr * smooth_grad))
+//=========================Signal Helpers and Parameter State===============================
+// Small building blocks shared by the engines and the loops: clipping, sign,
+// exponential moving averages, and the recursive state of a learned parameter.
+//==========================================================================================
+
+//------------------------------`(op.)clip`-------------------------------------
+// Clip a signal to `[lo, hi]`. Used by every loop to project a learned
+// parameter back into its bounds. The projection is outside the
+// differentiated expression, so it does not need a derivative.
+//
+// #### Usage
+//
+// ```
+// _ : clip(lo, hi) : _
+// ```
+//
+// Where:
+//
+// * `lo`: lower bound
+// * `hi`: upper bound
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// clip_test = hslider("clip:x", 0, -2, 2, 0.01) : op.clip(-1.0, 1.0);
+// ```
+//------------------------------------------------------------------------------
+clip(lo, hi, x) = max(lo, min(hi, x));
+
+//------------------------------`(op.)sgn`--------------------------------------
+// Sign of a signal as a float: `-1`, `0` or `1`. Built from comparisons, so it
+// has a zero tangent under `fad` and must only be applied to gradients, never
+// inside a differentiated model.
+//
+// #### Usage
+//
+// ```
+// _ : sgn : _
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// sgn_test = hslider("sgn:x", 0, -1, 1, 0.01) : op.sgn;
+// ```
+//------------------------------------------------------------------------------
+sgn(x) = float(x > 0.0) - float(x < 0.0);
+
+//------------------------------`(op.)ema`--------------------------------------
+// Exponential moving average with coefficient `a` (the one-pole
+// `si.smooth(a)`): `y[n] = (1 - a) x[n] + a y[n-1]`, starting from zero. The
+// memory is about `1 / (1 - a)` samples.
+//
+// #### Usage
+//
+// ```
+// _ : ema(a) : _
+// ```
+//
+// Where:
+//
+// * `a`: smoothing coefficient in `[0, 1)`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// ema_test = hslider("ema:x", 0, -1, 1, 0.01) : op.ema(0.99);
+// ```
+//------------------------------------------------------------------------------
+ema(a, x) = x : _smooth(a);
+
+//------------------------------`(op.)ema_bc`-----------------------------------
+// Bias-corrected exponential moving average, as in Adam: `ema(a, x)` divided
+// by `ema(a, 1.0)`, and `ema(a, 1.0)` is exactly `1 - a^(n+1)`. The average is
+// unbiased from the first sample on instead of starting near zero.
+//
+// #### Usage
+//
+// ```
+// _ : ema_bc(a) : _
+// ```
+//
+// Where:
+//
+// * `a`: smoothing coefficient in `[0, 1)`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// ema_bc_test = hslider("ema_bc:x", 0, -1, 1, 0.01) : op.ema_bc(0.99);
+// ```
+//
+// #### References
+//
+// * <https://arxiv.org/abs/1412.6980>
+//------------------------------------------------------------------------------
+ema_bc(a, x) = ema(a, x) / ema(a, 1.0);
+
+//------------------------------`(op.)pstate`-----------------------------------
+// The value of a learned parameter for the current sample, from its recursive
+// state: `init` on the first sample and whenever `reset` is non-zero, `prev`
+// otherwise. Every loop of this library applies it to its recursive inputs,
+// which is what gives them an explicit initial value and a reset control.
+//
+// #### Usage
+//
+// ```
+// (loop ~ _) with { loop(prev) = ... pstate(init, reset, prev) ...; }
+// ```
+//
+// Where:
+//
+// * `init`: initial value of the parameter
+// * `reset`: signal (button, checkbox, ...) forcing the parameter back to `init` while non-zero
+// * `prev`: the recursive state, i.e. the value computed at the previous sample
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// pstate_test = (op.pstate(1.0, button("pstate:reset")) : *(0.999)) ~ _;
+// ```
+//------------------------------------------------------------------------------
+pstate(init, reset, prev) = select2(_first | (reset != 0.0), prev, init);
+
+//------------------------------`(op.)polyak`-----------------------------------
+// Polyak averaging: a smoothed readout of a learned parameter, `ema(a, p)`.
+// The optimizer keeps stepping on the raw parameter while the audible value
+// moves smoothly.
+//
+// #### Usage
+//
+// ```
+// _ : polyak(a) : _
+// ```
+//
+// Where:
+//
+// * `a`: smoothing coefficient in `[0, 1)`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// polyak_test = hslider("polyak:p", 0, -1, 1, 0.01) : op.polyak(0.999);
+// ```
+//
+// #### References
+//
+// * <https://doi.org/10.1137/0330046>
+//------------------------------------------------------------------------------
+polyak(a, p) = ema(a, p);
+
+//===============================Losses and Regularizers====================================
+// Scalar losses `loss(y, t)` between a model output `y` and a target `t`, and
+// regularizers on a parameter `p`, for the loss-first loops. All of them are
+// smooth: `abs` is avoided because its `fad` derivative is `x / abs(x)`, which
+// is `NaN` at zero. A loss is a plain Faust function, so a regularizer is
+// simply added to it: `loss(p) = mse(mdl(p), target) + l2(0.001, p)`.
+//==========================================================================================
+
+//------------------------------`(op.)mse`--------------------------------------
+// Squared error `(y - t)^2`.
+//
+// #### Usage
+//
+// ```
+// mse(y, t) : _
+// ```
+//
+// Where:
+//
+// * `y`: model output
+// * `t`: target
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// mse_test = op.mse(hslider("mse:y", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+mse(y, t) = (y - t) * (y - t);
+
+//------------------------------`(op.)pseudo_huber`-----------------------------
+// Pseudo-Huber loss `d^2 (sqrt(1 + (e/d)^2) - 1)` with `e = y - t`: quadratic
+// for `|e| << d`, linear for `|e| >> d`, smooth everywhere. Its gradient is
+// bounded by `d`, so outliers in the target cannot throw the parameters.
+//
+// #### Usage
+//
+// ```
+// pseudo_huber(d, y, t) : _
+// ```
+//
+// Where:
+//
+// * `d`: transition scale between the quadratic and the linear regime
+// * `y`: model output
+// * `t`: target
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// pseudo_huber_test = op.pseudo_huber(0.05, hslider("pseudo_huber:y", 0, -1, 1, 0.01), 0.5);
+// ```
+//
+// #### References
+//
+// * <https://doi.org/10.1214/aoms/1177703732>
+//------------------------------------------------------------------------------
+pseudo_huber(d, y, t) = d * d * (sqrt(1.0 + (e / d) * (e / d)) - 1.0)
 with {
-    smooth_grad = err * grad : si.smooth(0.99);
+    e = y - t;
 };
 
-adam(lr, err, grad) = step
+//------------------------------`(op.)logcosh`----------------------------------
+// Log-cosh loss `log(cosh(y - t))`, written with `exp` and `log` only. Its
+// gradient is `tanh(y - t)`: the error slope of `mse` near zero, saturating
+// to `±1` far from it.
+//
+// #### Usage
+//
+// ```
+// logcosh(y, t) : _
+// ```
+//
+// Where:
+//
+// * `y`: model output
+// * `t`: target
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// logcosh_test = op.logcosh(hslider("logcosh:y", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+logcosh(y, t) = log(0.5 * (exp(e) + exp(0.0 - e)))
 with {
-    raw_grad = err * grad;
-    m = raw_grad : si.smooth(0.9);
-    v = (raw_grad * raw_grad) : si.smooth(0.999);
-    step = (lr * m) / (sqrt(v) + 0.00000001);
+    e = y - t;
 };
 
-/*
+//------------------------------`(op.)energy_loss`------------------------------
+// Squared difference of the smoothed powers of `y` and `t`. Insensitive to the
+// phase of the signals, so it can match a model to a target driven by a
+// different realization of the same excitation. `fad` differentiates through
+// the smoothing recursion. The optimizer's time constant must be longer than
+// the smoothing time `1 / (1 - a)`, or the delayed feedback oscillates.
+//
+// #### Usage
+//
+// ```
+// energy_loss(a, y, t) : _
+// ```
+//
+// Where:
+//
+// * `a`: power smoothing coefficient in `[0, 1)`
+// * `y`: model output
+// * `t`: target
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// energy_loss_test = op.energy_loss(0.999, hslider("energy_loss:y", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+energy_loss(a, y, t) = d * d
+with {
+    d = ema(a, y * y) - ema(a, t * t);
+};
+
+//------------------------------`(op.)log_energy_loss`--------------------------
+// Squared difference of the log powers of `y` and `t`. The relative version of
+// `energy_loss`: the gradient is scale-free, which is what a parameter in a
+// log domain (see `sigmoid_map` and the log-frequency recipe) calls for.
+//
+// #### Usage
+//
+// ```
+// log_energy_loss(a, eps, y, t) : _
+// ```
+//
+// Where:
+//
+// * `a`: power smoothing coefficient in `[0, 1)`
+// * `eps`: floor added to both powers before the logarithm
+// * `y`: model output
+// * `t`: target
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// log_energy_loss_test = op.log_energy_loss(0.999, 1e-9, hslider("log_energy_loss:y", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+log_energy_loss(a, eps, y, t) = d * d
+with {
+    d = log(ema(a, y * y) + eps) - log(ema(a, t * t) + eps);
+};
+
+//------------------------------`(op.)l2`---------------------------------------
+// L2 regularizer `lambda p^2`, to be added to a loss (weight decay).
+//
+// #### Usage
+//
+// ```
+// l2(lambda, p) : _
+// ```
+//
+// Where:
+//
+// * `lambda`: regularization weight
+// * `p`: the parameter
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// l2_test = op.l2(0.01, hslider("l2:p", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+l2(lambda, p) = lambda * p * p;
+
+//------------------------------`(op.)l1s`--------------------------------------
+// Smooth L1 regularizer `lambda (sqrt(p^2 + d^2) - d)`: `|p|` for `|p| >> d`,
+// quadratic below, with a defined gradient at zero.
+//
+// #### Usage
+//
+// ```
+// l1s(lambda, d, p) : _
+// ```
+//
+// Where:
+//
+// * `lambda`: regularization weight
+// * `d`: smoothing scale around zero
+// * `p`: the parameter
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// l1s_test = op.l1s(0.01, 0.001, hslider("l1s:p", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+l1s(lambda, d, p) = lambda * (sqrt(p * p + d * d) - d);
+
+//================================Reparameterizations=======================================
+// Maps from an unconstrained or conveniently scaled parameter to the quantity
+// the model uses. Learning in the mapped domain replaces hard bounds by
+// domains that are stable or well scaled by construction. A parameter with a
+// large range, such as a frequency in Hertz, is best learned as a logarithm:
+// `mdl_log(u, x) = mdl(exp(u), x)` with bounds `log(lo), log(hi)`.
+//==========================================================================================
+
+//------------------------------`(op.)poles_from_reflection`--------------------
+// Biquad denominator coefficients `a1, a2` from two reflection coefficients
+// `k1, k2` in `(-1, 1)`: `a1 = k1 (1 + k2)`, `a2 = k2`. The map is a bijection
+// onto the stability triangle `|a2| < 1`, `|a1| < 1 + a2`, so rectangular
+// bounds on `(k1, k2)` keep every step of the optimizer stable, which
+// rectangular bounds on `(a1, a2)` cannot do.
+//
+// #### Usage
+//
+// ```
+// poles_from_reflection(k1, k2) : _, _
+// ```
+//
+// Where:
+//
+// * `k1`: first reflection coefficient in `(-1, 1)`
+// * `k2`: second reflection coefficient in `(-1, 1)`
+//
+// #### Example
+//
+// ```
+// biquad(b0, b1, b2, k1, k2, x) = fi.tf2(b0, b1, b2, a1, a2, x)
+// with {
+//     a1 = op.poles_from_reflection(k1, k2) : _, !;
+//     a2 = op.poles_from_reflection(k1, k2) : !, _;
+// };
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// poles_from_reflection_test = op.poles_from_reflection(hslider("poles:k1", 0, -0.99, 0.99, 0.01), 0.5);
+// ```
+//
+// #### References
+//
+// * <https://ccrma.stanford.edu/~jos/filters/Lattice_Ladder_Filters.html>
+//------------------------------------------------------------------------------
+poles_from_reflection(k1, k2) = k1 * (1.0 + k2), k2;
+
+//------------------------------`(op.)reflection_from_poles`--------------------
+// Inverse of `poles_from_reflection`: `k1 = a1 / (1 + a2)`, `k2 = a2`. Handy
+// to initialize the reflection coefficients from known stable poles.
+//
+// #### Usage
+//
+// ```
+// reflection_from_poles(a1, a2) : _, _
+// ```
+//
+// Where:
+//
+// * `a1`, `a2`: stable biquad denominator coefficients
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// reflection_from_poles_test = op.reflection_from_poles(-1.0, 0.4);
+// ```
+//------------------------------------------------------------------------------
+reflection_from_poles(a1, a2) = a1 / (1.0 + a2), a2;
+
+//------------------------------`(op.)sigmoid_map`------------------------------
+// Map an unbounded parameter `u` to `(lo, hi)` through a logistic sigmoid:
+// `lo + (hi - lo) / (1 + exp(-u))`. Soft alternative to `clip` bounds; note
+// that the gradient vanishes when `u` is far from zero.
+//
+// #### Usage
+//
+// ```
+// sigmoid_map(lo, hi, u) : _
+// ```
+//
+// Where:
+//
+// * `lo`: lower bound
+// * `hi`: upper bound
+// * `u`: unbounded parameter
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// sigmoid_map_test = op.sigmoid_map(20.0, 20000.0, hslider("sigmoid_map:u", 0, -6, 6, 0.01));
+// ```
+//------------------------------------------------------------------------------
+sigmoid_map(lo, hi, u) = lo + (hi - lo) / (1.0 + exp(0.0 - u));
+
+//=========================Gradient Conditioning and Schedules==============================
+// Functions applied to a gradient before an engine, and learning-rate
+// schedules. A learning rate is an ordinary signal, so a schedule is simply
+// passed where a constant `lr` would be.
+//==========================================================================================
+
+//------------------------------`(op.)clip_g`-----------------------------------
+// Clip a gradient to `[-c, c]`.
+//
+// #### Usage
+//
+// ```
+// _ : clip_g(c) : _
+// ```
+//
+// Where:
+//
+// * `c`: maximum magnitude
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// clip_g_test = hslider("clip_g:g", 0, -2, 2, 0.01) : op.clip_g(1.0);
+// ```
+//------------------------------------------------------------------------------
+clip_g(c, g) = clip(0.0 - c, c, g);
+
+//------------------------------`(op.)softclip_g`-------------------------------
+// Bound a gradient smoothly: `g / sqrt(1 + (g/c)^2)`, which is `g` for small
+// values and saturates to `±c`.
+//
+// #### Usage
+//
+// ```
+// _ : softclip_g(c) : _
+// ```
+//
+// Where:
+//
+// * `c`: saturation magnitude
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// softclip_g_test = hslider("softclip_g:g", 0, -2, 2, 0.01) : op.softclip_g(1.0);
+// ```
+//------------------------------------------------------------------------------
+softclip_g(c, g) = g / sqrt(1.0 + (g / c) * (g / c));
+
+//------------------------------`(op.)gate_g`-----------------------------------
+// Zero a gradient while `cond` is zero: the parameters hold, and the moments of
+// a stateful engine decay, while the condition is false. Typical use: learn
+// only while the input carries signal, `gate_g(ema(0.99, x * x) > thr, g)`.
+//
+// #### Usage
+//
+// ```
+// _ : gate_g(cond) : _
+// ```
+//
+// Where:
+//
+// * `cond`: learning enable (any non-zero value learns)
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// gate_g_test = hslider("gate_g:g", 0, -1, 1, 0.01) : op.gate_g(checkbox("gate_g:learn"));
+// ```
+//------------------------------------------------------------------------------
+gate_g(cond, g) = g * float(cond != 0.0);
+
+//------------------------------`(op.)lr_exp`-----------------------------------
+// Exponentially decaying learning rate, from `lr0` towards `lr_min` with time
+// constant `tau` samples.
+//
+// #### Usage
+//
+// ```
+// lr_exp(lr0, lr_min, tau) : _
+// ```
+//
+// Where:
+//
+// * `lr0`: initial learning rate
+// * `lr_min`: asymptotic learning rate
+// * `tau`: time constant in samples
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lr_exp_test = op.lr_exp(0.01, 0.0001, 48000.0);
+// ```
+//------------------------------------------------------------------------------
+lr_exp(lr0, lr_min, tau) = lr_min + (lr0 - lr_min) * _expdecay(exp(0.0 - 1.0 / tau));
+
+//------------------------------`(op.)lr_cos`-----------------------------------
+// Cosine-annealed learning rate, from `lr0` down to `lr_min` over `T` samples,
+// then held at `lr_min`.
+//
+// #### Usage
+//
+// ```
+// lr_cos(lr0, lr_min, T) : _
+// ```
+//
+// Where:
+//
+// * `lr0`: initial learning rate
+// * `lr_min`: final learning rate
+// * `T`: annealing length in samples
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lr_cos_test = op.lr_cos(0.01, 0.0001, 48000.0);
+// ```
+//
+// #### References
+//
+// * <https://arxiv.org/abs/1608.03983>
+//------------------------------------------------------------------------------
+lr_cos(lr0, lr_min, T) = lr_min + 0.5 * (lr0 - lr_min) * (1.0 + cos(_PI * min(1.0, float(_time) / T)));
+
+//------------------------------`(op.)warmup`-----------------------------------
+// Linear warm-up factor rising from `0` to `1` over `T` samples, to multiply a
+// learning rate with.
+//
+// #### Usage
+//
+// ```
+// warmup(T) : _
+// ```
+//
+// Where:
+//
+// * `T`: warm-up length in samples
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// warmup_test = 0.01 * op.warmup(4800.0);
+// ```
+//------------------------------------------------------------------------------
+warmup(T) = min(1.0, float(_time) / T);
+
+//================================Least-Squares Engines=====================================
+// Update engines for the least-squares loops. An engine maps a residual
+// `r = model - target` and a sensitivity `j = d(model)/dp` to the step
+// subtracted from the parameter, `p_next = p - engine(r, j)`. Partially
+// apply the settings and pass the two-argument remainder to a loop:
+// `lsq_1D(mdl, nlms(0.01, 1e-6, 0.99), ...)`.
+//
+// The engines `sgd`, `adam`, `rmsprop`, `nadam` and `sign_sgd` are the
+// original engines of this library, kept with their signatures; they form the
+// MSE gradient `r * j` themselves.
+//==========================================================================================
+
+//------------------------------`(op.)lms`--------------------------------------
+// Plain LMS step `mu r j`.
+//
+// #### Usage
+//
+// ```
+// lms(mu, r, j) : _
+// ```
+//
+// Where:
+//
+// * `mu`: step size
+// * `r`: residual `model - target`
+// * `j`: sensitivity `d(model)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lms_test = op.lms(0.01, hslider("lms:r", 0, -1, 1, 0.01), 0.5);
+// ```
+//
+// #### References
+//
+// * <https://en.wikipedia.org/wiki/Least_mean_squares_filter>
+//------------------------------------------------------------------------------
+lms(mu, r, j) = mu * r * j;
+
+//------------------------------`(op.)nlms`-------------------------------------
+// Normalized LMS: the step is divided by the smoothed power of the
+// sensitivity, `mu r j / (eps + ema(a, j^2))`, so the convergence speed does
+// not depend on the input level. For a model that is linear in `p`, `j` is
+// the regressor and this is the classic NLMS.
+//
+// #### Usage
+//
+// ```
+// nlms(mu, eps, a, r, j) : _
+// ```
+//
+// Where:
+//
+// * `mu`: normalized step size, typically in `(0, 1]`
+// * `eps`: regularization added to the power
+// * `a`: power smoothing coefficient in `[0, 1)`
+// * `r`: residual `model - target`
+// * `j`: sensitivity `d(model)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// nlms_test = op.nlms(0.02, 1e-6, 0.99, hslider("nlms:r", 0, -1, 1, 0.01), 0.5);
+// ```
+//
+// #### References
+//
+// * <https://en.wikipedia.org/wiki/Least_mean_squares_filter#Normalized_least_mean_squares_filter_(NLMS)>
+//------------------------------------------------------------------------------
+nlms(mu, eps, a, r, j) = mu * r * j / (eps + ema(a, j * j));
+
+//------------------------------`(op.)gn1`--------------------------------------
+// One-dimensional Gauss-Newton step with exponential forgetting,
+// `mu ema(a, r j) / (ema(a, j^2) + lambda)`: the scalar version of `lm_2D`,
+// and a recursive least-squares estimate when the model is linear in `p`.
+//
+// #### Usage
+//
+// ```
+// gn1(mu, lambda, a, r, j) : _
+// ```
+//
+// Where:
+//
+// * `mu`: relaxation of the full Gauss-Newton step, in `(0, 1]`
+// * `lambda`: damping added to the information
+// * `a`: forgetting factor in `[0, 1)`
+// * `r`: residual `model - target`
+// * `j`: sensitivity `d(model)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// gn1_test = op.gn1(0.01, 1e-6, 0.99, hslider("gn1:r", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+gn1(mu, lambda, a, r, j) = mu * ema(a, r * j) / (ema(a, j * j) + lambda);
+
+//------------------------------`(op.)sgd`--------------------------------------
+// Smoothed and clipped gradient step on the MSE gradient `r * j`: the gradient
+// is averaged with `ema(0.99)`, scaled by `lr` and clipped to `±max_step`.
+//
+// #### Usage
+//
+// ```
+// sgd(lr, max_step, r, j) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `max_step`: maximum step magnitude
+// * `r`: residual `model - target`
+// * `j`: sensitivity `d(model)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// sgd_test = op.sgd(0.01, 0.1, hslider("sgd:r", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+sgd(lr, max_step, err, grad) = clip(0.0 - max_step, max_step, lr * smooth_grad)
+with {
+    smooth_grad = err * grad : _smooth(0.99);
+};
+
+//------------------------------`(op.)adam`-------------------------------------
+// Adam step on the MSE gradient `r * j`, with `b1 = 0.9`, `b2 = 0.999`,
+// `eps = 1e-8` and bias correction. Same as `adam_g(lr, 0.9, 0.999, 1e-8, r * j)`.
+//
+// #### Usage
+//
+// ```
+// adam(lr, r, j) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `r`: residual `model - target`
+// * `j`: sensitivity `d(model)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// adam_test = op.adam(0.01, hslider("adam:r", 0, -1, 1, 0.01), 0.5);
+// ```
+//
+// #### References
+//
+// * <https://arxiv.org/abs/1412.6980>
+//------------------------------------------------------------------------------
+adam(lr, err, grad) = adam_g(lr, 0.9, 0.999, 0.00000001, err * grad);
+
+//------------------------------`(op.)rmsprop`----------------------------------
+// RMSProp step on the MSE gradient with two fixed safety clamps: the residual
+// is clipped to `±2` and the gradient to `±1` before normalization by
+// `ema(0.9)` of the squared gradient. The clamps make it robust to an unstable
+// model at the price of depending on the signal scale; prefer `rmsprop_g` with
+// `clip_g` or a robust loss when the scale is known.
+//
+// #### Usage
+//
+// ```
+// rmsprop(lr, r, j) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `r`: residual `model - target`
+// * `j`: sensitivity `d(model)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// rmsprop_test = op.rmsprop(0.002, hslider("rmsprop:r", 0, -1, 1, 0.01), 0.5);
+// ```
+//
+// #### References
+//
+// * <https://www.cs.toronto.edu/~tijmen/csc321/slides/lecture_slides_lec6.pdf>
+//------------------------------------------------------------------------------
 rmsprop(lr, err, grad) = step
 with {
-    raw_grad = err * grad;
-    v = (raw_grad * raw_grad) : si.smooth(0.9);
-    step = (lr * raw_grad) / (sqrt(v) + 0.00000001);
-};
-*/
-
-/*
-rmsprop(lr, err, grad) = step
-with {
-    // NaN protection: clamp the error to +/- 10.0.
-    // If the filter becomes unstable, keep the optimizer arithmetic bounded.
-    safe_err = max(-10.0, min(10.0, err));
-
-    raw_grad = safe_err * grad;
-    v = (raw_grad * raw_grad) : si.smooth(0.9);
-    step = (lr * raw_grad) / (sqrt(v) + 0.00000001);
-};
-*/
-
-// Robust rmsprop implementation for optimizers.lib.
-rmsprop(lr, err, grad) = step
-with {
-    // 1. Clamp the error to absorb outliers.
-    safe_err = max(-2.0, min(2.0, err));
-
-    // 2. Clamp the gradient to prevent v from growing without bound.
-    raw_grad = max(-1.0, min(1.0, safe_err * grad));
-
-    // 3. Use more responsive smoothing (0.9) to forget old errors quickly.
-    v = (raw_grad * raw_grad) : si.smooth(0.9);
-
+    safe_err = clip(-2.0, 2.0, err);
+    raw_grad = clip(-1.0, 1.0, safe_err * grad);
+    v = (raw_grad * raw_grad) : _smooth(0.9);
     step = (lr * raw_grad) / (sqrt(v) + 0.00000001);
 };
 
-nadam(lr, err, grad) = step
+//------------------------------`(op.)nadam`------------------------------------
+// Nesterov-accelerated Adam step on the MSE gradient `r * j`, with `b1 = 0.9`,
+// `b2 = 0.999`, `eps = 1e-8` and bias correction. Same as
+// `nadam_g(lr, 0.9, 0.999, 1e-8, r * j)`.
+//
+// #### Usage
+//
+// ```
+// nadam(lr, r, j) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `r`: residual `model - target`
+// * `j`: sensitivity `d(model)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// nadam_test = op.nadam(0.01, hslider("nadam:r", 0, -1, 1, 0.01), 0.5);
+// ```
+//
+// #### References
+//
+// * <https://openreview.net/forum?id=OM0jvwB8jIp57ZJjtNEZ>
+//------------------------------------------------------------------------------
+nadam(lr, err, grad) = nadam_g(lr, 0.9, 0.999, 0.00000001, err * grad);
+
+//------------------------------`(op.)sign_sgd`---------------------------------
+// Sign descent on the MSE gradient: a step of `±lr`.
+//
+// #### Usage
+//
+// ```
+// sign_sgd(lr, r, j) : _
+// ```
+//
+// Where:
+//
+// * `lr`: step magnitude
+// * `r`: residual `model - target`
+// * `j`: sensitivity `d(model)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// sign_sgd_test = op.sign_sgd(0.001, hslider("sign_sgd:r", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+sign_sgd(lr, err, grad) = lr * sgn(err * grad);
+
+//===================================Gradient Engines=======================================
+// Update engines for the loss-first loops. An engine maps a gradient
+// `g = d(loss)/dp` to the step subtracted from the parameter,
+// `p_next = p - engine(g)`. Partially apply the settings and pass the
+// one-argument remainder to a loop: `descend_1D(loss, adam_g(0.01, 0.9, 0.999, 1e-8), ...)`.
+// Every learning rate is a signal, so a schedule (`lr_exp`, `lr_cos`) can be
+// passed in place of a constant.
+//==========================================================================================
+
+//------------------------------`(op.)sgd_g`------------------------------------
+// Gradient step `lr g`.
+//
+// #### Usage
+//
+// ```
+// sgd_g(lr, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// sgd_g_test = op.sgd_g(0.01, hslider("sgd_g:g", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+sgd_g(lr, g) = lr * g;
+
+//------------------------------`(op.)momentum_g`-------------------------------
+// Heavy-ball momentum: the step follows the exponential average of the
+// gradient, `lr ema(b, g)`.
+//
+// #### Usage
+//
+// ```
+// momentum_g(lr, b, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `b`: momentum coefficient in `[0, 1)`
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// momentum_g_test = op.momentum_g(0.01, 0.9, hslider("momentum_g:g", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+momentum_g(lr, b, g) = lr * ema(b, g);
+
+//------------------------------`(op.)nesterov_g`-------------------------------
+// Nesterov momentum: the step mixes the averaged and the current gradient,
+// `lr (b ema(b, g) + (1 - b) g)`.
+//
+// #### Usage
+//
+// ```
+// nesterov_g(lr, b, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `b`: momentum coefficient in `[0, 1)`
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// nesterov_g_test = op.nesterov_g(0.01, 0.9, hslider("nesterov_g:g", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+nesterov_g(lr, b, g) = lr * (b * ema(b, g) + (1.0 - b) * g);
+
+//------------------------------`(op.)adam_g`-----------------------------------
+// Adam: bias-corrected first and second moments of the gradient,
+// `lr m / (sqrt(v) + eps)`. Without the bias correction the first steps are
+// `sqrt(1 - b2) / (1 - b1)` times larger than `lr` (3.16 for the usual
+// settings), an audible jump at start.
+//
+// #### Usage
+//
+// ```
+// adam_g(lr, b1, b2, eps, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `b1`: first-moment coefficient (0.9 in the paper)
+// * `b2`: second-moment coefficient (0.999 in the paper)
+// * `eps`: regularization of the normalization
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// adam_g_test = op.adam_g(0.01, 0.9, 0.999, 1e-8, hslider("adam_g:g", 0, -1, 1, 0.01));
+// ```
+//
+// #### References
+//
+// * <https://arxiv.org/abs/1412.6980>
+//------------------------------------------------------------------------------
+adam_g(lr, b1, b2, eps, g) = lr * m / (sqrt(v) + eps)
 with {
-    raw_grad = err * grad;
-    m = raw_grad : si.smooth(0.9);
-    v = (raw_grad * raw_grad) : si.smooth(0.999);
-    m_nesterov = (0.9 * m) + ((1.0 - 0.9) * raw_grad);
-    step = (lr * m_nesterov) / (sqrt(v) + 0.00000001);
+    m = ema_bc(b1, g);
+    v = ema_bc(b2, g * g);
 };
 
-sign_sgd(lr, err, grad) = lr * ba.signum(err * grad);
+//------------------------------`(op.)nadam_g`----------------------------------
+// Nesterov-accelerated Adam: the Adam step taken on `b1 m + (1 - b1) g`
+// instead of `m`.
+//
+// #### Usage
+//
+// ```
+// nadam_g(lr, b1, b2, eps, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `b1`: first-moment coefficient
+// * `b2`: second-moment coefficient
+// * `eps`: regularization of the normalization
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// nadam_g_test = op.nadam_g(0.01, 0.9, 0.999, 1e-8, hslider("nadam_g:g", 0, -1, 1, 0.01));
+// ```
+//
+// #### References
+//
+// * <https://openreview.net/forum?id=OM0jvwB8jIp57ZJjtNEZ>
+//------------------------------------------------------------------------------
+nadam_g(lr, b1, b2, eps, g) = lr * (b1 * m + (1.0 - b1) * g) / (sqrt(v) + eps)
+with {
+    m = ema_bc(b1, g);
+    v = ema_bc(b2, g * g);
+};
 
+//------------------------------`(op.)amsgrad_g`--------------------------------
+// AMSGrad: Adam normalized by the running maximum of the second moment, so
+// the effective learning rate never increases.
+//
+// #### Usage
+//
+// ```
+// amsgrad_g(lr, b1, b2, eps, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `b1`: first-moment coefficient
+// * `b2`: second-moment coefficient
+// * `eps`: regularization of the normalization
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// amsgrad_g_test = op.amsgrad_g(0.01, 0.9, 0.999, 1e-8, hslider("amsgrad_g:g", 0, -1, 1, 0.01));
+// ```
+//
+// #### References
+//
+// * <https://openreview.net/forum?id=ryQu7f-RZ>
+//------------------------------------------------------------------------------
+amsgrad_g(lr, b1, b2, eps, g) = lr * m / (sqrt(vmax) + eps)
+with {
+    m = ema_bc(b1, g);
+    v = ema_bc(b2, g * g);
+    vmax = max(v) ~ _;
+};
 
-/* ==============================================================================
-   PART 2: GENERIC FAD ROUTERS (UNIFIED)
-   ============================================================================== */
+//------------------------------`(op.)adabelief_g`------------------------------
+// AdaBelief: Adam normalized by the variance of the gradient around its
+// average, `ema((g - m)^2)`, instead of its raw second moment. Steps are large
+// while the gradient is consistent and small while it is noisy.
+//
+// #### Usage
+//
+// ```
+// adabelief_g(lr, b1, b2, eps, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `b1`: first-moment coefficient
+// * `b2`: variance coefficient
+// * `eps`: regularization of the normalization
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// adabelief_g_test = op.adabelief_g(0.01, 0.9, 0.999, 1e-8, hslider("adabelief_g:g", 0, -1, 1, 0.01));
+// ```
+//
+// #### References
+//
+// * <https://arxiv.org/abs/2010.07468>
+//------------------------------------------------------------------------------
+adabelief_g(lr, b1, b2, eps, g) = lr * m / (sqrt(s) + eps)
+with {
+    m = ema_bc(b1, g);
+    s = ema_bc(b2, (g - m) * (g - m)) + eps;
+};
 
+//------------------------------`(op.)rmsprop_g`--------------------------------
+// RMSProp: gradient normalized by the root of its smoothed square,
+// `lr g / (sqrt(ema(a, g^2)) + eps)`.
+//
+// #### Usage
+//
+// ```
+// rmsprop_g(lr, a, eps, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `a`: smoothing coefficient of the squared gradient
+// * `eps`: regularization of the normalization
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// rmsprop_g_test = op.rmsprop_g(0.01, 0.999, 1e-8, hslider("rmsprop_g:g", 0, -1, 1, 0.01));
+// ```
+//
+// #### References
+//
+// * <https://www.cs.toronto.edu/~tijmen/csc321/slides/lecture_slides_lec6.pdf>
+//------------------------------------------------------------------------------
+rmsprop_g(lr, a, eps, g) = lr * g / (sqrt(ema(a, g * g)) + eps);
+
+//------------------------------`(op.)adagrad_g`--------------------------------
+// AdaGrad: gradient normalized by the root of the running *sum* of its
+// squares. The sum only grows, so the steps vanish over time: a decaying
+// learning rate rather than an adaptive one, to be used deliberately.
+//
+// #### Usage
+//
+// ```
+// adagrad_g(lr, eps, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `eps`: regularization of the normalization
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// adagrad_g_test = op.adagrad_g(0.01, 1e-8, hslider("adagrad_g:g", 0, -1, 1, 0.01));
+// ```
+//
+// #### References
+//
+// * <https://jmlr.org/papers/v12/duchi11a.html>
+//------------------------------------------------------------------------------
+adagrad_g(lr, eps, g) = lr * g / (sqrt(_sqsum(g)) + eps);
+
+//------------------------------`(op.)lion_g`-----------------------------------
+// Lion: a step of `±lr` in the direction of the sign of an interpolation
+// between the momentum and the current gradient, with the momentum updated
+// afterwards. One learning rate serves parameters of any scale, which makes it
+// a good default for several parameters with different units.
+//
+// #### Usage
+//
+// ```
+// lion_g(lr, b1, b2, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: step magnitude
+// * `b1`: interpolation coefficient (0.9 in the paper)
+// * `b2`: momentum coefficient (0.99 in the paper)
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lion_g_test = op.lion_g(0.001, 0.9, 0.99, hslider("lion_g:g", 0, -1, 1, 0.01));
+// ```
+//
+// #### References
+//
+// * <https://arxiv.org/abs/2302.06675>
+//------------------------------------------------------------------------------
+lion_g(lr, b1, b2, g) = lr * sgn(b1 * (m : mem) + (1.0 - b1) * g)
+with {
+    m = ema(b2, g);
+};
+
+//------------------------------`(op.)sign_g`-----------------------------------
+// Sign descent: a step of `±lr`.
+//
+// #### Usage
+//
+// ```
+// sign_g(lr, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: step magnitude
+// * `g`: gradient `d(loss)/dp`
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// sign_g_test = op.sign_g(0.001, hslider("sign_g:g", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+sign_g(lr, g) = lr * sgn(g);
+
+//==================================Least-Squares Loops=====================================
+// Loops that learn the `N` parameters of a model `mdl(p1, ..., pN, x)` so that
+// its output follows `target`. Each sample, `fad` differentiates the model
+// with respect to its parameters, every engine receives the residual
+// `r = model - target` and its own sensitivity `j = d(model)/dp`, and the
+// updated parameters are projected on their bounds. The loop outputs the `N`
+// learned parameters; rebuild the model from them to hear it.
+//
+// `lsq_ND` take an initial value and a reset control per parameter;
+// `optimize_ND` are the original entry points of this library, equivalent to
+// `lsq_ND` with a zero initial value and no reset.
+//==========================================================================================
+
+//------------------------------`(op.)lsq_1D`-----------------------------------
+// One-parameter least-squares loop.
+//
+// #### Usage
+//
+// ```
+// lsq_1D(mdl, upd1, lo1, hi1, init1, reset, target, x) : _
+// ```
+//
+// Where:
+//
+// * `mdl`: model `mdl(p1, x)`, a function of the parameter and the input
+// * `upd1`: least-squares engine `upd1(r, j)`
+// * `lo1`, `hi1`: bounds of the parameter
+// * `init1`: initial value
+// * `reset`: signal forcing the parameter back to `init1` while non-zero
+// * `target`: target signal
+// * `x`: model input
+//
+// #### Example
+//
+// ```
+// gain(p, x) = p * x;
+// learned = op.lsq_1D(gain, op.nlms(0.02, 1e-6, 0.99), -4, 4, 0, 0, target, x);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lsq_1D_test = op.lsq_1D(\(p, x).(p * x), op.nlms(0.02, 1e-6, 0.99), -4, 4, 0, 0, 0.5 * x, x)
+// with { x = hslider("lsq_1D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+lsq_1D(mdl, upd1, lo1, hi1, init1, reset, target, x) = loop ~ _
+with {
+    loop(prev1) = next1
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        pt = fad(mdl(p1, x), p1);
+        r = (pt : _, !) - target;
+        j1 = pt : !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
+    };
+};
+
+//------------------------------`(op.)lsq_2D`-----------------------------------
+// Two-parameter least-squares loop; see `lsq_1D`.
+//
+// #### Usage
+//
+// ```
+// lsq_2D(mdl, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset, target, x) : _, _
+// ```
+//
+// Where:
+//
+// * `mdl`: model `mdl(p1, p2, x)`
+// * `upd1`, `upd2`: least-squares engines `upd(r, j)`
+// * `lo1`, `hi1`, `lo2`, `hi2`: bounds of the parameters
+// * `init1`, `init2`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+// * `target`: target signal
+// * `x`: model input
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lsq_2D_test = op.lsq_2D(\(a, b, x).(a * x + b), op.lms(0.01), op.lms(0.01), -4, 4, -4, 4, 0, 0, 0, 0.5 * x + 0.1, x)
+// with { x = hslider("lsq_2D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+lsq_2D(mdl, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset, target, x) = loop ~ (_, _)
+with {
+    loop(prev1, prev2) = next1, next2
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        pt = fad(mdl(p1, p2, x), (p1, p2));
+        r = (pt : _, !, !) - target;
+        j1 = pt : !, _, !;
+        j2 = pt : !, !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
+        next2 = clip(lo2, hi2, p2 - upd2(r, j2));
+    };
+};
+
+//------------------------------`(op.)lsq_3D`-----------------------------------
+// Three-parameter least-squares loop; see `lsq_1D`.
+//
+// #### Usage
+//
+// ```
+// lsq_3D(mdl, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset, target, x) : _, _, _
+// ```
+//
+// Where:
+//
+// * `mdl`: model `mdl(p1, p2, p3, x)`
+// * `upd1` ... `upd3`: least-squares engines `upd(r, j)`
+// * `lo1`, `hi1` ... `lo3`, `hi3`: bounds of the parameters
+// * `init1` ... `init3`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+// * `target`: target signal
+// * `x`: model input
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lsq_3D_test = op.lsq_3D(\(h0, h1, h2, x).(h0 * x + h1 * x' + h2 * x''), op.nlms(0.02, 1e-6, 0.99), op.nlms(0.02, 1e-6, 0.99), op.nlms(0.02, 1e-6, 0.99), -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'', x)
+// with { x = hslider("lsq_3D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+lsq_3D(mdl, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset, target, x) = loop ~ (_, _, _)
+with {
+    loop(prev1, prev2, prev3) = next1, next2, next3
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        pt = fad(mdl(p1, p2, p3, x), (p1, p2, p3));
+        r = (pt : _, !, !, !) - target;
+        j1 = pt : !, _, !, !;
+        j2 = pt : !, !, _, !;
+        j3 = pt : !, !, !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
+        next2 = clip(lo2, hi2, p2 - upd2(r, j2));
+        next3 = clip(lo3, hi3, p3 - upd3(r, j3));
+    };
+};
+
+//------------------------------`(op.)lsq_4D`-----------------------------------
+// Four-parameter least-squares loop; see `lsq_1D`.
+//
+// #### Usage
+//
+// ```
+// lsq_4D(mdl, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset, target, x) : _, _, _, _
+// ```
+//
+// Where:
+//
+// * `mdl`: model `mdl(p1, p2, p3, p4, x)`
+// * `upd1` ... `upd4`: least-squares engines `upd(r, j)`
+// * `lo1`, `hi1` ... `lo4`, `hi4`: bounds of the parameters
+// * `init1` ... `init4`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+// * `target`: target signal
+// * `x`: model input
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lsq_4D_test = op.lsq_4D(\(a, b, c, d, x).(a * x + b * x' + c * x'' + d), op.lms(0.01), op.lms(0.01), op.lms(0.01), op.lms(0.01), -4, 4, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1, x)
+// with { x = hslider("lsq_4D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+lsq_4D(mdl, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset, target, x) = loop ~ (_, _, _, _)
+with {
+    loop(prev1, prev2, prev3, prev4) = next1, next2, next3, next4
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        p4 = clip(lo4, hi4, pstate(init4, reset, prev4));
+        pt = fad(mdl(p1, p2, p3, p4, x), (p1, p2, p3, p4));
+        r = (pt : _, !, !, !, !) - target;
+        j1 = pt : !, _, !, !, !;
+        j2 = pt : !, !, _, !, !;
+        j3 = pt : !, !, !, _, !;
+        j4 = pt : !, !, !, !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
+        next2 = clip(lo2, hi2, p2 - upd2(r, j2));
+        next3 = clip(lo3, hi3, p3 - upd3(r, j3));
+        next4 = clip(lo4, hi4, p4 - upd4(r, j4));
+    };
+};
+
+//------------------------------`(op.)lsq_5D`-----------------------------------
+// Five-parameter least-squares loop; see `lsq_1D`.
+//
+// #### Usage
+//
+// ```
+// lsq_5D(mdl, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset, target, x) : _, _, _, _, _
+// ```
+//
+// Where:
+//
+// * `mdl`: model `mdl(p1, p2, p3, p4, p5, x)`
+// * `upd1` ... `upd5`: least-squares engines `upd(r, j)`
+// * `lo1`, `hi1` ... `lo5`, `hi5`: bounds of the parameters
+// * `init1` ... `init5`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+// * `target`: target signal
+// * `x`: model input
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lsq_5D_test = op.lsq_5D(\(a, b, c, d, e, x).(a * x + b * x' + c * x'' + d * x''' + e), op.lms(0.01), op.lms(0.01), op.lms(0.01), op.lms(0.01), op.lms(0.01), -4, 4, -4, 4, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1 * x''' + 0.1, x)
+// with { x = hslider("lsq_5D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+lsq_5D(mdl, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset, target, x) = loop ~ (_, _, _, _, _)
+with {
+    loop(prev1, prev2, prev3, prev4, prev5) = next1, next2, next3, next4, next5
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        p4 = clip(lo4, hi4, pstate(init4, reset, prev4));
+        p5 = clip(lo5, hi5, pstate(init5, reset, prev5));
+        pt = fad(mdl(p1, p2, p3, p4, p5, x), (p1, p2, p3, p4, p5));
+        r = (pt : _, !, !, !, !, !) - target;
+        j1 = pt : !, _, !, !, !, !;
+        j2 = pt : !, !, _, !, !, !;
+        j3 = pt : !, !, !, _, !, !;
+        j4 = pt : !, !, !, !, _, !;
+        j5 = pt : !, !, !, !, !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(r, j1));
+        next2 = clip(lo2, hi2, p2 - upd2(r, j2));
+        next3 = clip(lo3, hi3, p3 - upd3(r, j3));
+        next4 = clip(lo4, hi4, p4 - upd4(r, j4));
+        next5 = clip(lo5, hi5, p5 - upd5(r, j5));
+    };
+};
+
+//------------------------------`(op.)optimize_1D`------------------------------
+// Original one-parameter loop of this library: `lsq_1D` with a zero initial
+// value and no reset.
+//
+// #### Usage
+//
+// ```
+// optimize_1D(mdl, upd1, min1, max1, target, x) : _
+// ```
+//
+// Where:
+//
+// * `mdl`: model `mdl(p1, x)`
+// * `upd1`: least-squares engine `upd1(r, j)`
+// * `min1`, `max1`: bounds of the parameter
+// * `target`: target signal
+// * `x`: model input
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// optimize_1D_test = op.optimize_1D(\(p, x).(p * x), op.adam(0.01), -4, 4, 0.5 * x, x)
+// with { x = hslider("optimize_1D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
 optimize_1D(mdl, upd1, min1, max1, target, x) =
-    (loop ~ _)
-with {
-    diff_mdl(p1) = fad(mdl(p1, x), (p1));
+    lsq_1D(mdl, upd1, min1, max1, 0.0, 0.0, target, x);
 
-    loop(p1_prev) = p1_next
-    with {
-        p1_act = max(min1, min(max1, p1_prev));
-        pt = diff_mdl(p1_act);
-
-        err = (pt : _, !) - target;
-        grad1 = pt : !, _;
-
-        p1_next = max(min1, min(max1, p1_act - upd1(err, grad1)));
-    };
-};
-
+//------------------------------`(op.)optimize_2D`------------------------------
+// Original two-parameter loop: `lsq_2D` with zero initial values and no reset.
+//
+// #### Usage
+//
+// ```
+// optimize_2D(mdl, upd1, upd2, min1, max1, min2, max2, target, x) : _, _
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// optimize_2D_test = op.optimize_2D(\(a, b, x).(a * x + b), op.adam(0.01), op.adam(0.01), -4, 4, -4, 4, 0.5 * x + 0.1, x)
+// with { x = hslider("optimize_2D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
 optimize_2D(mdl, upd1, upd2, min1, max1, min2, max2, target, x) =
-    (loop ~ (_, _))
-with {
-    diff_mdl(p1, p2) = fad(mdl(p1, p2, x), (p1, p2));
+    lsq_2D(mdl, upd1, upd2, min1, max1, min2, max2, 0.0, 0.0, 0.0, target, x);
 
-    loop(p1_prev, p2_prev) = p1_next, p2_next
-    with {
-        p1_act = max(min1, min(max1, p1_prev));
-        p2_act = max(min2, min(max2, p2_prev));
-
-        pt = diff_mdl(p1_act, p2_act);
-
-        err   = (pt : _, !, !) - target;
-        grad1 = pt : !, _, !;
-        grad2 = pt : !, !, _;
-
-        p1_next = max(min1, min(max1, p1_act - upd1(err, grad1)));
-        p2_next = max(min2, min(max2, p2_act - upd2(err, grad2)));
-    };
-};
-
+//------------------------------`(op.)optimize_3D`------------------------------
+// Original three-parameter loop: `lsq_3D` with zero initial values and no reset.
+//
+// #### Usage
+//
+// ```
+// optimize_3D(mdl, upd1, upd2, upd3, min1, max1, min2, max2, min3, max3, target, x) : _, _, _
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// optimize_3D_test = op.optimize_3D(\(h0, h1, h2, x).(h0 * x + h1 * x' + h2 * x''), op.adam(0.01), op.adam(0.01), op.adam(0.01), -4, 4, -4, 4, -4, 4, 0.5 * x + 0.3 * x' - 0.2 * x'', x)
+// with { x = hslider("optimize_3D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
 optimize_3D(mdl, upd1, upd2, upd3, min1, max1, min2, max2, min3, max3, target, x) =
-    (loop ~ (_, _, _))
-with {
-    diff_mdl(p1, p2, p3) = fad(mdl(p1, p2, p3, x), (p1, p2, p3));
+    lsq_3D(mdl, upd1, upd2, upd3, min1, max1, min2, max2, min3, max3, 0.0, 0.0, 0.0, 0.0, target, x);
 
-    loop(p1_prev, p2_prev, p3_prev) = p1_next, p2_next, p3_next
-    with {
-        p1_act = max(min1, min(max1, p1_prev));
-        p2_act = max(min2, min(max2, p2_prev));
-        p3_act = max(min3, min(max3, p3_prev));
-
-        pt = diff_mdl(p1_act, p2_act, p3_act);
-
-        err   = (pt : _, !, !, !) - target;
-        grad1 = pt : !, _, !, !;
-        grad2 = pt : !, !, _, !;
-        grad3 = pt : !, !, !, _;
-
-        p1_next = max(min1, min(max1, p1_act - upd1(err, grad1)));
-        p2_next = max(min2, min(max2, p2_act - upd2(err, grad2)));
-        p3_next = max(min3, min(max3, p3_act - upd3(err, grad3)));
-    };
-};
-
+//------------------------------`(op.)optimize_4D`------------------------------
+// Original four-parameter loop: `lsq_4D` with zero initial values and no reset.
+//
+// #### Usage
+//
+// ```
+// optimize_4D(mdl, upd1, upd2, upd3, upd4, min1, max1, min2, max2, min3, max3, min4, max4, target, x) : _, _, _, _
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// optimize_4D_test = op.optimize_4D(\(a, b, c, d, x).(a * x + b * x' + c * x'' + d), op.adam(0.01), op.adam(0.01), op.adam(0.01), op.adam(0.01), -4, 4, -4, 4, -4, 4, -4, 4, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1, x)
+// with { x = hslider("optimize_4D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
 optimize_4D(mdl, upd1, upd2, upd3, upd4, min1, max1, min2, max2, min3, max3, min4, max4, target, x) =
-    (loop ~ (_, _, _, _))
-with {
-    diff_mdl(p1, p2, p3, p4) = fad(mdl(p1, p2, p3, p4, x), (p1, p2, p3, p4));
+    lsq_4D(mdl, upd1, upd2, upd3, upd4, min1, max1, min2, max2, min3, max3, min4, max4, 0.0, 0.0, 0.0, 0.0, 0.0, target, x);
 
-    loop(p1_prev, p2_prev, p3_prev, p4_prev) = p1_next, p2_next, p3_next, p4_next
-    with {
-        p1_act = max(min1, min(max1, p1_prev));
-        p2_act = max(min2, min(max2, p2_prev));
-        p3_act = max(min3, min(max3, p3_prev));
-        p4_act = max(min4, min(max4, p4_prev));
-
-        pt = diff_mdl(p1_act, p2_act, p3_act, p4_act);
-
-        err   = (pt : _, !, !, !, !) - target;
-        grad1 = pt : !, _, !, !, !;
-        grad2 = pt : !, !, _, !, !;
-        grad3 = pt : !, !, !, _, !;
-        grad4 = pt : !, !, !, !, _;
-
-        p1_next = max(min1, min(max1, p1_act - upd1(err, grad1)));
-        p2_next = max(min2, min(max2, p2_act - upd2(err, grad2)));
-        p3_next = max(min3, min(max3, p3_act - upd3(err, grad3)));
-        p4_next = max(min4, min(max4, p4_act - upd4(err, grad4)));
-    };
-};
-
+//------------------------------`(op.)optimize_5D`------------------------------
+// Original five-parameter loop: `lsq_5D` with zero initial values and no reset.
+//
+// #### Usage
+//
+// ```
+// optimize_5D(mdl, upd1, upd2, upd3, upd4, upd5, min1, max1, min2, max2, min3, max3, min4, max4, min5, max5, target, x) : _, _, _, _, _
+// ```
+//
+// #### Example
+//
+// ```
+// biquad(b0, b1, b2, a1, a2, x) = fi.tf2(b0, b1, b2, a1, a2, x);
+// coefs = op.optimize_5D(biquad, fast, fast, fast, slow, slow,
+//                        -2, 2, -2, 2, -2, 2, -1.92, 1.92, -0.92, 0.92, target, x)
+// with { fast = op.rmsprop(0.002); slow = op.rmsprop(0.0005); };
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// optimize_5D_test = op.optimize_5D(\(a, b, c, d, e, x).(a * x + b * x' + c * x'' + d * x''' + e), op.adam(0.01), op.adam(0.01), op.adam(0.01), op.adam(0.01), op.adam(0.01), -4, 4, -4, 4, -4, 4, -4, 4, -4, 4, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1 * x''' + 0.1, x)
+// with { x = hslider("optimize_5D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
 optimize_5D(mdl, upd1, upd2, upd3, upd4, upd5, min1, max1, min2, max2, min3, max3, min4, max4, min5, max5, target, x) =
-    (loop ~ (_, _, _, _, _))
+    lsq_5D(mdl, upd1, upd2, upd3, upd4, upd5, min1, max1, min2, max2, min3, max3, min4, max4, min5, max5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, target, x);
+
+//====================================Loss-First Loops======================================
+// Loops that minimize a scalar loss `loss(p1, ..., pN)` closed over the data:
+// the user writes, for example, `loss(f, q) = mse(mdl(f, q, x), target)` and
+// may add regularizers, use a robust or an energy loss, or a model with
+// several outputs reduced by the loss. Each sample, one `fad` call
+// differentiates the loss with respect to all parameters, every gradient
+// engine receives its `g = d(loss)/dp`, and the updated parameters are
+// projected on their bounds. The loop outputs the `N` learned parameters.
+//==========================================================================================
+
+//------------------------------`(op.)descend_1D`-------------------------------
+// One-parameter loss-first loop.
+//
+// #### Usage
+//
+// ```
+// descend_1D(loss, upd1, lo1, hi1, init1, reset) : _
+// ```
+//
+// Where:
+//
+// * `loss`: scalar loss `loss(p1)`, a function of the parameter closed over the data
+// * `upd1`: gradient engine `upd1(g)`
+// * `lo1`, `hi1`: bounds of the parameter
+// * `init1`: initial value
+// * `reset`: signal forcing the parameter back to `init1` while non-zero
+//
+// #### Example
+//
+// ```
+// loss(p) = op.logcosh(p * x, target);
+// learned = op.descend_1D(loss, op.adam_g(0.002, 0.9, 0.999, 1e-8), -4, 4, 0, button("reset"));
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_1D_test = op.descend_1D(\(p).(op.mse(p * x, 0.5 * x)), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0)
+// with { x = hslider("descend_1D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+descend_1D(loss, upd1, lo1, hi1, init1, reset) = loop ~ _
 with {
-    diff_mdl(p1, p2, p3, p4, p5) = fad(mdl(p1, p2, p3, p4, p5, x), (p1, p2, p3, p4, p5));
-
-    loop(p1_prev, p2_prev, p3_prev, p4_prev, p5_prev) = (p1_next, p2_next, p3_next, p4_next, p5_next)
+    loop(prev1) = next1
     with {
-        p1_act = max(min1, min(max1, p1_prev));
-        p2_act = max(min2, min(max2, p2_prev));
-        p3_act = max(min3, min(max3, p3_prev));
-        p4_act = max(min4, min(max4, p4_prev));
-        p5_act = max(min5, min(max5, p5_prev));
-
-        pt = diff_mdl(p1_act, p2_act, p3_act, p4_act, p5_act);
-
-        err   = (pt : _, !, !, !, !, !) - target;
-        grad1 = pt : !, _, !, !, !, !;
-        grad2 = pt : !, !, _, !, !, !;
-        grad3 = pt : !, !, !, _, !, !;
-        grad4 = pt : !, !, !, !, _, !;
-        grad5 = pt : !, !, !, !, !, _;
-
-        p1_next = max(min1, min(max1, p1_act - upd1(err, grad1)));
-        p2_next = max(min2, min(max2, p2_act - upd2(err, grad2)));
-        p3_next = max(min3, min(max3, p3_act - upd3(err, grad3)));
-        p4_next = max(min4, min(max4, p4_act - upd4(err, grad4)));
-        p5_next = max(min5, min(max5, p5_act - upd5(err, grad5)));
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        g1 = fad(loss(p1), p1) : !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(g1));
     };
 };
+
+//------------------------------`(op.)descend_2D`-------------------------------
+// Two-parameter loss-first loop; see `descend_1D`.
+//
+// #### Usage
+//
+// ```
+// descend_2D(loss, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset) : _, _
+// ```
+//
+// Where:
+//
+// * `loss`: scalar loss `loss(p1, p2)`
+// * `upd1`, `upd2`: gradient engines `upd(g)`
+// * `lo1`, `hi1`, `lo2`, `hi2`: bounds of the parameters
+// * `init1`, `init2`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_2D_test = op.descend_2D(\(a, b).(op.mse(a * x + b, 0.5 * x + 0.1)), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, -4, 4, 0, 0, 0)
+// with { x = hslider("descend_2D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+descend_2D(loss, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset) = loop ~ (_, _)
+with {
+    loop(prev1, prev2) = next1, next2
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        gs = fad(loss(p1, p2), (p1, p2)) : !, _, _;
+        g1 = gs : _, !;
+        g2 = gs : !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(g1));
+        next2 = clip(lo2, hi2, p2 - upd2(g2));
+    };
+};
+
+//------------------------------`(op.)descend_3D`-------------------------------
+// Three-parameter loss-first loop; see `descend_1D`.
+//
+// #### Usage
+//
+// ```
+// descend_3D(loss, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset) : _, _, _
+// ```
+//
+// Where:
+//
+// * `loss`: scalar loss `loss(p1, p2, p3)`
+// * `upd1` ... `upd3`: gradient engines `upd(g)`
+// * `lo1`, `hi1` ... `lo3`, `hi3`: bounds of the parameters
+// * `init1` ... `init3`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_3D_test = op.descend_3D(\(h0, h1, h2).(op.mse(h0 * x + h1 * x' + h2 * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, -4, 4, -4, 4, 0, 0, 0, 0)
+// with { x = hslider("descend_3D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+descend_3D(loss, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset) = loop ~ (_, _, _)
+with {
+    loop(prev1, prev2, prev3) = next1, next2, next3
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        gs = fad(loss(p1, p2, p3), (p1, p2, p3)) : !, _, _, _;
+        g1 = gs : _, !, !;
+        g2 = gs : !, _, !;
+        g3 = gs : !, !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(g1));
+        next2 = clip(lo2, hi2, p2 - upd2(g2));
+        next3 = clip(lo3, hi3, p3 - upd3(g3));
+    };
+};
+
+//------------------------------`(op.)descend_4D`-------------------------------
+// Four-parameter loss-first loop; see `descend_1D`.
+//
+// #### Usage
+//
+// ```
+// descend_4D(loss, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset) : _, _, _, _
+// ```
+//
+// Where:
+//
+// * `loss`: scalar loss `loss(p1, p2, p3, p4)`
+// * `upd1` ... `upd4`: gradient engines `upd(g)`
+// * `lo1`, `hi1` ... `lo4`, `hi4`: bounds of the parameters
+// * `init1` ... `init4`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_4D_test = op.descend_4D(\(a, b, c, d).(op.mse(a * x + b * x' + c * x'' + d, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1)), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0)
+// with { x = hslider("descend_4D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+descend_4D(loss, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset) = loop ~ (_, _, _, _)
+with {
+    loop(prev1, prev2, prev3, prev4) = next1, next2, next3, next4
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        p4 = clip(lo4, hi4, pstate(init4, reset, prev4));
+        gs = fad(loss(p1, p2, p3, p4), (p1, p2, p3, p4)) : !, _, _, _, _;
+        g1 = gs : _, !, !, !;
+        g2 = gs : !, _, !, !;
+        g3 = gs : !, !, _, !;
+        g4 = gs : !, !, !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(g1));
+        next2 = clip(lo2, hi2, p2 - upd2(g2));
+        next3 = clip(lo3, hi3, p3 - upd3(g3));
+        next4 = clip(lo4, hi4, p4 - upd4(g4));
+    };
+};
+
+//------------------------------`(op.)descend_5D`-------------------------------
+// Five-parameter loss-first loop; see `descend_1D`.
+//
+// #### Usage
+//
+// ```
+// descend_5D(loss, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset) : _, _, _, _, _
+// ```
+//
+// Where:
+//
+// * `loss`: scalar loss `loss(p1, p2, p3, p4, p5)`
+// * `upd1` ... `upd5`: gradient engines `upd(g)`
+// * `lo1`, `hi1` ... `lo5`, `hi5`: bounds of the parameters
+// * `init1` ... `init5`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+//
+// #### Example
+//
+// ```
+// // Five-coefficient biquad with poles learned as reflection coefficients:
+// // every step of the optimizer is a stable filter.
+// biquad(b0, b1, b2, k1, k2, x) = fi.tf2(b0, b1, b2, a1, a2, x)
+// with {
+//     a1 = op.poles_from_reflection(k1, k2) : _, !;
+//     a2 = op.poles_from_reflection(k1, k2) : !, _;
+// };
+// loss(b0, b1, b2, k1, k2) = op.mse(biquad(b0, b1, b2, k1, k2, x), target);
+// lion = op.lion_g(op.lr_exp(0.0002, 0.000002, 30000), 0.9, 0.99);
+// coefs = op.descend_5D(loss, lion, lion, lion, lion, lion,
+//                       -2, 2, -2, 2, -2, 2, -0.999, 0.999, -0.999, 0.999,
+//                       0, 0, 0, 0, 0, button("reset"));
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_5D_test = op.descend_5D(\(a, b, c, d, e).(op.mse(a * x + b * x' + c * x'' + d * x''' + e, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1 * x''' + 0.1)), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, -4, 4, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0, 0)
+// with { x = hslider("descend_5D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+descend_5D(loss, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset) = loop ~ (_, _, _, _, _)
+with {
+    loop(prev1, prev2, prev3, prev4, prev5) = next1, next2, next3, next4, next5
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        p4 = clip(lo4, hi4, pstate(init4, reset, prev4));
+        p5 = clip(lo5, hi5, pstate(init5, reset, prev5));
+        gs = fad(loss(p1, p2, p3, p4, p5), (p1, p2, p3, p4, p5)) : !, _, _, _, _, _;
+        g1 = gs : _, !, !, !, !;
+        g2 = gs : !, _, !, !, !;
+        g3 = gs : !, !, _, !, !;
+        g4 = gs : !, !, !, _, !;
+        g5 = gs : !, !, !, !, _;
+        next1 = clip(lo1, hi1, p1 - upd1(g1));
+        next2 = clip(lo2, hi2, p2 - upd2(g2));
+        next3 = clip(lo3, hi3, p3 - upd3(g3));
+        next4 = clip(lo4, hi4, p4 - upd4(g4));
+        next5 = clip(lo5, hi5, p5 - upd5(g5));
+    };
+};
+
+//===================================Gauss-Newton Loops=====================================
+// Recursive Gauss-Newton loops in prediction-error form (the recursive
+// least-squares family). The information matrix `H ~ E[J J^T]` is averaged
+// with forgetting factor `a` (bias corrected, so the first samples are not
+// divided by an empty matrix) and damped Marquardt-style with
+// `lambda diag(H)`; the innovation `J r` is instantaneous; the step is
+// `mu H^-1 J r`. Parameters of different units are handled by the same
+// formula, correlations included, so no per-parameter learning rate is
+// needed: `mu` plays the role of `1 - a` in RLS and `mu = 1 - a` is the
+// natural choice.
+//==========================================================================================
+
+//------------------------------`(op.)lm_2D`------------------------------------
+// Two-parameter damped Gauss-Newton loop.
+//
+// #### Usage
+//
+// ```
+// lm_2D(mdl, mu, lambda, a, lo1, hi1, lo2, hi2, init1, init2, reset, target, x) : _, _
+// ```
+//
+// Where:
+//
+// * `mdl`: model `mdl(p1, p2, x)`
+// * `mu`: gain, typically `1 - a`
+// * `lambda`: Marquardt damping, relative to the diagonal of the information matrix (0.1 is a robust default)
+// * `a`: forgetting factor in `[0, 1)`
+// * `lo1`, `hi1`, `lo2`, `hi2`: bounds of the parameters
+// * `init1`, `init2`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+// * `target`: target signal
+// * `x`: model input
+//
+// #### Example
+//
+// ```
+// // Resonant filter identification: f in Hertz and q without unit, one gain.
+// mdl(f, q, x) = x : fi.resonlp(f, q, 1.0);
+// learned = op.lm_2D(mdl, 0.01, 0.1, 0.99, 20, 20000, 0.1, 10, 1000, 1, 0, target, x);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lm_2D_test = op.lm_2D(\(a, b, x).(a * x + b), 0.01, 0.1, 0.99, -4, 4, -4, 4, 0, 0, 0, 0.5 * x + 0.1, x)
+// with { x = hslider("lm_2D:x", 0, -1, 1, 0.01); };
+// ```
+//
+// #### References
+//
+// * <https://doi.org/10.1137/0111030>
+// * <https://doi.org/10.1016/0005-1098(84)90074-2>
+//------------------------------------------------------------------------------
+lm_2D(mdl, mu, lambda, a, lo1, hi1, lo2, hi2, init1, init2, reset, target, x) = loop ~ (_, _)
+with {
+    loop(prev1, prev2) = next1, next2
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        pt = fad(mdl(p1, p2, x), (p1, p2));
+        r = (pt : _, !, !) - target;
+        j1 = pt : !, _, !;
+        j2 = pt : !, !, _;
+        h11 = (1.0 + lambda) * ema_bc(a, j1 * j1) + _tiny;
+        h22 = (1.0 + lambda) * ema_bc(a, j2 * j2) + _tiny;
+        h12 = ema_bc(a, j1 * j2);
+        b1 = j1 * r;
+        b2 = j2 * r;
+        det = h11 * h22 - h12 * h12;
+        d1 = (h22 * b1 - h12 * b2) / det;
+        d2 = (h11 * b2 - h12 * b1) / det;
+        next1 = clip(lo1, hi1, p1 - mu * d1);
+        next2 = clip(lo2, hi2, p2 - mu * d2);
+    };
+};
+
+//------------------------------`(op.)lm_3D`------------------------------------
+// Three-parameter damped Gauss-Newton loop; see `lm_2D`. The 3x3 information
+// matrix is inverted through its cofactors.
+//
+// #### Usage
+//
+// ```
+// lm_3D(mdl, mu, lambda, a, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset, target, x) : _, _, _
+// ```
+//
+// Where:
+//
+// * `mdl`: model `mdl(p1, p2, p3, x)`
+// * `mu`: gain, typically `1 - a`
+// * `lambda`: Marquardt damping, relative to the diagonal of the information matrix
+// * `a`: forgetting factor in `[0, 1)`
+// * `lo1`, `hi1` ... `lo3`, `hi3`: bounds of the parameters
+// * `init1` ... `init3`: initial values
+// * `reset`: signal forcing the parameters back to their initial values while non-zero
+// * `target`: target signal
+// * `x`: model input
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lm_3D_test = op.lm_3D(\(h0, h1, h2, x).(h0 * x + h1 * x' + h2 * x''), 0.01, 0.1, 0.99, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'', x)
+// with { x = hslider("lm_3D:x", 0, -1, 1, 0.01); };
+// ```
+//
+// #### References
+//
+// * <https://doi.org/10.1137/0111030>
+//------------------------------------------------------------------------------
+lm_3D(mdl, mu, lambda, a, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset, target, x) = loop ~ (_, _, _)
+with {
+    loop(prev1, prev2, prev3) = next1, next2, next3
+    with {
+        p1 = clip(lo1, hi1, pstate(init1, reset, prev1));
+        p2 = clip(lo2, hi2, pstate(init2, reset, prev2));
+        p3 = clip(lo3, hi3, pstate(init3, reset, prev3));
+        pt = fad(mdl(p1, p2, p3, x), (p1, p2, p3));
+        r = (pt : _, !, !, !) - target;
+        j1 = pt : !, _, !, !;
+        j2 = pt : !, !, _, !;
+        j3 = pt : !, !, !, _;
+        h11 = (1.0 + lambda) * ema_bc(a, j1 * j1) + _tiny;
+        h22 = (1.0 + lambda) * ema_bc(a, j2 * j2) + _tiny;
+        h33 = (1.0 + lambda) * ema_bc(a, j3 * j3) + _tiny;
+        h12 = ema_bc(a, j1 * j2);
+        h13 = ema_bc(a, j1 * j3);
+        h23 = ema_bc(a, j2 * j3);
+        b1 = j1 * r;
+        b2 = j2 * r;
+        b3 = j3 * r;
+        c11 = h22 * h33 - h23 * h23;
+        c12 = h13 * h23 - h12 * h33;
+        c13 = h12 * h23 - h13 * h22;
+        c22 = h11 * h33 - h13 * h13;
+        c23 = h12 * h13 - h11 * h23;
+        c33 = h11 * h22 - h12 * h12;
+        det = h11 * c11 + h12 * c12 + h13 * c13;
+        d1 = (c11 * b1 + c12 * b2 + c13 * b3) / det;
+        d2 = (c12 * b1 + c22 * b2 + c23 * b3) / det;
+        d3 = (c13 * b1 + c23 * b2 + c33 * b3) / det;
+        next1 = clip(lo1, hi1, p1 - mu * d1);
+        next2 = clip(lo2, hi2, p2 - mu * d2);
+        next3 = clip(lo3, hi3, p3 - mu * d3);
+    };
+};
+
+//=====================================Newton Solver========================================
+// Newton-Raphson iteration on an implicit equation `F(y) = 0`, with `F` and
+// `F'` both obtained from a single-seed `fad`. The unrolled iteration is the
+// building block of zero-delay-feedback and analog-style implicit solvers.
+//==========================================================================================
+
+//------------------------------`(op.)newton_step`------------------------------
+// One Newton step `y - F(y) / F'(y)`.
+//
+// #### Usage
+//
+// ```
+// newton_step(F, y) : _
+// ```
+//
+// Where:
+//
+// * `F`: one-argument function of the unknown, `F(y)`, whose root is sought
+// * `y`: current estimate
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// newton_step_test = op.newton_step(\(y).(y * y - 2.0), hslider("newton_step:y", 1, 0.5, 2, 0.01));
+// ```
+//------------------------------------------------------------------------------
+newton_step(F, y) = y - (fad(F(y), y) : /);
+
+//------------------------------`(op.)newton`-----------------------------------
+// `N` unrolled Newton steps from the estimate `y0`.
+//
+// #### Usage
+//
+// ```
+// newton(N, F, y0) : _
+// ```
+//
+// Where:
+//
+// * `N`: number of steps, known at compile time
+// * `F`: one-argument function of the unknown, `F(y)`
+// * `y0`: initial estimate
+//
+// #### Example
+//
+// ```
+// // y = tanh(x - fb * y), solved for y with 5 steps from 0.
+// solve(x, fb) = op.newton(5, \(y).(y - ma.tanh(x - fb * y)), 0.0);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// newton_test = op.newton(6, \(y).(y * y * y + y - x), 0.0)
+// with { x = hslider("newton:x", 0, -1, 1, 0.01); };
+// ```
+//
+// #### References
+//
+// * <https://en.wikipedia.org/wiki/Newton%27s_method>
+//------------------------------------------------------------------------------
+newton(N, F, y0) = y0 : seq(i, N, newton_step(F));

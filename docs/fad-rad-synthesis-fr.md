@@ -211,8 +211,11 @@ pour réduire l'erreur.
 Cet exemple de conception exécutable complète le biquad adaptatif avec RAD de
 [`rad_tbptt_biquad1.dsp`](../tests/corpus/rad_tbptt_biquad1.dsp). La bibliothèque
 locale au projet [`optimizers.lib`](../libraries/optimizers.lib), utilisée
-ci-dessous, est versionnée avec `faust-rs`. Concaténer les blocs Faust de cette
-section et compiler le programme obtenu avec `-I libraries`.
+ci-dessous (préfixe `op`), est versionnée avec `faust-rs`; le fixture du corpus
+[`opt_descend_lion_biquad_reflection.dsp`](../tests/corpus/opt_descend_lion_biquad_reflection.dsp)
+en est la version sans bibliothèque standard, vérifiée par la suite de tests.
+Concaténer les blocs Faust de cette section et compiler le programme obtenu
+avec `-I libraries`.
 
 Cas d'usage: apprendre les cinq coefficients d'un biquad
 `b0, b1, b2, a1, a2` pour imiter une cible manipulée par l'utilisateur.
@@ -221,9 +224,9 @@ Le modèle audio est compact:
 
 ```faust
 import("stdfaust.lib");
-import("optimizers.lib");
+op = library("optimizers.lib");
 
-modele_biquad(b0, b1, b2, a1, a2, audio) =
+biquad_model(b0, b1, b2, a1, a2, audio) =
     fi.tf2(b0, b1, b2, a1, a2, audio);
 ```
 
@@ -237,65 +240,92 @@ t_a1 = vslider("[4] Cible a1", -1.0, -1.90, 1.90, 0.001) : si.smooth(0.99);
 t_a2 = vslider("[5] Cible a2", 0.4, -0.90, 0.90, 0.001) : si.smooth(0.99);
 ```
 
-Le coeur de l'apprentissage est une optimisation 5D:
+Le modèle appris n'expose pas `a1, a2` directement: il apprend deux
+coefficients de réflexion `k1, k2` dans `(-1, 1)` et les transforme par
+`a1 = k1 (1 + k2)`, `a2 = k2`. Cette application est une bijection sur le
+triangle de stabilité `|a2| < 1`, `|a1| < 1 + a2`: chaque filtre intermédiaire
+est stable, ce que des bornes rectangulaires sur `a1, a2` ne peuvent pas
+garantir. La perte s'écrit comme une fonction Faust ordinaire des cinq
+paramètres, fermée sur l'excitation et la cible:
 
 ```faust
 bruit = no.pink_noise;
-target = modele_biquad(t_b0, t_b1, t_b2, t_a1, t_a2, bruit);
+target = biquad_model(t_b0, t_b1, t_b2, t_a1, t_a2, bruit);
 
-fast = rmsprop(0.002);
-slow = rmsprop(0.0005);
+modele_appris(b0, b1, b2, k1, k2) = biquad_model(b0, b1, b2, a1, a2, bruit)
+with {
+    a1 = op.poles_from_reflection(k1, k2) : _, !;
+    a2 = op.poles_from_reflection(k1, k2) : !, _;
+};
+perte(b0, b1, b2, k1, k2) = op.mse(modele_appris(b0, b1, b2, k1, k2), target);
+```
 
-opts = optimize_5D(
-    modele_biquad,
-    fast, fast, fast, slow, slow,
+Le coeur de l'apprentissage est une descente 5D sur cette perte. Un seul
+moteur Lion, sur une vitesse d'apprentissage à décroissance exponentielle,
+sert les cinq paramètres: Lion avance de `±lr` dans la direction du signe de
+son moment, quelle que soit l'échelle de chaque gradient, donc zéros et pôles
+n'ont pas besoin de vitesses distinctes:
+
+```faust
+lion = op.lion_g(op.lr_exp(0.0002, 0.000002, 30000.0), 0.9, 0.99);
+reset = button("[6] Reset");
+
+opts = op.descend_5D(
+    perte,
+    lion, lion, lion, lion, lion,
     -2.0, 2.0,
     -2.0, 2.0,
     -2.0, 2.0,
-    -1.92, 1.92,
-    -0.92, 0.92,
-    target,
-    bruit
+    -0.999, 0.999,
+    -0.999, 0.999,
+    0.0, 0.0, 0.0, 0.0, 0.0,
+    reset
 );
 ```
 
-On extrait ensuite les cinq paramètres appris, on reconstruit le modèle appris
-et on définit un `process` complet:
+On extrait ensuite les cinq paramètres appris, on ramène les coefficients de
+réflexion aux pôles, on reconstruit le modèle appris et on définit un
+`process` complet:
 
 ```faust
 b0 = opts : _, !, !, !, !;
 b1 = opts : !, _, !, !, !;
 b2 = opts : !, !, _, !, !;
-a1 = opts : !, !, !, _, !;
-a2 = opts : !, !, !, !, _;
+k1 = opts : !, !, !, _, !;
+k2 = opts : !, !, !, !, _;
+a1 = op.poles_from_reflection(k1, k2) : _, !;
+a2 = op.poles_from_reflection(k1, k2) : !, _;
 
-modele = modele_biquad(b0, b1, b2, a1, a2, bruit);
+modele = modele_appris(b0, b1, b2, k1, k2);
 
 process = target, modele, b0, b1, b2, a1, a2;
 ```
 
-`optimize_5D` factorise le motif suivant:
+`descend_5D` factorise le motif suivant:
 
 ```faust
-diff_mdl(p1, p2, p3, p4, p5) =
-    fad(mdl(p1, p2, p3, p4, p5, x), (p1, p2, p3, p4, p5));
+grads(p1, p2, p3, p4, p5) =
+    fad(perte(p1, p2, p3, p4, p5), (p1, p2, p3, p4, p5)) : !, _, _, _, _, _;
 ```
 
-Puis il extrait:
-
-```text
-[model, dmodel/dp1, dmodel/dp2, dmodel/dp3, dmodel/dp4, dmodel/dp5]
-```
-
-et applique un moteur de mise à jour par paramètre.
+un seul appel `fad` sur la perte, dont les cinq tangentes sont les gradients
+`dperte/dp1 ... dperte/dp5`, puis un moteur de mise à jour par paramètre et une
+projection sur les bornes. Rendu avec `faustprobe` en double précision, les
+cinq coefficients sont à moins de `1e-5` de la cible après 300 000
+échantillons.
 
 Ce que montre l'exemple:
 
 - FAD n'est pas limité à un seul slider;
 - les optimiseurs peuvent être factorisés en bibliothèque Faust;
-- les coefficients d'un filtre IIR doivent être bornés pour rester stables;
-- des vitesses d'apprentissage différentes peuvent être utilisées pour les
-  zéros (`b0..b2`) et les pôles (`a1..a2`).
+- la perte est une expression Faust quelconque (une perte robuste ou
+  énergétique se brancherait de la même façon);
+- la stabilité d'un filtre IIR s'obtient mieux par reparamétrisation que par
+  des bornes.
+
+La forme d'origine de cet exemple, `optimize_5D` avec des moteurs `rmsprop` et
+des bornes rectangulaires sur les pôles, compile et converge toujours avec la
+version 0.5.0 de la bibliothèque.
 
 ## 5. Newton pour équation implicite
 
@@ -530,8 +560,8 @@ Utiliser **FAD** quand:
 - le nombre de paramètres est petit ou moyen;
 - le patch contient une mise à jour récursive écrite en Faust;
 - on veut une pente locale, par exemple pour Newton ou pour une non-linéarité;
-- on écrit une bibliothèque d'optimiseurs Faust comme `optimize_1D`,
-  `optimize_2D`, `optimize_5D`.
+- on écrit une bibliothèque d'optimiseurs Faust comme `descend_1D`,
+  `lsq_3D` ou `lm_2D` d'`optimizers.lib`.
 
 Utiliser **RAD** quand:
 

@@ -984,3 +984,41 @@ fn missing_deny_attribute_flags_an_unreadable_lib_rs() {
     assert!(finding.is_some());
     assert!(finding.unwrap().contains("does not exist"));
 }
+
+#[test]
+fn golden_eligibility_excludes_project_local_library_fixtures() {
+    let root = std::env::temp_dir().join(format!(
+        "faust-rs-golden-eligibility-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let plain = root.join("plain.dsp");
+    let interleave = root.join("interleave.dsp");
+    let optimizers = root.join("optimizers.dsp");
+    let remote = root.join("remote.dsp");
+    fs::write(&plain, b"process = _;\n").unwrap();
+    fs::write(
+        &interleave,
+        b"il = library(\"interleave.lib\");\nprocess = il.frame_clock(8);\n",
+    )
+    .unwrap();
+    fs::write(
+        &optimizers,
+        b"op = library(\"optimizers.lib\");\nprocess = op.sgn;\n",
+    )
+    .unwrap();
+    fs::write(
+        &remote,
+        b"import(\"https://example.org/lib.lib\");\nprocess = _;\n",
+    )
+    .unwrap();
+
+    assert!(is_rust_golden_eligible(&plain));
+    assert!(!is_rust_golden_eligible(&interleave));
+    assert!(!is_rust_golden_eligible(&optimizers));
+    assert!(!is_rust_golden_eligible(&remote));
+    // A missing file is left to the golden run itself to report.
+    assert!(is_rust_golden_eligible(&root.join("missing.dsp")));
+
+    fs::remove_dir_all(&root).unwrap();
+}

@@ -12,26 +12,35 @@ use super::*;
 
 /// Returns `false` for corpus fixtures that cannot be golden-checked:
 ///
-/// - fixtures importing the project-local `libraries/interleave.lib` (the
-///   spectral FFT-on-`ondemand` examples). The golden import search path
-///   contains `tests/corpus` and `/usr/local/share/faust` (see
-///   `default_import_search_paths`), but not `libraries`;
+/// - fixtures importing a project-local library from `libraries/`:
+///   `interleave.lib` (the spectral FFT-on-`ondemand` examples) and
+///   `optimizers.lib` (the `opt_*` in-graph optimization examples). The
+///   golden import search path contains `tests/corpus` and
+///   `/usr/local/share/faust` (see `default_import_search_paths`), but not
+///   `libraries`;
 /// - explicit HTTP(S) import fixtures, which require an opt-in network
 ///   capability and are intentionally not hermetic golden inputs.
 ///
-/// The interleave examples are exercised by the runtime tests
-/// (`crates/compiler/tests/interleave_fft.rs`, the impulse-runner effect
-/// checks) instead of by golden snapshots.
+/// The project-local library examples are exercised by the runtime tests
+/// (`crates/compiler/tests/interleave_fft.rs` and the impulse-runner effect
+/// checks for `interleave.lib`, `crates/compiler/tests/optimizers_lib.rs`
+/// for `optimizers.lib`) instead of by golden snapshots.
 pub(crate) fn is_rust_golden_eligible(source_path: &Path) -> bool {
     match fs::read_to_string(source_path) {
         Ok(text) => {
-            !text.contains("interleave.lib")
+            PROJECT_LOCAL_LIBRARIES
+                .iter()
+                .all(|library| !text.contains(library))
                 && !text.contains("import(\"http://")
                 && !text.contains("import(\"https://")
         }
         Err(_) => true,
     }
 }
+
+/// Libraries under `libraries/` that a corpus fixture may import; a fixture
+/// that names one of them is outside the golden import search path.
+const PROJECT_LOCAL_LIBRARIES: &[&str] = &["interleave.lib", "optimizers.lib"];
 
 /// Enumerates the corpus/golden pairs checked by `golden-check`.
 ///
