@@ -693,10 +693,12 @@ primitives elles-mêmes, `upsampling` et `downsampling` compris, est
 - **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   différencie une perte calculée sur une trame FFT, le pendant par trame de la
   section 7.2.
-- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : six
+- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : neuf
   programmes DDSP avec leurs tests — un notch adaptatif, un mode calibré par
-  Gauss-Newton, un modèle d'ampli (`fad`) ; un annuleur d'écho, un
-  waveshaper neuronal, des gradients par bloc pour un hôte (`rad`).
+  Gauss-Newton, un modèle d'ampli, un diode clipper appris à travers son
+  solveur implicite, une réverbération FDN (`fad`) ; un annuleur d'écho, un
+  waveshaper neuronal, des gradients par bloc pour un hôte, un ampli GRU
+  entraîné par BPTT par blocs (`rad`).
 - **Beaucoup de paramètres.** `tests/corpus/opt_descend_n_rad_fir16.dsp` et
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` sont les boucles à bus sur des
   FIR ; `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` fait tourner côte à côte
@@ -725,6 +727,7 @@ primitives elles-mêmes, `upsampling` et `downsampling` compris, est
 | Un bloc ignore ce qui se passe dehors | le corps capture un signal extérieur au lieu de le recevoir | passer les signaux extérieurs en entrées explicites du bloc |
 | Une boucle à bus n'apprend rien, les coefficients errent autour de zéro | `op.mse(_, t)` (toute fonction appliquée à un `_` libre) est un bloc à deux entrées : `:>` répartit les coefficients entre elles | nommer l'entrée de la perte : `\(y).(op.mse(y, t))` |
 | Une boucle `_rad` converge moins vite que la boucle `fad` sur un modèle récursif | dans une boucle, `rad` renvoie le terme direct, l'état passé tenu fixe | les boucles `fad` pour les modèles récursifs, les unes ou les autres pour les modèles sans récursion |
+| La pente `fad` d'un solveur implicite manque d'un terme | l'itération part de `vprev`, le signal même que l'équation tient fixe : `fad(G(vprev, v), v)` avec `v = vprev` dérive les deux | partir d'un prédicteur ou de tout signal distinct |
 
 ## Glossaire
 

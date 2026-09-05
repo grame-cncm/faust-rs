@@ -1,13 +1,17 @@
-# Six exemples DDSP avec `fad` et `rad`
+# Neuf exemples DDSP avec `fad` et `rad`
 
-Six programmes complets de DSP différentiable, chacun une tâche qu'un
+Neuf programmes complets de DSP différentiable, chacun une tâche qu'un
 ingénieur du son reconnaît, écrits avec les deux primitives de
 différenciation automatique de `faust-rs` et les boucles
 d'[optimizers.lib](optimizers.lib). Trois utilisent `fad`, le mode direct, là
 où la dérivée exacte à travers une récursion est ce qui fait marcher la
 méthode ; trois utilisent `rad`, le mode inverse, là où une perte scalaire
 dépend de nombreux paramètres ou là où le gradient sort du graphe vers un
-hôte. Chaque programme vit dans `tests/corpus/ddsp_*.dsp`, est exécuté par la
+hôte. Trois autres, à la fin, sont l'état de l'art de leur domaine : un diode
+clipper dont on apprend les composants à travers son solveur implicite, une
+réverbération FDN calibrée sur une décroissance cible, un amplificateur
+neuronal récurrent entraîné par rétropropagation dans le temps tronquée.
+Chaque programme vit dans `tests/corpus/ddsp_*.dsp`, est exécuté par la
 suite de tests
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs))
 et s'observe avec `faustprobe` :
@@ -32,6 +36,9 @@ pas est [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md).
 | 4 | `ddsp_rad_echo_canceller_64` | annuler un écho acoustique de 64 coefficients | `rad` | `lsq_N_rad` + `nlms` | écho résiduel sous 1e-9 (ERLE > 100 dB) |
 | 5 | `ddsp_rad_mlp_waveshaper` | entraîner un petit réseau de neurones à un soft clipper | `rad` | `descend_N_rad` + Adam | résidu 46 dB sous la cible |
 | 6 | `ddsp_rad_host_block_resonator` | gradients par bloc d'un résonateur pour un hôte | `rad`, public | Adam dans l'hôte (Rust) | gradient = différences finies à cinq chiffres, (−1,20000, 0,72000) retrouvé |
+| 7 | `ddsp_fad_diode_clipper_newton` | apprendre les composants d'un diode clipper à travers son solveur implicite | `fad` dans `fad` | `lm_2D` | (τ, k) exacts en 8 000 échantillons ; dérivée déroulée = implicite à 2e-7 |
+| 8 | `ddsp_fad_fdn_reverb_lm` | calibrer une réverbération FDN sur une décroissance cible | `fad` | `lm_2D` | (T60, amortissement) = (0,600, 0,300) depuis (0,3, 0) |
+| 9 | `ddsp_rad_gru_amp_host` | entraîner un ampli GRU par BPTT tronquée par blocs | `rad`, public | Adam dans l'hôte (Rust) | gradients = différences finies à quatre chiffres ; résidu 29 dB sous la cible |
 
 ## 1. Suppression d'un ronflement par notch adaptatif (`fad`)
 
@@ -280,6 +287,147 @@ plusieurs excitations par mise à jour. Entraîner les cinq coefficients d'un
 biquad (`rad(loss, (b0, b1, b2, a1, a2))`) : une voie de plus chacun, un seul
 balayage.
 
+## État de l'art : trois de plus
+
+Les six programmes ci-dessus sont le manuel de l'audio adaptatif ; les trois
+ci-dessous sont ce que fait la littérature du DSP différentiable de ces cinq
+dernières années, et chacun repose sur quelque chose qu'un framework à
+tenseurs ne donne pas : la dérivée exacte à travers un solveur implicite, à
+travers des milliers d'échantillons de rétroaction, ou le balayage inverse à
+travers une cellule récurrente sans réécrire le modèle.
+
+## 7. Un diode clipper appris à travers son solveur implicite (`fad` dans `fad`)
+
+**Ce que fait le programme.** Le circuit de toute pédale d'overdrive : une
+résistance, un condensateur et une paire de diodes (Yeh, Abel & Smith 2007),
+`dv/dt = (x − v)/(RC) − (2 Is/C) sinh(v/(2 n Vt))`. Discrétisé par Euler
+implicite, c'est une équation implicite en v[n],
+`G(v) = v − v[n−1] − h f(v, x[n]) = 0`, résolue à chaque échantillon par quatre
+itérations de Newton sécurisées dont la pente `G'(v)` vient d'un `fad`
+intérieur — un modèle analogique virtuel à rétroaction sans retard au sens
+habituel. Deux valeurs de composants, τ = RC et k = 2 Is/C, sont ensuite
+apprises sur la sortie d'un clipper caché : la modélisation analogique
+virtuelle « boîte blanche » (Esqueda, Kuznetsov & Parker 2021), dans le fil
+audio.
+
+**Modèle.** Une excitation de type guitare (trois partiels et un bruit à
+bande limitée, environ ±1,5 V, pour que les diodes conduisent sur les
+crêtes) ; `h = 1/SR`, `2 n Vt = 0,09 V` ; cible `(τ, k) = (1e-4 s, 0,1)`,
+soit 2,2 kΩ · 47 nF ; le modèle part de `(3e-4, 0,03)`, les deux en domaine
+log. L'itération de Newton part d'un prédicteur d'Euler explicite et garde
+son itéré dans ±2 V.
+
+**Ce qui est dérivé, et pourquoi le mode direct.** `lm_2D` dérive la sortie
+du clipper par rapport à `(log τ, log k)` : le `fad` extérieur traverse les
+quatre pas de Newton déroulés — chacun contenant un `fad` intérieur pour la
+pente — et la récursion d'état : `fad` dans `fad` dans une récursion, le tout
+développé à la compilation. Le programme vérifie le résultat contre le
+théorème des fonctions implicites : la dérivée du v résolu par rapport à k,
+propagée à travers la récursion, `s[n] = −(G_k + G_vprev · s[n−1]) / G_v`,
+coïncide avec la dérivée déroulée à 2e-7 près, dans les deux précisions,
+tandis que le résidu de Newton reste sous 1e-8 (1,2e-7 en simple précision).
+Mode direct : deux tangentes à travers un solveur dont le `fad` intérieur
+fournit déjà la jacobienne. Deux choses devaient tenir pour que cela marche
+en simple précision, et les deux sont maintenant dans le compilateur et dans
+les pièges : une récursion que la graine n'atteint pas n'est pas augmentée
+(toute la boucle `lm_2D` était copiée dans le `fad` intérieur, avec des
+tangentes exactement nulles en théorie et `inf · 0` en `f32`), et
+l'itération ne doit pas partir du signal même que l'équation tient fixe —
+les graines sont reconnues par identité, `fad(G(vprev, v), v)` avec
+`v = vprev` dérive les deux.
+
+**Optimiseur.** `lm_2D(mdl, 0.01, 0.1, 0.99, …)` : Gauss-Newton amorti avec
+la jacobienne exacte à travers le solveur.
+
+**Ce qu'on observe.** `(τ, k) → (1,0000e-4, 0,1000)` en 8 000 échantillons,
+le résidu par rapport au clipper caché à 1,7e-7 rms en simple précision.
+
+**À essayer.** Apprendre aussi `2 n Vt` (`lm_3D`) ; un clipper asymétrique
+(une diode, `exp` au lieu de `sinh`) ; un second étage RC ; fournir un
+enregistrement et voir l'identifiabilité dépendre de la force avec laquelle
+l'entrée pousse les diodes.
+
+## 8. Une réverbération FDN calibrée sur une décroissance cible (`fad`)
+
+**Ce que fait le programme.** Un réseau de retards à rétroaction à quatre
+lignes (Jot 1991) : des retards premiers de 1051, 1327, 1597 et 1801
+échantillons (24 à 41 ms), une matrice de Hadamard orthogonale (mise à
+l'échelle par 1/2), un gain par ligne fixé par un temps de réverbération,
+`gain_i = 10^(−3 len_i / (T60 · SR))`, et un amortissement à un pôle par
+ligne qui raccourcit la décroissance des aigus. Étant données les réponses
+d'un FDN caché à un train d'impulsions, le programme apprend son T60 et son
+amortissement : la réverbération artificielle différentiable (Lee, Choi &
+Lee 2022).
+
+**Modèle.** Une impulsion tous les 16 384 échantillons ; cible
+`(T60, d) = (0,6 s, 0,3)` ; départ `(0,3 s, 0)`, T60 en domaine log.
+
+**Ce qui est dérivé, et pourquoi le mode direct.** `fad` transporte une
+tangente à travers les quatre lignes à retard, les filtres d'amortissement
+et la matrice de rétroaction, échantillon par échantillon : la dérivée d'une
+queue de réverbération par rapport à ses paramètres de décroissance, exacte
+à travers des récursions de milliers d'échantillons, là où un framework à
+tenseurs déroule ou approche. Deux tangentes.
+
+**Optimiseur.** `lm_2D` avec un facteur d'oubli de 0,999 : le gradient n'est
+informatif que pendant les décroissances, et Gauss-Newton avec facteur
+d'oubli garde la dernière décroissance dans sa matrice d'information. Adam
+avec un schedule atteint aussi `(0,60, 0,30)`, puis erre entre les
+impulsions quand le gradient ne porte plus d'information (le fixture le
+dit).
+
+**Ce qu'on observe.** `(0,574, 0,289)` après 8 000 échantillons,
+`(0,6000, 0,3000)` à 60 000 (quatre impulsions), le résidu à 4,8e-7 rms à
+80 000.
+
+**À essayer.** Apprendre un gain par ligne (`descend_N`) ; prendre pour cible
+une réverbération *différente* et pour perte `log_energy_loss` sur la
+décroissance ; huit lignes ; un T60 dépendant de la fréquence avec une cible
+mesurée dans une salle.
+
+## 9. Un ampli GRU entraîné par BPTT tronquée par blocs (`rad`, public)
+
+**Ce que fait le programme.** Une cellule GRU à deux unités cachées et une
+lecture linéaire, 27 paramètres — l'architecture de la modélisation
+neuronale d'ampli en temps réel (Wright & Välimäki 2020) — est entraînée à
+imiter un amplificateur caché (un contrôle de tonalité vers une saturation
+`tanh`). Les paramètres sont des sliders ; le programme sort l'erreur
+quadratique et ses 27 gradients, échantillon par échantillon ; l'hôte (le
+test Rust) somme chaque voie sur le bloc et fait un pas d'Adam : la
+rétropropagation dans le temps tronquée, avec le bloc pour longueur de
+troncature.
+
+**Modèle.** `z = σ(W_z x + U_z h + b_z)`, `r = σ(W_r x + U_r h + b_r)`,
+`c = tanh(W_h x + U_h (r ∘ h) + b_h)`, `h' = (1 − z) ∘ h + z ∘ c`,
+`y = W_o h' + b_o`, deux unités ; un slider par paramètre avec une valeur
+initiale fixe (le parseur veut des libellés littéraux). Amplificateur caché
+`0,8 · tanh(3 · si.smooth(0.7, x))`. `process = rad(loss, params)` : 28 voies.
+
+**Ce qui est dérivé, et pourquoi le mode inverse.** Une perte, 27
+paramètres : un balayage inverse. Parce que les voies sortent du graphe, le
+balayage remonte tout le bloc à travers les portes, le candidat `tanh` et
+les deux états rebouclés, avec un adjoint terminal nul à la fin du bloc : la
+somme d'une voie est le gradient exact de la perte du bloc, état initial
+tenu fixe — la BPTT tronquée au bloc, que le test vérifie contre des
+différences finies centrées sur trois paramètres de natures différentes : un
+poids d'entrée 0,3671 (0,3670), un poids récurrent 0,0288 (0,0288), un poids
+de lecture −3,2342 (−3,2342). Consommé dans le graphe, le même `rad` ne
+verrait qu'un échantillon, et un modèle récurrent ne s'entraîne pas
+ainsi ; d'où l'hôte.
+
+**Optimiseur.** Adam en Rust, `lr = 0,005` par bloc de 256 échantillons,
+2 000 blocs (11,6 s d'audio), l'état conservé d'un bloc à l'autre.
+
+**Ce qu'on observe.** La perte moyenne par bloc tombe de 4,7e-3 (100
+premiers blocs) à 2,4e-4 (100 derniers) ; sur un bruit neuf, depuis une
+instance neuve, le résidu vaut 0,0148 pour une cible de rms 0,43 : 29 dB
+sous la cible.
+
+**À essayer.** Quatre unités cachées (plus de sliders, même boucle hôte) ;
+une cellule LSTM ; plusieurs excitations par mise à jour ; l'enregistrement
+d'un vrai amplificateur comme modèle caché — le DSP ne change pas, seule la
+cible de l'hôte.
+
 ## Comment les tests les vérifient
 
 Chaque programme est rendu par l'interpréteur sur une instance neuve (les
@@ -291,8 +439,12 @@ près et le résidu sous 0,02 rms, le mode à 0,5 Hz et 0,1 en Q près, l'ampli 
 au-dessus de 30 dB d'ERLE, le réseau 20 dB sous la cible avec une
 amélioration d'un facteur cinq par rapport à son départ, la boucle hôte à
 0,02 près de la cible avec une réduction de 30 dB de la perte après la
-vérification par différences finies. Les programmes tournent en simple
-précision là et en double sous `faustprobe` ; les deux convergent.
+vérification par différences finies ; le diode clipper à 1 % près sur τ et k
+avec un résidu de Newton sous 1e-4 et les deux dérivées à 1e-3 l'une de
+l'autre, le FDN à 0,01 près sur T60 et l'amortissement, les gradients du GRU
+à 2 % des différences finies, sa perte divisée par dix et son résidu 20 dB
+sous la cible. Les programmes tournent en simple précision là et en double
+sous `faustprobe` ; les deux convergent.
 
 ## D'où viennent les gradients
 

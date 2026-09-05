@@ -376,3 +376,225 @@ fn rad_host_block_gradients_identify_the_resonator() {
         .join()
         .expect("ddsp host worker should finish");
 }
+
+// ───────────────── state of the art: FAD ─────────────────
+
+#[test]
+fn fad_diode_clipper_newton_learns_the_circuit_through_the_solver() {
+    // [tau * 1e4, k, residual, Newton residual, unrolled - implicit derivative,
+    // unrolled derivative]: damped Gauss-Newton through an implicit solver.
+    let Some(outs) = render("ddsp_fad_diode_clipper_newton", 20_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 6);
+    assert_finite("ddsp_fad_diode_clipper_newton", &outs);
+    let tau = mean(&outs[0][16_000..]);
+    let k = mean(&outs[1][16_000..]);
+    let residual = rms(&outs[2][16_000..]);
+    let newton = outs[3].iter().fold(0.0_f32, |m, &v| m.max(v.abs()));
+    let (mut gap, mut scale) = (0.0_f64, 0.0_f64);
+    for (&g, &d) in outs[4].iter().zip(&outs[5]) {
+        gap = gap.max(f64::from(g).abs());
+        scale = scale.max(f64::from(d).abs());
+    }
+    eprintln!(
+        "diode: tau*1e4 {tau} k {k} residual {residual:.3e} newton {newton:.3e} derivative gap {gap:.3e} (scale {scale:.3})"
+    );
+    assert!(
+        (tau - 1.0).abs() < 0.01,
+        "tau should be 1e-4 s, got {tau}e-4"
+    );
+    assert!((k - 0.1).abs() < 0.001, "k should be 0.1, got {k}");
+    assert!(
+        residual < 1e-3,
+        "residual should vanish, got rms {residual}"
+    );
+    assert!(
+        newton < 1e-4,
+        "Newton should converge, worst residual {newton}"
+    );
+    assert!(
+        gap < 1e-3 * scale.max(1.0),
+        "unrolled and implicit derivatives should agree: gap {gap} for a scale of {scale}"
+    );
+}
+
+#[test]
+fn fad_fdn_reverb_lm_identifies_t60_and_damping() {
+    // [T60, damping, residual] over 80 000 samples (five impulses).
+    let Some(outs) = render("ddsp_fad_fdn_reverb_lm", 80_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    assert_finite("ddsp_fad_fdn_reverb_lm", &outs);
+    let t60 = mean(&outs[0][72_000..]);
+    let damping = mean(&outs[1][72_000..]);
+    let residual = rms(&outs[2][72_000..]);
+    eprintln!("fdn: t60 {t60} damping {damping} residual {residual:.3e}");
+    assert!((t60 - 0.6).abs() < 0.01, "T60 should be 0.6 s, got {t60}");
+    assert!(
+        (damping - 0.3).abs() < 0.01,
+        "damping should be 0.3, got {damping}"
+    );
+}
+
+// ───────────────── state of the art: RAD ─────────────────
+
+const GRU_PARAMS: [(&str, f64); 27] = [
+    ("wz1", 0.5),
+    ("wz2", -0.4),
+    ("wr1", 0.3),
+    ("wr2", 0.6),
+    ("wh1", 0.8),
+    ("wh2", -0.7),
+    ("uz11", 0.1),
+    ("uz12", -0.2),
+    ("uz21", 0.3),
+    ("uz22", 0.05),
+    ("ur11", 0.2),
+    ("ur12", 0.1),
+    ("ur21", -0.3),
+    ("ur22", 0.4),
+    ("uh11", 0.4),
+    ("uh12", -0.5),
+    ("uh21", 0.2),
+    ("uh22", 0.3),
+    ("bz1", 0.0),
+    ("bz2", 0.0),
+    ("br1", 0.0),
+    ("br2", 0.0),
+    ("bh1", 0.0),
+    ("bh2", 0.0),
+    ("wo1", 0.9),
+    ("wo2", -0.6),
+    ("bo", 0.0),
+];
+
+/// One block of the GRU fixture from a fresh instance at `params`: the
+/// block loss (sum) and the 27 block gradients (sums).
+fn gru_block(factory: &mut FbcDspFactory<f32>, params: &[f64], x: &[f32]) -> (f64, Vec<f64>) {
+    let mut instance = FbcDspInstance::new(factory);
+    instance.init(SAMPLE_RATE);
+    let ui = instance.ui_instructions().to_vec();
+    for ((name, _), &value) in GRU_PARAMS.iter().zip(params) {
+        instance.set_real_zone(slider_offset(&ui, name), value as f32);
+    }
+    let mut lanes = vec![vec![0.0_f32; x.len()]; 28];
+    let mut outs: Vec<&mut [f32]> = lanes.iter_mut().map(Vec::as_mut_slice).collect();
+    instance
+        .try_compute(x.len() as i32, &[x], &mut outs)
+        .expect("gru block");
+    let sum = |lane: &[f32]| lane.iter().map(|&v| f64::from(v)).sum::<f64>();
+    (
+        sum(&lanes[0]),
+        lanes[1..].iter().map(|lane| sum(lane)).collect(),
+    )
+}
+
+/// The hidden amplifier of the fixture, in Rust: a one-pole tone control
+/// (`si.smooth(0.7)`) into `0.8 tanh(3 s)`.
+fn hidden_amp(x: &[f32]) -> Vec<f64> {
+    let mut s = 0.0_f64;
+    x.iter()
+        .map(|&v| {
+            s = 0.3 * f64::from(v) + 0.7 * s;
+            0.8 * (3.0 * s).tanh()
+        })
+        .collect()
+}
+
+#[test]
+fn rad_gru_amp_trained_by_block_bptt_from_the_host() {
+    let Some(root) = faustlibraries_root() else {
+        eprintln!("Skipping ddsp_rad_gru_amp_host: faustlibraries unavailable");
+        return;
+    };
+    std::thread::Builder::new()
+        .name("ddsp-gru-host".to_string())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let mut factory = compile_fixture("ddsp_rad_gru_amp_host", root);
+            let init: Vec<f64> = GRU_PARAMS.iter().map(|&(_, v)| v).collect();
+
+            // 1. Block gradients through the recurrent cell against central
+            //    finite differences, on three parameters of different kinds.
+            let mut x = vec![0.0_f32; 128];
+            Lcg(3).block(&mut x);
+            let (_, grads) = gru_block(&mut factory, &init, &x);
+            let h = 1e-3_f64;
+            for &(k, kind) in &[(0_usize, "input weight"), (8, "recurrent weight"), (24, "readout")] {
+                let mut plus = init.clone();
+                plus[k] += h;
+                let mut minus = init.clone();
+                minus[k] -= h;
+                let fd = (gru_block(&mut factory, &plus, &x).0 - gru_block(&mut factory, &minus, &x).0) / (2.0 * h);
+                eprintln!("gru gradient {} ({kind}): rad {:.4} fd {fd:.4}", GRU_PARAMS[k].0, grads[k]);
+                assert!(
+                    (grads[k] - fd).abs() < 2e-2 * fd.abs().max(1.0),
+                    "block gradient for {} ({kind}): rad {} vs finite differences {fd}",
+                    GRU_PARAMS[k].0,
+                    grads[k]
+                );
+            }
+
+            // 2. Training: truncated BPTT, one Adam step per block of 256 on
+            //    the summed lanes, the state carried across blocks.
+            let mut instance = FbcDspInstance::new(&mut factory);
+            instance.init(SAMPLE_RATE);
+            let ui = instance.ui_instructions().to_vec();
+            let offsets: Vec<i32> = GRU_PARAMS.iter().map(|(name, _)| slider_offset(&ui, name)).collect();
+            let mut p = init.clone();
+            let (mut m, mut v) = (vec![0.0_f64; 27], vec![0.0_f64; 27]);
+            let (lr, b1, b2, eps) = (0.005_f64, 0.9_f64, 0.999_f64, 1e-8_f64);
+            let mut noise = Lcg(11);
+            let mut x = vec![0.0_f32; BLOCK];
+            let mut lanes = vec![vec![0.0_f32; BLOCK]; 28];
+            let blocks = 2000;
+            let (mut first, mut last) = (0.0_f64, 0.0_f64);
+            for iteration in 1..=blocks {
+                for (offset, &value) in offsets.iter().zip(&p) {
+                    instance.set_real_zone(*offset, value as f32);
+                }
+                noise.block(&mut x);
+                let mut outs: Vec<&mut [f32]> = lanes.iter_mut().map(Vec::as_mut_slice).collect();
+                instance
+                    .try_compute(BLOCK as i32, &[&x], &mut outs)
+                    .expect("gru training block");
+                let sums: Vec<f64> = lanes
+                    .iter()
+                    .map(|lane| lane.iter().map(|&s| f64::from(s)).sum::<f64>() / BLOCK as f64)
+                    .collect();
+                if iteration <= 100 {
+                    first += sums[0] / 100.0;
+                }
+                if iteration > blocks - 100 {
+                    last += sums[0] / 100.0;
+                }
+                for k in 0..27 {
+                    let g = sums[k + 1];
+                    m[k] = b1 * m[k] + (1.0 - b1) * g;
+                    v[k] = b2 * v[k] + (1.0 - b2) * g * g;
+                    let m_hat = m[k] / (1.0 - b1.powi(iteration));
+                    let v_hat = v[k] / (1.0 - b2.powi(iteration));
+                    p[k] = (p[k] - lr * m_hat / (v_hat.sqrt() + eps)).clamp(-4.0, 4.0);
+                }
+            }
+
+            // 3. Evaluation on fresh noise, from a fresh instance.
+            let mut x = vec![0.0_f32; 4096];
+            Lcg(23).block(&mut x);
+            let (loss_sum, _) = gru_block(&mut factory, &p, &x);
+            let residual = (loss_sum / 4096.0).sqrt();
+            let target = hidden_amp(&x);
+            let target_rms = (target.iter().map(|t| t * t).sum::<f64>() / 4096.0).sqrt();
+            let ratio_db = 20.0 * (residual / target_rms).log10();
+            eprintln!(
+                "gru training: mean loss first 100 blocks {first:.4e}, last 100 {last:.4e}; residual {residual:.4} on a target of rms {target_rms:.4} ({ratio_db:.1} dB)"
+            );
+            assert!(last < 0.1 * first, "training should cut the block loss by 10 dB: first {first}, last {last}");
+            assert!(ratio_db < -20.0, "the trained GRU should be 20 dB under the target, got {ratio_db:.1} dB");
+        })
+        .expect("spawn ddsp gru worker")
+        .join()
+        .expect("ddsp gru worker should finish");
+}

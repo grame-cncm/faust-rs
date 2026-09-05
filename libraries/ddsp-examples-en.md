@@ -1,11 +1,15 @@
-# Six DDSP examples with `fad` and `rad`
+# Nine DDSP examples with `fad` and `rad`
 
-Six complete differentiable-DSP programs, each one a task an audio engineer
+Nine complete differentiable-DSP programs, each one a task an audio engineer
 recognises, written with the two automatic-differentiation primitives of
 `faust-rs` and the loops of [optimizers.lib](optimizers.lib). Three use
 `fad`, forward mode, where the exact derivative through a recursion is what
 makes the method work; three use `rad`, reverse mode, where one scalar loss
 depends on many parameters or where the gradient leaves the graph for a host.
+Three more, at the end, are the state of the art of their fields: a diode
+clipper whose components are learned through its implicit solver, an FDN
+reverb calibrated to a target decay, a recurrent neural amplifier trained by
+truncated backpropagation through time.
 Every program lives in `tests/corpus/ddsp_*.dsp`, is run by the test suite
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs)),
 and can be watched with `faustprobe`:
@@ -30,6 +34,9 @@ introduction is [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md)
 | 4 | `ddsp_rad_echo_canceller_64` | cancel a 64-tap acoustic echo | `rad` | `lsq_N_rad` + `nlms` | residual echo below 1e-9 (ERLE > 100 dB) |
 | 5 | `ddsp_rad_mlp_waveshaper` | train a small neural network to a soft clipper | `rad` | `descend_N_rad` + Adam | residual 46 dB under the target |
 | 6 | `ddsp_rad_host_block_resonator` | block gradients of a resonator for a host | `rad`, public | Adam in the host (Rust) | gradient = finite differences to five digits, (−1.20000, 0.72000) recovered |
+| 7 | `ddsp_fad_diode_clipper_newton` | learn the components of a diode clipper through its implicit solver | `fad` in `fad` | `lm_2D` | (τ, k) exact within 8 000 samples; unrolled = implicit derivative to 2e-7 |
+| 8 | `ddsp_fad_fdn_reverb_lm` | calibrate an FDN reverb to a target decay | `fad` | `lm_2D` | (T60, damping) = (0.600, 0.300) from (0.3, 0) |
+| 9 | `ddsp_rad_gru_amp_host` | train a GRU amplifier model by block-truncated BPTT | `rad`, public | Adam in the host (Rust) | gradients = finite differences to four digits; residual 29 dB under the target |
 
 ## 1. Hum cancellation with an adaptive notch (`fad`)
 
@@ -259,6 +266,132 @@ computed by the host: the DSP stays the same. Batch several excitations per
 update. Train the five coefficients of a biquad (`rad(loss, (b0, b1, b2, a1,
 a2))`): one more lane each, one sweep.
 
+## State of the art: three more
+
+The six programs above are the textbook of adaptive audio; the three below
+are what the differentiable-DSP literature of the last five years does, and
+each of them relies on something a tensor framework does not give: the exact
+derivative through an implicit solver, through thousands of samples of
+feedback, or the reverse sweep through a recurrent cell without rewriting
+the model.
+
+## 7. A diode clipper learned through its implicit solver (`fad` in `fad`)
+
+**What it does.** The circuit of every overdrive pedal: a resistor, a
+capacitor and a diode pair (Yeh, Abel & Smith 2007),
+`dv/dt = (x − v)/(RC) − (2 Is/C) sinh(v/(2 n Vt))`. Discretised by backward
+Euler it is an implicit equation in v[n], `G(v) = v − v[n−1] − h f(v, x[n]) = 0`,
+solved at every sample by four safeguarded Newton iterations whose slope
+`G'(v)` comes from an inner `fad` — a zero-delay-feedback virtual-analog
+model in the usual sense. Two component values, τ = RC and k = 2 Is/C, are
+then learned from the output of a hidden clipper: white-box virtual-analog
+modelling (Esqueda, Kuznetsov & Parker 2021), in the audio thread.
+
+**Model.** A guitar-like excitation (three partials and band-limited noise,
+about ±1.5 V, so the diodes conduct on the peaks); `h = 1/SR`,
+`2 n Vt = 0.09 V`; hidden `(τ, k) = (1e-4 s, 0.1)`, i.e. 2.2 kΩ · 47 nF;
+the model starts at `(3e-4, 0.03)`, both in the log domain. The Newton
+iteration starts from an explicit-Euler predictor and keeps its iterate
+within ±2 V.
+
+**What is differentiated, and why forward mode.** `lm_2D` differentiates
+the clipper output with respect to `(log τ, log k)`: the outer `fad` goes
+through the four unrolled Newton steps — each holding an inner `fad` for
+the slope — and through the state recursion: `fad` inside `fad` inside a
+recursion, all expanded at compile time. The program checks the result
+against the implicit-function theorem: the derivative of the solved v with
+respect to k propagated through the recursion,
+`s[n] = −(G_k + G_vprev · s[n−1]) / G_v`, agrees with the unrolled derivative
+to 2e-7, in both precisions, while the Newton residual stays below 1e-8
+(1.2e-7 in single). Forward mode: two tangents through a solver whose
+Jacobian the inner `fad` already provides. Two things had to hold for this
+to work in single precision, and both are now in the compiler and the
+pitfalls: a recursion the seed does not reach is not augmented (the whole
+`lm_2D` loop used to be copied into the inner `fad`, with tangent slots
+exactly zero in theory and `inf · 0` in `f32`), and the iteration must not
+start from the very signal the equation holds fixed — seeds are matched by
+identity, `fad(G(vprev, v), v)` with `v = vprev` differentiates both.
+
+**Optimizer.** `lm_2D(mdl, 0.01, 0.1, 0.99, …)`: damped Gauss-Newton with
+the exact Jacobian through the solver.
+
+**What you see.** `(τ, k) → (1.0000e-4, 0.1000)` within 8 000 samples, the
+residual against the hidden clipper at 1.7e-7 rms in single precision.
+
+**Try.** Learn `2 n Vt` as well (`lm_3D`); an asymmetric clipper (one
+diode, `exp` instead of `sinh`); a second RC stage; feed a recording and
+watch identifiability depend on how hard the input drives the diodes.
+
+## 8. An FDN reverb calibrated to a target decay (`fad`)
+
+**What it does.** A four-line feedback delay network (Jot 1991): prime
+delays of 1051, 1327, 1597 and 1801 samples (24 to 41 ms), an orthogonal
+Hadamard matrix (scaled by 1/2), a per-line gain set by a reverberation
+time, `gain_i = 10^(−3 len_i / (T60 · SR))`, and a per-line one-pole damping
+that shortens the decay of high frequencies. Given the responses of a hidden
+FDN to an impulse train, the program learns its T60 and its damping:
+differentiable artificial reverberation (Lee, Choi & Lee 2022).
+
+**Model.** Impulses every 16 384 samples; hidden `(T60, d) = (0.6 s, 0.3)`;
+start `(0.3 s, 0)`, T60 in the log domain.
+
+**What is differentiated, and why forward mode.** `fad` carries a tangent
+through the four delay lines, the damping filters and the feedback matrix,
+sample by sample: the derivative of a reverb tail with respect to its decay
+parameters, exact through recursions thousands of samples long, where a
+tensor framework unrolls or approximates. Two tangents.
+
+**Optimizer.** `lm_2D` with a forgetting factor of 0.999: the gradient is
+informative only during the decays, and Gauss-Newton with a forgetting
+factor keeps the last decay in its information matrix. Adam with a schedule
+reaches `(0.60, 0.30)` as well, then wanders between impulses when the
+gradient carries no information (the fixture says so).
+
+**What you see.** `(0.574, 0.289)` after 8 000 samples, `(0.6000, 0.3000)`
+by 60 000 (four impulses), the residual at 4.8e-7 rms at 80 000.
+
+**Try.** Learn one gain per line (`descend_N`); make the target a
+*different* reverb and the loss `log_energy_loss` on the decay; eight lines;
+a frequency-dependent T60 with a target measured from a room.
+
+## 9. A GRU amplifier model trained by block-truncated BPTT (`rad`, public)
+
+**What it does.** A GRU cell with two hidden units and a linear readout,
+27 parameters — the architecture of real-time neural amp modelling (Wright &
+Välimäki 2020) — is trained to imitate a hidden amplifier (a tone control
+into a `tanh` saturation). The parameters are sliders; the program outputs
+the squared error and its 27 gradients, sample by sample; the host (the Rust
+test) sums each lane over the block and takes an Adam step: truncated
+backpropagation through time, with the block as the truncation length.
+
+**Model.** `z = σ(W_z x + U_z h + b_z)`, `r = σ(W_r x + U_r h + b_r)`,
+`c = tanh(W_h x + U_h (r ∘ h) + b_h)`, `h' = (1 − z) ∘ h + z ∘ c`,
+`y = W_o h' + b_o`, two units; one slider per parameter with a fixed
+initial value (the parser wants literal labels). Hidden amplifier
+`0.8 · tanh(3 · si.smooth(0.7, x))`. `process = rad(loss, params)`: 28 lanes.
+
+**What is differentiated, and why reverse mode.** One loss, 27 parameters:
+one reverse sweep. Because the lanes leave the graph, the sweep runs
+backwards over the whole block through the gates, the `tanh` candidate and
+the two fed-back states, with a zero terminal adjoint at the block end: the
+sum of a lane is the exact gradient of the block loss with the initial state
+held fixed — BPTT truncated at the block, which the test checks against
+central finite differences on three parameters of different kinds: an input
+weight 0.3671 (0.3670), a recurrent weight 0.0288 (0.0288), a readout weight
+−3.2342 (−3.2342). Consumed inside the graph, the same `rad` would see one
+sample, and a recurrent model cannot be trained on that; hence the host.
+
+**Optimizer.** Adam in Rust, `lr = 0.005` per block of 256 samples, 2 000
+blocks (11.6 s of audio), the state carried across blocks.
+
+**What you see.** The mean block loss falls from 4.7e-3 (first 100 blocks)
+to 2.4e-4 (last 100); on fresh noise, from a fresh instance, the residual is
+0.0148 for a target of rms 0.43: 29 dB under the target.
+
+**Try.** Four hidden units (more sliders, same host loop); an LSTM cell;
+several excitations per update; a recording of a real amplifier as the
+hidden model — the DSP does not change, only the host's target.
+
 ## How the tests check them
 
 Each program renders through the interpreter on a fresh instance (the
@@ -269,8 +402,12 @@ under 0.02 rms, the mode within 0.5 Hz and 0.1 in Q, the amp within 2 % on
 the means of the last 4 000 samples, the echo canceller above 30 dB of ERLE,
 the network 20 dB under the target with a fivefold improvement over its
 start, the host loop within 0.02 of the target with a 30 dB loss reduction
-after the finite-difference check. The programs run in single precision
-there and in double under `faustprobe`; both converge.
+after the finite-difference check; the diode clipper within 1 % of τ and k
+with a Newton residual under 1e-4 and the two derivatives within 1e-3 of
+each other, the FDN within 0.01 of T60 and damping, the GRU's gradients
+within 2 % of finite differences, its loss cut tenfold and its residual 20 dB
+under the target. The programs run in single precision there and in double
+under `faustprobe`; both converge.
 
 ## Where the gradients come from
 

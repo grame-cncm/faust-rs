@@ -472,6 +472,12 @@ in the tutorial.
   identity after lowering, not by algebraic equivalence. Inside a loop,
   `fad(loss(p), p)` with `p` the recursive input is the exact partial
   derivative.
+- **A seed is matched by identity, and every occurrence counts.**
+  `fad(F(v, v), v)` differentiates both occurrences of `v`: the Newton
+  iteration of an implicit solver must not start from the very signal the
+  equation holds fixed (`vprev`) — start from a predictor, or any distinct
+  signal. Conversely a signal the seed does not reach (another loop's
+  output, a noise generator) keeps a zero tangent and is not rewritten.
 - **Sign convention.** With `r = model - target`, the MSE gradient is
   `+2 r j`. The synthesis note writes `err = target - model` and `-err * j`.
   Both are right; mixing them ascends the loss.

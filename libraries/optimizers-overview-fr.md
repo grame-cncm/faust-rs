@@ -498,6 +498,13 @@ programmes dans le tutoriel.
   reconnues par identité après abaissement, pas par équivalence algébrique.
   Dans une boucle, `fad(loss(p), p)` avec `p` l'entrée récursive est la
   dérivée partielle exacte.
+- **Une graine est reconnue par identité, et chaque occurrence compte.**
+  `fad(F(v, v), v)` dérive les deux occurrences de `v` : l'itération de
+  Newton d'un solveur implicite ne doit pas partir du signal même que
+  l'équation tient fixe (`vprev`) — partir d'un prédicteur, ou de tout
+  signal distinct. Inversement un signal que la graine n'atteint pas (la
+  sortie d'une autre boucle, un générateur de bruit) garde une tangente
+  nulle et n'est pas réécrit.
 - **Convention de signe.** Avec `r = modèle - cible`, le gradient MSE est
   `+2 r j`. La note de synthèse écrit `err = cible - modèle` et `-err * j`. Les
   deux sont justes ; les mélanger fait remonter la perte.

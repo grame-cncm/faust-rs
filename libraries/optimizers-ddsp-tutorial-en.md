@@ -669,10 +669,11 @@ reference for the primitives themselves, including `upsampling` and
 - **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   differentiates a loss computed on an FFT frame, the per-frame counterpart of
   section 7.2.
-- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): six
+- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): nine
   DDSP programs with their tests — an adaptive notch, a mode calibrated by
-  Gauss-Newton, an amp model (`fad`); an echo canceller, a neural
-  waveshaper, block gradients for a host (`rad`).
+  Gauss-Newton, an amp model, a diode clipper learned through its implicit
+  solver, an FDN reverb (`fad`); an echo canceller, a neural waveshaper,
+  block gradients for a host, a GRU amp trained by block BPTT (`rad`).
 - **Many parameters.** `tests/corpus/opt_descend_n_rad_fir16.dsp` and
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` are the bus loops on FIRs;
   `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` runs the forward and the
@@ -702,6 +703,7 @@ reference for the primitives themselves, including `upsampling` and
 | A block ignores what happens outside | the body captures an outer signal instead of receiving it | pass outer signals as explicit inputs of the block |
 | A bus loop learns nothing, the taps random-walk near zero | `op.mse(_, t)` (any function applied to a free `_`) is a two-input block: `:>` splits the taps between its inputs | name the loss input: `\(y).(op.mse(y, t))` |
 | A `_rad` loop converges slower than the `fad` one on a recursive model | inside a loop `rad` returns the direct term, the past state held fixed | the `fad` loops for recursive models, either for feed-forward ones |
+| The `fad` slope of an implicit solver misses a term | the iteration starts from `vprev`, the very signal the equation holds fixed: `fad(G(vprev, v), v)` with `v = vprev` differentiates both | start the iteration from a predictor or any distinct signal |
 
 ## Glossary
 
