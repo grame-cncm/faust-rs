@@ -411,13 +411,13 @@
 //! The result is the same DSP semantics with less duplicated recursive state in
 //! the emitted code.
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashMap;
 use signals::{BinOp, SigBuilder, SigId, SigMatch, match_sig};
 use smallvec::SmallVec;
 use tlib::{
-    NodeKind, TreeArena, TreeId, check_de_bruijn_coherence, de_bruijn_rec, is_de_bruijn_closed,
-    lift_de_bruijn, list_to_vec, match_de_bruijn_rec, match_de_bruijn_ref, tree_to_str,
-    vec_to_list,
+    NodeKind, TreeArena, TreeId, check_de_bruijn_coherence, de_bruijn_aperture_with_memo,
+    de_bruijn_rec, is_de_bruijn_closed, lift_de_bruijn, list_to_vec, match_de_bruijn_rec,
+    match_de_bruijn_ref, tree_to_str, vec_to_list,
 };
 
 use crate::PropagateError;
@@ -459,6 +459,9 @@ struct ForwardADTransform<'a> {
     arena: &'a mut TreeArena,
     diff_seeds: Vec<SigId>,
     diff_seed_index: AHashMap<SigId, SmallVec<[usize; 2]>>,
+    /// Memo for `de_bruijn_aperture`, consulted when a recursion body is
+    /// entered to decide which cache entries are closed terms.
+    aperture_memo: AHashMap<TreeId, i64>,
     cache: AHashMap<SigId, Dual>,
     debruijn_depth: i64,
     /// First clock-boundary violation encountered during the sweep, if any.
@@ -484,6 +487,7 @@ impl<'a> ForwardADTransform<'a> {
             arena,
             diff_seed_index: Self::build_seed_index(diff_seeds),
             diff_seeds: diff_seeds.to_vec(),
+            aperture_memo: AHashMap::new(),
             cache: AHashMap::new(),
             debruijn_depth: 0,
             boundary_error: None,
@@ -600,17 +604,36 @@ impl<'a> ForwardADTransform<'a> {
         }
 
         if let Some(body) = match_de_bruijn_rec(self.arena, sig) {
-            // Snapshot the set of SigIds already in the cache before entering
-            // this recursive body.  Every entry added during body traversal is
-            // computed under a *lifted-seed* context (seeds shifted by one De
-            // Bruijn level) and is therefore WRONG in the enclosing scope.
-            // Concretely: `SIGDELAY1(SIGPROJ(0, DEBRUIJNREF(1)))` appears as a
-            // back-edge inside every single-slot feedback body *and* may be the
-            // FAD seed itself (e.g. `prev_gain` in `fad(loss, prev_gain)`).
-            // Without the cache snapshot the body-traversal entry wins and the
-            // seed check never fires at the outer scope, producing a tangent of
-            // `delay1(proj(1, ref))` instead of `1.0`.
-            let outer_cache_keys: AHashSet<SigId> = self.cache.keys().copied().collect();
+            // Scope the cache to this body. A de Bruijn term is relative to
+            // its binders, so one `SigId` means different things on the two
+            // sides of a `DEBRUIJNREC` boundary: `delay1(proj(0, ref(1)))` is
+            // the FAD seed `prev_gain` at the outer scope of
+            // `fad(loss, prev_gain)` *and* the back-edge of any single-slot
+            // feedback body, such as the noise generator the loss reads. The
+            // cache must therefore not carry entries across the boundary in
+            // either direction:
+            //
+            // - inward: an outer entry served inside the body would hand the
+            //   seed's tangent `1.0` to the body's own back-edge, and the
+            //   inner recursion would come out depending on the seed;
+            // - outward: a body entry is computed under the lifted-seed
+            //   context and is wrong one level up (it would shadow the seed
+            //   check and yield `delay1(proj(1, ref))` instead of `1.0`).
+            //
+            // Closed terms (no free `DEBRUIJNREF`) mean the same thing at
+            // every depth, so their entries are kept for sharing; the rest of
+            // the outer cache is stashed and restored on exit, which also
+            // discards everything the body traversal added.
+            let outer_cache = std::mem::replace(&mut self.cache, AHashMap::new());
+            {
+                let arena: &TreeArena = self.arena;
+                let memo = &mut self.aperture_memo;
+                self.cache = outer_cache
+                    .iter()
+                    .filter(|(key, _)| de_bruijn_aperture_with_memo(arena, **key, memo) == 0)
+                    .map(|(key, dual)| (*key, dual.clone()))
+                    .collect();
+            }
 
             // Pre-seed the cache with a self-referential placeholder so any
             // `DEBRUIJNREF(1)` back-edge discovered while differentiating the
@@ -650,12 +673,11 @@ impl<'a> ForwardADTransform<'a> {
             self.diff_seed_index = old_seed_index;
             self.debruijn_depth -= 1;
 
-            // Discard all cache entries that were added while traversing the
-            // body.  They used the lifted-seed index and are invalid at this
-            // outer scope.  The only exception is `sig` itself (the current
-            // `DEBRUIJNREC` node): its final dual is inserted below after the
-            // expanded group is built.
-            self.cache.retain(|k, _| outer_cache_keys.contains(k));
+            // Back to the outer cache: the body entries used the lifted-seed
+            // index and are invalid at this scope. `sig` itself (the current
+            // `DEBRUIJNREC` node) gets its final dual from `transform` once
+            // the expanded group is built.
+            self.cache = outer_cache;
 
             // Interleave `[primal, tangent_s0, …, tangent_s{N-1}]` for every
             // original slot in source order. Downstream `Proj` nodes rely on
@@ -1932,6 +1954,75 @@ mod tests {
     /// This corresponds to the `fad_gain1.dsp` bug where `prev_gain` (the FAD
     /// seed) is the delay-feedback of the outer loop, and the same expression
     /// appears as a back-edge in an inner noise `DEBRUIJNREC` body.
+    /// The converse of `fad_seed_not_poisoned_by_inner_rec_back_edge`: the
+    /// seed is visited (and cached, with tangent `1.0`) *before* the inner
+    /// recursion whose back-edge has the same `SigId`. The cached outer-scope
+    /// dual must not be served inside the body, or the inner recursion comes
+    /// out depending on the seed.
+    ///
+    /// Setup:
+    ///   `inner_rec = DEBRUIJNREC([k * delay1(proj(0, ref(1)))])`
+    ///   `seed      = delay1(proj(0, DEBRUIJNREF(1)))`   (same SigId as the back-edge)
+    ///   `expr      = seed + inner_out`                   (seed first)
+    ///
+    /// The rebuilt inner body must be `[k * back, 0 * back + k * delay1(proj(1, ref(1)))]`:
+    /// the back-edge's tangent is the group's own tangent slot, not `1.0`.
+    #[test]
+    fn outer_seed_does_not_leak_into_an_inner_rec_body() {
+        let mut arena = TreeArena::new();
+        let k = SigBuilder::new(&mut arena).real(2.0);
+
+        let ref1 = de_bruijn_ref(&mut arena, 1);
+        let back_proj = SigBuilder::new(&mut arena).proj(0, ref1);
+        let back_delay = SigBuilder::new(&mut arena).delay1(back_proj);
+        let inner_body_elem = SigBuilder::new(&mut arena).mul(k, back_delay);
+        let inner_body_list = vec_to_list(&mut arena, &[inner_body_elem]);
+        let inner_rec = de_bruijn_rec(&mut arena, inner_body_list);
+        let inner_out = SigBuilder::new(&mut arena).proj(0, inner_rec);
+
+        let seed = back_delay;
+        let expr = SigBuilder::new(&mut arena).add(seed, inner_out);
+
+        let result = generate_fad_signals_multi(&mut arena, &[expr], &[seed])
+            .expect("FAD must succeed on expr = seed + inner_out");
+        assert_eq!(result.len(), 2, "one primal + one tangent lane");
+
+        // tangent = 1.0 + proj(1, fad_rec)
+        let SigMatch::BinOp(op, lhs, rhs) = match_sig(&arena, result[1]) else {
+            panic!("tangent of (seed + inner_out) must be a BinOp");
+        };
+        assert_eq!(op, signals::BinOp::Add);
+        let one = SigBuilder::new(&mut arena).real(1.0);
+        assert_eq!(lhs, one, "tangent(seed) must be 1.0");
+        let SigMatch::Proj(slot, fad_rec) = match_sig(&arena, rhs) else {
+            panic!("tangent(inner_out) must be a Proj on the rebuilt inner rec");
+        };
+        assert_eq!(slot, 1, "tangent slot of the single-slot group");
+        let body =
+            match_de_bruijn_rec(&arena, fad_rec).expect("rebuilt group must be a DEBRUIJNREC");
+        let elems = list_to_vec(&arena, body).expect("rebuilt body must be a list");
+        assert_eq!(
+            elems.len(),
+            2,
+            "interleaved body of one slot is [primal, tangent]"
+        );
+
+        // Expected tangent element, by the Mul and Delay1 rules with the
+        // back-edge resolved *inside* the body: the group's own tangent slot.
+        let zero = SigBuilder::new(&mut arena).real(0.0);
+        let zero_times_back = SigBuilder::new(&mut arena).mul(zero, back_delay);
+        let tangent_proj = SigBuilder::new(&mut arena).proj(1, ref1);
+        let tangent_back = SigBuilder::new(&mut arena).delay1(tangent_proj);
+        let k_times_tangent = SigBuilder::new(&mut arena).mul(k, tangent_back);
+        let expected = SigBuilder::new(&mut arena).add(zero_times_back, k_times_tangent);
+        assert_eq!(
+            elems[1],
+            expected,
+            "inner tangent must be built from the group's own tangent slot, got {:?}",
+            tree_to_str(&arena, elems[1])
+        );
+    }
+
     #[test]
     fn fad_seed_not_poisoned_by_inner_rec_back_edge() {
         let mut arena = TreeArena::new();

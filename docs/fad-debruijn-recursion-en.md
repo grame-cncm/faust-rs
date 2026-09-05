@@ -249,6 +249,25 @@ The transform is memoized: every `SigId` rewritten by `T` is cached in
 placeholder makes the cache act simultaneously as a cycle-breaker for the
 back-edges introduced by `DEBRUIJNREF(1)` inside the recursion body.
 
+The cache is **scoped per binder**. A de Bruijn term is relative to its
+binders, so one `SigId` names different signals on the two sides of a
+`DEBRUIJNREC` boundary: `delay1(proj(0, ref(1)))` is the FAD seed
+`prev_gain` at the outer scope of `fad(loss, prev_gain)` *and* the
+back-edge of any single-slot feedback body the loss reads, such as a noise
+generator. On entering a body, `(Rec)` therefore stashes the outer cache
+and starts the body traversal with only its **closed** entries (terms with
+no free `DEBRUIJNREF`, which mean the same thing at every depth, checked
+with `de_bruijn_aperture`); on exit it restores the outer cache, which
+discards every entry the body added. Neither direction may leak: an outer
+entry served inside the body hands the seed's tangent `1.0` to the body's
+own back-edge and makes the inner recursion depend on the seed; a body
+entry served outside was computed under the lifted-seed context and would
+shadow the seed check with `delay1(proj(1, ref))` instead of `1.0`. The
+unit tests `fad_seed_not_poisoned_by_inner_rec_back_edge` and
+`outer_seed_does_not_leak_into_an_inner_rec_body` pin the two directions,
+and `crates/compiler/tests/fad_recursive_runtime.rs` checks the resulting
+gradient against a hand-written derivative through the interpreter.
+
 ## 7. Worked example — single feedback loop
 
 Take the single-seed program:
@@ -553,6 +572,11 @@ The rules above preserve the following invariants:
 - **Seed-lifting invariant.** Inside the body of `(Rec)`, the active seed
   set is exactly the lifted snapshot, which keeps `SigId` equality the
   correct seed-recognition test even after a binder has been crossed.
+
+- **Cache-scoping invariant.** No open term (free `DEBRUIJNREF`) is ever
+  served from the cache across a `DEBRUIJNREC` boundary, in either
+  direction; only closed terms are shared between a body and its
+  enclosing scope (§6.5).
 
 - **Cycle-safety invariant.** The placeholder inserted by `(Rec)` before
   body evaluation is overwritten before returning, so no externally

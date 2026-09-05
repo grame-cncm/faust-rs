@@ -815,3 +815,39 @@ process = mix;
         primal_source,
     );
 }
+
+#[test]
+fn recursive_projection_seed_stays_a_leaf_inside_an_unrelated_recursion() {
+    // The seed is the recursive input `g` itself, i.e. `delay1(proj(0, ref(1)))`
+    // in de Bruijn form. The loss also reads `x`, an LCG whose own back-edge
+    // is spelled exactly the same way *inside its own body*. The outer-scope
+    // seed must not leak into that body: `x` does not depend on `g`, so the
+    // `fad` gradient has to equal the hand-written partial derivative
+    // `2 (g x - t) x` on every frame. Before the cache was scoped per
+    // recursion, the LCG state picked up a tangent of 1 and `x` a spurious
+    // tangent of ~0.5.
+    let source = r#"
+x = (+(12345) ~ *(1103515245)) * 4.656612873077393e-10;
+target = 0.7 * x;
+lr = 0.01;
+loss(g) = (g * x - target) * (g * x - target);
+process = (loop ~ _) : !, _, _
+with {
+    loop(g) = g - lr * gf, gf, gm
+    with {
+        gf = fad(loss(g), g) : !, _;
+        gm = 2.0 * (g * x - target) * x;
+    };
+};
+"#;
+    let outputs = run_interp_temp_source("recursive-seed-unrelated-recursion", source, 256);
+    assert_eq!(outputs.len(), 2);
+    for (frame, (&fad_grad, &hand_grad)) in outputs[0].iter().zip(&outputs[1]).enumerate() {
+        assert_close(
+            fad_grad,
+            hand_grad,
+            1.0e-6,
+            &format!("recursive-seed gradient vs hand-written gradient at frame {frame}"),
+        );
+    }
+}
