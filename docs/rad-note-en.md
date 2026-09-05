@@ -208,7 +208,10 @@ descriptor name):
 | `acosh` | `y_bar / √(x² - 1)` |
 
 Non-unary or unrecognised FFun calls raise
-`RadUnsupportedNode { kind: "ffun" }`.
+`RadUnsupportedNode { kind: "ffun" }`. The block sweep applies the same
+table (`propagate_bra_ffun_adj`), taping the node's value for `tanh` and
+`sinh` and the argument's for the others; an unrecognised foreign
+function inside a temporal body is rejected with `FRS-SFIR-0004`.
 
 ### 3.8 Pass-through wrappers
 
@@ -277,6 +280,17 @@ adjoint chain through time for every loss with an interior recursive
 output: each sample kept its direct term only, which the convergence
 fixtures did not notice and a finite-difference check does (6.7 vs 29.7
 for `rad(y * y, c)` with `y = c : + ~ sin`).
+
+A feedback tap is `Delay1(Proj(SYMREF))`, a chain `Delay1(Delay1(..))`
+for `y[n-2]` (`mem`, `fi.tf2`), or `Delay(c, Proj(SYMREF))` for `y@c`.
+The first and the last are pre-seeded into `adj[Proj(SYMREC)]` from
+their carry -- a scalar, or a circular buffer of `c` slots -- before
+the walk. In a chain the adjoint of the inner delay *is* the carry
+loaded by the outer one, and every carry load is snapshotted into a
+stack temporary before the step's stores (`snapshot_bra_carry`): a
+plain read of the field, consumed only by the inner store in
+post-output, saw the value the outer store had just written, which
+cut every two-pole block gradient to about half.
 
 A carrier whose public projections are all gradients -- `rad(loss, p) :
 !, _` -- has no primal output to drive its forward pass. The lowering
@@ -403,7 +417,10 @@ parity tests in `crates/compiler/tests/rad_runtime.rs`.
   seed as a leaf, the one-sample horizon of the in-graph sweep
   (`in_graph_rad_*`: direct term vs `fad`, no carry declared), and
   recursions read only through a delay inside a carrier or next to a
-  public gradient.
+  public gradient, the unary foreign functions in a temporal body
+  (lane by lane against `fad`; a two-tap FIR followed by `tanh` learned
+  in the graph), and the block gradient of a two-pole recursion against
+  finite differences.
 - **Backend parity** ([crates/compiler/tests/signal_fir_lane.rs](../crates/compiler/tests/signal_fir_lane.rs))
   — C, C++, interpreter, and Cranelift lowering of RAD/BRA shapes within the
   current fast-lane subset.

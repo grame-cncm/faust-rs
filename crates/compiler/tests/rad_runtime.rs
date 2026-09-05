@@ -1998,6 +1998,108 @@ process = (y_target - nl_filter(p_learned, noise)) <: _, _;
     assert_eq!(outs.len(), 2);
 }
 
+/// A two-pole recursion feeds back `y@1` and `y@2`, i.e. `Delay(c,
+/// Proj(SYMREF))` taps rather than `Delay1`: their circular carries were
+/// stored but never landed on the recursion, and the block gradient of
+/// `fi.tf2`-shaped losses was about half of the finite difference. Public
+/// output, block of 32, total against central finite differences on the
+/// block loss (the initial state is zero, so the block-local gradient is
+/// the exact derivative of the block loss). The seeds are sliders: a
+/// literal constant would be folded into the body and never be a seed.
+#[test]
+fn rad_two_pole_feedback_bra_total_grad_matches_fd() {
+    let template = |a1: f64, a2: f64| {
+        format!(
+            r#"
+x = (+(12345) ~ *(1103515245)) * 4.656612873077393e-10;
+a1 = hslider("a1", {a1}, -2, 2, 0.0001);
+a2 = hslider("a2", {a2}, -1, 1, 0.0001);
+model = x : + ~ (_ <: (*(0.0 - a1)), (@(1) : *(0.0 - a2)) :> _);
+target = x : + ~ (_ <: (*(1.2)), (@(1) : *(0.0 - 0.72)) :> _);
+loss = (target - model) * (target - model);
+process = rad(loss, (a1, a2));
+"#
+        )
+    };
+    let (a1, a2) = (-0.8_f64, 0.5_f64);
+    let outs = run_interp_temp_source("rad-two-pole-fd", &template(a1, a2), 32);
+    assert_eq!(outs.len(), 3);
+    let total = |lane: &[f32]| lane.iter().map(|&v| f64::from(v)).sum::<f64>();
+    let (g1, g2) = (total(&outs[1]), total(&outs[2]));
+    let h = 1e-3;
+    let loss_at = |a1: f64, a2: f64| {
+        total(&run_interp_temp_source("rad-two-pole-fd-probe", &template(a1, a2), 32)[0])
+    };
+    let fd1 = (loss_at(a1 + h, a2) - loss_at(a1 - h, a2)) / (2.0 * h);
+    let fd2 = (loss_at(a1, a2 + h) - loss_at(a1, a2 - h)) / (2.0 * h);
+    assert!(
+        (g1 - fd1).abs() < 2e-2 * fd1.abs().max(1.0),
+        "d(loss)/da1 over the block: rad {g1} vs FD {fd1}"
+    );
+    assert!(
+        (g2 - fd2).abs() < 2e-2 * fd2.abs().max(1.0),
+        "d(loss)/da2 over the block: rad {g2} vs FD {fd2}"
+    );
+}
+
+/// The unary foreign functions of `maths.lib` (`ma.tanh` and the other
+/// hyperbolic families) had a rule in the symbolic sweep and none in the
+/// block sweep: a `tanh` after an FIR of delayed taps -- a temporal body --
+/// failed with FRS-SFIR-0004. Public output, lane by lane against `fad`
+/// (feed-forward in `p`, so the block gradient is the per-sample one).
+#[test]
+fn bra_unary_foreign_functions_match_fad_lane_by_lane() {
+    let source = r#"
+tanh_ff = ffunction(float tanhf|tanh|tanhl(float), <math.h>, "");
+sinh_ff = ffunction(float sinhf|sinh|sinhl(float), <math.h>, "");
+cosh_ff = ffunction(float coshf|cosh|coshl(float), <math.h>, "");
+atanh_ff = ffunction(float atanhf|atanh|atanhl(float), <math.h>, "");
+asinh_ff = ffunction(float asinhf|asinh|asinhl(float), <math.h>, "");
+p = hslider("p", 0.7, 0, 1, 0.001);
+x = (+(12345) ~ *(1103515245)) * 4.656612873077393e-10;
+u = p * x' + 0.2 * x;
+body = tanh_ff(u) + sinh_ff(u) * 0.5 + cosh_ff(u) + atanh_ff(u) * 0.25 + asinh_ff(u);
+process = (rad(body, p) : !, _), (fad(body, p) : !, _);
+"#;
+    let outs = run_interp_temp_source("rad-bra-unary-ffun", source, 64);
+    assert_eq!(outs.len(), 2);
+    for (n, (&g_rad, &g_fad)) in outs[0].iter().zip(&outs[1]).enumerate() {
+        assert!(
+            (g_rad - g_fad).abs() <= 1e-4 * (1.0 + g_fad.abs()),
+            "frame {n}: rad {g_rad} vs fad {g_fad}"
+        );
+    }
+}
+
+/// The in-graph shape that found it: a two-tap FIR followed by a foreign
+/// `tanh`, learned by gradient descent; the taps must converge.
+#[test]
+fn in_graph_rad_learns_through_a_foreign_tanh() {
+    let source = r#"
+tanh_ff = ffunction(float tanhf|tanh|tanhl(float), <math.h>, "");
+x = (+(12345) ~ *(1103515245)) * 4.656612873077393e-10;
+model(a, b) = tanh_ff(a * x + b * x');
+target = model(0.5, -0.3);
+weights = loop ~ (_, _)
+with {
+    loop(a, b) = an, bn
+    with {
+        loss = (target - model(a, b)) * (target - model(a, b));
+        g = rad(loss, (a, b));
+        an = a - 0.05 * (g : !, _, !);
+        bn = b - 0.05 * (g : !, !, _);
+    };
+};
+process = weights;
+"#;
+    let outs = run_interp_temp_source("rad-in-graph-foreign-tanh", source, 6000);
+    assert_eq!(outs.len(), 2);
+    let a = outs[0][5999];
+    let b = outs[1][5999];
+    assert!((a - 0.5).abs() < 1e-2, "tap a should learn 0.5, got {a}");
+    assert!((b + 0.3).abs() < 1e-2, "tap b should learn -0.3, got {b}");
+}
+
 /// A recursion read only through a delay inside a `rad` -- `ba.time` gating
 /// a seed, a `mem` counter in the loss -- has no delay-0 projection to
 /// schedule its body pass on demand, and the previsit skips the carrier's

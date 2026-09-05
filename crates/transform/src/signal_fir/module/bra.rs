@@ -21,6 +21,7 @@ use crate::signal_fir::SignalFirErrorCode;
 use crate::signal_fir::module::AccessType;
 use crate::signal_fir::module::FirBinOp;
 use crate::signal_fir::module::FirBuilder;
+use crate::signal_fir::module::FirMathOp;
 use crate::signal_fir::module::FirRadFormulaBuilder;
 use crate::signal_fir::module::HashMap;
 use crate::signal_fir::module::HashSet;
@@ -450,31 +451,50 @@ impl<'a> SignalToFirLower<'a> {
             }
         }
 
+        // A feedback tap is `Delay1(Proj(slot, SYMREF))` or, for `y@c` with
+        // `c >= 1` (`fi.tf2`, `x@2`), `Delay(c, Proj(slot, SYMREF))`: the
+        // scalar carry of the first, the `c`-slot circular carry of the
+        // second, both written by the reverse step that consumed the tap.
         for &sig in &postorder {
-            if !causal
-                && let SigMatch::Delay1(x) = match_sig(self.arena, sig)
-                && let SigMatch::Proj(slot, inner_group) = match_sig(self.arena, x)
-                && let Some(ref_var) = match_sym_ref(self.arena, inner_group)
-            {
-                let slot_usize = usize::try_from(slot).unwrap_or(usize::MAX);
-                // Look up the body_sig whose SYMREC var matches this SYMREF var.
-                if let Some(&proj_symrec) = var_slot_to_body_sig.get(&(ref_var, slot_usize)) {
-                    let carry_name = self.ensure_bra_delay1_carry(sig, group)?;
-                    let carry_load = {
-                        let rt = self.real_ty();
-                        let mut b = FirBuilder::new(&mut self.store);
-                        b.load_var(carry_name, AccessType::Struct, rt)
-                    };
-                    let real_ty = self.real_ty.clone();
-                    Self::add_to_adjoint(
-                        &mut self.store,
-                        &mut adj,
-                        proj_symrec,
-                        carry_load,
-                        real_ty,
-                    );
-                }
+            if causal {
+                break;
             }
+            let (tap, amount) = match match_sig(self.arena, sig) {
+                SigMatch::Delay1(x) => (x, None),
+                SigMatch::Delay(x, amount) => (x, Some(amount)),
+                _ => continue,
+            };
+            let SigMatch::Proj(slot, inner_group) = match_sig(self.arena, tap) else {
+                continue;
+            };
+            let Some(ref_var) = match_sym_ref(self.arena, inner_group) else {
+                continue;
+            };
+            let slot_usize = usize::try_from(slot).unwrap_or(usize::MAX);
+            // Look up the body_sig whose SYMREC var matches this SYMREF var.
+            let Some(&proj_symrec) = var_slot_to_body_sig.get(&(ref_var, slot_usize)) else {
+                continue;
+            };
+            let carry_load = match amount {
+                None => {
+                    let carry_name = self.ensure_bra_delay1_carry(sig, group)?;
+                    let rt = self.real_ty();
+                    let mut b = FirBuilder::new(&mut self.store);
+                    b.load_var(carry_name, AccessType::Struct, rt)
+                }
+                Some(amount) => {
+                    let c =
+                        usize::try_from(tree_to_int(self.arena, amount).unwrap_or(0)).unwrap_or(0);
+                    if c == 0 {
+                        continue;
+                    }
+                    let carry_name = self.ensure_bra_delay_array_carry(sig, c)?;
+                    self.load_bra_delay_array_carry(&carry_name, c)
+                }
+            };
+            let carry_load = self.snapshot_bra_carry(carry_load);
+            let real_ty = self.real_ty.clone();
+            Self::add_to_adjoint(&mut self.store, &mut adj, proj_symrec, carry_load, real_ty);
         }
 
         // 3b. Seed cotangent contributions.
@@ -531,6 +551,102 @@ impl<'a> SignalToFirLower<'a> {
     /// trivially reverse-evaluable signals).
     ///
     /// Unsupported node kinds return a `SignalFirError::UnsupportedSignalNode`.
+    /// Adjoint of the unary foreign functions the symbolic sweep knows
+    /// (`tanh`, `sinh`, `cosh`, `atanh`, `asinh`, `acosh`, in any precision
+    /// variant), with its formulas: `tanh' = 1 - tanh^2` and
+    /// `sinh' = sqrt(1 + sinh^2)` from the node's own forward value,
+    /// `cosh' = (e^x - e^-x) / 2`, `atanh' = 1 / (1 - x^2)`,
+    /// `asinh' = 1 / sqrt(1 + x^2)`, `acosh' = 1 / sqrt(x^2 - 1)` from the
+    /// argument's. Any other foreign function is rejected, as by the
+    /// symbolic sweep.
+    fn propagate_bra_ffun_adj(
+        &mut self,
+        sig: SigId,
+        ff: SigId,
+        largs: SigId,
+        y_bar: FirId,
+        adj: &mut std::collections::HashMap<SigId, FirId>,
+    ) -> Result<(), SignalFirError> {
+        let proto = self.decode_foreign_fun_proto(ff)?;
+        let args = list_to_vec(self.arena, largs).unwrap_or_default();
+        let family = match proto.name.as_str() {
+            "tanhf" | "tanh" | "tanhl" => Some("tanh"),
+            "sinhf" | "sinh" | "sinhl" => Some("sinh"),
+            "coshf" | "cosh" | "coshl" => Some("cosh"),
+            "atanhf" | "atanh" | "atanhl" => Some("atanh"),
+            "asinhf" | "asinh" | "asinhl" => Some("asinh"),
+            "acoshf" | "acosh" | "acoshl" => Some("acosh"),
+            _ => None,
+        };
+        let (Some(family), [arg]) = (family, args.as_slice()) else {
+            return Err(SignalFirError::new(
+                SignalFirErrorCode::UnsupportedSignalNode,
+                format!(
+                    "foreign function `{}` not supported in BlockReverseAD backward pass (B6)",
+                    proto.name
+                ),
+            ));
+        };
+        let arg = *arg;
+        let real_ty = self.real_ty.clone();
+        let one = self.float_const(1.0);
+        let contrib = match family {
+            "tanh" => {
+                let y = self.load_bra_fwd_value(sig)?;
+                let mut b = FirBuilder::new(&mut self.store);
+                let sq = b.binop(FirBinOp::Mul, y, y, real_ty.clone());
+                let sech_sq = b.binop(FirBinOp::Sub, one, sq, real_ty.clone());
+                b.binop(FirBinOp::Mul, y_bar, sech_sq, real_ty.clone())
+            }
+            "sinh" => {
+                let y = self.load_bra_fwd_value(sig)?;
+                let mut b = FirBuilder::new(&mut self.store);
+                let sq = b.binop(FirBinOp::Mul, y, y, real_ty.clone());
+                let one_plus = b.binop(FirBinOp::Add, one, sq, real_ty.clone());
+                let cosh_x = b.math_call(FirMathOp::Sqrt, &[one_plus], real_ty.clone());
+                b.binop(FirBinOp::Mul, y_bar, cosh_x, real_ty.clone())
+            }
+            "cosh" => {
+                let x = self.load_bra_fwd_value(arg)?;
+                let zero = self.float_const(0.0);
+                let half = self.float_const(0.5);
+                let mut b = FirBuilder::new(&mut self.store);
+                let exp_x = b.math_call(FirMathOp::Exp, &[x], real_ty.clone());
+                let neg_x = b.binop(FirBinOp::Sub, zero, x, real_ty.clone());
+                let exp_neg_x = b.math_call(FirMathOp::Exp, &[neg_x], real_ty.clone());
+                let diff = b.binop(FirBinOp::Sub, exp_x, exp_neg_x, real_ty.clone());
+                let sinh_x = b.binop(FirBinOp::Mul, half, diff, real_ty.clone());
+                b.binop(FirBinOp::Mul, y_bar, sinh_x, real_ty.clone())
+            }
+            "atanh" => {
+                let x = self.load_bra_fwd_value(arg)?;
+                let mut b = FirBuilder::new(&mut self.store);
+                let sq = b.binop(FirBinOp::Mul, x, x, real_ty.clone());
+                let denom = b.binop(FirBinOp::Sub, one, sq, real_ty.clone());
+                b.binop(FirBinOp::Div, y_bar, denom, real_ty.clone())
+            }
+            "asinh" => {
+                let x = self.load_bra_fwd_value(arg)?;
+                let mut b = FirBuilder::new(&mut self.store);
+                let sq = b.binop(FirBinOp::Mul, x, x, real_ty.clone());
+                let sum = b.binop(FirBinOp::Add, one, sq, real_ty.clone());
+                let denom = b.math_call(FirMathOp::Sqrt, &[sum], real_ty.clone());
+                b.binop(FirBinOp::Div, y_bar, denom, real_ty.clone())
+            }
+            _ => {
+                // acosh
+                let x = self.load_bra_fwd_value(arg)?;
+                let mut b = FirBuilder::new(&mut self.store);
+                let sq = b.binop(FirBinOp::Mul, x, x, real_ty.clone());
+                let diff = b.binop(FirBinOp::Sub, sq, one, real_ty.clone());
+                let denom = b.math_call(FirMathOp::Sqrt, &[diff], real_ty.clone());
+                b.binop(FirBinOp::Div, y_bar, denom, real_ty.clone())
+            }
+        };
+        Self::add_to_adjoint(&mut self.store, adj, arg, contrib, real_ty);
+        Ok(())
+    }
+
     /// `Delay1` adjoint: `adj[x][n-1] += adj[y][n]` through a struct carry
     /// (store now, load next reverse step); the recursive-feedback form's
     /// load was already accumulated by the backward-sweep pre-scan.
@@ -588,6 +704,7 @@ impl<'a> SignalToFirLower<'a> {
                 let mut b = FirBuilder::new(&mut self.store);
                 b.load_var(carry_name, AccessType::Struct, rt)
             };
+            let carry_load = self.snapshot_bra_carry(carry_load);
             Self::add_to_adjoint(&mut self.store, adj, x, carry_load, real_ty);
         }
 
@@ -620,33 +737,33 @@ impl<'a> SignalToFirLower<'a> {
         } else if !self.bra_sweep_is_causal() {
             // (In the forward sample loop the horizon is the current sample:
             // `x[n-c]` is outside it, nothing to propagate, no carry.)
+            //
+            // A feedback tap, `Delay(c, Proj(slot, SYMREF))`, had its carry
+            // loaded by the backward-sweep pre-scan into the recursion's
+            // `Proj(SYMREC)` before the walk; here it is only stored.
+            let is_recursive_feedback = matches!(
+                match_sig(self.arena, sig_inner),
+                SigMatch::Proj(_, inner_group) if match_sym_ref(self.arena, inner_group).is_some()
+            );
             let carry_name = self.ensure_bra_delay_array_carry(sig, c)?;
-            let c_fir = {
-                let mut b = FirBuilder::new(&mut self.store);
-                b.int32(i32::try_from(c).unwrap_or(i32::MAX))
-            };
-            let i0 = {
-                let mut b = FirBuilder::new(&mut self.store);
-                b.load_var("i0", AccessType::Loop, FirType::Int32)
-            };
-            let slot = {
-                let mut b = FirBuilder::new(&mut self.store);
-                b.binop(FirBinOp::Rem, i0, c_fir, FirType::Int32)
-            };
-            let rt = self.real_ty();
-            let carry_load = {
-                let mut b = FirBuilder::new(&mut self.store);
-                b.load_table(carry_name.clone(), AccessType::Struct, slot, rt)
-            };
+            let slot = self.bra_delay_array_slot(c);
             let carry_store = {
                 let mut b = FirBuilder::new(&mut self.store);
-                b.store_table(carry_name, AccessType::Struct, slot, y_bar)
+                b.store_table(carry_name.clone(), AccessType::Struct, slot, y_bar)
             };
             self.regions
                 .current_phases_mut()
                 .post_output
                 .push(carry_store);
-            Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty);
+            if !is_recursive_feedback {
+                let rt = self.real_ty();
+                let carry_load = {
+                    let mut b = FirBuilder::new(&mut self.store);
+                    b.load_table(carry_name, AccessType::Struct, slot, rt)
+                };
+                let carry_load = self.snapshot_bra_carry(carry_load);
+                Self::add_to_adjoint(&mut self.store, adj, sig_inner, carry_load, real_ty);
+            }
         }
 
         Ok(())
@@ -681,6 +798,7 @@ impl<'a> SignalToFirLower<'a> {
                 let mut b = FirBuilder::new(&mut self.store);
                 b.load_var(carry_name.clone(), AccessType::Struct, rt)
             };
+            let carry_load = self.snapshot_bra_carry(carry_load);
             let carry_store = {
                 let mut b = FirBuilder::new(&mut self.store);
                 b.store_var(carry_name, AccessType::Struct, y_bar)
@@ -862,6 +980,11 @@ impl<'a> SignalToFirLower<'a> {
             // ── Delay1: anti-causal carry ───────────────────────────────────
             SigMatch::Delay1(x) => self.propagate_bra_delay1_adj(sig, x, y_bar, adj, group)?,
 
+            // ── Unary foreign functions: the hyperbolic families ───────────
+            SigMatch::FFun(ff, largs) => {
+                self.propagate_bra_ffun_adj(sig, ff, largs, y_bar, adj)?;
+            }
+
             // ── Floor / Ceil / Rint / Round: zero gradient ──────────────────
             SigMatch::Floor(x) | SigMatch::Ceil(x) | SigMatch::Rint(x) | SigMatch::Round(x) => {
                 let _ = (x, y_bar); // Rounding ops: gradient is 0 almost everywhere.
@@ -986,6 +1109,51 @@ impl<'a> SignalToFirLower<'a> {
     ///
     /// Idempotent: subsequent calls for the same `delay_node` return the same
     /// name without emitting a second declaration.
+    /// Snapshots a carry load into a stack temporary of the current phase.
+    ///
+    /// A carry is a struct field the same reverse step overwrites in
+    /// post-output. A load consumed by an immediate expression reads the
+    /// value stored by step `n + 1`, as intended; a load consumed only by a
+    /// later store -- the carry of a `Delay1(Delay1(y))` chain, where the
+    /// adjoint of the inner delay *is* the outer delay's carry -- would read
+    /// the field after the outer store overwrote it. Every carry load goes
+    /// through here so that the reads happen before the stores.
+    fn snapshot_bra_carry(&mut self, value: FirId) -> FirId {
+        let real_ty = self.real_ty.clone();
+        let name = format!("fBraLoad{}", self.name_gen.next_loop_var_id);
+        self.name_gen.next_loop_var_id += 1;
+        let declare = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.declare_var(
+                name.clone(),
+                real_ty.clone(),
+                AccessType::Stack,
+                Some(value),
+            )
+        };
+        self.regions.current_phases_mut().immediate.push(declare);
+        let mut b = FirBuilder::new(&mut self.store);
+        b.load_var(name, AccessType::Stack, real_ty)
+    }
+
+    /// The slot of a `c`-slot circular carry at the current reverse step:
+    /// `i0 % c`.
+    fn bra_delay_array_slot(&mut self, c: usize) -> FirId {
+        let mut b = FirBuilder::new(&mut self.store);
+        let c_fir = b.int32(i32::try_from(c).unwrap_or(i32::MAX));
+        let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+        b.binop(FirBinOp::Rem, i0, c_fir, FirType::Int32)
+    }
+
+    /// Loads the value a `c`-slot circular carry holds for the current
+    /// reverse step: the adjoint stored `c` steps ago, i.e. by step `n + c`.
+    fn load_bra_delay_array_carry(&mut self, carry_name: &str, c: usize) -> FirId {
+        let slot = self.bra_delay_array_slot(c);
+        let rt = self.real_ty();
+        let mut b = FirBuilder::new(&mut self.store);
+        b.load_table(carry_name.to_string(), AccessType::Struct, slot, rt)
+    }
+
     pub(super) fn ensure_bra_delay_array_carry(
         &mut self,
         delay_node: SigId,

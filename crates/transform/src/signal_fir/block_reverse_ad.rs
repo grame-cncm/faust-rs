@@ -221,6 +221,13 @@ pub(super) fn collect_bra_postorder(
             collect_bra_postorder(arena, else_value, stops, visited, order);
             collect_bra_postorder(arena, then_value, stops, visited, order);
         }
+        // Foreign functions: the backward pass knows the unary hyperbolic
+        // families and rejects the rest, so every argument is walked.
+        SigMatch::FFun(_ff, largs) => {
+            for arg in list_to_vec(arena, largs).unwrap_or_default() {
+                collect_bra_postorder(arena, arg, stops, visited, order);
+            }
+        }
         // Delay1: recurse into the value child so its adjoint can be tracked.
         SigMatch::Delay1(x) => {
             collect_bra_postorder(arena, x, stops, visited, order);
@@ -345,6 +352,16 @@ pub(super) fn collect_tape_needed_values(arena: &TreeArena, postorder: &[SigId])
             SigMatch::Select2(cond, _else_value, _then_value) => {
                 if !is_trivially_reverse_evaluable(arena, cond) {
                     needed.insert(cond);
+                }
+            }
+            // Unary foreign functions: `tanh'`/`sinh'` use the node's own
+            // value, the other families the argument's.
+            SigMatch::FFun(_ff, largs) => {
+                needed.insert(sig);
+                for arg in list_to_vec(arena, largs).unwrap_or_default() {
+                    if !is_trivially_reverse_evaluable(arena, arg) {
+                        needed.insert(arg);
+                    }
                 }
             }
             SigMatch::BinOp(BinOp::Mul | BinOp::Div, lhs, rhs) => {
