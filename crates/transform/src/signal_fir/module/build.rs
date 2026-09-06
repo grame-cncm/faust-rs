@@ -37,7 +37,6 @@ use crate::signal_fir::module::SigType;
 use crate::signal_fir::module::SignalToFirLower;
 use crate::signal_fir::module::classify_reverse_time_outputs;
 use crate::signal_fir::module::clocked;
-use crate::signal_fir::module::dump_sig_readable;
 use crate::signal_fir::module::fixed_ad_internal_signals;
 use crate::signal_fir::module::match_sig;
 use crate::signal_fir::placement::analyze_signal_sharing;
@@ -55,9 +54,17 @@ pub(super) struct RadReverseState {
     /// `Delay1(primal)` from the primal output buffer instead of reading the
     /// recursion carrier in reverse-time order.
     pub(super) forward_output_by_sig: HashMap<SigId, usize>,
-    /// Same map as [`Self::forward_output_by_sig`], keyed by the prepared
-    /// readable signal shape to survive equivalent but non-identical `SigId`s.
-    pub(super) forward_output_by_sig_key: HashMap<String, usize>,
+    /// The forward outputs `(signal, lane)`, for the structural fallback of
+    /// [`Self::forward_output_by_sig`]: a lookup that misses by identity is
+    /// retried on the shared-structure dump of the signal
+    /// (`signals::dump_sig_dag`, linear in the graph), built on first use in
+    /// [`Self::forward_output_keys`]. The keys are never the readable tree
+    /// dump: on a program with many `rad` lanes over a large shared graph
+    /// (a six-line reverb and its adjoints) that dump is exponential and took
+    /// five minutes and ten gigabytes before a single instruction was lowered.
+    pub(super) forward_outputs: Vec<(SigId, usize)>,
+    /// Lazily built structural keys of [`Self::forward_outputs`].
+    pub(super) forward_output_keys: Option<HashMap<String, usize>>,
     /// True while lowering the reverse-time sample-loop slice.
     pub(super) lowering_reverse_loop: bool,
 }
@@ -1114,6 +1121,7 @@ pub(crate) fn build_module<'a>(
     real_ty: FirType,
     max_copy_delay: u32,
     delay_line_threshold: u32,
+    bra_tape_block_size: usize,
     control_rate_mode: ControlRateMode,
     processing_api: ProcessingApi,
     table_init_mode: crate::signal_fir::TableInitMode,
@@ -1145,6 +1153,7 @@ pub(crate) fn build_module<'a>(
         real_ty,
         placement,
         delay_opts,
+        bra_tape_block_size,
     );
     lower.control_rate_mode = control_rate_mode;
     lower.processing_api = processing_api;
@@ -1192,14 +1201,13 @@ pub(crate) fn build_module<'a>(
     let has_reverse_outputs = reverse_time_outputs.iter().any(|is_reverse| *is_reverse);
     if has_reverse_outputs {
         lower.scalar_schedule = None;
-        // Readable structural fallback keys are only needed when the RAD
-        // reverse-time loop must reconnect a delayed value to a forward output.
-        lower.rad_reverse.forward_output_by_sig_key = signals
+        // Structural fallback keys are only needed when the RAD reverse-time
+        // loop must reconnect a delayed value to a forward output, and are
+        // built on first use.
+        lower.rad_reverse.forward_outputs = signals
             .iter()
             .enumerate()
-            .filter_map(|(index, &sig)| {
-                (!reverse_time_outputs[index]).then_some((dump_sig_readable(arena, sig), index))
-            })
+            .filter_map(|(index, &sig)| (!reverse_time_outputs[index]).then_some((sig, index)))
             .collect();
     }
     let sample_loops = {

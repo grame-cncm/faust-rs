@@ -145,6 +145,14 @@ records the needed primal intermediates in BRA tapes, then runs the
 adjoint sweep backward over the same block with terminal-zero adjoint
 state at the end of each `compute()` call.
 
+The tapes hold `-bra-tape N` samples (default 8192, a power of two): a
+block longer than the tape wraps its index and the gradients of the
+tail are wrong, so a host that differentiates a loss over a whole
+impulse response in one `compute` call sizes the tape to it
+(`-bra-tape 32768` for a two-second response at 16 kHz; `--bra-tape` in
+`faustprobe`). The forward tapes then cost `N` samples per taped signal,
+which is why the default stays small.
+
 One-pole example:
 
 ```faust

@@ -108,6 +108,22 @@ impl Factory {
         double: bool,
         opt_level: i32,
     ) -> Result<Self, String> {
+        Self::compile_with_args(path, import_dirs, &[], double, opt_level)
+    }
+
+    /// [`Factory::compile`] with extra compiler arguments appended verbatim
+    /// (`-bra-tape 32768`, `-mcd 64`, ...), for the options the probe does
+    /// not model as flags of its own.
+    ///
+    /// # Errors
+    /// As [`Factory::compile`].
+    pub fn compile_with_args(
+        path: &str,
+        import_dirs: &[String],
+        extra_args: &[String],
+        double: bool,
+        opt_level: i32,
+    ) -> Result<Self, String> {
         let mut argv: Vec<CString> = Vec::new();
         for dir in import_dirs {
             argv.push(CString::new("-I").map_err(|e| e.to_string())?);
@@ -115,6 +131,9 @@ impl Factory {
         }
         if double {
             argv.push(CString::new("-double").map_err(|e| e.to_string())?);
+        }
+        for arg in extra_args {
+            argv.push(CString::new(arg.as_str()).map_err(|e| e.to_string())?);
         }
         let argv_ptrs: Vec<*const c_char> = argv.iter().map(|a| a.as_ptr()).collect();
 
@@ -239,7 +258,29 @@ impl Probe {
         double: bool,
         opt_level: i32,
     ) -> Result<Self, String> {
-        let factory = Rc::new(Factory::compile(path, import_dirs, double, opt_level)?);
+        Self::compile_with_args(path, import_dirs, &[], sample_rate, double, opt_level)
+    }
+
+    /// [`Probe::compile`] with extra compiler arguments appended verbatim
+    /// (see [`Factory::compile_with_args`]).
+    ///
+    /// # Errors
+    /// As [`Probe::compile`].
+    pub fn compile_with_args(
+        path: &str,
+        import_dirs: &[String],
+        extra_args: &[String],
+        sample_rate: i32,
+        double: bool,
+        opt_level: i32,
+    ) -> Result<Self, String> {
+        let factory = Rc::new(Factory::compile_with_args(
+            path,
+            import_dirs,
+            extra_args,
+            double,
+            opt_level,
+        )?);
         Self::instantiate(&factory, sample_rate)
     }
 

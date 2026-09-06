@@ -1096,6 +1096,10 @@ fn compiler_from_argv(argv: &[String]) -> Result<(FaustCompiler, bool, MemoryMan
         Some(sample_rate) => compiler.with_table_init_sample_rate(sample_rate),
         None => compiler,
     };
+    let compiler = match parsed.bra_tape {
+        Some(samples) => compiler.with_bra_tape(samples),
+        None => compiler,
+    };
     Ok((
         compiler,
         parsed.double,

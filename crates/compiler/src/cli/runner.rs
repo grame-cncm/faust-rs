@@ -281,6 +281,9 @@ pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) ->
     if cli.dlt != d.dlt {
         parts.push(format!("-dlt {}", cli.dlt));
     }
+    if cli.bra_tape != d.bra_tape {
+        parts.push(format!("-bra-tape {}", cli.bra_tape));
+    }
     if cli.check_table != d.check_table {
         parts.push(format!("-ct {}", cli.check_table));
     }
@@ -515,6 +518,7 @@ pub fn compiler_from_cli(
         .with_real_type(selected_real_type(cli))
         .with_mcd(cli.mcd)
         .with_dlt(cli.dlt)
+        .with_bra_tape(cli.bra_tape)
         .with_table_init_mode(selected_table_init_mode(cli))
         .with_compute_mode(selected_compute_mode(cli))
         .with_scheduling_strategy(selected_scheduling_strategy(cli))

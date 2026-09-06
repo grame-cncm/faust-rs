@@ -939,6 +939,25 @@ impl<'a> SignalToFirLower<'a> {
     /// primals present in the public output bundle, the forward output buffer is
     /// the block-local tape: frame `0` returns the delay initializer `0`, and
     /// later frames read `output_primal[i0 - 1]`.
+    /// Structural fallback of `forward_output_by_sig`: the lane of a forward
+    /// output whose shared-structure dump equals `value`'s, for equivalent
+    /// but non-identical `SigId`s. The keys are built on the first miss.
+    fn forward_output_by_structure(&mut self, value: SigId) -> Option<usize> {
+        if self.rad_reverse.forward_outputs.is_empty() {
+            return None;
+        }
+        let arena = self.arena;
+        let keys = self.rad_reverse.forward_output_keys.get_or_insert_with(|| {
+            self.rad_reverse
+                .forward_outputs
+                .iter()
+                .map(|&(sig, index)| (signals::dump_sig_dag(arena, &[sig], None), index))
+                .collect()
+        });
+        keys.get(&signals::dump_sig_dag(arena, &[value], None))
+            .copied()
+    }
+
     pub(super) fn lower_forward_output_delay1_for_reverse_loop(
         &mut self,
         node: SigId,
@@ -949,12 +968,7 @@ impl<'a> SignalToFirLower<'a> {
             .forward_output_by_sig
             .get(&value)
             .copied()
-            .or_else(|| {
-                self.rad_reverse
-                    .forward_output_by_sig_key
-                    .get(&dump_sig_readable(self.arena, value))
-                    .copied()
-            });
+            .or_else(|| self.forward_output_by_structure(value));
         let Some(output_index) = output_index else {
             return Ok(None);
         };

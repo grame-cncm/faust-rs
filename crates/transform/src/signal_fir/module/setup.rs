@@ -127,6 +127,7 @@ impl<'a> SignalToFirLower<'a> {
         real_ty: FirType,
         placement: PlacementInfo,
         delay_opts: DelayOptions,
+        bra_tape_block_size: usize,
     ) -> Self {
         Self {
             arena,
@@ -171,6 +172,7 @@ impl<'a> SignalToFirLower<'a> {
             clocked_payload_signals: HashSet::new(),
             fixed_ad_internal_signals: HashSet::new(),
             scheduled_previsit: true,
+            bra_tape_block_size,
         }
     }
 

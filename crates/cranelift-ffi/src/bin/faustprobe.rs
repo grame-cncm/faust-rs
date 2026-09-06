@@ -56,6 +56,12 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     opt_level: i32,
 
+    /// Samples one `rad` block reverse tape holds (`-bra-tape N` of the
+    /// compiler): the largest `--block` over which the gradients of a
+    /// `rad` through delays and recursions are exact. A power of two.
+    #[arg(long, default_value_t = 8192)]
+    bra_tape: usize,
+
     /// Sample rate in Hz.
     #[arg(long, default_value_t = 44_100)]
     sr: i32,
@@ -292,6 +298,16 @@ fn parse_assignment(text: &str) -> Result<(&str, f64), String> {
 /// the only way this entry point can make a render produce sound — genuine
 /// note-driven verification goes through [`PolyProbe::key_on`]/`key_off`
 /// directly, exercised by this crate's tests rather than this binary.
+/// Compiler arguments the probe forwards verbatim.
+fn compiler_args(args: &Args) -> Vec<String> {
+    let mut out = Vec::new();
+    if args.bra_tape != 8192 {
+        out.push("-bra-tape".to_owned());
+        out.push(args.bra_tape.to_string());
+    }
+    out
+}
+
 fn run_poly(args: &Args) -> Result<(), String> {
     if !args.sweeps.is_empty() || args.reduce.is_some() {
         return Err(
@@ -484,9 +500,10 @@ fn run(mut args: Args) -> Result<(), String> {
         return run_poly(&args);
     }
 
-    let probe = Probe::compile(
+    let probe = Probe::compile_with_args(
         &args.file,
         &args.import_dirs,
+        &compiler_args(&args),
         args.sr,
         args.double,
         args.opt_level,

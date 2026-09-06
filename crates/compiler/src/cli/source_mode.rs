@@ -843,5 +843,9 @@ fn expansion_option_argv(cli: &CliArgs) -> Vec<String> {
         argv.push("-dlt".to_owned());
         argv.push(cli.dlt.to_string());
     }
+    if cli.bra_tape != 8192 {
+        argv.push("-bra-tape".to_owned());
+        argv.push(cli.bra_tape.to_string());
+    }
     argv
 }

@@ -26,6 +26,10 @@ pub struct FfiCompileArgs {
     /// Set by the `-double` flag in the `argv` vector passed to FFI factory
     /// constructors. Mirrors the reference Faust compiler's `-double` option.
     pub double: bool,
+    /// Samples one `BlockReverseAD` tape holds (`-bra-tape N`): the largest
+    /// `compute` block over which `rad` gradients through delays and
+    /// recursions are exact. `None` keeps the compiler's default (8192).
+    pub bra_tape: Option<usize>,
     /// Vector mode requested (`-vec`). When false, `vec_size`/`loop_variant` are
     /// ignored (scalar codegen).
     pub vec_mode: bool,
@@ -184,6 +188,18 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
             index += 1;
             continue;
         }
+        if arg == "-bra-tape" || arg == "--bra-tape" {
+            let Some(value) = argv.get(index + 1) else {
+                return Err("missing value after -bra-tape".to_owned());
+            };
+            parsed.bra_tape = Some(
+                value
+                    .parse()
+                    .map_err(|error| format!("bad -bra-tape value: {error}"))?,
+            );
+            index += 2;
+            continue;
+        }
         index += 1;
     }
     if parsed.memory_manager0 && parsed.vec_mode {
@@ -198,6 +214,21 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+
+    #[test]
+    fn bra_tape_is_parsed_in_both_spellings() {
+        let parsed = super::parse_ffi_compile_args(&["-bra-tape".to_owned(), "16384".to_owned()])
+            .expect("parse");
+        assert_eq!(parsed.bra_tape, Some(16384));
+        let parsed = super::parse_ffi_compile_args(&["--bra-tape".to_owned(), "4096".to_owned()])
+            .expect("parse");
+        assert_eq!(parsed.bra_tape, Some(4096));
+        assert!(super::parse_ffi_compile_args(&["-bra-tape".to_owned()]).is_err());
+        assert_eq!(
+            super::parse_ffi_compile_args(&[]).expect("parse").bra_tape,
+            None
+        );
+    }
 
     use super::parse_ffi_compile_args;
 

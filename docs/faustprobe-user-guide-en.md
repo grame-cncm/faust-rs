@@ -71,6 +71,7 @@ summary reach the terminal.
 | `--opt-level N` | Cranelift optimisation level (default 0) |
 | `--sr HZ` | sample rate (default 44100) |
 | `--block N` | frames per `compute` call (default 64) |
+| `--bra-tape N` | samples one `rad` reverse tape holds, the largest `--block` over which the gradients of a `rad` through delays and recursions are exact (default 8192, a power of two; the compiler's `-bra-tape`) |
 | `-n, --render N` | frames to render (default 15000) |
 
 `--double` is worth reaching for whenever the measurement is near the noise

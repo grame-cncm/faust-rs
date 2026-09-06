@@ -73,6 +73,7 @@ mod error;
 mod leaf_emit;
 mod loop_graph;
 mod module;
+pub use module::DEFAULT_BRA_TAPE_BLOCK_SIZE;
 mod one_sample;
 mod origins;
 mod placement;
@@ -355,6 +356,12 @@ pub struct SignalFirOptions {
     /// per-line counter variable. Default: `u32::MAX` (disabled; all delays at
     /// or above `max_copy_delay` use circular-pow2).
     pub delay_line_threshold: u32,
+    /// Samples one `BlockReverseAD` forward tape can hold, which is the
+    /// largest compute block over which `rad` gradients are exact
+    /// (`-bra-tape N`, a power of two). Default: 8192. A host that
+    /// differentiates a loss over a whole impulse response in one `compute`
+    /// call sizes the tapes to that response.
+    pub bra_tape_block_size: usize,
     /// Codegen strategy for `compute()`: scalar (default) or vector mode
     /// (`-vec`). Accepted programs use the checked pipeline; named
     /// unsupported shapes fail closed to scalar lowering.
@@ -439,6 +446,7 @@ impl Default for SignalFirOptions {
             real_type: RealType::Float32,
             max_copy_delay: 16,
             delay_line_threshold: u32::MAX,
+            bra_tape_block_size: module::DEFAULT_BRA_TAPE_BLOCK_SIZE,
             compute_mode: ComputeMode::Scalar,
             scheduling_strategy: SchedulingStrategy::DepthFirst,
             control_rate_mode: ControlRateMode::InlinePerBlock,
@@ -629,6 +637,15 @@ impl<'a> SignalFirRequest<'a> {
 pub fn compile_signals_to_fir_fastlane(
     request: &SignalFirRequest<'_>,
 ) -> Result<SignalFirOutput, SignalFirError> {
+    let tape = request.options.bra_tape_block_size;
+    if tape == 0 || !tape.is_power_of_two() {
+        return Err(SignalFirError::new(
+            SignalFirErrorCode::InvalidOptions,
+            format!(
+                "-bra-tape {tape}: the BlockReverseAD tape size must be a power of two (the tape index is masked)"
+            ),
+        ));
+    }
     compile_fastlane_inner(
         request.arena,
         request.signals,
@@ -896,6 +913,7 @@ fn compile_fastlane_inner(
             options.real_type.as_fir_type(),
             options.max_copy_delay,
             options.delay_line_threshold,
+            options.bra_tape_block_size,
             options.control_rate_mode,
             options.processing_api,
             options.table_init_mode,

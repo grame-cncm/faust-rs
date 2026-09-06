@@ -25,7 +25,6 @@ use crate::signal_fir::module::FirMathOp;
 use crate::signal_fir::module::FirRadFormulaBuilder;
 use crate::signal_fir::module::HashMap;
 use crate::signal_fir::module::HashSet;
-use crate::signal_fir::module::MAX_BRA_TAPE_BLOCK_SIZE;
 use crate::signal_fir::module::RadBinOpRule;
 use crate::signal_fir::module::SigMatch;
 use crate::signal_fir::module::SignalToFirLower;
@@ -78,7 +77,7 @@ pub(super) struct BraState {
     ///
     /// Key: signal `SigId` whose forward value must be replayed in the reverse
     /// loop.  Value: the struct-field name of the `Array(real_ty,
-    /// MAX_BRA_TAPE_BLOCK_SIZE)` used to store/load it.
+    /// bra_tape_block_size)` used to store/load it.
     ///
     /// Populated by `ensure_bra_tape_stores` and consumed by
     /// `load_bra_fwd_value`.  Acts as a per-signal idempotency guard: a
@@ -1194,7 +1193,7 @@ impl<'a> SignalToFirLower<'a> {
     ///    require a tape.
     /// 3. For each tape-needed signal `v` not yet in `bra_tape_store_var`:
     ///    a. Allocate a fresh struct-field name `fBraTapeN`.
-    ///    b. Declare the field as `Array(real_ty, MAX_BRA_TAPE_BLOCK_SIZE)`.
+    ///    b. Declare the field as `Array(real_ty, bra_tape_block_size)`.
     ///    c. Lower `v` via `lower_signal` (runs in the forward loop context).
     ///    d. Emit `store_table(fBraTapeN, Struct, i0, v_fir)` to
     ///    `sample_phases.immediate` so it captures the forward value
@@ -1280,7 +1279,7 @@ impl<'a> SignalToFirLower<'a> {
             let tape_name = format!("fBraTape{}", self.name_gen.next_loop_var_id);
             self.name_gen.next_loop_var_id += 1;
             // Declare as a fixed-size array struct field.
-            let tape_ty = FirType::Array(Box::new(v_ty.clone()), MAX_BRA_TAPE_BLOCK_SIZE);
+            let tape_ty = FirType::Array(Box::new(v_ty.clone()), self.bra_tape_block_size);
             self.ensure_named_struct_var(&tape_name, tape_ty, None);
             // Lower the value in the current (forward) loop context. Real
             // tapes feed the adjoint arithmetic; an integer tape only ever
@@ -1338,10 +1337,10 @@ impl<'a> SignalToFirLower<'a> {
         }
     }
 
-    /// Builds the bounded BRA tape index `i0 & (MAX_BRA_TAPE_BLOCK_SIZE - 1)`.
+    /// Builds the bounded BRA tape index `i0 & (bra_tape_block_size - 1)`.
     ///
-    /// `MAX_BRA_TAPE_BLOCK_SIZE` is a power of two, so the mask is a **no-op** for
-    /// the supported block size (`count ≤ MAX_BRA_TAPE_BLOCK_SIZE`): there,
+    /// `bra_tape_block_size` is a power of two, so the mask is a **no-op** for
+    /// the supported block size (`count ≤ bra_tape_block_size`): there,
     /// `i0 < MAX` and `i0 & (MAX - 1) == i0`. For an over-long block it keeps the
     /// access in bounds — the forward store and the reverse load use the same
     /// wrapped slot — instead of reading/writing past the tape array. The
@@ -1356,7 +1355,7 @@ impl<'a> SignalToFirLower<'a> {
         };
         let mask = {
             let mut b = FirBuilder::new(&mut self.store);
-            b.int32(i32::try_from(MAX_BRA_TAPE_BLOCK_SIZE - 1).unwrap_or(i32::MAX))
+            b.int32(i32::try_from(self.bra_tape_block_size - 1).unwrap_or(i32::MAX))
         };
         let mut b = FirBuilder::new(&mut self.store);
         b.binop(FirBinOp::And, i0, mask, FirType::Int32)

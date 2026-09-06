@@ -610,6 +610,7 @@ fn Compiler::get_faustwasm_info
 fn Compiler::new
 fn Compiler::table_range_warning_messages
 fn Compiler::version
+fn Compiler::with_bra_tape
 fn Compiler::with_cancel
 fn Compiler::with_check_table
 fn Compiler::with_compute_mode
@@ -798,6 +799,7 @@ fn ControlMap::len
 fn ControlMap::resolve
 fn Factory::compile
 fn Factory::compile_from_string
+fn Factory::compile_with_args
 fn InputMode::sample
 fn KeyConversion::convert
 fn PolyProbe::active_voice_count
@@ -817,6 +819,7 @@ fn PolyState::key_on
 fn PolyState::new
 fn PolyState::record_level
 fn Probe::compile
+fn Probe::compile_with_args
 fn Probe::compute_raw
 fn Probe::instantiate
 fn Probe::is_double
@@ -2257,6 +2260,7 @@ use recursion
 ## transform
 const CRATE_NAME
 const DECORATION_CERTIFICATE_VERSION
+const DEFAULT_BRA_TAPE_BLOCK_SIZE
 const DEFAULT_COMPACT_EVENT_LIMIT
 const DEFAULT_EVENT_LIMIT
 const DEFAULT_EVENT_LIMITS
@@ -2705,6 +2709,7 @@ use error
 use fused_groups
 use materialize
 use model
+use module::DEFAULT_BRA_TAPE_BLOCK_SIZE
 use normalize::table_promote::TableRangeWarning
 use origins
 use produce

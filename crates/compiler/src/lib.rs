@@ -590,6 +590,9 @@ pub struct Compiler {
     /// Delay above which the if-based wrapping strategy is used.
     /// Mirrors Faust `-dlt N`. Default: `u32::MAX` (disabled).
     delay_line_threshold: u32,
+    /// Samples one `BlockReverseAD` tape holds, the largest compute block
+    /// over which `rad` gradients are exact (`-bra-tape N`). Default: 8192.
+    bra_tape_block_size: usize,
     /// How generated-table content is produced (`--table-init`).
     table_init_mode: TableInitMode,
     /// Explicit host sample rate used when `--table-init const` folds a
@@ -692,6 +695,7 @@ impl Compiler {
             table_init_sample_rate: None,
             check_table: true,
             delay_line_threshold: u32::MAX,
+            bra_tape_block_size: transform::signal_fir::DEFAULT_BRA_TAPE_BLOCK_SIZE,
             compute_mode: ComputeMode::Scalar,
             scheduling_strategy: SchedulingStrategy::DepthFirst,
             control_rate_mode: ControlRateMode::InlinePerBlock,
@@ -822,6 +826,15 @@ impl Compiler {
         self
     }
 
+    /// Sets the `BlockReverseAD` tape size (`-bra-tape N`): the largest
+    /// compute block over which `rad` gradients are exact. Must be a power
+    /// of two; validated when the FIR is built. Default: 8192.
+    #[must_use]
+    pub fn with_bra_tape(mut self, samples: usize) -> Self {
+        self.bra_tape_block_size = samples;
+        self
+    }
+
     /// Sets the delay-line threshold (`-dlt N`).
     ///
     /// Delays > `n` use the if-based wrapping strategy (per-line counter,
@@ -926,6 +939,7 @@ impl Compiler {
             real_type: self.real_type,
             max_copy_delay: self.max_copy_delay,
             delay_line_threshold: self.delay_line_threshold,
+            bra_tape_block_size: self.bra_tape_block_size,
             compute_mode: self.compute_mode,
             scheduling_strategy: self.scheduling_strategy,
             control_rate_mode: self.control_rate_mode,
@@ -969,6 +983,7 @@ impl Compiler {
             self.real_type,
             self.max_copy_delay,
             self.delay_line_threshold,
+            self.bra_tape_block_size,
             self.compute_mode,
             self.scheduling_strategy,
             self.control_rate_mode,

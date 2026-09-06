@@ -152,27 +152,29 @@ pub(super) use build::build_module;
 pub(super) use clocked::ClockedPlan;
 use rad_formula_builder::FirRadFormulaBuilder;
 
-/// Maximum number of samples that can be stored in a BRA forward tape array.
+/// Default number of samples a BRA forward tape array can store
+/// (`SignalFirOptions::bra_tape_block_size`, `-bra-tape N`).
 ///
-/// Tape arrays are declared as `fBraTapeN: Array(real_ty, MAX_BRA_TAPE_BLOCK_SIZE)`.
-/// For correct gradients the host should call `compute()` with a frame count no
-/// larger than this value when using a `SigBlockReverseAD` carrier.
+/// Tape arrays are declared as `fBraTapeN: Array(real_ty, bra_tape_block_size)`.
+/// For correct gradients the host must call `compute()` with a frame count no
+/// larger than that size when using a `SigBlockReverseAD` carrier: the reverse
+/// sweep's horizon is the compute block, and a host that differentiates a
+/// loss over a whole impulse response in one call sizes the tapes to it.
 ///
-/// The tape index is masked (`i0 & (MAX_BRA_TAPE_BLOCK_SIZE - 1)`, see
-/// [`SignalToFirLower::bra_tape_index`]), so an over-long block now **wraps
+/// The tape index is masked (`i0 & (bra_tape_block_size - 1)`, see
+/// [`SignalToFirLower::bra_tape_index`]), so an over-long block **wraps
 /// safely within the array** (aliased/approximate gradients for the tail)
-/// instead of writing out of bounds. The exact fix for arbitrarily long blocks
-/// is chunked TBPTT or a dynamically sized tape (analysis W5). The masking
-/// relies on this constant being a power of two — enforced just below.
+/// instead of writing out of bounds. The masking relies on the size being a
+/// power of two, which the option validates.
 ///
 /// 8 192 samples is the default upper bound chosen to stay within typical L1/L2
 /// cache pressure while leaving room for the usual block sizes used in practice
 /// (64, 128, 256, 512, 1024 samples).
-const MAX_BRA_TAPE_BLOCK_SIZE: usize = 8192;
+pub const DEFAULT_BRA_TAPE_BLOCK_SIZE: usize = 8192;
 
-// The tape-index mask `i0 & (MAX_BRA_TAPE_BLOCK_SIZE - 1)` is only equivalent to
+// The tape-index mask `i0 & (DEFAULT_BRA_TAPE_BLOCK_SIZE - 1)` is only equivalent to
 // a bounds check when the size is a power of two.
-const _: () = assert!(MAX_BRA_TAPE_BLOCK_SIZE.is_power_of_two());
+const _: () = assert!(DEFAULT_BRA_TAPE_BLOCK_SIZE.is_power_of_two());
 
 /// Deterministic prototype emission order for math helper functions.
 ///
@@ -460,6 +462,9 @@ struct SignalToFirLower<'a> {
     /// forward graph. Programs with reverse-time outputs have no previsit and
     /// are lowered on demand only; see `schedule_unreachable_recursion_group`.
     scheduled_previsit: bool,
+    /// Samples one BRA forward tape can hold, the reverse sweep's block
+    /// horizon (`SignalFirOptions::bra_tape_block_size`, a power of two).
+    bra_tape_block_size: usize,
 }
 
 /// One extern prototype recovered from a Faust `FFUN(...)` descriptor.

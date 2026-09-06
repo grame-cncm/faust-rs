@@ -521,7 +521,10 @@ fn compile_factory_from_file_fastlane(
     search_paths.extend(parsed.search_paths);
 
     let compiler = apply_table_init(
-        FaustCompiler::new().with_real_type(real_type),
+        with_bra_tape_option(
+            FaustCompiler::new().with_real_type(real_type),
+            parsed.bra_tape,
+        ),
         table_init.as_deref(),
         parsed.table_init_sample_rate,
     );
@@ -558,7 +561,10 @@ fn compile_factory_from_string_fastlane(
     };
 
     let compiler = apply_table_init(
-        FaustCompiler::new().with_real_type(real_type),
+        with_bra_tape_option(
+            FaustCompiler::new().with_real_type(real_type),
+            parsed.bra_tape,
+        ),
         table_init.as_deref(),
         parsed.table_init_sample_rate,
     );
@@ -713,6 +719,14 @@ unsafe fn decode_c_argv(argc: i32, argv: *const *const c_char) -> Result<Vec<Str
 /// Parse the FFI-supported subset of Faust CLI options.
 fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String> {
     parse_ffi_compile_args_shared(argv)
+}
+
+/// Applies `-bra-tape N` when the argv carried it.
+fn with_bra_tape_option(compiler: FaustCompiler, bra_tape: Option<usize>) -> FaustCompiler {
+    match bra_tape {
+        Some(samples) => compiler.with_bra_tape(samples),
+        None => compiler,
+    }
 }
 
 // ── expand / generateAuxFiles ─────────────────────────────────────────────

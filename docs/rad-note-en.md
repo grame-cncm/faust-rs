@@ -261,7 +261,9 @@ unrecognized foreign functions still surface targeted diagnostics.
 The `BlockReverseAD` lowering evaluates the primal body forward over
 the current `compute(count)` block, records the intermediate values it
 needs in BRA tapes (real-valued, plus one integer tape per `select2`
-condition), then runs the backward sweep over that same block. The
+condition, each `-bra-tape N` samples long, 8192 by default: a longer
+block wraps the tape index and the gradients of its tail are wrong),
+then runs the backward sweep over that same block. The
 gradient lanes are per-sample contributions for the block-local
 objective; users can sum them over the block or reduce them in DSP code
 with a block length such as `ma.BS`.

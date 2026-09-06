@@ -365,6 +365,11 @@ pub struct CliArgs {
     /// Delays ≤ `mcd` use a statically-shifted array (no `fIOTA`). Default: 16.
     #[arg(long = "mcd", default_value_t = 16)]
     pub mcd: u32,
+    /// Samples one `BlockReverseAD` tape holds: the largest `compute` block
+    /// over which `rad` gradients through delays and recursions are exact
+    /// (`-bra-tape N`). A power of two. Default: 8192.
+    #[arg(long = "bra-tape", default_value_t = 8192)]
+    pub bra_tape: usize,
     /// Delay-line threshold above which the if-based wrapping strategy is used
     /// instead of the default power-of-two circular buffer (`-dlt N`).
     ///
@@ -573,6 +578,13 @@ pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<Stri
         }
         if arg == "-mcd" {
             normalized.push("--mcd".to_owned());
+            if let Some(value) = it.next() {
+                normalized.push(value);
+            }
+            continue;
+        }
+        if arg == "-bra-tape" {
+            normalized.push("--bra-tape".to_owned());
             if let Some(value) = it.next() {
                 normalized.push(value);
             }

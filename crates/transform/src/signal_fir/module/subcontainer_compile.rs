@@ -163,6 +163,7 @@ pub(crate) fn compile_generator_sub_module(
         spec.real_ty.clone(),
         spec.max_copy_delay,
         spec.delay_line_threshold,
+        super::DEFAULT_BRA_TAPE_BLOCK_SIZE,
         crate::signal_fir::ControlRateMode::InlinePerBlock,
         crate::signal_fir::ProcessingApi::Block,
         spec.table_init_mode,
