@@ -925,20 +925,45 @@ impl<'a> ForwardADTransform<'a> {
             SigMatch::Pow(x, y) => {
                 let dual_x = self.transform(x);
                 let dual_y = self.transform(y);
+                // d(x^y) = y x^(y-1) x' + x^y ln(x) y'. The base term never
+                // divides by x, so the tangent of x^2 at x = 0 is 0 and not
+                // 0/0; the exponent term is built only for lanes whose
+                // exponent carries a tangent, since `0 * ln(x)` is a NaN for
+                // x <= 0 that no simplification is guaranteed to remove (an
+                // energy-decay loss squares log-energy differences that cross
+                // zero and pass through it).
+                let exponent_lanes: SmallVec<[bool; 2]> = dual_y
+                    .tangents
+                    .iter()
+                    .map(|&ty| !is_literal_zero(self.arena, ty))
+                    .collect();
                 let mut b = SigBuilder::new(self.arena);
                 let primal = b.pow(dual_x.primal, dual_y.primal);
-                let log_x = b.log(dual_x.primal);
+                let one = b.real(1.0);
+                let exponent_minus_one = b.sub(dual_y.primal, one);
+                let base_slope = {
+                    let decremented = b.pow(dual_x.primal, exponent_minus_one);
+                    b.mul(dual_y.primal, decremented)
+                };
+                let log_term = exponent_lanes.iter().any(|&lane| lane).then(|| {
+                    let log_x = b.log(dual_x.primal);
+                    b.mul(primal, log_x)
+                });
                 let tangents = dual_x
                     .tangents
                     .iter()
                     .copied()
                     .zip(dual_y.tangents.iter().copied())
-                    .map(|(tx, ty)| {
-                        let term1 = b.mul(ty, log_x);
-                        let scaled_dx = b.mul(dual_y.primal, tx);
-                        let term2 = b.div(scaled_dx, dual_x.primal);
-                        let sum = b.add(term1, term2);
-                        b.mul(primal, sum)
+                    .zip(exponent_lanes.iter().copied())
+                    .map(|((tx, ty), exponent_active)| {
+                        let base = b.mul(base_slope, tx);
+                        match log_term {
+                            Some(log_term) if exponent_active => {
+                                let exponent = b.mul(log_term, ty);
+                                b.add(base, exponent)
+                            }
+                            _ => base,
+                        }
                     })
                     .collect::<SmallVec<[SigId; 2]>>();
                 Dual { primal, tangents }
@@ -1704,6 +1729,13 @@ pub(super) fn generate_fad_signals_multi(
         }
     }
     Ok(result)
+}
+
+/// Whether `sig` is the literal zero a constant's tangent is spelled as
+/// (`real(0.0)` or `int(0)`).
+fn is_literal_zero(arena: &TreeArena, sig: SigId) -> bool {
+    matches!(match_sig(arena, sig), SigMatch::Real(v) if v == 0.0)
+        || matches!(match_sig(arena, sig), SigMatch::Int(0))
 }
 
 #[cfg(test)]

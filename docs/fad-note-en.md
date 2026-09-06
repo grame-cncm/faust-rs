@@ -321,7 +321,10 @@ families most relevant to DSP:
 - arithmetic, standard transcendentals, and the recognized unary foreign
   functions (`tanh`, `sinh`, `cosh` and their inverse hyperbolic forms),
 - `pow`, `atan2`, `min/max`, `fmod`/remainder-style operations, `select2`, and
-  numeric casts with a defined rule,
+  numeric casts with a defined rule (`pow` differentiates as
+  `y x^(y-1) x' + x^y ln(x) y'`, the base term without a division by `x`,
+  the logarithmic term only for lanes whose exponent carries a tangent, so
+  the tangent of `x^2` is finite at and below zero),
 - unit and variable delays,
 - recursive projections,
 - explicit seeds with duplicates or multiple lanes,

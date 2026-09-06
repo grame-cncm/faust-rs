@@ -851,3 +851,47 @@ with {
         );
     }
 }
+
+// ── The power rule ───────────────────────────────────────────────────────────
+
+/// `d(x^y) = y x^(y-1) x' + x^y ln(x) y'`: the base term must not divide by
+/// `x` (the tangent of `x^2` at `x = 0` is `0`, not `0/0`), and the
+/// exponent term must not be built for a constant exponent (`0 * ln(x)` is
+/// a NaN for `x <= 0`). An energy-decay loss squares log-energy differences
+/// that cross zero, which is where both hazards surfaced.
+#[test]
+fn fad_power_with_a_constant_exponent_is_finite_at_zero_and_below() {
+    let source = r#"
+x = hslider("x", 3.0, -10.0, 10.0, 0.001);
+process = fad((x - 3.0) ^ 2.0, x), fad((x - 5.0) ^ 2.0, x), fad((x - 1.0) ^ 3.0, x);
+"#;
+    let outs = run_interp_temp_source("fad-pow-constant-exponent", source, 4);
+    // (x-3)^2 at 3: primal 0, tangent 0; (x-5)^2 at 3: 4, -4; (x-1)^3 at 3: 8, 12.
+    let expected = [0.0_f32, 0.0, 4.0, -4.0, 8.0, 12.0];
+    for (lane, want) in expected.iter().enumerate() {
+        let got = outs[lane][3];
+        assert!(
+            got.is_finite() && (got - want).abs() < 1e-5,
+            "lane {lane}: expected {want}, got {got}"
+        );
+    }
+}
+
+#[test]
+fn fad_power_with_a_variable_exponent_keeps_the_logarithmic_term() {
+    let source = r#"
+x = hslider("x", 2.0, 0.1, 10.0, 0.001);
+y = hslider("y", 3.0, -10.0, 10.0, 0.001);
+process = fad(x ^ y, (x, y));
+"#;
+    let outs = run_interp_temp_source("fad-pow-variable-exponent", source, 4);
+    // x^y at (2, 3): primal 8, d/dx = 3 * 2^2 = 12, d/dy = 8 ln 2.
+    let expected = [8.0_f32, 12.0, 8.0 * std::f32::consts::LN_2];
+    for (lane, want) in expected.iter().enumerate() {
+        let got = outs[lane][3];
+        assert!(
+            (got - want).abs() < 1e-4 * want.abs().max(1.0),
+            "lane {lane}: expected {want}, got {got}"
+        );
+    }
+}
