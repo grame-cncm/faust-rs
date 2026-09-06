@@ -669,10 +669,13 @@ en « sequential composition mismatch ». Donnez au corps des arguments nommés.
 Une variante garde le paramètre hors du bloc et le passe en entrée explicite ;
 le bloc sort alors le gradient maintenu, et la mise à jour
 `g - lr * grad * horloge` est conditionnée par l'horloge à cadence audio. Elle
-atteint le même `0,34`. Ce qui ne marche *pas*, c'est de capturer un signal
-audio extérieur dans le corps sans le passer en entrée : gardez la graine, la
-perte et la mise à jour dans le même domaine, ou reliez-les par les entrées du
-bloc.
+atteint le même `0,34`. Ce qui ne marche *pas*, c'est de lire un signal audio
+extérieur dans le corps par son nom : une définition référencée dans un corps
+est instanciée à nouveau dans le temps propre du corps (`ba.time` dans un bloc
+compte les déclenchements, un oscillateur extérieur devient un nouvel
+oscillateur qui avance d'un pas par déclenchement), si bien que le signal
+extérieur n'est vu qu'à travers une entrée. Gardez la graine, la perte et la
+mise à jour dans le même domaine, ou reliez-les par les entrées du bloc.
 
 Trois dernières choses sur les domaines d'horloge. `ma.SR` n'est pas adapté
 dans `ondemand` (sa cadence est inconnue statiquement) : calculez les valeurs
@@ -728,7 +731,7 @@ primitives elles-mêmes, `upsampling` et `downsampling` compris, est
 | `mdl(opts)` a la mauvaise arité | une expression multi-sorties est un seul argument | projeter chaque sortie et les passer séparément |
 | Converge en double mais pas en simple précision | perte de précision dans les tangentes récursives | compiler avec `-double` |
 | `sequential composition mismatch` autour d'un bloc `ondemand` | un opérateur de trame à entrées `_` libres utilisé plusieurs fois | donner au corps des arguments nommés, un par échantillon de la trame |
-| Un bloc ignore ce qui se passe dehors | le corps capture un signal extérieur au lieu de le recevoir | passer les signaux extérieurs en entrées explicites du bloc |
+| Un bloc ignore ce qui se passe dehors | une définition référencée dans le corps est instanciée à nouveau dans le temps du corps, ce n'est pas le signal extérieur | passer les signaux extérieurs en entrées explicites du bloc |
 | Une boucle à bus n'apprend rien, les coefficients errent autour de zéro | `op.mse(_, t)` (toute fonction appliquée à un `_` libre) est un bloc à deux entrées : `:>` répartit les coefficients entre elles | nommer l'entrée de la perte : `\(y).(op.mse(y, t))` |
 | Une boucle `_rad` converge moins vite que la boucle `fad` sur un modèle récursif | dans une boucle, `rad` renvoie le terme direct, l'état passé tenu fixe | les boucles `fad` pour les modèles récursifs, les unes ou les autres pour les modèles sans récursion |
 | La pente `fad` d'un solveur implicite manque d'un terme | l'itération part de `vprev`, le signal même que l'équation tient fixe : `fad(G(vprev, v), v)` avec `v = vprev` dérive les deux | partir d'un prédicteur ou de tout signal distinct |

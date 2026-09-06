@@ -4,6 +4,7 @@
 use super::AnalysisError;
 use super::dependencies::*;
 use super::uses::*;
+use crate::signal_fir::recursion::recursion_read_payload;
 use crate::signal_prepare::VerifiedPreparedSignals;
 use signals::{SigId, SigMatch, match_sig};
 use std::collections::{BTreeMap, BTreeSet};
@@ -266,7 +267,7 @@ pub(super) fn direct_effects(
         // Delay storage is allocated for the carried signal and shared by all
         // of its readers, regardless of the requested history depth.
         SigMatch::Delay1(value) | SigMatch::Delay(value, _) => {
-            state_effects(value, StateCell::Delay)
+            state_effects(recursion_read_payload(arena, value), StateCell::Delay)
         }
         SigMatch::Prefix(_, _) => state_effects(sig, StateCell::Prefix),
         SigMatch::Fir(_) => state_effects(sig, StateCell::Fir),

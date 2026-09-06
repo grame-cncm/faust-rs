@@ -497,10 +497,9 @@ dans DDSP. Trois choses devaient tenir dans le compilateur et la
 bibliothèque : le balayage inverse traite les entrées de frontière d'un bloc
 et les constantes étrangères (`ma.SR`) comme des feuilles et traverse
 l'enveloppe d'horloge, si bien qu'un `rad` peut vivre *dans* un bloc (à
-travers la frontière il reste refusé) ; et l'état d'une boucle ne doit pas
-dépendre d'une détection du premier échantillon capturée à travers cette
-frontière, ce pour quoi `optimizers.lib` 0.7.1 garde dans ses récursions
-l'écart à `init`.
+travers la frontière il reste refusé) ; et l'état d'une boucle est mieux
+tenu comme un écart à `init`, sans aucune détection du premier échantillon,
+ce que fait `optimizers.lib` 0.7.1.
 
 **Ce qu'on observe.** Les seize amplitudes à 2,5e-4 (relatif) de 1/h en 100
 trames, 0,6 s d'audio ; le résidu de resynthèse vaut 1,2e-3 rms pour une cible

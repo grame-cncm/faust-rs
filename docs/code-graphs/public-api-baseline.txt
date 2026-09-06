@@ -2520,6 +2520,7 @@ fn prepare_signals_for_fir
 fn prepare_signals_for_fir_verified
 fn prepare_signals_for_fir_verified_with_options
 fn prepare_signals_for_fir_verified_with_origins
+fn prepare_signals_for_fir_with_options
 fn pv_schedule
 fn route_pv_vector_fir
 fn schedule

@@ -36,6 +36,14 @@
 //! lowering) see one stable unary-delay representation. `normalize` may legally
 //! expose unary feedback as `Delay(x, 1)`; this pass collapses it before FIR
 //! lowering.
+//!
+//! # `drop_clock_annotations`
+//!
+//! Rewrites every `Clocked(env, x)` to `x`. Used for table generators only:
+//! a generator runs once at table-fill time, outside every clock domain, so
+//! the domain annotations propagation put on its stateful primitives (when
+//! the generator was written inside an `ondemand` body) carry nothing there,
+//! and the generator sub-module has no domain table to decode them against.
 
 use std::collections::{HashMap, HashSet};
 
@@ -222,6 +230,57 @@ fn rewrite_unary_rec_projections(
         arena.intern(node.kind, &children)
     };
 
+    memo.insert(sig, rewritten);
+    Ok(rewritten)
+}
+
+/// Rebuilds the staged forest without its `Clocked(env, x)` annotations.
+pub(super) fn drop_clock_annotations(
+    arena: &mut TreeArena,
+    outputs: &[SigId],
+) -> Result<Vec<SigId>, SignalPrepareError> {
+    let mut memo = HashMap::new();
+    outputs
+        .iter()
+        .map(|&sig| rewrite_drop_clock_annotations(arena, sig, &mut memo))
+        .collect()
+}
+
+fn rewrite_drop_clock_annotations(
+    arena: &mut TreeArena,
+    sig: SigId,
+    memo: &mut HashMap<SigId, SigId>,
+) -> Result<SigId, SignalPrepareError> {
+    if let Some(mapped) = memo.get(&sig) {
+        return Ok(*mapped);
+    }
+    let rewritten = if arena.is_nil(sig) {
+        sig
+    } else if arena.is_list(sig) {
+        let head = arena.hd(sig).ok_or_else(|| {
+            SignalPrepareError::Typing("malformed list while dropping clock annotations".to_owned())
+        })?;
+        let tail = arena.tl(sig).ok_or_else(|| {
+            SignalPrepareError::Typing("malformed list while dropping clock annotations".to_owned())
+        })?;
+        let head = rewrite_drop_clock_annotations(arena, head, memo)?;
+        let tail = rewrite_drop_clock_annotations(arena, tail, memo)?;
+        arena.cons(head, tail)
+    } else if let SigMatch::Clocked(_, inner) = match_sig(arena, sig) {
+        rewrite_drop_clock_annotations(arena, inner, memo)?
+    } else {
+        let node = arena.node(sig).cloned().ok_or_else(|| {
+            SignalPrepareError::Typing(format!(
+                "missing node {} while dropping clock annotations",
+                sig.as_u32()
+            ))
+        })?;
+        let mut children = Vec::with_capacity(node.children.len());
+        for child in node.children.as_slice() {
+            children.push(rewrite_drop_clock_annotations(arena, *child, memo)?);
+        }
+        arena.intern(node.kind, &children)
+    };
     memo.insert(sig, rewritten);
     Ok(rewritten)
 }

@@ -457,9 +457,9 @@ as to a), hence the exponentials, as in DDSP. Three things had to hold in
 the compiler and the library: the reverse sweep treats a block's boundary
 inputs and the foreign constants (`ma.SR`) as leaves and passes through the
 clocked wrapper, so a `rad` can live *inside* a block (across the boundary
-it is still rejected); and a loop's state must not depend on a
-first-sample gate captured across that boundary, which is why
-`optimizers.lib` 0.7.1 keeps the deviation from `init` in its recursions.
+it is still rejected); and a loop's state is best kept as a deviation from
+`init`, with no first-sample detection at all, which is what
+`optimizers.lib` 0.7.1 does.
 
 **What you see.** All sixteen amplitudes within 2.5e-4 (relative) of 1/h
 in 100 frames, 0.6 s of audio; the resynthesis residual is 1.2e-3 rms for

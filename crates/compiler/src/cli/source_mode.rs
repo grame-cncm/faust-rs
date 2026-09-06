@@ -263,6 +263,7 @@ pub(crate) fn run_source_mode(
                         &out.ui,
                         &transform::signal_prepare::PrepareOptions {
                             check_table: cli.check_table != 0,
+                            drop_clock_annotations: false,
                         },
                     );
                 timer.phase("prepare");

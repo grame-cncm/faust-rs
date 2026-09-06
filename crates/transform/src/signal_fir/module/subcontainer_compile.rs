@@ -71,6 +71,7 @@ pub(crate) fn compile_generator_sub_module(
         &UiProgram::empty(),
         &crate::signal_prepare::PrepareOptions {
             check_table: spec.check_table,
+            drop_clock_annotations: true,
         },
     )
     .map_err(|err| {

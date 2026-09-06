@@ -996,7 +996,10 @@ impl Compiler {
         if !self.check_table {
             return Vec::new();
         }
-        let options = transform::signal_prepare::PrepareOptions { check_table: true };
+        let options = transform::signal_prepare::PrepareOptions {
+            check_table: true,
+            drop_clock_annotations: false,
+        };
         match transform::signal_prepare::prepare_signals_for_fir_verified_with_options(
             &signals.parse.state.arena,
             &signals.signals,

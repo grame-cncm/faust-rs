@@ -574,9 +574,10 @@ process = no.noise : il.serialize_in(N) : (il.frame_clock(N), si.bus(N)) : ondem
 
 The learned gain settles at `0.34`; the least-squares optimum for this
 excitation is `0.340`. Two rules the examples rely on: a body receives outer
-signals as explicit inputs (never by capture), and a frame operator with free
-`_` inputs is given named arguments, or its inputs are duplicated at every
-use. `ma.SR` is not adapted inside `ondemand`. The primitives are described in
+signals as explicit inputs (a definition referenced inside is instantiated
+again in the body's own time, not the outer signal), and a frame operator
+with free `_` inputs is given named arguments, or its inputs are duplicated
+at every use. `ma.SR` is not adapted inside `ondemand`. The primitives are described in
 [ondemand-note-en.md](ondemand-note-en.md); a step-by-step walk-through is
 section 11 of
 [optimizers-ddsp-tutorial-en.md](../libraries/optimizers-ddsp-tutorial-en.md).

@@ -114,7 +114,10 @@ fn prepared_dump_shows_the_signal_level_clamp() {
         &signals.parse.state.arena,
         &signals.signals,
         &signals.ui,
-        &transform::signal_prepare::PrepareOptions { check_table: true },
+        &transform::signal_prepare::PrepareOptions {
+            check_table: true,
+            drop_clock_annotations: false,
+        },
     )
     .expect("preparation must succeed");
     let dump = signals::dump_sig_dag(prepared.arena(), prepared.outputs(), Some(&signals.ui));
@@ -133,7 +136,10 @@ fn prepared_dump_shows_the_signal_level_clamp() {
         &signals.parse.state.arena,
         &signals.signals,
         &signals.ui,
-        &transform::signal_prepare::PrepareOptions { check_table: false },
+        &transform::signal_prepare::PrepareOptions {
+            check_table: false,
+            drop_clock_annotations: false,
+        },
     )
     .expect("preparation must succeed");
     let dump = signals::dump_sig_dag(raw.arena(), raw.outputs(), Some(&signals.ui));

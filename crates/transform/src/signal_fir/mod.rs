@@ -795,6 +795,7 @@ fn compile_fastlane_inner(
     // stage matches the verified preparation boundary consumed by lowering.
     let prepare_options = PrepareOptions {
         check_table: options.check_table,
+        drop_clock_annotations: false,
     };
     let prepared = time_signal_fir_phase(timing_sink, "fir-prepare-normalize", || {
         let result = signal_origins.map_or_else(

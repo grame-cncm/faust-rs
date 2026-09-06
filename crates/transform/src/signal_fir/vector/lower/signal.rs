@@ -11,6 +11,7 @@ use crate::schedule::SchedulingStrategy;
 use crate::signal_fir::ControlRateMode;
 use crate::signal_fir::FirOrigins;
 use crate::signal_fir::leaf_emit;
+use crate::signal_fir::recursion::recursion_read_payload;
 use crate::signal_fir::vector::analysis::wrtbl_is_readonly;
 use crate::signal_fir::vector::clock_ad::{ClockGuard, VerifiedVectorClockAdPlan};
 use crate::signal_fir::vector::cse::{
@@ -845,8 +846,12 @@ impl PureVectorLowerer<'_> {
                 self.lower_bargraph(scope, control, ui::ControlKind::HBargraph, inner, cur)?
             }
             SigMatch::Output(_, inner) => self.lower_dep(scope, inner, cur)?,
-            SigMatch::Delay1(value) => self.lower_delay_read(scope, value, 1, cur)?,
+            SigMatch::Delay1(value) => {
+                let value = recursion_read_payload(self.prepared.arena(), value);
+                self.lower_delay_read(scope, value, 1, cur)?
+            }
             SigMatch::Delay(value, amount) => {
+                let value = recursion_read_payload(self.prepared.arena(), value);
                 self.lower_delay(scope, signal_id, value, amount, cur)?
             }
             SigMatch::Prefix(_, value) => self.lower_prefix(scope, signal_id, value, cur)?,

@@ -63,11 +63,12 @@ const ATTACH_CROSS_LOOP_SOURCE: &str = concat!(
 // input on every fire: an impulse was accumulated `factor` times. Scalar
 // bit-exactness discriminates the missing fire gating.
 const UPSAMPLING_ZEROPAD_SOURCE: &str = "process = (2, _) : upsampling(+ ~ _);";
-// A rate-polymorphic recursion (all-constant inputs infer the bottom clock
-// environment) written under an upsampling wrapper. The plan hoists it into
-// an outer-rate loop, so its state would advance once per outer sample
-// instead of once per fire. Until domain adoption exists this fails closed.
-const UNADOPTED_STATEFUL_SOURCE: &str = "process = (3, (_ : !)) : upsampling(1 : (+ ~ *(0.5)));";
+// A recursion with all-constant inputs written under an upsampling wrapper.
+// Propagation annotates its projections with the wrapper's domain (the C++
+// `sigClocked` seeds), so clock-env inference places it in that domain by
+// its inputs alone and the plan keeps its state advancing once per fire.
+const DOMAIN_ADOPTED_STATEFUL_SOURCE: &str =
+    "process = (3, (_ : !)) : upsampling(1 : (+ ~ *(0.5)));";
 // `pm.ks` contains a pass-through symbolic recursion projection whose
 // cross-loop back-edge denotes the previous sample even though the selected
 // body has no explicit delay occurrence. Before X2b the vector lowerer tried
@@ -503,25 +504,9 @@ fn upsampling_zero_pad_gating_is_certified_and_bit_exact() {
 }
 
 #[test]
-fn unadopted_stateful_recursion_under_upsampling_falls_back() {
-    let compiler = Compiler::new().with_compute_mode(ComputeMode::Vector {
-        vec_size: 8,
-        loop_variant: 0,
-    });
-    let output = compiler
-        .compile_source_to_fir_with_lane(
-            "unadopted.dsp",
-            UNADOPTED_STATEFUL_SOURCE,
-            SignalFirLane::TransformFastLane,
-        )
-        .expect("unadopted stateful vector FIR");
-    assert_eq!(
-        output.vector_pipeline_status,
-        VectorPipelineStatus::Fallback(VectorFallbackReason::ClockAdPlan),
-        "rate-polymorphic state under a clock wrapper must fail closed: {:?}",
-        output.vector_pipeline_detail
-    );
-    assert_eq!(output.vector_effective_mode, VectorEffectiveMode::Scalar);
+fn stateful_recursion_under_upsampling_is_adopted_by_its_domain() {
+    assert_vector_pipeline_certified("domain_adopted_stateful", DOMAIN_ADOPTED_STATEFUL_SOURCE, 8);
+    assert_scalar_vector_bit_exact("domain_adopted_stateful", DOMAIN_ADOPTED_STATEFUL_SOURCE, 8);
 }
 
 #[test]

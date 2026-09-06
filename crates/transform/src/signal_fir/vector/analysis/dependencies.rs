@@ -3,6 +3,7 @@
 
 use super::AnalysisError;
 use super::uses::*;
+use crate::signal_fir::recursion::recursion_read_payload;
 use signals::{SigId, SigMatch, match_sig};
 use sigtype::{SigType, check_delay_interval};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -374,11 +375,13 @@ pub fn signal_dependencies(
             push_condition(&mut result, held);
         }
         SigMatch::Delay1(value) => {
+            let value = recursion_read_payload(arena, value);
             push_schedule(&mut result, sig, value, DepKind::Delayed { amount: 1 });
             push_occurrence(&mut result, sig, value, 1);
             push_condition(&mut result, value);
         }
         SigMatch::Delay(x, amount) => {
+            let x = recursion_read_payload(arena, x);
             delay_dependencies(context, sig, x, amount, &mut result)?;
         }
         SigMatch::Prefix(init, x) => {

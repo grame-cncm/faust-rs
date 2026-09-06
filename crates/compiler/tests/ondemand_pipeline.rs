@@ -1068,3 +1068,149 @@ fn ui_slider_inside_block_is_read_on_fire() {
         );
     }
 }
+
+// ── Signals of the enclosing domain used inside a body ───────────────────────
+//
+// C++ `propagate.cpp` annotates every stateful primitive built inside a
+// clock domain with that domain (`sigClocked` on the inputs of `mem`, `@`,
+// `prefix`, the tables, the waveform, the recursion projections) and samples
+// a slot bound in an enclosing domain through a `TempVar`. So a *definition*
+// referenced inside a body is re-instantiated there and counts in fire time,
+// whatever the same expression computes outside, while an explicit input or
+// a lambda parameter bound outside is the outer signal sampled at the firing.
+
+/// Clock lane with firings at frames 1, 4, 5 and 9.
+fn firing_clock() -> Vec<f32> {
+    vec![0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+}
+
+fn assert_lane(stem: &str, lane: &[f32], expected: &[f32]) {
+    assert_eq!(lane.len(), expected.len(), "{stem}: frame count");
+    for (n, (&value, &want)) in lane.iter().zip(expected).enumerate() {
+        assert!(
+            (value - want).abs() < 1.0e-6,
+            "{stem}: frame {n}: expected {want}, got {value}"
+        );
+    }
+}
+
+#[test]
+fn definition_inside_a_body_runs_in_fire_time_while_the_input_samples_the_outer_signal() {
+    // `t` is the audio-rate sample count. As the block's input it is sampled
+    // at the firing (1, 4, 5, 9); as a definition referenced inside the body
+    // it is a fresh counter of firings (0, 1, 2, 3), the same expression
+    // notwithstanding.
+    let outputs = run_interp_with_inputs(
+        "od_definition_vs_input",
+        r#"t = (+(1) ~ _) : mem;
+process = ((_ != 0), t) : ondemand(\(u).(u, float(t)));"#,
+        &[firing_clock()],
+    );
+    assert_lane(
+        "input",
+        &outputs[0],
+        &[0.0, 1.0, 1.0, 1.0, 4.0, 5.0, 5.0, 5.0, 5.0, 9.0],
+    );
+    assert_lane(
+        "definition",
+        &outputs[1],
+        &[0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 2.0, 3.0],
+    );
+}
+
+#[test]
+fn slot_bound_outside_a_body_is_sampled_at_the_firing() {
+    // The lambda parameter holds the outer counter: read inside the body it
+    // is the value at the firing, not a domain-local counter.
+    let outputs = run_interp_with_inputs(
+        "od_slot_sampled",
+        r#"t = (+(1) ~ _) : mem;
+process = (t, _) : \(x).((_ != 0) : ondemand(float(x)));"#,
+        &[firing_clock()],
+    );
+    assert_lane(
+        "slot",
+        &outputs[0],
+        &[0.0, 1.0, 1.0, 1.0, 4.0, 5.0, 5.0, 5.0, 5.0, 9.0],
+    );
+}
+
+#[test]
+fn recursion_read_only_through_a_delay_inside_a_body_advances_in_fire_time() {
+    // The counter is read through `mem` only (the `ba.time` shape): its
+    // group must still be scheduled inside the block, once per firing.
+    let outputs = run_interp_with_inputs(
+        "od_mem_read_counter",
+        r#"process = (_ != 0) : ondemand(float((+(1) ~ _) : mem));"#,
+        &[firing_clock()],
+    );
+    assert_lane(
+        "mem read",
+        &outputs[0],
+        &[0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 2.0, 2.0, 2.0, 3.0],
+    );
+}
+
+#[test]
+fn a_delay_line_referenced_inside_a_body_counts_firings() {
+    // The same `t@2` outside and inside: two delay lines, one in audio time
+    // and one in fire time, never one shared through hash-consing.
+    let outputs = run_interp_with_inputs(
+        "od_delay_shared",
+        r#"t = (+(1) ~ _) : mem;
+process = (_ != 0) <: (ondemand(t@2), (!, t@2));"#,
+        &[firing_clock()],
+    );
+    assert_lane(
+        "inside",
+        &outputs[0],
+        &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    );
+    assert_lane(
+        "outside",
+        &outputs[1],
+        &[0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+    );
+}
+
+#[test]
+fn a_waveform_referenced_inside_a_body_has_its_own_read_index() {
+    let outputs = run_interp_with_inputs(
+        "od_waveform_shared",
+        r#"rd = waveform{10, 20, 30, 40, 50} : (!, _);
+process = (_ != 0) <: (ondemand(rd), (!, rd));"#,
+        &[firing_clock()],
+    );
+    assert_lane(
+        "inside",
+        &outputs[0],
+        &[0.0, 10.0, 10.0, 10.0, 20.0, 30.0, 30.0, 30.0, 30.0, 40.0],
+    );
+    assert_lane(
+        "outside",
+        &outputs[1],
+        &[10.0, 20.0, 30.0, 40.0, 50.0, 10.0, 20.0, 30.0, 40.0, 50.0],
+    );
+}
+
+#[test]
+fn a_table_read_referenced_inside_a_body_uses_a_domain_local_index() {
+    // The read index is a counter; the table itself (a generator) is filled
+    // once, outside every domain.
+    let outputs = run_interp_with_inputs(
+        "od_rdtable_shared",
+        r#"tbl = rdtable(8, (+(1) ~ _) - 1, (+(1) ~ _) % 8);
+process = (_ != 0) <: (ondemand(tbl), (!, tbl));"#,
+        &[firing_clock()],
+    );
+    assert_lane(
+        "inside",
+        &outputs[0],
+        &[0.0, 1.0, 1.0, 1.0, 2.0, 3.0, 3.0, 3.0, 3.0, 4.0],
+    );
+    assert_lane(
+        "outside",
+        &outputs[1],
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 0.0, 1.0, 2.0],
+    );
+}

@@ -629,9 +629,11 @@ process = no.noise : il.serialize_in(N) : (il.frame_clock(N), si.bus(N)) : ondem
 
 Le gain appris se stabilise à `0,34`; l'optimum des moindres carrés pour cette
 excitation vaut `0,340`. Deux règles sur lesquelles reposent les exemples: un
-corps reçoit les signaux extérieurs comme entrées explicites (jamais par
-capture), et un opérateur de trame à entrées `_` libres reçoit des arguments
-nommés, sinon ses entrées sont dupliquées à chaque usage. `ma.SR` n'est pas
+corps reçoit les signaux extérieurs comme entrées explicites (une définition
+référencée à l'intérieur est instanciée à nouveau dans le temps propre du
+corps, ce n'est pas le signal extérieur), et un opérateur de trame à entrées
+`_` libres reçoit des arguments nommés, sinon ses entrées sont dupliquées à
+chaque usage. `ma.SR` n'est pas
 adapté dans `ondemand`. Les primitives sont décrites dans
 [ondemand-note-fr.md](ondemand-note-fr.md); un parcours pas à pas est la
 section 11 de

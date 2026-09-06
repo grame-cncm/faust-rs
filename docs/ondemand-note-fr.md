@@ -130,6 +130,24 @@ déclenchements — placez-le à l'intérieur. Se tromper de côté est la sourc
 confusion la plus fréquente, et l'erreur est silencieuse : les deux versions
 compilent.
 
+« À l'intérieur » se décide sur le texte, pas sur la valeur. Une *définition*
+référencée dans le corps (`ba.time`, un oscillateur, une lecture de table, un
+signal retardé, une locale de `with`) est instanciée à nouveau dans le domaine
+du corps, avec son propre état qui avance en temps de déclenchement, même si la
+même définition est aussi utilisée à l'extérieur : le compilateur annote
+chaque primitive à état construite dans un domaine avec ce domaine, si bien
+que les deux instances ne partagent jamais leur état. Ce qui atteint le corps
+depuis l'extérieur comme une *valeur* — une entrée du bloc, un paramètre de
+lambda lié à l'extérieur — est le signal extérieur échantillonné au
+déclenchement.
+
+```faust
+t = ba.time;
+process = (clock, t) : ondemand(\(u).(u, float(t)));
+// u        : le temps audio, échantillonné à chaque déclenchement
+// float(t) : un nouveau compteur de déclenchements
+```
+
 ## 4. Cas d'utilisation typiques
 
 **Calcul au rythme de contrôle.** Tout ce qui n'a pas besoin d'être recalculé
@@ -376,15 +394,12 @@ mise à jour dans le **même** domaine.
   FAD/RAD avec les domaines d'horloge** — faust-rs en définit la sémantique, et
   l'oracle est l'accord numérique avec les différences finies.
 
-Un signal du domaine englobant lu dans un corps sans être l'une de ses
-entrées est *capturé* : il n'est pas échantillonné au tir, et quand le même
-nœud est aussi passé en entrée, cette entrée lit 0 elle aussi --
-`(clock, ba.time) : ondemand(\(u).(u, float(ba.time)))` sort 0 sur les deux
-voies à chaque tir. Passez les signaux extérieurs en entrées, et seulement
-en entrées. Le code de bibliothèque doit s'y plier aussi : `optimizers.lib`
-0.7.1 garde l'état d'une boucle comme écart à sa valeur initiale parce que
-la détection du premier échantillon de `pstate` lit un compteur du domaine
-englobant, qu'un bloc capture.
+Une définition référencée dans un corps est réinstanciée dans le domaine du
+corps (section 3) : `ba.time` dans un bloc compte les déclenchements, et le
+même `x @ n` écrit dans et hors d'un bloc fait deux lignes de retard. Une
+entrée du bloc, ou un paramètre de lambda lié à l'extérieur, est échantillonné
+au déclenchement. Les générateurs de tables sont l'exception par nature : une
+table est remplie une fois, hors de tout domaine, où qu'elle soit lue.
 
 Un `rad` dont la perte et les graines vivent dans un corps tourne dans le
 domaine du bloc, à la cadence des trames : le synthétiseur harmonique de

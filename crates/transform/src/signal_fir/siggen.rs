@@ -54,14 +54,21 @@ pub(super) fn interpret_generator(
     size: usize,
     table_init_sample_rate: Option<i32>,
 ) -> Result<Vec<f64>, SignalFirError> {
-    let prepared =
-        crate::signal_prepare::prepare_signals_for_fir(arena, &[sig], &UiProgram::empty())
-            .map_err(|err| {
-                SignalFirError::new(
-                    SignalFirErrorCode::UnsupportedSignalNode,
-                    format!("SIGGEN interpreter preparation failed: {err}"),
-                )
-            })?;
+    let prepared = crate::signal_prepare::prepare_signals_for_fir_with_options(
+        arena,
+        &[sig],
+        &UiProgram::empty(),
+        &crate::signal_prepare::PrepareOptions {
+            drop_clock_annotations: true,
+            ..crate::signal_prepare::PrepareOptions::default()
+        },
+    )
+    .map_err(|err| {
+        SignalFirError::new(
+            SignalFirErrorCode::UnsupportedSignalNode,
+            format!("SIGGEN interpreter preparation failed: {err}"),
+        )
+    })?;
     let prepared_sig = prepared.outputs().first().copied().ok_or_else(|| {
         SignalFirError::new(
             SignalFirErrorCode::UnsupportedSignalNode,

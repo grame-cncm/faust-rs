@@ -880,15 +880,45 @@ pub(super) fn resolve_active_recursion_carrier(
 /// This is the pure structural recognizer used before any materialization
 /// fallback. It does not validate that the referenced group has already been
 /// allocated.
+/// Strips the clock-domain annotation of a recursion feedback read: inside a
+/// clock domain a projection is read as `Clocked(env, Proj(i, group))`, the
+/// annotation naming the domain the recursion lives in. Returns the
+/// projection when the group is a symbolic recursion or its reference, and
+/// `value` unchanged otherwise (a delayed signal that is not a recursion
+/// keeps its annotation: it names the domain whose time the delay counts).
+pub(super) fn recursion_read_payload(arena: &TreeArena, value: SigId) -> SigId {
+    let mut current = value;
+    while let SigMatch::Clocked(_, inner) = match_sig(arena, current) {
+        current = inner;
+    }
+    match match_sig(arena, current) {
+        SigMatch::Proj(_, group)
+            if match_sym_rec(arena, group).is_some() || match_sym_ref(arena, group).is_some() =>
+        {
+            current
+        }
+        _ => value,
+    }
+}
+
 pub(super) fn match_recursion_delay_key(
     arena: &TreeArena,
     value: SigId,
 ) -> Option<RecursionDelayKey> {
     let mut current = value;
     let mut carried_delay = 0usize;
-    while let SigMatch::Delay1(inner) = match_sig(arena, current) {
-        carried_delay = carried_delay.saturating_add(1);
-        current = inner;
+    loop {
+        match match_sig(arena, current) {
+            SigMatch::Delay1(inner) => {
+                carried_delay = carried_delay.saturating_add(1);
+                current = inner;
+            }
+            // Inside a clock domain the feedback read is
+            // `Delay1(Clocked(env, Proj(i, group)))`: the annotation names
+            // the domain the recursion lives in and is not a delay.
+            SigMatch::Clocked(_, inner) => current = inner,
+            _ => break,
+        }
     }
     let SigMatch::Proj(index, group) = match_sig(arena, current) else {
         return None;

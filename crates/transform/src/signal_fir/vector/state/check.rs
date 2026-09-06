@@ -7,6 +7,7 @@
 //! `vector/mod.rs`).
 
 use super::model::*;
+use crate::signal_fir::recursion::recursion_read_payload;
 use crate::signal_fir::vector::analysis::{DepKind, EffectAtom, StateCell, StateResource};
 use crate::signal_fir::vector::clock_ad::VerifiedVectorClockAdPlan;
 use crate::signal_fir::vector::decoration_verify::{
@@ -699,8 +700,14 @@ pub(super) fn has_only_fixed_delay_one_reads(
     let mut found = false;
     for signal in ids.values().copied() {
         match match_sig(prepared.arena(), signal) {
-            SigMatch::Delay1(value) if value == carrier => found = true,
-            SigMatch::Delay(value, amount) if value == carrier => {
+            SigMatch::Delay1(value)
+                if recursion_read_payload(prepared.arena(), value) == carrier =>
+            {
+                found = true;
+            }
+            SigMatch::Delay(value, amount)
+                if recursion_read_payload(prepared.arena(), value) == carrier =>
+            {
                 if !matches!(match_sig(prepared.arena(), amount), SigMatch::Int(1)) {
                     return false;
                 }

@@ -122,6 +122,22 @@ If you want per-event history — a counter of events, the previous frame, a val
 held between firings — put it inside. Choosing the wrong side is the most common
 source of confusion, and it is silent: both versions compile.
 
+"Inside" is decided by the text, not by the value. A *definition* referenced
+in the body (`ba.time`, an oscillator, a table read, a delayed signal, a
+`with` local) is instantiated again in the body's domain, with its own state
+advancing in fire time, even when the same definition is also used outside:
+the compiler annotates every stateful primitive built inside a domain with
+that domain, so the two instances never share their state. What reaches the
+body from outside as a *value* — a block input, a lambda parameter bound
+outside — is the outer signal sampled at the firing.
+
+```faust
+t = ba.time;
+process = (clock, t) : ondemand(\(u).(u, float(t)));
+// u       : the audio-rate time, sampled at each firing
+// float(t): a fresh counter of firings
+```
+
 ## 4. Typical use cases
 
 **Control-rate computation.** Anything that does not need to be recomputed 48000
@@ -350,14 +366,12 @@ seed, the loss, and the update in the **same** domain.
   domains** — faust-rs defines those semantics, and the oracle is numerical
   agreement with finite differences.
 
-A signal of the enclosing domain read inside a body without being one of
-its inputs is *captured*: it is not sampled at the firing, and when the same
-node is also passed as an input, that input reads 0 as well --
-`(clock, ba.time) : ondemand(\(u).(u, float(ba.time)))` outputs 0 on both
-lanes at every firing. Pass outer signals as inputs, and only as inputs.
-Library code has to respect it too: `optimizers.lib` 0.7.1 keeps a loop's
-state as a deviation from its initial value because `pstate`'s first-sample
-gate reads a counter of the enclosing domain, which a block captures.
+A definition referenced inside a body is re-instantiated in the body's
+domain (section 3): `ba.time` inside a block counts firings, and the same
+`x @ n` written inside and outside a block are two delay lines. A block
+input, or a lambda parameter bound outside, is sampled at the firing. Table
+generators are the exception by nature: a table is filled once, outside
+every domain, wherever it is read.
 
 A `rad` whose loss and seeds live inside a body runs in the block's domain,
 at frame rate: the harmonic synthesizer of

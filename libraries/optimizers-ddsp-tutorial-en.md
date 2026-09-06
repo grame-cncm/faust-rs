@@ -647,9 +647,13 @@ composition mismatch". Give the body named arguments.
 A variant keeps the parameter outside the block and passes it in as an
 explicit input; the block then outputs the held gradient, and the update
 `g - lr * grad * clock` is gated by the clock at audio rate. It reaches the
-same `0.34`. What does *not* work is capturing an outer audio-rate signal
-inside the body without passing it as an input: keep the seed, the loss and
-the update in the same domain, or connect them through the block's inputs.
+same `0.34`. What does *not* work is reading an outer audio-rate signal
+inside the body by its name: a definition referenced in a body is
+instantiated again in the body's own time (`ba.time` inside a block counts
+firings, an outer oscillator becomes a fresh one stepping once per firing),
+so the outer signal is only seen through an input. Keep the seed, the loss
+and the update in the same domain, or connect them through the block's
+inputs.
 
 Three last things about clock domains. `ma.SR` is not adapted inside
 `ondemand` (its rate is unknown statically), so compute rate-dependent values
@@ -704,7 +708,7 @@ reference for the primitives themselves, including `upsampling` and
 | `mdl(opts)` has the wrong arity | a multi-output expression is one argument | project each output and pass them separately |
 | Convergence in double but not in float | precision loss in recursive tangents | compile with `-double` |
 | `sequential composition mismatch` around an `ondemand` block | a frame operator with free `_` inputs used several times | give the body named arguments, one per frame sample |
-| A block ignores what happens outside | the body captures an outer signal instead of receiving it | pass outer signals as explicit inputs of the block |
+| A block ignores what happens outside | a definition referenced in the body is instantiated again in the body's time, it is not the outer signal | pass outer signals as explicit inputs of the block |
 | A bus loop learns nothing, the taps random-walk near zero | `op.mse(_, t)` (any function applied to a free `_`) is a two-input block: `:>` splits the taps between its inputs | name the loss input: `\(y).(op.mse(y, t))` |
 | A `_rad` loop converges slower than the `fad` one on a recursive model | inside a loop `rad` returns the direct term, the past state held fixed | the `fad` loops for recursive models, either for feed-forward ones |
 | The `fad` slope of an implicit solver misses a term | the iteration starts from `vprev`, the very signal the equation holds fixed: `fad(G(vprev, v), v)` with `v = vprev` differentiates both | start the iteration from a predictor or any distinct signal |

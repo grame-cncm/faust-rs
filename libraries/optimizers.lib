@@ -83,11 +83,8 @@ ma = library("maths.lib");
 
 // Internal helpers (not part of the public API).
 _tiny = 0.000000000001;
-// 1 on the first sample, 0 afterwards. Spelled as a bare counter rather than
-// `ba.time == 0`: inside an `ondemand` body an outer signal read without being
-// a block input is captured, and `ba.time`'s `mem` captured across the clock
-// boundary reads 0 at every firing, which would re-initialise `pstate` each
-// time; the counter is sampled at the firing and is 1 only at the first one.
+// 1 on the first sample, 0 afterwards. Inside an `ondemand` body the counter
+// is instantiated in the body's domain, so `_first` is 1 at the first firing.
 _first = (+(1) ~ _) == 1;
 _sqsum(x) = (x * x) : + ~ _;
 _expdecay(k) = (*(k) : +(_first)) ~ _;
@@ -202,11 +199,10 @@ ema_bc(a, x) = ema(a, x) / ema(a, 1.0);
 // otherwise. Every loop of this library applies it to its recursive inputs,
 // which is what gives them an explicit initial value and a reset control.
 //
-// `pstate` detects the first sample with a counter; inside an `ondemand`
-// body that counter is captured from the enclosing domain and sampled at the
-// firing, so the gate is only right for a block that fires at the first
-// sample. The loops of this library do not use it: they keep the deviation
-// from `init` in their recursion (`_from_init`), which needs no clock.
+// `pstate` detects the first sample with a counter, which counts firings
+// inside an `ondemand` body. The loops of this library do not use it: they
+// keep the deviation from `init` in their recursion (`_from_init`), which
+// needs no first-sample detection at all.
 //
 // #### Usage
 //

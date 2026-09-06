@@ -158,7 +158,12 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
             if let Some(sig) = ctx.slot_env.get(&box_tree.as_tree_id()) {
-                Ok(vec![sig])
+                Ok(vec![read_slot_in_domain(
+                    arena,
+                    box_tree.as_tree_id(),
+                    ctx,
+                    sig,
+                )?])
             } else {
                 let mut b = SigBuilder::new(arena);
                 Ok(vec![b.input(id)])
@@ -246,12 +251,18 @@ fn propagate_inner(
                 BoxMatch::Max => {
                     binary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y| b.max(x, y))
                 }
-                BoxMatch::Delay => binary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y| {
-                    b.delay(x, y)
-                }),
-                BoxMatch::Prefix => binary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y| {
-                    b.prefix(x, y)
-                }),
+                BoxMatch::Delay => {
+                    expect_input_arity(box_tree.as_tree_id(), inputs, 2)?;
+                    let delayed = clock_in_domain(arena, ctx, inputs[0]);
+                    let mut b = SigBuilder::new(arena);
+                    Ok(vec![b.delay(delayed, inputs[1])])
+                }
+                BoxMatch::Prefix => {
+                    expect_input_arity(box_tree.as_tree_id(), inputs, 2)?;
+                    let delayed = clock_in_domain(arena, ctx, inputs[1]);
+                    let mut b = SigBuilder::new(arena);
+                    Ok(vec![b.prefix(inputs[0], delayed)])
+                }
                 BoxMatch::Attach => binary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y| {
                     b.attach(x, y)
                 }),
@@ -270,7 +281,10 @@ fn propagate_inner(
             let op = match_box(arena, box_tree.as_tree_id());
             match op {
                 BoxMatch::Delay1 => {
-                    unary_prim(arena, box_tree.as_tree_id(), inputs, |b, x| b.delay1(x))
+                    expect_input_arity(box_tree.as_tree_id(), inputs, 1)?;
+                    let delayed = clock_in_domain(arena, ctx, inputs[0]);
+                    let mut b = SigBuilder::new(arena);
+                    Ok(vec![b.delay1(delayed)])
                 }
                 BoxMatch::IntCast => {
                     unary_prim(arena, box_tree.as_tree_id(), inputs, |b, x| b.int_cast(x))
@@ -327,9 +341,10 @@ fn propagate_inner(
             let op = match_box(arena, box_tree.as_tree_id());
             match op {
                 BoxMatch::ReadOnlyTable => {
-                    ternary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y, z| {
-                        b.read_only_table(x, y, z)
-                    })
+                    expect_input_arity(box_tree.as_tree_id(), inputs, 3)?;
+                    let read_index = clock_in_domain(arena, ctx, inputs[2]);
+                    let mut b = SigBuilder::new(arena);
+                    Ok(vec![b.read_only_table(inputs[0], inputs[1], read_index)])
                 }
                 BoxMatch::Select2 => {
                     ternary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y, z| {
@@ -349,12 +364,20 @@ fn propagate_inner(
                 b.select3(x, y, z, w)
             })
         }
-        FlatNodeKind::Prim5 => quinary_prim(
-            arena,
-            box_tree.as_tree_id(),
-            inputs,
-            |b, s, i, wi, ws, ri| b.write_read_table(s, i, wi, ws, ri),
-        ),
+        FlatNodeKind::Prim5 => {
+            expect_input_arity(box_tree.as_tree_id(), inputs, 5)?;
+            let write_index = clock_in_domain(arena, ctx, inputs[2]);
+            let write_value = clock_in_domain(arena, ctx, inputs[3]);
+            let read_index = clock_in_domain(arena, ctx, inputs[4]);
+            let mut b = SigBuilder::new(arena);
+            Ok(vec![b.write_read_table(
+                inputs[0],
+                inputs[1],
+                write_index,
+                write_value,
+                read_index,
+            )])
+        }
         FlatNodeKind::FConst => {
             let BoxMatch::FConst(ty, name, file) = match_box(arena, box_tree.as_tree_id()) else {
                 unreachable!("flat fconst node must decode to BoxMatch::FConst")
@@ -455,8 +478,9 @@ fn propagate_inner(
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
                 .expect("vbargraph control id must be registered during UI extraction");
+            let value = clock_in_domain(arena, ctx, inputs[0]);
             let mut b = SigBuilder::new(arena);
-            Ok(vec![b.vbargraph(control, inputs[0])])
+            Ok(vec![b.vbargraph(control, value)])
         }
         FlatNodeKind::HBargraph => {
             let BoxMatch::HBargraph(_, _, _) = match_box(arena, box_tree.as_tree_id()) else {
@@ -468,18 +492,25 @@ fn propagate_inner(
                 .control_ids
                 .get(&(box_tree.as_tree_id(), ctx_hash))
                 .expect("hbargraph control id must be registered during UI extraction");
+            let value = clock_in_domain(arena, ctx, inputs[0]);
             let mut b = SigBuilder::new(arena);
-            Ok(vec![b.hbargraph(control, inputs[0])])
+            Ok(vec![b.hbargraph(control, value)])
         }
         FlatNodeKind::Waveform => {
             let BoxMatch::Waveform(values) = match_box(arena, box_tree.as_tree_id()) else {
                 unreachable!("flat waveform node must decode to BoxMatch::Waveform")
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
-            let values = list_to_vec(arena, values).ok_or(PropagateError::UnsupportedBox {
+            let mut values = list_to_vec(arena, values).ok_or(PropagateError::UnsupportedBox {
                 node: box_tree.as_tree_id(),
                 kind: "waveform-list",
             })?;
+            // C++ `boxWaveform`: the first element carries the domain
+            // annotation so a waveform read inside a clock domain has its own
+            // read index, advancing in that domain's time.
+            if let Some(first) = values.first_mut() {
+                *first = clock_in_domain(arena, ctx, *first);
+            }
             let mut b = SigBuilder::new(arena);
             let n = i32_from_usize(values.len(), "waveform size")?;
             let size = b.int(n);
@@ -550,7 +581,11 @@ fn propagate_inner(
                     got: 0,
                 });
             }
-            let saved_slot_env = ctx.slot_env.push(slot, inputs[0]);
+            // C++ `boxSymbolic`: the bound signal keeps its time reference,
+            // read back by `read_slot_in_domain` when the slot is used in a
+            // deeper domain.
+            let bound = clock_in_domain(arena, ctx, inputs[0]);
+            let saved_slot_env = ctx.slot_env.push(slot, bound);
             let result = propagate_in_slot_env(arena, body, &inputs[1..], ctx);
             ctx.slot_env.restore(saved_slot_env);
             result
@@ -663,7 +698,7 @@ fn propagate_inner(
             };
             ctx.slot_env.restore(lifted_slot_env);
 
-            let l0 = make_mem_sig_proj_list(arena, right_arity.inputs)?;
+            let l0 = make_mem_sig_proj_list(arena, ctx, right_arity.inputs)?;
             let l1 = propagate_in_slot_env(arena, right, &l0, ctx)?;
 
             let mut rec_inputs = l1;
@@ -683,8 +718,8 @@ fn propagate_inner(
                 let ap = de_bruijn_aperture_with_memo(arena, expr, &mut ctx.memo.aperture);
                 if ap > 0 {
                     let idx = i32_from_usize(index, "rec projection index")?;
-                    let mut b = SigBuilder::new(arena);
-                    outputs.push(b.proj(idx, group));
+                    let proj = SigBuilder::new(arena).proj(idx, group);
+                    outputs.push(clock_in_domain(arena, ctx, proj));
                 } else {
                     outputs.push(expr);
                 }
@@ -1112,20 +1147,6 @@ fn quaternary_prim(
     Ok(vec![f(&mut b, inputs[0], inputs[1], inputs[2], inputs[3])])
 }
 
-/// Lowers one quinary primitive and returns a single output signal.
-fn quinary_prim(
-    arena: &mut TreeArena,
-    node: TreeId,
-    inputs: &[SigId],
-    f: impl FnOnce(&mut SigBuilder<'_>, SigId, SigId, SigId, SigId, SigId) -> SigId,
-) -> Result<Vec<SigId>, PropagateError> {
-    expect_input_arity(node, inputs, 5)?;
-    let mut b = SigBuilder::new(arena);
-    Ok(vec![f(
-        &mut b, inputs[0], inputs[1], inputs[2], inputs[3], inputs[4],
-    )])
-}
-
 /// Returns whether `split` wiring law is satisfied.
 ///
 /// C++ parity rule:
@@ -1299,20 +1320,91 @@ pub(crate) fn i32_from_usize(value: usize, field: &'static str) -> Result<i32, P
     i32::try_from(value).map_err(|_| PropagateError::IntegerTooLarge { field, value })
 }
 
-/// Seeds recursive feedback inputs with `delay1(proj(i, DEBRUIJNREF(1)))`.
+/// Seeds recursive feedback inputs with `delay1(proj(i, DEBRUIJNREF(1)))`,
+/// the projection annotated with the current clock domain (C++
+/// `makeMemSigProjList`).
 pub(crate) fn make_mem_sig_proj_list(
     arena: &mut TreeArena,
+    ctx: &PropagateContext<'_>,
     n: usize,
 ) -> Result<Vec<SigId>, PropagateError> {
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
         let idx = i32_from_usize(i, "rec projection seed index")?;
         let rg = debruijn_ref(arena, 1);
-        let mut b = SigBuilder::new(arena);
-        let proj = b.proj(idx, rg);
-        out.push(b.delay1(proj));
+        let proj = SigBuilder::new(arena).proj(idx, rg);
+        let clocked = clock_in_domain(arena, ctx, proj);
+        out.push(SigBuilder::new(arena).delay1(clocked));
     }
     Ok(out)
+}
+
+/// C++ `sigClocked(clockenv, x)` at the stateful-primitive sites of
+/// `propagate.cpp` (`makeMemSigProjList`, `sigDelay1`, `sigDelay`,
+/// `sigPrefix`, the tables, the waveform, the bargraphs, the `boxRec`
+/// outputs and the `boxSymbolic` bindings).
+///
+/// Inside a clock domain the annotation gives the primitive's state the
+/// domain's time reference and makes its tree distinct from the same
+/// primitive built outside: a `mem`, a delay line or a recursion written in
+/// the body of an `ondemand` counts in fire time and is never shared with
+/// the enclosing domain through hash-consing, whatever else the program
+/// computes with the same expression outside. At the top-level rate the
+/// annotation carries nothing (there is no shallower domain), so it is not
+/// emitted and the trees of unclocked programs stay unchanged.
+fn clock_in_domain(arena: &mut TreeArena, ctx: &PropagateContext<'_>, sig: SigId) -> SigId {
+    if ctx.clock_domain.is_none() {
+        return sig;
+    }
+    SigBuilder::new(arena).clocked(ctx.clock_env, sig)
+}
+
+/// C++ `recTempVar(useEnv, defEnv, sig)` at a slot read (`boxSlot`): a slot
+/// bound in an enclosing domain and read in a deeper one holds a signal of
+/// the enclosing domain, so its value is sampled at the firing through one
+/// `TempVar` per domain level crossed,
+/// `Clocked(use, TempVar(Clocked(parent(use), TempVar(... sig))))`. The
+/// binding domain is the annotation the binding site left on the signal
+/// (none at the top-level rate). A slot read in the domain that bound it is
+/// returned as it is.
+fn read_slot_in_domain(
+    arena: &mut TreeArena,
+    node: TreeId,
+    ctx: &PropagateContext<'_>,
+    sig: SigId,
+) -> Result<SigId, PropagateError> {
+    let binding_domain = match match_sig(arena, sig) {
+        SigMatch::Clocked(env, _) => match match_sig(arena, env) {
+            SigMatch::ClockEnvToken(id) => Some(ClockDomainId::from_u32(id)),
+            _ => None,
+        },
+        _ => None,
+    };
+    let mut crossed = Vec::new();
+    let mut domain = ctx.clock_domain;
+    while domain != binding_domain {
+        let Some(id) = domain else {
+            // Reached the top-level rate without meeting the binding domain:
+            // the slot was bound in a domain that does not enclose this one.
+            return Err(PropagateError::UnsupportedBox {
+                node,
+                kind: "slot bound in a clock domain that does not enclose its use",
+            });
+        };
+        crossed.push(id);
+        domain = ctx
+            .clock_domains
+            .get(id)
+            .expect("clock domain ids allocated by this propagation are valid")
+            .parent;
+    }
+    let mut current = sig;
+    for &id in crossed.iter().rev() {
+        let token = SigBuilder::new(arena).clock_env_token(id.as_u32());
+        let temp = SigBuilder::new(arena).temp_var(current);
+        current = SigBuilder::new(arena).clocked(token, temp);
+    }
+    Ok(current)
 }
 
 /// Local memoization reused across one propagation traversal.

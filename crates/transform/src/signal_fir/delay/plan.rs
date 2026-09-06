@@ -104,7 +104,7 @@ pub(crate) fn plan_delays(
 /// does not need `&self`.
 fn is_recursion_delay_chain_static(arena: &TreeArena, value: SigId) -> bool {
     let mut current = value;
-    while let SigMatch::Delay1(inner) = match_sig(arena, current) {
+    while let SigMatch::Delay1(inner) | SigMatch::Clocked(_, inner) = match_sig(arena, current) {
         current = inner;
     }
     let SigMatch::Proj(_, group) = match_sig(arena, current) else {

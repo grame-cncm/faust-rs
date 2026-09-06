@@ -162,11 +162,22 @@ pub struct PrepareOptions {
     /// lowering unclamped and the generated access is raw — exactly the C++
     /// `-ct 0` contract.
     pub check_table: bool,
+    /// Drop every `Clocked(env, x)` annotation of the forest before staging
+    /// (step 2.1b). Table generators are prepared with it: propagation
+    /// annotates the stateful primitives of a body with its clock domain, and
+    /// a generator written inside a body carries those annotations on its
+    /// own state, which means nothing at table-fill time -- a generator runs
+    /// once, outside every domain, and its sub-module has no domain table
+    /// to decode the tokens against.
+    pub drop_clock_annotations: bool,
 }
 
 impl Default for PrepareOptions {
     fn default() -> Self {
-        Self { check_table: true }
+        Self {
+            check_table: true,
+            drop_clock_annotations: false,
+        }
     }
 }
 
@@ -434,8 +445,17 @@ pub fn prepare_signals_for_fir(
     outputs: &[SigId],
     ui: &UiProgram,
 ) -> Result<PreparedSignals, SignalPrepareError> {
-    let options = PrepareOptions::default();
-    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None, &options)?;
+    prepare_signals_for_fir_with_options(src_arena, outputs, ui, &PrepareOptions::default())
+}
+
+/// Like [`prepare_signals_for_fir`], with explicit [`PrepareOptions`].
+pub fn prepare_signals_for_fir_with_options(
+    src_arena: &TreeArena,
+    outputs: &[SigId],
+    ui: &UiProgram,
+    options: &PrepareOptions,
+) -> Result<PreparedSignals, SignalPrepareError> {
+    let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None, options)?;
     verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
     prepared.verify(ui)?;
     Ok(prepared)
@@ -644,6 +664,15 @@ impl<'ui> Staging<'ui> {
         Ok(())
     }
 
+    /// Step 2.1b (table generators): drop the clock-domain annotations.
+    fn drop_clock_annotations(&mut self) -> Result<(), SignalPrepareError> {
+        let before = self.outputs.clone();
+        self.outputs = rewrites::drop_clock_annotations(&mut self.arena, &self.outputs)?;
+        self.origins.inherit_replacements(&before, &self.outputs);
+        self.inherit_origins();
+        Ok(())
+    }
+
     /// W4 contract: no non-canonical one-sample delay `Delay(_, 1)` remains.
     fn assert_d1(&self) {
         debug_assert!(
@@ -696,6 +725,11 @@ fn prepare_signals_for_fir_unverified(
     });
     let mut s = Staging::new(arena, cloned_outputs, ui, origins);
     s.inherit_origins();
+    // Step 2.1b — table generators: the clock-domain annotations of a
+    // generator written inside a body mean nothing at table-fill time.
+    if options.drop_clock_annotations {
+        s.drop_clock_annotations()?;
+    }
 
     // Step 2.2 — de Bruijn → SYMREC / SYMREF.
     s.de_bruijn_to_sym()?;
