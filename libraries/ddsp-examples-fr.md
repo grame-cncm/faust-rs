@@ -44,7 +44,23 @@ pas est [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md).
 | 8 | `ddsp_fad_fdn_reverb_lm` | calibrer une réverbération FDN sur une décroissance cible | `fad` | `lm_2D` | (T60, amortissement) = (0,600, 0,300) depuis (0,3, 0) |
 | 9 | `ddsp_rad_gru_amp_host` | entraîner un ampli GRU par BPTT tronquée par blocs | `rad`, public | Adam dans l'hôte (Rust) | gradients = différences finies à quatre chiffres ; résidu 29 dB sous la cible |
 | 10 | `ddsp_fad_waveguide_string_pitch` | accorder une corde à guide d'onde à travers son retard fractionnaire | `fad` | `lsq_1D` + `nlms` | 228 → 220,000000 Hz ; puits de ±1 Hz, capture seulement par le haut |
-| 11 | `ddsp_rad_harmonic_spectral_frame` | ajuster 16 amplitudes harmoniques par une perte spectrale par trame | `rad` dans `ondemand` | Adam par trame, dans le bloc | toutes les amplitudes à 2,5e-4 de 1/h en 100 trames |
+| 11 | `ddsp_rad_harmonic_spectral_frame` | ajuster 16 amplitudes harmoniques par une perte spectrale par trame | `rad` dans `ondemand` | Adam par trame, dans un bloc `ondemand` | toutes les amplitudes à 2,5e-4 de 1/h en 100 trames |
+
+**Où tourne l'optimiseur.** Huit exemples font un pas par échantillon audio
+dans le graphe, par les boucles de la bibliothèque (`lsq_1D`, `lm_2D`,
+`descend_3D`, `lsq_N_rad`, `descend_N_rad`) : 1, 2, 3, 4, 5, 7, 8 et 10.
+L'exemple 11 est le seul dont l'optimiseur tourne dans un bloc `ondemand` :
+sa perte est calculée une fois par trame de 256 échantillons dans le bloc et
+Adam y fait son pas, à la cadence des trames, dans un bloc écrit à la main
+autour de `frame_sum` et `adam_g`. Les boucles cadencées de la bibliothèque
+(`descend_1D_clocked` … `descend_5D_clocked`, `descend_N_clocked`,
+`descend_N_rad_clocked`) emballent l'autre motif cadencé, une perte calculée
+à cadence audio et son gradient moyenné sur la trame, un pas par
+déclenchement ; aucun des onze ne les utilise, la section 11 du tutoriel et
+les fixtures `opt_descend_clocked_gain.dsp` et
+`opt_descend_in_ondemand_gain.dsp` le font. Les exemples 6 et 9 n'utilisent
+pas `ondemand` du tout : leur optimiseur est celui de l'hôte, un pas d'Adam
+par bloc `compute` sur les voies de gradient sommées.
 
 ## 1. Suppression d'un ronflement par notch adaptatif (`fad`)
 

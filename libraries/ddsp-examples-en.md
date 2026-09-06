@@ -41,7 +41,22 @@ introduction is [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md)
 | 8 | `ddsp_fad_fdn_reverb_lm` | calibrate an FDN reverb to a target decay | `fad` | `lm_2D` | (T60, damping) = (0.600, 0.300) from (0.3, 0) |
 | 9 | `ddsp_rad_gru_amp_host` | train a GRU amplifier model by block-truncated BPTT | `rad`, public | Adam in the host (Rust) | gradients = finite differences to four digits; residual 29 dB under the target |
 | 10 | `ddsp_fad_waveguide_string_pitch` | tune the pitch of a waveguide string through its fractional delay | `fad` | `lsq_1D` + `nlms` | 228 → 220.000000 Hz; the well is ±1 Hz wide, capture only from above |
-| 11 | `ddsp_rad_harmonic_spectral_frame` | fit 16 harmonic amplitudes through a per-frame spectral loss | `rad` in `ondemand` | Adam per frame, in the block | all amplitudes within 2.5e-4 of 1/h in 100 frames |
+| 11 | `ddsp_rad_harmonic_spectral_frame` | fit 16 harmonic amplitudes through a per-frame spectral loss | `rad` in `ondemand` | Adam per frame, in an `ondemand` block | all amplitudes within 2.5e-4 of 1/h in 100 frames |
+
+**Where the optimizer runs.** Eight examples take one step per audio sample
+inside the graph, through the loops of the library (`lsq_1D`, `lm_2D`,
+`descend_3D`, `lsq_N_rad`, `descend_N_rad`): 1, 2, 3, 4, 5, 7, 8 and 10.
+Example 11 is the only one whose optimizer runs in an `ondemand` block: its
+loss is computed once per 256-sample frame inside the block and Adam steps
+there, at frame rate, in a block written by hand around `frame_sum` and
+`adam_g`. The clocked loops of the library (`descend_1D_clocked` …
+`descend_5D_clocked`, `descend_N_clocked`, `descend_N_rad_clocked`) package
+the other clocked pattern, a loss computed at audio rate and its gradient
+averaged over the frame, one step per firing; none of the eleven uses them,
+section 11 of the tutorial and the fixtures `opt_descend_clocked_gain.dsp`
+and `opt_descend_in_ondemand_gain.dsp` do. Examples 6 and 9 use no
+`ondemand` at all: their optimizer is the host's, one Adam step per
+`compute` block on the summed gradient lanes.
 
 ## 1. Hum cancellation with an adaptive notch (`fad`)
 
