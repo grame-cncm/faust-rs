@@ -153,6 +153,14 @@ fn descend_1d_with_adam_learns_a_gain() {
 }
 
 #[test]
+fn small_steps_on_a_large_parameter_are_kept_in_single_precision() {
+    // `init` = 1000, target 1000.001, SGD steps below half an ulp of the value
+    // (6e-5 in f32): applied to the deviation from `init` they accumulate and
+    // the residual falls; applied to the value they would all be lost.
+    assert_converges("opt_descend_small_steps_large_init", 3000, 100, 0.1);
+}
+
+#[test]
 fn lsq_3d_with_nlms_learns_fir_taps_at_ten_times_the_level() {
     // Normalized LMS on an excitation of level 10: a plain LMS step tuned
     // for level 1 diverges here; NLMS converges in a few hundred frames.

@@ -201,7 +201,7 @@ does not pretend otherwise:
 
 ## 3. How the library is organized
 
-The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.7.1) is
+The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.7.2) is
 documented function by function in the Faust libraries convention; this
 section gives the map. It has twelve sections, ordered from building blocks to
 ready-made loops.
@@ -228,7 +228,7 @@ Every loop is the same recursion, drawn here for one parameter:
 ```text
               prev (recursive state)
                 │
-        init + deviation             the recursion keeps the deviation from init; reset clears it
+        init + deviation             the recursion keeps the deviation from init; the step applies to it; reset clears it
                 │
           clip(lo, hi, ·)            projection on the bounds
                 │
@@ -246,8 +246,10 @@ Every loop is the same recursion, drawn here for one parameter:
 The parameter lives in Faust recursive state as its deviation from the
 initial value: the recursion starts at zero, `reset` clears it, and no
 first-sample detection is involved, so the loop also works inside an
-`ondemand` block whatever its first firing; `clip` keeps the parameter in
-bounds; one `fad` call
+`ondemand` block whatever its first firing. The step is applied to the
+deviation and clipped in deviation space, so a step smaller than the
+precision of the value is not lost (a parameter near 1000 learned in single
+precision keeps steps of 1e-5); one `fad` call
 per sample yields the derivative; the engine turns the derivative into a
 step. With `N` parameters, one `fad` call with `N` seeds produces the `N`
 derivatives at once. The bus loops draw the same picture with `N` wires in

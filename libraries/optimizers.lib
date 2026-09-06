@@ -1,5 +1,5 @@
 declare name "Faust Differentiable Optimizers Library";
-declare version "0.7.1";
+declare version "0.7.2";
 declare author "faust-rs";
 declare license "MIT/LGPL-3.0";
 
@@ -53,6 +53,12 @@ declare license "MIT/LGPL-3.0";
 // process = op.descend_1D(loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
 // ```
 //
+// Changes in 0.7.2: the loops apply the update to the deviation from `init`
+// itself and clip it in deviation space, so a step smaller than the
+// precision of the parameter's value is kept (a parameter near 1000 learned
+// in single precision); the clocked loops output `init` before their first
+// firing; `pstate` is right inside an `ondemand` body again, its counter
+// counting firings there.
 // Changes in 0.7.1: the loops keep the deviation from the initial value in
 // their recursion instead of detecting the first sample, so they work inside
 // an `ondemand` body whatever its first firing; same trajectories.
@@ -88,12 +94,21 @@ _tiny = 0.000000000001;
 _first = (+(1) ~ _) == 1;
 _sqsum(x) = (x * x) : + ~ _;
 _expdecay(k) = (*(k) : +(_first)) ~ _;
-// The value of a learned parameter whose recursion keeps its *deviation*
-// from `init`: the deviation starts at 0 (a recursion's initial state) and
-// is cleared while `reset` is non-zero, so no first-sample detection is
+// The *deviation* of a learned parameter from `init` for the current sample,
+// from its recursive state: 0 while `reset` is non-zero, `prev` otherwise.
+// Every loop of this library keeps its state in this form: the deviation
+// starts at 0 (a recursion's initial state), so no first-sample detection is
 // involved and the loops work inside an `ondemand` body whatever its first
-// firing. The loops store `next - init`.
-_from_init(init, reset, delta) = init + select2(reset != 0.0, delta, 0.0);
+// firing; and the update is applied to the deviation itself, clipped in
+// deviation space, so a step smaller than the precision of the parameter's
+// value is not lost when `init` is large.
+_dev(reset, delta) = select2(reset != 0.0, delta, 0.0);
+// The value of the parameter, `init + _dev(reset, delta)`.
+_from_init(init, reset, delta) = init + _dev(reset, delta);
+// The deviation held by a clocked block: 0 while a reset is pending (seen
+// since the last firing, released the sample after the next one); 0 before
+// the first firing, as the block's held output.
+_dev_clocked(clock, reset, prev) = select2(_reset_latched(clock, reset), prev, 0.0);
 
 //=========================Signal Helpers and Parameter State===============================
 // Small building blocks shared by the engines and the loops: clipping, sign,
@@ -199,10 +214,12 @@ ema_bc(a, x) = ema(a, x) / ema(a, 1.0);
 // otherwise. Every loop of this library applies it to its recursive inputs,
 // which is what gives them an explicit initial value and a reset control.
 //
-// `pstate` detects the first sample with a counter, which counts firings
-// inside an `ondemand` body. The loops of this library do not use it: they
-// keep the deviation from `init` in their recursion (`_from_init`), which
-// needs no first-sample detection at all.
+// `pstate` detects the first sample with a counter. Inside an `ondemand`
+// body the counter is instantiated in the body's domain and counts firings,
+// so `pstate` is right there too, whatever the block's first firing. The
+// loops of this library do not use it: they keep the deviation from `init`
+// in their recursion (`_dev`, `_from_init`), which needs no first-sample
+// detection at all and keeps steps below the precision of the value.
 //
 // #### Usage
 //
@@ -1318,7 +1335,7 @@ with {
         pt = fad(mdl(p1, x), p1);
         r = (pt : _, !) - target;
         j1 = pt : !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(r, j1));
     };
 };
 
@@ -1358,8 +1375,8 @@ with {
         r = (pt : _, !, !) - target;
         j1 = pt : !, _, !;
         j2 = pt : !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
-        next2 = clip(lo2, hi2, p2 - upd2(r, j2)) - init2;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(r, j1));
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - upd2(r, j2));
     };
 };
 
@@ -1401,9 +1418,9 @@ with {
         j1 = pt : !, _, !, !;
         j2 = pt : !, !, _, !;
         j3 = pt : !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
-        next2 = clip(lo2, hi2, p2 - upd2(r, j2)) - init2;
-        next3 = clip(lo3, hi3, p3 - upd3(r, j3)) - init3;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(r, j1));
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - upd2(r, j2));
+        next3 = clip(lo3 - init3, hi3 - init3, _dev(reset, prev3) - upd3(r, j3));
     };
 };
 
@@ -1447,10 +1464,10 @@ with {
         j2 = pt : !, !, _, !, !;
         j3 = pt : !, !, !, _, !;
         j4 = pt : !, !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
-        next2 = clip(lo2, hi2, p2 - upd2(r, j2)) - init2;
-        next3 = clip(lo3, hi3, p3 - upd3(r, j3)) - init3;
-        next4 = clip(lo4, hi4, p4 - upd4(r, j4)) - init4;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(r, j1));
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - upd2(r, j2));
+        next3 = clip(lo3 - init3, hi3 - init3, _dev(reset, prev3) - upd3(r, j3));
+        next4 = clip(lo4 - init4, hi4 - init4, _dev(reset, prev4) - upd4(r, j4));
     };
 };
 
@@ -1496,11 +1513,11 @@ with {
         j3 = pt : !, !, !, _, !, !;
         j4 = pt : !, !, !, !, _, !;
         j5 = pt : !, !, !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(r, j1)) - init1;
-        next2 = clip(lo2, hi2, p2 - upd2(r, j2)) - init2;
-        next3 = clip(lo3, hi3, p3 - upd3(r, j3)) - init3;
-        next4 = clip(lo4, hi4, p4 - upd4(r, j4)) - init4;
-        next5 = clip(lo5, hi5, p5 - upd5(r, j5)) - init5;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(r, j1));
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - upd2(r, j2));
+        next3 = clip(lo3 - init3, hi3 - init3, _dev(reset, prev3) - upd3(r, j3));
+        next4 = clip(lo4 - init4, hi4 - init4, _dev(reset, prev4) - upd4(r, j4));
+        next5 = clip(lo5 - init5, hi5 - init5, _dev(reset, prev5) - upd5(r, j5));
     };
 };
 
@@ -1666,7 +1683,7 @@ with {
     with {
         p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
         g1 = fad(loss(p1), p1) : !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(g1));
     };
 };
 
@@ -1703,8 +1720,8 @@ with {
         gs = fad(loss(p1, p2), (p1, p2)) : !, _, _;
         g1 = gs : _, !;
         g2 = gs : !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
-        next2 = clip(lo2, hi2, p2 - upd2(g2)) - init2;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(g1));
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - upd2(g2));
     };
 };
 
@@ -1743,9 +1760,9 @@ with {
         g1 = gs : _, !, !;
         g2 = gs : !, _, !;
         g3 = gs : !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
-        next2 = clip(lo2, hi2, p2 - upd2(g2)) - init2;
-        next3 = clip(lo3, hi3, p3 - upd3(g3)) - init3;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(g1));
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - upd2(g2));
+        next3 = clip(lo3 - init3, hi3 - init3, _dev(reset, prev3) - upd3(g3));
     };
 };
 
@@ -1786,10 +1803,10 @@ with {
         g2 = gs : !, _, !, !;
         g3 = gs : !, !, _, !;
         g4 = gs : !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
-        next2 = clip(lo2, hi2, p2 - upd2(g2)) - init2;
-        next3 = clip(lo3, hi3, p3 - upd3(g3)) - init3;
-        next4 = clip(lo4, hi4, p4 - upd4(g4)) - init4;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(g1));
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - upd2(g2));
+        next3 = clip(lo3 - init3, hi3 - init3, _dev(reset, prev3) - upd3(g3));
+        next4 = clip(lo4 - init4, hi4 - init4, _dev(reset, prev4) - upd4(g4));
     };
 };
 
@@ -1849,11 +1866,11 @@ with {
         g3 = gs : !, !, _, !, !;
         g4 = gs : !, !, !, _, !;
         g5 = gs : !, !, !, !, _;
-        next1 = clip(lo1, hi1, p1 - upd1(g1)) - init1;
-        next2 = clip(lo2, hi2, p2 - upd2(g2)) - init2;
-        next3 = clip(lo3, hi3, p3 - upd3(g3)) - init3;
-        next4 = clip(lo4, hi4, p4 - upd4(g4)) - init4;
-        next5 = clip(lo5, hi5, p5 - upd5(g5)) - init5;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(g1));
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - upd2(g2));
+        next3 = clip(lo3 - init3, hi3 - init3, _dev(reset, prev3) - upd3(g3));
+        next4 = clip(lo4 - init4, hi4 - init4, _dev(reset, prev4) - upd4(g4));
+        next5 = clip(lo5 - init5, hi5 - init5, _dev(reset, prev5) - upd5(g5));
     };
 };
 
@@ -1928,8 +1945,8 @@ with {
         det = h11 * h22 - h12 * h12;
         d1 = (h22 * b1 - h12 * b2) / det;
         d2 = (h11 * b2 - h12 * b1) / det;
-        next1 = clip(lo1, hi1, p1 - mu * d1) - init1;
-        next2 = clip(lo2, hi2, p2 - mu * d2) - init2;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - mu * d1);
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - mu * d2);
     };
 };
 
@@ -1997,9 +2014,9 @@ with {
         d1 = (c11 * b1 + c12 * b2 + c13 * b3) / det;
         d2 = (c12 * b1 + c22 * b2 + c23 * b3) / det;
         d3 = (c13 * b1 + c23 * b2 + c33 * b3) / det;
-        next1 = clip(lo1, hi1, p1 - mu * d1) - init1;
-        next2 = clip(lo2, hi2, p2 - mu * d2) - init2;
-        next3 = clip(lo3, hi3, p3 - mu * d3) - init3;
+        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - mu * d1);
+        next2 = clip(lo2 - init2, hi2 - init2, _dev(reset, prev2) - mu * d2);
+        next3 = clip(lo3 - init3, hi3 - init3, _dev(reset, prev3) - mu * d3);
     };
 };
 
@@ -2071,10 +2088,11 @@ _spread3(N) = route(2 * N + 1, 3 * N, par(i, N, (i + 1, 3 * i + 1, N + 1, 3 * i 
 lsq_N(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
     model = (si.bus(N), x) : mdl;
-    step = par(i, N, clip(lo, hi, _from_init(init, reset)))
-         <: (si.bus(N), (fad(model, si.bus(N)) : (_ - target), si.bus(N)))
+    params = par(i, N, clip(lo, hi, +(init)));
+    step = par(i, N, _dev(reset))
+         <: (si.bus(N), (params : fad(model, si.bus(N)) : (_ - target), si.bus(N)))
          : _spread3(N)
-         : par(i, N, (_, _, _ : \(p, r, j).(clip(lo, hi, p - upd(r, j)) - init)));
+         : par(i, N, (_, _, _ : \(d, r, j).(clip(lo - init, hi - init, d - upd(r, j)))));
 };
 
 //------------------------------`(op.)lsq_N_rad`--------------------------------
@@ -2115,10 +2133,11 @@ with {
 lsq_N_rad(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
     model = (si.bus(N), x) : mdl;
-    step = par(i, N, clip(lo, hi, _from_init(init, reset)))
-         <: (si.bus(N), (rad(model, si.bus(N)) : (_ - target), si.bus(N)))
+    params = par(i, N, clip(lo, hi, +(init)));
+    step = par(i, N, _dev(reset))
+         <: (si.bus(N), (params : rad(model, si.bus(N)) : (_ - target), si.bus(N)))
          : _spread3(N)
-         : par(i, N, (_, _, _ : \(p, r, j).(clip(lo, hi, p - upd(r, j)) - init)));
+         : par(i, N, (_, _, _ : \(d, r, j).(clip(lo - init, hi - init, d - upd(r, j)))));
 };
 
 //------------------------------`(op.)descend_N`--------------------------------
@@ -2160,10 +2179,11 @@ with {
 //------------------------------------------------------------------------------
 descend_N(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
-    step = par(i, N, clip(lo, hi, _from_init(init, reset)))
-         <: (si.bus(N), (fad(loss, si.bus(N)) : !, si.bus(N)))
+    params = par(i, N, clip(lo, hi, +(init)));
+    step = par(i, N, _dev(reset))
+         <: (si.bus(N), (params : fad(loss, si.bus(N)) : !, si.bus(N)))
          : ro.interleave(N, 2)
-         : par(i, N, (_, _ : \(p, g).(clip(lo, hi, p - upd(g)) - init)));
+         : par(i, N, (_, _ : \(d, g).(clip(lo - init, hi - init, d - upd(g)))));
 };
 
 //------------------------------`(op.)descend_N_rad`----------------------------
@@ -2205,10 +2225,11 @@ with {
 //------------------------------------------------------------------------------
 descend_N_rad(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
-    step = par(i, N, clip(lo, hi, _from_init(init, reset)))
-         <: (si.bus(N), (rad(loss, si.bus(N)) : !, si.bus(N)))
+    params = par(i, N, clip(lo, hi, +(init)));
+    step = par(i, N, _dev(reset))
+         <: (si.bus(N), (params : rad(loss, si.bus(N)) : !, si.bus(N)))
          : ro.interleave(N, 2)
-         : par(i, N, (_, _ : \(p, g).(clip(lo, hi, p - upd(g)) - init)));
+         : par(i, N, (_, _ : \(d, g).(clip(lo - init, hi - init, d - upd(g)))));
 };
 
 //------------------------------`(op.)descend_N_clocked`------------------------
@@ -2243,12 +2264,13 @@ with {
 // with { x = hslider("descend_N_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_N_clocked(N, clock, loss, upd, lo, hi, init, reset) = step ~ si.bus(N)
+descend_N_clocked(N, clock, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
-    step = par(i, N, clip(lo, hi, _clocked_state(clock, init, reset)))
-         <: (si.bus(N), (fad(loss, si.bus(N)) : !, par(i, N, frame_mean(clock))))
+    params = par(i, N, clip(lo, hi, +(init)));
+    step = par(i, N, _dev_clocked(clock, reset))
+         <: (si.bus(N), (params : fad(loss, si.bus(N)) : !, par(i, N, frame_mean(clock))))
          : (clock, si.bus(2 * N)) : ondemand(update);
-    update = ro.interleave(N, 2) : par(i, N, (_, _ : \(q, h).(clip(lo, hi, q - upd(h)))));
+    update = ro.interleave(N, 2) : par(i, N, (_, _ : \(q, h).(clip(lo - init, hi - init, q - upd(h)))));
 };
 
 //------------------------------`(op.)descend_N_rad_clocked`--------------------
@@ -2272,12 +2294,13 @@ with {
 // with { x = hslider("descend_N_rad_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_N_rad_clocked(N, clock, loss, upd, lo, hi, init, reset) = step ~ si.bus(N)
+descend_N_rad_clocked(N, clock, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
 with {
-    step = par(i, N, clip(lo, hi, _clocked_state(clock, init, reset)))
-         <: (si.bus(N), (rad(loss, si.bus(N)) : !, par(i, N, frame_mean(clock))))
+    params = par(i, N, clip(lo, hi, +(init)));
+    step = par(i, N, _dev_clocked(clock, reset))
+         <: (si.bus(N), (params : rad(loss, si.bus(N)) : !, par(i, N, frame_mean(clock))))
          : (clock, si.bus(2 * N)) : ondemand(update);
-    update = ro.interleave(N, 2) : par(i, N, (_, _ : \(q, h).(clip(lo, hi, q - upd(h)))));
+    update = ro.interleave(N, 2) : par(i, N, (_, _ : \(q, h).(clip(lo - init, hi - init, q - upd(h)))));
 };
 
 //=====================================Clocked Loops========================================
@@ -2296,14 +2319,10 @@ with {
 // is not adapted inside `ondemand`.
 //==========================================================================================
 
-// Internal helpers of the clocked loops.
-// 1 once at least one firing happened strictly before this sample.
-_fired_before(clock) = ((+(clock)) ~ _) : mem : >(0);
-// A reset seen since the last firing, held until the sample after the next one.
+// Internal helper of the clocked loops: a reset seen since the last firing,
+// held until the sample after the next one, so the block's next step starts
+// from `init` (see `_dev_clocked`).
 _reset_latched(clock, reset) = (+(float(reset != 0.0)) : min(1.0)) ~ *(1.0 - clock');
-// The audio-rate value of a parameter learned in a clocked block: `init` until
-// the block has fired once and while a reset is pending, `prev` otherwise.
-_clocked_state(clock, init, reset, prev) = select2(_reset_latched(clock, reset) | (_fired_before(clock) == 0), prev, init);
 
 //------------------------------`(op.)frame_sum`--------------------------------
 // Sum of `x` over the current frame: the samples since the one after the last
@@ -2421,14 +2440,15 @@ frame_mean(clock, x) = frame_sum(clock, x) / frame_count(clock);
 //
 // * <https://github.com/grame-cncm/faust-rs/blob/main/docs/ondemand-note-en.md>
 //------------------------------------------------------------------------------
-descend_1D_clocked(clock, loss, upd1, lo1, hi1, init1, reset) = loop ~ _
+descend_1D_clocked(clock, loss, upd1, lo1, hi1, init1, reset) = (loop ~ _) : +(init1)
 with {
-    loop(prev1) = (clock, p1, gm1) : ondemand(step)
+    loop(prev1) = (clock, d1, gm1) : ondemand(step)
     with {
-        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
+        d1 = _dev_clocked(clock, reset, prev1);
+        p1 = clip(lo1, hi1, init1 + d1);
         g1 = fad(loss(p1), p1) : !, _;
         gm1 = frame_mean(clock, g1);
-        step(q1, h1) = clip(lo1, hi1, q1 - upd1(h1));
+        step(q1, h1) = clip(lo1 - init1, hi1 - init1, q1 - upd1(h1));
     };
 };
 
@@ -2457,16 +2477,18 @@ with {
 // with { x = hslider("descend_2D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_2D_clocked(clock, loss, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset) = loop ~ (_, _)
+descend_2D_clocked(clock, loss, upd1, upd2, lo1, hi1, lo2, hi2, init1, init2, reset) = (loop ~ (_, _)) : (+(init1), +(init2))
 with {
-    loop(prev1, prev2) = (clock, p1, p2, gm1, gm2) : ondemand(step)
+    loop(prev1, prev2) = (clock, d1, d2, gm1, gm2) : ondemand(step)
     with {
-        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
-        p2 = clip(lo2, hi2, _clocked_state(clock, init2, reset, prev2));
+        d1 = _dev_clocked(clock, reset, prev1);
+        p1 = clip(lo1, hi1, init1 + d1);
+        d2 = _dev_clocked(clock, reset, prev2);
+        p2 = clip(lo2, hi2, init2 + d2);
         gs = fad(loss(p1, p2), (p1, p2)) : !, _, _;
         gm1 = frame_mean(clock, (gs : _, !));
         gm2 = frame_mean(clock, (gs : !, _));
-        step(q1, q2, h1, h2) = clip(lo1, hi1, q1 - upd1(h1)), clip(lo2, hi2, q2 - upd2(h2));
+        step(q1, q2, h1, h2) = clip(lo1 - init1, hi1 - init1, q1 - upd1(h1)), clip(lo2 - init2, hi2 - init2, q2 - upd2(h2));
     };
 };
 
@@ -2495,19 +2517,22 @@ with {
 // with { x = hslider("descend_3D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_3D_clocked(clock, loss, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset) = loop ~ (_, _, _)
+descend_3D_clocked(clock, loss, upd1, upd2, upd3, lo1, hi1, lo2, hi2, lo3, hi3, init1, init2, init3, reset) = (loop ~ (_, _, _)) : (+(init1), +(init2), +(init3))
 with {
-    loop(prev1, prev2, prev3) = (clock, p1, p2, p3, gm1, gm2, gm3) : ondemand(step)
+    loop(prev1, prev2, prev3) = (clock, d1, d2, d3, gm1, gm2, gm3) : ondemand(step)
     with {
-        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
-        p2 = clip(lo2, hi2, _clocked_state(clock, init2, reset, prev2));
-        p3 = clip(lo3, hi3, _clocked_state(clock, init3, reset, prev3));
+        d1 = _dev_clocked(clock, reset, prev1);
+        p1 = clip(lo1, hi1, init1 + d1);
+        d2 = _dev_clocked(clock, reset, prev2);
+        p2 = clip(lo2, hi2, init2 + d2);
+        d3 = _dev_clocked(clock, reset, prev3);
+        p3 = clip(lo3, hi3, init3 + d3);
         gs = fad(loss(p1, p2, p3), (p1, p2, p3)) : !, _, _, _;
         gm1 = frame_mean(clock, (gs : _, !, !));
         gm2 = frame_mean(clock, (gs : !, _, !));
         gm3 = frame_mean(clock, (gs : !, !, _));
         step(q1, q2, q3, h1, h2, h3) =
-            clip(lo1, hi1, q1 - upd1(h1)), clip(lo2, hi2, q2 - upd2(h2)), clip(lo3, hi3, q3 - upd3(h3));
+            clip(lo1 - init1, hi1 - init1, q1 - upd1(h1)), clip(lo2 - init2, hi2 - init2, q2 - upd2(h2)), clip(lo3 - init3, hi3 - init3, q3 - upd3(h3));
     };
 };
 
@@ -2536,22 +2561,26 @@ with {
 // with { x = hslider("descend_4D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_4D_clocked(clock, loss, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset) = loop ~ (_, _, _, _)
+descend_4D_clocked(clock, loss, upd1, upd2, upd3, upd4, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, init1, init2, init3, init4, reset) = (loop ~ (_, _, _, _)) : (+(init1), +(init2), +(init3), +(init4))
 with {
-    loop(prev1, prev2, prev3, prev4) = (clock, p1, p2, p3, p4, gm1, gm2, gm3, gm4) : ondemand(step)
+    loop(prev1, prev2, prev3, prev4) = (clock, d1, d2, d3, d4, gm1, gm2, gm3, gm4) : ondemand(step)
     with {
-        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
-        p2 = clip(lo2, hi2, _clocked_state(clock, init2, reset, prev2));
-        p3 = clip(lo3, hi3, _clocked_state(clock, init3, reset, prev3));
-        p4 = clip(lo4, hi4, _clocked_state(clock, init4, reset, prev4));
+        d1 = _dev_clocked(clock, reset, prev1);
+        p1 = clip(lo1, hi1, init1 + d1);
+        d2 = _dev_clocked(clock, reset, prev2);
+        p2 = clip(lo2, hi2, init2 + d2);
+        d3 = _dev_clocked(clock, reset, prev3);
+        p3 = clip(lo3, hi3, init3 + d3);
+        d4 = _dev_clocked(clock, reset, prev4);
+        p4 = clip(lo4, hi4, init4 + d4);
         gs = fad(loss(p1, p2, p3, p4), (p1, p2, p3, p4)) : !, _, _, _, _;
         gm1 = frame_mean(clock, (gs : _, !, !, !));
         gm2 = frame_mean(clock, (gs : !, _, !, !));
         gm3 = frame_mean(clock, (gs : !, !, _, !));
         gm4 = frame_mean(clock, (gs : !, !, !, _));
         step(q1, q2, q3, q4, h1, h2, h3, h4) =
-            clip(lo1, hi1, q1 - upd1(h1)), clip(lo2, hi2, q2 - upd2(h2)),
-            clip(lo3, hi3, q3 - upd3(h3)), clip(lo4, hi4, q4 - upd4(h4));
+            clip(lo1 - init1, hi1 - init1, q1 - upd1(h1)), clip(lo2 - init2, hi2 - init2, q2 - upd2(h2)),
+            clip(lo3 - init3, hi3 - init3, q3 - upd3(h3)), clip(lo4 - init4, hi4 - init4, q4 - upd4(h4));
     };
 };
 
@@ -2580,15 +2609,20 @@ with {
 // with { x = hslider("descend_5D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_5D_clocked(clock, loss, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset) = loop ~ (_, _, _, _, _)
+descend_5D_clocked(clock, loss, upd1, upd2, upd3, upd4, upd5, lo1, hi1, lo2, hi2, lo3, hi3, lo4, hi4, lo5, hi5, init1, init2, init3, init4, init5, reset) = (loop ~ (_, _, _, _, _)) : (+(init1), +(init2), +(init3), +(init4), +(init5))
 with {
-    loop(prev1, prev2, prev3, prev4, prev5) = (clock, p1, p2, p3, p4, p5, gm1, gm2, gm3, gm4, gm5) : ondemand(step)
+    loop(prev1, prev2, prev3, prev4, prev5) = (clock, d1, d2, d3, d4, d5, gm1, gm2, gm3, gm4, gm5) : ondemand(step)
     with {
-        p1 = clip(lo1, hi1, _clocked_state(clock, init1, reset, prev1));
-        p2 = clip(lo2, hi2, _clocked_state(clock, init2, reset, prev2));
-        p3 = clip(lo3, hi3, _clocked_state(clock, init3, reset, prev3));
-        p4 = clip(lo4, hi4, _clocked_state(clock, init4, reset, prev4));
-        p5 = clip(lo5, hi5, _clocked_state(clock, init5, reset, prev5));
+        d1 = _dev_clocked(clock, reset, prev1);
+        p1 = clip(lo1, hi1, init1 + d1);
+        d2 = _dev_clocked(clock, reset, prev2);
+        p2 = clip(lo2, hi2, init2 + d2);
+        d3 = _dev_clocked(clock, reset, prev3);
+        p3 = clip(lo3, hi3, init3 + d3);
+        d4 = _dev_clocked(clock, reset, prev4);
+        p4 = clip(lo4, hi4, init4 + d4);
+        d5 = _dev_clocked(clock, reset, prev5);
+        p5 = clip(lo5, hi5, init5 + d5);
         gs = fad(loss(p1, p2, p3, p4, p5), (p1, p2, p3, p4, p5)) : !, _, _, _, _, _;
         gm1 = frame_mean(clock, (gs : _, !, !, !, !));
         gm2 = frame_mean(clock, (gs : !, _, !, !, !));
@@ -2596,8 +2630,8 @@ with {
         gm4 = frame_mean(clock, (gs : !, !, !, _, !));
         gm5 = frame_mean(clock, (gs : !, !, !, !, _));
         step(q1, q2, q3, q4, q5, h1, h2, h3, h4, h5) =
-            clip(lo1, hi1, q1 - upd1(h1)), clip(lo2, hi2, q2 - upd2(h2)), clip(lo3, hi3, q3 - upd3(h3)),
-            clip(lo4, hi4, q4 - upd4(h4)), clip(lo5, hi5, q5 - upd5(h5));
+            clip(lo1 - init1, hi1 - init1, q1 - upd1(h1)), clip(lo2 - init2, hi2 - init2, q2 - upd2(h2)), clip(lo3 - init3, hi3 - init3, q3 - upd3(h3)),
+            clip(lo4 - init4, hi4 - init4, q4 - upd4(h4)), clip(lo5 - init5, hi5 - init5, q5 - upd5(h5));
     };
 };
 
