@@ -7,7 +7,7 @@
 use std::process::ExitCode;
 use std::thread;
 
-use clap::{Parser, ValueEnum};
+use clap::{ArgAction, Parser, ValueEnum};
 
 use cranelift_ffi::probe::engine::{PolyProbe, Probe, RenderSpec};
 use cranelift_ffi::probe::poly;
@@ -39,10 +39,23 @@ enum Protocol {
 
 /// Probe a Faust DSP: set controls, render offline, report samples and statistics.
 #[derive(Debug, Parser)]
-#[command(name = "faustprobe", version, about, long_about = None)]
+#[command(
+    name = "faustprobe",
+    version = concat!(
+        env!("CARGO_PKG_VERSION"),
+        "\nCopyright (C) 2002-2026, GRAME - Centre National de Creation Musicale. All rights reserved."
+    ),
+    about,
+    long_about = None,
+    disable_version_flag = true
+)]
 struct Args {
     /// Faust DSP source file.
     file: String,
+
+    /// Print the version and the copyright notice (`-v`, as with faust-rs).
+    #[arg(short = 'v', long = "version", action = ArgAction::Version)]
+    version: (),
 
     /// Add a Faust library import directory (repeatable).
     #[arg(short = 'I', long = "import-dir", value_name = "DIR")]
