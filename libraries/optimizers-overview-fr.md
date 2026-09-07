@@ -541,17 +541,101 @@ programmes dans le tutoriel.
   4.7) ; apprendre les modèles récursifs avec les boucles `fad`, les modèles
   sans récursion avec les unes ou les autres.
 
-## 7. Portée : ce que cela atteint, et ce que cela n'atteint pas
+## 7. Deux phases : apprendre, puis servir
+
+Un programme qui apprend dans le processus audio continue de payer son
+apprentissage une fois les paramètres stabilisés : le réseau qui porte les
+tangentes, la perte et l'optimiseur tournent à chaque échantillon, utiles
+ou non, et avec une voie augmentée par paramètre ils font l'essentiel du
+coût : pour une douzaine de paramètres, l'effet lui-même n'en est que
+quelques pour cent. Couper le gradient avec `gate_g` n'y change rien : il est
+calculé, puis mis à zéro. Un `select2` non plus, Faust évalue ses deux
+branches. Ce qui le permet, c'est `ondemand` : un bloc dont l'horloge ne
+tire pas ne calcule rien et tient ses sorties.
+
+**La bascule.** Mettre tout l'apprentissage, boucle comprise, dans un
+`ondemand` externe dont l'horloge est `1 - done'`, `done` étant un drapeau
+que le bloc lève lui-même ; l'effet qui traite l'audio lit les paramètres
+tenus et rien d'autre ne change :
+
+```faust
+learn(t) = ps <: (si.bus(P), loss(t), (loss(t) : stop))
+with {
+    ps = op.descend_N_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0);
+    stop(l) = crit : (max ~ _)          // verrouillé
+    with {
+        n = (+(clock)) ~ _;               // périodes écoulées
+        lp = op.frame_sum(clock, l);      // la perte de la période, à son dernier échantillon
+        ck = clock & ((n % WINDOW) == 0); // un point de contrôle toutes les WINDOW périodes
+        lck = ba.sAndH(ck, lp);
+        rel = abs(lp - lck') / max(lck', 1e-12);
+        crit = clock & (n >= MIN_PERIODS) & ((ck & (rel < TOL)) | (n >= MAX_PERIODS));
+    };
+};
+gated = (ondemand(learn) : route(P + 2, P + 2, (P + 2, 1), par(i, P + 1, (i + 1, i + 2)))) ~ (1 - _);
+```
+
+Le critère compare la perte d'une période à celle du point de contrôle
+précédent, `WINDOW` périodes plus tôt, et s'arrête en fin de période quand
+le changement relatif est sous `TOL`, après `MIN_PERIODS`, ou à
+`MAX_PERIODS` ; comparer des périodes consécutives se fait piéger par les
+plateaux d'un dépassement. Le retard d'un échantillon de la récursion fait
+retomber l'horloge à l'échantillon qui suit le dernier de la période, si
+bien que le temps propre du bloc, qui compte ses tirs, reste aligné sur la
+période si l'apprentissage reprend. Les pertes par période du programme
+cadencé sont bit-identiques à celles du programme non cadencé : un `fad` et
+une récursion dans un `ondemand` imbriqué dans un autre `ondemand` sont
+compilés exactement.
+
+**Les coefficients.** Une fois arrêté, les paramètres tenus restent des
+signaux, donc un filtre qui en calcule ses coefficients recalcule `exp`,
+`tan` et `cos` à chaque échantillon, là où le compilateur sort les mêmes
+expressions de la boucle quand elles dépendent de sliders. Un second
+`ondemand` comble l'écart : il calcule les coefficients (gains des shelves
+et de l'égaliseur, cosinus et sinus des angles appris) et son horloge est
+la comparaison de chaque paramètre avec sa valeur précédente, il tire donc
+une fois par pas d'optimiseur et plus jamais une fois l'apprentissage
+arrêté ; les filtres reçoivent les gains linéaires tenus
+(`fi.filterbank(1, (fx)) : *(g), _ :> _` est ce sur quoi `fi.highshelf`
+est construit). La réponse est bit-identique à la version par échantillon.
+
+**Mesuré** sur un cœur, blocs de 320 échantillons, une réverbération à une
+douzaine de paramètres appris (l'exemple de calibration du document des
+exemples DDSP, poussé plus loin) :
+
+| phase | × temps réel |
+|---|---|
+| apprentissage, programme non cadencé | 28 |
+| apprentissage, programme cadencé | 23 |
+| après la bascule | 196 |
+| après la bascule, coefficients hissés | 572 |
+| le même réseau avec des sliders, sans apprentissage | 625 |
+| après une recompilation avec les valeurs apprises en constantes | 631 |
+
+La bascule coûte environ 18 % pendant l'apprentissage, l'imbrication des
+domaines ; une fois arrêté, l'effet ne coûte pas plus que le même réseau
+seul. La dernière ligne est l'autre voie, celle qu'un framework à tenseurs
+est obligé de prendre : l'hôte remplace les sliders par les valeurs
+apprises, recompile (0,07 s avec le JIT Cranelift) et remplace l'instance,
+qui part alors du silence et doit être fondue ; la propagation de
+constantes ne gagne rien sur les sliders, les expressions qui en dépendent
+sortant déjà de la boucle d'échantillons. La bascule n'a besoin d'aucun
+hôte et garde l'état ; c'est `ondemand` appliqué à la dérivée, possible
+parce que la dérivée est un signal du même programme, et des horloges
+décident de ce qui en est calculé : l'apprentissage tant qu'il sert, les
+coefficients quand un paramètre change, l'effet toujours.
+
+## 8. Portée : ce que cela atteint, et ce que cela n'atteint pas
 
 Face aux frameworks à tenseurs de la DDSP (PyTorch ou JAX avec les
 bibliothèques DDSP, torchaudio, FLAMO, dasp-pytorch), la différentiation au
 niveau du compilateur est à la DDSP ce que le filtrage adaptatif est à
 l'apprentissage automatique : exacte, bon marché, temps réel, interprétable,
 petite. Son domaine, ce sont les modèles paramétriques dont un ingénieur du
-son sait lire les paramètres. La calibration d'un réseau de lignes à retard
-sur des salles mesurées, hors ligne et dans le processus audio, en est
-l'exemple travaillé (le projet `faust-diff-fdn`) ; cette section est ce
-qu'il a appris sur la portée de l'approche.
+son sait lire les paramètres. La calibration d'une réverbération sur des
+salles mesurées, hors ligne et dans le processus audio, est l'exemple
+travaillé derrière cette section, qui est ce qu'il a appris sur la portée de
+l'approche.
 
 **Ce qu'on peut raisonnablement atteindre.**
 
@@ -563,7 +647,7 @@ qu'il a appris sur la portée de l'approche.
 - *L'apprentissage dans le processus audio*, ce qu'aucun framework ne fait :
   effets qui se calibrent, suivi d'une cible qui dérive, annulation d'écho,
   filtres adaptatifs, patches qui s'accordent, et l'apprentissage coupé par
-  une horloge `ondemand` une fois fini, sans coût ensuite. Réaliste jusqu'à
+  une horloge `ondemand` une fois fini, sans coût ensuite (section 7). Réaliste jusqu'à
   quelques dizaines de paramètres en temps réel avec `fad`, sur des cibles
   embarquées ou dans un navigateur, puisque le programme qui apprend est du
   Faust ordinaire.
@@ -587,7 +671,7 @@ qu'il a appris sur la portée de l'approche.
   plusieurs heures, on est à des ordres de grandeur d'un framework.
 - *Tout est un graphe de signaux.* Une couche de mille poids fait mille
   signaux ; la compilation et la taille du code croissent avec le graphe
-  dérivé (quarante tangentes directes à travers une FDN à six lignes :
+  dérivé (quarante tangentes directes à travers une petite réverbération :
   15 s). Au-delà de quelques dizaines de milliers de nœuds, la
   différentiation à la compilation ne suit plus.
 - *Pas de FFT dans le langage.* La perte spectrale multi-résolution, l'outil
@@ -639,7 +723,7 @@ qu'il a appris sur la portée de l'approche.
   framework, cela demande des relaxations, et elles seraient à écrire en
   Faust.
 
-## 8. Références
+## 9. Références
 
 - J. Engel, L. Hantrakul, C. Gu, A. Roberts, « DDSP: Differentiable Digital
   Signal Processing », ICLR 2020. <https://arxiv.org/abs/2001.04643>

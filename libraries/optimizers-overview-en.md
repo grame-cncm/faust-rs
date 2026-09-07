@@ -511,16 +511,98 @@ in the tutorial.
   the direct term, not the derivative through the recursion (section 4.7);
   learn recursive models with the `fad` loops, feed-forward ones with either.
 
-## 7. Scope: what this reaches, and what it does not
+## 7. Two phases: learning, then use
+
+A program that learns inside the audio process keeps paying for its
+learning after the parameters have settled: the network carrying the
+tangents, the loss and the optimiser run at every sample whether or not
+they are still useful, and with one augmented lane per parameter they are
+most of the cost: with a dozen parameters, the effect itself is a few
+percent of it. Gating the gradient with `gate_g` does not help: the gradient is still computed, then zeroed. A
+`select2` does not help either, Faust evaluates both branches. What does is
+`ondemand`: a block whose clock does not fire computes nothing and holds
+its outputs.
+
+**The gate.** Put the whole learning, the loop included, in an outer
+`ondemand` whose clock is `1 - done'`, with `done` a flag the block itself
+raises; the effect that processes the audio reads the held parameters
+and nothing else changes:
+
+```faust
+learn(t) = ps <: (si.bus(P), loss(t), (loss(t) : stop))
+with {
+    ps = op.descend_N_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0);
+    stop(l) = crit : (max ~ _)          // latched
+    with {
+        n = (+(clock)) ~ _;               // periods elapsed
+        lp = op.frame_sum(clock, l);      // the loss of the period, at its last sample
+        ck = clock & ((n % WINDOW) == 0); // a checkpoint every WINDOW periods
+        lck = ba.sAndH(ck, lp);
+        rel = abs(lp - lck') / max(lck', 1e-12);
+        crit = clock & (n >= MIN_PERIODS) & ((ck & (rel < TOL)) | (n >= MAX_PERIODS));
+    };
+};
+gated = (ondemand(learn) : route(P + 2, P + 2, (P + 2, 1), par(i, P + 1, (i + 1, i + 2)))) ~ (1 - _);
+```
+
+The criterion compares the loss of a period with the loss at the previous
+checkpoint, `WINDOW` periods earlier, and stops at a period boundary when
+the relative change is under `TOL`, after `MIN_PERIODS`, or at
+`MAX_PERIODS`; comparing consecutive periods instead is fooled by the
+plateaus of an overshoot. The recursion's one-sample delay makes the clock
+fall at the sample after the period's last one, so the block's own time,
+which counts its firings, stays aligned with the period if learning is
+resumed. The period losses of the gated program are bit-identical to the
+ungated one's: a `fad` and a recursion inside an `ondemand` inside another
+`ondemand` are compiled exactly.
+
+**The coefficients.** Once stopped, the held parameters are still signals,
+so a filter that computes its coefficients from them recomputes `exp`, `tan`
+and `cos` at every sample, where the compiler moves the same expressions
+out of the loop when they depend on sliders. A second `ondemand` closes
+the gap: it computes the coefficients (shelf and equaliser gains, cosines
+and sines of learned angles) and its clock is the comparison of every
+parameter with its previous value, so it fires once per optimiser step and
+never once learning has stopped; the filters take the held linear gains
+(`fi.filterbank(1, (fx)) : *(g), _ :> _` is what `fi.highshelf` is built
+on). The response is bit-identical to the per-sample version.
+
+**Measured** on one core, blocks of 320 samples, a reverberator with a
+dozen learned parameters (the calibration example of the DDSP examples
+document, taken further):
+
+| phase | × real time |
+|---|---|
+| learning, ungated program | 28 |
+| learning, gated program | 23 |
+| after the gate | 196 |
+| after the gate, coefficients hoisted | 572 |
+| the same network with sliders, no learning | 625 |
+| after a recompilation with the learned values as constants | 631 |
+
+The gate costs about 18 % while learning, the nesting of the domains; once
+stopped the effect costs no more than the same network alone. The last row
+is the other route, the one a tensor framework has to take: the host
+substitutes the learned values for the sliders, recompiles (0.07 s with the
+Cranelift JIT) and swaps the instance, which then starts from silence and
+has to be crossfaded; constant propagation gains nothing over sliders,
+since slider-dependent expressions already leave the sample loop. The gate
+needs no host and keeps the state; it is `ondemand` applied to the
+derivative, available because the derivative is a signal of the same
+program, and clocks decide which parts of it are computed: the learning
+while it is useful, the coefficients when a parameter changes, the effect
+always.
+
+## 8. Scope: what this reaches, and what it does not
 
 Against the tensor frameworks of DDSP (PyTorch or JAX with the DDSP
 libraries, torchaudio, FLAMO, dasp-pytorch), compiler-level differentiation
 is to DDSP what adaptive filtering is to machine learning: exact, cheap,
 real time, interpretable, small. Its domain is the parametric models whose
-parameters a sound engineer can read. The calibration of a feedback delay
-network to measured rooms, offline and inside the audio process, is the
-worked example (the `faust-diff-fdn` project); this section is what it
-taught about the reach of the approach.
+parameters a sound engineer can read. The calibration of a reverberator to
+measured rooms, offline and inside the audio process, is the worked example
+behind this section, which is what it taught about the reach of the
+approach.
 
 **What can reasonably be reached.**
 
@@ -531,7 +613,7 @@ taught about the reach of the approach.
 - *Learning inside the audio process*, which no framework does: effects that
   calibrate themselves, tracking a drifting target, echo cancellation,
   adaptive filters, patches that tune themselves, and the learning switched
-  off by an `ondemand` clock once done, at no cost afterwards. Realistic up
+  off by an `ondemand` clock once done, at no cost afterwards (section 7). Realistic up
   to a few tens of parameters in real time with `fad`, on embedded targets
   or in a browser, since the program that learns is ordinary Faust.
 - *Small networks written in Faust*: an amplifier GRU, an MLP of a few
@@ -553,7 +635,7 @@ taught about the reach of the approach.
   is orders of magnitude.
 - *Everything is a signal graph.* A layer of a thousand weights is a
   thousand signals; compile time and code size grow with the differentiated
-  graph (forty forward tangents through a six-line FDN: 15 s). Beyond a few
+  graph (forty forward tangents through a small reverberator: 15 s). Beyond a few
   tens of thousands of nodes, compile-time differentiation stops following.
 - *No FFT in the language.* The multi-resolution spectral loss, the
   workhorse of DDSP, does not exist as such; filter banks approximate it.
@@ -596,7 +678,7 @@ taught about the reach of the approach.
   lines, an integer delay length, a discrete choice. As in every framework
   this needs relaxations, and they would be written in Faust.
 
-## 8. References
+## 9. References
 
 - J. Engel, L. Hantrakul, C. Gu, A. Roberts, "DDSP: Differentiable Digital
   Signal Processing", ICLR 2020. <https://arxiv.org/abs/2001.04643>

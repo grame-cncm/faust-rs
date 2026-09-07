@@ -455,6 +455,12 @@ going from 0.02 to 0.0016. `upd` shows how conditioning composes: it is an
 ordinary function of the gradient, built from library pieces, passed as the
 engine.
 
+`gate_g` zeroes the gradient but still computes it, and so does the model
+that carries the tangents. To stop paying for the learning once the
+parameters have settled, put the whole loop in an `ondemand` whose clock a
+convergence criterion switches off: section 7 of the overview shows the
+pattern and its cost, a factor of eight to twenty-five.
+
 ## 9. Solving instead of learning: Newton
 
 The same derivative machinery solves equations. Virtual-analog models are full

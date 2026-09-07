@@ -472,6 +472,12 @@ vitesse passer de 0,02 à 0,0016. `upd` montre comment le conditionnement se
 compose : c'est une fonction ordinaire du gradient, bâtie avec des briques de
 la bibliothèque, passée comme moteur.
 
+`gate_g` met le gradient à zéro mais le calcule quand même, et le modèle
+qui porte les tangentes tourne aussi. Pour cesser de payer l'apprentissage
+une fois les paramètres stabilisés, mettre toute la boucle dans un
+`ondemand` dont un critère de convergence coupe l'horloge : la section 7 de
+l'aperçu montre le motif et son coût, un facteur huit à vingt-cinq.
+
 ## 9. Résoudre plutôt qu'apprendre : Newton
 
 La même mécanique de dérivée résout des équations. Les modèles analogiques
