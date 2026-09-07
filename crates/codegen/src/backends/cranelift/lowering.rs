@@ -4,8 +4,8 @@
 //! expressions, statements, stack slots, and struct-field access. Unsupported
 //! shapes are filtered by `subset` before this lowering path is used.
 
-use cranelift_frontend::Variable;
 
+use cranelift_frontend::Variable;
 use super::*;
 
 /// Lowered expression value tracked in the local Cranelift lowering environment.
@@ -183,8 +183,6 @@ pub(crate) struct ComputeLowering<'a, 'b, 'c> {
     pub(crate) ptr_ty: Type,
     /// Local FIR variable → binding mapping (built up during lowering).
     vars: HashMap<String, LocalBinding>,
-    /// Monotonic index for fresh builder SSA variables.
-    next_var: u32,
     /// Cache of already-imported host function refs keyed by signature string.
     ///
     /// Cranelift requires explicit `declare_function` + `declare_func_in_func`
@@ -324,9 +322,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             LoweredExpr::Ptr { value, pointee } => (value, true, pointee),
         };
         let value = self.coerce_to_local_type(value, clif_ty)?;
-        let var = Variable::from_u32(self.next_var);
-        self.next_var += 1;
-        self.fb.declare_var(var, clif_ty);
+        let var = self.fb.declare_var(clif_ty);
         self.fb.def_var(var, value);
         Ok(self.vars.insert(
             name.to_string(),
@@ -380,10 +376,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     /// Resolves the payload base for inline and manager-externalized tables.
     fn struct_table_base(&mut self, field: &StructFieldLayout) -> Result<Value, LoweringError> {
         let dsp = self.dsp_base_ptr()?;
-        let slot = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
+        let slot = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
         Ok(match field.kind {
             StructFieldKind::ExternalTable { .. } => {
-                self.fb.ins().load(self.ptr_ty, MemFlags::new(), slot, 0)
+                self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), slot, 0)
             }
             StructFieldKind::Table { .. } => slot,
             StructFieldKind::Scalar(_) => {
@@ -398,9 +394,9 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     /// Resolves a static table data object, dereferencing a mem0 pointer slot.
     fn static_table_base(&mut self, name: &str, data_id: DataId) -> Value {
         let gv = self.jit.declare_data_in_func(data_id, self.fb.func);
-        let slot = self.fb.ins().global_value(self.ptr_ty, gv);
+        let slot = self.fb.ins().symbol_value(self.ptr_ty, gv);
         if self.external_static_tables.contains(name) {
-            self.fb.ins().load(self.ptr_ty, MemFlags::new(), slot, 0)
+            self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), slot, 0)
         } else {
             slot
         }
@@ -681,7 +677,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let body_block = self.fb.create_block();
         let exit = self.fb.create_block();
         self.fb.append_block_param(header, types::I32);
-        self.fb.ins().jump(header, &[init]);
+        self.fb.ins().jump(header, &[BlockArg::Value(init)]);
 
         self.fb.switch_to_block(header);
         let i_val = self.fb.block_params(header)[0];
@@ -703,7 +699,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             } else {
                 self.fb.ins().iadd(i_val, one)
             };
-            self.fb.ins().jump(header, &[next]);
+            self.fb.ins().jump(header, &[BlockArg::Value(next)]);
         }
         if let Some(old) = prev {
             self.vars.insert(var, old);
@@ -756,7 +752,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         };
         let elem_size = i64::from(elem_ty.bytes());
         let addr = self.indexed_addr(base_ptr, index_v, elem_size);
-        self.fb.ins().store(MemFlags::new(), value_v, addr, 0);
+        self.fb.ins().store(MemFlagsData::new(), value_v, addr, 0);
         Ok(())
     }
 
@@ -772,10 +768,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             }
         };
         let dsp = self.dsp_base_ptr()?;
-        let addr = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
+        let addr = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
         let mut value_v = self.lower_expr(value, Some(&scalar_ty))?.value();
         value_v = self.coerce_value_to_fir_type(value_v, &scalar_ty)?;
-        self.fb.ins().store(MemFlags::new(), value_v, addr, 0);
+        self.fb.ins().store(MemFlagsData::new(), value_v, addr, 0);
         Ok(())
     }
 
@@ -802,7 +798,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         value_v = self.coerce_value_to_fir_type(value_v, &elem_type)?;
         let elem_clif = self.fir_type_to_clif(&elem_type)?;
         let addr = self.indexed_addr(base, index_v, i64::from(elem_clif.bytes()));
-        self.fb.ins().store(MemFlags::new(), value_v, addr, 0);
+        self.fb.ins().store(MemFlagsData::new(), value_v, addr, 0);
         Ok(())
     }
 
@@ -840,7 +836,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         value_v = self.coerce_value_to_fir_type(value_v, &elem_type)?;
         let elem_clif = self.fir_type_to_clif(&elem_type)?;
         let addr = self.indexed_addr(base, index_v, i64::from(elem_clif.bytes()));
-        self.fb.ins().store(MemFlags::new(), value_v, addr, 0);
+        self.fb.ins().store(MemFlagsData::new(), value_v, addr, 0);
         Ok(())
     }
 
@@ -882,21 +878,21 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let exit = self.fb.create_block();
         let init_i = self.fb.ins().iconst(types::I32, i64::from(shift_len));
         self.fb.append_block_param(header, types::I32);
-        self.fb.ins().jump(header, &[init_i]);
+        self.fb.ins().jump(header, &[BlockArg::Value(init_i)]);
 
         self.fb.switch_to_block(header);
         let i_val = self.fb.block_params(header)[0];
-        let cond = self.fb.ins().icmp_imm(IntCC::SignedGreaterThan, i_val, 0);
+        let cond = self.fb.ins().icmp_imm_s(IntCC::SignedGreaterThan, i_val, 0);
         self.fb.ins().brif(cond, body, &[], exit, &[]);
 
         self.fb.switch_to_block(body);
-        let src_idx = self.fb.ins().iadd_imm(i_val, -1);
+        let src_idx = self.fb.ins().iadd_imm_s(i_val, -1);
         let src_addr = self.indexed_addr(base, src_idx, elem_bytes);
         let dst_addr = self.indexed_addr(base, i_val, elem_bytes);
-        let v = self.fb.ins().load(elem_clif, MemFlags::new(), src_addr, 0);
-        self.fb.ins().store(MemFlags::new(), v, dst_addr, 0);
-        let next = self.fb.ins().iadd_imm(i_val, -1);
-        self.fb.ins().jump(header, &[next]);
+        let v = self.fb.ins().load(elem_clif, MemFlagsData::new(), src_addr, 0);
+        self.fb.ins().store(MemFlagsData::new(), v, dst_addr, 0);
+        let next = self.fb.ins().iadd_imm_s(i_val, -1);
+        self.fb.ins().jump(header, &[BlockArg::Value(next)]);
         self.fb.seal_block(body);
         self.fb.seal_block(header);
 
@@ -933,7 +929,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         else_block: Option<FirId>,
     ) -> Result<(), LoweringError> {
         let cond_v = self.lower_expr(cond, Some(&FirType::Bool))?.value();
-        let cond_b1 = self.fb.ins().icmp_imm(IntCC::NotEqual, cond_v, 0);
+        let cond_b1 = self.fb.ins().icmp_imm_s(IntCC::NotEqual, cond_v, 0);
         let then_b = self.fb.create_block();
         let else_b = self.fb.create_block();
         let cont_b = self.fb.create_block();
@@ -1011,7 +1007,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             };
             let fallthrough_b = next_b.or(default_b).unwrap_or(cont_b);
 
-            let cond_match = self.fb.ins().icmp_imm(IntCC::Equal, cond_v, *case_value);
+            let cond_match = self.fb.ins().icmp_imm_s(IntCC::Equal, cond_v, *case_value);
             self.fb
                 .ins()
                 .brif(cond_match, then_b, &[], fallthrough_b, &[]);
@@ -1069,7 +1065,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let body_block = self.fb.create_block();
         let exit = self.fb.create_block();
         self.fb.append_block_param(header, types::I32);
-        self.fb.ins().jump(header, &[init_v]);
+        self.fb.ins().jump(header, &[BlockArg::Value(init_v)]);
 
         self.fb.switch_to_block(header);
         let i_val = self.fb.block_params(header)[0];
@@ -1087,7 +1083,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         self.lower_stmt(body)?;
         let step_v = self.lower_expr(step, Some(&FirType::Int32))?.value();
         let next = self.fb.ins().iadd(i_val, step_v);
-        self.fb.ins().jump(header, &[next]);
+        self.fb.ins().jump(header, &[BlockArg::Value(next)]);
         self.fb.seal_block(body_block);
         self.fb.seal_block(header);
 
@@ -1111,7 +1107,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
 
         self.fb.switch_to_block(header);
         let cond_v = self.lower_expr(cond, Some(&FirType::Bool))?.value();
-        let cond_b1 = self.fb.ins().icmp_imm(IntCC::NotEqual, cond_v, 0);
+        let cond_b1 = self.fb.ins().icmp_imm_s(IntCC::NotEqual, cond_v, 0);
         self.fb.ins().brif(cond_b1, body_block, &[], exit, &[]);
 
         self.fb.switch_to_block(body_block);
@@ -1181,9 +1177,9 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                     }
                 };
                 let dsp = self.dsp_base_ptr()?;
-                let addr = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
+                let addr = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
                 let field_clif_ty = self.fir_type_to_clif(&scalar_ty)?;
-                let raw = self.fb.ins().load(field_clif_ty, MemFlags::new(), addr, 0);
+                let raw = self.fb.ins().load(field_clif_ty, MemFlagsData::new(), addr, 0);
                 let coerced = self.coerce_value_to_fir_type(raw, &typ)?;
                 Ok(LoweredExpr::Scalar(coerced))
             }
@@ -1198,9 +1194,9 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                     ))
                 })?;
                 let gv = self.jit.declare_data_in_func(data_id, self.fb.func);
-                let addr = self.fb.ins().global_value(self.ptr_ty, gv);
+                let addr = self.fb.ins().symbol_value(self.ptr_ty, gv);
                 let elem_clif = self.fir_type_to_clif(&typ)?;
-                let raw = self.fb.ins().load(elem_clif, MemFlags::new(), addr, 0);
+                let raw = self.fb.ins().load(elem_clif, MemFlagsData::new(), addr, 0);
                 let coerced = self.coerce_value_to_fir_type(raw, &typ)?;
                 Ok(LoweredExpr::Scalar(coerced))
             }
@@ -1238,7 +1234,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 };
                 let elem_clif = self.fir_type_to_clif(&elem_fir_ty)?;
                 let addr = self.indexed_addr(base_ptr, index_v, i64::from(elem_clif.bytes()));
-                let raw = self.fb.ins().load(elem_clif, MemFlags::new(), addr, 0);
+                let raw = self.fb.ins().load(elem_clif, MemFlagsData::new(), addr, 0);
                 let coerced = self.coerce_value_to_fir_type(raw, &typ)?;
                 Ok(LoweredExpr::Scalar(coerced))
             }
@@ -1252,7 +1248,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
                 let elem_ty = self.fir_type_to_clif(&typ)?;
                 let addr = self.indexed_addr(base_ptr, index_v, i64::from(self.ptr_ty.bytes()));
-                let loaded = self.fb.ins().load(elem_ty, MemFlags::new(), addr, 0);
+                let loaded = self.fb.ins().load(elem_ty, MemFlagsData::new(), addr, 0);
                 let pointee = match &typ {
                     FirType::Ptr(inner) => Some(FirTypeRef::from_fir_type(inner)),
                     _ => None,
@@ -1282,7 +1278,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
                 let elem_clif = self.fir_type_to_clif(&elem_type)?;
                 let addr = self.indexed_addr(base, index_v, i64::from(elem_clif.bytes()));
-                let raw = self.fb.ins().load(elem_clif, MemFlags::new(), addr, 0);
+                let raw = self.fb.ins().load(elem_clif, MemFlagsData::new(), addr, 0);
                 let coerced = self.coerce_value_to_fir_type(raw, &typ)?;
                 Ok(LoweredExpr::Scalar(coerced))
             }
@@ -1301,7 +1297,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 let index_v = self.lower_expr(index, Some(&FirType::Int32))?.value();
                 let elem_clif = self.fir_type_to_clif(&typ)?;
                 let addr = self.indexed_addr(base, index_v, i64::from(elem_clif.bytes()));
-                let raw = self.fb.ins().load(elem_clif, MemFlags::new(), addr, 0);
+                let raw = self.fb.ins().load(elem_clif, MemFlagsData::new(), addr, 0);
                 let coerced = self.coerce_value_to_fir_type(raw, &typ)?;
                 Ok(LoweredExpr::Scalar(coerced))
             }
@@ -1316,7 +1312,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 let then_v = self.coerce_value_to_fir_type(then_v, &typ)?;
                 let else_v = self.lower_expr(else_value, Some(&typ))?.value();
                 let else_v = self.coerce_value_to_fir_type(else_v, &typ)?;
-                let bool_cond = self.fb.ins().icmp_imm(IntCC::NotEqual, cond_v, 0);
+                let bool_cond = self.fb.ins().icmp_imm_s(IntCC::NotEqual, cond_v, 0);
                 let out = self.fb.ins().select(bool_cond, then_v, else_v);
                 Ok(LoweredExpr::Scalar(out))
             }
@@ -1751,8 +1747,8 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     fn load_soundfile_ptr(&mut self, var: &str) -> Result<Value, LoweringError> {
         let field = self.struct_field(var)?.clone();
         let dsp = self.dsp_base_ptr()?;
-        let sf_addr = self.fb.ins().iadd_imm(dsp, i64::from(field.offset_bytes));
-        let sf_ptr = self.fb.ins().load(self.ptr_ty, MemFlags::new(), sf_addr, 0);
+        let sf_addr = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
+        let sf_ptr = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_addr, 0);
         Ok(sf_ptr)
     }
 
@@ -1766,10 +1762,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     ) -> Result<LoweredExpr, LoweringError> {
         let sf_ptr = self.load_soundfile_ptr(var)?;
         // fLength is an `int*` at byte offset 8 from the Soundfile*.
-        let len_ptr = self.fb.ins().load(self.ptr_ty, MemFlags::new(), sf_ptr, 8);
+        let len_ptr = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 8);
         let part_v = self.lower_expr(part, Some(&FirType::Int32))?.value();
         let addr = self.indexed_addr(len_ptr, part_v, 4);
-        let result = self.fb.ins().load(types::I32, MemFlags::new(), addr, 0);
+        let result = self.fb.ins().load(types::I32, MemFlagsData::new(), addr, 0);
         Ok(LoweredExpr::Scalar(result))
     }
 
@@ -1783,10 +1779,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     ) -> Result<LoweredExpr, LoweringError> {
         let sf_ptr = self.load_soundfile_ptr(var)?;
         // fSR is an `int*` at byte offset 16 from the Soundfile*.
-        let sr_ptr = self.fb.ins().load(self.ptr_ty, MemFlags::new(), sf_ptr, 16);
+        let sr_ptr = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 16);
         let part_v = self.lower_expr(part, Some(&FirType::Int32))?.value();
         let addr = self.indexed_addr(sr_ptr, part_v, 4);
-        let result = self.fb.ins().load(types::I32, MemFlags::new(), addr, 0);
+        let result = self.fb.ins().load(types::I32, MemFlagsData::new(), addr, 0);
         Ok(LoweredExpr::Scalar(result))
     }
 
@@ -1813,7 +1809,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let sf_ptr = self.load_soundfile_ptr(var)?;
 
         // fBuffers is a `void*` (= float** or double**) at byte offset 0.
-        let bufs = self.fb.ins().load(self.ptr_ty, MemFlags::new(), sf_ptr, 0);
+        let bufs = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 0);
 
         // chan_buf = ((FAUSTFLOAT**)bufs)[chan]  — one pointer per channel.
         let ptr_stride = i64::from(self.ptr_ty.bytes());
@@ -1822,16 +1818,16 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let chan_buf = self
             .fb
             .ins()
-            .load(self.ptr_ty, MemFlags::new(), chan_ptr_addr, 0);
+            .load(self.ptr_ty, MemFlagsData::new(), chan_ptr_addr, 0);
 
         // part_offset = fOffset[part]  — fOffset is `int*` at byte offset 24.
-        let off_ptr = self.fb.ins().load(self.ptr_ty, MemFlags::new(), sf_ptr, 24);
+        let off_ptr = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 24);
         let part_v = self.lower_expr(part, Some(&FirType::Int32))?.value();
         let part_off_addr = self.indexed_addr(off_ptr, part_v, 4);
         let part_off = self
             .fb
             .ins()
-            .load(types::I32, MemFlags::new(), part_off_addr, 0);
+            .load(types::I32, MemFlagsData::new(), part_off_addr, 0);
 
         // actual_idx = fOffset[part] + idx
         let idx_v = self.lower_expr(idx, Some(&FirType::Int32))?.value();
@@ -1844,7 +1840,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let raw = self
             .fb
             .ins()
-            .load(elem_clif, MemFlags::new(), sample_addr, 0);
+            .load(elem_clif, MemFlagsData::new(), sample_addr, 0);
         let result = self.coerce_value_to_fir_type(raw, typ)?;
         Ok(LoweredExpr::Scalar(result))
     }
@@ -2007,7 +2003,6 @@ pub(crate) fn try_lower_function_body(
         struct_layout: cx.struct_layout,
         ptr_ty: cx.ptr_ty,
         vars,
-        next_var: 0,
         import_refs: HashMap::new(),
         static_data_ids: cx.static_data_ids,
         static_table_elem_types: cx.static_table_elem_types,

@@ -34,7 +34,8 @@
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{
-    AbiParam, FuncRef, InstBuilder, MemFlags, StackSlotData, StackSlotKind, Type, Value, types,
+    AbiParam, BlockArg, FuncRef, InstBuilder, MemFlagsData, StackSlotData, StackSlotKind, Type,
+    Value, types,
 };
 use cranelift_codegen::settings;
 use cranelift_codegen::settings::Configurable;

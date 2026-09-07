@@ -378,7 +378,7 @@ pub(crate) fn declare_jit_function(
             compute_body_lowered = false;
         }
         fb.seal_all_blocks();
-        fb.finalize();
+        fb.finalize(jit.target_config());
     }
 
     let compute_clif_text = ctx.func.display().to_string();

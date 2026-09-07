@@ -19,11 +19,11 @@ wasm-encoder = { version = "0.225", optional = true }
 wasmparser = { version = "0.225", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-cranelift-codegen = "0.117"
-cranelift-frontend = "0.117"
-cranelift-jit = "0.117"
-cranelift-module = "0.117"
-cranelift-native = "0.117"
+cranelift-codegen = "0.135"
+cranelift-frontend = "0.135"
+cranelift-jit = "0.135"
+cranelift-module = "0.135"
+cranelift-native = "0.135"
 
 [dev-dependencies]
 clap.workspace = true
