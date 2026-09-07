@@ -109,7 +109,8 @@ Run with `-n 1`: the six outputs are `6, 3, 2, 6, 3, 2`.
 
 The seeds are whatever signals you list; for a loss with `N` parameters, one
 call gives the `N` derivatives. Most of this tutorial uses `fad`; `rad` comes
-back in section 4.1 (many parameters) and in section 10 (hosts).
+back in section 4.1 (many parameters), in section 10 (in real time inside
+the graph, then handed to a host) and in section 11.4 (clocked).
 
 ## 3. The same loop with the library
 
@@ -485,12 +486,133 @@ second is the residual of the solution — `0` to numerical precision on every
 frame. This is the building block of zero-delay-feedback filters and diode
 clippers.
 
-## 10. Handing gradients to a host: `rad`
+## 10. Reverse mode in real time, then handed to a host: `rad`
 
-Everything so far learned inside the graph. Sometimes the program should only
-*produce* derivatives, and a host (a plugin, a Python script, a test harness)
-does the accumulation and the update — for example to train on a batch of
-recordings rather than on the live signal. That is what `rad` is for:
+Section 2 introduced `rad` as the other layout of the same numbers, and
+section 4.1 used it through `descend_N_rad`. This section writes it by hand
+inside the graph, as section 1 did for `fad`, then puts it in two programs
+that learn in real time, and ends with the use where it only produces
+gradients for a host. The rule of section 4.1 holds throughout: a `rad`
+consumed inside the graph sees one sample, which is exact for a model with no
+recursion between the parameters and the output, and gives only the direct
+term otherwise.
+
+### 10.1 Three taps, one sweep
+
+A three-tap FIR learned by hand, like the gain of section 1, but with one
+`rad` for the three gradients instead of three `fad`s:
+
+```faust
+import("stdfaust.lib");
+x = no.noise;
+target = 0.5 * x + 0.3 * x' - 0.2 * x'';
+lr = 0.02;
+model(h0, h1, h2) = h0 * x + h1 * x' + h2 * x'';
+loss(h0, h1, h2) = (model(h0, h1, h2) - target) * (model(h0, h1, h2) - target);
+step(h0, h1, h2) = h0 - lr * g0, h1 - lr * g1, h2 - lr * g2
+with {
+    grads = rad(loss(h0, h1, h2), (h0, h1, h2)) : !, _, _, _;   // one sweep, three gradients
+    g0 = grads : _, !, !;
+    g1 = grads : !, _, !;
+    g2 = grads : !, !, _;
+};
+taps = step ~ (_, _, _);
+process = taps, target - (taps : model);
+```
+
+Run with `-n 3000 --every 500`: the taps read `0.4995, 0.2997, -0.1999` at
+500 samples, `0.5, 0.3, -0.2` to `1e-6` at 1 000, exactly afterwards, and
+the residual is zero. `rad(loss, (h0, h1, h2))` returns four signals, the
+loss then the three gradients; `: !, _, _, _` drops the loss. The three
+projections of `grads` cost one sweep: the compiler shares the expression.
+Compare with section 1: the `fad` of a loss with `N` parameters reads
+`fad(loss, (h0, h1, h2))` too, with the same output here; the difference is
+in the generated code, one reverse sweep against three carried tangents, and
+it grows with `N`.
+
+### 10.2 An adaptive effect: the echo canceller
+
+The far-end signal of a conference goes to a loudspeaker; the microphone
+picks up its echo through the room. The canceller learns an FIR replica of
+the room response and subtracts it from the microphone signal, the NLMS echo
+canceller of every conferencing system. Here the room is a synthetic 64-tap
+response, and the loop is `lsq_N_rad`, the reverse-mode version of the bus
+loop of section 4.1 with the `nlms` engine:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+N = 64;
+far = no.noise;
+room(i) = sin(1.7 * i + 0.3) * exp(-i / 12.0);
+fir = si.bus(N), (_ <: par(i, N, @(i))) : ro.interleave(N, 2) : par(i, N, *) :> _;
+mic = (par(i, N, room(i)), far) : fir;
+h = op.lsq_N_rad(N, fir, op.nlms(0.01, 0.000001, 0.99), -2.0, 2.0, 0.0, 0.0, mic, far);
+residual = mic - ((h, far) : fir);
+process = residual, mic;
+```
+
+Run with `-n 4000 --quiet`, then in windows of 1 000 samples
+(`--skip 1000 -n 2000`, and so on): the residual starts at the level of the
+echo, rms `2.6` over the first window with a transient peak of 25 while the
+taps overshoot, falls to `1.4e-4` over the second, `2e-8` over the third and
+`0` afterwards, an echo return loss enhancement beyond 100 dB on this
+noiseless room. The sensitivity of the FIR output to tap `i` is the delayed
+far-end sample `x[n - i]`: 64 sensitivities, one output, which reverse mode
+gives in one sweep per sample where `lsq_N` would carry 64 tangents. The FIR
+has no recursion with respect to the taps, so the one-sample horizon loses
+nothing. `mu = 0.01`: with 64 taps sharing the step, the stability bound of
+NLMS (`mu < 2/N` in these units) sets it. To try: make `room` depend on a
+slider and change it on the fly, the canceller reconverges; add a near-end
+talker to the microphone and the taps drift, the double-talk problem, whose
+classic answer is to gate the update with `gate_g`.
+
+### 10.3 A small neural network in the loop
+
+Reverse mode is the mode of neural networks: a scalar loss, many parameters,
+the adjoint flowing back from the output to every unit. A network with one
+hidden layer of four `tanh` units, thirteen parameters, learns inside the
+graph to imitate a soft clipper, neural amp modelling at its smallest:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+H = 4;
+x = no.noise;
+target = 0.8 * ma.tanh(3.0 * x) + 0.1 * x;
+w1_0(j) = 1.0 + 0.5 * j;
+b1_0(j) = -0.6 + 0.4 * j;
+unit(j, w, b) = ma.tanh((w + w1_0(j)) * x + b + b1_0(j));
+// the network as a block of its 13 parameters: (w1 x 4, b1 x 4, w2 x 4, b2)
+hidden = (si.bus(H), si.bus(H)) : ro.interleave(H, 2) : par(j, H, (_, _ : unit(j)));
+net = (hidden, si.bus(H), _) : ((ro.interleave(H, 2) : par(j, H, *) :> _), _) : +;
+net_loss = net : sq_err with { sq_err(y) = op.mse(y, target); };
+p = op.descend_N_rad(3 * H + 1, net_loss, op.adam_g(0.003, 0.9, 0.999, 1e-8), -4.0, 4.0, 0.0, 0.0);
+process = target - (p : net), target;
+```
+
+Run with `-n 2000 --quiet` then `-n 20000 --skip 16000 --quiet`: the
+residual falls from rms `0.105` over the first 2 000 samples (the initial
+function of the offsets is 17 dB below the target) to `0.0037` over the last
+4 000, 46 dB below the target. `descend_N_rad(13, net_loss, adam, …)`
+differentiates `mse(net(p), target)` by one reverse sweep per sample for the
+thirteen gradients; Adam is shared by the thirteen (one engine expression,
+one state per parameter), because the units have different sensitivities and
+it equalises them. One detail that is not differentiation: a bus loop starts
+every parameter from the same value, which would leave the four units
+identical for ever; the model adds fixed, distinct offsets `w1_0`, `b1_0` to
+the learned weights, and the parameters are learned from zero around that
+initialisation. Remove them and the units collapse onto each other. The
+network has no state, so a target with memory, a one-pole after the clipper,
+escapes it: give `x` and `x'` to the units, or add a learned one-pole after
+`net`.
+
+### 10.4 Handing gradients to a host
+
+Sometimes the program should only *produce* derivatives, and a host (a
+plugin, a Python script, a test harness) does the accumulation and the
+update — for example to train on a batch of recordings rather than on the
+live signal:
 
 ```faust
 gain = hslider("gain", 1.0, -4.0, 4.0, 0.001);
@@ -505,8 +627,12 @@ back. [docs/rad-usage-en.md](../docs/rad-usage-en.md) has the full loop in
 Rust, including an adaptive notch filter. As a public output, `rad` works
 block by block through delays and recursions: the sweep runs backwards over
 the current `compute` block with the derivative reset at its end, and the
-gradient lanes are per-sample contributions the host sums. Consumed inside
-the graph, as in section 4.1, it sees one sample instead.
+gradient lanes are per-sample contributions the host sums. That is the
+difference with the three programs above: consumed inside the graph, `rad`
+sees one sample; handed to the host, it goes through the recursion over the
+whole block, and the sum of a lane is the exact gradient of the block's
+loss, which example 6 of [ddsp-examples-en.md](ddsp-examples-en.md) checks
+against finite differences on a resonator.
 
 ## 11. Learning at its own rate: `ondemand`
 
@@ -663,13 +789,53 @@ inputs.
 
 Three last things about clock domains. `ma.SR` is not adapted inside
 `ondemand` (its rate is unknown statically), so compute rate-dependent values
-outside and pass them in. `rad` does not cross a domain boundary, but the
-bus loops have clocked `_rad` versions (`descend_N_rad_clocked`): the reverse
-sweep runs at audio rate inside the frame, only the step is clocked; and a
-`rad` whose loss and seeds live inside the block runs at frame rate there
-(example 11 of [ddsp-examples-en.md](ddsp-examples-en.md)). And the
-reference for the primitives themselves, including `upsampling` and
-`downsampling`, is [docs/ondemand-note-en.md](../docs/ondemand-note-en.md).
+outside and pass them in. `rad` does not cross a domain boundary; its
+clocked forms are the subject of section 11.4. And the reference for the
+primitives themselves, including `upsampling` and `downsampling`, is
+[docs/ondemand-note-en.md](../docs/ondemand-note-en.md).
+
+### 11.4 Reverse mode, clocked
+
+The bus loops of section 10 have their clocked form, `descend_N_rad_clocked`:
+the reverse sweep runs at audio rate within the frame, its `N` gradients are
+averaged by `frame_mean`, and the step is taken inside an `ondemand` block,
+once per frame. The sixteen-tap FIR of section 4.1, one step every 64
+samples:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+il = library("interleave.lib");
+N = 16;
+x = no.noise;
+taps = x <: par(i, N, @(i));
+fir(h) = (h, taps) : ro.interleave(N, 2) : par(i, N, *) :> _;
+h_star(i) = sin(0.5 * i) * exp(-0.2 * i);
+target = fir(par(i, N, h_star(i)));
+fir_loss = fir(si.bus(N)) : sq_err with { sq_err(y) = op.mse(y, target); };
+h = op.descend_N_rad_clocked(N, il.frame_clock(64), fir_loss, op.sgd_g(0.5), -2.0, 2.0, 0.0, 0.0);
+process = target - fir(h);
+```
+
+Run in windows of 1 000 samples (`--quiet`, `--skip`) and, next to it, the
+per-sample version of section 4.1 (`descend_N_rad`, `lr = 0.02`): the
+residual of the clocked loop reads rms `0.21`, `6e-4`, `1.6e-6`, `3e-9` over
+the first four windows, that of the per-sample loop `0.10`, `2e-7`, then `0`.
+The clocked loop takes 64 times fewer steps with a rate 25 times larger, and
+each step sees the frame's mean gradient: after 1 000 samples it has taken 15
+steps and the residual is at `6e-4`, where the per-sample loop has taken
+1 000 and is at `2e-7`. It converges a little more slowly, for an engine that
+runs once per frame, which matters when the engine is an Adam with `N`
+states or when the update must be rare by construction. The price is that of
+section 11.1: the time constant counts frames.
+
+A `rad` can also live entirely *inside* a block, loss and seeds included,
+and then runs at frame rate on a frame loss, like the spectral loss of
+section 11.3; that is what example 11 of
+[ddsp-examples-en.md](ddsp-examples-en.md) does, sixteen harmonic amplitudes
+fitted through a spectral loss per 256-sample frame, the sixteen gradients
+from one sweep per frame. What stays forbidden is a `rad` that would cross
+the block's boundary, a loss inside and a seed outside.
 
 ## 12. Where to go next
 
@@ -681,13 +847,14 @@ reference for the primitives themselves, including `upsampling` and
 - **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   differentiates a loss computed on an FFT frame, the per-frame counterpart of
   section 7.2.
-- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): eleven
+- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): twelve
   DDSP programs with their tests — an adaptive notch, a mode calibrated by
   Gauss-Newton, an amp model, a diode clipper learned through its implicit
   solver, an FDN reverb, a string tuned through its fractional delay
   (`fad`); an echo canceller, a neural waveshaper, block gradients for a
   host, a GRU amp trained by block BPTT, a harmonic synthesizer fitted
-  through a spectral loss inside an `ondemand` block (`rad`).
+  through a spectral loss inside an `ondemand` block (`rad`); a reverb that
+  calibrates itself, then stops paying for it (`gated`, `on_change`).
 - **Many parameters.** `tests/corpus/opt_descend_n_rad_fir16.dsp` and
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` are the bus loops on FIRs;
   `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` runs the forward and the

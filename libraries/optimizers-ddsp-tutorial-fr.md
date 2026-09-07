@@ -114,8 +114,9 @@ Exécutez avec `-n 1` : les six sorties sont `6, 3, 2, 6, 3, 2`.
 
 Les graines sont les signaux que vous listez ; pour une perte à `N`
 paramètres, un appel donne les `N` dérivées. L'essentiel de ce tutoriel
-utilise `fad` ; `rad` revient à la section 4.1 (beaucoup de paramètres) et à la
-section 10 (les hôtes).
+utilise `fad` ; `rad` revient à la section 4.1 (beaucoup de paramètres), à la
+section 10 (en temps réel dans le graphe, puis vers un hôte) et à la section
+11.4 (cadencé).
 
 ## 3. La même boucle avec la bibliothèque
 
@@ -503,13 +504,136 @@ compresse), la seconde est le résidu de la solution — `0` à la précision
 numérique à chaque trame. C'est la brique de base des filtres à rétroaction
 sans délai et des écrêteurs à diodes.
 
-## 10. Remettre les gradients à un hôte : `rad`
+## 10. Le mode inverse en temps réel, puis vers un hôte : `rad`
 
-Jusqu'ici tout apprenait dans le graphe. Parfois le programme doit seulement
-*produire* des dérivées, et un hôte (un plugin, un script Python, un banc de
-test) se charge de l'accumulation et de la mise à jour — par exemple pour
-entraîner sur un lot d'enregistrements plutôt que sur le signal vivant. C'est
-à cela que sert `rad` :
+`rad` a été présenté à la section 2 comme l'autre disposition des mêmes
+nombres, et utilisé à la section 4.1 à travers `descend_N_rad`. Cette section
+l'écrit à la main dans le graphe, comme la section 1 l'a fait pour `fad`,
+puis le met dans deux programmes qui apprennent en temps réel, et finit par
+l'usage où il ne fait que produire des gradients pour un hôte. La règle de la
+section 4.1 tient partout : un `rad` consommé dans le graphe ne voit qu'un
+échantillon, ce qui est exact pour un modèle sans récursion entre les
+paramètres et la sortie, et ne donne que le terme direct sinon.
+
+### 10.1 Trois coefficients, un seul balayage
+
+Un FIR à trois coefficients appris à la main, comme le gain de la section 1,
+mais avec un `rad` pour les trois gradients au lieu de trois `fad` :
+
+```faust
+import("stdfaust.lib");
+x = no.noise;
+target = 0.5 * x + 0.3 * x' - 0.2 * x'';
+lr = 0.02;
+model(h0, h1, h2) = h0 * x + h1 * x' + h2 * x'';
+loss(h0, h1, h2) = (model(h0, h1, h2) - target) * (model(h0, h1, h2) - target);
+step(h0, h1, h2) = h0 - lr * g0, h1 - lr * g1, h2 - lr * g2
+with {
+    grads = rad(loss(h0, h1, h2), (h0, h1, h2)) : !, _, _, _;   // un balayage, trois gradients
+    g0 = grads : _, !, !;
+    g1 = grads : !, _, !;
+    g2 = grads : !, !, _;
+};
+taps = step ~ (_, _, _);
+process = taps, target - (taps : model);
+```
+
+Exécutez avec `-n 3000 --every 500` : les coefficients valent
+`0,4995, 0,2997, −0,1999` à 500 échantillons, `0,5, 0,3, −0,2` à `1e-6` près à
+1 000, exactement ensuite, et le résidu est nul. `rad(loss, (h0, h1, h2))`
+renvoie quatre signaux, la perte puis les trois gradients ; `: !, _, _, _`
+jette la perte. Les trois projections de `grads` ne coûtent qu'un balayage :
+le compilateur partage l'expression. Comparez avec la section 1 : le `fad`
+d'une perte à `N` paramètres se lit `fad(loss, (h0, h1, h2))` aussi, avec la
+même sortie ici ; la différence est dans le code produit, un balayage inverse
+contre trois tangentes transportées, et elle croît avec `N`.
+
+### 10.2 Un effet adaptatif : l'annuleur d'écho
+
+Le signal distant d'une conférence part dans un haut-parleur ; le microphone
+capte son écho à travers la pièce. L'annuleur apprend une réplique FIR de la
+réponse de la pièce et la soustrait du signal du microphone, c'est l'annuleur
+NLMS de tout système de conférence. Ici la pièce est une réponse synthétique
+à 64 coefficients, et la boucle est `lsq_N_rad`, la version inverse de la
+boucle à bus de la section 4.1 avec le moteur `nlms` :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+N = 64;
+far = no.noise;
+room(i) = sin(1.7 * i + 0.3) * exp(-i / 12.0);
+fir = si.bus(N), (_ <: par(i, N, @(i))) : ro.interleave(N, 2) : par(i, N, *) :> _;
+mic = (par(i, N, room(i)), far) : fir;
+h = op.lsq_N_rad(N, fir, op.nlms(0.01, 0.000001, 0.99), -2.0, 2.0, 0.0, 0.0, mic, far);
+residual = mic - ((h, far) : fir);
+process = residual, mic;
+```
+
+Exécutez avec `-n 4000 --quiet`, puis par fenêtres de 1 000 échantillons
+(`--skip 1000 -n 2000`, etc.) : le résidu part au niveau de l'écho, rms `2,6`
+sur la première fenêtre avec une pointe transitoire à 25 pendant que les
+coefficients dépassent, tombe à `1,4e-4` sur la deuxième, `2e-8` sur la
+troisième et `0` ensuite, un rehaussement de l'affaiblissement d'écho au-delà
+de 100 dB sur cette pièce sans bruit. La sensibilité de la sortie du FIR au
+coefficient `i` est l'échantillon distant retardé `x[n − i]` : 64
+sensibilités, une sortie, ce que le mode inverse donne en un balayage par
+échantillon là où `lsq_N` transporterait 64 tangentes. Le FIR n'a pas de
+récursion vis-à-vis des coefficients, donc l'horizon d'un échantillon ne
+perd rien. `mu = 0,01` : avec 64 coefficients qui partagent le pas, c'est la
+borne de stabilité du NLMS (`mu < 2/N` dans ces unités) qui le fixe. À
+essayer : faire dépendre `room` d'un slider et le changer en cours de route,
+l'annuleur reconverge ; ajouter un locuteur proche au microphone, les
+coefficients dérivent, c'est le problème de la double parole, et la réponse
+classique est de conditionner la mise à jour avec `gate_g`.
+
+### 10.3 Un petit réseau de neurones dans la boucle
+
+Le mode inverse est le mode des réseaux de neurones : une perte scalaire,
+beaucoup de paramètres, l'adjoint qui remonte de la sortie vers chaque unité.
+Un réseau à une couche cachée de quatre unités `tanh`, treize paramètres,
+apprend dans le graphe à imiter un soft clipper, la modélisation neuronale
+d'ampli au plus petit :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+H = 4;
+x = no.noise;
+target = 0.8 * ma.tanh(3.0 * x) + 0.1 * x;
+w1_0(j) = 1.0 + 0.5 * j;
+b1_0(j) = -0.6 + 0.4 * j;
+unit(j, w, b) = ma.tanh((w + w1_0(j)) * x + b + b1_0(j));
+// le réseau comme bloc de ses 13 paramètres : (w1 x 4, b1 x 4, w2 x 4, b2)
+hidden = (si.bus(H), si.bus(H)) : ro.interleave(H, 2) : par(j, H, (_, _ : unit(j)));
+net = (hidden, si.bus(H), _) : ((ro.interleave(H, 2) : par(j, H, *) :> _), _) : +;
+net_loss = net : sq_err with { sq_err(y) = op.mse(y, target); };
+p = op.descend_N_rad(3 * H + 1, net_loss, op.adam_g(0.003, 0.9, 0.999, 1e-8), -4.0, 4.0, 0.0, 0.0);
+process = target - (p : net), target;
+```
+
+Exécutez avec `-n 2000 --quiet` puis `-n 20000 --skip 16000 --quiet` : le
+résidu tombe de rms `0,105` sur les 2 000 premiers échantillons (la fonction
+initiale des décalages est 17 dB sous la cible) à `0,0037` sur les 4 000
+derniers, 46 dB sous la cible. `descend_N_rad(13, net_loss, adam, …)` dérive
+`mse(net(p), cible)` par un balayage inverse par échantillon pour les treize
+gradients ; Adam est partagé par les treize (une expression de moteur, un
+état par paramètre), parce que les unités ont des sensibilités différentes
+et qu'il les égalise. Un détail qui n'est pas de la différenciation : une
+boucle à bus démarre tous les paramètres à la même valeur, ce qui laisserait
+les quatre unités identiques à jamais ; le modèle ajoute des décalages fixes
+et distincts `w1_0`, `b1_0` aux poids appris, et les paramètres sont appris
+depuis zéro autour de cette initialisation. Retirez-les et les unités
+s'effondrent l'une sur l'autre. Le réseau est sans état, donc une cible avec
+mémoire, un un-pôle après le clipper, lui échappe : donnez `x` et `x'` aux
+unités, ou ajoutez un un-pôle appris après `net`.
+
+### 10.4 Remettre les gradients à un hôte
+
+Parfois le programme doit seulement *produire* des dérivées, et un hôte (un
+plugin, un script Python, un banc de test) se charge de l'accumulation et de
+la mise à jour — par exemple pour entraîner sur un lot d'enregistrements
+plutôt que sur le signal vivant :
 
 ```faust
 gain = hslider("gain", 1.0, -4.0, 4.0, 0.001);
@@ -525,8 +649,12 @@ complète en Rust, y compris un filtre coupe-bande adaptatif. En sortie
 publique, `rad` travaille bloc par bloc à travers les délais et les
 récursions : le balayage remonte le bloc `compute` courant, la dérivée remise
 à zéro à sa fin, et les voies de gradient sont des contributions par
-échantillon que l'hôte somme. Consommé dans le graphe, comme à la section
-4.1, il ne voit qu'un échantillon.
+échantillon que l'hôte somme. C'est la différence avec les trois programmes
+précédents : consommé dans le graphe, `rad` ne voit qu'un échantillon ; sorti
+vers l'hôte, il traverse la récursion sur tout le bloc, et la somme d'une
+voie est le gradient exact de la perte du bloc, ce que l'exemple 6 de
+[ddsp-examples-fr.md](ddsp-examples-fr.md) vérifie par différences finies sur
+un résonateur.
 
 ## 11. Apprendre à sa propre cadence : `ondemand`
 
@@ -686,13 +814,53 @@ mise à jour dans le même domaine, ou reliez-les par les entrées du bloc.
 Trois dernières choses sur les domaines d'horloge. `ma.SR` n'est pas adapté
 dans `ondemand` (sa cadence est inconnue statiquement) : calculez les valeurs
 qui dépendent de la cadence à l'extérieur et passez-les en entrée. `rad` ne
-traverse pas une frontière de domaine, mais les boucles à bus ont des versions
-`_rad` cadencées (`descend_N_rad_clocked`) : le balayage inverse tourne à
-cadence audio dans la trame, seul le pas est cadencé ; et un `rad` dont la
-perte et les graines vivent dans le bloc y tourne à la cadence des trames
-(exemple 11 de [ddsp-examples-fr.md](ddsp-examples-fr.md)). Et la référence pour les
-primitives elles-mêmes, `upsampling` et `downsampling` compris, est
+traverse pas une frontière de domaine ; ses formes cadencées sont l'objet de
+la section 11.4. Et la référence pour les primitives elles-mêmes,
+`upsampling` et `downsampling` compris, est
 [docs/ondemand-note-fr.md](../docs/ondemand-note-fr.md).
+
+### 11.4 Le mode inverse cadencé
+
+Les boucles à bus de la section 10 ont leur forme cadencée,
+`descend_N_rad_clocked` : le balayage inverse tourne à cadence audio dans la
+trame, ses `N` gradients sont moyennés par `frame_mean`, et le pas est fait
+dans un bloc `ondemand`, une fois par trame. Le FIR à seize coefficients de
+la section 4.1, un pas toutes les 64 trames :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+il = library("interleave.lib");
+N = 16;
+x = no.noise;
+taps = x <: par(i, N, @(i));
+fir(h) = (h, taps) : ro.interleave(N, 2) : par(i, N, *) :> _;
+h_star(i) = sin(0.5 * i) * exp(-0.2 * i);
+target = fir(par(i, N, h_star(i)));
+fir_loss = fir(si.bus(N)) : sq_err with { sq_err(y) = op.mse(y, target); };
+h = op.descend_N_rad_clocked(N, il.frame_clock(64), fir_loss, op.sgd_g(0.5), -2.0, 2.0, 0.0, 0.0);
+process = target - fir(h);
+```
+
+Exécutez par fenêtres de 1 000 échantillons (`--quiet`, `--skip`) et à côté
+la version par échantillon de la section 4.1 (`descend_N_rad`, `lr = 0,02`) :
+le résidu du cadencé vaut rms `0,21`, `6e-4`, `1,6e-6`, `3e-9` sur les quatre
+premières fenêtres, celui du par-échantillon `0,10`, `2e-7`, puis `0`. Le
+cadencé fait 64 fois moins de pas avec une vitesse 25 fois plus grande, et
+chaque pas voit le gradient moyen de la trame : après 1 000 échantillons il a
+fait 15 pas et le résidu est à `6e-4`, là où le par-échantillon en a fait
+1 000 et est à `2e-7`. Il converge un peu plus lentement, pour un moteur qui
+ne tourne qu'une fois par trame, ce qui compte quand le moteur est un Adam à
+`N` états ou quand la mise à jour doit être rare par construction. Le prix
+est celui de la section 11.1 : la constante de temps se compte en trames.
+
+Un `rad` peut aussi vivre entièrement *dans* un bloc, perte et graines
+comprises, et tourner alors à la cadence des trames sur une perte de trame,
+comme la perte spectrale de la section 11.3 ; c'est ce que fait l'exemple 11
+de [ddsp-examples-fr.md](ddsp-examples-fr.md), seize amplitudes harmoniques
+ajustées par une perte spectrale par trame de 256 échantillons, les seize
+gradients d'un balayage par trame. Ce qui reste interdit est un `rad` qui
+traverserait la frontière du bloc, une perte dedans et une graine dehors.
 
 ## 12. Pour aller plus loin
 
@@ -704,14 +872,15 @@ primitives elles-mêmes, `upsampling` et `downsampling` compris, est
 - **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   différencie une perte calculée sur une trame FFT, le pendant par trame de la
   section 7.2.
-- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : onze
+- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : douze
   programmes DDSP avec leurs tests — un notch adaptatif, un mode calibré par
   Gauss-Newton, un modèle d'ampli, un diode clipper appris à travers son
   solveur implicite, une réverbération FDN, une corde accordée à travers son
   retard fractionnaire (`fad`) ; un annuleur d'écho, un waveshaper neuronal,
   des gradients par bloc pour un hôte, un ampli GRU entraîné par BPTT par
   blocs, un synthétiseur harmonique ajusté par une perte spectrale dans un
-  bloc `ondemand` (`rad`).
+  bloc `ondemand` (`rad`) ; une réverbération qui se calibre puis cesse de
+  payer son apprentissage (`gated`, `on_change`).
 - **Beaucoup de paramètres.** `tests/corpus/opt_descend_n_rad_fir16.dsp` et
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` sont les boucles à bus sur des
   FIR ; `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` fait tourner côte à côte
