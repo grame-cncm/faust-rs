@@ -279,27 +279,42 @@ fn test_compile_for_loop_structure() {
     let mut store = FirStore::new();
     let mut b = FirBuilder::new(&mut store);
 
-    // for (i = 0; i < 10; i++) { /* empty body */ }
+    // for (i = 0; i < 10; i++) { /* empty body */ }: `end` is the exclusive
+    // bound, as the lowerings build it, not a comparison.
     let init_val = b.int32(0);
     let init_decl = b.declare_var("i", FirType::Int32, AccessType::Loop, Some(init_val));
-    let load_i = b.load_var("i", AccessType::Loop, FirType::Int32);
     let ten = b.int32(10);
-    let cond = b.binop(FirBinOp::Lt, load_i, ten, FirType::Bool);
     let load_i2 = b.load_var("i", AccessType::Loop, FirType::Int32);
     let one = b.int32(1);
     let incr_val = b.binop(FirBinOp::Add, load_i2, one, FirType::Int32);
     let step = b.store_var("i", AccessType::Loop, incr_val);
     let body = b.block(&[]);
-    let loop_node = b.for_loop("i", init_decl, cond, step, body, false);
+    let loop_node = b.for_loop("i", init_decl, ten, step, body, false);
 
     let result = compile_one::<f32>(&store, loop_node);
 
-    // Entry block should have kLoop.
+    // Entry block: the guard `init < end` (bound, init, LTInt), then kIf whose
+    // `then` block holds kLoop; a zero bound runs the body zero times.
     let ops = opcodes(&result, result.entry_block);
-    assert_eq!(ops, vec![FbcOpcode::Loop, FbcOpcode::Return]);
+    assert_eq!(
+        ops,
+        vec![
+            FbcOpcode::Int32Value,
+            FbcOpcode::Int32Value,
+            FbcOpcode::LTInt,
+            FbcOpcode::If,
+            FbcOpcode::Return
+        ]
+    );
+    let if_instr = &result.arena.get(result.entry_block).instructions[3];
+    let then_id = if_instr.branch1.unwrap();
+    assert_eq!(
+        opcodes(&result, then_id),
+        vec![FbcOpcode::Loop, FbcOpcode::Return]
+    );
 
     // kLoop instruction should reference init and loop-body blocks.
-    let loop_instr = &result.arena.get(result.entry_block).instructions[0];
+    let loop_instr = &result.arena.get(then_id).instructions[0];
     assert!(loop_instr.branch1.is_some());
     assert!(loop_instr.branch2.is_some());
 
@@ -326,10 +341,27 @@ fn test_compile_reverse_simple_for_loop_structure() {
     let loop_node = b.simple_for_loop("i", upper, body, true);
 
     let result = compile_one::<f32>(&store, loop_node);
+    // The guard `upper > 0`, then kIf whose `then` block holds kLoop.
     let ops = opcodes(&result, result.entry_block);
-    assert_eq!(ops, vec![FbcOpcode::Loop, FbcOpcode::Return]);
+    assert_eq!(
+        ops,
+        vec![
+            FbcOpcode::Int32Value,
+            FbcOpcode::Int32Value,
+            FbcOpcode::GTInt,
+            FbcOpcode::If,
+            FbcOpcode::Return
+        ]
+    );
+    let then_id = result.arena.get(result.entry_block).instructions[3]
+        .branch1
+        .unwrap();
+    assert_eq!(
+        opcodes(&result, then_id),
+        vec![FbcOpcode::Loop, FbcOpcode::Return]
+    );
 
-    let loop_instr = &result.arena.get(result.entry_block).instructions[0];
+    let loop_instr = &result.arena.get(then_id).instructions[0];
     let init_id = loop_instr.branch1.unwrap();
     let body_id = loop_instr.branch2.unwrap();
     let init_ops = opcodes(&result, init_id);

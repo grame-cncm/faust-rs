@@ -118,13 +118,63 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
     /// `step` nodes and a direction. `init` is a `DeclareVar` that allocates and
     /// seeds the variable; `step` and `end` are the (signed) increment value and
     /// the exclusive bound. The loop runs `var = init; do { body; var += step }
-    /// while (is_reverse ? var > end : var < end)`.
+    /// while (is_reverse ? var > end : var < end)`, guarded by
+    /// `if (is_reverse ? init > end : init < end)` so that a bound that admits
+    /// no iteration runs the body zero times, as the C++ `for` does.
     ///
     /// Earlier this compiled `step`/`end` as plain expressions and never updated
     /// the loop variable or built a real condition, so reverse loops (the
     /// shift-array strategy used by short delays `@(3..mcd)`) produced no
-    /// iterations and the delay line emitted silence.
+    /// iterations and the delay line emitted silence. And until the guard the
+    /// do-while ran its body once for a zero bound: the loop of an `ondemand`
+    /// block runs `clock` times, and a silent clock still executed the body
+    /// once, so a block gated by its own held output
+    /// (`optimizers.lib`'s `gated`) never stopped in the interpreter while the
+    /// C++ and Cranelift backends, which emit a real `for`, held.
     pub(super) fn compile_for_loop(
+        &mut self,
+        store: &FirStore,
+        params: ForLoopParams<'_>,
+    ) -> Result<(), CompileError> {
+        let init_value = match match_fir(store, params.init) {
+            FirMatch::DeclareVar {
+                init: Some(init), ..
+            } => Some(init),
+            _ => None,
+        };
+        let Some(init_value) = init_value else {
+            return self.compile_for_loop_unguarded(store, params);
+        };
+        // Guard: `init < end` (`init > end` reversed). Stack convention: LHS on
+        // TOS, so the bound (RHS) is pushed first.
+        self.compile_node(store, params.end)?;
+        self.compile_node(store, init_value)?;
+        self.current_block
+            .push(FbcInstruction::new(if params.is_reverse {
+                FbcOpcode::GTInt
+            } else {
+                FbcOpcode::LTInt
+            }));
+        self.begin_sub_block();
+        self.compile_for_loop_unguarded(store, params)?;
+        let then_block_id = self.end_sub_block();
+        self.begin_sub_block();
+        let else_block_id = self.end_sub_block();
+        self.current_block.push(FbcInstruction::full(
+            FbcOpcode::If,
+            "",
+            0,
+            R::default(),
+            0,
+            0,
+            Some(then_block_id),
+            Some(else_block_id),
+        ));
+        Ok(())
+    }
+
+    /// The do-while itself: `var = init; do { body; var += step } while (cond)`.
+    fn compile_for_loop_unguarded(
         &mut self,
         store: &FirStore,
         params: ForLoopParams<'_>,
@@ -216,7 +266,45 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
     ///
     /// Forward loops implement `for (var = 0; var < upper; var = var + 1)`.
     /// Reverse loops implement `for (var = upper - 1; var >= 0; var = var - 1)`.
+    /// Both are do-while loops guarded by `if (upper > 0)`, so that a zero
+    /// bound runs the body zero times (see `compile_for_loop`).
     pub(super) fn compile_simple_for_loop(
+        &mut self,
+        store: &FirStore,
+        var: &str,
+        upper: FirId,
+        body: FirId,
+        is_reverse: bool,
+    ) -> Result<(), CompileError> {
+        // Guard: `upper > 0`. Stack convention: LHS on TOS, so 0 (RHS) first.
+        self.current_block.push(FbcInstruction::with_values(
+            FbcOpcode::Int32Value,
+            0,
+            R::default(),
+        ));
+        self.compile_node(store, upper)?;
+        self.current_block
+            .push(FbcInstruction::new(FbcOpcode::GTInt));
+        self.begin_sub_block();
+        self.compile_simple_for_loop_unguarded(store, var, upper, body, is_reverse)?;
+        let then_block_id = self.end_sub_block();
+        self.begin_sub_block();
+        let else_block_id = self.end_sub_block();
+        self.current_block.push(FbcInstruction::full(
+            FbcOpcode::If,
+            "",
+            0,
+            R::default(),
+            0,
+            0,
+            Some(then_block_id),
+            Some(else_block_id),
+        ));
+        Ok(())
+    }
+
+    /// The do-while itself, see `compile_simple_for_loop`.
+    fn compile_simple_for_loop_unguarded(
         &mut self,
         store: &FirStore,
         var: &str,
