@@ -511,7 +511,92 @@ in the tutorial.
   the direct term, not the derivative through the recursion (section 4.7);
   learn recursive models with the `fad` loops, feed-forward ones with either.
 
-## 7. References
+## 7. Scope: what this reaches, and what it does not
+
+Against the tensor frameworks of DDSP (PyTorch or JAX with the DDSP
+libraries, torchaudio, FLAMO, dasp-pytorch), compiler-level differentiation
+is to DDSP what adaptive filtering is to machine learning: exact, cheap,
+real time, interpretable, small. Its domain is the parametric models whose
+parameters a sound engineer can read. The calibration of a feedback delay
+network to measured rooms, offline and inside the audio process, is the
+worked example (the `faust-diff-fdn` project); this section is what it
+taught about the reach of the approach.
+
+**What can reasonably be reached.**
+
+- *Calibration and system identification*: reverberators, filters,
+  equalisers, physical models, grey-box circuits, with tens to a few hundred
+  parameters. `rad` costs about three forward passes whatever their number,
+  so a few hundred stay affordable offline.
+- *Learning inside the audio process*, which no framework does: effects that
+  calibrate themselves, tracking a drifting target, echo cancellation,
+  adaptive filters, patches that tune themselves, and the learning switched
+  off by an `ondemand` clock once done, at no cost afterwards. Realistic up
+  to a few tens of parameters in real time with `fad`, on embedded targets
+  or in a browser, since the program that learns is ordinary Faust.
+- *Small networks written in Faust*: an amplifier GRU, an MLP of a few
+  hundred weights (examples 5 and 9 of `ddsp-examples-en.md`). Trainable,
+  but slowly: on a CPU, one example at a time.
+- *Design by objective*: the parameters of a fixed structure that reach a
+  specification where no analytical formula exists; and Newton solvers for
+  implicit circuits, already in place.
+- *The bridge with the frameworks*, within reach but not done: a Faust
+  program as a differentiable layer in PyTorch. `rad` produces the
+  vector-Jacobian products an `autograd.Function` expects, and in the other
+  direction an encoder trained in PyTorch exports to Faust. Each side gets
+  what it lacks.
+
+**The current limits, the ones that can be worked on.**
+
+- *No batches, no accelerator.* One instance processes one signal, sample
+  by sample, on one core; on a dataset of hours the distance to a framework
+  is orders of magnitude.
+- *Everything is a signal graph.* A layer of a thousand weights is a
+  thousand signals; compile time and code size grow with the differentiated
+  graph (forty forward tangents through a six-line FDN: 15 s). Beyond a few
+  tens of thousands of nodes, compile-time differentiation stops following.
+- *No FFT in the language.* The multi-resolution spectral loss, the
+  workhorse of DDSP, does not exist as such; filter banks approximate it.
+- *The bounds of `rad`.* Tapes proportional to the block, so memory is block
+  length times recorded signals; a horizon equal to the block, with a zero
+  adjoint at its end and nothing carried across blocks, hence exact over a
+  whole response in one `compute` but truncated to the buffer in a stream,
+  which is why streaming learners use `fad`; no variable delay (`fad` has
+  it); no writable table nor soundfile (`rdtable` is differentiated with
+  respect to its index only); no crossing of a clock-domain boundary; the
+  derivative of the active branch at `select2`, `min`, `max`, zero for
+  integer and bitwise operations; no second derivative (neither `fad` over
+  `rad` nor `rad` over `fad`), so no Hessian-vector products, though the
+  Jacobian columns from `fad` allow a Gauss-Newton step when the parameters
+  are few.
+- *Tooling.* No execution graph to inspect at run time, no `.grad` on a
+  node; `faustprobe` renders any lane and the signal DAG can be dumped, but
+  finding the source of a NaN means bisecting the source. No learning-rate
+  schedule is provided (a schedule is a signal and can be written), no
+  checkpoint (an instance's state cannot be saved and restored), no
+  hyperparameter search beyond a host loop over compilations. Double
+  precision stays necessary: tangents and adjoints through thousands of
+  samples of recursion lose digits fast in single precision, while plugins
+  usually run in single.
+
+**What this approach will not do, by construction.**
+
+- *Large-scale deep learning*: millions of parameters, corpora of hours,
+  neural codecs, diffusion models, the big convolutional amplifier models.
+  The one-signal-per-node representation, one-instance execution and the
+  absence of tensors and GPU exclude them; inference of medium networks in
+  Faust stays possible, not their training.
+- *Dynamic graphs*: Faust is static dataflow, no data-dependent shape, no
+  variable length other than through clocks, no recursion over structures;
+  hence no transformers, beam search or tree-structured models.
+- *Learning representations from a corpus*: the strength of Engel et al.'s
+  DDSP is a neural encoder learned on data coupled with the differentiable
+  synthesiser; Faust can carry the second half, never the first.
+- *Differentiating what is not a signal*: the topology, the number of
+  lines, an integer delay length, a discrete choice. As in every framework
+  this needs relaxations, and they would be written in Faust.
+
+## 8. References
 
 - J. Engel, L. Hantrakul, C. Gu, A. Roberts, "DDSP: Differentiable Digital
   Signal Processing", ICLR 2020. <https://arxiv.org/abs/2001.04643>

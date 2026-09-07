@@ -541,7 +541,105 @@ programmes dans le tutoriel.
   4.7) ; apprendre les modèles récursifs avec les boucles `fad`, les modèles
   sans récursion avec les unes ou les autres.
 
-## 7. Références
+## 7. Portée : ce que cela atteint, et ce que cela n'atteint pas
+
+Face aux frameworks à tenseurs de la DDSP (PyTorch ou JAX avec les
+bibliothèques DDSP, torchaudio, FLAMO, dasp-pytorch), la différentiation au
+niveau du compilateur est à la DDSP ce que le filtrage adaptatif est à
+l'apprentissage automatique : exacte, bon marché, temps réel, interprétable,
+petite. Son domaine, ce sont les modèles paramétriques dont un ingénieur du
+son sait lire les paramètres. La calibration d'un réseau de lignes à retard
+sur des salles mesurées, hors ligne et dans le processus audio, en est
+l'exemple travaillé (le projet `faust-diff-fdn`) ; cette section est ce
+qu'il a appris sur la portée de l'approche.
+
+**Ce qu'on peut raisonnablement atteindre.**
+
+- *Calibration et identification de systèmes* : réverbérations, filtres,
+  égaliseurs, modèles physiques, circuits à boîte grise, avec des dizaines à
+  quelques centaines de paramètres. `rad` coûte environ trois passes avant
+  quel que soit leur nombre, donc quelques centaines restent abordables hors
+  ligne.
+- *L'apprentissage dans le processus audio*, ce qu'aucun framework ne fait :
+  effets qui se calibrent, suivi d'une cible qui dérive, annulation d'écho,
+  filtres adaptatifs, patches qui s'accordent, et l'apprentissage coupé par
+  une horloge `ondemand` une fois fini, sans coût ensuite. Réaliste jusqu'à
+  quelques dizaines de paramètres en temps réel avec `fad`, sur des cibles
+  embarquées ou dans un navigateur, puisque le programme qui apprend est du
+  Faust ordinaire.
+- *Les petits réseaux écrits en Faust* : un GRU d'ampli, un MLP de quelques
+  centaines de poids (exemples 5 et 9 de `ddsp-examples-fr.md`).
+  Entraînables, mais lentement : sur CPU, un exemple à la fois.
+- *La conception par objectif* : les paramètres d'une structure fixe qui
+  atteignent une spécification là où les formules analytiques n'existent
+  pas ; et les solveurs de Newton pour les circuits implicites, déjà en
+  place.
+- *Le pont avec les frameworks*, à portée mais pas fait : un programme Faust
+  comme couche différentiable dans PyTorch. `rad` produit les produits
+  vecteur-jacobien qu'une `autograd.Function` attend, et dans l'autre sens un
+  encodeur entraîné en PyTorch s'exporte vers Faust. Chaque côté reçoit ce
+  qui lui manque.
+
+**Les limites actuelles, celles qui se travaillent.**
+
+- *Pas de lots ni d'accélérateur.* Une instance traite un signal,
+  échantillon par échantillon, sur un cœur ; sur un jeu de données de
+  plusieurs heures, on est à des ordres de grandeur d'un framework.
+- *Tout est un graphe de signaux.* Une couche de mille poids fait mille
+  signaux ; la compilation et la taille du code croissent avec le graphe
+  dérivé (quarante tangentes directes à travers une FDN à six lignes :
+  15 s). Au-delà de quelques dizaines de milliers de nœuds, la
+  différentiation à la compilation ne suit plus.
+- *Pas de FFT dans le langage.* La perte spectrale multi-résolution, l'outil
+  de base de la DDSP, n'existe pas telle quelle ; les bancs de filtres
+  l'approchent.
+- *Les bornes de `rad`.* Des bandes proportionnelles au bloc, donc une
+  mémoire égale à la longueur du bloc fois les signaux enregistrés ; un
+  horizon égal au bloc, adjoint nul à sa fin et rien de transmis d'un bloc au
+  suivant, donc exact sur toute une réponse en un `compute` mais tronqué au
+  tampon dans un flux, d'où `fad` pour les apprentissages en flux ; pas de
+  retard variable (`fad` l'a) ; pas de table en écriture ni de fichier son
+  (`rdtable` n'est dérivée que par rapport à son index) ; pas de traversée
+  d'une frontière de domaine d'horloge ; la dérivée de la branche active à
+  `select2`, `min`, `max`, zéro pour les opérations entières et bit à bit ;
+  pas de dérivée seconde (ni `fad` sur `rad` ni `rad` sur `fad`), donc pas de
+  produits hessienne-vecteur, même si les colonnes de la jacobienne données
+  par `fad` permettent un pas de Gauss-Newton quand les paramètres sont peu
+  nombreux.
+- *L'outillage.* Pas de graphe d'exécution à inspecter à l'exécution, pas de
+  `.grad` sur un nœud ; `faustprobe` rend n'importe quelle voie et le DAG de
+  signaux se dumpe, mais trouver l'origine d'un NaN veut dire bissecter la
+  source. Aucune planification du taux d'apprentissage n'est fournie (une
+  planification est un signal et peut s'écrire), pas de point de reprise
+  (l'état d'une instance ne se sauvegarde ni ne se restaure), pas de
+  recherche d'hyperparamètres au-delà d'une boucle de l'hôte sur des
+  compilations. La double précision reste nécessaire : tangentes et adjoints
+  à travers des milliers d'échantillons de récursion perdent vite des
+  chiffres en simple précision, alors que les plugins tournent le plus
+  souvent en simple.
+
+**Ce que cette approche ne fera pas, par construction.**
+
+- *L'apprentissage profond à grande échelle* : des millions de paramètres,
+  des corpus d'heures, les codecs neuronaux, les modèles de diffusion, les
+  gros modèles d'ampli à convolutions. La représentation un signal par nœud,
+  l'exécution une instance à la fois et l'absence de tenseurs et de GPU les
+  excluent ; l'inférence de réseaux moyens en Faust reste possible, pas leur
+  entraînement.
+- *Les graphes dynamiques* : Faust est un flot de données statique, pas de
+  forme dépendant des données, pas de longueur variable autrement que par
+  les horloges, pas de récursion sur des structures ; donc pas de
+  transformeurs, de recherche en faisceau ni de modèles arborescents.
+- *Apprendre des représentations depuis un corpus* : la force de la DDSP
+  d'Engel et al. est un encodeur neuronal appris sur des données couplé au
+  synthétiseur différentiable ; Faust peut porter la seconde moitié, jamais
+  la première.
+- *Dériver ce qui n'est pas un signal* : la topologie, le nombre de lignes,
+  une longueur de retard entière, un choix discret. Comme dans tout
+  framework, cela demande des relaxations, et elles seraient à écrire en
+  Faust.
+
+## 8. Références
 
 - J. Engel, L. Hantrakul, C. Gu, A. Roberts, « DDSP: Differentiable Digital
   Signal Processing », ICLR 2020. <https://arxiv.org/abs/2001.04643>
