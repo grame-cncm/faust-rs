@@ -217,9 +217,9 @@ bibliothèque ne prétend pas le contraire :
 
 ## 3. Organisation de la bibliothèque
 
-Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.7.2) est
+Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.8.0) est
 documenté fonction par fonction selon la convention des bibliothèques Faust ;
-cette section en donne la carte. Il comporte douze sections, ordonnées des
+cette section en donne la carte. Il comporte treize sections, ordonnées des
 briques de base aux boucles prêtes à l'emploi.
 
 | Section | Contenu | Raison d'être |
@@ -235,6 +235,7 @@ briques de base aux boucles prêtes à l'emploi.
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | pas de second ordre pour deux ou trois paramètres corrélés |
 | Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus avec un moteur et une paire de bornes, en mode direct ou inverse |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | le gradient à cadence audio, moyenné sur la trame, le pas une fois par tir d'une horloge `ondemand` |
+| Porte et arrêt | `gated`, `gated_when`, `stop_after`, `stop_below`, `stop_relative`, `on_change` | couper l'apprentissage une fois qu'il a convergé, pour qu'il ne coûte plus rien ensuite ; ne calculer des coefficients que lorsqu'un paramètre change |
 | Newton solver | `newton_step`, `newton` | pas de l'apprentissage : résoudre une équation implicite avec `F` et `F'` issus d'un seul `fad` |
 
 ### 3.1 La forme d'une boucle
@@ -469,6 +470,50 @@ beaucoup de paramètres, un seul balayage.
   `tests/corpus/ondemand_fad_spectral_loss_008.dsp` montre `fad` à travers une
   perte basée sur une FFT. L'intégrer à la bibliothèque est un travail à venir.
 
+### 4.9 Porte et arrêt
+
+Un bloc qui a convergé continue de coûter ce qu'il coûtait en apprenant :
+le modèle qui porte les tangentes, la perte et le moteur tournent à chaque
+échantillon. La seule façon de ne pas calculer quelque
+chose en Faust est un domaine d'horloge, puisque `select2` évalue ses deux
+branches et que `gate_g` met à zéro un gradient déjà calculé ;
+`ondemand(C)` ne calcule rien tant que son horloge se tait et tient ses
+sorties. `gated(C)` est cela, appliqué à un bloc dont la dernière sortie
+est un drapeau : l'horloge vaut `1 - flag'`, le bloc tourne à chaque
+échantillon jusqu'à ce que le drapeau se lève, puis plus jamais. Le retard
+d'un échantillon de la récursion est ce qui rend la construction légale
+(une horloge ne peut pas dépendre de la sortie du bloc au même échantillon)
+et ce qui fait qu'un drapeau levé au dernier échantillon d'une période
+arrête le bloc à la frontière de période. `gated_when` ajoute un signal
+d'activation ; les deux ont besoin d'`outputs(C)`, d'où leur écriture avec
+`route` plutôt qu'à arité fixe.
+
+Le drapeau est l'affaire du critère, pas de la porte, d'où les fonctions
+`stop_*` séparées, toutes bâties sur `frame_sum` cadencé par la période et
+sur `ba.peakhold(1)`, le maximum courant de la bibliothèque standard, qui
+tient un drapeau levé : un budget de périodes (`stop_after`), un seuil de perte
+(`stop_below`), et `stop_relative`, qui compare la perte d'une période à la
+perte du point de contrôle précédent, `window` périodes plus tôt, et
+s'arrête quand leur changement relatif est sous `tol`, après `min_periods`,
+ou à `max_periods`. Les périodes consécutives ne sont pas comparées : sur
+une perte qui dépasse, son plateau ressemble à une convergence pendant
+quelques périodes et un test à une période s'y déclenche ; les points de
+contrôle sont ce qui rend le test robuste.
+
+`on_change(C)` est l'autre moitié de l'économie. Une fois arrêté, les
+paramètres appris restent des signaux, et un filtre qui en calcule ses
+coefficients recalcule `exp`, `tan` ou `cos` à chaque échantillon, là où le
+compilateur sort les mêmes expressions de la boucle d'échantillons quand
+elles dépendent de sliders. `on_change` fait tourner `C` dans un `ondemand`
+dont l'horloge est la comparaison de chaque entrée avec sa valeur
+précédente, plus le premier échantillon : une fois par pas d'optimiseur
+pendant l'apprentissage, plus jamais ensuite. Il faut des filtres qui
+prennent des coefficients plutôt que des paramètres ;
+`fi.filterbank(1, (fx)) : *(g), _ :> _` est le shelf de
+`fi.highshelf(1, L, fx)` avec un gain linéaire. La section 7 donne les
+mesures : la porte divise par environ neuf le coût d'une réverbération
+auto-calibrante, `on_change` le ramène à celui de la réverbération seule.
+
 ## 5. Comportement mesuré
 
 Toutes les exécutions : `faustprobe --double -I libraries -I <faustlibraries>` ;
@@ -553,36 +598,30 @@ calculé, puis mis à zéro. Un `select2` non plus, Faust évalue ses deux
 branches. Ce qui le permet, c'est `ondemand` : un bloc dont l'horloge ne
 tire pas ne calcule rien et tient ses sorties.
 
-**La bascule.** Mettre tout l'apprentissage, boucle comprise, dans un
-`ondemand` externe dont l'horloge est `1 - done'`, `done` étant un drapeau
-que le bloc lève lui-même ; l'effet qui traite l'audio lit les paramètres
-tenus et rien d'autre ne change :
+**La bascule.** `gated(C)` (section 4.9) fait tourner un bloc arbitraire
+`C`, dont la dernière sortie est un drapeau, dans un `ondemand` externe dont
+l'horloge est `1 - flag'` ; tant que le drapeau vaut 0 le bloc tourne à
+chaque échantillon, dès qu'il vaut 1 plus rien n'en est calculé et ses
+sorties tiennent. Mettre tout l'apprentissage dans `C`, boucle comprise, et
+laisser un critère `stop_*` lever le drapeau ; l'effet qui traite l'audio
+lit les paramètres tenus et rien d'autre ne change :
 
 ```faust
-learn(t) = ps <: (si.bus(P), loss(t), (loss(t) : stop))
-with {
-    ps = op.descend_N_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0);
-    stop(l) = crit : (max ~ _)          // verrouillé
-    with {
-        n = (+(clock)) ~ _;               // périodes écoulées
-        lp = op.frame_sum(clock, l);      // la perte de la période, à son dernier échantillon
-        ck = clock & ((n % WINDOW) == 0); // un point de contrôle toutes les WINDOW périodes
-        lck = ba.sAndH(ck, lp);
-        rel = abs(lp - lck') / max(lck', 1e-12);
-        crit = clock & (n >= MIN_PERIODS) & ((ck & (rel < TOL)) | (n >= MAX_PERIODS));
-    };
-};
-gated = (ondemand(learn) : route(P + 2, P + 2, (P + 2, 1), par(i, P + 1, (i + 1, i + 2)))) ~ (1 - _);
+learn(t) = ps <: (si.bus(P), (loss(t) : op.stop_relative(clock, 20, 40, 300, 0.02)))
+with { ps = op.descend_N_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0); };
+params = t : op.gated(learn);      // P paramètres tenus, puis le drapeau
 ```
 
-Le critère compare la perte d'une période à celle du point de contrôle
-précédent, `WINDOW` périodes plus tôt, et s'arrête en fin de période quand
-le changement relatif est sous `TOL`, après `MIN_PERIODS`, ou à
-`MAX_PERIODS` ; comparer des périodes consécutives se fait piéger par les
-plateaux d'un dépassement. Le retard d'un échantillon de la récursion fait
-retomber l'horloge à l'échantillon qui suit le dernier de la période, si
-bien que le temps propre du bloc, qui compte ses tirs, reste aligné sur la
-période si l'apprentissage reprend. Les pertes par période du programme
+`stop_relative` compare la perte d'une période à celle du point de contrôle
+précédent, `window` périodes plus tôt, et s'arrête en fin de période quand
+le changement relatif est sous `tol`, après `min_periods`, ou à
+`max_periods` ; comparer des périodes consécutives se fait piéger par les
+plateaux d'un dépassement. `stop_after` et `stop_below` sont les budgets
+plus simples, un nombre de périodes ou un seuil de perte, et `gated_when`
+ajoute un signal d'activation. Le retard d'un échantillon de la récursion
+fait retomber l'horloge à l'échantillon qui suit le dernier de la période,
+si bien que le temps propre du bloc, qui compte ses tirs, reste aligné sur
+la période si l'apprentissage reprend. Les pertes par période du programme
 cadencé sont bit-identiques à celles du programme non cadencé : un `fad` et
 une récursion dans un `ondemand` imbriqué dans un autre `ondemand` sont
 compilés exactement.
@@ -590,14 +629,15 @@ compilés exactement.
 **Les coefficients.** Une fois arrêté, les paramètres tenus restent des
 signaux, donc un filtre qui en calcule ses coefficients recalcule `exp`,
 `tan` et `cos` à chaque échantillon, là où le compilateur sort les mêmes
-expressions de la boucle quand elles dépendent de sliders. Un second
-`ondemand` comble l'écart : il calcule les coefficients (gains des shelves
-et de l'égaliseur, cosinus et sinus des angles appris) et son horloge est
-la comparaison de chaque paramètre avec sa valeur précédente, il tire donc
-une fois par pas d'optimiseur et plus jamais une fois l'apprentissage
-arrêté ; les filtres reçoivent les gains linéaires tenus
-(`fi.filterbank(1, (fx)) : *(g), _ :> _` est ce sur quoi `fi.highshelf`
-est construit). La réponse est bit-identique à la version par échantillon.
+expressions de la boucle quand elles dépendent de sliders. `on_change(C)` comble
+l'écart : il fait tourner `C`, le calcul des coefficients (gains des
+shelves et de l'égaliseur, cosinus et sinus des angles appris), dans un
+`ondemand` dont l'horloge est la comparaison de chaque entrée avec sa valeur
+précédente, il tire donc une fois par pas d'optimiseur et plus jamais une
+fois l'apprentissage arrêté ; les filtres reçoivent les gains linéaires
+tenus (`fi.filterbank(1, (fx)) : *(g), _ :> _` est ce sur quoi
+`fi.highshelf` est construit). La réponse est bit-identique à la version
+par échantillon.
 
 **Mesuré** sur un cœur, blocs de 320 échantillons, une réverbération à une
 douzaine de paramètres appris (l'exemple de calibration du document des

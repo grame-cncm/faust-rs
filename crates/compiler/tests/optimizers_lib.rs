@@ -259,14 +259,96 @@ fn newton_solves_the_cubic_on_every_frame() {
 }
 
 #[test]
+fn gated_block_matches_the_plain_one_then_holds() {
+    // `gated(learn)`: the gain of the gated block is bit-identical to the
+    // plain block's until `stop_after(clock, 5)` raises the flag on the
+    // fifth firing (frame 319), then nothing of the block runs and the gain
+    // holds; `on_change` recomputes exp(g) on the samples where g changes
+    // and holds it in between.
+    let Some(outs) = run_interp_fixture("opt_gated_stop_after", 1200) else {
+        return;
+    };
+    assert_eq!(outs.len(), 4, "expected [g_plain, g_gated, done, coef]");
+    let (plain, gated, done, coef) = (&outs[0], &outs[1], &outs[2], &outs[3]);
+    let stop = done.iter().position(|&d| d > 0.5).expect("the flag rises");
+    assert_eq!(stop, 319, "the flag rises on the fifth firing");
+    for n in 0..=stop {
+        assert_eq!(
+            plain[n], gated[n],
+            "gated and plain differ before the stop, at frame {n}"
+        );
+    }
+    for n in stop..plain.len() {
+        assert_eq!(
+            gated[n], gated[stop],
+            "the gated gain moved after the stop, at frame {n}"
+        );
+        assert!(done[n] > 0.5, "the flag fell at frame {n}");
+    }
+    assert!(
+        plain[plain.len() - 1] > gated[stop] + 0.05,
+        "the plain block should keep learning"
+    );
+    for n in 0..coef.len() {
+        let expected = gated[n].exp();
+        assert!(
+            (coef[n] - expected).abs() < 1e-5,
+            "on_change is not exp(g) at frame {n}: {} vs {expected}",
+            coef[n]
+        );
+    }
+}
+
+#[test]
+fn stop_relative_gates_a_converging_loop() {
+    // `stop_relative(clock, 2, 4, 40, 0.05)`: the period loss of the gain
+    // learner flattens within a few periods; the flag rises on a period
+    // boundary after at least four periods and before the cap, and the
+    // gated gain holds from there.
+    let Some(outs) = run_interp_fixture("opt_gated_stop_relative", 3000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3, "expected [g_plain, g_gated, done]");
+    let (plain, gated, done) = (&outs[0], &outs[1], &outs[2]);
+    let stop = done.iter().position(|&d| d > 0.5).expect("the flag rises");
+    assert_eq!(
+        (stop + 1) % 64,
+        0,
+        "the flag must rise on a period's last sample, not at {stop}"
+    );
+    assert!(
+        (4 * 64 - 1..40 * 64 - 1).contains(&stop),
+        "the flag rose at frame {stop}"
+    );
+    assert_eq!(stop, 767, "the flag rises at the twelfth period");
+    for n in 0..=stop {
+        assert_eq!(
+            plain[n], gated[n],
+            "gated and plain differ before the stop, at frame {n}"
+        );
+    }
+    for n in stop..gated.len() {
+        assert_eq!(
+            gated[n], gated[stop],
+            "the gated gain moved after the stop, at frame {n}"
+        );
+    }
+    assert!(
+        (gated[stop] - 0.7).abs() < 0.1,
+        "the gain should be near 0.7 when learning stops, got {}",
+        gated[stop]
+    );
+}
+
+#[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 74 entries, 131 outputs. It only has to compile,
+    // documented function: 80 entries, 139 outputs. It only has to compile,
     // run, and stay finite.
     let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
         return;
     };
-    assert_eq!(outs.len(), 131, "expected the outputs of every Test entry");
+    assert_eq!(outs.len(), 139, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(

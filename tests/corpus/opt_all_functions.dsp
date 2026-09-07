@@ -113,8 +113,29 @@ descend_4D_clocked_test = op.descend_4D_clocked(clock, \(a, b, c, d).(op.mse(a *
 with { x = hslider("descend_4D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 descend_5D_clocked_test = op.descend_5D_clocked(clock, \(a, b, c, d, e).(op.mse(a * x + b * x' + c * x'' + d * x''' + e, 0.5 * x + 0.3 * x' - 0.2 * x'' + 0.1 * x''' + 0.1)), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), op.sgd_g(0.5), -4, 4, -4, 4, -4, 4, -4, 4, -4, 4, 0, 0, 0, 0, 0, 0)
 with { x = hslider("descend_5D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+stop_after_test = op.stop_after(clock, 3)
+with { clock = ((+(1) : %(64)) ~ _) == 0; };
+stop_below_test = hslider("stop_below:l", 1, 0, 2, 0.01) : op.stop_below(clock, 0.5)
+with { clock = ((+(1) : %(64)) ~ _) == 0; };
+stop_relative_test = hslider("stop_relative:l", 1, 0, 2, 0.01) : op.stop_relative(clock, 2, 4, 100, 0.01)
+with { clock = ((+(1) : %(64)) ~ _) == 0; };
+gated_test = x : op.gated(learn)
+with {
+    x = hslider("gated:x", 0.5, -1, 1, 0.01);
+    clock = ((+(1) : %(64)) ~ _) == 0;
+    learn(xi) = g, op.stop_after(clock, 3)
+    with { g = op.descend_1D_clocked(clock, \(p).(op.mse(p * xi, 0.7 * xi)), op.sgd_g(0.5), -4.0, 4.0, 0.0, 0.0); };
+};
+gated_when_test = x : op.gated_when(checkbox("gated_when:learn"), learn)
+with {
+    x = hslider("gated_when:x", 0.5, -1, 1, 0.01);
+    clock = ((+(1) : %(64)) ~ _) == 0;
+    learn(xi) = g, op.stop_after(clock, 3)
+    with { g = op.descend_1D_clocked(clock, \(p).(op.mse(p * xi, 0.7 * xi)), op.sgd_g(0.5), -4.0, 4.0, 0.0, 0.0); };
+};
+on_change_test = hslider("on_change:t60", 0.5, 0.1, 3, 0.01) : op.on_change(\(t).(exp(-6.9 * 0.02 / t)));
 newton_step_test = op.newton_step(\(y).(y * y - 2.0), hslider("newton_step:y", 1, 0.5, 2, 0.01));
 newton_test = op.newton(6, \(y).(y * y * y + y - x), 0.0)
 with { x = hslider("newton:x", 0, -1, 1, 0.01); };
 
-process = clip_test, sgn_test, ema_test, ema_bc_test, pstate_test, polyak_test, mse_test, pseudo_huber_test, logcosh_test, energy_loss_test, log_energy_loss_test, l2_test, l1s_test, poles_from_reflection_test, reflection_from_poles_test, sigmoid_map_test, clip_g_test, softclip_g_test, gate_g_test, lr_exp_test, lr_cos_test, warmup_test, lms_test, nlms_test, gn1_test, sgd_test, adam_test, rmsprop_test, nadam_test, sign_sgd_test, sgd_g_test, momentum_g_test, nesterov_g_test, adam_g_test, nadam_g_test, amsgrad_g_test, adabelief_g_test, rmsprop_g_test, adagrad_g_test, lion_g_test, sign_g_test, lsq_1D_test, lsq_2D_test, lsq_3D_test, lsq_4D_test, lsq_5D_test, optimize_1D_test, optimize_2D_test, optimize_3D_test, optimize_4D_test, optimize_5D_test, descend_1D_test, descend_2D_test, descend_3D_test, descend_4D_test, descend_5D_test, lm_2D_test, lm_3D_test, lsq_N_test, lsq_N_rad_test, descend_N_test, descend_N_rad_test, descend_N_clocked_test, descend_N_rad_clocked_test, frame_sum_test, frame_count_test, frame_mean_test, descend_1D_clocked_test, descend_2D_clocked_test, descend_3D_clocked_test, descend_4D_clocked_test, descend_5D_clocked_test, newton_step_test, newton_test;
+process = clip_test, sgn_test, ema_test, ema_bc_test, pstate_test, polyak_test, mse_test, pseudo_huber_test, logcosh_test, energy_loss_test, log_energy_loss_test, l2_test, l1s_test, poles_from_reflection_test, reflection_from_poles_test, sigmoid_map_test, clip_g_test, softclip_g_test, gate_g_test, lr_exp_test, lr_cos_test, warmup_test, lms_test, nlms_test, gn1_test, sgd_test, adam_test, rmsprop_test, nadam_test, sign_sgd_test, sgd_g_test, momentum_g_test, nesterov_g_test, adam_g_test, nadam_g_test, amsgrad_g_test, adabelief_g_test, rmsprop_g_test, adagrad_g_test, lion_g_test, sign_g_test, lsq_1D_test, lsq_2D_test, lsq_3D_test, lsq_4D_test, lsq_5D_test, optimize_1D_test, optimize_2D_test, optimize_3D_test, optimize_4D_test, optimize_5D_test, descend_1D_test, descend_2D_test, descend_3D_test, descend_4D_test, descend_5D_test, lm_2D_test, lm_3D_test, lsq_N_test, lsq_N_rad_test, descend_N_test, descend_N_rad_test, descend_N_clocked_test, descend_N_rad_clocked_test, frame_sum_test, frame_count_test, frame_mean_test, descend_1D_clocked_test, descend_2D_clocked_test, descend_3D_clocked_test, descend_4D_clocked_test, descend_5D_clocked_test, stop_after_test, stop_below_test, stop_relative_test, gated_test, gated_when_test, on_change_test, newton_step_test, newton_test;

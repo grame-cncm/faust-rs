@@ -1,5 +1,5 @@
 declare name "Faust Differentiable Optimizers Library";
-declare version "0.7.2";
+declare version "0.8.0";
 declare author "faust-rs";
 declare license "MIT/LGPL-3.0";
 
@@ -31,7 +31,7 @@ declare license "MIT/LGPL-3.0";
 // (`-I <faustlibraries>`) next to this one (`-I libraries`). It is a
 // `faust-rs` library: `fad` and `rad` are not known to the C++ Faust compiler.
 //
-// The Optimizers library is organized into 12 sections:
+// The Optimizers library is organized into 13 sections:
 //
 // * [Signal Helpers and Parameter State](#signal-helpers-and-parameter-state)
 // * [Losses and Regularizers](#losses-and-regularizers)
@@ -44,6 +44,7 @@ declare license "MIT/LGPL-3.0";
 // * [Gauss-Newton Loops](#gauss-newton-loops)
 // * [Bus Loops](#bus-loops)
 // * [Clocked Loops](#clocked-loops)
+// * [Gating and Stopping](#gating-and-stopping)
 // * [Newton Solver](#newton-solver)
 //
 // It should be used using the `op` environment:
@@ -53,6 +54,13 @@ declare license "MIT/LGPL-3.0";
 // process = op.descend_1D(loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
 // ```
 //
+// Changes in 0.8.0: gating and stopping. `gated(C)` and `gated_when(on, C)`
+// run an arbitrary block in an `ondemand` domain that the block's own last
+// output switches off, so a block stops costing anything once it has
+// converged; `stop_after`, `stop_below` and `stop_relative` build that flag
+// from a period clock and a per-sample loss (`ba.peakhold(1)` keeps it raised);
+// `on_change(C)` runs a block only when one of its inputs changes, the
+// control-rate computation of coefficients that depend on learned parameters.
 // Changes in 0.7.2: the loops apply the update to the deviation from `init`
 // itself and clip it in deviation space, so a step smaller than the
 // precision of the parameter's value is kept (a parameter near 1000 learned
@@ -2633,6 +2641,231 @@ with {
             clip(lo1 - init1, hi1 - init1, q1 - upd1(h1)), clip(lo2 - init2, hi2 - init2, q2 - upd2(h2)), clip(lo3 - init3, hi3 - init3, q3 - upd3(h3)),
             clip(lo4 - init4, hi4 - init4, q4 - upd4(h4)), clip(lo5 - init5, hi5 - init5, q5 - upd5(h5));
     };
+};
+
+//===================================Gating and Stopping====================================
+// Switching the learning off. A block that learns inside the audio process
+// keeps paying for its learning once the parameters have settled: the model
+// carrying the tangents, the loss and the engine run at every sample whether
+// or not they are still useful, and with one augmented lane per parameter
+// they are most of the cost. Zeroing the gradient (`gate_g`) does not help,
+// it is still computed, and neither does `select2`, both branches are
+// evaluated. `ondemand` does: a block whose clock does not fire computes
+// nothing and holds its outputs. `gated(C)` runs an arbitrary block in such a
+// domain and lets the block's own last output, a flag, switch the clock off;
+// the `stop_*` functions build that flag from a period clock and a
+// per-sample loss, raised once and kept raised by `ba.peakhold(1)`, the
+// running maximum of the standard library; `on_change(C)` runs a block only
+// when one of its inputs
+// changes, the control-rate computation of coefficients that depend on
+// learned parameters, which are signals, not sliders.
+//==========================================================================================
+
+//------------------------------`(op.)stop_after`--------------------------------
+// Raised, and kept raised (`ba.peakhold(1)`), on the `n`-th firing of `clock`:
+// a fixed budget of periods.
+//
+// #### Usage
+//
+// ```
+// stop_after(clock, n) : _
+// ```
+//
+// Where:
+//
+// * `clock`: the period clock, non-zero on the last sample of every period
+// * `n`: the number of periods to run
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// stop_after_test = op.stop_after(clock, 3)
+// with { clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+stop_after(clock, n) = ba.peakhold(1, clock & (count >= n))
+with { count = (+(clock)) ~ _; };
+
+//------------------------------`(op.)stop_below`--------------------------------
+// Raised, and kept raised, at the end of the first period whose summed loss
+// is below `threshold`.
+//
+// #### Usage
+//
+// ```
+// _ : stop_below(clock, threshold) : _
+// ```
+//
+// Where:
+//
+// * `clock`: the period clock, non-zero on the last sample of every period
+// * `threshold`: the loss summed over a period under which learning stops
+// * input: the per-sample loss
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// stop_below_test = hslider("stop_below:l", 1, 0, 2, 0.01) : op.stop_below(clock, 0.5)
+// with { clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+stop_below(clock, threshold, l) = ba.peakhold(1, clock & (frame_sum(clock, l) < threshold));
+
+//------------------------------`(op.)stop_relative`-----------------------------
+// Raised, and kept raised, at the end of a period when the loss has stopped
+// improving: every `window` periods (a checkpoint) the summed loss of the
+// period is compared with the loss at the previous checkpoint, and the flag
+// rises when their relative change is below `tol`, after at least
+// `min_periods`, or at `max_periods` whatever the loss. Comparing
+// consecutive periods instead is fooled by the plateaus of an overshoot;
+// the checkpoints are what make the test robust. Stopping happens on a clock
+// sample, so a program gated by this flag stops on a period boundary and the
+// gated block's own time, which counts its firings, stays aligned with the
+// period if learning is resumed.
+//
+// #### Usage
+//
+// ```
+// _ : stop_relative(clock, window, min_periods, max_periods, tol) : _
+// ```
+//
+// Where:
+//
+// * `clock`: the period clock, non-zero on the last sample of every period
+// * `window`: periods between two checkpoints (e.g. 20)
+// * `min_periods`: no stop before this many periods
+// * `max_periods`: stop there whatever the loss
+// * `tol`: relative change of the period loss between checkpoints under which learning stops (e.g. 0.02)
+// * input: the per-sample loss
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// stop_relative_test = hslider("stop_relative:l", 1, 0, 2, 0.01) : op.stop_relative(clock, 2, 4, 100, 0.01)
+// with { clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+stop_relative(clock, window, min_periods, max_periods, tol, l) = ba.peakhold(1, crit)
+with {
+    n = (+(clock)) ~ _;
+    lp = frame_sum(clock, l);
+    ck = clock & ((n % window) == 0);
+    lck = ba.sAndH(ck, lp);
+    rel = abs(lp - lck') / max(lck', 1e-12);
+    crit = clock & (n >= min_periods) & ((ck & (rel < tol)) | (n >= max_periods));
+};
+
+//------------------------------`(op.)gated`-------------------------------------
+// An arbitrary block `C` whose last output is a flag, run in an `ondemand`
+// domain whose clock the flag switches off: while the flag is 0 the block
+// runs on every sample, exactly as it would outside; once it is 1 nothing of
+// the block is computed any more and its outputs hold. The clock is
+// `1 - flag'`, the one-sample delay of the recursion making the clock fall
+// on the sample after the one that raised the flag, so a flag raised by a
+// `stop_*` criterion on a period's last sample stops the block on the period
+// boundary. The outputs are those of `C`, the flag last. `C` must have at
+// least one output besides the flag.
+//
+// Typical use: a clocked loop and its loss, with a stop criterion on the
+// loss, gated as a whole; the effect that uses the parameters reads the held
+// values and nothing else changes. Measured on a self-calibrating
+// reverberator with a dozen parameters, the gate costs about 18 % while
+// learning (the nesting of the domains) and the program then costs a ninth,
+// or the effect alone when its coefficients are computed with `on_change`.
+//
+// #### Usage
+//
+// ```
+// gated(C) : si.bus(outputs(C))
+// ```
+//
+// Where:
+//
+// * `C`: a block whose last output is the stop flag (0 while learning, 1 once done)
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// gated_test = x : op.gated(learn)
+// with {
+//     x = hslider("gated:x", 0.5, -1, 1, 0.01);
+//     clock = ((+(1) : %(64)) ~ _) == 0;
+//     learn(xi) = g, op.stop_after(clock, 3)
+//     with { g = op.descend_1D_clocked(clock, \(p).(op.mse(p * xi, 0.7 * xi)), op.sgd_g(0.5), -4.0, 4.0, 0.0, 0.0); };
+// };
+// ```
+//------------------------------------------------------------------------------
+gated(C) = (ondemand(C) : route(n, n, (n, 1), par(i, n - 1, (i + 1, i + 2)))) ~ (1 - _)
+           : route(n, n, (1, n), par(i, n - 1, (i + 2, i + 1)))
+with { n = outputs(C); };
+
+//------------------------------`(op.)gated_when`--------------------------------
+// `gated(C)` with an enable signal: the clock is `on * (1 - flag')`, so the
+// block also stops while `on` is 0 (a button, a signal detector) and resumes
+// when it comes back, unless the flag has been raised. (`enable` itself is a
+// Faust primitive, hence the name.)
+//
+// #### Usage
+//
+// ```
+// gated_when(on, C) : si.bus(outputs(C))
+// ```
+//
+// Where:
+//
+// * `on`: non-zero while learning is allowed
+// * `C`: a block whose last output is the stop flag
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// gated_when_test = x : op.gated_when(checkbox("gated_when:learn"), learn)
+// with {
+//     x = hslider("gated_when:x", 0.5, -1, 1, 0.01);
+//     clock = ((+(1) : %(64)) ~ _) == 0;
+//     learn(xi) = g, op.stop_after(clock, 3)
+//     with { g = op.descend_1D_clocked(clock, \(p).(op.mse(p * xi, 0.7 * xi)), op.sgd_g(0.5), -4.0, 4.0, 0.0, 0.0); };
+// };
+// ```
+//------------------------------------------------------------------------------
+gated_when(on, C) = (ondemand(C) : route(n, n, (n, 1), par(i, n - 1, (i + 1, i + 2)))) ~ ((1 - _) * on)
+           : route(n, n, (1, n), par(i, n - 1, (i + 2, i + 1)))
+with { n = outputs(C); };
+
+//------------------------------`(op.)on_change`---------------------------------
+// A block `C` run only when one of its inputs changes, and on the first
+// sample; between changes its outputs hold. This is the control-rate
+// computation the compiler does by itself for expressions of sliders, made
+// available to expressions of signals: the coefficients of a filter whose
+// parameters are learned (they change once per optimiser step and never once
+// learning has stopped) are computed there, and the filter reads held
+// values instead of recomputing `exp`, `tan` or `cos` at every sample. The
+// filters have to take coefficients rather than parameters; for the shelves
+// of `filters.lib`, `fi.filterbank(1, (fx)) : *(g), _ :> _` is what
+// `fi.highshelf(1, L, fx)` is built on, with `g` the linear gain. `C` must
+// have at least one input.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(C)) : on_change(C) : si.bus(outputs(C))
+// ```
+//
+// Where:
+//
+// * `C`: the block to run on change, its inputs the values to watch
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// on_change_test = hslider("on_change:t60", 0.5, 0.1, 3, 0.01) : op.on_change(\(t).(exp(-6.9 * 0.02 / t)));
+// ```
+//------------------------------------------------------------------------------
+on_change(C) = (si.bus(n) <: (changed, si.bus(n))) : ondemand(C)
+with {
+    n = inputs(C);
+    changed1(x) = x != x';
+    changed = ((par(k, n, changed1) :> _) > 0) | (ba.time == 0);
 };
 
 //=====================================Newton Solver========================================

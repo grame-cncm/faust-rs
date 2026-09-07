@@ -201,10 +201,10 @@ does not pretend otherwise:
 
 ## 3. How the library is organized
 
-The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.7.2) is
+The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.8.0) is
 documented function by function in the Faust libraries convention; this
-section gives the map. It has twelve sections, ordered from building blocks to
-ready-made loops.
+section gives the map. It has thirteen sections, ordered from building blocks to
+ready-made loops and what surrounds them.
 
 | Section | What it holds | Why it exists |
 |---|---|---|
@@ -219,6 +219,7 @@ ready-made loops.
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | second-order steps for two or three correlated parameters |
 | Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus with one engine and one pair of bounds, in forward or in reverse mode |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | the gradient at audio rate, averaged over the frame, the step once per firing of an `ondemand` clock |
+| Gating and stopping | `gated`, `gated_when`, `stop_after`, `stop_below`, `stop_relative`, `on_change` | switching the learning off once it has converged, so that it costs nothing afterwards; computing coefficients only when a parameter changes |
 | Newton solver | `newton_step`, `newton` | not learning: solving an implicit equation with `F` and `F'` from one `fad` |
 
 ### 3.1 The shape of a loop
@@ -443,6 +444,46 @@ reverse mode earns its keep: many parameters, one sweep.
   `tests/corpus/ondemand_fad_spectral_loss_008.dsp` shows `fad` through an
   FFT-based loss. Bringing it into the library is future work.
 
+### 4.9 Gating and stopping
+
+A block that has converged keeps costing what it cost while learning: the
+model carrying the tangents, the loss and the engine run at every sample.
+The only way not to compute something in Faust is a clock domain, since
+`select2` evaluates both branches and `gate_g` zeroes a gradient it has
+already computed; `ondemand(C)` computes nothing while its clock is silent
+and holds its outputs. `gated(C)` is that, applied to a block whose last
+output is a flag: the clock is `1 - flag'`, the block runs on every sample
+until the flag rises, then never again. The one-sample delay of the
+recursion is what makes the construct legal (a clock cannot depend on the
+block's output at the same sample) and what makes a flag raised on a
+period's last sample stop the block on the period boundary. `gated_when`
+adds an enable signal; both need `outputs(C)`, which is why they are
+written with `route` rather than with a fixed arity.
+
+The flag is the criterion's business, not the gate's, hence the separate
+`stop_*` functions, all built on `frame_sum` over the period clock and on
+`ba.peakhold(1)`, the running maximum of the standard library, which keeps
+a flag raised: a period budget (`stop_after`), a loss threshold (`stop_below`),
+and `stop_relative`, which compares the loss of a period with the loss at
+the previous checkpoint `window` periods earlier and stops when their
+relative change is under `tol`, after `min_periods`, or at `max_periods`.
+Consecutive periods are not compared: on a loss with an overshoot, its
+plateau looks like convergence for a few periods and a one-period test
+fires there; the checkpoints are what make the test robust.
+
+`on_change(C)` is the other half of the saving. Once stopped, the learned
+parameters are still signals, and a filter computing its coefficients from
+them recomputes `exp`, `tan` or `cos` at every sample, where the compiler
+moves the same expressions out of the sample loop when they depend on
+sliders. `on_change` runs `C` in an `ondemand` whose clock is the comparison
+of every input with its previous value, plus the first sample: once per
+optimiser step while learning, never afterwards. It needs filters that take
+coefficients rather than parameters; `fi.filterbank(1, (fx)) : *(g), _ :> _`
+is the shelf of `fi.highshelf(1, L, fx)` with a linear gain. Section 7 has
+the measurements: the gate divides the cost of a self-calibrating
+reverberator by about nine, `on_change` brings it to the cost of the
+reverberator alone.
+
 ## 5. Measured behaviour
 
 All runs: `faustprobe --double -I libraries -I <faustlibraries>`; programs
@@ -523,49 +564,43 @@ percent of it. Gating the gradient with `gate_g` does not help: the gradient is 
 `ondemand`: a block whose clock does not fire computes nothing and holds
 its outputs.
 
-**The gate.** Put the whole learning, the loop included, in an outer
-`ondemand` whose clock is `1 - done'`, with `done` a flag the block itself
-raises; the effect that processes the audio reads the held parameters
-and nothing else changes:
+**The gate.** `gated(C)` (section 4.9) runs an arbitrary block `C` whose
+last output is a flag in an outer `ondemand` whose clock is `1 - flag'`;
+while the flag is 0 the block runs on every sample, once it is 1 nothing of
+it is computed and its outputs hold. Put the whole learning in `C`, the
+loop included, and let a `stop_*` criterion raise the flag; the effect that
+processes the audio reads the held parameters and nothing else changes:
 
 ```faust
-learn(t) = ps <: (si.bus(P), loss(t), (loss(t) : stop))
-with {
-    ps = op.descend_N_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0);
-    stop(l) = crit : (max ~ _)          // latched
-    with {
-        n = (+(clock)) ~ _;               // periods elapsed
-        lp = op.frame_sum(clock, l);      // the loss of the period, at its last sample
-        ck = clock & ((n % WINDOW) == 0); // a checkpoint every WINDOW periods
-        lck = ba.sAndH(ck, lp);
-        rel = abs(lp - lck') / max(lck', 1e-12);
-        crit = clock & (n >= MIN_PERIODS) & ((ck & (rel < TOL)) | (n >= MAX_PERIODS));
-    };
-};
-gated = (ondemand(learn) : route(P + 2, P + 2, (P + 2, 1), par(i, P + 1, (i + 1, i + 2)))) ~ (1 - _);
+learn(t) = ps <: (si.bus(P), (loss(t) : op.stop_relative(clock, 20, 40, 300, 0.02)))
+with { ps = op.descend_N_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0); };
+params = t : op.gated(learn);      // P held parameters, then the flag
 ```
 
-The criterion compares the loss of a period with the loss at the previous
-checkpoint, `WINDOW` periods earlier, and stops at a period boundary when
-the relative change is under `TOL`, after `MIN_PERIODS`, or at
-`MAX_PERIODS`; comparing consecutive periods instead is fooled by the
-plateaus of an overshoot. The recursion's one-sample delay makes the clock
-fall at the sample after the period's last one, so the block's own time,
-which counts its firings, stays aligned with the period if learning is
-resumed. The period losses of the gated program are bit-identical to the
-ungated one's: a `fad` and a recursion inside an `ondemand` inside another
-`ondemand` are compiled exactly.
+`stop_relative` compares the loss of a period with the loss at the previous
+checkpoint, `window` periods earlier, and stops at a period boundary when
+the relative change is under `tol`, after `min_periods`, or at
+`max_periods`; comparing consecutive periods instead is fooled by the
+plateaus of an overshoot. `stop_after` and `stop_below` are the simpler
+budgets, a number of periods or a loss threshold, and `gated_when` adds an
+enable signal. The recursion's one-sample delay makes the clock fall at the
+sample after the period's last one, so the block's own time, which counts
+its firings, stays aligned with the period if learning is resumed. The
+period losses of the gated program are bit-identical to the ungated one's:
+a `fad` and a recursion inside an `ondemand` inside another `ondemand` are
+compiled exactly.
 
 **The coefficients.** Once stopped, the held parameters are still signals,
 so a filter that computes its coefficients from them recomputes `exp`, `tan`
 and `cos` at every sample, where the compiler moves the same expressions
-out of the loop when they depend on sliders. A second `ondemand` closes
-the gap: it computes the coefficients (shelf and equaliser gains, cosines
-and sines of learned angles) and its clock is the comparison of every
-parameter with its previous value, so it fires once per optimiser step and
-never once learning has stopped; the filters take the held linear gains
-(`fi.filterbank(1, (fx)) : *(g), _ :> _` is what `fi.highshelf` is built
-on). The response is bit-identical to the per-sample version.
+out of the loop when they depend on sliders. `on_change(C)` closes the
+gap: it runs `C`, the computation of the coefficients (shelf and equaliser
+gains, cosines and sines of learned angles), in an `ondemand` whose clock
+is the comparison of every input with its previous value, so it fires once
+per optimiser step and never once learning has stopped; the filters take
+the held linear gains (`fi.filterbank(1, (fx)) : *(g), _ :> _` is what
+`fi.highshelf` is built on). The response is bit-identical to the
+per-sample version.
 
 **Measured** on one core, blocks of 320 samples, a reverberator with a
 dozen learned parameters (the calibration example of the DDSP examples
