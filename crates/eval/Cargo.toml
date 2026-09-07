@@ -13,6 +13,7 @@ normalize = { path = "../normalize" }
 parser = { path = "../parser" }
 propagate = { path = "../propagate" }
 signals = { path = "../signals" }
+stacker = "0.1"
 tlib = { path = "../tlib" }
 
 [lints]

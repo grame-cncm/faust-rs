@@ -153,6 +153,32 @@ fn eval_error_fixtures_expose_source_labels_and_readable_context() {
     }
 }
 
+/// A deeply nested but acyclic expression (issue #16): it pushes no
+/// `call_stack` frame, so the eval depth budget never saw it, and it overflowed
+/// the native stack of whatever thread ran the compiler, killing an embedding
+/// host with `SIGABRT`. The evaluator now recurses on stack segments it grows
+/// on demand: a chain of five thousand additions compiles from start to end
+/// on a 64 MiB thread, where the previous evaluator aborted (the evaluator
+/// alone handles it on 1 MiB, see the `eval` crate's tests; the rest of the
+/// pipeline still recurses on the native stack, a few KiB per level in debug
+/// builds, which is what sizes this thread).
+#[test]
+fn deep_acyclic_expression_compiles_on_a_host_thread() {
+    let source = format!("process = {};", vec!["1"; 5_000].join("+"));
+    std::thread::Builder::new()
+        .name("deep-expression-host-stack".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let compiler = Compiler::new();
+            compiler
+                .compile_source_to_signals("deep_expression.dsp", &source)
+                .expect("a 5 000-deep acyclic expression compiles on a grown stack");
+        })
+        .expect("spawn worker")
+        .join()
+        .expect("worker thread should finish, not abort");
+}
+
 #[test]
 fn diverging_recursive_case_reports_eval_error_instead_of_aborting() {
     // This test deliberately drives unbounded recursion and relies on the

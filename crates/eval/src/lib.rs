@@ -194,6 +194,7 @@ use ui_widgets::*;
 pub use environment::Environment;
 pub use error::{EvalError, EvalStats};
 pub use loop_detector::LoopDetector;
+use loop_detector::on_deep_stack;
 pub use source_context::{EvalSourceContext, SamplePrecision};
 pub use suggestions::{SymbolSuggestion, rank_similar_names, unambiguous_suggestion};
 
@@ -435,7 +436,7 @@ fn a2sb_value(
     loop_detector: &mut LoopDetector,
 ) -> Result<TreeId, EvalError> {
     loop_detector.enter_structural()?;
-    let result = a2sb_value_inner(arena, value, loop_detector);
+    let result = on_deep_stack(|| a2sb_value_inner(arena, value, loop_detector));
     loop_detector.leave_structural();
     result
 }
@@ -726,7 +727,14 @@ fn eval_value(
     if let Some(cached) = loop_detector.eval_cache.get(&cache_key) {
         return Ok(cached.clone());
     }
-    let result = eval_value_uncached(arena, expr, env, loop_detector)?;
+    // Bound the syntactic nesting (a deep acyclic expression pushes no
+    // `call_stack` frame) and run the recursion on a stack that grows on
+    // demand, so that no input overflows the native stack: see `enter_eval`
+    // and `on_deep_stack` in `loop_detector.rs`.
+    loop_detector.enter_eval()?;
+    let result = on_deep_stack(|| eval_value_uncached(arena, expr, env, loop_detector));
+    loop_detector.leave_eval();
+    let result = result?;
     if should_cache_eval_value(&result) {
         loop_detector.eval_cache.insert(cache_key, result.clone());
     }
@@ -2263,6 +2271,57 @@ mod simplify_helpers_tests {
             })
             .collect();
         assert_eq!(vals, [1, 1, 2, 2]);
+    }
+
+    /// `1 + 1 + ... + 1`, `levels` deep, as boxes: `seq(par(acc, 1), +)`.
+    fn deep_addition_chain(arena: &mut TreeArena, levels: usize) -> tlib::TreeId {
+        let mut acc = BoxBuilder::new(arena).int(1);
+        for _ in 0..levels {
+            let one = BoxBuilder::new(arena).int(1);
+            let pair = BoxBuilder::new(arena).par(acc, one);
+            let add = BoxBuilder::new(arena).add();
+            acc = BoxBuilder::new(arena).seq(pair, add);
+        }
+        acc
+    }
+
+    /// A deeply nested acyclic expression pushes no `call_stack` frame; it
+    /// used to overflow the native stack of the calling thread. The evaluator
+    /// now continues on grown stack segments: five thousand levels, ten
+    /// thousand `eval_value` entries, evaluate on a 1 MiB thread.
+    #[test]
+    fn deep_acyclic_expression_evaluates_on_a_small_thread() {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                let mut arena = TreeArena::new();
+                let chain = deep_addition_chain(&mut arena, 5_000);
+                let env = Environment::empty();
+                let mut ld = LoopDetector::new();
+                let result = eval_box(&mut arena, chain, &env, &mut ld)
+                    .expect("a deep acyclic chain evaluates on a grown stack");
+                assert!(!arena.is_nil(result));
+                assert_eq!(ld.eval_depth, 0, "every enter_eval is balanced");
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker thread should finish, not abort");
+    }
+
+    /// Past the nesting budget the same input fails with the clean
+    /// "stack overflow in eval" of the C++ compiler, from the eval stage.
+    #[test]
+    fn deep_acyclic_expression_past_the_nesting_budget_is_an_eval_error() {
+        let mut arena = TreeArena::new();
+        let chain = deep_addition_chain(&mut arena, 5_000);
+        let env = Environment::empty();
+        let mut ld = LoopDetector::with_nesting_max_depth(1_000);
+        let err = eval_box(&mut arena, chain, &env, &mut ld).expect_err("budget of 1 000 entries");
+        assert!(
+            matches!(err, crate::EvalError::RecursionDepthExceeded { max_depth: 1_000 }),
+            "got {err:?}"
+        );
+        assert!(err.to_string().contains("stack overflow in eval"));
     }
 
     /// Reusing the same residual abstraction inside one evaluation session must

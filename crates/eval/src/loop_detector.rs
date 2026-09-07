@@ -52,6 +52,10 @@ use crate::error::EvalError;
 pub struct LoopDetector {
     pub(crate) call_stack: Vec<LoopFrame>,
     pub(crate) max_depth: usize,
+    /// Syntactic nesting depth of [`eval_value`](crate::eval_value) calls, and
+    /// its budget: see [`Self::enter_eval`].
+    pub(crate) eval_depth: usize,
+    pub(crate) nesting_max_depth: usize,
     /// Structural lowering depth cap for this evaluator pass.
     ///
     /// This is read when the detector is constructed so one evaluation pass has
@@ -150,6 +154,55 @@ const DEFAULT_EVAL_MAX_DEPTH_ENV: &str = "FAUST_RS_DEFAULT_EVAL_MAX_DEPTH";
 
 /// Environment variable overriding the structural lowering recursion cap.
 const STRUCTURAL_HARD_MAX_DEPTH_ENV: &str = "FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH";
+
+/// Environment variable overriding the syntactic nesting budget of the
+/// evaluator, [`DEFAULT_EVAL_NESTING_DEPTH`].
+const DEFAULT_EVAL_NESTING_DEPTH_ENV: &str = "FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH";
+
+/// Default budget for the syntactic nesting of `eval_value` calls.
+///
+/// A deeply nested but acyclic expression, `1 + 1 + ... + 1` two hundred
+/// thousand times, recurses through `eval_value` without pushing a
+/// [`LoopDetector::call_stack`] frame, so `max_depth` never sees it. The
+/// native stack is no longer what bounds it either: every recursive entry of
+/// the evaluator runs through [`on_deep_stack`], which continues on a
+/// heap-allocated stack segment when the current one runs low, whatever the
+/// size of the thread that called the compiler. What remains to bound is the
+/// resource such an input may consume, about 2 KiB per entry, and the answer
+/// is the clean [`EvalError::RecursionDepthExceeded`], "stack overflow in
+/// eval", that the C++ compiler gives for the same inputs.
+///
+/// The unit is an `eval_value` entry, not a syntactic level: a chain of
+/// binary operators costs two entries per level (the application, then its
+/// left operand), so the budget below is 200 000 levels of such a chain. The
+/// previous evaluator, bound by the CLI's 512 MiB stack, accepted 150 000
+/// levels and aborted at 200 000; this budget accepts everything it did, and
+/// costs at most about 800 MiB of stack segments before it reports. Set
+/// [`DEFAULT_EVAL_NESTING_DEPTH_ENV`] to a positive integer to override.
+const DEFAULT_EVAL_NESTING_DEPTH: usize = 400_000;
+
+/// Stack the evaluator keeps in reserve before it continues on a fresh
+/// segment: the deepest native call chain between two guarded entries must
+/// fit in it, with a wide margin for debug builds.
+const STACK_RED_ZONE: usize = 256 * 1024;
+
+/// Size of the heap-allocated stack segments the evaluator grows onto.
+const STACK_SEGMENT: usize = 8 * 1024 * 1024;
+
+/// Runs `f`, on a freshly allocated stack segment if the current stack has
+/// less than [`STACK_RED_ZONE`] bytes left.
+///
+/// This is what the C++ evaluator's stack-address check becomes in Rust:
+/// instead of throwing when the stack runs low, the evaluator moves to
+/// another one (`stacker::maybe_grow`, the mechanism rustc itself uses), so
+/// no depth of input overflows the native stack, in the CLI's 512 MiB
+/// worker as in an 8 MiB host thread of `libfaust-rs`. On targets without
+/// stack switching the call runs in place. The recursion is bounded
+/// separately, by [`LoopDetector::enter_eval`] and the structural budget.
+#[inline]
+pub(crate) fn on_deep_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
+}
 
 /// Default fallback budget for identity-tracked evaluator recursion.
 ///
@@ -290,9 +343,13 @@ impl LoopDetector {
     fn with_parts(max_depth: usize, cancel: Arc<AtomicBool>) -> Self {
         let structural_max_depth =
             depth_limit_from_env(STRUCTURAL_HARD_MAX_DEPTH_ENV, STRUCTURAL_HARD_MAX_DEPTH);
+        let nesting_max_depth =
+            depth_limit_from_env(DEFAULT_EVAL_NESTING_DEPTH_ENV, DEFAULT_EVAL_NESTING_DEPTH);
         Self {
             call_stack: Vec::new(),
             max_depth,
+            eval_depth: 0,
+            nesting_max_depth,
             structural_max_depth,
             cancel,
             def_names: std::collections::HashMap::new(),
@@ -305,6 +362,37 @@ impl LoopDetector {
             eval_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             structural_depth: 0,
         }
+    }
+
+    /// A detector with the given syntactic nesting budget, for tests.
+    #[cfg(test)]
+    pub(crate) fn with_nesting_max_depth(nesting_max_depth: usize) -> Self {
+        let mut detector = Self::new();
+        detector.nesting_max_depth = nesting_max_depth;
+        detector
+    }
+
+    /// Enters one level of syntactic evaluation, an `eval_value` call.
+    ///
+    /// Records no identity, like `enter_structural`: it only counts the
+    /// nesting and fails with [`EvalError::RecursionDepthExceeded`] past
+    /// `nesting_max_depth`, so a deeply nested acyclic expression ends in the
+    /// clean "stack overflow in eval" of the C++ compiler instead of running
+    /// for ever deeper (the native stack itself is grown on demand by
+    /// [`on_deep_stack`]). Pair with [`leave_eval`](Self::leave_eval).
+    pub(crate) fn enter_eval(&mut self) -> Result<(), EvalError> {
+        if self.eval_depth >= self.nesting_max_depth {
+            return Err(EvalError::RecursionDepthExceeded {
+                max_depth: self.nesting_max_depth,
+            });
+        }
+        self.eval_depth += 1;
+        Ok(())
+    }
+
+    /// Leaves a level entered by [`enter_eval`](Self::enter_eval).
+    pub(crate) fn leave_eval(&mut self) {
+        self.eval_depth = self.eval_depth.saturating_sub(1);
     }
 
     /// Returns a clone of the cancellation flag for external threads to signal abort.
@@ -472,6 +560,54 @@ pub(crate) enum LoopFrame {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn eval_nesting_trips_at_its_budget() {
+        let mut detector = super::LoopDetector::with_nesting_max_depth(4);
+        for _ in 0..4 {
+            detector.enter_eval().unwrap();
+        }
+        assert!(matches!(
+            detector.enter_eval(),
+            Err(super::EvalError::RecursionDepthExceeded { max_depth: 4 })
+        ));
+        // the budget is separate from the call-stack one
+        assert!(detector.call_stack.is_empty());
+    }
+
+    #[test]
+    fn eval_nesting_leave_restores_the_budget() {
+        let mut detector = super::LoopDetector::with_nesting_max_depth(2);
+        detector.enter_eval().unwrap();
+        detector.enter_eval().unwrap();
+        assert!(detector.enter_eval().is_err());
+        detector.leave_eval();
+        detector.enter_eval().unwrap();
+        detector.leave_eval();
+        detector.leave_eval();
+        detector.leave_eval(); // saturates at zero
+        assert_eq!(detector.eval_depth, 0);
+    }
+
+    #[test]
+    fn deep_stack_runs_on_a_small_thread() {
+        // a recursion of forty thousand frames, each holding a kibibyte,
+        // would overflow a 256 KiB thread; on the grown stack it completes
+        fn descend(n: u32) -> u32 {
+            let pad = [n; 256];
+            if n == 0 {
+                return pad[0];
+            }
+            super::on_deep_stack(|| descend(n - 1) + pad[(n % 256) as usize] % 2)
+        }
+        let depth = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| descend(40_000))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(depth <= 40_000);
+    }
+
     use super::*;
 
     #[test]

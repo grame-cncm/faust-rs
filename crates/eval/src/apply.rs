@@ -84,7 +84,7 @@ pub(crate) fn apply_value_list_value(
     }
 
     loop_detector.enter_structural()?;
-    let result = (|| match fun {
+    let result = on_deep_stack(|| match fun {
         EvalValue::Box(fun) => Ok(EvalValue::Box(apply_list(
             arena,
             fun,
@@ -133,7 +133,7 @@ pub(crate) fn apply_value_list_value(
         EvalValue::PatternMatcher(pm) => {
             apply_pattern_matcher_value(arena, pm, larg, env, loop_detector, call_site)
         }
-    })();
+    });
     loop_detector.leave_structural();
     result
 }
@@ -156,7 +156,7 @@ pub(crate) fn apply_pattern_matcher_value(
     }
 
     loop_detector.enter_structural()?;
-    let result = (|| {
+    let result = on_deep_stack(|| {
         let raw_arg = arena
             .hd(larg)
             .ok_or(EvalError::MalformedListNode { node: larg })?;
@@ -211,7 +211,7 @@ pub(crate) fn apply_pattern_matcher_value(
             node: pm.original_rules,
             arguments: pm.rev_param_list.clone(),
         })
-    })();
+    });
     loop_detector.leave_structural();
     result
 }
