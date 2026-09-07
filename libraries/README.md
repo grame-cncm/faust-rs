@@ -41,7 +41,7 @@ machine learning and differentiable DSP, in English and French:
   step-by-step tutorial, from a hand-written gradient to a five-coefficient
   biquad, every program run with `faustprobe`;
 - [ddsp-examples-en.md](ddsp-examples-en.md) /
-  [ddsp-examples-fr.md](ddsp-examples-fr.md) — eleven complete DDSP programs
+  [ddsp-examples-fr.md](ddsp-examples-fr.md) — twelve complete DDSP programs
   (`tests/corpus/ddsp_*.dsp`, run by `crates/compiler/tests/ddsp_examples.rs`):
   an adaptive notch, a mode calibrated by Gauss-Newton, an amp model, a
   diode clipper learned through its implicit Newton solver, an FDN reverb

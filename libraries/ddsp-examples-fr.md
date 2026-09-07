@@ -1,6 +1,6 @@
-# Onze exemples DDSP avec `fad` et `rad`
+# Douze exemples DDSP avec `fad` et `rad`
 
-Onze programmes complets de DSP différentiable, chacun une tâche qu'un
+Douze programmes complets de DSP différentiable, chacun une tâche qu'un
 ingénieur du son reconnaît, écrits avec les deux primitives de
 différenciation automatique de `faust-rs` et les boucles
 d'[optimizers.lib](optimizers.lib). Trois utilisent `fad`, le mode direct, là
@@ -14,7 +14,9 @@ neuronal récurrent entraîné par rétropropagation dans le temps tronquée. Le
 deux derniers sont les fragiles, gardés pour ce qu'ils enseignent : la hauteur
 d'une corde apprise à travers son retard fractionnaire, et le synthétiseur
 harmonique de DDSP ajusté par une perte spectrale calculée trame par trame
-dans un bloc `ondemand`.
+dans un bloc `ondemand`. Le douzième est de nouveau la réverbération FDN,
+qui se calibre puis coupe son apprentissage, pour ne plus coûter qu'une
+réverbération une fois fait.
 Chaque programme vit dans `tests/corpus/ddsp_*.dsp`, est exécuté par la
 suite de tests
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs))
@@ -45,6 +47,7 @@ pas est [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md).
 | 9 | `ddsp_rad_gru_amp_host` | entraîner un ampli GRU par BPTT tronquée par blocs | `rad`, public | Adam dans l'hôte (Rust) | gradients = différences finies à quatre chiffres ; résidu 29 dB sous la cible |
 | 10 | `ddsp_fad_waveguide_string_pitch` | accorder une corde à guide d'onde à travers son retard fractionnaire | `fad` | `lsq_1D` + `nlms` | 228 → 220,000000 Hz ; puits de ±1 Hz, capture seulement par le haut |
 | 11 | `ddsp_rad_harmonic_spectral_frame` | ajuster 16 amplitudes harmoniques par une perte spectrale par trame | `rad` dans `ondemand` | Adam par trame, dans un bloc `ondemand` | toutes les amplitudes à 2,5e-4 de 1/h en 100 trames |
+| 12 | `ddsp_fad_fdn_gated` | calibrer la FDN, puis couper son apprentissage | `fad` dans `gated` | `lm_2D` dans un `ondemand` cadencé par `stop_below`, gains par `on_change` | (0,600, 0,300) figés à la sixième période ; l'apprentissage ne coûte plus rien |
 
 **Où tourne l'optimiseur.** Huit exemples font un pas par échantillon audio
 dans le graphe, par les boucles de la bibliothèque (`lsq_1D`, `lm_2D`,
@@ -56,9 +59,14 @@ autour de `frame_sum` et `adam_g`. Les boucles cadencées de la bibliothèque
 (`descend_1D_clocked` … `descend_5D_clocked`, `descend_N_clocked`,
 `descend_N_rad_clocked`) emballent l'autre motif cadencé, une perte calculée
 à cadence audio et son gradient moyenné sur la trame, un pas par
-déclenchement ; aucun des onze ne les utilise, la section 11 du tutoriel et
-les fixtures `opt_descend_clocked_gain.dsp` et
-`opt_descend_in_ondemand_gain.dsp` le font. Les exemples 6 et 9 n'utilisent
+déclenchement ; aucun des onze premiers ne les utilise, la section 11 du
+tutoriel et les fixtures `opt_descend_clocked_gain.dsp` et
+`opt_descend_in_ondemand_gain.dsp` le font. L'exemple 12 fait tourner la
+boucle de l'exemple 8 à cadence audio dans `op.gated`, un bloc `ondemand`
+que son propre drapeau arrête : le seul dont l'apprentissage se termine, et
+celui qui utilise les fonctions de porte de la bibliothèque, `stop_below`
+pour le drapeau et `on_change` pour les coefficients de la réverbération
+rendue. Les exemples 6 et 9 n'utilisent
 pas `ondemand` du tout : leur optimiseur est celui de l'hôte, un pas d'Adam
 par bloc `compute` sur les voies de gradient sommées.
 
@@ -528,6 +536,46 @@ Faust C++), son test tourne donc sous `cargo test --release`.
 l'autre moitié de DDSP, une bande de bruit à travers un filtre appris ; une
 perte multi-résolution (deux tailles de trame, deux blocs).
 
+## 12. Une réverbération qui se calibre, puis cesse de payer son apprentissage (`gated`, `stop_below`, `on_change`)
+
+**Ce que ça fait.** La FDN de l'exemple 8, la même cible cachée, la même
+boucle de Gauss-Newton, avec deux ajouts venus de la section « Gating and
+Stopping » de la bibliothèque. Tout l'apprentissage, le modèle qui porte les
+deux tangentes, `lm_2D` et le résidu, vit dans `op.gated(learn)`, un domaine
+`ondemand` dont l'horloge est coupée par le propre drapeau du bloc : une
+fois le drapeau levé, plus rien de l'apprentissage n'est calculé et les
+paramètres tiennent. Et la réverbération qui rend la sortie prend ses
+quatre gains d'`op.on_change`, qui ne recalcule `10^(−3 len_i / (T60 · SR))`
+que lorsque T60 change, une fois par pas d'apprentissage et plus jamais
+après l'arrêt, au lieu de quatre `pow` par échantillon.
+
+**Le drapeau.** `op.stop_below(clock, 1e-7)` sur le résidu au carré : levé à
+la fin de la première période dont l'énergie résiduelle est sous 1e-7, un
+résidu de 2,5e-6 rms, une correspondance exacte pour un effet, et tenu
+levé. Un seuil plutôt que `stop_relative` parce que la cible est exacte : le
+résidu n'a pas de plancher, il continue de baisser géométriquement et son
+changement relatif ne se stabilise jamais. Sur une cible mesurée, avec un
+plancher de bruit, `stop_relative` est le critère ; la calibration d'une
+réverbération sur des salles mesurées, section 7 de l'aperçu, l'utilise.
+Gauss-Newton avec un facteur d'oubli de 0,999 est aussi la raison pour
+laquelle la cible est exacte ici : un bruit à −60 dB suffit à faire errer
+ses pas (essayez).
+
+**Ce qu'on voit.** `(0,5688, 0,2980)` à la fin de la première période,
+`(0,6000, 0,3000)` à la quatrième ; l'énergie résiduelle par période tombe
+de 3,9e-2 à 1,6e-8 à la sixième, où le drapeau se lève au dernier
+échantillon de la période (98 303) et les paramètres se figent à
+`(0,600002, 0,300000)` ; la réverbération rendue sur les gains tenus
+coïncide alors avec la cible à 5e-9 rms. Jusqu'au drapeau, un bloc cadencé
+est bit-identique au même bloc hors de la porte (les fixtures de la
+bibliothèque le vérifient) ; après, l'apprentissage ne coûte rien et la
+réverbération coûte une réverbération.
+
+**À essayer.** `gated_when(button("learn"), learn)` pour réapprendre à la
+demande ; une cible qui change toutes les cent périodes, avec `gated_when`
+qui réactive l'apprentissage quand l'énergie résiduelle remonte ;
+`stop_after(clock, 8)` comme simple budget.
+
 ## Comment les tests les vérifient
 
 Chaque programme est rendu par l'interpréteur sur une instance neuve (les
@@ -545,7 +593,10 @@ l'autre, le FDN à 0,01 près sur T60 et l'amortissement, les gradients du GRU
 à 2 % des différences finies, sa perte divisée par dix et son résidu 20 dB
 sous la cible ; la corde à 0,05 Hz de 220 avec un résidu sous 1e-3 ; les
 amplitudes harmoniques à 2 % de 1/h avec un résidu de resynthèse sous 0,01
-(en build release). Les programmes tournent en simple précision là et en
+(en build release) ; la FDN cadencée à 0,01 du T60 et de l'amortissement
+quand son drapeau se lève, à une frontière de période entre la quatrième et
+la vingtième, ses paramètres bit-constants ensuite et le résidu rendu sous
+1e-4 rms. Les programmes tournent en simple précision là et en
 double sous `faustprobe` ; les deux convergent.
 
 ## D'où viennent les gradients

@@ -438,6 +438,61 @@ fn fad_fdn_reverb_lm_identifies_t60_and_damping() {
     );
 }
 
+#[test]
+fn fad_fdn_gated_calibrates_then_switches_its_learning_off() {
+    // [T60, damping, done, rendered residual] over 160 000 samples, almost
+    // ten periods of 16 384: the flag of `stop_below` rises on a period's
+    // last sample once the residual energy of the period is under 1e-7,
+    // the parameters are then bit-constant (the gated block computes nothing
+    // any more) and the reverb rendered on the held gains matches the target.
+    let Some(outs) = render("ddsp_fad_fdn_gated", 160_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 4);
+    assert_finite("ddsp_fad_fdn_gated", &outs);
+    let done = &outs[2];
+    let stop = done
+        .iter()
+        .position(|&d| d > 0.5)
+        .expect("the flag should rise within ten periods");
+    assert_eq!(
+        (stop + 1) % 16_384,
+        0,
+        "the flag must rise on a period's last sample, not at {stop}"
+    );
+    let period = (stop + 1) / 16_384;
+    assert!(
+        (4..=20).contains(&period),
+        "the flag rose at period {period}"
+    );
+    let t60 = f64::from(outs[0][stop]);
+    let damping = f64::from(outs[1][stop]);
+    let residual = rms(&outs[3][stop..]);
+    eprintln!(
+        "gated fdn: stop at period {period}, t60 {t60} damping {damping} residual {residual:.3e}"
+    );
+    assert!((t60 - 0.6).abs() < 0.01, "T60 should be 0.6 s, got {t60}");
+    assert!(
+        (damping - 0.3).abs() < 0.01,
+        "damping should be 0.3, got {damping}"
+    );
+    for n in stop..outs[0].len() {
+        assert_eq!(
+            outs[0][n], outs[0][stop],
+            "T60 moved after the stop, at frame {n}"
+        );
+        assert_eq!(
+            outs[1][n], outs[1][stop],
+            "damping moved after the stop, at frame {n}"
+        );
+        assert!(done[n] > 0.5, "the flag fell at frame {n}");
+    }
+    assert!(
+        residual < 1e-4,
+        "the rendered reverb should match the target once stopped, residual {residual:.3e}"
+    );
+}
+
 // ───────────────── state of the art: RAD ─────────────────
 
 const GRU_PARAMS: [(&str, f64); 27] = [

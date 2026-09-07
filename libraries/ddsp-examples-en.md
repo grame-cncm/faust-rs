@@ -1,6 +1,6 @@
-# Eleven DDSP examples with `fad` and `rad`
+# Twelve DDSP examples with `fad` and `rad`
 
-Eleven complete differentiable-DSP programs, each one a task an audio engineer
+Twelve complete differentiable-DSP programs, each one a task an audio engineer
 recognises, written with the two automatic-differentiation primitives of
 `faust-rs` and the loops of [optimizers.lib](optimizers.lib). Three use
 `fad`, forward mode, where the exact derivative through a recursion is what
@@ -12,7 +12,9 @@ reverb calibrated to a target decay, a recurrent neural amplifier trained by
 truncated backpropagation through time. The last two are the fragile ones,
 kept because of what they teach: the pitch of a string learned through its
 fractional delay, and the harmonic synthesizer of DDSP fitted through a
-spectral loss computed frame by frame inside an `ondemand` block.
+spectral loss computed frame by frame inside an `ondemand` block. The
+twelfth is the FDN reverb again, calibrating itself and then switching its
+learning off, so that it costs a reverb once done.
 Every program lives in `tests/corpus/ddsp_*.dsp`, is run by the test suite
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs)),
 and can be watched with `faustprobe`:
@@ -42,6 +44,7 @@ introduction is [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md)
 | 9 | `ddsp_rad_gru_amp_host` | train a GRU amplifier model by block-truncated BPTT | `rad`, public | Adam in the host (Rust) | gradients = finite differences to four digits; residual 29 dB under the target |
 | 10 | `ddsp_fad_waveguide_string_pitch` | tune the pitch of a waveguide string through its fractional delay | `fad` | `lsq_1D` + `nlms` | 228 → 220.000000 Hz; the well is ±1 Hz wide, capture only from above |
 | 11 | `ddsp_rad_harmonic_spectral_frame` | fit 16 harmonic amplitudes through a per-frame spectral loss | `rad` in `ondemand` | Adam per frame, in an `ondemand` block | all amplitudes within 2.5e-4 of 1/h in 100 frames |
+| 12 | `ddsp_fad_fdn_gated` | calibrate the FDN, then switch its learning off | `fad` in `gated` | `lm_2D` in an `ondemand` gated by `stop_below`, gains by `on_change` | (0.600, 0.300) frozen at the sixth period; the learning then costs nothing |
 
 **Where the optimizer runs.** Eight examples take one step per audio sample
 inside the graph, through the loops of the library (`lsq_1D`, `lm_2D`,
@@ -52,9 +55,13 @@ there, at frame rate, in a block written by hand around `frame_sum` and
 `adam_g`. The clocked loops of the library (`descend_1D_clocked` …
 `descend_5D_clocked`, `descend_N_clocked`, `descend_N_rad_clocked`) package
 the other clocked pattern, a loss computed at audio rate and its gradient
-averaged over the frame, one step per firing; none of the eleven uses them,
-section 11 of the tutorial and the fixtures `opt_descend_clocked_gain.dsp`
-and `opt_descend_in_ondemand_gain.dsp` do. Examples 6 and 9 use no
+averaged over the frame, one step per firing; none of the first eleven uses
+them, section 11 of the tutorial and the fixtures `opt_descend_clocked_gain.dsp`
+and `opt_descend_in_ondemand_gain.dsp` do. Example 12 runs the loop of
+example 8 at audio rate inside `op.gated`, an `ondemand` block that its own
+flag stops: the only one whose learning ends, and the one that uses the
+gating helpers of the library, `stop_below` for the flag and `on_change` for
+the coefficients of the rendered reverb. Examples 6 and 9 use no
 `ondemand` at all: their optimizer is the host's, one Adam step per
 `compute` block on the summed gradient lanes.
 
@@ -487,6 +494,44 @@ its test runs under `cargo test --release`.
 half, a noise band through a learned filter; a multi-resolution loss (two
 frame sizes, two blocks).
 
+## 12. A reverb that calibrates itself, then stops paying for it (`gated`, `stop_below`, `on_change`)
+
+**What it does.** The FDN of example 8, the same hidden target, the same
+Gauss-Newton loop, with two additions from the "Gating and Stopping" section
+of the library. The whole learning, the model carrying the two tangents,
+`lm_2D` and the residual, lives in `op.gated(learn)`, an `ondemand` domain
+whose clock the block's own flag switches off: once the flag is raised
+nothing of the learning is computed any more and the parameters hold. And
+the reverberator that renders the output takes its four gains from
+`op.on_change`, which recomputes `10^(−3 len_i / (T60 · SR))` only when T60
+changes, once per learning step and never after the stop, instead of four
+`pow` per sample.
+
+**The flag.** `op.stop_below(clock, 1e-7)` on the squared residual: raised
+at the end of the first period whose residual energy is under 1e-7, a
+residual of 2.5e-6 rms, an exact match for an effect, and kept raised. A
+threshold rather than `stop_relative` because the target is exact: the
+residual has no floor, it keeps falling geometrically and its relative
+change never settles. On a measured target, with a noise floor,
+`stop_relative` is the criterion; the calibration of a reverberator to
+measured rooms in section 7 of the overview uses it. Gauss-Newton with a
+forgetting factor of 0.999 is also why the target is exact here: noise at
+−60 dB is enough to make its steps wander (try it).
+
+**What you see.** `(0.5688, 0.2980)` at the end of the first period,
+`(0.6000, 0.3000)` by the fourth; the residual energy per period falls from
+3.9e-2 to 1.6e-8 at the sixth, where the flag rises on the period's last
+sample (98 303) and the parameters freeze at `(0.600002, 0.300000)`; the
+reverb rendered on the held gains then matches the target to 5e-9 rms. Until
+the flag a gated block is bit-identical to the same block outside the gate
+(the fixtures of the library check it); after it, the learning costs
+nothing and the reverb costs a reverb.
+
+**Try.** `gated_when(button("learn"), learn)` to relearn on demand; a target
+that changes every hundred periods, with `gated_when` re-enabling the
+learning when the residual energy rises; `stop_after(clock, 8)` as a plain
+budget.
+
 ## How the tests check them
 
 Each program renders through the interpreter on a fresh instance (the
@@ -503,7 +548,10 @@ each other, the FDN within 0.01 of T60 and damping, the GRU's gradients
 within 2 % of finite differences, its loss cut tenfold and its residual 20 dB
 under the target; the string within 0.05 Hz of 220 with a residual under
 1e-3; the harmonic amplitudes within 2 % of 1/h with a resynthesis residual
-under 0.01 (in release builds). The programs run in single precision there
+under 0.01 (in release builds); the gated FDN within 0.01 of T60 and
+damping when its flag rises, on a period boundary between the fourth and
+the twentieth period, its parameters bit-constant afterwards and the
+rendered residual under 1e-4 rms. The programs run in single precision there
 and in double under `faustprobe`; both converge.
 
 ## Where the gradients come from
