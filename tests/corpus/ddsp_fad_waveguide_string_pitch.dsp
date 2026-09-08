@@ -35,14 +35,29 @@
 import("stdfaust.lib");
 op = library("optimizers.lib");
 
-MAXD = 512;
-x = 0.1 * no.noise;
+MAXD = 512;                               // longest delay the line can hold, in samples (86 Hz)
+x = 0.1 * no.noise;                       // the excitation, driving both strings
 // loop: input, fractional delay of d samples (one is the loop's own), gain, damping
+// `+(s)` adds the excitation to the feedback; `de.fdelay4(MAXD, d - 1.0)` is
+// the 4th-order Lagrange fractional delay of delays.lib, one sample less than
+// d because the `~` recursion adds one; g is the loop gain, under 1 for a
+// decaying string; si.smooth(0.3) is the loop's low-pass, which shortens the
+// decay of the high partials as a real string does. The period is d samples,
+// so the pitch is SR / d.
 string(d, g, s) = (+(s) : de.fdelay4(MAXD, d - 1.0) : *(g) : si.smooth(0.3)) ~ _;
 
-f_star = 220.0;
+f_star = 220.0;                           // the hidden pitch
 target = string(ma.SR / f_star, 0.95, x);
-mdl(d, s) = string(d, 0.95, s);
+mdl(d, s) = string(d, 0.95, s);           // the model shares the gain; only d is learned
+// lsq_1D(mdl, engine, lo, hi, init, reset, target, x): least squares on the
+// waveform with the NLMS engine (mu 0.02, eps 1e-6, power smoothing 0.99),
+// the sensitivity d string / dd from `fad` through the interpolated read and
+// the feedback; d in [100, 400] samples (110 to 441 Hz), starting at the
+// delay of 228 Hz, 3.6 % above the target; no reset.
 d = op.lsq_1D(mdl, op.nlms(0.02, 0.000001, 0.99), 100.0, 400.0, ma.SR / 228.0, 0.0, target, x);
 
+// ---- outputs
+// [0] the learned pitch in Hz, SR / d: 228 -> 220.000000 within 60 000 samples
+// [1] the residual, target - model on the same excitation: under 1e-6 once
+//     the pitch has locked
 process = ma.SR / d, target - mdl(d, x);
