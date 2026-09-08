@@ -96,7 +96,9 @@ struct Args {
     #[arg(long = "set", value_name = "PATH=VALUE")]
     sets: Vec<String>,
 
-    /// Input excitation: zero, impulse, impulse:CH, dc, `white[:SEED]`, sine:HZ.
+    /// Input excitation: zero, impulse, impulse:CH, dc, `white[:SEED]`, sine:HZ,
+    /// `file:PATH[:CH]` (a .wav, .f64 or .f32 file; input i reads channel i, a
+    /// mono file feeds every input, `:CH` picks one channel for all).
     #[arg(long = "in", value_name = "MODE", default_value = "impulse")]
     input: String,
 
@@ -242,6 +244,14 @@ struct Args {
     #[arg(long, default_value_t = 100)]
     blocks: usize,
 
+    /// Start every `--train` block from a cleared state and from frame 0 of
+    /// the excitation: one pass over the same response per block, an
+    /// offline calibration with one epoch per block (with `--in file:` the
+    /// response is the file). Without it the blocks are the successive
+    /// stretches of one stream and the state carries over.
+    #[arg(long = "reset-per-block")]
+    reset_per_block: bool,
+
     /// Check the gradient lanes of the `--train` controls against central
     /// finite differences of the loss lane, on one block from a fresh
     /// instance per evaluation, at the controls' initial values. Fails when
@@ -342,8 +352,35 @@ fn parse_input(spec: &str) -> Result<InputMode, String> {
             .map(|hz| InputMode::Sine { hz })
             .map_err(|_| format!("invalid frequency in `--in sine:{hz}`")),
         ("sine", None) => Err("`--in sine` needs a frequency, e.g. sine:440".to_owned()),
+        ("file", Some(rest)) => {
+            // `file:PATH` or `file:PATH:CH`; a trailing `:N` is a channel
+            let (path, channel) = match rest.rsplit_once(':') {
+                Some((path, ch)) if ch.parse::<usize>().is_ok() => (path, ch.parse().ok()),
+                _ => (rest, None),
+            };
+            InputMode::from_file(std::path::Path::new(path), channel)
+        }
+        ("file", None) => Err("`--in file` needs a path, e.g. file:target.wav".to_owned()),
         _ => Err(format!("unknown input mode `{spec}`")),
     }
+}
+
+/// The excitation of `--in`, with a warning on stderr when it is a file
+/// recorded at another rate than `--sr`: the program then runs at `--sr`
+/// and reads the samples as if they were at that rate.
+fn parse_input_at(spec: &str, sr: i32) -> Result<InputMode, String> {
+    let input = parse_input(spec)?;
+    if let InputMode::File {
+        sample_rate: Some(rate),
+        ..
+    } = &input
+        && i64::from(*rate) != i64::from(sr)
+    {
+        eprintln!(
+            "warning: `--in {spec}` is recorded at {rate} Hz, the program runs at {sr} Hz (--sr)"
+        );
+    }
+    Ok(input)
 }
 
 /// Split a `PATH=VALUE` assignment.
@@ -629,7 +666,7 @@ fn run(mut args: Args) -> Result<(), String> {
     let spec = RenderSpec {
         frames: args.render,
         block: args.block,
-        input: parse_input(&args.input)?,
+        input: parse_input_at(&args.input, args.sr)?,
         skip: args.skip,
         schedule: schedule.clone(),
         drive_buttons: impulse_test,
@@ -899,7 +936,8 @@ fn run_train(args: &Args) -> Result<(), String> {
         lr: args.lr,
         block: args.block,
         blocks: args.blocks,
-        input: parse_input(&args.input)?,
+        input: parse_input_at(&args.input, args.sr)?,
+        reset_per_block: args.reset_per_block,
     };
     if args.fd_check {
         let checks = train::fd_check(&factory, args.sr, &spec, args.fd_step)?;

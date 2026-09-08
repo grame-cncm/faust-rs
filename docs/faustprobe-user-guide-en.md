@@ -95,6 +95,7 @@ itself a finding.
 | `dc` | constant 1 |
 | `white[:SEED]` | white noise; the seed makes it reproducible |
 | `sine:HZ` | a sine at `HZ` |
+| `file:PATH[:CH]` | the channels of an audio file, `.wav` (PCM or float), `.f64` or `.f32` (raw little-endian, mono); input `i` reads channel `i`, a mono file feeds every input, `:CH` picks one channel for all; silence past the end. The samples are read at `--sr`: give the file's rate there (a WAV at another rate gets a warning; a raw file carries none) |
 
 ```bash
 faustprobe --in zero -n 4 gen.dsp          # a generator drives itself
@@ -348,11 +349,17 @@ faustprobe --double -I libraries -I <faustlibraries> --in white:1 --block 256 \
 of their gradient lanes; `--loss-lane` (default 0) and `--grad-lane`
 (default 1, the lanes of the controls follow it) say where the lanes are;
 `--optimizer adam|sgd`, `--lr` and `--blocks` set the loop, `--block` the
-block size, `--in` the excitation (`white:SEED` for a reproducible one). Per
-block, the controls are written, the block computed on the same instance
-(the state carries across blocks: truncated backpropagation through time
-for a recurrent model), the loss and gradient lanes averaged, the
-controls stepped and kept in their range. One CSV row per block, thinned by
+block size, `--in` the excitation (`white:SEED` for a reproducible one,
+`file:PATH` for a recording). Per block, the controls are written, the
+block computed on the same instance (the state carries across blocks:
+truncated backpropagation through time for a recurrent model), the loss
+and gradient lanes averaged, the controls stepped and kept in their range.
+With `--reset-per-block` every block starts instead from a cleared state
+and from frame 0 of the excitation: one pass over the same response per
+block, the offline calibration of a program whose target is a measured
+response given by `--in file:` and whose block is the whole response
+(`--block` its length, `--bra-tape` the next power of two, `--sr` the
+rate of the recording). One CSV row per block, thinned by
 `--every`, then the trained values and the first and last loss:
 
 ```text

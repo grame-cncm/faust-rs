@@ -43,6 +43,7 @@
 //! - [`sweep`] — parameter sweeps and the reductions applied to each point.
 //! - [`spectrum`] — the radix-2 FFT behind the `f0` reduction.
 
+pub mod audio_file;
 pub mod engine;
 pub mod params;
 pub mod poly;

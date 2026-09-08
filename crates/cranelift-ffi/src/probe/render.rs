@@ -27,19 +27,55 @@ pub enum InputMode {
     White { seed: u64 },
     /// Full-scale sine at the given frequency on every channel.
     Sine { hz: f64 },
+    /// The channels of an audio file (`--in file:PATH[:CH]`): input `i` reads
+    /// channel `i`, or the last channel when the file has fewer (a mono file
+    /// feeds every input); silence past the end of the file.
+    File {
+        channels: std::sync::Arc<Vec<Vec<f64>>>,
+        /// The file's own sample rate when its format records one.
+        sample_rate: Option<u32>,
+    },
 }
 
 impl InputMode {
+    /// The excitation read from `path` (`.wav`, `.f64` or `.f32`, see
+    /// [`crate::probe::audio_file`]); with `channel`, that channel alone
+    /// feeds every input.
+    pub fn from_file(path: &std::path::Path, channel: Option<usize>) -> Result<Self, String> {
+        let (mut channels, sample_rate) = crate::probe::audio_file::read_channels(path)?;
+        if channels.is_empty() || channels[0].is_empty() {
+            return Err(format!("{}: no samples", path.display()));
+        }
+        if let Some(ch) = channel {
+            if ch >= channels.len() {
+                return Err(format!(
+                    "{}: channel {ch} requested, the file has {}",
+                    path.display(),
+                    channels.len()
+                ));
+            }
+            channels = vec![channels.swap_remove(ch)];
+        }
+        Ok(Self::File {
+            channels: std::sync::Arc::new(channels),
+            sample_rate,
+        })
+    }
+
     /// Sample for `channel` at absolute `frame`.
     #[must_use]
     pub fn sample(&self, channel: usize, frame: usize, sample_rate: f64) -> f64 {
-        match *self {
+        match self {
             Self::Zero => 0.0,
             Self::Impulse => f64::from(u8::from(frame == 0)),
-            Self::ImpulseChannel(ch) => f64::from(u8::from(frame == 0 && channel == ch)),
+            Self::ImpulseChannel(ch) => f64::from(u8::from(frame == 0 && channel == *ch)),
             Self::Dc => 1.0,
-            Self::White { seed } => white(seed, channel, frame),
+            Self::White { seed } => white(*seed, channel, frame),
             Self::Sine { hz } => (std::f64::consts::TAU * hz * frame as f64 / sample_rate).sin(),
+            Self::File { channels, .. } => channels[channel.min(channels.len() - 1)]
+                .get(frame)
+                .copied()
+                .unwrap_or(0.0),
         }
     }
 }

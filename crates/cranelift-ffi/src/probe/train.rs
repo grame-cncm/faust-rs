@@ -10,7 +10,9 @@
 //! module does it with the two operations a host has, `set_exact` on the
 //! controls and `compute_raw` on a block, the state of the instance carried
 //! from block to block (truncated backpropagation through time for a
-//! recurrent model), and checks the gradient lanes against central finite
+//! recurrent model) or, with `reset_per_block`, cleared before each block so
+//! that every block replays the same response from silence (an offline
+//! calibration, one epoch per block), and checks the gradient lanes against central finite
 //! differences on the controls, the first thing to do when a gradient looks
 //! wrong.
 
@@ -56,6 +58,11 @@ pub struct TrainSpec {
     pub blocks: usize,
     /// The excitation, position-addressed so that the blocks are contiguous.
     pub input: InputMode,
+    /// Start every block from a cleared state and from frame 0 of the
+    /// excitation: each block is then one pass over the same response (an
+    /// offline calibration, one epoch per block) instead of the next stretch
+    /// of a stream.
+    pub reset_per_block: bool,
 }
 
 /// One step of the training, reported as it happens.
@@ -183,13 +190,23 @@ pub fn train(
     let (mut first_loss, mut last_loss) = (0.0, 0.0);
     let n = spec.block as f64;
     for iteration in 1..=spec.blocks {
+        if spec.reset_per_block {
+            // controls back to their defaults and the state cleared; the
+            // trained controls are rewritten just below
+            probe.reset();
+        }
         for (param, &value) in params.iter().zip(&values) {
             probe.set_exact(&param.path, value)?;
         }
+        let start = if spec.reset_per_block {
+            0
+        } else {
+            (iteration - 1) * spec.block
+        };
         let x = input_block(
             &spec.input,
             probe.inputs(),
-            (iteration - 1) * spec.block,
+            start,
             spec.block,
             f64::from(sample_rate),
         );
@@ -339,6 +356,7 @@ mod tests {
             block,
             blocks,
             input: InputMode::White { seed },
+            reset_per_block: false,
         }
     }
 
