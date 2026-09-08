@@ -1,5 +1,5 @@
 faust-rs-golden-v1
 source=ddsp_rad_host_block_resonator.dsp
-bytes=1431
-lines=32
-fnv1a64=6eec3075987c2837
+bytes=2208
+lines=46
+fnv1a64=abfd4814bc774cfe

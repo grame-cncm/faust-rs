@@ -1,5 +1,5 @@
 faust-rs-golden-v1
 source=ddsp_rad_gru_amp_host.dsp
-bytes=4009
-lines=87
-fnv1a64=8c5559cc14f6ca66
+bytes=5310
+lines=107
+fnv1a64=51e85458e1f9371e
