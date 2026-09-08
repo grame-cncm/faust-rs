@@ -149,7 +149,7 @@ same closed-form derivatives as FAD:
 | `log(x)` | `1 / x` |
 | `log10(x)` | `1 / (x · ln 10)` |
 | `sqrt(x)` | `1 / (2 · √x)` |
-| `abs(x)` | `x / |x|` |
+| `abs(x)` | `x / \|x\|` |
 | `acos(x)` | `-1 / √(1 - x²)` |
 | `asin(x)` | `1 / √(1 - x²)` |
 | `atan(x)` | `1 / (1 + x²)` |

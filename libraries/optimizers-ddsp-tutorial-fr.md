@@ -28,16 +28,29 @@ hors ligne et imprime des trames choisies et des statistiques. Tous les
 exemples ci-dessous ont été vérifiés avec lui, et
 `crates/cranelift-ffi/tests/tutorial_examples.rs` les garde vérifiés : il
 extrait chaque programme de cette page, l'exécute comme le texte l'indique
-et contrôle les chiffres cités à sa suite. Remplacer `<faustlibraries>` par
-le répertoire qui contient `stdfaust.lib` :
+et contrôle les chiffres cités à sa suite. La partie de la commande qui ne
+change jamais est celle du compilateur : la double précision et le chemin
+d'import (remplacer `<faustlibraries>` par le répertoire qui contient
+`stdfaust.lib`) :
 
 ```sh
-faustprobe --double -I libraries -I <faustlibraries> --in zero -n 3000 --every 500 programme.dsp
+FP="faustprobe --double -I libraries -I <faustlibraries>"
 ```
 
-`-n` est le nombre de trames rendues, `--every` imprime une trame sur N,
-`--quiet` n'imprime que les statistiques par sortie, `--in sine:220` injecte
-une sinusoïde là où le programme a une entrée. Le reste est dans
+Chaque exemple donne ensuite les options de sa propre exécution, à placer
+entre `$FP` et le programme : `-n` est le nombre de trames rendues,
+`--every N` imprime une trame sur N, `--skip` fait commencer plus tard les
+trames imprimées et les statistiques, `--quiet` n'imprime que les
+statistiques par sortie (crête, rms, dc), et `--in sine:220` injecte une
+sinusoïde là où le programme a une entrée (la plupart des programmes de
+cette page n'en ont pas et ne prennent pas de `--in`). Le premier exemple
+se lit :
+
+```sh
+$FP -n 1200 --every 200 programme.dsp
+```
+
+Le reste est dans
 [docs/faustprobe-user-guide-en.md](../docs/faustprobe-user-guide-en.md).
 
 La bibliothèque se charge avec un préfixe :
@@ -63,6 +76,20 @@ Quatre idées, dans l'ordre où elles apparaissent dans le code :
 - **mise à jour** : déplacer `g` à l'opposé du gradient,
   `g <- g - lr * gradient`, où la vitesse d'apprentissage `lr` fixe la taille
   du pas.
+
+Ces quatre idées ensemble sont la **descente de gradient** : la perte est
+une cuvette au-dessus de `g`, le gradient est la pente de la cuvette au `g`
+courant, et chaque pas glisse un peu le long de la pente ; là où la pente
+est nulle, au fond, `g * x = cible`, les pas s'arrêtent. Rien n'est résolu
+en forme close — la réponse `0,7` n'est jamais calculée, seulement
+approchée, un pas par échantillon, la vitesse d'apprentissage décidant de
+la longueur de chaque pas : trop petite et l'on rampe, trop grande et l'on
+dépasse le fond et l'on diverge. La version présentée ici, où chaque pas
+utilise le gradient du seul échantillon courant plutôt que celui de tout un
+enregistrement, est la descente de gradient *stochastique*, que le
+traitement du signal connaît depuis 1960 sous le nom d'algorithme LMS ; la
+bibliothèque l'emballe dans `op.sgd_g` et propose d'autres pas sur le même
+gradient (section 3, section 5.3).
 
 La mise à jour a besoin de mémoire : le nouveau `g` dépend du précédent. En
 Faust, la mémoire est la récursion, et `~ _` renvoie la sortie précédente comme
@@ -114,6 +141,40 @@ Exécutez avec `-n 1` : les six sorties sont `6, 3, 2, 6, 3, 2`.
   par rapport à chaque graine : `[x*y, d/dx = y, d/dy = x]`.
 - `rad(expr, (s0, s1))` donne toutes les sorties d'`expr`, puis les
   gradients : les mêmes nombres ici, dans une autre disposition.
+
+Comment le compilateur y arrive, sur ce produit. Les deux primitives
+travaillent sur le graphe de signaux, une fois le programme développé, où
+`x * y` est un nœud multiplication à deux feuilles, les deux sliders. Une
+graine est reconnue par identité : la feuille `x` *est* la graine 0, la
+feuille `y` *est* la graine 1.
+
+`fad` parcourt le graphe des feuilles vers la sortie et attache à chaque
+nœud sa valeur et une tangente par graine. La feuille `x` porte
+`(x, [1, 0])` : sa dérivée par rapport à elle-même vaut 1, par rapport à
+`y` 0 ; la feuille `y` porte `(y, [0, 1])`. À la multiplication, la règle
+du produit combine les deux paquets voie par voie, `d(uv) = du·v + u·dv` :
+
+```text
+voie 0 (d/dx) :  1·y + x·0  =  y
+voie 1 (d/dy) :  0·y + x·1  =  x
+```
+
+le nœud porte donc `(x·y, [y, x])`, les trois sorties de `fad`. Les `·0`
+et `·1` ne survivent pas : le simplificateur les replie, et le code généré
+calcule `x * y` puis recopie `y` et `x` vers les sorties tangentes — rien
+n'est dérivé à l'exécution, la dérivée est un programme.
+
+`rad` parcourt le graphe dans l'autre sens. La sortie reçoit l'adjoint 1
+(la dérivée de la sortie par rapport à elle-même) ; la multiplication
+transmet à chaque facteur l'adjoint multiplié par l'*autre* facteur, `1·y`
+à `x` et `1·x` à `y` ; une graine accumule ce qui lui parvient. Le gradient
+vaut encore `[y, x]`, obtenu en une passe sur le graphe quel que soit le
+nombre de graines, là où `fad` a transporté une voie par graine à travers
+chaque nœud. Sur un produit les deux coûts sont les mêmes ; sur une perte à
+beaucoup de paramètres et un graphe profond, la section 4.1 montre ce qui
+change.
+
+Avec `x = 2` et `y = 3` : `6, 3, 2`, deux fois.
 
 Les graines sont les signaux que vous listez ; pour une perte à `N`
 paramètres, un appel donne les `N` dérivées. L'essentiel de ce tutoriel
@@ -201,11 +262,16 @@ normalisez.
 
 ### 4.1 Beaucoup de coefficients : boucles à bus et mode inverse
 
-`lsq_3D` prend trois coefficients comme trois arguments, chacun avec son
-moteur et ses bornes. Pour seize coefficients, la bibliothèque porte les
-paramètres par un *bus* et applique un moteur et une paire de bornes à tous :
-`lsq_N`, et son pendant perte d'abord `descend_N`. Le modèle devient un bloc
-dont les `N` premières entrées sont les coefficients :
+La section 4 a appris un coefficient avec `lsq_1D`. La bibliothèque a la
+même boucle pour deux à cinq paramètres, `lsq_2D` à `lsq_5D` (et
+`descend_2D` à `descend_5D`, perte d'abord), chaque paramètre passé comme
+son propre argument avec son moteur et ses bornes — la section 5 utilise
+`descend_2D` ainsi, la section 6 `descend_5D`. Cette forme s'arrête à cinq. Pour seize coefficients de
+FIR, la bibliothèque porte les paramètres par un *bus* et applique un
+moteur et une paire de bornes à tous : `lsq_N(N, mdl, moteur, lo, hi, init,
+reset, cible, x)`, et son pendant perte d'abord `descend_N`, que cet exemple
+utilise dans sa variante `rad`. Le modèle devient un bloc dont les `N`
+premières entrées sont les coefficients :
 
 ```faust
 import("stdfaust.lib");
@@ -223,9 +289,11 @@ process = target - fir(h);
 
 `descend_N_rad` est `descend_N` avec `rad` à la place de `fad` : un balayage
 inverse par échantillon donne les seize gradients, là où le mode direct
-transporte seize tangentes. Exécutez les deux (`op.descend_N` est l'autre) :
-les résidus sont le même signal à l'arrondi près, et les programmes compilés
-ne le sont pas — 1 182 instructions d'interpréteur contre 3 777, 0,04 s
+transporte seize tangentes. Exécutez avec `-n 1000 --quiet`, puis `-n 2000
+--skip 1000 --quiet`, puis `-n 3000 --skip 2000 --quiet` : le résidu vaut rms
+`0,10`, `2e-7`, puis `0`. Exécutez les deux boucles (`op.descend_N` est
+l'autre) : les résidus sont le même signal à l'arrondi près, et les
+programmes compilés ne le sont pas — 1 182 instructions d'interpréteur contre 3 777, 0,04 s
 contre 0,10 s pour 200 000 échantillons ; 4 129 contre 28 891 et 0,13 s
 contre 1,32 s à 64 coefficients. La sensibilité d'un coefficient de FIR est
 son entrée retardée, donc les deux boucles calculent le même gradient. Là où
@@ -303,8 +371,9 @@ constante de temps de 20 000 échantillons, de sorte que la recherche est rapide
 au début et calme à la fin. Les vitesses d'apprentissage sont des signaux ; un
 schedule se passe là où on mettrait une constante.
 
-Exécutez : `(1206, 2,003)` à 10 000 échantillons, puis à environ 2 % de
-`(1200, 2,0)`. Bien, avec une gigue résiduelle que laisse le pas fixe de Lion.
+Exécutez avec `-n 30000 --every 10000` : `(1206, 2,003)` à 10 000
+échantillons, puis à moins de 5 % de `(1200, 2,0)` (`(1233, 2,03)` à 20 000).
+Bien, avec une gigue résiduelle que laisse le pas fixe de Lion.
 
 ### 5.3 Second remède : laisser l'algorithme trouver les échelles
 
@@ -479,15 +548,20 @@ la bibliothèque, passée comme moteur.
 `gate_g` met le gradient à zéro mais le calcule quand même, et le modèle
 qui porte les tangentes tourne aussi. Pour cesser de payer l'apprentissage
 une fois les paramètres stabilisés, mettre toute la boucle dans un
-`ondemand` dont un critère de convergence coupe l'horloge : la section 7 de
-l'aperçu montre le motif et son coût, un facteur huit à vingt-cinq.
+`ondemand` dont un critère de convergence coupe l'horloge : la section 7,
+« Deux phases : apprendre, puis servir », de
+[optimizers-overview-fr.md](optimizers-overview-fr.md) montre le motif et le
+mesure sur une réverbération : une fois l'apprentissage arrêté, le programme
+tourne huit à vingt-cinq fois plus vite que pendant (23 fois le temps réel
+en apprenant, 196 après la bascule, 572 les coefficients hissés).
 
 ## 9. Résoudre plutôt qu'apprendre : Newton
 
 La même mécanique de dérivée résout des équations. Les modèles analogiques
 virtuels en sont pleins d'implicites — la sortie d'une boucle de rétroaction
-saturante dépend d'elle-même : `y = tanh(x - fb * y)`. La méthode de Newton
-trouve `y` en quelques pas, chacun demandant le résidu
+saturante dépend d'elle-même : `y = tanh(x - fb * y)`. La [méthode de
+Newton](https://fr.wikipedia.org/wiki/M%C3%A9thode_de_Newton) trouve `y` en
+quelques pas, `y <- y - F(y) / F'(y)`, chacun demandant le résidu
 `F(y) = y - tanh(x - fb y)` et sa dérivée `F'(y)` ; un `fad` donne les deux, et
 `op.newton(N, F, y0)` déroule `N` pas :
 
@@ -687,6 +761,48 @@ qu'un hôte écrit, décrite à la section 13 de
 avec `--in file:` et `--reset-per-block` pour une cible enregistrée rejouée
 depuis un état vierge à chaque bloc.
 
+### 10.5 À travers le temps : ce que voit le balayage par bloc
+
+La section 4.1 disait qu'à l'intérieur d'une boucle `rad` renvoie le *terme
+direct*, et la section 10.4 que, remis à l'hôte, il traverse la récursion
+sur le bloc. Un pôle rend les deux visibles. La cible est `onepole(0.9, x)`,
+le modèle le même filtre avec `r` en slider ; la seconde sortie est le terme
+direct écrit à la main, le gradient avec `y[n-1]` tenu fixe :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+r = hslider("r", 0.3, -0.99, 0.99, 0.001);
+x = no.noise;
+onepole(c, s) = s : + ~ *(c);          // y[n] = s[n] + c * y[n-1]
+target = onepole(0.9, x);
+y = onepole(r, x);
+loss = op.mse(y, target);
+direct = 2.0 * (y - target) * y';      // le gradient avec y[n-1] tenu fixe
+process = rad(loss, r), direct;
+```
+
+Exécutez avec `--block 256 -n 256 --quiet` : `dc` fois 256 est la somme
+d'une voie sur le bloc, `-172,9` pour la voie `rad` et `-117,2` pour le
+terme direct. Puis `--block 256 --train r --blocks 1 --fd-check` : la
+différence finie de la perte du bloc vaut `-172,9`, à `1e-6` près de la voie
+`rad`. La voie est le gradient exact de la perte du bloc, ce qui n'est
+possible que si le balayage est repassé par `y[n-1]` à chaque échantillon :
+c'est la rétropropagation à travers le temps (BPTT), la dérivée de la sortie
+du bloc par rapport à `r` à travers chaque état passé. Le terme direct en
+manque un tiers, la part qui vient de ce que `y[n-1]` dépend lui-même de `r`.
+
+L'horizon est le bloc. À sa fin le balayage part d'un adjoint nul, donc ce
+que les états d'avant le bloc doivent à `r` n'est pas compté : BPTT
+tronquée, le bloc étant la troncature. La constante de temps du pôle est
+`1 / (1 - 0,9) = 10` échantillons et un bloc de 16 la couvre : `--block 16
+--train r --lr 0.01 --blocks 800 --every 200` donne `0,8964, 0,900005,
+0,900001, 0,900000`. Avec `--block 1` le balayage ne voit qu'un échantillon,
+la voie *est* le terme direct, et la même boucle ne se pose jamais : après
+3 200 pas `r` oscille entre 0,53 et sa borne 0,99. L'exemple 10 de
+[ddsp-examples-fr.md](ddsp-examples-fr.md) est le même mécanisme sur un GRU
+à 27 paramètres.
+
 ## 11. Apprendre à sa propre cadence : `ondemand`
 
 Jusqu'ici tout tournait une fois par échantillon : le modèle, la dérivée et la
@@ -873,8 +989,9 @@ h = op.descend_N_rad_clocked(N, il.frame_clock(64), fir_loss, op.sgd_g(0.5), -2.
 process = target - fir(h);
 ```
 
-Exécutez par fenêtres de 1 000 échantillons (`--quiet`, `--skip`) et à côté
-la version par échantillon de la section 4.1 (`descend_N_rad`, `lr = 0,02`) :
+Exécutez par fenêtres de 1 000 échantillons (`-n 1000 --quiet`, puis `-n
+2000 --skip 1000 --quiet`, etc.) et à côté la version par échantillon de la
+section 4.1 (`descend_N_rad`, `lr = 0,02`) :
 le résidu du cadencé vaut rms `0,21`, `6e-4`, `1,6e-6`, `3e-9` sur les quatre
 premières fenêtres, celui du par-échantillon `0,10`, `2e-7`, puis `0`. Le
 cadencé fait 64 fois moins de pas avec une vitesse 25 fois plus grande, et
@@ -929,7 +1046,7 @@ traverserait la frontière du bloc, une perte dedans et une graine dehors.
 |---|---|---|
 | Le paramètre ne bouge jamais | sa dérivée est nulle : il traverse un bouton, une case à cocher, une conversion ou une comparaison entière dans le modèle | garder le chemin du paramètre en arithmétique flottante |
 | Il bouge dans le mauvais sens | convention de signe : avec `r = modèle - cible` le gradient MSE est `+2 r j` ; la note de synthèse utilise `err = cible - modèle` et `-err * j` | choisir une convention |
-| `NaN` au bout d'un moment | `abs` (dérivée `x/|x|`) ou un filtre devenu instable | pertes lisses (`logcosh`, `pseudo_huber`), coefficients de réflexion pour les pôles |
+| `NaN` au bout d'un moment | `abs` (dérivée `x/\|x\|`) ou un filtre devenu instable | pertes lisses (`logcosh`, `pseudo_huber`), coefficients de réflexion pour les pôles |
 | Un paramètre converge, un autre rampe | unités différentes sous une seule vitesse | domaine log, Adam/Lion, ou `lm_2D` |
 | La boucle oscille avec une perte énergétique | l'optimiseur est plus rapide que le lissage de la perte | baisser `lr` sous `1 - a` |
 | Gigue à la fin | pas fixe sur un gradient bruité | `lr_exp`/`lr_cos`, `polyak`, ou SGD au lieu d'Adam |

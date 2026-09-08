@@ -25,16 +25,26 @@ To *see* a program learn without wiring audio, `faustprobe` renders it offline
 and prints selected frames and statistics. All examples below were checked
 with it, and `crates/cranelift-ffi/tests/tutorial_examples.rs` keeps them
 checked: it extracts every program of this page, runs it as the text says
-and asserts the figures quoted after it. Replace `<faustlibraries>` by the
-directory holding `stdfaust.lib`:
+and asserts the figures quoted after it. The part of the command that never
+changes is the compiler's: double precision and the import path (replace
+`<faustlibraries>` by the directory holding `stdfaust.lib`):
 
 ```sh
-faustprobe --double -I libraries -I <faustlibraries> --in zero -n 3000 --every 500 program.dsp
+FP="faustprobe --double -I libraries -I <faustlibraries>"
 ```
 
-`-n` is the number of frames rendered, `--every` prints one frame out of N,
-`--quiet` prints only the per-output statistics, `--in sine:220` feeds a sine
-where the program has an input. Read
+Each example then gives the options of its own run, to put between `$FP`
+and the program: `-n` is the number of frames rendered, `--every N` prints
+one frame out of N, `--skip` starts the printed frames and the statistics
+later, `--quiet` prints only the per-output statistics (peak, rms, dc), and
+`--in sine:220` feeds a sine where the program has an input (most programs
+here have none and take no `--in`). The first example reads:
+
+```sh
+$FP -n 1200 --every 200 program.dsp
+```
+
+Read
 [docs/faustprobe-user-guide-en.md](../docs/faustprobe-user-guide-en.md) for the
 rest.
 
@@ -59,6 +69,19 @@ Four ideas, in the order they appear in the code:
   small;
 - **update**: move `g` against the gradient, `g <- g - lr * gradient`, where
   the learning rate `lr` sets the step size.
+
+Together these four are **gradient descent**: the loss is a bowl over `g`,
+the gradient is the slope of the bowl at the current `g`, and each step
+slides a little way down the slope; where the slope is zero, at the bottom,
+`g * x = target`, the steps stop. Nothing is solved in closed form — the
+answer `0.7` is never computed, only approached, one step per sample, the
+learning rate deciding how far each step goes: too small and it crawls, too
+large and it overshoots the bottom and diverges. The version here, where
+each step uses the gradient of the current sample alone rather than of a
+whole recording, is *stochastic* gradient descent, which the signal
+processing literature has known since 1960 as the LMS algorithm; the
+library packages it as `op.sgd_g` and offers other steppers on the same
+gradient (section 3, section 5.3).
 
 The update needs memory: the new `g` depends on the previous one. In Faust,
 memory is recursion, and `~ _` feeds the previous output back as the input of
@@ -109,6 +132,39 @@ Run with `-n 1`: the six outputs are `6, 3, 2, 6, 3, 2`.
   derivatives with respect to each seed: `[x*y, d/dx = y, d/dy = x]`.
 - `rad(expr, (s0, s1))` gives all outputs of `expr`, then the gradients:
   the same numbers here, in a different layout.
+
+How the compiler gets there, on this product. Both primitives work on the
+signal graph after the program has been expanded, where `x * y` is one
+multiplication node with two leaves, the two sliders. A seed is recognised
+by identity: the leaf `x` *is* seed 0, the leaf `y` *is* seed 1.
+
+`fad` walks the graph from the leaves up and attaches to every node its
+value and one tangent per seed. The leaf `x` carries `(x, [1, 0])`: its
+derivative with respect to itself is 1, with respect to `y` 0; the leaf `y`
+carries `(y, [0, 1])`. At the multiplication the product rule combines the
+two bundles lane by lane, `d(uv) = du·v + u·dv`:
+
+```text
+lane 0 (d/dx):  1·y + x·0  =  y
+lane 1 (d/dy):  0·y + x·1  =  x
+```
+
+so the node carries `(x·y, [y, x])`, which is the three outputs of `fad`.
+The `·0` and `·1` do not survive: the simplifier folds them, and the
+generated code computes `x * y`, then copies `y` and `x` to the tangent
+outputs — nothing is differentiated at run time, the derivative is a
+program.
+
+`rad` walks the graph the other way. The output receives the adjoint 1
+(the derivative of the output with respect to itself); the multiplication
+passes to each factor the adjoint times the *other* factor, `1·y` to `x`
+and `1·x` to `y`; a seed accumulates what reaches it. The gradient is
+`[y, x]` again, from one pass over the graph whatever the number of seeds,
+where `fad` carried one lane per seed through every node. On a product the
+two costs are the same; on a loss with many parameters and a deep graph,
+section 4.1 shows what changes.
+
+With `x = 2` and `y = 3`: `6, 3, 2`, twice.
 
 The seeds are whatever signals you list; for a loss with `N` parameters, one
 call gives the `N` derivatives. Most of this tutorial uses `fad`; `rad` comes
@@ -193,11 +249,15 @@ Audio levels vary by 40 dB in a session; normalize.
 
 ### 4.1 Many taps: bus loops and reverse mode
 
-`lsq_3D` takes three taps as three arguments, each with its engine and its
-bounds. For sixteen taps the library carries the parameters as a *bus* and
-applies one engine and one pair of bounds to all of them: `lsq_N`, and its
-loss-first counterpart `descend_N`. The model becomes a block whose first
-`N` inputs are the taps:
+Section 4 learned one coefficient with `lsq_1D`. The library has the same
+loop for two to five parameters, `lsq_2D` to `lsq_5D` (and `descend_2D` to
+`descend_5D`, loss first), each parameter given as its own argument with
+its own engine and bounds — section 5 uses `descend_2D` that way, section
+6 `descend_5D`. That form stops at five. For sixteen FIR taps the library carries the
+parameters as a *bus* and applies one engine and one pair of bounds to all
+of them: `lsq_N(N, mdl, engine, lo, hi, init, reset, target, x)`, and its
+loss-first counterpart `descend_N`, which this example uses in its `rad`
+variant. The model becomes a block whose first `N` inputs are the taps:
 
 ```faust
 import("stdfaust.lib");
@@ -215,8 +275,10 @@ process = target - fir(h);
 
 `descend_N_rad` is `descend_N` with `rad` in place of `fad`: one reverse
 sweep per sample gives the sixteen gradients where forward mode carries
-sixteen tangents. Run both (`op.descend_N` is the other): the residuals are
-the same signal to rounding, and the compiled programs are not — 1 182
+sixteen tangents. Run with `-n 1000 --quiet`, then `-n 2000 --skip 1000
+--quiet`, then `-n 3000 --skip 2000 --quiet`: the residual reads rms `0.10`,
+`2e-7`, then `0`. Run both loops (`op.descend_N` is the other): the residuals
+are the same signal to rounding, and the compiled programs are not — 1 182
 interpreter instructions against 3 777, 0.04 s against 0.10 s for 200 000
 samples; 4 129 against 28 891 and 0.13 s against 1.32 s at 64 taps. The
 sensitivity of a FIR tap is its delayed input, so both loops compute the
@@ -291,8 +353,9 @@ exponentially from 0.001 towards 0.00001 with a time constant of 20 000
 samples, so the search is fast at first and quiet at the end. Learning rates
 are signals; a schedule is passed where a constant would be.
 
-Run: `(1206, 2.003)` at 10 000 samples, then within about 2 % of
-`(1200, 2.0)`. Good, with a residual jitter that Lion's fixed step size leaves.
+Run with `-n 30000 --every 10000`: `(1206, 2.003)` at 10 000 samples, then
+within 5 % of `(1200, 2.0)` (`(1233, 2.03)` at 20 000). Good, with a residual
+jitter that Lion's fixed step size leaves.
 
 ### 5.3 Fix two: let the algorithm find the scales
 
@@ -462,16 +525,22 @@ engine.
 `gate_g` zeroes the gradient but still computes it, and so does the model
 that carries the tangents. To stop paying for the learning once the
 parameters have settled, put the whole loop in an `ondemand` whose clock a
-convergence criterion switches off: section 7 of the overview shows the
-pattern and its cost, a factor of eight to twenty-five.
+convergence criterion switches off: section 7, "Two phases: learning, then
+use", of [optimizers-overview-en.md](optimizers-overview-en.md) shows the
+pattern and measures it on a reverb: once the learning has stopped the
+program runs eight to twenty-five times faster than while learning (23
+times real time learning, 196 after the switch, 572 with the coefficients
+hoisted).
 
 ## 9. Solving instead of learning: Newton
 
 The same derivative machinery solves equations. Virtual-analog models are full
 of implicit ones — the output of a saturating feedback loop depends on itself:
-`y = tanh(x - fb * y)`. Newton's method finds `y` in a few steps, each needing
-the residual `F(y) = y - tanh(x - fb y)` and its derivative `F'(y)`; one `fad`
-gives both, and `op.newton(N, F, y0)` unrolls `N` steps:
+`y = tanh(x - fb * y)`. [Newton's
+method](https://en.wikipedia.org/wiki/Newton%27s_method) finds `y` in a few
+steps, `y <- y - F(y) / F'(y)`, each needing the residual
+`F(y) = y - tanh(x - fb y)` and its derivative `F'(y)`; one `fad` gives both,
+and `op.newton(N, F, y0)` unrolls `N` steps:
 
 ```faust
 import("stdfaust.lib");
@@ -665,6 +734,48 @@ host writes, described in section 13 of
 with `--in file:` and `--reset-per-block` for a recorded target replayed
 from a cleared state at every block.
 
+### 10.5 Through time: what the block sweep sees
+
+Section 4.1 said that inside a loop `rad` returns the *direct term*, and
+section 10.4 that, handed to the host, it goes through the recursion over
+the block. One pole makes both visible. The target is `onepole(0.9, x)`,
+the model the same filter with `r` as a slider; the second output is the
+direct term written by hand, the gradient with `y[n-1]` held fixed:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+r = hslider("r", 0.3, -0.99, 0.99, 0.001);
+x = no.noise;
+onepole(c, s) = s : + ~ *(c);          // y[n] = s[n] + c * y[n-1]
+target = onepole(0.9, x);
+y = onepole(r, x);
+loss = op.mse(y, target);
+direct = 2.0 * (y - target) * y';      // the gradient with y[n-1] held fixed
+process = rad(loss, r), direct;
+```
+
+Run with `--block 256 -n 256 --quiet`: `dc` times 256 is the sum of a lane
+over the block, `-172.9` for the `rad` lane and `-117.2` for the direct
+term. Then `--block 256 --train r --blocks 1 --fd-check`: the finite
+difference of the block's loss is `-172.9`, within `1e-6` of the `rad`
+lane. The lane is the exact gradient of the block's loss, which is only
+possible if the sweep went back through `y[n-1]` at every sample: this is
+backpropagation through time, the derivative of the block's output with
+respect to `r` through every past state. The direct term misses a third of
+it, the part that comes from `y[n-1]` depending on `r` itself.
+
+The horizon is the block. At its end the sweep starts from a zero adjoint,
+so what the states before the block owe to `r` is not counted: truncated
+BPTT, the block being the truncation. The pole's time constant is
+`1 / (1 - 0.9) = 10` samples and a block of 16 covers it: `--block 16
+--train r --lr 0.01 --blocks 800 --every 200` reads `0.8964, 0.900005,
+0.900001, 0.900000`. With `--block 1` the sweep sees one sample, the lane
+*is* the direct term, and the same loop never settles: after 3 200 steps `r`
+swings between 0.53 and its bound 0.99. Example 10 of
+[ddsp-examples-en.md](ddsp-examples-en.md) is the same mechanism on a GRU
+with 27 parameters.
+
 ## 11. Learning at its own rate: `ondemand`
 
 Everything so far ran once per sample: the model, the derivative, and the
@@ -848,8 +959,9 @@ h = op.descend_N_rad_clocked(N, il.frame_clock(64), fir_loss, op.sgd_g(0.5), -2.
 process = target - fir(h);
 ```
 
-Run in windows of 1 000 samples (`--quiet`, `--skip`) and, next to it, the
-per-sample version of section 4.1 (`descend_N_rad`, `lr = 0.02`): the
+Run in windows of 1 000 samples (`-n 1000 --quiet`, then `-n 2000 --skip
+1000 --quiet`, and so on) and, next to it, the per-sample version of section
+4.1 (`descend_N_rad`, `lr = 0.02`): the
 residual of the clocked loop reads rms `0.21`, `6e-4`, `1.6e-6`, `3e-9` over
 the first four windows, that of the per-sample loop `0.10`, `2e-7`, then `0`.
 The clocked loop takes 64 times fewer steps with a rate 25 times larger, and
@@ -904,7 +1016,7 @@ the block's boundary, a loss inside and a seed outside.
 |---|---|---|
 | The parameter never moves | its derivative is zero: it passes through a button, a checkbox, an integer cast or comparison inside the model | keep the parameter path in floating-point arithmetic |
 | It moves the wrong way | sign convention: with `r = model - target` the MSE gradient is `+2 r j`; the synthesis note uses `err = target - model` and `-err * j` | pick one convention |
-| `NaN` after a while | `abs` (derivative `x/|x|`) or a filter that went unstable | smooth losses (`logcosh`, `pseudo_huber`), reflection coefficients for poles |
+| `NaN` after a while | `abs` (derivative `x/\|x\|`) or a filter that went unstable | smooth losses (`logcosh`, `pseudo_huber`), reflection coefficients for poles |
 | One parameter converges, another crawls | different units under one learning rate | log domain, Adam/Lion, or `lm_2D` |
 | The loop oscillates with an energy loss | the optimizer is faster than the loss's smoothing | lower `lr` below `1 - a` |
 | Jitter at the end | fixed step size on a noisy gradient | `lr_exp`/`lr_cos`, `polyak`, or SGD instead of Adam |

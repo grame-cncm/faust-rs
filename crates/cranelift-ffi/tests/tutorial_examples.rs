@@ -172,12 +172,24 @@ fn compile(block: &Block, root: &Path) -> Rc<Factory> {
 /// `frames` frames of the program, one vector per output, rendered with
 /// faustprobe's engine and block size.
 fn render(block: &Block, root: &Path, input: InputMode, frames: usize) -> Vec<Vec<f64>> {
+    render_with_block(block, root, input, frames, BLOCK)
+}
+
+/// [`render`] with an explicit `--block`: the reverse horizon of a public
+/// `rad`.
+fn render_with_block(
+    block: &Block,
+    root: &Path,
+    input: InputMode,
+    frames: usize,
+    block_size: usize,
+) -> Vec<Vec<f64>> {
     let factory = compile(block, root);
     let probe = Probe::instantiate(&factory, SAMPLE_RATE).expect("instantiate");
     let mut outs = vec![Vec::with_capacity(frames); probe.outputs()];
     let spec = RenderSpec {
         frames,
-        block: BLOCK,
+        block: block_size,
         input,
         skip: 0,
         ..RenderSpec::default()
@@ -243,7 +255,7 @@ fn french_tutorial_carries_the_same_programs() {
     }
     assert_eq!(
         en.iter().filter(|b| b.is_program()).count(),
-        23,
+        24,
         "the tutorial's program count changed: update the tests"
     );
 }
@@ -606,6 +618,68 @@ fn s10_4_host_loop_with_train() {
             train::train(&factory, SAMPLE_RATE, &spec(Optimizer::Sgd, 0.5), |_| {}).expect("train");
         assert_near("gain (sgd)", sgd.values[0], 0.5, 1e-9);
         assert_near("bias (sgd)", sgd.values[1], -0.25, 1e-9);
+    });
+}
+
+/// §10.5: the `rad` lane summed over a block of 256 is the finite
+/// difference of the block's loss (`-172.9`), the direct term is not
+/// (`-117.2`); `--block 16` trains the pole to 0.9 exactly, `--block 1`
+/// never settles.
+#[test]
+fn s10_5_block_sweep_goes_through_time() {
+    with_libraries("s10_5", |root| {
+        let block = program("10.5", 0);
+        let outs = render_with_block(&block, &root, InputMode::Zero, 256, 256);
+        let rad_sum: f64 = outs[1].iter().sum();
+        let direct_sum: f64 = outs[2].iter().sum();
+        assert_near("rad lane over the block", rad_sum, -172.9, 0.05);
+        assert_near("direct term over the block", direct_sum, -117.2, 0.05);
+
+        let factory = compile(&block, &root);
+        let spec = |block: usize, blocks: usize| TrainSpec {
+            params: vec!["r".to_owned()],
+            loss_lane: 0,
+            first_grad_lane: 1,
+            optimizer: Optimizer::ADAM,
+            lr: 0.01,
+            block,
+            blocks,
+            input: InputMode::Zero,
+            reset_per_block: false,
+        };
+        let checks = train::fd_check(&factory, SAMPLE_RATE, &spec(256, 1), 1e-3).expect("fd-check");
+        assert_near("fd of the block loss", checks[0].fd, rad_sum, 0.01);
+        assert!(
+            checks[0].relative_error < 1e-5,
+            "relative error {}",
+            checks[0].relative_error
+        );
+
+        let mut at = Vec::new();
+        let trained = train::train(&factory, SAMPLE_RATE, &spec(16, 800), |step| {
+            if step.block % 200 == 0 {
+                at.push(step.params[0]);
+            }
+        })
+        .expect("train");
+        assert_near("r at block 200", at[0], 0.8964, 5e-4);
+        assert_near("r at block 400", at[1], 0.900_005, 5e-6);
+        assert_near("r at block 800", trained.values[0], 0.9, 1e-6);
+
+        let mut swing = Vec::new();
+        train::train(&factory, SAMPLE_RATE, &spec(1, 12_800), |step| {
+            if step.block > 3200 {
+                swing.push(step.params[0]);
+            }
+        })
+        .expect("train");
+        let (lo, hi) = swing
+            .iter()
+            .fold((1.0_f64, 0.0_f64), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+        assert!(
+            lo < 0.6 && hi > 0.98,
+            "with a block of 1, r should swing: {lo}..{hi}"
+        );
     });
 }
 
