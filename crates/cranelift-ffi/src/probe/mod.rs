@@ -52,3 +52,4 @@ pub mod schedule;
 pub mod soundfile;
 pub mod spectrum;
 pub mod sweep;
+pub mod train;

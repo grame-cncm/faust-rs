@@ -347,23 +347,23 @@ excitation is the corpus LCG noise.
 **What you see.** In 600 blocks (3.5 s of audio) the sliders reach
 `(−1.20000, 0.72000)` and the mean block loss falls from 0.53 to 2.6e-14.
 
-**With faustprobe.** The program needs an input and a host; `faustprobe`
-provides the input and shows the lanes the host would sum, but does not
-run the Adam loop (that is the Rust test's part):
+**With faustprobe.** The program needs an input and a host; `--train` is
+that host (user guide, §13), `--fd-check` the check every host should run
+first:
 
 ```sh
 faustprobe --double -I libraries -I <faustlibraries> --list-params tests/corpus/ddsp_rad_host_block_resonator.dsp
-faustprobe --double -I libraries -I <faustlibraries> --in white:1 -n 256 --quiet tests/corpus/ddsp_rad_host_block_resonator.dsp
-faustprobe --double -I libraries -I <faustlibraries> --in white:1 -n 256 --quiet --set /ddsp_rad_host_block_resonator/a1=-1.2 --set /ddsp_rad_host_block_resonator/a2=0.72 tests/corpus/ddsp_rad_host_block_resonator.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:1 --block 256 --train a1,a2 --fd-check --lr 0.01 --blocks 600 --every 100 tests/corpus/ddsp_rad_host_block_resonator.dsp
 ```
 
-The first lists the two sliders and their paths. The second, on one block
-of 256 frames of white noise at the initial `(-0.8, 0.5)`, gives in the `dc`
-column the mean per-sample contributions, loss 0.46, gradients 1.78 and
-1.27; times 256 they are the block loss and the block gradient a host would
-step on. The third sets the sliders to the hidden `(-1.2, 0.72)`: the three
-lanes are exactly 0.
-
+The first lists the two sliders and their paths. The second checks the two
+gradient lanes against finite differences on one block (relative errors of
+4e-6), then runs 600 blocks of Adam: the row of block 100 reads
+`(-1.1946, 0.7152)`, block 200 `(-1.2000005, 0.7200039)`, block 600
+`(-1.200000000, 0.720000000)`, the block loss from 0.46 to 3e-28, in 0.6 s.
+`--in white:1 -n 256 --quiet` alone shows what the host reads on one block:
+the `dc` of `out0`, 0.46, is the mean loss, those of `out1` and `out2`,
+1.78 and 1.27, the mean gradient contributions.
 **Try.** Replace the target by a recording and the loss by a spectral one
 computed by the host: the DSP stays the same. Batch several excitations per
 update. Train the five coefficients of a biquad (`rad(loss, (b0, b1, b2, a1,
@@ -515,19 +515,19 @@ blocks (11.6 s of audio), the state carried across blocks.
 to 2.4e-4 (last 100); on fresh noise, from a fresh instance, the residual is
 0.0148 for a target of rms 0.43: 29 dB under the target.
 
-**With faustprobe.** As for example 6, `faustprobe` shows what the host
-would read, not the training:
+**With faustprobe.** The same host loop, 27 sliders in the order of the
+program's `params` list:
 
 ```sh
-faustprobe --double -I libraries -I <faustlibraries> --list-params tests/corpus/ddsp_rad_gru_amp_host.dsp
-faustprobe --double -I libraries -I <faustlibraries> --in white:3 -n 256 --quiet tests/corpus/ddsp_rad_gru_amp_host.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:3 --block 128 --train wz1,wz2,wr1,wr2,wh1,wh2,uz11,uz12,uz21,uz22,ur11,ur12,ur21,ur22,uh11,uh12,uh21,uh22,bz1,bz2,br1,br2,bh1,bh2,wo1,wo2,bo --fd-check --blocks 0 tests/corpus/ddsp_rad_gru_amp_host.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:11 --block 256 --train wz1,wz2,wr1,wr2,wh1,wh2,uz11,uz12,uz21,uz22,ur11,ur12,ur21,ur22,uh11,uh12,uh21,uh22,bz1,bz2,br1,br2,bh1,bh2,wo1,wo2,bo --lr 0.005 --blocks 2000 --every 500 tests/corpus/ddsp_rad_gru_amp_host.dsp
 ```
 
-27 sliders; on one block of white noise at the initial weights, `out0` has
-a `dc` of 0.0119, the mean block loss, and `out1` to `out27` the mean
-gradient contributions of the 27 parameters in the order of the `params`
-list; the host sums each over the block and steps.
-
+The first checks the 27 block gradients through the recurrent cell against
+finite differences: worst relative error 5e-6. The second trains by
+truncated BPTT, the hidden state carried from block to block: the mean
+block loss goes from 1.3e-2 at block 1 to 2.0e-4 at block 2 000, in a
+tenth of a second.
 **Try.** Four hidden units (more sliders, same host loop); an LSTM cell;
 several excitations per update; a recording of a real amplifier as the
 hidden model — the DSP does not change, only the host's target.

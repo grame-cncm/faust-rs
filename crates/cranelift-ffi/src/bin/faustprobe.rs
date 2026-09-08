@@ -9,13 +9,14 @@ use std::thread;
 
 use clap::{ArgAction, Parser, ValueEnum};
 
-use cranelift_ffi::probe::engine::{PolyProbe, Probe, RenderSpec};
+use cranelift_ffi::probe::engine::{Factory, PolyProbe, Probe, RenderSpec};
 use cranelift_ffi::probe::poly;
 use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::{InputMode, RenderStats};
 use cranelift_ffi::probe::schedule::{Event, Schedule, parse_at, parse_chord, parse_note};
 use cranelift_ffi::probe::spectrum::{dominant_frequency, sfdr_db, thd_db};
 use cranelift_ffi::probe::sweep::{Reduction, cartesian, parse_axis, parse_reduction};
+use cranelift_ffi::probe::train::{self, Optimizer, TrainSpec};
 
 /// How rendered frames are printed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -210,6 +211,60 @@ struct Args {
     /// reclaims a voice under sustained play. Requires `--nvoices` > 0.
     #[arg(long = "voice-stop-level", default_value_t = poly::DEFAULT_VOICE_STOP_LEVEL)]
     voice_stop_level: f64,
+
+    /// Train these controls by gradient descent, the host loop of a `rad`
+    /// program whose loss and gradients leave the graph: per block of
+    /// `--block` frames, the loss lane and the gradient lanes are averaged,
+    /// the optimizer steps the controls (kept in their range), and the next
+    /// block runs on the same instance. Comma-separated exact paths or
+    /// unique suffixes, in the order of their gradient lanes. Prints one
+    /// CSV row per block (`--every` thins them): block, loss, the controls.
+    #[arg(long = "train", value_name = "CONTROLS", value_delimiter = ',')]
+    train: Vec<String>,
+
+    /// Output lane of the per-sample loss.
+    #[arg(long = "loss-lane", default_value_t = 0)]
+    loss_lane: usize,
+
+    /// Output lane of the first control's gradient; the others follow it.
+    #[arg(long = "grad-lane", default_value_t = 1)]
+    grad_lane: usize,
+
+    /// Update rule of `--train`.
+    #[arg(long, value_enum, default_value_t = OptimizerKind::Adam)]
+    optimizer: OptimizerKind,
+
+    /// Learning rate of `--train`.
+    #[arg(long, default_value_t = 0.01)]
+    lr: f64,
+
+    /// Number of blocks, one step each, of `--train`.
+    #[arg(long, default_value_t = 100)]
+    blocks: usize,
+
+    /// Check the gradient lanes of the `--train` controls against central
+    /// finite differences of the loss lane, on one block from a fresh
+    /// instance per evaluation, at the controls' initial values. Fails when
+    /// a relative error exceeds `--fd-tolerance`. Alone or before `--train`.
+    #[arg(long = "fd-check")]
+    fd_check: bool,
+
+    /// Step of the finite differences.
+    #[arg(long = "fd-step", default_value_t = 1e-3)]
+    fd_step: f64,
+
+    /// Largest accepted `|rad - fd| / max(|fd|, 1)`.
+    #[arg(long = "fd-tolerance", default_value_t = 0.02)]
+    fd_tolerance: f64,
+}
+
+/// The update rule of `--train`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OptimizerKind {
+    /// Adam with the paper's betas (0.9, 0.999) and epsilon 1e-8.
+    Adam,
+    /// Plain gradient descent.
+    Sgd,
 }
 
 /// Flags a caller must not combine with `--protocol impulse-test`.
@@ -512,6 +567,9 @@ fn run(mut args: Args) -> Result<(), String> {
     if args.nvoices > 0 {
         return run_poly(&args);
     }
+    if !args.train.is_empty() || args.fd_check {
+        return run_train(&args);
+    }
 
     let probe = Probe::compile_with_args(
         &args.file,
@@ -801,6 +859,94 @@ fn run(mut args: Args) -> Result<(), String> {
 ///
 /// Shared by the JSON and CSV sweep paths so the two cannot report different
 /// numbers for the same render.
+/// `--train` and `--fd-check`: the host loop of a program whose loss and
+/// gradient lanes leave the graph (see `probe::train`).
+fn run_train(args: &Args) -> Result<(), String> {
+    if args.train.is_empty() {
+        return Err("--fd-check needs the controls to check: --train CONTROLS".to_owned());
+    }
+    for (flag, set) in [
+        ("--sweep", !args.sweeps.is_empty()),
+        ("--reduce", args.reduce.is_some()),
+        ("--at", !args.ats.is_empty()),
+        ("--set", !args.sets.is_empty()),
+        (
+            "--protocol impulse-test",
+            args.protocol == Protocol::ImpulseTest,
+        ),
+    ] {
+        if set {
+            return Err(format!(
+                "{flag} cannot be combined with --train / --fd-check"
+            ));
+        }
+    }
+    let factory = std::rc::Rc::new(Factory::compile_with_args(
+        &args.file,
+        &args.import_dirs,
+        &compiler_args(args),
+        args.double,
+        args.opt_level,
+    )?);
+    let spec = TrainSpec {
+        params: args.train.clone(),
+        loss_lane: args.loss_lane,
+        first_grad_lane: args.grad_lane,
+        optimizer: match args.optimizer {
+            OptimizerKind::Adam => Optimizer::ADAM,
+            OptimizerKind::Sgd => Optimizer::Sgd,
+        },
+        lr: args.lr,
+        block: args.block,
+        blocks: args.blocks,
+        input: parse_input(&args.input)?,
+    };
+    if args.fd_check {
+        let checks = train::fd_check(&factory, args.sr, &spec, args.fd_step)?;
+        let mut worst = 0.0_f64;
+        for check in &checks {
+            println!(
+                "# fd-check {}: rad {:.6} fd {:.6} relative error {:.2e}",
+                check.path, check.rad, check.fd, check.relative_error
+            );
+            worst = worst.max(check.relative_error);
+        }
+        println!(
+            "# fd-check: block {} frames, step {}, worst relative error {worst:.2e} (tolerance {})",
+            args.block, args.fd_step, args.fd_tolerance
+        );
+        if worst > args.fd_tolerance {
+            return Err(format!(
+                "a gradient lane departs from finite differences by {worst:.2e}, above --fd-tolerance {}",
+                args.fd_tolerance
+            ));
+        }
+        if args.blocks == 0 {
+            return Ok(());
+        }
+    }
+    let mut header_done = false;
+    let every = args.every.max(1);
+    let trained = train::train(&factory, args.sr, &spec, |step| {
+        if !header_done {
+            println!("block,loss,{}", spec.params.join(","));
+            header_done = true;
+        }
+        if step.block % every == 0 || step.block == args.blocks {
+            let values: Vec<String> = step.params.iter().map(|v| format!("{v:.9}")).collect();
+            println!("{},{:.9e},{}", step.block, step.loss, values.join(","));
+        }
+    })?;
+    for (path, value) in trained.paths.iter().zip(&trained.values) {
+        println!("# trained {path}={value:.9}");
+    }
+    println!(
+        "# loss: block 1 {:.6e}, block {} {:.6e}",
+        trained.first_loss, args.blocks, trained.last_loss
+    );
+    Ok(())
+}
+
 fn reduce_channel(
     r: Reduction,
     stats: &RenderStats,

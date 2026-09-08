@@ -373,22 +373,22 @@ dans le tas (`set_real_zone`), l'excitation est le bruit LCG du corpus.
 `(−1,20000, 0,72000)` et la perte moyenne par bloc tombe de 0,53 à 2,6e-14.
 
 **Avec faustprobe.** Le programme a besoin d'une entrée et d'un hôte ;
-`faustprobe` fournit l'entrée et montre les voies que l'hôte sommerait, mais
-ne fait pas tourner la boucle d'Adam (c'est la part du test Rust) :
+`--train` est cet hôte (guide utilisateur, §13), `--fd-check` la
+vérification que tout hôte devrait faire d'abord :
 
 ```sh
 faustprobe --double -I libraries -I <faustlibraries> --list-params tests/corpus/ddsp_rad_host_block_resonator.dsp
-faustprobe --double -I libraries -I <faustlibraries> --in white:1 -n 256 --quiet tests/corpus/ddsp_rad_host_block_resonator.dsp
-faustprobe --double -I libraries -I <faustlibraries> --in white:1 -n 256 --quiet --set /ddsp_rad_host_block_resonator/a1=-1.2 --set /ddsp_rad_host_block_resonator/a2=0.72 tests/corpus/ddsp_rad_host_block_resonator.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:1 --block 256 --train a1,a2 --fd-check --lr 0.01 --blocks 600 --every 100 tests/corpus/ddsp_rad_host_block_resonator.dsp
 ```
 
-La première liste les deux sliders et leurs chemins. La deuxième, sur un
-bloc de 256 trames de bruit blanc aux valeurs initiales `(−0,8, 0,5)`, donne
-dans la colonne `dc` les contributions moyennes par échantillon, perte 0,46,
-gradients 1,78 et 1,27 ; multipliées par 256, ce sont la perte et le gradient
-de bloc sur lesquels un hôte ferait son pas. La troisième règle les sliders
-sur la cible cachée `(−1,2, 0,72)` : les trois voies valent exactement 0.
-
+La première liste les deux sliders et leurs chemins. La seconde compare les
+deux voies de gradient aux différences finies sur un bloc (erreurs relatives
+de 4e-6), puis fait tourner 600 blocs d'Adam : la ligne du bloc 100 donne
+`(−1,1946, 0,7152)`, le bloc 200 `(−1,2000005, 0,7200039)`, le bloc 600
+`(−1,200000000, 0,720000000)`, la perte de bloc de 0,46 à 3e-28, en 0,6 s.
+`--in white:1 -n 256 --quiet` seul montre ce que l'hôte lit sur un bloc : le
+`dc` de `out0`, 0,46, est la perte moyenne, ceux de `out1` et `out2`, 1,78 et
+1,27, les contributions moyennes du gradient.
 **À essayer.** Remplacer la cible par un enregistrement et la perte par une
 perte spectrale calculée par l'hôte : le DSP reste le même. Grouper
 plusieurs excitations par mise à jour. Entraîner les cinq coefficients d'un
@@ -554,19 +554,19 @@ premiers blocs) à 2,4e-4 (100 derniers) ; sur un bruit neuf, depuis une
 instance neuve, le résidu vaut 0,0148 pour une cible de rms 0,43 : 29 dB
 sous la cible.
 
-**Avec faustprobe.** Comme pour l'exemple 6, `faustprobe` montre ce que
-l'hôte lirait, pas l'entraînement :
+**Avec faustprobe.** La même boucle hôte, 27 sliders dans l'ordre de la
+liste `params` du programme :
 
 ```sh
-faustprobe --double -I libraries -I <faustlibraries> --list-params tests/corpus/ddsp_rad_gru_amp_host.dsp
-faustprobe --double -I libraries -I <faustlibraries> --in white:3 -n 256 --quiet tests/corpus/ddsp_rad_gru_amp_host.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:3 --block 128 --train wz1,wz2,wr1,wr2,wh1,wh2,uz11,uz12,uz21,uz22,ur11,ur12,ur21,ur22,uh11,uh12,uh21,uh22,bz1,bz2,br1,br2,bh1,bh2,wo1,wo2,bo --fd-check --blocks 0 tests/corpus/ddsp_rad_gru_amp_host.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:11 --block 256 --train wz1,wz2,wr1,wr2,wh1,wh2,uz11,uz12,uz21,uz22,ur11,ur12,ur21,ur22,uh11,uh12,uh21,uh22,bz1,bz2,br1,br2,bh1,bh2,wo1,wo2,bo --lr 0.005 --blocks 2000 --every 500 tests/corpus/ddsp_rad_gru_amp_host.dsp
 ```
 
-27 sliders ; sur un bloc de bruit blanc aux poids initiaux, `out0` a un `dc`
-de 0,0119, la perte de bloc moyenne, et `out1` à `out27` les contributions
-moyennes des gradients des 27 paramètres dans l'ordre de la liste `params` ;
-l'hôte somme chacune sur le bloc et fait son pas.
-
+La première compare les 27 gradients de bloc à travers la cellule
+récurrente aux différences finies : pire erreur relative 5e-6. La seconde
+entraîne par BPTT tronquée, l'état caché transporté de bloc en bloc : la
+perte de bloc moyenne passe de 1,3e-2 au bloc 1 à 2,0e-4 au bloc 2 000, en
+un dixième de seconde.
 **À essayer.** Quatre unités cachées (plus de sliders, même boucle hôte) ;
 une cellule LSTM ; plusieurs excitations par mise à jour ; l'enregistrement
 d'un vrai amplificateur comme modèle caché — le DSP ne change pas, seule la

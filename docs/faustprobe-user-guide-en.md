@@ -328,3 +328,58 @@ faustprobe --protocol impulse-test dsp.dsp > new.ir && diff old.ir new.ir
 ```bash
 faustprobe --sweep cutoff=100,200,400,800,1600 --reduce rms --in "white:1" filt.dsp
 ```
+
+## 13. Host loops: `--train` and `--fd-check`
+
+Some programs learn nothing themselves: they output a loss and, from `rad`,
+the per-sample contributions of its gradient with respect to their sliders,
+and leave the optimisation to a host (`tests/corpus/ddsp_rad_host_block_resonator.dsp`,
+`ddsp_rad_gru_amp_host.dsp`, see `libraries/ddsp-examples-en.md`). The block
+reverse sweep makes the sum of a gradient lane over a `compute` block the
+gradient of the block's loss. `--train` is that host:
+
+```bash
+faustprobe --double -I libraries -I <faustlibraries> --in white:1 --block 256 \
+    --train a1,a2 --fd-check --lr 0.01 --blocks 600 --every 100 \
+    tests/corpus/ddsp_rad_host_block_resonator.dsp
+```
+
+`--train` names the controls, exact paths or unique suffixes, in the order
+of their gradient lanes; `--loss-lane` (default 0) and `--grad-lane`
+(default 1, the lanes of the controls follow it) say where the lanes are;
+`--optimizer adam|sgd`, `--lr` and `--blocks` set the loop, `--block` the
+block size, `--in` the excitation (`white:SEED` for a reproducible one). Per
+block, the controls are written, the block computed on the same instance
+(the state carries across blocks: truncated backpropagation through time
+for a recurrent model), the loss and gradient lanes averaged, the
+controls stepped and kept in their range. One CSV row per block, thinned by
+`--every`, then the trained values and the first and last loss:
+
+```text
+block,loss,a1,a2
+100,2.388789544e-4,-1.194621353,0.715239037
+200,2.727260747e-10,-1.200000508,0.720003903
+...
+600,3.462933533e-28,-1.200000000,0.720000000
+# trained /ddsp_rad_host_block_resonator/a1=-1.200000000
+# trained /ddsp_rad_host_block_resonator/a2=0.720000000
+# loss: block 1 4.615726e-1, block 600 3.462934e-28
+```
+
+`--fd-check` runs first (or alone, with `--blocks 0`): each gradient lane,
+summed over one block from a fresh instance at the controls' initial
+values, against the central finite difference of the summed loss lane with
+step `--fd-step` (default 1e-3); the command fails when a relative error
+`|rad - fd| / max(|fd|, 1)` exceeds `--fd-tolerance` (default 0.02). It is
+the first thing to run when a gradient looks wrong:
+
+```text
+# fd-check /ddsp_rad_host_block_resonator/a1: rad 476.523699 fd 476.521802 relative error 3.98e-6
+# fd-check /ddsp_rad_host_block_resonator/a2: rad 335.872145 fd 335.873239 relative error 3.26e-6
+# fd-check: block 256 frames, step 0.001, worst relative error 3.98e-6 (tolerance 0.02)
+```
+
+The GRU of the second example trains its 27 sliders the same way,
+`--train wz1,wz2,...,bo --lr 0.005 --blocks 2000`, in a fraction of a
+second; `--sweep`, `--reduce`, `--at`, `--set` and the impulse-test protocol
+do not combine with it.
