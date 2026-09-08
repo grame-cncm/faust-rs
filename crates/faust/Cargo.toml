@@ -1,0 +1,24 @@
+[package]
+name = "faust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The Rust API of faust-rs: compile a Faust program to a factory, instantiate DSPs, run them"
+
+[lib]
+name = "faust"
+crate-type = ["rlib"]
+
+[dependencies]
+ffi-common = { path = "../ffi-common" }
+interp_ffi = { package = "interp-ffi", path = "../interp-ffi" }
+cranelift_ffi = { package = "cranelift-ffi", path = "../cranelift-ffi", default-features = false }
+
+[lints.rust]
+unsafe_code = "allow" # the facade owns the raw factory and instance pointers of the two C APIs
+unused_attributes = "warn"
+unused_lifetimes = "warn"
+
+[lints.clippy]
+all = "warn"

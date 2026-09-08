@@ -590,7 +590,20 @@ fn compile_factory_from_string_fastlane(
 /// precision (auto-detected from the header).
 fn compile_factory_from_fbc_text(fbc: &str) -> Result<FbcDspFactoryAny, String> {
     let mut cursor = std::io::Cursor::new(fbc.as_bytes());
-    read_fbc_any(&mut cursor)
+    let mut factory = read_fbc_any(&mut cursor)?;
+    // The compiler leaves `sha_key` empty ("not computed at this layer"), and
+    // the factory cache coalesces entries by that key: with an empty key every
+    // interpreter factory of the process would be the first one compiled. The
+    // key is the digest of the bytecode text, which carries the program, its
+    // name, its precision and its compile options.
+    if factory.sha_key().is_empty() {
+        let key = format!("interp:{}", ffi_common::sha1_hex(fbc.as_bytes()));
+        match &mut factory {
+            FbcDspFactoryAny::Float32(f) => f.sha_key = key,
+            FbcDspFactoryAny::Float64(f) => f.sha_key = key,
+        }
+    }
+    Ok(factory)
 }
 
 /// Map `FfiCompileArgs.double` to a `RealType` for the compiler.
@@ -1268,6 +1281,42 @@ mod tests {
         clearCInterpreterForeignFunctions();
         unsafe { deleteCInterpreterDSPInstance(dsp) };
         assert!(unsafe { deleteCInterpreterDSPFactory(factory_ptr) });
+    }
+
+    /// Two different programs alive at once are two factories. Their cache
+    /// key used to be the empty `sha_key` the compiler leaves, so the second
+    /// `create` coalesced onto the first program's entry and returned it.
+    #[test]
+    fn different_programs_get_different_factories() {
+        let _guard = crate::test_serial_guard();
+        let mut error = [0_i8; 4096];
+        let mut create = |name: &std::ffi::CStr, source: &std::ffi::CStr| unsafe {
+            createCInterpreterDSPFactoryFromString(
+                name.as_ptr(),
+                source.as_ptr(),
+                0,
+                std::ptr::null(),
+                error.as_mut_ptr(),
+            )
+        };
+        let mono = create(c"interp_distinct_mono", c"process = _;");
+        let stereo = create(c"interp_distinct_stereo", c"process = _, _;");
+        assert!(!mono.is_null() && !stereo.is_null());
+        assert_ne!(mono, stereo, "two programs must not share one cache entry");
+        unsafe {
+            assert_eq!((*mono).inner.num_outputs(), 1);
+            assert_eq!((*stereo).inner.num_outputs(), 2);
+            assert_ne!((*mono).inner.sha_key(), (*stereo).inner.sha_key());
+            assert!(!(*mono).inner.sha_key().is_empty());
+        }
+        // the same program again is the same entry, as the C++ API promises
+        let mono_again = create(c"interp_distinct_mono", c"process = _;");
+        assert_eq!(mono_again, mono);
+        unsafe {
+            assert!(!deleteCInterpreterDSPFactory(mono_again)); // still referenced once
+            assert!(deleteCInterpreterDSPFactory(mono));
+            assert!(deleteCInterpreterDSPFactory(stereo));
+        }
     }
 
     #[test]

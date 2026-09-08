@@ -196,6 +196,33 @@ The final `opt_level` argument is optional and defaults to `0`; values `1` and
 speed-and-size optimization. `createCraneliftDSPFactoryFromFile(...)` is the
 file-based equivalent.
 
+### Rust API
+
+[`crates/faust`](crates/faust) is the supported way to embed faust-rs from
+Rust: one model over the interpreter and the Cranelift JIT, with the lifecycle
+of the C API and none of its raw pointers. A `Factory` is a compiled program,
+cheap to clone; `Factory::instantiate(sample_rate)` gives a `Dsp` that owns a
+reference to its factory, so it can be stored, moved and sent to another
+thread with no lifetime parameter and no `unsafe` on the host's side. Controls
+are addressed by their `/group/label` paths, as with `MapUI` and OSC:
+
+```rust
+use faust::{Backend, CompileOptions, Factory};
+
+let options = CompileOptions { backend: Backend::Cranelift, ..Default::default() };
+let factory = Factory::from_source("gain", r#"process = _ * hslider("gain", 0.5, 0, 1, 0.01);"#, &options)?;
+let mut dsp = factory.instantiate(48_000)?;
+dsp.set("/gain/gain", 0.25)?;
+let input = [1.0_f32; 64];
+let mut output = [0.0_f32; 64];
+dsp.compute_f32(&[&input], &mut [&mut output])?;
+```
+
+`compute_f32` and `compute_f64` accept host buffers of either width and
+convert when it is not the one the backend exchanges. This crate and the C API
+below are the two contracts of faust-rs; the other crates of the workspace are
+implementation details and may change without notice.
+
 ### C API
 
 The C API uses opaque factory and instance pointers and does not require the
@@ -638,6 +665,7 @@ boundary plus the `foreign-call` runtime bridge.
 | `faustprobe` | Generic DSP probe: set controls, render offline, measure (see below) |
 | `xtask` | Developer and CI automation |
 | `faust-ffi` | Unified `libfaust-rs` distribution crate |
+| `faust` | The Rust API: `Factory` and `Dsp` over the interpreter and the Cranelift JIT, on top of the two C APIs |
 | `wasm-ffi` | Raw WASM ABI for `faustwasm` embedded compiler mode |
 
 ### Probing a DSP with `faustprobe`

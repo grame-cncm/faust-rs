@@ -310,6 +310,9 @@ pub fn generate_interp_module<R: real::FbcReal>(
         })?;
     let mut fn_blocks: HashMap<String, BlockId> = HashMap::new();
     let mut split_compute_blocks: Option<(BlockId, BlockId)> = None;
+    // the `declare` metadata of the program, from the FIR `metadata` function,
+    // so that the factory's `metadata()` and JSON report them like C++ does
+    let mut meta_block: Vec<FbcMetaInstruction> = Vec::new();
 
     for decl_id in &decl_ids {
         if let fir::FirMatch::DeclareFun {
@@ -318,6 +321,9 @@ pub fn generate_interp_module<R: real::FbcReal>(
             ..
         } = match_fir(store, *decl_id)
         {
+            if fn_name == "metadata" {
+                collect_meta_declares(store, body, &mut meta_block);
+            }
             if fn_name == "compute"
                 && let Some((control_prefix, dsp_loop_stmt)) =
                     detect_compute_control_dsp_split(store, body)
@@ -465,7 +471,7 @@ pub fn generate_interp_module<R: real::FbcReal>(
         iota_offset,
         options.opt_level,
         arena,
-        Vec::new(), // meta_block: populated by higher-level APIs
+        meta_block,
         ui_block,
         static_init_block,
         init_block,
@@ -528,3 +534,19 @@ fn detect_compute_control_dsp_split(
 
 #[cfg(test)]
 mod tests;
+
+/// Collects the `AddMetaDeclare` statements of a FIR body, nested blocks
+/// included, as the interpreter's metadata instructions.
+fn collect_meta_declares(store: &fir::FirStore, id: fir::FirId, out: &mut Vec<FbcMetaInstruction>) {
+    match fir::match_fir(store, id) {
+        fir::FirMatch::Block(items) => {
+            for item in items {
+                collect_meta_declares(store, item, out);
+            }
+        }
+        fir::FirMatch::AddMetaDeclare { key, value, .. } => {
+            out.push(FbcMetaInstruction { key, value })
+        }
+        _ => {}
+    }
+}

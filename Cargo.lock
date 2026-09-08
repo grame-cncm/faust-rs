@@ -599,6 +599,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "faust"
+version = "0.8.0"
+dependencies = [
+ "cranelift-ffi",
+ "ffi-common",
+ "interp-ffi",
+]
+
+[[package]]
 name = "faust-ffi"
 version = "0.8.0"
 dependencies = [
