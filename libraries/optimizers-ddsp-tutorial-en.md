@@ -23,7 +23,10 @@ faust-rs -double -I libraries -I <faustlibraries> -lang cpp program.dsp
 
 To *see* a program learn without wiring audio, `faustprobe` renders it offline
 and prints selected frames and statistics. All examples below were checked
-with it; replace `<faustlibraries>` by the directory holding `stdfaust.lib`:
+with it, and `crates/cranelift-ffi/tests/tutorial_examples.rs` keeps them
+checked: it extracts every program of this page, runs it as the text says
+and asserts the figures quoted after it. Replace `<faustlibraries>` by the
+directory holding `stdfaust.lib`:
 
 ```sh
 faustprobe --double -I libraries -I <faustlibraries> --in zero -n 3000 --every 500 program.dsp
@@ -451,7 +454,7 @@ process = g, op.polyak(0.999, g), lr;
 ```
 
 Run with `-n 80000 --every 10000`: `g` is at `0.69994` after 10 000 samples
-and within `±5e-5` of 0.7 afterwards; the third output shows the learning rate
+and within `±6e-5` of 0.7 afterwards; the third output shows the learning rate
 going from 0.02 to 0.0016. `upd` shows how conditioning composes: it is an
 ordinary function of the gradient, built from library pieces, passed as the
 engine.
@@ -633,6 +636,34 @@ sees one sample; handed to the host, it goes through the recursion over the
 whole block, and the sum of a lane is the exact gradient of the block's
 loss, which example 6 of [ddsp-examples-en.md](ddsp-examples-en.md) checks
 against finite differences on a resonator.
+
+Since the loop is the host's, faustprobe can play the host. Give the
+program a target and put the loss in front of the gradient lanes:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+gain = hslider("gain", 1.0, -4.0, 4.0, 0.001);
+bias = hslider("bias", 0.0, -4.0, 4.0, 0.001);
+x = no.noise;
+target = 0.5 * x - 0.25;          // the values the host has to find
+loss = op.mse(gain * x + bias, target);
+process = rad(loss, (gain, bias));
+```
+
+Run with `--block 256 --train gain,bias --lr 0.05 --blocks 100 --every 20
+--fd-check`: the first lines compare each gradient lane, summed over a
+block, with a finite difference of the loss lane (relative error `2e-13`
+here); then one CSV row per 20 blocks with the block's mean loss and the
+two controls after the step, from `(0.363, -0.223)` at block 20 to
+`(0.5013, -0.2511)` at block 100, the loss from `0.15` to `1.2e-6`; with
+`--optimizer sgd --lr 0.5` the pair is exact at block 100. Per block,
+faustprobe writes the controls, computes the block, averages the lanes,
+steps by Adam or SGD and keeps the controls in their range — the loop a
+host writes, described in section 13 of
+[docs/faustprobe-user-guide-en.md](../docs/faustprobe-user-guide-en.md),
+with `--in file:` and `--reset-per-block` for a recorded target replayed
+from a cleared state at every block.
 
 ## 11. Learning at its own rate: `ondemand`
 

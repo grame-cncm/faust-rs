@@ -39,7 +39,8 @@ machine learning and differentiable DSP, in English and French:
 - [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md) /
   [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md) — a
   step-by-step tutorial, from a hand-written gradient to a five-coefficient
-  biquad, every program run with `faustprobe`;
+  biquad, every program run with `faustprobe` and its quoted figures kept
+  true by `crates/cranelift-ffi/tests/tutorial_examples.rs`;
 - [ddsp-examples-en.md](ddsp-examples-en.md) /
   [ddsp-examples-fr.md](ddsp-examples-fr.md) — twelve complete DDSP programs
   (`tests/corpus/ddsp_*.dsp`, run by `crates/compiler/tests/ddsp_examples.rs`):

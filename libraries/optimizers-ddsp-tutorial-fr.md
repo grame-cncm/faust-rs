@@ -25,8 +25,11 @@ faust-rs -double -I libraries -I <faustlibraries> -lang cpp programme.dsp
 
 Pour *voir* un programme apprendre sans brancher d'audio, `faustprobe` le rend
 hors ligne et imprime des trames choisies et des statistiques. Tous les
-exemples ci-dessous ont été vérifiés avec lui ; remplacer `<faustlibraries>`
-par le répertoire qui contient `stdfaust.lib` :
+exemples ci-dessous ont été vérifiés avec lui, et
+`crates/cranelift-ffi/tests/tutorial_examples.rs` les garde vérifiés : il
+extrait chaque programme de cette page, l'exécute comme le texte l'indique
+et contrôle les chiffres cités à sa suite. Remplacer `<faustlibraries>` par
+le répertoire qui contient `stdfaust.lib` :
 
 ```sh
 faustprobe --double -I libraries -I <faustlibraries> --in zero -n 3000 --every 500 programme.dsp
@@ -468,7 +471,7 @@ process = g, op.polyak(0.999, g), lr;
 ```
 
 Exécutez avec `-n 80000 --every 10000` : `g` vaut `0,69994` après 10 000
-échantillons et reste à `±5e-5` de 0,7 ensuite ; la troisième sortie montre la
+échantillons et reste à `±6e-5` de 0,7 ensuite ; la troisième sortie montre la
 vitesse passer de 0,02 à 0,0016. `upd` montre comment le conditionnement se
 compose : c'est une fonction ordinaire du gradient, bâtie avec des briques de
 la bibliothèque, passée comme moteur.
@@ -655,6 +658,34 @@ vers l'hôte, il traverse la récursion sur tout le bloc, et la somme d'une
 voie est le gradient exact de la perte du bloc, ce que l'exemple 6 de
 [ddsp-examples-fr.md](ddsp-examples-fr.md) vérifie par différences finies sur
 un résonateur.
+
+Puisque la boucle est celle de l'hôte, faustprobe peut jouer l'hôte. Donnez
+une cible au programme et placez la perte devant les voies de gradient :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+gain = hslider("gain", 1.0, -4.0, 4.0, 0.001);
+bias = hslider("bias", 0.0, -4.0, 4.0, 0.001);
+x = no.noise;
+target = 0.5 * x - 0.25;          // les valeurs que l'hôte doit trouver
+loss = op.mse(gain * x + bias, target);
+process = rad(loss, (gain, bias));
+```
+
+Exécutez avec `--block 256 --train gain,bias --lr 0.05 --blocks 100 --every
+20 --fd-check` : les premières lignes comparent chaque voie de gradient,
+sommée sur un bloc, à une différence finie de la voie de perte (erreur
+relative `2e-13` ici) ; puis une ligne CSV tous les 20 blocs avec la perte
+moyenne du bloc et les deux contrôles après le pas, de `(0,363, -0,223)` au
+bloc 20 à `(0,5013, -0,2511)` au bloc 100, la perte de `0,15` à `1,2e-6` ;
+avec `--optimizer sgd --lr 0.5` le couple est exact au bloc 100. À chaque
+bloc, faustprobe écrit les contrôles, calcule le bloc, moyenne les voies,
+avance par Adam ou SGD et garde les contrôles dans leur plage — la boucle
+qu'un hôte écrit, décrite à la section 13 de
+[docs/faustprobe-user-guide-en.md](../docs/faustprobe-user-guide-en.md),
+avec `--in file:` et `--reset-per-block` pour une cible enregistrée rejouée
+depuis un état vierge à chaque bloc.
 
 ## 11. Apprendre à sa propre cadence : `ondemand`
 
