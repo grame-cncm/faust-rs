@@ -25,6 +25,10 @@ faustprobe --double -I libraries -I <faustlibraries> --in zero -n 40000 --every 
 
 `-n` renders that many frames, `--every` prints one frame out of N, `--quiet`
 prints statistics only, `--skip N` excludes the first N frames from them.
+The columns are the program's outputs in the order its header gives; in the
+statistics, `dc` (the mean) is the reading for a parameter and `rms` for a
+residual. Each section below gives the command for its program and what it
+prints; the commands run from the repository root.
 This document says what each program does, what is differentiated and why in
 that mode, which optimizer it uses and why, and what the numbers are. The
 reader new to the vocabulary will find it in
@@ -104,6 +108,18 @@ jitters by ±25 Hz.
 hum level (rms 0.35) to rms 0.0118, the floor of the added noise (0.02 uniform:
 rms 0.0115): the hum is gone and the noise untouched.
 
+**With faustprobe.** Column 2 is the frequency of the null, column 1 the
+cleaned signal:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --every 4000 tests/corpus/ddsp_fad_adaptive_notch.dsp
+```
+
+prints 1400 at frame 0, 999.9 at 4 000, 1000.05 at 8 000, then within 0.1 Hz
+of 1000. Add `--quiet --skip 16000` for the statistics of the last 4 000
+frames: `out0` rms 0.0120, the floor of the added noise, and `out1` dc
+1000.00, the mean of the tracked frequency.
+
 **Try.** Move `f0` during the run (it is a constant here; make it a slider):
 the notch follows. Lower `r` to 0.9 to widen the capture range, raise it to
 0.99 to hear how narrow a null can be. Replace the sine by two sines: one
@@ -135,6 +151,16 @@ the natural way to get a Jacobian row per sample: two tangents.
 exact (800.000, 25.001) by 24 000; the residual falls to rms 2.6e-5. Q
 briefly hits its upper bound (60) on the way: the damped step is bold while
 the Jacobian is small, and the bound is what keeps it honest.
+
+**With faustprobe.** Columns f, q, residual:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --every 4000 tests/corpus/ddsp_fad_modal_resonator_lm.dsp
+```
+
+f overshoots to 808.6 at 4 000 and is 799.9 at 8 000; q closes in more
+slowly, 22.4, 24.3, 24.7, 25.3 at the printed frames, 25.0 on average; the
+residual column is a few 1e-3 at most.
 
 **Try.** Excite with an impulse train instead of noise (the calibration then
 only learns during the decays). Add a third parameter, the mode's gain, with
@@ -172,6 +198,17 @@ jitter for a deployed model.
 
 **What you see.** `(4.00, 0.700, 0.800)` by 8 000 samples, a residual rms of
 4e-3 on a target of amplitude 0.8.
+
+**With faustprobe.** Columns drive, gain, tone, residual:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --every 4000 tests/corpus/ddsp_fad_amp_model.dsp
+```
+
+`(2.68, 0.80, 0.81)` at 4 000, `(4.000, 0.700, 0.800)` at 8 000 and 16 000.
+A printed frame can catch Adam's jitter (4.14 at 12 000 in one run), which
+is why the test averages the last 4 000 samples: `--quiet --skip 16000`
+gives that mean in the `dc` column.
 
 **Try.** Replace the noise by a guitar-like excitation (a decaying sawtooth
 sum) and watch identifiability go: the drive is only learned where the
@@ -211,6 +248,18 @@ and is below 1e-9 by 8 000 samples: an echo return loss enhancement beyond
 100 dB on this noiseless room. Add near-end noise and the residual settles
 at its level.
 
+**With faustprobe.** Column 1 is the residual echo, column 2 the microphone:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 1000 --quiet tests/corpus/ddsp_rad_echo_canceller_64.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 12000 --skip 8000 --quiet tests/corpus/ddsp_rad_echo_canceller_64.dsp
+```
+
+The first run shows the residual at the echo level, rms 2.6 with a
+transient peak of 25; the second, over frames 8 000 to 12 000, an `out0` rms
+of 0 to the printed precision against an `out1` rms of 1.03: the ERLE is
+beyond 100 dB on this noiseless room.
+
 **Try.** Change the room while running (make the response depend on a
 slider): the canceller re-converges. Add a near-end talker: the classic
 double-talk problem — the taps drift; gate the update with `gate_g` on a
@@ -245,6 +294,16 @@ equalises them.
 **What you see.** The residual falls from rms 0.105 over the first 2 000
 samples (the offsets' initial function is 17 dB under the target) to 0.0034
 over the last 4 000: 46 dB under the target, a 30 dB improvement.
+
+**With faustprobe.** Column 1 is the residual, column 2 the target:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 2000 --quiet tests/corpus/ddsp_rad_mlp_waveshaper.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --skip 16000 --quiet tests/corpus/ddsp_rad_mlp_waveshaper.dsp
+```
+
+rms 0.105 over the first 2 000 frames, 0.0037 over frames 16 000 to 20 000
+against a target of rms 0.71: 46 dB down.
 
 **Try.** More units (`H = 8`): the bus loop only needs the constant. A
 harder target with memory — a one-pole after the clipper — and the network
@@ -287,6 +346,23 @@ excitation is the corpus LCG noise.
 
 **What you see.** In 600 blocks (3.5 s of audio) the sliders reach
 `(−1.20000, 0.72000)` and the mean block loss falls from 0.53 to 2.6e-14.
+
+**With faustprobe.** The program needs an input and a host; `faustprobe`
+provides the input and shows the lanes the host would sum, but does not
+run the Adam loop (that is the Rust test's part):
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --list-params tests/corpus/ddsp_rad_host_block_resonator.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:1 -n 256 --quiet tests/corpus/ddsp_rad_host_block_resonator.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:1 -n 256 --quiet --set /ddsp_rad_host_block_resonator/a1=-1.2 --set /ddsp_rad_host_block_resonator/a2=0.72 tests/corpus/ddsp_rad_host_block_resonator.dsp
+```
+
+The first lists the two sliders and their paths. The second, on one block
+of 256 frames of white noise at the initial `(-0.8, 0.5)`, gives in the `dc`
+column the mean per-sample contributions, loss 0.46, gradients 1.78 and
+1.27; times 256 they are the block loss and the block gradient a host would
+step on. The third sets the sliders to the hidden `(-1.2, 0.72)`: the three
+lanes are exactly 0.
 
 **Try.** Replace the target by a recording and the loss by a spectral one
 computed by the host: the DSP stays the same. Batch several excitations per
@@ -345,6 +421,19 @@ the exact Jacobian through the solver.
 **What you see.** `(τ, k) → (1.0000e-4, 0.1000)` within 8 000 samples, the
 residual against the hidden clipper at 1.7e-7 rms in single precision.
 
+**With faustprobe.** Columns τ × 1e4, k, residual, Newton residual,
+derivative gap, derivative:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --every 4000 tests/corpus/ddsp_fad_diode_clipper_newton.dsp
+```
+
+τ × 1e4 goes from 3.0 to 1.000 and k from 0.03 to 0.1000 by the frame
+4 000 line already; the residual, the Newton residual and the gap between
+the two derivatives print as 0 at nine decimals; the last column, dv/dk
+itself, grows with the signal from 0.05 to 0.56, the scale against which
+the gap is read.
+
 **Try.** Learn `2 n Vt` as well (`lm_3D`); an asymmetric clipper (one
 diode, `exp` instead of `sinh`); a second RC stage; feed a recording and
 watch identifiability depend on how hard the input drives the diodes.
@@ -376,6 +465,17 @@ gradient carries no information (the fixture says so).
 
 **What you see.** `(0.574, 0.289)` after 8 000 samples, `(0.6000, 0.3000)`
 by 60 000 (four impulses), the residual at 4.8e-7 rms at 80 000.
+
+**With faustprobe.** Columns T60, damping, residual; `--every 16384`
+prints one line per impulse:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 80000 --every 16384 tests/corpus/ddsp_fad_fdn_reverb_lm.dsp
+```
+
+T60 0.568 after the first period, 0.6002 after the second, 0.6000 from
+the third; damping 0.298, 0.2998, 0.29995, 0.30000; the residual falls to
+3e-7.
 
 **Try.** Learn one gain per line (`descend_N`); make the target a
 *different* reverb and the loss `log_energy_loss` on the decay; eight lines;
@@ -415,6 +515,19 @@ blocks (11.6 s of audio), the state carried across blocks.
 to 2.4e-4 (last 100); on fresh noise, from a fresh instance, the residual is
 0.0148 for a target of rms 0.43: 29 dB under the target.
 
+**With faustprobe.** As for example 6, `faustprobe` shows what the host
+would read, not the training:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --list-params tests/corpus/ddsp_rad_gru_amp_host.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:3 -n 256 --quiet tests/corpus/ddsp_rad_gru_amp_host.dsp
+```
+
+27 sliders; on one block of white noise at the initial weights, `out0` has
+a `dc` of 0.0119, the mean block loss, and `out1` to `out27` the mean
+gradient contributions of the 27 parameters in the order of the `params`
+list; the host sums each over the block and steps.
+
 **Try.** Four hidden units (more sliders, same host loop); an LSTM cell;
 several excitations per update; a recording of a real amplifier as the
 hidden model — the DSP does not change, only the host's target.
@@ -453,6 +566,15 @@ DDSP systems estimate f0 with a detector and let the gradient refine it.
 **What you see.** 228 → 219.99 Hz at 20 000 samples, 220.000000 at 60 000,
 residual 3e-8.
 
+**With faustprobe.** Columns pitch in Hz, residual:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 60000 --every 10000 tests/corpus/ddsp_fad_waveguide_string_pitch.dsp
+```
+
+228, 223.8, 219.99, 220.0007, 219.99999, 220.0000004 at the printed frames;
+the residual goes from 0.08 to 2e-7.
+
 **Try.** Learn the damping as well (`lsq_2D`); replace the noise by plucks
 and watch the well narrow; start a fifth away and watch the drift; feed a
 pitch detector's estimate as `init`.
@@ -490,6 +612,18 @@ a target of rms 0.8. The frame graph — 256 × 16 sines, 32 correlations of
 in an unoptimised one (the add-term factorisation C++ Faust also runs), so
 its test runs under `cargo test --release`.
 
+**With faustprobe.** Columns 1 to 16 are the amplitudes, held between
+frames, column 17 the residual; the statistics of the last 4 200 frames are
+the reading:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 51200 --skip 47000 --quiet tests/corpus/ddsp_rad_harmonic_spectral_frame.dsp
+```
+
+`out0` dc 0.9998 (1/1), `out1` 0.4999 (1/2), ..., `out15` 0.06250 (1/16);
+`out16` rms 4e-4. The run takes about fifteen seconds: the normalisation of
+the frame graph, a sum of 256 products of 16-term sums, dominates.
+
 **Try.** A recording as the target (`--in`); more harmonics; DDSP's other
 half, a noise band through a learned filter; a multi-resolution loss (two
 frame sizes, two blocks).
@@ -526,6 +660,18 @@ reverb rendered on the held gains then matches the target to 5e-9 rms. Until
 the flag a gated block is bit-identical to the same block outside the gate
 (the fixtures of the library check it); after it, the learning costs
 nothing and the reverb costs a reverb.
+
+**With faustprobe.** Columns T60, damping, done, residual of the rendered
+reverb; one line per period:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 160000 --every 16384 tests/corpus/ddsp_fad_fdn_gated.dsp
+```
+
+T60 and damping follow example 8 line for line; `done` is 0 for five
+periods and 1 from frame 98 304, the sixth period, on; from that line T60
+prints 0.600001606 on every following line, bit for bit, and the residual
+is 1e-9. Nothing of the learning runs any more.
 
 **Try.** `gated_when(button("learn"), learn)` to relearn on demand; a target
 that changes every hundred periods, with `gated_when` re-enabling the

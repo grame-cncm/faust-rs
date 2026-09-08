@@ -33,6 +33,11 @@ dans ce mode, quel optimiseur il utilise et pourquoi, et ce que valent les
 nombres. Le vocabulaire est dans
 [optimizers-overview-fr.md](optimizers-overview-fr.md) ; l'introduction pas à
 pas est [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md).
+Les colonnes sont les sorties du programme dans l'ordre que donne son
+en-tête ; dans les statistiques, `dc` (la moyenne) est la lecture d'un
+paramètre et `rms` celle d'un résidu. Chaque section ci-dessous donne la
+commande de son programme et ce qu'elle affiche ; les commandes se lancent
+depuis la racine du dépôt.
 
 | | Programme | Tâche | Mode | Boucle et moteur | Résultat |
 |---|---|---|---|---|---|
@@ -112,6 +117,18 @@ du niveau du ronflement (rms 0,35) à rms 0,0118, le plancher du bruit ajouté
 (0,02 uniforme : rms 0,0115) : le ronflement a disparu, le bruit est
 intact.
 
+**Avec faustprobe.** La colonne 2 est la fréquence du zéro, la colonne 1 le
+signal nettoyé :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --every 4000 tests/corpus/ddsp_fad_adaptive_notch.dsp
+```
+
+affiche 1400 à la trame 0, 999,9 à 4 000, 1000,05 à 8 000, puis à moins de
+0,1 Hz de 1000. Ajouter `--quiet --skip 16000` pour les statistiques des
+4 000 dernières trames : `out0` rms 0,0120, le plancher du bruit ajouté, et
+`out1` dc 1000,00, la moyenne de la fréquence suivie.
+
 **À essayer.** Déplacer `f0` pendant l'exécution (c'est une constante ici ;
 en faire un slider) : le notch suit. Baisser `r` à 0,9 pour élargir la zone
 de capture, le monter à 0,99 pour entendre à quel point un creux peut être
@@ -146,6 +163,16 @@ direct est la manière naturelle d'obtenir une ligne de jacobienne par
 tous deux exacts (800,000, 25,001) à 24 000 ; le résidu tombe à rms 2,6e-5.
 Q touche brièvement sa borne haute (60) en chemin : le pas amorti est
 audacieux tant que la jacobienne est petite, et c'est la borne qui le tient.
+
+**Avec faustprobe.** Colonnes f, q, résidu :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --every 4000 tests/corpus/ddsp_fad_modal_resonator_lm.dsp
+```
+
+f dépasse à 808,6 à 4 000 et vaut 799,9 à 8 000 ; q se referme plus
+lentement, 22,4, 24,3, 24,7, 25,3 aux trames affichées, 25,0 en moyenne ; la
+colonne du résidu reste à quelques 1e-3 au plus.
 
 **À essayer.** Exciter par un train d'impulsions plutôt que du bruit (la
 calibration n'apprend alors que pendant les décroissances). Ajouter un
@@ -185,6 +212,17 @@ moyenne du drive sur les 4 000 derniers échantillons est 3,98, sa pointe
 
 **Ce qu'on observe.** `(4,00, 0,700, 0,800)` à 8 000 échantillons, un résidu
 rms de 4e-3 sur une cible d'amplitude 0,8.
+
+**Avec faustprobe.** Colonnes drive, gain, tone, résidu :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --every 4000 tests/corpus/ddsp_fad_amp_model.dsp
+```
+
+`(2,68, 0,80, 0,81)` à 4 000, `(4,000, 0,700, 0,800)` à 8 000 et 16 000. Une
+trame affichée peut tomber sur la gigue d'Adam (4,14 à 12 000 dans un essai),
+raison pour laquelle le test moyenne les 4 000 derniers échantillons :
+`--quiet --skip 16000` donne cette moyenne dans la colonne `dc`.
 
 **À essayer.** Remplacer le bruit par une excitation de type guitare (une
 somme de dents de scie décroissantes) et voir l'identifiabilité s'en aller :
@@ -227,6 +265,19 @@ rehaussement de l'affaiblissement d'écho (ERLE) au-delà de 100 dB sur cette
 pièce sans bruit. Ajouter du bruit côté proche et le résidu se cale à son
 niveau.
 
+**Avec faustprobe.** La colonne 1 est l'écho résiduel, la colonne 2 le
+microphone :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 1000 --quiet tests/corpus/ddsp_rad_echo_canceller_64.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 12000 --skip 8000 --quiet tests/corpus/ddsp_rad_echo_canceller_64.dsp
+```
+
+Le premier essai montre le résidu au niveau de l'écho, rms 2,6 avec une
+pointe transitoire à 25 ; le second, sur les trames 8 000 à 12 000, un rms de
+`out0` nul à la précision affichée contre un rms de `out1` de 1,03 : l'ERLE
+dépasse 100 dB sur cette pièce sans bruit.
+
 **À essayer.** Changer la pièce en cours d'exécution (faire dépendre la
 réponse d'un slider) : l'annuleur reconverge. Ajouter un locuteur proche :
 le problème classique de la double parole — les coefficients dérivent ;
@@ -265,6 +316,16 @@ différentes et Adam les égalise.
 échantillons (la fonction initiale des décalages est 17 dB sous la cible) à
 0,0034 sur les 4 000 derniers : 46 dB sous la cible, une amélioration de
 30 dB.
+
+**Avec faustprobe.** La colonne 1 est le résidu, la colonne 2 la cible :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 2000 --quiet tests/corpus/ddsp_rad_mlp_waveshaper.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --skip 16000 --quiet tests/corpus/ddsp_rad_mlp_waveshaper.dsp
+```
+
+rms 0,105 sur les 2 000 premières trames, 0,0037 sur les trames 16 000 à
+20 000 contre une cible de rms 0,71 : 46 dB plus bas.
 
 **À essayer.** Plus d'unités (`H = 8`) : la boucle à bus n'a besoin que de la
 constante. Une cible plus difficile, avec mémoire — un un-pôle après le
@@ -310,6 +371,23 @@ dans le tas (`set_real_zone`), l'excitation est le bruit LCG du corpus.
 
 **Ce qu'on observe.** En 600 blocs (3,5 s d'audio) les sliders atteignent
 `(−1,20000, 0,72000)` et la perte moyenne par bloc tombe de 0,53 à 2,6e-14.
+
+**Avec faustprobe.** Le programme a besoin d'une entrée et d'un hôte ;
+`faustprobe` fournit l'entrée et montre les voies que l'hôte sommerait, mais
+ne fait pas tourner la boucle d'Adam (c'est la part du test Rust) :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --list-params tests/corpus/ddsp_rad_host_block_resonator.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:1 -n 256 --quiet tests/corpus/ddsp_rad_host_block_resonator.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:1 -n 256 --quiet --set /ddsp_rad_host_block_resonator/a1=-1.2 --set /ddsp_rad_host_block_resonator/a2=0.72 tests/corpus/ddsp_rad_host_block_resonator.dsp
+```
+
+La première liste les deux sliders et leurs chemins. La deuxième, sur un
+bloc de 256 trames de bruit blanc aux valeurs initiales `(−0,8, 0,5)`, donne
+dans la colonne `dc` les contributions moyennes par échantillon, perte 0,46,
+gradients 1,78 et 1,27 ; multipliées par 256, ce sont la perte et le gradient
+de bloc sur lesquels un hôte ferait son pas. La troisième règle les sliders
+sur la cible cachée `(−1,2, 0,72)` : les trois voies valent exactement 0.
 
 **À essayer.** Remplacer la cible par un enregistrement et la perte par une
 perte spectrale calculée par l'hôte : le DSP reste le même. Grouper
@@ -372,6 +450,18 @@ la jacobienne exacte à travers le solveur.
 **Ce qu'on observe.** `(τ, k) → (1,0000e-4, 0,1000)` en 8 000 échantillons,
 le résidu par rapport au clipper caché à 1,7e-7 rms en simple précision.
 
+**Avec faustprobe.** Colonnes τ × 1e4, k, résidu, résidu de Newton, écart
+des dérivées, dérivée :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 20000 --every 4000 tests/corpus/ddsp_fad_diode_clipper_newton.dsp
+```
+
+τ × 1e4 passe de 3,0 à 1,000 et k de 0,03 à 0,1000 dès la ligne de la trame
+4 000 ; le résidu, le résidu de Newton et l'écart entre les deux dérivées
+s'affichent à 0 sur neuf décimales ; la dernière colonne, dv/dk lui-même,
+croît avec le signal de 0,05 à 0,56, l'échelle à laquelle se lit l'écart.
+
 **À essayer.** Apprendre aussi `2 n Vt` (`lm_3D`) ; un clipper asymétrique
 (une diode, `exp` au lieu de `sinh`) ; un second étage RC ; fournir un
 enregistrement et voir l'identifiabilité dépendre de la force avec laquelle
@@ -409,6 +499,17 @@ dit).
 **Ce qu'on observe.** `(0,574, 0,289)` après 8 000 échantillons,
 `(0,6000, 0,3000)` à 60 000 (quatre impulsions), le résidu à 4,8e-7 rms à
 80 000.
+
+**Avec faustprobe.** Colonnes T60, amortissement, résidu ; `--every 16384`
+affiche une ligne par impulsion :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 80000 --every 16384 tests/corpus/ddsp_fad_fdn_reverb_lm.dsp
+```
+
+T60 0,568 après la première période, 0,6002 après la deuxième, 0,6000 à
+partir de la troisième ; amortissement 0,298, 0,2998, 0,29995, 0,30000 ; le
+résidu descend à 3e-7.
 
 **À essayer.** Apprendre un gain par ligne (`descend_N`) ; prendre pour cible
 une réverbération *différente* et pour perte `log_energy_loss` sur la
@@ -453,6 +554,19 @@ premiers blocs) à 2,4e-4 (100 derniers) ; sur un bruit neuf, depuis une
 instance neuve, le résidu vaut 0,0148 pour une cible de rms 0,43 : 29 dB
 sous la cible.
 
+**Avec faustprobe.** Comme pour l'exemple 6, `faustprobe` montre ce que
+l'hôte lirait, pas l'entraînement :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --list-params tests/corpus/ddsp_rad_gru_amp_host.dsp
+faustprobe --double -I libraries -I <faustlibraries> --in white:3 -n 256 --quiet tests/corpus/ddsp_rad_gru_amp_host.dsp
+```
+
+27 sliders ; sur un bloc de bruit blanc aux poids initiaux, `out0` a un `dc`
+de 0,0119, la perte de bloc moyenne, et `out1` à `out27` les contributions
+moyennes des gradients des 27 paramètres dans l'ordre de la liste `params` ;
+l'hôte somme chacune sur le bloc et fait son pas.
+
 **À essayer.** Quatre unités cachées (plus de sliders, même boucle hôte) ;
 une cellule LSTM ; plusieurs excitations par mise à jour ; l'enregistrement
 d'un vrai amplificateur comme modèle caché — le DSP ne change pas, seule la
@@ -494,6 +608,15 @@ systèmes DDSP estiment f0 par un détecteur et laissent le gradient affiner.
 **Ce qu'on observe.** 228 → 219,99 Hz à 20 000 échantillons, 220,000000 à
 60 000, résidu 3e-8.
 
+**Avec faustprobe.** Colonnes hauteur en Hz, résidu :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 60000 --every 10000 tests/corpus/ddsp_fad_waveguide_string_pitch.dsp
+```
+
+228, 223,8, 219,99, 220,0007, 219,99999, 220,0000004 aux trames affichées ;
+le résidu passe de 0,08 à 2e-7.
+
 **À essayer.** Apprendre aussi l'amortissement (`lsq_2D`) ; remplacer le bruit
 par des pincements et voir le puits se rétrécir ; partir une quinte plus loin
 et voir la dérive ; donner l'estimation d'un détecteur de hauteur comme `init`.
@@ -531,6 +654,18 @@ de rms 0,8. Le graphe de trame — 256 × 16 sinus, 32 corrélations de 256
 termes — se normalise en une seconde en build release et en deux minutes en
 build non optimisé (la factorisation des termes additifs que fait aussi le
 Faust C++), son test tourne donc sous `cargo test --release`.
+
+**Avec faustprobe.** Les colonnes 1 à 16 sont les amplitudes, tenues
+entre les trames, la colonne 17 le résidu ; les statistiques des 4 200
+dernières trames sont la lecture :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 51200 --skip 47000 --quiet tests/corpus/ddsp_rad_harmonic_spectral_frame.dsp
+```
+
+`out0` dc 0,9998 (1/1), `out1` 0,4999 (1/2), ..., `out15` 0,06250 (1/16) ;
+`out16` rms 4e-4. L'essai prend une quinzaine de secondes : la normalisation
+du graphe de trame, une somme de 256 produits de sommes à 16 termes, domine.
 
 **À essayer.** Un enregistrement comme cible (`--in`) ; plus d'harmoniques ;
 l'autre moitié de DDSP, une bande de bruit à travers un filtre appris ; une
@@ -570,6 +705,18 @@ coïncide alors avec la cible à 5e-9 rms. Jusqu'au drapeau, un bloc cadencé
 est bit-identique au même bloc hors de la porte (les fixtures de la
 bibliothèque le vérifient) ; après, l'apprentissage ne coûte rien et la
 réverbération coûte une réverbération.
+
+**Avec faustprobe.** Colonnes T60, amortissement, done, résidu de la
+réverbération rendue ; une ligne par période :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 160000 --every 16384 tests/corpus/ddsp_fad_fdn_gated.dsp
+```
+
+T60 et amortissement suivent l'exemple 8 ligne pour ligne ; `done` vaut 0
+pendant cinq périodes et 1 à partir de la trame 98 304, la sixième période ;
+dès cette ligne T60 affiche 0,600001606 sur toutes les lignes suivantes, au
+bit près, et le résidu vaut 1e-9. Plus rien de l'apprentissage ne tourne.
 
 **À essayer.** `gated_when(button("learn"), learn)` pour réapprendre à la
 demande ; une cible qui change toutes les cent périodes, avec `gated_when`
