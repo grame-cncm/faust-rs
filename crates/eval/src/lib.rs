@@ -2318,7 +2318,10 @@ mod simplify_helpers_tests {
         let mut ld = LoopDetector::with_nesting_max_depth(1_000);
         let err = eval_box(&mut arena, chain, &env, &mut ld).expect_err("budget of 1 000 entries");
         assert!(
-            matches!(err, crate::EvalError::RecursionDepthExceeded { max_depth: 1_000 }),
+            matches!(
+                err,
+                crate::EvalError::RecursionDepthExceeded { max_depth: 1_000 }
+            ),
             "got {err:?}"
         );
         assert!(err.to_string().contains("stack overflow in eval"));

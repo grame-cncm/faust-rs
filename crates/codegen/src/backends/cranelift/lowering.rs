@@ -4,9 +4,8 @@
 //! expressions, statements, stack slots, and struct-field access. Unsupported
 //! shapes are filtered by `subset` before this lowering path is used.
 
-
-use cranelift_frontend::Variable;
 use super::*;
+use cranelift_frontend::Variable;
 
 /// Lowered expression value tracked in the local Cranelift lowering environment.
 ///
@@ -379,7 +378,9 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let slot = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
         Ok(match field.kind {
             StructFieldKind::ExternalTable { .. } => {
-                self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), slot, 0)
+                self.fb
+                    .ins()
+                    .load(self.ptr_ty, MemFlagsData::new(), slot, 0)
             }
             StructFieldKind::Table { .. } => slot,
             StructFieldKind::Scalar(_) => {
@@ -396,7 +397,9 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let gv = self.jit.declare_data_in_func(data_id, self.fb.func);
         let slot = self.fb.ins().symbol_value(self.ptr_ty, gv);
         if self.external_static_tables.contains(name) {
-            self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), slot, 0)
+            self.fb
+                .ins()
+                .load(self.ptr_ty, MemFlagsData::new(), slot, 0)
         } else {
             slot
         }
@@ -889,7 +892,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let src_idx = self.fb.ins().iadd_imm_s(i_val, -1);
         let src_addr = self.indexed_addr(base, src_idx, elem_bytes);
         let dst_addr = self.indexed_addr(base, i_val, elem_bytes);
-        let v = self.fb.ins().load(elem_clif, MemFlagsData::new(), src_addr, 0);
+        let v = self
+            .fb
+            .ins()
+            .load(elem_clif, MemFlagsData::new(), src_addr, 0);
         self.fb.ins().store(MemFlagsData::new(), v, dst_addr, 0);
         let next = self.fb.ins().iadd_imm_s(i_val, -1);
         self.fb.ins().jump(header, &[BlockArg::Value(next)]);
@@ -1179,7 +1185,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 let dsp = self.dsp_base_ptr()?;
                 let addr = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
                 let field_clif_ty = self.fir_type_to_clif(&scalar_ty)?;
-                let raw = self.fb.ins().load(field_clif_ty, MemFlagsData::new(), addr, 0);
+                let raw = self
+                    .fb
+                    .ins()
+                    .load(field_clif_ty, MemFlagsData::new(), addr, 0);
                 let coerced = self.coerce_value_to_fir_type(raw, &typ)?;
                 Ok(LoweredExpr::Scalar(coerced))
             }
@@ -1748,7 +1757,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let field = self.struct_field(var)?.clone();
         let dsp = self.dsp_base_ptr()?;
         let sf_addr = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
-        let sf_ptr = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_addr, 0);
+        let sf_ptr = self
+            .fb
+            .ins()
+            .load(self.ptr_ty, MemFlagsData::new(), sf_addr, 0);
         Ok(sf_ptr)
     }
 
@@ -1762,7 +1774,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     ) -> Result<LoweredExpr, LoweringError> {
         let sf_ptr = self.load_soundfile_ptr(var)?;
         // fLength is an `int*` at byte offset 8 from the Soundfile*.
-        let len_ptr = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 8);
+        let len_ptr = self
+            .fb
+            .ins()
+            .load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 8);
         let part_v = self.lower_expr(part, Some(&FirType::Int32))?.value();
         let addr = self.indexed_addr(len_ptr, part_v, 4);
         let result = self.fb.ins().load(types::I32, MemFlagsData::new(), addr, 0);
@@ -1779,7 +1794,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     ) -> Result<LoweredExpr, LoweringError> {
         let sf_ptr = self.load_soundfile_ptr(var)?;
         // fSR is an `int*` at byte offset 16 from the Soundfile*.
-        let sr_ptr = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 16);
+        let sr_ptr = self
+            .fb
+            .ins()
+            .load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 16);
         let part_v = self.lower_expr(part, Some(&FirType::Int32))?.value();
         let addr = self.indexed_addr(sr_ptr, part_v, 4);
         let result = self.fb.ins().load(types::I32, MemFlagsData::new(), addr, 0);
@@ -1809,7 +1827,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let sf_ptr = self.load_soundfile_ptr(var)?;
 
         // fBuffers is a `void*` (= float** or double**) at byte offset 0.
-        let bufs = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 0);
+        let bufs = self
+            .fb
+            .ins()
+            .load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 0);
 
         // chan_buf = ((FAUSTFLOAT**)bufs)[chan]  — one pointer per channel.
         let ptr_stride = i64::from(self.ptr_ty.bytes());
@@ -1821,7 +1842,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             .load(self.ptr_ty, MemFlagsData::new(), chan_ptr_addr, 0);
 
         // part_offset = fOffset[part]  — fOffset is `int*` at byte offset 24.
-        let off_ptr = self.fb.ins().load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 24);
+        let off_ptr = self
+            .fb
+            .ins()
+            .load(self.ptr_ty, MemFlagsData::new(), sf_ptr, 24);
         let part_v = self.lower_expr(part, Some(&FirType::Int32))?.value();
         let part_off_addr = self.indexed_addr(off_ptr, part_v, 4);
         let part_off = self
