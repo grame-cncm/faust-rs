@@ -11,6 +11,7 @@ digraph workspace_crates {
     "doc";
     "draw";
     "eval";
+    "faust";
     "faust-ffi";
     "ffi-common";
     "fir";

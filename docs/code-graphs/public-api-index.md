@@ -1442,6 +1442,51 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `rank_similar_names` | `crates/eval/src/suggestions.rs:40` |
 | `fn` | `unambiguous_suggestion` | `crates/eval/src/suggestions.rs:78` |
 
+## `faust`
+
+| Kind | Name | Location |
+|---|---|---|
+| `enum` | `ControlKind` | `crates/faust/src/controls.rs:13` |
+| `fn` | `ControlKind::is_writable` | `crates/faust/src/controls.rs:25` |
+| `struct` | `Control` | `crates/faust/src/controls.rs:35` |
+| `fn` | `Control::clamp` | `crates/faust/src/controls.rs:49` |
+| `struct` | `Dsp` | `crates/faust/src/dsp.rs:13` |
+| `fn` | `Dsp::factory` | `crates/faust/src/dsp.rs:86` |
+| `fn` | `Dsp::backend` | `crates/faust/src/dsp.rs:92` |
+| `fn` | `Dsp::precision` | `crates/faust/src/dsp.rs:96` |
+| `fn` | `Dsp::num_inputs` | `crates/faust/src/dsp.rs:100` |
+| `fn` | `Dsp::num_outputs` | `crates/faust/src/dsp.rs:104` |
+| `fn` | `Dsp::sample_rate` | `crates/faust/src/dsp.rs:108` |
+| `fn` | `Dsp::init` | `crates/faust/src/dsp.rs:115` |
+| `fn` | `Dsp::instance_init` | `crates/faust/src/dsp.rs:120` |
+| `fn` | `Dsp::reset_controls` | `crates/faust/src/dsp.rs:125` |
+| `fn` | `Dsp::clear` | `crates/faust/src/dsp.rs:130` |
+| `fn` | `Dsp::controls` | `crates/faust/src/dsp.rs:135` |
+| `fn` | `Dsp::control` | `crates/faust/src/dsp.rs:139` |
+| `fn` | `Dsp::get` | `crates/faust/src/dsp.rs:144` |
+| `fn` | `Dsp::set` | `crates/faust/src/dsp.rs:151` |
+| `fn` | `Dsp::metadata` | `crates/faust/src/dsp.rs:160` |
+| `fn` | `Dsp::compute_f32` | `crates/faust/src/dsp.rs:201` |
+| `fn` | `Dsp::compute_f64` | `crates/faust/src/dsp.rs:240` |
+| `struct` | `Factory` | `crates/faust/src/factory.rs:34` |
+| `fn` | `Factory::from_file` | `crates/faust/src/factory.rs:41` |
+| `fn` | `Factory::from_source` | `crates/faust/src/factory.rs:55` |
+| `fn` | `Factory::backend` | `crates/faust/src/factory.rs:70` |
+| `fn` | `Factory::precision` | `crates/faust/src/factory.rs:74` |
+| `fn` | `Factory::name` | `crates/faust/src/factory.rs:80` |
+| `fn` | `Factory::json` | `crates/faust/src/factory.rs:86` |
+| `fn` | `Factory::instantiate` | `crates/faust/src/factory.rs:92` |
+| `use` | `controls` | `crates/faust/src/lib.rs:72` |
+| `use` | `dsp::Dsp` | `crates/faust/src/lib.rs:73` |
+| `use` | `factory::Factory` | `crates/faust/src/lib.rs:74` |
+| `enum` | `Backend` | `crates/faust/src/lib.rs:81` |
+| `enum` | `Precision` | `crates/faust/src/lib.rs:100` |
+| `struct` | `CompileOptions` | `crates/faust/src/lib.rs:108` |
+| `fn` | `CompileOptions::for_backend` | `crates/faust/src/lib.rs:122` |
+| `enum` | `ErrorKind` | `crates/faust/src/lib.rs:146` |
+| `struct` | `Error` | `crates/faust/src/lib.rs:162` |
+| `fn` | `version` | `crates/faust/src/lib.rs:185` |
+
 ## `faust-ffi`
 
 | Kind | Name | Location |

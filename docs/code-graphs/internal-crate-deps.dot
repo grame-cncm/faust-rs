@@ -11,6 +11,7 @@ digraph workspace_crates {
     "doc";
     "draw";
     "eval";
+    "faust";
     "faust-ffi";
     "ffi-common";
     "fir";
@@ -75,6 +76,9 @@ digraph workspace_crates {
     "eval" -> "signals";
     "eval" -> "tlib";
     "eval" -> "ui";
+    "faust" -> "cranelift-ffi";
+    "faust" -> "ffi-common";
+    "faust" -> "interp-ffi";
     "faust-ffi" -> "box-ffi";
     "faust-ffi" -> "cranelift-ffi";
     "faust-ffi" -> "interp-ffi";
