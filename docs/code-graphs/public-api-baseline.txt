@@ -771,6 +771,7 @@ use transform::signal_fir::RealType
 
 ## cranelift-ffi
 const ACTIVE_VOICE
+const ADAM
 const BLOCK_SIZE
 const DEFAULT_FRAMES
 const DEFAULT_VOICE_STOP_LEVEL
@@ -785,6 +786,7 @@ enum ControlKind
 enum Event
 enum InputMode
 enum KeyConversion
+enum Optimizer
 enum Reduction
 enum Resolution
 enum VelConversion
@@ -800,6 +802,7 @@ fn ControlMap::resolve
 fn Factory::compile
 fn Factory::compile_from_string
 fn Factory::compile_with_args
+fn InputMode::from_file
 fn InputMode::sample
 fn KeyConversion::convert
 fn PolyProbe::active_voice_count
@@ -846,6 +849,7 @@ fn dominant_frequency
 fn extract_paths
 fn factory_status
 fn fade_out
+fn fd_check
 fn frame_line
 fn get_free_voice
 fn get_playing_voice
@@ -859,9 +863,12 @@ fn parse_axis
 fn parse_chord
 fn parse_note
 fn parse_reduction
+fn read_channels
 fn sfdr_db
 fn soundfile_part_count
 fn thd_db
+fn train
+mod audio_file
 mod cache
 mod engine
 mod factory
@@ -875,6 +882,7 @@ mod schedule
 mod soundfile
 mod spectrum
 mod sweep
+mod train
 mod types
 struct Axis
 struct ChannelStats
@@ -883,6 +891,7 @@ struct ControlMap
 struct CraneliftDspFactory
 struct CraneliftDspInstance
 struct Factory
+struct FdCheck
 struct Point
 struct PolyProbe
 struct PolyState
@@ -892,6 +901,9 @@ struct RenderSpec
 struct RenderStats
 struct Schedule
 struct TestSoundfile
+struct TrainSpec
+struct TrainStep
+struct Trained
 struct VoiceControlPaths
 struct VoiceState
 type FaustFloat
