@@ -137,6 +137,14 @@ pub struct LoopDetector {
     /// keeps it inside the per-pass [`LoopDetector`] so one evaluation session
     /// preserves sharing without requiring mutable properties on tree nodes.
     pub(crate) eval_cache: ahash::HashMap<EvalCacheKey, EvalValue>,
+    /// Memoized verdicts of `normal_form::is_normal_form`, per tree: a tree in
+    /// normal form evaluates to itself in every environment and skips the
+    /// walk and the per-layer cache.
+    pub(crate) normal_form_cache: ahash::HashMap<TreeId, bool>,
+    /// The boxes the evaluator has produced: only those may take the
+    /// normal-form fast path, a source tree of the same shape still having
+    /// its constants to fold.
+    pub(crate) evaluated_boxes: ahash::HashSet<TreeId>,
     /// Structural recursion depth for `a2sb` / `a2sb_value` lowering.
     ///
     /// These paths create fresh slot nodes on every iteration, so the identity
@@ -359,6 +367,8 @@ impl LoopDetector {
             closure_intern: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             next_slot_id: 0,
             symbolic_box_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+            normal_form_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+            evaluated_boxes: ahash::HashSet::with_hasher(ahash::RandomState::new()),
             eval_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             structural_depth: 0,
         }

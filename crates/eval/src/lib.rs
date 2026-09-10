@@ -173,6 +173,7 @@ mod iteration;
 mod label;
 pub(crate) mod loop_detector;
 mod modulation;
+mod normal_form;
 mod pattern_matcher;
 mod simplify;
 pub(crate) mod source_context;
@@ -720,6 +721,15 @@ fn eval_value(
     env: &Environment,
     loop_detector: &mut LoopDetector,
 ) -> Result<EvalValue, EvalError> {
+    // A tree the evaluator has already produced, and that is in normal form,
+    // evaluates to itself in every environment: no walk, no cache entry per
+    // layer (`normal_form.rs`). Source trees are excluded: evaluation still
+    // rewrites them (a `:` of numbers folds), whatever their shape.
+    if loop_detector.evaluated_boxes.contains(&expr)
+        && normal_form::is_normal_form(arena, expr, &mut loop_detector.normal_form_cache)
+    {
+        return Ok(EvalValue::Box(expr));
+    }
     let cache_key = EvalCacheKey {
         expr,
         env_key: env.frame_key(),
@@ -735,6 +745,9 @@ fn eval_value(
     let result = on_deep_stack(|| eval_value_uncached(arena, expr, env, loop_detector));
     loop_detector.leave_eval();
     let result = result?;
+    if let EvalValue::Box(result_id) = &result {
+        loop_detector.evaluated_boxes.insert(*result_id);
+    }
     if should_cache_eval_value(&result) {
         loop_detector.eval_cache.insert(cache_key, result.clone());
     }
