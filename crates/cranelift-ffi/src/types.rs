@@ -174,7 +174,7 @@ impl DspStateBuffer {
             .iter()
             .find(|zone| zone.role == MemoryRole::DspObject)
             .ok_or_else(|| "mem0 layout has no DSP object zone".to_owned())?;
-        if object.size_bytes != u64::from(layout.size_bytes())
+        if object.size_bytes != layout.size_bytes()
             || object.alignment != u64::from(layout.align_bytes())
         {
             return Err(format!(

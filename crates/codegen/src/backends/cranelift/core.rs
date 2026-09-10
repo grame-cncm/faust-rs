@@ -354,7 +354,7 @@ impl JitDspModule {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StructLayoutPlan {
     fields: Vec<StructFieldLayout>,
-    size_bytes: u32,
+    size_bytes: u64,
     align_bytes: u32,
 }
 
@@ -370,9 +370,12 @@ impl StructLayoutPlan {
 
     /// Returns the total struct size in bytes, including final padding.
     ///
-    /// The size is rounded up to `align_bytes()`.
+    /// The size is rounded up to `align_bytes()`. It is a `u64`: the tapes of
+    /// a `rad` block reverse sweep over a long block (`-bra-tape`) put the
+    /// state of one instance beyond 4 GB, and the offsets are added to the
+    /// `dsp*` base pointer as 64-bit immediates.
     #[must_use]
-    pub fn size_bytes(&self) -> u32 {
+    pub fn size_bytes(&self) -> u64 {
         self.size_bytes
     }
 
@@ -402,9 +405,9 @@ pub struct StructFieldLayout {
     /// Storage shape in the backend contract (scalar or inline table).
     pub kind: StructFieldKind,
     /// Byte offset relative to the `dsp*` base pointer.
-    pub offset_bytes: u32,
+    pub offset_bytes: u64,
     /// Field storage size in bytes (table payload size for tables).
-    pub size_bytes: u32,
+    pub size_bytes: u64,
     /// Field alignment in bytes.
     pub align_bytes: u32,
 }
@@ -470,10 +473,11 @@ pub(crate) struct LayoutScalar {
 /// Rounds `value` up to the next multiple of `align`.
 ///
 /// `align <= 1` is treated as already aligned.
-pub(crate) fn align_up(value: u32, align: u32) -> u32 {
+pub(crate) fn align_up(value: u64, align: u32) -> u64 {
     if align <= 1 {
         return value;
     }
+    let align = u64::from(align);
     let rem = value % align;
     if rem == 0 {
         value
@@ -677,7 +681,7 @@ pub(crate) fn build_struct_layout_for_module(
         .map(|zone| (zone.name.as_str(), zone.id))
         .collect();
     let mut fields = Vec::new();
-    let mut offset = 0u32;
+    let mut offset = 0u64;
     let mut struct_align = if mem0.is_some() { ptr_size } else { 1 };
     for item in dsp_struct_items.into_iter().chain(global_items) {
         match match_fir(store, item) {
@@ -695,24 +699,14 @@ pub(crate) fn build_struct_layout_for_module(
                             "Cranelift dsp* array field length does not fit in u32",
                         )
                     })?;
-                    let payload_size = scalar.size.checked_mul(len).ok_or_else(|| {
-                        CraneliftBackendError::unsupported_module_shape(
-                            "Cranelift dsp* array field size overflow",
-                        )
-                    })?;
+                    let payload_size = u64::from(scalar.size) * u64::from(len);
                     let external_zone = external_zones.get(name.as_str()).copied();
-                    let storage = if external_zone.is_some() {
-                        LayoutScalar {
-                            size: ptr_size,
-                            align: ptr_size,
-                        }
+                    let (storage_size, storage_align) = if external_zone.is_some() {
+                        (u64::from(ptr_size), ptr_size)
                     } else {
-                        LayoutScalar {
-                            size: payload_size,
-                            align: scalar.align,
-                        }
+                        (payload_size, scalar.align)
                     };
-                    offset = align_up(offset, storage.align);
+                    offset = align_up(offset, storage_align);
                     fields.push(StructFieldLayout {
                         name,
                         kind: match external_zone {
@@ -724,15 +718,15 @@ pub(crate) fn build_struct_layout_for_module(
                             None => StructFieldKind::Table { elem_type, len },
                         },
                         offset_bytes: offset,
-                        size_bytes: storage.size,
-                        align_bytes: storage.align,
+                        size_bytes: storage_size,
+                        align_bytes: storage_align,
                     });
-                    offset = offset.checked_add(storage.size).ok_or_else(|| {
+                    offset = offset.checked_add(storage_size).ok_or_else(|| {
                         CraneliftBackendError::unsupported_module_shape(
                             "Cranelift dsp* layout size overflow",
                         )
                     })?;
-                    struct_align = struct_align.max(storage.align);
+                    struct_align = struct_align.max(storage_align);
                 }
                 scalar_ty => {
                     let scalar = fir_type_layout_scalar(ptr_size, &scalar_ty, double)?;
@@ -741,10 +735,10 @@ pub(crate) fn build_struct_layout_for_module(
                         name,
                         kind: StructFieldKind::Scalar(scalar_ty),
                         offset_bytes: offset,
-                        size_bytes: scalar.size,
+                        size_bytes: u64::from(scalar.size),
                         align_bytes: scalar.align,
                     });
-                    offset = offset.checked_add(scalar.size).ok_or_else(|| {
+                    offset = offset.checked_add(u64::from(scalar.size)).ok_or_else(|| {
                         CraneliftBackendError::unsupported_module_shape(
                             "Cranelift dsp* layout size overflow",
                         )
@@ -777,24 +771,14 @@ pub(crate) fn build_struct_layout_for_module(
                         "Cranelift dsp* table length does not fit in u32",
                     )
                 })?;
-                let payload_size = scalar.size.checked_mul(len).ok_or_else(|| {
-                    CraneliftBackendError::unsupported_module_shape(
-                        "Cranelift dsp* table size overflow",
-                    )
-                })?;
+                let payload_size = u64::from(scalar.size) * u64::from(len);
                 let external_zone = external_zones.get(name.as_str()).copied();
-                let storage = if external_zone.is_some() {
-                    LayoutScalar {
-                        size: ptr_size,
-                        align: ptr_size,
-                    }
+                let (storage_size, storage_align) = if external_zone.is_some() {
+                    (u64::from(ptr_size), ptr_size)
                 } else {
-                    LayoutScalar {
-                        size: payload_size,
-                        align: scalar.align,
-                    }
+                    (payload_size, scalar.align)
                 };
-                offset = align_up(offset, storage.align);
+                offset = align_up(offset, storage_align);
                 fields.push(StructFieldLayout {
                     name,
                     kind: match external_zone {
@@ -806,15 +790,15 @@ pub(crate) fn build_struct_layout_for_module(
                         None => StructFieldKind::Table { elem_type, len },
                     },
                     offset_bytes: offset,
-                    size_bytes: storage.size,
-                    align_bytes: storage.align,
+                    size_bytes: storage_size,
+                    align_bytes: storage_align,
                 });
-                offset = offset.checked_add(storage.size).ok_or_else(|| {
+                offset = offset.checked_add(storage_size).ok_or_else(|| {
                     CraneliftBackendError::unsupported_module_shape(
                         "Cranelift dsp* layout size overflow",
                     )
                 })?;
-                struct_align = struct_align.max(storage.align);
+                struct_align = struct_align.max(storage_align);
             }
             FirMatch::DeclareTable {
                 access: AccessType::Static | AccessType::Global,

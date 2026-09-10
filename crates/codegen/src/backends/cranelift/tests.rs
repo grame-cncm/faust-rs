@@ -2253,3 +2253,32 @@ fn compile_module_lowers_float_to_int_cast_subset_body() {
         "expected float-to-int cast lowering in CLIF, got:\n{compute_clif}"
     );
 }
+
+#[test]
+/// The `dsp*` state of a `rad` over a long block is its tapes: with
+/// `-bra-tape 524288` and a few thousand taped signals it passes 4 GB, so the
+/// layout offsets are 64-bit. A 4 GiB array followed by a scalar puts the
+/// scalar at an offset a `u32` cannot hold.
+fn struct_layout_offsets_are_not_limited_to_four_gigabytes() {
+    let mut store = fir::FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let big = b.declare_var(
+        "fBig",
+        FirType::Array(Box::new(FirType::Float64), 1 << 29),
+        AccessType::Struct,
+        None,
+    );
+    let after = b.declare_var("fAfter", FirType::Float64, AccessType::Struct, None);
+    let dsp_struct = b.block(&[big, after]);
+    let empty = b.block(&[]);
+    let module = b.module(0, 0, "big", dsp_struct, empty, empty, empty, &[]);
+    let layout = super::core::build_struct_layout_for_module(&store, module, 8, true, None)
+        .expect("a state beyond 4 GB is laid out");
+    let four_gib = 1_u64 << 32;
+    assert_eq!(layout.field("fBig").expect("fBig").size_bytes, four_gib);
+    assert_eq!(
+        layout.field("fAfter").expect("fAfter").offset_bytes,
+        four_gib
+    );
+    assert_eq!(layout.size_bytes(), four_gib + 8);
+}

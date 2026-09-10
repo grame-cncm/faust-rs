@@ -261,12 +261,49 @@ unrecognized foreign functions still surface targeted diagnostics.
 The `BlockReverseAD` lowering evaluates the primal body forward over
 the current `compute(count)` block, records the intermediate values it
 needs in BRA tapes (real-valued, plus one integer tape per `select2`
-condition, each `-bra-tape N` samples long, 8192 by default: a longer
-block wraps the tape index and the gradients of its tail are wrong),
-then runs the backward sweep over that same block. The
+condition and per delay amount, each `-bra-tape N` samples long, 8192 by
+default: a longer block wraps the tape index and the gradients of its
+tail are wrong), then runs the backward sweep over that same block. The
 gradient lanes are per-sample contributions for the block-local
 objective; users can sum them over the block or reduce them in DSP code
 with a block length such as `ma.BS`.
+
+A value is taped only when a backward rule needs it and it is not
+trivially re-evaluable in the reverse loop: a stateless expression of
+constants, inputs, controls and foreign constants is recomputed there
+(and hoisted out of the loop like any control expression), whatever the
+operators on the way, `min`/`max`/`pow`/`atan2`/`fmod`/`select2`
+included. This matters for filter coefficients: `ma.SR` is
+`min(192000, max(1, fconstant(...)))` in the standard library, so a
+criterion that stopped at `min`/`max` taped every coefficient computed
+from the sample rate, per sample, 21 tapes for one RBJ biquad section
+instead of 5 (`x`, `x'`, `x''`, `y'`, `y''`), and 4449 tapes for a
+16-line FDN with 170 sections, 1391 after. Two signals that lower to the
+same FIR value (the slot of a recursion read inside its body through
+`SYMREF` and outside it through `SYMREC`) share one tape. The tapes are
+the memory of a `rad` over a long block, `N` samples per tape; the
+Cranelift `dsp*` layout is 64-bit, so an instance can hold more than 4 GB
+of them (a 7-second response at 48 kHz, `-bra-tape 524288`, is 5.8 GB
+for that FDN).
+
+A `Delay(d, x)` whose amount is not a literal, a slider-driven integer
+constant over the block or a signal that varies within it, is a scatter
+rather than a fixed shift: `y[n] = x[n - d[n]]`, so `adj[x][n - d[n]] +=
+adj[y][n]`. The reverse step `n` accumulates `adj[y][n]` into slot
+`(n - d[n]) % S` of an `S = D + 1` slot buffer, `D` the bound of the
+amount (its interval, the bound that sizes the forward delay line), and
+`adj[x][n]` reads slot `n % S`, then clears it: the targets still to be
+read at step `n` are the `D + 1` consecutive indices `n - D ..= n`, whose
+residues are distinct. `d[n] == 0` contributes at the same step, a target
+before the block is dropped (the block is the horizon), and `d[n]` is
+replayed from its tape when it is not trivially re-evaluable. The amount
+itself gets no adjoint (an integer). A non-literal amount used to be read
+as zero, the delay treated as the identity, and the gradients through a
+recursion holding such a delay were silently wrong. A delay with a
+non-literal amount read *directly* on a recursion output
+(`Delay(d, Proj(SYMREF))`, which the normalizer does not produce for `~`:
+the feedback path reads `Delay1(Proj)`) is rejected with a diagnostic
+rather than approximated.
 
 Seeds are leaves of the block sweep exactly as they are of the symbolic
 sweep: the postorder records a seed and does not descend into whatever

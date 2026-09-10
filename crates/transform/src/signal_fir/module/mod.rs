@@ -125,7 +125,8 @@ use sigtype::{SigType, Variability};
 use crate::signal_prepare::SimpleSigType;
 
 use super::block_reverse_ad::{
-    collect_bra_postorder, collect_select2_conditions, collect_tape_needed_values,
+    collect_bra_postorder, collect_delay_amounts, collect_select2_conditions,
+    collect_tape_needed_values,
 };
 use super::delay::{
     DelayFirCtx, DelayLineInfo, DelayLoweringCtx, DelayManager, DelayOptions, DomainCounters,

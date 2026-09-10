@@ -792,8 +792,22 @@ impl<'a> SignalToFirLower<'a> {
                 }
                 RecursionStorageStrategy::ExactShift => {
                     let read_ty = self.signal_fir_type(node)?;
-                    let prev_index =
-                        self.lower_int32_const(i32::try_from(total_delay).unwrap_or(i32::MAX));
+                    // The array holds the last `total_delay` outputs, shifted
+                    // every sample: a literal amount reads a fixed slot, a
+                    // runtime amount (slider-driven, time-varying) its own slot
+                    // plus the carried implicit delay. `delay` is only the
+                    // sizing bound: reading `total_delay` for a runtime amount
+                    // read the oldest slot whatever the amount's value.
+                    let prev_index = if tree_to_int(self.arena, amount).is_some() {
+                        self.lower_int32_const(i32::try_from(total_delay).unwrap_or(i32::MAX))
+                    } else {
+                        let amount_value = self.lower_signal(amount)?;
+                        let carried_delay = self.lower_int32_const(
+                            i32::try_from(rec_delay_ref.implicit_delay).unwrap_or(i32::MAX),
+                        );
+                        let mut b = FirBuilder::new(&mut self.store);
+                        b.binop(FirBinOp::Add, amount_value, carried_delay, FirType::Int32)
+                    };
                     let mut b = FirBuilder::new(&mut self.store);
                     return Ok(b.load_table(
                         rec_delay_ref.carrier.info.name,

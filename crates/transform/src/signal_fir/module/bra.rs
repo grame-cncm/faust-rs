@@ -30,8 +30,10 @@ use crate::signal_fir::module::SigMatch;
 use crate::signal_fir::module::SignalToFirLower;
 use crate::signal_fir::module::TreeId;
 use crate::signal_fir::module::collect_bra_postorder;
+use crate::signal_fir::module::collect_delay_amounts;
 use crate::signal_fir::module::collect_select2_conditions;
 use crate::signal_fir::module::collect_tape_needed_values;
+use crate::signal_fir::module::delay_size_for_amount;
 use crate::signal_fir::module::dump_sig_readable;
 use crate::signal_fir::module::list_to_vec;
 use crate::signal_fir::module::match_sig;
@@ -84,6 +86,10 @@ pub(super) struct BraState {
     /// signal is never taped twice even when `ensure_bra_tape_stores` is
     /// called once per primal body slot.
     pub(super) tape_store_var: HashMap<SigId, (String, FirType)>,
+    /// The tape of each lowered forward value, so that two signals lowering
+    /// to the same FIR value (a recursion slot read inside its body through
+    /// `SYMREF` and outside it through `SYMREC`) share one tape.
+    pub(super) tape_by_value: HashMap<FirId, (String, FirType)>,
     /// Carriers whose primal bodies were lowered (and taped) by the forward
     /// slice on behalf of gradient-only public projections. Keyed by the
     /// group `SigId`; see `ensure_bra_forward_pass`.
@@ -482,8 +488,21 @@ impl<'a> SignalToFirLower<'a> {
                     b.load_var(carry_name, AccessType::Struct, rt)
                 }
                 Some(amount) => {
-                    let c =
-                        usize::try_from(tree_to_int(self.arena, amount).unwrap_or(0)).unwrap_or(0);
+                    // The carry of a tap read directly on the recursion output
+                    // is loaded here, before the walk; a scattered (variable)
+                    // amount has no fixed slot to load from at this point.
+                    let Some(c_raw) = tree_to_int(self.arena, amount) else {
+                        return Err(SignalFirError::new(
+                            SignalFirErrorCode::UnsupportedSignalNode,
+                            format!(
+                                "BlockReverseAD: a delay read directly on a recursion output \
+                                 must have a literal amount; delay the recursion's input or \
+                                 an expression of its output instead (expr={})",
+                                dump_sig_readable(self.arena, sig)
+                            ),
+                        ));
+                    };
+                    let c = usize::try_from(c_raw).unwrap_or(0);
                     if c == 0 {
                         continue;
                     }
@@ -712,6 +731,8 @@ impl<'a> SignalToFirLower<'a> {
 
     /// `Delay(c, x)` adjoint: `adj[x][n] += adj[y][n+c]` through a circular
     /// `c`-slot carry array indexed by `i0 % c`; zero delay is the identity.
+    /// An amount that is not a literal goes through
+    /// [`Self::propagate_bra_variable_delay_adj`].
     fn propagate_bra_delay_adj(
         &mut self,
         sig: SigId,
@@ -728,7 +749,9 @@ impl<'a> SignalToFirLower<'a> {
         //   carry[n % c] holds adj[y][n+c] written c steps ago.
         //   We load it → adj[sig_inner] += carry[n%c].
         //   We store y_bar to carry[n%c] for step n-c to read.
-        let c_raw = tree_to_int(self.arena, amount).unwrap_or(0);
+        let Some(c_raw) = tree_to_int(self.arena, amount) else {
+            return self.propagate_bra_variable_delay_adj(sig, sig_inner, amount, y_bar, adj);
+        };
         let c = usize::try_from(c_raw).unwrap_or(0);
         if c == 0 {
             // Zero delay: y = x.
@@ -765,6 +788,113 @@ impl<'a> SignalToFirLower<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    /// `Delay(d, x)` adjoint for an amount that is not a literal: a
+    /// slider-driven integer, constant over the block, or a signal that
+    /// varies within it. `y[n] = x[n - d[n]]`, so `adj[x][n - d[n]] +=
+    /// adj[y][n]`: a scatter, where the literal case is a fixed shift.
+    ///
+    /// At reverse step `n`, `y_bar = adj[y][n]` is accumulated into slot
+    /// `(n - d[n]) % S` of an `S = D + 1` slot buffer, `D` the bound of the
+    /// amount (its interval, the same bound that sizes the forward delay
+    /// line); `adj[x][n]` reads slot `n % S`, which is then cleared. The
+    /// targets still to be read at step `n` are the `D + 1` consecutive
+    /// indices `n - D ..= n`, whose residues modulo `S` are distinct, so a
+    /// slot never holds two targets. `d[n] == 0` is the identity at the same
+    /// step and does not go through the buffer; a target before the block
+    /// (`n - d[n] < 0`) is dropped, the block being the horizon; `d[n]` is
+    /// replayed by [`Self::load_bra_fwd_value`], from its tape when it is not
+    /// trivially re-evaluable. The buffer is zeroed before every reverse
+    /// loop like the fixed-shift carries (`emit_bra_compute_resets`).
+    fn propagate_bra_variable_delay_adj(
+        &mut self,
+        sig: SigId,
+        sig_inner: SigId,
+        amount: SigId,
+        y_bar: FirId,
+        adj: &mut std::collections::HashMap<SigId, FirId>,
+    ) -> Result<(), SignalFirError> {
+        let real_ty = self.real_ty.clone();
+        let d = self.load_bra_fwd_value(amount)?;
+        let zero_i = self.lower_int32_const(0);
+        let zero_r = self.float_const(0.0);
+        let is_now = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.binop(FirBinOp::Eq, d, zero_i, FirType::Int32)
+        };
+        // d[n] == 0: y[n] = x[n], the whole adjoint lands at this step.
+        let direct = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.select2(is_now, y_bar, zero_r, real_ty.clone())
+        };
+        if self.bra_sweep_is_causal() {
+            // In the forward sample loop the horizon is the current sample:
+            // `x[n - d]` is outside it for `d > 0`, nothing to propagate.
+            Self::add_to_adjoint(&mut self.store, adj, sig_inner, direct, real_ty);
+            return Ok(());
+        }
+        let Some(bound) = delay_size_for_amount(self.arena, self.sig_types, amount)? else {
+            return Err(SignalFirError::new(
+                SignalFirErrorCode::UnsupportedSignalNode,
+                format!(
+                    "BlockReverseAD: the amount of a delay must be a literal or a signal with \
+                     a bounded non-negative interval (expr={})",
+                    dump_sig_readable(self.arena, amount)
+                ),
+            ));
+        };
+        let slots = usize::try_from(bound).unwrap_or(0).saturating_add(1);
+        let buffer = self.ensure_bra_delay_array_carry(sig, slots)?;
+        let slots_i = self.lower_int32_const(i32::try_from(slots).unwrap_or(i32::MAX));
+
+        // adj[x][n]: what the later reverse steps scattered to slot n % S,
+        // plus the direct term.
+        let slot_now = self.bra_delay_array_slot(slots);
+        let gathered = {
+            let rt = self.real_ty();
+            let mut b = FirBuilder::new(&mut self.store);
+            b.load_table(buffer.clone(), AccessType::Struct, slot_now, rt)
+        };
+        let gathered = self.snapshot_bra_carry(gathered);
+        let total = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.binop(FirBinOp::Add, gathered, direct, real_ty.clone())
+        };
+        Self::add_to_adjoint(&mut self.store, adj, sig_inner, total, real_ty.clone());
+
+        // After the reads of this step: free slot n % S, then scatter y_bar
+        // to slot (n - d[n]) % S when the target is in the block and is not
+        // this step (d[n] > 0, so the two slots differ).
+        let clear = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.store_table(buffer.clone(), AccessType::Struct, slot_now, zero_r)
+        };
+        self.regions.current_phases_mut().post_output.push(clear);
+        let i0 = {
+            let mut b = FirBuilder::new(&mut self.store);
+            b.load_var("i0", AccessType::Loop, FirType::Int32)
+        };
+        let (target_slot, valid) = {
+            let mut b = FirBuilder::new(&mut self.store);
+            let target = b.binop(FirBinOp::Sub, i0, d, FirType::Int32);
+            let in_block = b.binop(FirBinOp::Ge, target, zero_i, FirType::Int32);
+            let not_now = b.binop(FirBinOp::Ne, d, zero_i, FirType::Int32);
+            let valid = b.binop(FirBinOp::And, in_block, not_now, FirType::Int32);
+            let clamped = b.select2(in_block, target, zero_i, FirType::Int32);
+            let slot = b.binop(FirBinOp::Rem, clamped, slots_i, FirType::Int32);
+            (slot, valid)
+        };
+        let scatter = {
+            let rt = self.real_ty();
+            let mut b = FirBuilder::new(&mut self.store);
+            let current = b.load_table(buffer.clone(), AccessType::Struct, target_slot, rt);
+            let term = b.select2(valid, y_bar, zero_r, real_ty.clone());
+            let sum = b.binop(FirBinOp::Add, current, term, real_ty);
+            b.store_table(buffer, AccessType::Struct, target_slot, sum)
+        };
+        self.regions.current_phases_mut().post_output.push(scatter);
         Ok(())
     }
 
@@ -1248,6 +1378,7 @@ impl<'a> SignalToFirLower<'a> {
             return Ok(());
         }
         let select2_conditions = collect_select2_conditions(self.arena, &postorder);
+        let delay_amounts = collect_delay_amounts(self.arena, &postorder);
 
         // 3. Emit tape stores in deterministic (postorder) order.
         let mut tape_sigs: Vec<SigId> = tape_needed.into_iter().collect();
@@ -1261,7 +1392,7 @@ impl<'a> SignalToFirLower<'a> {
             }
             let real_ty = self.real_ty.clone();
             let v_ty = self.signal_fir_type(v)?;
-            if v_ty != real_ty && !select2_conditions.contains(&v) {
+            if v_ty != real_ty && !select2_conditions.contains(&v) && !delay_amounts.contains(&v) {
                 // `collect_tape_needed_values` is structural: it walks the full
                 // body postorder and can see integer islands below a
                 // `FloatCast`, notably LCG-style noise recursions.  Those
@@ -1272,15 +1403,10 @@ impl<'a> SignalToFirLower<'a> {
                 // promoted `FloatCast` node; that node is the candidate to tape
                 // when needed.  Skip non-real candidates here rather than
                 // silently casting and hiding a missing Signal-level promotion.
-                // The one integer the sweep replays is a `select2` condition,
-                // taped with its own type.
+                // The integers the sweep replays are the `select2`
+                // conditions and the delay amounts, taped with their own type.
                 continue;
             }
-            let tape_name = format!("fBraTape{}", self.name_gen.next_loop_var_id);
-            self.name_gen.next_loop_var_id += 1;
-            // Declare as a fixed-size array struct field.
-            let tape_ty = FirType::Array(Box::new(v_ty.clone()), self.bra_tape_block_size);
-            self.ensure_named_struct_var(&tape_name, tape_ty, None);
             // Lower the value in the current (forward) loop context. Real
             // tapes feed the adjoint arithmetic; an integer tape only ever
             // drives a `select2` in the reverse loop.
@@ -1295,6 +1421,18 @@ impl<'a> SignalToFirLower<'a> {
                     ),
                 ));
             }
+            // One tape per forward value: two signals that lower to the same
+            // FIR value (a recursion slot read inside its body through
+            // `SYMREF` and outside it through `SYMREC`) share it.
+            if let Some(existing) = self.bra.tape_by_value.get(&v_fir).cloned() {
+                self.bra.tape_store_var.insert(v, existing);
+                continue;
+            }
+            let tape_name = format!("fBraTape{}", self.name_gen.next_loop_var_id);
+            self.name_gen.next_loop_var_id += 1;
+            // Declare as a fixed-size array struct field.
+            let tape_ty = FirType::Array(Box::new(v_ty.clone()), self.bra_tape_block_size);
+            self.ensure_named_struct_var(&tape_name, tape_ty, None);
             // Tape stores go in `immediate` so they capture the forward value
             // BEFORE `post_output` updates delay/state variables.  Placing them
             // in `sample_end` would re-read post-update state (e.g. the updated
@@ -1307,6 +1445,9 @@ impl<'a> SignalToFirLower<'a> {
                 b.store_table(tape_name.clone(), AccessType::Struct, idx, v_fir)
             };
             self.regions.current_phases_mut().immediate.push(store_stmt);
+            self.bra
+                .tape_by_value
+                .insert(v_fir, (tape_name.clone(), v_ty.clone()));
             self.bra.tape_store_var.insert(v, (tape_name, v_ty));
         }
         Ok(())

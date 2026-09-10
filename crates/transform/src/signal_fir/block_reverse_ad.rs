@@ -116,8 +116,24 @@ pub(super) fn is_trivially_reverse_evaluable(arena: &TreeArena, sig: SigId) -> b
         SigMatch::IntCast(x) | SigMatch::FloatCast(x) | SigMatch::BitCast(x) => {
             is_trivially_reverse_evaluable(arena, x)
         }
-        SigMatch::BinOp(_, lhs, rhs) => {
+        // Stateless binary math: `ma.SR` is `min(192000, max(1, fconstant(...)))`
+        // in the standard library, so a criterion without `Min`/`Max` taped
+        // every filter coefficient computed from the sample rate, per sample.
+        SigMatch::BinOp(_, lhs, rhs)
+        | SigMatch::Pow(lhs, rhs)
+        | SigMatch::Min(lhs, rhs)
+        | SigMatch::Max(lhs, rhs)
+        | SigMatch::Atan2(lhs, rhs)
+        | SigMatch::Fmod(lhs, rhs)
+        | SigMatch::Remainder(lhs, rhs) => {
             is_trivially_reverse_evaluable(arena, lhs) && is_trivially_reverse_evaluable(arena, rhs)
+        }
+        // A branch of stateless operands is stateless; the reverse rule
+        // replays the condition from the same operands.
+        SigMatch::Select2(cond, a, b) => {
+            is_trivially_reverse_evaluable(arena, cond)
+                && is_trivially_reverse_evaluable(arena, a)
+                && is_trivially_reverse_evaluable(arena, b)
         }
         SigMatch::Sin(x)
         | SigMatch::Cos(x)
@@ -314,6 +330,22 @@ pub(super) fn collect_select2_conditions(arena: &TreeArena, postorder: &[SigId])
         .collect()
 }
 
+/// Collects the amounts of the `Delay` nodes of `postorder`.
+///
+/// Like a `select2` condition, a delay amount is an integer the backward
+/// sweep replays: the reverse step `n` scatters the adjoint of `x[n - d[n]]`
+/// to the slot of `n - d[n]`, so it needs `d[n]` (taped when it varies within
+/// the block, re-evaluated when it is a slider-driven constant).
+pub(super) fn collect_delay_amounts(arena: &TreeArena, postorder: &[SigId]) -> HashSet<SigId> {
+    postorder
+        .iter()
+        .filter_map(|&sig| match match_sig(arena, sig) {
+            SigMatch::Delay(_, amount) => Some(amount),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Collects the set of signals whose **forward** value must be stored on a
 /// tape during the forward sample loop so that the backward sweep can load
 /// them instead of re-evaluating `lower_signal` in reverse order.
@@ -370,6 +402,12 @@ pub(super) fn collect_tape_needed_values(arena: &TreeArena, postorder: &[SigId])
                 }
                 if !is_trivially_reverse_evaluable(arena, rhs) {
                     needed.insert(rhs);
+                }
+            }
+            // Delay(x, d): the scatter rule replays `d[n]` at reverse step `n`.
+            SigMatch::Delay(_, amount) => {
+                if !is_trivially_reverse_evaluable(arena, amount) {
+                    needed.insert(amount);
                 }
             }
             // Min/Max subgradient needs operand values for the indicator cond.

@@ -375,7 +375,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     /// Resolves the payload base for inline and manager-externalized tables.
     fn struct_table_base(&mut self, field: &StructFieldLayout) -> Result<Value, LoweringError> {
         let dsp = self.dsp_base_ptr()?;
-        let slot = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
+        let slot = self.fb.ins().iadd_imm_s(dsp, field_offset_imm(field)?);
         Ok(match field.kind {
             StructFieldKind::ExternalTable { .. } => {
                 self.fb
@@ -771,7 +771,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             }
         };
         let dsp = self.dsp_base_ptr()?;
-        let addr = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
+        let addr = self.fb.ins().iadd_imm_s(dsp, field_offset_imm(&field)?);
         let mut value_v = self.lower_expr(value, Some(&scalar_ty))?.value();
         value_v = self.coerce_value_to_fir_type(value_v, &scalar_ty)?;
         self.fb.ins().store(MemFlagsData::new(), value_v, addr, 0);
@@ -1183,7 +1183,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                     }
                 };
                 let dsp = self.dsp_base_ptr()?;
-                let addr = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
+                let addr = self.fb.ins().iadd_imm_s(dsp, field_offset_imm(&field)?);
                 let field_clif_ty = self.fir_type_to_clif(&scalar_ty)?;
                 let raw = self
                     .fb
@@ -1756,7 +1756,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     fn load_soundfile_ptr(&mut self, var: &str) -> Result<Value, LoweringError> {
         let field = self.struct_field(var)?.clone();
         let dsp = self.dsp_base_ptr()?;
-        let sf_addr = self.fb.ins().iadd_imm_s(dsp, i64::from(field.offset_bytes));
+        let sf_addr = self.fb.ins().iadd_imm_s(dsp, field_offset_imm(&field)?);
         let sf_ptr = self
             .fb
             .ins()
@@ -2041,6 +2041,18 @@ pub(crate) fn try_lower_function_body(
         emit_return_stub(lowering.fb);
     }
     Ok(true)
+}
+
+/// The byte offset of a `dsp*` field as the immediate of an `iadd_imm`: a
+/// `u64` offset (the tapes of a long `rad` block put the state beyond 4 GB)
+/// that must fit the signed 64-bit immediate.
+fn field_offset_imm(field: &StructFieldLayout) -> Result<i64, LoweringError> {
+    i64::try_from(field.offset_bytes).map_err(|_| {
+        LoweringError::Unsupported(format!(
+            "Cranelift dsp* field offset does not fit in i64: {} at {}",
+            field.name, field.offset_bytes
+        ))
+    })
 }
 
 #[cfg(test)]

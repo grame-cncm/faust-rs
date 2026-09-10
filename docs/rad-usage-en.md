@@ -151,7 +151,13 @@ tail are wrong, so a host that differentiates a loss over a whole
 impulse response in one `compute` call sizes the tape to it
 (`-bra-tape 32768` for a two-second response at 16 kHz; `--bra-tape` in
 `faustprobe`). The forward tapes then cost `N` samples per taped signal,
-which is why the default stays small.
+which is why the default stays small. Only the values a backward rule
+needs and that change within the block are taped (the inputs of a
+multiplication by a coefficient, the state of a recursion); a value that
+is constant over the block, such as a filter coefficient computed from
+sliders and `ma.SR`, is recomputed in the reverse loop: one RBJ biquad
+section costs 5 tapes. The state of an instance can exceed 4 GB when the
+tapes are long, the Cranelift layout being 64-bit.
 
 One-pole example:
 
@@ -292,6 +298,13 @@ cargo run --release -p compiler --example rad_vs_fad_perf
   bodies use the current `compute(count)` block as the reverse horizon
   through `BlockReverseAD`. This is exact for the block-local objective,
   with zero terminal adjoint state, not a cross-call infinite-horizon adjoint.
+- **Delays with a non-literal amount.** A delay whose length is a slider
+  or a signal (`x@int(d)`, `de.fdelay(n, d, x)`), inside a recursion or
+  not, has an exact reverse rule (the adjoint is scattered to `n - d[n]`,
+  the amount replayed from its tape when it varies); the derivative with
+  respect to a fractional length comes from the interpolation, the
+  integer part gets none. A delay with a non-literal amount read directly
+  on a recursion output is rejected with a diagnostic.
 - **One-sample horizon inside the graph.** A gradient consumed by a
   forward-time expression -- `p_next = p - lr * (rad(loss(p), p) : !, _)`
   in an adaptation recursion -- is produced at the sample that consumes it,

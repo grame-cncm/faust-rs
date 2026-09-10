@@ -2509,3 +2509,104 @@ process = (clock, t) : ondemand(body);
         "the parameter should have walked to 0.5, got {last}"
     );
 }
+
+// ── Delays whose amount is not a literal ──────────────────────────────────────
+//
+// `Delay(d, x)` with `d` a slider-driven or time-varying integer: the reverse
+// rule scatters `adj[y][n]` to `n - d[n]` (`propagate_bra_variable_delay_adj`).
+// Before it, a non-literal amount was read as zero and the delay treated as
+// the identity: the gradients through a recursion holding such a delay were
+// silently wrong.
+
+/// A comb loop whose delay length is a slider (constant over the block) and
+/// whose feedback gain is the seed: the adjoint has to travel back through the
+/// variable delay at every round trip.
+#[test]
+fn rad_slider_delay_amount_in_loop_total_grad_matches_fd() {
+    let rad = |s: &[f32]| {
+        format!(
+            r#"d = hslider("d", 3, 1, 8, 1);
+g = hslider("g", {}, -0.9, 0.9, 0.001);
+process = rad(0.5 : + ~ (@(int(d)) : *(g)), g);"#,
+            s[0]
+        )
+    };
+    let primal = |s: &[f32]| {
+        format!(
+            r#"d = hslider("d", 3, 1, 8, 1);
+g = hslider("g", {}, -0.9, 0.9, 0.001);
+process = 0.5 : + ~ (@(int(d)) : *(g));"#,
+            s[0]
+        )
+    };
+    assert_bra_block_total_grad_matches_fd(
+        "rad-slider-delay-loop",
+        1,
+        32,
+        &[0.5],
+        &[1e-3],
+        2e-2,
+        rad,
+        primal,
+    );
+}
+
+/// A delay whose length changes every sample (3 or 7), inside a loop, with a
+/// gain on the delayed path and a feedback gain as seeds: the amount is
+/// replayed from its tape by the reverse sweep.
+#[test]
+fn rad_time_varying_delay_amount_in_loop_total_grad_matches_fd() {
+    let body = |s: &[f32]| {
+        format!(
+            r#"g = hslider("g", {}, -0.9, 0.9, 0.001);
+a = hslider("a", {}, -0.9, 0.9, 0.001);
+counter = +(1) ~ _;
+d = min(7, max(0, 3 + 4 * (counter % 2)));
+loop = 0.5 : + ~ (@(d) : *(a) : *(g));"#,
+            s[0], s[1]
+        )
+    };
+    let rad = move |s: &[f32]| format!("{}\nprocess = rad(loop, (g, a));", body(s));
+    let primal = move |s: &[f32]| format!("{}\nprocess = loop;", body(s));
+    assert_bra_block_total_grad_matches_fd(
+        "rad-time-varying-delay-loop",
+        1,
+        32,
+        &[0.6, 0.7],
+        &[1e-3, 1e-3],
+        2e-2,
+        rad,
+        primal,
+    );
+}
+
+/// A fractional delay, feed-forward, whose length is itself a seed: the
+/// interpolation gives the derivative with respect to the length, and the
+/// integer part is a variable delay on a decaying signal.
+#[test]
+fn rad_fractional_delay_amount_seed_feed_forward_total_grad_matches_fd() {
+    let body = |s: &[f32]| {
+        format!(
+            r#"d = hslider("d", {}, 1.0, 12.0, 0.001);
+g = hslider("g", {}, -2.0, 2.0, 0.001);
+env = (1.0 - 1.0') : + ~ *(0.9);
+fd(len, x) = x@int(len) * (1.0 - fr) + x@(int(len) + 1) * fr with {{ fr = len - floor(len); }};
+model = fd(d, env) * g;
+target = fd(5.3, env) * 0.65;
+loss = (model - target) * (model - target);"#,
+            s[0], s[1]
+        )
+    };
+    let rad = move |s: &[f32]| format!("{}\nprocess = rad(loss, (d, g));", body(s));
+    let primal = move |s: &[f32]| format!("{}\nprocess = loss;", body(s));
+    assert_bra_block_total_grad_matches_fd(
+        "rad-fractional-delay-seed",
+        1,
+        32,
+        &[4.37, 0.8],
+        &[1e-3, 1e-3],
+        2e-2,
+        rad,
+        primal,
+    );
+}
