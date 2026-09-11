@@ -1472,9 +1472,11 @@ Two structures that look like entries for §2 and are not:
   one line here only for the hazard it shares with the list above: the Cranelift
   key has to carry the optimization level, the canonicalized argv, the foreign
   functions and the semantic FIR fingerprint, or two different compilations
-  coalesce. On the interpreter side the key is whatever the `.fbc` header says,
-  and the codegen layer writes an empty string there, which is that hazard
-  realized rather than avoided.
+  coalesce. The interpreter side had that hazard realized — it keyed by the
+  `.fbc` header's field, which the codegen layer writes empty, so the second
+  factory created through the FFI was dropped and its caller handed the first.
+  Fixed on 2026-09-11: the FFI computes the key libfaust computes, from the
+  source and its normalized options, or from the digest of the bitcode text.
 
 ## 5. Rollout Discipline
 

@@ -153,6 +153,20 @@ impl FbcDspFactoryAny {
         }
     }
 
+    /// Sets the cache identity of this factory.
+    ///
+    /// # Source provenance (C++)
+    /// - `interpreter_dsp_factory::setSHAKey` (`interpreter_dsp_aux.hh`), called
+    ///   by every creation path in `interpreter_dynamic_dsp_aux.cpp` and
+    ///   `interpreter_dsp_aux.cpp` right after the factory is registered.
+    pub fn set_sha_key(&mut self, sha_key: impl Into<String>) {
+        let sha_key = sha_key.into();
+        match self {
+            Self::Float32(f) => f.sha_key = sha_key,
+            Self::Float64(f) => f.sha_key = sha_key,
+        }
+    }
+
     pub fn compile_options(&self) -> &str {
         match self {
             Self::Float32(f) => &f.compile_options,

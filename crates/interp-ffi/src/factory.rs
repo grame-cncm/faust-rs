@@ -126,17 +126,7 @@ pub unsafe extern "C" fn readCInterpreterDSPFactoryFromBitcode(
                 return std::ptr::null_mut();
             }
         };
-        let mut reader = BufReader::new(s.as_bytes());
-        match read_fbc_any(&mut reader) {
-            Ok(factory) => {
-                let sha = factory.sha_key().to_owned();
-                cache_insert(&sha, InterpreterDspFactory { inner: factory })
-            }
-            Err(e) => {
-                write_error(error_msg, &e.to_string());
-                std::ptr::null_mut()
-            }
-        }
+        create_interp_factory_from_bitcode_text(s, error_msg)
     }
 }
 
@@ -185,24 +175,14 @@ pub unsafe extern "C" fn readCInterpreterDSPFactoryFromBitcodeFile(
                 return std::ptr::null_mut();
             }
         };
-        let file = match std::fs::File::open(&path) {
-            Ok(f) => f,
+        let content = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
             Err(e) => {
                 write_error(error_msg, &format!("cannot open file '{path}': {e}"));
                 return std::ptr::null_mut();
             }
         };
-        let mut reader = BufReader::new(file);
-        match read_fbc_any(&mut reader) {
-            Ok(factory) => {
-                let sha = factory.sha_key().to_owned();
-                cache_insert(&sha, InterpreterDspFactory { inner: factory })
-            }
-            Err(e) => {
-                write_error(error_msg, &e.to_string());
-                std::ptr::null_mut()
-            }
-        }
+        create_interp_factory_from_bitcode_text(&content, error_msg)
     }
 }
 
@@ -265,8 +245,27 @@ pub unsafe extern "C" fn createCInterpreterDSPFactoryFromFile(
                 return std::ptr::null_mut();
             }
         };
-        create_interp_factory_with_argv(&argv, error_msg, |argv| {
-            compile_factory_from_file_fastlane(Path::new(&filename), argv)
+        // C++ `createInterpreterDSPFactoryFromFile` keys the file by the name
+        // and content it forwards to the string constructor; compilation still
+        // runs from the path, so relative imports resolve from its directory.
+        // The key therefore covers the file's own text and the options, not the
+        // text of what it imports — the same hole C++ has, one step wider here
+        // because our imports may come from the file's directory.
+        let path = Path::new(&filename);
+        let source = match std::fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(e) => {
+                write_error(error_msg, &format!("cannot read '{filename}': {e}"));
+                return std::ptr::null_mut();
+            }
+        };
+        let name_app = path.file_stem().map_or_else(
+            || filename.clone(),
+            |stem| stem.to_string_lossy().into_owned(),
+        );
+        let sha = source_factory_sha_key(&name_app, &source, &argv);
+        create_interp_factory_with_argv(&sha, &argv, error_msg, |argv| {
+            compile_factory_from_file_fastlane(path, argv)
         })
     }
 }
@@ -312,7 +311,8 @@ pub unsafe extern "C" fn createCInterpreterDSPFactoryFromString(
                 return std::ptr::null_mut();
             }
         };
-        create_interp_factory_with_argv(&argv, error_msg, |argv| {
+        let sha = source_factory_sha_key(&source_name, &dsp_content, &argv);
+        create_interp_factory_with_argv(&sha, &argv, error_msg, |argv| {
             compile_factory_from_string_fastlane(&source_name, &dsp_content, argv)
         })
     }
@@ -474,10 +474,18 @@ fn read_fbc_any(reader: &mut dyn BufRead) -> Result<FbcDspFactoryAny, String> {
 /// Central post-`argv` FFI factory creation flow.
 ///
 /// All file and string constructors funnel through here to share:
+/// - the cache probe that makes a repeated request free,
 /// - C error-buffer wiring,
-/// - cache insertion,
+/// - cache insertion under `sha_key`,
 /// - final opaque pointer allocation.
+///
+/// # Source provenance (C++)
+/// - `createInterpreterDSPFactoryFromString`
+///   (`interpreter_dynamic_dsp_aux.cpp:52`): the factory table is consulted
+///   under the source's key *before* compiling, and the key is stored on the
+///   factory that a miss produces.
 fn create_interp_factory_with_argv<F>(
+    sha_key: &str,
     argv: &[String],
     error_msg: *mut c_char,
     compile: F,
@@ -485,13 +493,70 @@ fn create_interp_factory_with_argv<F>(
 where
     F: FnOnce(&[String]) -> Result<FbcDspFactoryAny, String>,
 {
+    let cached = cache_lookup(sha_key);
+    if !cached.is_null() {
+        return cached;
+    }
     match compile(argv) {
-        Ok(factory) => {
-            let sha = factory.sha_key().to_owned();
-            cache_insert(&sha, InterpreterDspFactory { inner: factory })
+        Ok(mut factory) => {
+            factory.set_sha_key(sha_key);
+            cache_insert(sha_key, InterpreterDspFactory { inner: factory })
         }
         Err(e) => {
             unsafe { write_error(error_msg, &e) };
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Cache identity of a factory compiled from Faust source.
+///
+/// # Source provenance (C++)
+/// - `sha1FromDSP` (`dsp_aux.cpp:216`): the digest covers the application name,
+///   the unexpanded source, and the *normalized* compilation options, so the
+///   same program with the same options reaches the same entry whatever order
+///   the caller passed its arguments in. `reorganizeCompilationOptions` quotes
+///   the normalized string before it is hashed, which this reproduces, so a key
+///   computed here equals the one libfaust computes for the same request.
+///
+/// Unlike the Cranelift key, this one carries no foreign-function fingerprint,
+/// and does not need one: the interpreter resolves a foreign call by name at
+/// execution time (`executor.rs`, `lookup_foreign_function`), so a re-registered
+/// address reaches a cached factory. A *missing* registration fails compilation
+/// (`compiler/control.rs`, `UnknownMathFunction`) and a failure is never cached.
+fn source_factory_sha_key(name_app: &str, dsp_content: &str, argv: &[String]) -> String {
+    let options = compiler::expand::reorganize_compilation_options(argv);
+    ffi_common::sha1_hex(format!("{name_app}{dsp_content}\"{options}\"").as_bytes())
+}
+
+/// Cache identity of a factory read back from bitcode.
+///
+/// # Source provenance (C++)
+/// - `readInterpreterDSPFactoryFromBitcodeAux` (`interpreter_dsp_aux.cpp:141`):
+///   `generateSHA1(bitcode)` over the whole `.fbc` text, not the key the header
+///   happens to carry.
+fn bitcode_factory_sha_key(bitcode: &str) -> String {
+    ffi_common::sha1_hex(bitcode.as_bytes())
+}
+
+/// Deserialize one `.fbc` text and cache it under the digest of that text.
+fn create_interp_factory_from_bitcode_text(
+    bitcode: &str,
+    error_msg: *mut c_char,
+) -> *mut InterpreterDspFactory {
+    let sha = bitcode_factory_sha_key(bitcode);
+    let cached = cache_lookup(&sha);
+    if !cached.is_null() {
+        return cached;
+    }
+    let mut reader = BufReader::new(bitcode.as_bytes());
+    match read_fbc_any(&mut reader) {
+        Ok(mut factory) => {
+            factory.set_sha_key(&sha);
+            cache_insert(&sha, InterpreterDspFactory { inner: factory })
+        }
+        Err(e) => {
+            unsafe { write_error(error_msg, &e.to_string()) };
             std::ptr::null_mut()
         }
     }
@@ -1024,19 +1089,29 @@ fn extract_output_dir(argv: &[String]) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString, c_char};
 
     use super::{
         clearCInterpreterForeignFunctions, compile_factory_from_string_fastlane,
         createCInterpreterDSPFactoryFromString, deleteAllCInterpreterDSPFactories,
-        deleteCInterpreterDSPFactory, getCInterpreterDSPFactoryFromSHAKey, parse_ffi_compile_args,
+        deleteCInterpreterDSPFactory, freeCMemory, getCInterpreterDSPFactoryFromSHAKey,
+        parse_ffi_compile_args, readCInterpreterDSPFactoryFromBitcode,
         registerCInterpreterForeignFunction, unregisterCInterpreterForeignFunction,
+        writeCInterpreterDSPFactoryToBitcode,
     };
     use crate::instance::createCInterpreterDSPInstance;
     use crate::types::{FbcDspFactoryAny, InterpreterDspFactory};
 
-    fn cache_test_factory(factory: FbcDspFactoryAny) -> *mut InterpreterDspFactory {
-        let sha = factory.sha_key().to_owned();
+    /// Caches one directly built factory under its own bytecode identity.
+    ///
+    /// Tests must not insert under a constant key: the cache coalesces equal
+    /// keys, which is exactly what `two_different_sources_get_two_cache_entries`
+    /// pins for the production paths.
+    fn cache_test_factory(mut factory: FbcDspFactoryAny) -> *mut InterpreterDspFactory {
+        let mut bitcode: Vec<u8> = Vec::new();
+        crate::types::write_fbc_any(&factory, &mut bitcode).expect("serialize test factory");
+        let sha = super::bitcode_factory_sha_key(&String::from_utf8_lossy(&bitcode));
+        factory.set_sha_key(&sha);
         crate::cache::cache_insert(&sha, InterpreterDspFactory { inner: factory })
     }
 
@@ -1306,6 +1381,155 @@ mod tests {
             assert!(getCInterpreterDSPFactoryFromSHAKey(sha.as_ptr()).is_null());
         }
         // `instance` was owned by the cache and became invalid on final release.
+    }
+
+    #[test]
+    fn two_different_sources_get_two_cache_entries() {
+        let _guard = crate::test_serial_guard();
+        let mut error = [0_i8; 4096];
+        let mut create = |name: &CStr, source: &CStr| unsafe {
+            createCInterpreterDSPFactoryFromString(
+                name.as_ptr(),
+                source.as_ptr(),
+                0,
+                std::ptr::null(),
+                error.as_mut_ptr(),
+            )
+        };
+
+        let mono = create(c"interp_two_sources_mono", c"process = _;");
+        let stereo = create(c"interp_two_sources_stereo", c"process = _, _;");
+        assert!(!mono.is_null() && !stereo.is_null());
+        assert_ne!(mono, stereo, "distinct programs must not share one entry");
+        assert_eq!(unsafe { (*mono).inner.num_outputs() }, 1);
+        assert_eq!(unsafe { (*stereo).inner.num_outputs() }, 2);
+
+        let mono_sha = unsafe { (*mono).inner.sha_key().to_owned() };
+        let stereo_sha = unsafe { (*stereo).inner.sha_key().to_owned() };
+        assert!(!mono_sha.is_empty(), "a cached factory carries its key");
+        assert_ne!(mono_sha, stereo_sha);
+
+        let mono_key = CString::new(mono_sha).unwrap();
+        let stereo_key = CString::new(stereo_sha).unwrap();
+        assert_eq!(
+            unsafe { getCInterpreterDSPFactoryFromSHAKey(mono_key.as_ptr()) },
+            mono
+        );
+        assert_eq!(
+            unsafe { getCInterpreterDSPFactoryFromSHAKey(stereo_key.as_ptr()) },
+            stereo
+        );
+
+        deleteAllCInterpreterDSPFactories();
+    }
+
+    #[test]
+    fn precision_and_option_order_decide_cache_identity() {
+        let _guard = crate::test_serial_guard();
+        let mut error = [0_i8; 4096];
+        let name = c"interp_key_options";
+        let source = c"process = _ * hslider(\"g\", 0.5, 0, 1, 0.01);";
+        let create = |args: &[&CStr], error: &mut [i8; 4096]| {
+            let argv: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
+            unsafe {
+                createCInterpreterDSPFactoryFromString(
+                    name.as_ptr(),
+                    source.as_ptr(),
+                    argv.len() as i32,
+                    if argv.is_empty() {
+                        std::ptr::null()
+                    } else {
+                        argv.as_ptr()
+                    },
+                    error.as_mut_ptr(),
+                )
+            }
+        };
+
+        let single = create(&[], &mut error);
+        let double = create(&[c"-double"], &mut error);
+        assert!(!single.is_null() && !double.is_null());
+        assert_ne!(single, double, "precision belongs to the cache identity");
+        assert!(!unsafe { (*single).inner.is_double() });
+        assert!(unsafe { (*double).inner.is_double() });
+
+        // Normalized options: the same request written in another order is the
+        // same entry, as in C++ `reorganizeCompilationOptions`.
+        let ordered = create(&[c"-double", c"-mcd", c"16"], &mut error);
+        let shuffled = create(&[c"-mcd", c"16", c"-double"], &mut error);
+        assert_eq!(ordered, shuffled);
+
+        let sha = unsafe { (*single).inner.sha_key().to_owned() };
+        assert_eq!(sha.len(), 40, "SHA-1 hex digest");
+        assert!(
+            sha.chars()
+                .all(|c| c.is_ascii_digit() || c.is_ascii_uppercase()),
+            "libfaust writes its keys in uppercase hex: {sha}"
+        );
+
+        deleteAllCInterpreterDSPFactories();
+    }
+
+    #[test]
+    fn a_source_key_is_the_digest_libfaust_computes() {
+        // C++ `sha1FromDSP` (`dsp_aux.cpp:216`) hashes
+        // `name_app + dsp_content + quote(reorganizeCompilationOptions(argv))`.
+        // The two digests below were produced outside this code base from that
+        // formula, so a change of key shape is caught here rather than by a
+        // host that can no longer find its factory.
+        assert_eq!(
+            super::source_factory_sha_key("interp_key_parity", "process = _;", &[]),
+            "A3EC7200AD53D7395A75B098F9B2C542393EA3CC"
+        );
+        assert_eq!(
+            super::source_factory_sha_key(
+                "interp_key_parity",
+                "process = _;",
+                &["-double".to_owned()]
+            ),
+            "D4912D5E1F4E80FADD19D4DACA522ACAA1E28686"
+        );
+    }
+
+    #[test]
+    fn a_bitcode_factory_is_keyed_by_the_digest_of_its_bitcode() {
+        let _guard = crate::test_serial_guard();
+        let mut error = [0_i8; 4096];
+        let source = unsafe {
+            createCInterpreterDSPFactoryFromString(
+                c"interp_bitcode_key".as_ptr(),
+                c"process = _ + 1.0;".as_ptr(),
+                0,
+                std::ptr::null(),
+                error.as_mut_ptr(),
+            )
+        };
+        assert!(!source.is_null());
+
+        let bitcode = unsafe { writeCInterpreterDSPFactoryToBitcode(source) };
+        assert!(!bitcode.is_null());
+        let text = unsafe { CStr::from_ptr(bitcode) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+
+        let first = unsafe { readCInterpreterDSPFactoryFromBitcode(bitcode, error.as_mut_ptr()) };
+        let second = unsafe { readCInterpreterDSPFactoryFromBitcode(bitcode, error.as_mut_ptr()) };
+        assert!(!first.is_null());
+        assert_eq!(first, second, "one entry per bitcode text");
+        assert_eq!(
+            unsafe { (*first).inner.sha_key() },
+            super::bitcode_factory_sha_key(&text)
+        );
+
+        let key = CString::new(unsafe { (*first).inner.sha_key() }).unwrap();
+        assert_eq!(
+            unsafe { getCInterpreterDSPFactoryFromSHAKey(key.as_ptr()) },
+            first
+        );
+
+        unsafe { freeCMemory(bitcode.cast()) };
+        deleteAllCInterpreterDSPFactories();
     }
 
     #[test]

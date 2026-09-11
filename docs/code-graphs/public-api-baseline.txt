@@ -1455,6 +1455,7 @@ fn FbcDspFactoryAny::num_outputs
 fn FbcDspFactoryAny::optimize
 fn FbcDspFactoryAny::real_heap_size
 fn FbcDspFactoryAny::reset_ui_block
+fn FbcDspFactoryAny::set_sha_key
 fn FbcDspFactoryAny::sha_key
 fn FbcDspFactoryAny::soundfile_count
 fn FbcDspFactoryAny::sr_offset

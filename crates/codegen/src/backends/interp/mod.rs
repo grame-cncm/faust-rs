@@ -453,7 +453,12 @@ pub fn generate_interp_module<R: real::FbcReal>(
         .unwrap_or_else(|| "-lang interp".to_owned());
     let mut factory = FbcDspFactory::new(
         module_name,
-        "", // sha_key: not computed at this layer
+        // Cache identity belongs to the layer that owns a factory table: the
+        // FFI sets it (`interp-ffi/src/factory.rs`, `source_factory_sha_key` and
+        // `bitcode_factory_sha_key`) before caching, as C++ `setSHAKey` does.
+        // A factory written to `.fbc` from here carries an empty header field,
+        // and a reader keys it by the digest of the bitcode text.
+        "",
         compile_options,
         INTERP_FILE_VERSION,
         num_inputs,
