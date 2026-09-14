@@ -65,6 +65,15 @@ verified Rust extension must not be presented as a proof of C++ parity.
 - Additional adapted behavior: differentiating a read-only table index uses a
   symmetric finite-difference slope. This is a documented derivative model,
   not C++ semantic parity.
+- Additional adapted behavior (shared with `rad`): a widget referenced from a
+  seed is one control in every group context (C++ makes the group path part
+  of a widget's identity, and so does `faust-rs` outside seeds, see
+  `replicated_widgets_wire_distinct_dsp_fields`), and that control owns one
+  UI leaf, at the body's group path; a seed the body never reads is placed at
+  the root. Guarded by `ad_seed_references_unify_to_one_control` and
+  `ad_seed_reference_is_placed_once_at_its_body_group_path` in
+  `crates/compiler/src/tests.rs`, described in
+  [`docs/fad-note-en.md`](../docs/fad-note-en.md) §2.1.
 - Compatibility impact: DSPs using this form are `faust-rs` programs and must
   not be expected to compile with the pinned C++ compiler.
 - Evidence:

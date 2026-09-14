@@ -56,6 +56,18 @@ but it must be the same lowered signal that occurs in the differentiated body;
 `fad` does not solve for an arbitrary algebraically equivalent expression.
 Repeated seed lanes are preserved rather than deduplicated.
 
+A widget used as a seed is one control wherever it is referenced. Ordinary
+Faust makes the group path part of a widget's identity, so a slider read
+inside `vgroup("a", …)` and again outside it is two controls, in faust-rs as
+in the C++ compiler. A seed breaks that rule on purpose: `fad(hgroup("top",
+vgroup("a", _ * g)), g)` differentiates with respect to the very `g` the body
+reads, so the seed reference (walked without group context) resolves to the
+body's control, and that control owns a single UI leaf, at the body's group
+path (`/top/a/g`). Only a seed the body never reads is placed at the root,
+with a zero tangent. Hosts therefore see one path per parameter, and a label
+with a pathname such as `hslider("/top/a/g", …)` is no longer rejected as a
+duplicated control path.
+
 This note focuses on **forward AD**. Reverse AD (`rad`) is also available in the
 compiler, with different output and temporal semantics; see
 [rad-usage-en.md](rad-usage-en.md) and [rad-note-en.md](rad-note-en.md).

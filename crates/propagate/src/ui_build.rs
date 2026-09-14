@@ -3,6 +3,13 @@
 //! This module walks validated flat box DAGs, registers control widgets, and
 //! builds the canonical `UiProgram` owned by propagation output. It deduplicates
 //! shared source nodes while preserving distinct group-path contexts.
+//!
+//! A widget referenced from a `fad(…)` / `rad(…)` seed is a differentiation
+//! parameter: every reference to it, in any group context, resolves to one
+//! control, and that control owns exactly one UI leaf, the one of its body
+//! occurrence (a seed the body never reads is placed at the root, where the
+//! context-free seed walk meets it). Aliasing a re-reference without placing
+//! it again is what keeps one path per parameter for hosts.
 
 use super::*;
 
@@ -80,6 +87,11 @@ impl UiCollector {
         }
     }
 
+    /// Registers one widget occurrence and returns its control together with
+    /// `true` when this call created the control. An existing control (the same
+    /// widget in the same group context, or an AD-seed re-reference aliased to
+    /// its primary control) already owns its UI leaf: the caller must not
+    /// insert a second one for it.
     #[allow(clippy::too_many_arguments)]
     fn register_control(
         &mut self,
@@ -90,12 +102,12 @@ impl UiCollector {
         label: String,
         metadata: UiMetadata,
         range: Option<ControlRange>,
-    ) -> ControlId {
+    ) -> (ControlId, bool) {
         let key = (source_node, context_hash);
         // Deduplicate: the same widget in the same group context must not be registered twice
         // (e.g. a slider variable referenced from two branches of the signal DAG).
         if let Some(&existing_id) = self.control_ids.get(&key) {
-            return existing_id;
+            return (existing_id, false);
         }
         // Cross-context aliasing applies ONLY inside AD seed subtrees: there
         // the seed re-references a widget the compiler repositioned outside
@@ -115,7 +127,7 @@ impl UiCollector {
             && let Some(&primary_id) = self.node_primary_id.get(&source_node)
         {
             self.control_ids.insert(key, primary_id);
-            return primary_id;
+            return (primary_id, false);
         }
         let id =
             ControlId::try_from(self.controls.len()).expect("control registry index fits in u32");
@@ -129,9 +141,11 @@ impl UiCollector {
         });
         self.control_ids.insert(key, id);
         self.node_primary_id.entry(source_node).or_insert(id);
-        id
+        (id, true)
     }
 
+    /// Registers an input widget and places its UI leaf under `path` when the
+    /// control is new. Returns whether a leaf was placed.
     #[allow(clippy::too_many_arguments)]
     fn input_control(
         &mut self,
@@ -143,9 +157,9 @@ impl UiCollector {
         label: String,
         metadata: UiMetadata,
         range: Option<ControlRange>,
-    ) {
+    ) -> bool {
         let order_key = ui::ordering_key_from_label(&label, &metadata);
-        let id = self.register_control(
+        let (id, created) = self.register_control(
             source_node,
             context_hash,
             in_ad_seed,
@@ -154,9 +168,14 @@ impl UiCollector {
             metadata,
             range,
         );
-        self.builder.insert_input_control(path, id, order_key);
+        if created {
+            self.builder.insert_input_control(path, id, order_key);
+        }
+        created
     }
 
+    /// Registers an output widget (bargraph) and places its UI leaf under
+    /// `path` when the control is new. Returns whether a leaf was placed.
     #[allow(clippy::too_many_arguments)]
     fn output_control(
         &mut self,
@@ -168,9 +187,9 @@ impl UiCollector {
         label: String,
         metadata: UiMetadata,
         range: Option<ControlRange>,
-    ) {
+    ) -> bool {
         let order_key = ui::ordering_key_from_label(&label, &metadata);
-        let id = self.register_control(
+        let (id, created) = self.register_control(
             source_node,
             context_hash,
             in_ad_seed,
@@ -179,9 +198,14 @@ impl UiCollector {
             metadata,
             range,
         );
-        self.builder.insert_output_control(path, id, order_key);
+        if created {
+            self.builder.insert_output_control(path, id, order_key);
+        }
+        created
     }
 
+    /// Registers a soundfile control and places its UI leaf under `path` when
+    /// the control is new. Returns whether a leaf was placed.
     fn soundfile(
         &mut self,
         source_node: BoxId,
@@ -190,9 +214,9 @@ impl UiCollector {
         in_ad_seed: bool,
         label: String,
         metadata: UiMetadata,
-    ) {
+    ) -> bool {
         let order_key = ui::ordering_key_from_label(&label, &metadata);
-        let id = self.register_control(
+        let (id, created) = self.register_control(
             source_node,
             context_hash,
             in_ad_seed,
@@ -201,7 +225,10 @@ impl UiCollector {
             metadata,
             None,
         );
-        self.builder.insert_soundfile(path, id, order_key);
+        if created {
+            self.builder.insert_soundfile(path, id, order_key);
+        }
+        created
     }
 }
 
@@ -302,7 +329,7 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.input_control(
+            let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
@@ -313,7 +340,7 @@ fn collect_ui_nodes(
                 None,
             );
             UiCollectSummary {
-                has_ui: true,
+                has_ui: placed,
                 preserve_ancestor_chain: false,
             }
         }
@@ -325,7 +352,7 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.input_control(
+            let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
@@ -336,7 +363,7 @@ fn collect_ui_nodes(
                 None,
             );
             UiCollectSummary {
-                has_ui: true,
+                has_ui: placed,
                 preserve_ancestor_chain: false,
             }
         }
@@ -350,7 +377,7 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.input_control(
+            let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
@@ -366,7 +393,7 @@ fn collect_ui_nodes(
                 }),
             );
             UiCollectSummary {
-                has_ui: true,
+                has_ui: placed,
                 preserve_ancestor_chain: false,
             }
         }
@@ -380,7 +407,7 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.input_control(
+            let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
@@ -396,7 +423,7 @@ fn collect_ui_nodes(
                 }),
             );
             UiCollectSummary {
-                has_ui: true,
+                has_ui: placed,
                 preserve_ancestor_chain: false,
             }
         }
@@ -410,7 +437,7 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.input_control(
+            let placed = collector.input_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
@@ -426,7 +453,7 @@ fn collect_ui_nodes(
                 }),
             );
             UiCollectSummary {
-                has_ui: true,
+                has_ui: placed,
                 preserve_ancestor_chain: false,
             }
         }
@@ -440,7 +467,7 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.output_control(
+            let placed = collector.output_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
@@ -456,7 +483,7 @@ fn collect_ui_nodes(
                 }),
             );
             UiCollectSummary {
-                has_ui: true,
+                has_ui: placed,
                 preserve_ancestor_chain: false,
             }
         }
@@ -470,7 +497,7 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.output_control(
+            let placed = collector.output_control(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
@@ -486,7 +513,7 @@ fn collect_ui_nodes(
                 }),
             );
             UiCollectSummary {
-                has_ui: true,
+                has_ui: placed,
                 preserve_ancestor_chain: false,
             }
         }
@@ -499,7 +526,7 @@ fn collect_ui_nodes(
                 normalize_widget_label_path(&decode_box_label(source_arena, label), current_groups);
             let path = canonical_group_path(&normalized.groups);
             let (label, metadata) = split_label_metadata(&normalized.raw_label);
-            collector.soundfile(
+            let placed = collector.soundfile(
                 box_tree.as_tree_id(),
                 &path,
                 context_hash,
@@ -508,7 +535,7 @@ fn collect_ui_nodes(
                 metadata,
             );
             UiCollectSummary {
-                has_ui: true,
+                has_ui: placed,
                 preserve_ancestor_chain: false,
             }
         }
@@ -547,7 +574,10 @@ fn collect_ui_nodes(
             // Visiting with an empty context ensures that subsequent references to
             // the same seed node (e.g. in the Rec feedback branch) hit the cache
             // rather than being registered as duplicate controls. The seed flag
-            // lets re-references of body widgets alias to their primary control.
+            // lets re-references of body widgets alias to their primary control,
+            // whose single UI leaf stays where the body placed it (see
+            // `register_control`); only a seed the body never reads is placed
+            // here, at the root.
             let seed_s = collect_ui_nodes(source_arena, seed, &[], true, collector);
             UiCollectSummary {
                 has_ui: body_s.has_ui || seed_s.has_ui,

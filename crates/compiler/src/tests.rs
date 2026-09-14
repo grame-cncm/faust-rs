@@ -1238,6 +1238,87 @@ fn ad_seed_references_unify_to_one_control() {
 }
 
 #[test]
+fn ad_seed_reference_is_placed_once_at_its_body_group_path() {
+    // The seed re-reference of a widget the body reads inside a group aliases
+    // the body's control (previous test) and must not add a second UI leaf
+    // for it: one zone, one `addHorizontalSlider`, placed inside the body's
+    // groups. Before this guard the context-free seed walk placed the same
+    // control a second time at the root: two paths per parameter (33 zones for
+    // 66 entries on a 33-parameter preamp), suffix addressing ambiguous for
+    // hosts, and an absolute-path label rejected as a duplicated control path.
+    let compiler = Compiler::new();
+    let cases = [
+        (
+            "seed_group_fad.dsp",
+            "g = hslider(\"g\", 0.5, 0, 1, 0.01);\nprocess = fad(hgroup(\"top\", vgroup(\"a\", _ * g)), g);",
+            true,
+        ),
+        (
+            "seed_group_rad.dsp",
+            "g = hslider(\"g\", 0.5, 0, 1, 0.01);\nprocess = rad(hgroup(\"top\", vgroup(\"a\", _ * g)), g);",
+            true,
+        ),
+        (
+            "seed_group_inside.dsp",
+            "g = hslider(\"g\", 0.5, 0, 1, 0.01);\nprocess = hgroup(\"top\", vgroup(\"a\", fad(_ * g, g)));",
+            true,
+        ),
+        (
+            "seed_abs_path.dsp",
+            "g = hslider(\"/top/a/g\", 0.5, 0, 1, 0.01);\nprocess = fad(hgroup(\"top\", vgroup(\"a\", _ * g)), g);",
+            false,
+        ),
+    ];
+    for (name, source, leaf_inside_body_group) in cases {
+        let cpp = compiler
+            .compile_source_to_cpp(name, source, &codegen::backends::cpp::CppOptions::default())
+            .expect("compiles");
+        assert_eq!(
+            cpp.matches("addHorizontalSlider(").count(),
+            1,
+            "{name}: the seed parameter must own exactly one UI leaf:\n{cpp}"
+        );
+        assert!(
+            cpp.contains("FAUSTFLOAT fHslider0;") && !cpp.contains("FAUSTFLOAT fHslider1;"),
+            "{name}: the seed parameter must be one control:\n{cpp}"
+        );
+        if leaf_inside_body_group {
+            let group = cpp
+                .find("openVerticalBox(\"a\")")
+                .expect("the body's group must be emitted");
+            let leaf = cpp
+                .find("addHorizontalSlider(")
+                .expect("the leaf must be emitted");
+            assert!(
+                leaf > group,
+                "{name}: the leaf must sit inside the body's group, not at the root:\n{cpp}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ad_seed_the_body_never_reads_keeps_its_own_ui_leaf() {
+    // A seed the body does not read has no body occurrence to alias: it is
+    // placed once, by the seed walk, and its tangent lane is zero. The seed
+    // the body does read keeps its single leaf.
+    let compiler = Compiler::new();
+    let cpp = compiler
+        .compile_source_to_cpp(
+            "seed_unused.dsp",
+            "g = hslider(\"g\", 0.5, 0, 1, 0.01);\nh = hslider(\"h\", 0.2, 0, 1, 0.01);\nprocess = fad(hgroup(\"top\", vgroup(\"a\", _ * g)), (g, h));",
+            &codegen::backends::cpp::CppOptions::default(),
+        )
+        .expect("compiles");
+    assert_eq!(cpp.matches("addHorizontalSlider(\"g\"").count(), 1, "{cpp}");
+    assert_eq!(cpp.matches("addHorizontalSlider(\"h\"").count(), 1, "{cpp}");
+    assert!(
+        cpp.contains("FAUSTFLOAT fHslider1;") && !cpp.contains("FAUSTFLOAT fHslider2;"),
+        "two controls expected:\n{cpp}"
+    );
+}
+
+#[test]
 fn compiler_error_source_classification_covers_every_variant() {
     fn assert_source_is<T>(error: CompilerError)
     where
