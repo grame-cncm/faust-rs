@@ -74,7 +74,12 @@ declare license "MIT/LGPL-3.0";
 // `lsq_1D_restart` is its least-squares twin. `multistart_1D`, `multistart_lsq_1D` run `K`
 // descents in parallel and follow the one whose smoothed loss is lowest;
 // `grid_then_descend_1D` scores `K` fixed candidates for `T` samples, then
-// descends from the best; `grid_init` spreads `K` starts over the bounds. The one-parameter loops
+// descends from the best; `grid_init` spreads `K` starts over the bounds. Three
+// losses that widen a basin: `corr_loss` (normalised correlation, scale-free),
+// `bank_log_energy_loss` (log energies per band of a band-pass bank, the
+// filter-bank form of the multi-resolution spectral loss, at audio rate) and
+// `frame_spectral_loss` (magnitude spectra of two frames, for an `ondemand`
+// body); the library now imports `fi` and `an` too. The one-parameter loops
 // `lsq_1D`, `descend_1D` and `descend_1D_clocked` take `init` through an
 // input wire of their recursive block instead of closing over it, so an
 // `init` computed in the graph does not multiply their compile time; same
@@ -119,6 +124,8 @@ si = library("signals.lib");
 ba = library("basics.lib");
 ro = library("routes.lib");
 ma = library("maths.lib");
+fi = library("filters.lib");
+an = library("analyzers.lib");
 
 // Internal helpers (not part of the public API).
 _tiny = 0.000000000001;
@@ -614,6 +621,105 @@ l2(lambda, p) = lambda * p * p;
 // ```
 //------------------------------------------------------------------------------
 l1s(lambda, d, p) = lambda * (sqrt(p * p + d * d) - d);
+
+
+//------------------------------`(op.)corr_loss`--------------------------------
+// Minus the normalised correlation of two smoothed signals,
+// `-E[y t] / sqrt(E[y²] E[t²] + eps)`, in `[-1, 0]`: `-1` when `y` is a
+// positive multiple of `t`. Scale-free, so a model's own output power does not
+// pull on it (on the waveguide string, the waveform error's plateau slopes
+// because the model's power depends on the delay; this loss removes that
+// bias). Like `energy_loss`, it sees the world with a lag of about
+// `1 / (1 - a)` samples.
+//
+// #### Usage
+//
+// ```
+// corr_loss(a, eps, y, t) : _
+// ```
+//
+// Where:
+//
+// * `a`: smoothing coefficient in `[0, 1)`
+// * `eps`: floor under the product of powers
+// * `y`: model output
+// * `t`: target
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// corr_loss_test = op.corr_loss(0.999, 1e-9, hslider("corr_loss:y", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+corr_loss(a, eps, y, t) = 0.0 - ema(a, y * t) / sqrt(ema(a, y * y) * ema(a, t * t) + eps);
+
+//------------------------------`(op.)bank_log_energy_loss`---------------------
+// `log_energy_loss` summed over `B` band-pass bands log-spaced from `lo` to
+// `hi` (`fi.resonbp`, the Q set by the spacing so that neighbouring bands
+// meet at their half-power points): the filter-bank form of the
+// multi-resolution spectral loss, at audio rate, without a frame or an FFT.
+// It compares smoothed powers per band, so it ignores phase and widens the
+// basin of a loss on a resonant model to the width of its bands; like
+// `energy_loss`, it lags by about `1 / (1 - a)` samples.
+//
+// #### Usage
+//
+// ```
+// bank_log_energy_loss(B, lo, hi, a, eps, y, t) : _
+// ```
+//
+// Where:
+//
+// * `B`: number of bands, a constant of at least 2
+// * `lo`, `hi`: centre frequencies of the first and last band, in hertz
+// * `a`, `eps`: as `log_energy_loss`
+// * `y`: model output
+// * `t`: target
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// bank_log_energy_loss_test = op.bank_log_energy_loss(4, 100.0, 4000.0, 0.999, 1e-9, hslider("bank_log_energy_loss:y", 0, -1, 1, 0.01), 0.5);
+// ```
+//------------------------------------------------------------------------------
+bank_log_energy_loss(B, lo, hi, a, eps, y, t) = par(b, B, log_energy_loss(a, eps, band(b, y), band(b, t))) :> _
+with {
+    ratio = pow(hi / lo, 1.0 / (B - 1));
+    q = 1.0 / (sqrt(ratio) - 1.0 / sqrt(ratio));
+    band(b, s) = fi.resonbp(lo * pow(ratio, b), q, 1.0, s);
+};
+
+//------------------------------`(op.)frame_spectral_loss`----------------------
+// Sum over the bins of the squared difference of the magnitude spectra of
+// two frames of `N` samples: a block with `2 N` inputs, the model's frame
+// then the target's, for the body of an `ondemand` block fired once per
+// frame (`interleave.lib` serialises the frames). Inside a body, apply it to
+// named inputs, not to free `_` wires. The magnitudes carry a floor `eps`
+// under the square root, so the loss is differentiable at a silent bin.
+//
+// #### Usage
+//
+// ```
+// si.bus(2 * N) : frame_spectral_loss(N, eps) : _
+// ```
+//
+// Where:
+//
+// * `N`: frame length, a power of two
+// * `eps`: floor under the squared magnitude of a bin
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// frame_spectral_loss_test = (x, 0.0, 0.0, 0.0, 0.5 * x, 0.0, 0.0, 0.0) : op.frame_spectral_loss(4, 1e-9)
+// with { x = hslider("frame_spectral_loss:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+frame_spectral_loss(N, eps) = (mags, mags) : ro.interleave(N, 2) : par(k, N, (- <: _ * _)) :> _
+with {
+    cmag(re, im) = sqrt(re * re + im * im + eps);
+    mags = par(i, N, (_, 0.0)) : an.fft(N) : par(k, N, cmag);
+};
 
 //================================Reparameterizations=======================================
 // Maps from an unconstrained or conveniently scaled parameter to the quantity

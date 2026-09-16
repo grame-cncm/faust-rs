@@ -713,14 +713,114 @@ fn grid_then_descend_starts_from_the_best_cell() {
 }
 
 #[test]
+fn basin_widening_losses_are_symmetric_and_floored() {
+    // [corr asymmetry, bank asymmetry, corr_loss(t, t), bank loss(t, t)]:
+    // swapping the arguments changes nothing bit for bit, the correlation
+    // of a signal with itself tends to -1 and the bank loss of a signal with
+    // itself is exactly 0.
+    let Some(outs) = run_interp_fixture("opt_loss_symmetry", 20_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 4);
+    assert!(
+        outs[0].iter().all(|&v| v == 0.0),
+        "corr_loss should be symmetric"
+    );
+    assert!(
+        outs[1].iter().all(|&v| v == 0.0),
+        "bank_log_energy_loss should be symmetric"
+    );
+    assert!(
+        outs[3].iter().all(|&v| v == 0.0),
+        "the bank loss of a signal with itself should be 0"
+    );
+    let self_corr = outs[2][10_000..].iter().sum::<f32>() / 10_000.0;
+    assert!(
+        (self_corr + 1.0).abs() < 1e-3,
+        "corr_loss(t, t) should tend to -1, got {self_corr}"
+    );
+}
+
+#[test]
+fn bank_loss_tangent_matches_a_finite_difference() {
+    // [fad tangent, central finite difference] of the eight-band bank loss
+    // with respect to a gain: through the band-pass filters and the smoothed
+    // log energies, the two agree to the order of h^2 once the averages have
+    // settled.
+    let Some(outs) = run_interp_fixture("opt_bank_loss_tangent", 20_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2);
+    for (frame, (&fad, &fd)) in outs[0].iter().zip(&outs[1]).enumerate().skip(4_000) {
+        assert!(
+            (fad - fd).abs() <= 1e-3 * fd.abs().max(1e-3),
+            "tangent {fad} and finite difference {fd} disagree at frame {frame}"
+        );
+    }
+    eprintln!(
+        "bank loss tangent: {} vs {}",
+        outs[0][19_999], outs[1][19_999]
+    );
+}
+
+#[test]
+fn frame_spectral_loss_identities_hold() {
+    // [loss(t, t), loss(2t, t) - loss(t, 2t), loss(2t, t) - loss(0, t),
+    // loss(0, t)] on an 8-sample frame of constants: zero with itself,
+    // symmetric bit for bit, and doubling the frame costs what silencing it
+    // costs up to the eps floor under the magnitudes (about 3e-5 relative).
+    let Some(outs) = run_interp_fixture("opt_frame_spectral_lanes", 4) else {
+        return;
+    };
+    assert_eq!(outs.len(), 4);
+    assert!(
+        outs[0].iter().all(|&v| v == 0.0),
+        "a frame against itself should cost 0"
+    );
+    assert!(
+        outs[1].iter().all(|&v| v == 0.0),
+        "the loss should be symmetric"
+    );
+    let (gap, base) = (outs[2][0], outs[3][0]);
+    assert!(base > 0.0, "silence against t should cost something");
+    assert!(
+        gap.abs() < 1e-3 * base,
+        "2t and silence should cost about the same against t, gap {gap} of {base}"
+    );
+}
+
+#[test]
+fn bank_loss_learns_the_string_from_above() {
+    // [pitch through the bank loss, pitch through the waveform error] from
+    // 224 Hz: the bank loss slopes toward 220 Hz from about 218 to 226 Hz and
+    // SGD at 1e-4 reaches it; the waveform error reaches it too, carried by
+    // the slope of its plateau.
+    let Some(outs) = run_interp_fixture("opt_bank_loss_string", 300_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2);
+    let bank = outs[0][280_000..].iter().sum::<f32>() / 20_000.0;
+    let wave = outs[1][280_000..].iter().sum::<f32>() / 20_000.0;
+    eprintln!("bank loss string: bank {bank} wave {wave}");
+    assert!(
+        (bank - 220.0).abs() < 0.05,
+        "the bank loss should reach 220 Hz, got {bank}"
+    );
+    assert!(
+        (wave - 220.0).abs() < 0.05,
+        "the waveform error should reach 220 Hz too, got {wave}"
+    );
+}
+
+#[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 96 entries, 162 outputs. It only has to compile,
+    // documented function: 99 entries, 165 outputs. It only has to compile,
     // run, and stay finite.
     let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
         return;
     };
-    assert_eq!(outs.len(), 162, "expected the outputs of every Test entry");
+    assert_eq!(outs.len(), 165, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(

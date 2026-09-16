@@ -225,7 +225,7 @@ briques de base aux boucles prêtes à l'emploi.
 | Section | Contenu | Raison d'être |
 |---|---|---|
 | Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak`, `init_latch`, `init_reset`, `stalled`, `no_progress` | les quelques primitives avec lesquelles tout moteur et toute boucle sont écrits, par-dessus `si`, `ba`, `ro`, `ma` ; démarrer une boucle sur une estimation extérieure ; détecter un plateau plat (`stalled`) ou en pente (`no_progress`) |
-| Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `l2`, `l1s` | une perte est une fonction Faust ordinaire `loss(y, t)` ; celles-ci sont lisses |
+| Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `corr_loss`, `bank_log_energy_loss`, `frame_spectral_loss`, `l2`, `l1s` | une perte est une fonction Faust ordinaire `loss(y, t)` ; celles-ci sont lisses ; les trois dernières comparent des sons plutôt que des formes d'onde et élargissent un bassin |
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | apprendre dans un domaine où toute valeur est admissible (stable, positive, bornée) plutôt que borner |
 | Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `ramp_lin`, `ramp_exp`, `lr_exp`, `lr_cos`, `warmup` | ce qui arrive à un gradient avant le moteur, et comment une vitesse d'apprentissage, ou un paramètre du modèle, évolue |
 | Least-squares engines | `lms`, `nlms`, `gn1`, `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd` | moteurs qui voient séparément le résidu `r` et la sensibilité `j` |
@@ -479,10 +479,11 @@ beaucoup de paramètres, un seul balayage.
 - **L-BFGS et autres méthodes par lots** : elles demandent un lot et une
   recherche linéaire ; en ligne, un échantillon à la fois, elles n'ont pas de
   forme naturelle.
-- **Pertes spectrales** (STFT multi-échelles) : elles demandent une trame, ce
-  qui en Faust signifie un bloc `ondemand` ; le fixture
-  `tests/corpus/ondemand_fad_spectral_loss_008.dsp` montre `fad` à travers une
-  perte basée sur une FFT. L'intégrer à la bibliothèque est un travail à venir.
+- **Pertes spectrales multi-échelles** : la bibliothèque en a deux formes
+  depuis le 16 septembre 2026, `bank_log_energy_loss` par banc de filtres à
+  cadence audio et `frame_spectral_loss` par trame pour un corps `ondemand` ;
+  la version à plusieurs tailles de trame se compose de deux blocs et n'est
+  pas emballée, l'arité d'un bloc étant sa taille de trame.
 
 ### 4.9 Porte et arrêt
 
@@ -610,6 +611,9 @@ programmes dans le tutoriel.
 | `lsq_1D_restart(2, (1, -1))` + NLMS sur `x · L(p)` contre `-0,2 x`, `L` le polynôme à deux puits | 0,960 (résidu 0,24 E[x²], jamais nul dans le puits peu profond) puis redémarrage à 8 000 et une racine de `L = -0,2` dans le puits profond, résidu nul |
 | redémarrage sur la corde depuis 228 Hz après une dérive, NLMS ou Adam, simple ou double précision | ne verrouille pas comme une boucle neuve partie de 228 : le modèle, sa tangente et le moteur gardent l'état de la dérive ; non retenu comme fixture |
 | `no_progress(2 000, 0,05, 0,1)` sur une perte décroissante, constante haute, constante basse | 0, 1, 0 par segment |
+| paysage de la corde balayé de 150 à 300 Hz (`opt_landscape_string.dsp`) | `mse` et `corr_loss` : un puits de ±1 Hz sur un plateau ; `bank_log_energy_loss` (8 bandes, 150–4 800 Hz) : pente monotone vers 220 Hz d'environ 218 à 226 Hz, des extrema locaux à 216 et 232 Hz où les harmoniques s'alignent ; 16 ou 32 bandes ne l'élargissent pas |
+| la corde depuis 224 Hz, `bank_log_energy_loss` + SGD 1e-4 contre `mse` + NLMS | `220,000` Hz par le banc à 300 000 échantillons, `220,000` par la forme d'onde aussi, portée par la pente de son plateau (elle capture par le haut jusqu'à 228 Hz, dérive par le bas) ; depuis 200 ou 214 Hz les deux échouent, les alignements d'harmoniques à 214 et 216 Hz bloquant le banc ; SGD 5e-4 sur le banc oscille (la vitesse doit rester sous `1 - a`) |
+| `fad` de `bank_log_energy_loss` par rapport à un gain contre une différence finie | -43,06843 contre -43,06874, écart relatif 7e-6 |
 
 ## 6. Pièges à connaître
 
@@ -907,12 +911,17 @@ agit sur l'une des trois questions.
   lissées et élargissent le bassin. La section 7.2 du tutoriel le mesure :
   sur deux excitations indépendantes, `mse` laisse la coupure bloquée sur
   la borne de 20 Hz, `log_energy_loss` la ramène entre 770 et 850 Hz autour
-  des 800 Hz de la cible. Une perte spectrale par trame, dans un bloc
-  `ondemand`, est l'étape suivante ; la version multi-résolution, l'outil
-  standard de la DDSP pour élargir les bassins en fréquence, est le travail
-  à venir de la section 4.8. Les pertes robustes (`logcosh`, `pseudo_huber`)
-  ne changent pas la forme du bassin, elles bornent les coups que les
-  aberrants lui portent.
+  des 800 Hz de la cible. `bank_log_energy_loss` fait de même par bande sur
+  un banc de filtres : sur la corde, le puits de ±1 Hz de la forme d'onde
+  devient une pente vers 220 Hz d'environ 218 à 226 Hz, que SGD descend
+  depuis 224 Hz ; sur cette corde cela n'achète pourtant pas un départ que la
+  forme d'onde ne sait pas traiter, sa pente de plateau capturant par le haut
+  et les alignements d'harmoniques bloquant les deux par le bas (section 5) ;
+  `corr_loss` retire le biais de
+  puissance mais n'élargit pas le puits ; `frame_spectral_loss` est la forme
+  par trame pour un corps `ondemand`. Les pertes robustes (`logcosh`,
+  `pseudo_huber`) ne changent pas la forme du bassin, elles bornent les
+  coups que les aberrants lui portent.
 - *La continuation.* Commencer sur un paysage lisse et le durcir en cours
   de route : l'amortissement de la corde recuit de 0,70 à 0,95 (résonances
   larges d'abord) fait converger depuis 264 Hz ce qui ne convergeait que

@@ -354,6 +354,28 @@ two-well fixtures.
 
 ## N5 — Losses that widen the basin
 
+**Status 2026-09-16: landed** (`optimizers.lib` 0.9.0). The landscape scan
+(`opt_landscape_string.dsp`, the pitch swept by the host with
+`faustprobe --set`) decided it: `mse` and `corr_loss` both show the ±1 Hz
+well on a plateau (`corr_loss` removes the plateau's slope but is no wider,
+and shows a dip at 264 Hz, a harmonic relation); `bank_log_energy_loss` with
+8 bands over 150–4 800 Hz slopes monotonically toward 220 Hz from about 218
+to 226 Hz, with local extrema at 216 and 232 Hz where harmonics align, and
+16 or 32 bands or a 150–1 200 Hz range do not widen it. Learning through
+it from 224 Hz reaches 220.000 Hz with SGD at 1e-4 in single precision
+(2e-4 in double from 218 and 224; 5e-4 oscillates, the rate having to stay
+under `1 - a` of the smoothing; Adam wanders). But on this string the
+wider well buys no start the waveform error cannot handle: NLMS on the
+waveform reaches 220 from 224 and 226 Hz too, carried by its plateau's
+slope, and from 200 or 214 Hz both fail, the bank blocked by the harmonic
+alignments at 214 and 216 Hz. The measured widening is real; its practical
+gain on the string is nil, which the fixture and the overview say. `frame_spectral_loss(N, eps)` is the promoted FFT
+loss as a `2 N`-input block, checked by two identities (zero with itself,
+`loss(2t, t) = loss(0, t)` bit for bit); the multi-resolution version stays
+a composition of two blocks. Symmetry and floor checks and the tangent
+against a finite difference (relative gap 7e-6) are fixtures.
+
+
 **Surface** (section "Losses and Regularizers"):
 
 - `corr_loss(a, eps, y, t) = −ema(a, y t) / sqrt(ema(a, y²) ema(a, t²) + eps)`:

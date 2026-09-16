@@ -209,7 +209,7 @@ ready-made loops and what surrounds them.
 | Section | What it holds | Why it exists |
 |---|---|---|
 | Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak`, `init_latch`, `init_reset`, `stalled`, `no_progress` | the few primitives every engine and loop is written with, on top of `si`, `ba`, `ro`, `ma`; starting a loop from an outside estimate; detecting a flat plateau (`stalled`) or a sloped one (`no_progress`) |
-| Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `l2`, `l1s` | a loss is a plain Faust function `loss(y, t)`; these are smooth ones |
+| Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `corr_loss`, `bank_log_energy_loss`, `frame_spectral_loss`, `l2`, `l1s` | a loss is a plain Faust function `loss(y, t)`; these are smooth ones; the last three compare sounds rather than waveforms and widen a basin |
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | learn in a domain where every value is valid (stable, positive, bounded) instead of clipping |
 | Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `ramp_lin`, `ramp_exp`, `lr_exp`, `lr_cos`, `warmup` | what happens to a gradient before the engine, and how a learning rate, or a model parameter, evolves |
 | Least-squares engines | `lms`, `nlms`, `gn1`, `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd` | engines that see the residual `r` and the sensitivity `j` separately |
@@ -452,10 +452,11 @@ reverse mode earns its keep: many parameters, one sweep.
   `l2(lambda, p)`, which composes with every engine.
 - **L-BFGS and other batch methods**: they need a batch and a line search;
   online, one sample at a time, they have no natural form.
-- **Spectral losses** (multi-scale STFT): they need a frame, which in Faust
-  means an `ondemand` block; the fixture
-  `tests/corpus/ondemand_fad_spectral_loss_008.dsp` shows `fad` through an
-  FFT-based loss. Bringing it into the library is future work.
+- **Multi-scale spectral losses**: the library has two forms since
+  2026-09-16, `bank_log_energy_loss` on a filter bank at audio rate and
+  `frame_spectral_loss` per frame for an `ondemand` body; the version with
+  several frame sizes is two blocks composed by hand, not wrapped, a block's
+  arity being its frame size.
 
 ### 4.9 Gating and stopping
 
@@ -577,6 +578,9 @@ in the tutorial.
 | `lsq_1D_restart(2, (1, -1))` + NLMS on `x · L(p)` against `-0.2 x`, `L` the two-well polynomial | 0.960 (residual 0.24 E[x²], never nil in the shallow well) then a restart at 8 000 and a root of `L = -0.2` in the deep well, residual nil |
 | a restart on the string from 228 Hz after a drift, NLMS or Adam, single or double precision | does not lock the way a fresh loop from 228 does: the model, its tangent and the engine keep the drift's state; not kept as a fixture |
 | `no_progress(2 000, 0.05, 0.1)` on a decaying, a constant high and a constant low loss | 0, 1, 0 per segment |
+| the string's landscape swept from 150 to 300 Hz (`opt_landscape_string.dsp`) | `mse` and `corr_loss`: a ±1 Hz well on a plateau; `bank_log_energy_loss` (8 bands, 150–4 800 Hz): a monotone slope toward 220 Hz from about 218 to 226 Hz, local extrema at 216 and 232 Hz where harmonics align; 16 or 32 bands do not widen it |
+| the string from 224 Hz, `bank_log_energy_loss` + SGD 1e-4 vs `mse` + NLMS | `220.000` Hz through the bank at 300 000 samples, `220.000` through the waveform too, carried by the slope of its plateau (it captures from above up to 228 Hz, drifts from below); from 200 or 214 Hz both fail, the harmonic alignments at 214 and 216 Hz blocking the bank; SGD 5e-4 on the bank oscillates (the rate must stay under `1 - a`) |
+| `fad` of `bank_log_energy_loss` with respect to a gain vs a finite difference | -43.06843 vs -43.06874, relative gap 7e-6 |
 
 ## 6. Pitfalls worth knowing
 
@@ -850,11 +854,15 @@ the three questions.
   basin. Section 7.2 of the tutorial measures it: on two independent
   excitations, `mse` leaves the cutoff stuck at the 20 Hz bound,
   `log_energy_loss` brings it back between 770 and 850 Hz around the 800 Hz
-  target. A per-frame spectral loss, inside an `ondemand` block, is the next
-  step; the multi-resolution version, DDSP's standard tool for widening
-  basins in frequency, is the pending work of section 4.8. Robust losses
-  (`logcosh`, `pseudo_huber`) do not change the shape of the basin, they
-  bound the blows outliers deal to it.
+  target. `bank_log_energy_loss` does the same per band on a filter bank: on
+  the string, the waveform's ±1 Hz well becomes a slope toward 220 Hz from
+  about 218 to 226 Hz, which SGD descends from 224 Hz; on this string that
+  does not buy a start the waveform error cannot handle, its plateau's slope
+  capturing from above and the harmonic alignments blocking both from below
+  (section 5); `corr_loss` removes the power bias but does not widen the
+  well; `frame_spectral_loss` is the per-frame form for an `ondemand` body.
+  Robust losses (`logcosh`, `pseudo_huber`) do not change the shape of the
+  basin, they bound the blows outliers deal to it.
 - *Continuation.* Start on a smooth landscape and harden it along the way:
   the string's damping annealed from 0.70 to 0.95 (broad resonances first)
   makes convergence from 264 Hz possible where only 228 Hz worked; the
