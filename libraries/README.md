@@ -35,7 +35,8 @@ machine learning and differentiable DSP, in English and French:
 - [optimizers-overview-en.md](optimizers-overview-en.md) /
   [optimizers-overview-fr.md](optimizers-overview-fr.md) — what `fad`/`rad`
   bring to differentiable DSP, how the library is organized, where each
-  algorithm comes from and why it was chosen, measured behaviour, pitfalls;
+  algorithm comes from and why it was chosen, measured behaviour, pitfalls,
+  and what gradient descent asks of a non-convex loss landscape;
 - [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md) /
   [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md) — a
   step-by-step tutorial, from a hand-written gradient to a five-coefficient

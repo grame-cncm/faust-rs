@@ -763,7 +763,127 @@ l'approche.
   framework, cela demande des relaxations, et elles seraient à écrire en
   Faust.
 
-## 9. Références
+## 9. Non-convexité : ce que le gradient demande au paysage
+
+La descente de gradient ne garantit le minimum global que pour une perte
+*convexe* : un seul bassin, vers lequel tout point de départ descend.
+Presque aucune perte de ce document ne l'est, et pourtant presque tous les
+programmes convergent. La convexité n'est donc pas ce qui sépare ce qui
+apprend de ce qui n'apprend pas. Trois questions le font : le point de
+départ est-il dans le bassin du bon minimum ; le gradient y est-il
+informatif, ou le paysage est-il plat ; le problème est-il conditionné,
+c'est-à-dire les paramètres ont-ils des échelles comparables. Cette section
+relit les exemples du dépôt à travers ces trois questions, puis dit ce que
+la bibliothèque offre quand le paysage est difficile, et ce qu'elle n'offre
+pas.
+
+**Ce qui est convexe.** Un modèle *linéaire en ses paramètres* sous une
+erreur quadratique donne une perte quadratique, un bol : un gain, un biais,
+les coefficients d'un FIR, les amplitudes d'un banc d'harmoniques. C'est le
+domaine du LMS et de ses parents, l'annuleur d'écho à 64 coefficients, les
+boucles à bus, le synthétiseur harmonique. Ces programmes convergent depuis
+n'importe quel point de départ ; seule la vitesse dépend du conditionnement,
+que la normalisation de `nlms` règle. Même là un piège subsiste : une perte
+sur des *magnitudes* est aveugle au signe et a deux minima symétriques, `a`
+et `−a` ; l'exemple 11 de `ddsp-examples-fr.md` en supprime un avec
+`a_h = exp(p_h)`, une reparamétrisation qui ne laisse qu'un minimum.
+
+**Ce qui ne l'est pas.** Dès qu'un paramètre entre dans une récursion ou
+dans une fréquence, la perte cesse d'être convexe : la fréquence et le Q
+d'un résonateur, les pôles d'un biquad, le `c = cos w` d'un notch, le T60
+d'un FDN, la longueur de retard d'une corde, les poids d'un GRU ou d'un MLP.
+L'erreur de sortie d'un filtre récursif peut avoir des minima locaux
+(Stearns 1981 ; Söderström & Stoica 1982), surtout quand le modèle est
+d'ordre insuffisant. Pourtant le notch converge de 1400 Hz à 1000, `resonlp`
+de `(1000, 1)` à `(1200, 2)`, le FDN de `(0,3 s, 0)` à `(0,6, 0,3)`, le
+biquad de zéro à sa cible. Ce n'est pas la convexité qui les sauve : c'est
+un bassin assez large et un point de départ dedans.
+
+**Le contre-exemple mesuré.** La corde à guide d'onde (exemple 10 de
+`ddsp-examples-fr.md`) montre le paysage lui-même. L'erreur de forme d'onde
+entre deux cordes est un puits de ±1 Hz de large autour de 220 Hz sur un
+plateau plat. Depuis 228 Hz la hauteur se cale à 220,000000 ; depuis 200 Hz
+elle dérive à 190. Même modèle, même perte, même optimiseur : seul le point
+de départ change. C'est la raison pour laquelle le DDSP d'Engel et al. fait
+estimer f0 par un détecteur et laisse le gradient affiner ; le DDSP n'est
+pas une méthode pour problèmes convexes, c'est un ensemble de techniques
+pour rendre un paysage non convexe praticable par le gradient.
+
+**Ce que la bibliothèque offre pour un paysage difficile.** Chaque outil
+agit sur l'une des trois questions.
+
+- *Le point de départ.* L'`init` de chaque boucle est le premier outil, et
+  le plus fort : une estimation extérieure, un détecteur de hauteur, la
+  valeur d'une session précédente. `on_change` et l'entrée `reset`
+  permettent de repartir quand la cible saute.
+- *La reparamétrisation.* Elle change la forme du paysage sans déplacer son
+  minimum. La fréquence en log rend les pas relatifs ; les coefficients de
+  réflexion transforment le triangle de stabilité en boîte, donc tout point
+  atteint est un filtre valide ; `exp` sur une amplitude supprime le minimum
+  miroir ; `sigmoid_map` remplace une borne dure, où le gradient se perd,
+  par une pente.
+- *La perte.* Une erreur de forme d'onde compare des phases, d'où des puits
+  étroits ; `energy_loss` et `log_energy_loss` comparent des puissances
+  lissées et élargissent le bassin. La section 7.2 du tutoriel le mesure :
+  sur deux excitations indépendantes, `mse` laisse la coupure bloquée sur
+  la borne de 20 Hz, `log_energy_loss` la ramène entre 770 et 850 Hz autour
+  des 800 Hz de la cible. Une perte spectrale par trame, dans un bloc
+  `ondemand`, est l'étape suivante ; la version multi-résolution, l'outil
+  standard de la DDSP pour élargir les bassins en fréquence, est le travail
+  à venir de la section 4.8. Les pertes robustes (`logcosh`, `pseudo_huber`)
+  ne changent pas la forme du bassin, elles bornent les coups que les
+  aberrants lui portent.
+- *La continuation.* Commencer sur un paysage lisse et le durcir en cours
+  de route : l'amortissement de la corde recuit de 0,70 à 0,95 (résonances
+  larges d'abord) fait converger depuis 264 Hz ce qui ne convergeait que
+  depuis 228 ; le rayon `r` du notch fixe de même la largeur du bassin
+  (0,9 large, 0,99 étroit). Un schedule de vitesse, `lr_exp` ou `lr_cos`,
+  en est la version la plus simple : explorer vite, puis se poser.
+- *Le second ordre.* `lm_2D` et `lm_3D` règlent le conditionnement, pas la
+  multimodalité : un pas de Gauss-Newton descend dans le bassin où il se
+  trouve, seulement plus vite et sans vitesse par paramètre.
+  L'amortissement de Marquardt est ce qui le garde raisonnable là où
+  l'approximation quadratique est fausse, loin de la solution.
+- *Le terme direct.* Les boucles `_rad` (section 4.7) ne changent pas le
+  paysage non plus : leur convergence repose sur une condition de
+  positivité, pas sur la forme de la perte.
+
+**Quand le gradient ne suffit plus.** Un paysage à plusieurs bassins sans
+bonne initialisation demande une recherche que le gradient ne fait pas, et
+qui en général l'encadre plutôt qu'elle ne le remplace :
+
+- *plusieurs départs* : la même descente lancée depuis des points distincts,
+  on garde celle dont la perte lissée est la plus basse ;
+- *une grille grossière puis le gradient* : balayer le paramètre difficile,
+  la hauteur ou une longueur de retard, à pas larges, et affiner par
+  descente depuis le meilleur point ; c'est le schéma détecteur puis
+  gradient de la DDSP, écrit à la main ;
+- *les méthodes sans gradient* : recuit simulé, CMA-ES (Hansen 2016),
+  Nelder-Mead, optimisation bayésienne ; elles n'évaluent que la perte et
+  conviennent à peu de paramètres, hors ligne, là où le gradient est nul ou
+  trompeur ;
+- *les paramètres discrets* : une longueur de retard entière, une topologie,
+  un choix ; ils n'ont pas de dérivée (section 8), il faut les relaxer ou
+  les énumérer.
+
+Rien de cela n'est dans la bibliothèque. Deux formes seraient naturelles,
+ni écrites ni mesurées : dans le graphe, `N` boucles en parallèle depuis
+des inits distincts, une perte lissée par `ema` pour chacune, un sélecteur
+qui suit la meilleure et `gated` ou `stop_below` pour éteindre les autres ;
+côté hôte, la boucle de
+[docs/rad-usage-en.md](../docs/rad-usage-en.md) recompile et écrit les
+paramètres par `set_real_zone`, et un multi-start ou une recherche
+bayésienne sur les inits s'y greffe sans toucher au compilateur.
+
+**Convexe ne veut pas dire facile.** En ligne, un échantillon à la fois, un
+bol quadratique se traverse aussi mal qu'un autre paysage si le pas est mal
+choisi : la marche aléatoire d'Adam sur une perte bruitée, l'oscillation
+d'une perte lissée plus lente que l'optimiseur, un paramètre en hertz et un
+autre sans unité sous une seule vitesse. Ces murs sont ceux de la section 6
+et de la section 13 du tutoriel, et ils n'ont rien à voir avec la
+convexité.
+
+## 10. Références
 
 - J. Engel, L. Hantrakul, C. Gu, A. Roberts, « DDSP: Differentiable Digital
   Signal Processing », ICLR 2020. <https://arxiv.org/abs/2001.04643>
@@ -782,6 +902,11 @@ l'approche.
 - J. J. Shynk, « Adaptive IIR Filtering », IEEE ASSP Magazine, 1989 —
   régression pseudo-linéaire contre erreur de prédiction récursive.
 - P. L. Feintuch, « An Adaptive Recursive LMS Filter », Proc. IEEE, 1976.
+- S. D. Stearns, « Error Surfaces of Recursive Adaptive Filters », IEEE
+  Trans. ASSP, 1981 — minima locaux de l'erreur de sortie d'un filtre
+  récursif.
+- T. Söderström, P. Stoica, « Some Properties of the Output Error Method »,
+  Automatica, 1982 — unimodalité et minima locaux de l'erreur de sortie.
 - D. Marquardt, « An Algorithm for Least-Squares Estimation of Nonlinear
   Parameters », SIAM J. Appl. Math., 1963. <https://doi.org/10.1137/0111030>
 - D. P. Kingma, J. Ba, « Adam: A Method for Stochastic Optimization », ICLR
@@ -799,6 +924,8 @@ l'approche.
   solveurs implicites.
 - I. Loshchilov, F. Hutter, « SGDR: Stochastic Gradient Descent with Warm
   Restarts », ICLR 2017. <https://arxiv.org/abs/1608.03983>
+- N. Hansen, « The CMA Evolution Strategy: A Tutorial », 2016 — recherche
+  sans gradient. <https://arxiv.org/abs/1604.00772>
 - Notes côté Faust : [docs/fad-note-en.md](../docs/fad-note-en.md),
   [docs/ondemand-note-fr.md](../docs/ondemand-note-fr.md),
   [docs/rad-note-en.md](../docs/rad-note-en.md),

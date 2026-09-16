@@ -713,7 +713,119 @@ approach.
   lines, an integer delay length, a discrete choice. As in every framework
   this needs relaxations, and they would be written in Faust.
 
-## 9. References
+## 9. Non-convexity: what gradient descent asks of the landscape
+
+Gradient descent guarantees the global minimum only for a *convex* loss: a
+single basin, into which every starting point descends. Almost no loss in
+this document is convex, and yet almost every program converges. Convexity
+is therefore not what separates what learns from what does not. Three
+questions do: is the starting point inside the basin of the right minimum;
+is the gradient informative there, or is the landscape flat; is the problem
+conditioned, that is, do the parameters have comparable scales. This
+section rereads the examples of the repository through those three
+questions, then says what the library offers when the landscape is hard,
+and what it does not.
+
+**What is convex.** A model *linear in its parameters* under a squared error
+gives a quadratic loss, a bowl: a gain, a bias, the coefficients of an FIR,
+the amplitudes of a harmonic bank. That is the domain of LMS and its
+relatives, the 64-tap echo canceller, the bus loops, the harmonic
+synthesizer. These programs converge from any starting point; only the
+speed depends on conditioning, which the normalisation of `nlms` settles.
+Even there one trap remains: a loss on *magnitudes* is blind to sign and has
+two symmetric minima, `a` and `−a`; example 11 of `ddsp-examples-en.md`
+removes one with `a_h = exp(p_h)`, a reparameterisation that leaves a single
+minimum.
+
+**What is not.** As soon as a parameter enters a recursion or a frequency,
+the loss stops being convex: the frequency and Q of a resonator, the poles
+of a biquad, the `c = cos w` of a notch, the T60 of an FDN, the delay length
+of a string, the weights of a GRU or an MLP. The output error of a recursive
+filter can have local minima (Stearns 1981; Söderström & Stoica 1982),
+especially when the model is of insufficient order. Yet the notch converges
+from 1400 Hz to 1000, `resonlp` from `(1000, 1)` to `(1200, 2)`, the FDN
+from `(0.3 s, 0)` to `(0.6, 0.3)`, the biquad from zero to its target.
+Convexity is not what saves them: a wide enough basin and a starting point
+inside it are.
+
+**The measured counter-example.** The waveguide string (example 10 of
+`ddsp-examples-en.md`) shows the landscape itself. The waveform error
+between two strings is a well ±1 Hz wide around 220 Hz on a flat plateau.
+From 228 Hz the pitch locks to 220.000000; from 200 Hz it drifts to 190.
+Same model, same loss, same optimizer: only the starting point changes.
+This is why Engel et al.'s DDSP has f0 estimated by a detector and lets the
+gradient refine it; DDSP is not a method for convex problems, it is a set
+of techniques that make a non-convex landscape passable by gradient.
+
+**What the library offers for a hard landscape.** Each tool acts on one of
+the three questions.
+
+- *The starting point.* The `init` of every loop is the first tool, and the
+  strongest: an outside estimate, a pitch detector, the value from a
+  previous session. `on_change` and the `reset` input allow a restart when
+  the target jumps.
+- *Reparameterisation.* It changes the shape of the landscape without
+  moving its minimum. Frequency in log makes the steps relative; reflection
+  coefficients turn the stability triangle into a box, so every point
+  reached is a valid filter; `exp` on an amplitude removes the mirror
+  minimum; `sigmoid_map` replaces a hard bound, where the gradient is lost,
+  by a slope.
+- *The loss.* A waveform error compares phases, hence narrow wells;
+  `energy_loss` and `log_energy_loss` compare smoothed powers and widen the
+  basin. Section 7.2 of the tutorial measures it: on two independent
+  excitations, `mse` leaves the cutoff stuck at the 20 Hz bound,
+  `log_energy_loss` brings it back between 770 and 850 Hz around the 800 Hz
+  target. A per-frame spectral loss, inside an `ondemand` block, is the next
+  step; the multi-resolution version, DDSP's standard tool for widening
+  basins in frequency, is the pending work of section 4.8. Robust losses
+  (`logcosh`, `pseudo_huber`) do not change the shape of the basin, they
+  bound the blows outliers deal to it.
+- *Continuation.* Start on a smooth landscape and harden it along the way:
+  the string's damping annealed from 0.70 to 0.95 (broad resonances first)
+  makes convergence from 264 Hz possible where only 228 Hz worked; the
+  notch radius `r` likewise sets the width of the basin (0.9 wide, 0.99
+  narrow). A learning-rate schedule, `lr_exp` or `lr_cos`, is the simplest
+  version of it: explore fast, then settle.
+- *Second order.* `lm_2D` and `lm_3D` settle conditioning, not
+  multimodality: a Gauss-Newton step descends into the basin it is in, only
+  faster and without a rate per parameter. Marquardt's damping is what keeps
+  it reasonable where the quadratic approximation is wrong, far from the
+  solution.
+- *The direct term.* The `_rad` loops (section 4.7) do not change the
+  landscape either: their convergence rests on a positivity condition, not
+  on the shape of the loss.
+
+**When the gradient is not enough.** A landscape with several basins and no
+good initialisation calls for a search that the gradient does not do, and
+that usually wraps it rather than replaces it:
+
+- *several starts*: the same descent launched from distinct points, keeping
+  the one whose smoothed loss is lowest;
+- *a coarse grid, then the gradient*: sweep the hard parameter, the pitch or
+  a delay length, in wide steps, and refine by descent from the best point;
+  this is DDSP's detector-then-gradient scheme, written by hand;
+- *gradient-free methods*: simulated annealing, CMA-ES (Hansen 2016),
+  Nelder-Mead, Bayesian optimisation; they evaluate only the loss and suit
+  few parameters, offline, where the gradient is zero or misleading;
+- *discrete parameters*: an integer delay length, a topology, a choice;
+  they have no derivative (section 8) and must be relaxed or enumerated.
+
+None of this is in the library. Two forms would be natural, neither written
+nor measured: in the graph, `N` loops in parallel from distinct inits, a
+loss smoothed by `ema` for each, a selector that follows the best and
+`gated` or `stop_below` to switch the others off; on the host side, the
+loop of [docs/rad-usage-en.md](../docs/rad-usage-en.md) recompiles and
+writes parameters through `set_real_zone`, and a multi-start or a Bayesian
+search over inits grafts onto it without touching the compiler.
+
+**Convex does not mean easy.** Online, one sample at a time, a quadratic
+bowl is crossed as badly as any other landscape when the step is wrong:
+Adam's random walk on a noisy loss, the oscillation of a smoothed loss
+slower than the optimizer, a parameter in hertz and another without unit
+under a single rate. Those walls are the ones of section 6 and of section
+13 of the tutorial, and they have nothing to do with convexity.
+
+## 10. References
 
 - J. Engel, L. Hantrakul, C. Gu, A. Roberts, "DDSP: Differentiable Digital
   Signal Processing", ICLR 2020. <https://arxiv.org/abs/2001.04643>
@@ -731,6 +843,11 @@ approach.
 - J. J. Shynk, "Adaptive IIR Filtering", IEEE ASSP Magazine, 1989 —
   pseudo-linear regression against recursive prediction error.
 - P. L. Feintuch, "An Adaptive Recursive LMS Filter", Proc. IEEE, 1976.
+- S. D. Stearns, "Error Surfaces of Recursive Adaptive Filters", IEEE
+  Trans. ASSP, 1981 — local minima of the output error of a recursive
+  filter.
+- T. Söderström, P. Stoica, "Some Properties of the Output Error Method",
+  Automatica, 1982 — unimodality and local minima of the output error.
 - D. Marquardt, "An Algorithm for Least-Squares Estimation of Nonlinear
   Parameters", SIAM J. Appl. Math., 1963. <https://doi.org/10.1137/0111030>
 - D. P. Kingma, J. Ba, "Adam: A Method for Stochastic Optimization", ICLR
@@ -748,6 +865,8 @@ approach.
   implicit solvers.
 - I. Loshchilov, F. Hutter, "SGDR: Stochastic Gradient Descent with Warm
   Restarts", ICLR 2017. <https://arxiv.org/abs/1608.03983>
+- N. Hansen, "The CMA Evolution Strategy: A Tutorial", 2016 — gradient-free
+  search. <https://arxiv.org/abs/1604.00772>
 - Faust-side notes: [docs/fad-note-en.md](../docs/fad-note-en.md),
   [docs/ondemand-note-en.md](../docs/ondemand-note-en.md),
   [docs/rad-note-en.md](../docs/rad-note-en.md),
