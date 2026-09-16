@@ -619,7 +619,9 @@ le résidu passe de 0,08 à 2e-7.
 
 **À essayer.** Apprendre aussi l'amortissement (`lsq_2D`) ; remplacer le bruit
 par des pincements et voir le puits se rétrécir ; partir une quinte plus loin
-et voir la dérive ; donner l'estimation d'un détecteur de hauteur comme `init`.
+et voir la dérive ; donner l'estimation d'un détecteur de hauteur comme `init`
+(`tests/corpus/opt_init_latch_string.dsp` le fait avec `op.init_latch` et un
+pic d'autocorrélation : hauteur à `220,000000` sans départ choisi à la main).
 
 ## 11. Un synthétiseur harmonique ajusté par une perte spectrale par trame (`rad` dans un bloc `ondemand`)
 

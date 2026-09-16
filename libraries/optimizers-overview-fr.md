@@ -217,17 +217,17 @@ bibliothèque ne prétend pas le contraire :
 
 ## 3. Organisation de la bibliothèque
 
-Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.8.0) est
+Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.9.0) est
 documenté fonction par fonction selon la convention des bibliothèques Faust ;
 cette section en donne la carte. Il comporte treize sections, ordonnées des
 briques de base aux boucles prêtes à l'emploi.
 
 | Section | Contenu | Raison d'être |
 |---|---|---|
-| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak` | les quelques primitives avec lesquelles tout moteur et toute boucle sont écrits, par-dessus `si`, `ba`, `ro`, `ma` |
+| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak`, `init_latch`, `init_reset`, `stalled` | les quelques primitives avec lesquelles tout moteur et toute boucle sont écrits, par-dessus `si`, `ba`, `ro`, `ma` ; démarrer une boucle sur une estimation extérieure ; détecter un plateau |
 | Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `l2`, `l1s` | une perte est une fonction Faust ordinaire `loss(y, t)` ; celles-ci sont lisses |
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | apprendre dans un domaine où toute valeur est admissible (stable, positive, bornée) plutôt que borner |
-| Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `lr_exp`, `lr_cos`, `warmup` | ce qui arrive à un gradient avant le moteur, et comment une vitesse d'apprentissage évolue |
+| Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `ramp_lin`, `ramp_exp`, `lr_exp`, `lr_cos`, `warmup` | ce qui arrive à un gradient avant le moteur, et comment une vitesse d'apprentissage, ou un paramètre du modèle, évolue |
 | Least-squares engines | `lms`, `nlms`, `gn1`, `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd` | moteurs qui voient séparément le résidu `r` et la sensibilité `j` |
 | Gradient engines | `sgd_g`, `momentum_g`, `nesterov_g`, `adam_g`, `nadam_g`, `amsgrad_g`, `adabelief_g`, `rmsprop_g`, `adagrad_g`, `lion_g`, `sign_g` | moteurs qui voient un seul nombre, le gradient de la perte `g` |
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D` | le modèle est différencié, la perte est implicitement l'erreur quadratique |
@@ -421,7 +421,15 @@ relative de fréquence, ce que l'oreille et le gradient réclament tous deux.
 Les schedules de vitesse d'apprentissage (décroissance exponentielle ;
 recuit en cosinus, Loshchilov & Hutter 2017 ; warm-up) concilient un départ
 rapide et une fin calme — en audio, la « fin calme » est l'absence de gigue
-audible sur un paramètre. `gate_g` n'apprend que lorsqu'une condition est
+audible sur un paramètre. Un schedule est un signal : `ramp_lin` et
+`ramp_exp` sont les mêmes rampes sous un nom neutre (`lr_exp` est
+`ramp_exp`, bit pour bit), pour recuire un paramètre du *modèle* — un
+amortissement, le lissage d'une perte — et non seulement une vitesse ; c'est
+la continuation de la section 9, écrite comme un signal. `init_latch` et
+`init_reset` font d'une estimation extérieure l'`init` d'une boucle : la
+boucle est tenue à `init` pendant que l'estimation s'observe, puis relâchée
+la valeur figée ; `stalled` lit un plateau, gradient petit sous une perte
+haute, pour les boucles à redémarrage à venir. `gate_g` n'apprend que lorsqu'une condition est
 vraie, typiquement quand il y a du signal : le même gating qu'emploient les
 filtres adaptatifs pour ne pas dériver dans le silence. `polyak` (Polyak &
 Juditsky, 1992) moyenne le paramètre pour la lecture audible pendant que
@@ -541,6 +549,9 @@ programmes dans le tutoriel.
 | `lsq_N_rad` + `nlms`, FIR à 8 coefficients au niveau 10 | résidu sous 1e-6 à partir de 1 000 échantillons |
 | `descend_N` contre `descend_N_rad`, FIR à 16 coefficients, LMS 0,02 | même résidu à l'arrondi près ; 3 777 contre 1 182 instructions d'interpréteur, 0,10 s contre 0,04 s pour 200 000 échantillons ; 28 891 contre 4 129 et 1,32 s contre 0,13 s à 64 coefficients |
 | `rad` contre `fad` dans le graphe sur `y = 1 + p y[n-1]`, `perte = (y - 3)^2` | `rad` -3, -3,75, -3,94 (terme direct), `fad` -3, -5, -6,19 (à travers la récursion) |
+| `init_latch` + `init_reset` sur la corde, estimation par autocorrélation observée 8 192 échantillons | init figé à 222,77 Hz (+1,3 %), hauteur 219,998 à 24 000, `220,000000` dès 48 000, résidu sous 1e-6 |
+| `stalled(0,999, 0,01, 0,1)` sur (gradient, perte) = (0,5, 1), (0, 1), (0, 0,001) | 0, 1, 0 par segment |
+| `lr_exp` contre `ramp_exp` | identiques bit pour bit |
 
 ## 6. Pièges à connaître
 
@@ -581,6 +592,13 @@ programmes dans le tutoriel.
   l'argument est utilisé : `(_ - t) * (_ - t)` est un bloc à deux entrées, et
   un `:>` vers lui répartit un bus entre elles — les coefficients font une
   marche aléatoire autour de zéro. Nommer l'entrée : `\(y).(op.mse(y, cible))`.
+- **Un `init` calculé dans le graphe alourdit la compilation des boucles à
+  plusieurs paramètres.** Un terme sur lequel le corps d'une récursion se
+  ferme est ré-abaissé à chacune de ses mentions : un `init` de trente voies
+  d'autocorrélation a multiplié par cent le temps de compilation d'une
+  boucle. Les boucles à un paramètre (`lsq_1D`, `descend_1D`,
+  `descend_1D_clocked`) prennent `init` par un fil d'entrée depuis 0.9.0 ;
+  les autres suivront quand leur `init` deviendra un signal.
 - **`rad` dans une boucle ne voit qu'un échantillon.** À travers une récursion
   il renvoie le terme direct, pas la dérivée à travers la récursion (section
   4.7) ; apprendre les modèles récursifs avec les boucles `fad`, les modèles
@@ -814,8 +832,12 @@ agit sur l'une des trois questions.
 
 - *Le point de départ.* L'`init` de chaque boucle est le premier outil, et
   le plus fort : une estimation extérieure, un détecteur de hauteur, la
-  valeur d'une session précédente. `on_change` et l'entrée `reset`
-  permettent de repartir quand la cible saute.
+  valeur d'une session précédente. `init_latch(T, e)` et `init_reset(T)`
+  font d'une estimation observée `T` échantillons cet `init` : sur la corde,
+  le pic d'autocorrélation de la cible, figé 2 % au-dessus, amène la hauteur
+  à `220,000000` sans qu'aucun départ soit choisi à la main (section 5).
+  `on_change` et l'entrée `reset` permettent de repartir quand la cible
+  saute.
 - *La reparamétrisation.* Elle change la forme du paysage sans déplacer son
   minimum. La fréquence en log rend les pas relatifs ; les coefficients de
   réflexion transforment le triangle de stabilité en boîte, donc tout point
@@ -837,8 +859,9 @@ agit sur l'une des trois questions.
   de route : l'amortissement de la corde recuit de 0,70 à 0,95 (résonances
   larges d'abord) fait converger depuis 264 Hz ce qui ne convergeait que
   depuis 228 ; le rayon `r` du notch fixe de même la largeur du bassin
-  (0,9 large, 0,99 étroit). Un schedule de vitesse, `lr_exp` ou `lr_cos`,
-  en est la version la plus simple : explorer vite, puis se poser.
+  (0,9 large, 0,99 étroit). `ramp_lin` et `ramp_exp` écrivent ce recuit
+  comme un signal ; un schedule de vitesse, `lr_exp` ou `lr_cos`, en est la
+  version la plus simple : explorer vite, puis se poser.
 - *Le second ordre.* `lm_2D` et `lm_3D` règlent le conditionnement, pas la
   multimodalité : un pas de Gauss-Newton descend dans le bassin où il se
   trouve, seulement plus vite et sans vitesse par paramètre.
@@ -866,8 +889,10 @@ qui en général l'encadre plutôt qu'elle ne le remplace :
   un choix ; ils n'ont pas de dérivée (section 8), il faut les relaxer ou
   les énumérer.
 
-Rien de cela n'est dans la bibliothèque. Deux formes seraient naturelles,
-ni écrites ni mesurées : dans le graphe, `N` boucles en parallèle depuis
+De tout cela, la bibliothèque n'a que les briques : l'`init` sur estimation,
+les rampes et le détecteur de plateau `stalled` (gradient petit sous une
+perte haute). Les recherches elles-mêmes restent à écrire ; deux formes
+seraient naturelles, ni écrites ni mesurées : dans le graphe, `N` boucles en parallèle depuis
 des inits distincts, une perte lissée par `ema` pour chacune, un sélecteur
 qui suit la meilleure et `gated` ou `stop_below` pour éteindre les autres ;
 côté hôte, la boucle de

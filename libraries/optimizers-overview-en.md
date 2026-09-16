@@ -201,17 +201,17 @@ does not pretend otherwise:
 
 ## 3. How the library is organized
 
-The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.8.0) is
+The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.9.0) is
 documented function by function in the Faust libraries convention; this
 section gives the map. It has thirteen sections, ordered from building blocks to
 ready-made loops and what surrounds them.
 
 | Section | What it holds | Why it exists |
 |---|---|---|
-| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak` | the few primitives every engine and loop is written with, on top of `si`, `ba`, `ro`, `ma` |
+| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak`, `init_latch`, `init_reset`, `stalled` | the few primitives every engine and loop is written with, on top of `si`, `ba`, `ro`, `ma`; starting a loop from an outside estimate; detecting a plateau |
 | Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `l2`, `l1s` | a loss is a plain Faust function `loss(y, t)`; these are smooth ones |
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | learn in a domain where every value is valid (stable, positive, bounded) instead of clipping |
-| Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `lr_exp`, `lr_cos`, `warmup` | what happens to a gradient before the engine, and how a learning rate evolves |
+| Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `ramp_lin`, `ramp_exp`, `lr_exp`, `lr_cos`, `warmup` | what happens to a gradient before the engine, and how a learning rate, or a model parameter, evolves |
 | Least-squares engines | `lms`, `nlms`, `gn1`, `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd` | engines that see the residual `r` and the sensitivity `j` separately |
 | Gradient engines | `sgd_g`, `momentum_g`, `nesterov_g`, `adam_g`, `nadam_g`, `amsgrad_g`, `adabelief_g`, `rmsprop_g`, `adagrad_g`, `lion_g`, `sign_g` | engines that see one number, the loss gradient `g` |
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D` | the model is differentiated, the loss is implicitly the squared error |
@@ -398,7 +398,15 @@ change in frequency, which is what the ear and the gradient both want.
 
 Learning-rate schedules (exponential decay; cosine annealing, Loshchilov &
 Hutter 2017; warm-up) reconcile a fast start with a quiet end — in audio, the
-"quiet end" is the absence of audible jitter on a parameter. `gate_g` learns
+"quiet end" is the absence of audible jitter on a parameter. A schedule is a
+signal: `ramp_lin` and `ramp_exp` are the same ramps under a neutral name
+(`lr_exp` is `ramp_exp`, bit for bit), to anneal a *model* parameter — a
+damping, the smoothing of a loss — and not only a rate; this is the
+continuation of section 9, written as a signal. `init_latch` and
+`init_reset` make an outside estimate the `init` of a loop: the loop is held
+at `init` while the estimate is observed, then released on the frozen value;
+`stalled` reads a plateau, a small gradient under a high loss, for the
+restart loops to come. `gate_g` learns
 only when a condition holds, typically when there is signal: the same gating
 adaptive filters use to avoid drifting in silence. `polyak` (Polyak & Juditsky,
 1992) averages the parameter for the audible readout while the optimizer
@@ -511,6 +519,9 @@ in the tutorial.
 | `lsq_N_rad` + `nlms`, 8-tap FIR at level 10 | residual below 1e-6 from 1 000 samples on |
 | `descend_N` vs `descend_N_rad`, 16-tap FIR, LMS 0.02 | same residual to rounding; 3 777 vs 1 182 interpreter instructions, 0.10 s vs 0.04 s for 200 000 samples; 28 891 vs 4 129 and 1.32 s vs 0.13 s at 64 taps |
 | in-graph `rad` vs `fad` on `y = 1 + p y[n-1]`, `loss = (y - 3)^2` | `rad` -3, -3.75, -3.94 (direct term), `fad` -3, -5, -6.19 (through the recursion) |
+| `init_latch` + `init_reset` on the string, autocorrelation estimate observed for 8 192 samples | init frozen at 222.77 Hz (+1.3 %), pitch 219.998 at 24 000, `220.000000` from 48 000 on, residual under 1e-6 |
+| `stalled(0.999, 0.01, 0.1)` on (gradient, loss) = (0.5, 1), (0, 1), (0, 0.001) | 0, 1, 0 per segment |
+| `lr_exp` vs `ramp_exp` | bit-identical |
 
 ## 6. Pitfalls worth knowing
 
@@ -548,6 +559,13 @@ in the tutorial.
   the argument is used, so `(_ - t) * (_ - t)` is a two-input block and `:>`
   into it splits a bus between them: the taps random-walk near zero. Name
   the input: `\(y).(op.mse(y, target))`.
+- **An `init` computed in the graph weighs on the compile time of the
+  multi-parameter loops.** A term a recursion's body closes over is
+  re-lowered at each of its mentions: an `init` of thirty autocorrelation
+  lanes multiplied a loop's compile time by a hundred. The one-parameter
+  loops (`lsq_1D`, `descend_1D`, `descend_1D_clocked`) take `init` through
+  an input wire since 0.9.0; the others will follow when their `init`
+  becomes a signal.
 - **`rad` inside a loop sees one sample.** Through a recursion it returns
   the direct term, not the derivative through the recursion (section 4.7);
   learn recursive models with the `fad` loops, feed-forward ones with either.
@@ -762,8 +780,11 @@ the three questions.
 
 - *The starting point.* The `init` of every loop is the first tool, and the
   strongest: an outside estimate, a pitch detector, the value from a
-  previous session. `on_change` and the `reset` input allow a restart when
-  the target jumps.
+  previous session. `init_latch(T, e)` and `init_reset(T)` make an estimate
+  observed for `T` samples that `init`: on the string, the target's
+  autocorrelation peak, frozen 2 % above, brings the pitch to `220.000000`
+  with no start chosen by hand (section 5). `on_change` and the `reset`
+  input allow a restart when the target jumps.
 - *Reparameterisation.* It changes the shape of the landscape without
   moving its minimum. Frequency in log makes the steps relative; reflection
   coefficients turn the stability triangle into a box, so every point
@@ -784,8 +805,9 @@ the three questions.
   the string's damping annealed from 0.70 to 0.95 (broad resonances first)
   makes convergence from 264 Hz possible where only 228 Hz worked; the
   notch radius `r` likewise sets the width of the basin (0.9 wide, 0.99
-  narrow). A learning-rate schedule, `lr_exp` or `lr_cos`, is the simplest
-  version of it: explore fast, then settle.
+  narrow). `ramp_lin` and `ramp_exp` write that annealing as a signal; a
+  learning-rate schedule, `lr_exp` or `lr_cos`, is the simplest version of
+  it: explore fast, then settle.
 - *Second order.* `lm_2D` and `lm_3D` settle conditioning, not
   multimodality: a Gauss-Newton step descends into the basin it is in, only
   faster and without a rate per parameter. Marquardt's damping is what keeps
@@ -810,8 +832,10 @@ that usually wraps it rather than replaces it:
 - *discrete parameters*: an integer delay length, a topology, a choice;
   they have no derivative (section 8) and must be relaxed or enumerated.
 
-None of this is in the library. Two forms would be natural, neither written
-nor measured: in the graph, `N` loops in parallel from distinct inits, a
+Of all this the library has only the building blocks: the `init` from an
+estimate, the ramps and the plateau detector `stalled` (a small gradient
+under a high loss). The searches themselves remain to be written; two forms
+would be natural, neither written nor measured: in the graph, `N` loops in parallel from distinct inits, a
 loss smoothed by `ema` for each, a selector that follows the best and
 `gated` or `stop_below` to switch the others off; on the host side, the
 loop of [docs/rad-usage-en.md](../docs/rad-usage-en.md) recompiles and

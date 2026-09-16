@@ -577,7 +577,9 @@ the residual goes from 0.08 to 2e-7.
 
 **Try.** Learn the damping as well (`lsq_2D`); replace the noise by plucks
 and watch the well narrow; start a fifth away and watch the drift; feed a
-pitch detector's estimate as `init`.
+pitch detector's estimate as `init` (`tests/corpus/opt_init_latch_string.dsp`
+does, with `op.init_latch` and an autocorrelation peak: pitch `220.000000`
+with no start chosen by hand).
 
 ## 11. A harmonic synthesizer fitted through a per-frame spectral loss (`rad` in an `ondemand` block)
 

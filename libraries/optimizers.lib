@@ -1,5 +1,5 @@
 declare name "Faust Differentiable Optimizers Library";
-declare version "0.8.0";
+declare version "0.9.0";
 declare author "faust-rs";
 declare license "MIT/LGPL-3.0";
 
@@ -54,6 +54,17 @@ declare license "MIT/LGPL-3.0";
 // process = op.descend_1D(loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
 // ```
 //
+// Changes in 0.9.0: initialisation and continuation helpers. `init_latch(T, e)`
+// holds an estimate seen at sample `T` and `init_reset(T)` keeps a loop at its
+// `init` until then, so an outside estimate (a detector) becomes the start of
+// a loop; `ramp_lin` and `ramp_exp` are the schedules as plain signals, to
+// anneal a model parameter as well as a learning rate (`lr_exp` is now
+// `ramp_exp`, bit-identical); `stalled` flags a plateau, a small gradient
+// under a high loss, for the restart loops to come. The one-parameter loops
+// `lsq_1D`, `descend_1D` and `descend_1D_clocked` take `init` through an
+// input wire of their recursive block instead of closing over it, so an
+// `init` computed in the graph does not multiply their compile time; same
+// trajectories.
 // Changes in 0.8.0: gating and stopping. `gated(C)` and `gated_when(on, C)`
 // run an arbitrary block in an `ondemand` domain that the block's own last
 // output switches off, so a block stops costing anything once it has
@@ -275,6 +286,94 @@ pstate(init, reset, prev) = select2(_first | (reset != 0.0), prev, init);
 // * <https://doi.org/10.1137/0330046>
 //------------------------------------------------------------------------------
 polyak(a, p) = ema(a, p);
+
+//------------------------------`(op.)init_latch`-------------------------------
+// An estimate observed for `T` samples, then frozen: `estimate` while
+// `time <= T`, afterwards the value it had at sample `T`, held forever. With
+// `init_reset(T)` on a loop's `reset` input, this turns an outside estimate
+// (a pitch detector, an autocorrelation peak, a previous session's value)
+// into the loop's `init`: the loop starts descending, from that value, the
+// sample after the estimate is frozen. The counter is `ba.time`, so inside an
+// `ondemand` body it counts the body's own firings.
+//
+// #### Usage
+//
+// ```
+// init_latch(T, estimate) : _
+// ```
+//
+// Where:
+//
+// * `T`: the sample at which `estimate` is frozen
+// * `estimate`: the signal to observe, then hold
+//
+// #### Example
+//
+// ```
+// est = target : my_pitch_estimate;
+// d = op.lsq_1D(mdl, op.nlms(0.02, 1e-6, 0.99), 100, 400, op.init_latch(8192, est), op.init_reset(8192), target, x);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// init_latch_test = op.init_latch(64.0, hslider("init_latch:e", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+init_latch(T, estimate) = (select2(float(ba.time) > T, estimate, _)) ~ _;
+
+//------------------------------`(op.)init_reset`-------------------------------
+// `1` up to and including sample `T`, `0` afterwards: on a loop's `reset`
+// input it holds the parameter at `init` while `init_latch(T, estimate)` is
+// still observing, and releases it the sample after the estimate is frozen.
+//
+// #### Usage
+//
+// ```
+// init_reset(T) : _
+// ```
+//
+// Where:
+//
+// * `T`: the last sample on which the loop is held (the `T` of `init_latch`)
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// init_reset_test = op.init_reset(64.0);
+// ```
+//------------------------------------------------------------------------------
+init_reset(T) = float(ba.time) <= T;
+
+//------------------------------`(op.)stalled`----------------------------------
+// Plateau detector: `1` when the smoothed magnitude of the gradient is below
+// `eps_g` while the smoothed loss is still above `eps_l`, `0` otherwise. A
+// loop that has converged has a small gradient *and* a small loss; a loop
+// stuck on a plateau or in the wrong basin has a small gradient and a large
+// loss. Set `eps_l` above the loss floor (the noise floor of the residual),
+// or a converged loop with a noisy target reads as a permanent stall.
+//
+// #### Usage
+//
+// ```
+// stalled(a, eps_g, eps_l, g, l) : _
+// ```
+//
+// Where:
+//
+// * `a`: smoothing coefficient of both averages, in `[0, 1)`
+// * `eps_g`: gradient magnitude below which the descent counts as stopped
+// * `eps_l`: loss above which the descent counts as unfinished
+// * `g`: the per-sample gradient
+// * `l`: the per-sample loss
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// stalled_test = op.stalled(0.999, 0.01, 0.1, hslider("stalled:g", 0, -1, 1, 0.01), 1.0);
+// ```
+//------------------------------------------------------------------------------
+stalled(a, eps_g, eps_l, g, l) = (ema(a, abs(g)) < eps_g) & (ema(a, l) > eps_l);
 
 //===============================Losses and Regularizers====================================
 // Scalar losses `loss(y, t)` between a model output `y` and a target `t`, and
@@ -637,9 +736,59 @@ softclip_g(c, g) = g / sqrt(1.0 + (g / c) * (g / c));
 //------------------------------------------------------------------------------
 gate_g(cond, g) = g * float(cond != 0.0);
 
+//------------------------------`(op.)ramp_lin`---------------------------------
+// The signal that goes linearly from `from` to `to` in `T` samples, then
+// stays at `to`. A schedule is a signal: this one anneals a learning rate
+// or a model parameter (a damping, a loss smoothing) alike.
+//
+// #### Usage
+//
+// ```
+// ramp_lin(from, to, T) : _
+// ```
+//
+// Where:
+//
+// * `from`: value at the first sample
+// * `to`: value from sample `T` on
+// * `T`: length of the ramp in samples
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// ramp_lin_test = op.ramp_lin(0.7, 0.95, 48000.0);
+// ```
+//------------------------------------------------------------------------------
+ramp_lin(from, to, T) = from + (to - from) * min(1.0, float(ba.time) / T);
+
+//------------------------------`(op.)ramp_exp`---------------------------------
+// The signal that goes exponentially from `from` towards `to` with time
+// constant `T` samples: `to + (from - to) * exp(-n / T)`. `lr_exp` is this
+// ramp under its learning-rate name.
+//
+// #### Usage
+//
+// ```
+// ramp_exp(from, to, T) : _
+// ```
+//
+// Where:
+//
+// * `from`: value at the first sample
+// * `to`: asymptotic value
+// * `T`: time constant in samples
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// ramp_exp_test = op.ramp_exp(0.7, 0.95, 48000.0);
+// ```
+//------------------------------------------------------------------------------
+ramp_exp(from, to, T) = to + (from - to) * _expdecay(exp(0.0 - 1.0 / T));
+
 //------------------------------`(op.)lr_exp`-----------------------------------
 // Exponentially decaying learning rate, from `lr0` towards `lr_min` with time
-// constant `tau` samples.
+// constant `tau` samples: `ramp_exp(lr0, lr_min, tau)`, bit-identical.
 //
 // #### Usage
 //
@@ -659,7 +808,7 @@ gate_g(cond, g) = g * float(cond != 0.0);
 // lr_exp_test = op.lr_exp(0.01, 0.0001, 48000.0);
 // ```
 //------------------------------------------------------------------------------
-lr_exp(lr0, lr_min, tau) = lr_min + (lr0 - lr_min) * _expdecay(exp(0.0 - 1.0 / tau));
+lr_exp(lr0, lr_min, tau) = ramp_exp(lr0, lr_min, tau);
 
 //------------------------------`(op.)lr_cos`-----------------------------------
 // Cosine-annealed learning rate, from `lr0` down to `lr_min` over `T` samples,
@@ -1335,15 +1484,18 @@ sign_g(lr, g) = lr * sgn(g);
 // with { x = hslider("lsq_1D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_1D(mdl, upd1, lo1, hi1, init1, reset, target, x) = (loop ~ _) : +(init1)
+lsq_1D(mdl, upd1, lo1, hi1, init1, reset, target, x) = init1 : (loop ~ _) : +(init1)
 with {
-    loop(prev1) = next1
+    // `init1` enters the recursive block as an input wire, not as a term the
+    // body closes over: a large `init` expression (an estimate computed in
+    // the graph) would otherwise be re-lowered at each of its mentions.
+    loop(prev1, i1) = next1
     with {
-        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p1 = clip(lo1, hi1, _from_init(i1, reset, prev1));
         pt = fad(mdl(p1, x), p1);
         r = (pt : _, !) - target;
         j1 = pt : !, _;
-        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(r, j1));
+        next1 = clip(lo1 - i1, hi1 - i1, _dev(reset, prev1) - upd1(r, j1));
     };
 };
 
@@ -1685,13 +1837,14 @@ optimize_5D(mdl, upd1, upd2, upd3, upd4, upd5, min1, max1, min2, max2, min3, max
 // with { x = hslider("descend_1D:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_1D(loss, upd1, lo1, hi1, init1, reset) = (loop ~ _) : +(init1)
+descend_1D(loss, upd1, lo1, hi1, init1, reset) = init1 : (loop ~ _) : +(init1)
 with {
-    loop(prev1) = next1
+    // `init1` enters as an input wire; see `lsq_1D`.
+    loop(prev1, i1) = next1
     with {
-        p1 = clip(lo1, hi1, _from_init(init1, reset, prev1));
+        p1 = clip(lo1, hi1, _from_init(i1, reset, prev1));
         g1 = fad(loss(p1), p1) : !, _;
-        next1 = clip(lo1 - init1, hi1 - init1, _dev(reset, prev1) - upd1(g1));
+        next1 = clip(lo1 - i1, hi1 - i1, _dev(reset, prev1) - upd1(g1));
     };
 };
 
@@ -2448,15 +2601,17 @@ frame_mean(clock, x) = frame_sum(clock, x) / frame_count(clock);
 //
 // * <https://github.com/grame-cncm/faust-rs/blob/main/docs/ondemand-note-en.md>
 //------------------------------------------------------------------------------
-descend_1D_clocked(clock, loss, upd1, lo1, hi1, init1, reset) = (loop ~ _) : +(init1)
+descend_1D_clocked(clock, loss, upd1, lo1, hi1, init1, reset) = init1 : (loop ~ _) : +(init1)
 with {
-    loop(prev1) = (clock, d1, gm1) : ondemand(step)
+    // `init1` enters as an input wire, and the block reads it as an input;
+    // see `lsq_1D`.
+    loop(prev1, i1) = (clock, d1, gm1, i1) : ondemand(step)
     with {
         d1 = _dev_clocked(clock, reset, prev1);
-        p1 = clip(lo1, hi1, init1 + d1);
+        p1 = clip(lo1, hi1, i1 + d1);
         g1 = fad(loss(p1), p1) : !, _;
         gm1 = frame_mean(clock, g1);
-        step(q1, h1) = clip(lo1 - init1, hi1 - init1, q1 - upd1(h1));
+        step(q1, h1, i1b) = clip(lo1 - i1b, hi1 - i1b, q1 - upd1(h1));
     };
 };
 

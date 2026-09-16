@@ -92,6 +92,21 @@ documentation quotes it.
 
 ## N6 — Initialisation and continuation helpers (first: consumed by N2, N3, N4)
 
+**Status 2026-09-16: landed** (`optimizers.lib` 0.9.0). Two deviations from
+the text below. `init_pulse(T)` became `init_reset(T)`, 1 up to and
+including sample `T`: holding the loop at `init` while the estimate is
+observed is what the use case needs, and a one-sample pulse would let the
+loop descend on a moving `init` before the latch. And a compile-time trap
+surfaced: a recursion whose body closes over a large term (the estimate)
+re-lowers it at every mention, 34 s for an 8-lane estimate feeding
+`lsq_1D`, growing 4 s per lane, 0.07 s for the same graph outside a
+recursion; the three 1D loops now take `init` through an input wire of
+their recursive block (0.46 s at 8 lanes, 1.5 s for the shipped 30-lane
+fixture), the multi-parameter loops still close over theirs, and the
+compiler issue is filed as its own task. Measured: init frozen at
+222.77 Hz, pitch 219.998 at 24 000 samples, 220.000000 from 48 000 on.
+
+
 **Surface** (section "Signal Helpers and Parameter State", and "Gradient
 Conditioning and Schedules"):
 
@@ -101,7 +116,8 @@ Conditioning and Schedules"):
   `ondemand` body in the body's time.
 - `init_pulse(T)`: 1 at sample `T`, 0 elsewhere. `(init_latch(T, e),
   init_pulse(T))` is what a loop takes as `(init, reset)` to start from an
-  outside estimate after `T` samples of observation.
+  outside estimate after `T` samples of observation. *(Landed as
+  `init_reset(T)`, held up to `T`; see the status note.)*
 - `ramp_lin(from, to, T)`, `ramp_exp(from, to, T)`: the signal that goes
   from `from` to `to` in `T` samples, linearly or with time constant `T`.
   `lr_exp(lr0, lr_inf, T)` becomes an alias of `ramp_exp`, bit-identical.

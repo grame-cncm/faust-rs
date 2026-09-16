@@ -341,14 +341,95 @@ fn stop_relative_gates_a_converging_loop() {
 }
 
 #[test]
+fn ramp_exp_is_lr_exp_and_ramp_lin_reaches_its_end() {
+    // [lr_exp, ramp_exp, ramp_lin], all (0.01 -> 0.0001, T = 4800): the
+    // learning-rate schedule is the ramp under another name, bit-identical;
+    // the linear ramp is at its midpoint at T/2 and at its end from T on.
+    let Some(outs) = run_interp_fixture("opt_ramp_alias", 20_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    for (frame, (&a, &b)) in outs[0].iter().zip(&outs[1]).enumerate() {
+        assert!(a.is_finite(), "opt_ramp_alias: non-finite lr_exp at frame {frame}");
+        assert_eq!(a, b, "opt_ramp_alias: lr_exp and ramp_exp differ at frame {frame}");
+    }
+    let lin = &outs[2];
+    assert_eq!(lin[0], 0.01);
+    assert!((lin[2400] - 0.00505).abs() < 1e-6, "midpoint {}", lin[2400]);
+    assert!((lin[4800] - 0.0001).abs() < 1e-7, "end {}", lin[4800]);
+    assert!((lin[19_999] - 0.0001).abs() < 1e-7, "held {}", lin[19_999]);
+}
+
+#[test]
+fn stalled_flags_a_plateau_and_neither_a_descent_nor_a_convergence() {
+    // [stalled, g, l] over three 20 000-sample segments: descending
+    // (0.5, 1.0) -> 0, stuck (0.0, 1.0) -> 1, converged (0.0, 0.001) -> 0.
+    // The averages (a = 0.999) settle within 5 000 samples of a segment
+    // start, so each segment is read on its last 10 000 samples.
+    let Some(outs) = run_interp_fixture("opt_stalled_lanes", 60_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    let flag = &outs[0];
+    let mean = |range: std::ops::Range<usize>| {
+        flag[range.clone()].iter().sum::<f32>() / range.len() as f32
+    };
+    assert_eq!(mean(10_000..20_000), 0.0, "descending segment read as stalled");
+    assert_eq!(mean(30_000..40_000), 1.0, "stuck segment not read as stalled");
+    assert_eq!(mean(50_000..60_000), 0.0, "converged segment read as stalled");
+}
+
+#[test]
+fn init_latch_starts_the_string_from_its_own_pitch_estimate() {
+    // [pitch in Hz, residual, init in Hz]: the loop is held at `init` while
+    // an autocorrelation estimate of the target's pitch is observed, `init`
+    // is frozen at sample 8 192 (2 % above the target, inside the capture
+    // zone of the +-1 Hz well) and the pitch then locks on 220 Hz.
+    let Some(outs) = run_interp_fixture("opt_init_latch_string", 80_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    for (channel, samples) in outs.iter().enumerate() {
+        for (frame, &sample) in samples.iter().enumerate() {
+            assert!(sample.is_finite(), "opt_init_latch_string: non-finite output {channel} at frame {frame}");
+        }
+    }
+    // While the estimate is observed (up to and including sample 8 192)
+    // `init_reset` holds the deviation at zero, so the pitch lane follows
+    // the moving init lane to within one engine step (the loops apply the
+    // step to a zeroed deviation and report that): a mean gap of 0.04 Hz
+    // measured, against 2.8 Hz when the loop is not held.
+    let gap = (0..=8_192)
+        .map(|frame| (outs[0][frame] - outs[2][frame]).abs())
+        .sum::<f32>()
+        / 8_193.0;
+    assert!(gap < 0.5, "the loop should be held at init during the observation, mean gap {gap} Hz");
+    let init = &outs[2];
+    let frozen = init[8_193];
+    assert!(
+        (220.0..230.0).contains(&frozen),
+        "the frozen init should sit just above the target, got {frozen} Hz"
+    );
+    assert!(
+        init[8_193..].iter().all(|&v| v == frozen),
+        "init should not move once frozen"
+    );
+    let pitch = outs[0][76_000..].iter().sum::<f32>() / 4_000.0;
+    let residual = rms(&outs[1][76_000..]);
+    eprintln!("init_latch string: init {frozen} pitch {pitch} residual {residual:.3e}");
+    assert!((pitch - 220.0).abs() < 0.05, "pitch should lock on 220 Hz, got {pitch}");
+    assert!(residual < 1e-3, "residual should vanish, got rms {residual}");
+}
+
+#[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 80 entries, 139 outputs. It only has to compile,
+    // documented function: 85 entries, 144 outputs. It only has to compile,
     // run, and stay finite.
     let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
         return;
     };
-    assert_eq!(outs.len(), 139, "expected the outputs of every Test entry");
+    assert_eq!(outs.len(), 144, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(
