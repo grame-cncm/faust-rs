@@ -224,14 +224,14 @@ briques de base aux boucles prêtes à l'emploi.
 
 | Section | Contenu | Raison d'être |
 |---|---|---|
-| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak`, `init_latch`, `init_reset`, `stalled` | les quelques primitives avec lesquelles tout moteur et toute boucle sont écrits, par-dessus `si`, `ba`, `ro`, `ma` ; démarrer une boucle sur une estimation extérieure ; détecter un plateau |
+| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak`, `init_latch`, `init_reset`, `stalled`, `no_progress` | les quelques primitives avec lesquelles tout moteur et toute boucle sont écrits, par-dessus `si`, `ba`, `ro`, `ma` ; démarrer une boucle sur une estimation extérieure ; détecter un plateau plat (`stalled`) ou en pente (`no_progress`) |
 | Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `l2`, `l1s` | une perte est une fonction Faust ordinaire `loss(y, t)` ; celles-ci sont lisses |
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | apprendre dans un domaine où toute valeur est admissible (stable, positive, bornée) plutôt que borner |
 | Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `ramp_lin`, `ramp_exp`, `lr_exp`, `lr_cos`, `warmup` | ce qui arrive à un gradient avant le moteur, et comment une vitesse d'apprentissage, ou un paramètre du modèle, évolue |
 | Least-squares engines | `lms`, `nlms`, `gn1`, `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd` | moteurs qui voient séparément le résidu `r` et la sensibilité `j` |
 | Gradient engines | `sgd_g`, `momentum_g`, `nesterov_g`, `adam_g`, `nadam_g`, `amsgrad_g`, `adabelief_g`, `rmsprop_g`, `adagrad_g`, `lion_g`, `sign_g`, `langevin_g` | moteurs qui voient un seul nombre, le gradient de la perte `g` ; `langevin_g` y ajoute un bruit recuit pour quitter un puits peu profond |
-| Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D` | le modèle est différencié, la perte est implicitement l'erreur quadratique |
-| Loss-first loops | `descend_1D` … `descend_5D` | la perte est différenciée, quelle qu'elle soit |
+| Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D`, `lsq_1D_restart` | le modèle est différencié, la perte est implicitement l'erreur quadratique ; `lsq_1D_restart` change de départ quand le résidu ne progresse plus |
+| Loss-first loops | `descend_1D` … `descend_5D`, `descend_1D_restart` | la perte est différenciée, quelle qu'elle soit ; `descend_1D_restart` prend le départ suivant quand la perte ne progresse plus |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | pas de second ordre pour deux ou trois paramètres corrélés |
 | Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus avec un moteur et une paire de bornes, en mode direct ou inverse |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | le gradient à cadence audio, moyenné sur la trame, le pas une fois par tir d'une horloge `ondemand` |
@@ -430,8 +430,11 @@ amortissement, le lissage d'une perte — et non seulement une vitesse ; c'est
 la continuation de la section 9, écrite comme un signal. `init_latch` et
 `init_reset` font d'une estimation extérieure l'`init` d'une boucle : la
 boucle est tenue à `init` pendant que l'estimation s'observe, puis relâchée
-la valeur figée ; `stalled` lit un plateau, gradient petit sous une perte
-haute, pour les boucles à redémarrage à venir. `gate_g` n'apprend que lorsqu'une condition est
+la valeur figée ; `stalled` lit un plateau plat, gradient petit sous une
+perte haute, et `no_progress` un plateau en pente, une perte qui ne baisse
+plus sur une fenêtre de patience : c'est sur ce dernier que
+`descend_1D_restart` passe au départ suivant, car sur la corde le gradient
+est plus grand sur le plateau que dans le puits (section 5). `gate_g` n'apprend que lorsqu'une condition est
 vraie, typiquement quand il y a du signal : le même gating qu'emploient les
 filtres adaptatifs pour ne pas dériver dans le silence. `polyak` (Polyak &
 Juditsky, 1992) moyenne le paramètre pour la lecture audible pendant que
@@ -579,6 +582,11 @@ programmes dans le tutoriel.
 | `spsa_1D_clocked` contre `descend_1D_clocked`, gain, SGD 0,5 par trame de 64 | mêmes trajectoires, différence `0` à chaque échantillon, 0,700000 à 4 000 |
 | `spsa_1D_clocked`, retard entier d'un peigne, `c = 2`, Adam 0,5 par trame de 256, depuis 160 | `int(d) = 200` dès 25 000 échantillons, tenu à partir de 40 000, résidu 0 ; la tangente `fad` est identiquement nulle |
 | `search_1D_clocked` contre `descend_1D`, `select2(p > 0,5, …)` depuis 0 | la recherche à 0,83 en quelques trames, perte 0 ; `descend_1D` ne bouge pas |
+| `descend_1D` + Adam 0,02 sur la corde, gradient et perte lissés | depuis 228 Hz : verrouillé à 220 dès 18 000 échantillons, gradient 0,003, perte 1e-4 ; depuis 200 Hz : marche entre 196 et 207 Hz, gradient 0,025, perte 0,011, plus grand sur le plateau que dans le puits |
+| `descend_1D_restart(2, (1, -1))` + SGD sur la perte à deux puits, patience 4 000 | 0,960 (puits peu profond, perte 0,29 > `eps_l`) puis redémarrage à 8 000 et -1,036 (puits profond) pour de bon |
+| `lsq_1D_restart(2, (1, -1))` + NLMS sur `x · L(p)` contre `-0,2 x`, `L` le polynôme à deux puits | 0,960 (résidu 0,24 E[x²], jamais nul dans le puits peu profond) puis redémarrage à 8 000 et une racine de `L = -0,2` dans le puits profond, résidu nul |
+| redémarrage sur la corde depuis 228 Hz après une dérive, NLMS ou Adam, simple ou double précision | ne verrouille pas comme une boucle neuve partie de 228 : le modèle, sa tangente et le moteur gardent l'état de la dérive ; non retenu comme fixture |
+| `no_progress(2 000, 0,05, 0,1)` sur une perte décroissante, constante haute, constante basse | 0, 1, 0 par segment |
 
 ## 6. Pièges à connaître
 
@@ -922,9 +930,14 @@ haute), `langevin_g`, le pas SGD plus un bruit recuit, qui quitte un puits
 peu profond (section 5) mais n'attire pas sur un plateau — et les boucles
 sans gradient de la section 4.10, `spsa_1D_clocked`, `spsa_N_clocked` et
 `search_1D_clocked`, qui apprennent les paramètres discrets par deux
-évaluations de la perte par trame. Les départs multiples et la grille
-restent à écrire ; deux formes seraient naturelles, ni écrites ni
-mesurées : dans le graphe, `N` boucles en parallèle depuis
+évaluations de la perte par trame ; et `descend_1D_restart`, le multi-start
+séquentiel au prix d'un seul modèle, qui prend le départ suivant quand la
+perte ne progresse plus (mesuré sur les paysages à deux puits : le puits peu
+profond quitté à 8 000 échantillons pour le profond ; sur la corde, un
+départ pris après une dérive ne verrouille pas comme une boucle neuve,
+section 5). Les
+départs en parallèle et la grille restent à écrire ; deux formes seraient
+naturelles, ni écrites ni mesurées : dans le graphe, `N` boucles en parallèle depuis
 des inits distincts, une perte lissée par `ema` pour chacune, un sélecteur
 qui suit la meilleure et `gated` ou `stop_below` pour éteindre les autres ;
 côté hôte, la boucle de

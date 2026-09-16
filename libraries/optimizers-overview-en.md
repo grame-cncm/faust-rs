@@ -208,14 +208,14 @@ ready-made loops and what surrounds them.
 
 | Section | What it holds | Why it exists |
 |---|---|---|
-| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak`, `init_latch`, `init_reset`, `stalled` | the few primitives every engine and loop is written with, on top of `si`, `ba`, `ro`, `ma`; starting a loop from an outside estimate; detecting a plateau |
+| Signal helpers and parameter state | `clip`, `sgn`, `ema`, `ema_bc`, `pstate`, `polyak`, `init_latch`, `init_reset`, `stalled`, `no_progress` | the few primitives every engine and loop is written with, on top of `si`, `ba`, `ro`, `ma`; starting a loop from an outside estimate; detecting a flat plateau (`stalled`) or a sloped one (`no_progress`) |
 | Losses and regularizers | `mse`, `pseudo_huber`, `logcosh`, `energy_loss`, `log_energy_loss`, `l2`, `l1s` | a loss is a plain Faust function `loss(y, t)`; these are smooth ones |
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | learn in a domain where every value is valid (stable, positive, bounded) instead of clipping |
 | Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `ramp_lin`, `ramp_exp`, `lr_exp`, `lr_cos`, `warmup` | what happens to a gradient before the engine, and how a learning rate, or a model parameter, evolves |
 | Least-squares engines | `lms`, `nlms`, `gn1`, `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd` | engines that see the residual `r` and the sensitivity `j` separately |
 | Gradient engines | `sgd_g`, `momentum_g`, `nesterov_g`, `adam_g`, `nadam_g`, `amsgrad_g`, `adabelief_g`, `rmsprop_g`, `adagrad_g`, `lion_g`, `sign_g`, `langevin_g` | engines that see one number, the loss gradient `g`; `langevin_g` adds an annealed noise to it, to leave a shallow well |
-| Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D` | the model is differentiated, the loss is implicitly the squared error |
-| Loss-first loops | `descend_1D` … `descend_5D` | the loss is differentiated, whatever it is |
+| Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D`, `lsq_1D_restart` | the model is differentiated, the loss is implicitly the squared error; `lsq_1D_restart` changes start when the residual stops making progress |
+| Loss-first loops | `descend_1D` … `descend_5D`, `descend_1D_restart` | the loss is differentiated, whatever it is; `descend_1D_restart` takes the next start when the loss stops making progress |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | second-order steps for two or three correlated parameters |
 | Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus with one engine and one pair of bounds, in forward or in reverse mode |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | the gradient at audio rate, averaged over the frame, the step once per firing of an `ondemand` clock |
@@ -407,8 +407,10 @@ damping, the smoothing of a loss — and not only a rate; this is the
 continuation of section 9, written as a signal. `init_latch` and
 `init_reset` make an outside estimate the `init` of a loop: the loop is held
 at `init` while the estimate is observed, then released on the frozen value;
-`stalled` reads a plateau, a small gradient under a high loss, for the
-restart loops to come. `gate_g` learns
+`stalled` reads a flat plateau, a small gradient under a high loss, and
+`no_progress` a sloped one, a loss that no longer falls over a patience
+window: the latter is what `descend_1D_restart` restarts on, since on the
+string the gradient is larger on the plateau than in the well (section 5). `gate_g` learns
 only when a condition holds, typically when there is signal: the same gating
 adaptive filters use to avoid drifting in silence. `polyak` (Polyak & Juditsky,
 1992) averages the parameter for the audible readout while the optimizer
@@ -548,6 +550,11 @@ in the tutorial.
 | `spsa_1D_clocked` vs `descend_1D_clocked`, gain, SGD 0.5 per 64-sample frame | same trajectories, difference `0` on every sample, 0.700000 at 4 000 |
 | `spsa_1D_clocked`, integer delay of a comb, `c = 2`, Adam 0.5 per 256-sample frame, from 160 | `int(d) = 200` from 25 000 samples, held from 40 000 on, residual 0; the `fad` tangent is identically zero |
 | `search_1D_clocked` vs `descend_1D`, `select2(p > 0.5, …)` from 0 | the search at 0.83 within a few frames, loss 0; `descend_1D` never moves |
+| `descend_1D` + Adam 0.02 on the string, smoothed gradient and loss | from 228 Hz: locked on 220 by 18 000 samples, gradient 0.003, loss 1e-4; from 200 Hz: walks between 196 and 207 Hz, gradient 0.025, loss 0.011, larger on the plateau than in the well |
+| `descend_1D_restart(2, (1, -1))` + SGD on the two-well loss, patience 4 000 | 0.960 (shallow well, loss 0.29 > `eps_l`) then a restart at 8 000 and -1.036 (deep well) for good |
+| `lsq_1D_restart(2, (1, -1))` + NLMS on `x · L(p)` against `-0.2 x`, `L` the two-well polynomial | 0.960 (residual 0.24 E[x²], never nil in the shallow well) then a restart at 8 000 and a root of `L = -0.2` in the deep well, residual nil |
+| a restart on the string from 228 Hz after a drift, NLMS or Adam, single or double precision | does not lock the way a fresh loop from 228 does: the model, its tangent and the engine keep the drift's state; not kept as a fixture |
+| `no_progress(2 000, 0.05, 0.1)` on a decaying, a constant high and a constant low loss | 0, 1, 0 per segment |
 
 ## 6. Pitfalls worth knowing
 
@@ -863,8 +870,12 @@ a high loss), `langevin_g`, the SGD step plus an annealed noise, which
 leaves a shallow well (section 5) but has no pull on a plateau — and the
 gradient-free loops of section 4.10, `spsa_1D_clocked`, `spsa_N_clocked` and
 `search_1D_clocked`, which learn discrete parameters from two evaluations of
-the loss per frame. Multi-start and the grid remain to be written; two forms
-would be natural, neither written nor measured: in the graph, `N` loops in parallel from distinct inits, a
+the loss per frame; and `descend_1D_restart`, the sequential multi-start for
+the cost of one model, which takes the next start when the loss stops making
+progress (measured on the two-well landscapes: the shallow well left at
+8 000 samples for the deep one; on the string, a start taken after a drift
+does not lock the way a fresh loop does, section 5). Parallel starts and the grid remain
+to be written; two forms would be natural, neither written nor measured: in the graph, `N` loops in parallel from distinct inits, a
 loss smoothed by `ema` for each, a selector that follows the best and
 `gated` or `stop_below` to switch the others off; on the host side, the
 loop of [docs/rad-usage-en.md](../docs/rad-usage-en.md) recompiles and

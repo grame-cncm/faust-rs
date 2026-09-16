@@ -557,14 +557,102 @@ fn search_finds_the_select2_branch_that_descend_never_reaches() {
 }
 
 #[test]
+fn no_progress_flags_a_sloped_plateau_and_neither_a_descent_nor_a_finish() {
+    // [no_progress, l] over three 20 000-sample segments: a decaying loss
+    // -> 0, a constant high loss -> 1, a constant loss under eps_l -> 0
+    // (read on the last 10 000 samples of each, past the warm-up of 2 W).
+    let Some(outs) = run_interp_fixture("opt_no_progress_lanes", 60_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2);
+    let flag = &outs[0];
+    let mean = |range: std::ops::Range<usize>| {
+        flag[range.clone()].iter().sum::<f32>() / range.len() as f32
+    };
+    assert_eq!(
+        mean(10_000..20_000),
+        0.0,
+        "a decreasing loss read as no progress"
+    );
+    assert_eq!(
+        mean(30_000..40_000),
+        1.0,
+        "a stuck high loss not read as no progress"
+    );
+    assert_eq!(
+        mean(50_000..60_000),
+        0.0,
+        "a finished loss read as no progress"
+    );
+}
+
+#[test]
+fn lsq_restart_takes_the_second_start_out_of_a_local_minimum() {
+    // [p, start index, residual]: NLMS on x * L(p) against -0.2 x settles in
+    // L's shallow well at 0.96 (residual power above eps_l), the loop
+    // restarts after 2 W = 8 000 samples from p = -1 and reaches a root of
+    // L(p) = -0.2 in the deep well, where the residual vanishes.
+    let Some(outs) = run_interp_fixture("opt_lsq_restart_two_wells", 30_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    let k = &outs[1];
+    assert!(
+        k[..7_000].iter().all(|&v| v == 0.0),
+        "the first start should last 2 W"
+    );
+    assert!(
+        k[12_000..].iter().all(|&v| v == 1.0),
+        "the loop should stay on its second start"
+    );
+    let p = outs[0][29_999];
+    let residual = rms(&outs[2][25_000..]);
+    eprintln!("lsq restart two wells: p {p} residual {residual:.3e}");
+    assert!(
+        p < -0.5,
+        "the second start should stay in the deep well, got {p}"
+    );
+    assert!(
+        residual < 1e-3,
+        "the residual should vanish, got rms {residual}"
+    );
+}
+
+#[test]
+fn restart_leaves_the_shallow_well_for_the_second_start() {
+    // [p, start index] on the two-well loss with descend_1D_restart: SGD
+    // settles in the shallow well (loss 0.29, above eps_l), the loop restarts
+    // after 2 W = 8 000 samples from p = -1 and stays in the deep well.
+    let Some(outs) = run_interp_fixture("opt_restart_two_wells", 30_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2);
+    let k = &outs[1];
+    assert!(
+        k[..7_000].iter().all(|&v| v == 0.0),
+        "the first start should last 2 W"
+    );
+    assert!(
+        k[12_000..].iter().all(|&v| v == 1.0),
+        "the loop should stay on its second start"
+    );
+    let p = outs[0][29_999];
+    eprintln!("restart two wells: p {p}");
+    assert!(
+        (p + 1.036).abs() < 0.01,
+        "the second start should settle in the deep well, got {p}"
+    );
+}
+
+#[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 89 entries, 150 outputs. It only has to compile,
+    // documented function: 92 entries, 155 outputs. It only has to compile,
     // run, and stay finite.
     let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
         return;
     };
-    assert_eq!(outs.len(), 150, "expected the outputs of every Test entry");
+    assert_eq!(outs.len(), 155, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(

@@ -67,7 +67,10 @@ declare license "MIT/LGPL-3.0";
 // perturbation) and `search_1D_clocked` ((1+1) evolution strategy) learn from
 // two evaluations of the loss per frame and no tangent at all, so an integer
 // delay, a `select2` or anything else `fad` gives a zero tangent to becomes
-// learnable. The one-parameter loops
+// learnable. `descend_1D_restart` walks a sequence of starting points, taking
+// the next one whenever the loss makes no progress over a patience window
+// (`no_progress`), a sequential multi-start for the cost of one model;
+// `lsq_1D_restart` is its least-squares twin. The one-parameter loops
 // `lsq_1D`, `descend_1D` and `descend_1D_clocked` take `init` through an
 // input wire of their recursive block instead of closing over it, so an
 // `init` computed in the graph does not multiply their compile time; same
@@ -381,6 +384,38 @@ init_reset(T) = float(ba.time) <= T;
 // ```
 //------------------------------------------------------------------------------
 stalled(a, eps_g, eps_l, g, l) = (ema(a, abs(g)) < eps_g) & (ema(a, l) > eps_l);
+
+//------------------------------`(op.)no_progress`------------------------------
+// Progress detector: `1` when the smoothed loss is still above `eps_l` and
+// has not fallen by a fraction `rel` over the last `W` samples, `0` otherwise
+// and during the first `2 W` samples. The smoothing horizon is `W`, the
+// average bias-corrected so that it reads the loss from the first sample. Where
+// `stalled` reads a flat plateau (a small gradient), this reads a *sloped*
+// one: a loop that walks without descending, as on the waveguide string,
+// whose plateau slopes toward lower pitch and where the gradient is larger
+// than in the well. `descend_1D_restart` restarts on this test.
+//
+// #### Usage
+//
+// ```
+// no_progress(W, rel, eps_l, l) : _
+// ```
+//
+// Where:
+//
+// * `W`: patience, in samples (a constant)
+// * `rel`: the relative decrease over `W` samples that counts as progress
+// * `eps_l`: loss below which the descent counts as finished
+// * `l`: the per-sample loss
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// no_progress_test = op.no_progress(64, 0.05, 0.1, hslider("no_progress:l", 0, 0, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+no_progress(W, rel, eps_l, l) = (float(ba.time) >= 2.0 * W) & (m > eps_l) & (m > (m @ W) * (1.0 - rel))
+with { m = ema_bc(1.0 - 1.0 / W, l); };
 
 //===============================Losses and Regularizers====================================
 // Scalar losses `loss(y, t)` between a model output `y` and a target `t`, and
@@ -2082,6 +2117,133 @@ with {
         next3 = clip(lo3 - init3, hi3 - init3, _dev(reset, prev3) - upd3(g3));
         next4 = clip(lo4 - init4, hi4 - init4, _dev(reset, prev4) - upd4(g4));
         next5 = clip(lo5 - init5, hi5 - init5, _dev(reset, prev5) - upd5(g5));
+    };
+};
+
+//------------------------------`(op.)descend_1D_restart`----------------------
+// `descend_1D` with a sequence of `K` starting points: the parameter starts
+// at `init(0)`; whenever the loss has made no progress (the test of
+// `no_progress`, restarted at each start: the smoothed loss above `eps_l`
+// and not down by `rel` over the last `W` samples, checked from `2 W`
+// samples after the start), the deviation is zeroed and the next start
+// `init(k + 1)` (modulo `K`) is taken; during the first `W` samples of a
+// start the parameter is held while the model and its tangent settle on it
+// (the engine still sees the gradient and adapts). A sequential multi-start
+// for the cost of one model. Outputs the parameter and the index of the
+// current start; the engine keeps its state across restarts; `reset`
+// returns to `init(0)`. A stateful model is not the fresh one a new loop
+// would start with: on the waveguide string, restarted from 228 Hz after a
+// drift, neither NLMS nor Adam locks the way a fresh loop does from the same
+// start, in either precision; the loops are measured on memoryless two-well
+// landscapes.
+//
+// #### Usage
+//
+// ```
+// descend_1D_restart(K, init, loss, upd, lo, hi, W, rel, eps_l, reset) : _, _
+// ```
+//
+// Where:
+//
+// * `K`: number of starting points
+// * `init`: `init(k)`, the starting value of index `k` (a function of a constant)
+// * `loss`, `upd`, `lo`, `hi`, `reset`: as `descend_1D`
+// * `W`, `rel`, `eps_l`: as `no_progress`
+//
+// #### Example
+//
+// ```
+// loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;   // a shallow well at 0.96, a deep one at -1.04
+// init(k) = select2(k, 1.0, -1.0);
+// p = op.descend_1D_restart(2, init, loss, op.sgd_g(0.01), -3, 3, 4000, 0.05, 0.1, 0) : _, !;
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// descend_1D_restart_test = op.descend_1D_restart(2, \(k).(k), \(p).(op.mse(p * x, 0.5 * x)), op.sgd_g(0.01), -4, 4, 64, 0.05, 0.001, 0)
+// with { x = hslider("descend_1D_restart:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+descend_1D_restart(K, init, loss, upd, lo, hi, W, rel, eps_l, reset) = (loop ~ (_, _, _, _)) : (!, !, !, !, _, _)
+with {
+    a = 1.0 - 1.0 / W;
+    loop(prev, kprev, tprev, mprev) = next_dev, next_k, next_t, m, p, k
+    with {
+        k = select2(reset != 0.0, kprev, 0.0);
+        t = select2(reset != 0.0, tprev, 0.0);
+        i1 = par(j, K, init(j)) : ba.selectn(K, int(k));
+        dev = _dev(reset, prev);
+        p = clip(lo, hi, i1 + dev);
+        pt = fad(loss(p), p);
+        l = pt : _, !;
+        g = pt : !, _;
+        // the smoothed loss, restarted with the parameter (0 marks a fresh start)
+        m = select2((t == 0.0) | (mprev == 0.0), a * mprev + (1.0 - a) * l, l);
+        restart = (t >= 2.0 * W) & (m > eps_l) & (m > (m @ W) * (1.0 - rel));
+        updated = clip(lo - i1, hi - i1, dev - upd(g));
+        // the first W samples of a start let the model and its tangent settle on
+        // the new parameter (the engine still sees the gradient and adapts)
+        next_dev = select2(restart | (t < W), updated, 0.0);
+        next_k = select2(restart, k, select2(k + 1.0 >= K, k + 1.0, 0.0));
+        next_t = select2(restart, t + 1.0, 0.0);
+    };
+};
+
+//------------------------------`(op.)lsq_1D_restart`--------------------------
+// `lsq_1D` with a sequence of `K` starting points, restarted as
+// `descend_1D_restart` when the squared residual makes no progress: the
+// model is differentiated, the engine sees the residual and the
+// sensitivity. Outputs the parameter and the index of the current start.
+//
+// #### Usage
+//
+// ```
+// lsq_1D_restart(K, init, mdl, upd, lo, hi, W, rel, eps_l, reset, target, x) : _, _
+// ```
+//
+// Where:
+//
+// * `K`, `init`, `W`, `rel`, `eps_l`: as `descend_1D_restart`
+// * `mdl`, `upd`, `lo`, `hi`, `reset`, `target`, `x`: as `lsq_1D`
+//
+// #### Example
+//
+// ```
+// L(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;   // a shallow well at 0.96, a deep one at -1.04
+// init(k) = select2(k, 1.0, -1.0);                  // the target -0.2 x is reached in the deep well only
+// p = op.lsq_1D_restart(2, init, \(p, s).(s * L(p)), op.nlms(0.01, 1e-6, 0.99), -3, 3, 4000, 0.05, 0.05, 0, -0.2 * x, x) : _, !;
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// lsq_1D_restart_test = op.lsq_1D_restart(2, \(k).(k), \(p, x).(p * x), op.nlms(0.01, 1e-6, 0.99), -4, 4, 64, 0.05, 0.001, 0, 0.5 * x, x)
+// with { x = hslider("lsq_1D_restart:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+lsq_1D_restart(K, init, mdl, upd, lo, hi, W, rel, eps_l, reset, target, x) = (loop ~ (_, _, _, _)) : (!, !, !, !, _, _)
+with {
+    a = 1.0 - 1.0 / W;
+    loop(prev, kprev, tprev, mprev) = next_dev, next_k, next_t, m, p, k
+    with {
+        k = select2(reset != 0.0, kprev, 0.0);
+        t = select2(reset != 0.0, tprev, 0.0);
+        i1 = par(j, K, init(j)) : ba.selectn(K, int(k));
+        dev = _dev(reset, prev);
+        p = clip(lo, hi, i1 + dev);
+        pt = fad(mdl(p, x), p);
+        r = (pt : _, !) - target;
+        j1 = pt : !, _;
+        l = r * r;
+        m = select2((t == 0.0) | (mprev == 0.0), a * mprev + (1.0 - a) * l, l);
+        restart = (t >= 2.0 * W) & (m > eps_l) & (m > (m @ W) * (1.0 - rel));
+        updated = clip(lo - i1, hi - i1, dev - upd(r, j1));
+        // the first W samples of a start let the model and its tangent settle on
+        // the new parameter (the engine still sees the gradient and adapts)
+        next_dev = select2(restart | (t < W), updated, 0.0);
+        next_k = select2(restart, k, select2(k + 1.0 >= K, k + 1.0, 0.0));
+        next_t = select2(restart, t + 1.0, 0.0);
     };
 };
 

@@ -253,6 +253,31 @@ its tangent.
 
 ## N3 — Restart on a plateau
 
+**Status 2026-09-16: landed** (`optimizers.lib` 0.9.0), with one deviation
+in the detector. Measured with a loss-first Adam loop on the string, the
+gradient is *larger* on the plateau (0.025, the loop walking between 196
+and 207 Hz) than in the well (0.003, locked on 220): the plateau slopes, and
+`stalled`'s small-gradient test cannot separate the drift from a legitimate
+descent (the loss is the same 0.010 in both during the first 12 000
+samples). The loop therefore restarts on *no progress*: a new helper
+`no_progress(W, rel, eps_l, l)` reads a bias-corrected smoothed loss that is
+above `eps_l` and not down by `rel` over the last `W` samples, and
+`descend_1D_restart(K, init, loss, upd, lo, hi, W, rel, eps_l, reset)`
+applies that test restarted at each start (a refractory of `2 W`). The
+string bed did not survive: restarted from 228 Hz after a drift, with NLMS
+(`lsq_1D_restart`) or Adam (`descend_1D_restart`), with or without a
+settling hold, in single or double precision, the loop does not lock the way
+a fresh loop from 228 Hz does. A fresh loop's first NLMS steps are huge (its
+power estimate starts empty) and its tangent starts clean; after a restart
+the model, its tangent through the recursion and the engine keep the
+drift's state, and the ±1 Hz well does not forgive it. Rather than tune
+thresholds on the fragile bed, the two loops are measured on memoryless
+two-well landscapes (`opt_restart_two_wells.dsp`,
+`opt_lsq_restart_two_wells.dsp`): the shallow well left at 8 000 samples for
+the deep one, for good. Both loops hold the parameter during the first `W`
+samples of a start so the model settles. `stalled` stays for flat plateaus.
+
+
 **Surface** (section "Loss-First Loops"):
 `descend_1D_restart(K, init, loss, upd, lo, hi, a, eps_g, eps_l, reset)`:
 `descend_1D` whose `init` is `init(k)` for a restart index `k` counted from 0;
