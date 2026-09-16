@@ -452,14 +452,46 @@ fn init_latch_starts_the_string_from_its_own_pitch_estimate() {
 }
 
 #[test]
+fn langevin_leaves_the_shallow_well_where_sgd_stays() {
+    // [sgd_g, langevin_g with temp annealed 0.5 -> 0, langevin_g at temp 0]
+    // on (p^2 - 1)^2 + 0.3 p from p = 1: SGD settles in the shallow well at
+    // 0.960, Langevin crosses the barrier while hot and cools into the deep
+    // well at -1.036; at temperature zero the Langevin step is the SGD step
+    // bit for bit.
+    let Some(outs) = run_interp_fixture("opt_langevin_two_wells", 200_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    for (frame, (&a, &b)) in outs[0].iter().zip(&outs[2]).enumerate() {
+        assert!(
+            a.is_finite(),
+            "opt_langevin_two_wells: non-finite sgd at frame {frame}"
+        );
+        assert_eq!(a, b, "langevin at temp 0 differs from sgd at frame {frame}");
+    }
+    let mean = |lane: &[f32]| lane[180_000..].iter().sum::<f32>() / 20_000.0;
+    let sgd = mean(&outs[0]);
+    let langevin = mean(&outs[1]);
+    eprintln!("two wells: sgd {sgd} langevin {langevin}");
+    assert!(
+        (sgd - 0.960).abs() < 0.005,
+        "sgd should settle in the shallow well, got {sgd}"
+    );
+    assert!(
+        (langevin + 1.036).abs() < 0.03,
+        "langevin should cool into the deep well, got {langevin}"
+    );
+}
+
+#[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 85 entries, 144 outputs. It only has to compile,
+    // documented function: 86 entries, 145 outputs. It only has to compile,
     // run, and stay finite.
     let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
         return;
     };
-    assert_eq!(outs.len(), 144, "expected the outputs of every Test entry");
+    assert_eq!(outs.len(), 145, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(

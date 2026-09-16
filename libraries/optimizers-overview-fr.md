@@ -229,7 +229,7 @@ briques de base aux boucles prêtes à l'emploi.
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | apprendre dans un domaine où toute valeur est admissible (stable, positive, bornée) plutôt que borner |
 | Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `ramp_lin`, `ramp_exp`, `lr_exp`, `lr_cos`, `warmup` | ce qui arrive à un gradient avant le moteur, et comment une vitesse d'apprentissage, ou un paramètre du modèle, évolue |
 | Least-squares engines | `lms`, `nlms`, `gn1`, `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd` | moteurs qui voient séparément le résidu `r` et la sensibilité `j` |
-| Gradient engines | `sgd_g`, `momentum_g`, `nesterov_g`, `adam_g`, `nadam_g`, `amsgrad_g`, `adabelief_g`, `rmsprop_g`, `adagrad_g`, `lion_g`, `sign_g` | moteurs qui voient un seul nombre, le gradient de la perte `g` |
+| Gradient engines | `sgd_g`, `momentum_g`, `nesterov_g`, `adam_g`, `nadam_g`, `amsgrad_g`, `adabelief_g`, `rmsprop_g`, `adagrad_g`, `lion_g`, `sign_g`, `langevin_g` | moteurs qui voient un seul nombre, le gradient de la perte `g` ; `langevin_g` y ajoute un bruit recuit pour quitter un puits peu profond |
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D` | le modèle est différencié, la perte est implicitement l'erreur quadratique |
 | Loss-first loops | `descend_1D` … `descend_5D` | la perte est différenciée, quelle qu'elle soit |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | pas de second ordre pour deux ou trois paramètres corrélés |
@@ -349,6 +349,7 @@ exemples de la documentation sont compilés eux aussi.
 | `amsgrad_g`, `adabelief_g` | Reddi et al., 2018 ; Zhuang et al., 2020 | variantes d'Adam qui n'augmentent jamais le pas effectif (AMSGrad) ou normalisent par la variance du gradient plutôt que par son amplitude (AdaBelief) |
 | `lion_g` | Chen et al., 2023 | des pas de `±lr` dans la direction du signe d'un moment : une seule vitesse pour des paramètres de toute unité, une seule variable d'état. Mesuré : cinq coefficients de biquad appris avec une seule vitesse Lion, tous à moins de 3e-6 de la cible |
 | `sign_g`, `sign_sgd` | descente par le signe | le pas insensible à l'échelle le plus simple |
+| `langevin_g` | Welling & Teh, 2011 — dynamique de Langevin à gradient stochastique | le pas SGD plus un bruit d'écart-type `sqrt(2 lr temp)` : à température fixe le paramètre échantillonne `exp(-perte / temp)`, recuite vers zéro il explore puis descend. Mesuré sur une perte à deux puits, `(p² - 1)² + 0,3 p` depuis le puits peu profond : SGD y reste (0,960), Langevin passe la barrière et refroidit dans le puits profond (-1,036) ; à température nulle, identique à SGD bit pour bit |
 
 La bibliothèque conserve les `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd`
 d'origine avec leurs signatures ; `adam` et `nadam` ont gagné la correction de
@@ -552,6 +553,7 @@ programmes dans le tutoriel.
 | `init_latch` + `init_reset` sur la corde, estimation par autocorrélation observée 8 192 échantillons | init figé à 222,77 Hz (+1,3 %), hauteur 219,998 à 24 000, `220,000000` dès 48 000, résidu sous 1e-6 |
 | `stalled(0,999, 0,01, 0,1)` sur (gradient, perte) = (0,5, 1), (0, 1), (0, 0,001) | 0, 1, 0 par segment |
 | `lr_exp` contre `ramp_exp` | identiques bit pour bit |
+| `langevin_g`, température recuite 0,5 → 0, contre `sgd_g`, perte à deux puits depuis le puits peu profond | SGD 0,960 (puits peu profond), Langevin -1,036 (puits profond) à 200 000 échantillons ; à température 0, identique à SGD |
 
 ## 6. Pièges à connaître
 
@@ -890,9 +892,11 @@ qui en général l'encadre plutôt qu'elle ne le remplace :
   les énumérer.
 
 De tout cela, la bibliothèque n'a que les briques : l'`init` sur estimation,
-les rampes et le détecteur de plateau `stalled` (gradient petit sous une
-perte haute). Les recherches elles-mêmes restent à écrire ; deux formes
-seraient naturelles, ni écrites ni mesurées : dans le graphe, `N` boucles en parallèle depuis
+les rampes, le détecteur de plateau `stalled` (gradient petit sous une perte
+haute) et `langevin_g`, le pas SGD plus un bruit recuit, qui quitte un puits
+peu profond (section 5) mais n'attire pas sur un plateau. Les recherches
+elles-mêmes restent à écrire ; deux formes seraient naturelles, ni écrites ni
+mesurées : dans le graphe, `N` boucles en parallèle depuis
 des inits distincts, une perte lissée par `ema` pour chacune, un sélecteur
 qui suit la meilleure et `gated` ou `stop_below` pour éteindre les autres ;
 côté hôte, la boucle de
@@ -949,6 +953,8 @@ convexité.
   solveurs implicites.
 - I. Loshchilov, F. Hutter, « SGDR: Stochastic Gradient Descent with Warm
   Restarts », ICLR 2017. <https://arxiv.org/abs/1608.03983>
+- M. Welling, Y. W. Teh, « Bayesian Learning via Stochastic Gradient Langevin
+  Dynamics », ICML 2011 — le moteur `langevin_g`.
 - N. Hansen, « The CMA Evolution Strategy: A Tutorial », 2016 — recherche
   sans gradient. <https://arxiv.org/abs/1604.00772>
 - Notes côté Faust : [docs/fad-note-en.md](../docs/fad-note-en.md),

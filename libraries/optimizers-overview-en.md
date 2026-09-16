@@ -213,7 +213,7 @@ ready-made loops and what surrounds them.
 | Reparameterizations | `poles_from_reflection`, `reflection_from_poles`, `sigmoid_map` | learn in a domain where every value is valid (stable, positive, bounded) instead of clipping |
 | Gradient conditioning and schedules | `clip_g`, `softclip_g`, `gate_g`, `ramp_lin`, `ramp_exp`, `lr_exp`, `lr_cos`, `warmup` | what happens to a gradient before the engine, and how a learning rate, or a model parameter, evolves |
 | Least-squares engines | `lms`, `nlms`, `gn1`, `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd` | engines that see the residual `r` and the sensitivity `j` separately |
-| Gradient engines | `sgd_g`, `momentum_g`, `nesterov_g`, `adam_g`, `nadam_g`, `amsgrad_g`, `adabelief_g`, `rmsprop_g`, `adagrad_g`, `lion_g`, `sign_g` | engines that see one number, the loss gradient `g` |
+| Gradient engines | `sgd_g`, `momentum_g`, `nesterov_g`, `adam_g`, `nadam_g`, `amsgrad_g`, `adabelief_g`, `rmsprop_g`, `adagrad_g`, `lion_g`, `sign_g`, `langevin_g` | engines that see one number, the loss gradient `g`; `langevin_g` adds an annealed noise to it, to leave a shallow well |
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D` | the model is differentiated, the loss is implicitly the squared error |
 | Loss-first loops | `descend_1D` … `descend_5D` | the loss is differentiated, whatever it is |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | second-order steps for two or three correlated parameters |
@@ -330,6 +330,7 @@ every documented function, so the documentation examples are compiled too.
 | `amsgrad_g`, `adabelief_g` | Reddi et al., 2018; Zhuang et al., 2020 | Adam variants that never increase the effective step (AMSGrad) or normalize by the gradient's variance rather than its magnitude (AdaBelief) |
 | `lion_g` | Chen et al., 2023 | steps of `±lr` in the direction of a momentum sign: one learning rate for parameters of any unit, one state variable. Measured: five biquad coefficients learned with a single Lion rate, all within 3e-6 of the target |
 | `sign_g`, `sign_sgd` | sign descent | the simplest scale-free step |
+| `langevin_g` | Welling & Teh, 2011 — stochastic gradient Langevin dynamics | the SGD step plus a noise of standard deviation `sqrt(2 lr temp)`: at a fixed temperature the parameter samples `exp(-loss / temp)`, annealed to zero it explores then descends. Measured on a two-well loss, `(p² - 1)² + 0.3 p` from the shallow well: SGD stays there (0.960), Langevin crosses the barrier and cools into the deep well (-1.036); at zero temperature it is SGD bit for bit |
 
 The library keeps the original `sgd`, `adam`, `rmsprop`, `nadam`, `sign_sgd`
 with their signatures; `adam` and `nadam` gained the bias correction.
@@ -522,6 +523,7 @@ in the tutorial.
 | `init_latch` + `init_reset` on the string, autocorrelation estimate observed for 8 192 samples | init frozen at 222.77 Hz (+1.3 %), pitch 219.998 at 24 000, `220.000000` from 48 000 on, residual under 1e-6 |
 | `stalled(0.999, 0.01, 0.1)` on (gradient, loss) = (0.5, 1), (0, 1), (0, 0.001) | 0, 1, 0 per segment |
 | `lr_exp` vs `ramp_exp` | bit-identical |
+| `langevin_g`, temperature annealed 0.5 → 0, vs `sgd_g`, two-well loss from the shallow well | SGD 0.960 (shallow well), Langevin -1.036 (deep well) at 200 000 samples; at temperature 0, identical to SGD |
 
 ## 6. Pitfalls worth knowing
 
@@ -832,9 +834,11 @@ that usually wraps it rather than replaces it:
   they have no derivative (section 8) and must be relaxed or enumerated.
 
 Of all this the library has only the building blocks: the `init` from an
-estimate, the ramps and the plateau detector `stalled` (a small gradient
-under a high loss). The searches themselves remain to be written; two forms
-would be natural, neither written nor measured: in the graph, `N` loops in parallel from distinct inits, a
+estimate, the ramps, the plateau detector `stalled` (a small gradient under
+a high loss) and `langevin_g`, the SGD step plus an annealed noise, which
+leaves a shallow well (section 5) but has no pull on a plateau. The searches
+themselves remain to be written; two forms would be natural, neither
+written nor measured: in the graph, `N` loops in parallel from distinct inits, a
 loss smoothed by `ema` for each, a selector that follows the best and
 `gated` or `stop_below` to switch the others off; on the host side, the
 loop of [docs/rad-usage-en.md](../docs/rad-usage-en.md) recompiles and
@@ -888,6 +892,8 @@ under a single rate. Those walls are the ones of section 6 and of section
   implicit solvers.
 - I. Loshchilov, F. Hutter, "SGDR: Stochastic Gradient Descent with Warm
   Restarts", ICLR 2017. <https://arxiv.org/abs/1608.03983>
+- M. Welling, Y. W. Teh, "Bayesian Learning via Stochastic Gradient Langevin
+  Dynamics", ICML 2011 — the `langevin_g` engine.
 - N. Hansen, "The CMA Evolution Strategy: A Tutorial", 2016 — gradient-free
   search. <https://arxiv.org/abs/1604.00772>
 - Faust-side notes: [docs/fad-note-en.md](../docs/fad-note-en.md),

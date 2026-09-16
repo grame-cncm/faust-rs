@@ -60,7 +60,8 @@ declare license "MIT/LGPL-3.0";
 // a loop; `ramp_lin` and `ramp_exp` are the schedules as plain signals, to
 // anneal a model parameter as well as a learning rate (`lr_exp` is now
 // `ramp_exp`, bit-identical); `stalled` flags a plateau, a small gradient
-// under a high loss, for the restart loops to come. The one-parameter loops
+// under a high loss, for the restart loops to come; `langevin_g` is the SGD
+// step plus an annealed noise, to leave a shallow well. The one-parameter loops
 // `lsq_1D`, `descend_1D` and `descend_1D_clocked` take `init` through an
 // input wire of their recursive block instead of closing over it, so an
 // `init` computed in the graph does not multiply their compile time; same
@@ -1435,6 +1436,49 @@ with {
 // ```
 //------------------------------------------------------------------------------
 sign_g(lr, g) = lr * sgn(g);
+
+//------------------------------`(op.)langevin_g`-------------------------------
+// Stochastic gradient Langevin dynamics: the SGD step plus a noise of
+// standard deviation `sqrt(2 lr temp)`, so that the parameter samples
+// `exp(-loss / temp)` instead of settling in the first well it finds. With
+// `temp` annealed to zero (a `ramp_exp`) the walk explores while the
+// temperature is high and descends once it is low; at `temp = 0` the step is
+// `sgd_g(lr)` bit for bit. Noise leaves a shallow well; it does not pull on a
+// flat plateau, and it does not choose the deepest well with certainty.
+//
+// #### Usage
+//
+// ```
+// langevin_g(lr, temp, noise, g) : _
+// ```
+//
+// Where:
+//
+// * `lr`: learning rate
+// * `temp`: temperature, a signal (`ramp_exp(t0, 0.0, T)` to anneal)
+// * `noise`: a unit-variance noise (`no.noise * sqrt(3)`: `no.noise` is
+//   uniform on `[-1, 1]`, variance `1/3`)
+// * `g`: gradient of the loss with respect to the parameter
+//
+// #### Example
+//
+// ```
+// temp = op.ramp_exp(0.5, 0.0, 20000.0);
+// p = op.descend_1D(loss, op.langevin_g(0.01, temp, no.noise * sqrt(3.0)), -3, 3, 1.0, 0);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// langevin_g_test = op.langevin_g(0.01, op.ramp_exp(0.5, 0.0, 4800.0), hslider("langevin_g:n", 0, -1, 1, 0.01), hslider("langevin_g:g", 0, -1, 1, 0.01));
+// ```
+//
+// #### References
+//
+// * M. Welling, Y. W. Teh, "Bayesian Learning via Stochastic Gradient
+//   Langevin Dynamics", ICML 2011.
+//------------------------------------------------------------------------------
+langevin_g(lr, temp, noise, g) = lr * g + sqrt(2.0 * lr * temp) * noise;
 
 //==================================Least-Squares Loops=====================================
 // Loops that learn the `N` parameters of a model `mdl(p1, ..., pN, x)` so that

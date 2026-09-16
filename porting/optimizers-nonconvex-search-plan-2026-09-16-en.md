@@ -149,6 +149,12 @@ Conditioning and Schedules"):
 
 ## N4 — A noisy engine: `langevin_g`
 
+**Status 2026-09-16: landed** (`optimizers.lib` 0.9.0). As planned; the
+deep well of the fixture's loss is at `-1.036` (the plan's `-1.07` was a
+guess), the barrier `1.01` at `p = 0.04`. Measured: SGD `0.960`, Langevin
+`-1.036` at 200 000 samples, the temperature-zero lane bit-identical to SGD.
+
+
 **Surface** (section "Gradient Engines"):
 `langevin_g(lr, temp, noise, g) = lr * g + sqrt(2 * lr * temp) * noise`,
 with `temp` a signal (a `ramp_exp` to zero is the annealing schedule) and
