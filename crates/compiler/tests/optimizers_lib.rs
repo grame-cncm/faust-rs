@@ -350,8 +350,14 @@ fn ramp_exp_is_lr_exp_and_ramp_lin_reaches_its_end() {
     };
     assert_eq!(outs.len(), 3);
     for (frame, (&a, &b)) in outs[0].iter().zip(&outs[1]).enumerate() {
-        assert!(a.is_finite(), "opt_ramp_alias: non-finite lr_exp at frame {frame}");
-        assert_eq!(a, b, "opt_ramp_alias: lr_exp and ramp_exp differ at frame {frame}");
+        assert!(
+            a.is_finite(),
+            "opt_ramp_alias: non-finite lr_exp at frame {frame}"
+        );
+        assert_eq!(
+            a, b,
+            "opt_ramp_alias: lr_exp and ramp_exp differ at frame {frame}"
+        );
     }
     let lin = &outs[2];
     assert_eq!(lin[0], 0.01);
@@ -374,9 +380,21 @@ fn stalled_flags_a_plateau_and_neither_a_descent_nor_a_convergence() {
     let mean = |range: std::ops::Range<usize>| {
         flag[range.clone()].iter().sum::<f32>() / range.len() as f32
     };
-    assert_eq!(mean(10_000..20_000), 0.0, "descending segment read as stalled");
-    assert_eq!(mean(30_000..40_000), 1.0, "stuck segment not read as stalled");
-    assert_eq!(mean(50_000..60_000), 0.0, "converged segment read as stalled");
+    assert_eq!(
+        mean(10_000..20_000),
+        0.0,
+        "descending segment read as stalled"
+    );
+    assert_eq!(
+        mean(30_000..40_000),
+        1.0,
+        "stuck segment not read as stalled"
+    );
+    assert_eq!(
+        mean(50_000..60_000),
+        0.0,
+        "converged segment read as stalled"
+    );
 }
 
 #[test]
@@ -391,7 +409,10 @@ fn init_latch_starts_the_string_from_its_own_pitch_estimate() {
     assert_eq!(outs.len(), 3);
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
-            assert!(sample.is_finite(), "opt_init_latch_string: non-finite output {channel} at frame {frame}");
+            assert!(
+                sample.is_finite(),
+                "opt_init_latch_string: non-finite output {channel} at frame {frame}"
+            );
         }
     }
     // While the estimate is observed (up to and including sample 8 192)
@@ -403,7 +424,10 @@ fn init_latch_starts_the_string_from_its_own_pitch_estimate() {
         .map(|frame| (outs[0][frame] - outs[2][frame]).abs())
         .sum::<f32>()
         / 8_193.0;
-    assert!(gap < 0.5, "the loop should be held at init during the observation, mean gap {gap} Hz");
+    assert!(
+        gap < 0.5,
+        "the loop should be held at init during the observation, mean gap {gap} Hz"
+    );
     let init = &outs[2];
     let frozen = init[8_193];
     assert!(
@@ -417,8 +441,14 @@ fn init_latch_starts_the_string_from_its_own_pitch_estimate() {
     let pitch = outs[0][76_000..].iter().sum::<f32>() / 4_000.0;
     let residual = rms(&outs[1][76_000..]);
     eprintln!("init_latch string: init {frozen} pitch {pitch} residual {residual:.3e}");
-    assert!((pitch - 220.0).abs() < 0.05, "pitch should lock on 220 Hz, got {pitch}");
-    assert!(residual < 1e-3, "residual should vanish, got rms {residual}");
+    assert!(
+        (pitch - 220.0).abs() < 0.05,
+        "pitch should lock on 220 Hz, got {pitch}"
+    );
+    assert!(
+        residual < 1e-3,
+        "residual should vanish, got rms {residual}"
+    );
 }
 
 #[test]

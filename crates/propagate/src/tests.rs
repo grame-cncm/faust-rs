@@ -485,3 +485,68 @@ fn result_memo_hit_replays_pending_fad_seeds_across_recursions_body() {
         "the second recursion's fad box must hit the memo"
     );
 }
+
+/// A zero-input chain whose DAG has `3 * levels` nodes and whose tree
+/// unfolding has `2^levels` paths: `levels` times `(x, x) : +` over an
+/// integer. Unlike a chain that composes `x` with itself, its signal graph
+/// stays linear, so only the box walks see the exponential.
+fn shared_constant_dag(arena: &mut TreeArena, levels: usize) -> BoxId {
+    let mut b = BoxBuilder::new(arena);
+    let mut x = b.int(1);
+    for _ in 0..levels {
+        let pair = b.par(x, x);
+        let add = b.add();
+        x = b.seq(pair, add);
+    }
+    x
+}
+
+/// Regression for the 2026-09-16 compile-time blow-up on recursions: the
+/// walks a `Rec` node triggers over its branches (`rec_fad_mode`'s two
+/// forward-AD reachability scans and `box_arity_wiring`) are memoized in the
+/// `ArityCache`, so they cost the nodes of a shared box DAG, not its paths.
+/// The recursion is `(_, x) : + ~ _` with `x` a 40-level shared DAG: an
+/// unmemoized walk would take `2^40` steps; the budget is generous for a
+/// debug build and the memoized cost is milliseconds.
+#[test]
+fn rec_arity_walks_are_linear_on_a_shared_dag() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (sender, receiver) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("rec-arity-walks-shared-dag".to_owned())
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || {
+            let mut arena = TreeArena::new();
+            let shared = shared_constant_dag(&mut arena, 40);
+            let rec = {
+                let mut b = BoxBuilder::new(&mut arena);
+                let wire = b.wire();
+                let pair = b.par(wire, shared);
+                let add = b.add();
+                let left = b.seq(pair, add);
+                b.rec(left, wire)
+            };
+            let flat = try_build_flat_box(&arena, rec).expect("flat recursive box");
+            let mut cache = ArityCache::new();
+            let arity = box_arity_typed(&arena, flat, &mut cache).expect("rec arity");
+            let outputs = propagate_typed(&mut arena, flat, &[], &mut cache).expect("propagation");
+            let _ = sender.send((
+                arity,
+                outputs.len(),
+                cache.wiring.len(),
+                cache.forward_ad.len(),
+            ));
+        })
+        .expect("spawn rec-arity worker");
+    let (arity, outputs, wiring_entries, fad_entries) = receiver
+        .recv_timeout(Duration::from_secs(60))
+        .expect("arity and propagation of a 40-level shared DAG must finish within the budget");
+    assert_eq!((arity.inputs, arity.outputs), (0, 1));
+    assert_eq!(outputs, 1);
+    assert!(
+        wiring_entries >= 40 && fad_entries >= 40,
+        "the walks must keep one verdict per distinct node, got wiring {wiring_entries}, fad {fad_entries}"
+    );
+}

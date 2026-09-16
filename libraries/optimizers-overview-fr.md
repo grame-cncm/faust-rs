@@ -592,13 +592,13 @@ programmes dans le tutoriel.
   l'argument est utilisé : `(_ - t) * (_ - t)` est un bloc à deux entrées, et
   un `:>` vers lui répartit un bus entre elles — les coefficients font une
   marche aléatoire autour de zéro. Nommer l'entrée : `\(y).(op.mse(y, cible))`.
-- **Un `init` calculé dans le graphe alourdit la compilation des boucles à
-  plusieurs paramètres.** Un terme sur lequel le corps d'une récursion se
-  ferme est ré-abaissé à chacune de ses mentions : un `init` de trente voies
-  d'autocorrélation a multiplié par cent le temps de compilation d'une
-  boucle. Les boucles à un paramètre (`lsq_1D`, `descend_1D`,
-  `descend_1D_clocked`) prennent `init` par un fil d'entrée depuis 0.9.0 ;
-  les autres suivront quand leur `init` deviendra un signal.
+- **Un `init` calculé dans le graphe a un jour alourdi la compilation.** Un
+  `init` de trente voies d'autocorrélation multipliait par cent le temps de
+  compilation d'une boucle qui se fermait dessus ; c'était trois parcours non
+  mémoïsés du compilateur, corrigés le 16 septembre 2026, et toute boucle
+  accepte désormais un tel `init`. Les boucles à un paramètre (`lsq_1D`,
+  `descend_1D`, `descend_1D_clocked`) le prennent par un fil d'entrée depuis
+  0.9.0, la forme la plus propre.
 - **`rad` dans une boucle ne voit qu'un échantillon.** À travers une récursion
   il renvoie le terme direct, pas la dérivée à travers la récursion (section
   4.7) ; apprendre les modèles récursifs avec les boucles `fad`, les modèles

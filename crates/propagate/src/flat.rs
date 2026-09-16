@@ -336,18 +336,22 @@ pub(crate) fn flat_node_kind(
 pub(crate) fn contains_forward_ad(
     arena: &TreeArena,
     box_tree: FlatBoxId,
+    cache: &mut ArityCache,
 ) -> Result<bool, FlatBoxBuildError> {
-    match flat_node_kind(arena, box_tree)? {
-        FlatNodeKind::ForwardAD { .. } => Ok(true),
+    if let Some(&cached) = cache.forward_ad.get(&box_tree) {
+        return Ok(cached);
+    }
+    let found = match flat_node_kind(arena, box_tree)? {
+        FlatNodeKind::ForwardAD { .. } => true,
         FlatNodeKind::Rec(left, right)
         | FlatNodeKind::Seq(left, right)
         | FlatNodeKind::Par(left, right)
         | FlatNodeKind::Split(left, right)
         | FlatNodeKind::Merge(left, right) => {
-            Ok(contains_forward_ad(arena, left)? || contains_forward_ad(arena, right)?)
+            contains_forward_ad(arena, left, cache)? || contains_forward_ad(arena, right, cache)?
         }
         FlatNodeKind::ReverseAD { body, seeds } => {
-            Ok(contains_forward_ad(arena, body)? || contains_forward_ad(arena, seeds)?)
+            contains_forward_ad(arena, body, cache)? || contains_forward_ad(arena, seeds, cache)?
         }
         FlatNodeKind::Symbolic { body }
         | FlatNodeKind::Metadata { body }
@@ -356,9 +360,11 @@ pub(crate) fn contains_forward_ad(
         | FlatNodeKind::TGroup { body }
         | FlatNodeKind::Ondemand(body)
         | FlatNodeKind::Upsampling(body)
-        | FlatNodeKind::Downsampling(body) => contains_forward_ad(arena, body),
-        _ => Ok(false),
-    }
+        | FlatNodeKind::Downsampling(body) => contains_forward_ad(arena, body, cache)?,
+        _ => false,
+    };
+    cache.forward_ad.insert(box_tree, found);
+    Ok(found)
 }
 
 /// Counts the number of [`FlatNodeKind::ForwardAD`] nodes reachable in a flat
@@ -400,8 +406,6 @@ pub(crate) fn count_fad_nodes(
     }
 }
 
-/// Recursion-specific forward-AD handling strategy selected for one `boxRec(...)`.
-///
 /// `ExpandAfterRec` preserves the historical Rust behavior where `ForwardAD`
 /// stays arity-transparent during internal recursive wiring and the tangent
 /// bundle is emitted only after the recursive group has been built.
@@ -429,14 +433,15 @@ pub(crate) fn rec_fad_mode(
     arena: &TreeArena,
     left: FlatBoxId,
     right: FlatBoxId,
+    cache: &mut ArityCache,
 ) -> Result<RecFadMode, PropagateError> {
-    let left_has = contains_forward_ad(arena, left)?;
-    let right_has = contains_forward_ad(arena, right)?;
+    let left_has = contains_forward_ad(arena, left, cache)?;
+    let right_has = contains_forward_ad(arena, right, cache)?;
     if !left_has && !right_has {
         return Ok(RecFadMode::None);
     }
-    let left_local = subtree_consumes_fad_outputs_locally(arena, left, false)?;
-    let right_local = subtree_consumes_fad_outputs_locally(arena, right, false)?;
+    let left_local = subtree_consumes_fad_outputs_locally(arena, left, false, cache)?;
+    let right_local = subtree_consumes_fad_outputs_locally(arena, right, false, cache)?;
     if left_local || right_local {
         Ok(RecFadMode::AugmentedState)
     } else {
@@ -450,35 +455,42 @@ fn subtree_consumes_fad_outputs_locally(
     arena: &TreeArena,
     box_tree: FlatBoxId,
     consumed_by_parent: bool,
+    cache: &mut ArityCache,
 ) -> Result<bool, PropagateError> {
-    match flat_node_kind(arena, box_tree)? {
-        FlatNodeKind::ForwardAD { .. } => Ok(consumed_by_parent),
+    let key = (box_tree, consumed_by_parent);
+    if let Some(&cached) = cache.fad_consumed_locally.get(&key) {
+        return Ok(cached);
+    }
+    let found = match flat_node_kind(arena, box_tree)? {
+        FlatNodeKind::ForwardAD { .. } => consumed_by_parent,
         FlatNodeKind::Symbolic { body }
         | FlatNodeKind::Metadata { body }
         | FlatNodeKind::VGroup { body }
         | FlatNodeKind::HGroup { body }
         | FlatNodeKind::TGroup { body } => {
-            subtree_consumes_fad_outputs_locally(arena, body, consumed_by_parent)
+            subtree_consumes_fad_outputs_locally(arena, body, consumed_by_parent, cache)?
         }
         FlatNodeKind::Rec(left, right)
         | FlatNodeKind::Seq(left, right)
         | FlatNodeKind::Par(left, right)
         | FlatNodeKind::Split(left, right)
         | FlatNodeKind::Merge(left, right) => {
-            Ok(subtree_consumes_fad_outputs_locally(arena, left, true)?
-                || subtree_consumes_fad_outputs_locally(arena, right, true)?)
+            subtree_consumes_fad_outputs_locally(arena, left, true, cache)?
+                || subtree_consumes_fad_outputs_locally(arena, right, true, cache)?
         }
         FlatNodeKind::ReverseAD { body, seeds } => {
-            Ok(subtree_consumes_fad_outputs_locally(arena, body, true)?
-                || subtree_consumes_fad_outputs_locally(arena, seeds, true)?)
+            subtree_consumes_fad_outputs_locally(arena, body, true, cache)?
+                || subtree_consumes_fad_outputs_locally(arena, seeds, true, cache)?
         }
         FlatNodeKind::Ondemand(body)
         | FlatNodeKind::Upsampling(body)
         | FlatNodeKind::Downsampling(body) => {
-            subtree_consumes_fad_outputs_locally(arena, body, true)
+            subtree_consumes_fad_outputs_locally(arena, body, true, cache)?
         }
-        _ => Ok(false),
-    }
+        _ => false,
+    };
+    cache.fad_consumed_locally.insert(key, found);
+    Ok(found)
 }
 
 fn flat_box_unexpected(node: TreeId, kind: &'static str) -> FlatBoxBuildError {

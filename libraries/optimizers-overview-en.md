@@ -559,13 +559,12 @@ in the tutorial.
   the argument is used, so `(_ - t) * (_ - t)` is a two-input block and `:>`
   into it splits a bus between them: the taps random-walk near zero. Name
   the input: `\(y).(op.mse(y, target))`.
-- **An `init` computed in the graph weighs on the compile time of the
-  multi-parameter loops.** A term a recursion's body closes over is
-  re-lowered at each of its mentions: an `init` of thirty autocorrelation
-  lanes multiplied a loop's compile time by a hundred. The one-parameter
-  loops (`lsq_1D`, `descend_1D`, `descend_1D_clocked`) take `init` through
-  an input wire since 0.9.0; the others will follow when their `init`
-  becomes a signal.
+- **An `init` computed in the graph once weighed on compile time.** An
+  `init` of thirty autocorrelation lanes multiplied by a hundred the compile
+  time of a loop that closed over it; that was three unmemoized walks of the
+  compiler, fixed on 2026-09-16, and every loop now accepts such an `init`.
+  The one-parameter loops (`lsq_1D`, `descend_1D`, `descend_1D_clocked`)
+  take it through an input wire since 0.9.0, the cleaner form.
 - **`rad` inside a loop sees one sample.** Through a recursion it returns
   the direct term, not the derivative through the recursion (section 4.7);
   learn recursive models with the `fad` loops, feed-forward ones with either.

@@ -1882,6 +1882,7 @@ enum PropagateError
 enum RadRecLinearity
 enum RecRadMode
 enum TransposeAdError
+fn ArityCache::new
 fn ClockDomainId::as_u32
 fn ClockDomainId::from_u32
 fn ClockDomainTable::alloc
@@ -1918,6 +1919,7 @@ fn try_build_flat_box
 mod clock_domain
 mod stateful_rad
 mod transpose_ad
+struct ArityCache
 struct BoxArity
 struct ClockDomain
 struct ClockDomainId
@@ -1926,7 +1928,6 @@ struct FlatBoxId
 struct PropagateOutput
 struct PropagateUiOptions
 struct SignalOrigins
-type ArityCache
 use api
 use arity
 use clock_domain

@@ -475,12 +475,32 @@ Location:
 
 Cache:
 
-- `ArityCache = AHashMap<FlatBoxId, Result<BoxArity, PropagateError>>`
+- `ArityCache`, a struct of four maps keyed by `FlatBoxId` (since
+  2026-09-16; before, the type alias of its first map):
+  - `typed`: `box_arity_typed` results, `Result<BoxArity, PropagateError>`;
+  - `wiring`: `box_arity_wiring` results, the `ForwardAD`-transparent arity
+    the `ExpandAfterRec` recursion mode wires on;
+  - `forward_ad`: whether a subtree reaches a `ForwardAD` node
+    (`contains_forward_ad`);
+  - `fad_consumed_locally`: keyed by `(FlatBoxId, consumed_by_parent)`, the
+    second scan of `rec_fad_mode`.
 
 Purpose:
 
 - avoids repeated arity inference on the same validated flat-box DAG,
-- keeps `box_arity*` queries effectively linear on shared subgraphs.
+- keeps `box_arity*` queries effectively linear on shared subgraphs,
+- keeps the walks a `Rec` node triggers over its branches linear too. Until
+  2026-09-16 only `typed` was memoized: `box_arity_wiring` re-walked every
+  composition node under a recursion branch, and `rec_fad_mode` ran two
+  unmemoized reachability scans per `Rec`, in the arity phase and again in
+  propagation. On a hash-consed box DAG each costs the number of *paths*,
+  exponential in the sharing depth, and every `Rec` in the DAG (a smoothing
+  filter, a delay line) pays it anew. Measured on the string program of §2.15
+  written with a hand-written learning recursion and no `fad` (the result memo
+  therefore on): arity 2.26 s and propagation 2.47 s at `K = 8`, 45 s and 49 s
+  at `K = 148`, all in `box_arity_wiring` / `flat_node_kind` / `match_box`
+  under the `Rec` arms; with the four maps, 0.1 ms and 2 ms at `K = 8`,
+  0.4 ms and 19 ms at `K = 148` (the whole compile 46 ms and 116 ms).
 
 Notes:
 
@@ -498,6 +518,15 @@ Notes:
 - `crates/compiler/src/diagnostic_enrichment.rs` allocates its own throwaway
   `ArityCache` for the arity queries of a mismatched sequential composition; it
   is not the pipeline's.
+
+Validation:
+
+- `rec_arity_walks_are_linear_on_a_shared_dag` (`crates/propagate/src/tests.rs`):
+  `(_, x) : + ~ _` with `x` a 40-level `(x, x) : +` chain over a constant, a
+  box DAG with `2^40` paths and a linear signal graph, must type and propagate
+  within a 60 s budget and leave one `wiring` and one `forward_ad` verdict per
+  level. Removing the `forward_ad` probe hangs it (checked by hand,
+  2026-09-16).
 
 ### 2.7 `propagate`: grouped-UI DAG visitation cache
 

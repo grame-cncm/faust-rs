@@ -98,7 +98,9 @@ pub(crate) fn propagate_in_slot_env(
         });
     }
     // When no FAD is involved, outputs must match exactly.
-    if outputs.len() != arity.outputs && !ctx.suppress_fad && !contains_forward_ad(arena, box_tree)?
+    if outputs.len() != arity.outputs
+        && !ctx.suppress_fad
+        && !contains_forward_ad(arena, box_tree, ctx.cache)?
     {
         return Err(PropagateError::OutputArityMismatch {
             node: box_tree.as_tree_id(),
@@ -656,7 +658,7 @@ fn propagate_inner(
             propagate_in_slot_env(arena, right, &merge_in, ctx)
         }
         FlatNodeKind::Rec(left, right) => {
-            let fad_mode = rec_fad_mode(arena, left, right)?;
+            let fad_mode = rec_fad_mode(arena, left, right, ctx.cache)?;
             let (left_arity, right_arity) = match fad_mode {
                 RecFadMode::None | RecFadMode::ExpandAfterRec => (
                     box_arity_wiring(arena, left, ctx.cache)?,

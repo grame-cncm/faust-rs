@@ -39,11 +39,11 @@ pub fn box_arity_typed(
     box_tree: FlatBoxId,
     cache: &mut ArityCache,
 ) -> Result<BoxArity, PropagateError> {
-    if let Some(cached) = cache.get(&box_tree) {
+    if let Some(cached) = cache.typed.get(&box_tree) {
         return cached.clone();
     }
     let result = box_arity_flat_inner(arena, box_tree, cache);
-    cache.insert(box_tree, result.clone());
+    cache.typed.insert(box_tree, result.clone());
     result
 }
 
@@ -58,9 +58,22 @@ pub(crate) fn box_arity_wiring(
     box_tree: FlatBoxId,
     cache: &mut ArityCache,
 ) -> Result<BoxArity, PropagateError> {
-    // Unwrap ForwardAD layers, then delegate to box_arity_typed for the body.
-    // Since ForwardAD is the only node that differs between wiring and typed,
-    // once we strip it, the cached typed arity of the inner body is correct.
+    if let Some(cached) = cache.wiring.get(&box_tree) {
+        return cached.clone();
+    }
+    let result = box_arity_wiring_inner(arena, box_tree, cache);
+    cache.wiring.insert(box_tree, result.clone());
+    result
+}
+
+/// Wiring arity on a cache miss: unwrap `ForwardAD` layers and walk the
+/// composition nodes, delegating to [`box_arity_typed`] everywhere else,
+/// where the typed arity is the wiring arity.
+fn box_arity_wiring_inner(
+    arena: &TreeArena,
+    box_tree: FlatBoxId,
+    cache: &mut ArityCache,
+) -> Result<BoxArity, PropagateError> {
     match flat_node_kind(arena, box_tree)? {
         FlatNodeKind::ForwardAD { body, .. } => box_arity_wiring(arena, body, cache),
         FlatNodeKind::VGroup { body }
@@ -343,7 +356,7 @@ fn box_arity_flat_inner(
             })
         }
         FlatNodeKind::Rec(left, right) => {
-            let fad_mode = rec_fad_mode(arena, left, right)?;
+            let fad_mode = rec_fad_mode(arena, left, right, cache)?;
             let (left_arity, right_arity) = match fad_mode {
                 RecFadMode::None | RecFadMode::ExpandAfterRec => (
                     box_arity_wiring(arena, left, cache)?,

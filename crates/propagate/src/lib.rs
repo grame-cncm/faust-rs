@@ -134,8 +134,37 @@ pub mod transpose_ad;
 
 pub use clock_domain::{ClockDomain, ClockDomainId, ClockDomainKind, ClockDomainTable};
 
-/// Memoization cache for [`box_arity_typed`] results, keyed by validated flat boxes.
-pub type ArityCache = AHashMap<FlatBoxId, Result<BoxArity, PropagateError>>;
+/// Memoization caches of the arity pass, keyed by validated flat boxes: the
+/// typed arity ([`box_arity_typed`]), the wiring arity (`ForwardAD` transparent)
+/// and the two forward-AD reachability walks that pick a recursion's FAD mode.
+/// Post-eval boxes are hash-consed DAGs; without these maps each walk costs
+/// the size of the tree unfolding, exponential in the sharing depth.
+#[derive(Debug)]
+pub struct ArityCache {
+    pub(crate) typed: AHashMap<FlatBoxId, Result<BoxArity, PropagateError>>,
+    pub(crate) wiring: AHashMap<FlatBoxId, Result<BoxArity, PropagateError>>,
+    pub(crate) forward_ad: AHashMap<FlatBoxId, bool>,
+    pub(crate) fad_consumed_locally: AHashMap<(FlatBoxId, bool), bool>,
+}
+
+impl ArityCache {
+    /// Empty caches.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            typed: AHashMap::new(),
+            wiring: AHashMap::new(),
+            forward_ad: AHashMap::new(),
+            fad_consumed_locally: AHashMap::new(),
+        }
+    }
+}
+
+impl Default for ArityCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 /// Context-aware mapping from (source widget box node, group-path hash) to stable control ids.
 /// The group-path hash distinguishes the same structural widget appearing in different UI groups.
 type ControlIds = AHashMap<(BoxId, u64), ControlId>;

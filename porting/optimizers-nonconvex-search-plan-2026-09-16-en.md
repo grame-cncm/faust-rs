@@ -103,7 +103,8 @@ re-lowers it at every mention, 34 s for an 8-lane estimate feeding
 recursion; the three 1D loops now take `init` through an input wire of
 their recursive block (0.46 s at 8 lanes, 1.5 s for the shipped 30-lane
 fixture), the multi-parameter loops still close over theirs, and the
-compiler issue is filed as its own task. Measured: init frozen at
+compiler issue was fixed the same day (three unmemoized DAG walks and the
+result memo gate, journal of 2026-09-16). Measured: init frozen at
 222.77 Hz, pitch 219.998 at 24 000 samples, 220.000000 from 48 000 on.
 
 

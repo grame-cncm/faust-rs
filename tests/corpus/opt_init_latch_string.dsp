@@ -14,8 +14,10 @@
 // is frozen, shortened by 2 % to land on the side of the well the loop
 // captures from, and the loop is released: from that init the pitch locks on
 // 220 Hz. The estimate reaches the loop through `init`, which the 1D loops
-// take as an input wire of their recursion since 0.9.0: closed over inside
-// the body, an `init` of this size multiplied the compile time by a hundred.
+// take as an input wire of their recursion since 0.9.0. (Closed over inside
+// the body, an `init` of this size once multiplied the compile time by a
+// hundred: three unmemoized walks of the compiler, fixed the same day, see
+// porting/journal/2026-09-16.md; the input wire stays as the cleaner form.)
 //
 // Measured (faustprobe --double, 80 000 frames): the frozen init is 222.77 Hz
 // (lag 202 x 0.98); the pitch is 219.74 Hz at 16 000 samples, 219.998 at
