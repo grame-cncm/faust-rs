@@ -255,7 +255,7 @@ fn french_tutorial_carries_the_same_programs() {
     }
     assert_eq!(
         en.iter().filter(|b| b.is_program()).count(),
-        24,
+        33,
         "the tutorial's program count changed: update the tests"
     );
 }
@@ -755,5 +755,170 @@ fn s11_4_reverse_mode_clocked() {
             4e-7,
         );
         assert!(rms(&outs[0][3000..4000]) < 1e-8, "fourth window");
+    });
+}
+
+// ───────────────────────── §14: when the start is wrong ─────────────────────────
+
+/// §14.1: from `p = 1` the descent settles at 0.960150, from `p = -1` at
+/// -1.035579; neither crosses the barrier.
+#[test]
+fn s14_1_two_wells_keep_their_descents() {
+    with_libraries("s14_1", |root| {
+        let outs = render(&program("14.1", 0), &root, InputMode::Zero, 4_000);
+        for frame in (1000..4_000).step_by(1000) {
+            assert_near(
+                &format!("shallow at {frame}"),
+                outs[0][frame],
+                0.960150,
+                1e-6,
+            );
+            assert_near(&format!("deep at {frame}"), outs[1][frame], -1.035579, 1e-6);
+        }
+    });
+}
+
+/// §14.2: the init lane holds 222.772277 Hz from sample 8 192 on; the pitch
+/// reads 223.30 at 12 000, 219.998 at 24 000 and 220.000007 at 48 000.
+#[test]
+fn s14_2_start_from_a_latched_estimate() {
+    with_libraries("s14_2", |root| {
+        let outs = render(&program("14.2", 0), &root, InputMode::Zero, 60_000);
+        let frozen = outs[1][8_193];
+        assert_near("frozen init", frozen, 222.772277, 1e-4);
+        assert!(
+            outs[1][8_193..].iter().all(|&v| v == frozen),
+            "init should not move once frozen"
+        );
+        assert_near("pitch at 12 000", outs[0][12_000], 223.30, 0.05);
+        assert_near("pitch at 24 000", outs[0][24_000], 219.998, 5e-3);
+        assert_near("pitch at 48 000", outs[0][48_000], 220.000007, 1e-4);
+    });
+}
+
+/// §14.3: SGD stays at 0.960150, Langevin cools into the deep well
+/// (-1.03557 over the last 20 000 samples), the cold lane is SGD bit for bit.
+#[test]
+fn s14_3_langevin_leaves_the_shallow_well() {
+    with_libraries("s14_3", |root| {
+        let outs = render(&program("14.3", 0), &root, InputMode::Zero, 200_000);
+        assert_near("sgd", outs[0][199_999], 0.960150, 1e-6);
+        assert_near("langevin at 40 000", outs[1][40_000], -0.899, 5e-3);
+        assert_near(
+            "langevin, last 20 000",
+            mean(&outs[1][180_000..]),
+            -1.03557,
+            1e-4,
+        );
+        assert!(
+            outs[0] == outs[2],
+            "langevin at temperature 0 should be sgd bit for bit"
+        );
+    });
+}
+
+/// §14.4: on the two wells, multistart follows a deep-well descent
+/// (-1.035579, index 0 or 1) and the grid picks the cell at -1.125 (index
+/// 2, held output -1.116) then settles at -1.035579; on the string, the
+/// start at 228 Hz (index 2) wins from 16 000 on and locks on 220 Hz.
+#[test]
+fn s14_4_several_starts() {
+    with_libraries("s14_4", |root| {
+        let outs = render(&program("14.4", 0), &root, InputMode::Zero, 12_000);
+        for frame in (2000..12_000).step_by(2000) {
+            assert_near(
+                &format!("multistart p at {frame}"),
+                outs[0][frame],
+                -1.035579,
+                1e-6,
+            );
+            assert!(
+                outs[1][frame] == 0.0 || outs[1][frame] == 1.0,
+                "multistart index at {frame}"
+            );
+            assert_near(&format!("grid index at {frame}"), outs[3][frame], 2.0, 0.0);
+        }
+        assert_near("grid held output", outs[2][2_000], -1.116, 5e-3);
+        assert_near("grid p at 4 000", outs[2][4_000], -1.035579, 1e-6);
+        let outs = render(&program("14.4", 1), &root, InputMode::Zero, 80_000);
+        assert!(
+            outs[1][16_000..].iter().all(|&k| k == 2.0),
+            "the string start at 228 Hz should win"
+        );
+        assert_near("string pitch at 16 000", outs[0][16_000], 219.995, 5e-3);
+        assert_near("string pitch at 48 000", outs[0][48_000], 220.000005, 1e-4);
+    });
+}
+
+/// §14.5: index 0 and p held at 1 until 4 000, 0.960150 at 6 000, the
+/// restart at 8 000 to index 1, -1.035579 from 15 000 on.
+#[test]
+fn s14_5_restart_on_no_progress() {
+    with_libraries("s14_5", |root| {
+        let outs = render(&program("14.5", 0), &root, InputMode::Zero, 30_000);
+        assert_near("held at 3 000", outs[0][3_000], 1.0, 0.0);
+        assert_near("shallow at 6 000", outs[0][6_000], 0.960150, 1e-6);
+        assert!(
+            outs[1][..7_000].iter().all(|&k| k == 0.0),
+            "first start until 2 W"
+        );
+        assert!(
+            outs[1][9_000..].iter().all(|&k| k == 1.0),
+            "second start from 9 000 on"
+        );
+        for frame in (15_000..30_000).step_by(3000) {
+            assert_near(&format!("deep at {frame}"), outs[0][frame], -1.035579, 1e-6);
+        }
+    });
+}
+
+/// §14.6: the integer delay goes 160, 170, 187, 199 and holds 200 from
+/// 40 000 on with a zero fad tangent; the search reads 0.825585 from 1 000
+/// on while descend_1D reads 0.
+#[test]
+fn s14_6_learning_without_a_gradient() {
+    with_libraries("s14_6", |root| {
+        let outs = render(&program("14.6", 0), &root, InputMode::Zero, 60_000);
+        assert!(
+            outs[1].iter().all(|&t| t == 0.0),
+            "the fad tangent should be zero"
+        );
+        for (frame, want) in [(10_000, 170.0), (20_000, 187.0), (30_000, 199.0)] {
+            assert_near(&format!("int(d) at {frame}"), outs[0][frame], want, 0.0);
+        }
+        assert!(
+            outs[0][40_000..].iter().all(|&d| d == 200.0),
+            "int(d) should hold 200"
+        );
+        let outs = render(&program("14.6", 1), &root, InputMode::Zero, 6_000);
+        assert!(
+            outs[0][1_000..]
+                .iter()
+                .all(|&p| (p - 0.825585).abs() < 1e-6),
+            "the search should hold 0.825585"
+        );
+        assert!(
+            outs[1].iter().all(|&p| p == 0.0),
+            "descend_1D should never move"
+        );
+    });
+}
+
+/// §14.7: through the bank loss the pitch reads 223.25 at 50 000, 220.04 at
+/// 100 000 and 220.000000 over the last 20 000 samples; the waveform error
+/// reaches 220.000000 from 224 Hz too.
+#[test]
+fn s14_7_bank_loss_widens_the_basin() {
+    with_libraries("s14_7", |root| {
+        let outs = render(&program("14.7", 0), &root, InputMode::Zero, 300_000);
+        assert_near("bank at 50 000", outs[0][50_000], 223.25, 0.05);
+        assert_near("bank at 100 000", outs[0][100_000], 220.04, 0.05);
+        assert_near("bank, last 20 000", mean(&outs[0][280_000..]), 220.0, 1e-5);
+        assert_near(
+            "waveform, last 20 000",
+            mean(&outs[1][280_000..]),
+            220.0,
+            1e-5,
+        );
     });
 }

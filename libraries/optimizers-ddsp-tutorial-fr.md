@@ -1036,6 +1036,10 @@ traverserait la frontière du bloc, une perte dedans et une graine dehors.
 - **Mode inverse et hôtes.** [docs/rad-note-en.md](../docs/rad-note-en.md)
   pour l'algorithme, [docs/rad-usage-en.md](../docs/rad-usage-en.md) pour le
   flux de travail.
+- **Quand le départ est faux.** La section 9 de
+  [optimizers-overview-fr.md](optimizers-overview-fr.md) sur ce que la
+  descente de gradient demande au paysage, et la section 14 ci-dessous pour
+  les outils, un programme chacun.
 - **La bibliothèque elle-même.** Chaque fonction d'[optimizers.lib](optimizers.lib)
   porte un exemple `#### Test` compilé par la suite de tests ; ce sont les
   plus petits usages fonctionnels de chaque fonction.
@@ -1057,7 +1061,251 @@ traverserait la frontière du bloc, une perte dedans et une graine dehors.
 | Un bloc ignore ce qui se passe dehors | une définition référencée dans le corps est instanciée à nouveau dans le temps du corps, ce n'est pas le signal extérieur | passer les signaux extérieurs en entrées explicites du bloc |
 | Une boucle à bus n'apprend rien, les coefficients errent autour de zéro | `op.mse(_, t)` (toute fonction appliquée à un `_` libre) est un bloc à deux entrées : `:>` répartit les coefficients entre elles | nommer l'entrée de la perte : `\(y).(op.mse(y, t))` |
 | Une boucle `_rad` converge moins vite que la boucle `fad` sur un modèle récursif | dans une boucle, `rad` renvoie le terme direct, l'état passé tenu fixe | les boucles `fad` pour les modèles récursifs, les unes ou les autres pour les modèles sans récursion |
+| Il dérive au lieu de converger, la perte restant haute | le mauvais bassin : un puits trop étroit pour le départ, ou un plateau en pente | une estimation comme `init` (14.2), plusieurs départs (14.4), un redémarrage sur absence de progrès (14.5), une perte qui élargit le puits (14.7) |
+| Il ne bouge jamais alors que la perte est haute | le paramètre n'a pas de dérivée : un retard entier, un `select2`, une table écrite | `spsa_1D_clocked` ou `search_1D_clocked` (14.6) |
+| `multistart` hésite entre deux boucles | leurs pertes lissées sont égales à l'arrondi près, le même puits atteint deux fois | lire le paramètre, pas l'index ; ou moins de départs |
 | La pente `fad` d'un solveur implicite manque d'un terme | l'itération part de `vprev`, le signal même que l'équation tient fixe : `fad(G(vprev, v), v)` avec `v = vprev` dérive les deux | partir d'un prédicteur ou de tout signal distinct |
+
+## 14. Quand le départ est faux
+
+Jusqu'ici tout partait assez près de la réponse. Cette section traite du
+cas contraire : la perte a plusieurs bassins, ou un plateau, ou le paramètre
+n'a pas de dérivée du tout. Les outils sont ceux de la section 9 de
+l'overview ; chaque programme ci-dessous s'exécute comme les autres, et ses
+chiffres sont vérifiés par la suite de tests.
+
+### 14.1 Le paysage avant l'optimiseur
+
+Une perte à deux puits, `(p² - 1)² + 0,3 p` : un puits peu profond en
+`p = 0,96` (perte 0,29) et un puits profond en `p = -1,04` (perte -0,31),
+séparés par une barrière en `p = 0,04`. La descente de gradient finit dans
+le puits où elle commence :
+
+```faust
+op = library("optimizers.lib");
+loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+process = op.descend_1D(loss, op.sgd_g(0.01), -3, 3, 1.0, 0), op.descend_1D(loss, op.sgd_g(0.01), -3, 3, -1.0, 0);
+```
+
+Exécutez avec `-n 4000 --every 1000` : depuis `p = 1` la première boucle se
+pose à `0,960150`, depuis `p = -1` la seconde à `-1,035579`, et aucune ne
+franchira jamais la barrière. Le point de départ décide de ce qu'on trouve ;
+la suite de cette section consiste à le choisir, ou à le déplacer.
+
+### 14.2 Partir d'une estimation
+
+L'outil le plus fort est une estimation extérieure. La corde à guide d'onde
+des `ddsp-examples` a un puits de ±1 Hz autour de sa hauteur, capturé par le
+haut seulement ; plutôt que de deviner un départ, on observe la cible
+pendant `T` échantillons, on fige une estimation de sa hauteur (ici le pic
+d'autocorrélation de la cible sur une grille de retards de 161 à 279 Hz,
+raccourci de 2 % pour tomber du côté d'où le puits capture) avec
+`init_latch`, on tient la boucle à cet `init` mobile avec `init_reset`, et
+on la relâche à `T` :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = 0.1 * no.noise;
+string(d, g, s) = (+(s) : de.fdelay4(512, d - 1.0) : *(g) : si.smooth(0.3)) ~ _;
+target = string(ma.SR / 220.0, 0.95, x);
+mdl(d, s) = string(d, 0.95, s);
+acf(k) = op.ema(0.999, target * (target @ (158 + 4 * k)));
+lanes = par(k, 30, (acf(k), float(158 + 4 * k)));
+pick(bv, bl, v, l) = select2(v > bv, bv, v), select2(v > bv, bl, l);
+best_lag = lanes : seq(i, 29, (pick, si.bus(2 * (28 - i)))) : !, _;
+T = 8192.0;
+init = op.init_latch(T, best_lag * 0.98);
+d = op.lsq_1D(mdl, op.nlms(0.02, 1e-6, 0.99), 100, 400, init, op.init_reset(T), target, x);
+process = ma.SR / d, ma.SR / init;
+```
+
+Exécutez avec `-n 60000 --every 12000` : la voie de l'init tient
+`222,772277 Hz` à partir de l'échantillon 8 192 ; la hauteur lit `223,30` à
+12 000, `219,998` à 24 000 et `220,000007` à 48 000, sans qu'aucun départ
+soit choisi à la main. Les trente retards coûtent trente produits lissés,
+pas trente modèles.
+
+### 14.3 Quitter un puits peu profond par le bruit
+
+`langevin_g` est le pas SGD plus un bruit d'écart-type `sqrt(2 lr temp)` :
+à température fixe le paramètre échantillonne `exp(-perte / temp)` au lieu
+de se poser, et avec la température recuite vers zéro il explore tant qu'il
+fait chaud et descend une fois refroidi. Sur les deux puits, depuis le puits
+peu profond :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+noise = no.noise * sqrt(3.0);
+temp = op.ramp_exp(0.5, 0.0, 20000.0);
+p_sgd = op.descend_1D(loss, op.sgd_g(0.01), -3, 3, 1.0, 0);
+p_langevin = op.descend_1D(loss, op.langevin_g(0.01, temp, noise), -3, 3, 1.0, 0);
+p_cold = op.descend_1D(loss, op.langevin_g(0.01, 0.0, noise), -3, 3, 1.0, 0);
+process = p_sgd, p_langevin, p_cold;
+```
+
+Exécutez avec `-n 200000 --every 40000` : SGD reste à `0,960150` ;
+Langevin, avec `temp` de 0,5 à 0 sur une constante de temps de 20 000
+échantillons, passe la barrière tant qu'il fait chaud (`-0,899` à 40 000,
+encore agité) et refroidit dans le puits profond, `-1,03557` en moyenne sur
+les 20 000 derniers échantillons ; la troisième voie, Langevin à
+température 0, est SGD bit pour bit. Le bruit quitte un puits peu profond ;
+il n'attire pas sur un plateau plat, et il ne choisit pas le puits le plus
+profond avec certitude.
+
+### 14.4 Plusieurs départs
+
+Sans estimation, on part de plusieurs endroits. `multistart_1D` fait
+tourner `K` descentes en parallèle et suit celle dont la perte lissée est la
+plus basse ; `grid_then_descend_1D` note `K` candidats fixes pendant `T`
+échantillons sans aucune tangente, puis lance une descente depuis le
+meilleur ; `grid_init(K, lo, hi)` répartit les départs sur les bornes :
+
+```faust
+op = library("optimizers.lib");
+loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+process = op.multistart_1D(4, op.grid_init(4, -3.0, 3.0), loss, op.sgd_g(0.01), -3, 3, 0.999, 0),
+          op.grid_then_descend_1D(8, 2000, op.grid_init(8, -3.0, 3.0), loss, op.sgd_g(0.01), -3, 3, 0);
+```
+
+Exécutez avec `-n 12000 --every 2000` : des quatre descentes depuis -2,25,
+-0,75, 0,75 et 2,25, les deux de gauche finissent dans le puits profond et
+la boucle suit l'une d'elles, `-1,035579` avec l'index `1` (leurs pertes
+sont égales à l'arrondi près, l'index peut lire 0 ou 1) ; la grille note ses
+huit cellules pendant 2 000 échantillons, retient celle en -1,125 (index
+`2`, la sortie tenue lit `-1,116`, la cellule moins un pas), et la descente
+qui en part se pose à `-1,035579` dès 4 000.
+
+La même chose sur la corde, en forme moindres carrés avec quatre départs,
+dont un seul dans la zone de capture :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = 0.1 * no.noise;
+string(d, g, s) = (+(s) : de.fdelay4(512, d - 1.0) : *(g) : si.smooth(0.3)) ~ _;
+target = string(ma.SR / 220.0, 0.95, x);
+mdl(d, s) = string(d, 0.95, s);
+init(k) = ma.SR / ba.take(k + 1, (176.0, 200.0, 228.0, 264.0));
+learned = op.multistart_lsq_1D(4, init, mdl, op.nlms(0.02, 1e-6, 0.99), 100, 400, 0.999, 0, target, x);
+process = ma.SR / (learned : _, !), (learned : !, _);
+```
+
+Exécutez avec `-n 80000 --every 16000` : l'index vaut `2`, le départ à
+228 Hz, dès 16 000 échantillons, et la hauteur `219,995` à 16 000,
+`220,000005` à 48 000. Quatre cordes et leurs tangentes compilent en
+quelque 60 ms. Une grille n'aurait pas trouvé ce puits : large de ±1 Hz sur
+une plage de 110 à 441 Hz, il lui faudrait des centaines de cellules.
+
+### 14.5 Redémarrer quand rien ne progresse
+
+Au prix d'un seul modèle, `descend_1D_restart` parcourt une suite de
+départs : quand la perte lissée est au-dessus de `eps_l` et n'a pas baissé
+de `rel` sur les `W` derniers échantillons (vérifié à partir de `2 W` après
+un départ, le paramètre tenu pendant les `W` premiers le temps que le modèle
+se pose), la déviation est remise à zéro et le départ suivant est pris. Sur
+les deux puits, depuis le puits peu profond :
+
+```faust
+op = library("optimizers.lib");
+loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+init(k) = select2(k, 1.0, -1.0);
+process = op.descend_1D_restart(2, init, loss, op.sgd_g(0.01), -3, 3, 4000, 0.05, 0.1, 0);
+```
+
+Exécutez avec `-n 30000 --every 3000` : index `0` et `p = 1` tenu jusqu'à
+4 000, puis `0,960150` dans le puits peu profond ; à 8 000 la perte (0,29,
+au-dessus de `eps_l = 0,1`) n'a pas bougé depuis 4 000 échantillons, la
+boucle prend le second départ, `p = -1`, index `1`, et se pose à
+`-1,035579` dès 15 000, où la perte est sous `eps_l` et où plus aucun
+redémarrage ne se déclenche. Le test porte sur le progrès, non sur un
+gradient petit : sur la corde, le gradient est *plus grand* sur le plateau
+que dans le puits. Et un départ pris après une dérive n'est pas une boucle
+neuve : sur la corde, le modèle, sa tangente et le moteur gardent l'état de
+la dérive, et un redémarrage depuis 228 Hz ne verrouille pas comme une
+boucle neuve partie de 228 Hz ; la perte à deux puits n'a pas cette mémoire.
+
+### 14.6 Apprendre sans gradient
+
+Certains paramètres n'ont pas de dérivée : une longueur de retard entière,
+un `select2`, une table écrite. `fad` leur donne une tangente nulle et
+aucune boucle des sections précédentes ne peut les déplacer.
+`spsa_1D_clocked` évalue la perte en `p + c` et `p - c` sur chaque trame
+(la même excitation pour les deux) et donne `(L+ - L-) / 2c` à un moteur
+ordinaire, une fois par trame. Un peigne `x + x @ 200` sur un bruit filtré,
+son retard entier :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = no.noise : fi.lowpass(1, 200.0);
+target = x + (x @ 200);
+mdl(d) = x + de.delay(512, int(d), x);
+loss(d) = op.mse(mdl(d), target);
+clock = ((+(1) : %(256)) ~ _) == 0;
+d = op.spsa_1D_clocked(clock, loss, op.adam_g(0.5, 0.9, 0.999, 1e-8), 2.0, 0, 500, 160, 0);
+process = int(d), (fad(mdl(d), d) : !, _);
+```
+
+Exécutez avec `-n 60000 --every 10000` : la seconde voie, la tangente `fad`
+du modèle par rapport à `d`, vaut identiquement `0` ; la première, `int(d)`,
+fait 160, 170, 187, 199, et lit `200` à partir de 40 000 : le retard caché,
+trouvé par deux évaluations par trame. `search_1D_clocked`, la stratégie
+d'évolution (1+1), se passe de moteur : un candidat `p + sigma u` par trame,
+gardé quand sa perte est plus basse. Sur un choix discret :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = no.noise;
+mdl(p) = select2(p > 0.5, 0.2 * x, 0.7 * x);
+loss(p) = op.mse(mdl(p), 0.7 * x);
+clock = ((+(1) : %(64)) ~ _) == 0;
+process = op.search_1D_clocked(clock, loss, 1.0, -2, 2, 0, 0), op.descend_1D(loss, op.sgd_g(0.5), -2, 2, 0, 0);
+```
+
+Exécutez avec `-n 6000 --every 1000` : la recherche lit `0,825585` dès
+1 000, sur la branche qui correspond (la perte y est 0) ; `descend_1D` lit
+`0` tout du long, la tangente à travers la comparaison étant nulle.
+
+### 14.7 Élargir le bassin par la perte
+
+Le dernier outil change le paysage lui-même. `bank_log_energy_loss` compare
+des énergies lissées en log par bande d'un banc passe-bande, la forme par
+banc de filtres de la perte spectrale multi-résolution : elle ignore la
+phase, si bien que sur la corde le puits de ±1 Hz de la forme d'onde devient
+une pente vers 220 Hz d'environ 218 à 226 Hz (le balayage de
+`tests/corpus/opt_landscape_string.dsp`, section 5 de l'overview).
+L'apprentissage à travers elle depuis 224 Hz, à côté de l'erreur de forme
+d'onde :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = 0.1 * no.noise;
+string(d, g, s) = (+(s) : de.fdelay4(512, d - 1.0) : *(g) : si.smooth(0.3)) ~ _;
+target = string(ma.SR / 220.0, 0.95, x);
+mdl(d, s) = string(d, 0.95, s);
+bank(d) = op.bank_log_energy_loss(8, 150.0, 4800.0, 0.999, 1e-9, mdl(d, x), target);
+d_bank = op.descend_1D(bank, op.sgd_g(0.0001), 100, 400, ma.SR / 224.0, 0);
+d_wave = op.lsq_1D(mdl, op.nlms(0.02, 1e-6, 0.99), 100, 400, ma.SR / 224.0, 0, target, x);
+process = ma.SR / d_bank, ma.SR / d_wave;
+```
+
+Exécutez avec `-n 300000 --every 50000` : par la perte du banc la hauteur
+lit `223,25` à 50 000, `220,04` à 100 000 et `220,000000` en moyenne sur les
+20 000 derniers échantillons ; la vitesse est 1e-4, sous le `1 - a = 1e-3`
+du lissage de la perte, comme en section 7.2 (5e-4 oscille). La moitié
+honnête : l'erreur de forme d'onde atteint aussi `220,000000` depuis
+224 Hz, portée par la pente de son plateau, et depuis 200 ou 214 Hz les deux
+échouent, le paysage du banc ayant des extrema locaux là où les harmoniques
+des deux cordes s'alignent. L'élargissement est réel ; sur cette corde il
+n'achète aucun départ que l'erreur de forme d'onde ne sache pas traiter.
+`corr_loss` retire la pente du plateau mais n'est pas plus large, et
+`frame_spectral_loss` est la forme par trame pour un corps `ondemand`, comme
+en section 11.3.
 
 ## Glossaire
 

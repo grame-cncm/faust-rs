@@ -1005,6 +1005,10 @@ the block's boundary, a loss inside and a seed outside.
 - **Reverse mode and hosts.** [docs/rad-note-en.md](../docs/rad-note-en.md)
   for the algorithm, [docs/rad-usage-en.md](../docs/rad-usage-en.md) for the
   workflow.
+- **When the start is wrong.** Section 9 of
+  [optimizers-overview-en.md](optimizers-overview-en.md) on what gradient
+  descent asks of the landscape, and section 14 below for the tools, one
+  program each.
 - **The library itself.** Every function of
   [optimizers.lib](optimizers.lib) carries a `#### Test` example that is
   compiled by the test suite; they are the smallest working usage of each
@@ -1027,7 +1031,242 @@ the block's boundary, a loss inside and a seed outside.
 | A block ignores what happens outside | a definition referenced in the body is instantiated again in the body's time, it is not the outer signal | pass outer signals as explicit inputs of the block |
 | A bus loop learns nothing, the taps random-walk near zero | `op.mse(_, t)` (any function applied to a free `_`) is a two-input block: `:>` splits the taps between its inputs | name the loss input: `\(y).(op.mse(y, t))` |
 | A `_rad` loop converges slower than the `fad` one on a recursive model | inside a loop `rad` returns the direct term, the past state held fixed | the `fad` loops for recursive models, either for feed-forward ones |
+| It drifts away instead of converging, the loss staying high | the wrong basin: a well too narrow for the start, or a sloped plateau | an estimate as `init` (14.2), several starts (14.4), a restart on no progress (14.5), a loss that widens the well (14.7) |
+| It never moves although the loss is high | the parameter has no derivative: an integer delay, a `select2`, a written table | `spsa_1D_clocked` or `search_1D_clocked` (14.6) |
+| `multistart` hesitates between two loops | their smoothed losses are equal to rounding, the same well reached twice | read the parameter, not the index; or fewer starts |
 | The `fad` slope of an implicit solver misses a term | the iteration starts from `vprev`, the very signal the equation holds fixed: `fad(G(vprev, v), v)` with `v = vprev` differentiates both | start the iteration from a predictor or any distinct signal |
+
+## 14. When the start is wrong
+
+Everything so far started close enough to the answer. This section is
+about what happens when it does not: the loss has several basins, or a
+plateau, or the parameter has no derivative at all. The tools are those
+of section 9 of the overview; every program below is run as the others,
+and its figures checked by the test suite.
+
+### 14.1 The landscape before the optimizer
+
+A loss with two wells, `(p² - 1)² + 0.3 p`: a shallow one at `p = 0.96`
+(loss 0.29) and a deep one at `p = -1.04` (loss -0.31), with a barrier
+between them at `p = 0.04`. Gradient descent ends in the well it starts in:
+
+```faust
+op = library("optimizers.lib");
+loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+process = op.descend_1D(loss, op.sgd_g(0.01), -3, 3, 1.0, 0), op.descend_1D(loss, op.sgd_g(0.01), -3, 3, -1.0, 0);
+```
+
+Run with `-n 4000 --every 1000`: from `p = 1` the first loop settles at
+`0.960150`, from `p = -1` the second at `-1.035579`, and neither will ever
+cross the barrier. Where you start decides what you find; the rest of this
+section is about choosing the start, or moving it.
+
+### 14.2 Starting from an estimate
+
+The strongest tool is an outside estimate. The waveguide string of
+`ddsp-examples` has a well ±1 Hz wide around its pitch, captured from above
+only; instead of guessing a start, observe the target for `T` samples,
+freeze an estimate of its pitch (here the peak lag of the target's
+autocorrelation over a grid of lags from 161 to 279 Hz, shortened by 2 % to
+land on the side the well captures from) with `init_latch`, hold the loop
+at that moving `init` with `init_reset`, and release it at `T`:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = 0.1 * no.noise;
+string(d, g, s) = (+(s) : de.fdelay4(512, d - 1.0) : *(g) : si.smooth(0.3)) ~ _;
+target = string(ma.SR / 220.0, 0.95, x);
+mdl(d, s) = string(d, 0.95, s);
+acf(k) = op.ema(0.999, target * (target @ (158 + 4 * k)));
+lanes = par(k, 30, (acf(k), float(158 + 4 * k)));
+pick(bv, bl, v, l) = select2(v > bv, bv, v), select2(v > bv, bl, l);
+best_lag = lanes : seq(i, 29, (pick, si.bus(2 * (28 - i)))) : !, _;
+T = 8192.0;
+init = op.init_latch(T, best_lag * 0.98);
+d = op.lsq_1D(mdl, op.nlms(0.02, 1e-6, 0.99), 100, 400, init, op.init_reset(T), target, x);
+process = ma.SR / d, ma.SR / init;
+```
+
+Run with `-n 60000 --every 12000`: the init lane holds `222.772277 Hz`
+from sample 8 192 on; the pitch reads `223.30` at 12 000, `219.998` at
+24 000 and `220.000007` at 48 000, with no start chosen by hand. The thirty
+lags cost thirty smoothed products, not thirty models.
+
+### 14.3 Leaving a shallow well with noise
+
+`langevin_g` is the SGD step plus a noise of standard deviation
+`sqrt(2 lr temp)`: at a fixed temperature the parameter samples
+`exp(-loss / temp)` instead of settling, and with the temperature annealed
+to zero it explores while hot and descends once cold. On the two wells,
+from the shallow one:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+noise = no.noise * sqrt(3.0);
+temp = op.ramp_exp(0.5, 0.0, 20000.0);
+p_sgd = op.descend_1D(loss, op.sgd_g(0.01), -3, 3, 1.0, 0);
+p_langevin = op.descend_1D(loss, op.langevin_g(0.01, temp, noise), -3, 3, 1.0, 0);
+p_cold = op.descend_1D(loss, op.langevin_g(0.01, 0.0, noise), -3, 3, 1.0, 0);
+process = p_sgd, p_langevin, p_cold;
+```
+
+Run with `-n 200000 --every 40000`: SGD stays at `0.960150`; Langevin, with
+`temp` going from 0.5 to 0 with a 20 000-sample time constant, crosses the
+barrier while hot (`-0.899` at 40 000, still jittering) and cools into the
+deep well, `-1.03557` on average over the last 20 000 samples; the third
+lane, Langevin at temperature 0, is SGD bit for bit. Noise leaves a
+shallow well; it does not pull on a flat plateau, and it does not choose
+the deepest well with certainty.
+
+### 14.4 Several starts
+
+When no estimate is at hand, start from several places. `multistart_1D`
+runs `K` descents in parallel and follows the one whose smoothed loss is
+lowest; `grid_then_descend_1D` scores `K` fixed candidates for `T` samples
+with no tangent, then runs one descent from the best; `grid_init(K, lo,
+hi)` spreads the starts over the bounds:
+
+```faust
+op = library("optimizers.lib");
+loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+process = op.multistart_1D(4, op.grid_init(4, -3.0, 3.0), loss, op.sgd_g(0.01), -3, 3, 0.999, 0),
+          op.grid_then_descend_1D(8, 2000, op.grid_init(8, -3.0, 3.0), loss, op.sgd_g(0.01), -3, 3, 0);
+```
+
+Run with `-n 12000 --every 2000`: of the four descents from -2.25, -0.75,
+0.75 and 2.25, the two from the left end in the deep well and the loop
+follows one of them, `-1.035579` with index `1` (their losses are equal to
+rounding, so the index may read 0 or 1); the grid scores its eight cells
+for 2 000 samples, picks the one at -1.125 (index `2`, the held output
+reads `-1.116`, the cell minus one step), and the descent from it settles
+at `-1.035579` by 4 000.
+
+The same on the string, in least-squares form with four starts, only one
+of which is in the capture zone:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = 0.1 * no.noise;
+string(d, g, s) = (+(s) : de.fdelay4(512, d - 1.0) : *(g) : si.smooth(0.3)) ~ _;
+target = string(ma.SR / 220.0, 0.95, x);
+mdl(d, s) = string(d, 0.95, s);
+init(k) = ma.SR / ba.take(k + 1, (176.0, 200.0, 228.0, 264.0));
+learned = op.multistart_lsq_1D(4, init, mdl, op.nlms(0.02, 1e-6, 0.99), 100, 400, 0.999, 0, target, x);
+process = ma.SR / (learned : _, !), (learned : !, _);
+```
+
+Run with `-n 80000 --every 16000`: the index is `2`, the start at 228 Hz,
+from 16 000 samples on, and the pitch `219.995` at 16 000, `220.000005` at
+48 000. Four strings and their tangents compile in some 60 ms. A grid would
+not have found this well: ±1 Hz wide over a range of 110 to 441 Hz, it
+would need hundreds of cells.
+
+### 14.5 Restarting when nothing progresses
+
+For the cost of one model, `descend_1D_restart` walks a sequence of starts:
+when the smoothed loss is above `eps_l` and has not fallen by `rel` over
+the last `W` samples (checked from `2 W` after a start, the parameter held
+during the first `W` while the model settles), the deviation is zeroed and
+the next start is taken. On the two wells, from the shallow one:
+
+```faust
+op = library("optimizers.lib");
+loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+init(k) = select2(k, 1.0, -1.0);
+process = op.descend_1D_restart(2, init, loss, op.sgd_g(0.01), -3, 3, 4000, 0.05, 0.1, 0);
+```
+
+Run with `-n 30000 --every 3000`: index `0` and `p = 1` held until 4 000,
+then `0.960150` in the shallow well; at 8 000 the loss (0.29, above
+`eps_l = 0.1`) has not moved for 4 000 samples, the loop takes the second
+start, `p = -1`, index `1`, and settles at `-1.035579` by 15 000, where the
+loss is below `eps_l` and no further restart fires. The test is progress,
+not a small gradient: on the string, the gradient is *larger* on the
+plateau than in the well. And a start taken after a drift is not a fresh
+loop: on the string, the model, its tangent and the engine keep the
+drift's state, and a restart from 228 Hz does not lock the way a fresh
+loop from 228 Hz does; the two-well loss has no such memory.
+
+### 14.6 Learning without a gradient
+
+Some parameters have no derivative: an integer delay length, a `select2`,
+a written table. `fad` gives them a zero tangent and no loop of the
+previous sections can move them. `spsa_1D_clocked` evaluates the loss at
+`p + c` and `p - c` over each frame (the same excitation for both) and
+hands `(L+ - L-) / 2c` to an ordinary engine, once per frame. A comb
+`x + x @ 200` on a low-passed noise, its delay an integer:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = no.noise : fi.lowpass(1, 200.0);
+target = x + (x @ 200);
+mdl(d) = x + de.delay(512, int(d), x);
+loss(d) = op.mse(mdl(d), target);
+clock = ((+(1) : %(256)) ~ _) == 0;
+d = op.spsa_1D_clocked(clock, loss, op.adam_g(0.5, 0.9, 0.999, 1e-8), 2.0, 0, 500, 160, 0);
+process = int(d), (fad(mdl(d), d) : !, _);
+```
+
+Run with `-n 60000 --every 10000`: the second lane, the `fad` tangent of
+the model with respect to `d`, is identically `0`; the first, `int(d)`,
+goes 160, 170, 187, 199, and reads `200` from 40 000 on: the hidden delay,
+found by two evaluations per frame. `search_1D_clocked`, the (1+1)
+evolution strategy, does without an engine: a candidate `p + sigma u` per
+frame, kept when its loss is lower. On a discrete choice:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = no.noise;
+mdl(p) = select2(p > 0.5, 0.2 * x, 0.7 * x);
+loss(p) = op.mse(mdl(p), 0.7 * x);
+clock = ((+(1) : %(64)) ~ _) == 0;
+process = op.search_1D_clocked(clock, loss, 1.0, -2, 2, 0, 0), op.descend_1D(loss, op.sgd_g(0.5), -2, 2, 0, 0);
+```
+
+Run with `-n 6000 --every 1000`: the search reads `0.825585` from 1 000
+on, on the branch that matches (the loss there is 0); `descend_1D` reads
+`0` throughout, the tangent through the comparison being zero.
+
+### 14.7 Widening the basin with the loss
+
+The last tool changes the landscape itself. `bank_log_energy_loss`
+compares smoothed log energies per band of a band-pass bank, the
+filter-bank form of the multi-resolution spectral loss: it ignores phase,
+so on the string the waveform's ±1 Hz well becomes a slope toward 220 Hz
+from about 218 to 226 Hz (the sweep of `tests/corpus/opt_landscape_string.dsp`,
+in section 5 of the overview). Learning through it from 224 Hz, next to
+the waveform error:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+x = 0.1 * no.noise;
+string(d, g, s) = (+(s) : de.fdelay4(512, d - 1.0) : *(g) : si.smooth(0.3)) ~ _;
+target = string(ma.SR / 220.0, 0.95, x);
+mdl(d, s) = string(d, 0.95, s);
+bank(d) = op.bank_log_energy_loss(8, 150.0, 4800.0, 0.999, 1e-9, mdl(d, x), target);
+d_bank = op.descend_1D(bank, op.sgd_g(0.0001), 100, 400, ma.SR / 224.0, 0);
+d_wave = op.lsq_1D(mdl, op.nlms(0.02, 1e-6, 0.99), 100, 400, ma.SR / 224.0, 0, target, x);
+process = ma.SR / d_bank, ma.SR / d_wave;
+```
+
+Run with `-n 300000 --every 50000`: through the bank loss the pitch reads
+`223.25` at 50 000, `220.04` at 100 000 and `220.000000` on average over
+the last 20 000 samples; the rate is 1e-4, under the `1 - a = 1e-3` of the
+loss's smoothing, as in section 7.2 (5e-4 oscillates). The honest half:
+the waveform error reaches `220.000000` from 224 Hz too, carried by the
+slope of its plateau, and from 200 or 214 Hz both fail, the bank's
+landscape having local extrema where the harmonics of the two strings
+align. The widening is real; on this string it buys no start the waveform
+error cannot handle. `corr_loss` removes the plateau's slope but is no
+wider, and `frame_spectral_loss` is the per-frame form for an `ondemand`
+body, as in section 11.3.
 
 ## Glossary
 
