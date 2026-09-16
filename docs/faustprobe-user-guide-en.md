@@ -388,5 +388,16 @@ the first thing to run when a gradient looks wrong:
 
 The GRU of the second example trains its 27 sliders the same way,
 `--train wz1,wz2,...,bo --lr 0.005 --blocks 2000`, in a fraction of a
-second; `--sweep`, `--reduce`, `--at`, `--set` and the impulse-test protocol
-do not combine with it.
+second; `--sweep`, `--reduce`, `--at` and the impulse-test protocol do not
+combine with it.
+
+`--set` does, with two meanings. On a trained control it is the descent's
+starting point, in place of the slider's initial value: `--set a1=-0.4
+--train a1,a2` leaves from `-0.4` (the value is kept in the control's
+range), and `--fd-check` checks the gradients there. On any other control it
+is a fixed value, rewritten on every fresh instance and after every
+`--reset-per-block` reset, since a reset restores the widgets' defaults: the
+way to fit a program whose other controls select a variant (`--set exact=1`)
+without editing it. A starting point found by a `--sweep` of the loss over a
+grid, then a descent from it, is the grid-then-gradient of
+`libraries/optimizers-overview-en.md` done by the host.

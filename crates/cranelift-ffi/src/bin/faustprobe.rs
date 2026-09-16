@@ -92,7 +92,10 @@ struct Args {
     ///
     /// PATH may be a full address or a trailing fragment of one; an ambiguous
     /// fragment is reported with its candidates rather than resolved
-    /// arbitrarily.
+    /// arbitrarily. With `--train` / `--fd-check`, a trained control's value
+    /// is the descent's starting point instead of its initial value, and any
+    /// other control's is a fixed value, rewritten on every instance and
+    /// after every `--reset-per-block`.
     #[arg(long = "set", value_name = "PATH=VALUE")]
     sets: Vec<String>,
 
@@ -906,7 +909,6 @@ fn run_train(args: &Args) -> Result<(), String> {
         ("--sweep", !args.sweeps.is_empty()),
         ("--reduce", args.reduce.is_some()),
         ("--at", !args.ats.is_empty()),
-        ("--set", !args.sets.is_empty()),
         (
             "--protocol impulse-test",
             args.protocol == Protocol::ImpulseTest,
@@ -938,6 +940,11 @@ fn run_train(args: &Args) -> Result<(), String> {
         blocks: args.blocks,
         input: parse_input_at(&args.input, args.sr)?,
         reset_per_block: args.reset_per_block,
+        sets: args
+            .sets
+            .iter()
+            .map(|a| parse_assignment(a).map(|(path, value)| (path.to_owned(), value)))
+            .collect::<Result<Vec<_>, _>>()?,
     };
     if args.fd_check {
         let checks = train::fd_check(&factory, args.sr, &spec, args.fd_step)?;

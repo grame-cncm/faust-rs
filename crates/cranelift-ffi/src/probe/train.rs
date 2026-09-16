@@ -63,6 +63,12 @@ pub struct TrainSpec {
     /// offline calibration, one epoch per block) instead of the next stretch
     /// of a stream.
     pub reset_per_block: bool,
+    /// Controls written on every instance before a block is computed, as
+    /// (exact path or unique suffix, value): `--set`. For a trained control
+    /// the value is the descent's starting point instead of the widget's
+    /// initial value; for any other control it is a fixed value, rewritten
+    /// after every reset (the reset restores the widgets' defaults).
+    pub sets: Vec<(String, f64)>,
 }
 
 /// One step of the training, reported as it happens.
@@ -105,11 +111,29 @@ struct Param {
     init: f64,
 }
 
-fn resolve_params(probe: &Probe, queries: &[String]) -> Result<Vec<Param>, String> {
+/// The exact path of the control a query names.
+fn resolve_path(probe: &Probe, query: &str) -> Result<String, String> {
+    match probe.controls().resolve(query) {
+        Resolution::Unique(control) => Ok(control.path.clone()),
+        Resolution::NotFound => Err(format!("no control matching `{query}`")),
+        Resolution::Ambiguous(candidates) => Err(format!(
+            "`{query}` is ambiguous, matches: {}",
+            candidates.join(", ")
+        )),
+    }
+}
+
+/// The trained controls, starting from their widgets' initial values, or
+/// from the value `sets` gives them (clamped to their range).
+fn resolve_params(
+    probe: &Probe,
+    queries: &[String],
+    sets: &[(String, f64)],
+) -> Result<Vec<Param>, String> {
     if queries.is_empty() {
         return Err("--train needs at least one control".to_owned());
     }
-    queries
+    let mut params = queries
         .iter()
         .map(|query| match probe.controls().resolve(query) {
             Resolution::Unique(control) => {
@@ -132,7 +156,24 @@ fn resolve_params(probe: &Probe, queries: &[String]) -> Result<Vec<Param>, Strin
                 candidates.join(", ")
             )),
         })
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    for (query, value) in sets {
+        let path = resolve_path(probe, query)?;
+        if let Some(param) = params.iter_mut().find(|p| p.path == path) {
+            param.init = value.clamp(param.min, param.max);
+        }
+    }
+    Ok(params)
+}
+
+/// Writes the `--set` controls on an instance: the fixed values of the
+/// controls that are not trained (the trained ones are rewritten by the
+/// caller just after).
+fn apply_sets(probe: &Probe, sets: &[(String, f64)]) -> Result<(), String> {
+    for (query, value) in sets {
+        probe.set(query, *value)?;
+    }
+    Ok(())
 }
 
 fn check_lanes(probe: &Probe, spec: &TrainSpec) -> Result<(), String> {
@@ -183,7 +224,7 @@ pub fn train(
         return Err("--train needs a block size and a number of blocks".to_owned());
     }
     let probe = Probe::instantiate(factory, sample_rate)?;
-    let params = resolve_params(&probe, &spec.params)?;
+    let params = resolve_params(&probe, &spec.params, &spec.sets)?;
     check_lanes(&probe, spec)?;
     let mut values: Vec<f64> = params.iter().map(|p| p.init).collect();
     let (mut m, mut v) = (vec![0.0_f64; params.len()], vec![0.0_f64; params.len()]);
@@ -192,9 +233,10 @@ pub fn train(
     for iteration in 1..=spec.blocks {
         if spec.reset_per_block {
             // controls back to their defaults and the state cleared; the
-            // trained controls are rewritten just below
+            // `--set` controls and the trained ones are rewritten just below
             probe.reset();
         }
+        apply_sets(&probe, &spec.sets)?;
         for (param, &value) in params.iter().zip(&values) {
             probe.set_exact(&param.path, value)?;
         }
@@ -250,7 +292,8 @@ pub fn train(
 
 /// Checks every gradient lane of `spec` against central finite differences
 /// of the loss lane, with step `h` on each control in turn, at the controls'
-/// initial values, on the first block of the excitation. Every evaluation
+/// starting values (their widgets' initial values, or what `spec.sets`
+/// gives them), on the first block of the excitation. Every evaluation
 /// runs on a fresh instance so that the state is the same each time.
 pub fn fd_check(
     factory: &Rc<Factory>,
@@ -264,11 +307,15 @@ pub fn fd_check(
     let (params, inputs) = {
         let probe = Probe::instantiate(factory, sample_rate)?;
         check_lanes(&probe, spec)?;
-        (resolve_params(&probe, &spec.params)?, probe.inputs())
+        (
+            resolve_params(&probe, &spec.params, &spec.sets)?,
+            probe.inputs(),
+        )
     };
     let x = input_block(&spec.input, inputs, 0, spec.block, f64::from(sample_rate));
     let evaluate = |values: &[f64]| -> Result<Vec<f64>, String> {
         let probe = Probe::instantiate(factory, sample_rate)?;
+        apply_sets(&probe, &spec.sets)?;
         for (param, &value) in params.iter().zip(values) {
             probe.set_exact(&param.path, value)?;
         }
@@ -357,7 +404,52 @@ mod tests {
             blocks,
             input: InputMode::White { seed },
             reset_per_block: false,
+            sets: vec![],
         }
+    }
+
+    /// `--set` on a trained control is the descent's starting point: from
+    /// `a1 = -0.4` instead of the slider's `-0.8`, the first block's loss is
+    /// another number, the finite-difference check holds there, and 600
+    /// blocks still recover `(-1.2, 0.72)`.
+    #[test]
+    fn set_gives_a_trained_control_its_starting_point() {
+        on_big_stack(|| {
+            let Some(factory) = corpus_factory("ddsp_rad_host_block_resonator") else {
+                return;
+            };
+            let s0 = spec(&["a1", "a2"], 256, 600, 0.01, 1);
+            let mut s = spec(&["a1", "a2"], 256, 600, 0.01, 1);
+            s.sets = vec![("a1".to_owned(), -0.4)];
+            for check in fd_check(&factory, 44_100, &s, 1e-3).expect("fd-check") {
+                assert!(check.relative_error < 2e-2, "{check:?}");
+            }
+            let mut first_step = None;
+            let trained = train(&factory, 44_100, &s, |step| {
+                if step.block == 1 {
+                    first_step = Some(step.params.clone());
+                }
+            })
+            .expect("train");
+            let from_default = train(&factory, 44_100, &s0, |_| {}).expect("train");
+            assert!(
+                (trained.first_loss - from_default.first_loss).abs()
+                    > 1e-3 * from_default.first_loss,
+                "the first block should be computed from the set start: {} against {}",
+                trained.first_loss,
+                from_default.first_loss
+            );
+            let first = first_step.expect("a first step");
+            assert!(
+                (first[0] + 0.4).abs() < 0.02,
+                "the first step should leave from -0.4, got {first:?}"
+            );
+            assert!(
+                (trained.values[0] + 1.2).abs() < 0.02 && (trained.values[1] - 0.72).abs() < 0.02,
+                "training should recover (-1.2, 0.72), got {:?}",
+                trained.values
+            );
+        });
     }
 
     /// The resonator of `ddsp_rad_host_block_resonator.dsp`: the block
