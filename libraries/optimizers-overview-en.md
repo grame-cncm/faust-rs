@@ -203,7 +203,7 @@ does not pretend otherwise:
 
 The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.9.0) is
 documented function by function in the Faust libraries convention; this
-section gives the map. It has thirteen sections, ordered from building blocks to
+section gives the map. It has fourteen sections, ordered from building blocks to
 ready-made loops and what surrounds them.
 
 | Section | What it holds | Why it exists |
@@ -219,6 +219,7 @@ ready-made loops and what surrounds them.
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | second-order steps for two or three correlated parameters |
 | Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus with one engine and one pair of bounds, in forward or in reverse mode |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | the gradient at audio rate, averaged over the frame, the step once per firing of an `ondemand` clock |
+| Gradient-free loops | `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked` | learning with no tangent at all, from two evaluations of the loss per frame: an integer delay, a `select2`, anything `fad` differentiates to zero |
 | Gating and stopping | `gated`, `gated_when`, `stop_after`, `stop_below`, `stop_relative`, `on_change` | switching the learning off once it has converged, so that it costs nothing afterwards; computing coefficients only when a parameter changes |
 | Newton solver | `newton_step`, `newton` | not learning: solving an implicit equation with `F` and `F'` from one `fad` |
 
@@ -493,6 +494,26 @@ the measurements: the gate divides the cost of a self-calibrating
 reverberator by about nine, `on_change` brings it to the cost of the
 reverberator alone.
 
+### 4.10 Gradient-free: `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked`
+
+Everything above differentiates. These three loops never do: the loss is
+evaluated at two parameter values over each frame, on the same excitation,
+and the update takes the difference. Spall's simultaneous perturbation (1992)
+holds a sign `delta` over the frame, evaluates `L(p + c delta)` and
+`L(p - c delta)`, and hands `(L+ - L-) / (2 c delta)` to the engine, the
+ordinary contract; on a quadratic loss the estimate is the exact frame
+gradient, and the loop follows `descend_1D_clocked` to rounding (section 5).
+For `N` parameters, one vector of `N` signs and still two evaluations, where
+coordinate-wise finite differences would need `2N`. Rechenberg's (1+1)
+evolution strategy (1973) keeps a candidate `p + sigma u` next to the
+incumbent and adopts it when its frame loss is strictly lower; no engine, the
+step is the acceptance. What they reach is what `fad` cannot see: an integer
+delay length (measured: a comb whose integer delay goes from 160 to 200
+samples), a `select2` on the parameter (measured: the branch found within a
+few frames while `descend_1D` never moves), a written table. The price: two
+model copies instead of one copy and its tangent, one step per frame, and a
+noisy estimate that wants a `c` or `sigma` on the parameter's scale.
+
 ## 5. Measured behaviour
 
 All runs: `faustprobe --double -I libraries -I <faustlibraries>`; programs
@@ -524,6 +545,9 @@ in the tutorial.
 | `stalled(0.999, 0.01, 0.1)` on (gradient, loss) = (0.5, 1), (0, 1), (0, 0.001) | 0, 1, 0 per segment |
 | `lr_exp` vs `ramp_exp` | bit-identical |
 | `langevin_g`, temperature annealed 0.5 → 0, vs `sgd_g`, two-well loss from the shallow well | SGD 0.960 (shallow well), Langevin -1.036 (deep well) at 200 000 samples; at temperature 0, identical to SGD |
+| `spsa_1D_clocked` vs `descend_1D_clocked`, gain, SGD 0.5 per 64-sample frame | same trajectories, difference `0` on every sample, 0.700000 at 4 000 |
+| `spsa_1D_clocked`, integer delay of a comb, `c = 2`, Adam 0.5 per 256-sample frame, from 160 | `int(d) = 200` from 25 000 samples, held from 40 000 on, residual 0; the `fad` tangent is identically zero |
+| `search_1D_clocked` vs `descend_1D`, `select2(p > 0.5, …)` from 0 | the search at 0.83 within a few frames, loss 0; `descend_1D` never moves |
 
 ## 6. Pitfalls worth knowing
 
@@ -833,12 +857,14 @@ that usually wraps it rather than replaces it:
 - *discrete parameters*: an integer delay length, a topology, a choice;
   they have no derivative (section 8) and must be relaxed or enumerated.
 
-Of all this the library has only the building blocks: the `init` from an
+Of all this the library has the building blocks — the `init` from an
 estimate, the ramps, the plateau detector `stalled` (a small gradient under
-a high loss) and `langevin_g`, the SGD step plus an annealed noise, which
-leaves a shallow well (section 5) but has no pull on a plateau. The searches
-themselves remain to be written; two forms would be natural, neither
-written nor measured: in the graph, `N` loops in parallel from distinct inits, a
+a high loss), `langevin_g`, the SGD step plus an annealed noise, which
+leaves a shallow well (section 5) but has no pull on a plateau — and the
+gradient-free loops of section 4.10, `spsa_1D_clocked`, `spsa_N_clocked` and
+`search_1D_clocked`, which learn discrete parameters from two evaluations of
+the loss per frame. Multi-start and the grid remain to be written; two forms
+would be natural, neither written nor measured: in the graph, `N` loops in parallel from distinct inits, a
 loss smoothed by `ema` for each, a selector that follows the best and
 `gated` or `stop_below` to switch the others off; on the host side, the
 loop of [docs/rad-usage-en.md](../docs/rad-usage-en.md) recompiles and
@@ -894,6 +920,11 @@ under a single rate. Those walls are the ones of section 6 and of section
   Restarts", ICLR 2017. <https://arxiv.org/abs/1608.03983>
 - M. Welling, Y. W. Teh, "Bayesian Learning via Stochastic Gradient Langevin
   Dynamics", ICML 2011 — the `langevin_g` engine.
+- J. C. Spall, "Multivariate Stochastic Approximation Using a Simultaneous
+  Perturbation Gradient Approximation", IEEE Trans. Automatic Control, 1992
+  — `spsa_1D_clocked`, `spsa_N_clocked`.
+- H.-G. Beyer, H.-P. Schwefel, "Evolution Strategies: A Comprehensive
+  Introduction", Natural Computing, 2002 — `search_1D_clocked`.
 - N. Hansen, "The CMA Evolution Strategy: A Tutorial", 2016 — gradient-free
   search. <https://arxiv.org/abs/1604.00772>
 - Faust-side notes: [docs/fad-note-en.md](../docs/fad-note-en.md),

@@ -181,6 +181,21 @@ leaves a shallow well; it does not pull on a flat plateau.
 
 ## N1 — Gradient-free engines at frame rate
 
+**Status 2026-09-16: landed** (`optimizers.lib` 0.9.0), with one deviation.
+The integer-delay bed is not the string: on a waveform loss an integer delay
+sees the string's ±1 Hz well only at one value, a flat plateau everywhere
+else, so no method can descend on it. The fixture `opt_spsa_int_delay.dsp`
+is a comb `x + x @ d` on a low-passed noise instead, whose loss is a bowl as
+wide as the excitation's correlation length: `int(d)` goes from 160 to 200
+and holds, with the `fad` tangent asserted identically zero on a lane. The
+other two fixtures are as planned (`opt_spsa_vs_fad_gain.dsp`: the two
+trajectories coincide exactly, the symmetric difference of a quadratic being
+its derivative; `opt_search_select2.dsp`). The perturbation sign is drawn
+inside the body, once per firing; before the first firing it is `+1`, so the
+first frame is already a valid estimate. `c` and `sigma` enter the body as
+inputs, so a ramp on them counts samples, not firings.
+
+
 **What it changes.** Everything the library learns today goes through a
 `fad` or `rad` tangent; nodes without a rule (integer arithmetic, `int`
 casts, table writes, buttons) give a zero tangent, and a `select2` gives the

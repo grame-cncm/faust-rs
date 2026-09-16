@@ -44,6 +44,7 @@ declare license "MIT/LGPL-3.0";
 // * [Gauss-Newton Loops](#gauss-newton-loops)
 // * [Bus Loops](#bus-loops)
 // * [Clocked Loops](#clocked-loops)
+// * [Gradient-Free Loops](#gradient-free-loops)
 // * [Gating and Stopping](#gating-and-stopping)
 // * [Newton Solver](#newton-solver)
 //
@@ -61,7 +62,12 @@ declare license "MIT/LGPL-3.0";
 // anneal a model parameter as well as a learning rate (`lr_exp` is now
 // `ramp_exp`, bit-identical); `stalled` flags a plateau, a small gradient
 // under a high loss, for the restart loops to come; `langevin_g` is the SGD
-// step plus an annealed noise, to leave a shallow well. The one-parameter loops
+// step plus an annealed noise, to leave a shallow well. The gradient-free
+// clocked loops `spsa_1D_clocked`, `spsa_N_clocked` (simultaneous
+// perturbation) and `search_1D_clocked` ((1+1) evolution strategy) learn from
+// two evaluations of the loss per frame and no tangent at all, so an integer
+// delay, a `select2` or anything else `fad` gives a zero tangent to becomes
+// learnable. The one-parameter loops
 // `lsq_1D`, `descend_1D` and `descend_1D_clocked` take `init` through an
 // input wire of their recursive block instead of closing over it, so an
 // `init` computed in the graph does not multiply their compile time; same
@@ -2840,6 +2846,183 @@ with {
             clip(lo1 - init1, hi1 - init1, q1 - upd1(h1)), clip(lo2 - init2, hi2 - init2, q2 - upd2(h2)), clip(lo3 - init3, hi3 - init3, q3 - upd3(h3)),
             clip(lo4 - init4, hi4 - init4, q4 - upd4(h4)), clip(lo5 - init5, hi5 - init5, q5 - upd5(h5));
     };
+};
+
+//==================================Gradient-Free Loops=====================================
+// Clocked loops that never differentiate: the loss is evaluated at two
+// parameter values over each frame, and the update takes the difference. They
+// learn what `fad` cannot see -- an integer delay length, a `select2` on the
+// parameter, a written table, anything whose tangent is zero -- at the price
+// of two model copies instead of one model and its tangent, one step per
+// frame, and a noisy estimate. The frame is the mini-batch: the two copies see
+// the same excitation (common random numbers), which is what makes their
+// difference informative.
+//==========================================================================================
+
+// A +-1 sign drawn from an LCG. Referenced inside an `ondemand` body, the
+// generator is instantiated in the body's time and advances once per firing.
+_rademacher = select2((lcg >> 16) & 1, -1.0, 1.0)
+with { lcg = (+(12345) ~ *(1103515245)); };
+// A uniform draw on [-1, 1] from the same generator.
+_uniform = lcg * 4.656612873077393e-10
+with { lcg = (+(12345) ~ *(1103515245)); };
+// The perturbation sign held over the frame, +1 before the first firing.
+_dsafe(s) = select2(s == 0.0, s, 1.0);
+
+//------------------------------`(op.)spsa_1D_clocked`--------------------------
+// One-parameter simultaneous perturbation loop (Spall 1992). The block holds
+// a sign `delta` over the frame; at audio rate the loss is evaluated at
+// `p + c delta` and at `p - c delta` and both are averaged with `frame_mean`;
+// on the firing the gradient estimate `(L+ - L-) / (2 c delta)` goes to the
+// engine, the ordinary contract, and a fresh sign is drawn for the next
+// frame. On a loss quadratic in `p` the estimate is the exact frame gradient,
+// so with the same engine and clock the loop follows `descend_1D_clocked` to
+// rounding. `c` may be a signal (`ramp_exp` to shrink it, as Spall
+// recommends); a parameter at a bound sees its perturbation clipped.
+//
+// #### Usage
+//
+// ```
+// spsa_1D_clocked(clock, loss, upd, c, lo, hi, init, reset) : _
+// ```
+//
+// Where:
+//
+// * `clock`: non-zero on the samples where the update runs
+// * `loss`: scalar loss `loss(p)`, a function of the parameter closed over the data
+// * `upd`: gradient engine `upd(g)`
+// * `c`: perturbation size, in the parameter's unit (at least 1 for an integer parameter)
+// * `lo`, `hi`: bounds of the parameter
+// * `init`: initial value
+// * `reset`: signal forcing the parameter back to `init` while non-zero
+//
+// #### Example
+//
+// ```
+// clock = ((+(1) : %(256)) ~ _) == 0;
+// mdl(d) = x + de.delay(512, int(d), x);            // an integer delay: fad gives a zero tangent
+// d = op.spsa_1D_clocked(clock, \(d).(op.mse(mdl(d), target)), op.adam_g(0.5, 0.9, 0.999, 1e-8), 2.0, 0, 500, 160, 0);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// spsa_1D_clocked_test = op.spsa_1D_clocked(clock, \(p).(op.mse(p * x, 0.5 * x)), op.sgd_g(0.5), 0.1, -4, 4, 0, 0)
+// with { x = hslider("spsa_1D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//
+// #### References
+//
+// * J. C. Spall, "Multivariate Stochastic Approximation Using a Simultaneous
+//   Perturbation Gradient Approximation", IEEE Trans. Automatic Control, 1992.
+//------------------------------------------------------------------------------
+spsa_1D_clocked(clock, loss, upd, c, lo, hi, init, reset) = init : (loop ~ (_, _)) : (_, !) : +(init)
+with {
+    loop(prev, dprev, i1) = (clock, d1, lp, lm, i1, c, dsafe) : ondemand(step)
+    with {
+        d1 = _dev_clocked(clock, reset, prev);
+        dsafe = _dsafe(dprev);
+        p = clip(lo, hi, i1 + d1);
+        lp = frame_mean(clock, loss(clip(lo, hi, p + c * dsafe)));
+        lm = frame_mean(clock, loss(clip(lo, hi, p - c * dsafe)));
+        step(q, l_plus, l_minus, i, cc, dd) =
+            clip(lo - i, hi - i, q - upd((l_plus - l_minus) / (2.0 * cc * dd))), _rademacher;
+    };
+};
+
+//------------------------------`(op.)search_1D_clocked`------------------------
+// One-parameter (1+1) evolution strategy (Rechenberg 1973): the block holds an
+// incumbent and a candidate `incumbent + sigma * u`, `u` uniform on
+// `[-1, 1]`; over the frame both losses are averaged; on the firing the
+// candidate replaces the incumbent when its loss is strictly lower, and a new
+// candidate is drawn. No engine: the step is the acceptance. `sigma` may be a
+// signal (a `ramp_exp` to narrow the search).
+//
+// #### Usage
+//
+// ```
+// search_1D_clocked(clock, loss, sigma, lo, hi, init, reset) : _
+// ```
+//
+// Where:
+//
+// * `clock`: non-zero on the samples where the update runs
+// * `loss`: scalar loss `loss(p)`, a function of the parameter closed over the data
+// * `sigma`: half-width of the candidate draw, in the parameter's unit
+// * `lo`, `hi`: bounds of the parameter
+// * `init`: initial value
+// * `reset`: signal forcing the parameter back to `init` while non-zero
+//
+// #### Example
+//
+// ```
+// mdl(p) = select2(p > 0.5, 0.2 * x, 0.7 * x);      // a discrete choice: fad never moves p
+// p = op.search_1D_clocked(clock, \(p).(op.mse(mdl(p), 0.7 * x)), 1.0, -2, 2, 0, 0);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// search_1D_clocked_test = op.search_1D_clocked(clock, \(p).(op.mse(p * x, 0.5 * x)), 0.1, -4, 4, 0, 0)
+// with { x = hslider("search_1D_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//
+// #### References
+//
+// * I. Rechenberg, *Evolutionsstrategie*, Frommann-Holzboog, 1973.
+// * H.-G. Beyer, H.-P. Schwefel, "Evolution Strategies: A Comprehensive
+//   Introduction", Natural Computing, 2002.
+//------------------------------------------------------------------------------
+search_1D_clocked(clock, loss, sigma, lo, hi, init, reset) = init : (loop ~ (_, _)) : (_, !) : +(init)
+with {
+    loop(prev, cprev, i1) = (clock, d1, dc, li, lc, i1, sigma) : ondemand(step)
+    with {
+        d1 = _dev_clocked(clock, reset, prev);
+        dc = _dev_clocked(clock, reset, cprev);
+        li = frame_mean(clock, loss(clip(lo, hi, i1 + d1)));
+        lc = frame_mean(clock, loss(clip(lo, hi, i1 + dc)));
+        step(q, qc, l_inc, l_cand, i, s) = winner, clip(lo - i, hi - i, winner + s * _uniform)
+        with { winner = select2(l_cand < l_inc, q, qc); };
+    };
+};
+
+//------------------------------`(op.)spsa_N_clocked`---------------------------
+// `N` parameters as a bus, one perturbation vector of `N` signs per frame and
+// the same two loss evaluations whatever `N`: the point of simultaneous
+// perturbation over coordinate-wise differences. Each parameter's estimate is
+// `(L+ - L-) / (2 c delta_k)`.
+//
+// #### Usage
+//
+// ```
+// spsa_N_clocked(N, clock, loss, upd, c, lo, hi, init, reset) : si.bus(N)
+// ```
+//
+// Where:
+//
+// * `N`: number of parameters
+// * `loss`: scalar loss `loss(p1, ..., pN)`
+// * `upd`, `c`, `lo`, `hi`, `init`, `reset`: as `spsa_1D_clocked`, one engine
+//   setting, one pair of bounds and one initial value for all parameters
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// spsa_N_clocked_test = op.spsa_N_clocked(3, clock, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.sgd_g(0.5), 0.1, -4, 4, 0, 0)
+// with { x = hslider("spsa_N_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+spsa_N_clocked(N, clock, loss, upd, c, lo, hi, init, reset) = (step ~ si.bus(2 * N)) : (si.bus(N), par(i, N, !)) : par(i, N, +(init))
+with {
+    perturbed(sign) = ro.interleave(N, 2) : par(i, N, \(d, s).(clip(lo, hi, init + d + sign * c * s)));
+    losses = si.bus(2 * N) <: (perturbed(1.0) : loss : frame_mean(clock)), (perturbed(-1.0) : loss : frame_mean(clock));
+    step = (par(i, N, _dev_clocked(clock, reset)), par(i, N, _dsafe))
+         <: (si.bus(2 * N), losses)
+         : (clock, si.bus(2 * N + 2), c) : ondemand(update);
+    update = (si.bus(2 * N), (\(lp, lm, cc).((lp - lm) / (2.0 * cc)) <: si.bus(N)))
+           : ro.interleave(N, 3)
+           : par(i, N, \(q, s, gs).(clip(lo - init, hi - init, q - upd(gs / s)), _rademacher))
+           : ro.interleave(2, N);
 };
 
 //===================================Gating and Stopping====================================

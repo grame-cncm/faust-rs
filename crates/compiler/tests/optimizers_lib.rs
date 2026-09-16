@@ -484,14 +484,87 @@ fn langevin_leaves_the_shallow_well_where_sgd_stays() {
 }
 
 #[test]
+fn spsa_follows_the_fad_loop_on_a_quadratic_loss() {
+    // [gain by spsa_1D_clocked, gain by descend_1D_clocked, difference]:
+    // the symmetric difference of a quadratic loss is its exact derivative,
+    // so both loops, same engine and clock, reach 0.7 on the same path.
+    let Some(outs) = run_interp_fixture("opt_spsa_vs_fad_gain", 6_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    let spsa = outs[0][5_999];
+    let fad = outs[1][5_999];
+    let max_gap = outs[2].iter().fold(0.0_f32, |m, &d| m.max(d.abs()));
+    eprintln!("spsa vs fad: {spsa} {fad} max gap {max_gap:.3e}");
+    assert!(
+        (spsa - 0.7).abs() < 1e-4,
+        "spsa should learn the gain, got {spsa}"
+    );
+    assert!(
+        (fad - 0.7).abs() < 1e-4,
+        "descend_1D_clocked should learn the gain, got {fad}"
+    );
+    assert!(
+        max_gap < 1e-4,
+        "the two trajectories should coincide, max gap {max_gap}"
+    );
+}
+
+#[test]
+fn spsa_learns_an_integer_delay_that_fad_cannot_see() {
+    // [d, int(d), fad tangent, residual]: the comb's delay is an integer, its
+    // tangent identically zero; SPSA with c = 2 and Adam 0.5 per 256-sample
+    // frame brings d from 160 to the hidden 200 and holds it.
+    let Some(outs) = run_interp_fixture("opt_spsa_int_delay", 60_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 4);
+    assert!(
+        outs[2].iter().all(|&t| t == 0.0),
+        "fad through int(d) should be zero"
+    );
+    let held = outs[1][50_000..].iter().all(|&i| i == 200.0);
+    let residual = rms(&outs[3][50_000..]);
+    eprintln!("int delay: d {} residual {residual:.3e}", outs[0][59_999]);
+    assert!(held, "int(d) should hold 200 over the last 10 000 samples");
+    assert!(
+        residual < 1e-6,
+        "the comb should match once the delay is right, got {residual}"
+    );
+}
+
+#[test]
+fn search_finds_the_select2_branch_that_descend_never_reaches() {
+    // [p by search_1D_clocked, p by descend_1D, frame loss]: the loss is a
+    // step in p (a comparison), so the fad loop stays at 0 while the (1+1)
+    // strategy accepts a candidate above 0.5 and the loss falls to zero.
+    let Some(outs) = run_interp_fixture("opt_search_select2", 6_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    assert!(
+        outs[1].iter().all(|&p| p == 0.0),
+        "descend_1D should never move p"
+    );
+    let p = outs[0][5_999];
+    let loss = outs[2][5_999];
+    eprintln!("search: p {p} loss {loss:.3e}");
+    assert!(p > 0.5, "the search should settle above 0.5, got {p}");
+    assert_eq!(
+        loss, 0.0,
+        "the frame loss should be zero on the right branch"
+    );
+}
+
+#[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 86 entries, 145 outputs. It only has to compile,
+    // documented function: 89 entries, 150 outputs. It only has to compile,
     // run, and stay finite.
     let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
         return;
     };
-    assert_eq!(outs.len(), 145, "expected the outputs of every Test entry");
+    assert_eq!(outs.len(), 150, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(

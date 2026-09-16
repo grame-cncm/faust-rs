@@ -219,7 +219,7 @@ bibliothèque ne prétend pas le contraire :
 
 Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.9.0) est
 documenté fonction par fonction selon la convention des bibliothèques Faust ;
-cette section en donne la carte. Il comporte treize sections, ordonnées des
+cette section en donne la carte. Il comporte quatorze sections, ordonnées des
 briques de base aux boucles prêtes à l'emploi.
 
 | Section | Contenu | Raison d'être |
@@ -235,6 +235,7 @@ briques de base aux boucles prêtes à l'emploi.
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | pas de second ordre pour deux ou trois paramètres corrélés |
 | Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus avec un moteur et une paire de bornes, en mode direct ou inverse |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | le gradient à cadence audio, moyenné sur la trame, le pas une fois par tir d'une horloge `ondemand` |
+| Gradient-free loops | `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked` | apprendre sans aucune tangente, par deux évaluations de la perte par trame : un retard entier, un `select2`, tout ce que `fad` dérive à zéro |
 | Porte et arrêt | `gated`, `gated_when`, `stop_after`, `stop_below`, `stop_relative`, `on_change` | couper l'apprentissage une fois qu'il a convergé, pour qu'il ne coûte plus rien ensuite ; ne calculer des coefficients que lorsqu'un paramètre change |
 | Newton solver | `newton_step`, `newton` | pas de l'apprentissage : résoudre une équation implicite avec `F` et `F'` issus d'un seul `fad` |
 
@@ -523,6 +524,27 @@ prennent des coefficients plutôt que des paramètres ;
 mesures : la porte divise par environ neuf le coût d'une réverbération
 auto-calibrante, `on_change` le ramène à celui de la réverbération seule.
 
+### 4.10 Sans gradient : `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked`
+
+Tout ce qui précède dérive. Ces trois boucles ne dérivent jamais : la perte
+est évaluée à deux valeurs du paramètre sur chaque trame, sur la même
+excitation, et la mise à jour prend la différence. La perturbation simultanée
+de Spall (1992) tient le signe `delta` sur la trame, évalue `L(p + c delta)`
+et `L(p - c delta)`, et donne `(L+ - L-) / (2 c delta)` au moteur, le contrat
+ordinaire ; sur une perte quadratique l'estimation est la dérivée exacte de la
+trame, et la boucle suit `descend_1D_clocked` à l'arrondi près (section 5).
+Pour `N` paramètres, un vecteur de `N` signes et toujours deux évaluations,
+là où des différences finies par coordonnée en demanderaient `2N`. La
+stratégie d'évolution (1+1) de Rechenberg (1973) tient un candidat
+`p + sigma u` à côté du titulaire et le garde quand sa perte de trame est
+strictement plus basse ; pas de moteur, le pas est l'acceptation. Ce qu'elles
+atteignent, c'est ce que `fad` ne voit pas : une longueur de retard entière
+(mesuré : un peigne dont le retard entier va de 160 à 200 échantillons), un
+`select2` sur le paramètre (mesuré : la branche trouvée en quelques trames
+quand `descend_1D` ne bouge pas), une table écrite. Le prix : deux copies du
+modèle au lieu d'une copie et sa tangente, un pas par trame, et une
+estimation bruitée qui demande un `c` ou un `sigma` à l'échelle du paramètre.
+
 ## 5. Comportement mesuré
 
 Toutes les exécutions : `faustprobe --double -I libraries -I <faustlibraries>` ;
@@ -554,6 +576,9 @@ programmes dans le tutoriel.
 | `stalled(0,999, 0,01, 0,1)` sur (gradient, perte) = (0,5, 1), (0, 1), (0, 0,001) | 0, 1, 0 par segment |
 | `lr_exp` contre `ramp_exp` | identiques bit pour bit |
 | `langevin_g`, température recuite 0,5 → 0, contre `sgd_g`, perte à deux puits depuis le puits peu profond | SGD 0,960 (puits peu profond), Langevin -1,036 (puits profond) à 200 000 échantillons ; à température 0, identique à SGD |
+| `spsa_1D_clocked` contre `descend_1D_clocked`, gain, SGD 0,5 par trame de 64 | mêmes trajectoires, différence `0` à chaque échantillon, 0,700000 à 4 000 |
+| `spsa_1D_clocked`, retard entier d'un peigne, `c = 2`, Adam 0,5 par trame de 256, depuis 160 | `int(d) = 200` dès 25 000 échantillons, tenu à partir de 40 000, résidu 0 ; la tangente `fad` est identiquement nulle |
+| `search_1D_clocked` contre `descend_1D`, `select2(p > 0,5, …)` depuis 0 | la recherche à 0,83 en quelques trames, perte 0 ; `descend_1D` ne bouge pas |
 
 ## 6. Pièges à connaître
 
@@ -891,11 +916,14 @@ qui en général l'encadre plutôt qu'elle ne le remplace :
   un choix ; ils n'ont pas de dérivée (section 8), il faut les relaxer ou
   les énumérer.
 
-De tout cela, la bibliothèque n'a que les briques : l'`init` sur estimation,
-les rampes, le détecteur de plateau `stalled` (gradient petit sous une perte
-haute) et `langevin_g`, le pas SGD plus un bruit recuit, qui quitte un puits
-peu profond (section 5) mais n'attire pas sur un plateau. Les recherches
-elles-mêmes restent à écrire ; deux formes seraient naturelles, ni écrites ni
+De tout cela, la bibliothèque a les briques — l'`init` sur estimation, les
+rampes, le détecteur de plateau `stalled` (gradient petit sous une perte
+haute), `langevin_g`, le pas SGD plus un bruit recuit, qui quitte un puits
+peu profond (section 5) mais n'attire pas sur un plateau — et les boucles
+sans gradient de la section 4.10, `spsa_1D_clocked`, `spsa_N_clocked` et
+`search_1D_clocked`, qui apprennent les paramètres discrets par deux
+évaluations de la perte par trame. Les départs multiples et la grille
+restent à écrire ; deux formes seraient naturelles, ni écrites ni
 mesurées : dans le graphe, `N` boucles en parallèle depuis
 des inits distincts, une perte lissée par `ema` pour chacune, un sélecteur
 qui suit la meilleure et `gated` ou `stop_below` pour éteindre les autres ;
@@ -955,6 +983,11 @@ convexité.
   Restarts », ICLR 2017. <https://arxiv.org/abs/1608.03983>
 - M. Welling, Y. W. Teh, « Bayesian Learning via Stochastic Gradient Langevin
   Dynamics », ICML 2011 — le moteur `langevin_g`.
+- J. C. Spall, « Multivariate Stochastic Approximation Using a Simultaneous
+  Perturbation Gradient Approximation », IEEE Trans. Automatic Control, 1992
+  — `spsa_1D_clocked`, `spsa_N_clocked`.
+- H.-G. Beyer, H.-P. Schwefel, « Evolution Strategies: A Comprehensive
+  Introduction », Natural Computing, 2002 — `search_1D_clocked`.
 - N. Hansen, « The CMA Evolution Strategy: A Tutorial », 2016 — recherche
   sans gradient. <https://arxiv.org/abs/1604.00772>
 - Notes côté Faust : [docs/fad-note-en.md](../docs/fad-note-en.md),
