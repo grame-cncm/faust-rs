@@ -990,7 +990,7 @@ the block's boundary, a loss inside and a seed outside.
 - **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   differentiates a loss computed on an FFT frame, the per-frame counterpart of
   section 7.2.
-- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): twelve
+- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): fourteen
   DDSP programs with their tests — an adaptive notch, a mode calibrated by
   Gauss-Newton, an amp model, a diode clipper learned through its implicit
   solver, an FDN reverb, a string tuned through its fractional delay

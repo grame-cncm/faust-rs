@@ -43,7 +43,7 @@ machine learning and differentiable DSP, in English and French:
   biquad, every program run with `faustprobe` and its quoted figures kept
   true by `crates/cranelift-ffi/tests/tutorial_examples.rs`;
 - [ddsp-examples-en.md](ddsp-examples-en.md) /
-  [ddsp-examples-fr.md](ddsp-examples-fr.md) — twelve complete DDSP programs
+  [ddsp-examples-fr.md](ddsp-examples-fr.md) — fourteen complete DDSP programs
   (`tests/corpus/ddsp_*.dsp`, run by `crates/compiler/tests/ddsp_examples.rs`):
   an adaptive notch, a mode calibrated by Gauss-Newton, an amp model, a
   diode clipper learned through its implicit Newton solver, an FDN reverb
@@ -51,7 +51,9 @@ machine learning and differentiable DSP, in English and French:
   fractional delay with `fad`; a 64-tap echo canceller, a neural waveshaper,
   block gradients handed to a host, a GRU amp model trained by
   block-truncated BPTT from the host and a harmonic synthesizer fitted
-  through a per-frame spectral loss inside an `ondemand` block with `rad`.
+  through a per-frame spectral loss inside an `ondemand` block with `rad`;
+  a string that tunes itself from its own pitch estimate (`init_latch`) and
+  an integer delay learned without a gradient (`spsa_1D_clocked`).
 
 Both libraries follow the Faust libraries documentation conventions
 (<https://faustlibraries.grame.fr/contributing/>): a `declare name`/`version`

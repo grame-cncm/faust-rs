@@ -1,6 +1,6 @@
-# Douze exemples DDSP avec `fad` et `rad`
+# Quatorze exemples DDSP avec `fad` et `rad`
 
-Douze programmes complets de DSP différentiable, chacun une tâche qu'un
+Quatorze programmes complets de DSP différentiable, chacun une tâche qu'un
 ingénieur du son reconnaît, écrits avec les deux primitives de
 différenciation automatique de `faust-rs` et les boucles
 d'[optimizers.lib](optimizers.lib). Trois utilisent `fad`, le mode direct, là
@@ -16,7 +16,11 @@ d'une corde apprise à travers son retard fractionnaire, et le synthétiseur
 harmonique de DDSP ajusté par une perte spectrale calculée trame par trame
 dans un bloc `ondemand`. Le douzième est de nouveau la réverbération FDN,
 qui se calibre puis coupe son apprentissage, pour ne plus coûter qu'une
-réverbération une fois fait.
+réverbération une fois fait. Les deux derniers sont nés du travail sur la
+non-convexité (section 9 de l'overview) : la corde de nouveau, qui s'accorde
+depuis sa propre estimation de la hauteur, un détecteur puis le gradient ;
+et un retard entier appris sans aucun gradient, par deux évaluations de la
+perte par trame.
 Chaque programme vit dans `tests/corpus/ddsp_*.dsp`, est exécuté par la
 suite de tests
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs))
@@ -53,6 +57,8 @@ depuis la racine du dépôt.
 | 10 | `ddsp_fad_waveguide_string_pitch` | accorder une corde à guide d'onde à travers son retard fractionnaire | `fad` | `lsq_1D` + `nlms` | 228 → 220,000000 Hz ; puits de ±1 Hz, capture seulement par le haut |
 | 11 | `ddsp_rad_harmonic_spectral_frame` | ajuster 16 amplitudes harmoniques par une perte spectrale par trame | `rad` dans `ondemand` | Adam par trame, dans un bloc `ondemand` | toutes les amplitudes à 2,5e-4 de 1/h en 100 trames |
 | 12 | `ddsp_fad_fdn_gated` | calibrer la FDN, puis couper son apprentissage | `fad` dans `gated` | `lm_2D` dans un `ondemand` cadencé par `stop_below`, gains par `on_change` | (0,600, 0,300) figés à la sixième période ; l'apprentissage ne coûte plus rien |
+| 13 | `ddsp_fad_string_self_tuning` | accorder la corde depuis sa propre estimation de hauteur, sans départ choisi à la main | `fad` | `lsq_1D` + `nlms`, `init_latch` et `init_reset` sur un pic d'autocorrélation | init figé à 222,77 Hz, 220,000000 dès 48 000 échantillons |
+| 14 | `ddsp_spsa_delay_estimation` | trouver le retard entier entre un signal et sa copie | aucun : deux évaluations de la perte par trame | `spsa_1D_clocked` + Adam par trame de 256 | `int(d)` de 160 à 200 en 25 000 échantillons, tenu ; la tangente `fad` est identiquement nulle |
 
 **Où tourne l'optimiseur.** Huit exemples font un pas par échantillon audio
 dans le graphe, par les boucles de la bibliothèque (`lsq_1D`, `lm_2D`,
@@ -73,7 +79,13 @@ celui qui utilise les fonctions de porte de la bibliothèque, `stop_below`
 pour le drapeau et `on_change` pour les coefficients de la réverbération
 rendue. Les exemples 6 et 9 n'utilisent
 pas `ondemand` du tout : leur optimiseur est celui de l'hôte, un pas d'Adam
-par bloc `compute` sur les voies de gradient sommées.
+par bloc `compute` sur les voies de gradient sommées. L'exemple 13 est la
+boucle de l'exemple 10, `lsq_1D` à cadence audio, partie d'une estimation
+que le graphe calcule et fige. L'exemple 14 est le premier dont l'optimiseur
+ne dérive rien : `spsa_1D_clocked`, une boucle de la bibliothèque dans un
+bloc `ondemand` tiré tous les 256 échantillons, évalue la perte à deux
+valeurs du paramètre sur la trame et fait un pas d'Adam sur leur
+différence.
 
 ## 1. Suppression d'un ronflement par notch adaptatif (`fad`)
 
@@ -603,6 +615,23 @@ l'amortissement du modèle est recuit de 0,70 à 0,95 (résonances larges
 d'abord) — et par le bas non (200 → 190 Hz, 176 → 168). C'est pourquoi les
 systèmes DDSP estiment f0 par un détecteur et laissent le gradient affiner.
 
+**Ce que permet le paysage, mesuré.** Le balayage de
+`tests/corpus/opt_landscape_string.dsp` (la hauteur réglée par l'hôte avec
+`faustprobe --set`, section 5 de l'overview) met des chiffres dessus. Sous
+`mse` et sous `corr_loss` le puits fait ±1 Hz. Sous `bank_log_energy_loss`
+à huit bandes il devient une pente vers 220 Hz d'environ 218 à 226 Hz, avec
+des extrema locaux à 216 et 232 Hz où les harmoniques des deux cordes
+s'alignent : SGD à 1e-4 y atteint 220,000 Hz depuis 224 Hz, mais l'erreur de
+forme d'onde aussi, portée par la pente de son plateau, et depuis 200 ou
+214 Hz les deux échouent. Quatre départs répartis sur la plage, `176`,
+`200`, `228` et `264` Hz sous `multistart_lsq_1D`, en comprennent un dans la
+zone de capture et la boucle le suit dès 16 000 échantillons. Un
+redémarrage pris après une dérive n'est pas une boucle neuve : la corde, sa
+tangente et le moteur gardent l'état de la dérive, et un redémarrage depuis
+228 Hz ne verrouille pas comme une boucle neuve partie de 228 Hz. Les
+outils sont ceux de la bibliothèque ; le départ reste le choix décisif, que
+l'exemple 13 fait à votre place.
+
 **Optimiseur.** `lsq_1D` avec `nlms(0.02, 1e-6, 0.99)`.
 
 **Ce qu'on observe.** 228 → 219,99 Hz à 20 000 échantillons, 220,000000 à
@@ -620,8 +649,11 @@ le résidu passe de 0,08 à 2e-7.
 **À essayer.** Apprendre aussi l'amortissement (`lsq_2D`) ; remplacer le bruit
 par des pincements et voir le puits se rétrécir ; partir une quinte plus loin
 et voir la dérive ; donner l'estimation d'un détecteur de hauteur comme `init`
-(`tests/corpus/opt_init_latch_string.dsp` le fait avec `op.init_latch` et un
-pic d'autocorrélation : hauteur à `220,000000` sans départ choisi à la main).
+(l'exemple 13 le fait, avec `op.init_latch` et un pic d'autocorrélation) ;
+répartir quatre départs avec `multistart_lsq_1D`
+(`tests/corpus/opt_multistart_string.dsp`) ; apprendre à travers
+`bank_log_energy_loss` depuis 224 Hz (`tests/corpus/opt_bank_loss_string.dsp`)
+et comparer avec l'erreur de forme d'onde.
 
 ## 11. Un synthétiseur harmonique ajusté par une perte spectrale par trame (`rad` dans un bloc `ondemand`)
 
@@ -725,6 +757,100 @@ demande ; une cible qui change toutes les cent périodes, avec `gated_when`
 qui réactive l'apprentissage quand l'énergie résiduelle remonte ;
 `stop_after(clock, 8)` comme simple budget.
 
+## Après le travail sur la non-convexité : deux de plus
+
+## 13. Une corde qui s'accorde seule : un détecteur, puis le gradient (`fad`)
+
+**Ce que fait le programme.** La corde pincée de l'exemple 10, accordée sur
+une corde cachée à 220 Hz, mais aucun départ n'est choisi à la main. Pendant
+`T = 8 192` échantillons la boucle est tenue à `init` par `init_reset`
+tandis que `init` suit une estimation de la hauteur de la cible calculée
+dans le graphe : le retard du pic de l'autocorrélation lissée de la cible
+sur une grille de 30 retards entiers de 158 à 274 échantillons (279 à
+161 Hz), un pas de 2 % à 220 Hz. À `T` l'estimation est figée par
+`init_latch`, raccourcie de 2 % pour que le départ tombe du côté d'où le
+puits capture, et la boucle est relâchée. Le suivi standard par passages à
+zéro `an.pitchTracker` lit des centaines de hertz ou quelques unités sur
+cette corde excitée par du bruit, d'où l'estimation calculée ici ; tout
+autre détecteur ferait l'affaire, les deux helpers prenant n'importe quel
+signal.
+
+**Ce qui est dérivé, et pourquoi le mode direct.** Comme dans l'exemple 10,
+`fad` à travers le retard fractionnaire et la rétroaction, une tangente. Le
+détecteur n'est pas dérivé du tout : trente produits lissés et un pli
+argmax, aucune copie du modèle. C'est le schéma détecteur puis gradient des
+systèmes DDSP, écrit en Faust et tournant dans le processus audio.
+
+**Optimiseur.** `lsq_1D` avec `nlms(0.02, 1e-6, 0.99)`, son `init` un
+signal (les boucles le prennent par un fil d'entrée depuis 0.9.0) et son
+`reset` tenu jusqu'à `T`.
+
+**Ce qu'on observe.** La voie de l'init lit l'estimation mobile jusqu'à
+8 192, puis tient `222,772277 Hz` (retard 202 × 0,98) ; la hauteur lit
+223,3 Hz à 10 000 échantillons, 219,986 à 20 000, 219,9989 à 30 000,
+220,000002 à 50 000 ; le résidu passe sous 1e-6.
+
+**Avec faustprobe.** Colonnes hauteur en Hz, résidu, init figé en Hz :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 60000 --every 10000 tests/corpus/ddsp_fad_string_self_tuning.dsp
+```
+
+284,8 (le premier retard de l'estimation), 223,29, 219,986, 219,9989,
+219,99997, 220,0000016 aux trames affichées ; la colonne de l'init tient
+222,772277 à partir de la deuxième ligne.
+
+**À essayer.** Remplacer la cible par un enregistrement (`--in`) et élargir
+la grille de retards ; raccourcir `T` et voir l'estimation figée avant de
+s'être posée ; retirer le raccourcissement de 2 % et voir de quel côté du
+puits le départ tombe.
+
+## 14. Le retard entier entre un signal et sa copie, appris sans gradient (`spsa_1D_clocked`)
+
+**Ce que fait le programme.** Estimation de retard : avant qu'un annuleur
+d'écho ou un alignement de micros puisse faire quoi que ce soit, il faut
+trouver le retard, en échantillons entiers, entre un signal et sa copie
+retardée. Un peigne `x + x @ 200` sur un bruit filtré cache `d* = 200` ; le
+modèle est le même peigne avec `de.delay(512, int(d), x)`, un retard
+entier, et la perte l'erreur de forme d'onde entre les deux.
+
+**Pourquoi sans gradient.** `fad` donne une tangente nulle à travers `int`
+et à travers la longueur du retard : la troisième voie l'affirme,
+identiquement nulle. Aucune descente des exemples précédents ne peut
+déplacer `d`. `spsa_1D_clocked`, la perturbation simultanée, tient un signe
+±1 sur chaque trame de 256 échantillons, évalue la perte en `int(d + 2)` et
+`int(d - 2)` sur la même excitation, moyenne les deux avec `frame_mean` et
+donne `(L+ - L-) / (2 c delta)` à Adam une fois par trame : deux copies du
+modèle et aucune tangente. La perte est un bol aussi large que la longueur
+de corrélation de l'excitation, un passe-bas du premier ordre à 200 Hz,
+environ 35 échantillons : depuis 160 la pente pointe vers 200.
+
+**Optimiseur.** `spsa_1D_clocked` avec `c = 2` (au moins un échantillon,
+pour un paramètre entier) et `adam_g(0.5, 0.9, 0.999, 1e-8)` par trame ; le
+pas fixe d'Adam, un demi-échantillon, garde `int(d)` sur 200 une fois `d`
+dans `[200, 201)`.
+
+**Ce qu'on observe.** `int(d)` lit 160, 170, 187, 199 à 0, 10 000, 20 000
+et 30 000 échantillons, 200 à partir de 40 000 (199 et 201 sont visités
+entre 25 000 et 35 000) ; le résidu vaut 0 une fois le retard juste ; la
+voie de la tangente vaut 0 tout du long.
+
+**Avec faustprobe.** Colonnes `d`, `int(d)`, tangente `fad`, résidu :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 60000 --every 10000 tests/corpus/ddsp_spsa_delay_estimation.dsp
+```
+
+`d` 160, 170,1, 187,5, 199,95, 200,78, 200,73 et `int(d)` 160, 170, 187,
+199, 200, 200 aux trames affichées ; la colonne de la tangente vaut
+0,000000 sur chaque ligne, le résidu 0 sur les deux dernières.
+
+**À essayer.** Élargir la bande de l'excitation et voir le bol se
+rétrécir (un bruit blanc a un bol d'un échantillon, et SPSA aucune pente à
+suivre) ; recuire `c` avec `ramp_exp` ; deux retards avec `spsa_N_clocked` ;
+un `select2` entre deux filtres avec `search_1D_clocked`
+(`tests/corpus/opt_search_select2.dsp`).
+
 ## Comment les tests les vérifient
 
 Chaque programme est rendu par l'interpréteur sur une instance neuve (les
@@ -745,7 +871,11 @@ amplitudes harmoniques à 2 % de 1/h avec un résidu de resynthèse sous 0,01
 (en build release) ; la FDN cadencée à 0,01 du T60 et de l'amortissement
 quand son drapeau se lève, à une frontière de période entre la quatrième et
 la vingtième, ses paramètres bit-constants ensuite et le résidu rendu sous
-1e-4 rms. Les programmes tournent en simple précision là et en
+1e-4 rms ; la corde qui s'accorde seule avec son init figé entre 220 et
+230 Hz et bit-constant ensuite, sa hauteur à 0,05 Hz de 220 et son résidu
+sous 1e-3 ; l'estimation de retard avec une voie de tangente identiquement
+nulle, `int(d)` à 200 sur les 10 000 derniers échantillons et un résidu sous
+1e-6. Les programmes tournent en simple précision là et en
 double sous `faustprobe` ; les deux convergent.
 
 ## D'où viennent les gradients
@@ -754,5 +884,7 @@ double sous `faustprobe` ; les deux convergent.
 décrite dans [docs/fad-note-en.md](../docs/fad-note-en.md) ; `rad` en le
 balayage inverse par bloc de [docs/rad-note-en.md](../docs/rad-note-en.md),
 dont les carries, les bandes et les horizons sont ce que les exemples 4 à 6
-exercent. Les boucles à bus et les moteurs sont documentés fonction par
+exercent. L'exemple 14 n'a aucun gradient : son estimation vient de deux
+évaluations de la perte par trame, les boucles sans gradient de la
+bibliothèque. Les boucles à bus et les moteurs sont documentés fonction par
 fonction dans [optimizers.lib](optimizers.lib).

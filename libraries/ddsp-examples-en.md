@@ -1,6 +1,6 @@
-# Twelve DDSP examples with `fad` and `rad`
+# Fourteen DDSP examples with `fad` and `rad`
 
-Twelve complete differentiable-DSP programs, each one a task an audio engineer
+Fourteen complete differentiable-DSP programs, each one a task an audio engineer
 recognises, written with the two automatic-differentiation primitives of
 `faust-rs` and the loops of [optimizers.lib](optimizers.lib). Three use
 `fad`, forward mode, where the exact derivative through a recursion is what
@@ -14,7 +14,11 @@ kept because of what they teach: the pitch of a string learned through its
 fractional delay, and the harmonic synthesizer of DDSP fitted through a
 spectral loss computed frame by frame inside an `ondemand` block. The
 twelfth is the FDN reverb again, calibrating itself and then switching its
-learning off, so that it costs a reverb once done.
+learning off, so that it costs a reverb once done. The last two came out of
+the work on non-convexity (section 9 of the overview): the string again,
+tuning itself from its own estimate of the pitch, a detector then the
+gradient; and an integer delay learned without any gradient, by two
+evaluations of the loss per frame.
 Every program lives in `tests/corpus/ddsp_*.dsp`, is run by the test suite
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs)),
 and can be watched with `faustprobe`:
@@ -49,6 +53,8 @@ introduction is [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md)
 | 10 | `ddsp_fad_waveguide_string_pitch` | tune the pitch of a waveguide string through its fractional delay | `fad` | `lsq_1D` + `nlms` | 228 → 220.000000 Hz; the well is ±1 Hz wide, capture only from above |
 | 11 | `ddsp_rad_harmonic_spectral_frame` | fit 16 harmonic amplitudes through a per-frame spectral loss | `rad` in `ondemand` | Adam per frame, in an `ondemand` block | all amplitudes within 2.5e-4 of 1/h in 100 frames |
 | 12 | `ddsp_fad_fdn_gated` | calibrate the FDN, then switch its learning off | `fad` in `gated` | `lm_2D` in an `ondemand` gated by `stop_below`, gains by `on_change` | (0.600, 0.300) frozen at the sixth period; the learning then costs nothing |
+| 13 | `ddsp_fad_string_self_tuning` | tune the string from its own pitch estimate, no start chosen by hand | `fad` | `lsq_1D` + `nlms`, `init_latch` and `init_reset` on an autocorrelation peak | init frozen at 222.77 Hz, 220.000000 from 48 000 samples on |
+| 14 | `ddsp_spsa_delay_estimation` | find the integer delay between a signal and its copy | none: two loss evaluations per frame | `spsa_1D_clocked` + Adam per 256-sample frame | `int(d)` 160 → 200 by 25 000 samples, held; the `fad` tangent is identically 0 |
 
 **Where the optimizer runs.** Eight examples take one step per audio sample
 inside the graph, through the loops of the library (`lsq_1D`, `lm_2D`,
@@ -67,7 +73,12 @@ flag stops: the only one whose learning ends, and the one that uses the
 gating helpers of the library, `stop_below` for the flag and `on_change` for
 the coefficients of the rendered reverb. Examples 6 and 9 use no
 `ondemand` at all: their optimizer is the host's, one Adam step per
-`compute` block on the summed gradient lanes.
+`compute` block on the summed gradient lanes. Example 13 is example 10's
+loop, `lsq_1D` at audio rate, started from an estimate the graph computes
+and freezes. Example 14 is the first whose optimizer differentiates nothing:
+`spsa_1D_clocked`, a library loop in an `ondemand` block fired every 256
+samples, evaluates the loss at two parameter values over the frame and
+steps Adam on their difference.
 
 ## 1. Hum cancellation with an adaptive notch (`fad`)
 
@@ -561,6 +572,22 @@ when the model's damping is annealed from 0.70 to 0.95 (broad resonances
 first) — and from below it does not (200 → 190 Hz, 176 → 168). That is why
 DDSP systems estimate f0 with a detector and let the gradient refine it.
 
+**What the landscape allows, measured.** The sweep of
+`tests/corpus/opt_landscape_string.dsp` (the pitch set by the host with
+`faustprobe --set`, section 5 of the overview) puts numbers on it. Under
+`mse` and under `corr_loss` the well is ±1 Hz wide. Under the eight-band
+`bank_log_energy_loss` it becomes a slope toward 220 Hz from about 218 to
+226 Hz, with local extrema at 216 and 232 Hz where the harmonics of the
+two strings align: SGD at 1e-4 reaches 220.000 Hz from 224 Hz through it,
+but the waveform error does too, carried by its plateau's slope, and from
+200 or 214 Hz both fail. Four starts spread over the range, `176`, `200`,
+`228` and `264` Hz under `multistart_lsq_1D`, include one in the capture
+zone and the loop follows it from 16 000 samples on. A restart taken after
+a drift is not a fresh loop: the string, its tangent and the engine keep
+the drift's state, and a restart from 228 Hz does not lock the way a fresh
+loop from 228 Hz does. The tools are the library's; the start remains the
+decisive choice, which example 13 makes for you.
+
 **Optimizer.** `lsq_1D` with `nlms(0.02, 1e-6, 0.99)`.
 
 **What you see.** 228 → 219.99 Hz at 20 000 samples, 220.000000 at 60 000,
@@ -577,9 +604,11 @@ the residual goes from 0.08 to 2e-7.
 
 **Try.** Learn the damping as well (`lsq_2D`); replace the noise by plucks
 and watch the well narrow; start a fifth away and watch the drift; feed a
-pitch detector's estimate as `init` (`tests/corpus/opt_init_latch_string.dsp`
-does, with `op.init_latch` and an autocorrelation peak: pitch `220.000000`
-with no start chosen by hand).
+pitch detector's estimate as `init` (example 13 does, with `op.init_latch`
+and an autocorrelation peak); spread four starts with `multistart_lsq_1D`
+(`tests/corpus/opt_multistart_string.dsp`); learn through
+`bank_log_energy_loss` from 224 Hz (`tests/corpus/opt_bank_loss_string.dsp`)
+and compare with the waveform error.
 
 ## 11. A harmonic synthesizer fitted through a per-frame spectral loss (`rad` in an `ondemand` block)
 
@@ -680,6 +709,95 @@ that changes every hundred periods, with `gated_when` re-enabling the
 learning when the residual energy rises; `stop_after(clock, 8)` as a plain
 budget.
 
+## After the work on non-convexity: two more
+
+## 13. A string that tunes itself: a detector, then the gradient (`fad`)
+
+**What it does.** Example 10's plucked string, tuned to a hidden string at
+220 Hz, but no start is chosen by hand. For `T = 8 192` samples the loop is
+held at `init` by `init_reset` while `init` follows an estimate of the
+target's pitch computed in the graph: the lag of the peak of the target's
+smoothed autocorrelation over a grid of 30 integer lags from 158 to 274
+samples (279 to 161 Hz), a 2 % grid at 220 Hz. At `T` the estimate is
+frozen by `init_latch`, shortened by 2 % so that the start lands on the side
+the well captures from, and the loop is released. The standard
+zero-crossing tracker `an.pitchTracker` reads hundreds of hertz or single
+digits on this noise-driven string, so the estimate is computed here; any
+other detector would do, the two helpers taking any signal.
+
+**What is differentiated, and why forward mode.** As in example 10, `fad`
+through the fractional delay and the feedback, one tangent. The detector is
+not differentiated at all: thirty smoothed products and an argmax fold,
+no model copy. This is the detector-then-gradient scheme of the DDSP
+systems, written in Faust and running inside the audio process.
+
+**Optimizer.** `lsq_1D` with `nlms(0.02, 1e-6, 0.99)`, its `init` a signal
+(the loops take it through an input wire since 0.9.0) and its `reset`
+held until `T`.
+
+**What you see.** The init lane reads the moving estimate until 8 192, then
+holds `222.772277 Hz` (lag 202 × 0.98); the pitch reads 223.3 Hz at
+10 000 samples, 219.986 at 20 000, 219.9989 at 30 000, 220.000002 at
+50 000; the residual falls under 1e-6.
+
+**With faustprobe.** Columns pitch in Hz, residual, latched init in Hz:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 60000 --every 10000 tests/corpus/ddsp_fad_string_self_tuning.dsp
+```
+
+284.8 (the estimate's first lag), 223.29, 219.986, 219.9989, 219.99997,
+220.0000016 at the printed frames; the init column holds 222.772277 from
+the second line on.
+
+**Try.** Replace the target by a recording (`--in`) and widen the lag
+grid; shorten `T` and watch the estimate freeze before it has settled;
+drop the 2 % shortening and see which side of the well the start lands on.
+
+## 14. The integer delay between a signal and its copy, learned without a gradient (`spsa_1D_clocked`)
+
+**What it does.** Time-delay estimation: before an echo canceller or a
+microphone alignment can do anything, the delay in whole samples between a
+signal and its delayed copy has to be found. A comb `x + x @ 200` on a
+low-passed noise hides `d* = 200`; the model is the same comb with
+`de.delay(512, int(d), x)`, an integer delay, and the loss the waveform
+error between the two.
+
+**Why no gradient.** `fad` gives a zero tangent through `int` and through
+the delay amount: the third lane asserts it, identically zero. No descent of
+the previous examples can move `d`. `spsa_1D_clocked`, simultaneous
+perturbation, holds a ±1 sign over each 256-sample frame, evaluates the
+loss at `int(d + 2)` and `int(d - 2)` on the same excitation, averages both
+with `frame_mean` and hands `(L+ - L-) / (2 c delta)` to Adam once per
+frame: two model copies and no tangent. The loss is a bowl as wide as the
+correlation length of the excitation, a first-order low-pass at 200 Hz,
+about 35 samples: from 160 the slope points at 200.
+
+**Optimizer.** `spsa_1D_clocked` with `c = 2` (at least one sample, for an
+integer parameter) and `adam_g(0.5, 0.9, 0.999, 1e-8)` per frame; Adam's
+fixed step of half a sample keeps `int(d)` on 200 once `d` sits inside
+`[200, 201)`.
+
+**What you see.** `int(d)` reads 160, 170, 187, 199 at 0, 10 000, 20 000
+and 30 000 samples, 200 from 40 000 on (199 and 201 are visited between
+25 000 and 35 000); the residual is 0 once the delay is right; the tangent
+lane is 0 throughout.
+
+**With faustprobe.** Columns `d`, `int(d)`, `fad` tangent, residual:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 60000 --every 10000 tests/corpus/ddsp_spsa_delay_estimation.dsp
+```
+
+`d` 160, 170.1, 187.5, 199.95, 200.78, 200.73 and `int(d)` 160, 170, 187,
+199, 200, 200 at the printed frames; the tangent column is 0.000000 on
+every line, the residual 0 on the last two.
+
+**Try.** Widen the excitation's band and watch the bowl narrow (a white
+noise has a bowl one sample wide, and SPSA no slope to follow); anneal `c`
+with `ramp_exp`; two delays with `spsa_N_clocked`; a `select2` between two
+filters with `search_1D_clocked` (`tests/corpus/opt_search_select2.dsp`).
+
 ## How the tests check them
 
 Each program renders through the interpreter on a fresh instance (the
@@ -699,7 +817,11 @@ under the target; the string within 0.05 Hz of 220 with a residual under
 under 0.01 (in release builds); the gated FDN within 0.01 of T60 and
 damping when its flag rises, on a period boundary between the fourth and
 the twentieth period, its parameters bit-constant afterwards and the
-rendered residual under 1e-4 rms. The programs run in single precision there
+rendered residual under 1e-4 rms; the self-tuning string with its init
+frozen between 220 and 230 Hz and bit-constant afterwards, its pitch within
+0.05 Hz of 220 and its residual under 1e-3; the delay estimation with a
+tangent lane identically zero, `int(d)` at 200 over the last 10 000 samples
+and a residual under 1e-6. The programs run in single precision there
 and in double under `faustprobe`; both converge.
 
 ## Where the gradients come from
@@ -707,6 +829,8 @@ and in double under `faustprobe`; both converge.
 `fad` expands during propagation into the augmented-state recursion
 described in [docs/fad-note-en.md](../docs/fad-note-en.md); `rad` into the
 block reverse sweep of [docs/rad-note-en.md](../docs/rad-note-en.md), whose
-carries, tapes and horizons are what examples 4 to 6 exercise. The bus loops
+carries, tapes and horizons are what examples 4 to 6 exercise. Example 14
+has no gradient at all: its estimate comes from two evaluations of the loss
+per frame, the gradient-free loops of the library. The bus loops
 and the engines are documented function by function in
 [optimizers.lib](optimizers.lib).

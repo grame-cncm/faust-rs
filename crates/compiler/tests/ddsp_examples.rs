@@ -716,3 +716,66 @@ fn rad_harmonic_synth_fits_the_target_spectrum_frame_by_frame() {
         "resynthesis should match the target, got rms {residual}"
     );
 }
+
+#[test]
+fn fad_string_self_tuning_starts_from_its_own_estimate() {
+    // [pitch in Hz, residual, latched init in Hz]: the loop is held at a
+    // moving autocorrelation estimate for 8 192 samples, the estimate is
+    // frozen 2 % above the target, and the pitch then locks on 220 Hz with
+    // no start chosen by hand.
+    let Some(outs) = render("ddsp_fad_string_self_tuning", 80_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 3);
+    assert_finite("ddsp_fad_string_self_tuning", &outs);
+    let frozen = outs[2][8_193];
+    assert!(
+        (220.0..230.0).contains(&frozen),
+        "the frozen init should sit just above the target, got {frozen} Hz"
+    );
+    assert!(
+        outs[2][8_193..].iter().all(|&v| v == frozen),
+        "init should not move once frozen"
+    );
+    let pitch = mean(&outs[0][76_000..]);
+    let residual = rms(&outs[1][76_000..]);
+    eprintln!("self-tuning string: init {frozen} pitch {pitch} residual {residual:.3e}");
+    assert!(
+        (pitch - 220.0).abs() < 0.05,
+        "pitch should lock on 220 Hz, got {pitch}"
+    );
+    assert!(
+        residual < 1e-3,
+        "residual should vanish, got rms {residual}"
+    );
+}
+
+#[test]
+fn spsa_delay_estimation_finds_the_integer_delay_without_a_gradient() {
+    // [d, int(d), fad tangent, residual]: the comb's delay is an integer,
+    // its tangent identically zero; simultaneous perturbation with c = 2
+    // and Adam 0.5 per 256-sample frame brings d from 160 to the hidden 200
+    // and holds it.
+    let Some(outs) = render("ddsp_spsa_delay_estimation", 60_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 4);
+    assert_finite("ddsp_spsa_delay_estimation", &outs);
+    assert!(
+        outs[2].iter().all(|&t| t == 0.0),
+        "fad through int(d) should be zero"
+    );
+    assert!(
+        outs[1][50_000..].iter().all(|&i| i == 200.0),
+        "int(d) should hold 200 over the last 10 000 samples"
+    );
+    let residual = rms(&outs[3][50_000..]);
+    eprintln!(
+        "delay estimation: d {} residual {residual:.3e}",
+        outs[0][59_999]
+    );
+    assert!(
+        residual < 1e-6,
+        "the comb should match once the delay is right, got rms {residual}"
+    );
+}

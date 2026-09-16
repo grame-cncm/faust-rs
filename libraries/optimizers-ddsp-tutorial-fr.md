@@ -1020,7 +1020,7 @@ traverserait la frontière du bloc, une perte dedans et une graine dehors.
 - **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   différencie une perte calculée sur une trame FFT, le pendant par trame de la
   section 7.2.
-- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : douze
+- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : quatorze
   programmes DDSP avec leurs tests — un notch adaptatif, un mode calibré par
   Gauss-Newton, un modèle d'ampli, un diode clipper appris à travers son
   solveur implicite, une réverbération FDN, une corde accordée à travers son
