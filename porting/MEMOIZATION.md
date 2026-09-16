@@ -418,6 +418,53 @@ History (worth keeping — the failure was subtle and expensive):
   because a too-short lifetime is merely slow and a too-long one is silently
   incorrect.
 
+### 2.5b `eval`: box arity oracle memo
+
+Status: **implemented 2026-09-16.**
+
+Location:
+
+- `crates/eval/src/apply.rs`, `infer_box_arity` / `infer_box_arity_cached`,
+  `BoxArityCache`
+- `crates/eval/src/loop_detector.rs`, `LoopDetector::box_arity_cache`
+
+Cache:
+
+- `ahash::HashMap<TreeId, Option<(usize, usize)>>`: one verdict per box,
+  `None` included. The pass-wide table lives in the `LoopDetector`; the
+  detector-less entry point (`infer_box_arity`, used by `eval_box_to_int_list_node`)
+  opens a call-local one.
+
+Key and payload:
+
+- the key is the box's `TreeId`. The arena is hash-consed and append-only, so a
+  box's arity never changes and the memo is exact for the life of the arena
+  (the same argument as §2.6 on the `propagate` side);
+- the payload is the `(inputs, outputs)` verdict of the evaluator's
+  first-order oracle, or `None` when the shape is outside its subset.
+
+Purpose:
+
+- `apply_list` probes the arity of the function and of every argument for each
+  primitive application (C++ `applyList` / `boxlistOutputs` → `getBoxType`, the
+  under-application rewrite `*(x)` → `(_, x) : *`). The C++ oracle is memoized
+  through the tree property `gBoxTypeProperty`; the Rust one was a plain
+  recursive walk, so on a shared box DAG it cost the number of *paths*, and the
+  applications that probe it multiply that by the number of mentions;
+- on the string program of §2.15 the evaluation stage, once propagation was
+  memoized, still took 1.8 s at `K = 8`, 5.3 s at `K = 24` and 36 s at
+  `K = 148`, all of it in `infer_box_arity` (sampled: 4 600 of 4 600 stacks in
+  `match_box` under it). With the memo: 12 ms, 17 ms and 57 ms.
+
+Validation:
+
+- `infer_box_arity_is_linear_on_a_shared_dag` (`apply.rs`): a 64-level
+  `(x, x) : +` DAG, 2^64 paths, probed within a 60 s budget on a worker
+  thread, and the detector holds one verdict per node;
+- `crates/compiler/tests/fad_seed_sharing_cost.rs` compiles the self-contained
+  `lsq_1D` string at `K = 8` and `K = 32` under one budget;
+- generated C++ byte-identical on the repro at `K = 2`, `4`, `8`, `32`.
+
 ### 2.6 `propagate`: box arity cache
 
 Status: implemented
@@ -955,8 +1002,14 @@ Purpose:
 Safety and scope:
 
 - a linear whole-root scan enables replay only when the flat Box DAG contains
-  neither forward/reverse AD nor `ondemand`/upsampling/downsampling wrappers;
-- a non-empty pending-FAD-seed vector is an additional per-call barrier;
+  no `ondemand`/upsampling/downsampling wrapper (a fresh clock domain per
+  propagation, no replay protocol yet). It looks through AD nodes: since
+  2026-09-16 forward/reverse AD roots are eligible;
+- the pending forward-AD seed vector is replayed, not barred. It is write-only
+  during propagation (only the `Rec` arm drains it), so the seeds one call
+  appends are a function of its exact key: each entry stores that delta next
+  to its output bus (`ResultEntry { outputs, pending_fad_seeds }`) and a hit
+  appends it again. The per-call barrier on a non-empty vector is gone;
 - nothing else is excluded. The table was limited to non-empty lexical slot
   environments between 2026-08-08 and 2026-08-30; that restriction is gone, and
   every eligible call past the warm-up now probes, as the C++ wrapper does;
@@ -983,6 +1036,30 @@ Adaptive policy and validation:
 - retained generated C++ is byte-identical. The smoothed stereo sentinel drops
   from roughly 1.23 s to 0.215 s in propagation, and the two production
   Jiles-Atherton cases improve by 12.7x and 5.8x respectively.
+
+Why the AD exclusion was wrong (2026-09-16):
+
+- it switched the memo off for the **whole** root of any program mentioning
+  `fad` or `rad`, so every shared box subtree was re-propagated once per
+  reference, and the references multiply along the nesting: `op.lsq_1D` on a
+  waveguide string, whose seed `p1 = clip(lo, hi, init + prev)` is mentioned a
+  dozen times by the interpolated delay and whose `init` was a `K`-lane
+  autocorrelation fold, propagated in 9.3 s at `K = 2` (18 M `seq` calls, the
+  `fad` box 200 times) and about 4 s more per lane: 34 s at `K = 8`, 115 s at
+  `K = 24`. The same program without the `fad` took 0.07 s;
+- the exclusion guarded one side effect, the pending seeds, that a two-field
+  entry replays exactly. With the replay, propagation of that program is
+  0.03 s at `K = 8` and 0.7 s at `K = 148` (5 ms per lane, linear), the
+  generated C++ byte-identical, and the `ddsp_examples` / `optimizers_lib`
+  fixtures keep their numbers;
+- tests: `fad_root_reuses_the_result_memo_for_shared_subtrees` and
+  `result_memo_hit_replays_pending_fad_seeds_across_recursions`
+  (`crates/propagate/src/tests.rs`; the second one fails without the replay,
+  both fail with the old gate), `hit_replays_the_pending_fad_seed_delta`
+  and `root_safety_gate_excludes_clock_side_effects_only`
+  (`result_memo.rs`), and the end-to-end budget
+  `crates/compiler/tests/fad_seed_sharing_cost.rs`. §2.5b is the other half
+  of the same finding, on the evaluator side.
 
 Why the slot-environment restriction was wrong (2026-08-30):
 
@@ -1262,10 +1339,12 @@ rate) despite byte-identical output. That finding rejected the representation,
 not exact result replay. Canonical slot/UI identities and compact buses enabled
 the current implementation.
 
-The remaining work is to replace the conservative whole-root exclusion with a
-per-subtree eligibility fact, but only after AD seed accumulation and
-clock-domain state deltas have an explicit replay protocol. Until then, do not
-widen §2.15's gate.
+AD seed accumulation has its replay protocol since 2026-09-16 (§2.15): the
+entry records the seeds a call appended and a hit replays them, and AD roots
+are eligible. The remaining work is to replace the conservative whole-root
+exclusion of clocked wrappers with a per-subtree eligibility fact, but only
+after clock-domain state deltas have an explicit replay protocol of the same
+kind. Until then, do not widen §2.15's gate further.
 
 ### 3.2 `normalize`: broader normal-form stage caching beyond local simplify/promote passes
 

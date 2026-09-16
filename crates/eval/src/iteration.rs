@@ -115,7 +115,9 @@ pub(crate) fn neutral_seq_body(
 ) -> Result<TreeId, EvalError> {
     let evaluated = eval_iter_body(arena, var_name, 0, body, env, loop_detector)?;
     let lowered = a2sb(arena, evaluated, loop_detector)?;
-    let Some((ins, outs)) = infer_box_arity(arena, lowered) else {
+    let Some((ins, outs)) =
+        infer_box_arity_cached(arena, lowered, &mut loop_detector.box_arity_cache)
+    else {
         return Err(EvalError::InternalError {
             message: "seq(i,0,body) neutral arity could not be inferred".to_owned(),
         });

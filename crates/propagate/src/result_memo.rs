@@ -15,9 +15,25 @@
 //! owned `Vec<SigId>`.
 //!
 //! Memoization is deliberately disabled for a complete propagation containing
-//! forward/reverse AD or clocked wrappers. Those families carry pending-seed or
-//! fresh clock-domain side effects that cannot yet be replayed from a signal
-//! result alone. Provenance remains safe for eligible calls: the first miss
+//! clocked wrappers (`ondemand`, upsampling, downsampling). Those allocate a
+//! fresh clock domain per propagation, a side effect that cannot yet be
+//! replayed from a signal result alone.
+//!
+//! Forward/reverse AD roots are eligible since 2026-09-16. Their only
+//! propagation-time side effect is the pending forward-AD seed vector: a
+//! `ForwardAD` box propagated under `suppress_fad` (the `ExpandAfterRec`
+//! recursion mode) returns its primal outputs and appends its seeds to
+//! `PropagateContext::pending_fad_seeds`, which the enclosing `Rec` drains.
+//! Nothing reads that vector during propagation, so the seeds a call appends
+//! are a pure function of its exact key; each entry therefore records that
+//! delta next to its output bus and a hit replays it. Before this, any
+//! program mentioning `fad` lost the memo for its **whole** root and every
+//! shared box subtree was re-propagated once per reference: the seed of a
+//! `fad` whose expression mentioned a large initial estimate cost seconds per
+//! lane of that estimate (the string fixture of
+//! `porting/optimizers-nonconvex-search-plan-2026-09-16-en.md`, phase N6).
+//!
+//! Provenance remains safe for eligible calls: the first miss
 //! records every descendant `(signal, box)` derivation, and a later exact-key
 //! hit can only replay the same canonical signals for the same Box nodes.
 //! A 1,024-entry warm-up keeps small DSPs on the allocation-free uncached path;
@@ -109,9 +125,11 @@ impl BusInterner {
 
 /// Output-affecting mutable propagation state represented in an exact key.
 ///
-/// Clocked and AD roots are currently ineligible, but their fields remain part
-/// of the key so enabling a side-effect replay protocol later cannot
-/// accidentally alias nested rate or suppression contexts.
+/// Clocked roots are currently ineligible, but their fields remain part of
+/// the key so enabling a side-effect replay protocol later cannot
+/// accidentally alias nested rate contexts. `suppress_fad` is live: the same
+/// `ForwardAD` box yields its expanded bundle at the top level and its primal
+/// bus (plus a pending-seed delta) inside an `ExpandAfterRec` recursion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PropagationModeKey {
     clock_env: TreeId,
@@ -142,12 +160,29 @@ pub(crate) struct PropagateResultKey {
     inputs: BusKey,
 }
 
+/// Replayable outcome of one propagation call: its output bus and the
+/// forward-AD seeds it appended to the pending vector (empty outside the
+/// `ExpandAfterRec` recursion mode).
+#[derive(Clone, Copy, Debug)]
+struct ResultEntry {
+    outputs: BusKey,
+    pending_fad_seeds: BusKey,
+}
+
+/// One propagation result materialized from the table.
+pub(crate) struct PropagateResultHit {
+    pub(crate) outputs: Vec<SigId>,
+    /// Seeds to append to `PropagateContext::pending_fad_seeds`, in the order
+    /// the original call appended them.
+    pub(crate) pending_fad_seeds: Vec<SigId>,
+}
+
 /// One-run exact result table adapted from C++ `gGlobal->gResult2Memo`.
 pub(crate) struct PropagateResultMemo {
     safe_root: bool,
     eligible_calls: u32,
     buses: BusInterner,
-    entries: AHashMap<PropagateResultKey, BusKey>,
+    entries: AHashMap<PropagateResultKey, ResultEntry>,
 }
 
 impl Default for PropagateResultMemo {
@@ -193,24 +228,40 @@ impl PropagateResultMemo {
         })
     }
 
-    pub(crate) fn get(&self, key: PropagateResultKey) -> Option<Vec<SigId>> {
+    pub(crate) fn get(&self, key: PropagateResultKey) -> Option<PropagateResultHit> {
         self.entries
             .get(&key)
             .copied()
-            .map(|outputs| self.buses.materialize(outputs))
+            .map(|entry| PropagateResultHit {
+                outputs: self.buses.materialize(entry.outputs),
+                pending_fad_seeds: self.buses.materialize(entry.pending_fad_seeds),
+            })
     }
 
-    pub(crate) fn insert(&mut self, key: PropagateResultKey, outputs: &[SigId]) {
-        let outputs = self.buses.key(outputs);
-        self.entries.insert(key, outputs);
+    /// Records one call's outputs together with the forward-AD seeds it
+    /// appended to the pending vector, so a later hit can replay both.
+    pub(crate) fn insert(
+        &mut self,
+        key: PropagateResultKey,
+        outputs: &[SigId],
+        pending_fad_seeds: &[SigId],
+    ) {
+        let entry = ResultEntry {
+            outputs: self.buses.key(outputs),
+            pending_fad_seeds: self.buses.key(pending_fad_seeds),
+        };
+        self.entries.insert(key, entry);
     }
 }
 
 /// Returns whether exact result replay is side-effect safe for the whole root.
 ///
-/// A visited set makes the analysis linear in the shared flat Box DAG. The
-/// conservative whole-root gate can later become a per-subtree fact once AD
-/// pending-seed and clock-domain deltas have an explicit replay protocol.
+/// A visited set makes the analysis linear in the shared flat Box DAG. Only
+/// the clocked wrappers disqualify a root: they allocate a fresh clock domain
+/// per propagation and that delta has no replay protocol yet. Forward and
+/// reverse AD are eligible; their pending-seed delta is recorded per entry
+/// (see the module documentation). The conservative whole-root gate can later
+/// become a per-subtree fact once clock-domain deltas are replayable too.
 pub(crate) fn result_memo_is_safe_root(
     arena: &TreeArena,
     root: FlatBoxId,
@@ -222,11 +273,17 @@ pub(crate) fn result_memo_is_safe_root(
             continue;
         }
         match flat_node_kind(arena, node)? {
-            FlatNodeKind::ForwardAD { .. }
-            | FlatNodeKind::ReverseAD { .. }
-            | FlatNodeKind::Ondemand(_)
+            FlatNodeKind::Ondemand(_)
             | FlatNodeKind::Upsampling(_)
             | FlatNodeKind::Downsampling(_) => return Ok(false),
+            FlatNodeKind::ForwardAD { body, seed } => {
+                pending.push(body);
+                pending.push(seed);
+            }
+            FlatNodeKind::ReverseAD { body, seeds } => {
+                pending.push(body);
+                pending.push(seeds);
+            }
             FlatNodeKind::Rec(left, right)
             | FlatNodeKind::Seq(left, right)
             | FlatNodeKind::Par(left, right)
@@ -350,19 +407,72 @@ mod tests {
     }
 
     #[test]
-    fn root_safety_gate_excludes_ad_and_clock_side_effects() {
+    fn root_safety_gate_excludes_clock_side_effects_only() {
         let mut arena = TreeArena::new();
-        let (plain, fad, clocked) = {
+        let (plain, fad, rad, clocked, fad_over_clocked) = {
             let mut boxes = BoxBuilder::new(&mut arena);
             let wire = boxes.wire();
-            (wire, boxes.forward_ad(wire, wire), boxes.ondemand(wire))
+            let clocked = boxes.ondemand(wire);
+            (
+                wire,
+                boxes.forward_ad(wire, wire),
+                boxes.reverse_ad(wire, wire),
+                clocked,
+                boxes.forward_ad(clocked, wire),
+            )
         };
         let plain = crate::try_build_flat_box(&arena, plain).expect("flat wire");
         let fad = crate::try_build_flat_box(&arena, fad).expect("flat FAD");
+        let rad = crate::try_build_flat_box(&arena, rad).expect("flat RAD");
         let clocked = crate::try_build_flat_box(&arena, clocked).expect("flat clocked wrapper");
+        let fad_over_clocked =
+            crate::try_build_flat_box(&arena, fad_over_clocked).expect("flat FAD over clock");
 
         assert!(result_memo_is_safe_root(&arena, plain).expect("plain analysis"));
-        assert!(!result_memo_is_safe_root(&arena, fad).expect("FAD analysis"));
+        assert!(result_memo_is_safe_root(&arena, fad).expect("FAD analysis"));
+        assert!(result_memo_is_safe_root(&arena, rad).expect("RAD analysis"));
         assert!(!result_memo_is_safe_root(&arena, clocked).expect("clock analysis"));
+        assert!(
+            !result_memo_is_safe_root(&arena, fad_over_clocked).expect("FAD over clock analysis"),
+            "the scan must look through AD nodes to find a clocked wrapper"
+        );
+    }
+
+    #[test]
+    fn hit_replays_the_pending_fad_seed_delta() {
+        let mut arena = TreeArena::new();
+        let raw_box = BoxBuilder::new(&mut arena).int(1);
+        let box_tree = crate::try_build_flat_box(&arena, raw_box).expect("flat integer box");
+        let slots = SlotEnv::new();
+        let ui = UiPathContext::new();
+        let output = arena.int(42);
+        let seed = arena.int(7);
+        let suppressed = PropagationModeKey::new(arena.nil(), None, true);
+        let expanded = PropagationModeKey::new(arena.nil(), None, false);
+        let mut memo = PropagateResultMemo::default();
+        memo.set_enabled(true);
+        for _ in 0..RESULT_MEMO_WARMUP_CALLS {
+            assert!(
+                memo.key(box_tree, slots.id(), ui.id(), suppressed, &[])
+                    .is_none()
+            );
+        }
+        let key_suppressed = memo
+            .key(box_tree, slots.id(), ui.id(), suppressed, &[])
+            .expect("enabled key");
+        let key_expanded = memo
+            .key(box_tree, slots.id(), ui.id(), expanded, &[])
+            .expect("enabled key");
+        assert_ne!(key_suppressed, key_expanded);
+
+        memo.insert(key_suppressed, &[output], &[seed]);
+        memo.insert(key_expanded, &[output, seed], &[]);
+
+        let hit = memo.get(key_suppressed).expect("suppressed entry");
+        assert_eq!(hit.outputs, vec![output]);
+        assert_eq!(hit.pending_fad_seeds, vec![seed]);
+        let hit = memo.get(key_expanded).expect("expanded entry");
+        assert_eq!(hit.outputs, vec![output, seed]);
+        assert!(hit.pending_fad_seeds.is_empty());
     }
 }

@@ -45,7 +45,11 @@ pub(crate) fn eval_modulation(
     let target_path = modulation_target_path(&target_label);
     let modulation_circuit =
         eval_modulation_circuit(arena, modulation_node, var, env, loop_detector)?;
-    let Some((inputs, outputs)) = infer_box_arity(arena, modulation_circuit) else {
+    let Some((inputs, outputs)) = infer_box_arity_cached(
+        arena,
+        modulation_circuit,
+        &mut loop_detector.box_arity_cache,
+    ) else {
         return Err(EvalError::InvalidModulationCircuit {
             node: modulation_node,
             reason: "circuit should evaluate to a block diagram",
@@ -152,7 +156,7 @@ pub(crate) fn eval_modulation_circuit(
     }
     let evaluated = eval_box(arena, circuit, env, loop_detector)?;
     let lowered = a2sb(arena, evaluated, loop_detector)?;
-    if infer_box_arity(arena, lowered).is_none() {
+    if infer_box_arity_cached(arena, lowered, &mut loop_detector.box_arity_cache).is_none() {
         return Err(EvalError::InvalidModulationCircuit {
             node: modulation_node,
             reason: "circuit should evaluate to a block diagram",

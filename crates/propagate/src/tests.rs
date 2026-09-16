@@ -328,3 +328,160 @@ fn remap_is_independent_of_node_map_hash_order() {
         );
     }
 }
+
+/// Propagates `flat` from the top level the way `api.rs` does, with the
+/// profiler on and the result memo forced on or off, and returns the output
+/// bus with the memo's `(probes, hits)`.
+fn propagate_counting_memo(
+    arena: &mut TreeArena,
+    flat: FlatBoxId,
+    memo_enabled: bool,
+) -> (Vec<SigId>, (u64, u64)) {
+    use crate::clock_domain::ClockDomainTable;
+    use crate::context_id::{SlotEnv, UiPathContext};
+    use crate::engine::{PropagateContext, PropagateMemo, propagate_in_slot_env};
+    use crate::profile::PropagateProfile;
+    use crate::result_memo::result_memo_is_safe_root;
+
+    let ui = build_ui_program(arena, flat, &PropagateUiOptions::default());
+    let mut cache = ArityCache::new();
+    let mut slot_env = SlotEnv::new();
+    let mut memo = PropagateMemo {
+        profile: PropagateProfile::enabled_for_test(),
+        ..Default::default()
+    };
+    let safe = result_memo_is_safe_root(arena, flat).expect("root analysis");
+    memo.results.set_enabled(memo_enabled && safe);
+    let mut clock_domains = ClockDomainTable::new();
+    let mut signal_origins = SignalOrigins::default();
+    let mut ctx = PropagateContext {
+        cache: &mut cache,
+        control_ids: &ui.control_ids,
+        slot_env: &mut slot_env,
+        memo: &mut memo,
+        clock_domains: &mut clock_domains,
+        clock_env: arena.nil(),
+        clock_domain: None,
+        suppress_fad: false,
+        pending_fad_seeds: Vec::new(),
+        ui_path: UiPathContext::new(),
+        signal_origins: &mut signal_origins,
+    };
+    let outputs = propagate_in_slot_env(arena, flat, &[], &mut ctx).expect("propagation");
+    (outputs, memo.profile.result_memo_counts())
+}
+
+/// Runs `f` on a worker thread with a stack sized for the deep chains below:
+/// several hundred nested `seq` levels overflow a debug test thread.
+fn on_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .name("propagate-memo-test".to_owned())
+        .stack_size(256 * 1024 * 1024)
+        .spawn(f)
+        .expect("spawn big-stack worker")
+        .join()
+        .expect("big-stack worker must not panic")
+}
+
+/// A zero-input chain deep enough for one propagation of it to pass the
+/// result memo's warm-up: `levels` times `(x, 1) : +` over an integer.
+fn deep_constant_chain(arena: &mut TreeArena, levels: usize) -> BoxId {
+    let mut b = BoxBuilder::new(arena);
+    let mut chain = b.int(1);
+    for _ in 0..levels {
+        let one = b.int(1);
+        let pair = b.par(chain, one);
+        let add = b.add();
+        chain = b.seq(pair, add);
+    }
+    chain
+}
+
+/// Regression for the 2026-09-16 `fad` compile-time blow-up: a root that
+/// contains a forward-AD node is eligible for the exact result memo, so the
+/// second reference to a shared subtree inside the `fad` body is a hit and
+/// the outputs are the ones the memo-less traversal builds.
+#[test]
+fn fad_root_reuses_the_result_memo_for_shared_subtrees() {
+    on_big_stack(fad_root_reuses_the_result_memo_for_shared_subtrees_body);
+}
+
+fn fad_root_reuses_the_result_memo_for_shared_subtrees_body() {
+    let mut arena = TreeArena::new();
+    let root = {
+        let shared = deep_constant_chain(&mut arena, 400);
+        let mut b = BoxBuilder::new(&mut arena);
+        let seed = b.real(0.25);
+        let pair = b.par(shared, shared);
+        let add = b.add();
+        let body = b.seq(pair, add);
+        b.forward_ad(body, seed)
+    };
+    let flat = try_build_flat_box(&arena, root).expect("flat fad root");
+
+    let (with_memo, (probes, hits)) = propagate_counting_memo(&mut arena, flat, true);
+    let (without_memo, (_, hits_off)) = propagate_counting_memo(&mut arena, flat, false);
+
+    assert_eq!(with_memo.len(), 2, "primal + one tangent lane");
+    assert_eq!(with_memo, without_memo, "replay must be exact");
+    assert!(probes > 0, "a fad root must probe the result memo");
+    assert!(
+        hits >= 1,
+        "the second reference to the shared chain must hit the memo (probes={probes}, hits={hits})"
+    );
+    assert_eq!(hits_off, 0);
+}
+
+/// The one propagation-time side effect of a `ForwardAD` box is the seeds it
+/// appends under `suppress_fad` (the `ExpandAfterRec` recursion mode). Two
+/// distinct recursions whose left branch is the same `fad` box fed by the
+/// same signals share that box's memo entry; the hit must replay the seeds,
+/// or the second recursion expands with none and loses its tangent lane.
+/// (Mutation checked 2026-09-16: without the replay the output bus has four
+/// signals instead of five.)
+#[test]
+fn result_memo_hit_replays_pending_fad_seeds_across_recursions() {
+    on_big_stack(result_memo_hit_replays_pending_fad_seeds_across_recursions_body);
+}
+
+fn result_memo_hit_replays_pending_fad_seeds_across_recursions_body() {
+    let mut arena = TreeArena::new();
+    let root = {
+        // Propagated first, so the memo is past its warm-up when the first
+        // recursion reaches the `fad` box and that call is recorded.
+        let warm_up = deep_constant_chain(&mut arena, 400);
+        let mut b = BoxBuilder::new(&mut arena);
+        let gain = b.real(0.5);
+        let wire = b.wire();
+        let pair = b.par(wire, gain);
+        let mul = b.mul();
+        let body = b.seq(pair, mul);
+        let seed = b.real(0.25);
+        let fad = b.forward_ad(body, seed);
+        // `fad ~ _` and `fad ~ (_ : _)`: different Rec boxes, same feedback
+        // signal, hence the same memo key for the shared `fad` box.
+        let rec_a = b.rec(fad, wire);
+        let wire_again = b.wire();
+        let wires = b.seq(wire, wire_again);
+        let rec_b = b.rec(fad, wires);
+        let recs = b.par(rec_a, rec_b);
+        b.par(warm_up, recs)
+    };
+    let flat = try_build_flat_box(&arena, root).expect("flat recursive fad root");
+
+    let (with_memo, (_, hits)) = propagate_counting_memo(&mut arena, flat, true);
+    let (without_memo, _) = propagate_counting_memo(&mut arena, flat, false);
+
+    assert_eq!(
+        with_memo.len(),
+        5,
+        "the chain, then primal + tangent per recursion: {with_memo:?}"
+    );
+    assert_eq!(with_memo, without_memo, "replay must be exact");
+    assert_eq!(with_memo[1], with_memo[3]);
+    assert_eq!(with_memo[2], with_memo[4]);
+    assert!(
+        hits >= 1,
+        "the second recursion's fad box must hit the memo"
+    );
+}

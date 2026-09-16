@@ -141,6 +141,11 @@ pub struct LoopDetector {
     /// normal form evaluates to itself in every environment and skips the
     /// walk and the per-layer cache.
     pub(crate) normal_form_cache: ahash::HashMap<TreeId, bool>,
+    /// Memoized verdicts of the evaluator's arity oracle
+    /// (`apply::infer_box_arity_cached`), per box. Exact for the life of the
+    /// arena, and what keeps `apply_list`'s per-application probe linear on a
+    /// shared box DAG instead of once per path.
+    pub(crate) box_arity_cache: crate::apply::BoxArityCache,
     /// The boxes the evaluator has produced: only those may take the
     /// normal-form fast path, a source tree of the same shape still having
     /// its constants to fold.
@@ -368,6 +373,7 @@ impl LoopDetector {
             next_slot_id: 0,
             symbolic_box_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             normal_form_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+            box_arity_cache: crate::apply::BoxArityCache::with_hasher(ahash::RandomState::new()),
             evaluated_boxes: ahash::HashSet::with_hasher(ahash::RandomState::new()),
             eval_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             structural_depth: 0,

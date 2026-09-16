@@ -189,6 +189,13 @@ impl PropagateProfile {
         }
     }
 
+    /// Result-memo `(probes, hits)` recorded so far; for tests of the memo's
+    /// eligibility and replay.
+    #[cfg(test)]
+    pub(crate) fn result_memo_counts(&self) -> (u64, u64) {
+        (self.result_memo_probes, self.result_memo_hits)
+    }
+
     #[inline]
     pub(crate) fn record_result_memo_probe(&mut self, hit: bool) {
         if self.enabled {

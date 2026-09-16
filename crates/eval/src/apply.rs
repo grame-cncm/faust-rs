@@ -445,11 +445,19 @@ pub(crate) fn infer_box_arity_for_apply(
     // Doing the same here avoids under-counting residual symbolic boxes such as
     // partially applied `selectbus(...)`, which otherwise fall back to
     // "1 output" and trigger spurious implicit wires.
-    a2sb(arena, id, loop_detector)
-        .ok()
-        .and_then(|lowered| infer_box_arity(arena, lowered))
-        .or_else(|| infer_box_arity(arena, id))
+    let lowered = a2sb(arena, id, loop_detector).ok();
+    let cache = &mut loop_detector.box_arity_cache;
+    lowered
+        .and_then(|lowered| infer_box_arity_cached(arena, lowered, cache))
+        .or_else(|| infer_box_arity_cached(arena, id, cache))
 }
+
+/// Per-box memo of [`infer_box_arity_cached`] verdicts, including `None`.
+///
+/// The arena is hash-consed and append-only, so a box's arity never changes
+/// and the memo is exact for the life of the arena; [`LoopDetector`] owns one
+/// for the whole evaluation pass.
+pub(crate) type BoxArityCache = ahash::HashMap<TreeId, Option<(usize, usize)>>;
 
 /// Local arity inference used by non-closure application lowering.
 ///
@@ -461,7 +469,45 @@ pub(crate) fn infer_box_arity_for_apply(
 /// `propagate::box_arity_typed(...)` contract. It exists for local evaluator tasks
 /// such as under-application handling and label-placeholder constant checks
 /// where pulling the full propagate error surface would be unnecessarily heavy.
+///
+/// This entry point walks with a call-local memo, so one probe is linear in
+/// the number of distinct nodes of the box DAG rather than in its number of
+/// paths. Callers that own a [`LoopDetector`] should prefer
+/// [`infer_box_arity_cached`] with its `box_arity_cache`, which also
+/// amortizes the walk across probes.
 pub(crate) fn infer_box_arity(arena: &TreeArena, id: TreeId) -> Option<(usize, usize)> {
+    let mut cache = BoxArityCache::with_hasher(ahash::RandomState::new());
+    infer_box_arity_cached(arena, id, &mut cache)
+}
+
+/// [`infer_box_arity`] memoized in `cache`.
+///
+/// The memo is what keeps the oracle affordable on shared box DAGs. Before it
+/// existed (2026-09-16) the walk revisited a shared subtree once per path to
+/// it, and `apply_list` probes it for every primitive application: the seed
+/// `p1` of the `fad` in `optimizers.lib`'s `lsq_1D`, mentioned a dozen times
+/// by an interpolated delay and carrying a K-lane initial estimate, made
+/// evaluation cost about 0.2 s per lane (11 s at K = 48) where the whole
+/// program compiles in a few hundred milliseconds with the memo.
+pub(crate) fn infer_box_arity_cached(
+    arena: &TreeArena,
+    id: TreeId,
+    cache: &mut BoxArityCache,
+) -> Option<(usize, usize)> {
+    if let Some(&hit) = cache.get(&id) {
+        return hit;
+    }
+    let result = infer_box_arity_uncached(arena, id, cache);
+    cache.insert(id, result);
+    result
+}
+
+/// Recursive body of [`infer_box_arity_cached`]; children go through the memo.
+fn infer_box_arity_uncached(
+    arena: &TreeArena,
+    id: TreeId,
+    cache: &mut BoxArityCache,
+) -> Option<(usize, usize)> {
     match match_box(arena, id) {
         BoxMatch::Int(_) | BoxMatch::Real(_) => Some((0, 1)),
         BoxMatch::Slot(_) => Some((0, 1)),
@@ -535,44 +581,44 @@ pub(crate) fn infer_box_arity(arena: &TreeArena, id: TreeId) -> Option<(usize, u
             Some((2, channels.checked_add(2)?))
         }
         BoxMatch::VGroup(_, inner) | BoxMatch::HGroup(_, inner) | BoxMatch::TGroup(_, inner) => {
-            infer_box_arity(arena, inner)
+            infer_box_arity_cached(arena, inner, cache)
         }
         BoxMatch::Symbolic(_, inner) => {
-            let (ins, outs) = infer_box_arity(arena, inner)?;
+            let (ins, outs) = infer_box_arity_cached(arena, inner, cache)?;
             Some((ins.checked_add(1)?, outs))
         }
         BoxMatch::Seq(left, right) => {
-            let (ins1, outs1) = infer_box_arity(arena, left)?;
-            let (ins2, outs2) = infer_box_arity(arena, right)?;
+            let (ins1, outs1) = infer_box_arity_cached(arena, left, cache)?;
+            let (ins2, outs2) = infer_box_arity_cached(arena, right, cache)?;
             if outs1 != ins2 {
                 return None;
             }
             Some((ins1, outs2))
         }
         BoxMatch::Par(left, right) => {
-            let (ins1, outs1) = infer_box_arity(arena, left)?;
-            let (ins2, outs2) = infer_box_arity(arena, right)?;
+            let (ins1, outs1) = infer_box_arity_cached(arena, left, cache)?;
+            let (ins2, outs2) = infer_box_arity_cached(arena, right, cache)?;
             Some((ins1.checked_add(ins2)?, outs1.checked_add(outs2)?))
         }
         BoxMatch::Split(left, right) => {
-            let (ins1, outs1) = infer_box_arity(arena, left)?;
-            let (ins2, outs2) = infer_box_arity(arena, right)?;
+            let (ins1, outs1) = infer_box_arity_cached(arena, left, cache)?;
+            let (ins2, outs2) = infer_box_arity_cached(arena, right, cache)?;
             if outs1 != ins2 && (outs1 == 0 || !ins2.is_multiple_of(outs1)) {
                 return None;
             }
             Some((ins1, outs2))
         }
         BoxMatch::Merge(left, right) => {
-            let (ins1, outs1) = infer_box_arity(arena, left)?;
-            let (ins2, outs2) = infer_box_arity(arena, right)?;
+            let (ins1, outs1) = infer_box_arity_cached(arena, left, cache)?;
+            let (ins2, outs2) = infer_box_arity_cached(arena, right, cache)?;
             if outs1 != ins2 && (ins2 == 0 || !outs1.is_multiple_of(ins2)) {
                 return None;
             }
             Some((ins1, outs2))
         }
         BoxMatch::Rec(left, right) => {
-            let (ins1, outs1) = infer_box_arity(arena, left)?;
-            let (ins2, outs2) = infer_box_arity(arena, right)?;
+            let (ins1, outs1) = infer_box_arity_cached(arena, left, cache)?;
+            let (ins2, outs2) = infer_box_arity_cached(arena, right, cache)?;
             if ins2 > outs1 || outs2 > ins1 {
                 return None;
             }
@@ -592,24 +638,23 @@ pub(crate) fn infer_box_arity(arena: &TreeArena, id: TreeId) -> Option<(usize, u
         }
         BoxMatch::Inputs(_) | BoxMatch::Outputs(_) => Some((0, 1)),
         BoxMatch::ForwardAD(exp, seed) => {
-            let (_, seed_outs) = infer_box_arity(arena, seed)?;
+            let (seed_ins, seed_outs) = infer_box_arity_cached(arena, seed, cache)?;
             if seed_outs != 1 {
                 return None;
             }
-            let (exp_ins, exp_outs) = infer_box_arity(arena, exp)?;
-            let (seed_ins, _) = infer_box_arity(arena, seed)?;
+            let (exp_ins, exp_outs) = infer_box_arity_cached(arena, exp, cache)?;
             Some((exp_ins.max(seed_ins), exp_outs * 2))
         }
         BoxMatch::ReverseAD(exp, seeds) => {
-            let (exp_ins, exp_outs) = infer_box_arity(arena, exp)?;
-            let (seeds_ins, seeds_outs) = infer_box_arity(arena, seeds)?;
+            let (exp_ins, exp_outs) = infer_box_arity_cached(arena, exp, cache)?;
+            let (seeds_ins, seeds_outs) = infer_box_arity_cached(arena, seeds, cache)?;
             if exp_outs == 0 || seeds_outs == 0 {
                 return None;
             }
             Some((exp_ins.max(seeds_ins), exp_outs + seeds_outs))
         }
         BoxMatch::Ondemand(inner) | BoxMatch::Upsampling(inner) | BoxMatch::Downsampling(inner) => {
-            let (ins, outs) = infer_box_arity(arena, inner)?;
+            let (ins, outs) = infer_box_arity_cached(arena, inner, cache)?;
             Some((ins.checked_add(1)?, outs))
         }
         _ => None,
@@ -648,4 +693,61 @@ pub(crate) fn is_binary_primitive_non_prefix(arena: &TreeArena, id: TreeId) -> b
             | BoxMatch::Enable
             | BoxMatch::Control
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use boxes::BoxBuilder;
+    use tlib::{TreeArena, TreeId};
+
+    use super::{infer_box_arity, infer_box_arity_for_apply};
+    use crate::LoopDetector;
+
+    /// `levels` times `(x, x) : +` over an integer: a DAG of `4 * levels`
+    /// nodes with `2^levels` root-to-leaf paths.
+    fn shared_dag(arena: &mut TreeArena, levels: u32) -> TreeId {
+        let mut b = BoxBuilder::new(arena);
+        let mut x = b.int(1);
+        for _ in 0..levels {
+            let pair = b.par(x, x);
+            let add = b.add();
+            x = b.seq(pair, add);
+        }
+        x
+    }
+
+    /// Regression for the 2026-09-16 `fad` compile-time blow-up: the arity
+    /// oracle must be linear in the nodes of a shared box DAG, not in its
+    /// paths. At 64 levels an unmemoized walk would take 2^64 steps; the
+    /// budget below is three orders of magnitude above the memoized cost of a
+    /// debug build.
+    #[test]
+    fn infer_box_arity_is_linear_on_a_shared_dag() {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("infer-box-arity-shared-dag".to_owned())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                let mut arena = TreeArena::new();
+                let dag = shared_dag(&mut arena, 64);
+                let plain = infer_box_arity(&arena, dag);
+                let mut detector = LoopDetector::new();
+                let for_apply = infer_box_arity_for_apply(&mut arena, dag, &mut detector);
+                let cached_nodes = detector.box_arity_cache.len();
+                let _ = sender.send((plain, for_apply, cached_nodes));
+            })
+            .expect("spawn arity worker");
+        let (plain, for_apply, cached_nodes) = receiver
+            .recv_timeout(Duration::from_secs(60))
+            .expect("arity probe of a 64-level shared DAG must finish within the budget");
+        assert_eq!(plain, Some((0, 1)));
+        assert_eq!(for_apply, Some((0, 1)));
+        assert!(
+            cached_nodes >= 64,
+            "the loop detector must keep one verdict per distinct node, got {cached_nodes}"
+        );
+    }
 }

@@ -46,19 +46,21 @@ pub(crate) fn propagate_in_slot_env(
             got: inputs.len(),
         });
     }
-    let result_key = if ctx.pending_fad_seeds.is_empty() {
-        ctx.memo.results.key(
-            box_tree,
-            ctx.slot_env.id(),
-            ctx.ui_path.id(),
-            PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, ctx.suppress_fad),
-            inputs,
-        )
-    } else {
-        None
-    };
+    // The pending forward-AD seed vector is write-only during propagation
+    // (only the `Rec` arm drains it), so the seeds one call appends depend on
+    // nothing but its exact key: each entry records that delta and a hit
+    // replays it. See `result_memo` for why AD roots were ineligible before.
+    let result_key = ctx.memo.results.key(
+        box_tree,
+        ctx.slot_env.id(),
+        ctx.ui_path.id(),
+        PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, ctx.suppress_fad),
+        inputs,
+    );
     if let Some(key) = result_key {
-        if let Some(outputs) = ctx.memo.results.get(key) {
+        if let Some(hit) = ctx.memo.results.get(key) {
+            let outputs = hit.outputs;
+            ctx.pending_fad_seeds.extend(hit.pending_fad_seeds);
             ctx.memo.profile.record_result_memo_probe(true);
             let origins_started = ctx.memo.profile.start();
             ctx.signal_origins
@@ -77,6 +79,7 @@ pub(crate) fn propagate_in_slot_env(
         }
         ctx.memo.profile.record_result_memo_probe(false);
     }
+    let pending_fad_seeds_before = ctx.pending_fad_seeds.len();
     let outputs = propagate_inner(arena, box_tree, inputs, ctx)?;
     // Output arity validation: signal count may be less than box arity in two
     // cases:
@@ -104,7 +107,14 @@ pub(crate) fn propagate_in_slot_env(
         });
     }
     if let Some(key) = result_key {
-        ctx.memo.results.insert(key, &outputs);
+        // A `Rec` restores the vector it found on entry, so the length never
+        // drops below the entry mark; the tail is exactly what this call
+        // appended.
+        let appended_seeds = ctx
+            .pending_fad_seeds
+            .get(pending_fad_seeds_before..)
+            .unwrap_or(&[]);
+        ctx.memo.results.insert(key, &outputs, appended_seeds);
     }
     let origins_started = ctx.memo.profile.start();
     ctx.signal_origins
@@ -1419,8 +1429,9 @@ pub(crate) struct PropagateMemo {
     /// Canonical environment counterpart of C++'s synthesized lifted tree:
     /// repeated entry into the same recursion scope reuses one `SlotEnvId`.
     pub(crate) slot_env_lift: AHashMap<(SlotEnvId, i64), SlotEnvId>,
-    /// Exact C++-style propagation result memo, enabled only when whole-root
-    /// side-effect analysis proves signal-only replay safe.
+    /// Exact C++-style propagation result memo, enabled unless the root
+    /// contains a clocked wrapper. Each entry carries the pending forward-AD
+    /// seeds its call appended, so a hit replays that one side effect.
     pub(crate) results: PropagateResultMemo,
     /// Opt-in C++-comparable propagation attribution. It is dormant unless
     /// `FAUST_PROPAGATE_PROFILE` was present when this traversal was created.
