@@ -645,14 +645,82 @@ fn restart_leaves_the_shallow_well_for_the_second_start() {
 }
 
 #[test]
+fn multistart_follows_the_string_start_that_locks() {
+    // [pitch of the best start, its index]: four NLMS loops from 176, 200,
+    // 228 and 264 Hz; only the one from 228 Hz locks on 220 Hz, and the loop
+    // follows it (index 2) once its residual has vanished.
+    let Some(outs) = run_interp_fixture("opt_multistart_string", 80_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2);
+    assert!(
+        outs[1][20_000..].iter().all(|&k| k == 2.0),
+        "the start from 228 Hz should win"
+    );
+    let pitch = outs[0][72_000..].iter().sum::<f32>() / 8_000.0;
+    eprintln!("multistart string: pitch {pitch}");
+    assert!(
+        (pitch - 220.0).abs() < 0.05,
+        "the winning start should lock on 220 Hz, got {pitch}"
+    );
+}
+
+#[test]
+fn multistart_picks_a_deep_well_descent_on_the_two_well_loss() {
+    // [p of the best start, its index]: of four SGD descents from the cell
+    // centres of [-3, 3], the two from the left end in the deep well; the
+    // loop follows one of them (index 0 or 1, the two losses equal to
+    // rounding) and its parameter is -1.036.
+    let Some(outs) = run_interp_fixture("opt_multistart_two_wells", 12_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2);
+    assert!(
+        outs[1][6_000..].iter().all(|&k| k == 0.0 || k == 1.0),
+        "a deep-well start should win"
+    );
+    let p = outs[0][11_999];
+    eprintln!("multistart two wells: p {p}");
+    assert!(
+        (p + 1.036).abs() < 0.01,
+        "the best start should sit in the deep well, got {p}"
+    );
+}
+
+#[test]
+fn grid_then_descend_starts_from_the_best_cell() {
+    // [p, chosen index]: eight candidates scored for 2 000 samples, the cell
+    // at -1.125 (index 2) chosen, the descent from it settling at -1.036.
+    let Some(outs) = run_interp_fixture("opt_grid_two_wells", 12_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 2);
+    assert!(
+        outs[1][2_001..].iter().all(|&k| k == 2.0),
+        "the cell at -1.125 should be chosen"
+    );
+    // the held output is the cell minus one engine step (see init_reset)
+    assert!(
+        (outs[0][2_000] + 1.125).abs() < 0.02,
+        "the descent should start from the chosen cell"
+    );
+    let p = outs[0][11_999];
+    eprintln!("grid two wells: p {p}");
+    assert!(
+        (p + 1.036).abs() < 0.01,
+        "the descent should settle in the deep well, got {p}"
+    );
+}
+
+#[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 92 entries, 155 outputs. It only has to compile,
+    // documented function: 96 entries, 162 outputs. It only has to compile,
     // run, and stay finite.
     let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
         return;
     };
-    assert_eq!(outs.len(), 155, "expected the outputs of every Test entry");
+    assert_eq!(outs.len(), 162, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(

@@ -219,7 +219,7 @@ bibliothèque ne prétend pas le contraire :
 
 Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.9.0) est
 documenté fonction par fonction selon la convention des bibliothèques Faust ;
-cette section en donne la carte. Il comporte quatorze sections, ordonnées des
+cette section en donne la carte. Il comporte quinze sections, ordonnées des
 briques de base aux boucles prêtes à l'emploi.
 
 | Section | Contenu | Raison d'être |
@@ -236,6 +236,7 @@ briques de base aux boucles prêtes à l'emploi.
 | Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus avec un moteur et une paire de bornes, en mode direct ou inverse |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | le gradient à cadence audio, moyenné sur la trame, le pas une fois par tir d'une horloge `ondemand` |
 | Gradient-free loops | `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked` | apprendre sans aucune tangente, par deux évaluations de la perte par trame : un retard entier, un `select2`, tout ce que `fad` dérive à zéro |
+| Multi-start loops | `grid_init`, `multistart_1D`, `multistart_lsq_1D`, `grid_then_descend_1D` | plusieurs départs à la fois : `K` descentes en parallèle dont on suit la meilleure, ou `K` candidats notés sans tangente puis une descente depuis le meilleur |
 | Porte et arrêt | `gated`, `gated_when`, `stop_after`, `stop_below`, `stop_relative`, `on_change` | couper l'apprentissage une fois qu'il a convergé, pour qu'il ne coûte plus rien ensuite ; ne calculer des coefficients que lorsqu'un paramètre change |
 | Newton solver | `newton_step`, `newton` | pas de l'apprentissage : résoudre une équation implicite avec `F` et `F'` issus d'un seul `fad` |
 
@@ -548,6 +549,25 @@ quand `descend_1D` ne bouge pas), une table écrite. Le prix : deux copies du
 modèle au lieu d'une copie et sa tangente, un pas par trame, et une
 estimation bruitée qui demande un `c` ou un `sigma` à l'échelle du paramètre.
 
+### 4.11 Plusieurs départs : `multistart_1D`, `multistart_lsq_1D`, `grid_then_descend_1D`
+
+Quand aucune estimation ne dit dans quel bassin est la réponse, on part de
+plusieurs endroits. `multistart_1D` et sa jumelle moindres carrés font
+tourner `K` descentes en parallèle, chacune avec son moteur, et suivent celle
+dont la perte lissée est la plus basse, la première en cas d'égalité ; le prix
+est `K` modèles et leurs tangentes. Mesuré sur la corde : quatre boucles NLMS
+depuis 176, 200, 228 et 264 Hz, seule celle de 228 Hz verrouille, et la
+boucle la suit dès 16 000 échantillons. `grid_then_descend_1D` note `K`
+candidats fixes pendant `T` échantillons sans aucune tangente, puis lance une
+seule descente depuis le meilleur, figé par `init_latch` : le schéma
+détecteur puis gradient de la DDSP, écrit à la main, pour `K` modèles
+pendant la fenêtre puis un modèle et sa tangente (les candidats continuent
+de tourner : une branche figée n'est pas élaguée). La grille ne voit un bassin
+que si son pas est plus fin que lui : sur la corde, dont le puits fait ±1 Hz,
+une grille sur toute la plage demanderait des centaines de cellules, là où
+quatre départs répartis en comprennent un dans la zone de capture ; elle est
+mesurée sur la perte à deux puits, où huit cellules suffisent.
+
 ## 5. Comportement mesuré
 
 Toutes les exécutions : `faustprobe --double -I libraries -I <faustlibraries>` ;
@@ -583,6 +603,9 @@ programmes dans le tutoriel.
 | `spsa_1D_clocked`, retard entier d'un peigne, `c = 2`, Adam 0,5 par trame de 256, depuis 160 | `int(d) = 200` dès 25 000 échantillons, tenu à partir de 40 000, résidu 0 ; la tangente `fad` est identiquement nulle |
 | `search_1D_clocked` contre `descend_1D`, `select2(p > 0,5, …)` depuis 0 | la recherche à 0,83 en quelques trames, perte 0 ; `descend_1D` ne bouge pas |
 | `descend_1D` + Adam 0,02 sur la corde, gradient et perte lissés | depuis 228 Hz : verrouillé à 220 dès 18 000 échantillons, gradient 0,003, perte 1e-4 ; depuis 200 Hz : marche entre 196 et 207 Hz, gradient 0,025, perte 0,011, plus grand sur le plateau que dans le puits |
+| `multistart_lsq_1D(4, (176, 200, 228, 264 Hz))` + NLMS sur la corde | l'index 2 (228 Hz) dès 16 000 échantillons, `220,000000` Hz ; quatre cordes et leurs tangentes compilent en 58 ms |
+| `multistart_1D(4, grid_init(4, -3, 3))` + SGD sur la perte à deux puits | les deux départs de gauche finissent dans le puits profond, la boucle suit l'un d'eux, -1,036 |
+| `grid_then_descend_1D(8, 2 000, grid_init(8, -3, 3))` sur la perte à deux puits | la cellule -1,125 (index 2) choisie à 2 000 échantillons, descente à -1,036 |
 | `descend_1D_restart(2, (1, -1))` + SGD sur la perte à deux puits, patience 4 000 | 0,960 (puits peu profond, perte 0,29 > `eps_l`) puis redémarrage à 8 000 et -1,036 (puits profond) pour de bon |
 | `lsq_1D_restart(2, (1, -1))` + NLMS sur `x · L(p)` contre `-0,2 x`, `L` le polynôme à deux puits | 0,960 (résidu 0,24 E[x²], jamais nul dans le puits peu profond) puis redémarrage à 8 000 et une racine de `L = -0,2` dans le puits profond, résidu nul |
 | redémarrage sur la corde depuis 228 Hz après une dérive, NLMS ou Adam, simple ou double précision | ne verrouille pas comme une boucle neuve partie de 228 : le modèle, sa tangente et le moteur gardent l'état de la dérive ; non retenu comme fixture |
@@ -935,15 +958,15 @@ séquentiel au prix d'un seul modèle, qui prend le départ suivant quand la
 perte ne progresse plus (mesuré sur les paysages à deux puits : le puits peu
 profond quitté à 8 000 échantillons pour le profond ; sur la corde, un
 départ pris après une dérive ne verrouille pas comme une boucle neuve,
-section 5). Les
-départs en parallèle et la grille restent à écrire ; deux formes seraient
-naturelles, ni écrites ni mesurées : dans le graphe, `N` boucles en parallèle depuis
-des inits distincts, une perte lissée par `ema` pour chacune, un sélecteur
-qui suit la meilleure et `gated` ou `stop_below` pour éteindre les autres ;
-côté hôte, la boucle de
-[docs/rad-usage-en.md](../docs/rad-usage-en.md) recompile et écrit les
-paramètres par `set_real_zone`, et un multi-start ou une recherche
-bayésienne sur les inits s'y greffe sans toucher au compilateur.
+section 5) ; et les départs multiples de la section 4.11,
+`multistart_1D`, `multistart_lsq_1D` et `grid_then_descend_1D`, les deux
+formes que ce paragraphe annonçait. Dans le graphe, `multistart_1D` est
+la première telle quelle, `K` boucles en parallèle, une perte lissée par
+`ema_bc` pour chacune et un sélecteur qui suit la meilleure ; éteindre les
+perdantes avec `gated` reste une composition à écrire à la main. Côté hôte,
+la boucle de [docs/rad-usage-en.md](../docs/rad-usage-en.md) recompile et
+écrit les paramètres par `set_real_zone`, et un multi-start ou une recherche
+bayésienne sur les inits s'y greffe toujours sans toucher au compilateur.
 
 **Convexe ne veut pas dire facile.** En ligne, un échantillon à la fois, un
 bol quadratique se traverse aussi mal qu'un autre paysage si le pas est mal

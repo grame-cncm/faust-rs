@@ -45,6 +45,7 @@ declare license "MIT/LGPL-3.0";
 // * [Bus Loops](#bus-loops)
 // * [Clocked Loops](#clocked-loops)
 // * [Gradient-Free Loops](#gradient-free-loops)
+// * [Multi-Start Loops](#multi-start-loops)
 // * [Gating and Stopping](#gating-and-stopping)
 // * [Newton Solver](#newton-solver)
 //
@@ -70,7 +71,10 @@ declare license "MIT/LGPL-3.0";
 // learnable. `descend_1D_restart` walks a sequence of starting points, taking
 // the next one whenever the loss makes no progress over a patience window
 // (`no_progress`), a sequential multi-start for the cost of one model;
-// `lsq_1D_restart` is its least-squares twin. The one-parameter loops
+// `lsq_1D_restart` is its least-squares twin. `multistart_1D`, `multistart_lsq_1D` run `K`
+// descents in parallel and follow the one whose smoothed loss is lowest;
+// `grid_then_descend_1D` scores `K` fixed candidates for `T` samples, then
+// descends from the best; `grid_init` spreads `K` starts over the bounds. The one-parameter loops
 // `lsq_1D`, `descend_1D` and `descend_1D_clocked` take `init` through an
 // input wire of their recursive block instead of closing over it, so an
 // `init` computed in the graph does not multiply their compile time; same
@@ -3185,6 +3189,187 @@ with {
            : ro.interleave(N, 3)
            : par(i, N, \(q, s, gs).(clip(lo - init, hi - init, q - upd(gs / s)), _rademacher))
            : ro.interleave(2, N);
+};
+
+//==================================Multi-Start Loops=======================================
+// Several starting points at once, for a landscape with more than one basin
+// and no estimate of which one holds the answer. `multistart_*` run `K`
+// descents in parallel and output the one whose smoothed loss is lowest, for
+// `K` models and their tangents; `grid_then_descend_1D` scores `K` fixed
+// candidates over a window of `T` samples with no tangent at all, then runs
+// one descent from the best, for `K` models during the window and one model
+// plus its tangent afterwards (the candidates keep running: a latched branch
+// is not pruned). The grid sees a basin only when its spacing is finer than
+// the basin: on the waveguide string, whose well is +-1 Hz wide, a grid over
+// the whole range would need hundreds of cells, where four starts spread
+// over the range include one in the capture zone.
+//==========================================================================================
+
+// Fold of `K` triples `(value, payload, index)` to the triple of lowest
+// value, the first one on ties.
+_argmin(K) = seq(i, K - 1, (pick, si.bus(3 * (K - 2 - i))))
+with {
+    pick(bv, bp, bk, v, p, k) = select2(v < bv, bv, v), select2(v < bv, bp, p), select2(v < bv, bk, k);
+};
+// `descend_1D` that also outputs the loss at the current parameter.
+_descend_1D_with_loss(loss, upd, lo, hi, init, reset) = init : (loop ~ _) : (+(init), _)
+with {
+    loop(prev, i1) = next, l
+    with {
+        p = clip(lo, hi, _from_init(i1, reset, prev));
+        pt = fad(loss(p), p);
+        l = pt : _, !;
+        g = pt : !, _;
+        next = clip(lo - i1, hi - i1, _dev(reset, prev) - upd(g));
+    };
+};
+// `lsq_1D` that also outputs the squared residual at the current parameter.
+_lsq_1D_with_loss(mdl, upd, lo, hi, init, reset, target, x) = init : (loop ~ _) : (+(init), _)
+with {
+    loop(prev, i1) = next, r * r
+    with {
+        p = clip(lo, hi, _from_init(i1, reset, prev));
+        pt = fad(mdl(p, x), p);
+        r = (pt : _, !) - target;
+        j = pt : !, _;
+        next = clip(lo - i1, hi - i1, _dev(reset, prev) - upd(r, j));
+    };
+};
+
+//------------------------------`(op.)grid_init`--------------------------------
+// The `k`-th of `K` starting points spread evenly over `[lo, hi]`, at the
+// centres of `K` equal cells: `lo + (k + 1/2) (hi - lo) / K`. Partially
+// applied, `grid_init(K, lo, hi)` is the `init` argument of the multi-start
+// loops.
+//
+// #### Usage
+//
+// ```
+// grid_init(K, lo, hi, k) : _
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// grid_init_test = op.grid_init(8, -3.0, 3.0, 2);
+// ```
+//------------------------------------------------------------------------------
+grid_init(K, lo, hi, k) = lo + (k + 0.5) * (hi - lo) / K;
+
+//------------------------------`(op.)multistart_1D`----------------------------
+// `K` loss-first descents in parallel, from `init(0)` to `init(K - 1)`, each
+// with its own engine state; the loop follows the one whose bias-corrected
+// smoothed loss (horizon `1 / (1 - a)`) is lowest, the first on ties, and
+// outputs its parameter and its index. The index may change while the
+// descents are running; once they have settled it stays.
+//
+// #### Usage
+//
+// ```
+// multistart_1D(K, init, loss, upd, lo, hi, a, reset) : _, _
+// ```
+//
+// Where:
+//
+// * `K`: number of starting points
+// * `init`: `init(k)`, the starting value of index `k` (`grid_init(K, lo, hi)` spreads them)
+// * `loss`, `upd`, `lo`, `hi`, `reset`: as `descend_1D`
+// * `a`: smoothing coefficient of the losses compared, in `[0, 1)`
+//
+// #### Example
+//
+// ```
+// loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;   // two wells, the deep one at -1.04
+// p = op.multistart_1D(4, op.grid_init(4, -3.0, 3.0), loss, op.sgd_g(0.01), -3, 3, 0.999, 0) : _, !;
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// multistart_1D_test = op.multistart_1D(3, op.grid_init(3, -4.0, 4.0), \(p).(op.mse(p * x, 0.5 * x)), op.sgd_g(0.01), -4, 4, 0.99, 0)
+// with { x = hslider("multistart_1D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+multistart_1D(K, init, loss, upd, lo, hi, a, reset) =
+    par(k, K, (_descend_1D_with_loss(loss, upd, lo, hi, init(k), reset) : (_, ema_bc(a)) : ro.cross(2), k))
+    : _argmin(K) : (!, _, _);
+
+//------------------------------`(op.)multistart_lsq_1D`------------------------
+// `multistart_1D` in least-squares form: `K` `lsq_1D` loops in parallel,
+// compared on their smoothed squared residual.
+//
+// #### Usage
+//
+// ```
+// multistart_lsq_1D(K, init, mdl, upd, lo, hi, a, reset, target, x) : _, _
+// ```
+//
+// Where:
+//
+// * `K`, `init`, `a`: as `multistart_1D`
+// * `mdl`, `upd`, `lo`, `hi`, `reset`, `target`, `x`: as `lsq_1D`
+//
+// #### Example
+//
+// ```
+// init(k) = ma.SR / ba.take(k + 1, (176.0, 200.0, 228.0, 264.0));   // four pitches, one in the string's capture zone
+// d = op.multistart_lsq_1D(4, init, mdl, op.nlms(0.02, 1e-6, 0.99), 100, 400, 0.999, 0, target, x) : _, !;
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// multistart_lsq_1D_test = op.multistart_lsq_1D(3, op.grid_init(3, -4.0, 4.0), \(p, x).(p * x), op.nlms(0.01, 1e-6, 0.99), -4, 4, 0.99, 0, 0.5 * x, x)
+// with { x = hslider("multistart_lsq_1D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+multistart_lsq_1D(K, init, mdl, upd, lo, hi, a, reset, target, x) =
+    par(k, K, (_lsq_1D_with_loss(mdl, upd, lo, hi, init(k), reset, target, x) : (_, ema_bc(a)) : ro.cross(2), k))
+    : _argmin(K) : (!, _, _);
+
+//------------------------------`(op.)grid_then_descend_1D`---------------------
+// A coarse search, then the gradient: for `T` samples, `K` candidates
+// `init(0)` to `init(K - 1)` are scored by their accumulated loss with no
+// tangent (`K` undifferentiated models); at sample `T` the best one, the
+// first on ties, is frozen as the `init` of one `descend_1D`, held until
+// then and released at `T + 1` (`init_latch`, `init_reset`). Outputs the
+// parameter and the index of the chosen candidate. The detector-then-gradient
+// scheme of DDSP, written by hand: the grid must be finer than the basin it
+// looks for.
+//
+// #### Usage
+//
+// ```
+// grid_then_descend_1D(K, T, init, loss, upd, lo, hi, reset) : _, _
+// ```
+//
+// Where:
+//
+// * `K`: number of candidates
+// * `T`: length of the scoring window, in samples
+// * `init`: `init(k)`, the `k`-th candidate (`grid_init(K, lo, hi)` spreads them)
+// * `loss`, `upd`, `lo`, `hi`, `reset`: as `descend_1D`
+//
+// #### Example
+//
+// ```
+// loss(p) = (p * p - 1.0) * (p * p - 1.0) + 0.3 * p;
+// p = op.grid_then_descend_1D(8, 2000, op.grid_init(8, -3.0, 3.0), loss, op.sgd_g(0.01), -3, 3, 0) : _, !;
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// grid_then_descend_1D_test = op.grid_then_descend_1D(3, 64, op.grid_init(3, -4.0, 4.0), \(p).(op.mse(p * x, 0.5 * x)), op.sgd_g(0.01), -4, 4, 0)
+// with { x = hslider("grid_then_descend_1D:x", 0, -1, 1, 0.01); };
+// ```
+//------------------------------------------------------------------------------
+grid_then_descend_1D(K, T, init, loss, upd, lo, hi, reset) = p, k_sel
+with {
+    best = par(k, K, (loss(init(k)) : (+ ~ _), init(k), k)) : _argmin(K);
+    i_sel = init_latch(T, (best : (!, _, !)));
+    k_sel = init_latch(T, (best : (!, !, _)));
+    p = descend_1D(loss, upd, lo, hi, i_sel, (reset != 0.0) | init_reset(T));
 };
 
 //===================================Gating and Stopping====================================

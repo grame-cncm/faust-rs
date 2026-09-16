@@ -203,7 +203,7 @@ does not pretend otherwise:
 
 The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.9.0) is
 documented function by function in the Faust libraries convention; this
-section gives the map. It has fourteen sections, ordered from building blocks to
+section gives the map. It has fifteen sections, ordered from building blocks to
 ready-made loops and what surrounds them.
 
 | Section | What it holds | Why it exists |
@@ -220,6 +220,7 @@ ready-made loops and what surrounds them.
 | Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus with one engine and one pair of bounds, in forward or in reverse mode |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | the gradient at audio rate, averaged over the frame, the step once per firing of an `ondemand` clock |
 | Gradient-free loops | `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked` | learning with no tangent at all, from two evaluations of the loss per frame: an integer delay, a `select2`, anything `fad` differentiates to zero |
+| Multi-start loops | `grid_init`, `multistart_1D`, `multistart_lsq_1D`, `grid_then_descend_1D` | several starts at once: `K` descents in parallel, following the best, or `K` candidates scored with no tangent, then one descent from the best |
 | Gating and stopping | `gated`, `gated_when`, `stop_after`, `stop_below`, `stop_relative`, `on_change` | switching the learning off once it has converged, so that it costs nothing afterwards; computing coefficients only when a parameter changes |
 | Newton solver | `newton_step`, `newton` | not learning: solving an implicit equation with `F` and `F'` from one `fad` |
 
@@ -516,6 +517,24 @@ few frames while `descend_1D` never moves), a written table. The price: two
 model copies instead of one copy and its tangent, one step per frame, and a
 noisy estimate that wants a `c` or `sigma` on the parameter's scale.
 
+### 4.11 Several starts: `multistart_1D`, `multistart_lsq_1D`, `grid_then_descend_1D`
+
+When no estimate says which basin holds the answer, start from several
+places. `multistart_1D` and its least-squares twin run `K` descents in
+parallel, each with its own engine, and follow the one whose smoothed loss
+is lowest, the first on ties; the price is `K` models and their tangents.
+Measured on the string: four NLMS loops from 176, 200, 228 and 264 Hz, only
+the one from 228 Hz locks, and the loop follows it from 16 000 samples on.
+`grid_then_descend_1D` scores `K` fixed candidates for `T` samples with no
+tangent at all, then runs one descent from the best, frozen by `init_latch`:
+DDSP's detector-then-gradient scheme written by hand, for `K` models during
+the window and one model plus its tangent afterwards (the candidates keep
+running: a latched branch is not pruned). The grid sees a basin only when its
+spacing is finer than the basin: on the string, whose well is ±1 Hz wide, a
+grid over the whole range would need hundreds of cells, where four starts
+spread over the range include one in the capture zone; it is measured on the
+two-well loss, where eight cells suffice.
+
 ## 5. Measured behaviour
 
 All runs: `faustprobe --double -I libraries -I <faustlibraries>`; programs
@@ -551,6 +570,9 @@ in the tutorial.
 | `spsa_1D_clocked`, integer delay of a comb, `c = 2`, Adam 0.5 per 256-sample frame, from 160 | `int(d) = 200` from 25 000 samples, held from 40 000 on, residual 0; the `fad` tangent is identically zero |
 | `search_1D_clocked` vs `descend_1D`, `select2(p > 0.5, …)` from 0 | the search at 0.83 within a few frames, loss 0; `descend_1D` never moves |
 | `descend_1D` + Adam 0.02 on the string, smoothed gradient and loss | from 228 Hz: locked on 220 by 18 000 samples, gradient 0.003, loss 1e-4; from 200 Hz: walks between 196 and 207 Hz, gradient 0.025, loss 0.011, larger on the plateau than in the well |
+| `multistart_lsq_1D(4, (176, 200, 228, 264 Hz))` + NLMS on the string | index 2 (228 Hz) from 16 000 samples on, `220.000000` Hz; four strings and their tangents compile in 58 ms |
+| `multistart_1D(4, grid_init(4, -3, 3))` + SGD on the two-well loss | the two left starts end in the deep well, the loop follows one of them, -1.036 |
+| `grid_then_descend_1D(8, 2 000, grid_init(8, -3, 3))` on the two-well loss | the cell at -1.125 (index 2) chosen at 2 000 samples, the descent at -1.036 |
 | `descend_1D_restart(2, (1, -1))` + SGD on the two-well loss, patience 4 000 | 0.960 (shallow well, loss 0.29 > `eps_l`) then a restart at 8 000 and -1.036 (deep well) for good |
 | `lsq_1D_restart(2, (1, -1))` + NLMS on `x · L(p)` against `-0.2 x`, `L` the two-well polynomial | 0.960 (residual 0.24 E[x²], never nil in the shallow well) then a restart at 8 000 and a root of `L = -0.2` in the deep well, residual nil |
 | a restart on the string from 228 Hz after a drift, NLMS or Adam, single or double precision | does not lock the way a fresh loop from 228 does: the model, its tangent and the engine keep the drift's state; not kept as a fixture |
@@ -874,13 +896,16 @@ the loss per frame; and `descend_1D_restart`, the sequential multi-start for
 the cost of one model, which takes the next start when the loss stops making
 progress (measured on the two-well landscapes: the shallow well left at
 8 000 samples for the deep one; on the string, a start taken after a drift
-does not lock the way a fresh loop does, section 5). Parallel starts and the grid remain
-to be written; two forms would be natural, neither written nor measured: in the graph, `N` loops in parallel from distinct inits, a
-loss smoothed by `ema` for each, a selector that follows the best and
-`gated` or `stop_below` to switch the others off; on the host side, the
-loop of [docs/rad-usage-en.md](../docs/rad-usage-en.md) recompiles and
-writes parameters through `set_real_zone`, and a multi-start or a Bayesian
-search over inits grafts onto it without touching the compiler.
+does not lock the way a fresh loop does, section 5); and the multi-start
+loops of section 4.11, `multistart_1D`, `multistart_lsq_1D` and
+`grid_then_descend_1D`, the two forms this paragraph used to announce. In the graph,
+`multistart_1D` is the first one as such, `K` loops in parallel, a loss
+smoothed by `ema_bc` for each and a selector that follows the best;
+switching the losers off with `gated` remains a composition to write by
+hand. On the host side, the loop of
+[docs/rad-usage-en.md](../docs/rad-usage-en.md) recompiles and writes
+parameters through `set_real_zone`, and a multi-start or a Bayesian search
+over inits still grafts onto it without touching the compiler.
 
 **Convex does not mean easy.** Online, one sample at a time, a quadratic
 bowl is crossed as badly as any other landscape when the step is wrong:

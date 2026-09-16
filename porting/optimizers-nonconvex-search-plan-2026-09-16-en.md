@@ -302,6 +302,21 @@ sequential search over `K` starts.
 
 ## N2 — Multi-start and grid-then-gradient
 
+**Status 2026-09-16: landed** (`optimizers.lib` 0.9.0), with two deviations.
+`multistart_1D` has a least-squares twin `multistart_lsq_1D`, because on
+the string only the NLMS loop locks from 228 Hz in single precision (the
+finding of N3); the string fixture uses it with four starts (176, 200, 228,
+264 Hz) and follows the 228 Hz one from 16 000 samples on. The grid is not
+measured on the string: its ±1 Hz well would need hundreds of cells over
+the range (the plateau's residual is 0.10 everywhere else), so
+`grid_then_descend_1D` is measured on the two-well loss, eight cells, the
+one at -1.125 chosen after 2 000 samples. The `argmin` fold is the triple
+fold `_argmin(K)`, first on ties; the candidates of the grid keep running
+after `T` (a latched branch is not pruned), which the documentation says.
+Compile times: 58 ms for the four differentiated strings, 11 ms for the
+two-well fixtures.
+
+
 **Surface** (section "Loss-First Loops"):
 
 - `multistart_1D(K, init, loss, upd, lo, hi, a, reset)`: `K` `descend_1D`
