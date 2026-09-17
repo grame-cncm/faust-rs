@@ -102,15 +102,37 @@ pub struct Control {
 }
 
 impl Control {
+    /// Whether `value` is one the control can hold. `NaN` is not.
+    ///
+    /// The bounds reach the host through the UI glue as `FAUSTFLOAT`, single
+    /// precision whatever the program's width, so a range declared `[0.1,
+    /// 0.7]` is known here as `[0.10000000149, 0.69999998808]`: narrower than
+    /// declared at the top, and a value typed `0.7`, read as a double, is above
+    /// it. A value is therefore in range when it is **at the precision the
+    /// bounds have**: what a host writing floats would send for it.
+    #[must_use]
+    pub fn holds(&self, value: f64) -> bool {
+        let range = self.min..=self.max;
+        range.contains(&value) || range.contains(&f64::from(value as f32))
+    }
+
     /// Clamp `value` into the declared range.
     ///
     /// Faust hosts are expected to respect widget bounds; writing outside them
     /// is not rejected by the runtime but produces states the DSP was never
     /// compiled to expect (a negative delay length, say). Clamping here keeps
     /// a mistyped command line from being silently absurd.
+    ///
+    /// A value the control [`holds`](Self::holds) is returned as it is, not
+    /// pulled onto a single-precision bound: `0.7` stays `0.7` in a
+    /// double-precision program instead of becoming `0.699999988079071`.
     #[must_use]
     pub fn clamp(&self, value: f64) -> f64 {
-        value.clamp(self.min, self.max)
+        if self.holds(value) {
+            value
+        } else {
+            value.clamp(self.min, self.max)
+        }
     }
 }
 
@@ -150,18 +172,21 @@ pub struct Write<'a> {
 }
 
 impl Write<'_> {
-    /// Whether the request is a value the control can hold. `NaN` is not.
+    /// Whether the request is a value the control can hold
+    /// ([`Control::holds`]). `NaN` is not.
     #[must_use]
     pub fn in_range(&self) -> bool {
-        (self.control.min..=self.control.max).contains(&self.requested)
+        self.control.holds(self.requested)
     }
 
     /// The error of a request outside the range, naming the query as typed.
     #[must_use]
     pub fn range_error(&self, query: &str) -> String {
+        // the bounds as declared, which is what their single precision
+        // prints: `[0.1, 0.7]`, not `[0.10000000149011612, 0.699999988079071]`
         format!(
             "`{query}`={} is outside the range [{}, {}] of {}",
-            self.requested, self.control.min, self.control.max, self.control.path
+            self.requested, self.control.min as f32, self.control.max as f32, self.control.path
         )
     }
 }
@@ -642,6 +667,27 @@ mod tests {
         let c = probe("/dsp/gain");
         assert!((c.clamp(2.0) - 1.0).abs() < f64::EPSILON);
         assert!((c.clamp(-1.0) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_value_on_a_decimal_bound_is_in_range_and_is_not_altered() {
+        // `hslider("x", 0.1, 0.1, 0.7, 0.01)`: the glue hands the bounds over in
+        // single precision, 0.7 as 0.699999988 and 0.1 as 0.100000001
+        let mut c = probe("/dsp/x");
+        c.min = f64::from(0.1_f32);
+        c.max = f64::from(0.7_f32);
+        assert!(c.max < 0.7 && c.min > 0.1);
+        for on_a_bound in [0.7, 0.1] {
+            assert!(c.holds(on_a_bound), "{on_a_bound}");
+            // and a double-precision program receives the value typed
+            assert_eq!(c.clamp(on_a_bound).to_bits(), on_a_bound.to_bits());
+        }
+        assert!(c.holds(0.4));
+        // outside, by more than the bounds' own precision
+        for outside in [0.7001, 0.0999, 7.0, f64::NAN] {
+            assert!(!c.holds(outside), "{outside}");
+        }
+        assert!((c.clamp(7.0) - c.max).abs() < f64::EPSILON);
     }
 
     #[test]

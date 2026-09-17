@@ -254,6 +254,12 @@ says what it did: `# clamped /osc/gain: 7 -> 1` with the statistics (on stderr
 before a sweep's rows), a `clamped` array in the JSON runs concerned, and sweep
 rows that carry the value used, `1`, not the one asked for. With `--train` the
 same holds for `--set`: a starting point outside the range is an error.
+
+The bounds reach a host in single precision, whatever the program's width: a
+range declared `[0.1, 0.7]` is known as `[0.100000001, 0.699999988]`. A value is
+in range at that precision, so `--set x=0.7` is accepted, and a
+double-precision program receives the `0.7` that was typed, not the float below
+it; the error message prints the range as declared.
 `--nvoices` keeps the polyphonic wrapper's own rule (a voice's controls are
 written unclamped, as `poly-dsp.h` does) and refuses `--clamp`.
 

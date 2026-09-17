@@ -157,6 +157,47 @@ fn set_sweep_and_at_refuse_a_value_outside_the_range() {
 }
 
 #[test]
+fn a_value_typed_on_a_decimal_bound_is_in_range_in_both_widths() {
+    // The bounds reach the probe in single precision: 0.7 as 0.699999988, below
+    // the 0.7 a command line types. 0 and 1, which the test above uses, are
+    // exact and could not show it.
+    let source = "process = hslider(\"x\", 0.4, 0.1, 0.7, 0.01);\n";
+    for width in [&[][..], &["--double"][..]] {
+        let args = [
+            width,
+            &[
+                "--sweep",
+                "x=0.1,0.7",
+                "--reduce",
+                "dc",
+                "--in",
+                "zero",
+                "-n",
+                "4",
+            ],
+        ]
+        .concat();
+        let (ok, stdout, stderr) = probe_binary("decimal_bounds", source, &args);
+        assert!(ok, "{width:?}: {stderr}");
+        assert_eq!(stdout.lines().count(), 3, "{stdout}");
+    }
+    // a double-precision program receives the value typed, not the bound's float
+    let (_, stdout, _) = probe_binary(
+        "decimal_value",
+        source,
+        &["--double", "--set", "x=0.7", "--in", "zero", "-n", "1"],
+    );
+    assert_eq!(row(&stdout, 0), ["0.7"]);
+    // and a value really outside is still refused, the range printed as declared
+    let (ok, _, stderr) = probe_binary("decimal_outside", source, &["--set", "x=0.71", "-n", "1"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("outside the range [0.1, 0.7] of /"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn clamp_is_reported_and_a_sweep_row_carries_the_value_used() {
     let (ok, stdout, stderr) = probe_binary(
         "clamp_sweep",
