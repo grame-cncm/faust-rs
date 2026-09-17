@@ -105,6 +105,67 @@ check. (The probe compiles through the C API, whose `error_msg` buffer is 4096
 bytes by contract and carries the summary line only; the rest comes from
 `getCCompleteCraneliftDSPFactoryError`, which any host of that API can call.)
 
+### Evaluating an expression: `--eval`
+
+`--eval EXPR` probes an expression evaluated **in the scope of the file**
+instead of the file's `process`. The file may be a `.lib`, which has no
+`process` and could not otherwise be given to the tool; the expression sees its
+definitions unprefixed, as inside the library, and its imports:
+
+```
+$ faustprobe --double -n 1 --in zero \
+      --eval 'absorb_pole_exact(1709, 2.0, 0.5)' --eval 'absorb_pole(1709, 2.0, 0.5)' jot.lib
+frame,"absorb_pole_exact(1709, 2.0, 0.5)","absorb_pole(1709, 2.0, 0.5)"
+0,0.1981164814632339,0.5019283066233194
+```
+
+A question about a sub-expression costs a command, not a file with an `import`
+and a `process`. The flag repeats, the expressions' outputs standing side by
+side in the order given; an expression with several outputs gets `EXPR[0]`,
+`EXPR[1]`, … (the columns are attributed by the number of outputs of each
+expression, which a second, tiny program computes with `outputs(EXPR)`). A
+header field that holds a comma is quoted, as CSV has it. With the statistics
+comes a legend, `# eval out1 = EXPR`, which is what names the outputs under
+`--quiet`, in a sweep (whose columns keep their `REDUCTION_outN` names) and in
+JSON (an `eval` array).
+
+Everything else applies to the program the expressions make: an expression
+with inputs is a processor and is fed by `--in`
+(`--eval 'fi.lowpass(2, 1000)' filters.lib` is an impulse response); its
+controls are listed, set and swept, under the paths they have in the file, and
+only those the expressions use exist; `--out`, `--fail-above` and `--train`
+work as usual. `--eval '0' file.lib` is the compile check of a library.
+
+What an expression sees is the file's **top-level** definitions: one local to
+a `with` block is not in scope, and the error says so. The file's own `process`
+is not evaluated at all, so a program that does not define one, or whose
+`process` is broken, can still be asked about its parts.
+
+When the compilation fails, a location in the file is the file's own line (the
+wrapper `--eval` puts around the file shares its first line, whose columns
+alone are shifted), and a location in an expression is `<eval k>`, with the
+expression as its source line:
+
+```
+$ faustprobe --eval scale --eval 'third(1) + quarter' small.lib
+faustprobe: evaluation failed for small.lib: undefined symbol `quarter`
+<eval 1>:1:12: error [FRS-EVAL-0002] undefined symbol `quarter`
+  8 | third(1) + quarter
+    |            ^^^^^^^ failing use
+  1 | __faustprobe_env = environment{ // a small library
+    | ^^^^^^^^^^^^^^^^ enclosing definition
+  …
+  = note: <eval 1> is `--eval 'third(1) + quarter'`, line 8 of the source as wrapped
+  = note: `__faustprobe_env = environment{...` and `process = ...` are the wrapper `--eval` puts around the file
+```
+
+A literal argument is folded at compile time, a control is computed at run
+time, and the two can differ in the last bit:
+`absorb_pole(967, 2.0, 0.5)` reads `0.28400507460781155` and the same function
+of two sliders at 2.0 and 0.5 reads `0.2840050746078115`. `--eval` is how to
+tell which one a program's output is. It does not combine with `--nvoices` or
+the impulse-test protocol.
+
 `--double` is worth reaching for whenever the measurement is near the noise
 floor, or when the DSP evaluates trigonometric functions of a large argument —
 single precision loses accuracy there and the loss can be mistaken for a defect

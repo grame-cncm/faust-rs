@@ -16,8 +16,8 @@ error reduced to "errors=1, diagnostics=1").
 This document asks what remains of that kind, and what would make the feedback
 more precise and more attributable. It has two parts: an analysis, whose claims
 about the present tool were each run on the release binary of commit `79f2d6af`,
-and a plan in five phases. **Status: F1 is implemented (2026-09-17, §7); F2 to F5
-are not.**
+and a plan in five phases. **Status: F1 and F3 are implemented (2026-09-17, §7);
+F2, F4 and F5 are not.**
 
 The design document already states the principle the analysis applies (its §6):
 the tool is a measuring instrument, and an instrument that silently misreports
@@ -531,4 +531,63 @@ One prediction of §2.1 was measured: with round-trip numbers the residuals of
 `faust-diff-jot` that the analysis attributed to printing are gone, bargraphs
 against the fitted record 4.3e-10 -> 0 and `jot_reverb.dsp` against a preset
 2.6e-9 -> 6.2e-16.
+
+### F3, implemented 2026-09-17
+
+`--eval EXPR`, repeatable, as planned (`probe/eval.rs`, `EvalProgram`). What
+the plan left open, and what was found:
+
+- **Layout.** The opener shares the file's first line, and each expression is
+  alone on its own line, its definition's name on the line before and its `;`
+  on the line after: a diagnostic about an expression then has exact columns and
+  the expression as its source line. `EvalProgram::explain` renames such a
+  location `<eval k>:1:COL` (the terminator's line, where a parser reports what
+  an expression left open, becomes the expression's end) and adds a note naming
+  the expression. It is text surgery on the rendered diagnostic, and is written
+  so that a text it does not recognise is left as it is.
+- **Several outputs.** With more than one expression the columns are attributed
+  by arity, which a second program computes (`process = outputs(E0),
+  outputs(E1), ...`, one frame). Assuming one output each would have been wrong
+  in silence the day an expression has two; `labels` refuses arities that do
+  not add up to the program's outputs.
+- **The source's name is the file's path**, not a bare name: it is what
+  diagnostics cite, what the control paths' root comes from (`/jot_ir/exact`,
+  as when the file is compiled), and what the compiler resolves the file's
+  relative imports against. A first version also added the file's directory to
+  the import path; a mutation that removed it survived, which is how the
+  redundancy was found, and the code was dropped for a mutation on the name,
+  which is rejected.
+- **Scope.** An expression sees the file's top-level definitions. One local to
+  a `with` block is not visible, and the diagnostic then often cannot locate the
+  use (the name also occurs in the file); `explain` attributes an unlocated
+  undefined symbol to the expressions that use it and states the rule.
+- **Open question of §6** (`declare` and `process` inside the environment):
+  both are accepted; a test wraps a program with `declare options` and a
+  `process` of another arity.
+- CSV header fields holding a comma are quoted; a `# eval outN = EXPR` legend
+  goes with the statistics and before a sweep's rows; JSON gets an `eval` array.
+  Refused with `--nvoices` and the impulse-test protocol.
+
+Exit criterion. The 150 outputs of `faust-diff-jot/dsp/jot_coefs.dsp` were
+obtained from `jot.lib` alone with thirteen `--eval`: 126 are identical text for
+text, 24 differ by one to three units in the last place (relative 1e-16 to
+3e-15). The difference is not the wrapper's: `jot_coefs.dsp` computes from two
+sliders at run time and the expressions had literal arguments, folded at compile
+time; with sliders as arguments `--eval` gives the file's digits
+(`0.2840050746078115` against `0.28400507460781155` for `absorb_pole(967, 2.0,
+0.5)`). Diagnostics keep the file's line numbers (`broken.lib:3:15`).
+
+Checks: `tests/eval_probe.rs`, 10 tests (an expression against the hand-written
+program that states it, labels and arities, a program with its own `process`,
+controls, sweeps and listing, relative imports from another directory, errors
+in the file and in an expression, the `with` rule, a training run whose loss is
+an expression, JSON, refusals) and 6 unit tests. Six mutations rejected: the
+opener on its own line; the expressions in reverse order; arities from
+`inputs`; the source named by a bare name; a location not renamed; a header
+field not quoted. A seventh survived, the file's directory removed from the
+import path, and showed that code to be redundant (above).
+
+Found on the way and left to a separate task: `process = 2.0 / 0;` panics the
+compiler (and aborts a host through the FFI) instead of giving a value or a
+diagnostic.
 

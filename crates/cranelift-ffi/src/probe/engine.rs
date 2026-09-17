@@ -205,6 +205,26 @@ impl Factory {
         double: bool,
         opt_level: i32,
     ) -> Result<Self, String> {
+        Self::compile_from_string_with_args(name, source, import_dirs, &[], double, opt_level)
+    }
+
+    /// [`Factory::compile_from_string`] with extra compiler arguments
+    /// appended verbatim, as [`Factory::compile_with_args`] does for a file.
+    ///
+    /// `name` is more than a label: a caller that read the source from a file
+    /// passes that file's path, against whose directory the compiler resolves
+    /// the source's relative imports, and which diagnostics cite.
+    ///
+    /// # Errors
+    /// As [`Factory::compile`].
+    pub fn compile_from_string_with_args(
+        name: &str,
+        source: &str,
+        import_dirs: &[String],
+        extra_args: &[String],
+        double: bool,
+        opt_level: i32,
+    ) -> Result<Self, String> {
         let mut argv: Vec<CString> = Vec::new();
         for dir in import_dirs {
             argv.push(CString::new("-I").map_err(|e| e.to_string())?);
@@ -212,6 +232,9 @@ impl Factory {
         }
         if double {
             argv.push(CString::new("-double").map_err(|e| e.to_string())?);
+        }
+        for arg in extra_args {
+            argv.push(CString::new(arg.as_str()).map_err(|e| e.to_string())?);
         }
         let argv_ptrs: Vec<*const c_char> = argv.iter().map(|a| a.as_ptr()).collect();
 

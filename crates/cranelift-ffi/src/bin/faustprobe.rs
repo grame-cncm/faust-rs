@@ -11,6 +11,7 @@ use clap::{ArgAction, Parser, ValueEnum};
 
 use cranelift_ffi::probe::audio_out::SampleWriter;
 use cranelift_ffi::probe::engine::{Factory, PolyProbe, Probe, RenderSpec};
+use cranelift_ffi::probe::eval::{EvalProgram, csv_field};
 use cranelift_ffi::probe::number::{NumberFormat, Precision};
 use cranelift_ffi::probe::params::{ControlKind, ControlMap};
 use cranelift_ffi::probe::poly;
@@ -57,6 +58,20 @@ enum Protocol {
 struct Args {
     /// Faust DSP source file.
     file: String,
+
+    /// Evaluate EXPR in the scope of FILE and probe that instead of FILE's
+    /// `process` (repeatable: the expressions' outputs side by side).
+    ///
+    /// FILE may be a `.lib`, which has no `process`: the expression sees its
+    /// definitions unprefixed, as inside the library, and its imports. A
+    /// question about a sub-expression costs a command, not a file:
+    /// `--eval 'absorb_pole(1709, 2.0, 0.5)' -n 1 --in zero jot.lib`. The
+    /// expressions head the CSV columns (`EXPR[j]` for one with several
+    /// outputs) and everything else applies unchanged: `--set`, `--sweep`,
+    /// `--list-params`, `--out`, `--train`. A compile error keeps the file's
+    /// line numbers, and one in an expression is located in `<eval k>`.
+    #[arg(long = "eval", value_name = "EXPR")]
+    evals: Vec<String>,
 
     /// Print the version and the copyright notice (`-v`, as with faust-rs).
     #[arg(short = 'v', long = "version", action = ArgAction::Version)]
@@ -390,6 +405,9 @@ fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
     if args.fail_above.is_some() {
         offenders.push("--fail-above");
     }
+    if !args.evals.is_empty() {
+        offenders.push("--eval");
+    }
     if offenders.is_empty() {
         Ok(())
     } else {
@@ -463,6 +481,78 @@ fn parse_assignment(text: &str) -> Result<(&str, f64), String> {
         .parse()
         .map_err(|_| format!("`{value}` is not a number in `{text}`"))?;
     Ok((path, parsed))
+}
+
+/// The program to probe: FILE, or under `--eval` the expressions evaluated in
+/// FILE's scope. With the wrapped file when there is one, which is what
+/// labels the outputs and explains a compile error.
+fn compile_program(args: &Args) -> Result<(Factory, Option<EvalProgram>), String> {
+    if args.evals.is_empty() {
+        let factory = Factory::compile_with_args(
+            &args.file,
+            &args.import_dirs,
+            &compiler_args(args),
+            args.double,
+            args.opt_level,
+        )?;
+        return Ok((factory, None));
+    }
+    let text = std::fs::read_to_string(&args.file)
+        .map_err(|e| format!("cannot read '{}': {e}", args.file))?;
+    let eval = EvalProgram::new(&text, &args.evals)?;
+    // The source is named by the file's path, not by a bare name: that is
+    // what a diagnostic cites, what the compiler resolves the file's relative
+    // imports against, and what the control paths' root comes from.
+    let factory = Factory::compile_from_string_with_args(
+        &args.file,
+        &eval.source(),
+        &args.import_dirs,
+        &compiler_args(args),
+        args.double,
+        args.opt_level,
+    )
+    .map_err(|error| eval.explain(&args.file, &error))?;
+    Ok((factory, Some(eval)))
+}
+
+/// One label per output: `out0, out1, ...`, or under `--eval` the expressions
+/// (`EXPR[j]` for one with several outputs).
+///
+/// With several expressions the columns are attributed by the number of
+/// outputs of each, which a second, tiny program computes (`outputs(EXPR)`):
+/// assuming one output each would label a column with the wrong expression
+/// the day one of them has two.
+fn output_labels(
+    args: &Args,
+    eval: Option<&EvalProgram>,
+    outputs: usize,
+) -> Result<Vec<String>, String> {
+    let Some(eval) = eval else {
+        return Ok((0..outputs).map(|ch| format!("out{ch}")).collect());
+    };
+    if eval.exprs().len() == 1 {
+        return eval.labels(&[outputs], outputs);
+    }
+    let factory = Factory::compile_from_string_with_args(
+        &args.file,
+        &eval.arity_source(),
+        &args.import_dirs,
+        &compiler_args(args),
+        true,
+        0,
+    )
+    .map_err(|error| eval.explain(&args.file, &error))?;
+    let probe = Probe::instantiate(&std::rc::Rc::new(factory), args.sr)?;
+    let spec = RenderSpec {
+        frames: 1,
+        input: InputMode::Zero,
+        ..RenderSpec::default()
+    };
+    let mut arities = Vec::new();
+    probe.render(&spec, |_, samples| {
+        arities = samples.iter().map(|count| *count as usize).collect();
+    });
+    eval.labels(&arities, outputs)
 }
 
 /// The number text of this run: `--precision`, at the program's width.
@@ -643,6 +733,7 @@ fn run_poly(args: &Args) -> Result<(), String> {
         ("--out", args.out.is_some()),
         ("--fail-above", args.fail_above.is_some()),
         ("--clamp", args.clamp),
+        ("--eval", !args.evals.is_empty()),
     ] {
         if set {
             return Err(format!(
@@ -851,14 +942,8 @@ fn run(mut args: Args) -> Result<(), String> {
         return run_train(&args);
     }
 
-    let probe = Probe::compile_with_args(
-        &args.file,
-        &args.import_dirs,
-        &compiler_args(&args),
-        args.sr,
-        args.double,
-        args.opt_level,
-    )?;
+    let (factory, eval) = compile_program(&args)?;
+    let probe = Probe::instantiate(&std::rc::Rc::new(factory), args.sr)?;
 
     let fmt = number_format(&args)?;
     if args.list_params {
@@ -953,6 +1038,17 @@ fn run(mut args: Args) -> Result<(), String> {
     // The bargraphs' paths, for the headers; their values are read after each
     // block (`Probe::bargraphs`, in the same order).
     let bargraph_paths: Vec<String> = probe.bargraphs().into_iter().map(|(p, _)| p).collect();
+    // What each output is: `outN`, or under `--eval` the expression it computes.
+    let labels = output_labels(&args, eval.as_ref(), probe.outputs())?;
+    let legend: Vec<String> = if eval.is_some() {
+        labels
+            .iter()
+            .enumerate()
+            .map(|(ch, label)| format!("# eval out{ch} = {label}"))
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let spec = RenderSpec {
         frames: args.render,
@@ -1021,6 +1117,13 @@ fn run(mut args: Args) -> Result<(), String> {
             annotate(clamp.line());
         }
     }
+    // A sweep's columns keep their `REDUCTION_outN` names, which scripts key
+    // on; what each `outN` is goes before the rows.
+    if sweep_csv {
+        for line in &legend {
+            annotate(line.clone());
+        }
+    }
 
     let every = args.every.max(1);
     let mut runs: Vec<serde_json::Value> = Vec::new();
@@ -1052,8 +1155,8 @@ fn run(mut args: Args) -> Result<(), String> {
             match args.format {
                 Format::Csv => {
                     print!("frame");
-                    for ch in 0..probe.outputs() {
-                        print!(",out{ch}");
+                    for label in &labels {
+                        print!(",{}", csv_field(label));
                     }
                     if args.bargraphs {
                         for path in &bargraph_paths {
@@ -1331,6 +1434,9 @@ fn run(mut args: Args) -> Result<(), String> {
                 stats.window_start + stats.window_len,
                 stats.window_len
             ));
+            for line in &legend {
+                emit(line.clone());
+            }
             for (ch, channel) in stats.channels.iter().enumerate() {
                 // `peak_at` comes last: a reader keyed on the older fields
                 // does not see it
@@ -1374,6 +1480,13 @@ fn run(mut args: Args) -> Result<(), String> {
             "reduce": reduction.map(|r| r.to_string()),
             "runs": runs,
         });
+        let mut document = document;
+        if eval.is_some()
+            && let Some(object) = document.as_object_mut()
+        {
+            // what each output, in order, computes
+            object.insert("eval".to_owned(), serde_json::json!(labels));
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?
@@ -1420,13 +1533,7 @@ fn run_train(args: &Args) -> Result<(), String> {
         }
     }
     let fmt = number_format(args)?;
-    let factory = std::rc::Rc::new(Factory::compile_with_args(
-        &args.file,
-        &args.import_dirs,
-        &compiler_args(args),
-        args.double,
-        args.opt_level,
-    )?);
+    let factory = std::rc::Rc::new(compile_program(args)?.0);
     // A `--set` outside its range: on a trained control it would move the
     // starting point, on another it would fix a value that is not the one
     // asked for, and the descent's rows would show neither.
