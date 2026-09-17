@@ -290,8 +290,8 @@ range declared `[0.1, 0.7]` is known as `[0.100000001, 0.699999988]`. A value is
 in range at that precision, so `--set x=0.7` is accepted, and a
 double-precision program receives the `0.7` that was typed, not the float below
 it; the error message prints the range as declared.
-`--nvoices` keeps the polyphonic wrapper's own rule (a voice's controls are
-written unclamped, as `poly-dsp.h` does) and refuses `--clamp`.
+Under `--nvoices` the rule is the same, for the control of every voice and
+for the effect's (§10).
 
 `--at FRAME PATH=VALUE` writes a control at an exact frame. The render splits
 its block so the change lands on the requested frame rather than at the next
@@ -599,6 +599,29 @@ several pitches at once.
 declaring both `process` and `effect` has its effect extracted automatically,
 the way `FaustPolyDspGenerator` does, so the flag is only needed to override
 that guess or to pair files.
+
+`--set` and `--at` broadcast: the control a path or fragment names is written
+on **every voice**, and on the **effect** when it resolves there too, each
+against its own range. They follow the rule of §5, and are checked before
+anything is rendered: an unknown path, a fragment ambiguous on a voice or on
+the effect, a bargraph, and a value outside the range are errors, the last
+one naming where it would have landed:
+
+```text
+$ faustprobe --nvoices 2 --note 60@0 --set level=7 synth.dsp
+faustprobe: `level`=7 is outside the range [0, 1] of /synth/level on every voice (--clamp accepts it, clamped to the range)
+```
+
+Under `--clamp` the value is clamped on the voices and on the effect alike and
+reported (`# clamped /synth/level: 7 -> 1` with the statistics, a `clamped`
+array in the JSON document). Until this was fixed the two halves of an
+instrument disagreed, and neither said anything: a voice took `7` as it was, a
+state no host produces, and the effect clamped in silence.
+
+What a **note** writes is another matter: `poly-dsp.h` sets a voice's frequency
+from the pitch, its gain from the velocity and its gate, whatever the sliders
+declare, and so does the probe. Note 127 is 12 543.85 Hz on a `freq` slider that
+stops at 1000, and reaches the voice as computed.
 
 ## 11. The impulse-test protocol
 

@@ -150,6 +150,39 @@ fn more_notes_than_voices_steals_rather_than_dropping() {
 }
 
 #[test]
+fn a_broadcast_write_is_a_widgets_and_stays_in_its_range() {
+    // `level` goes from 0 to 1. A voice used to take whatever it was given,
+    // while the effect clamped: 7 is now 1 on a voice too, as `Probe::set`
+    // has it, and the caller is told beforehand what would be written.
+    use cranelift_ffi::probe::engine::PolyTarget;
+    let mut at_the_bound = compile(2);
+    let mut beyond = compile(2);
+    {
+        let writes = beyond.check_write("level", 7.0).expect("level resolves");
+        assert_eq!(writes.len(), 1, "no effect here: the voices alone");
+        assert_eq!(writes[0].target, PolyTarget::Voices);
+        assert!(!writes[0].write.in_range());
+        assert!((writes[0].write.applied - 1.0).abs() < f64::EPSILON);
+        assert!(
+            beyond.check_write("level", 0.25).unwrap()[0]
+                .write
+                .in_range()
+        );
+        assert!(beyond.check_write("nope", 1.0).is_err());
+    }
+    at_the_bound.set_all("level", 1.0).expect("level");
+    beyond.set_all("level", 7.0).expect("level");
+    at_the_bound.key_on(69, 100);
+    beyond.key_on(69, 100);
+    let (a, b) = (
+        run_blocks(&mut at_the_bound, 20),
+        run_blocks(&mut beyond, 20),
+    );
+    assert!(a > 1e-4, "the voice sounds: {a}");
+    assert!((a - b).abs() < 1e-15, "7 was written as 7: {a} against {b}");
+}
+
+#[test]
 fn broadcasting_a_control_reaches_every_voice() {
     // set_all is how a caller configures a patch across voices; if it only
     // reached voice 0 a chord would be uneven and nothing else would say so.

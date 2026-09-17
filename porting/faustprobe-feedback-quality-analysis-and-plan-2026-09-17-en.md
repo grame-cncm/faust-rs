@@ -481,10 +481,12 @@ As planned, with these decisions and departures:
   planned. The error names the query, the value, the range and the resolved
   path, and points at `--clamp`. Under `--clamp` a sweep's rows and the JSON
   `set` carry the applied value. With `--train`, every `--set` is validated the
-  same way before the descent. **Not applied to `--nvoices`**: the polyphonic
-  wrapper writes a voice's controls unclamped on purpose, as `poly-dsp.h` does
-  (a synthesized frequency must reach the zone as computed), so its `--set` keeps
-  that rule and `--clamp` is refused there.
+  same way before the descent. **Not applied to `--nvoices`** in this phase: the
+  polyphonic wrapper writes a voice's controls unclamped on purpose, as
+  `poly-dsp.h` does (a synthesized frequency must reach the zone as computed), so
+  its `--set` kept that rule and `--clamp` was refused there. That reasoning
+  confused two writes, a note's and a widget's; corrected later the same day,
+  see "The polyphonic path" at the end of this section.
 - **D2.** Round-trip text is Rust's `{:?}` of the float at the program's width;
   a peak, a bargraph and a control's bounds are at that width, a mean, an RMS,
   a reduction and a trained control are `f64` (last open question of §6, as
@@ -773,8 +775,9 @@ keeping the rendered text under `--error-format json`. One of them (the bound
 counted before the step) was first written as a change that changed nothing
 and survived for that reason; rewritten, it is rejected.
 
-Not done, and known: the polyphonic path still clamps a `--set` in silence
-(F1 refused `--clamp` there instead of reporting).
+Not done at the time, and known: the polyphonic path still let a `--set` out
+of its range through (F1 refused `--clamp` there instead of reporting). Done
+since: "The polyphonic path", at the end of this section.
 
 *Later the same day*, `scripts/fit_rooms.py` of `faust-diff-jot` was moved to
 the one-command form (its commits `b1651c8`, `38fd801`): on the nine rooms the
@@ -865,4 +868,35 @@ survived a test that expects a refusal; applied to the excitation and the
 expectation together, it is rejected by the rectifier. One test of mine was
 wrong on the way (four stages at their cutoff are a quarter, -12.04 dB, not
 -6.02).
+
+### The polyphonic path, 2026-09-17
+
+F1 had left `--nvoices` out, on the argument that `poly-dsp.h` writes a voice's
+controls unclamped. It does, for what a **note** writes: the frequency of its
+pitch, its gain, its gate. A `--set` or an `--at` is a widget's write, which no
+host lets out of the range, and measuring what it did showed the two halves of
+an instrument disagreeing in silence: `--set level=7` on a `[0, 1]` slider was
+written as 7 on every voice (a peak of 7.0), and `--set drive=9` on the effect's
+`[0, 2]` slider was clamped to 2 without a word. What this document had called
+"clamps a `--set` in silence" was half of it.
+
+Now: `PolyProbe::check_write` says where a broadcast write lands (the control
+of every voice, the effect's, or both, each with its own range) and
+`PolyProbe::set_all` clamps on both, as `Probe::set` does. The binary checks
+every `--set` and every scheduled `--at` before anything is rendered, with the
+scalar rule: an error naming the range, the path and the place (`on every
+voice`, `on the effect`), or under `--clamp`, which is accepted there now, a
+clamp reported with the statistics and in the JSON document, once per control.
+A bargraph of a voice was written without a word, and is refused; a fragment
+ambiguous on the effect was skipped without a word, and is an error. A value
+typed on a decimal bound is in range, as in the scalar path. What a note writes
+is untouched, and pinned: note 127 reaches a `freq` slider that stops at 1000
+as 12 543.85 Hz.
+
+Checks: four tests in `tests/feedback_probe.rs`, one in `tests/poly_probe.rs`;
+359 in the crate. Eleven mutations rejected: the `--set` writes unchecked; the
+`--at` writes unchecked; the effect not looked at; a voice taking the requested
+value (from the binary and from the library); the effect taking it; a clamp
+said once per write; the clamps not printed; not in the JSON; a note's
+frequency clamped to the slider; a bargraph written.
 

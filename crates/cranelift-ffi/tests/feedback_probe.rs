@@ -754,3 +754,195 @@ process = gate * gain * (freq / 20000);
     assert!(ok, "{stderr}");
     assert!(!stdout.contains("# note:"), "{stdout}");
 }
+
+// ------------------------------------------- the polyphonic path and ranges
+//
+// F1 left `--nvoices` out: a write of the command line outside its control's
+// range was written as it is on the voices (a state no host produces) and
+// clamped in silence on the effect, and `--clamp` was refused. The rule is the
+// scalar one now: an error, or under `--clamp` a clamp that is reported. What a
+// note writes is another matter, and is pinned below.
+
+/// A voice that outputs its `level` while a note is held, and an effect that
+/// is a gain: what was written is read off the peak, `level * drive`.
+const INSTRUMENT: &str = r#"
+freq = hslider("freq", 440, 20, 20000, 0.01);
+gain = hslider("gain", 0.5, 0, 1, 0.001);
+gate = button("gate");
+level = hslider("level", 0.5, 0, 1, 0.001);
+tone = hslider("tone", 0.4, 0.1, 0.7, 0.01);
+meter = level : hbargraph("meter", 0, 1);
+process = gate * meter + 0 * (freq + gain + tone);
+effect = _ * hslider("drive", 1, 0, 2, 0.001);
+"#;
+
+fn poly(name: &str, extra: &[&str]) -> (bool, String, String) {
+    let mut args = vec![
+        "--double",
+        "--nvoices",
+        "2",
+        "--note",
+        "60@0",
+        "-n",
+        "64",
+        "--quiet",
+    ];
+    args.extend(extra);
+    probe_binary(name, INSTRUMENT, &args)
+}
+
+fn peak_of(stdout: &str) -> f64 {
+    let line = stdout
+        .lines()
+        .find(|l| l.starts_with("# out0"))
+        .unwrap_or_else(|| panic!("no statistics: {stdout}"));
+    line.split("peak=")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|number| number.parse().ok())
+        .unwrap_or_else(|| panic!("{line}"))
+}
+
+#[test]
+fn a_polyphonic_write_outside_the_range_is_refused_on_a_voice_and_on_the_effect() {
+    // in range, the two writes are what the peak shows
+    let (ok, stdout, stderr) = poly("poly_in_range", &["--set", "level=1", "--set", "drive=2"]);
+    assert!(ok, "{stderr}");
+    assert!((peak_of(&stdout) - 2.0).abs() < 1e-12);
+    assert!(!stdout.contains("# clamped"));
+
+    for (extra, place) in [
+        (vec!["--set", "level=7"], "/level on every voice"),
+        (vec!["--set", "drive=9"], "/drive on the effect"),
+        // a scheduled write is known before any render too
+        (vec!["--at", "32", "level=7"], "/level on every voice"),
+        (vec!["--at", "32", "drive=9"], "/drive on the effect"),
+    ] {
+        let (ok, stdout, stderr) = poly("poly_refused", &extra);
+        assert!(!ok, "{extra:?} must be refused");
+        assert!(
+            stdout.is_empty(),
+            "{extra:?}: nothing is rendered: {stdout}"
+        );
+        assert!(stderr.contains("is outside the range [0, "), "{stderr}");
+        assert!(stderr.contains(place), "{extra:?}: {stderr}");
+        assert!(stderr.contains("--clamp accepts it"), "{stderr}");
+    }
+}
+
+#[test]
+fn clamp_is_accepted_and_reported_under_nvoices() {
+    let (ok, stdout, stderr) = poly(
+        "poly_clamp",
+        &["--clamp", "--set", "level=7", "--set", "drive=9"],
+    );
+    assert!(ok, "{stderr}");
+    // 1 * 2: not 7 on the voices, as it was, nor 9 on the effect
+    assert!((peak_of(&stdout) - 2.0).abs() < 1e-12, "{stdout}");
+    let clamps: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.starts_with("# clamped"))
+        .collect();
+    assert_eq!(clamps.len(), 2, "{stdout}");
+    assert!(clamps[0].ends_with("/level: 7 -> 1"), "{}", clamps[0]);
+    assert!(clamps[1].ends_with("/drive: 9 -> 2"), "{}", clamps[1]);
+
+    // a scheduled write is clamped alike: 0.5 for 32 frames, then 1
+    let (ok, stdout, stderr) = poly("poly_clamp_at", &["--clamp", "--at", "32", "level=7"]);
+    assert!(ok, "{stderr}");
+    assert!((peak_of(&stdout) - 1.0).abs() < 1e-12, "{stdout}");
+    assert!(
+        stdout.contains(&format!("rms={:?}", 0.625_f64.sqrt())),
+        "{stdout}"
+    );
+    // the same clamp by --set and by --at is said once
+    let (_, stdout, _) = poly(
+        "poly_clamp_once",
+        &["--clamp", "--set", "level=7", "--at", "32", "level=7"],
+    );
+    assert_eq!(stdout.matches("# clamped").count(), 1, "{stdout}");
+
+    // and in the JSON document
+    let (ok, stdout, stderr) = probe_binary(
+        "poly_clamp_json",
+        INSTRUMENT,
+        &[
+            "--double",
+            "--nvoices",
+            "2",
+            "--note",
+            "60@0",
+            "-n",
+            "64",
+            "--format",
+            "json",
+            "--clamp",
+            "--set",
+            "drive=9",
+        ],
+    );
+    assert!(ok, "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let clamped = document["clamped"].as_array().expect("a clamped array");
+    assert_eq!(clamped.len(), 1);
+    assert_eq!(clamped[0]["requested"], 9.0);
+    assert_eq!(clamped[0]["applied"], 2.0);
+}
+
+#[test]
+fn a_polyphonic_write_on_a_decimal_bound_or_on_a_bargraph_follows_the_scalar_rule() {
+    // 0.7 is the bound as declared, and above the single-precision bound the
+    // host knows: in range, in both widths, as for a scalar program
+    for width in [&["--double"][..], &[][..]] {
+        let mut args = vec!["--nvoices", "2", "--note", "60@0", "-n", "64", "--quiet"];
+        args.extend(width);
+        args.extend(["--set", "tone=0.7", "--set", "tone=0.1"]);
+        let (ok, stdout, stderr) = probe_binary("poly_decimal", INSTRUMENT, &args);
+        assert!(ok, "{width:?}: {stderr}");
+        assert!(!stdout.contains("# clamped"), "{stdout}");
+    }
+    // a bargraph is an output: it was written without a word
+    let (ok, _, stderr) = poly("poly_bargraph", &["--set", "meter=1"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("is a bargraph") && stderr.contains("on every voice"),
+        "{stderr}"
+    );
+    // and a path that resolves nowhere says so, as before
+    let (ok, _, stderr) = poly("poly_unknown", &["--set", "nope=1"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("no control matching `nope` on any voice or the effect"),
+        "{stderr}"
+    );
+}
+
+/// `poly-dsp.h` writes a voice's frequency as computed from the pitch,
+/// whatever the slider declares: note 127 is 12 543.85 Hz on a slider that
+/// stops at 1000. That is not a widget's write, and no range applies to it.
+#[test]
+fn what_a_note_writes_is_not_bound_by_the_slider() {
+    let voice = r#"
+freq = hslider("freq", 440, 20, 1000, 0.01);
+gain = hslider("gain", 0.5, 0, 1, 0.001);
+gate = button("gate");
+process = gate * (freq / 20000) + 0 * gain;
+"#;
+    let (ok, stdout, stderr) = probe_binary(
+        "poly_note_freq",
+        voice,
+        &[
+            "--double",
+            "--nvoices",
+            "1",
+            "--note",
+            "127@0",
+            "-n",
+            "64",
+            "--quiet",
+        ],
+    );
+    assert!(ok, "{stderr}");
+    let expected = 440.0 * 2.0_f64.powf((127.0 - 69.0) / 12.0) / 20000.0;
+    assert!((peak_of(&stdout) - expected).abs() < 1e-9, "{stdout}");
+}

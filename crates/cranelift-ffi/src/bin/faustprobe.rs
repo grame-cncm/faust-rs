@@ -13,7 +13,9 @@ use clap::{ArgAction, Parser, ValueEnum};
 use cranelift_ffi::probe::audio_file::read_channels;
 use cranelift_ffi::probe::audio_out::SampleWriter;
 use cranelift_ffi::probe::compare::{Comparison, Samples, Tolerance, compare};
-use cranelift_ffi::probe::engine::{Factory, PolyProbe, Probe, RenderSpec, last_compile_failure};
+use cranelift_ffi::probe::engine::{
+    Factory, PolyProbe, PolyWrite, Probe, RenderSpec, last_compile_failure,
+};
 use cranelift_ffi::probe::eval::{EvalProgram, csv_field};
 use cranelift_ffi::probe::freqresp::{self, Grid, Property};
 use cranelift_ffi::probe::number::{NumberFormat, Precision};
@@ -317,11 +319,12 @@ struct Args {
     /// including in this tool's own regression check against
     /// `impulse-cranelift`, which this phase must not disturb.
     ///
-    /// This phase exposes no `--note`/`--chord`/`--at` scheduling (design
-    /// phase P5): the polyphonic engine is driven at the library level
-    /// (`PolyProbe::key_on`/`key_off`), not from this command line yet, so a
-    /// poly render with no `--set` broadcast onto a voice's own gate/freq/gain
-    /// is silence — every voice starts and stays free.
+    /// `--note` and `--chord` play it; without one every voice stays free and
+    /// the render is silence. `--set` and `--at` broadcast: the control they
+    /// name is written on every voice, and on the effect when it resolves
+    /// there, each within its own range (an error outside it, or `--clamp`).
+    /// What a note writes (its pitch's frequency, its gain, its gate) is
+    /// written as computed, whatever the sliders declare, as in `poly-dsp.h`.
     #[arg(long = "nvoices", default_value_t = 0)]
     nvoices: usize,
 
@@ -937,6 +940,39 @@ fn check_value(
     Ok(write.applied)
 }
 
+/// [`check_value`] for a write broadcast to a polyphonic instrument: the
+/// control of every voice, the effect's, or both, each against its own range.
+fn check_poly_value(
+    poly: &PolyProbe,
+    query: &str,
+    value: f64,
+    clamp: bool,
+    clamped: &mut Vec<Clamped>,
+) -> Result<(), String> {
+    for PolyWrite { target, write } in poly.check_write(query, value)? {
+        if write.in_range() {
+            continue;
+        }
+        if !clamp {
+            return Err(format!(
+                "{} {} (--clamp accepts it, clamped to the range)",
+                write.range_error(query),
+                target.place()
+            ));
+        }
+        let record = Clamped {
+            path: write.control.path.clone(),
+            requested: value,
+            applied: write.applied,
+        };
+        // a control written by `--set` and again by an `--at` is one clamp
+        if !clamped.contains(&record) {
+            clamped.push(record);
+        }
+    }
+    Ok(())
+}
+
 /// Facts that explain a render whose every output is exactly zero.
 ///
 /// Facts, not guesses: what the tool knows and the statistics do not show.
@@ -1089,15 +1125,6 @@ fn non_finite_name(value: f64) -> &'static str {
     }
 }
 
-/// Render `args.nvoices` > 0 through the polyphonic wrapper.
-///
-/// Split from [`run`] because the two paths share almost nothing below
-/// compilation: a poly render mixes N voices and an optional effect rather
-/// than driving one `Probe`, and this phase has no `--note`/`--chord`/`--at`
-/// scheduling (design phase P5), so `--set` broadcasting to every voice is
-/// the only way this entry point can make a render produce sound — genuine
-/// note-driven verification goes through [`PolyProbe::key_on`]/`key_off`
-/// directly, exercised by this crate's tests rather than this binary.
 /// Compiler arguments the probe forwards verbatim.
 fn compiler_args(args: &Args) -> Vec<String> {
     let mut out = Vec::new();
@@ -1108,6 +1135,13 @@ fn compiler_args(args: &Args) -> Vec<String> {
     out
 }
 
+/// Render `args.nvoices` > 0 through the polyphonic wrapper.
+///
+/// Split from [`run`] because the two paths share almost nothing below
+/// compilation: a poly render mixes N voices and an optional effect rather
+/// than driving one `Probe`. `--note` and `--chord` play the voices; `--set`
+/// and `--at` are broadcast to every voice and to the effect, and checked
+/// against their ranges before the render, as a scalar program's are.
 fn run_poly(args: &Args) -> Result<(), String> {
     if !args.sweeps.is_empty() || args.reduce.is_some() {
         return Err(
@@ -1123,7 +1157,6 @@ fn run_poly(args: &Args) -> Result<(), String> {
     for (flag, set) in [
         ("--out", args.out.is_some()),
         ("--fail-above", args.fail_above.is_some()),
-        ("--clamp", args.clamp),
         ("--eval", !args.evals.is_empty()),
         ("--compare/--ref/--check", verification_requested(args)),
         ("--freqresp", args.freqresp.is_some()),
@@ -1182,10 +1215,22 @@ fn run_poly(args: &Args) -> Result<(), String> {
         .iter()
         .map(|a| parse_assignment(a))
         .collect::<Result<Vec<_>, _>>()?;
+    let schedule = build_schedule(args)?;
+    // Every write of the command line is checked before any render, as for a
+    // scalar program: an unknown path, a bargraph, and a value outside its
+    // control's range, which was written as it is on the voices and clamped
+    // in silence on the effect. What a note writes (its pitch's frequency,
+    // its gain, its gate) is not a widget's doing and is not checked.
+    let mut clamped: Vec<Clamped> = Vec::new();
+    for (query, value) in &fixed {
+        check_poly_value(&poly, query, *value, args.clamp, &mut clamped)?;
+    }
+    for (_, query, value) in schedule.param_writes() {
+        check_poly_value(&poly, query, value, args.clamp, &mut clamped)?;
+    }
     for (path, value) in &fixed {
         poly.set_all(path, *value)?;
     }
-    let schedule = build_schedule(args)?;
 
     let every = args.every.max(1);
     let mut peak = vec![0.0_f64; poly.outputs()];
@@ -1279,6 +1324,10 @@ fn run_poly(args: &Args) -> Result<(), String> {
             "channels": channels,
         });
         let mut document = document;
+        if !clamped.is_empty() {
+            document["clamped"] =
+                serde_json::Value::Array(clamped.iter().map(Clamped::json).collect());
+        }
         if let Some(timing) = &timing {
             let mut json = timing_json(timing);
             json["compile_s"] = json_number(compile_seconds);
@@ -1312,6 +1361,9 @@ fn run_poly(args: &Args) -> Result<(), String> {
                 fmt.sample(peak[ch]),
                 fmt.computed((sum_sq[ch] / denom).sqrt())
             ));
+        }
+        for clamp in &clamped {
+            emit(clamp.line());
         }
         // A poly render is silent until a note plays: say which it is.
         if counted > 0 && peak.iter().all(|p| *p == 0.0) {

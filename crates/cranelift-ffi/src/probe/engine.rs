@@ -39,7 +39,7 @@ use crate::instance::{
 use crate::types::{CraneliftDspFactory, CraneliftDspInstance, FaustFloat};
 use ffi_common::abi::FfiFaustFloat;
 
-use crate::probe::params::{Control, ControlKind, ControlMap, Resolution};
+use crate::probe::params::{Control, ControlKind, ControlMap, Resolution, Write};
 use crate::probe::poly;
 use crate::probe::render::{InputMode, RenderStats, StatsAccumulator};
 use crate::probe::schedule::{Event, Schedule};
@@ -834,6 +834,33 @@ struct Voice {
     paths: poly::VoiceControlPaths,
 }
 
+/// Where a broadcast write lands in a polyphonic instrument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolyTarget {
+    /// The control of that path on every voice.
+    Voices,
+    /// A control of the effect the voices' mix runs through.
+    Effect,
+}
+
+impl PolyTarget {
+    /// `on every voice` or `on the effect`, for a message.
+    #[must_use]
+    pub const fn place(self) -> &'static str {
+        match self {
+            Self::Voices => "on every voice",
+            Self::Effect => "on the effect",
+        }
+    }
+}
+
+/// One control a broadcast write reaches, with the value it would take.
+#[derive(Debug, Clone)]
+pub struct PolyWrite<'a> {
+    pub target: PolyTarget,
+    pub write: Write<'a>,
+}
+
 /// A polyphonic wrapper over N instances of one factory, plus an optional
 /// effect run once on their sum.
 ///
@@ -1111,8 +1138,59 @@ impl PolyProbe {
         self.voices[0].probe.controls()
     }
 
-    /// Write `value` to `path` on every voice for which it resolves exactly,
-    /// and on the effect if it resolves there instead.
+    /// What [`PolyProbe::set_all`] would write for `query`, and where: on the
+    /// voices (one entry, the voices being instances of one DSP), on the
+    /// effect, or on both, each with the range of its own control.
+    ///
+    /// The caller decides what a value outside a range means
+    /// ([`Write::in_range`]): the command line refuses it, or accepts it under
+    /// `--clamp` and says so. Nothing is written.
+    ///
+    /// # Errors
+    /// A fragment that is ambiguous on a voice or on the effect (with its
+    /// candidates), a bargraph, or a query that resolves nowhere.
+    pub fn check_write(&self, query: &str, value: f64) -> Result<Vec<PolyWrite<'_>>, String> {
+        // Voices are identical instances of the same DSP, so a fragment that
+        // is unambiguous on one is unambiguous on all: resolve once against
+        // voice 0. The effect is a different DSP with its own control map, so
+        // it gets its own resolution rather than the voice's exact path.
+        //
+        // Requiring an exact path here would be worse, because `--set`
+        // accepts a fragment in scalar mode and the same command would then
+        // fail the moment `--nvoices` was raised: a trap, not a safety
+        // feature.
+        let maps = [
+            (
+                PolyTarget::Voices,
+                self.voices.first().map(|voice| voice.probe.controls()),
+            ),
+            (
+                PolyTarget::Effect,
+                self.effect.as_ref().map(Probe::controls),
+            ),
+        ];
+        let mut writes = Vec::new();
+        for (target, controls) in maps {
+            let Some(controls) = controls else { continue };
+            if matches!(controls.resolve(query), Resolution::NotFound) {
+                continue;
+            }
+            let write = controls
+                .check_write(query, value)
+                .map_err(|error| format!("{error} ({})", target.place()))?;
+            writes.push(PolyWrite { target, write });
+        }
+        if writes.is_empty() {
+            return Err(format!(
+                "no control matching `{query}` on any voice or the effect"
+            ));
+        }
+        Ok(writes)
+    }
+
+    /// Write `value` to the control `query` names on every voice, and on the
+    /// effect if it resolves there, clamped to each control's declared range
+    /// as [`Probe::set`] clamps it.
     ///
     /// This is the poly bus's equivalent of the scalar `Probe::set` for
     /// controls that are not the gate/freq/gain triple — a shared filter
@@ -1121,53 +1199,30 @@ impl PolyProbe {
     /// `poly-dsp.h:379`), minus that class's GUI-grouping machinery, which is
     /// a live-performance display convenience out of this tool's scope.
     ///
+    /// The clamp is that of a widget: a user's write stays in the range, which
+    /// this used to guarantee on the effect only, a voice taking whatever it
+    /// was given. What a **note** writes (`key_on`: the frequency of its
+    /// pitch, its gain, its gate) is not a widget's doing and stays unclamped,
+    /// as in `poly-dsp.h`.
+    ///
     /// # Errors
-    /// Returns a message if `path` resolves on no voice and not on the
-    /// effect.
+    /// As [`PolyProbe::check_write`].
     pub fn set_all(&self, query: &str, value: f64) -> Result<(), String> {
-        // Voices are identical instances of the same DSP, so a fragment that
-        // is unambiguous on one is unambiguous on all: resolve once against
-        // voice 0, then apply the resulting exact path everywhere.
-        //
-        // Resolving per voice would be equivalent but wasteful; requiring an
-        // exact path here would be worse than either, because `--set` accepts
-        // a fragment in scalar mode and the same command would then fail the
-        // moment `--nvoices` was raised — a trap, not a safety feature.
-        let resolved = match self.voices.first() {
-            Some(voice) => match voice.probe.controls().resolve(query) {
-                Resolution::Unique(control) => Some(control.path.clone()),
-                Resolution::Ambiguous(candidates) => {
-                    return Err(format!(
-                        "`{query}` is ambiguous on a voice, matches: {}",
-                        candidates.join(", ")
-                    ));
+        for PolyWrite { target, write } in self.check_write(query, value)? {
+            match target {
+                PolyTarget::Voices => {
+                    for voice in &self.voices {
+                        voice.probe.set_exact(&write.control.path, write.applied)?;
+                    }
                 }
-                Resolution::NotFound => None,
-            },
-            None => None,
-        };
-        let path = resolved.as_deref().unwrap_or(query);
-
-        let mut hit = false;
-        for voice in &self.voices {
-            if voice.probe.set_exact(path, value).is_ok() {
-                hit = true;
+                PolyTarget::Effect => {
+                    if let Some(effect) = &self.effect {
+                        effect.set_exact(&write.control.path, write.applied)?;
+                    }
+                }
             }
         }
-        // The effect is a different DSP with its own control map, so it gets
-        // its own resolution rather than the voice's exact path.
-        if let Some(effect) = &self.effect
-            && effect.set(query, value).is_ok()
-        {
-            hit = true;
-        }
-        if hit {
-            Ok(())
-        } else {
-            Err(format!(
-                "no control matching `{query}` on any voice or the effect"
-            ))
-        }
+        Ok(())
     }
 
     /// Note on: allocate a voice and sound `pitch` at `velocity` (0-127).
