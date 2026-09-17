@@ -1,0 +1,125 @@
+# faustprobe: restructuring and factoring, plan (2026-09-18)
+
+Status: **plan**. §6 records what was done.
+
+## 1. Why
+
+Five phases of feedback work (F1–F5) and their leftovers landed in one day, all
+of them in the same two files. Measured on `4213cdfd`:
+
+| file | lines | what makes it large |
+|---|---:|---|
+| `src/bin/faustprobe.rs` | 3545 | `run` 890 lines, `run_freqresp` 518, `Args` 425, `run_train` 355, `run_poly` 263 |
+| `src/probe/engine.rs` | 1513 | `Factory`, `Probe` (460) and `PolyProbe` (551) in one file |
+| `tests/*_probe.rs` | 5299 | `Fixtures`, `probe(args)`, `json`, `lines_of`, `workspace` rewritten in up to eight files |
+
+The house standard (`xtask structure-check`, which guards `crates/transform`
+and `crates/compiler`, not this crate) is 2000 lines a file and 200 lines a
+function. The binary is over the first and four of its functions over the
+second, one of them four times over.
+
+The size is a symptom. The four modes (plain render and sweep, polyphony,
+`--freqresp`, `--train`) each grew their own copy of what they share:
+
+1. the table of `--list-params` (scalar, poly);
+2. the failure of a render: `--fail-above`, then non-finite (scalar, poly),
+   and the context that goes with it, `failure_context` and
+   `poly_failure_context`, two thirds of which are the same text assembly;
+3. the statistics of a channel, as `# outN:` lines and as JSON (scalar, poly);
+4. where annotations go, stdout under `--quiet` and stderr otherwise: four
+   closures (`annotate`, `emit` twice, `emit` of `--freqresp`);
+5. the validation of a sweep's values into `clamped_axes`, and "the clamps this
+   point ran under" (plain sweep, `--freqresp`);
+6. the applied values of a point, `check_write(q, v).map_or(v, |w| w.applied)`,
+   four times;
+7. "reset, write `--set`, write the point" before a render, three times;
+8. the total of `--time` over several renders, and its closing lines, twice;
+9. the JSON document's head (`schema_version`, `dsp`, `sr`, ...), its optional
+   `eval` and `timing.compile_s`, and its printing, four times;
+10. the refusal of flags a mode does not take, a `for (flag, set) in [...]`
+    loop written six times;
+11. compile-and-time, four times; `--set` parsed into pairs, six times.
+
+One defect found while reading: the doc comment of `reduce_channel` ("One
+channel of a rendered window, reduced to a single number...") sits on
+`PointResponse`, 1000 lines above the function it describes.
+
+## 2. Invariant
+
+**No output changes.** Not a message, not a digit, not the order of two lines,
+not which of two errors is reported when a command line has both, not an exit
+status. This is a refactoring, and the one property that makes it checkable.
+
+Inconsistencies found on the way are recorded in §6 and left for a change of
+their own (known so far: `--freqresp` words an `impulse:CH` beyond the inputs
+differently from a plain render).
+
+## 3. The check, written before the change
+
+`cargo test` runs the ten `*_probe.rs` files (about 140 tests through the
+binary). They assert on fragments, which is right for tests and not enough
+here: a line that moved or a note that disappeared passes them.
+
+So a harness (scratch, not committed: it cites absolute paths) runs **369
+commands** against a binary and records for each the exit status, stdout and
+stderr: every mode, every format, every refusal table entry, the failure paths
+(out of range, clamp, `--fail-above`, non-finite, not linear, not
+time-invariant, ringing, a descent that reaches a bound, a gradient check that
+fails, a loss that stops being finite), `--eval`, `--compare`/`--ref`/`--check`,
+polyphony, and the 133 programs of `tests/impulse-tests/dsp` through
+`--protocol impulse-test`. 231 exit 0, 138 do not. The numbers of `--time` are
+masked, and nothing else.
+
+Recorded with the binary of `4213cdfd`; the harness run twice on that binary
+gives identical directories. It did not at first: the parser lists the repair
+suggestions of a syntax error in an order that changes from run to run
+(reported apart, not this plan's subject); those lists are sorted before the
+comparison.
+
+Every step below ends with `diff -r before after` empty, the crate's tests,
+clippy with `-D warnings`, and fmt. The harness is shown to reject: a line of a
+shared helper moved by hand must show in the diff.
+
+## 4. Target layout
+
+The binary becomes a directory, `src/bin/faustprobe/main.rs`, which is what
+Cargo expects of a multi-file binary and removes the `#[path]` that
+`determinism.rs` needed:
+
+| module | holds |
+|---|---|
+| `main.rs` | `main`, the large-stack thread, the choice of a mode |
+| `cli.rs` | `Args` and its enums, the refusal helper, `--protocol`'s conflicts |
+| `setup.rs` | what the command line means: excitation, assignments, schedule, compilation (timed), output labels, number format |
+| `writes.rs` | `Clamped`, the writes of a run checked before any render, a point's clamps and applied values, priming an instance |
+| `report.rs` | where lines go, channel statistics (lines, JSON), `--time` (lines, JSON), the control table, the JSON document, silence notes |
+| `failure.rs` | the failure of a render and its context, scalar and polyphonic |
+| `verify.rs` | `--compare`, `--ref`, `--check`: setup, one render's verdict |
+| `render.rs` | the plain render and the sweep |
+| `poly.rs` | `--nvoices` |
+| `freqresp.rs` | `--freqresp` |
+| `train.rs` | `--train`, `--fd-check` |
+| `determinism.rs` | as it is |
+
+`probe/engine.rs` becomes `probe/engine/` (`mod.rs` with `RenderSpec` and the
+re-exports, `factory.rs`, `probe.rs`, `poly_probe.rs`): every public path stays
+(`probe::engine::Probe`), so no caller changes.
+
+The integration tests share `tests/common/mod.rs`.
+
+Targets: no function above 200 lines, no file of the binary above 700.
+
+## 5. Order
+
+1. Move to `faustprobe/main.rs`; `cli.rs` out (pure move).
+2. The helpers out, as they are (pure moves): `setup`, `writes`, `report`,
+   `failure`, `verify`.
+3. Factor the eleven duplications of §1 into those modules.
+4. The four modes out, each long function cut along its phases.
+5. `engine/`.
+6. `tests/common`.
+7. Documents that cite the old paths; journal; structure numbers after.
+
+## 6. What was done
+
+(to be filled)

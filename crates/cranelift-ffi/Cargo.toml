@@ -50,4 +50,4 @@ path = "src/bin/mem0_json_check.rs"
 
 [[bin]]
 name = "faustprobe"
-path = "src/bin/faustprobe.rs"
+path = "src/bin/faustprobe/main.rs"

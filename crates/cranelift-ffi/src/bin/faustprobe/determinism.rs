@@ -8,12 +8,14 @@
 
 use std::process::Command;
 
-use super::{
-    Args, Probe, RenderSpec, Samples, build_schedule, compile_program, parse_assignment,
-    parse_input_at, render_for_comparison,
-};
+use cranelift_ffi::probe::compare::Samples;
+use cranelift_ffi::probe::engine::{Probe, RenderSpec};
 
-pub(super) fn render(args: &Args) -> Result<(String, Samples), String> {
+use crate::cli::Args;
+use crate::setup::{build_schedule, compile_program, parse_assignment, parse_input_at};
+use crate::verify::render_for_comparison;
+
+pub(crate) fn render(args: &Args) -> Result<(String, Samples), String> {
     let executable = std::env::current_exe().map_err(|e| format!("--check determinism: {e}"))?;
     let mut command = Command::new(executable);
     command.arg("--determinism-worker");
@@ -59,7 +61,7 @@ pub(super) fn render(args: &Args) -> Result<(String, Samples), String> {
     decode(&output.stdout)
 }
 
-pub(super) fn worker(args: &Args) -> Result<(), String> {
+pub(crate) fn worker(args: &Args) -> Result<(), String> {
     let (factory, _) = compile_program(args, args.double)?;
     let key = factory.sha_key();
     let probe = Probe::instantiate(&std::rc::Rc::new(factory), args.sr)?;

@@ -158,7 +158,7 @@ must run unchanged with Faust C++ should not pass them.
 ### 4.4 Rust-only companion tool
 
 - **DIFF-CLI-011 — `faustprobe`.** Status: `extension`. A second binary
-  (`crates/cranelift-ffi`, `src/bin/faustprobe.rs`) that JIT-compiles a program
+  (`crates/cranelift-ffi`, `src/bin/faustprobe/`) that JIT-compiles a program
   with the Cranelift backend and measures it offline: controls set, swept and
   scheduled from the command line, statistics (subnormal outputs included),
   bargraph read-out, binary output (`--out`), expressions evaluated in a file's
