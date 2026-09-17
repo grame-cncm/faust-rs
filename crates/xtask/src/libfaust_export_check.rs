@@ -80,6 +80,7 @@ pub(crate) fn libfaust_export_check(
 
     syntax_check_headers(&workspace)?;
     run_libfaust_cpp_client(&workspace, &dynamic_library)?;
+    run_wrapper_cpp_clients(&workspace, &dynamic_library)?;
 
     println!(
         "libfaust-rs export check: {} exports, {} header declarations, baseline {}{}",
@@ -676,6 +677,98 @@ int main() {
         .into());
     }
     println!("libfaust C++ client: expandDSPFromString and generateSHA1 verified");
+    Ok(())
+}
+
+/// Where the Faust architecture headers (`faust/gui/CGlue.h`, `faust/dsp/dsp.h`)
+/// are, if anywhere: the C++ wrappers `cranelift-dsp.h` and `interpreter-dsp.h`
+/// include them, and this repository does not ship them.
+fn faust_architecture_dir(workspace: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(dir) = std::env::var("FAUST_ARCH_DIR") {
+        candidates.push(PathBuf::from(dir));
+    }
+    candidates.push(workspace.join("../faust/architecture"));
+    candidates.push(PathBuf::from("/usr/local/include"));
+    candidates.push(PathBuf::from("/opt/homebrew/include"));
+    candidates.push(PathBuf::from("/usr/include"));
+    candidates.into_iter().find(|dir| {
+        dir.join("faust/gui/CGlue.h").is_file() && dir.join("faust/dsp/dsp.h").is_file()
+    })
+}
+
+/// Builds and runs a C++ host of each wrapper header against the dynamic
+/// library: a program that does not compile must reach `std::string&
+/// error_msg` with the compiler's complete diagnostic, not with the 4096-byte
+/// summary of the C API (`complete_error_cpp_client.cpp` says what is checked).
+///
+/// Skipped, and said so, where the Faust architecture headers are not found.
+fn run_wrapper_cpp_clients(
+    workspace: &Path,
+    dynamic_library: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if cfg!(target_os = "windows") {
+        println!("C++ wrapper clients: skipped on Windows (no import library published)");
+        return Ok(());
+    }
+    let Some(architecture) = faust_architecture_dir(workspace) else {
+        println!(
+            "C++ wrapper clients: skipped, no Faust architecture headers (set FAUST_ARCH_DIR)"
+        );
+        return Ok(());
+    };
+
+    let out_dir = workspace.join("target/libfaust-export-check");
+    fs::create_dir_all(&out_dir)?;
+    let source =
+        workspace.join("crates/cranelift-ffi/tests/header-smoke/complete_error_cpp_client.cpp");
+    let compiler = std::env::var("CXX").unwrap_or_else(|_| "c++".to_owned());
+    let library_dir = dynamic_library
+        .parent()
+        .ok_or("the dynamic library has no parent directory")?;
+
+    for wrapper in ["CRANELIFT", "INTERPRETER"] {
+        let binary = out_dir.join(format!("complete-error-{}", wrapper.to_lowercase()));
+        let output = Command::new(&compiler)
+            .arg("-std=c++17")
+            .arg(format!("-DWRAPPER_{wrapper}"))
+            .arg("-I")
+            .arg(workspace.join("crates/cranelift-ffi/include"))
+            .arg("-I")
+            .arg(workspace.join("crates/interp-ffi/include"))
+            .arg("-I")
+            .arg(&architecture)
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary)
+            .arg("-L")
+            .arg(library_dir)
+            .arg("-lfaust-rs")
+            .arg("-Wl,-rpath")
+            .arg(library_dir)
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "building the {wrapper} C++ wrapper client failed:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
+        }
+        let run = Command::new(&binary).output()?;
+        if !run.status.success() {
+            return Err(format!(
+                "the {wrapper} C++ wrapper client failed at run time:\n{}{}",
+                String::from_utf8_lossy(&run.stdout),
+                String::from_utf8_lossy(&run.stderr)
+            )
+            .into());
+        }
+    }
+    println!(
+        "C++ wrapper clients: complete compile errors verified through cranelift-dsp.h and interpreter-dsp.h (Faust headers: {})",
+        architecture.display()
+    );
     Ok(())
 }
 

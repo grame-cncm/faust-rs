@@ -69,6 +69,7 @@ bool setCCraneliftMemoryManager(ccranelift_dsp_factory* factory,
                                 char* error_msg);
 void deleteAllCCraneliftDSPFactories(void);
 char** getAllCCraneliftDSPFactories(void);
+const char* getCCompleteCraneliftDSPFactoryError(void);
 char* getCCraneliftDSPFactoryName(ccranelift_dsp_factory* factory);
 char* getCCraneliftDSPFactorySHAKey(ccranelift_dsp_factory* factory);
 char* getCCraneliftDSPFactoryDSPCode(ccranelift_dsp_factory* factory);
@@ -163,9 +164,29 @@ inline std::vector<std::string> from_owned_c_string_array(char** items)
     return result;
 }
 
+/**
+ * Sets `error_msg` to the text of a call that just failed.
+ *
+ * `buffer` is the 4096-byte `error_msg` of the C API: caller-allocated, its
+ * size never passed, so it truncates and, for a compiler error, carries only
+ * the one-line summary. `std::string` has no such limit, so the complete text
+ * (the summary, then the compiler's rendered diagnostics: location, source
+ * snippet, notes, fixes) is read from
+ * getCCompleteCraneliftDSPFactoryError. That text is per thread and is not
+ * reset by a success, so it is taken only when it extends what the buffer of
+ * this failure received (and an empty buffer is extended by nothing).
+ */
 inline void copy_error_message(std::string& error_msg, const char* buffer)
 {
-    error_msg = buffer ? buffer : "";
+    const char* summary = buffer ? buffer : "";
+    const char* complete = getCCompleteCraneliftDSPFactoryError();
+    const size_t length = std::strlen(summary);
+    if (complete && length > 0 && std::strncmp(complete, summary, length) == 0) {
+        error_msg = complete;
+        while (!error_msg.empty() && error_msg.back() == '\n') error_msg.pop_back();
+    } else {
+        error_msg = summary;
+    }
 }
 
 } // namespace cranelift_dsp_detail

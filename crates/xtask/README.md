@@ -617,6 +617,16 @@ layouts and initialize every callback-table field.
 cargo run -p xtask -- libfaust-export-check
 ```
 
+The check also builds and runs a C++ host of each wrapper header
+(`cranelift-dsp.h`, `interpreter-dsp.h`) against the dynamic library:
+`crates/cranelift-ffi/tests/header-smoke/complete_error_cpp_client.cpp` fails
+to compile two programs and requires the compiler's complete diagnostic in
+`std::string& error_msg` (location, source line, fix, a text of more than 4096
+bytes whole). The wrappers include the Faust architecture headers, which this
+repository does not ship: they are looked for in `FAUST_ARCH_DIR`,
+`../faust/architecture`, `/usr/local/include`, `/opt/homebrew/include` and
+`/usr/include`, and the step is skipped, and says so, when they are not found.
+
 Refresh the symbol baseline only for an intentional ABI change:
 
 ```bash

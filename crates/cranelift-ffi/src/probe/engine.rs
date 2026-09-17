@@ -105,7 +105,8 @@ pub struct Factory {
 /// count; the complete text adds the compiler's rendered diagnostics (location,
 /// source snippet, notes, fixes), so the probe prints what `faust-rs` prints.
 /// The complete text is not reset by a success, so it is taken only when it
-/// extends what the buffer of *this* failure received.
+/// extends what the buffer of *this* failure received, an empty buffer being
+/// extended by nothing.
 fn compile_error(error_msg: &[c_char; 4096]) -> String {
     let summary = unsafe { CStr::from_ptr(error_msg.as_ptr()) }
         .to_string_lossy()
@@ -115,7 +116,7 @@ fn compile_error(error_msg: &[c_char; 4096]) -> String {
         return summary;
     }
     let complete = unsafe { CStr::from_ptr(complete) }.to_string_lossy();
-    if complete.starts_with(summary.as_str()) {
+    if !summary.is_empty() && complete.starts_with(summary.as_str()) {
         complete.trim_end().to_owned()
     } else {
         summary
@@ -1179,5 +1180,9 @@ mod tests {
             *slot = *byte as c_char;
         }
         assert_eq!(compile_error(&error_msg), "some other failure");
+
+        // A failure that wrote nothing to its buffer: every text extends the
+        // empty one, and none of them is about this failure.
+        assert_eq!(compile_error(&[0 as c_char; 4096]), "");
     }
 }

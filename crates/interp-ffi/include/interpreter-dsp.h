@@ -59,6 +59,7 @@ bool writeCInterpreterDSPFactoryToBitcodeFile(
 bool deleteCInterpreterDSPFactory(cinterpreter_dsp_factory* factory);
 void deleteAllCInterpreterDSPFactories(void);
 char** getAllCInterpreterDSPFactories(void);
+const char* getCCompleteInterpreterDSPFactoryError(void);
 char* getCInterpreterDSPFactoryJSON(cinterpreter_dsp_factory* factory);
 const char** getCInterpreterDSPFactoryLibraryList(cinterpreter_dsp_factory* factory);
 bool startMTDSPFactories(void);
@@ -108,6 +109,35 @@ bool generateCInterpreterAuxFilesFromString(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #ifdef __cplusplus
+
+namespace interpreter_dsp_detail {
+
+/**
+ * Sets `error_msg` to the text of a call that just failed.
+ *
+ * `buffer` is the 4096-byte `error_msg` of the C API: caller-allocated, its
+ * size never passed, so it truncates and, for a compiler error, carries only
+ * the one-line summary. `std::string` has no such limit, so the complete text
+ * (the summary, then the compiler's rendered diagnostics: location, source
+ * snippet, notes, fixes) is read from
+ * getCCompleteInterpreterDSPFactoryError. That text is per thread and is not
+ * reset by a success, so it is taken only when it extends what the buffer of
+ * this failure received (and an empty buffer is extended by nothing).
+ */
+inline void copy_error_message(std::string& error_msg, const char* buffer)
+{
+    const char* summary = buffer ? buffer : "";
+    const char* complete = getCCompleteInterpreterDSPFactoryError();
+    const size_t length = std::strlen(summary);
+    if (complete && length > 0 && std::strncmp(complete, summary, length) == 0) {
+        error_msg = complete;
+        while (!error_msg.empty() && error_msg.back() == '\n') error_msg.pop_back();
+    } else {
+        error_msg = summary;
+    }
+}
+
+} // namespace interpreter_dsp_detail
 
 class interpreter_dsp;
 
@@ -327,9 +357,10 @@ inline interpreter_dsp_factory* readInterpreterDSPFactoryFromBitcode(
     cinterpreter_dsp_factory* raw =
         readCInterpreterDSPFactoryFromBitcode(bit_code.c_str(), buf);
     if (!raw) {
-        error_msg = buf;
+        interpreter_dsp_detail::copy_error_message(error_msg, buf);
         return nullptr;
     }
+    error_msg.clear();
     return new interpreter_dsp_factory(raw);
 }
 
@@ -350,9 +381,10 @@ inline interpreter_dsp_factory* createInterpreterDSPFactoryFromFile(
     cinterpreter_dsp_factory* raw =
         createCInterpreterDSPFactoryFromFile(filename.c_str(), argc, argv, buf);
     if (!raw) {
-        error_msg = buf;
+        interpreter_dsp_detail::copy_error_message(error_msg, buf);
         return nullptr;
     }
+    error_msg.clear();
     return new interpreter_dsp_factory(raw);
 }
 
@@ -374,9 +406,10 @@ inline interpreter_dsp_factory* createInterpreterDSPFactoryFromString(
     cinterpreter_dsp_factory* raw = createCInterpreterDSPFactoryFromString(
         name_app.c_str(), dsp_content.c_str(), argc, argv, buf);
     if (!raw) {
-        error_msg = buf;
+        interpreter_dsp_detail::copy_error_message(error_msg, buf);
         return nullptr;
     }
+    error_msg.clear();
     return new interpreter_dsp_factory(raw);
 }
 
@@ -407,9 +440,10 @@ inline interpreter_dsp_factory* readInterpreterDSPFactoryFromBitcodeFile(
     cinterpreter_dsp_factory* raw =
         readCInterpreterDSPFactoryFromBitcodeFile(path.c_str(), buf);
     if (!raw) {
-        error_msg = buf;
+        interpreter_dsp_detail::copy_error_message(error_msg, buf);
         return nullptr;
     }
+    error_msg.clear();
     return new interpreter_dsp_factory(raw);
 }
 
@@ -548,7 +582,7 @@ inline std::string expandInterpreterDSPFromFile(
     char* raw = expandCInterpreterDSPFromFile(
         filename.c_str(), argc, argv, sha_buf, err_buf);
     if (!raw) {
-        error_msg = err_buf;
+        interpreter_dsp_detail::copy_error_message(error_msg, err_buf);
         sha_key.clear();
         return {};
     }
@@ -586,7 +620,7 @@ inline std::string expandInterpreterDSPFromString(
     char* raw = expandCInterpreterDSPFromString(
         name_app.c_str(), dsp_content.c_str(), argc, argv, sha_buf, err_buf);
     if (!raw) {
-        error_msg = err_buf;
+        interpreter_dsp_detail::copy_error_message(error_msg, err_buf);
         sha_key.clear();
         return {};
     }
@@ -617,7 +651,7 @@ inline bool generateInterpreterAuxFilesFromFile(
 {
     char buf[4096] = {};
     bool ok = generateCInterpreterAuxFilesFromFile(filename.c_str(), argc, argv, buf);
-    if (!ok) error_msg = buf;
+    if (!ok) interpreter_dsp_detail::copy_error_message(error_msg, buf);
     else error_msg.clear();
     return ok;
 }
@@ -645,7 +679,7 @@ inline bool generateInterpreterAuxFilesFromString(
     char buf[4096] = {};
     bool ok = generateCInterpreterAuxFilesFromString(
         name_app.c_str(), dsp_content.c_str(), argc, argv, buf);
-    if (!ok) error_msg = buf;
+    if (!ok) interpreter_dsp_detail::copy_error_message(error_msg, buf);
     else error_msg.clear();
     return ok;
 }

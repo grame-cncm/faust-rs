@@ -167,6 +167,19 @@ c++ -std=c++11 -fsyntax-only -I crates/cranelift-ffi/include -I /path/to/faust/a
   crates/cranelift-ffi/tests/header-smoke/cranelift_dsp_cpp_header_smoke.cpp
 ```
 
+### Compile errors
+
+`error_msg` is 4096 bytes by the libfaust contract (caller-allocated, size never
+passed) and receives the one-line summary of a compiler error.
+`getCCompleteCraneliftDSPFactoryError()` returns the complete text, the summary
+followed by the rendered diagnostics (location, source snippet, notes, fixes):
+per thread, owned by the library, null before the thread's first error, valid
+until its next one, not reset by a success. The C++ wrapper reads it, so
+`std::string& error_msg` holds the complete text; `faustprobe` prints it.
+`complete_error_cpp_client.cpp` is a C++ host that checks this, run by
+`cargo run -p xtask -- libfaust-export-check` where the Faust architecture
+headers are found.
+
 ## Known limitations
 
 - Some LLVM-specific API families are intentionally omitted/deferred in V1
