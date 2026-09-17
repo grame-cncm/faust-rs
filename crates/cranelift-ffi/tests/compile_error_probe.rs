@@ -9,6 +9,9 @@
 use cranelift_ffi::probe::engine::Factory;
 use std::process::Command;
 
+mod common;
+use common::probe_source;
+
 /// An unclosed parenthesis on line 2, column 21.
 const UNCLOSED: &str = "// a comment line\nprocess = _ : *(0.5 ;\n";
 
@@ -146,28 +149,9 @@ fn a_report_describes_the_last_failure_only() {
     assert_eq!(failure.diagnostics_json, None, "{text}");
 }
 
-fn run_probe(args: &[&str], source: &str, name: &str) -> (bool, String, String) {
-    let path = std::env::temp_dir().join(format!(
-        "faustprobe_error_format_{}_{name}.dsp",
-        std::process::id()
-    ));
-    std::fs::write(&path, source).expect("write dsp");
-    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
-        .args(args)
-        .arg(&path)
-        .output()
-        .expect("run faustprobe");
-    let _ = std::fs::remove_file(&path);
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
-
 #[test]
 fn error_format_json_prints_the_report_on_stdout_and_the_summary_on_stderr() {
-    let (ok, stdout, stderr) = run_probe(&["--error-format", "json"], UNCLOSED, "json");
+    let (ok, stdout, stderr) = probe_source("json", UNCLOSED, &["--error-format", "json"]);
     assert!(!ok);
     // stdout is one JSON document and nothing else
     let report: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
@@ -188,19 +172,19 @@ fn error_format_json_prints_the_report_on_stdout_and_the_summary_on_stderr() {
 fn error_format_json_leaves_any_other_failure_as_text() {
     // a value out of range is not a compile failure: no document
     let gain = "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.01);\n";
-    let (ok, stdout, stderr) = run_probe(
-        &["--error-format", "json", "--set", "gain=7"],
-        gain,
+    let (ok, stdout, stderr) = probe_source(
         "range",
+        gain,
+        &["--error-format", "json", "--set", "gain=7"],
     );
     assert!(!ok);
     assert!(stdout.is_empty(), "{stdout}");
     assert!(stderr.contains("outside the range"), "{stderr}");
     // and a run that succeeds prints what it always printed
-    let (ok, stdout, _) = run_probe(
-        &["--error-format", "json", "-n", "2", "--in", "dc"],
-        gain,
+    let (ok, stdout, _) = probe_source(
         "fine",
+        gain,
+        &["--error-format", "json", "-n", "2", "--in", "dc"],
     );
     assert!(ok);
     assert_eq!(stdout, "frame,out0\n0,0.5\n1,0.5\n");
@@ -213,7 +197,9 @@ fn error_format_json_leaves_any_other_failure_as_text() {
 #[test]
 fn a_compile_failure_that_was_recovered_from_is_not_reported() {
     let voice = "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.01) * button(\"gate\");\n";
-    let (ok, stdout, stderr) = run_probe(
+    let (ok, stdout, stderr) = probe_source(
+        "recovered",
+        voice,
         &[
             "--error-format",
             "json",
@@ -224,8 +210,6 @@ fn a_compile_failure_that_was_recovered_from_is_not_reported() {
             "-n",
             "64",
         ],
-        voice,
-        "recovered",
     );
     assert!(!ok);
     assert!(stderr.contains("no control matching `nope`"), "{stderr}");
@@ -234,10 +218,10 @@ fn a_compile_failure_that_was_recovered_from_is_not_reported() {
 
 #[test]
 fn error_format_json_is_refused_with_eval() {
-    let (ok, stdout, stderr) = run_probe(
-        &["--error-format", "json", "--eval", "g"],
-        "g = 0.5;\n",
+    let (ok, stdout, stderr) = probe_source(
         "eval",
+        "g = 0.5;\n",
+        &["--error-format", "json", "--eval", "g"],
     );
     assert!(!ok);
     assert!(stdout.is_empty());

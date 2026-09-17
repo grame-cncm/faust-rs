@@ -6,8 +6,8 @@
 //! independent route these tests compare with is that one: the hand-written
 //! program that states the same expression.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
+use common::{Fixtures, probe_in};
 
 /// A library: no `process`, a private helper, a control, a filter.
 const LIB: &str = r#"// a small library
@@ -18,45 +18,6 @@ g = hslider("g", 0.5, 0, 1, 0.001);
 gained(x) = x * g;
 onepole(p) = + ~ *(p);
 "#;
-
-/// A scratch directory of fixtures, removed when dropped.
-struct Fixtures(PathBuf);
-
-impl Fixtures {
-    fn new(name: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("faustprobe_eval_{}_{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create fixture dir");
-        Self(dir)
-    }
-
-    fn write(&self, file: &str, text: &str) -> String {
-        let path = self.0.join(file);
-        std::fs::create_dir_all(path.parent().unwrap()).expect("create dir");
-        std::fs::write(&path, text).expect("write fixture");
-        path.to_string_lossy().into_owned()
-    }
-}
-
-impl Drop for Fixtures {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn probe_in(dir: &Path, args: &[&str]) -> (bool, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
-        .current_dir(dir)
-        .args(args)
-        .output()
-        .expect("run faustprobe");
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
 
 fn probe(args: &[&str]) -> (bool, String, String) {
     probe_in(&std::env::temp_dir(), args)
@@ -222,7 +183,7 @@ fn the_file_directory_resolves_its_relative_imports_from_anywhere() {
     assert_eq!(rows(&stdout), ["0,0.5"]);
     // and a bare file name, whose directory is the current one
     let (ok, stdout, stderr) = probe_in(
-        &fixtures.0.join("libs"),
+        &fixtures.dir().join("libs"),
         &["--in", "zero", "-n", "1", "--eval", "twice", "user.lib"],
     );
     assert!(ok, "{stderr}");

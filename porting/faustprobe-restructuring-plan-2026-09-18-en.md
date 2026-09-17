@@ -1,6 +1,6 @@
 # faustprobe: restructuring and factoring, plan (2026-09-18)
 
-Status: **plan**. §6 records what was done.
+Status: **done** (2026-09-18, three commits). §6 records what was done.
 
 ## 1. Why
 
@@ -61,7 +61,8 @@ binary). They assert on fragments, which is right for tests and not enough
 here: a line that moved or a note that disappeared passes them.
 
 So a harness (scratch, not committed: it cites absolute paths) runs **369
-commands** against a binary and records for each the exit status, stdout and
+commands** (391 by the end, cases being added as the work showed what was not
+covered) against a binary and records for each the exit status, stdout and
 stderr: every mode, every format, every refusal table entry, the failure paths
 (out of range, clamp, `--fail-above`, non-finite, not linear, not
 time-invariant, ringing, a descent that reaches a bound, a gradient check that
@@ -122,4 +123,61 @@ Targets: no function above 200 lines, no file of the binary above 700.
 
 ## 6. What was done
 
-(to be filled)
+Three commits, in the order of §5, each ending on the gate of §3.
+
+| | before | after |
+|---|---:|---:|
+| largest file of the binary | 3545 | 647 (`render.rs`) |
+| longest function of the binary | 890 (`run`) | 116 (`run_train`) |
+| functions over 200 lines | 4 | 0 |
+| `probe/engine.rs` | 1513 | 667 + 469 + 280 + 125 |
+| lines of the binary | 3545 | 4333 |
+| lines of the probe tests | 5299 | 5146 |
+| harness cases identical | | 391 of 391 |
+| crate tests | 382 | 382 |
+
+The binary's total **grew**: eleven module headers, the types the phases pass
+to each other (`Plan`, `Run`, `Rendered`, `Family`, `Report`, `Verification`,
+`Subject`, `Verdict`, `Clamps`) and the signatures of some sixty functions
+outweigh the two to three hundred duplicated lines that went. What fell is the
+size of what has to be held in mind to change one thing.
+
+Departures from §4: `setup.rs` also holds `compile_timed` and `timed`; the
+refusal helper is `cli::refuse`, generic over what a table carries besides the
+flag, because `--freqresp` says *why* it refuses each one.
+
+**What the harness caught.** One change of mine: rewriting `--train` I parsed
+every `--set` before checking any. The original does them one at a time, so of
+two faulty `--set` it reports the first. No case covered it; five now do, for
+the four modes. **What it missed**, shown by a mutation that survived: no case
+gave a forwarded compiler argument (`--bra-tape`) a value other than the
+default, so dropping the extra arguments changed nothing. Two cases added.
+
+Seventeen mutations in all, ten on the binary's shared helpers, six on the
+factored library code, one on the shared test helper: all rejected, the
+survivor above once its cases existed.
+
+**Inconsistencies found, left as they are** (each is an output, and this was a
+refactoring):
+
+1. `--set fb=1.5 --set fb=2 --at 3 fb=2.5` and a failure: the context lists
+   the control twice, `fb=2.5 fb=2`. A scheduled write updates the first of
+   two entries of one control.
+2. `--freqresp --in impulse:5` says `the program has 2 input(s)`; a plain
+   render says `the program has 2 inputs, channels 0 to 1`.
+3. A polyphonic CSV dump prints its header before `--in` is validated: a
+   faulty `--in` leaves a header line on stdout.
+4. `--train` checks its `--set` one at a time; the other modes parse them all
+   first. Of two faulty `--set`, which is reported depends on the mode.
+5. `Probe::set` clamps a NaN (to NaN); `ControlMap::check_write` answers the
+   control's initial value for one. The command line goes through the second.
+
+**Outside this plan**, found by the harness disagreeing with itself: the
+parser lists the repair suggestions of a syntax error in an order that changes
+from run to run.
+
+Not done, deliberately: `probe/train.rs` (812 lines), `probe/poly.rs` (760)
+and `probe/params.rs` (700) are each one subject with its unit tests, under
+the threshold, and were left alone. `cranelift-ffi` is still outside
+`structure-check`; adding the crate to it is a one-line change that would make
+the two thresholds hold from now on.

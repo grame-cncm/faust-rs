@@ -21,8 +21,10 @@
 use cranelift_ffi::probe::engine::{Factory, Probe, RenderSpec};
 use cranelift_ffi::probe::render::InputMode;
 use cranelift_ffi::probe::schedule::{Event, Schedule};
-use std::process::Command;
 use std::rc::Rc;
+
+mod common;
+use common::probe_source;
 
 /// A gain on a 0..1 slider: what a request of 7 must not silently become.
 const GAIN: &str = r#"
@@ -48,25 +50,6 @@ process = + ~ *(g);
 
 /// Exact silence until its button is pressed.
 const GATED: &str = "process = button(\"gate\") * 0.5;\n";
-
-fn probe_binary(name: &str, source: &str, args: &[&str]) -> (bool, String, String) {
-    let path = std::env::temp_dir().join(format!(
-        "faustprobe_feedback_{}_{name}.dsp",
-        std::process::id()
-    ));
-    std::fs::write(&path, source).expect("write dsp");
-    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
-        .args(args)
-        .arg(&path)
-        .output()
-        .expect("run faustprobe");
-    let _ = std::fs::remove_file(&path);
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
 
 fn probe(source: &str, double: bool) -> Probe {
     let factory =
@@ -141,7 +124,7 @@ fn set_sweep_and_at_refuse_a_value_outside_the_range() {
         &["--sweep", "gain=0.5,1,7,100", "--reduce", "peak", "-n", "8"][..],
         &["--at", "4", "gain=-0.5", "-n", "8"][..],
     ] {
-        let (ok, stdout, stderr) = probe_binary("range", GAIN, args);
+        let (ok, stdout, stderr) = probe_source("range", GAIN, args);
         assert!(!ok, "{args:?} passed");
         // before any render: not one row of a sweep that would mislead
         assert!(stdout.is_empty(), "{args:?} printed:\n{stdout}");
@@ -152,7 +135,7 @@ fn set_sweep_and_at_refuse_a_value_outside_the_range() {
         assert!(stderr.contains("--clamp"), "{stderr}");
     }
     // the bounds themselves are in the range
-    let (ok, _, stderr) = probe_binary("bounds", GAIN, &["--sweep", "gain=0,1", "-n", "8"]);
+    let (ok, _, stderr) = probe_source("bounds", GAIN, &["--sweep", "gain=0,1", "-n", "8"]);
     assert!(ok, "{stderr}");
 }
 
@@ -177,19 +160,19 @@ fn a_value_typed_on_a_decimal_bound_is_in_range_in_both_widths() {
             ],
         ]
         .concat();
-        let (ok, stdout, stderr) = probe_binary("decimal_bounds", source, &args);
+        let (ok, stdout, stderr) = probe_source("decimal_bounds", source, &args);
         assert!(ok, "{width:?}: {stderr}");
         assert_eq!(stdout.lines().count(), 3, "{stdout}");
     }
     // a double-precision program receives the value typed, not the bound's float
-    let (_, stdout, _) = probe_binary(
+    let (_, stdout, _) = probe_source(
         "decimal_value",
         source,
         &["--double", "--set", "x=0.7", "--in", "zero", "-n", "1"],
     );
     assert_eq!(row(&stdout, 0), ["0.7"]);
     // and a value really outside is still refused, the range printed as declared
-    let (ok, _, stderr) = probe_binary("decimal_outside", source, &["--set", "x=0.71", "-n", "1"]);
+    let (ok, _, stderr) = probe_source("decimal_outside", source, &["--set", "x=0.71", "-n", "1"]);
     assert!(!ok);
     assert!(
         stderr.contains("outside the range [0.1, 0.7] of /"),
@@ -199,7 +182,7 @@ fn a_value_typed_on_a_decimal_bound_is_in_range_in_both_widths() {
 
 #[test]
 fn clamp_is_reported_and_a_sweep_row_carries_the_value_used() {
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "clamp_sweep",
         GAIN,
         &[
@@ -221,7 +204,7 @@ fn clamp_is_reported_and_a_sweep_row_carries_the_value_used() {
     // a constant 1 through the gain: the peak is the gain that was used
     assert_eq!(rows, ["0.5,0.5", "1,1.0"], "{stdout}");
 
-    let (ok, stdout, _) = probe_binary(
+    let (ok, stdout, _) = probe_source(
         "clamp_set",
         GAIN,
         &[
@@ -234,7 +217,7 @@ fn clamp_is_reported_and_a_sweep_row_carries_the_value_used() {
 
 #[test]
 fn clamp_is_in_the_json_of_the_runs_it_concerns() {
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "clamp_json",
         GAIN,
         &[
@@ -265,7 +248,7 @@ fn clamp_is_in_the_json_of_the_runs_it_concerns() {
 
 #[test]
 fn the_text_of_a_sample_parses_back_to_the_very_float() {
-    let (ok, stdout, _) = probe_binary(
+    let (ok, stdout, _) = probe_source(
         "numbers_double",
         CONSTANTS,
         &["--double", "--in", "zero", "-n", "1"],
@@ -282,7 +265,7 @@ fn the_text_of_a_sample_parses_back_to_the_very_float() {
     // the small one keeps its digits: nine fixed decimals left it two
     assert_eq!(row(&stdout, 0)[1], "3.3333333333333334e-8");
 
-    let (ok, stdout, _) = probe_binary("numbers_single", CONSTANTS, &["--in", "zero", "-n", "1"]);
+    let (ok, stdout, _) = probe_source("numbers_single", CONSTANTS, &["--in", "zero", "-n", "1"]);
     assert!(ok);
     let expected = first_frame(CONSTANTS, false);
     for (text, value) in row(&stdout, 0).iter().zip(&expected) {
@@ -298,7 +281,7 @@ fn the_text_of_a_sample_parses_back_to_the_very_float() {
 
 #[test]
 fn precision_nine_is_the_text_the_tool_used_to_print() {
-    let (ok, stdout, _) = probe_binary(
+    let (ok, stdout, _) = probe_source(
         "numbers_fixed",
         CONSTANTS,
         &["--double", "--precision", "9", "--in", "zero", "-n", "1"],
@@ -314,7 +297,7 @@ fn precision_nine_is_the_text_the_tool_used_to_print() {
 
 #[test]
 fn a_single_precision_control_is_listed_at_its_own_width() {
-    let (ok, stdout, _) = probe_binary("list", GAIN, &["--list-params"]);
+    let (ok, stdout, _) = probe_source("list", GAIN, &["--list-params"]);
     assert!(ok);
     let line = stdout.lines().find(|l| l.contains("/gain")).unwrap();
     // the step, 0.001, once read 0.0010000000474974513
@@ -326,7 +309,7 @@ fn a_single_precision_control_is_listed_at_its_own_width() {
 #[test]
 fn an_npy_holds_the_window_at_the_program_width() {
     let out = std::env::temp_dir().join(format!("faustprobe_feedback_{}.npy", std::process::id()));
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "npy",
         CONSTANTS,
         &[
@@ -364,7 +347,7 @@ fn an_npy_holds_the_window_at_the_program_width() {
 #[test]
 fn a_wav_written_by_out_is_the_excitation_in_file_reads() {
     let out = std::env::temp_dir().join(format!("faustprobe_feedback_{}.wav", std::process::id()));
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "wav_write",
         RAMP,
         &[
@@ -378,13 +361,13 @@ fn a_wav_written_by_out_is_the_excitation_in_file_reads() {
         ],
     );
     assert!(ok, "{stderr}");
-    let (_, direct, _) = probe_binary(
+    let (_, direct, _) = probe_source(
         "wav_direct",
         RAMP,
         &["--double", "--in", "zero", "-n", "16"],
     );
     let input = format!("file:{}", out.display());
-    let (ok, replayed, stderr) = probe_binary(
+    let (ok, replayed, stderr) = probe_source(
         "wav_read",
         "process = _;\n",
         &["--double", "--in", &input, "-n", "16"],
@@ -415,7 +398,7 @@ fn out_refuses_what_it_cannot_honour() {
         (GAIN, vec!["--out", &f32_path, "--double"], "drop digits"),
         (CONSTANTS, vec!["--out", &f64_path], "one channel"),
     ] {
-        let (ok, _, stderr) = probe_binary("out_refuse", source, &args);
+        let (ok, _, stderr) = probe_source("out_refuse", source, &args);
         assert!(!ok, "{args:?} passed");
         assert!(stderr.contains(expected), "{args:?}: {stderr}");
     }
@@ -426,7 +409,7 @@ fn out_refuses_what_it_cannot_honour() {
 #[test]
 fn a_non_finite_render_says_where_it_starts() {
     let (ok, _, stderr) =
-        probe_binary("nan", NAN_AT_500, &["--in", "zero", "-n", "600", "--quiet"]);
+        probe_source("nan", NAN_AT_500, &["--in", "zero", "-n", "600", "--quiet"]);
     assert!(!ok);
     assert!(
         stderr.contains("render produced non-finite samples"),
@@ -453,7 +436,7 @@ fn a_non_finite_render_says_where_it_starts() {
 
 #[test]
 fn a_failure_names_the_writes_before_it_and_not_those_after() {
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "loop_events",
         LOOP,
         &[
@@ -475,7 +458,7 @@ fn a_failure_names_the_writes_before_it_and_not_those_after() {
 
 #[test]
 fn fail_above_locates_the_first_sample_over_the_level() {
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "ramp",
         RAMP,
         &[
@@ -499,7 +482,7 @@ fn fail_above_locates_the_first_sample_over_the_level() {
     );
 
     // the window is what is measured: a transient before --skip is not
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "ramp_window",
         RAMP,
         &[
@@ -520,7 +503,7 @@ fn fail_above_locates_the_first_sample_over_the_level() {
         "{stderr}"
     );
 
-    let (ok, stdout, _) = probe_binary(
+    let (ok, stdout, _) = probe_source(
         "ramp_under",
         RAMP,
         &[
@@ -540,7 +523,7 @@ fn fail_above_locates_the_first_sample_over_the_level() {
 
 #[test]
 fn a_runaway_is_reported_where_it_starts_not_where_it_overflows() {
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "runaway",
         LOOP,
         &[
@@ -591,7 +574,7 @@ fn a_runaway_is_reported_where_it_starts_not_where_it_overflows() {
 
 #[test]
 fn exact_silence_comes_with_the_facts_that_explain_it() {
-    let (ok, stdout, _) = probe_binary("gated", GATED, &["-n", "64", "--quiet"]);
+    let (ok, stdout, _) = probe_source("gated", GATED, &["-n", "64", "--quiet"]);
     assert!(ok, "silence is not an error");
     assert!(
         stdout.contains("# note: every output is exactly zero over the window"),
@@ -604,7 +587,7 @@ fn exact_silence_comes_with_the_facts_that_explain_it() {
     assert!(stdout.contains("/gate"), "{stdout}");
     assert!(stdout.contains("peak_at=none"), "{stdout}");
 
-    let (_, stdout, _) = probe_binary(
+    let (_, stdout, _) = probe_source(
         "wire",
         "process = _;\n",
         &["--in", "zero", "-n", "64", "--quiet"],
@@ -617,14 +600,14 @@ fn exact_silence_comes_with_the_facts_that_explain_it() {
 
 #[test]
 fn a_program_that_sounds_gets_no_note_however_quiet() {
-    let (_, stdout, _) = probe_binary(
+    let (_, stdout, _) = probe_source(
         "pressed",
         GATED,
         &["-n", "64", "--quiet", "--set", "gate=1"],
     );
     assert!(!stdout.contains("# note:"), "{stdout}");
     // quiet is not silent: the comparison is with exact zero
-    let (_, stdout, _) = probe_binary(
+    let (_, stdout, _) = probe_source(
         "faint",
         "process = 1.0e-30;\n",
         &["--in", "zero", "-n", "8", "--quiet"],
@@ -634,13 +617,13 @@ fn a_program_that_sounds_gets_no_note_however_quiet() {
 
 #[test]
 fn silence_is_noted_in_json_and_once_for_a_silent_sweep() {
-    let (_, stdout, _) = probe_binary("gated_json", GATED, &["-n", "64", "--format", "json"]);
+    let (_, stdout, _) = probe_source("gated_json", GATED, &["-n", "64", "--format", "json"]);
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
     let notes = document["runs"][0]["notes"].as_array().unwrap();
     assert!(notes[1].as_str().unwrap().contains("/gate"), "{notes:?}");
 
     let source = "g = hslider(\"gain\", 0.5, 0, 1, 0.001);\nprocess = button(\"gate\") * g;\n";
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "gated_sweep",
         source,
         &["--sweep", "gain=0.25,0.5", "--reduce", "peak", "-n", "64"],
@@ -669,7 +652,7 @@ fn a_training_run_refuses_a_starting_point_outside_the_range() {
     let args = [
         "--double", "--in", "zero", "--block", "8", "--blocks", "3", "--train", "w",
     ];
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "train_range",
         HOST_LOOP,
         &[&args[..], &["--set", "w=5"]].concat(),
@@ -681,7 +664,7 @@ fn a_training_run_refuses_a_starting_point_outside_the_range() {
         "{stderr}"
     );
 
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "train_clamp",
         HOST_LOOP,
         &[&args[..], &["--set", "w=5", "--clamp"]].concat(),
@@ -693,7 +676,7 @@ fn a_training_run_refuses_a_starting_point_outside_the_range() {
 
 #[test]
 fn a_trained_value_is_printed_whole() {
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "train_text",
         HOST_LOOP,
         &[
@@ -731,7 +714,7 @@ gain = hslider("gain", 0.8, 0, 1, 0.001);
 gate = button("gate");
 process = gate * gain * (freq / 20000);
 "#;
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "poly_silent",
         voice,
         &["--nvoices", "2", "-n", "256", "--quiet"],
@@ -746,7 +729,7 @@ process = gate * gain * (freq / 20000);
         "{stdout}"
     );
 
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "poly_note",
         voice,
         &["--nvoices", "2", "-n", "256", "--quiet", "--note", "69@0"],
@@ -788,7 +771,7 @@ fn poly(name: &str, extra: &[&str]) -> (bool, String, String) {
         "--quiet",
     ];
     args.extend(extra);
-    probe_binary(name, INSTRUMENT, &args)
+    probe_source(name, INSTRUMENT, &args)
 }
 
 fn peak_of(stdout: &str) -> f64 {
@@ -863,7 +846,7 @@ fn clamp_is_accepted_and_reported_under_nvoices() {
     assert_eq!(stdout.matches("# clamped").count(), 1, "{stdout}");
 
     // and in the JSON document
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "poly_clamp_json",
         INSTRUMENT,
         &[
@@ -897,7 +880,7 @@ fn a_polyphonic_write_on_a_decimal_bound_or_on_a_bargraph_follows_the_scalar_rul
         let mut args = vec!["--nvoices", "2", "--note", "60@0", "-n", "64", "--quiet"];
         args.extend(width);
         args.extend(["--set", "tone=0.7", "--set", "tone=0.1"]);
-        let (ok, stdout, stderr) = probe_binary("poly_decimal", INSTRUMENT, &args);
+        let (ok, stdout, stderr) = probe_source("poly_decimal", INSTRUMENT, &args);
         assert!(ok, "{width:?}: {stderr}");
         assert!(!stdout.contains("# clamped"), "{stdout}");
     }
@@ -928,7 +911,7 @@ gain = hslider("gain", 0.5, 0, 1, 0.001);
 gate = button("gate");
 process = gate * (freq / 20000) + 0 * gain;
 "#;
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "poly_note_freq",
         voice,
         &[
@@ -1002,7 +985,7 @@ fn a_polyphonic_render_that_runs_away_fails_and_says_where_it_starts() {
         "1900",
         "fb=0.5",
     ];
-    let (ok, stdout, stderr) = probe_binary("poly_runaway", RUNAWAY, &base);
+    let (ok, stdout, stderr) = probe_source("poly_runaway", RUNAWAY, &base);
     assert!(!ok, "a render that is not finite fails: {stdout}");
     assert!(
         stderr.contains(&format!(
@@ -1028,7 +1011,7 @@ fn a_polyphonic_render_that_runs_away_fails_and_says_where_it_starts() {
     let mut json = base.to_vec();
     json.retain(|a| *a != "--quiet");
     json.extend(["--format", "json"]);
-    let (ok, stdout, _) = probe_binary("poly_runaway_json", RUNAWAY, &json);
+    let (ok, stdout, _) = probe_source("poly_runaway_json", RUNAWAY, &json);
     assert!(!ok);
     assert!(stdout.is_empty(), "{stdout}");
 }
@@ -1037,7 +1020,7 @@ fn a_polyphonic_render_that_runs_away_fails_and_says_where_it_starts() {
 fn fail_above_catches_a_polyphonic_runaway_at_its_start() {
     let above = runaway_frame(100.0);
     assert_eq!(above, 502, "2, then 9, 37, 149");
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "poly_fail_above",
         RUNAWAY,
         &[
@@ -1067,7 +1050,7 @@ fn fail_above_catches_a_polyphonic_runaway_at_its_start() {
     );
     assert!(stderr.contains("notes held then: 60"), "{stderr}");
     // under the level nothing fails
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "poly_fail_above_ok",
         RUNAWAY,
         &[
@@ -1097,7 +1080,7 @@ gate = button("gate");
 process = ((gate - gate') * (gate > 0) + 0 * (freq + gain)) : (+ ~ *(0.5));
 "#;
     let args = ["--nvoices", "1", "--note", "60@0", "-n", "300", "--quiet"];
-    let (ok, stdout, stderr) = probe_binary("poly_stats", decay, &args);
+    let (ok, stdout, stderr) = probe_source("poly_stats", decay, &args);
     assert!(ok, "{stderr}");
     assert!(
         stdout.contains("nvoices=1 active_voices=1 window=0..300 (300 frames)"),
@@ -1112,14 +1095,14 @@ process = ((gate - gate') * (gate > 0) + 0 * (freq + gain)) : (+ ~ *(0.5));
     // at the width of the instrument: none in double precision
     let mut double = args.to_vec();
     double.push("--double");
-    let (_, stdout, _) = probe_binary("poly_stats_double", decay, &double);
+    let (_, stdout, _) = probe_source("poly_stats_double", decay, &double);
     let line = stdout.lines().find(|l| l.starts_with("# out0")).unwrap();
     assert!(line.ends_with(" finite=yes peak_at=0"), "{line}");
 
     // the window is the one --skip leaves: frames 140 to 149 are subnormal
     let mut skipped = args.to_vec();
     skipped.extend(["--skip", "140"]);
-    let (_, stdout, _) = probe_binary("poly_stats_skip", decay, &skipped);
+    let (_, stdout, _) = probe_source("poly_stats_skip", decay, &skipped);
     assert!(stdout.contains("window=140..300 (160 frames)"), "{stdout}");
     let line = stdout.lines().find(|l| l.starts_with("# out0")).unwrap();
     assert!(line.ends_with(" subnormal=10 subnormal_at=140"), "{line}");
@@ -1128,7 +1111,7 @@ process = ((gate - gate') * (gate > 0) + 0 * (freq + gain)) : (+ ~ *(0.5));
     let mut json = args.to_vec();
     json.retain(|a| *a != "--quiet");
     json.extend(["--format", "json"]);
-    let (ok, stdout, stderr) = probe_binary("poly_stats_json", decay, &json);
+    let (ok, stdout, stderr) = probe_source("poly_stats_json", decay, &json);
     assert!(ok, "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
     let channel = &document["channels"][0];
@@ -1144,7 +1127,7 @@ process = ((gate - gate') * (gate > 0) + 0 * (freq + gain)) : (+ ~ *(0.5));
 /// with, not the one that was typed.
 #[test]
 fn a_polyphonic_failure_lists_the_values_that_were_applied() {
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "poly_context_clamped",
         RUNAWAY,
         &[
@@ -1189,7 +1172,7 @@ process = _ * (gate + 0 * (freq + gain));
 fn poly_in(name: &str, extra: &[&str]) -> (bool, String, String) {
     let mut args = vec!["--double", "--nvoices", "2", "-n", "200", "--quiet"];
     args.extend(extra);
-    probe_binary(name, VOICE_WITH_INPUT, &args)
+    probe_source(name, VOICE_WITH_INPUT, &args)
 }
 
 #[test]
@@ -1252,14 +1235,14 @@ fn an_impulse_on_an_input_the_program_does_not_have_is_refused() {
         "{stderr}"
     );
     let stereo = "process = _ * 0.5, _ * 0.25;\n";
-    let (ok, _, stderr) = probe_binary("in_channel", stereo, &["-n", "8", "--in", "impulse:2"]);
+    let (ok, _, stderr) = probe_source("in_channel", stereo, &["-n", "8", "--in", "impulse:2"]);
     assert!(!ok);
     assert!(
         stderr.contains("the program has 2 inputs, channels 0 to 1"),
         "{stderr}"
     );
     // the last channel is one of them
-    let (ok, stdout, stderr) = probe_binary(
+    let (ok, stdout, stderr) = probe_source(
         "in_channel_ok",
         stereo,
         &["--double", "-n", "2", "--in", "impulse:1"],
@@ -1269,7 +1252,7 @@ fn an_impulse_on_an_input_the_program_does_not_have_is_refused() {
         stdout.starts_with("frame,out0,out1\n0,0.0,0.25\n"),
         "{stdout}"
     );
-    let (ok, _, stderr) = probe_binary(
+    let (ok, _, stderr) = probe_source(
         "in_channel_none",
         "process = 0.5;\n",
         &["-n", "8", "--in", "impulse:0"],

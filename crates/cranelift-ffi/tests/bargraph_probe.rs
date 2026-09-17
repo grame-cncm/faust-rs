@@ -15,8 +15,10 @@ use cranelift_ffi::probe::engine::{Factory, Probe, RenderSpec};
 use cranelift_ffi::probe::params::ControlKind;
 use cranelift_ffi::probe::render::InputMode;
 use cranelift_ffi::probe::schedule::{Event, Schedule};
-use std::process::Command;
 use std::rc::Rc;
+
+mod common;
+use common::probe_source;
 
 /// A gain on a slider, and a bargraph showing twice the slider: the
 /// bargraph's value is known from the control alone, whatever the input.
@@ -130,22 +132,7 @@ fn the_kinds_have_names() {
 
 /// The test program on disk, and `faustprobe` on it with `args`.
 fn faustprobe(tag: &str, args: &[&str]) -> (bool, String, String) {
-    let path = std::env::temp_dir().join(format!(
-        "faustprobe_bargraph_{tag}_{}.dsp",
-        std::process::id()
-    ));
-    std::fs::write(&path, DSP).expect("write dsp");
-    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
-        .args(args)
-        .arg(&path)
-        .output()
-        .expect("run faustprobe");
-    let _ = std::fs::remove_file(&path);
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
+    probe_source(tag, DSP, args)
 }
 
 #[test]

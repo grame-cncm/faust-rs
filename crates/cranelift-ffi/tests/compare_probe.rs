@@ -11,7 +11,9 @@
 //! Expected frames and values follow from the fixtures' definitions.
 
 use std::path::PathBuf;
-use std::process::Command;
+
+mod common;
+use common::{Fixtures, probe};
 
 /// Half the input, two ways: the same samples.
 const HALF: &str = "process = _ * 0.5;\n";
@@ -39,46 +41,6 @@ const STATEFUL: &str = "n = +(1) ~ _;\nprocess = (_ : + ~ *(0.9)) + n * 0.001;\n
 
 /// `0.1` accumulated: the two widths drift apart, by an amount the test replays.
 const ACCUMULATOR: &str = "process = +(0.1) ~ _;\n";
-
-struct Fixtures(PathBuf);
-
-impl Fixtures {
-    fn new(name: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("faustprobe_compare_{}_{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create fixture dir");
-        Self(dir)
-    }
-
-    fn write(&self, file: &str, text: &str) -> String {
-        let path = self.0.join(file);
-        std::fs::write(&path, text).expect("write fixture");
-        path.to_string_lossy().into_owned()
-    }
-
-    fn path(&self, file: &str) -> String {
-        self.0.join(file).to_string_lossy().into_owned()
-    }
-}
-
-impl Drop for Fixtures {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn probe(args: &[&str]) -> (bool, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
-        .args(args)
-        .output()
-        .expect("run faustprobe");
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
 
 /// The `# TAG ...` lines of a `--quiet` run.
 fn lines_of<'a>(stdout: &'a str, tag: &str) -> Vec<&'a str> {

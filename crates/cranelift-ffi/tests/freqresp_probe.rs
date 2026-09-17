@@ -11,8 +11,9 @@
 //! the property that breaks and the first frame at which it does.
 
 use std::f64::consts::{PI, TAU};
-use std::path::PathBuf;
-use std::process::Command;
+
+mod common;
+use common::{Fixtures, probe};
 
 /// `y[n] = x[n] + 0.5 y[n-1]`: `H = 1 / (1 - 0.5 exp(-jw))`.
 const ONE_POLE: &str = "process = + ~ *(0.5);\n";
@@ -60,42 +61,6 @@ const SLOW: &str = "process = + ~ *(0.999);\n";
 const TWO_BY_TWO: &str = "process = *(0.5), (+ ~ *(0.5));\n";
 /// No input at all.
 const GENERATOR: &str = "process = +(0.001) ~ _;\n";
-
-struct Fixtures(PathBuf);
-
-impl Fixtures {
-    fn new(name: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("faustprobe_freqresp_{}_{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create fixture dir");
-        Self(dir)
-    }
-
-    fn write(&self, file: &str, text: &str) -> String {
-        let path = self.0.join(file);
-        std::fs::write(&path, text).expect("write fixture");
-        path.to_string_lossy().into_owned()
-    }
-}
-
-impl Drop for Fixtures {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn probe(args: &[&str]) -> (bool, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
-        .args(args)
-        .output()
-        .expect("run faustprobe");
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
 
 /// The rows of a response: `hz`, then `(mag_db, phase)` per output.
 fn rows(stdout: &str) -> Vec<(f64, Vec<(f64, f64)>)> {

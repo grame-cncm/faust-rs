@@ -12,8 +12,8 @@
 //! needs a loss and its gradient, not `rad`, and a closed form is what lets
 //! every expected number below be replayed in the test.
 
-use std::path::PathBuf;
-use std::process::Command;
+mod common;
+use common::{Fixtures, json, probe};
 
 /// The minimum of `(x - 3)^2` is outside `[0, 2]`; that of `(y - 0.5)^2` is
 /// inside `[-1, 1]`.
@@ -71,44 +71,6 @@ process = 1 / (x - 1), 0 * x;\n";
 /// The loss is the control: the first block's loss is the starting point.
 const IDENTITY: &str = "x = hslider(\"x\", 0.1, 0, 0.7, 0.001);\nprocess = x, 1 + 0 * x;\n";
 
-struct Fixtures(PathBuf);
-
-impl Fixtures {
-    fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "faustprobe_host_loop_{}_{name}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create fixture dir");
-        Self(dir)
-    }
-
-    fn write(&self, file: &str, text: &str) -> String {
-        let path = self.0.join(file);
-        std::fs::write(&path, text).expect("write fixture");
-        path.to_string_lossy().into_owned()
-    }
-}
-
-impl Drop for Fixtures {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn probe(args: &[&str]) -> (bool, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
-        .args(args)
-        .output()
-        .expect("run faustprobe");
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
-
 /// A descent by plain gradient descent on `file`, in double precision, with
 /// no input: the arguments every test below shares.
 fn descend<'a>(file: &'a str, train: &'a str, lr: &'a str, blocks: &'a str) -> Vec<&'a str> {
@@ -134,10 +96,6 @@ fn descend<'a>(file: &'a str, train: &'a str, lr: &'a str, blocks: &'a str) -> V
 
 fn lines_of<'a>(stdout: &'a str, prefix: &str) -> Vec<&'a str> {
     stdout.lines().filter(|l| l.starts_with(prefix)).collect()
-}
-
-fn json(stdout: &str) -> serde_json::Value {
-    serde_json::from_str(stdout).unwrap_or_else(|e| panic!("not JSON ({e}):\n{stdout}"))
 }
 
 // ------------------------------------------------------------------ bounds

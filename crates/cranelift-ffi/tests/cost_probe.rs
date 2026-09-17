@@ -11,8 +11,8 @@
 //! Subnormals are exact: `+ ~ *(0.5)` halves an impulse, and the halvings
 //! that are subnormal at each width can be counted.
 
-use std::path::PathBuf;
-use std::process::Command;
+mod common;
+use common::{Fixtures, json, probe};
 
 /// An impulse halved at every sample: `2^-k` at frame `k`.
 const HALVING: &str = "process = + ~ *(0.5);\n";
@@ -24,46 +24,6 @@ const MANY_POLES: &str = "process = _ <: par(i, 100, + ~ *(0.5 + i / 1000)) :> _
 /// A descent, for the cost of its blocks.
 const DESCENT: &str =
     "x = hslider(\"x\", 1, 0, 2, 0.001);\nprocess = (x - 3) * (x - 3), 2 * (x - 3);\n";
-
-struct Fixtures(PathBuf);
-
-impl Fixtures {
-    fn new(name: &str) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("faustprobe_cost_{}_{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create fixture dir");
-        Self(dir)
-    }
-
-    fn write(&self, file: &str, text: &str) -> String {
-        let path = self.0.join(file);
-        std::fs::write(&path, text).expect("write fixture");
-        path.to_string_lossy().into_owned()
-    }
-}
-
-impl Drop for Fixtures {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn probe(args: &[&str]) -> (bool, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
-        .args(args)
-        .output()
-        .expect("run faustprobe");
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
-}
-
-fn json(stdout: &str) -> serde_json::Value {
-    serde_json::from_str(stdout).unwrap_or_else(|e| panic!("not JSON ({e}):\n{stdout}"))
-}
 
 fn without_time(text: &str) -> String {
     text.lines()
