@@ -67,10 +67,12 @@ impl CompleteError {
     /// Attached diagnostics are appended when `message` contains their
     /// summary (it may have been wrapped in a prefix on the way), and dropped
     /// either way: they describe one failure and must not leak into the next.
+    /// The text never ends with a newline, with or without diagnostics, so a
+    /// host prints it the way it prints `error_msg`.
     pub fn report(&self, message: &str) {
         let complete = match self.attached.borrow_mut().take() {
             Some((summary, details)) if message.contains(summary.as_str()) => {
-                format!("{message}\n{details}")
+                format!("{message}\n{}", details.trim_end())
             }
             _ => message.to_owned(),
         };
@@ -112,6 +114,17 @@ mod tests {
         record.attach("parse failed", "2:21: error");
         record.report("parse failed");
         assert_eq!(text(&record).as_deref(), Some("parse failed\n2:21: error"));
+    }
+
+    #[test]
+    fn the_text_never_ends_with_a_newline() {
+        let record = CompleteError::new();
+        record.attach("parse failed", "2:21: error\n  = fix: insert `)`\n\n");
+        record.report("parse failed");
+        assert_eq!(
+            text(&record).as_deref(),
+            Some("parse failed\n2:21: error\n  = fix: insert `)`")
+        );
     }
 
     #[test]
