@@ -35,6 +35,19 @@ context lifecycle.
 - This is an incremental parity layer; rows marked as exact candidates in the
   generated Signal API matrix still need focused semantic parity tests.
 
+## Errors
+
+`CcreateSourceFromSignals` reports through a 4096-byte `error_msg`.
+`getCCompleteSignalError()`, an addition of this port, returns the complete text
+of the last error this thread reported through it, not cut at 4096 bytes: per
+thread, owned by the library (do not free it), null before the thread's first
+error, valid until its next one, not reset by a success. Signals are built
+through the API and have no source text, so no failure here comes with compiler
+diagnostics: the complete text is the message. It exists so that a host reads
+every libfaust-rs error the same way (`getCCompleteDSPError`,
+`getCCompleteBoxError`, `getCCompleteCraneliftDSPFactoryError`,
+`getCCompleteInterpreterDSPFactoryError`).
+
 ## Source provenance
 
 The exported symbol names and signatures mirror the C++ reference header

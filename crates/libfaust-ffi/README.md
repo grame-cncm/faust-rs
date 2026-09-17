@@ -34,7 +34,8 @@ source snippet, notes, fixes): per thread, owned by the library (do not free
 it), null before the thread's first error, valid until its next one, not reset
 by a success. The reference libfaust has no equivalent; the backends have
 theirs (`getCCompleteCraneliftDSPFactoryError`,
-`getCCompleteInterpreterDSPFactoryError`), each for its own entry points. The
+`getCCompleteInterpreterDSPFactoryError`), and so have the Box and Signal APIs
+(`getCCompleteBoxError`, `getCCompleteSignalError`), each for its own entry points. The
 `std::string` wrappers of `libfaust.h` read it, so their `error_msg` holds the
 complete text.
 

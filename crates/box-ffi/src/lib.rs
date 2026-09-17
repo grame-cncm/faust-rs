@@ -36,6 +36,7 @@ use codegen::backends::c::{COptions, generate_c_module};
 use codegen::backends::cpp::{CppOptions, generate_cpp_module};
 use codegen::backends::interp::{InterpOptions, generate_interp_module, write_fbc};
 use compiler::Compiler;
+use ffi_common::CompleteError;
 use fir::{FirId, FirStore};
 use propagate::{
     ArityCache, PropagateUiOptions, box_arity_typed, make_sig_input_list, propagate_typed,
@@ -2368,6 +2369,39 @@ pub extern "C" fn CisBoxWire(t: *mut c_void) -> bool {
     })
 }
 
+thread_local! {
+    /// Complete text of the last error this thread reported; see
+    /// [`ffi_common::complete_error`] for the contract.
+    static COMPLETE_ERROR: CompleteError = const { CompleteError::new() };
+}
+
+/// Writes one message into the caller's 4096-byte error buffer, and publishes
+/// its complete text for [`getCCompleteBoxError`].
+///
+/// # Safety
+/// `error_msg` must be null or point to a writable buffer of at least 4096 bytes.
+unsafe fn write_error(error_msg: *mut c_char, message: &str) {
+    COMPLETE_ERROR.with(|record| record.report(message));
+    unsafe { ffi_common::write_error_4096(error_msg, message) };
+}
+
+#[unsafe(no_mangle)]
+/// Returns the complete text of the last error reported on the calling thread
+/// through an `error_msg` buffer of the Box API: the message that buffer
+/// received, not cut at 4096 bytes,
+/// followed, for a `CDSPToBoxes` failure, by the compiler's rendered diagnostics
+/// (location, source snippet, notes, fixes).
+///
+/// An addition of this port: the reference libfaust has no equivalent. Same
+/// contract as `getCCompleteDSPError` and the backends' entry points. The
+/// pointer is owned by the library: do not free it, `freeCMemory` included. It
+/// is null while no error was reported on this thread, and stays valid until
+/// the next error reported on this thread. A call that succeeds does not reset
+/// it, so read it after a call that failed.
+pub extern "C" fn getCCompleteBoxError() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::as_ptr)
+}
+
 #[unsafe(no_mangle)]
 /// Compile Faust source into one flattened box.
 ///
@@ -2386,14 +2420,14 @@ pub unsafe extern "C" fn CDSPToBoxes(
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
     let content = match unsafe { ffi_common::required_c_string_arg(dsp_content, "dsp_content") } {
         Ok(s) => s,
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
@@ -2401,7 +2435,11 @@ pub unsafe extern "C" fn CDSPToBoxes(
     let compiled = match compiler.compile_source_to_signals(&source_name, &content) {
         Ok(v) => v,
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+            // The one failure of this API that comes from the compiler with
+            // diagnostics: keep them for the report of their summary.
+            let summary = e.to_string();
+            COMPLETE_ERROR.with(|record| record.attach(&summary, &e.rendered_diagnostics()));
+            unsafe { write_error(error_msg, &summary) };
             return std::ptr::null_mut();
         }
     };
@@ -2425,9 +2463,7 @@ pub unsafe extern "C" fn CDSPToBoxes(
         ) {
             Some(id) => ctx.encode(id),
             None => {
-                unsafe {
-                    ffi_common::write_error_4096(error_msg, "failed to import process box tree")
-                };
+                unsafe { write_error(error_msg, "failed to import process box tree") };
                 std::ptr::null_mut()
             }
         }
@@ -2485,13 +2521,13 @@ pub unsafe extern "C" fn CboxesToSignals(
 ) -> *mut *mut c_void {
     with_ctx(|ctx| {
         let Some(box_id) = ctx.decode(box_ptr) else {
-            unsafe { ffi_common::write_error_4096(error_msg, "null or unknown box pointer") };
+            unsafe { write_error(error_msg, "null or unknown box pointer") };
             return std::ptr::null_mut();
         };
         let flat = match try_build_flat_box(&ctx.arena, box_id) {
             Ok(flat) => flat,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2499,7 +2535,7 @@ pub unsafe extern "C" fn CboxesToSignals(
         let arity = match box_arity_typed(&ctx.arena, flat, &mut cache) {
             Ok(a) => a,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2507,7 +2543,7 @@ pub unsafe extern "C" fn CboxesToSignals(
         let outputs = match propagate_typed(&mut ctx.arena, flat, &inputs, &mut cache) {
             Ok(sigs) => sigs,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2527,13 +2563,13 @@ pub unsafe extern "C" fn CboxesToSignals2(
 ) -> *mut *mut c_void {
     with_ctx(|ctx| {
         let Some(box_id) = ctx.decode(box_ptr) else {
-            unsafe { ffi_common::write_error_4096(error_msg, "null or unknown box pointer") };
+            unsafe { write_error(error_msg, "null or unknown box pointer") };
             return std::ptr::null_mut();
         };
         let flat = match try_build_flat_box(&ctx.arena, box_id) {
             Ok(flat) => flat,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2541,7 +2577,7 @@ pub unsafe extern "C" fn CboxesToSignals2(
         let arity = match box_arity_typed(&ctx.arena, flat, &mut cache) {
             Ok(a) => a,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2549,7 +2585,7 @@ pub unsafe extern "C" fn CboxesToSignals2(
         let outputs = match propagate_typed(&mut ctx.arena, flat, &inputs, &mut cache) {
             Ok(sigs) => sigs,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2558,7 +2594,7 @@ pub unsafe extern "C" fn CboxesToSignals2(
             match de_bruijn_to_sym(&mut ctx.arena, signal) {
                 Ok(sym) => symbolic.push(sym),
                 Err(e) => {
-                    unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                    unsafe { write_error(error_msg, &e.to_string()) };
                     return std::ptr::null_mut();
                 }
             }
@@ -2585,42 +2621,42 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
     let lang = match unsafe { ffi_common::required_c_string_arg(lang, "lang") } {
         Ok(s) => s.to_ascii_lowercase(),
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
     let argv = match unsafe { ffi_common::decode_c_argv(argc, argv) } {
         Ok(v) => v,
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
     let parsed = match ffi_common::parse_ffi_compile_args(&argv) {
         Ok(v) => v,
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
 
     with_ctx(|ctx| {
         let Some(box_id) = ctx.decode(box_ptr) else {
-            unsafe { ffi_common::write_error_4096(error_msg, "null or unknown box pointer") };
+            unsafe { write_error(error_msg, "null or unknown box pointer") };
             return std::ptr::null_mut();
         };
 
         let flat = match try_build_flat_box(&ctx.arena, box_id) {
             Ok(flat) => flat,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2628,7 +2664,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         let arity = match box_arity_typed(&ctx.arena, flat, &mut cache) {
             Ok(a) => a,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2636,7 +2672,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         let signals = match propagate_typed(&mut ctx.arena, flat, &inputs, &mut cache) {
             Ok(sigs) => sigs,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e.to_string()) };
+                unsafe { write_error(error_msg, &e.to_string()) };
                 return std::ptr::null_mut();
             }
         };
@@ -2648,7 +2684,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         let fir = match lower_signal_roots_to_fir(ctx, &signals, &module_name) {
             Ok(v) => v,
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e) };
+                unsafe { write_error(error_msg, &e) };
                 return std::ptr::null_mut();
             }
         };
@@ -2658,7 +2694,7 @@ pub unsafe extern "C" fn CcreateSourceFromBoxes(
         match rendered {
             Ok(text) => ffi_common::alloc_c_string(&text),
             Err(e) => {
-                unsafe { ffi_common::write_error_4096(error_msg, &e) };
+                unsafe { write_error(error_msg, &e) };
                 std::ptr::null_mut()
             }
         }
@@ -2679,6 +2715,119 @@ mod tests {
             .expect("test context lock poisoned");
         createLibContext();
         guard
+    }
+
+    /// An unclosed parenthesis on line 2, column 21.
+    const UNCLOSED: &str = "// a comment line\nprocess = _ : *(0.5 ;\n";
+
+    /// `CDSPToBoxes` on `source`: whether it succeeded, and what `error_msg` got.
+    fn dsp_to_boxes(source: &str) -> (bool, String) {
+        let name = CString::new("probe").unwrap();
+        let content = CString::new(source).unwrap();
+        let (mut inputs, mut outputs) = (0, 0);
+        let mut buffer = [0 as c_char; 4096];
+        let tree = unsafe {
+            CDSPToBoxes(
+                name.as_ptr(),
+                content.as_ptr(),
+                0,
+                std::ptr::null(),
+                &mut inputs,
+                &mut outputs,
+                buffer.as_mut_ptr(),
+            )
+        };
+        let message = unsafe { CStr::from_ptr(buffer.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        (!tree.is_null(), message)
+    }
+
+    fn complete_error() -> Option<String> {
+        let text = getCCompleteBoxError();
+        (!text.is_null()).then(|| {
+            unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    #[test]
+    fn complete_error_is_null_before_any_error_and_untouched_by_a_success() {
+        let _guard = fresh_test_context();
+        assert_eq!(complete_error(), None);
+        assert!(dsp_to_boxes("process = _;").0);
+        assert_eq!(complete_error(), None);
+    }
+
+    #[test]
+    fn complete_error_locates_a_syntax_error() {
+        let _guard = fresh_test_context();
+        let (ok, summary) = dsp_to_boxes(UNCLOSED);
+        assert!(!ok);
+        // The buffer still gets what it always got: a count, no location.
+        assert!(summary.starts_with("parse failed for"), "{summary}");
+        assert!(!summary.contains("FRS-PARSE"), "{summary}");
+
+        let complete = complete_error().expect("a failure publishes its complete text");
+        assert!(complete.starts_with(&summary), "{complete}");
+        assert!(
+            complete.contains(":2:21: error [FRS-PARSE-0001]"),
+            "{complete}"
+        );
+        assert!(
+            complete.contains("  2 | process = _ : *(0.5 ;"),
+            "{complete}"
+        );
+        assert!(complete.contains("insert `)`"), "{complete}");
+    }
+
+    #[test]
+    fn complete_error_keeps_a_text_longer_than_the_buffer_whole() {
+        let _guard = fresh_test_context();
+        let mut source = String::new();
+        for index in 0..200 {
+            source.push_str(&format!(
+                "a_rather_long_definition_name_{index:03} = {index};\n"
+            ));
+        }
+        source.push_str("process = _ : missing_symbol;\n");
+
+        let (ok, summary) = dsp_to_boxes(&source);
+        assert!(!ok);
+        assert!(summary.len() < 4096);
+        let complete = complete_error().unwrap();
+        assert!(complete.len() > 4096, "only {} bytes", complete.len());
+        assert!(complete.contains("undefined symbol `missing_symbol`"));
+        assert!(complete.contains("a_rather_long_definition_name_199"));
+    }
+
+    #[test]
+    fn complete_error_of_a_plain_failure_is_its_message_and_inherits_nothing() {
+        let _guard = fresh_test_context();
+        assert!(!dsp_to_boxes(UNCLOSED).0);
+        assert!(complete_error().unwrap().contains("FRS-PARSE"));
+
+        let mut buffer = [0 as c_char; 4096];
+        let signals = unsafe { CboxesToSignals(std::ptr::null_mut(), buffer.as_mut_ptr()) };
+        assert!(signals.is_null());
+        let message = unsafe { CStr::from_ptr(buffer.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(message, "null or unknown box pointer");
+        assert_eq!(complete_error().as_deref(), Some(message.as_str()));
+    }
+
+    #[test]
+    fn complete_error_survives_a_success_and_is_per_thread() {
+        let _guard = fresh_test_context();
+        assert!(!dsp_to_boxes(UNCLOSED).0);
+        let before = complete_error().unwrap();
+        assert!(dsp_to_boxes("process = _;").0);
+        assert_eq!(complete_error().as_deref(), Some(before.as_str()));
+
+        let elsewhere = std::thread::spawn(complete_error).join().unwrap();
+        assert_eq!(elsewhere, None);
     }
 
     fn assert_box_matches(ptr: *mut c_void, expected: BoxMatch) {

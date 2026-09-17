@@ -8,6 +8,7 @@ int main(void)
     Box add = CboxAddAux(one, two);
     char* txt = CprintBox(add, true, 1024);
     freeCMemory(txt);
+    (void)getCCompleteBoxError();
     destroyLibContext();
     return 0;
 }

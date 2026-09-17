@@ -41,6 +41,21 @@ common helpers.
 - This is an incremental parity layer; rows marked as exact candidates in the
   generated Box API matrix still need focused semantic parity tests.
 
+## Errors
+
+`error_msg` (`CDSPToBoxes`, `CboxesToSignals*`, `CcreateSourceFromBoxes`) is
+4096 bytes by the reference contract, caller-allocated, its size never passed,
+so it cannot grow. `getCCompleteBoxError()`, an addition of this port, returns
+the complete text of the last error this thread reported through one: the
+message, not cut, followed for a `CDSPToBoxes` failure by the compiler's
+rendered diagnostics (location, source snippet, notes, fixes), where the buffer
+only gets "parse failed for x: errors=1, recoveries=0, diagnostics=1". The other
+failures of this API concern boxes built through it, which have no source text:
+their complete text is their message. Per thread, owned by the library (do not
+free it), null before the thread's first error, valid until its next one, not
+reset by a success; same contract as `getCCompleteDSPError` and the backends'
+entry points.
+
 ## Source provenance
 
 The exported symbol names and signatures mirror the C++ reference headers

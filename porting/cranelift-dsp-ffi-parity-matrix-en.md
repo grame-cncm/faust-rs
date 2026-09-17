@@ -99,7 +99,7 @@ Legend:
 | Cache get by SHA | `getCDSPFactoryFromSHAKey` | `getCInterpreterDSPFactoryFromSHAKey` | `getCCraneliftDSPFactoryFromSHAKey` | `v1-required` | Backend-prefixed naming, cache parity required |
 | Delete all factories | `deleteAllCDSPFactories` | `deleteAllCInterpreterDSPFactories` | `deleteAllCCraneliftDSPFactories` | `v1-required` | |
 | List all factories | `getAllCDSPFactories` | `getAllCInterpreterDSPFactories` | `getAllCCraneliftDSPFactories` | `v1-required` | Array/freeing semantics parity |
-| Complete text of the last error | (none; `getCCompleteDSPError` for the backend-agnostic `expandCDSP*` / `generateCAuxFiles*` of `libfaust-ffi`) | `getCCompleteInterpreterDSPFactoryError` | `getCCompleteCraneliftDSPFactoryError` | `faust-rs addition` | `error_msg` stays 4096 bytes (caller-allocated, size never passed); this returns the untruncated message plus the rendered compiler diagnostics from per-thread, library-owned storage, valid until the next error on the thread; the C++ wrappers read it into `std::string& error_msg` |
+| Complete text of the last error | (none; `getCCompleteDSPError` for the backend-agnostic `expandCDSP*` / `generateCAuxFiles*` of `libfaust-ffi`; `getCCompleteBoxError`, `getCCompleteSignalError` for the Box and Signal APIs) | `getCCompleteInterpreterDSPFactoryError` | `getCCompleteCraneliftDSPFactoryError` | `faust-rs addition` | `error_msg` stays 4096 bytes (caller-allocated, size never passed); this returns the untruncated message plus the rendered compiler diagnostics from per-thread, library-owned storage, valid until the next error on the thread; the C++ wrappers read it into `std::string& error_msg` |
 
 ## 3.3 Factory creation from Faust source
 

@@ -406,7 +406,9 @@ fn syntax_check_headers(workspace: &Path) -> Result<(), Box<dyn std::error::Erro
 int main(void) {
     Signal s = CsigInput(0);
     Box b = CboxWire();
-    return (s == 0 || b == 0) ? 0 : 0;
+    const char* box_error = getCCompleteBoxError();
+    const char* signal_error = getCCompleteSignalError();
+    return (s == 0 || b == 0 || box_error == 0 || signal_error == 0) ? 0 : 0;
 }
 "#,
     )?;

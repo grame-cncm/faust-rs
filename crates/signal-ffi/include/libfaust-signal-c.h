@@ -224,6 +224,20 @@ Signal* CsimplifyToNormalForm2(Signal* siglist);
 char* CcreateSourceFromSignals(const char* name_app, Signal* osigs, const char* lang,
                                int argc, const char* argv[], char* error_msg);
 
+/**
+ * Return the complete text of the last error reported on the calling thread
+ * through an `error_msg` buffer of this header: the message that buffer
+ * received, not cut at 4096 bytes.
+ *
+ * An addition of the Rust port: the reference libfaust has no equivalent. Same
+ * contract as getCCompleteDSPError (libfaust-c.h) and the backends' entry
+ * points. The pointer is owned by the library: do NOT free it, not with
+ * freeCMemory either. It is NULL while no error was reported on this thread and
+ * stays valid until the next error reported on this thread. A successful call
+ * does not reset it: read it after a call that failed.
+ */
+const char* getCCompleteSignalError(void);
+
 #ifdef __cplusplus
 }
 #endif

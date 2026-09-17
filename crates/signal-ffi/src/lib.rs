@@ -34,6 +34,7 @@
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 
+use ffi_common::CompleteError;
 use signals::{BinOp, SigBuilder, SigMatch, match_sig};
 use tlib::{NodeKind, TreeId, de_bruijn_aperture, de_bruijn_ref, vec_to_list};
 use tree_ffi::{
@@ -832,6 +833,37 @@ pub unsafe extern "C" fn CsimplifyToNormalForm2(siglist: *mut *mut c_void) -> *m
     })
 }
 
+thread_local! {
+    /// Complete text of the last error this thread reported; see
+    /// [`ffi_common::complete_error`] for the contract.
+    static COMPLETE_ERROR: CompleteError = const { CompleteError::new() };
+}
+
+/// Writes one message into the caller's 4096-byte error buffer, and publishes
+/// its complete text for [`getCCompleteSignalError`].
+///
+/// # Safety
+/// `error_msg` must be null or point to a writable buffer of at least 4096 bytes.
+unsafe fn write_error(error_msg: *mut c_char, message: &str) {
+    COMPLETE_ERROR.with(|record| record.report(message));
+    unsafe { ffi_common::write_error_4096(error_msg, message) };
+}
+
+#[unsafe(no_mangle)]
+/// Returns the complete text of the last error reported on the calling thread
+/// through an `error_msg` buffer of the Signal API: the message that buffer
+/// received, not cut at 4096 bytes.
+///
+/// An addition of this port: the reference libfaust has no equivalent. Same
+/// contract as `getCCompleteDSPError` and the backends' entry points. The
+/// pointer is owned by the library: do not free it, `freeCMemory` included. It
+/// is null while no error was reported on this thread, and stays valid until
+/// the next error reported on this thread. A call that succeeds does not reset
+/// it, so read it after a call that failed.
+pub extern "C" fn getCCompleteSignalError() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::as_ptr)
+}
+
 #[unsafe(no_mangle)]
 /// Compile a null-terminated Signal array to target source code.
 ///
@@ -853,21 +885,21 @@ pub unsafe extern "C" fn CcreateSourceFromSignals(
         Ok(Some(s)) if !s.is_empty() => s.to_owned(),
         Ok(_) => "FaustDSP".to_owned(),
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
     let lang = match unsafe { ffi_common::required_c_string_arg(lang, "lang") } {
         Ok(s) => s.to_ascii_lowercase(),
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
     let argv = match unsafe { ffi_common::decode_c_argv(argc, argv) } {
         Ok(v) => v,
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             return std::ptr::null_mut();
         }
     };
@@ -882,7 +914,7 @@ pub unsafe extern "C" fn CcreateSourceFromSignals(
     } {
         Ok(source) => ffi_common::alloc_c_string(&source),
         Err(e) => {
-            unsafe { ffi_common::write_error_4096(error_msg, &e) };
+            unsafe { write_error(error_msg, &e) };
             std::ptr::null_mut()
         }
     }
@@ -2005,6 +2037,66 @@ mod tests {
         assert!(failed.is_null());
         let error_text = unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy();
         assert!(error_text.contains("unsupported lang"));
+    }
+
+    fn complete_error() -> Option<String> {
+        let text = getCCompleteSignalError();
+        (!text.is_null()).then(|| {
+            unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
+    /// The Signal API has no failure that comes with compiler diagnostics (its
+    /// programs are built through the API, not parsed): the complete text is
+    /// the message, whole, under the contract of the other `getCComplete*`.
+    #[test]
+    fn complete_error_is_the_message_of_the_last_failure_on_this_thread() {
+        let _guard = lock_context();
+        reset_global_context();
+        assert_eq!(complete_error(), None);
+
+        let mut signals = [CsigInput(0), ptr::null_mut()];
+        let name = CString::new("SignalDSP").expect("valid name");
+        // Compiles to `lang`; returns the source, or the message `error_msg` got.
+        let mut compile = |lang: &str| -> Result<(), String> {
+            let lang = CString::new(lang).expect("valid lang");
+            let mut error = [0_i8; 4096];
+            let source = unsafe {
+                CcreateSourceFromSignals(
+                    name.as_ptr(),
+                    signals.as_mut_ptr(),
+                    lang.as_ptr(),
+                    0,
+                    ptr::null(),
+                    error.as_mut_ptr(),
+                )
+            };
+            if source.is_null() {
+                Err(unsafe { CStr::from_ptr(error.as_ptr()) }
+                    .to_string_lossy()
+                    .into_owned())
+            } else {
+                unsafe { box_ffi::freeCMemory(source.cast()) };
+                Ok(())
+            }
+        };
+
+        // A success publishes nothing.
+        assert_eq!(compile("c"), Ok(()));
+        assert_eq!(complete_error(), None);
+
+        // A failure publishes what the buffer received.
+        let message = compile("rust").expect_err("rust is not a source target here");
+        assert!(message.contains("unsupported lang"), "{message}");
+        assert_eq!(complete_error().as_deref(), Some(message.as_str()));
+
+        // A later success does not reset it, and another thread never saw it.
+        assert_eq!(compile("c"), Ok(()));
+        assert_eq!(complete_error().as_deref(), Some(message.as_str()));
+        let elsewhere = std::thread::spawn(complete_error).join().unwrap();
+        assert_eq!(elsewhere, None);
     }
 
     #[test]
