@@ -378,6 +378,7 @@ fn is_libfaust_c_symbol(name: &str) -> bool {
         "metadata",
         "read",
         "register",
+        "set",
         "start",
         "stop",
         "unregister",
@@ -792,6 +793,7 @@ mod tests {
             0000000000012340 T _CsigInt
             0000000000012350 T _createLibContext
             0000000000012358 T _getCInterpreterDSPFactoryFromSHAKey
+            000000000001235c T _setCCraneliftMemoryManager
               12    B 0000000180001230 CboxInt
             0000000000012360 T _rust_internal_helper
             ordinal hint RVA      name
@@ -803,6 +805,7 @@ mod tests {
         assert!(symbols.contains("CboxInt"));
         assert!(symbols.contains("createLibContext"));
         assert!(symbols.contains("getCInterpreterDSPFactoryFromSHAKey"));
+        assert!(symbols.contains("setCCraneliftMemoryManager"));
         assert!(!symbols.contains("rust_internal_helper"));
         assert!(!symbols.contains("name"));
     }
