@@ -39,6 +39,16 @@ theirs (`getCCompleteCraneliftDSPFactoryError`,
 `std::string` wrappers of `libfaust.h` read it, so their `error_msg` holds the
 complete text.
 
+`getCDSPErrorDiagnostics()`, another addition, returns the typed form of the
+same failure: the compiler's complete diagnostics-v2 JSON report (codes, byte
+ranges, facts, fixes with their edits and applicability), under the same
+contract and **null when the last error carried no typed diagnostics** (a
+missing file), even if an earlier one did. `schema_version` is 2,
+`request.backend` is `"libfaust"`; `getDSPErrorDiagnostics()` in `libfaust.h`
+returns it as a `std::string`. The backends and the Box API have theirs
+(`getCCraneliftDSPFactoryErrorDiagnostics`,
+`getCInterpreterDSPFactoryErrorDiagnostics`, `getCBoxErrorDiagnostics`).
+
 ## Verification
 
 ```bash

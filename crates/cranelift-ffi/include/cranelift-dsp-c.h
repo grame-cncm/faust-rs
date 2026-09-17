@@ -212,6 +212,26 @@ char** getAllCCraneliftDSPFactories(void);
 const char* getCCompleteCraneliftDSPFactoryError(void);
 
 /**
+ * Return the typed form of the last error reported on the calling thread
+ * through an `error_msg` buffer: the compiler's diagnostics-v2 JSON report.
+ * For each diagnostic: its `code` (FRS-...), its `labels` with byte ranges in
+ * each of `sources[]`, its `facts`, `notes` and `help`, and its `fixes`, each
+ * with its `edits` (range, replacement) and its `applicability`, so that a
+ * machine-applicable fix is applied without reading the rendered text.
+ *
+ * It is NULL when that error carried no typed diagnostics (an argument error),
+ * even if an earlier one did: a report never outlives the failure it
+ * describes. Otherwise the contract of the complete text above: owned by the
+ * library (do NOT free it), per thread, valid until the next error reported on
+ * this thread, not reset by a successful call.
+ *
+ * The document carries its own `schema_version` (2 today); fields may be added
+ * within a version, so read what you know and check the version rather than
+ * assuming it. `request.backend` names the surface that failed ("cranelift").
+ */
+const char* getCCraneliftDSPFactoryErrorDiagnostics(void);
+
+/**
  * Return the factory name string.
  * The returned string must be freed with freeCMemory.
  */

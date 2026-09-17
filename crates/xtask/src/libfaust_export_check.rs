@@ -641,6 +641,23 @@ int main() {
         std::cerr << "incomplete compile error:\n" << error_msg.substr(0, 600) << std::endl;
         return 1;
     }
+    // The same failure as a document (getCDSPErrorDiagnostics): its code, and
+    // the edit of its machine-applicable fix, which applied makes it compile.
+    const std::string report = getDSPErrorDiagnostics();
+    if (report.find("\"schema_version\": 2") == std::string::npos ||
+        report.find("\"backend\": \"libfaust\"") == std::string::npos ||
+        report.find("\"code\": \"FRS-PARSE-0001\"") == std::string::npos ||
+        report.find("\"start\": 38") == std::string::npos ||
+        report.find("\"replacement\": \")\"") == std::string::npos) {
+        std::cerr << "unexpected diagnostics report:\n" << report.substr(0, 800) << std::endl;
+        return 1;
+    }
+    std::string fixed = "// a comment line\nprocess = _ : *(0.5 ;\n";
+    fixed.insert(38, ")");
+    if (expandDSPFromString("probe", fixed, 0, nullptr, sha_key, error_msg).empty()) {
+        std::cerr << "the fix of the report did not repair the program: " << error_msg << std::endl;
+        return 1;
+    }
     std::string many;
     for (int i = 0; i < 200; ++i) {
         many += "a_rather_long_definition_name_" + std::to_string(i) + " = 0;\n";
@@ -706,7 +723,7 @@ int main() {
         .into());
     }
     println!(
-        "libfaust C++ client: expandDSPFromString, its complete compile errors and generateSHA1 verified"
+        "libfaust C++ client: expandDSPFromString, its complete compile errors, their diagnostics report and generateSHA1 verified"
     );
     Ok(())
 }
@@ -797,7 +814,7 @@ fn run_wrapper_cpp_clients(
         }
     }
     println!(
-        "C++ wrapper clients: complete compile errors verified through cranelift-dsp.h and interpreter-dsp.h (Faust headers: {})",
+        "C++ wrapper clients: complete compile errors and their diagnostics reports verified through cranelift-dsp.h and interpreter-dsp.h (Faust headers: {})",
         architecture.display()
     );
     Ok(())

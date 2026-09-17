@@ -32,3 +32,7 @@ codegen = { path = "../codegen" }
 transform = { path = "../transform" }
 fir = { path = "../fir" }
 ui = { path = "../ui" }
+
+# The typed error report is a JSON document: its tests parse it.
+[dev-dependencies]
+serde_json = "1"

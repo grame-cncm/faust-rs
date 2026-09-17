@@ -198,10 +198,32 @@ rendered at the `standard` verbosity with absolute paths and does not end with a
 newline. The workspace README has a
 [complete example](../README.md#compile-errors).
 
-This channel is the human one. A tool that needs typed fields (codes, ranges,
-fixes to apply) should run `faust-rs --check --error-format json` (sections 6
-and 7), or use the `wasm-ffi` bindings, which return the diagnostics-v2 JSON;
-the C API does not expose the JSON channel.
+This channel is the human one. A host that needs typed fields (codes, ranges,
+fixes to apply) reads the **diagnostics-v2 JSON report** of the same failure
+from the function next to it:
 
-`faustprobe` prints the same text when the program it is asked to measure does
-not compile.
+| Header | Function |
+|---|---|
+| `interpreter-dsp-c.h` | `getCInterpreterDSPFactoryErrorDiagnostics()` |
+| `cranelift-dsp-c.h` | `getCCraneliftDSPFactoryErrorDiagnostics()` |
+| `libfaust-c.h` | `getCDSPErrorDiagnostics()` |
+| `libfaust-box-c.h` | `getCBoxErrorDiagnostics()` |
+
+The Signal API has none: it never compiles a source, and none of its failures
+is typed. The contract is that of the complete text (library-owned, per thread,
+valid until the thread's next error, not reset by a success) with one
+difference: the pointer is **null when the last error carried no typed
+diagnostics**, even if an earlier one did, so a report never outlives the
+failure it describes. The document is the one of sections 6 and 7 with the
+complete field set (every label, fact, trace, fix, note and help entry, and
+the text of in-memory sources), the one the `wasm-ffi` bindings return and a
+superset of what `faust-rs --error-format json` prints; `request.backend` names
+the surface (`"interpreter"`, `"cranelift"`, `"libfaust"`, `"box"`). It carries
+`schema_version` (2): fields may be added within a version, so a host reads
+what it knows and checks the version rather than assuming it. The C++ wrappers
+return the report as a `std::string`, empty when there is none
+(`getInterpreterDSPFactoryErrorDiagnostics()`,
+`getCraneliftDSPFactoryErrorDiagnostics()`, `getDSPErrorDiagnostics()`).
+
+`faustprobe` prints the text when the program it is asked to measure does not
+compile, and the report under `--error-format json`.

@@ -409,7 +409,12 @@ pub(crate) unsafe fn write_error(error_msg: *mut c_char, message: &str) {
 /// Flattens a front-end failure to the message the error buffer receives,
 /// keeping its rendered diagnostics for the report of that message.
 fn summary_of(error: FaustwasmServiceError) -> String {
-    COMPLETE_ERROR.with(|record| record.attach(&error.message, &error.rendered_diagnostics()));
+    COMPLETE_ERROR.with(|record| match error.diagnostics_report_json(BACKEND) {
+        Some(report) => {
+            record.attach_with_diagnostics(&error.message, &error.rendered_diagnostics(), &report);
+        }
+        None => record.attach(&error.message, &error.rendered_diagnostics()),
+    });
     error.message
 }
 
@@ -432,6 +437,30 @@ fn summary_of(error: FaustwasmServiceError) -> String {
 #[unsafe(no_mangle)]
 pub extern "C" fn getCCompleteDSPError() -> *const c_char {
     COMPLETE_ERROR.with(CompleteError::as_ptr)
+}
+
+/// `request.backend` of this surface's diagnostics reports: the front end,
+/// which these entry points run without a backend.
+const BACKEND: &str = "libfaust";
+
+/// Returns the typed form of the last error reported on the calling thread
+/// through an `error_msg` buffer of this API: the compiler's **diagnostics-v2
+/// JSON report** (for each diagnostic its code, its labels with byte ranges in
+/// each source, its facts, notes and help, its fixes with their edits and
+/// applicability), so that a host applies a machine-applicable fix without
+/// reading the rendered text of [`getCCompleteDSPError`].
+///
+/// An addition of this port: the reference libfaust has no equivalent. Null
+/// when that error carried no typed diagnostics (an argument error), **even
+/// if an earlier one did**: a report never outlives the failure it describes.
+/// Otherwise the contract of the complete text: owned by the library (do not
+/// free it, `freeCMemory` included), per thread, valid until the next error
+/// reported on this thread, not reset by a success. The document carries its
+/// own `schema_version` (2 today) and `request.backend` (`"libfaust"`); fields
+/// may be added within a version.
+#[unsafe(no_mangle)]
+pub extern "C" fn getCDSPErrorDiagnostics() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::diagnostics_ptr)
 }
 
 /// Writes the SHA-1 key of `text` into the caller's 64-byte buffer.

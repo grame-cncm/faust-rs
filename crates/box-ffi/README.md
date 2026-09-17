@@ -56,6 +56,12 @@ free it), null before the thread's first error, valid until its next one, not
 reset by a success; same contract as `getCCompleteDSPError` and the backends'
 entry points.
 
+`getCBoxErrorDiagnostics()` returns the typed form of a `CDSPToBoxes` failure,
+the compiler's complete diagnostics-v2 JSON report (codes, byte ranges, facts,
+fixes with their edits and applicability; `request.backend` is `"box"`), and
+**null for every other failure of this API**, which has no typed diagnostics,
+even right after a `CDSPToBoxes` failure that had some.
+
 ## Source provenance
 
 The exported symbol names and signatures mirror the C++ reference headers

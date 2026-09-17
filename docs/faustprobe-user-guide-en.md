@@ -131,9 +131,9 @@ OTHER of `--compare` are compiled before anything is printed, so the document
 is alone on stdout. It is refused with `--eval`: the report's ranges are byte
 offsets in the source that was compiled, which is then the file wrapped and
 followed by the expressions, and a fix applied to the file at those offsets
-would land elsewhere. The report is reached inside the crate
-(`cranelift_ffi::factory::last_error_diagnostics_json`); the C API does not
-export it, which would freeze that schema into the ABI.
+would land elsewhere. The probe reads the report as any host of the C API
+can, from `getCCraneliftDSPFactoryErrorDiagnostics` (the README's "Compile
+errors" has the four such functions and their contract).
 
 ### Evaluating an expression: `--eval`
 

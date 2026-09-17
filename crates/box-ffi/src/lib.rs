@@ -2403,6 +2403,26 @@ pub extern "C" fn getCCompleteBoxError() -> *const c_char {
 }
 
 #[unsafe(no_mangle)]
+/// Returns the typed form of the last error reported on the calling thread
+/// through an `error_msg` buffer of the Box API: the compiler's
+/// **diagnostics-v2 JSON report** (for each diagnostic its code, its labels
+/// with byte ranges in each source, its facts, notes and help, its fixes with
+/// their edits and applicability). `CDSPToBoxes` is the entry point of this
+/// API that compiles a source, and the one whose failures have a report.
+///
+/// An addition of this port: the reference libfaust has no equivalent. Null
+/// when that error carried no typed diagnostics (every argument error), **even
+/// if an earlier one did**: a report never outlives the failure it describes.
+/// Otherwise the contract of `getCCompleteBoxError`: owned by the library (do
+/// not free it, `freeCMemory` included), per thread, valid until the next
+/// error reported on this thread, not reset by a success. The document
+/// carries its own `schema_version` (2 today) and `request.backend`
+/// (`"box"`); fields may be added within a version.
+pub extern "C" fn getCBoxErrorDiagnostics() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::diagnostics_ptr)
+}
+
+#[unsafe(no_mangle)]
 /// Compile Faust source into one flattened box.
 ///
 /// # Safety
@@ -2438,7 +2458,13 @@ pub unsafe extern "C" fn CDSPToBoxes(
             // The one failure of this API that comes from the compiler with
             // diagnostics: keep them for the report of their summary.
             let summary = e.to_string();
-            COMPLETE_ERROR.with(|record| record.attach(&summary, &e.rendered_diagnostics()));
+            COMPLETE_ERROR.with(|record| {
+                record.attach_with_diagnostics(
+                    &summary,
+                    &e.rendered_diagnostics(),
+                    &e.diagnostics_report_json("box"),
+                );
+            });
             unsafe { write_error(error_msg, &summary) };
             return std::ptr::null_mut();
         }
@@ -2816,6 +2842,65 @@ mod tests {
             .into_owned();
         assert_eq!(message, "null or unknown box pointer");
         assert_eq!(complete_error().as_deref(), Some(message.as_str()));
+    }
+
+    /// The typed form of the last error: `getCBoxErrorDiagnostics`, parsed.
+    fn error_diagnostics() -> Option<serde_json::Value> {
+        let text = getCBoxErrorDiagnostics();
+        (!text.is_null()).then(|| {
+            let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+            serde_json::from_str(&text).expect("the report is one JSON document")
+        })
+    }
+
+    #[test]
+    fn error_diagnostics_hold_the_code_the_range_and_the_fix_of_a_syntax_error() {
+        let _guard = fresh_test_context();
+        assert!(!dsp_to_boxes(UNCLOSED).0);
+        let report = error_diagnostics().expect("a typed failure has a report");
+        assert_eq!(report["schema_version"], 2);
+        assert_eq!(report["request"]["backend"], "box");
+        let diagnostic = &report["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "FRS-PARSE-0001");
+        let edit = &diagnostic["fixes"][0]["edits"][0];
+        assert_eq!(
+            diagnostic["fixes"][0]["applicability"],
+            "machine_applicable"
+        );
+        let start = usize::try_from(edit["range"]["start"].as_u64().unwrap()).unwrap();
+        assert_eq!(edit["replacement"], ")");
+        // line 2, column 21 of the source: applying the edit is all it takes
+        assert_eq!(start, UNCLOSED.find(" ;").unwrap() + 1);
+        let mut fixed = UNCLOSED.to_owned();
+        fixed.insert(start, ')');
+        assert!(dsp_to_boxes(&fixed).0, "the fixed source compiles");
+    }
+
+    #[test]
+    fn error_diagnostics_are_null_for_a_plain_failure_and_inherit_nothing() {
+        let _guard = fresh_test_context();
+        assert!(!dsp_to_boxes(UNCLOSED).0);
+        assert!(error_diagnostics().is_some());
+        // an argument error: its message, and no report, not the previous one's
+        let mut buffer = [0 as c_char; 4096];
+        let signals = unsafe { CboxesToSignals(std::ptr::null_mut(), buffer.as_mut_ptr()) };
+        assert!(signals.is_null());
+        assert!(error_diagnostics().is_none());
+        assert!(complete_error().is_some());
+    }
+
+    #[test]
+    fn error_diagnostics_survive_a_success_and_are_per_thread() {
+        let _guard = fresh_test_context();
+        assert!(!dsp_to_boxes(UNCLOSED).0);
+        let before = error_diagnostics().expect("a report");
+        assert!(dsp_to_boxes("process = _;").0);
+        assert_eq!(error_diagnostics().as_ref(), Some(&before));
+        assert!(
+            std::thread::spawn(|| error_diagnostics().is_none())
+                .join()
+                .unwrap()
+        );
     }
 
     #[test]

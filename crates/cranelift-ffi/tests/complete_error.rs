@@ -12,6 +12,7 @@ use std::ffi::{CStr, CString, c_char};
 use cranelift_ffi::factory::{
     createCCraneliftDSPFactoryFromString, deleteCCraneliftDSPFactory,
     expandCCraneliftDSPFromString, getCCompleteCraneliftDSPFactoryError,
+    getCCraneliftDSPFactoryErrorDiagnostics,
 };
 
 /// Compiles `source`; returns whether it succeeded and what `error_msg` got.
@@ -151,4 +152,82 @@ fn expansion_failures_carry_their_diagnostics_too() {
     let complete = complete().unwrap();
     assert!(complete.starts_with(summary.as_ref()), "{complete}");
     assert!(complete.contains("[FRS-PARSE-0001]"), "{complete}");
+}
+
+// ------------------------------------------------ the typed form of an error
+//
+// The same failure as a document: the compiler's diagnostics-v2 JSON report,
+// through `getCCraneliftDSPFactoryErrorDiagnostics`. A host applies a machine-applicable fix
+// from it without reading the rendered text. It follows the contract of the
+// complete text, with one difference: an error that carries no typed
+// diagnostics has no report, and does not inherit the previous one's.
+
+fn report() -> Option<serde_json::Value> {
+    let text = getCCraneliftDSPFactoryErrorDiagnostics();
+    (!text.is_null()).then(|| {
+        let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+        serde_json::from_str(&text).expect("the report is one JSON document")
+    })
+}
+
+#[test]
+fn the_report_of_a_syntax_error_holds_its_code_its_range_and_its_fix() {
+    assert!(report().is_none(), "null before any error");
+    assert!(!compile(Some(UNCLOSED)).0);
+    let report = report().expect("a typed failure has a report");
+    assert_eq!(report["schema_version"], 2);
+    assert_eq!(report["status"], "failed");
+    assert_eq!(report["request"]["backend"], "cranelift");
+    let diagnostic = &report["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "FRS-PARSE-0001");
+    let fix = &diagnostic["fixes"][0];
+    assert_eq!(fix["applicability"], "machine_applicable");
+    let edit = &fix["edits"][0];
+    assert_eq!(edit["range"]["start"], 20);
+    assert_eq!(edit["replacement"], ")");
+    // applying the edit is all it takes
+    let mut fixed = UNCLOSED.to_owned();
+    fixed.insert(20, ')');
+    assert!(compile(Some(&fixed)).0, "the fixed source compiles");
+
+    // the document is the one `docs/diagnostics-v2.schema.json` publishes,
+    // with the complete field set: what the CLI's channel test requires of a
+    // diagnostic, and the source the ranges point into, with its text
+    for key in [
+        "severity", "stage", "code", "category", "message", "labels", "facts", "traces", "fixes",
+        "related", "notes", "help",
+    ] {
+        assert!(diagnostic.get(key).is_some(), "missing {key}: {diagnostic}");
+    }
+    assert!(report["compiler"]["version"].is_string());
+    let source = &report["sources"][0];
+    assert_eq!(source["id"], edit["range"]["source_id"]);
+    assert_eq!(source["content_hash"].as_str().map(str::len), Some(64));
+    assert_eq!(
+        source["text"], UNCLOSED,
+        "a source given as a string comes with its text"
+    );
+}
+
+#[test]
+fn an_error_without_typed_diagnostics_has_no_report_and_inherits_none() {
+    assert!(!compile(Some(UNCLOSED)).0);
+    assert!(report().is_some());
+    // a null source: an argument error, no compiler diagnostic
+    assert!(!compile(None).0);
+    assert!(
+        report().is_none(),
+        "the previous failure's report must not describe this one"
+    );
+    // while the complete text is this error's message
+    assert!(complete().is_some());
+}
+
+#[test]
+fn a_report_survives_a_success_and_is_per_thread() {
+    assert!(!compile(Some(UNCLOSED)).0);
+    let before = report().expect("a report");
+    assert!(compile(Some("process = _;")).0);
+    assert_eq!(report().as_ref(), Some(&before));
+    assert!(std::thread::spawn(|| report().is_none()).join().unwrap());
 }

@@ -28,3 +28,7 @@ ffi-common = { path = "../ffi-common" }
 # For now the C header (include/interpreter-dsp-c.h) is maintained manually.
 # [build-dependencies]
 # cbindgen = "0.27"
+
+# The typed error report is a JSON document: its tests parse it.
+[dev-dependencies]
+serde_json = "1"

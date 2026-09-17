@@ -100,6 +100,7 @@ Legend:
 | Delete all factories | `deleteAllCDSPFactories` | `deleteAllCInterpreterDSPFactories` | `deleteAllCCraneliftDSPFactories` | `v1-required` | |
 | List all factories | `getAllCDSPFactories` | `getAllCInterpreterDSPFactories` | `getAllCCraneliftDSPFactories` | `v1-required` | Array/freeing semantics parity |
 | Complete text of the last error | (none; `getCCompleteDSPError` for the backend-agnostic `expandCDSP*` / `generateCAuxFiles*` of `libfaust-ffi`; `getCCompleteBoxError`, `getCCompleteSignalError` for the Box and Signal APIs) | `getCCompleteInterpreterDSPFactoryError` | `getCCompleteCraneliftDSPFactoryError` | `faust-rs addition` | `error_msg` stays 4096 bytes (caller-allocated, size never passed); this returns the untruncated message plus the rendered compiler diagnostics from per-thread, library-owned storage, valid until the next error on the thread; the C++ wrappers read it into `std::string& error_msg` |
+| Typed form of the last error (diagnostics-v2 JSON) | (none; `getCDSPErrorDiagnostics` for `libfaust-ffi`, `getCBoxErrorDiagnostics` for the Box API; the Signal API has none, no failure of it being typed) | `getCInterpreterDSPFactoryErrorDiagnostics` | `getCCraneliftDSPFactoryErrorDiagnostics` | `addition` | The compiler's complete report: codes, byte ranges, facts, fixes with their edits. Same per-thread storage as the complete text, and null when the last error carried no typed diagnostics, even if an earlier one did. The document carries its `schema_version` |
 
 ## 3.3 Factory creation from Faust source
 

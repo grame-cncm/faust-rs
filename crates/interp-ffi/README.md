@@ -111,9 +111,17 @@ thread's first error, valid until its next one, not reset by a success, no
 trailing newline. It covers every entry point of `interpreter-dsp-c.h` that
 takes an `error_msg`: factory creation from file, string and bitcode, expansion,
 auxiliary files. The C++ wrapper reads it, so `std::string& error_msg` holds the
-complete text, and is cleared by a success. The workspace
-[C and C++ usage guide](../../README.md#compile-errors) has an example and the
-functions of the other APIs.
+complete text, and is cleared by a success.
+
+`getCInterpreterDSPFactoryErrorDiagnostics()` returns the typed form of the same
+failure, the compiler's complete diagnostics-v2 JSON report (codes, byte ranges,
+facts, fixes with their edits and applicability), under the same contract and
+**null when the last error carried no typed diagnostics**, even if an earlier
+one did. The document carries `schema_version` (2) and `"request": {"backend":
+"interpreter"}`; the C++ wrapper returns it as a `std::string`
+(`getInterpreterDSPFactoryErrorDiagnostics()`, empty when there is none). The
+workspace [C and C++ usage guide](../../README.md#compile-errors) has an example
+and the functions of the other APIs.
 
 ## Build / test
 

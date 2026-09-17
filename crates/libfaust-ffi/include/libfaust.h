@@ -73,6 +73,20 @@ inline std::string libfaustErrorText(const char* buffer)
 }
 
 /**
+ * The typed form of the last failure on this thread: the compiler's
+ * diagnostics-v2 JSON report (codes, byte ranges, facts, fixes with their
+ * edits and applicability), or an empty string when that failure carried no
+ * typed diagnostics. To be read after a call that failed: it is per thread and
+ * a successful call does not reset it. `error_msg` holds the same failure
+ * rendered for a person.
+ */
+inline std::string getDSPErrorDiagnostics()
+{
+    const char* report = getCDSPErrorDiagnostics();
+    return report ? std::string(report) : std::string();
+}
+
+/**
  * Generate a SHA-1 key from a string.
  */
 inline std::string generateSHA1(const std::string& data)

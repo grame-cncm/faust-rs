@@ -26,13 +26,16 @@ diagnostics when there are some) behind one function per API, all five under
 the same contract: per thread, owned by the library, null before the thread's
 first error, valid until its next one, not reset by a success.
 
-| API | Function |
-|---|---|
-| Interpreter | `getCCompleteInterpreterDSPFactoryError()` |
-| Cranelift | `getCCompleteCraneliftDSPFactoryError()` |
-| libfaust (`expandCDSP*`, `generateCAuxFiles*`) | `getCCompleteDSPError()` |
-| Box | `getCCompleteBoxError()` |
-| Signal | `getCCompleteSignalError()` |
+| API | Complete text | Typed form (diagnostics-v2 JSON) |
+|---|---|---|
+| Interpreter | `getCCompleteInterpreterDSPFactoryError()` | `getCInterpreterDSPFactoryErrorDiagnostics()` |
+| Cranelift | `getCCompleteCraneliftDSPFactoryError()` | `getCCraneliftDSPFactoryErrorDiagnostics()` |
+| libfaust (`expandCDSP*`, `generateCAuxFiles*`) | `getCCompleteDSPError()` | `getCDSPErrorDiagnostics()` |
+| Box | `getCCompleteBoxError()` | `getCBoxErrorDiagnostics()` |
+| Signal | `getCCompleteSignalError()` | none: no failure of this API is typed |
+
+The typed form is null when the last error carried no typed diagnostics, even
+if an earlier one did.
 
 The C++ wrappers that take a `std::string& error_msg` read it themselves. See
 [Compile errors](../../README.md#compile-errors) in the workspace guide.

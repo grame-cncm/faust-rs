@@ -60,6 +60,7 @@ bool deleteCInterpreterDSPFactory(cinterpreter_dsp_factory* factory);
 void deleteAllCInterpreterDSPFactories(void);
 char** getAllCInterpreterDSPFactories(void);
 const char* getCCompleteInterpreterDSPFactoryError(void);
+const char* getCInterpreterDSPFactoryErrorDiagnostics(void);
 char* getCInterpreterDSPFactoryJSON(cinterpreter_dsp_factory* factory);
 const char** getCInterpreterDSPFactoryLibraryList(cinterpreter_dsp_factory* factory);
 bool startMTDSPFactories(void);
@@ -467,6 +468,20 @@ inline bool writeInterpreterDSPFactoryToBitcodeFile(
  * @param sha_key the SHA key
  * @return a newly acquired factory reference, or nullptr if not found
  */
+/**
+ * The typed form of the last failure on this thread: the compiler's
+ * diagnostics-v2 JSON report (codes, byte ranges, facts, fixes with their
+ * edits and applicability), or an empty string when that failure carried no
+ * typed diagnostics. To be read after a call that failed: it is per thread and
+ * a successful call does not reset it. `error_msg` holds the same failure
+ * rendered for a person.
+ */
+inline std::string getInterpreterDSPFactoryErrorDiagnostics()
+{
+    const char* report = getCInterpreterDSPFactoryErrorDiagnostics();
+    return report ? std::string(report) : std::string();
+}
+
 inline interpreter_dsp_factory* getInterpreterDSPFactoryFromSHAKey(
     const std::string& sha_key)
 {

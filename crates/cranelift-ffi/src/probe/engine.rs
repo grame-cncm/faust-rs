@@ -28,7 +28,7 @@ use std::time::Instant;
 
 use crate::factory::{
     createCCraneliftDSPFactoryFromFile, deleteCCraneliftDSPFactory,
-    getCCompleteCraneliftDSPFactoryError,
+    getCCompleteCraneliftDSPFactoryError, getCCraneliftDSPFactoryErrorDiagnostics,
 };
 use crate::instance::{
     buildUserInterfaceCCraneliftDSPInstance, computeCCraneliftDSPInstance,
@@ -132,13 +132,20 @@ fn compile_error(error_msg: &[c_char; 4096]) -> String {
             summary
         }
     };
-    // The typed channel of the same failure, read here because here is where
-    // the failure is known to be this one: the report is per thread and a
-    // later failure replaces it.
+    // The typed channel of the same failure, through the entry point any host
+    // of the C API has, and read here because here is where the failure is
+    // known to be this one: the report is per thread and a later failure
+    // replaces it (or clears it, when it has none).
+    let report = getCCraneliftDSPFactoryErrorDiagnostics();
+    let diagnostics_json = (!report.is_null()).then(|| {
+        unsafe { CStr::from_ptr(report) }
+            .to_string_lossy()
+            .into_owned()
+    });
     LAST_COMPILE_FAILURE.with(|last| {
         *last.borrow_mut() = Some(CompileFailure {
             text: text.clone(),
-            diagnostics_json: crate::factory::last_error_diagnostics_json(),
+            diagnostics_json,
         });
     });
     text

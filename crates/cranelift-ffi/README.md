@@ -184,13 +184,18 @@ headers are found. The workspace
 [C and C++ usage guide](../../README.md#compile-errors) has an example and the
 functions of the other APIs.
 
-Rust callers of this crate also reach the typed channel of the same failure:
-`cranelift_ffi::factory::last_error_diagnostics_json()` returns the compiler's
-complete diagnostics-v2 JSON report (code, byte ranges, facts,
-machine-applicable fixes) under the same per-thread contract, or `None` when
-the last error carried no typed diagnostics. `faustprobe --error-format json`
-prints it. It is not exported by the C API, which would freeze that schema into
-the ABI.
+The typed form of the same failure is
+`getCCraneliftDSPFactoryErrorDiagnostics()`: the compiler's complete
+diagnostics-v2 JSON report (codes, byte ranges, facts, fixes with their edits
+and applicability), under the same per-thread contract, and **null when the
+last error carried no typed diagnostics**, even if an earlier one did. The
+document carries its own `schema_version` (2) and `"request": {"backend":
+"cranelift"}`. The C++ wrapper returns it as a `std::string`
+(`getCraneliftDSPFactoryErrorDiagnostics()`, empty when there is none), Rust
+callers of this crate as an `Option<String>`
+(`cranelift_ffi::factory::last_error_diagnostics_json()`), and `faustprobe
+--error-format json` prints it. `complete_error_cpp_client.cpp` applies the
+report's fix and compiles the result.
 
 ## Known limitations
 

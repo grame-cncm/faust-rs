@@ -586,7 +586,7 @@ must run unchanged with Faust C++ should not pass them.
   and the three compile-and-run C++ tests named above in
   `crates/codegen/src/backends/cpp/mod.rs`.
 
-### DIFF-API-006 — the complete text of an error through the C API
+### DIFF-API-006 — the complete text of an error, and its typed form, through the C API
 
 - Status: `extension`.
 - The reference C API reports a failure through `error_msg`, a buffer the caller
@@ -607,15 +607,23 @@ must run unchanged with Faust C++ should not pass them.
   them, so their `std::string& error_msg` holds the complete text, where the
   reference's holds its own one-line message. A host that parses that string
   must not assume one line.
-- The typed channel of the same failure, the diagnostics-v2 JSON report, is
-  reachable for Rust callers of the Cranelift crate only
-  (`cranelift_ffi::factory::last_error_diagnostics_json`, same per-thread
-  contract; `faustprobe --error-format json` prints it). It is deliberately
-  not a sixth C function: exporting it would freeze that schema into the ABI.
+- Four more functions, with no reference counterpart either, return the typed
+  form of the same failure, the compiler's complete diagnostics-v2 JSON report
+  (codes, byte ranges in each source, facts, fixes with their edits and
+  applicability): `getCInterpreterDSPFactoryErrorDiagnostics`,
+  `getCCraneliftDSPFactoryErrorDiagnostics`, `getCDSPErrorDiagnostics`,
+  `getCBoxErrorDiagnostics`. Same storage and lifetime, with one difference:
+  the pointer is null when the last error carried no typed diagnostics, even
+  if an earlier one did. The Signal API has none, no failure of it being
+  typed. Exporting the report ties the ABI to a document, not to its fields:
+  it carries its own `schema_version` (2), fields may be added within a
+  version, and a host is told to check the version. The C++ wrappers return it
+  as a `std::string`; `faustprobe --error-format json` prints the Cranelift one.
 - Compatibility impact: none for a host written against the reference API; the
   functions are additions and the buffer's behavior is unchanged.
 - Evidence: `crates/ffi-common/src/complete_error.rs`, the `complete_error`
-  tests of the FFI crates, `cargo run -p xtask -- libfaust-export-check`, and
+  tests of the FFI crates (which apply the report's fix and compile the
+  result), `cargo run -p xtask -- libfaust-export-check`, and
   the workspace README, "Compile errors".
 
 ## 8. Internal architectural adaptations

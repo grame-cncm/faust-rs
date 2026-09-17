@@ -184,6 +184,7 @@ Functions: `cache_insert`, `cache_lookup`, `cache_remove_by_ptr`,
 | `getAllCInterpreterDSPFactories` | `cache_all_sha_keys` → null-terminated `*mut *mut c_char` |
 | `getCInterpreterDSPFactoryJSON` | generate JSON from `meta_block` + `ui_block` |
 | `getCCompleteInterpreterDSPFactoryError` | `ffi_common::CompleteError` (per-thread): the `error_msg` text plus the rendered compiler diagnostics, not limited to 4096 bytes; no libfaust equivalent |
+| `getCInterpreterDSPFactoryErrorDiagnostics` | the same `CompleteError` record: the typed form of that error, the compiler's complete diagnostics-v2 JSON report (`CompilerError::diagnostics_report_json("interpreter")`), null when the error carried no typed diagnostics; no libfaust equivalent |
 | `getCInterpreterDSPFactoryLibraryList` | always returns empty null-terminated array |
 | `getCLibFaustVersion` | `FAUST_VERSION` constant via `OnceLock<CString>` |
 | `freeCMemory` | `CString::from_raw(ptr)` |

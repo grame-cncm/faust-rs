@@ -70,6 +70,7 @@ bool setCCraneliftMemoryManager(ccranelift_dsp_factory* factory,
 void deleteAllCCraneliftDSPFactories(void);
 char** getAllCCraneliftDSPFactories(void);
 const char* getCCompleteCraneliftDSPFactoryError(void);
+const char* getCCraneliftDSPFactoryErrorDiagnostics(void);
 char* getCCraneliftDSPFactoryName(ccranelift_dsp_factory* factory);
 char* getCCraneliftDSPFactorySHAKey(ccranelift_dsp_factory* factory);
 char* getCCraneliftDSPFactoryDSPCode(ccranelift_dsp_factory* factory);
@@ -463,6 +464,20 @@ inline ::dsp* cranelift_dsp_factory::createDSPInstance()
 }
 
 // ── Free functions ────────────────────────────────────────────────────────
+
+/**
+ * The typed form of the last failure on this thread: the compiler's
+ * diagnostics-v2 JSON report (codes, byte ranges, facts, fixes with their
+ * edits and applicability), or an empty string when that failure carried no
+ * typed diagnostics. To be read after a call that failed: it is per thread and
+ * a successful call does not reset it. `error_msg` holds the same failure
+ * rendered for a person.
+ */
+inline std::string getCraneliftDSPFactoryErrorDiagnostics()
+{
+    const char* report = getCCraneliftDSPFactoryErrorDiagnostics();
+    return report ? std::string(report) : std::string();
+}
 
 inline cranelift_dsp_factory* getCraneliftDSPFactoryFromSHAKey(
     const std::string& sha_key)

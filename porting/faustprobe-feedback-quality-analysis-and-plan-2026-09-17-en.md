@@ -464,6 +464,14 @@ from 1e-7 to what the programs actually achieve, which is itself a result.
 - **JSON diagnostics through the C ABI.** A sixth `getCComplete*` returning
   diagnostics-v2 would give every C host the typed channel; it also freezes that
   schema into the ABI.
+  *Settled 2026-09-17, by the maintainer: exported.* Four functions
+  (`getC{Interpreter,Cranelift}DSPFactoryErrorDiagnostics`,
+  `getCDSPErrorDiagnostics`, `getCBoxErrorDiagnostics`; the Signal API has no
+  typed failure and gets none), on the storage of the complete text, null
+  when the last error carried no typed diagnostics. What the ABI is tied to is
+  a document that carries its own `schema_version`, not its fields: the
+  headers tell a host to check the version and that fields may be added within
+  one. `faustprobe` reads the report through the C function, as any host can.
 - **`--eval` and `declare`/`process` clashes.** A file that declares options
   (`declare options "[nvoices:8]"`) inside an `environment` needs checking; so
   does a library that itself defines `process`.
@@ -741,8 +749,8 @@ As planned, with these decisions and departures:
   plan's "as `faust-rs` prints it". stderr keeps the summary line. **Refused
   with `--eval`**: the ranges are byte offsets in the wrapped source, and a fix
   applied to the file at those offsets would land elsewhere; the human text is
-  rewritten for that case, the report is not. The open question of §6 stays
-  open: the C ABI does not export the report.
+  rewritten for that case, the report is not. The open question of §6 was
+  settled later the same day: the C ABI exports the report (§6).
 
 Exit criterion. The studio fit of `faust-diff-jot` as one command (`--sweep
 lt0=... --sweep ltpi=... --train lt0,ltpi --reset-per-block --fd-check=end

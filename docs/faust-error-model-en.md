@@ -279,10 +279,18 @@ actually used, because a tool resolving a byte range needs that exact path.
 
 ### 4.1 Where it is produced
 
-One place: the CLI, under `--error-format json`. Every mode that can fail emits
+The CLI, under `--error-format json`. Every mode that can fail emits
 it, and `--check` emits it on success too, with an empty `diagnostics` array —
 so success and failure share one schema and a consumer never needs a second
 code path for "no output".
+
+The embedding surfaces return the same document for a failure, with the
+complete field set: the `wasm-ffi` bindings, and the native C API through one
+function per header (`getCInterpreterDSPFactoryErrorDiagnostics`,
+`getCCraneliftDSPFactoryErrorDiagnostics`, `getCDSPErrorDiagnostics`,
+`getCBoxErrorDiagnostics`), which set `request.backend` to the surface that
+failed and return null for an error that has no typed diagnostics. See "Compile
+errors" in the workspace README for their contract.
 
 The payload is **schema v2**, published as `docs/diagnostics-v2.schema.json`
 with a worked example in `docs/diagnostics-v2-example.json`. It validates

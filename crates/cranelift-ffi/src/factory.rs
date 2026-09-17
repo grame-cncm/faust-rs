@@ -25,10 +25,6 @@ use codegen::backends::cranelift::{
 };
 use codegen::json::{JsonBuildOptions, JsonMemoryDescription, build_json_description_from_fir};
 use codegen::memory_layout::MemoryManagerMode;
-use compiler::diagnostics_json::{
-    DiagnosticsCompilerMetadata, DiagnosticsRequestMetadata, SourceTextPolicy,
-    render_complete_diagnostics_v2_json,
-};
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, CompilerError, ComputeMode, ExpandDspRequest,
     FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane,
@@ -1425,69 +1421,12 @@ thread_local! {
     static COMPLETE_ERROR: CompleteError = const { CompleteError::new() };
 }
 
-/// The typed channel of the last error this thread reported: its
-/// diagnostics-v2 JSON report, for Rust callers of this crate.
-///
-/// The same two steps as [`CompleteError`], for the same reason: the bundle
-/// is known where a typed error is flattened to its summary, and the error is
-/// known to have reached the host only where that summary is written to the
-/// buffer. A report whose message does not carry the attached summary (an
-/// argument error, an I/O error) publishes nothing, so a document never
-/// outlives the failure it describes.
-///
-/// Not part of the C ABI: exporting it would freeze the diagnostics-v2 schema
-/// into that ABI, a decision the C API has not taken.
-struct DiagnosticsReport {
-    attached: std::cell::RefCell<Option<(String, String)>>,
-    published: std::cell::RefCell<Option<String>>,
-}
-
-impl DiagnosticsReport {
-    const fn new() -> Self {
-        Self {
-            attached: std::cell::RefCell::new(None),
-            published: std::cell::RefCell::new(None),
-        }
-    }
-
-    fn attach(&self, summary: &str, bundle: &compiler::DiagnosticBundle) {
-        let report = render_complete_diagnostics_v2_json(
-            bundle,
-            DiagnosticsCompilerMetadata::default(),
-            DiagnosticsRequestMetadata {
-                mode: Some("factory".to_owned()),
-                backend: Some("cranelift".to_owned()),
-                normalized_options: Vec::new(),
-            },
-            SourceTextPolicy::AllMemorySources,
-        );
-        *self.attached.borrow_mut() = Some((summary.to_owned(), report));
-    }
-
-    fn report(&self, message: &str) {
-        *self.published.borrow_mut() = match self.attached.borrow_mut().take() {
-            Some((summary, report)) if message.contains(summary.as_str()) => Some(report),
-            _ => None,
-        };
-    }
-}
-
-thread_local! {
-    static DIAGNOSTICS_REPORT: DiagnosticsReport = const { DiagnosticsReport::new() };
-}
-
-/// The complete diagnostics-v2 JSON report (code, ranges, facts,
-/// machine-applicable fixes) of the last error reported on the calling thread
-/// through an `error_msg` buffer, or `None` when that error carried no typed
-/// compiler diagnostics (an argument error, an unreadable file).
-///
-/// The contract of [`getCCompleteCraneliftDSPFactoryError`], one level up: per
-/// thread, not reset by a success, to be read after a call that failed. For
-/// Rust callers of this crate (`faustprobe --error-format json`); the C ABI
-/// does not expose it.
+/// The complete diagnostics-v2 JSON report of the last error reported on the
+/// calling thread, for Rust callers of this crate:
+/// [`getCCraneliftDSPFactoryErrorDiagnostics`] as an owned string.
 #[must_use]
 pub fn last_error_diagnostics_json() -> Option<String> {
-    DIAGNOSTICS_REPORT.with(|record| record.published.borrow().clone())
+    COMPLETE_ERROR.with(CompleteError::diagnostics)
 }
 
 /// Write an error message to a standard 4096-byte Faust error buffer, and
@@ -1497,7 +1436,6 @@ pub fn last_error_diagnostics_json() -> Option<String> {
 /// `buf` must point to at least 4096 bytes or be null.
 unsafe fn write_error(buf: *mut c_char, msg: &str) {
     COMPLETE_ERROR.with(|record| record.report(msg));
-    DIAGNOSTICS_REPORT.with(|record| record.report(msg));
     unsafe { write_error_4096(buf, msg) }
 }
 
@@ -1505,18 +1443,25 @@ unsafe fn write_error(buf: *mut c_char, msg: &str) {
 /// receives, keeping its rendered diagnostics for the report of that summary.
 fn summary_of(error: &CompilerError) -> String {
     let summary = error.to_string();
-    COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
-    DIAGNOSTICS_REPORT.with(|record| record.attach(&summary, error.diagnostic_bundle()));
+    COMPLETE_ERROR.with(|record| {
+        record.attach_with_diagnostics(
+            &summary,
+            &error.rendered_diagnostics(),
+            &error.diagnostics_report_json(BACKEND),
+        );
+    });
     summary
 }
 
 /// [`summary_of`] for the helper-service errors (`expand`, auxiliary files).
 fn service_summary_of(error: &FaustwasmServiceError) -> String {
     let summary = error.to_string();
-    COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
-    if let Some(bundle) = &error.diagnostics {
-        DIAGNOSTICS_REPORT.with(|record| record.attach(&summary, bundle));
-    }
+    COMPLETE_ERROR.with(|record| match error.diagnostics_report_json(BACKEND) {
+        Some(report) => {
+            record.attach_with_diagnostics(&summary, &error.rendered_diagnostics(), &report);
+        }
+        None => record.attach(&summary, &error.rendered_diagnostics()),
+    });
     summary
 }
 
@@ -1534,6 +1479,30 @@ fn service_summary_of(error: &FaustwasmServiceError) -> String {
 #[unsafe(no_mangle)]
 pub extern "C" fn getCCompleteCraneliftDSPFactoryError() -> *const c_char {
     COMPLETE_ERROR.with(CompleteError::as_ptr)
+}
+
+/// `request.backend` of this surface's diagnostics reports.
+const BACKEND: &str = "cranelift";
+
+/// Returns the typed form of the last error reported on the calling thread
+/// through an `error_msg` buffer: the compiler's **diagnostics-v2 JSON
+/// report**, with for each diagnostic its code, its labels with byte ranges in
+/// each source, its facts, notes and help, and its fixes with their edits and
+/// applicability, so that a host applies a machine-applicable fix without
+/// reading the rendered text of [`getCCompleteCraneliftDSPFactoryError`].
+///
+/// Null when that error carried no typed diagnostics (an argument error, an
+/// unreadable file's transport failure), **even if an earlier one did**: a
+/// report never outlives the failure it describes. Otherwise the contract of
+/// the complete text: owned by the library (do not free it), per thread, valid
+/// until the next error reported on this thread, not reset by a success.
+///
+/// The document carries its own `schema_version` (2 today) and
+/// `request.backend` (`"cranelift"`); fields may be added within a version, so
+/// a host reads what it knows and checks the version rather than assuming it.
+#[unsafe(no_mangle)]
+pub extern "C" fn getCCraneliftDSPFactoryErrorDiagnostics() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::diagnostics_ptr)
 }
 
 /// Runs the shared post-`argv` FFI factory creation flow for Cranelift backend.

@@ -455,14 +455,25 @@ unsafe fn write_error(buf: *mut c_char, msg: &str) {
 /// receives, keeping its rendered diagnostics for the report of that summary.
 fn summary_of(error: &CompilerError) -> String {
     let summary = error.to_string();
-    COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
+    COMPLETE_ERROR.with(|record| {
+        record.attach_with_diagnostics(
+            &summary,
+            &error.rendered_diagnostics(),
+            &error.diagnostics_report_json(BACKEND),
+        );
+    });
     summary
 }
 
 /// [`summary_of`] for the helper-service errors (`expand`, auxiliary files).
 fn service_summary_of(error: &FaustwasmServiceError) -> String {
     let summary = error.to_string();
-    COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
+    COMPLETE_ERROR.with(|record| match error.diagnostics_report_json(BACKEND) {
+        Some(report) => {
+            record.attach_with_diagnostics(&summary, &error.rendered_diagnostics(), &report);
+        }
+        None => record.attach(&summary, &error.rendered_diagnostics()),
+    });
     summary
 }
 
@@ -480,6 +491,28 @@ fn service_summary_of(error: &FaustwasmServiceError) -> String {
 #[unsafe(no_mangle)]
 pub extern "C" fn getCCompleteInterpreterDSPFactoryError() -> *const c_char {
     COMPLETE_ERROR.with(CompleteError::as_ptr)
+}
+
+/// `request.backend` of this surface's diagnostics reports.
+const BACKEND: &str = "interpreter";
+
+/// Returns the typed form of the last error reported on the calling thread
+/// through an `error_msg` buffer: the compiler's **diagnostics-v2 JSON
+/// report** (for each diagnostic its code, its labels with byte ranges in each
+/// source, its facts, notes and help, its fixes with their edits and
+/// applicability), so that a host applies a machine-applicable fix without
+/// reading the rendered text of [`getCCompleteInterpreterDSPFactoryError`].
+///
+/// Null when that error carried no typed diagnostics (an argument error),
+/// **even if an earlier one did**: a report never outlives the failure it
+/// describes. Otherwise the contract of the complete text: owned by the
+/// library (do not free it), per thread, valid until the next error reported
+/// on this thread, not reset by a success. The document carries its own
+/// `schema_version` (2 today) and `request.backend` (`"interpreter"`); fields
+/// may be added within a version.
+#[unsafe(no_mangle)]
+pub extern "C" fn getCInterpreterDSPFactoryErrorDiagnostics() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::diagnostics_ptr)
 }
 
 /// Auto-detect precision from the `.fbc` header and deserialize the factory.

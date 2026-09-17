@@ -63,6 +63,9 @@ what each adapter returns from its `getCComplete*Error` entry point. One
 | `attach(summary, details)` | Where a typed compiler error is flattened to its summary: keep its rendered diagnostics for the report of that summary |
 | `report(message)` | In the adapter's `write_error` funnel: publish `message`, followed by the attached diagnostics when it carries their summary; they are dropped either way, so they never reach another error. The text never ends with a newline |
 | `as_ptr()` | The published text or null, valid until the next `report` on this thread |
+| `attach_with_diagnostics(summary, details, json)` | `attach` for a typed failure: `json` is its diagnostics-v2 report (`CompilerError::diagnostics_report_json`), published with the text by the report of `summary` |
+| `diagnostics_ptr()` | The published report or null, what an adapter returns from its `get...ErrorDiagnostics` entry point. A `report` of an error that has none **clears** it: a document never outlives the failure it describes |
+| `diagnostics()` | The same, as an owned `String` for a Rust caller |
 
 ### Compile arguments
 

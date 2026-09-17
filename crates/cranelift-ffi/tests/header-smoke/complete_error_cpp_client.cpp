@@ -3,7 +3,8 @@
 // The C API's `error_msg` is 4096 bytes and carries the one-line summary of a
 // compiler error. The wrappers' `std::string& error_msg` has no such limit and
 // receives the complete text, read from getCComplete*DSPFactoryError: summary,
-// then location, source snippet, notes and fix.
+// then location, source snippet, notes and fix. The typed form of the same
+// failure, the diagnostics-v2 JSON report, comes from get*DSPFactoryErrorDiagnostics.
 //
 // Built and run by `cargo run -p xtask -- libfaust-export-check` when the Faust
 // architecture headers are found (FAUST_ARCH_DIR, ../faust/architecture,
@@ -24,6 +25,7 @@
 #if defined(WRAPPER_CRANELIFT)
 #include "cranelift-dsp.h"
 #define WRAPPER "cranelift"
+static std::string diagnostics() { return getCraneliftDSPFactoryErrorDiagnostics(); }
 static dsp_factory* from_string(const std::string& source, std::string& error_msg)
 {
     return createCraneliftDSPFactoryFromString("client", source, 0, nullptr, error_msg, 0);
@@ -36,6 +38,7 @@ static std::string expand(const std::string& source, std::string& error_msg)
 #elif defined(WRAPPER_INTERPRETER)
 #include "interpreter-dsp.h"
 #define WRAPPER "interpreter"
+static std::string diagnostics() { return getInterpreterDSPFactoryErrorDiagnostics(); }
 static dsp_factory* from_string(const std::string& source, std::string& error_msg)
 {
     return createInterpreterDSPFactoryFromString("client", source, 0, nullptr, error_msg);
@@ -77,6 +80,23 @@ int main()
     expect(has(error_msg, "  2 | process = _ : *(0.5 ;"), "the source line", error_msg);
     expect(has(error_msg, "insert `)`"), "the fix", error_msg);
     expect(error_msg.back() != '\n', "no trailing newline", error_msg);
+
+    // The same failure as a document: the diagnostics-v2 JSON report, from
+    // which a host applies the fix (an insertion at byte 38) without reading
+    // the text above.
+    const std::string report = diagnostics();
+    expect(has(report, "\"schema_version\": 2"), "the report's version", report);
+    expect(has(report, "\"backend\": \"" WRAPPER "\""), "the surface that failed", report);
+    expect(has(report, "\"code\": \"FRS-PARSE-0001\""), "the code", report);
+    expect(has(report, "\"applicability\": \"machine_applicable\""), "a fix to apply", report);
+    expect(has(report, "\"start\": 38") && has(report, "\"replacement\": \")\""), "its edit", report);
+    std::string fixed = unclosed;
+    fixed.insert(38, ")");
+    dsp_factory* repaired = from_string(fixed, error_msg);
+    expect(repaired != nullptr, "the edit applied, the program compiles", error_msg);
+    // an argument error has no typed diagnostics, and inherits none
+    expect(from_string(unclosed, error_msg) == nullptr, "the program compiled", error_msg);
+    expect(!diagnostics().empty(), "a typed failure has its report", diagnostics());
 
     // More than the C buffer holds: an undefined symbol lists the visible scope.
     std::string many;

@@ -162,6 +162,7 @@ dependencies = [
  "ffi-common",
  "fir",
  "propagate",
+ "serde_json",
  "tlib",
  "transform",
  "tree-ffi",
@@ -904,6 +905,7 @@ dependencies = [
  "codegen",
  "compiler",
  "ffi-common",
+ "serde_json",
 ]
 
 [[package]]
@@ -946,6 +948,7 @@ version = "0.8.0"
 dependencies = [
  "compiler",
  "ffi-common",
+ "serde_json",
 ]
 
 [[package]]

@@ -286,13 +286,13 @@ never told: 4096 bytes, as in libfaust, and it cannot grow without overflowing
 existing hosts. It receives the first line above, the summary. The complete text
 is read from the library, one function per API:
 
-| Header | Entry points | Complete text of their last error |
-|---|---|---|
-| `interpreter-dsp-c.h` | Interpreter factories, expansion, auxiliary files | `getCCompleteInterpreterDSPFactoryError()` |
-| `cranelift-dsp-c.h` | Cranelift factories, expansion, auxiliary files | `getCCompleteCraneliftDSPFactoryError()` |
-| `libfaust-c.h` | `expandCDSP*`, `generateCAuxFiles*` | `getCCompleteDSPError()` |
-| `libfaust-box-c.h` | `CDSPToBoxes`, `CboxesToSignals*`, `CcreateSourceFromBoxes` | `getCCompleteBoxError()` |
-| `libfaust-signal-c.h` | `CcreateSourceFromSignals` | `getCCompleteSignalError()` |
+| Header | Entry points | Complete text of their last error | Its typed form (JSON) |
+|---|---|---|---|
+| `interpreter-dsp-c.h` | Interpreter factories, expansion, auxiliary files | `getCCompleteInterpreterDSPFactoryError()` | `getCInterpreterDSPFactoryErrorDiagnostics()` |
+| `cranelift-dsp-c.h` | Cranelift factories, expansion, auxiliary files | `getCCompleteCraneliftDSPFactoryError()` | `getCCraneliftDSPFactoryErrorDiagnostics()` |
+| `libfaust-c.h` | `expandCDSP*`, `generateCAuxFiles*` | `getCCompleteDSPError()` | `getCDSPErrorDiagnostics()` |
+| `libfaust-box-c.h` | `CDSPToBoxes`, `CboxesToSignals*`, `CcreateSourceFromBoxes` | `getCCompleteBoxError()` | `getCBoxErrorDiagnostics()` |
+| `libfaust-signal-c.h` | `CcreateSourceFromSignals` | `getCCompleteSignalError()` | none: no failure of this API is typed |
 
 ```c
 char error[4096] = {0};
@@ -319,10 +319,38 @@ The contract is the same for the five, and is that of `dlerror`:
   not instead of testing the call's result;
 - it does not end with a newline.
 
-These five functions are additions of `libfaust-rs`; the reference libfaust has
-no equivalent. The text is the one the `faust-rs` command prints under
+The text is for a person. The **typed form** of the same failure is the
+compiler's diagnostics-v2 JSON report: for each diagnostic its `code`, its
+`labels` with byte ranges in each of `sources[]`, its `facts`, `notes` and
+`help`, and its `fixes` with their `edits` and their `applicability`, so that a
+host (an editor, an agent) applies a machine-applicable fix without reading
+prose:
+
+```c
+const char* report = getCInterpreterDSPFactoryErrorDiagnostics();
+if (report != NULL) {
+    /* {"schema_version": 2, "status": "failed", "request": {"backend": "interpreter"},
+        "diagnostics": [{"code": "FRS-PARSE-0001", ...,
+          "fixes": [{"applicability": "machine_applicable", "title": "insert `)`",
+            "edits": [{"range": {"source_id": 0, "start": 20, "end": 20}, "replacement": ")"}]}]}]} */
+}
+```
+
+Same contract, with one difference that follows from what it is: the pointer
+is **null when the last error carried no typed diagnostics** (a null pointer, a
+missing file), even if an earlier one did, so that a report never outlives the
+failure it describes. The document carries its own `schema_version` (2 today)
+and names the surface in `request.backend`; fields may be added within a
+version, so read what you know and check the version. It is the complete
+report, the one the WebAssembly bindings return, a superset of what `faust-rs
+--error-format json` prints. The C++ wrappers return it as a `std::string`,
+empty when there is none: `getInterpreterDSPFactoryErrorDiagnostics()`,
+`getCraneliftDSPFactoryErrorDiagnostics()`, `getDSPErrorDiagnostics()`.
+
+These functions are additions of `libfaust-rs`; the reference libfaust has no
+equivalent. The text is the one the `faust-rs` command prints under
 `--error-format human`; see the [diagnostics guide](docs/user-diagnostics-guide-en.md)
-for how to read it.
+for how to read it, and for the report's fields.
 
 Cranelift support is experimental: native JIT execution works for the currently
 supported compiler/FIR subset, but full runtime parity and its serialized

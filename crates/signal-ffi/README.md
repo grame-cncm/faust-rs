@@ -46,7 +46,10 @@ through the API and have no source text, so no failure here comes with compiler
 diagnostics: the complete text is the message. It exists so that a host reads
 every libfaust-rs error the same way (`getCCompleteDSPError`,
 `getCCompleteBoxError`, `getCCompleteCraneliftDSPFactoryError`,
-`getCCompleteInterpreterDSPFactoryError`).
+`getCCompleteInterpreterDSPFactoryError`). For the same reason this API has no
+`get...ErrorDiagnostics` function, where the four others have one: a function
+that could only return null would promise a typed report that no failure here
+has.
 
 ## Source provenance
 

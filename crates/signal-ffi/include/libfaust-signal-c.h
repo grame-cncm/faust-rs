@@ -238,6 +238,15 @@ char* CcreateSourceFromSignals(const char* name_app, Signal* osigs, const char* 
  */
 const char* getCCompleteSignalError(void);
 
+/*
+ * The Box API, libfaust-c.h and the two backends also return the typed form of
+ * an error, the compiler's diagnostics-v2 JSON report (getCBoxErrorDiagnostics
+ * and its siblings). The Signal API has no such entry point because none of
+ * its failures carries typed diagnostics: it never compiles a source, and what
+ * it reports are argument errors and lowering messages, whole in the text
+ * above. A function that could only return NULL would promise something.
+ */
+
 #ifdef __cplusplus
 }
 #endif

@@ -489,6 +489,21 @@ pub struct FaustwasmServiceError {
     pub diagnostics: Option<DiagnosticBundle>,
 }
 
+/// The complete diagnostics-v2 report of `bundle`, as a native FFI surface
+/// returns it (`getC...ErrorDiagnostics`).
+fn ffi_diagnostics_report(bundle: &DiagnosticBundle, backend: &str) -> String {
+    diagnostics_json::render_complete_diagnostics_v2_json(
+        bundle,
+        diagnostics_json::DiagnosticsCompilerMetadata::default(),
+        diagnostics_json::DiagnosticsRequestMetadata {
+            mode: Some("ffi".to_owned()),
+            backend: Some(backend.to_owned()),
+            normalized_options: Vec::new(),
+        },
+        diagnostics_json::SourceTextPolicy::AllMemorySources,
+    )
+}
+
 /// Stable error codes for the helper-service surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FaustwasmServiceErrorCode {
@@ -513,6 +528,16 @@ impl FaustwasmServiceError {
                     diagnostics_human::HumanRenderOptions::default(),
                 )
             })
+    }
+
+    /// The retained compiler diagnostics as the complete diagnostics-v2 JSON
+    /// report, `None` when the failure carries none. See
+    /// [`CompilerError::diagnostics_report_json`].
+    #[must_use]
+    pub fn diagnostics_report_json(&self, backend: &str) -> Option<String> {
+        self.diagnostics
+            .as_ref()
+            .map(|bundle| ffi_diagnostics_report(bundle, backend))
     }
 
     /// Builds an error tagged [`FaustwasmServiceErrorCode::Unsupported`].
@@ -2416,6 +2441,16 @@ impl CompilerError {
             self.diagnostic_bundle(),
             diagnostics_human::HumanRenderOptions::default(),
         )
+    }
+
+    /// This error as the complete diagnostics-v2 JSON report the native FFI
+    /// surfaces hand to their hosts: every label, fact, trace, fix and note,
+    /// the text of in-memory sources, and `request.backend` naming the
+    /// surface that failed. The field set is the one the WebAssembly bindings
+    /// return; the document carries its own `schema_version`.
+    #[must_use]
+    pub fn diagnostics_report_json(&self, backend: &str) -> String {
+        ffi_diagnostics_report(self.diagnostic_bundle(), backend)
     }
 
     /// Compatibility wrapper for callers that still expect an optional bundle.
