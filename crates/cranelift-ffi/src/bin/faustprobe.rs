@@ -139,6 +139,9 @@ struct Args {
     /// Input excitation: zero, impulse, impulse:CH, dc, `white[:SEED]`, sine:HZ,
     /// `file:PATH[:CH]` (a .wav, .f64 or .f32 file; input i reads channel i, a
     /// mono file feeds every input, `:CH` picks one channel for all).
+    ///
+    /// `impulse:CH` must name an input the program has. Under `--nvoices`
+    /// every playing voice receives the excitation, as in `poly-dsp.h`.
     #[arg(long = "in", value_name = "MODE", default_value = "impulse")]
     input: String,
 
@@ -621,8 +624,22 @@ fn parse_input(spec: &str) -> Result<InputMode, String> {
 /// The excitation of `--in`, with a warning on stderr when it is a file
 /// recorded at another rate than `--sr`: the program then runs at `--sr`
 /// and reads the samples as if they were at that rate.
-fn parse_input_at(spec: &str, sr: i32) -> Result<InputMode, String> {
+fn parse_input_at(spec: &str, sr: i32, inputs: usize) -> Result<InputMode, String> {
     let input = parse_input(spec)?;
+    // An impulse on an input the program does not have excites nothing, and
+    // the silence that follows does not say why.
+    if let InputMode::ImpulseChannel(channel) = &input
+        && *channel >= inputs
+    {
+        return Err(format!(
+            "--in impulse:{channel}: {}",
+            match inputs {
+                0 => "the program has no input".to_owned(),
+                1 => "the program has one input, channel 0".to_owned(),
+                n => format!("the program has {n} inputs, channels 0 to {}", n - 1),
+            }
+        ));
+    }
     if let InputMode::File {
         sample_rate: Some(rate),
         ..
@@ -1309,6 +1326,9 @@ fn run_poly(args: &Args) -> Result<(), String> {
     let spec = PolyRenderSpec {
         frames: args.render,
         block: args.block,
+        // every playing voice receives the excitation, as the reference's
+        // `mydsp_poly::compute` hands the host's inputs to each of them
+        input: parse_input_at(&args.input, args.sr, poly.inputs())?,
         skip: args.skip,
         schedule: schedule.clone(),
         limit: args.fail_above,
@@ -1367,6 +1387,12 @@ fn run_poly(args: &Args) -> Result<(), String> {
         notes.push("every output is exactly zero over the window".to_owned());
         if !schedule.needs_poly() {
             notes.push("no --note or --chord is scheduled: every voice stays free".to_owned());
+        }
+        if spec.input == InputMode::Zero && poly.inputs() > 0 {
+            notes.push(format!(
+                "input is `zero` and a voice has {} input(s)",
+                poly.inputs()
+            ));
         }
     }
     if args.format == Format::Json {
@@ -1727,7 +1753,7 @@ fn run(mut args: Args) -> Result<(), String> {
     let spec = RenderSpec {
         frames: args.render,
         block: args.block,
-        input: parse_input_at(&args.input, args.sr)?,
+        input: parse_input_at(&args.input, args.sr, probe.inputs())?,
         skip: args.skip,
         schedule: schedule.clone(),
         drive_buttons: impulse_test,
@@ -3069,8 +3095,10 @@ fn run_train(args: &Args) -> Result<(), String> {
     // `--sweep` are starting points and are checked alike.
     let mut clamped = Vec::new();
     let mut axes: Vec<(String, Vec<f64>)> = Vec::new();
+    let inputs;
     {
         let probe = Probe::instantiate(&factory, args.sr)?;
+        inputs = probe.inputs();
         for assignment in &args.sets {
             let (path, value) = parse_assignment(assignment)?;
             check_value(probe.controls(), path, value, args.clamp, &mut clamped)?;
@@ -3113,7 +3141,7 @@ fn run_train(args: &Args) -> Result<(), String> {
         lr: args.lr,
         block: args.block,
         blocks: args.blocks,
-        input: parse_input_at(&args.input, args.sr)?,
+        input: parse_input_at(&args.input, args.sr, inputs)?,
         reset_per_block: args.reset_per_block,
         sets: args
             .sets

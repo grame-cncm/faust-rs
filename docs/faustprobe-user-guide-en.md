@@ -227,7 +227,7 @@ itself a finding.
 |---|---|
 | `zero` | silence — the right choice for a generator, which needs no input |
 | `impulse` | 1 on the first frame of every input, then 0 (the default) |
-| `impulse:CH` | the same, on channel `CH` only |
+| `impulse:CH` | the same, on channel `CH` only; a channel the program does not have is an error (`the program has 2 inputs, channels 0 to 1`), where it used to excite nothing and leave a silence to explain |
 | `dc` | constant 1 |
 | `white[:SEED]` | white noise; the seed makes it reproducible |
 | `sine:HZ` | a sine at `HZ` |
@@ -622,6 +622,17 @@ What a **note** writes is another matter: `poly-dsp.h` sets a voice's frequency
 from the pitch, its gain from the velocity and its gate, whatever the sliders
 declare, and so does the probe. Note 127 is 12 543.85 Hz on a `freq` slider that
 stops at 1000, and reaches the voice as computed.
+
+**`--in` reaches the voices.** `poly-dsp.h` hands the host's inputs to every
+playing voice, and so does the probe: an instrument whose voices have an input
+(a per-note filter on an external signal, a vocoder band) is excited by `--in`
+as a scalar program is, every playing voice receiving the same signal, a
+stolen voice its own half of the block. One held note under `--in dc` on a
+voice that passes its input is `peak=1.0`; a chord of two is `2.0`. Until this
+was fixed every voice was given silence, and `--in` was accepted under
+`--nvoices` and meant nothing. For an instrument without inputs, the usual
+case, nothing changes; a silent render of one that has some under `--in zero`
+says so.
 
 **Statistics and failures are those of a scalar render.** The header line adds
 the voices (`# frames=300 sr=44100 nvoices=1 active_voices=1 window=0..300 (300

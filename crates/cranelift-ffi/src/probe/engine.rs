@@ -835,14 +835,15 @@ struct Voice {
 }
 
 /// How a polyphonic render should be driven: what [`RenderSpec`] holds, less
-/// what a polyphonic instrument has no use for (its voices are fed silence,
-/// and nothing presses their gates but the notes).
+/// the driving of buttons (nothing presses a voice's gate but a note).
 #[derive(Debug, Clone)]
 pub struct PolyRenderSpec {
     /// Total frames to render.
     pub frames: usize,
     /// Frames per host block, before the schedule shortens one.
     pub block: usize,
+    /// Excitation of the instrument's inputs, handed to every playing voice.
+    pub input: InputMode,
     /// First frame included in statistics and dump.
     pub skip: usize,
     /// Notes and control writes, applied at their exact frames.
@@ -1303,9 +1304,8 @@ impl PolyProbe {
         let mut acc = StatsAccumulator::with_limit(self.outputs, spec.skip, spec.limit)
             .at_width(self.is_double());
         let block = spec.block.max(1);
-        let mut timer = spec
-            .time
-            .then(|| BlockTimer::new(f64::from(self.sample_rate)));
+        let sample_rate = f64::from(self.sample_rate);
+        let mut timer = spec.time.then(|| BlockTimer::new(sample_rate));
         let mut frame: Frame = vec![0.0; self.outputs];
         let mut written = 0usize;
         while written < spec.frames {
@@ -1330,9 +1330,18 @@ impl PolyProbe {
             {
                 n = n.min(next - written);
             }
+            // position-addressed, as for a scalar render: the excitation at a
+            // frame does not depend on how the render was cut into blocks
+            let inputs: Vec<Vec<f64>> = (0..self.inputs)
+                .map(|ch| {
+                    (0..n)
+                        .map(|j| spec.input.sample(ch, written + j, sample_rate))
+                        .collect()
+                })
+                .collect();
             // the voices, their mix and the effect: what a host's callback runs
             let started = timer.is_some().then(Instant::now);
-            let block_out = self.compute(n);
+            let block_out = self.compute_with_inputs(&inputs, n);
             if let (Some(timer), Some(started)) = (timer.as_mut(), started) {
                 timer.record(written, n, started.elapsed());
             }
@@ -1352,17 +1361,33 @@ impl PolyProbe {
         Ok(stats)
     }
 
+    /// [`PolyProbe::compute_with_inputs`] with silence on every input: what an
+    /// instrument without inputs is given, there being nothing else to give.
+    #[must_use]
+    pub fn compute(&mut self, frames: usize) -> Vec<Vec<f64>> {
+        let silence: Vec<Vec<f64>> = vec![vec![0.0; frames]; self.inputs];
+        self.compute_with_inputs(&silence, frames)
+    }
+
     /// Render one host block across every voice, mix, and run the effect.
     ///
     /// Mirrors `mydsp_poly::compute` (`poly-dsp.h:828`) in its
-    /// `fVoiceControl` branch. `frames` should not exceed the reference
-    /// `MIX_BUFFER_SIZE` (4096); nothing here enforces that bound the way
-    /// `poly-dsp.h`'s `assert` does; it is a design constraint of a
+    /// `fVoiceControl` branch, **the host's inputs included**: the reference
+    /// hands the same `inputs` to every playing voice
+    /// (`voice->compute(count, inputs, fMixBuffer)`), which is what makes a
+    /// voice with an input (a vocoder band, a per-note filter on an external
+    /// signal) an instrument at all. This port gave every voice silence, and
+    /// the command line's `--in` meant nothing under `--nvoices`.
+    ///
+    /// `inputs[ch]` holds at least `frames` samples for each of
+    /// [`PolyProbe::inputs`] channels. `frames` should not exceed the
+    /// reference `MIX_BUFFER_SIZE` (4096); nothing here enforces that bound
+    /// the way `poly-dsp.h`'s `assert` does; it is a design constraint of a
     /// fixed-size C mix buffer that Rust's `Vec`-backed buffers do not share.
     #[must_use]
-    pub fn compute(&mut self, frames: usize) -> Vec<Vec<f64>> {
+    pub fn compute_with_inputs(&mut self, inputs: &[Vec<f64>], frames: usize) -> Vec<Vec<f64>> {
+        debug_assert_eq!(inputs.len(), self.inputs, "input arity mismatch");
         let mut mixed = vec![vec![0.0_f64; frames]; self.outputs];
-        let silence: Vec<Vec<f64>> = vec![vec![0.0; frames]; self.inputs];
 
         for i in 0..self.voices.len() {
             let cur_note = self.state.voices[i].cur_note;
@@ -1370,9 +1395,9 @@ impl PolyProbe {
                 continue;
             }
             let voice_out = if cur_note == poly::LEGATO_VOICE {
-                self.compute_legato(i, frames, &silence)
+                self.compute_legato(i, frames, inputs)
             } else {
-                self.voices[i].probe.compute_raw(&silence, frames)
+                self.voices[i].probe.compute_raw(inputs, frames)
             };
             let level = poly::mix_check_voice(&voice_out, &mut mixed);
             self.state.record_level(i, level, self.stop_level);
@@ -1398,7 +1423,7 @@ impl PolyProbe {
         &mut self,
         voice: usize,
         frames: usize,
-        silence: &[Vec<f64>],
+        inputs: &[Vec<f64>],
     ) -> Vec<Vec<f64>> {
         // Reset envelope: gate off before rendering the outgoing note's tail,
         // exactly as `computeLegato`'s first act.
@@ -1408,14 +1433,16 @@ impl PolyProbe {
 
         let half = frames / 2;
         let rest = frames - half;
-        let first_input: Vec<Vec<f64>> = silence.iter().map(|c| c[..half].to_vec()).collect();
+        // each half of the block reads its own half of the inputs, as
+        // `computeSlice(offset, slice, inputs, outputs)` does
+        let first_input: Vec<Vec<f64>> = inputs.iter().map(|c| c[..half].to_vec()).collect();
         let mut first = self.voices[voice].probe.compute_raw(&first_input, half);
 
         // Apply the queued note now that the outgoing tail has rendered.
         let write = self.state.apply_legato(voice, self.key_fun, self.vel_fun);
         apply_write(&self.voices[voice], write);
 
-        let second_input: Vec<Vec<f64>> = silence
+        let second_input: Vec<Vec<f64>> = inputs
             .iter()
             .map(|c| c[half..half + rest].to_vec())
             .collect();

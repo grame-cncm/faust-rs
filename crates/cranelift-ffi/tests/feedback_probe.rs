@@ -1171,3 +1171,109 @@ fn a_polyphonic_failure_lists_the_values_that_were_applied() {
     assert!(stderr.contains("/fb=4\n"), "{stderr}");
     assert!(!stderr.contains("fb=9"), "{stderr}");
 }
+
+// ------------------------------------------------- the polyphonic path: --in
+//
+// `mydsp_poly::compute` hands the host's inputs to every playing voice
+// (`voice->compute(count, inputs, fMixBuffer)`). The port gave every voice
+// silence, so `--in` was accepted under `--nvoices` and meant nothing.
+
+/// A voice with an input: the input while its gate is held.
+const VOICE_WITH_INPUT: &str = r#"
+freq = hslider("freq", 440, 20, 20000, 0.01);
+gain = hslider("gain", 0.5, 0, 1, 0.001);
+gate = button("gate");
+process = _ * (gate + 0 * (freq + gain));
+"#;
+
+fn poly_in(name: &str, extra: &[&str]) -> (bool, String, String) {
+    let mut args = vec!["--double", "--nvoices", "2", "-n", "200", "--quiet"];
+    args.extend(extra);
+    probe_binary(name, VOICE_WITH_INPUT, &args)
+}
+
+#[test]
+fn a_polyphonic_instrument_receives_the_excitation_on_every_playing_voice() {
+    // one held note: the input, as it is
+    let (ok, stdout, stderr) = poly_in("poly_in_dc", &["--note", "60@0", "--in", "dc"]);
+    assert!(ok, "{stderr}");
+    assert!((peak_of(&stdout) - 1.0).abs() < 1e-12, "{stdout}");
+    assert!(stdout.contains("rms=1.0 dc=1.0"), "{stdout}");
+    // two held notes: each voice is given the same input, and they are mixed
+    let (_, stdout, _) = poly_in("poly_in_chord", &["--chord", "60,64@0", "--in", "dc"]);
+    assert!((peak_of(&stdout) - 2.0).abs() < 1e-12, "{stdout}");
+    // no note: the input reaches no voice
+    let (_, stdout, _) = poly_in("poly_in_free", &["--in", "dc"]);
+    assert!(peak_of(&stdout) == 0.0, "{stdout}");
+
+    // the default excitation is one impulse at frame 0, not one per block:
+    // a mean of 1/200 over the window, at any block size
+    for block in ["64", "7"] {
+        let (ok, stdout, stderr) =
+            poly_in("poly_in_impulse", &["--note", "60@0", "--block", block]);
+        assert!(ok, "{stderr}");
+        assert!(
+            stdout.contains("dc=0.005 finite=yes peak_at=0"),
+            "{block}: {stdout}"
+        );
+    }
+    // and noise is addressed by frame: the same samples however it is cut
+    let noise = |block: &str| {
+        poly_in(
+            "poly_in_noise",
+            &["--note", "60@0", "--in", "white:3", "--block", block],
+        )
+        .1
+    };
+    assert_eq!(noise("64"), noise("7"));
+    assert!(noise("64").contains("peak=0."), "{}", noise("64"));
+}
+
+#[test]
+fn a_silent_polyphonic_render_says_that_its_voices_have_an_unfed_input() {
+    let (ok, stdout, stderr) = poly_in("poly_in_zero", &["--note", "60@0", "--in", "zero"]);
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains("# note: input is `zero` and a voice has 1 input(s)"),
+        "{stdout}"
+    );
+}
+
+/// An impulse on an input that does not exist excites nothing, and the
+/// silence that followed did not say why: scalar or polyphonic, it is an
+/// error that names the inputs there are.
+#[test]
+fn an_impulse_on_an_input_the_program_does_not_have_is_refused() {
+    let (ok, stdout, stderr) = poly_in("poly_in_channel", &["--note", "60@0", "--in", "impulse:3"]);
+    assert!(!ok);
+    assert!(stdout.is_empty());
+    assert!(
+        stderr.contains("--in impulse:3: the program has one input, channel 0"),
+        "{stderr}"
+    );
+    let stereo = "process = _ * 0.5, _ * 0.25;\n";
+    let (ok, _, stderr) = probe_binary("in_channel", stereo, &["-n", "8", "--in", "impulse:2"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("the program has 2 inputs, channels 0 to 1"),
+        "{stderr}"
+    );
+    // the last channel is one of them
+    let (ok, stdout, stderr) = probe_binary(
+        "in_channel_ok",
+        stereo,
+        &["--double", "-n", "2", "--in", "impulse:1"],
+    );
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.starts_with("frame,out0,out1\n0,0.0,0.25\n"),
+        "{stdout}"
+    );
+    let (ok, _, stderr) = probe_binary(
+        "in_channel_none",
+        "process = 0.5;\n",
+        &["-n", "8", "--in", "impulse:0"],
+    );
+    assert!(!ok);
+    assert!(stderr.contains("the program has no input"), "{stderr}");
+}

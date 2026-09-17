@@ -960,9 +960,9 @@ plan, the non-finite render that says nothing, in its purest form.
   before, then `dc`, `finite`, `peak_at`, `subnormal`), the header line gains
   the window; the JSON channels and document alike. Keys added, none renamed.
 
-Known and left: `--in` means nothing under `--nvoices` (voices are fed
-silence) and is accepted without a word, its default being indistinguishable
-from its absence.
+Known and left at the time: `--in` meant nothing under `--nvoices` (voices
+were fed silence) and was accepted without a word. Fixed since, see "`--in`
+under `--nvoices`" below.
 
 Checks: four tests in `tests/feedback_probe.rs`, one of the library's render in
 `tests/poly_probe.rs` (a note at frame 100 sounds from frame 100 whatever the
@@ -976,4 +976,35 @@ given to the render; subnormals measured as doubles; the window ignoring
 from the binary); the requested values in place of the applied ones. One
 expectation of mine was wrong on the way: the test voice sounds from the very
 frame of its note-on, not the next.
+
+### `--in` under `--nvoices`, 2026-09-17
+
+Refusing `--in` there was the first idea and the wrong one. The reference does
+not ignore the inputs: `mydsp_poly::compute` hands the host's `inputs` to every
+playing voice (`voice->compute(count, inputs, fMixBuffer)`), and
+`computeLegato` gives each half of a stolen voice's block its own half of them
+(`computeSlice(slice, slice, inputs, outputs)`). The port gave every voice
+silence: a divergence from `poly-dsp.h`, of which the ignored option was the
+visible part.
+
+`PolyProbe::compute_with_inputs` takes the inputs and hands them to every
+playing voice, the stolen ones included (`compute` remains, with silence, for an
+instrument that has none); `PolyRenderSpec::input` is the excitation,
+position-addressed as in a scalar render, and the command line gives it `--in`.
+A silent polyphonic render whose voices have inputs under `--in zero` says so.
+
+Found with it, in every path: `--in impulse:CH` with a channel the program
+does not have excited nothing and left the silence note to explain a silence it
+could not explain. It is an error that names the inputs there are (scalar,
+polyphonic and `--train`; `--freqresp` had it).
+
+Checks: three tests in `tests/feedback_probe.rs` (one held note under `dc` is
+1, a chord 2, no note 0; the default impulse is one impulse and not one per
+block, at two block sizes; noise gives the same bytes however the render is
+cut), one in `tests/poly_probe.rs` on a ramp (a held voice returns it, a stolen
+one returns silence then the ramp from frame 32); 375 in the crate. Eight
+mutations rejected: the render giving silence; only the first voice fed; the
+second half of a stolen voice reading from the start; a stolen voice given
+silence; the excitation restarting at every block; the missing channel
+accepted; the unfed-input note dropped; `--in` replaced by the impulse.
 

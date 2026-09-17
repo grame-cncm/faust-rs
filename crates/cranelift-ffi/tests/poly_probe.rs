@@ -149,6 +149,51 @@ fn more_notes_than_voices_steals_rather_than_dropping() {
     assert!(run_blocks(&mut probe, 40) > 1e-4);
 }
 
+/// A voice with an input: the input while its gate is held.
+const VOICE_WITH_INPUT: &str = r#"
+freq = hslider("freq", 440, 20, 20000, 0.01);
+gain = hslider("gain", 0.8, 0, 1, 0.001);
+gate = button("gate");
+process = _ * (gate + 0 * (freq + gain));
+"#;
+
+#[test]
+fn every_voice_is_given_the_inputs_and_a_stolen_one_its_own_half_of_them() {
+    // `mydsp_poly::compute` hands the host's inputs to every playing voice,
+    // and `computeLegato` gives each half of a stolen voice's block its own
+    // half of them (`computeSlice(slice, slice, inputs, outputs)`).
+    let mut probe = PolyProbe::compile_from_string(
+        "voice_with_input",
+        VOICE_WITH_INPUT,
+        &[],
+        44_100,
+        true,
+        0,
+        1,
+        None,
+        cranelift_ffi::probe::poly::DEFAULT_VOICE_STOP_LEVEL,
+    )
+    .expect("compile");
+    assert_eq!(probe.inputs(), 1);
+    let ramp: Vec<Vec<f64>> = vec![(0..64).map(f64::from).collect()];
+    probe.key_on(60, 100);
+    let block = probe.compute_with_inputs(&ramp, 64);
+    assert_eq!(block[0], ramp[0], "the input, through the held voice");
+    // and silence is what `compute` gives
+    assert!(probe.compute(64)[0].iter().all(|v| *v == 0.0));
+
+    // one voice, a second note: it is stolen. The outgoing half has its gate
+    // down (silence here), the incoming half reads the ramp from 32 on
+    probe.key_on(64, 100);
+    let stolen = probe.compute_with_inputs(&ramp, 64);
+    assert!(
+        stolen[0][..32].iter().all(|v| *v == 0.0),
+        "{:?}",
+        &stolen[0][..32]
+    );
+    assert_eq!(stolen[0][32..], ramp[0][32..]);
+}
+
 #[test]
 fn a_render_plays_its_notes_on_their_frames_and_returns_the_scalar_statistics() {
     // The render loop moved from the command line into the library, where
@@ -164,6 +209,7 @@ fn a_render_plays_its_notes_on_their_frames_and_returns_the_scalar_statistics() 
     let spec = PolyRenderSpec {
         frames: 2000,
         block: 64,
+        input: cranelift_ffi::probe::render::InputMode::Zero,
         skip: 0,
         schedule,
         limit: None,
