@@ -258,6 +258,17 @@ fn match_simplification(
         _ => None,
     };
     if let Some((tag, x)) = maybe_unary {
+        // `abs` is the one unary function that keeps an integer an integer
+        // (C++ `AbsPrim`): folded through `f64` like the others, `abs(-3)`
+        // became the real 3.0 and `abs(-2147483647)` the float 2147483648.0.
+        // It wraps on `i32::MIN` as the 32-bit `std::abs` the two compilers
+        // emit for a non-constant argument does, so that a fold and a run
+        // agree.
+        if tag == 'l'
+            && let SigMatch::Int(i) = match_sig(arena, x)
+        {
+            return SigBuilder::new(arena).int(i.wrapping_abs());
+        }
         let arg = match match_sig(arena, x) {
             SigMatch::Int(i) => Some(i as f64),
             SigMatch::Real(r) => Some(r),
@@ -811,6 +822,27 @@ mod tests {
         let same = SigBuilder::new(&mut a).rem(input, input);
         let folded = try_simplify_const(&mut a, same).expect("x % x");
         assert_eq!(match_sig(&a, folded), SigMatch::Int(0));
+    }
+
+    #[test]
+    fn abs_of_an_integer_constant_stays_an_integer() {
+        let mut a = arena();
+        for (value, expected) in [(-3, 3), (5, 5), (-2_147_483_647, 2_147_483_647)] {
+            let x = SigBuilder::new(&mut a).int(value);
+            let abs = SigBuilder::new(&mut a).abs(x);
+            let folded = simplify_const(&mut a, abs);
+            assert_eq!(match_sig(&a, folded), SigMatch::Int(expected));
+        }
+        // no absolute value in 32 bits: it wraps, as `std::abs(int)` does at run time
+        let min = SigBuilder::new(&mut a).int(i32::MIN);
+        let abs = SigBuilder::new(&mut a).abs(min);
+        let folded = simplify_const(&mut a, abs);
+        assert_eq!(match_sig(&a, folded), SigMatch::Int(i32::MIN));
+        // a real stays a real
+        let real = SigBuilder::new(&mut a).real(-2.5);
+        let abs = SigBuilder::new(&mut a).abs(real);
+        let folded = simplify_const(&mut a, abs);
+        assert_eq!(match_sig(&a, folded), SigMatch::Real(2.5));
     }
 
     #[test]

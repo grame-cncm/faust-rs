@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-08-13
+Last reviewed: 2026-09-17 (constant arithmetic and domain errors, error text through the FFI, `faustprobe`); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -154,6 +154,20 @@ must run unchanged with Faust C++ should not pass them.
 | DIFF-CLI-006 | compilation-options text | `adapted` | Rust prints flags only when they differ from the CLI default, except precision, which is always printed. C++ prints some defaults, notably `-mcd`, unconditionally. Rust also records its own `-table-init`, `--table-init-sample-rate`, and `-dlt` settings. |
 | DIFF-CLI-007 | `-ec`/`-os` capability validation | `adapted` | Rust rejects unsupported backend combinations and block-sensitive one-sample programs with stable typed diagnostics. `-ec` on FIR is intentionally exposed as a Rust diagnostic/inspection extension. |
 | DIFF-CLI-008 | unknown or invalid combinations | `adapted` | The Rust CLI generally fails early through typed option validation rather than relying on permissive legacy parsing or a later backend failure. Scripts depending on C++ option coercion must be corrected. |
+
+### 4.4 Rust-only companion tool
+
+- **DIFF-CLI-010 — `faustprobe`.** Status: `extension`. A second binary
+  (`crates/cranelift-ffi`, `src/bin/faustprobe.rs`) that JIT-compiles a program
+  with the Cranelift backend and measures it offline: controls set, swept and
+  scheduled from the command line, statistics, bargraph read-out, binary output
+  (`--out`), expressions evaluated in a file's scope (`--eval`), a host loop for
+  programs that output a loss and its gradients (`--train`, `--fd-check`). It
+  has no C++ counterpart; the closest reference tools are the `impulse-tests`
+  runners, whose protocol it reproduces byte for byte under `--protocol
+  impulse-test`. Evidence:
+  [`docs/faustprobe-user-guide-en.md`](../docs/faustprobe-user-guide-en.md),
+  [`faustprobe-generic-test-tool-design-2026-08-14-en.md`](faustprobe-generic-test-tool-design-2026-08-14-en.md).
 
 ## 5. Runtime, lowering, and generated-code behavior
 
@@ -329,6 +343,64 @@ must run unchanged with Faust C++ should not pass them.
   [`rep_63_ui_relative_group_rebase.dsp`](../tests/corpus/rep_63_ui_relative_group_rebase.dsp)
   and
   [`rep_64_ui_relative_group_root_clamp.dsp`](../tests/corpus/rep_64_ui_relative_group_root_clamp.dsp).
+
+### DIFF-BEH-010 — division and remainder by a constant zero
+
+- Status: `adapted` (same rejection, different report), with one `parity-gap`
+  recorded as `DIFF-GAP-017`.
+- Both compilers reject a division by a constant zero with exit status 1, in
+  integers **and in reals**: neither folds `2.0 / 0` to an infinity. C++ prints
+  `ERROR : division by 0 in 2 / 0`, thrown by `mterm::operator/=` while the
+  evaluator folds a numeric sequence. Rust raises `FRS-EVAL-0007` at the same
+  point, located in the source, with the division as written (`expr=(2 / n)`)
+  next to the one that was folded (`2.0 / 0`); a divisor that becomes a constant
+  zero only in the signal graph (`_ / (0 : *(0))`, `_ / 0`) is reported by the
+  typing stage as `FRS-COMP-0004`, as is a remainder by zero (`% by 0`).
+- Until 2026-09-17 the evaluator's folds were not under the boundary that
+  catches the normalizer's unwind: `process = 2.0 / 0;` panicked the compiler
+  and, through the FFI, aborted the host. `0 / 0`, `0.0 / 0.0` and `0 % 0`
+  compiled to a silent 0, which the reference rejects. Both are fixed.
+- Integer folds that overflow in Rust follow the reference: `i32::MIN % -1` is
+  0, `i32::MIN / -1` is the real 2147483648, additions and multiplications wrap,
+  a shift count is taken modulo 32.
+- Evidence: `crates/compiler/tests/diagnostic_errors.rs`
+  (`a_constant_division_by_zero_is_a_located_eval_error` and the four tests
+  after it), `tests/corpus/err_18` to `err_20`, measured against Faust 2.89.
+
+### DIFF-BEH-011 — compile-time mathematical domain
+
+- Status: `adapted` (stricter on two functions) and `reference-fix` (sign of an
+  infinite constant).
+- Both compilers reject a constant argument outside a function's domain:
+  `sqrt(-1)`, `log(-1)`, `acos(2)`, `asin(2)`, `fmod(x, 0)`, `remainder(x, 0)`
+  (C++ `ERROR : out of domain in sqrt(-1)`, Rust `FRS-COMP-0004`, with the
+  inferred intervals).
+- **Rust also rejects `log(0)` and `log10(0)`**, the boundary of the domain;
+  C++ accepts them and folds an infinity. A program that relies on it must
+  write the infinity it wants. Both compilers accept `pow(-1, 0.5)` (NaN),
+  `exp(1000)` (infinity) and `atan2(0, 0)` (0).
+- **Sign of an infinite constant.** Faust 2.89 prints a negative infinity as
+  `INFINITY`: `0 - exp(1000)` and `log(_ * 0)` both generate
+  `static_cast<FAUSTFLOAT>(INFINITY)`, in the C and C++ backends. Rust generates
+  `-INFINITY`. The outputs of the two compilers therefore differ, and the Rust
+  one is the intended value.
+- Evidence: `crates/compiler/tests/diagnostic_errors.rs`
+  (`compile_time_math_domain_error_is_typed_and_source_located`); the table of
+  cases is in `porting/journal/2026-09-17.md`.
+
+### DIFF-BEH-012 — `abs` of an integer constant
+
+- Status: parity reached on 2026-09-17; kept here because the behavior is the
+  reference's and is not the mathematical one.
+- `abs` is the one unary function that keeps an integer an integer. Its
+  constant fold now does: `abs(-3)` is the integer 3 (it was the real 3.0, and
+  `abs(-2147483647)` the float 2147483648.0). `abs(-2147483648)` is
+  **-2147483648**, as in C++: there is no absolute value of `i32::MIN` in 32
+  bits, and the fold wraps the way the `std::abs(int)` both compilers emit for a
+  non-constant argument does, so that a folded expression and a computed one
+  agree.
+- Evidence: `crates/normalize/src/simplify.rs`
+  (`abs_of_an_integer_constant_stays_an_integer`).
 
 ## 6. Additional backends and delivery forms
 
@@ -507,6 +579,33 @@ must run unchanged with Faust C++ should not pass them.
   and the three compile-and-run C++ tests named above in
   `crates/codegen/src/backends/cpp/mod.rs`.
 
+### DIFF-API-006 — the complete text of an error through the C API
+
+- Status: `extension`.
+- The reference C API reports a failure through `error_msg`, a buffer the caller
+  allocates and whose size is never passed: 4096 bytes by contract. Rust keeps
+  that contract exactly (the buffer receives what it received, truncated at
+  4095 bytes), because writing more would overflow every existing host. A
+  compiler diagnostic does not always fit, and for a syntax error the summary
+  the buffer gets is a count.
+- Five functions, with no reference counterpart, return the whole text (the
+  message, then the rendered diagnostics: location, source snippet, notes,
+  fixes) from per-thread storage the library owns, the `dlerror` convention:
+  `getCCompleteInterpreterDSPFactoryError`,
+  `getCCompleteCraneliftDSPFactoryError`, `getCCompleteDSPError`
+  (`libfaust-c.h`), `getCCompleteBoxError`, `getCCompleteSignalError`. The
+  pointer is null before the thread's first error, valid until its next one,
+  not reset by a success, and must not be freed.
+- The C++ wrappers (`interpreter-dsp.h`, `cranelift-dsp.h`, `libfaust.h`) read
+  them, so their `std::string& error_msg` holds the complete text, where the
+  reference's holds its own one-line message. A host that parses that string
+  must not assume one line.
+- Compatibility impact: none for a host written against the reference API; the
+  functions are additions and the buffer's behavior is unchanged.
+- Evidence: `crates/ffi-common/src/complete_error.rs`, the `complete_error`
+  tests of the FFI crates, `cargo run -p xtask -- libfaust-export-check`, and
+  the workspace README, "Compile errors".
+
 ## 8. Internal architectural adaptations
 
 These differences normally preserve Faust semantics, but matter to maintainers
@@ -579,6 +678,7 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-014 | `narrower` | `rep_19_primitive_family` has different numerical results for the `control`/`enable` wrapper portion under the shared interpreter-runtime differential. |
 | DIFF-GAP-015 | `narrower` | `rep_37_table_rwtable_negative_indices` has different numerical behavior for negative read/write table indices. |
 | DIFF-GAP-016 | `narrower` | `rep_67_variable_delay_shifted_slider` differs for a variable delay whose shifted slider produces a negative intermediate delay expression. |
+| DIFF-GAP-017 | `parity-gap` | A division by a zero that is constant without being a literal when its sequence is evaluated (`z = 0 <: _, !;`), used as a **pattern-matching argument whose value is then unused** (`f(0) = 1; f(n) = 2; process = f(1 / z);`), compiles in Rust and fails in C++ (`ERROR : division by 0 in 1 / 0`): C++ simplifies the argument eagerly and its exception is fatal, Rust folds a pattern argument as an optimization and gives up on this one. With a literal divisor both fail, and wherever the quotient is used (a signal, an iteration count, a route size, a label) Rust reports the division too. Pinned by `a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument` in `crates/compiler/tests/diagnostic_errors.rs`; see `DIFF-BEH-010`. |
 For a time-stamped quantitative snapshot rather than this durable registry,
 use [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),
 the reports under `porting/phases/`, and `tests/golden/METADATA.toml`.

@@ -999,3 +999,46 @@ fn a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument() {
     let literal = first_diagnostic("pattern.dsp", "f(0) = 1; f(n) = 2; process = f(1 / 0);");
     assert_eq!(literal.code.0, "FRS-EVAL-0007");
 }
+
+#[test]
+fn abs_of_an_integer_constant_is_an_integer_and_an_infinity_keeps_its_sign() {
+    // These folds happen in the normalization of the signals, after
+    // `compile_source_to_signals`: they are read in the generated code.
+    let output = |source: &str| -> String {
+        let code = Compiler::new()
+            .compile_source_to_cpp(
+                "fold.dsp",
+                source,
+                &codegen::backends::cpp::CppOptions::default(),
+            )
+            .unwrap_or_else(|e| panic!("{source} must compile: {e}"));
+        code.lines()
+            .find(|line| line.contains("output0[i0] ="))
+            .unwrap_or_else(|| panic!("no output line for {source}"))
+            .trim()
+            .to_owned()
+    };
+    // `abs` keeps an integer an integer (it was the real 3.0), and wraps on
+    // `i32::MIN` as the `std::abs(int)` emitted for a non-constant argument does
+    assert_eq!(
+        output("process = abs(-3);"),
+        "output0[i0] = ((FAUSTFLOAT)(3));"
+    );
+    assert_eq!(
+        output("process = abs(-2147483647);"),
+        "output0[i0] = ((FAUSTFLOAT)(2147483647));"
+    );
+    assert_eq!(
+        output("process = abs(-2147483647 - 1);"),
+        "output0[i0] = ((FAUSTFLOAT)(-2147483648));"
+    );
+    assert_eq!(
+        output("process = abs(-2.5);"),
+        "output0[i0] = ((FAUSTFLOAT)(2.5f));"
+    );
+    // a negative infinity keeps its sign: Faust 2.89 prints `INFINITY` here
+    assert_eq!(
+        output("process = 0 - exp(1000);"),
+        "output0[i0] = ((FAUSTFLOAT)(-INFINITY));"
+    );
+}
