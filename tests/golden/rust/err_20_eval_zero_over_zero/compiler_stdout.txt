@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_20_eval_zero_over_zero.dsp
+bytes=260
+lines=4
+fnv1a64=ba984064d8ee7049

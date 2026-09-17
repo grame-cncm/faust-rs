@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_19_eval_division_by_zero_argument.dsp
+bytes=361
+lines=6
+fnv1a64=d344598a698613b7
