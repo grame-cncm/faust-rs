@@ -1080,11 +1080,48 @@ resonant four-pole ladder, the two agree to `1e-13` dB.
 The excitation is `--in impulse` (the default: every input at once, the
 response to a common input) or `--in impulse:CH` for the responses from one
 input; anything else is refused, and so is a program without inputs. `--set`
-fixes the controls; `--eval`, `--double`, `--sr`, `--block`, `--precision`,
-`--quiet` (the `#` lines alone, on stdout), `--time` and `--format json` apply.
-`--sweep`, `--reduce`, `--at`, `--skip`, `--every`, `--out`, `--bargraphs`,
-`--fail-above`, the comparisons of §14, `--train`, `--nvoices`, `--format ir`
-and the impulse-test protocol do not combine with it.
+fixes the controls and `--sweep` varies them (below); `--eval`, `--double`,
+`--sr`, `--block`, `--precision`, `--quiet` (the `#` lines alone, on stdout),
+`--time` and `--format json` apply. `--reduce`, `--at`, `--skip`, `--every`,
+`--out`, `--bargraphs`, `--fail-above`, the comparisons of §14, `--train`,
+`--nvoices`, `--format ir` and the impulse-test protocol do not combine with
+it.
+
+### A family of curves: `--sweep`
+
+`--sweep` gives one response per point, the swept controls heading the rows as
+in a sweep of renders (repeat the flag for the cartesian product, the last axis
+varying fastest):
+
+```text
+$ faustprobe --double -I <faustlibraries> --freqresp 3:500:2000 --sweep q=1,8 \
+    --eval 'fi.resonlp(hslider("fc", 1000, 100, 10000, 1), hslider("q", 1, 0.5, 20, 0.1), 1)' stdfaust.lib
+q,hz,mag_db_out0,phase_out0
+1,500.0,0.9000687595424967,-0.5870262849847706
+1,1000.0,5.785964799319721e-15,-1.570796326794909
+1,2000.0,-11.234933943905691,-2.5574999716557243
+8,500.0,2.4615011014203776,-0.08296627913722658
+8,1000.0,18.06179973983898,-1.57079632679498
+8,2000.0,-9.690021607648786,-3.0591507325662475
+# freqresp: 3 frequencies from 500.0 to 2000.0 Hz, from the response of 15000 frames to an impulse on the input, at each of 2 sweep points
+# freqresp [q=1]: linear and time-invariant within 1e-9 of the peak (homogeneity 1.3e-322, time_invariance 0.0, superposition 4.295553430345061e-15)
+# freqresp [q=1] out0: peak=0.0775513726569672 peak_at=9, the last tenth of the window holds 0.0 of the energy
+# freqresp [q=8]: linear and time-invariant within 1e-9 of the peak (homogeneity 0.0, time_invariance 0.0, superposition 5.484530576646706e-15)
+# freqresp [q=8] out0: peak=0.12904145063144237 peak_at=11, the last tenth of the window holds 8.799264642916371e-105 of the energy
+```
+
+A resonant low-pass at its resonance: 0 dB for a quality factor of 1, `20
+log10(8) = 18.06` dB for 8, a quarter turn late either way. **Every point is a
+measurement of its own**: four renders from a cleared instance with the `--set`
+controls and the point's written (after `--settle` frames of silence, when
+given), its three checks, and its own lines, tagged with the point; a note
+about a response cut while ringing names the point it concerns (`# note:
+[a=0.999] out0 is still ringing ...`). A family with a member that is not a
+frequency response is **refused whole**, nothing being printed, with the point
+that broke: `--freqresp: at `drive=0.5`, the program is not linear ...`. A
+swept value follows the rule of every write (§5): outside its range it is an
+error, or under `--clamp` a clamp said once, the rows carrying the value that
+was used. `--time` gives one account for all the responses.
 
 ### A program that has no frequency response is refused
 
@@ -1169,9 +1206,14 @@ is exactly zero: nothing reaches this output from input 1`) and reads `-inf`.
 ### JSON
 
 `--format json`: `schema_version`, `dsp`, `sr`, `frames`, and `freqresp` with
-`input` (null for every input), `settle`, `hz[]`, `linearity` (`tolerance`,
-`shift`, and the three measured departures `homogeneity`, `time_invariance`,
-`superposition`), `outputs[]` (`output`, `mag_db[]`, `phase[]`, `peak`,
-`tail_energy_fraction`); `eval`, `clamped`, `notes` and `timing` as elsewhere.
-A magnitude of `-inf` is `null`.
+`input` (null for every input), `settle`, `hz[]` and `runs[]`, one run per
+sweep point and a single one without a sweep, as in a render's document. A run
+holds `set` (the swept controls at that point, empty without a sweep),
+`linearity` (`tolerance`, `shift`, and the three measured departures
+`homogeneity`, `time_invariance`, `superposition`), `outputs[]` (`output`,
+`mag_db[]`, `phase[]`, `peak`, `tail_energy_fraction`), and `clamped`, `notes`,
+`timing` when there is something to say; `eval` and `timing.compile_s` are on
+the document. A magnitude of `-inf` is `null`. (For the few hours between the
+introduction of `--freqresp` and that of its sweep, `linearity` and `outputs`
+sat directly under `freqresp`.)
 

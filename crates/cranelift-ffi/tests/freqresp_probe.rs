@@ -508,11 +508,16 @@ fn the_json_document_holds_the_same_response() {
     let response = &document["freqresp"];
     assert_eq!(response["input"], serde_json::Value::Null);
     assert_eq!(response["settle"], 0);
-    assert_eq!(response["linearity"]["shift"], 37);
-    assert_eq!(response["linearity"]["homogeneity"], 0.0);
-    assert_eq!(response["linearity"]["time_invariance"], 0.0);
-    assert!(response["linearity"]["superposition"].as_f64().unwrap() < 1e-12);
-    let output = &response["outputs"][0];
+    // one run, as a render's document has one: a sweep has one per point
+    let runs = response["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 1);
+    let run = &runs[0];
+    assert_eq!(run["set"], serde_json::json!({}));
+    assert_eq!(run["linearity"]["shift"], 37);
+    assert_eq!(run["linearity"]["homogeneity"], 0.0);
+    assert_eq!(run["linearity"]["time_invariance"], 0.0);
+    assert!(run["linearity"]["superposition"].as_f64().unwrap() < 1e-12);
+    let output = &run["outputs"][0];
     assert_eq!(output["tail_energy_fraction"], 0.0);
     // the same numbers, to the last place a JSON reader is sure of
     let same = |a: f64, b: f64| (a - b).abs() <= 4.0 * f64::EPSILON * b.abs();
@@ -536,6 +541,275 @@ fn quiet_keeps_the_annotations_and_two_runs_print_the_same_bytes() {
     ));
     let first = probe(&["--double", "--freqresp", "32", &file]);
     assert_eq!(first, probe(&["--double", "--freqresp", "32", &file]));
+}
+
+// ------------------------------------------------------------------ --sweep
+
+/// A family of curves is one command: the closed form of the ladder at each
+/// cutoff and each resonance, the last axis varying fastest, the swept
+/// controls heading the rows.
+#[test]
+fn a_sweep_gives_one_checked_response_per_point() {
+    let fixtures = Fixtures::new("sweep");
+    let file = fixtures.write("ladder.dsp", LADDER);
+    let (ok, stdout, stderr) = probe(&[
+        "--double",
+        "-n",
+        "8000",
+        "--freqresp",
+        "5:100:10000",
+        "--sweep",
+        "cutoff=500,2000",
+        "--sweep",
+        "resonance=0,2",
+        &file,
+    ]);
+    assert!(ok, "{stderr}");
+    let mut lines = stdout.lines();
+    assert_eq!(
+        lines.next(),
+        Some("cutoff,resonance,hz,mag_db_out0,phase_out0")
+    );
+    let rows: Vec<Vec<f64>> = lines
+        .map(|l| l.split(',').map(|f| f.parse().unwrap()).collect())
+        .collect();
+    assert_eq!(rows.len(), 4 * 5);
+    let expected_points = [(500.0, 0.0), (500.0, 2.0), (2000.0, 0.0), (2000.0, 2.0)];
+    for (index, row) in rows.iter().enumerate() {
+        let (fc, k) = expected_points[index / 5];
+        assert_eq!((row[0], row[1]), (fc, k), "row {index}");
+        let g = (PI * fc / 44100.0).tan();
+        let h1 = C(1.0, 0.0).div(C(1.0, (PI * row[2] / 44100.0).tan() / g));
+        let h4 = h1.mul(h1).mul(h1).mul(h1);
+        let h = h4.div(C(1.0 + k * h4.0, k * h4.1));
+        assert!(distance(row[3], row[4], h) < 1e-12, "row {index}: {row:?}");
+    }
+    // each point is checked, and says so under its own name
+    assert!(stderr.contains("at each of 4 sweep points"), "{stderr}");
+    for label in ["cutoff=500 resonance=0", "cutoff=2000 resonance=2"] {
+        assert!(
+            stderr.contains(&format!(
+                "# freqresp [{label}]: linear and time-invariant within 1e-9"
+            )),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!("# freqresp [{label}] out0: peak=")),
+            "{stderr}"
+        );
+    }
+}
+
+/// `--set` fixes the other controls at every point.
+#[test]
+fn a_fixed_control_holds_at_every_point_of_the_sweep() {
+    let fixtures = Fixtures::new("sweep_set");
+    let file = fixtures.write("ladder.dsp", LADDER);
+    let (ok, stdout, stderr) = probe(&[
+        "--double",
+        "-n",
+        "8000",
+        "--set",
+        "resonance=2",
+        "--freqresp",
+        "1:1000:1000",
+        "--sweep",
+        "cutoff=1000,4000",
+        &file,
+    ]);
+    assert!(ok, "{stderr}");
+    // at its cutoff the ladder with k = 2 is H1^4 / (1 + 2 H1^4) = -0.5; at
+    // the second point too the resonance is 2, not the slider's 0
+    let rows: Vec<Vec<f64>> = stdout
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').map(|f| f.parse().unwrap()).collect())
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][0], 1000.0);
+    assert!(
+        (rows[0][2] - 20.0 * 0.5_f64.log10()).abs() < 1e-9,
+        "{:?}",
+        rows[0]
+    );
+    for row in &rows {
+        let g = (PI * row[0] / 44100.0).tan();
+        let h1 = C(1.0, 0.0).div(C(1.0, (PI * row[1] / 44100.0).tan() / g));
+        let h4 = h1.mul(h1).mul(h1).mul(h1);
+        let h = h4.div(C(1.0 + 2.0 * h4.0, 2.0 * h4.1));
+        assert!(distance(row[2], row[3], h) < 1e-12, "{row:?}");
+    }
+}
+
+/// `x + drive x^3` is linear at `drive = 0` and nowhere else: a family with a
+/// member that is no frequency response is refused whole, with the point.
+#[test]
+fn a_point_that_is_not_linear_refuses_the_sweep_and_is_named() {
+    let fixtures = Fixtures::new("sweep_nonlinear");
+    let file = fixtures.write(
+        "drive.dsp",
+        "drive = hslider(\"drive\", 0, 0, 1, 0.01);\nprocess = _ <: _ + drive * (_ * _ * _);\n",
+    );
+    // alone, the linear point is measured
+    let (ok, _, stderr) = probe(&["--double", "--freqresp", "4", "--sweep", "drive=0", &file]);
+    assert!(ok, "{stderr}");
+    let (ok, stdout, stderr) = probe(&[
+        "--double",
+        "--freqresp",
+        "4",
+        "--sweep",
+        "drive=0,0.5",
+        &file,
+    ]);
+    assert!(!ok);
+    assert!(
+        stdout.is_empty(),
+        "not even the first point's rows: {stdout}"
+    );
+    assert!(
+        stderr.contains("--freqresp: at `drive=0.5`, the program is not linear"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("homogeneity:"), "{stderr}");
+}
+
+#[test]
+fn a_swept_value_outside_the_range_follows_the_rule_of_every_write() {
+    let fixtures = Fixtures::new("sweep_range");
+    let file = fixtures.write("ladder.dsp", LADDER);
+    let base = [
+        "--double",
+        "-n",
+        "8000",
+        "--freqresp",
+        "1:1000:1000",
+        "--sweep",
+        "resonance=0,7",
+    ];
+    let mut args = base.to_vec();
+    args.push(&file);
+    let (ok, stdout, stderr) = probe(&args);
+    assert!(!ok);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("outside the range [0, 3.9]"), "{stderr}");
+
+    // under --clamp the row carries the value that was used, and the clamp
+    // is said once
+    args.insert(0, "--clamp");
+    let (ok, stdout, stderr) = probe(&args);
+    assert!(ok, "{stderr}");
+    let last = stdout.lines().last().unwrap();
+    assert!(last.starts_with("3.9"), "{last}");
+    assert_eq!(stderr.matches("# clamped").count(), 1, "{stderr}");
+    assert!(stderr.contains("/resonance: 7 -> 3.9"), "{stderr}");
+}
+
+/// Each point starts from a cleared instance: a smoothed control settles at
+/// every point, and a response that rings is noted for its point alone.
+#[test]
+fn every_point_settles_and_a_ringing_point_is_named() {
+    let fixtures = Fixtures::new("sweep_settle");
+    let smoothed = fixtures.write("smoothed.dsp", SMOOTHED);
+    let (ok, stdout, stderr) = probe(&[
+        "--double",
+        "--settle",
+        "50000",
+        "-n",
+        "2000",
+        "--freqresp",
+        "1:1000:1000",
+        "--sweep",
+        "gain=0.25,0.5",
+        &smoothed,
+    ]);
+    assert!(ok, "{stderr}");
+    let levels: Vec<f64> = stdout
+        .lines()
+        .skip(1)
+        .map(|l| l.split(',').nth(2).unwrap().parse().unwrap())
+        .collect();
+    // twice the gain, 6.02 dB
+    assert!(
+        (levels[1] - levels[0] - 20.0 * 2.0_f64.log10()).abs() < 1e-9,
+        "{levels:?}"
+    );
+
+    let pole = fixtures.write(
+        "pole.dsp",
+        "process = + ~ *(hslider(\"a\", 0.5, 0, 0.9999, 0.0001));\n",
+    );
+    let (ok, stdout, stderr) = probe(&[
+        "--double",
+        "-n",
+        "1000",
+        "--freqresp",
+        "2",
+        "--quiet",
+        "--sweep",
+        "a=0.999,0.5",
+        &pole,
+    ]);
+    assert!(ok, "{stderr}");
+    let notes: Vec<&str> = stdout.lines().filter(|l| l.starts_with("# note")).collect();
+    assert_eq!(notes.len(), 1, "{stdout}");
+    assert!(
+        notes[0].starts_with("# note: [a=0.999] out0 is still ringing"),
+        "{}",
+        notes[0]
+    );
+}
+
+#[test]
+fn a_sweep_in_json_is_one_run_per_point_and_timed_as_one_account() {
+    let fixtures = Fixtures::new("sweep_json");
+    let file = fixtures.write("ladder.dsp", LADDER);
+    let base = [
+        "--double",
+        "-n",
+        "8000",
+        "--freqresp",
+        "3:500:2000",
+        "--sweep",
+        "cutoff=500,1000,2000",
+        "--time",
+    ];
+    let mut args = base.to_vec();
+    args.extend(["--format", "json", &file]);
+    let (ok, stdout, stderr) = probe(&args);
+    assert!(ok, "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let runs = document["freqresp"]["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 3);
+    assert_eq!(document["freqresp"]["hz"].as_array().unwrap().len(), 3);
+    for (run, cutoff) in runs.iter().zip([500.0, 1000.0, 2000.0]) {
+        assert_eq!(run["set"]["cutoff"], cutoff);
+        // -12.04 dB where the frequency is the cutoff
+        let at_cutoff = run["outputs"][0]["mag_db"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(document["freqresp"]["hz"].as_array().unwrap())
+            .find(|(_, hz)| hz.as_f64() == Some(cutoff))
+            .map(|(db, _)| db.as_f64().unwrap())
+            .expect("the cutoff is on the grid");
+        assert!(
+            (at_cutoff - 20.0 * 0.25_f64.log10()).abs() < 1e-9,
+            "{cutoff}"
+        );
+        // to the bit, short of the subnormal end of the tail, where halving
+        // a sample loses its last bit
+        assert!(run["linearity"]["homogeneity"].as_f64().unwrap() < 1e-300);
+        assert_eq!(run["timing"]["frames"], 8000);
+    }
+    assert!(document["timing"]["compile_s"].as_f64().unwrap() > 0.0);
+
+    // the text has one account for the three responses
+    let mut args = base.to_vec();
+    args.push(&file);
+    let (ok, _, stderr) = probe(&args);
+    assert!(ok);
+    assert!(stderr.contains("# time: 3 renders"), "{stderr}");
+    assert!(stderr.contains("(24000 frames in"), "{stderr}");
 }
 
 // ------------------------------------------------------- what it is not for

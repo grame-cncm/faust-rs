@@ -826,10 +826,10 @@ with these decisions and departures:
   when it is of a size to explain it (above the tolerance times the response's
   peak): an offset of 0.25 is, a reverberator's `8e-21` is not.
 - **`--skip` is refused**, not ignored as the plan had it: an option that is
-  accepted and does nothing is what F1 removed. So are `--sweep` (one response
-  per command; a shell loop does a family of curves), `--at` (a control change
-  during the response makes the program time-varying), and what looks at the
-  frames of a plain render. `--in` must be `impulse` or `impulse:CH`; a program
+  accepted and does nothing is what F1 removed. So are `--at` (a control change
+  during the response makes the program time-varying) and what looks at the
+  frames of a plain render. `--sweep` was refused at first (one response per
+  command) and added later the same day, see the end of this section. `--in` must be `impulse` or `impulse:CH`; a program
   without inputs is refused.
 - **The transform** is Horner's rule on the polynomial in `z^-1`, from the last
   sample: a product by a constant of modulus one per sample, the small samples
@@ -899,4 +899,37 @@ Checks: four tests in `tests/feedback_probe.rs`, one in `tests/poly_probe.rs`;
 value (from the binary and from the library); the effect taking it; a clamp
 said once per write; the clamps not printed; not in the JSON; a note's
 frequency clamped to the slider; a bargraph written.
+
+### `--sweep` with `--freqresp`, 2026-09-17
+
+A family of curves is one command: `--sweep` gives one response per point of
+the cartesian product, the swept controls heading the rows (`q,hz,mag_db_out0,
+phase_out0`), as a sweep of renders does. Decisions:
+
+- **Every point is a measurement of its own**: the unit response and the three
+  checks, each render from a cleared instance with the `--set` controls and
+  the point's written, after `--settle` frames when given. Its lines carry its
+  name (`# freqresp [q=8]: linear ...`, `# note: [a=0.999] out0 is still
+  ringing ...`); without a sweep the lines are those of F5, unchanged.
+- **Refused whole.** Nothing is printed before every point has been measured,
+  and a point that fails a check refuses the command with its name
+  (`--freqresp: at `drive=0.5`, the program is not linear ...`): a family
+  with a member that is not a frequency response is not a family of frequency
+  responses, and the first failing point is the information.
+- Swept values follow the rule of every write (range error, or `--clamp` said
+  once with the rows carrying the value used). `--time` gives one account.
+- **The JSON document changed shape**, hours after its introduction:
+  `linearity` and `outputs` moved from `freqresp` into `freqresp.runs[]`, one
+  run per point with its `set`, and a single run without a sweep, as the
+  document of a render has it. A deliberate exception to §4's "none is
+  renamed", taken while the only consumer was this repository's tests.
+
+Checks: six more tests in `tests/freqresp_probe.rs` (22), 365 in the crate:
+the closed form of the ladder at every point of a two-axis sweep (order
+included), a fixed control at every point, a non-linear point refusing the
+whole with its name, ranges and `--clamp`, `--settle` at every point and a
+ringing point named, the JSON runs and the single timing account. Ten
+mutations rejected; one first survived, the fixed controls written at the first
+point only, because the test looked at the first point only: it now checks
+every point against the closed form.
 
