@@ -31,10 +31,12 @@
 
 use std::ffi::{c_char, c_int};
 
-use compiler::{Compiler as FaustCompiler, ExpandDspRequest, GenerateAuxFilesRequest};
+use compiler::{
+    Compiler as FaustCompiler, ExpandDspRequest, FaustwasmServiceError, GenerateAuxFilesRequest,
+};
 use ffi_common::{
-    alloc_c_string, decode_c_argv, optional_c_string_arg, required_c_string_arg, sha1_hex,
-    write_error_4096,
+    CompleteError, alloc_c_string, decode_c_argv, optional_c_string_arg, required_c_string_arg,
+    sha1_hex, write_error_4096,
 };
 
 mod aux_files;
@@ -268,7 +270,7 @@ unsafe fn expand(
             alloc_c_string(&expanded)
         }
         Err(error) => {
-            unsafe { write_error(error_msg, &error.message) };
+            unsafe { write_error(error_msg, &summary_of(error)) };
             std::ptr::null_mut()
         }
     }
@@ -288,7 +290,7 @@ fn aux_files(
     };
     FaustCompiler::new()
         .generate_aux_files(&request)
-        .map_err(|error| error.message)
+        .map_err(summary_of)
 }
 
 /// Auxiliary-file generation for the `*2` entry points, which return text.
@@ -391,9 +393,45 @@ unsafe fn take_argv(
     }
 }
 
-/// Writes one message into the caller's 4096-byte error buffer.
-unsafe fn write_error(error_msg: *mut c_char, message: &str) {
+thread_local! {
+    /// Complete text of the last error this thread reported; see
+    /// [`ffi_common::complete_error`] for the contract.
+    static COMPLETE_ERROR: CompleteError = const { CompleteError::new() };
+}
+
+/// Writes one message into the caller's 4096-byte error buffer, and publishes
+/// its complete text for [`getCCompleteDSPError`].
+pub(crate) unsafe fn write_error(error_msg: *mut c_char, message: &str) {
+    COMPLETE_ERROR.with(|record| record.report(message));
     unsafe { write_error_4096(error_msg, message) };
+}
+
+/// Flattens a front-end failure to the message the error buffer receives,
+/// keeping its rendered diagnostics for the report of that message.
+fn summary_of(error: FaustwasmServiceError) -> String {
+    COMPLETE_ERROR.with(|record| record.attach(&error.message, &error.rendered_diagnostics()));
+    error.message
+}
+
+/// Returns the complete text of the last error reported on the calling thread
+/// through an `error_msg` buffer of this API: the message that buffer
+/// received, followed by the compiler's rendered diagnostics (location, source
+/// snippet, notes, fixes) when the failure had some. The buffer is 4096 bytes
+/// by contract and its size cannot grow without breaking existing hosts; this
+/// text is not truncated.
+///
+/// An addition of this port: the reference libfaust has no equivalent. It is
+/// the backend-agnostic sibling of `getCCompleteCraneliftDSPFactoryError` and
+/// `getCCompleteInterpreterDSPFactoryError`; each of the three reports the
+/// failures of its own entry points.
+///
+/// The pointer is owned by the library: do not free it, `freeCMemory`
+/// included. It is null while no error was reported on this thread, and stays
+/// valid until the next error reported on this thread. A call that succeeds
+/// does not reset it, so read it after a call that failed.
+#[unsafe(no_mangle)]
+pub extern "C" fn getCCompleteDSPError() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::as_ptr)
 }
 
 /// Writes the SHA-1 key of `text` into the caller's 64-byte buffer.

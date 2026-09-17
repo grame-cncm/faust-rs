@@ -8,8 +8,8 @@
 use std::ffi::c_char;
 use std::path::PathBuf;
 
+use crate::write_error;
 use compiler::AuxFileArtifact;
-use ffi_common::write_error_4096;
 
 /// Writes every artifact under the directory selected by `-O <path>`.
 ///
@@ -25,7 +25,7 @@ pub(crate) fn write_artifacts_to_disk(
     let out_dir = output_dir(argv);
     if let Err(error) = std::fs::create_dir_all(&out_dir) {
         unsafe {
-            write_error_4096(
+            write_error(
                 error_msg,
                 &format!("cannot create output dir {}: {error}", out_dir.display()),
             );
@@ -36,7 +36,7 @@ pub(crate) fn write_artifacts_to_disk(
         let destination = out_dir.join(&artifact.path);
         if let Err(error) = std::fs::write(&destination, &artifact.content) {
             unsafe {
-                write_error_4096(
+                write_error(
                     error_msg,
                     &format!("cannot write {}: {error}", destination.display()),
                 );

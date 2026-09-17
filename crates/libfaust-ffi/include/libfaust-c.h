@@ -122,6 +122,24 @@ bool generateCAuxFilesFromString(const char* name_app, const char* dsp_content, 
 const char* generateCAuxFilesFromString2(const char* name_app, const char* dsp_content, int argc,
                                          const char* argv[], char* error_msg);
 
+/**
+ * Return the complete text of the last error reported on the calling thread
+ * through an `error_msg` buffer of this header: the message that buffer
+ * received, followed by the compiler's rendered diagnostics (location, source
+ * snippet, notes, fixes) when the failure had some. `error_msg` is 4096 bytes
+ * by contract and truncates; this text is whole.
+ *
+ * An addition of the Rust port: the reference libfaust has no equivalent. The
+ * backend headers have their own (`getCCompleteCraneliftDSPFactoryError`,
+ * `getCCompleteInterpreterDSPFactoryError`), each for its own entry points.
+ *
+ * The pointer is owned by the library: do NOT free it, not with freeCMemory
+ * either. It is NULL while no error was reported on this thread and stays
+ * valid until the next error reported on this thread. A successful call does
+ * not reset it: read it after a call that failed.
+ */
+const char* getCCompleteDSPError(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -351,6 +351,7 @@ generateCSHA1
 getAllCCraneliftDSPFactories
 getAllCInterpreterDSPFactories
 getCCompleteCraneliftDSPFactoryError
+getCCompleteDSPError
 getCCompleteInterpreterDSPFactoryError
 getCCraneliftDSPFactoryCompileOptions
 getCCraneliftDSPFactoryDSPCode

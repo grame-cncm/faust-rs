@@ -623,6 +623,33 @@ int main() {
         std::cerr << "unexpected sha key: " << sha_key << std::endl;
         return 1;
     }
+    if (!error_msg.empty()) {
+        std::cerr << "a success left a message: " << error_msg << std::endl;
+        return 1;
+    }
+    // A program that does not compile: `error_msg` is a std::string, so it
+    // holds the compiler's complete diagnostic (getCCompleteDSPError), not
+    // the one-line summary the C API's 4096-byte buffer receives.
+    expanded = expandDSPFromString("probe", "// a comment line\nprocess = _ : *(0.5 ;\n", 0,
+                                   nullptr, sha_key, error_msg);
+    if (!expanded.empty() || error_msg.rfind("parse failed for", 0) != 0 ||
+        error_msg.find(":2:21: error [FRS-PARSE-0001]") == std::string::npos ||
+        error_msg.find("  2 | process = _ : *(0.5 ;") == std::string::npos ||
+        error_msg.find("insert `)`") == std::string::npos || error_msg.back() == '\n') {
+        std::cerr << "incomplete compile error:\n" << error_msg.substr(0, 600) << std::endl;
+        return 1;
+    }
+    std::string many;
+    for (int i = 0; i < 200; ++i) {
+        many += "a_rather_long_definition_name_" + std::to_string(i) + " = 0;\n";
+    }
+    many += "process = _ : missing_symbol;\n";
+    expandDSPFromString("probe", many, 0, nullptr, sha_key, error_msg);
+    if (error_msg.size() <= 4096 ||
+        error_msg.find("a_rather_long_definition_name_199") == std::string::npos) {
+        std::cerr << "a long compile error was cut: " << error_msg.size() << " bytes" << std::endl;
+        return 1;
+    }
     if (generateSHA1("abc") != "A9993E364706816ABA3E25717850C26C9CD0D89D") {
         std::cerr << "unexpected sha1: " << generateSHA1("abc") << std::endl;
         return 1;
@@ -676,7 +703,9 @@ int main() {
         )
         .into());
     }
-    println!("libfaust C++ client: expandDSPFromString and generateSHA1 verified");
+    println!(
+        "libfaust C++ client: expandDSPFromString, its complete compile errors and generateSHA1 verified"
+    );
     Ok(())
 }
 

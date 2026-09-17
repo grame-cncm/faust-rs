@@ -19,6 +19,7 @@
 #include "libfaust-c.h"
 
 #ifdef __cplusplus
+#include <cstring>
 #include <string>
 
 /*
@@ -50,6 +51,28 @@ inline std::string libfaustAdoptString(const char* owned)
 }
 
 /**
+ * The text of a call, from the 4096-byte buffer it filled: empty after a
+ * success; after a failure, the complete text from getCCompleteDSPError (the
+ * buffer's message, then the compiler's rendered diagnostics: location, source
+ * snippet, notes, fixes), which `std::string` can hold and the buffer cannot.
+ * That text is per thread and is not reset by a success, so it is taken only
+ * when it extends what this buffer received, and an empty buffer is extended
+ * by nothing.
+ */
+inline std::string libfaustErrorText(const char* buffer)
+{
+    const char* summary = buffer ? buffer : "";
+    const char* complete = getCCompleteDSPError();
+    const size_t length = std::strlen(summary);
+    if (complete && length > 0 && std::strncmp(complete, summary, length) == 0) {
+        std::string text(complete);
+        while (!text.empty() && text.back() == '\n') text.pop_back();
+        return text;
+    }
+    return std::string(summary);
+}
+
+/**
  * Generate a SHA-1 key from a string.
  */
 inline std::string generateSHA1(const std::string& data)
@@ -72,7 +95,7 @@ inline std::string expandDSPFromFile(const std::string& filename, int argc, cons
     std::string result =
         libfaustAdoptString(expandCDSPFromFile(filename.c_str(), argc, argv, key, error));
     sha_key = key;
-    error_msg = error;
+    error_msg = libfaustErrorText(error);
     return result;
 }
 
@@ -90,7 +113,7 @@ inline std::string expandDSPFromString(const std::string& name_app, const std::s
     std::string result = libfaustAdoptString(
         expandCDSPFromString(name_app.c_str(), dsp_content.c_str(), argc, argv, key, error));
     sha_key = key;
-    error_msg = error;
+    error_msg = libfaustErrorText(error);
     return result;
 }
 
@@ -102,7 +125,7 @@ inline bool generateAuxFilesFromFile(const std::string& filename, int argc, cons
 {
     char error[LIBFAUST_ERROR_MSG_SIZE] = {0};
     bool ok = generateCAuxFilesFromFile(filename.c_str(), argc, argv, error);
-    error_msg = error;
+    error_msg = libfaustErrorText(error);
     return ok;
 }
 
@@ -115,7 +138,7 @@ inline std::string generateAuxFilesFromFile2(const std::string& filename, int ar
     char error[LIBFAUST_ERROR_MSG_SIZE] = {0};
     std::string result =
         libfaustAdoptString(generateCAuxFilesFromFile2(filename.c_str(), argc, argv, error));
-    error_msg = error;
+    error_msg = libfaustErrorText(error);
     return result;
 }
 
@@ -128,7 +151,7 @@ inline bool generateAuxFilesFromString(const std::string& name_app, const std::s
     char error[LIBFAUST_ERROR_MSG_SIZE] = {0};
     bool ok =
         generateCAuxFilesFromString(name_app.c_str(), dsp_content.c_str(), argc, argv, error);
-    error_msg = error;
+    error_msg = libfaustErrorText(error);
     return ok;
 }
 
@@ -142,7 +165,7 @@ inline std::string generateAuxFilesFromString2(const std::string& name_app,
     char error[LIBFAUST_ERROR_MSG_SIZE] = {0};
     std::string result = libfaustAdoptString(
         generateCAuxFilesFromString2(name_app.c_str(), dsp_content.c_str(), argc, argv, error));
-    error_msg = error;
+    error_msg = libfaustErrorText(error);
     return result;
 }
 
