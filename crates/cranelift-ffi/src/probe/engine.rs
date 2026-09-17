@@ -25,7 +25,10 @@
 use std::ffi::{CStr, CString, c_char, c_int};
 use std::rc::Rc;
 
-use crate::factory::{createCCraneliftDSPFactoryFromFile, deleteCCraneliftDSPFactory};
+use crate::factory::{
+    createCCraneliftDSPFactoryFromFile, deleteCCraneliftDSPFactory,
+    getCCompleteCraneliftDSPFactoryError,
+};
 use crate::instance::{
     buildUserInterfaceCCraneliftDSPInstance, computeCCraneliftDSPInstance,
     createCCraneliftDSPInstance, deleteCCraneliftDSPInstance, getNumInputsCCraneliftDSPInstance,
@@ -96,6 +99,29 @@ pub struct Factory {
     double: bool,
 }
 
+/// The text of a factory creation that just failed on this thread.
+///
+/// `error_msg` holds the one-line summary, which for a syntax error is a
+/// count; the complete text adds the compiler's rendered diagnostics (location,
+/// source snippet, notes, fixes), so the probe prints what `faust-rs` prints.
+/// The complete text is not reset by a success, so it is taken only when it
+/// extends what the buffer of *this* failure received.
+fn compile_error(error_msg: &[c_char; 4096]) -> String {
+    let summary = unsafe { CStr::from_ptr(error_msg.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    let complete = getCCompleteCraneliftDSPFactoryError();
+    if complete.is_null() {
+        return summary;
+    }
+    let complete = unsafe { CStr::from_ptr(complete) }.to_string_lossy();
+    if complete.starts_with(summary.as_str()) {
+        complete.trim_end().to_owned()
+    } else {
+        summary
+    }
+}
+
 impl Factory {
     /// JIT-compile `path`.
     ///
@@ -153,9 +179,7 @@ impl Factory {
             )
         };
         if factory.is_null() {
-            return Err(unsafe { CStr::from_ptr(err.as_ptr()) }
-                .to_string_lossy()
-                .into_owned());
+            return Err(compile_error(&err));
         }
         Ok(Self { factory, double })
     }
@@ -204,9 +228,7 @@ impl Factory {
             )
         };
         if factory.is_null() {
-            return Err(unsafe { CStr::from_ptr(err.as_ptr()) }
-                .to_string_lossy()
-                .into_owned());
+            return Err(compile_error(&err));
         }
         Ok(Self { factory, double })
     }
@@ -1135,5 +1157,27 @@ fn apply_write(voice: &Voice, write: poly::VoiceWrite) {
                 let _ = voice.probe.set_exact(path, 0.0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Factory, c_char, compile_error};
+
+    /// The complete text survives a success and any failure that does not
+    /// report through `error_msg`, so it may be stale: it is used only when
+    /// it extends the summary of the failure at hand.
+    #[test]
+    fn a_stale_complete_text_is_not_attributed_to_another_failure() {
+        let stale = Factory::compile_from_string("stale", "process = _ : *(0.5 ;", &[], true, 0)
+            .err()
+            .expect("a syntax error");
+        assert!(stale.contains("FRS-PARSE-0001"));
+
+        let mut error_msg = [0 as c_char; 4096];
+        for (slot, byte) in error_msg.iter_mut().zip(b"some other failure") {
+            *slot = *byte as c_char;
+        }
+        assert_eq!(compile_error(&error_msg), "some other failure");
     }
 }

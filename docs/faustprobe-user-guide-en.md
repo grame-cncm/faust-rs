@@ -74,6 +74,29 @@ summary reach the terminal.
 | `--bra-tape N` | samples one `rad` reverse tape holds, the largest `--block` over which the gradients of a `rad` through delays and recursions are exact (default 8192, a power of two; the compiler's `-bra-tape`) |
 | `-n, --render N` | frames to render (default 15000) |
 
+### When the program does not compile
+
+Nothing is rendered, the exit status is `1`, and the error on stderr is the
+compiler's complete diagnostic, the one `faust-rs` prints: a summary line, then
+the location, the source line with its markers, the notes and the suggested fix.
+
+```
+faustprobe: parse failed for reverb.dsp: errors=1, recoveries=0, diagnostics=1
+reverb.dsp:2:21: error [FRS-PARSE-0001] Parsing error at line 2 column 21. Repair sequences found:
+   1: Insert RPAR
+  2 | process = _ : *(0.5 ;
+    |                     ^ unexpected token
+    |                ^ `(` opened here
+  = fix (machine-applicable): insert `)`
+```
+
+So the probe answers "does it compile?" as well as `faust-rs` does, and for the
+path it measures: the Cranelift JIT in the width asked, which is not the path
+`faust-rs -lang cpp` takes. `faustprobe -n 1 file.dsp` is the shortest such
+check. (The probe compiles through the C API, whose `error_msg` buffer is 4096
+bytes by contract and carries the summary line only; the rest comes from
+`getCCompleteCraneliftDSPFactoryError`, which any host of that API can call.)
+
 `--double` is worth reaching for whenever the measurement is near the noise
 floor, or when the DSP evaluates trigonometric functions of a large argument —
 single precision loses accuracy there and the loss can be mistaken for a defect
