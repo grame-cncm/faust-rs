@@ -31,8 +31,9 @@ pub mod rec_merge;
 pub(crate) mod simplify;
 pub mod table_promote;
 
+pub use mterm::DivisionByZero;
 pub use rec_merge::merge_isomorphic_symrec_groups;
-pub use simplify::simplify_const;
+pub use simplify::{simplify_const, try_simplify_const};
 pub use table_promote::{TableRangeWarning, promote_table_signals};
 
 pub const CRATE_NAME: &str = "normalize";

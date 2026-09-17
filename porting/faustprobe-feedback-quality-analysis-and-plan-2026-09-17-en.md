@@ -596,7 +596,8 @@ first write-up of this phase had the wrong claim, and a `make check` line added
 to `faust-diff-jot` on its strength was withdrawn: the programs that import the
 library already parse it.
 
-Found on the way and left to a separate task: `process = 2.0 / 0;` panics the
-compiler (and aborts a host through the FFI) instead of giving a value or a
-diagnostic.
+Found on the way: `process = 2.0 / 0;` panicked the compiler (and aborted a host
+through the FFI) instead of giving a diagnostic. Fixed the same day: a constant
+division by zero is `FRS-EVAL-0007`, as the reference compiler's `ERROR :
+division by 0 in 2 / 0` (journal, 2026-09-17).
 

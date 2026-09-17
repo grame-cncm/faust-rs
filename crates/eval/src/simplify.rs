@@ -33,14 +33,31 @@ use super::*;
 ///
 /// Called by `isBoxNumeric`, `eval2double`, `eval2int`, and
 /// `numericBoxSimplification` in `compiler/evaluate/eval.cpp`.
-pub(crate) fn propagate_box_and_simplify(arena: &mut TreeArena, box_id: TreeId) -> Option<SigId> {
-    let flat = try_build_flat_box(arena, box_id).ok()?;
-    let mut cache = ArityCache::new();
-    let signals = propagate_typed(arena, flat, &[], &mut cache).ok()?;
-    let [sig] = signals.as_slice() else {
-        return None;
+///
+/// # Errors
+///
+/// A division by a constant zero met while simplifying. A literal `x / 0` never
+/// gets here ([`try_fold_seq_numeric`] reports it when its sequence is
+/// evaluated); what can is a divisor that is constant without being a numerical
+/// tuple, `z = 0 <: _, !;`. A caller that needs the constant reports it
+/// ([`eval_box_to_i32`], [`eval_box_to_f64`]); one for which the fold is only an
+/// optimization gives up on it, and the expression stays as written for the
+/// typing stage to report if its value is used.
+pub(crate) fn propagate_box_and_simplify(
+    arena: &mut TreeArena,
+    box_id: TreeId,
+) -> Result<Option<SigId>, normalize::DivisionByZero> {
+    let Ok(flat) = try_build_flat_box(arena, box_id) else {
+        return Ok(None);
     };
-    Some(simplify_const(arena, *sig))
+    let mut cache = ArityCache::new();
+    let Ok(signals) = propagate_typed(arena, flat, &[], &mut cache) else {
+        return Ok(None);
+    };
+    let [sig] = signals.as_slice() else {
+        return Ok(None);
+    };
+    try_simplify_const(arena, *sig).map(Some)
 }
 
 /// Tries to reduce a box to a numeric literal for pattern matching.
@@ -71,7 +88,9 @@ pub(crate) fn simplify_pattern(arena: &mut TreeArena, box_id: TreeId) -> TreeId 
         BoxMatch::Int(_) | BoxMatch::Real(_) => return box_id,
         _ => {}
     }
-    let Some(sig) = propagate_box_and_simplify(arena, box_id) else {
+    // the fold is an optimization here: on a division by zero the pattern
+    // argument stays as written (see `propagate_box_and_simplify`)
+    let Ok(Some(sig)) = propagate_box_and_simplify(arena, box_id) else {
         return box_id;
     };
     // For arithmetic expressions, the signal type determines the result type:
@@ -94,6 +113,17 @@ pub(crate) fn simplify_pattern(arena: &mut TreeArena, box_id: TreeId) -> TreeId 
     }
 }
 
+/// The simplified signal of a box that must be a constant: a division by a
+/// constant zero is this caller's error, not "not a constant".
+fn constant_signal(arena: &mut TreeArena, box_id: TreeId) -> Result<SigId, EvalError> {
+    propagate_box_and_simplify(arena, box_id)
+        .map_err(|division| EvalError::DivisionByZero {
+            node: box_id,
+            detail: division.detail,
+        })?
+        .ok_or(EvalError::NotAConstantExpression { node: box_id })
+}
+
 /// Converts a 0→1 box to an `f64` compile-time constant.
 ///
 /// Returns [`EvalError::NotAConstantExpression`] if the box is not a scalar
@@ -104,8 +134,7 @@ pub(crate) fn simplify_pattern(arena: &mut TreeArena, box_id: TreeId) -> TreeId 
 /// `static double eval2double(Tree exp, Tree visited, Tree localValEnv)` in
 /// `compiler/evaluate/eval.cpp`.
 pub(crate) fn eval_box_to_f64(arena: &mut TreeArena, box_id: TreeId) -> Result<f64, EvalError> {
-    let sig = propagate_box_and_simplify(arena, box_id)
-        .ok_or(EvalError::NotAConstantExpression { node: box_id })?;
+    let sig = constant_signal(arena, box_id)?;
     match match_sig(arena, sig) {
         SigMatch::Real(x) => Ok(x),
         SigMatch::Int(i) => Ok(f64::from(i)),
@@ -123,8 +152,7 @@ pub(crate) fn eval_box_to_f64(arena: &mut TreeArena, box_id: TreeId) -> Result<f
 /// `static int eval2int(Tree exp, Tree visited, Tree localValEnv)` in
 /// `compiler/evaluate/eval.cpp`.
 pub(crate) fn eval_box_to_i32(arena: &mut TreeArena, box_id: TreeId) -> Result<i32, EvalError> {
-    let sig = propagate_box_and_simplify(arena, box_id)
-        .ok_or(EvalError::NotAConstantExpression { node: box_id })?;
+    let sig = constant_signal(arena, box_id)?;
     match match_sig(arena, sig) {
         SigMatch::Int(i) => Ok(i),
         SigMatch::Real(x) => Ok(x as i32),
@@ -167,7 +195,7 @@ pub(crate) fn eval_box_to_int_list_node(arena: &mut TreeArena, box_id: TreeId) -
 
     let mut ints = Vec::with_capacity(outputs);
     for sig in signals {
-        let sig = simplify_const(arena, sig);
+        let sig = try_simplify_const(arena, sig).ok()?;
         let value = match match_sig(arena, sig) {
             SigMatch::Int(i) => i,
             SigMatch::Real(x) => {
@@ -292,22 +320,33 @@ pub(crate) fn is_numerical_tuple_box(arena: &TreeArena, box_id: TreeId) -> bool 
 ///     if (isNum(r)) { return r; }
 /// }
 /// ```
+///
+/// # Errors
+///
+/// A division by a constant zero. This is the fold C++ performs in its
+/// `isBoxSeq` branch, and the point at which the `faustexception` of
+/// `mterm::operator/=` leaves the reference evaluator: the caller reports it,
+/// located, instead of the fold quietly not happening.
 pub(crate) fn try_fold_seq_numeric(
     arena: &mut TreeArena,
     a1: TreeId,
     a2: TreeId,
-) -> Option<TreeId> {
+) -> Result<Option<TreeId>, normalize::DivisionByZero> {
     // C++ folds only when propagation produces exactly one output. Multi-output
     // sequences such as `(0,0,1,1) : par(i,2,+)` must remain structured graphs,
     // not collapse to the first propagated constant.
     let seq = BoxBuilder::new(arena).seq(a1, a2);
-    let flat = try_build_flat_box(arena, seq).ok()?;
-    let mut cache = ArityCache::new();
-    let signals = propagate_typed(arena, flat, &[], &mut cache).ok()?;
-    let [sig] = signals.as_slice() else {
-        return None;
+    let Ok(flat) = try_build_flat_box(arena, seq) else {
+        return Ok(None);
     };
-    let sig = simplify_const(arena, *sig);
+    let mut cache = ArityCache::new();
+    let Ok(signals) = propagate_typed(arena, flat, &[], &mut cache) else {
+        return Ok(None);
+    };
+    let [sig] = signals.as_slice() else {
+        return Ok(None);
+    };
+    let sig = try_simplify_const(arena, *sig)?;
     // Both SigInt/SigReal and BoxInt/BoxReal share the same underlying NodeKind
     // (NodeKind::Int / NodeKind::FloatBits), so the SigId IS the BoxId.
     //
@@ -316,7 +355,7 @@ pub(crate) fn try_fold_seq_numeric(
     // critical for pattern matching: `S(i,i)` compares tree nodes by identity,
     // so `Real(2.0) != Int(2)` would cause the match to fail.
     // C++ eval keeps integer semantics at the box level for this reason.
-    match match_sig(arena, sig) {
+    Ok(match match_sig(arena, sig) {
         SigMatch::Int(_) => Some(sig),
         SigMatch::Real(x)
             if all_inputs_are_int(arena, a1)
@@ -328,7 +367,7 @@ pub(crate) fn try_fold_seq_numeric(
         }
         SigMatch::Real(_) => Some(sig),
         _ => None,
-    }
+    })
 }
 
 // ─── Box simplification ────────────────────────────────────────────────────────
@@ -384,7 +423,7 @@ pub(crate) fn numeric_box_simplification(arena: &mut TreeArena, box_id: TreeId) 
         _ => {}
     }
     // General path: propagate + simplify → try to extract a numeric constant.
-    if let Some(sig) = propagate_box_and_simplify(arena, box_id) {
+    if let Ok(Some(sig)) = propagate_box_and_simplify(arena, box_id) {
         match match_sig(arena, sig) {
             SigMatch::Real(x) => {
                 // Observable C++ parity:

@@ -30,7 +30,12 @@ pub(crate) fn eval_non_negative_count(
     loop_detector: &mut LoopDetector,
 ) -> Result<usize, EvalError> {
     let count = eval_box(arena, count_expr, env, loop_detector)?;
-    if let Ok(v) = eval_box_to_i32(arena, count) {
+    let as_constant = eval_box_to_i32(arena, count);
+    // a count that divides by zero is that error, not "not an int"
+    if let Err(division @ EvalError::DivisionByZero { .. }) = as_constant {
+        return Err(division);
+    }
+    if let Ok(v) = as_constant {
         return match v {
             v if v < 0 => Err(EvalError::NegativeIterationCount {
                 value: i64::from(v),

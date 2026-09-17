@@ -28,9 +28,9 @@ enumerate every code actually present in source is:
 grep -rhoE 'FRS-[A-Z]+-[0-9]+' --include=*.rs crates/ | sort -u
 ```
 
-This currently returns **39 codes** across **11 stage-family namespaces**:
-`FRS-LEX-*` (1), `FRS-PARSE-*` (3), `FRS-SRC-*` (6), `FRS-EVAL-*` (7),
-`FRS-PROP-*` (5), `FRS-COMP-*` (3), `FRS-UI-*` (1), `FRS-FIR-*` (2),
+This currently returns **41 codes** across **10 stage-family namespaces**:
+`FRS-LEX-*` (1), `FRS-PARSE-*` (3), `FRS-SRC-*` (6), `FRS-EVAL-*` (8),
+`FRS-PROP-*` (5), `FRS-COMP-*` (4), `FRS-UI-*` (1), `FRS-FIR-*` (2),
 `FRS-SFIR-*` (10), `FRS-CODEGEN-*` (1).
 
 Backend emitters additionally own a **separate, finer taxonomy** of 27 codes
@@ -154,6 +154,7 @@ observable in practice today.
 | `FRS-EVAL-0004` | `eval` | Invalid iteration construct detected during eval. | `crates/eval/src/error.rs:658` |
 | `FRS-EVAL-0005` | `eval` | Symbol redefined with a different value in the same lexical scope. | `crates/eval/src/error.rs:620` |
 | `FRS-EVAL-0006` | `eval` | Slider/numentry init value is outside the `[min, max]` range. | `crates/eval/src/error.rs:692` |
+| `FRS-EVAL-0007` | `eval` | A constant expression divides by a constant zero (`2.0 / 0`, `1 / (2 - 2)`, `par(i, 2, 1.0 / i)` at `i = 0`), in integers or in reals: the reference compiler's `ERROR : division by 0 in 2 / 0`, no infinity is folded. | `EvalError::DivisionByZero`, raised by `eval_seq_value` where a numeric sequence is folded (`crates/eval/src/lib.rs`) |
 | `FRS-EVAL-0099` | `eval` | Generic eval failure fallback code (covers eval-error variants without a dedicated code). | `crates/eval/src/error.rs` (multiple sites, e.g. `:508,517,530,539,554,584,592,603,646,669,704`) |
 
 ### `FRS-PROP-*` — Box-to-signal propagation (5 codes)

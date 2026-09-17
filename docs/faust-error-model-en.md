@@ -827,6 +827,41 @@ domain). The run-time case — an operand that merely straddles the boundary —
 the opt-in **warning** of §2.5. Keeping them distinct matters: one is a broken
 program, the other is a risk.
 
+A division whose two operands are **constants** is caught earlier, where the
+evaluator folds it, and says which division it was after folding. It is an error
+in reals as in integers: like the reference, faust-rs does not fold `2.0 / 0` to
+an infinity.
+
+```faust
+coef(n, i, j) = float(i == j) - 2.0 / n;
+process = par(i, 2, _ * coef(i, 1, 1));
+```
+
+C++:
+
+```text
+ERROR : division by 0 in 2 / 0
+```
+
+faust-rs:
+
+```text
+e_divzero.dsp:1:1: error [FRS-EVAL-0007] division by 0 in 2.0 / 0
+  1 | coef(n, i, j) = float(i == j) - 2.0 / n;
+    | ^^^^ definition site
+  2 | process = par(i, 2, _ * coef(i, 1, 1));
+    | ^^^^^^^ call site
+  = note: cause: a constant expression divides by a constant zero
+  = note: rule: the divisor of a constant division must not be zero, in integers or in reals
+  = note: computed: `2.0 / 0`, after the operands were folded to constants
+  = note: expr=(2 / n)
+  = note: error originates from definition 'coef'
+  = help: check the value the divisor takes here: an iteration index starts at 0, and a function argument may be 0 at this call
+```
+
+`expr=(2 / n)` is the division as written, `computed` the one that was folded:
+between the two, `n` took the value of an iteration index that starts at 0.
+
 ### 6.12 Duplicate user-interface paths
 
 ```faust
@@ -923,6 +958,7 @@ may be correct and your search path wrong.
 | `FRS-EVAL-0004` | `eval` | An invalid iteration construct: `par`/`seq`/`sum`/`prod` whose count is not a compile-time non-negative integer. |
 | `FRS-EVAL-0005` | `eval` | A symbol redefined with a different value in the same scope. |
 | `FRS-EVAL-0006` | `eval` | A slider or `nentry` whose init value is outside its `[min, max]` range. |
+| `FRS-EVAL-0007` | `eval` | A constant expression divides by a constant zero, in integers or in reals (§6.11). |
 | `FRS-EVAL-0099` | `eval` | Any other evaluation failure, including a failed `case` match, an unresolvable `component`/`library`, and evaluator recursion limits. |
 
 ### 7.3 Connecting the blocks (`FRS-PROP-*`)

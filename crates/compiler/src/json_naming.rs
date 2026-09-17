@@ -580,6 +580,7 @@ pub(crate) fn eval_error_node(error: &eval::EvalError) -> Option<BoxId> {
         | eval::EvalError::PatternArityMismatch { node, .. }
         | eval::EvalError::PatternMatchFailed { node, .. }
         | eval::EvalError::TooManyArguments { node, .. }
+        | eval::EvalError::DivisionByZero { node, .. }
         | eval::EvalError::LoopDetected { node } => Some(*node),
         _ => None,
     }

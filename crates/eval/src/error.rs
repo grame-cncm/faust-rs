@@ -250,6 +250,19 @@ pub enum EvalError {
         min_bits: u64,
         max_bits: u64,
     },
+    /// A constant expression divides by a constant zero: `2.0 / 0`,
+    /// `1 / (2 - 2)`, `par(i, 2, 1.0 / i)` at `i = 0`.
+    ///
+    /// Raised where the evaluator folds a numeric sequence, the point at which
+    /// C++ `eval.cpp` lets the `faustexception` of `mterm::operator/=` through
+    /// (`ERROR : division by 0 in 2 / 0`). It is an error whatever the width:
+    /// the reference does not fold `2.0 / 0` to an infinity.
+    DivisionByZero {
+        /// The sequence being folded, which carries the source location.
+        node: TreeId,
+        /// The division as the normalizer saw it, e.g. `2 / 0`.
+        detail: String,
+    },
     /// Internal evaluator error — indicates a bug in the evaluator, not a user error.
     InternalError {
         message: String,
@@ -425,6 +438,8 @@ impl Display for EvalError {
                     node.as_u32()
                 )
             }
+            // the reference's words: `ERROR : division by 0 in 2 / 0`
+            Self::DivisionByZero { detail, .. } => write!(f, "division by 0 in {detail}"),
             Self::SliderInitOutOfRange {
                 kind,
                 label,
@@ -757,6 +772,19 @@ impl ToDiagnostic for EvalError {
                 "computed: the evaluator crossed its recursion budget before finishing ({max_depth} frames)"
             ))
             .with_help("check recursive definitions for a missing base case or non-decreasing recursive call"),
+            Self::DivisionByZero { detail, .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Eval,
+                codes::EVAL_DIVISION_BY_ZERO,
+                message,
+            )
+            .with_note("cause: a constant expression divides by a constant zero")
+            .with_note("rule: the divisor of a constant division must not be zero, in integers or in reals")
+            .with_note(format!("computed: `{detail}`, after the operands were folded to constants"))
+            .with_help(
+                "check the value the divisor takes here: an iteration index starts at 0, \
+                 and a function argument may be 0 at this call",
+            ),
             Self::SliderInitOutOfRange {
                 kind,
                 label,

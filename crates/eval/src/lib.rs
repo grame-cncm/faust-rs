@@ -159,7 +159,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use boxes::{BoxBuilder, BoxMatch, match_box};
-use normalize::simplify_const;
+use normalize::try_simplify_const;
 use propagate::{ArityCache, propagate_typed, try_build_flat_box};
 use signals::{SigId, SigMatch, match_sig};
 use tlib::{NodeKind, TreeArena, TreeId, tree_to_double, tree_to_int};
@@ -1070,7 +1070,7 @@ fn eval_value_uncached(
         BoxMatch::Route(ins, outs, routes) => {
             eval_route_value(arena, ins, outs, routes, env, loop_detector)
         }
-        BoxMatch::Seq(e1, e2) => eval_seq_value(arena, e1, e2, env, loop_detector),
+        BoxMatch::Seq(e1, e2) => eval_seq_value(arena, expr, e1, e2, env, loop_detector),
         // ── outputs(expr) / inputs(expr) ────────────────────────────────────
         // C++: eval.cpp handles `isBoxOutputs`/`isBoxInputs` by evaluating the
         // inner box, calling `getBoxType` to obtain the arity, then returning a
@@ -1209,8 +1209,14 @@ fn eval_route_value(
     let eval_outs = eval_box(arena, outs, env, loop_detector)?;
     let eval_routes = eval_box(arena, routes, env, loop_detector)?;
 
-    let ins_node = eval_box_to_int_node(arena, eval_ins).unwrap_or(eval_ins);
-    let outs_node = eval_box_to_int_node(arena, eval_outs).unwrap_or(eval_outs);
+    // a size that is not a constant yet stays as written; one that divides by
+    // zero is an error here, not an "invalid integer" later
+    let mut size_node = |size: TreeId| match eval_box_to_int_node(arena, size) {
+        Err(division @ EvalError::DivisionByZero { .. }) => Err(division),
+        other => Ok(other.unwrap_or(size)),
+    };
+    let ins_node = size_node(eval_ins)?;
+    let outs_node = size_node(eval_outs)?;
     let routes_node = a2sb(arena, eval_routes, loop_detector).unwrap_or(eval_routes);
     let spec_node = eval_box_to_int_list_node(arena, routes_node).unwrap_or_else(|| {
         let simplified_routes = box_simplification(arena, routes_node);
@@ -1231,6 +1237,7 @@ fn eval_route_value(
 /// `NodeKind`, so the folded `SigId` is directly usable as a `BoxId`.
 fn eval_seq_value(
     arena: &mut TreeArena,
+    seq: TreeId,
     e1: TreeId,
     e2: TreeId,
     env: &Environment,
@@ -1239,10 +1246,15 @@ fn eval_seq_value(
     let a1 = eval_box(arena, e1, env, loop_detector)?;
     let a2 = eval_box(arena, e2, env, loop_detector)?;
 
-    if is_numerical_tuple_box(arena, a1)
-        && let Some(folded) = try_fold_seq_numeric(arena, a1, a2)
-    {
-        return Ok(EvalValue::Box(folded));
+    if is_numerical_tuple_box(arena, a1) {
+        let folded =
+            try_fold_seq_numeric(arena, a1, a2).map_err(|division| EvalError::DivisionByZero {
+                node: seq,
+                detail: division.detail,
+            })?;
+        if let Some(folded) = folded {
+            return Ok(EvalValue::Box(folded));
+        }
     }
 
     let mut bld = BoxBuilder::new(arena);
@@ -1707,7 +1719,15 @@ fn eval_box_to_scalar_signal(
     }
     // Algebraically simplify the propagated signal (e.g. sin(0) → 0.0).
     // C++ equivalent: `simplify(hd(lsignals))` in eval.cpp `eval2double`/`eval2int`.
-    let simplified = simplify_const(arena, signals[0]);
+    //
+    // A constant is required here, so a division by a constant zero is this
+    // call's error (C++: `ERROR : division by 0 in 1 / 0`), not an unwind
+    // through the evaluator.
+    let simplified =
+        try_simplify_const(arena, signals[0]).map_err(|division| EvalError::DivisionByZero {
+            node: expr,
+            detail: division.detail,
+        })?;
     match match_sig(arena, simplified) {
         SigMatch::Int(_) | SigMatch::Real(_) => Ok(simplified),
         _ => Err(EvalError::InvalidLabelInterpolation {
@@ -1799,7 +1819,7 @@ mod simplify_helpers_tests {
     fn propagate_box_and_simplify_int_add() {
         let mut arena = TreeArena::default();
         let box_add = make_int_add(&mut arena, 2, 3);
-        let result = propagate_box_and_simplify(&mut arena, box_add);
+        let result = propagate_box_and_simplify(&mut arena, box_add).expect("no division by zero");
         assert!(result.is_some(), "expected Some(sig), got None");
         assert!(
             matches!(match_sig(&arena, result.unwrap()), SigMatch::Int(5)),
@@ -1812,7 +1832,7 @@ mod simplify_helpers_tests {
     fn propagate_box_and_simplify_float_mul() {
         let mut arena = TreeArena::default();
         let box_mul = make_real_mul(&mut arena, 0.5, 2.0);
-        let result = propagate_box_and_simplify(&mut arena, box_mul);
+        let result = propagate_box_and_simplify(&mut arena, box_mul).expect("no division by zero");
         assert!(result.is_some(), "expected Some(sig), got None");
         let SigMatch::Real(v) = match_sig(&arena, result.unwrap()) else {
             panic!("expected SigReal");
@@ -1826,7 +1846,9 @@ mod simplify_helpers_tests {
         let mut arena = TreeArena::default();
         let wire = BoxBuilder::new(&mut arena).wire();
         assert!(
-            propagate_box_and_simplify(&mut arena, wire).is_none(),
+            propagate_box_and_simplify(&mut arena, wire)
+                .expect("no division by zero")
+                .is_none(),
             "Wire (1→1) should return None"
         );
     }
@@ -1867,7 +1889,9 @@ mod simplify_helpers_tests {
         let route = b.route(ins, outs, spec);
         let expr = b.seq(inputs, route);
         assert!(
-            propagate_box_and_simplify(&mut arena, expr).is_none(),
+            propagate_box_and_simplify(&mut arena, expr)
+                .expect("no division by zero")
+                .is_none(),
             "multi-output route network should stay structured"
         );
     }
@@ -2064,7 +2088,7 @@ mod simplify_helpers_tests {
         let three = BoxBuilder::new(&mut arena).int(3);
         let par = BoxBuilder::new(&mut arena).par(two, three);
         let add = BoxBuilder::new(&mut arena).add();
-        let result = try_fold_seq_numeric(&mut arena, par, add);
+        let result = try_fold_seq_numeric(&mut arena, par, add).expect("no division by zero");
         assert!(result.is_some(), "should fold");
         assert!(matches!(
             match_box(&arena, result.unwrap()),
@@ -2080,7 +2104,7 @@ mod simplify_helpers_tests {
         let b = BoxBuilder::new(&mut arena).real(2.5);
         let par = BoxBuilder::new(&mut arena).par(a, b);
         let add = BoxBuilder::new(&mut arena).add();
-        let result = try_fold_seq_numeric(&mut arena, par, add);
+        let result = try_fold_seq_numeric(&mut arena, par, add).expect("no division by zero");
         assert!(result.is_some(), "should fold");
         assert!(
             matches!(match_box(&arena, result.unwrap()), BoxMatch::Real(x) if (x - 4.0).abs() < 1e-12)
@@ -2105,7 +2129,7 @@ mod simplify_helpers_tests {
         let add = BoxBuilder::new(&mut arena).add();
         let adds = BoxBuilder::new(&mut arena).par(add, add);
 
-        let result = try_fold_seq_numeric(&mut arena, inputs, adds);
+        let result = try_fold_seq_numeric(&mut arena, inputs, adds).expect("no division by zero");
         assert!(
             result.is_none(),
             "multi-output sequence should stay structured and not fold"
@@ -2123,7 +2147,7 @@ mod simplify_helpers_tests {
         // seq(par(2,3), wire) has arity 2→1, which means it has audio inputs.
         // propagate_box_and_simplify uses &[] inputs → propagation would fail for
         // a 2→* box, so this should return None.
-        let result = try_fold_seq_numeric(&mut arena, par, wire);
+        let result = try_fold_seq_numeric(&mut arena, par, wire).expect("no division by zero");
         // wire passes through signal 0 of its 1-input, but par(2,3) gives 2 outputs
         // → seq is ill-typed as 0-input anyway, so this is None.
         // (If it somehow propagates, the result should not be a bare Int/Real.)

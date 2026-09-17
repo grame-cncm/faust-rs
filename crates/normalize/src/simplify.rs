@@ -21,12 +21,15 @@
 //! - `simplification(sig)` → [`simplification`]
 
 use std::collections::HashMap;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
 use signals::{BinOp, SigBuilder, SigId, SigMatch, match_sig};
 use sigtype::SigType;
 use tlib::TreeArena;
 
-use crate::mterm::{is_minus_one, is_negative_num, is_num, is_one, is_zero, minus_num, mul_nums};
+use crate::mterm::{
+    DivisionByZero, is_minus_one, is_negative_num, is_num, is_one, is_zero, minus_num, mul_nums,
+};
 use crate::normalize::{normalize_add_term, normalize_delay_term, normalize_delay1_term};
 
 // ─── Public entry points ──────────────────────────────────────────────────────
@@ -112,6 +115,41 @@ pub(crate) fn simplify_with_cache(
 pub fn simplify_const(arena: &mut TreeArena, sig: SigId) -> SigId {
     let types = HashMap::new();
     simplify(arena, &types, sig)
+}
+
+/// [`simplify_const`] for a caller that is not under a normalization
+/// boundary: a division by a constant zero is returned, not unwound.
+///
+/// Multiplicative-term normalization reports `x / 0` by unwinding with a typed
+/// [`DivisionByZero`] payload, the analogue of the `faustexception` C++ throws
+/// from `mterm::operator/=` (see [`crate::mterm::DivisionByZero`] for why it is
+/// an unwind). [`crate::normalform::simplify_signals_fastlane`] catches it. The
+/// evaluator, which folds constant sub-expressions with `simplify_const` while
+/// it evaluates boxes, did not, and `process = 2.0 / 0;` took the whole
+/// compiler down, and through the FFI the host with it.
+///
+/// Any other payload is a genuine internal failure and keeps unwinding.
+///
+/// # Errors
+/// The division the normalizer refused, for the caller to report or, when the
+/// fold was only an optimization, to give up on: the expression then stays as
+/// written and the typing stage reports the division with its location.
+pub fn try_simplify_const(arena: &mut TreeArena, sig: SigId) -> Result<SigId, DivisionByZero> {
+    returning_division_by_zero(|| simplify_const(arena, sig))
+}
+
+/// Runs `work` and turns the one unwind the normalizer raises on purpose, a
+/// [`DivisionByZero`], into an `Err`. Every other payload is an internal
+/// failure and keeps unwinding: swallowing it here would hand the caller an
+/// unsimplified signal as if nothing had happened.
+fn returning_division_by_zero<T>(work: impl FnOnce() -> T) -> Result<T, DivisionByZero> {
+    match catch_unwind(AssertUnwindSafe(work)) {
+        Ok(value) => Ok(value),
+        Err(payload) => match payload.downcast::<DivisionByZero>() {
+            Ok(division) => Err(*division),
+            Err(other) => resume_unwind(other),
+        },
+    }
 }
 
 // ─── Graph traversal ──────────────────────────────────────────────────────────
@@ -379,7 +417,12 @@ fn match_simplification(
         if is_left_neutral(op, t1, arena) {
             return t2;
         }
-        if is_left_absorbing(op, t1, arena) {
+        // `0 / x` is 0, but not for the constant divisor 0: `0 / 0` is a
+        // division by zero like `2 / 0`, and absorbing it would turn an error
+        // of the reference (`division by 0 in 0 / 0`) into a silent 0. It goes
+        // on to the term normalizer, which raises it.
+        let zero_over_zero = op == BinOp::Div && is_num(arena, t2) && is_zero(arena, t2);
+        if is_left_absorbing(op, t1, arena) && !zero_over_zero {
             return t1;
         }
         if is_right_neutral(op, t2, arena) {
@@ -395,6 +438,10 @@ fn match_simplification(
                 BinOp::Sub => return SigBuilder::new(arena).int(0),
                 BinOp::And | BinOp::Or => return t1,
                 BinOp::Ge | BinOp::Le | BinOp::Eq => return SigBuilder::new(arena).int(1),
+                // `x % x` is 0 for any x but the constant 0: `0 % 0` is a
+                // remainder by zero, which the typing stage reports, and
+                // folding it to 0 here would hide it (C++: `% by 0 in 0 % 0`).
+                BinOp::Rem if is_zero(arena, t1) => {}
                 BinOp::Gt | BinOp::Lt | BinOp::Ne | BinOp::Rem | BinOp::Xor => {
                     return SigBuilder::new(arena).int(0);
                 }
@@ -550,7 +597,8 @@ fn fold_binop(op: BinOp, t1: SigId, t2: SigId, arena: &mut TreeArena) -> Option<
                 if b == 0 {
                     return None;
                 }
-                return Some(SigBuilder::new(arena).int(a % b));
+                // `i32::MIN % -1` overflows in Rust and is 0 in the reference
+                return Some(SigBuilder::new(arena).int(a.wrapping_rem(b)));
             }
             BinOp::Lsh => return Some(SigBuilder::new(arena).int(a << (b & 31))),
             BinOp::ARsh => return Some(SigBuilder::new(arena).int(a >> (b & 31))),
@@ -702,6 +750,91 @@ mod tests {
 
     fn types() -> HashMap<SigId, SigType> {
         HashMap::new()
+    }
+
+    /// `x op y` of two integer constants.
+    fn int_op(a: &mut TreeArena, op: BinOp, x: i32, y: i32) -> SigId {
+        let x = SigBuilder::new(a).int(x);
+        let y = SigBuilder::new(a).int(y);
+        SigBuilder::new(a).binop(op, x, y)
+    }
+
+    #[test]
+    fn a_division_by_a_constant_zero_is_returned_not_unwound() {
+        let mut a = arena();
+        let division = int_op(&mut a, BinOp::Div, 2, 0);
+        let error = try_simplify_const(&mut a, division).expect_err("2 / 0");
+        assert_eq!(error.to_string(), "division by 0 in 2 / 0");
+
+        let two = SigBuilder::new(&mut a).real(2.0);
+        let zero = SigBuilder::new(&mut a).real(0.0);
+        let real = SigBuilder::new(&mut a).div(two, zero);
+        let error = try_simplify_const(&mut a, real).expect_err("2.0 / 0.0");
+        assert_eq!(error.to_string(), "division by 0 in 2.0 / 0");
+
+        // and what is no division by zero is simplified as before
+        let sound = int_op(&mut a, BinOp::Div, 6, 3);
+        let folded = try_simplify_const(&mut a, sound).expect("6 / 3");
+        // a real here: it is the evaluator's fold that gives an exact quotient
+        // of integers back as an integer
+        assert_eq!(match_sig(&a, folded), SigMatch::Real(2.0));
+    }
+
+    #[test]
+    fn zero_over_zero_is_a_division_by_zero_not_an_absorbed_zero() {
+        // `0 / x` is 0, but the constant divisor 0 comes first: the reference
+        // reports `division by 0 in 0 / 0`
+        let mut a = arena();
+        let division = int_op(&mut a, BinOp::Div, 0, 0);
+        let error = try_simplify_const(&mut a, division).expect_err("0 / 0");
+        assert_eq!(error.to_string(), "division by 0 in 0 / 0");
+        // a zero numerator over anything else is still absorbed
+        let zero = SigBuilder::new(&mut a).int(0);
+        let input = SigBuilder::new(&mut a).input(0);
+        let over_input = SigBuilder::new(&mut a).div(zero, input);
+        let folded = try_simplify_const(&mut a, over_input).expect("0 / x");
+        assert_eq!(match_sig(&a, folded), SigMatch::Int(0));
+    }
+
+    #[test]
+    fn zero_modulo_zero_is_left_for_the_typing_stage() {
+        // `x % x` is 0 for any x but the constant 0, whose remainder the typing
+        // stage reports; cancelled here it compiled to a silent 0
+        let mut a = arena();
+        let remainder = int_op(&mut a, BinOp::Rem, 0, 0);
+        let kept = try_simplify_const(&mut a, remainder).expect("no unwind");
+        assert!(matches!(
+            match_sig(&a, kept),
+            SigMatch::BinOp(BinOp::Rem, _, _)
+        ));
+        let input = SigBuilder::new(&mut a).input(0);
+        let same = SigBuilder::new(&mut a).rem(input, input);
+        let folded = try_simplify_const(&mut a, same).expect("x % x");
+        assert_eq!(match_sig(&a, folded), SigMatch::Int(0));
+    }
+
+    #[test]
+    fn an_integer_remainder_wraps_where_rust_would_overflow() {
+        let mut a = arena();
+        let remainder = int_op(&mut a, BinOp::Rem, i32::MIN, -1);
+        let folded = try_simplify_const(&mut a, remainder).expect("no unwind");
+        assert_eq!(match_sig(&a, folded), SigMatch::Int(0));
+    }
+
+    #[test]
+    fn only_a_division_by_zero_is_returned_any_other_panic_keeps_unwinding() {
+        assert_eq!(returning_division_by_zero(|| 7).unwrap(), 7);
+        let division =
+            returning_division_by_zero(|| -> i32 { crate::mterm::division_by_zero("3 / 0") })
+                .expect_err("the normalizer's own unwind");
+        assert_eq!(division.detail, "3 / 0");
+
+        // an internal failure is not this function's to swallow
+        let escaped = std::panic::catch_unwind(|| {
+            returning_division_by_zero(|| -> i32 { panic!("an internal failure") })
+        })
+        .expect_err("the panic goes through");
+        assert_eq!(escaped.downcast_ref::<&str>(), Some(&"an internal failure"));
     }
 
     #[test]

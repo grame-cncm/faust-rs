@@ -817,3 +817,185 @@ fn propagate_error_ui_expr_note_is_pretty_printed() {
     assert!(!expr_note.contains("float_bits("));
     assert!(!expr_note.contains("cons("));
 }
+
+// ─── Constant division by zero ───────────────────────────────────────────────
+//
+// `process = 2.0 / 0;` used to panic the compiler, and through the FFI to abort
+// the host: the evaluator folds numeric sequences with the normalizer, which
+// reports `x / 0` by unwinding (as C++ `mterm::operator/=` throws), and nothing
+// caught that unwind on the evaluator's side. The reference behaviour, checked
+// against Faust 2.89, is an error in integers and in reals alike
+// (`ERROR : division by 0 in 2 / 0`): no infinity is folded.
+
+/// The first diagnostic of a program that must not compile.
+fn first_diagnostic(name: &str, source: &str) -> compiler::Diagnostic {
+    let err = Compiler::new()
+        .compile_source_to_signals(name, source)
+        .expect_err("the program divides by a constant zero");
+    err.diagnostic_bundle().as_slice()[0].clone()
+}
+
+#[test]
+fn a_constant_division_by_zero_is_a_located_eval_error() {
+    for (source, detail) in [
+        // the four programs of the report
+        ("process = 2.0 / 0;", "2.0 / 0"),
+        ("process = 2.0 / 0.0;", "2.0 / 0"),
+        ("process = 2 / 0;", "2 / 0"),
+        ("process = _ : *(2.0 / 0);", "2.0 / 0"),
+        // a divisor that folds to zero, and zero over zero
+        ("process = 1.0 / (2 - 2);", "1.0 / 0"),
+        ("process = 0 / 0;", "0 / 0"),
+        ("process = 0.0 / 0.0;", "0.0 / 0"),
+    ] {
+        let first = first_diagnostic("division.dsp", source);
+        assert_eq!(first.code.0, "FRS-EVAL-0007", "{source}");
+        assert_eq!(first.stage, Stage::Eval, "{source}");
+        assert_eq!(
+            first.message.as_ref(),
+            format!("division by 0 in {detail}"),
+            "{source}"
+        );
+        assert!(!first.labels.is_empty(), "{source} is not located");
+        assert!(
+            first.notes.iter().any(|note| note.contains(detail)),
+            "{source}: {:?}",
+            first.notes
+        );
+    }
+}
+
+#[test]
+fn a_division_by_a_zero_argument_or_index_is_reported_where_it_is_folded() {
+    // the case that revealed the panic: a coefficient function given a 0
+    let source = read_corpus("err_19_eval_division_by_zero_argument.dsp");
+    let first = first_diagnostic("err_19_eval_division_by_zero_argument.dsp", &source);
+    assert_eq!(first.code.0, "FRS-EVAL-0007");
+    assert_eq!(first.message.as_ref(), "division by 0 in 2.0 / 0");
+    // located in the definition that divides, line 5 of the fixture
+    assert!(
+        first.labels.iter().any(|label| label.span.line == 5),
+        "{:?}",
+        first.labels
+    );
+
+    for source in [
+        // an iteration index starts at 0
+        "process = par(i, 2, 1.0 / i);",
+        // contexts where the evaluator needs the constant itself
+        "process = par(i, 4 / 0, _);",
+        "process = route(2 / 0, 2, 1, 1);",
+        "N = 1 / 0; process = hslider(\"g%N\", 0, 0, 1, 0.1);",
+        // pattern matching: the reference fails even though `f(n)` ignores `n`
+        "f(0) = 1; f(n) = 2; process = f(1 / 0);",
+    ] {
+        let first = first_diagnostic("division.dsp", source);
+        assert!(
+            first.message.starts_with("division by 0 in ")
+                || first.message.contains("divides by a constant zero"),
+            "{source}: {}",
+            first.message
+        );
+    }
+}
+
+#[test]
+fn a_remainder_by_a_constant_zero_is_a_typed_error_even_for_zero_itself() {
+    // `x % x` is 0 for any x but the constant 0: the simplifier used to cancel
+    // `0 % 0` before the typing stage could see it
+    for source in [
+        "process = 2 % 0;",
+        "process = 0 % 0;",
+        "process = _ % (1 - 1);",
+    ] {
+        let first = first_diagnostic("remainder.dsp", source);
+        assert_eq!(first.stage, Stage::TypeInference, "{source}");
+        assert!(
+            first.message.contains("% by 0"),
+            "{source}: {}",
+            first.message
+        );
+    }
+}
+
+#[test]
+fn the_folds_next_to_the_division_keep_their_values() {
+    // what the fix must not disturb, and the integer operations that overflow
+    // in Rust where the reference wraps: `i32::MIN % -1` panicked
+    for (source, expected) in [
+        ("process = 6 / 3;", SigMatch::Int(2)),
+        ("process = 7 / 2;", SigMatch::Real(3.5)),
+        ("process = 0 / 2;", SigMatch::Int(0)),
+        ("process = 4 % 3;", SigMatch::Int(1)),
+        ("process = 7 % -2;", SigMatch::Int(1)),
+        ("process = (-2147483647 - 1) % -1;", SigMatch::Int(0)),
+        (
+            "process = (-2147483647 - 1) / -1;",
+            SigMatch::Real(2_147_483_648.0),
+        ),
+        ("process = 2147483647 + 1;", SigMatch::Int(i32::MIN)),
+        ("process = 1 << 40;", SigMatch::Int(256)),
+        ("process = 1 << -1;", SigMatch::Int(i32::MIN)),
+        ("process = 1 >> 40;", SigMatch::Int(0)),
+    ] {
+        let out = Compiler::new()
+            .compile_source_to_signals("fold.dsp", source)
+            .unwrap_or_else(|e| panic!("{source} must compile: {e}"));
+        assert_eq!(out.signals.len(), 1, "{source}");
+        assert_eq!(
+            match_sig(&out.parse.state.arena, out.signals[0]),
+            expected,
+            "{source}"
+        );
+    }
+    // a zero numerator over a signal is no division by a constant zero
+    Compiler::new()
+        .compile_source_to_signals("fold.dsp", "process = 0 / _;")
+        .expect("0 / x compiles");
+}
+
+#[test]
+fn a_zero_divisor_that_is_no_literal_is_reported_by_whoever_needs_the_constant() {
+    // `z` is the constant 0 without being a numerical tuple, so the division is
+    // not folded when its sequence is evaluated. No path may unwind on it.
+    let z = "z = 0 <: _, !;\n";
+    for (program, code) in [
+        // the evaluator needs the constant: its error, with the division named
+        ("process = par(i, 1 / z, _);", "FRS-EVAL-0007"),
+        ("process = route(1 / z, 1, 1, 1);", "FRS-EVAL-0007"),
+        (
+            "N = 1 / z; process = hslider(\"g%N\", 0, 0, 1, 0.1);",
+            "FRS-EVAL-0007",
+        ),
+        // the value reaches the signals: the typing stage reports it
+        ("process = 1 / z;", "FRS-COMP-0004"),
+        ("process = _ : @(1 / z);", "FRS-COMP-0004"),
+    ] {
+        let first = first_diagnostic("late_zero.dsp", &format!("{z}{program}"));
+        assert_eq!(first.code.0, code, "{program}: {}", first.message);
+        assert!(
+            first.message.contains("division by 0"),
+            "{program}: {}",
+            first.message
+        );
+    }
+}
+
+#[test]
+fn a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument() {
+    // The reference fails here (`ERROR : division by 0 in 1 / 0`): it simplifies
+    // the argument of `f` eagerly and its exception is fatal. faust-rs folds a
+    // pattern argument as an optimization, gives up on this one, matches the
+    // general rule, and the quotient is never used. With a literal divisor
+    // (`f(1 / 0)`) both fail. Recorded so that a change is noticed.
+    let source = "z = 0 <: _, !;\nf(0) = 1; f(n) = 2;\nprocess = f(1 / z);\n";
+    let out = Compiler::new()
+        .compile_source_to_signals("late_zero_pattern.dsp", source)
+        .expect("compiles: the division is never evaluated to a value that is used");
+    assert_eq!(
+        match_sig(&out.parse.state.arena, out.signals[0]),
+        SigMatch::Int(2)
+    );
+    let literal = first_diagnostic("pattern.dsp", "f(0) = 1; f(n) = 2; process = f(1 / 0);");
+    assert_eq!(literal.code.0, "FRS-EVAL-0007");
+}

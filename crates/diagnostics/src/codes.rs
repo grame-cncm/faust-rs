@@ -46,6 +46,12 @@ pub const EVAL_REDEFINED_SYMBOL: DiagnosticCode = DiagnosticCode("FRS-EVAL-0005"
 /// C++ equivalent: the `checkRange` check in `eval.cpp` that emits
 /// `"init = ... outside of [min max] range in '...'"`.
 pub const EVAL_SLIDER_INIT_OUT_OF_RANGE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0006");
+/// A constant expression divides by a constant zero.
+///
+/// C++ equivalent: the `faustexception` thrown by `mterm::operator/=` when the
+/// evaluator folds a numeric sequence (`eval.cpp`, `isBoxSeq` branch), printed
+/// as `ERROR : division by 0 in 2 / 0`.
+pub const EVAL_DIVISION_BY_ZERO: DiagnosticCode = DiagnosticCode("FRS-EVAL-0007");
 /// Generic eval failure fallback code.
 pub const EVAL_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0099");
 
@@ -161,6 +167,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         EVAL_ITERATION_INVALID,
         EVAL_REDEFINED_SYMBOL,
         EVAL_SLIDER_INIT_OUT_OF_RANGE,
+        EVAL_DIVISION_BY_ZERO,
         EVAL_GENERIC_FAILURE,
         PROP_UNSUPPORTED_BOX,
         PROP_ARITY_MISMATCH,

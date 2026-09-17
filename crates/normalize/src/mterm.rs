@@ -311,10 +311,11 @@ pub(crate) fn div_nums(arena: &mut TreeArena, a: SigId, b: SigId) -> SigId {
             if y == 0 {
                 division_by_zero(format!("{x} / {y}"));
             }
-            if x % y == 0 {
-                b.int(x / y)
-            } else {
-                b.real(x as f64 / y as f64)
+            // exact in integers when it is, in reals otherwise; `i32::MIN / -1`
+            // is neither representable nor allowed to overflow, and is a real
+            match (x.checked_rem(y), x.checked_div(y)) {
+                (Some(0), Some(quotient)) => b.int(quotient),
+                _ => b.real(f64::from(x) / f64::from(y)),
             }
         }
         (V::F(x), V::F(y)) => {
@@ -817,6 +818,26 @@ mod tests {
 
     fn arena() -> TreeArena {
         TreeArena::new()
+    }
+
+    #[test]
+    fn div_nums_is_exact_in_integers_and_never_overflows() {
+        let mut a = arena();
+        let num = |a: &mut TreeArena, v: i32| SigBuilder::new(a).int(v);
+        let (six, three, seven, two) = (
+            num(&mut a, 6),
+            num(&mut a, 3),
+            num(&mut a, 7),
+            num(&mut a, 2),
+        );
+        let exact = div_nums(&mut a, six, three);
+        assert_eq!(match_sig(&a, exact), SigMatch::Int(2));
+        let inexact = div_nums(&mut a, seven, two);
+        assert_eq!(match_sig(&a, inexact), SigMatch::Real(3.5));
+        // `i32::MIN / -1` and its remainder overflow in Rust: a real, not a panic
+        let (min, minus_one) = (num(&mut a, i32::MIN), num(&mut a, -1));
+        let wide = div_nums(&mut a, min, minus_one);
+        assert_eq!(match_sig(&a, wide), SigMatch::Real(2_147_483_648.0));
     }
 
     #[test]
