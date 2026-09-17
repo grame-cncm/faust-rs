@@ -401,20 +401,37 @@ fn json_names_what_each_output_computes() {
 }
 
 #[test]
-fn a_library_is_compile_checked_with_a_constant_and_eval_refuses_what_it_cannot_do() {
+fn only_what_an_expression_uses_is_evaluated() {
+    // Faust evaluates lazily: `--eval 0` checks that a library parses and
+    // that its imports resolve, not that its functions are sound.
+    let fixtures = Fixtures::new("lazy");
+    let lib = fixtures.write(
+        "lazy.lib",
+        "// a library\nsound(x) = x * 2;\nunsound(x) = x * oops;\n",
+    );
+    let common = ["--in", "zero", "-n", "1", "--quiet"];
+    let (ok, _, stderr) = probe(&[&common[..], &["--eval", "0", lib.as_str()]].concat());
+    assert!(ok, "{stderr}");
+    let (ok, _, stderr) = probe(&[&common[..], &["--eval", "sound(1)", lib.as_str()]].concat());
+    assert!(ok, "{stderr}");
+    // the function that is evaluated is checked, and cited at its own line
+    let (ok, _, stderr) = probe(&[&common[..], &["--eval", "unsound(1)", lib.as_str()]].concat());
+    assert!(!ok);
+    assert!(
+        stderr.contains("lazy.lib:3:18: error [FRS-EVAL-0002] undefined symbol `oops`"),
+        "{stderr}"
+    );
+    // what `--eval 0` does catch: a library that does not parse
+    let broken = fixtures.write("syntax.lib", "sound(x) = x * 2\nother = 1;\n");
+    let (ok, _, stderr) = probe(&[&common[..], &["--eval", "0", broken.as_str()]].concat());
+    assert!(!ok);
+    assert!(stderr.contains("FRS-PARSE"), "{stderr}");
+}
+
+#[test]
+fn eval_refuses_what_it_cannot_do() {
     let fixtures = Fixtures::new("check");
     let lib = fixtures.write("small.lib", LIB);
-    let (ok, _, stderr) = probe(&[
-        "--in",
-        "zero",
-        "-n",
-        "1",
-        "--quiet",
-        "--eval",
-        "0",
-        lib.as_str(),
-    ]);
-    assert!(ok, "{stderr}");
     // without --eval a library has no `process` to probe
     let (ok, _, _) = probe(&["--in", "zero", "-n", "1", "--quiet", lib.as_str()]);
     assert!(!ok);

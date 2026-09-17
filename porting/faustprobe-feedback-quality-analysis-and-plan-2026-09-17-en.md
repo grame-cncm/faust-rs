@@ -587,6 +587,15 @@ opener on its own line; the expressions in reverse order; arities from
 field not quoted. A seventh survived, the file's directory removed from the
 import path, and showed that code to be redundant (above).
 
+A correction to §3.3, which says that a `.lib` can be compile-checked with
+`--eval '0'`: it can be *parsed* that way. Faust evaluates lazily, so only what
+an expression uses is evaluated; a library with an undefined symbol in one of
+its functions passes `--eval 0` and fails, at the library's own line, when that
+function is evaluated. The guide says so and a test holds both halves. The
+first write-up of this phase had the wrong claim, and a `make check` line added
+to `faust-diff-jot` on its strength was withdrawn: the programs that import the
+library already parse it.
+
 Found on the way and left to a separate task: `process = 2.0 / 0;` panics the
 compiler (and aborts a host through the FFI) instead of giving a value or a
 diagnostic.

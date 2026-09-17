@@ -134,7 +134,21 @@ with inputs is a processor and is fed by `--in`
 (`--eval 'fi.lowpass(2, 1000)' filters.lib` is an impulse response); its
 controls are listed, set and swept, under the paths they have in the file, and
 only those the expressions use exist; `--out`, `--fail-above` and `--train`
-work as usual. `--eval '0' file.lib` is the compile check of a library.
+work as usual.
+
+Faust evaluates lazily, and that decides what an `--eval` checks: **only what
+the expression uses is evaluated**. `--eval 0 file.lib` therefore checks that
+the library parses and that its imports resolve, nothing more: an undefined
+symbol in a function nobody calls passes. To check a function, evaluate it; the
+error then cites the library's own line:
+
+```
+$ faustprobe --eval 0 jot.lib               # passes: `gamma` is not evaluated
+$ faustprobe --eval 'gamma(2.0)' jot.lib
+faustprobe: evaluation failed for jot.lib: undefined symbol `oops`
+jot.lib:81:14: error [FRS-EVAL-0002] undefined symbol `oops`
+  81 | gamma(t60) = oops + exp(0.0 - 3.0 * LN10 / (t60 * ma.SR));
+```
 
 What an expression sees is the file's **top-level** definitions: one local to
 a `with` block is not in scope, and the error says so. The file's own `process`
