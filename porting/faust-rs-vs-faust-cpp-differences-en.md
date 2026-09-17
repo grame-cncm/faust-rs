@@ -161,8 +161,10 @@ must run unchanged with Faust C++ should not pass them.
   (`crates/cranelift-ffi`, `src/bin/faustprobe.rs`) that JIT-compiles a program
   with the Cranelift backend and measures it offline: controls set, swept and
   scheduled from the command line, statistics, bargraph read-out, binary output
-  (`--out`), expressions evaluated in a file's scope (`--eval`), a host loop for
-  programs that output a loss and its gradients (`--train`, `--fd-check`). It
+  (`--out`), expressions evaluated in a file's scope (`--eval`), two renders
+  compared and the invariants of one checked (`--compare`, `--ref`, `--check`),
+  a host loop for programs that output a loss and its gradients (`--train`,
+  `--fd-check`). It
   has no C++ counterpart; the closest reference tools are the `impulse-tests`
   runners, whose protocol it reproduces byte for byte under `--protocol
   impulse-test`. Evidence:

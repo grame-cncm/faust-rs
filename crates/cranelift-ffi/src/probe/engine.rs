@@ -267,6 +267,27 @@ impl Factory {
     pub const fn is_double(&self) -> bool {
         self.double
     }
+
+    /// The key of the compiled program: a digest of its canonical FIR and of
+    /// the options that shape the code.
+    ///
+    /// Two compilations of one source give the same key when the compiler is
+    /// deterministic, and then share one cached factory; keys that differ are
+    /// what `--check determinism` has to explain.
+    #[must_use]
+    pub fn sha_key(&self) -> String {
+        // SAFETY: `self.factory` is live for as long as `self`; the returned
+        // string is owned by the caller and released with `freeCMemory`.
+        unsafe {
+            let raw = crate::factory::getCCraneliftDSPFactorySHAKey(self.factory);
+            if raw.is_null() {
+                return String::new();
+            }
+            let key = CStr::from_ptr(raw).to_string_lossy().into_owned();
+            crate::factory::freeCMemory(raw.cast());
+            key
+        }
+    }
 }
 
 impl Drop for Factory {
@@ -656,6 +677,25 @@ impl Probe {
             run!(f32);
         }
         acc.finish()
+    }
+
+    /// [`Probe::render`] that keeps the window's samples, for a comparison.
+    #[must_use]
+    pub fn collect(&self, spec: &RenderSpec) -> (RenderStats, crate::probe::compare::Samples) {
+        let mut channels =
+            vec![Vec::with_capacity(spec.frames.saturating_sub(spec.skip)); self.outputs];
+        let stats = self.render(spec, |_, samples| {
+            for (channel, value) in channels.iter_mut().zip(samples) {
+                channel.push(*value);
+            }
+        });
+        (
+            stats,
+            crate::probe::compare::Samples {
+                start: spec.skip,
+                channels,
+            },
+        )
     }
 
     /// Run exactly one `compute` call over `frames` samples of caller-supplied

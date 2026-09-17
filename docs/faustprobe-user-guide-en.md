@@ -669,3 +669,104 @@ way to fit a program whose other controls select a variant (`--set exact=1`)
 without editing it. A starting point found by a `--sweep` of the loss over a
 grid, then a descent from it, is the grid-then-gradient of
 `libraries/optimizers-overview-en.md` done by the host.
+
+## 14. Comparing renders and checking invariants
+
+"Did this change a sample?" is the question behind a refactoring, behind two
+routes to one result (`fad` and `rad`, a preset and the adjustable program set to
+its values), behind a new compiler version. The answer used to be two renders,
+two parses and the maximum of a difference in a script. The maximum is also the
+least informative answer: **the first frame that differs** says whether two
+programs part at the onset, at a control event, or slowly.
+
+### `--compare OTHER` and `--ref FILE`
+
+`--compare OTHER.dsp` compiles a second program in the same process and renders
+it under the same excitation, schedule and window. `--ref FILE` takes the
+samples of a file instead (`.npy`, `.wav`, `.f64`, `.f32`: what `--out` wrote),
+which must hold the same window. Per output:
+
+```
+$ faustprobe --double --in dc -n 512 --quiet --compare departs.dsp half.dsp
+# frames=512 sr=44100 window=0..512 (512 frames)
+# out0: peak=0.5 rms=0.5 dc=0.5 finite=yes peak_at=0
+# compare: against departs.dsp, tolerance abs=0 rel=0
+# compare out0: max_abs=9.99999999995449e-6 at frame 100, max_rel=1.9999600007908822e-5, first beyond tolerance: frame 100 (0.5 vs 0.50001)
+faustprobe: the render differs from `departs.dsp` beyond the tolerance
+  first: frame 100, out0: 0.5 vs 0.50001
+  controls then: all at their initial values
+```
+
+An output whose every sample has the reference's bits reads `identical`. The
+error carries the context a failed render has (§6): the controls written by
+that frame and the last `--at` before it, which is what names the control event
+two programs respond to differently. The exit status is 1 beyond the tolerance;
+the lines above are printed first, and `--format json` prints its document
+first too, with a `compare` object in the run (`agrees`, and per output
+`identical`, `max_abs`, `max_abs_at`, `max_rel`, `first_beyond`).
+
+**Tolerance.** A pair of samples agrees when `|a - b| <= ABS + REL * peak`,
+`peak` being the reference's largest magnitude on that output: `--tolerance ABS`,
+`--rel-tolerance REL`. Both default to 0, and then agreement is **bit
+equality**, which is what a refactoring, another block size or a second
+compilation owe. A non-finite sample agrees only with the very same bits.
+`--compare-outputs 0,2` restricts a comparison, and the checks below, to some
+outputs.
+
+**Controls.** `--set` applies to both programs, a trailing fragment resolving in
+each (`--set T60_at_dc=2` reaches `/jot_presets/...` and `/jot_reverb/...`),
+and must resolve in both; `--set-a` and `--set-b` address FILE or OTHER alone.
+`--at` applies to both. What the second program is given is validated like the
+first's: unknown path, bargraph, value outside the range.
+
+```bash
+# a preset against the adjustable program set to the values it displays
+faustprobe --double -n 44100 --quiet --set dry=0 --set wet=1 --set-a preset=4 \
+    --set-b T60_at_dc=1.9215 --set-b T60_at_half_the_sample_rate=0.527 \
+    --set-b gain=29.954550372874973 --set-b long_lines=1 \
+    --rel-tolerance 1e-12 --compare jot_reverb.dsp jot_presets.dsp
+```
+
+The two programs must have the same number of outputs; their inputs may differ,
+each being fed the excitation. `--eval` applies to FILE, so an expression can be
+compared with a program.
+
+### `--check`
+
+Invariants of the render, each a second render compared with the one the command
+makes. The flag repeats.
+
+| Check | The second render | Expected |
+|---|---|---|
+| `block[=N1,N2,...]` | a fresh instance at another block size (default 1, 7 and 512; the render's own `--block` is what they are compared with) | the same samples: a DSP that moves with the block size has a defect, or is a `rad` program, see below |
+| `reset` | the same instance again, after a reset | the same samples. Every sweep point and every `--reset-per-block` pass relies on it: a reset that left state behind would contaminate them in silence |
+| `determinism` | an instance of a second compilation of the source | the very bits, whatever the tolerance; the line says whether the two compilations gave the same program key |
+| `width` | the other sample width (`--double` or not) | a **report** of the distance: `max_abs`, where, the first differing frame. A gate only when a tolerance is given |
+| `all` | all of the above | |
+
+```
+$ faustprobe --double -n 8192 --quiet --check all jot_reverb.dsp
+# check block=1 out0: identical
+...
+# check reset out0: identical
+# check determinism: a second compilation gives the same program key
+# check determinism out0: identical
+# check width: this render in double precision against the single one (a report: no tolerance given)
+# check width out0: max_abs=4.7656649737604084e-9 at frame 1708, max_rel=4.7656649737604084e-9, first difference: frame 502
+```
+
+A large `width` distance marks a numerically fragile program: a long
+accumulation, a near-cancellation. `+(0.1) ~ _` is 3.0e-3 apart after 2000
+frames (1.5e-5 of its value).
+
+**`rad` and the block size.** The gradient lanes of a `rad` program are defined
+per block (the block reverse sweep), so they do move with `--block` and
+`--check block` fails on them, correctly. The loss lane does not:
+`--compare-outputs 0` checks it alone. On
+`tests/corpus/ddsp_rad_host_block_resonator.dsp`, `--check block=256` reads
+`out0: identical` and reports `out1` and `out2` from frames 1 and 2.
+
+`--compare`, `--ref` and `--check` look at one render: they do not combine with
+`--sweep`, `--train`, `--nvoices`, `--format ir` or the impulse-test protocol.
+JSON carries the checks as a `checks` array in the run.
+

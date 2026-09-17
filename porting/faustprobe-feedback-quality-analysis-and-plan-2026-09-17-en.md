@@ -16,8 +16,8 @@ error reduced to "errors=1, diagnostics=1").
 This document asks what remains of that kind, and what would make the feedback
 more precise and more attributable. It has two parts: an analysis, whose claims
 about the present tool were each run on the release binary of commit `79f2d6af`,
-and a plan in five phases. **Status: F1 and F3 are implemented (2026-09-17, §7);
-F2, F4 and F5 are not.**
+and a plan in five phases. **Status: F1, F2 and F3 are implemented (2026-09-17,
+§7); F4 and F5 are not.**
 
 The design document already states the principle the analysis applies (its §6):
 the tool is a measuring instrument, and an instrument that silently misreports
@@ -600,4 +600,61 @@ Found on the way: `process = 2.0 / 0;` panicked the compiler (and aborted a host
 through the FFI) instead of giving a diagnostic. Fixed the same day: a constant
 division by zero is `FRS-EVAL-0007`, as the reference compiler's `ERROR :
 division by 0 in 2 / 0` (journal, 2026-09-17).
+
+### F2, implemented 2026-09-17
+
+`--compare OTHER`, `--ref FILE`, `--check`, as planned (`probe/compare.rs`,
+FFI-free like `probe/render.rs`). Decisions and findings:
+
+- **What a comparison reports.** Per output: bit identity; the largest distance
+  and its frame; that distance relative to the reference's peak; and the first
+  pair beyond the tolerance, with both values. The tolerance is `abs + rel *
+  peak(reference)`, zero by default, and zero means bit equality. A non-finite
+  sample agrees only with the same bits (a NaN distance is beyond any
+  tolerance, which `distance > limit` alone would let through).
+- **The verdict comes after the output.** A failed comparison prints its lines,
+  or its JSON document, then fails: the details are what one reads, the exit
+  status what a gate reads. The error reuses the context of a failed render
+  (F1): the controls written by that frame and the last `--at` before it, which
+  is what names the event two programs answer differently.
+- **`--check block`** compares other sizes with the render's own `--block`
+  rather than with the first of the list, so the check is about the render one
+  is looking at. Open question of §6 settled with `--compare-outputs`, general
+  to comparisons and checks: on the `rad` fixture the loss lane is identical at
+  `--block 256` and the gradient lanes differ from frames 1 and 2.
+- **`--check determinism`** compiles again and says whether the program key is
+  the same. The key is a digest of the canonical FIR, so a second compilation
+  with the same key shares the cached factory and the comparison is then a
+  formality; a different key is a non-deterministic compilation, and the render
+  says whether it matters. It always demands the very bits.
+- **`--check width`** is a report unless a tolerance is given: the two widths
+  never agree to the bit, and a gate that always fails teaches nothing. Its test
+  replays the two accumulations of `+(0.1) ~ _` and finds the printed `max_abs`
+  to the bit (3.0e-3 after 2000 frames).
+- **`--ref`** needed a `.npy` reader, which `--in file:` gains too
+  (`probe/audio_file.rs`: formats 1.0 to 3.0, `<f8`/`<f4`, C order, one or two
+  dimensions, anything else refused by name). A file must hold the same window.
+- `--set` goes to both programs and must resolve in both; `--set-a`/`--set-b`
+  to one. The second program's writes are validated like the first's.
+
+Exit criterion. One command does the comparisons `faust-diff-jot` writes in
+Python: the bargraph variant against `jot_presets.dsp` (`identical`), and a
+preset against `jot_reverb.dsp` set to its displayed values (9e-17 of the peak,
+first differing frame 1516, inside `--rel-tolerance 1e-12`). `--check all` on
+`jot_reverb.dsp` takes 2.7 s and passes; its `width` report is 4.8e-9.
+
+Found on the way, fixed in its own commit: a regression of F1. A value typed on
+a decimal bound (`--set x=0.7`, maximum 0.7) was refused, because a control's
+bounds reach a host in single precision and the command line's value is a
+double. F1's test of the bounds used 0 and 1.
+
+Checks: `tests/compare_probe.rs` (13 tests), 7 unit tests of the comparison, 3
+of the `.npy` reader. Nine mutations rejected: only the first output compared;
+the last disagreement instead of the first; the relative tolerance ignored; a
+render for comparison not starting from a reset instance (the plan's mutation
+for `reset`, which has no Faust fixture); the block check at the same size; the
+second program given the first's own values; a failed comparison not failing the
+command; the width check never gating; a `.npy` read column-major, which a first
+version of the two-output test did not see (its outputs were constant and
+equal) and the rewritten one does.
 

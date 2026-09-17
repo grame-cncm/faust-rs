@@ -1,9 +1,11 @@
 //! Reading an excitation from a file, for `--in file:PATH[:CH]`.
 //!
-//! Three formats, told apart by the extension: `.wav` (RIFF/WAVE, PCM 8, 16,
+//! Four formats, told apart by the extension: `.wav` (RIFF/WAVE, PCM 8, 16,
 //! 24 or 32-bit integer and 32 or 64-bit float, any channel count), `.f64`
 //! and `.f32` (raw little-endian samples, one channel, what
-//! `scripts/make_target.py` of faust-diff-fdn writes). Samples come back as
+//! `scripts/make_target.py` of faust-diff-fdn writes), and `.npy` (NumPy,
+//! little-endian `<f8` or `<f4`, C order, shape `(frames,)` or `(frames,
+//! channels)`: what `--out` and `numpy.save` write). Samples come back as
 //! `f64` in `[-1, 1]` for integer formats, as stored for float ones.
 
 use std::path::Path;
@@ -16,15 +18,18 @@ pub fn read_channels(path: &Path) -> Result<(Vec<Vec<f64>>, Option<u32>), String
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
-    if !matches!(extension.as_str(), "wav" | "wave" | "f64" | "f32") {
+    if !matches!(extension.as_str(), "wav" | "wave" | "f64" | "f32" | "npy") {
         return Err(format!(
-            "{}: unknown audio extension `{extension}` (expected .wav, .f64 or .f32)",
+            "{}: unknown audio extension `{extension}` (expected .wav, .npy, .f64 or .f32)",
             path.display()
         ));
     }
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     match extension.as_str() {
         "wav" | "wave" => read_wav(&bytes).map_err(|e| format!("{}: {e}", path.display())),
+        "npy" => read_npy(&bytes)
+            .map(|channels| (channels, None))
+            .map_err(|e| format!("{}: {e}", path.display())),
         "f64" => Ok((
             vec![
                 bytes
@@ -49,6 +54,102 @@ pub fn read_channels(path: &Path) -> Result<(Vec<Vec<f64>>, Option<u32>), String
         )),
         _ => unreachable!("extension checked above"),
     }
+}
+
+/// A NumPy `.npy` file, format 1.0 to 3.0: the magic, the version, the length
+/// of a header that is a Python dict literal, then the data. Read here: the
+/// float arrays `--out` and `numpy.save` write, little-endian, C order, one or
+/// two dimensions; anything else is refused by name rather than misread.
+fn read_npy(bytes: &[u8]) -> Result<Vec<Vec<f64>>, String> {
+    if bytes.len() < 10 || &bytes[0..6] != b"\x93NUMPY" {
+        return Err("not a NumPy .npy file".to_owned());
+    }
+    // version 1 has a 16-bit header length, versions 2 and 3 a 32-bit one
+    let (header_len, header_at) = match bytes[6] {
+        1 => (usize::from(u16::from_le_bytes([bytes[8], bytes[9]])), 10),
+        2 | 3 => {
+            let len = bytes
+                .get(8..12)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .ok_or_else(|| "truncated .npy header".to_owned())?;
+            (len as usize, 12)
+        }
+        other => return Err(format!("unsupported .npy format version {other}")),
+    };
+    let header = bytes
+        .get(header_at..header_at + header_len)
+        .and_then(|h| std::str::from_utf8(h).ok())
+        .ok_or_else(|| "truncated .npy header".to_owned())?;
+    let data = &bytes[header_at + header_len..];
+
+    let field = |key: &str| -> Result<&str, String> {
+        let at = header
+            .find(key)
+            .ok_or_else(|| format!("no {key} in the .npy header"))?;
+        Ok(header[at + key.len()..].trim_start_matches([':', ' ']))
+    };
+    let descr = field("'descr'")?;
+    let width = if descr.starts_with("'<f8'") {
+        8
+    } else if descr.starts_with("'<f4'") {
+        4
+    } else {
+        let shown = descr.split(',').next().unwrap_or(descr);
+        return Err(format!(
+            "unsupported .npy element type {shown} (expected '<f8' or '<f4')"
+        ));
+    };
+    if field("'fortran_order'")?.starts_with("True") {
+        return Err("a Fortran-order .npy array is not supported (save it in C order)".to_owned());
+    }
+    let shape = field("'shape'")?;
+    let inside = shape
+        .strip_prefix('(')
+        .and_then(|rest| rest.split(')').next())
+        .ok_or_else(|| "malformed shape in the .npy header".to_owned())?;
+    let dims = inside
+        .split(',')
+        .map(str::trim)
+        .filter(|dim| !dim.is_empty())
+        .map(|dim| {
+            dim.parse::<usize>()
+                .map_err(|_| format!("malformed shape `({inside})`"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (frames, channels) = match dims.as_slice() {
+        [frames] => (*frames, 1),
+        [frames, channels] => (*frames, *channels),
+        _ => {
+            return Err(format!(
+                "a .npy array of shape ({inside}) is not frames x channels"
+            ));
+        }
+    };
+    if data.len() != frames * channels * width {
+        return Err(format!(
+            "the .npy data holds {} bytes, its shape ({inside}) announces {}",
+            data.len(),
+            frames * channels * width
+        ));
+    }
+    let sample = |k: usize| -> f64 {
+        let at = k * width;
+        if width == 8 {
+            f64::from_le_bytes(data[at..at + 8].try_into().expect("eight bytes"))
+        } else {
+            f64::from(f32::from_le_bytes(
+                data[at..at + 4].try_into().expect("four bytes"),
+            ))
+        }
+    };
+    // row-major: frame by frame
+    Ok((0..channels)
+        .map(|ch| {
+            (0..frames)
+                .map(|frame| sample(frame * channels + ch))
+                .collect()
+        })
+        .collect())
 }
 
 fn u16_at(bytes: &[u8], at: usize) -> Result<u16, String> {
@@ -132,6 +233,63 @@ fn read_wav(bytes: &[u8]) -> Result<(Vec<Vec<f64>>, Option<u32>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `.npy` file as `numpy.save` lays it out, built here from the format's
+    /// description and not with the writer of `audio_out`.
+    fn npy(version: u8, descr: &str, fortran: bool, shape: &str, data: &[u8]) -> Vec<u8> {
+        let order = if fortran { "True" } else { "False" };
+        let mut dict =
+            format!("{{'descr': '{descr}', 'fortran_order': {order}, 'shape': {shape}, }}");
+        let prefix = if version == 1 { 10 } else { 12 };
+        while (prefix + dict.len() + 1) % 64 != 0 {
+            dict.push(' ');
+        }
+        dict.push('\n');
+        let mut bytes = b"\x93NUMPY".to_vec();
+        bytes.extend_from_slice(&[version, 0]);
+        if version == 1 {
+            bytes.extend_from_slice(&(dict.len() as u16).to_le_bytes());
+        } else {
+            bytes.extend_from_slice(&(dict.len() as u32).to_le_bytes());
+        }
+        bytes.extend_from_slice(dict.as_bytes());
+        bytes.extend_from_slice(data);
+        bytes
+    }
+
+    #[test]
+    fn npy_two_dimensions_are_frames_by_channels_in_row_major_order() {
+        // frames (1, 10), (2, 20), (3, 30)
+        let data: Vec<u8> = [1.0_f64, 10.0, 2.0, 20.0, 3.0, 30.0]
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        for version in [1, 2] {
+            let channels = read_npy(&npy(version, "<f8", false, "(3, 2)", &data)).unwrap();
+            assert_eq!(channels, [vec![1.0, 2.0, 3.0], vec![10.0, 20.0, 30.0]]);
+        }
+    }
+
+    #[test]
+    fn npy_one_dimension_is_one_channel_and_f4_is_widened_exactly() {
+        let third = 1.0_f32 / 3.0;
+        let data: Vec<u8> = [third, -0.5].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let channels = read_npy(&npy(1, "<f4", false, "(2,)", &data)).unwrap();
+        assert_eq!(channels, [vec![f64::from(third), -0.5]]);
+    }
+
+    #[test]
+    fn npy_that_would_be_misread_is_refused_by_name() {
+        let eight = [0_u8; 8];
+        let error = |bytes: &[u8]| read_npy(bytes).unwrap_err();
+        assert!(error(&npy(1, "<i4", false, "(2,)", &eight)).contains("'<i4'"));
+        assert!(error(&npy(1, ">f8", false, "(1,)", &eight)).contains("'>f8'"));
+        assert!(error(&npy(1, "<f8", true, "(1, 1)", &eight)).contains("Fortran"));
+        assert!(error(&npy(1, "<f8", false, "(1, 1, 1)", &eight)).contains("frames x channels"));
+        // a shape that announces more than the file holds
+        assert!(error(&npy(1, "<f8", false, "(2, 1)", &eight)).contains("announces 16"));
+        assert!(error(b"RIFF....").contains("not a NumPy"));
+    }
 
     fn wav(format: u16, bits: u16, channels: u16, data: &[u8]) -> Vec<u8> {
         let mut b = Vec::new();

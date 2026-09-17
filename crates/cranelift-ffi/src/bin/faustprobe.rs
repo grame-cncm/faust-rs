@@ -9,7 +9,9 @@ use std::thread;
 
 use clap::{ArgAction, Parser, ValueEnum};
 
+use cranelift_ffi::probe::audio_file::read_channels;
 use cranelift_ffi::probe::audio_out::SampleWriter;
+use cranelift_ffi::probe::compare::{Comparison, Samples, Tolerance, compare};
 use cranelift_ffi::probe::engine::{Factory, PolyProbe, Probe, RenderSpec};
 use cranelift_ffi::probe::eval::{EvalProgram, csv_field};
 use cranelift_ffi::probe::number::{NumberFormat, Precision};
@@ -180,6 +182,60 @@ struct Args {
     /// thins the text dump, which this replaces.
     #[arg(long = "out", value_name = "FILE")]
     out: Option<String>,
+
+    /// Compare the render with that of OTHER, a second program compiled in the
+    /// same process and rendered under the same excitation, schedule and
+    /// window: per output, the largest difference and where, and **the first
+    /// frame beyond the tolerance**. Exit status 1 beyond it.
+    ///
+    /// For "this change must not alter a sample", two routes to one result, a
+    /// preset against the adjustable program set to its values. `--set` applies
+    /// to both programs (a trailing fragment resolves in each) and must resolve
+    /// in both; `--set-a` and `--set-b` address FILE or OTHER alone.
+    #[arg(long = "compare", value_name = "OTHER")]
+    compare: Option<String>,
+
+    /// Compare the render with the samples of FILE (`.npy`, `.wav`, `.f64`,
+    /// `.f32`: what `--out` writes), which must hold the same window.
+    #[arg(long = "ref", value_name = "FILE")]
+    reference: Option<String>,
+
+    /// `--set` for FILE only, under `--compare` (repeatable).
+    #[arg(long = "set-a", value_name = "PATH=VALUE")]
+    set_a: Vec<String>,
+
+    /// `--set` for OTHER only, under `--compare` (repeatable).
+    #[arg(long = "set-b", value_name = "PATH=VALUE")]
+    set_b: Vec<String>,
+
+    /// Largest accepted `|a - b|` in a comparison. Default 0, and with no
+    /// `--rel-tolerance` either, agreement is bit equality.
+    #[arg(long = "tolerance", value_name = "ABS")]
+    tolerance: Option<f64>,
+
+    /// Tolerance relative to the reference's peak on each output, added to
+    /// `--tolerance`.
+    #[arg(long = "rel-tolerance", value_name = "REL")]
+    rel_tolerance: Option<f64>,
+
+    /// Outputs a comparison or a check looks at (default: all), e.g. `0` for
+    /// the loss lane of a `rad` program, whose gradient lanes are defined per
+    /// block and do move with the block size.
+    #[arg(long = "compare-outputs", value_name = "N,...", value_delimiter = ',')]
+    compare_outputs: Vec<usize>,
+
+    /// Check an invariant of the render (repeatable): `block[=N1,N2,...]`, the
+    /// same samples at other block sizes (default 1, 7 and 512); `reset`, the
+    /// same samples again after a reset of the instance, which sweeps and
+    /// `--reset-per-block` rely on; `determinism`, the same samples from a
+    /// second compilation; `width`, the distance between the single and the
+    /// double precision render; `all`.
+    ///
+    /// The first three must hold to the tolerance (bit equality by default)
+    /// and fail the command otherwise, naming the first differing frame.
+    /// `width` is a report, and a gate only when a tolerance is given.
+    #[arg(long = "check", value_name = "CHECK")]
+    checks: Vec<String>,
 
     /// Fail when a sample of the window exceeds LEVEL in magnitude, and say
     /// at which frame and output first.
@@ -408,6 +464,9 @@ fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
     if !args.evals.is_empty() {
         offenders.push("--eval");
     }
+    if verification_requested(args) {
+        offenders.push("--compare/--ref/--check");
+    }
     if offenders.is_empty() {
         Ok(())
     } else {
@@ -486,13 +545,13 @@ fn parse_assignment(text: &str) -> Result<(&str, f64), String> {
 /// The program to probe: FILE, or under `--eval` the expressions evaluated in
 /// FILE's scope. With the wrapped file when there is one, which is what
 /// labels the outputs and explains a compile error.
-fn compile_program(args: &Args) -> Result<(Factory, Option<EvalProgram>), String> {
+fn compile_program(args: &Args, double: bool) -> Result<(Factory, Option<EvalProgram>), String> {
     if args.evals.is_empty() {
         let factory = Factory::compile_with_args(
             &args.file,
             &args.import_dirs,
             &compiler_args(args),
-            args.double,
+            double,
             args.opt_level,
         )?;
         return Ok((factory, None));
@@ -508,7 +567,7 @@ fn compile_program(args: &Args) -> Result<(Factory, Option<EvalProgram>), String
         &eval.source(),
         &args.import_dirs,
         &compiler_args(args),
-        args.double,
+        double,
         args.opt_level,
     )
     .map_err(|error| eval.explain(&args.file, &error))?;
@@ -553,6 +612,169 @@ fn output_labels(
         arities = samples.iter().map(|count| *count as usize).collect();
     });
     eval.labels(&arities, outputs)
+}
+
+/// Whether `--compare`, `--ref` or `--check` was given.
+fn verification_requested(args: &Args) -> bool {
+    args.compare.is_some() || args.reference.is_some() || !args.checks.is_empty()
+}
+
+/// An invariant `--check` verifies on the render.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Check {
+    /// The same samples at this block size.
+    Block(usize),
+    /// The same samples again after a reset of the instance.
+    Reset,
+    /// The same samples from a second compilation.
+    Determinism,
+    /// The distance between the two sample widths.
+    Width,
+}
+
+impl Check {
+    fn name(self) -> String {
+        match self {
+            Self::Block(size) => format!("block={size}"),
+            Self::Reset => "reset".to_owned(),
+            Self::Determinism => "determinism".to_owned(),
+            Self::Width => "width".to_owned(),
+        }
+    }
+}
+
+/// Block sizes `--check block` tries when none is given: a sample at a time,
+/// a size that divides nothing, and a large one.
+const DEFAULT_CHECK_BLOCKS: [usize; 3] = [1, 7, 512];
+
+/// Parses the `--check` occurrences. `block` sizes equal to the render's own
+/// are dropped: that render is what the others are compared with.
+fn parse_checks(specs: &[String], own_block: usize) -> Result<Vec<Check>, String> {
+    let mut checks = Vec::new();
+    let mut push = |check: Check| {
+        if check != Check::Block(own_block) && !checks.contains(&check) {
+            checks.push(check);
+        }
+    };
+    for spec in specs {
+        match spec.as_str() {
+            "reset" => push(Check::Reset),
+            "determinism" => push(Check::Determinism),
+            "width" => push(Check::Width),
+            "block" => DEFAULT_CHECK_BLOCKS
+                .into_iter()
+                .for_each(|n| push(Check::Block(n))),
+            "all" => {
+                DEFAULT_CHECK_BLOCKS
+                    .into_iter()
+                    .for_each(|n| push(Check::Block(n)));
+                push(Check::Reset);
+                push(Check::Determinism);
+                push(Check::Width);
+            }
+            other => {
+                let sizes = other.strip_prefix("block=").ok_or_else(|| {
+                    format!(
+                        "unknown check `{other}` (expected block[=N1,N2,...], reset, determinism, width or all)"
+                    )
+                })?;
+                for size in sizes.split(',') {
+                    match size.trim().parse::<usize>() {
+                        Ok(n) if n > 0 => push(Check::Block(n)),
+                        _ => {
+                            return Err(format!("`--check {other}`: `{size}` is not a block size"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(checks)
+}
+
+/// Renders `probe` from a cleared instance with `sets` written, keeping the
+/// window's samples. A reference that is not finite cannot be compared with.
+fn render_for_comparison(
+    probe: &Probe,
+    spec: &RenderSpec,
+    sets: &[(&str, f64)],
+    what: &str,
+) -> Result<Samples, String> {
+    probe.reset();
+    for (path, value) in sets {
+        probe.set(path, *value)?;
+    }
+    let (stats, samples) = probe.collect(spec);
+    if let Some((channel, located)) = stats.first_non_finite() {
+        return Err(format!(
+            "{what} produced non-finite samples: first at frame {}, out{channel} ({})",
+            located.frame,
+            non_finite_name(located.value)
+        ));
+    }
+    Ok(samples)
+}
+
+/// One comparison, as the lines printed with the statistics. `gate` says
+/// whether a disagreement fails the command or is only reported (`--check
+/// width` without a tolerance).
+fn comparison_lines(
+    tag: &str,
+    comparison: &Comparison,
+    gate: bool,
+    fmt: &NumberFormat,
+) -> Vec<String> {
+    comparison
+        .channels
+        .iter()
+        .map(|(ch, diff)| {
+            if diff.identical {
+                return format!("# {tag} out{ch}: identical");
+            }
+            let at = diff.max_abs_at.map_or_else(
+                || "a non-finite sample".to_owned(),
+                |frame| format!("frame {frame}"),
+            );
+            let verdict = match diff.first_beyond {
+                Some(d) if gate => format!(
+                    "first beyond tolerance: frame {} ({} vs {})",
+                    d.frame,
+                    fmt.sample(d.value),
+                    fmt.sample(d.reference)
+                ),
+                Some(d) => format!("first difference: frame {}", d.frame),
+                None => "within tolerance".to_owned(),
+            };
+            format!(
+                "# {tag} out{ch}: max_abs={} at {at}, max_rel={}, {verdict}",
+                fmt.computed(diff.max_abs),
+                fmt.computed(diff.max_rel)
+            )
+        })
+        .collect()
+}
+
+/// One comparison, for the JSON document.
+fn comparison_json(comparison: &Comparison) -> serde_json::Value {
+    let channels: Vec<serde_json::Value> = comparison
+        .channels
+        .iter()
+        .map(|(ch, diff)| {
+            serde_json::json!({
+                "output": ch,
+                "identical": diff.identical,
+                "max_abs": json_number(diff.max_abs),
+                "max_abs_at": diff.max_abs_at,
+                "max_rel": json_number(diff.max_rel),
+                "first_beyond": diff.first_beyond.map(|d| serde_json::json!({
+                    "frame": d.frame,
+                    "value": json_number(d.value),
+                    "reference": json_number(d.reference),
+                })),
+            })
+        })
+        .collect();
+    serde_json::json!({ "agrees": comparison.agrees(), "channels": channels })
 }
 
 /// The number text of this run: `--precision`, at the program's width.
@@ -734,6 +956,7 @@ fn run_poly(args: &Args) -> Result<(), String> {
         ("--fail-above", args.fail_above.is_some()),
         ("--clamp", args.clamp),
         ("--eval", !args.evals.is_empty()),
+        ("--compare/--ref/--check", verification_requested(args)),
     ] {
         if set {
             return Err(format!(
@@ -942,8 +1165,9 @@ fn run(mut args: Args) -> Result<(), String> {
         return run_train(&args);
     }
 
-    let (factory, eval) = compile_program(&args)?;
-    let probe = Probe::instantiate(&std::rc::Rc::new(factory), args.sr)?;
+    let (factory, eval) = compile_program(&args, args.double)?;
+    let factory = std::rc::Rc::new(factory);
+    let probe = Probe::instantiate(&factory, args.sr)?;
 
     let fmt = number_format(&args)?;
     if args.list_params {
@@ -994,9 +1218,11 @@ fn run(mut args: Args) -> Result<(), String> {
             }
         }
     }
+    // `--set` and, under `--compare`, the values of FILE alone
     let fixed = args
         .sets
         .iter()
+        .chain(&args.set_a)
         .map(|a| parse_assignment(a))
         .collect::<Result<Vec<_>, _>>()?;
     // Everything a render will write is checked before any render: a
@@ -1048,6 +1274,104 @@ fn run(mut args: Args) -> Result<(), String> {
             .collect()
     } else {
         Vec::new()
+    };
+
+    // `--compare`, `--ref`, `--check`: validated like everything else before
+    // any render. The second program is compiled and its own writes checked
+    // here; the reference file is read here.
+    let verifying = verification_requested(&args);
+    if verifying {
+        for (flag, set) in [
+            ("--sweep", !axes.is_empty()),
+            ("--format ir", args.format == Format::Ir),
+        ] {
+            if set {
+                return Err(format!(
+                    "{flag} cannot be combined with --compare, --ref or --check, which look at one render"
+                ));
+            }
+        }
+    }
+    if args.compare.is_some() && args.reference.is_some() {
+        return Err("--compare and --ref both name the reference: give one".to_owned());
+    }
+    if args.compare.is_none() && (!args.set_a.is_empty() || !args.set_b.is_empty()) {
+        return Err("--set-a and --set-b address the two programs of --compare".to_owned());
+    }
+    for (flag, value) in [
+        ("--tolerance", args.tolerance),
+        ("--rel-tolerance", args.rel_tolerance),
+    ] {
+        if value.is_some_and(|v| !(v >= 0.0 && v.is_finite())) {
+            return Err(format!("{flag} must be a non-negative number"));
+        }
+    }
+    let tolerance = Tolerance {
+        abs: args.tolerance.unwrap_or(0.0),
+        rel: args.rel_tolerance.unwrap_or(0.0),
+    };
+    let explicit_tolerance = args.tolerance.is_some() || args.rel_tolerance.is_some();
+    let compared_outputs =
+        (!args.compare_outputs.is_empty()).then_some(args.compare_outputs.as_slice());
+    if let Some(&beyond) = args
+        .compare_outputs
+        .iter()
+        .find(|&&ch| ch >= probe.outputs())
+    {
+        return Err(format!(
+            "--compare-outputs {beyond}: the program has {} output(s)",
+            probe.outputs()
+        ));
+    }
+    let checks = parse_checks(&args.checks, args.block)?;
+    // the second program, with the values it alone is given
+    let other_sets = args
+        .sets
+        .iter()
+        .chain(&args.set_b)
+        .map(|a| parse_assignment(a))
+        .collect::<Result<Vec<_>, _>>()?;
+    let other = match &args.compare {
+        Some(path) => {
+            let other_factory = Factory::compile_with_args(
+                path,
+                &args.import_dirs,
+                &compiler_args(&args),
+                args.double,
+                args.opt_level,
+            )
+            .map_err(|error| format!("--compare: {error}"))?;
+            let other = Probe::instantiate(&std::rc::Rc::new(other_factory), args.sr)?;
+            if other.outputs() != probe.outputs() {
+                return Err(format!(
+                    "--compare: `{}` has {} output(s) and `{path}` {}",
+                    args.file,
+                    probe.outputs(),
+                    other.outputs()
+                ));
+            }
+            // what is written to it is checked as for the first program
+            for (query, value) in &other_sets {
+                check_value(other.controls(), query, *value, args.clamp, &mut clamped)
+                    .map_err(|error| format!("--compare `{path}`: {error}"))?;
+            }
+            for (_, query, value) in schedule.param_writes() {
+                check_value(other.controls(), query, value, args.clamp, &mut clamped)
+                    .map_err(|error| format!("--compare `{path}`: {error}"))?;
+            }
+            Some(other)
+        }
+        None => None,
+    };
+    let reference_file = match &args.reference {
+        Some(path) => {
+            let (channels, _) = read_channels(std::path::Path::new(path))?;
+            Some(Samples {
+                start: args.skip,
+                channels,
+            })
+        }
+        None => None,
     };
 
     let spec = RenderSpec {
@@ -1128,6 +1452,9 @@ fn run(mut args: Args) -> Result<(), String> {
     let every = args.every.max(1);
     let mut runs: Vec<serde_json::Value> = Vec::new();
     let mut silent_points = 0usize;
+    // a comparison or a check that failed: reported after the output, which
+    // carries its details
+    let mut verification_failure: Option<String> = None;
 
     for point in &points {
         // Every point starts from the same known state (see probe::sweep).
@@ -1174,10 +1501,11 @@ fn run(mut args: Args) -> Result<(), String> {
         }
 
         // `f0` needs the samples, so collect them only when it is asked for.
-        let want_samples = matches!(
-            reduction,
-            Some(Reduction::F0 | Reduction::Sfdr | Reduction::Thd)
-        );
+        let want_samples = verifying
+            || matches!(
+                reduction,
+                Some(Reduction::F0 | Reduction::Sfdr | Reduction::Thd)
+            );
         let mut collected: Vec<Vec<f64>> = if want_samples {
             vec![Vec::new(); probe.outputs()]
         } else {
@@ -1309,6 +1637,130 @@ fn run(mut args: Args) -> Result<(), String> {
         // what the program's bargraphs show at the end of this render
         let bargraphs = probe.bargraphs();
 
+        // ── --compare / --ref / --check ──────────────────────────────────
+        // After the bargraphs were read: `--check reset` renders again on
+        // this instance.
+        let mut verify_lines: Vec<String> = Vec::new();
+        let mut verify_json = serde_json::Map::new();
+        if verifying {
+            let render = Samples {
+                start: spec.skip,
+                channels: collected.clone(),
+            };
+            let mut failed = |what: String, comparison: &Comparison| {
+                if verification_failure.is_none()
+                    && let Some((channel, d)) = comparison.first_beyond()
+                {
+                    verification_failure = Some(format!(
+                        "{what}\n  first: frame {}, out{channel}: {} vs {}{}",
+                        d.frame,
+                        fmt.sample(d.value),
+                        fmt.sample(d.reference),
+                        failure_context(d.frame, &written_controls(), &schedule, probe.controls())
+                    ));
+                }
+            };
+            let reference = match (&other, &reference_file, &args.compare, &args.reference) {
+                (Some(other), _, Some(path), _) => {
+                    let sets: Vec<(&str, f64)> = other_sets.clone();
+                    Some((
+                        path.clone(),
+                        render_for_comparison(other, &spec, &sets, &format!("`{path}`"))?,
+                    ))
+                }
+                (_, Some(samples), _, Some(path)) => Some((path.clone(), samples.clone())),
+                _ => None,
+            };
+            if let Some((name, reference)) = reference {
+                let comparison = compare(&render, &reference, tolerance, compared_outputs)
+                    .map_err(|error| format!("cannot compare with `{name}`: {error}"))?;
+                verify_lines.push(format!(
+                    "# compare: against {name}, tolerance abs={} rel={}",
+                    tolerance.abs, tolerance.rel
+                ));
+                verify_lines.extend(comparison_lines("compare", &comparison, true, &fmt));
+                let mut json = comparison_json(&comparison);
+                json["reference"] = serde_json::json!(name);
+                verify_json.insert("compare".to_owned(), json);
+                if !comparison.agrees() {
+                    failed(
+                        format!("the render differs from `{name}` beyond the tolerance"),
+                        &comparison,
+                    );
+                }
+            }
+            let mut checks_json = Vec::new();
+            for check in &checks {
+                let tag = format!("check {}", check.name());
+                let (samples, gate, limit) = match check {
+                    Check::Block(size) => {
+                        let fresh = Probe::instantiate(&factory, args.sr)?;
+                        let at_size = RenderSpec {
+                            block: *size,
+                            ..spec.clone()
+                        };
+                        let samples = render_for_comparison(&fresh, &at_size, &fixed, &tag)?;
+                        (samples, true, tolerance)
+                    }
+                    Check::Reset => (
+                        render_for_comparison(&probe, &spec, &fixed, &tag)?,
+                        true,
+                        tolerance,
+                    ),
+                    Check::Determinism => {
+                        let (again, _) = compile_program(&args, args.double)?;
+                        let same_key = again.sha_key() == factory.sha_key();
+                        verify_lines.push(format!(
+                            "# {tag}: a second compilation gives {} program key",
+                            if same_key { "the same" } else { "ANOTHER" }
+                        ));
+                        let fresh = Probe::instantiate(&std::rc::Rc::new(again), args.sr)?;
+                        // two compilations of one source owe each other the very bits
+                        (
+                            render_for_comparison(&fresh, &spec, &fixed, &tag)?,
+                            true,
+                            Tolerance::default(),
+                        )
+                    }
+                    Check::Width => {
+                        let (other_width, _) = compile_program(&args, !args.double)?;
+                        let fresh = Probe::instantiate(&std::rc::Rc::new(other_width), args.sr)?;
+                        verify_lines.push(format!(
+                            "# {tag}: this render in {} precision against the {} one{}",
+                            if args.double { "double" } else { "single" },
+                            if args.double { "single" } else { "double" },
+                            if explicit_tolerance {
+                                ""
+                            } else {
+                                " (a report: no tolerance given)"
+                            }
+                        ));
+                        (
+                            render_for_comparison(&fresh, &spec, &fixed, &tag)?,
+                            explicit_tolerance,
+                            tolerance,
+                        )
+                    }
+                };
+                let comparison = compare(&render, &samples, limit, compared_outputs)
+                    .map_err(|error| format!("{tag}: {error}"))?;
+                verify_lines.extend(comparison_lines(&tag, &comparison, gate, &fmt));
+                let mut json = comparison_json(&comparison);
+                json["check"] = serde_json::json!(check.name());
+                json["gate"] = serde_json::json!(gate);
+                checks_json.push(json);
+                if gate && !comparison.agrees() {
+                    failed(
+                        format!("--{tag} failed: the render is not the same"),
+                        &comparison,
+                    );
+                }
+            }
+            if !checks_json.is_empty() {
+                verify_json.insert("checks".to_owned(), serde_json::Value::Array(checks_json));
+            }
+        }
+
         if args.format == Format::Json {
             let mut entry = serde_json::Map::new();
             let mut set = serde_json::Map::new();
@@ -1329,6 +1781,9 @@ fn run(mut args: Args) -> Result<(), String> {
             }
             if !notes.is_empty() {
                 entry.insert("notes".to_owned(), serde_json::json!(notes));
+            }
+            for (key, value) in verify_json {
+                entry.insert(key, value);
             }
             entry.insert(
                 "window".to_owned(),
@@ -1460,6 +1915,9 @@ fn run(mut args: Args) -> Result<(), String> {
             for note in &notes {
                 emit(format!("# note: {note}"));
             }
+            for line in &verify_lines {
+                emit(line.clone());
+            }
         }
     }
 
@@ -1493,7 +1951,9 @@ fn run(mut args: Args) -> Result<(), String> {
         );
     }
 
-    Ok(())
+    // The output above carries the details of a comparison or a check that
+    // failed; the verdict is the exit status.
+    verification_failure.map_or(Ok(()), Err)
 }
 
 /// One channel of a rendered window, reduced to a single number.
@@ -1525,6 +1985,7 @@ fn run_train(args: &Args) -> Result<(), String> {
     for (flag, set) in [
         ("--out", args.out.is_some()),
         ("--fail-above", args.fail_above.is_some()),
+        ("--compare/--ref/--check", verification_requested(args)),
     ] {
         if set {
             return Err(format!(
@@ -1533,7 +1994,7 @@ fn run_train(args: &Args) -> Result<(), String> {
         }
     }
     let fmt = number_format(args)?;
-    let factory = std::rc::Rc::new(compile_program(args)?.0);
+    let factory = std::rc::Rc::new(compile_program(args, args.double)?.0);
     // A `--set` outside its range: on a trained control it would move the
     // starting point, on another it would fix a value that is not the one
     // asked for, and the descent's rows would show neither.
