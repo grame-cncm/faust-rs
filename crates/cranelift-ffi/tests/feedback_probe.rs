@@ -1,0 +1,715 @@
+//! The probe says what it did (phase F1 of
+//! `porting/faustprobe-feedback-quality-analysis-and-plan-2026-09-17-en.md`).
+//!
+//! Four places where a run did something other than what its command line
+//! asked, and printed numbers that looked like measurements either way:
+//!
+//! - **range**: a value outside its control's range was clamped in silence, so
+//!   a sweep printed rows labelled 7 and 100 that measured 1. It is an error,
+//!   or under `--clamp` a clamp that is reported, the row carrying the value
+//!   used;
+//! - **numbers**: nine fixed decimals kept two digits of 3.3e-8. The text now
+//!   parses back to the very float, at the program's width; `--precision 9` is
+//!   the old text; `--out` writes the window in binary;
+//! - **failures**: a non-finite render knew its first bad frame and discarded
+//!   it; `--fail-above` catches a runaway where it starts;
+//! - **silence**: exact zeros came with no word about the button at 0.
+//!
+//! Every expected frame, value and count below follows from the definition of
+//! the fixture, not from a run of the tool.
+
+use cranelift_ffi::probe::engine::{Factory, Probe, RenderSpec};
+use cranelift_ffi::probe::render::InputMode;
+use cranelift_ffi::probe::schedule::{Event, Schedule};
+use std::process::Command;
+use std::rc::Rc;
+
+/// A gain on a 0..1 slider: what a request of 7 must not silently become.
+const GAIN: &str = r#"
+g = hslider("gain", 0.5, 0, 1, 0.001);
+process = _ * g;
+"#;
+
+/// Constants no short decimal text holds, the second one small.
+const CONSTANTS: &str = "process = 1.0 / 3.0, 1.0e-7 / 3.0, 3.141592653589793;\n";
+
+/// `n` counts 1, 2, 3, ... from frame 0, so `500 - n` is negative from frame
+/// 500 on (n = 501) and its square root is NaN there, not before.
+const NAN_AT_500: &str = "n = +(1) ~ _;\nprocess = (500 - n) : sqrt;\n";
+
+/// `0.5 * (frame + 1)`: above 100 first at frame 200, where it is 100.5.
+const RAMP: &str = "process = (+(1) ~ _) : *(0.5);\n";
+
+/// A one-pole loop, stable below `g = 1` and running away above it.
+const LOOP: &str = r#"
+g = hslider("g", 0.5, 0, 2, 0.001);
+process = + ~ *(g);
+"#;
+
+/// Exact silence until its button is pressed.
+const GATED: &str = "process = button(\"gate\") * 0.5;\n";
+
+fn probe_binary(name: &str, source: &str, args: &[&str]) -> (bool, String, String) {
+    let path = std::env::temp_dir().join(format!(
+        "faustprobe_feedback_{}_{name}.dsp",
+        std::process::id()
+    ));
+    std::fs::write(&path, source).expect("write dsp");
+    let out = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
+        .args(args)
+        .arg(&path)
+        .output()
+        .expect("run faustprobe");
+    let _ = std::fs::remove_file(&path);
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+fn probe(source: &str, double: bool) -> Probe {
+    let factory =
+        Factory::compile_from_string("feedback_test", source, &[], double, 0).expect("compile");
+    Probe::instantiate(&Rc::new(factory), 44_100).expect("instantiate")
+}
+
+/// The samples of the first frame, from the library: the independent source
+/// the binary's text is compared with.
+fn first_frame(source: &str, double: bool) -> Vec<f64> {
+    let mut first = Vec::new();
+    let spec = RenderSpec {
+        frames: 1,
+        input: InputMode::Zero,
+        ..RenderSpec::default()
+    };
+    probe(source, double).render(&spec, |_, samples| first = samples.to_vec());
+    first
+}
+
+/// The numbers of the CSV row of `frame`.
+fn row(stdout: &str, frame: usize) -> Vec<String> {
+    let prefix = format!("{frame},");
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .unwrap_or_else(|| panic!("no row for frame {frame} in:\n{stdout}"))
+        .split(',')
+        .map(str::to_owned)
+        .collect()
+}
+
+// ------------------------------------------------------------------ range
+
+#[test]
+fn a_write_outside_the_range_is_known_before_any_render() {
+    let probe = probe(GAIN, false);
+    let inside = probe.controls().check_write("gain", 0.25).unwrap();
+    assert!(inside.in_range());
+    assert!((inside.applied - 0.25).abs() < f64::EPSILON);
+    // a bound is a value the control can hold
+    assert!(
+        probe
+            .controls()
+            .check_write("gain", 1.0)
+            .unwrap()
+            .in_range()
+    );
+
+    let outside = probe.controls().check_write("gain", 7.0).unwrap();
+    assert!(!outside.in_range());
+    assert!((outside.applied - 1.0).abs() < f64::EPSILON);
+    let message = outside.range_error("gain");
+    assert!(message.contains("`gain`=7"), "{message}");
+    assert!(message.contains("[0, 1]"), "{message}");
+    assert!(message.contains("/feedback_test/gain"), "{message}");
+
+    assert!(
+        !probe
+            .controls()
+            .check_write("gain", f64::NAN)
+            .unwrap()
+            .in_range()
+    );
+    assert!(probe.controls().check_write("nope", 0.5).is_err());
+}
+
+#[test]
+fn set_sweep_and_at_refuse_a_value_outside_the_range() {
+    for args in [
+        &["--set", "gain=7", "-n", "8"][..],
+        &["--sweep", "gain=0.5,1,7,100", "--reduce", "peak", "-n", "8"][..],
+        &["--at", "4", "gain=-0.5", "-n", "8"][..],
+    ] {
+        let (ok, stdout, stderr) = probe_binary("range", GAIN, args);
+        assert!(!ok, "{args:?} passed");
+        // before any render: not one row of a sweep that would mislead
+        assert!(stdout.is_empty(), "{args:?} printed:\n{stdout}");
+        assert!(
+            stderr.contains("is outside the range [0, 1] of /"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("--clamp"), "{stderr}");
+    }
+    // the bounds themselves are in the range
+    let (ok, _, stderr) = probe_binary("bounds", GAIN, &["--sweep", "gain=0,1", "-n", "8"]);
+    assert!(ok, "{stderr}");
+}
+
+#[test]
+fn clamp_is_reported_and_a_sweep_row_carries_the_value_used() {
+    let (ok, stdout, stderr) = probe_binary(
+        "clamp_sweep",
+        GAIN,
+        &[
+            "--clamp",
+            "--sweep",
+            "gain=0.5,7",
+            "--reduce",
+            "peak",
+            "--in",
+            "dc",
+            "-n",
+            "8",
+        ],
+    );
+    assert!(ok, "{stderr}");
+    assert!(stderr.contains("# clamped /"), "{stderr}");
+    assert!(stderr.contains("gain: 7 -> 1"), "{stderr}");
+    let rows: Vec<&str> = stdout.lines().skip(1).collect();
+    // a constant 1 through the gain: the peak is the gain that was used
+    assert_eq!(rows, ["0.5,0.5", "1,1.0"], "{stdout}");
+
+    let (ok, stdout, _) = probe_binary(
+        "clamp_set",
+        GAIN,
+        &[
+            "--clamp", "--set", "gain=7", "--in", "dc", "-n", "8", "--quiet",
+        ],
+    );
+    assert!(ok);
+    assert!(stdout.contains("gain: 7 -> 1"), "{stdout}");
+}
+
+#[test]
+fn clamp_is_in_the_json_of_the_runs_it_concerns() {
+    let (ok, stdout, stderr) = probe_binary(
+        "clamp_json",
+        GAIN,
+        &[
+            "--clamp",
+            "--sweep",
+            "gain=0.5,7",
+            "--in",
+            "dc",
+            "-n",
+            "8",
+            "--format",
+            "json",
+        ],
+    );
+    assert!(ok, "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let runs = document["runs"].as_array().unwrap();
+    assert!(runs[0].get("clamped").is_none(), "{}", runs[0]);
+    let clamp = &runs[1]["clamped"][0];
+    assert_eq!(clamp["requested"], 7.0);
+    assert_eq!(clamp["applied"], 1.0);
+    assert!(clamp["path"].as_str().unwrap().ends_with("/gain"));
+    // `set` is what the render used
+    assert_eq!(runs[1]["set"]["gain"], 1.0);
+}
+
+// ---------------------------------------------------------------- numbers
+
+#[test]
+fn the_text_of_a_sample_parses_back_to_the_very_float() {
+    let (ok, stdout, _) = probe_binary(
+        "numbers_double",
+        CONSTANTS,
+        &["--double", "--in", "zero", "-n", "1"],
+    );
+    assert!(ok);
+    let expected = first_frame(CONSTANTS, true);
+    for (text, value) in row(&stdout, 0).iter().zip(&expected) {
+        assert_eq!(
+            text.parse::<f64>().unwrap().to_bits(),
+            value.to_bits(),
+            "{text}"
+        );
+    }
+    // the small one keeps its digits: nine fixed decimals left it two
+    assert_eq!(row(&stdout, 0)[1], "3.3333333333333334e-8");
+
+    let (ok, stdout, _) = probe_binary("numbers_single", CONSTANTS, &["--in", "zero", "-n", "1"]);
+    assert!(ok);
+    let expected = first_frame(CONSTANTS, false);
+    for (text, value) in row(&stdout, 0).iter().zip(&expected) {
+        assert_eq!(
+            text.parse::<f32>().unwrap().to_bits(),
+            (*value as f32).to_bits(),
+            "{text}"
+        );
+        // and it is the f32's text, not its double's seventeen digits
+        assert!(text.len() <= 13, "{text}");
+    }
+}
+
+#[test]
+fn precision_nine_is_the_text_the_tool_used_to_print() {
+    let (ok, stdout, _) = probe_binary(
+        "numbers_fixed",
+        CONSTANTS,
+        &["--double", "--precision", "9", "--in", "zero", "-n", "1"],
+    );
+    assert!(ok);
+    let expected: Vec<String> = first_frame(CONSTANTS, true)
+        .iter()
+        .map(|value| format!("{value:.9}"))
+        .collect();
+    assert_eq!(row(&stdout, 0), expected);
+    assert_eq!(row(&stdout, 0)[1], "0.000000033");
+}
+
+#[test]
+fn a_single_precision_control_is_listed_at_its_own_width() {
+    let (ok, stdout, _) = probe_binary("list", GAIN, &["--list-params"]);
+    assert!(ok);
+    let line = stdout.lines().find(|l| l.contains("/gain")).unwrap();
+    // the step, 0.001, once read 0.0010000000474974513
+    assert!(line.trim_end().ends_with(" 0.001"), "{line}");
+}
+
+// -------------------------------------------------------------------- out
+
+#[test]
+fn an_npy_holds_the_window_at_the_program_width() {
+    let out = std::env::temp_dir().join(format!("faustprobe_feedback_{}.npy", std::process::id()));
+    let (ok, stdout, stderr) = probe_binary(
+        "npy",
+        CONSTANTS,
+        &[
+            "--double",
+            "--in",
+            "zero",
+            "-n",
+            "6",
+            "--skip",
+            "2",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert!(ok, "{stderr}");
+    // the statistics are the output; the dump is in the file
+    assert!(!stdout.contains("frame,"), "{stdout}");
+    assert!(stdout.contains("window=2..6 (4 frames)"), "{stdout}");
+
+    let bytes = std::fs::read(&out).unwrap();
+    let _ = std::fs::remove_file(&out);
+    let header_len = usize::from(u16::from_le_bytes([bytes[8], bytes[9]]));
+    let dict = std::str::from_utf8(&bytes[10..10 + header_len]).unwrap();
+    assert!(dict.contains("'descr': '<f8'"), "{dict}");
+    assert!(dict.contains("'shape': (4, 3)"), "{dict}");
+    let data = &bytes[10 + header_len..];
+    assert_eq!(data.len(), 4 * 3 * 8);
+    let expected = first_frame(CONSTANTS, true);
+    for (k, bytes) in data.as_chunks::<8>().0.iter().enumerate() {
+        let value = f64::from_le_bytes(*bytes);
+        assert_eq!(value.to_bits(), expected[k % 3].to_bits());
+    }
+}
+
+#[test]
+fn a_wav_written_by_out_is_the_excitation_in_file_reads() {
+    let out = std::env::temp_dir().join(format!("faustprobe_feedback_{}.wav", std::process::id()));
+    let (ok, _, stderr) = probe_binary(
+        "wav_write",
+        RAMP,
+        &[
+            "--double",
+            "--in",
+            "zero",
+            "-n",
+            "16",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert!(ok, "{stderr}");
+    let (_, direct, _) = probe_binary(
+        "wav_direct",
+        RAMP,
+        &["--double", "--in", "zero", "-n", "16"],
+    );
+    let input = format!("file:{}", out.display());
+    let (ok, replayed, stderr) = probe_binary(
+        "wav_read",
+        "process = _;\n",
+        &["--double", "--in", &input, "-n", "16"],
+    );
+    let _ = std::fs::remove_file(&out);
+    assert!(ok, "{stderr}");
+    assert_eq!(replayed, direct);
+}
+
+#[test]
+fn out_refuses_what_it_cannot_honour() {
+    let out =
+        std::env::temp_dir().join(format!("faustprobe_feedback_refuse_{}", std::process::id()));
+    let npy = format!("{}.npy", out.display());
+    let f32_path = format!("{}.f32", out.display());
+    let f64_path = format!("{}.f64", out.display());
+    for (source, args, expected) in [
+        (
+            GAIN,
+            vec!["--out", &npy, "--sweep", "gain=0,1"],
+            "--sweep cannot be combined",
+        ),
+        (
+            GAIN,
+            vec!["--out", &npy, "--every", "2"],
+            "--every cannot be combined",
+        ),
+        (GAIN, vec!["--out", &f32_path, "--double"], "drop digits"),
+        (CONSTANTS, vec!["--out", &f64_path], "one channel"),
+    ] {
+        let (ok, _, stderr) = probe_binary("out_refuse", source, &args);
+        assert!(!ok, "{args:?} passed");
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+    }
+}
+
+// --------------------------------------------------------------- failures
+
+#[test]
+fn a_non_finite_render_says_where_it_starts() {
+    let (ok, _, stderr) =
+        probe_binary("nan", NAN_AT_500, &["--in", "zero", "-n", "600", "--quiet"]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("render produced non-finite samples"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("first: frame 500, out0 (NaN); 100 of 600 frames affected"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("all at their initial values"), "{stderr}");
+
+    // the library has the same facts
+    let spec = RenderSpec {
+        frames: 600,
+        input: InputMode::Zero,
+        ..RenderSpec::default()
+    };
+    let stats = probe(NAN_AT_500, false).render(&spec, |_, _| {});
+    let (channel, located) = stats.first_non_finite().unwrap();
+    assert_eq!((channel, located.frame), (0, 500));
+    assert!(located.value.is_nan());
+    assert_eq!(stats.non_finite_frames, 100);
+}
+
+#[test]
+fn a_failure_names_the_writes_before_it_and_not_those_after() {
+    let (ok, _, stderr) = probe_binary(
+        "loop_events",
+        LOOP,
+        &[
+            "--in", "dc", "-n", "4000", "--quiet", "--set", "g=0.25", "--at", "1000", "g=1.5",
+            "--at", "3900", "g=0.1",
+        ],
+    );
+    assert!(!ok);
+    assert!(stderr.contains("(+inf)"), "{stderr}");
+    assert!(stderr.contains("controls written by then: /"), "{stderr}");
+    // g was 0.25, then 1.5 from frame 1000: the value at the failure
+    assert!(stderr.contains("/g=1.5"), "{stderr}");
+    assert!(
+        stderr.contains("last scheduled write before it: frame 1000, /"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("3900"), "{stderr}");
+}
+
+#[test]
+fn fail_above_locates_the_first_sample_over_the_level() {
+    let (ok, _, stderr) = probe_binary(
+        "ramp",
+        RAMP,
+        &[
+            "--in",
+            "zero",
+            "-n",
+            "400",
+            "--quiet",
+            "--fail-above",
+            "100",
+        ],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("a sample exceeds --fail-above 100"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("first: frame 200, out0 = 100.5"),
+        "{stderr}"
+    );
+
+    // the window is what is measured: a transient before --skip is not
+    let (ok, _, stderr) = probe_binary(
+        "ramp_window",
+        RAMP,
+        &[
+            "--in",
+            "zero",
+            "-n",
+            "400",
+            "--skip",
+            "300",
+            "--quiet",
+            "--fail-above",
+            "100",
+        ],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("first: frame 300, out0 = 150.5"),
+        "{stderr}"
+    );
+
+    let (ok, stdout, _) = probe_binary(
+        "ramp_under",
+        RAMP,
+        &[
+            "--in",
+            "zero",
+            "-n",
+            "400",
+            "--quiet",
+            "--fail-above",
+            "1e9",
+        ],
+    );
+    assert!(ok);
+    // the peak of a ramp is its last frame
+    assert!(stdout.contains("peak_at=399"), "{stdout}");
+}
+
+#[test]
+fn a_runaway_is_reported_where_it_starts_not_where_it_overflows() {
+    let (ok, _, stderr) = probe_binary(
+        "runaway",
+        LOOP,
+        &[
+            "--in",
+            "dc",
+            "-n",
+            "4000",
+            "--quiet",
+            "--at",
+            "1000",
+            "g=1.5",
+            "--fail-above",
+            "1000",
+        ],
+    );
+    assert!(!ok);
+    let above = stderr
+        .find("a sample exceeds --fail-above 1000")
+        .expect(&stderr);
+    let overflow = stderr
+        .find("the render turns non-finite at frame")
+        .expect(&stderr);
+    assert!(above < overflow, "{stderr}");
+
+    // the scheduled write is what the library's limit sees too
+    let mut schedule = Schedule::new();
+    schedule.push(
+        1000,
+        Event::SetParam {
+            path: "g".to_owned(),
+            value: 1.5,
+        },
+    );
+    let spec = RenderSpec {
+        frames: 4000,
+        input: InputMode::Dc,
+        schedule,
+        limit: Some(1000.0),
+        ..RenderSpec::default()
+    };
+    let stats = probe(LOOP, false).render(&spec, |_, _| {});
+    let (_, above) = stats.first_above().unwrap();
+    let (_, overflow) = stats.first_non_finite().unwrap();
+    assert!(above.frame > 1000 && above.frame < overflow.frame);
+}
+
+// ---------------------------------------------------------------- silence
+
+#[test]
+fn exact_silence_comes_with_the_facts_that_explain_it() {
+    let (ok, stdout, _) = probe_binary("gated", GATED, &["-n", "64", "--quiet"]);
+    assert!(ok, "silence is not an error");
+    assert!(
+        stdout.contains("# note: every output is exactly zero over the window"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("# note: buttons and checkboxes at 0: /"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("/gate"), "{stdout}");
+    assert!(stdout.contains("peak_at=none"), "{stdout}");
+
+    let (_, stdout, _) = probe_binary(
+        "wire",
+        "process = _;\n",
+        &["--in", "zero", "-n", "64", "--quiet"],
+    );
+    assert!(
+        stdout.contains("# note: input is `zero` and the program has 1 input(s)"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_program_that_sounds_gets_no_note_however_quiet() {
+    let (_, stdout, _) = probe_binary(
+        "pressed",
+        GATED,
+        &["-n", "64", "--quiet", "--set", "gate=1"],
+    );
+    assert!(!stdout.contains("# note:"), "{stdout}");
+    // quiet is not silent: the comparison is with exact zero
+    let (_, stdout, _) = probe_binary(
+        "faint",
+        "process = 1.0e-30;\n",
+        &["--in", "zero", "-n", "8", "--quiet"],
+    );
+    assert!(!stdout.contains("# note:"), "{stdout}");
+}
+
+#[test]
+fn silence_is_noted_in_json_and_once_for_a_silent_sweep() {
+    let (_, stdout, _) = probe_binary("gated_json", GATED, &["-n", "64", "--format", "json"]);
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let notes = document["runs"][0]["notes"].as_array().unwrap();
+    assert!(notes[1].as_str().unwrap().contains("/gate"), "{notes:?}");
+
+    let source = "g = hslider(\"gain\", 0.5, 0, 1, 0.001);\nprocess = button(\"gate\") * g;\n";
+    let (ok, stdout, stderr) = probe_binary(
+        "gated_sweep",
+        source,
+        &["--sweep", "gain=0.25,0.5", "--reduce", "peak", "-n", "64"],
+    );
+    assert!(ok);
+    assert_eq!(stdout.lines().count(), 3, "{stdout}");
+    assert_eq!(
+        stderr.matches("every output is exactly zero").count(),
+        1,
+        "{stderr}"
+    );
+    assert!(stderr.contains("(at every sweep point)"), "{stderr}");
+}
+
+// ------------------------------------------------- training and polyphony
+
+/// A loss and its gradient on one slider in `[-1, 1]`, written by hand so
+/// that the test needs no `rad`: loss `(w - 0.5)^2`, gradient `2 (w - 0.5)`.
+const HOST_LOOP: &str = r#"
+w = hslider("w", 0, -1, 1, 0.0001);
+process = (w - 0.5) * (w - 0.5), 2 * (w - 0.5);
+"#;
+
+#[test]
+fn a_training_run_refuses_a_starting_point_outside_the_range() {
+    let args = [
+        "--double", "--in", "zero", "--block", "8", "--blocks", "3", "--train", "w",
+    ];
+    let (ok, stdout, stderr) = probe_binary(
+        "train_range",
+        HOST_LOOP,
+        &[&args[..], &["--set", "w=5"]].concat(),
+    );
+    assert!(!ok);
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("`w`=5 is outside the range [-1, 1]"),
+        "{stderr}"
+    );
+
+    let (ok, stdout, stderr) = probe_binary(
+        "train_clamp",
+        HOST_LOOP,
+        &[&args[..], &["--set", "w=5", "--clamp"]].concat(),
+    );
+    assert!(ok, "{stderr}");
+    assert!(stdout.starts_with("# clamped /"), "{stdout}");
+    assert!(stdout.contains("w: 5 -> 1"), "{stdout}");
+}
+
+#[test]
+fn a_trained_value_is_printed_whole() {
+    let (ok, stdout, stderr) = probe_binary(
+        "train_text",
+        HOST_LOOP,
+        &[
+            "--double",
+            "--in",
+            "zero",
+            "--block",
+            "8",
+            "--blocks",
+            "2",
+            "--optimizer",
+            "sgd",
+            "--lr",
+            "0.125",
+            "--train",
+            "w",
+        ],
+    );
+    assert!(ok, "{stderr}");
+    // w: 0 -> 0 - 0.125 * 2 * (0 - 0.5) = 0.125 -> 0.125 + 0.125 * 0.75 = 0.21875
+    assert!(stdout.contains("# trained /"), "{stdout}");
+    assert!(
+        stdout.trim_end().lines().any(|l| l.ends_with("w=0.21875")),
+        "{stdout}"
+    );
+    // the loss of the second block, (0.125 - 0.5)^2, in scientific text
+    assert!(stdout.contains("2,1.40625e-1,0.21875"), "{stdout}");
+}
+
+#[test]
+fn a_polyphonic_render_with_no_note_says_why_it_is_silent() {
+    let voice = r#"
+freq = hslider("freq", 440, 20, 20000, 0.01);
+gain = hslider("gain", 0.8, 0, 1, 0.001);
+gate = button("gate");
+process = gate * gain * (freq / 20000);
+"#;
+    let (ok, stdout, stderr) = probe_binary(
+        "poly_silent",
+        voice,
+        &["--nvoices", "2", "-n", "256", "--quiet"],
+    );
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains("# note: every output is exactly zero over the window"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("no --note or --chord is scheduled"),
+        "{stdout}"
+    );
+
+    let (ok, stdout, stderr) = probe_binary(
+        "poly_note",
+        voice,
+        &["--nvoices", "2", "-n", "256", "--quiet", "--note", "69@0"],
+    );
+    assert!(ok, "{stderr}");
+    assert!(!stdout.contains("# note:"), "{stdout}");
+}

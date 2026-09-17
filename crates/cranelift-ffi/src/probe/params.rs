@@ -132,6 +132,40 @@ pub struct ControlMap {
     soundfiles: Vec<TestSoundfile>,
 }
 
+/// What writing `requested` to a control does: `applied` is the value the
+/// control can hold, the request clamped to the declared range.
+///
+/// A Faust host never writes outside a widget's range and a DSP is not
+/// compiled to expect it, so a request outside it is either refused or
+/// clamped. Either way it must not pass in silence: a render at `applied`
+/// labelled `requested` looks like a measurement of `requested`.
+#[derive(Debug, Clone)]
+pub struct Write<'a> {
+    /// The control the query resolved to.
+    pub control: &'a Control,
+    /// The value asked for.
+    pub requested: f64,
+    /// The value the control takes: `requested` clamped to the range.
+    pub applied: f64,
+}
+
+impl Write<'_> {
+    /// Whether the request is a value the control can hold. `NaN` is not.
+    #[must_use]
+    pub fn in_range(&self) -> bool {
+        (self.control.min..=self.control.max).contains(&self.requested)
+    }
+
+    /// The error of a request outside the range, naming the query as typed.
+    #[must_use]
+    pub fn range_error(&self, query: &str) -> String {
+        format!(
+            "`{query}`={} is outside the range [{}, {}] of {}",
+            self.requested, self.control.min, self.control.max, self.control.path
+        )
+    }
+}
+
 /// How a lookup by fragment resolved.
 #[derive(Debug)]
 pub enum Resolution<'a> {
@@ -193,6 +227,39 @@ impl ControlMap {
             [] => Resolution::NotFound,
             [only] => Resolution::Unique(only),
             many => Resolution::Ambiguous(many.iter().map(|c| c.path.clone()).collect()),
+        }
+    }
+
+    /// What writing `value` to the control `query` names would do.
+    ///
+    /// The validation `--set`, `--sweep` and `--at` run before any render: the
+    /// query must name exactly one control, that control must be writable (a
+    /// bargraph resolves like a control and is an output), and the caller
+    /// decides what a value outside the range means ([`Write::in_range`]).
+    ///
+    /// # Errors
+    /// Names the bargraph, the candidates of an ambiguous fragment, or the
+    /// query when nothing matches.
+    pub fn check_write(&self, query: &str, value: f64) -> Result<Write<'_>, String> {
+        match self.resolve(query) {
+            Resolution::Unique(control) if !control.kind.is_writable() => Err(format!(
+                "`{}` is a bargraph, an output of the program: it cannot be set",
+                control.path
+            )),
+            Resolution::Unique(control) => Ok(Write {
+                control,
+                requested: value,
+                applied: if value.is_nan() {
+                    control.init
+                } else {
+                    control.clamp(value)
+                },
+            }),
+            Resolution::NotFound => Err(format!("no control matching `{query}`")),
+            Resolution::Ambiguous(candidates) => Err(format!(
+                "`{query}` is ambiguous, matches: {}",
+                candidates.join(", ")
+            )),
         }
     }
 

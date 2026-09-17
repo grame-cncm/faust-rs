@@ -42,9 +42,13 @@
 //! - [`schedule`] — frame-scheduled parameter changes and note events.
 //! - [`sweep`] — parameter sweeps and the reductions applied to each point.
 //! - [`spectrum`] — the radix-2 FFT behind the `f0` reduction.
+//! - [`number`] — the text of a number: round-trip at the program's width.
+//! - [`audio_out`] — a render written to `.npy`, `.wav` or a raw file (`--out`).
 
 pub mod audio_file;
+pub mod audio_out;
 pub mod engine;
+pub mod number;
 pub mod params;
 pub mod poly;
 pub mod protocol;

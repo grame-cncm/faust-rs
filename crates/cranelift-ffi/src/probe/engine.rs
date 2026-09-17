@@ -38,7 +38,7 @@ use crate::instance::{
 use crate::types::{CraneliftDspFactory, CraneliftDspInstance, FaustFloat};
 use ffi_common::abi::FfiFaustFloat;
 
-use crate::probe::params::{ControlKind, ControlMap, Resolution};
+use crate::probe::params::{Control, ControlKind, ControlMap, Resolution};
 use crate::probe::poly;
 use crate::probe::render::{InputMode, RenderStats, StatsAccumulator};
 use crate::probe::schedule::{Event, Schedule};
@@ -68,6 +68,9 @@ pub struct RenderSpec {
     /// Without it an instrument renders silence, because nothing ever gates a
     /// voice.
     pub drive_buttons: bool,
+    /// Magnitude the window must stay under; the first sample above it is
+    /// located in the statistics (`--fail-above`).
+    pub limit: crate::probe::render::RenderLimit,
 }
 
 impl Default for RenderSpec {
@@ -79,6 +82,7 @@ impl Default for RenderSpec {
             skip: 0,
             schedule: Schedule::new(),
             drive_buttons: false,
+            limit: None,
         }
     }
 }
@@ -431,6 +435,19 @@ impl Probe {
             .collect()
     }
 
+    /// The current value of every writable control, ordered by path.
+    ///
+    /// What a silent render is explained with: a button or a checkbox still
+    /// at 0 is the usual reason an instrument outputs exact zeros.
+    #[must_use]
+    pub fn control_values(&self) -> Vec<(&Control, f64)> {
+        self.controls
+            .iter()
+            .filter(|c| c.kind.is_writable())
+            .map(|c| (c, self.get_zone(c.zone)))
+            .collect()
+    }
+
     /// Check that `query` names exactly one control that can be written.
     ///
     /// What `--set`, `--sweep` and `--at` validate before any render: a
@@ -527,7 +544,7 @@ impl Probe {
     where
         F: FnMut(usize, &[f64]),
     {
-        let mut acc = StatsAccumulator::new(self.outputs, spec.skip);
+        let mut acc = StatsAccumulator::with_limit(self.outputs, spec.skip, spec.limit);
         let block = spec.block.max(1);
         let sample_rate = f64::from(self.sample_rate);
         let double = self.factory.double;

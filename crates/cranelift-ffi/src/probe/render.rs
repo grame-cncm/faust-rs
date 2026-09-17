@@ -115,7 +115,35 @@ pub struct ChannelStats {
     pub dc: f64,
     /// Whether every sample was finite.
     pub finite: bool,
+    /// Absolute frame of the first sample that reached `peak`, `None` when the
+    /// window holds no non-zero finite sample. Where the maximum is says
+    /// whether it is an onset, a control event, or a level still rising at the
+    /// end of the render.
+    pub peak_at: Option<usize>,
+    /// The first non-finite sample of this channel, in or out of the window.
+    pub first_non_finite: Option<Located>,
+    /// The first sample of the window whose magnitude exceeds
+    /// [`RenderLimit`], when a limit was given.
+    pub first_above: Option<Located>,
 }
+
+/// A sample and where it is: what turns "the render failed" into a frame to
+/// look at.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Located {
+    /// Absolute frame index.
+    pub frame: usize,
+    /// The sample there (`NaN`, an infinity, or the value above the limit).
+    pub value: f64,
+}
+
+/// Magnitude a render's window must stay under (`--fail-above`).
+///
+/// A feedback loop that leaves its stable region runs away for thousands of
+/// frames before it overflows to infinity and then to `NaN`. The first frame
+/// above a level a sane signal never reaches is the frame at which to look,
+/// and it is known long before the render turns non-finite.
+pub type RenderLimit = Option<f64>;
 
 /// Statistics for a whole render, with the window they describe.
 #[derive(Debug, Clone, PartialEq)]
@@ -126,6 +154,9 @@ pub struct RenderStats {
     pub window_len: usize,
     /// One entry per output channel.
     pub channels: Vec<ChannelStats>,
+    /// Frames, in or out of the window, with a non-finite sample on any
+    /// channel: whether a render went wrong once and recovered, or for good.
+    pub non_finite_frames: usize,
 }
 
 impl RenderStats {
@@ -134,6 +165,35 @@ impl RenderStats {
     pub fn all_finite(&self) -> bool {
         self.channels.iter().all(|c| c.finite)
     }
+
+    /// The earliest non-finite sample of the render and its channel.
+    #[must_use]
+    pub fn first_non_finite(&self) -> Option<(usize, Located)> {
+        earliest(self.channels.iter().map(|c| c.first_non_finite))
+    }
+
+    /// The earliest sample above the limit and its channel.
+    #[must_use]
+    pub fn first_above(&self) -> Option<(usize, Located)> {
+        earliest(self.channels.iter().map(|c| c.first_above))
+    }
+
+    /// Whether every output is exactly zero over the window: not quiet,
+    /// silent. Nearly always a gate never pressed or an input never fed, and
+    /// never a rounding matter, hence the exact comparison.
+    #[must_use]
+    pub fn is_silent(&self) -> bool {
+        self.window_len > 0 && self.channels.iter().all(|c| c.finite && c.peak == 0.0)
+    }
+}
+
+/// The earliest of the per-channel locations, with its channel; the lowest
+/// channel wins a tie, so the answer does not depend on iteration details.
+fn earliest(per_channel: impl Iterator<Item = Option<Located>>) -> Option<(usize, Located)> {
+    per_channel
+        .enumerate()
+        .filter_map(|(ch, located)| located.map(|l| (ch, l)))
+        .min_by_key(|(ch, located)| (located.frame, *ch))
 }
 
 /// Accumulates statistics over the measured window.
@@ -143,17 +203,32 @@ pub(crate) struct StatsAccumulator {
     sum_sq: Vec<f64>,
     sum: Vec<f64>,
     finite: Vec<bool>,
+    peak_at: Vec<Option<usize>>,
+    first_non_finite: Vec<Option<Located>>,
+    first_above: Vec<Option<Located>>,
+    non_finite_frames: usize,
+    limit: RenderLimit,
     counted: usize,
     start: usize,
 }
 
 impl StatsAccumulator {
+    #[cfg(test)]
     pub(crate) fn new(channels: usize, start: usize) -> Self {
+        Self::with_limit(channels, start, None)
+    }
+
+    pub(crate) fn with_limit(channels: usize, start: usize, limit: RenderLimit) -> Self {
         Self {
             peak: vec![0.0; channels],
             sum_sq: vec![0.0; channels],
             sum: vec![0.0; channels],
             finite: vec![true; channels],
+            peak_at: vec![None; channels],
+            first_non_finite: vec![None; channels],
+            first_above: vec![None; channels],
+            non_finite_frames: 0,
+            limit,
             counted: 0,
             start,
         }
@@ -163,9 +238,14 @@ impl StatsAccumulator {
     /// are still checked for finiteness but excluded from the statistics.
     pub(crate) fn push(&mut self, frame: usize, samples: &[f64]) {
         let inside = frame >= self.start;
+        let mut frame_non_finite = false;
         for (ch, &value) in samples.iter().enumerate() {
             if !value.is_finite() {
                 self.finite[ch] = false;
+                frame_non_finite = true;
+                if self.first_non_finite[ch].is_none() {
+                    self.first_non_finite[ch] = Some(Located { frame, value });
+                }
                 continue;
             }
             if !inside {
@@ -174,9 +254,19 @@ impl StatsAccumulator {
             let magnitude = value.abs();
             if magnitude > self.peak[ch] {
                 self.peak[ch] = magnitude;
+                self.peak_at[ch] = Some(frame);
+            }
+            if let Some(limit) = self.limit
+                && magnitude > limit
+                && self.first_above[ch].is_none()
+            {
+                self.first_above[ch] = Some(Located { frame, value });
             }
             self.sum_sq[ch] = value.mul_add(value, self.sum_sq[ch]);
             self.sum[ch] += value;
+        }
+        if frame_non_finite {
+            self.non_finite_frames += 1;
         }
         if inside {
             self.counted += 1;
@@ -191,12 +281,16 @@ impl StatsAccumulator {
                 rms: (self.sum_sq[ch] / n).sqrt(),
                 dc: self.sum[ch] / n,
                 finite: self.finite[ch],
+                peak_at: self.peak_at[ch],
+                first_non_finite: self.first_non_finite[ch],
+                first_above: self.first_above[ch],
             })
             .collect();
         RenderStats {
             window_start: self.start,
             window_len: self.counted,
             channels,
+            non_finite_frames: self.non_finite_frames,
         }
     }
 }
@@ -268,6 +362,68 @@ mod tests {
         acc.push(0, &[f64::NAN]);
         acc.push(10, &[0.0]);
         assert!(!acc.finish().all_finite());
+    }
+
+    #[test]
+    fn the_first_non_finite_sample_is_located_and_the_frames_counted() {
+        let mut acc = StatsAccumulator::new(2, 0);
+        acc.push(0, &[0.0, 0.0]);
+        acc.push(1, &[0.0, f64::INFINITY]);
+        acc.push(2, &[f64::NAN, f64::NAN]);
+        acc.push(3, &[0.0, 0.0]);
+        let stats = acc.finish();
+        // the earliest over the channels, with its channel and its value
+        let (channel, located) = stats.first_non_finite().unwrap();
+        assert_eq!((channel, located.frame), (1, 1));
+        assert!(located.value.is_infinite());
+        // and each channel's own first
+        assert_eq!(stats.channels[0].first_non_finite.unwrap().frame, 2);
+        assert_eq!(stats.non_finite_frames, 2);
+    }
+
+    #[test]
+    fn the_peak_is_located_at_its_first_occurrence() {
+        let mut acc = StatsAccumulator::new(1, 1);
+        for (frame, value) in [9.0, 0.5, -2.0, 2.0, 1.0].into_iter().enumerate() {
+            acc.push(frame, &[value]);
+        }
+        let stats = acc.finish();
+        // frame 0 is before the window; -2 at frame 2 comes before +2 at frame 3
+        assert_eq!(stats.channels[0].peak_at, Some(2));
+        assert!((stats.channels[0].peak - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn a_limit_locates_the_first_sample_above_it_inside_the_window() {
+        let mut acc = StatsAccumulator::with_limit(1, 2, Some(1.0));
+        for (frame, value) in [5.0, 0.0, 1.0, -1.5, 3.0].into_iter().enumerate() {
+            acc.push(frame, &[value]);
+        }
+        let stats = acc.finish();
+        // 5.0 is before the window, 1.0 is not above 1.0, -1.5 is
+        let (channel, located) = stats.first_above().unwrap();
+        assert_eq!((channel, located.frame), (0, 3));
+        assert!((located.value + 1.5).abs() < f64::EPSILON);
+        // without a limit nothing is ever above it
+        let mut free = StatsAccumulator::new(1, 0);
+        free.push(0, &[1e30]);
+        assert!(free.finish().first_above().is_none());
+    }
+
+    #[test]
+    fn silence_is_exact_zero_over_a_non_empty_window() {
+        let mut silent = StatsAccumulator::new(2, 0);
+        silent.push(0, &[0.0, -0.0]);
+        let silent = silent.finish();
+        assert!(silent.is_silent());
+        assert_eq!(silent.channels[0].peak_at, None);
+
+        let mut quiet = StatsAccumulator::new(2, 0);
+        quiet.push(0, &[0.0, 1e-300]);
+        assert!(!quiet.finish().is_silent());
+
+        // an empty window says nothing about the program
+        assert!(!StatsAccumulator::new(1, 5).finish().is_silent());
     }
 
     #[test]

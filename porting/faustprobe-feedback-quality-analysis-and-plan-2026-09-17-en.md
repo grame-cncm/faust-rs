@@ -16,7 +16,8 @@ error reduced to "errors=1, diagnostics=1").
 This document asks what remains of that kind, and what would make the feedback
 more precise and more attributable. It has two parts: an analysis, whose claims
 about the present tool were each run on the release binary of commit `79f2d6af`,
-and a plan in five phases. Nothing here is implemented.
+and a plan in five phases. **Status: F1 is implemented (2026-09-17, §7); F2 to F5
+are not.**
 
 The design document already states the principle the analysis applies (its §6):
 the tool is a measuring instrument, and an instrument that silently misreports
@@ -469,3 +470,65 @@ from 1e-7 to what the programs actually achieve, which is itself a result.
 - **Round-trip text and `f32`.** Whether the statistics (computed in `f64` from
   `f32` samples) are printed as `f64` (they are sums) while samples are printed
   as `f32`. The plan assumes so; it should be stated in the guide.
+
+## 7. Status
+
+### F1, implemented 2026-09-17
+
+As planned, with these decisions and departures:
+
+- **D1 is an error by default** (first open question of §6), with `--clamp` as
+  planned. The error names the query, the value, the range and the resolved
+  path, and points at `--clamp`. Under `--clamp` a sweep's rows and the JSON
+  `set` carry the applied value. With `--train`, every `--set` is validated the
+  same way before the descent. **Not applied to `--nvoices`**: the polyphonic
+  wrapper writes a voice's controls unclamped on purpose, as `poly-dsp.h` does
+  (a synthesized frequency must reach the zone as computed), so its `--set` keeps
+  that rule and `--clamp` is refused there.
+- **D2.** Round-trip text is Rust's `{:?}` of the float at the program's width;
+  a peak, a bargraph and a control's bounds are at that width, a mean, an RMS,
+  a reduction and a trained control are `f64` (last open question of §6, as
+  assumed). A training loss is `{:e}`. `--precision 9` was compared with the
+  previous binary by hash on a dump, a windowed and thinned dump, a bargraph
+  dump, a two-axis sweep and a training run: identical bytes. The statistics
+  line is the one text that is not, by its appended `peak_at=`.
+- **`--out`** streams `.npy`, float `.wav` and single-output `.f64`/`.f32`, and
+  refuses `--every` as well as the planned `--sweep`, `--train`, `--format ir`
+  (every frame is written; a flag that would be ignored is refused), and
+  `--nvoices`.
+- **D3.** The context of a failure lists the controls the command line had
+  *written* by the failing frame with their values then, not every control: the
+  others are at their initial values by definition, and a GRU has 27. When both
+  happen, `--fail-above` is reported first if its frame comes first, with the
+  non-finite frame mentioned under it: the runaway is the cause, the overflow
+  its consequence. `--precision`, `--out` and `--fail-above` are refused by the
+  impulse-test protocol rather than ignored by it.
+- **D4** as planned, plus the polyphonic note (no `--note`/`--chord` scheduled).
+
+Checks: `tests/feedback_probe.rs` (20 tests, library and binary; every expected
+frame, value and count follows from the fixture's definition, including a
+hand-computed two-step descent) and unit tests in `probe/render.rs`,
+`probe/number.rs`, `probe/audio_out.rs` (the `.wav` and raw files are read back
+by the existing, independent `audio_file` reader; the `.npy` is decoded from the
+format's specification). Thirteen hand-applied mutations, each rejected: sweep
+values not validated; a clamp not recorded; a sweep row carrying the requested
+value; the dump back to `{:.9}`; an `f32` printed through its `f64`; the last
+non-finite frame instead of the first; writes scheduled after the failure
+listed; silence as a threshold; the level checked before the window; an overflow
+hiding the runaway; the `.npy` shape transposed; a training run not validating
+its `--set`; the polyphonic note dropped.
+
+Qualification gate (§4): the `cranelift-ffi` suite, 248 tests; `--protocol
+impulse-test` byte-identical to `impulse-cranelift` on the 133 programs of
+`tests/impulse-tests/dsp`, all non-trivial; the guide's quoted outputs re-run
+(the bargraph example had been illustrative and is now a real run, the
+first-contact example names its program; the two whose fixtures are not in the
+repository keep their text through `--precision 9`, the flag that produces it); `faust-diff-jot` `make test` 67/67, `faust-diff-fdn` `make
+probe-check`, a `faust-diff-ampli` sweep script, all unchanged in their
+conclusions and none relying on a silent clamp.
+
+One prediction of §2.1 was measured: with round-trip numbers the residuals of
+`faust-diff-jot` that the analysis attributed to printing are gone, bargraphs
+against the fitted record 4.3e-10 -> 0 and `jot_reverb.dsp` against a preset
+2.6e-9 -> 6.2e-16.
+

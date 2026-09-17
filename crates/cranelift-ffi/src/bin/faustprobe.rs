@@ -9,7 +9,10 @@ use std::thread;
 
 use clap::{ArgAction, Parser, ValueEnum};
 
+use cranelift_ffi::probe::audio_out::SampleWriter;
 use cranelift_ffi::probe::engine::{Factory, PolyProbe, Probe, RenderSpec};
+use cranelift_ffi::probe::number::{NumberFormat, Precision};
+use cranelift_ffi::probe::params::{ControlKind, ControlMap};
 use cranelift_ffi::probe::poly;
 use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::{InputMode, RenderStats};
@@ -21,7 +24,8 @@ use cranelift_ffi::probe::train::{self, Optimizer, TrainSpec};
 /// How rendered frames are printed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
-    /// `frame,out0,out1` with full precision — the default, pipeable.
+    /// `frame,out0,out1`, each number the shortest text that parses back to
+    /// the same float (see `--precision`) — the default, pipeable.
     Csv,
     /// The reference impulse-test `.ir` text, with its zero-clamp.
     Ir,
@@ -99,6 +103,17 @@ struct Args {
     #[arg(long = "set", value_name = "PATH=VALUE")]
     sets: Vec<String>,
 
+    /// Accept a `--set`, `--sweep` or `--at` value outside its control's
+    /// range by clamping it, and say so.
+    ///
+    /// Without this flag such a value is an error: a Faust host never writes
+    /// outside a widget's range, so the request is nearly always a typo, and
+    /// a render clamped in silence is labelled with a value it never used.
+    /// With it, each clamp is reported (`# clamped PATH: 7 -> 1`, a `clamped`
+    /// array per JSON run) and a sweep's rows carry the applied value.
+    #[arg(long)]
+    clamp: bool,
+
     /// Input excitation: zero, impulse, impulse:CH, dc, `white[:SEED]`, sine:HZ,
     /// `file:PATH[:CH]` (a .wav, .f64 or .f32 file; input i reads channel i, a
     /// mono file feeds every input, `:CH` picks one channel for all).
@@ -131,6 +146,34 @@ struct Args {
     /// Print statistics only, no per-frame dump.
     #[arg(long)]
     quiet: bool,
+
+    /// Text of the numbers: `full`, the shortest text that parses back to the
+    /// same float at the width the program was compiled in (the default), or
+    /// a number of fixed decimals.
+    ///
+    /// `--precision 9` is the text this tool printed before it had the flag.
+    /// Fixed decimals lose small values: `3.3e-8` prints `0.000000033`.
+    #[arg(long, value_name = "N|full")]
+    precision: Option<String>,
+
+    /// Write the rendered window to FILE and print the statistics only:
+    /// `.npy` (shape frames x outputs), `.wav` (IEEE float), or `.f64` /
+    /// `.f32` (raw, one output), at the width the program was compiled in.
+    ///
+    /// For a long render read by a script: binary, exact, and what `--in
+    /// file:` reads back. Every frame of the window is written; `--every`
+    /// thins the text dump, which this replaces.
+    #[arg(long = "out", value_name = "FILE")]
+    out: Option<String>,
+
+    /// Fail when a sample of the window exceeds LEVEL in magnitude, and say
+    /// at which frame and output first.
+    ///
+    /// A feedback loop that leaves its stable region runs away for thousands
+    /// of frames before it turns non-finite; this catches it at the start, and
+    /// makes "stays bounded under these control changes" an exit status.
+    #[arg(long = "fail-above", value_name = "LEVEL")]
+    fail_above: Option<f64>,
 
     /// Output format for rendered frames.
     #[arg(long, value_enum, default_value_t = Format::Csv)]
@@ -336,6 +379,17 @@ fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
     if args.nvoices != 0 {
         offenders.push("--nvoices");
     }
+    // `.ir` has its own number text and is the whole output: a flag that
+    // would be ignored there is refused rather than ignored.
+    if args.precision.is_some() {
+        offenders.push("--precision");
+    }
+    if args.out.is_some() {
+        offenders.push("--out");
+    }
+    if args.fail_above.is_some() {
+        offenders.push("--fail-above");
+    }
     if offenders.is_empty() {
         Ok(())
     } else {
@@ -411,6 +465,149 @@ fn parse_assignment(text: &str) -> Result<(&str, f64), String> {
     Ok((path, parsed))
 }
 
+/// The number text of this run: `--precision`, at the program's width.
+fn number_format(args: &Args) -> Result<NumberFormat, String> {
+    let precision = match &args.precision {
+        Some(text) => Precision::parse(text)?,
+        None => Precision::RoundTrip,
+    };
+    Ok(NumberFormat::new(precision, args.double))
+}
+
+/// A value that was clamped under `--clamp`, for the notices.
+#[derive(Debug, Clone, PartialEq)]
+struct Clamped {
+    path: String,
+    requested: f64,
+    applied: f64,
+}
+
+impl Clamped {
+    fn line(&self) -> String {
+        format!(
+            "# clamped {}: {} -> {}",
+            self.path, self.requested, self.applied
+        )
+    }
+
+    fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "path": self.path,
+            "requested": json_number(self.requested),
+            "applied": json_number(self.applied),
+        })
+    }
+}
+
+/// Validates one write before any render and returns the value the control
+/// takes. Outside the range: an error, or under `--clamp` a recorded clamp.
+fn check_value(
+    controls: &ControlMap,
+    query: &str,
+    value: f64,
+    clamp: bool,
+    clamped: &mut Vec<Clamped>,
+) -> Result<f64, String> {
+    let write = controls.check_write(query, value)?;
+    if !write.in_range() {
+        if !clamp {
+            return Err(format!(
+                "{} (--clamp accepts it, clamped to the range)",
+                write.range_error(query)
+            ));
+        }
+        clamped.push(Clamped {
+            path: write.control.path.clone(),
+            requested: value,
+            applied: write.applied,
+        });
+    }
+    Ok(write.applied)
+}
+
+/// Facts that explain a render whose every output is exactly zero.
+///
+/// Facts, not guesses: what the tool knows and the statistics do not show.
+fn silence_notes(probe: &Probe, input: &InputMode) -> Vec<String> {
+    let mut notes = vec!["every output is exactly zero over the window".to_owned()];
+    let released: Vec<&str> = probe
+        .control_values()
+        .into_iter()
+        .filter(|(control, value)| {
+            matches!(control.kind, ControlKind::Button | ControlKind::CheckButton) && *value == 0.0
+        })
+        .map(|(control, _)| control.path.as_str())
+        .collect();
+    if !released.is_empty() {
+        notes.push(format!(
+            "buttons and checkboxes at 0: {}",
+            released.join(" ")
+        ));
+    }
+    if *input == InputMode::Zero && probe.inputs() > 0 {
+        notes.push(format!(
+            "input is `zero` and the program has {} input(s)",
+            probe.inputs()
+        ));
+    }
+    notes
+}
+
+/// What a failed render is explained with: where it failed, the controls
+/// written by then, and the last scheduled write before it.
+fn failure_context(
+    frame: usize,
+    written: &[(String, f64)],
+    schedule: &Schedule,
+    controls: &ControlMap,
+) -> String {
+    // the value of each written control at `frame`: its `--set` or sweep
+    // value, then every scheduled write up to that frame
+    let mut then: Vec<(String, f64)> = written.to_vec();
+    let mut last_event = None;
+    for (at, query, value) in schedule.param_writes() {
+        if at > frame {
+            break;
+        }
+        let Ok(write) = controls.check_write(query, value) else {
+            continue;
+        };
+        let path = write.control.path.clone();
+        match then.iter_mut().find(|(p, _)| *p == path) {
+            Some(entry) => entry.1 = write.applied,
+            None => then.push((path.clone(), write.applied)),
+        }
+        last_event = Some((at, path, write.applied));
+    }
+    let mut text = String::new();
+    if then.is_empty() {
+        text.push_str("\n  controls then: all at their initial values");
+    } else {
+        let listed: Vec<String> = then.iter().map(|(p, v)| format!("{p}={v}")).collect();
+        text.push_str(&format!(
+            "\n  controls written by then: {}",
+            listed.join(" ")
+        ));
+    }
+    if let Some((at, path, value)) = last_event {
+        text.push_str(&format!(
+            "\n  last scheduled write before it: frame {at}, {path}={value}"
+        ));
+    }
+    text
+}
+
+/// Names a non-finite sample the way it prints.
+fn non_finite_name(value: f64) -> &'static str {
+    if value.is_nan() {
+        "NaN"
+    } else if value > 0.0 {
+        "+inf"
+    } else {
+        "-inf"
+    }
+}
+
 /// Render `args.nvoices` > 0 through the polyphonic wrapper.
 ///
 /// Split from [`run`] because the two paths share almost nothing below
@@ -442,6 +639,18 @@ fn run_poly(args: &Args) -> Result<(), String> {
     if args.bargraphs {
         return Err("--bargraphs reads the scalar Probe only; use --nvoices 0".to_owned());
     }
+    for (flag, set) in [
+        ("--out", args.out.is_some()),
+        ("--fail-above", args.fail_above.is_some()),
+        ("--clamp", args.clamp),
+    ] {
+        if set {
+            return Err(format!(
+                "{flag} operates on the scalar Probe only; use --nvoices 0"
+            ));
+        }
+    }
+    let fmt = number_format(args)?;
 
     let mut poly = PolyProbe::compile(
         &args.file,
@@ -469,7 +678,12 @@ fn run_poly(args: &Args) -> Result<(), String> {
         for control in poly.voice_controls().iter() {
             println!(
                 "{:<44} {:<9} {:>10} {:>10} {:>10} {:>10}",
-                control.path, control.kind, control.init, control.min, control.max, control.step
+                control.path,
+                control.kind,
+                fmt.sample(control.init),
+                fmt.sample(control.min),
+                fmt.sample(control.max),
+                fmt.sample(control.step)
             );
         }
         return Ok(());
@@ -543,7 +757,7 @@ fn run_poly(args: &Args) -> Result<(), String> {
                 let mut line = frame.to_string();
                 for channel in &block_out {
                     line.push(',');
-                    line.push_str(&format!("{:.9}", channel[j]));
+                    line.push_str(&fmt.sample(channel[j]));
                 }
                 println!("{line}");
             }
@@ -594,10 +808,19 @@ fn run_poly(args: &Args) -> Result<(), String> {
         ));
         for ch in 0..poly.outputs() {
             emit(format!(
-                "# out{ch}: peak={:.9} rms={:.9}",
-                peak[ch],
-                (sum_sq[ch] / denom).sqrt()
+                "# out{ch}: peak={} rms={}",
+                fmt.sample(peak[ch]),
+                fmt.computed((sum_sq[ch] / denom).sqrt())
             ));
+        }
+        // A poly render is silent until a note plays: say which it is.
+        if counted > 0 && peak.iter().all(|p| *p == 0.0) {
+            emit("# note: every output is exactly zero over the window".to_owned());
+            if !schedule.needs_poly() {
+                emit(
+                    "# note: no --note or --chord is scheduled: every voice stays free".to_owned(),
+                );
+            }
         }
     }
 
@@ -637,15 +860,24 @@ fn run(mut args: Args) -> Result<(), String> {
         args.opt_level,
     )?;
 
+    let fmt = number_format(&args)?;
     if args.list_params {
         println!(
             "{:<44} {:<9} {:>10} {:>10} {:>10} {:>10}",
             "path", "kind", "init", "min", "max", "step"
         );
         for control in probe.controls().iter() {
+            // a control's numbers live at the program's width: printed through
+            // an `f64`, a single-precision step of 0.001 reads
+            // 0.0010000000474974513
             println!(
                 "{:<44} {:<9} {:>10} {:>10} {:>10} {:>10}",
-                control.path, control.kind, control.init, control.min, control.max, control.step
+                control.path,
+                control.kind,
+                fmt.sample(control.init),
+                fmt.sample(control.min),
+                fmt.sample(control.max),
+                fmt.sample(control.step)
             );
         }
         return Ok(());
@@ -687,14 +919,33 @@ fn run(mut args: Args) -> Result<(), String> {
     // overwrites, and the scheduled writes of `--at` ignore their errors
     // inside the render loop, so an unknown or unwritable path would
     // otherwise pass in silence.
-    for (path, _) in &fixed {
-        probe.check_writable(path)?;
+    //
+    // A value outside its control's range is checked here too: the render
+    // clamps it, and a run at the clamped value labelled with the requested
+    // one looks like a measurement of the requested one. It is an error, or
+    // under `--clamp` a clamp that is reported.
+    // The clamps every render runs under (`--set`, `--at`), and those of the
+    // sweep's values, each of which concerns the points that use it.
+    let mut clamped: Vec<Clamped> = Vec::new();
+    let mut clamped_axes: Vec<(usize, Clamped)> = Vec::new();
+    for (path, value) in &fixed {
+        check_value(probe.controls(), path, *value, args.clamp, &mut clamped)?;
     }
-    for axis in &axes {
-        probe.check_writable(&axis.path)?;
+    for (_, path, value) in schedule.param_writes() {
+        check_value(probe.controls(), path, value, args.clamp, &mut clamped)?;
     }
-    for path in schedule.param_paths() {
-        probe.check_writable(path)?;
+    for (index, axis) in axes.iter().enumerate() {
+        let mut of_axis = Vec::new();
+        for value in &axis.values {
+            check_value(
+                probe.controls(),
+                &axis.path,
+                *value,
+                args.clamp,
+                &mut of_axis,
+            )?;
+        }
+        clamped_axes.extend(of_axis.into_iter().map(|c| (index, c)));
     }
     if args.bargraphs && args.format == Format::Ir {
         return Err("--bargraphs cannot be combined with --format ir".to_owned());
@@ -710,10 +961,24 @@ fn run(mut args: Args) -> Result<(), String> {
         skip: args.skip,
         schedule: schedule.clone(),
         drive_buttons: impulse_test,
+        limit: args.fail_above,
     };
 
     let points = cartesian(&axes);
     let sweeping = !axes.is_empty();
+    if args.out.is_some() {
+        for (flag, set) in [
+            ("--sweep", sweeping),
+            ("--format ir", args.format == Format::Ir),
+            ("--every", args.every != 1),
+        ] {
+            if set {
+                return Err(format!(
+                    "{flag} cannot be combined with --out, which writes every frame of one render"
+                ));
+            }
+        }
+    }
     // A sweep produces one row per point. In CSV that row *is* the output —
     // the swept values and what each render reduced to — so the per-frame dump
     // is suppressed. `.ir` describes exactly one render and cannot hold a
@@ -739,9 +1004,27 @@ fn run(mut args: Args) -> Result<(), String> {
         }
         println!("{}", header.join(","));
     }
+    // Where the annotations of a render go: under `--quiet` they are the
+    // output (stdout, redirectable); otherwise they annotate a dump or a
+    // sweep's rows, which own stdout, and belong on stderr.
+    let annotate = |line: String| {
+        if args.quiet && !sweep_csv && args.format != Format::Ir {
+            println!("{line}");
+        } else {
+            eprintln!("{line}");
+        }
+    };
+    // A sweep's rows and an `.ir` text have no statistics block to carry the
+    // clamps: say them once, before the rows.
+    if sweep_csv || args.format == Format::Ir {
+        for clamp in clamped.iter().chain(clamped_axes.iter().map(|(_, c)| c)) {
+            annotate(clamp.line());
+        }
+    }
 
     let every = args.every.max(1);
     let mut runs: Vec<serde_json::Value> = Vec::new();
+    let mut silent_points = 0usize;
 
     for point in &points {
         // Every point starts from the same known state (see probe::sweep).
@@ -753,7 +1036,18 @@ fn run(mut args: Args) -> Result<(), String> {
             probe.set(path, *value)?;
         }
 
-        let header_needed = !args.quiet && args.format != Format::Json && !sweep_csv;
+        let mut writer = match &args.out {
+            Some(path) => Some(SampleWriter::create(
+                std::path::Path::new(path),
+                probe.outputs(),
+                args.render.saturating_sub(args.skip),
+                args.double,
+                args.sr,
+            )?),
+            None => None,
+        };
+        let dumping = !args.quiet && writer.is_none();
+        let header_needed = dumping && args.format != Format::Json && !sweep_csv;
         if header_needed {
             match args.format {
                 Format::Csv => {
@@ -793,7 +1087,10 @@ fn run(mut args: Args) -> Result<(), String> {
                     collected[ch].push(*value);
                 }
             }
-            if args.quiet || args.format == Format::Json || sweep_csv {
+            if let Some(writer) = writer.as_mut() {
+                writer.push(samples);
+            }
+            if !dumping || args.format == Format::Json || sweep_csv {
                 return;
             }
             if !(frame - spec.skip).is_multiple_of(every) {
@@ -804,14 +1101,14 @@ fn run(mut args: Args) -> Result<(), String> {
                     let mut line = frame.to_string();
                     for value in samples {
                         line.push(',');
-                        line.push_str(&format!("{value:.9}"));
+                        line.push_str(&fmt.sample(*value));
                     }
                     if args.bargraphs {
                         // read after the block this frame belongs to was
                         // computed: the value at that block's last sample
                         for (_, value) in probe.bargraphs() {
                             line.push(',');
-                            line.push_str(&format!("{value:.9}"));
+                            line.push_str(&fmt.sample(value));
                         }
                     }
                     println!("{line}");
@@ -828,9 +1125,84 @@ fn run(mut args: Args) -> Result<(), String> {
         // says whether the render was produced, not whether the DSP diverged.
         // `impulse-cranelift` exits 0 there, and the probe must match it to be
         // a drop-in replacement.
-        if args.format != Format::Ir && !stats.all_finite() {
-            return Err("render produced non-finite samples".to_owned());
+        if let Some(writer) = writer {
+            writer.finish()?;
         }
+        // The controls this render wrote before its first frame, for the
+        // context of a failure; the applied values, as the render used them.
+        let written_controls = || -> Vec<(String, f64)> {
+            fixed
+                .iter()
+                .map(|(path, value)| (*path, *value))
+                .chain(point.assignments.iter().map(|(p, v)| (p.as_str(), *v)))
+                .filter_map(|(query, value)| probe.controls().check_write(query, value).ok())
+                .map(|write| (write.control.path.clone(), write.applied))
+                .collect()
+        };
+        // A runaway is reported where it starts: a loop that leaves its
+        // stable region passes any level long before it overflows, so the
+        // sample above `--fail-above` comes first, and the non-finite frame
+        // that follows is mentioned with it.
+        let non_finite = (args.format != Format::Ir)
+            .then(|| stats.first_non_finite())
+            .flatten();
+        if let Some((channel, located)) = stats.first_above()
+            && non_finite.is_none_or(|(_, nf)| located.frame <= nf.frame)
+        {
+            let later = non_finite.map_or_else(String::new, |(ch, nf)| {
+                format!(
+                    "\n  the render turns non-finite at frame {}, out{ch} ({})",
+                    nf.frame,
+                    non_finite_name(nf.value)
+                )
+            });
+            return Err(format!(
+                "a sample exceeds --fail-above {}\n  first: frame {}, out{channel} = {}{later}{}",
+                args.fail_above.unwrap_or_default(),
+                located.frame,
+                fmt.sample(located.value),
+                failure_context(
+                    located.frame,
+                    &written_controls(),
+                    &schedule,
+                    probe.controls()
+                )
+            ));
+        }
+        if let Some((channel, located)) = non_finite {
+            return Err(format!(
+                "render produced non-finite samples\n  first: frame {}, out{channel} ({}); {} of {} frames affected{}",
+                located.frame,
+                non_finite_name(located.value),
+                stats.non_finite_frames,
+                args.render,
+                failure_context(
+                    located.frame,
+                    &written_controls(),
+                    &schedule,
+                    probe.controls()
+                )
+            ));
+        }
+        // Exact silence is nearly always a gate never pressed or an input
+        // never fed: the facts the tool has go with the numbers.
+        let notes = if stats.is_silent() {
+            silent_points += 1;
+            silence_notes(&probe, &spec.input)
+        } else {
+            Vec::new()
+        };
+        // the clamps this render ran under: the fixed and scheduled ones, and
+        // those of its own sweep values (the axes and a point's assignments
+        // are in the same order)
+        let run_clamped: Vec<&Clamped> = clamped
+            .iter()
+            .chain(clamped_axes.iter().filter_map(|(axis, c)| {
+                (point.assignments.get(*axis).map(|(_, v)| v.to_bits())
+                    == Some(c.requested.to_bits()))
+                .then_some(c)
+            }))
+            .collect();
         // what the program's bargraphs show at the end of this render
         let bargraphs = probe.bargraphs();
 
@@ -838,9 +1210,23 @@ fn run(mut args: Args) -> Result<(), String> {
             let mut entry = serde_json::Map::new();
             let mut set = serde_json::Map::new();
             for (path, value) in &point.assignments {
-                set.insert(path.clone(), json_number(*value));
+                // the value the render used
+                let applied = probe
+                    .controls()
+                    .check_write(path, *value)
+                    .map_or(*value, |w| w.applied);
+                set.insert(path.clone(), json_number(applied));
             }
             entry.insert("set".to_owned(), serde_json::Value::Object(set));
+            if !run_clamped.is_empty() {
+                entry.insert(
+                    "clamped".to_owned(),
+                    serde_json::Value::Array(run_clamped.iter().map(|c| c.json()).collect()),
+                );
+            }
+            if !notes.is_empty() {
+                entry.insert("notes".to_owned(), serde_json::json!(notes));
+            }
             entry.insert(
                 "window".to_owned(),
                 serde_json::json!({
@@ -873,6 +1259,7 @@ fn run(mut args: Args) -> Result<(), String> {
                             "peak": json_number(c.peak),
                             "rms": json_number(c.rms),
                             "dc": json_number(c.dc),
+                            "peak_at": c.peak_at,
                         })
                     })
                     .collect();
@@ -889,37 +1276,51 @@ fn run(mut args: Args) -> Result<(), String> {
         } else if args.format == Format::Ir {
             // The .ir text is compared byte for byte; emit nothing else.
         } else if sweep_csv {
+            // the value the render used: the requested one, unless `--clamp`
+            // clamped it, and then the row must not claim the requested one
             let mut row: Vec<String> = point
                 .assignments
                 .iter()
-                .map(|(_, v)| format!("{v}"))
+                .map(|(query, v)| {
+                    let applied = probe
+                        .controls()
+                        .check_write(query, *v)
+                        .map_or(*v, |w| w.applied);
+                    format!("{applied}")
+                })
                 .collect();
             for ch in 0..probe.outputs() {
                 match reduction {
-                    Some(r) => row.push(format!(
-                        "{:.9}",
-                        reduce_channel(r, &stats, ch, &collected, probe.sample_rate(), args.f0)
-                    )),
+                    Some(r) => {
+                        let value =
+                            reduce_channel(r, &stats, ch, &collected, probe.sample_rate(), args.f0);
+                        // a peak is a sample's magnitude; the others are computed
+                        row.push(if r == Reduction::Peak {
+                            fmt.sample(value)
+                        } else {
+                            fmt.computed(value)
+                        });
+                    }
                     None => {
-                        row.push(format!("{:.9}", stats.channels[ch].peak));
-                        row.push(format!("{:.9}", stats.channels[ch].rms));
-                        row.push(format!("{:.9}", stats.channels[ch].dc));
+                        row.push(fmt.sample(stats.channels[ch].peak));
+                        row.push(fmt.computed(stats.channels[ch].rms));
+                        row.push(fmt.computed(stats.channels[ch].dc));
                     }
                 }
             }
             if args.bargraphs {
-                row.extend(bargraphs.iter().map(|(_, v)| format!("{v:.9}")));
+                row.extend(bargraphs.iter().map(|(_, v)| fmt.sample(*v)));
             }
             println!("{}", row.join(","));
         } else {
-            // With `--quiet` the statistics are the whole output, so they go to
-            // stdout and can be redirected; otherwise they annotate a dump that
-            // already owns stdout, and belong on stderr.
+            // With `--quiet` or `--out` the statistics are the whole output,
+            // so they go to stdout and can be redirected; otherwise they
+            // annotate a dump that already owns stdout, and belong on stderr.
             let emit = |line: String| {
-                if args.quiet {
-                    println!("{line}");
-                } else {
+                if dumping {
                     eprintln!("{line}");
+                } else {
+                    println!("{line}");
                 }
             };
             emit(format!(
@@ -931,17 +1332,36 @@ fn run(mut args: Args) -> Result<(), String> {
                 stats.window_len
             ));
             for (ch, channel) in stats.channels.iter().enumerate() {
+                // `peak_at` comes last: a reader keyed on the older fields
+                // does not see it
                 emit(format!(
-                    "# out{ch}: peak={:.9} rms={:.9} dc={:.9} finite={}",
-                    channel.peak,
-                    channel.rms,
-                    channel.dc,
-                    if channel.finite { "yes" } else { "no" }
+                    "# out{ch}: peak={} rms={} dc={} finite={} peak_at={}",
+                    fmt.sample(channel.peak),
+                    fmt.computed(channel.rms),
+                    fmt.computed(channel.dc),
+                    if channel.finite { "yes" } else { "no" },
+                    channel
+                        .peak_at
+                        .map_or_else(|| "none".to_owned(), |frame| frame.to_string())
                 ));
             }
             for (path, value) in &bargraphs {
-                emit(format!("# bargraph {path}={value:.9}"));
+                emit(format!("# bargraph {path}={}", fmt.sample(*value)));
             }
+            for clamp in &run_clamped {
+                emit(clamp.line());
+            }
+            for note in &notes {
+                emit(format!("# note: {note}"));
+            }
+        }
+    }
+
+    // A sweep's rows show their zeros; what they do not show is why. One
+    // render's notes stand for all when every point was silent.
+    if sweep_csv && silent_points == points.len() {
+        for note in silence_notes(&probe, &spec.input) {
+            annotate(format!("# note: {note} (at every sweep point)"));
         }
     }
 
@@ -989,6 +1409,17 @@ fn run_train(args: &Args) -> Result<(), String> {
             ));
         }
     }
+    for (flag, set) in [
+        ("--out", args.out.is_some()),
+        ("--fail-above", args.fail_above.is_some()),
+    ] {
+        if set {
+            return Err(format!(
+                "{flag} cannot be combined with --train / --fd-check"
+            ));
+        }
+    }
+    let fmt = number_format(args)?;
     let factory = std::rc::Rc::new(Factory::compile_with_args(
         &args.file,
         &args.import_dirs,
@@ -996,6 +1427,20 @@ fn run_train(args: &Args) -> Result<(), String> {
         args.double,
         args.opt_level,
     )?);
+    // A `--set` outside its range: on a trained control it would move the
+    // starting point, on another it would fix a value that is not the one
+    // asked for, and the descent's rows would show neither.
+    {
+        let probe = Probe::instantiate(&factory, args.sr)?;
+        let mut clamped = Vec::new();
+        for assignment in &args.sets {
+            let (path, value) = parse_assignment(assignment)?;
+            check_value(probe.controls(), path, value, args.clamp, &mut clamped)?;
+        }
+        for clamp in &clamped {
+            println!("{}", clamp.line());
+        }
+    }
     let spec = TrainSpec {
         params: args.train.clone(),
         loss_lane: args.loss_lane,
@@ -1047,12 +1492,17 @@ fn run_train(args: &Args) -> Result<(), String> {
             header_done = true;
         }
         if step.block % every == 0 || step.block == args.blocks {
-            let values: Vec<String> = step.params.iter().map(|v| format!("{v:.9}")).collect();
-            println!("{},{:.9e},{}", step.block, step.loss, values.join(","));
+            let values: Vec<String> = step.params.iter().map(|v| fmt.computed(*v)).collect();
+            println!(
+                "{},{},{}",
+                step.block,
+                fmt.loss(step.loss),
+                values.join(",")
+            );
         }
     })?;
     for (path, value) in trained.paths.iter().zip(&trained.values) {
-        println!("# trained {path}={value:.9}");
+        println!("# trained {path}={}", fmt.computed(*value));
     }
     println!(
         "# loss: block 1 {:.6e}, block {} {:.6e}",

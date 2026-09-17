@@ -77,6 +77,23 @@ impl Schedule {
             .collect()
     }
 
+    /// Every scheduled `SetParam`, as `(frame, path, value)` in frame order.
+    ///
+    /// What the range validation reads before a render, and what a failed
+    /// render reads afterwards to say which write preceded the failure.
+    #[must_use]
+    pub fn param_writes(&self) -> Vec<(usize, &str, f64)> {
+        self.events
+            .iter()
+            .flat_map(|(frame, events)| {
+                events.iter().filter_map(move |e| match e {
+                    Event::SetParam { path, value } => Some((*frame, path.as_str(), *value)),
+                    _ => None,
+                })
+            })
+            .collect()
+    }
+
     /// Whether nothing is scheduled.
     #[must_use]
     pub fn is_empty(&self) -> bool {

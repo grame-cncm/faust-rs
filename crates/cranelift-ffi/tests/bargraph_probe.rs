@@ -39,6 +39,7 @@ fn spec(frames: usize, block: usize, schedule: Schedule) -> RenderSpec {
         skip: 0,
         schedule,
         drive_buttons: false,
+        ..RenderSpec::default()
     }
 }
 

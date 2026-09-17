@@ -35,6 +35,7 @@ fn render_with(schedule: Schedule, frames: usize, block: usize) -> Vec<f64> {
         skip: 0,
         schedule,
         drive_buttons: false,
+        ..RenderSpec::default()
     };
     let mut out = Vec::with_capacity(frames);
     probe.render(&spec, |_frame, samples| out.push(samples[0]));
