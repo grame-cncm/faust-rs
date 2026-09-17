@@ -18,6 +18,14 @@ pub enum InputMode {
     Impulse,
     /// Unit impulse on frame 0 of one channel only, silence elsewhere.
     ImpulseChannel(usize),
+    /// Weighted impulses, `(frame, amplitude)`, on one channel or on all:
+    /// the excitations a linearity check compares with the unit impulse
+    /// (another level, another time, a sum of two), see
+    /// [`crate::probe::freqresp`].
+    Impulses {
+        channel: Option<usize>,
+        taps: Vec<(usize, f64)>,
+    },
     /// Constant 1.0 on every channel.
     Dc,
     /// Uniform noise in `[-1, 1)` from a seeded generator.
@@ -69,6 +77,18 @@ impl InputMode {
             Self::Zero => 0.0,
             Self::Impulse => f64::from(u8::from(frame == 0)),
             Self::ImpulseChannel(ch) => f64::from(u8::from(frame == 0 && channel == *ch)),
+            Self::Impulses {
+                channel: only,
+                taps,
+            } => {
+                if only.is_some_and(|ch| ch != channel) {
+                    return 0.0;
+                }
+                taps.iter()
+                    .filter(|(at, _)| *at == frame)
+                    .map(|(_, amplitude)| amplitude)
+                    .sum()
+            }
             Self::Dc => 1.0,
             Self::White { seed } => white(*seed, channel, frame),
             Self::Sine { hz } => (std::f64::consts::TAU * hz * frame as f64 / sample_rate).sin(),
@@ -349,6 +369,25 @@ mod tests {
         assert!((m.sample(0, 0, 44100.0) - 1.0).abs() < f64::EPSILON);
         assert!((m.sample(1, 0, 44100.0) - 1.0).abs() < f64::EPSILON);
         assert!(m.sample(0, 1, 44100.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn weighted_impulses_land_on_their_frames_and_their_channel() {
+        let m = InputMode::Impulses {
+            channel: Some(1),
+            taps: vec![(0, 1.0), (3, -0.5)],
+        };
+        assert!((m.sample(1, 0, 44100.0) - 1.0).abs() < f64::EPSILON);
+        assert!((m.sample(1, 3, 44100.0) + 0.5).abs() < f64::EPSILON);
+        assert!(m.sample(1, 1, 44100.0).abs() < f64::EPSILON);
+        assert!(m.sample(0, 0, 44100.0).abs() < f64::EPSILON);
+        // on every channel when none is named, as `Impulse` does
+        let all = InputMode::Impulses {
+            channel: None,
+            taps: vec![(2, 0.25)],
+        };
+        assert!((all.sample(0, 2, 44100.0) - 0.25).abs() < f64::EPSILON);
+        assert!((all.sample(5, 2, 44100.0) - 0.25).abs() < f64::EPSILON);
     }
 
     #[test]

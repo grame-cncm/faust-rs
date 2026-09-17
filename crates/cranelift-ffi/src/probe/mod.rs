@@ -47,12 +47,15 @@
 //! - [`compare`] — two renders compared, first differing frame first; FFI-free.
 //! - [`audio_out`] — a render written to `.npy`, `.wav` or a raw file (`--out`).
 //! - [`timing`] — what the `compute` calls cost, against real time (`--time`).
+//! - [`freqresp`] — the frequency response of a linear program, and the checks
+//!   that it is one (`--freqresp`); FFI-free.
 
 pub mod audio_file;
 pub mod audio_out;
 pub mod compare;
 pub mod engine;
 pub mod eval;
+pub mod freqresp;
 pub mod number;
 pub mod params;
 pub mod poly;

@@ -166,8 +166,10 @@ must run unchanged with Faust C++ should not pass them.
   (`--compare`, `--ref`, `--check`), a host loop for programs that output a
   loss and its gradients (`--train`, with a grid of starting points under
   `--sweep`, and `--fd-check` at the start or the end of the descent), the cost
-  of the `compute` calls against real time (`--time`), and a compile failure as
-  the compiler's diagnostics-v2 JSON report (`--error-format json`). It
+  of the `compute` calls against real time (`--time`), a compile failure as
+  the compiler's diagnostics-v2 JSON report (`--error-format json`), and the
+  frequency response of a program checked to be linear and time-invariant
+  (`--freqresp`). It
   has no C++ counterpart; the closest reference tools are the `impulse-tests`
   runners, whose protocol it reproduces byte for byte under `--protocol
   impulse-test`. Evidence:

@@ -15,6 +15,7 @@ use cranelift_ffi::probe::audio_out::SampleWriter;
 use cranelift_ffi::probe::compare::{Comparison, Samples, Tolerance, compare};
 use cranelift_ffi::probe::engine::{Factory, PolyProbe, Probe, RenderSpec, last_compile_failure};
 use cranelift_ffi::probe::eval::{EvalProgram, csv_field};
+use cranelift_ffi::probe::freqresp::{self, Grid, Property};
 use cranelift_ffi::probe::number::{NumberFormat, Precision};
 use cranelift_ffi::probe::params::{ControlKind, ControlMap};
 use cranelift_ffi::probe::poly;
@@ -428,6 +429,39 @@ struct Args {
     #[arg(long = "time")]
     time: bool,
 
+    /// The frequency response of a linear program, from its impulse
+    /// response: `N` log-spaced frequencies from 20 Hz to half the sample
+    /// rate, or `N:FMIN:FMAX`. Rows `hz,mag_db_out0,phase_out0,...`, the
+    /// phase in radians.
+    ///
+    /// The transform of the `-n` frames of the response is evaluated at each
+    /// frequency by direct summation, so no bin grid decides where the
+    /// response is known. Three more renders first check that the program is
+    /// linear and time-invariant (an impulse of -0.5, one delayed, a sum of
+    /// two): one that is not is refused, with the first frame at which the
+    /// property breaks, since its impulse response has no transfer function
+    /// to give. The share of the energy in the last tenth of the window says
+    /// whether the response was still ringing when it was cut.
+    #[arg(long = "freqresp", value_name = "N[:FMIN:FMAX]")]
+    freqresp: Option<String>,
+
+    /// Frames of silence rendered before the impulse of `--freqresp`, which
+    /// then lands on frame N: the time a smoothed control needs to reach its
+    /// value.
+    ///
+    /// A program that smooths its sliders (`si.smoo`) is time-varying until
+    /// they have settled, and the time-invariance check refuses it, rightly:
+    /// a response taken during the ramp is that of no filter. The response
+    /// and its `-n` frames are counted from the impulse.
+    #[arg(long = "settle", value_name = "N", default_value_t = 0)]
+    settle: usize,
+
+    /// Largest accepted departure from linearity under `--freqresp`, relative
+    /// to the expected response's peak (default 1e-9 in double precision,
+    /// 1e-4 in single).
+    #[arg(long = "linearity-tolerance", value_name = "REL")]
+    linearity_tolerance: Option<f64>,
+
     /// How a compile failure is reported: `human`, the compiler's rendered
     /// diagnostics on stderr (the default), or `json`, the compiler's
     /// diagnostics-v2 report on stdout (code, ranges, facts,
@@ -529,6 +563,9 @@ fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
     }
     if verification_requested(args) {
         offenders.push("--compare/--ref/--check");
+    }
+    if args.freqresp.is_some() {
+        offenders.push("--freqresp");
     }
     if offenders.is_empty() {
         Ok(())
@@ -1089,6 +1126,7 @@ fn run_poly(args: &Args) -> Result<(), String> {
         ("--clamp", args.clamp),
         ("--eval", !args.evals.is_empty()),
         ("--compare/--ref/--check", verification_requested(args)),
+        ("--freqresp", args.freqresp.is_some()),
     ] {
         if set {
             return Err(format!(
@@ -1330,6 +1368,17 @@ fn run(mut args: Args) -> Result<(), String> {
     }
     if !args.train.is_empty() || args.fd_check.is_some() {
         return run_train(&args);
+    }
+    if args.linearity_tolerance.is_some() && args.freqresp.is_none() {
+        return Err("--linearity-tolerance is the tolerance of --freqresp's checks".to_owned());
+    }
+    if args.settle != 0 && args.freqresp.is_none() {
+        return Err(
+            "--settle delays the impulse of --freqresp; a plain render has --skip".to_owned(),
+        );
+    }
+    if args.freqresp.is_some() {
+        return run_freqresp(&args);
     }
 
     let compile_started = Instant::now();
@@ -2175,6 +2224,400 @@ fn run(mut args: Args) -> Result<(), String> {
 ///
 /// Shared by the JSON and CSV sweep paths so the two cannot report different
 /// numbers for the same render.
+/// `--freqresp`: the frequency response of a linear program from one impulse
+/// response, after the checks that it is one (see `probe::freqresp`).
+fn run_freqresp(args: &Args) -> Result<(), String> {
+    let spec_text = args.freqresp.as_deref().unwrap_or_default();
+    for (flag, set, why) in [
+        (
+            "--sweep",
+            !args.sweeps.is_empty(),
+            "one response per command",
+        ),
+        (
+            "--reduce",
+            args.reduce.is_some(),
+            "the response is the reduction",
+        ),
+        (
+            "--at",
+            !args.ats.is_empty(),
+            "a control that changes during the response makes the program time-varying",
+        ),
+        (
+            "--note/--chord",
+            !args.notes.is_empty() || !args.chords.is_empty(),
+            "they drive the polyphonic wrapper",
+        ),
+        (
+            "--skip",
+            args.skip != 0,
+            "the transform is that of the whole response, from frame 0",
+        ),
+        (
+            "--every",
+            args.every != 1,
+            "the rows are frequencies, not frames",
+        ),
+        (
+            "--bargraphs",
+            args.bargraphs,
+            "the rows are frequencies, not frames",
+        ),
+        (
+            "--out",
+            args.out.is_some(),
+            "a plain render writes the impulse response",
+        ),
+        (
+            "--fail-above",
+            args.fail_above.is_some(),
+            "it gates a plain render",
+        ),
+        (
+            "--compare/--ref/--check",
+            verification_requested(args),
+            "they look at the samples of a plain render",
+        ),
+        (
+            "--format ir",
+            args.format == Format::Ir,
+            "`.ir` holds frames",
+        ),
+    ] {
+        if set {
+            return Err(format!("{flag} cannot be combined with --freqresp: {why}"));
+        }
+    }
+    let grid = Grid::parse(spec_text, f64::from(args.sr))?;
+    let tolerance = match args.linearity_tolerance {
+        Some(value) if value >= 0.0 && value.is_finite() => value,
+        Some(_) => return Err("--linearity-tolerance must be a non-negative number".to_owned()),
+        None => freqresp::default_tolerance(args.double),
+    };
+    if args.render < 4 {
+        return Err(
+            "--freqresp needs a window of at least 4 frames (-n) for its linearity checks"
+                .to_owned(),
+        );
+    }
+    let fmt = number_format(args)?;
+
+    let compile_started = Instant::now();
+    let (factory, eval) = compile_program(args, args.double)?;
+    let compile_seconds = compile_started.elapsed().as_secs_f64();
+    let probe = Probe::instantiate(&std::rc::Rc::new(factory), args.sr)?;
+    if probe.inputs() == 0 {
+        return Err(
+            "--freqresp measures the response to an input, and the program has none".to_owned(),
+        );
+    }
+    // The excitation is an impulse, on every input or on one: a transfer
+    // function is a response to that and to nothing else.
+    let channel = match parse_input(&args.input)? {
+        InputMode::Impulse => None,
+        InputMode::ImpulseChannel(ch) if ch < probe.inputs() => Some(ch),
+        InputMode::ImpulseChannel(ch) => {
+            return Err(format!(
+                "--in impulse:{ch}: the program has {} input(s)",
+                probe.inputs()
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "--freqresp measures an impulse response: `--in {}` is not `impulse` or `impulse:CH`",
+                args.input
+            ));
+        }
+    };
+    let mut clamped = Vec::new();
+    let fixed = args
+        .sets
+        .iter()
+        .map(|a| parse_assignment(a))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (path, value) in &fixed {
+        check_value(probe.controls(), path, *value, args.clamp, &mut clamped)?;
+    }
+    let labels = output_labels(args, eval.as_ref(), probe.outputs())?;
+
+    // One render per excitation, each from a cleared instance with the
+    // `--set` controls written: `--settle` frames of silence, then the
+    // impulses, the window being the `-n` frames that follow.
+    let render_taps =
+        |taps: Vec<(usize, f64)>, time: bool| -> Result<(RenderStats, Samples), String> {
+            probe.reset();
+            for (path, value) in &fixed {
+                probe.set(path, *value)?;
+            }
+            let spec = RenderSpec {
+                frames: args.settle + args.render,
+                block: args.block,
+                input: InputMode::Impulses {
+                    channel,
+                    taps: taps
+                        .into_iter()
+                        .map(|(frame, amplitude)| (args.settle + frame, amplitude))
+                        .collect(),
+                },
+                skip: args.settle,
+                time,
+                ..RenderSpec::default()
+            };
+            Ok(probe.collect(&spec))
+        };
+    let (stats, h) = render_taps(vec![(0, 1.0)], args.time)?;
+    if let Some((output, located)) = stats.first_non_finite() {
+        return Err(format!(
+            "the impulse response is not finite\n  first: frame {}, out{output} ({}); {} of {} frames affected",
+            located.frame,
+            non_finite_name(located.value),
+            stats.non_finite_frames,
+            args.render
+        ));
+    }
+
+    // ── is there a transfer function to measure? ─────────────────────────
+    let shift = freqresp::shift_for(args.render);
+    let mut deviations = Vec::new();
+    for property in Property::ALL {
+        let (_, answer) = render_taps(property.taps(shift), false)?;
+        let expected = property.expected(&h, shift);
+        let comparison = compare(
+            &answer,
+            &expected,
+            Tolerance {
+                abs: 0.0,
+                rel: tolerance,
+            },
+            None,
+        )?;
+        if let Some((output, d)) = comparison.first_beyond() {
+            let mut error = format!(
+                "--freqresp: the program is not linear and time-invariant: its impulse response has no transfer function to give\n  \
+                 {}\n  first: frame {}, out{output}: {} where {} was expected (tolerance {tolerance:e} of the peak)\n  \
+                 usual cause: {}",
+                property.violation(args.settle, shift),
+                d.frame,
+                fmt.sample(d.value),
+                fmt.sample(d.reference),
+                property.usual_cause()
+            );
+            // an output that does not come from the input is a fact the tool
+            // can establish: what the program says to silence. Said when it
+            // is of a size to explain the refusal: the 1e-20 a reverberator
+            // injects against subnormals is not.
+            let (silence, _) = render_taps(Vec::new(), false)?;
+            let (loudest, peak) = silence
+                .channels
+                .iter()
+                .enumerate()
+                .map(|(ch, c)| (ch, c.peak))
+                .fold(
+                    (0, 0.0),
+                    |best, now| if now.1 > best.1 { now } else { best },
+                );
+            if peak > tolerance * stats.channels[loudest].peak {
+                error.push_str(&format!(
+                    "\n  with no input at all the program outputs a signal (out{loudest} peaks at {}): it is not a function of its input alone",
+                    fmt.sample(peak)
+                ));
+            }
+            if property == Property::TimeInvariance {
+                error.push_str(
+                    "\n  a smoothed control (si.smoo) is such an envelope until it has settled: --settle N renders N frames of silence before the impulse",
+                );
+            }
+            error.push_str(
+                "\n  a program that is not linear is measured at one level and one frequency at a time: --in sine:HZ --skip N --reduce rms",
+            );
+            return Err(error);
+        }
+        let worst = comparison
+            .channels
+            .iter()
+            .map(|(_, diff)| diff.max_rel)
+            .fold(0.0_f64, f64::max);
+        deviations.push((property, worst));
+    }
+
+    // ── the response ─────────────────────────────────────────────────────
+    let hz = grid.frequencies();
+    let sample_rate = f64::from(args.sr);
+    let responses: Vec<Vec<freqresp::Point>> = h
+        .channels
+        .iter()
+        .map(|channel| freqresp::response(channel, sample_rate, &hz))
+        .collect();
+    let tails: Vec<Option<f64>> = h
+        .channels
+        .iter()
+        .map(|channel| freqresp::tail_energy_fraction(channel))
+        .collect();
+    let notes: Vec<String> = tails
+        .iter()
+        .enumerate()
+        .filter_map(|(output, tail)| {
+            let tail = (*tail)?;
+            (tail > freqresp::RINGING).then(|| {
+                format!(
+                    "out{output} is still ringing {} frames after the impulse: what -n cut off is of the order of the last tenth's share, and near a resonance the magnitude is off by about its square root ({}%); raise -n",
+                    args.render,
+                    three_digits(100.0 * tail.sqrt())
+                )
+            })
+        })
+        .collect();
+    let excited = channel.map_or_else(
+        || {
+            if probe.inputs() == 1 {
+                "the input".to_owned()
+            } else {
+                format!("all {} inputs at once", probe.inputs())
+            }
+        },
+        |ch| format!("input {ch}"),
+    );
+
+    if args.format == Format::Json {
+        let outputs: Vec<serde_json::Value> = responses
+            .iter()
+            .zip(&tails)
+            .enumerate()
+            .map(|(output, (points, tail))| {
+                serde_json::json!({
+                    "output": output,
+                    "mag_db": points.iter().map(|p| json_number(p.magnitude_db)).collect::<Vec<_>>(),
+                    "phase": points.iter().map(|p| json_number(p.phase)).collect::<Vec<_>>(),
+                    "tail_energy_fraction": tail.map(json_number),
+                    "peak": json_number(stats.channels[output].peak),
+                })
+            })
+            .collect();
+        let mut linearity = serde_json::Map::new();
+        linearity.insert("tolerance".to_owned(), json_number(tolerance));
+        linearity.insert("shift".to_owned(), serde_json::json!(shift));
+        for (property, worst) in &deviations {
+            linearity.insert(property.name().to_owned(), json_number(*worst));
+        }
+        let mut document = serde_json::json!({
+            "schema_version": 1,
+            "dsp": args.file,
+            "sr": args.sr,
+            "frames": args.render,
+            "freqresp": {
+                "input": channel,
+                "settle": args.settle,
+                "hz": hz.iter().map(|f| json_number(*f)).collect::<Vec<_>>(),
+                "linearity": linearity,
+                "outputs": outputs,
+            },
+        });
+        if let Some(object) = document.as_object_mut() {
+            if eval.is_some() {
+                object.insert("eval".to_owned(), serde_json::json!(labels));
+            }
+            if !clamped.is_empty() {
+                object.insert(
+                    "clamped".to_owned(),
+                    serde_json::Value::Array(clamped.iter().map(Clamped::json).collect()),
+                );
+            }
+            if !notes.is_empty() {
+                object.insert("notes".to_owned(), serde_json::json!(notes));
+            }
+            if let Some(timing) = &stats.timing {
+                let mut timing = timing_json(timing);
+                timing["compile_s"] = json_number(compile_seconds);
+                object.insert("timing".to_owned(), timing);
+            }
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+
+    if !args.quiet {
+        let mut header = vec!["hz".to_owned()];
+        for output in 0..probe.outputs() {
+            header.push(format!("mag_db_out{output}"));
+            header.push(format!("phase_out{output}"));
+        }
+        println!("{}", header.join(","));
+        for (k, frequency) in hz.iter().enumerate() {
+            let mut row = vec![fmt.computed(*frequency)];
+            for points in &responses {
+                row.push(fmt.computed(points[k].magnitude_db));
+                row.push(fmt.computed(points[k].phase));
+            }
+            println!("{}", row.join(","));
+        }
+    }
+    // As for a render: under `--quiet` the annotations are the output.
+    let emit = |line: String| {
+        if args.quiet {
+            println!("{line}");
+        } else {
+            eprintln!("{line}");
+        }
+    };
+    emit(format!(
+        "# freqresp: {} frequenc{} from {} to {} Hz, from the response of {} frames to an impulse on {excited}{}",
+        hz.len(),
+        if hz.len() == 1 { "y" } else { "ies" },
+        fmt.computed(grid.fmin),
+        fmt.computed(grid.fmax),
+        args.render,
+        if args.settle == 0 {
+            String::new()
+        } else {
+            format!(" at frame {}", args.settle)
+        }
+    ));
+    if eval.is_some() {
+        for (output, label) in labels.iter().enumerate() {
+            emit(format!("# eval out{output} = {label}"));
+        }
+    }
+    let shown: Vec<String> = deviations
+        .iter()
+        .map(|(property, worst)| format!("{} {}", property.name(), fmt.computed(*worst)))
+        .collect();
+    emit(format!(
+        "# freqresp: linear and time-invariant within {tolerance:e} of the peak ({})",
+        shown.join(", ")
+    ));
+    for (output, tail) in tails.iter().enumerate() {
+        emit(match tail {
+            Some(tail) => format!(
+                "# freqresp out{output}: peak={} peak_at={}, the last tenth of the window holds {} of the energy",
+                fmt.sample(stats.channels[output].peak),
+                stats.channels[output]
+                    .peak_at
+                    .map_or_else(|| "none".to_owned(), |frame| frame.to_string()),
+                fmt.computed(*tail)
+            ),
+            None => format!(
+                "# freqresp out{output}: the response is exactly zero: nothing reaches this output from {excited}"
+            ),
+        });
+    }
+    for clamp in &clamped {
+        emit(clamp.line());
+    }
+    for note in &notes {
+        emit(format!("# note: {note}"));
+    }
+    if let Some(timing) = &stats.timing {
+        for line in time_lines(compile_seconds, timing, |w| format!("frame {}", w.frame)) {
+            emit(line);
+        }
+    }
+    Ok(())
+}
+
 /// What the projection onto its range did to a trained control, for the
 /// `# trained` line: nothing is said of a control that never met a bound.
 fn bound_text(stats: &BoundStats, blocks: usize) -> Option<String> {
@@ -2281,6 +2724,7 @@ fn run_train(args: &Args) -> Result<(), String> {
         ("--out", args.out.is_some()),
         ("--fail-above", args.fail_above.is_some()),
         ("--compare/--ref/--check", verification_requested(args)),
+        ("--freqresp", args.freqresp.is_some()),
     ] {
         if set {
             return Err(format!(

@@ -16,8 +16,8 @@ error reduced to "errors=1, diagnostics=1").
 This document asks what remains of that kind, and what would make the feedback
 more precise and more attributable. It has two parts: an analysis, whose claims
 about the present tool were each run on the release binary of commit `79f2d6af`,
-and a plan in five phases. **Status: F1, F2, F3 and F4 are implemented
-(2026-09-17, §7); F5 is not.**
+and a plan in five phases. **Status: the five phases are implemented
+(2026-09-17, §7).**
 
 The design document already states the principle the analysis applies (its §6):
 the tool is a measuring instrument, and an instrument that silently misreports
@@ -776,3 +776,82 @@ and survived for that reason; rewritten, it is rejected.
 Not done, and known: the polyphonic path still clamps a `--set` in silence
 (F1 refused `--clamp` there instead of reporting); `scripts/fit_rooms.py` still
 uses the two-command form.
+
+### F5, implemented 2026-09-17
+
+`probe/freqresp.rs`, FFI-free, and `run_freqresp` in the binary. As planned,
+with these decisions and departures:
+
+- **Three checks, not one.** The plan asked for the impulse at half amplitude
+  and proportional responses. That is homogeneity, and "linear" stands for
+  more: a tremolo or an LFO-modulated filter is perfectly homogeneous and has
+  no frequency response, and so is a median filter, whose response to one
+  impulse is zero at any level. Three renders, each against what the unit
+  response `h` predicts: an impulse of **-0.5** (`-0.5 h`; the negative factor
+  is for a rectifier, which doubles when its input doubles), the impulse **37
+  frames later** (`h` delayed; 37 divides no block size), and **1 at frame 0
+  with 0.5 at frame 1** (`h[n] + 0.5 h[n-1]`; adjacent, because a rank-order
+  filter looks at a short window). The first failure names the property, the
+  first frame, the two values and the usual cause.
+- **To the bit.** The factors are powers of two, so in a linear program the
+  first two checks introduce no rounding of their own, and what they print is a
+  measurement: `0.0` for a Butterworth, `6.1e-18` for `re.zita_rev1_stereo`,
+  which turned out to output `2e-20` with no input at all (its guard against
+  subnormals). Superposition holds to rounding; the tolerance is relative to
+  the expected response's peak, `1e-9` in double and `1e-4` in single by
+  default, `--linearity-tolerance` otherwise. Necessary conditions at the
+  amplitudes of one excitation: the guide says so.
+- **`--settle N`, not planned, and needed at once.** The time-invariance check
+  refuses every program that smooths its sliders (`dm.zita_light`, most
+  `*_demo`): after a reset the smoothed gain is an envelope. That refusal is
+  right, a response taken during the ramp being that of no filter, and useless
+  without a way out: `--settle N` renders `N` frames of silence, puts the
+  impulse on frame `N` and counts the response from there. The error suggests
+  it.
+- **The render of silence** is made only to explain a refusal, and blamed only
+  when it is of a size to explain it (above the tolerance times the response's
+  peak): an offset of 0.25 is, a reverberator's `8e-21` is not.
+- **`--skip` is refused**, not ignored as the plan had it: an option that is
+  accepted and does nothing is what F1 removed. So are `--sweep` (one response
+  per command; a shell loop does a family of curves), `--at` (a control change
+  during the response makes the program time-varying), and what looks at the
+  frames of a plain render. `--in` must be `impulse` or `impulse:CH`; a program
+  without inputs is refused.
+- **The transform** is Horner's rule on the polynomial in `z^-1`, from the last
+  sample: a product by a constant of modulus one per sample, the small samples
+  of the tail summed first. Interior frequencies are rounded to twelve digits
+  so that the third point of `4:250:2000` is `1000.0`; the response is
+  evaluated at the printed frequency. Phase in radians, principal value, not
+  unwrapped: unwrapping on a log grid is a guess.
+- **Truncation**: the share of the energy in the last tenth of the window is
+  always printed; above `1e-6` a note gives the order of the error (its square
+  root) and says to raise `-n`.
+- The rows keep `outN` names, as a sweep's do, and `--eval` adds its legend.
+
+Exit criterion. A one-pole and the TPT ladder match their closed forms to
+`1e-12` of the passband's unit gain, in level and phase, at two sample rates,
+at resonance 0 (`H1^4`: 12.04 dB down and half a turn late at the cutoff) and
+at resonance 2 (`H1^4 / (1 + k H1^4)`); `x - x^3/3` and `ef.cubicnl` are
+refused. Against the route this replaces, four sine renders with `--reduce
+rms` on the resonant ladder, the two agree to `1e-13` dB. `--eval
+'fi.peak_eq(6, 1000, 200)' --freqresp 256 stdfaust.lib` takes 30 ms and no
+file.
+
+Gates: the crate's 354 tests; `--protocol impulse-test` byte-identical to
+`impulse-cranelift` on the 133 corpus programs.
+
+Checks: `tests/freqresp_probe.rs` (16 tests), 8 unit tests of the module, 1 of
+the weighted-impulse excitation. Eighteen mutations rejected: the checks
+skipped (the plan's); each of the three left out; homogeneity with a positive
+factor; the two impulses of superposition far apart; the phase conjugated; the
+frequencies those of 44 100 Hz whatever `--sr`; `10 log10`; the tail taken at
+the start of the window; `--in impulse:CH` exciting every input; `--settle`
+moving the window and not the impulse; a linear grid; `--linearity-tolerance`
+ignored; silence never rendered; any output with no input blamed; ringing
+never noted; weighted impulses ignoring their channel. The positive-factor one
+was first applied to the excitation alone, which refuses every program and so
+survived a test that expects a refusal; applied to the excitation and the
+expectation together, it is rejected by the rectifier. One test of mine was
+wrong on the way (four stages at their cutoff are a quarter, -12.04 dB, not
+-6.02).
+

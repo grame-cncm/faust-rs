@@ -571,6 +571,14 @@ time, asks for a spectrum, and no further reduction can supply it. Those belong
 in an analysis script reading the CSV — which is the intended division of
 labour, not a missing feature.
 
+One vector is the tool's own: the frequency response of a linear program
+(§16). It is what is asked first of any filter, it is domain-neutral, and it
+cost a sine sweep; and what must come with it, the check that the program
+*has* a frequency response, needs renders that only the tool can make. Band
+filters, decay times and modal fits stay in the scripts, for a second reason:
+a numerical reference is worth something because it shares no code with the
+tool it checks.
+
 ## 10. Polyphony
 
 `--nvoices N` compiles `N` instances from one JIT and drives them through the
@@ -641,6 +649,15 @@ faustprobe --in "sine:1000" --at 0 "threshold=-20" --skip 20000 --reduce rms com
 ```bash
 faustprobe --protocol impulse-test dsp.dsp > new.ir && diff old.ir new.ir
 ```
+
+**What is this filter's response?**
+
+```bash
+faustprobe --double --eval 'fi.peak_eq(6, 1000, 200)' --freqresp 256 <faustlibraries>/stdfaust.lib
+```
+
+No file to write (§3, `--eval`), one render instead of a sine sweep, and a
+refusal if the program is not a filter (§16).
 
 **How does a parameter affect the output?**
 
@@ -1004,3 +1021,134 @@ use the release build of `faustprobe`: the JIT-compiled code runs at the same
 speed in either build, the compiler does not (four hundred one-poles in
 parallel: compute 60.4 ms against 60.8 ms, compile 230 ms against 5.65 s in a
 debug build).
+
+## 16. Frequency response: `--freqresp`
+
+The magnitude response of a filter used to take a sine per frequency: a render
+each, a steady-state window to choose for each, for information that one
+impulse response holds in full. `--freqresp N[:FMIN:FMAX]` renders that
+response (`-n` frames) and evaluates its transform at `N` log-spaced
+frequencies, from 20 Hz to half the sample rate or from `FMIN` to `FMAX`:
+
+```text
+$ faustprobe --double -I <faustlibraries> --eval 'fi.lowpass(4, 1000)' --freqresp 5:250:4000 stdfaust.lib
+hz,mag_db_out0,phase_out0
+250.0,-6.54311006605819e-5,-0.6580867865538877
+500.0,-0.016760676978043003,-1.3588227827828372
+1000.0,-3.0102999566397597,3.141592653589781
+2000.0,-24.276023235260567,1.3531323337502958
+4000.0,-49.06460729328156,0.6420005338117702
+# freqresp: 5 frequencies from 250.0 to 4000.0 Hz, from the response of 15000 frames to an impulse on the input
+# eval out0 = fi.lowpass(4, 1000)
+# freqresp: linear and time-invariant within 1e-9 of the peak (homogeneity 1.83e-322, time_invariance 0.0, superposition 2.9005534296216863e-15)
+# freqresp out0: peak=0.0542977764131825 peak_at=20, the last tenth of the window holds 0.0 of the energy
+```
+
+One pair of columns per output: `mag_db_outN`, `20 log10 |H|` (`-inf` where
+the response is exactly zero), and `phase_outN`, the argument of `H` in
+radians, in `(-pi, pi]`, not unwrapped (the fourth-order Butterworth above is
+half a turn late at its cutoff, and 3.0103 dB down). The sum `H(w) = sum h[n]
+exp(-j w n)` is evaluated at the frequencies asked for, so no bin grid decides
+where the response is known; `1:1000:1000` is one frequency. The points
+between the two bounds are rounded to twelve digits, and the response is
+evaluated at the frequency that is printed. Against the sine route on a
+resonant four-pole ladder, the two agree to `1e-13` dB.
+
+The excitation is `--in impulse` (the default: every input at once, the
+response to a common input) or `--in impulse:CH` for the responses from one
+input; anything else is refused, and so is a program without inputs. `--set`
+fixes the controls; `--eval`, `--double`, `--sr`, `--block`, `--precision`,
+`--quiet` (the `#` lines alone, on stdout), `--time` and `--format json` apply.
+`--sweep`, `--reduce`, `--at`, `--skip`, `--every`, `--out`, `--bargraphs`,
+`--fail-above`, the comparisons of §14, `--train`, `--nvoices`, `--format ir`
+and the impulse-test protocol do not combine with it.
+
+### A program that has no frequency response is refused
+
+The transform of an impulse response is a transfer function only if the
+program is linear and time-invariant, and nothing in a Faust program says
+whether it is. So three more renders come first, each compared with what the
+response `h` to the unit impulse predicts:
+
+| Property | Excitation | Expected | Who fails |
+|---|---|---|---|
+| homogeneity | an impulse of `-0.5` | `-0.5 h` | a saturator, a rectifier (hence the negative factor), a threshold, an offset or a generator mixed in |
+| time invariance | the impulse 37 frames later | `h`, 37 frames later | an LFO on a coefficient, a tremolo, an envelope, a noise source, **a smoothed control that has not settled** |
+| superposition | `1` at frame 0 and `0.5` at frame 1 | `h[n] + 0.5 h[n-1]` | a median, a min or max over neighbouring samples: homogeneous, time-invariant, and not additive |
+
+A program that fails is not measured, and the error says which property broke
+and at which frame first:
+
+```text
+$ faustprobe --double --eval 'ef.cubicnl(0.5, 0)' --freqresp 8 stdfaust.lib
+faustprobe: --freqresp: the program is not linear and time-invariant: its impulse response has no transfer function to give
+  homogeneity: the response to an impulse of -0.5 is not -0.5 times the response to an impulse of 1
+  first: frame 0, out0: -0.6666666666666667 where -0.33333333333333337 was expected (tolerance 1e-9 of the peak)
+  usual cause: a saturation, a rectifier, a threshold, or an output that does not come from the input
+  a program that is not linear is measured at one level and one frequency at a time: --in sine:HZ --skip N --reduce rms
+```
+
+When the render of silence explains the refusal (a DC offset, an oscillator
+mixed in), the error adds `with no input at all the program outputs a signal
+(out0 peaks at 0.25)`.
+
+The factors are powers of two, so that in a linear program the first two
+checks hold **to the bit**: scaling by a power of two and shifting in time
+commute with every rounding. What they print is then a measurement:
+`homogeneity 0.0` above, and `6.1e-18` for `re.zita_rev1_stereo`, which with
+no input at all outputs `2e-20`, its guard against subnormals. Superposition
+holds to rounding (`1e-15`), hence a tolerance: `--linearity-tolerance REL`,
+relative to the expected response's peak, by default `1e-9` in double
+precision and `1e-4` in single, where the rounding of a resonant filter is
+that large; measure in `--double`.
+
+These are necessary conditions, observed at the amplitudes 1 and 0.5 of one
+excitation. A limiter whose threshold the impulse response never reaches
+passes, and is linear there; a nonlinearity 120 dB down (`x + 1e-6 x^3`) is
+refused by default and accepted under `--linearity-tolerance 1e-5`.
+
+### `--settle N`: smoothed controls
+
+Most programs smooth their sliders (`si.smoo`), and a smoothed gain is an
+envelope until it has reached its value: after a reset, the program *is*
+time-varying, and is refused for it, with the hint:
+
+```text
+$ faustprobe --double --eval 'dm.zita_light' --freqresp 3:100:10000 -n 100000 stdfaust.lib
+  time invariance: the response to an impulse at frame 37 is not the response to an impulse at frame 0, 37 frames later
+  first: frame 37, out0: 0.0093484857615766 where 0.0002505936168136361 was expected (tolerance 1e-9 of the peak)
+  ...
+  a smoothed control (si.smoo) is such an envelope until it has settled: --settle N renders N frames of silence before the impulse
+```
+
+`--settle 44100` renders a second of silence first; the impulse lands on frame
+44100, and the response and its `-n` frames are counted from there (`to an
+impulse on all 2 inputs at once at frame 44100`). A pole of 0.999, that of
+`si.smoo`, is within `1e-9` after 21 000 frames.
+
+### The window
+
+A response still ringing at the last frame is truncated, and the transform is
+that of the truncation. The last `# freqresp outN` line gives the share of the
+response's energy held by the last tenth of the window; above `1e-6` a note
+says the response was cut and by about how much the magnitude near a resonance
+is off (the square root of that share):
+
+```text
+$ faustprobe --double -n 1000 --freqresp 4 --quiet slow.dsp          # process = + ~ *(0.999);
+# freqresp out0: peak=1.0 peak_at=0, the last tenth of the window holds 0.03463246878183396 of the energy
+# note: out0 is still ringing 1000 frames after the impulse: what -n cut off is of the order of the last tenth's share, and near a resonance the magnitude is off by about its square root (18.6%); raise -n
+```
+
+An output that nothing reaches from the excited input says so (`the response
+is exactly zero: nothing reaches this output from input 1`) and reads `-inf`.
+
+### JSON
+
+`--format json`: `schema_version`, `dsp`, `sr`, `frames`, and `freqresp` with
+`input` (null for every input), `settle`, `hz[]`, `linearity` (`tolerance`,
+`shift`, and the three measured departures `homogeneity`, `time_invariance`,
+`superposition`), `outputs[]` (`output`, `mag_db[]`, `phase[]`, `peak`,
+`tail_energy_fraction`); `eval`, `clamped`, `notes` and `timing` as elsewhere.
+A magnitude of `-inf` is `null`.
+
