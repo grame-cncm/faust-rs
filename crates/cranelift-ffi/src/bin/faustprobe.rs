@@ -14,7 +14,7 @@ use cranelift_ffi::probe::audio_file::read_channels;
 use cranelift_ffi::probe::audio_out::SampleWriter;
 use cranelift_ffi::probe::compare::{Comparison, Samples, Tolerance, compare};
 use cranelift_ffi::probe::engine::{
-    Factory, PolyProbe, PolyWrite, Probe, RenderSpec, last_compile_failure,
+    Factory, PolyProbe, PolyRenderSpec, PolyWrite, Probe, RenderSpec, last_compile_failure,
 };
 use cranelift_ffi::probe::eval::{EvalProgram, csv_field};
 use cranelift_ffi::probe::freqresp::{self, Grid, Property};
@@ -23,7 +23,7 @@ use cranelift_ffi::probe::params::{ControlKind, ControlMap};
 use cranelift_ffi::probe::poly;
 use cranelift_ffi::probe::protocol;
 use cranelift_ffi::probe::render::{InputMode, RenderStats};
-use cranelift_ffi::probe::schedule::{Event, Schedule, parse_at, parse_chord, parse_note};
+use cranelift_ffi::probe::schedule::{Schedule, parse_at, parse_chord, parse_note};
 use cranelift_ffi::probe::spectrum::{dominant_frequency, sfdr_db, thd_db};
 use cranelift_ffi::probe::sweep::{Reduction, cartesian, parse_axis, parse_reduction};
 use cranelift_ffi::probe::timing::{BlockTimer, Timing, WorstBlock, human_seconds};
@@ -1047,6 +1047,72 @@ fn failure_context(
     text
 }
 
+/// [`failure_context`] for a polyphonic render: the controls written by the
+/// failing frame, on the voices and on the effect, the last scheduled write
+/// before it, and the notes held then, which for an instrument is half of
+/// what a failure is explained with.
+fn poly_failure_context(
+    frame: usize,
+    fixed: &[(&str, f64)],
+    schedule: &Schedule,
+    poly: &PolyProbe,
+) -> String {
+    let mut then: Vec<(String, f64)> = Vec::new();
+    let mut record = |query: &str, value: f64| -> Vec<(String, f64)> {
+        let landed: Vec<(String, f64)> = poly
+            .check_write(query, value)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|PolyWrite { write, .. }| (write.control.path.clone(), write.applied))
+            .collect();
+        for (path, applied) in &landed {
+            match then.iter_mut().find(|(p, _)| p == path) {
+                Some(entry) => entry.1 = *applied,
+                None => then.push((path.clone(), *applied)),
+            }
+        }
+        landed
+    };
+    for (query, value) in fixed {
+        record(query, *value);
+    }
+    let mut last_event = None;
+    for (at, query, value) in schedule.param_writes() {
+        if at > frame {
+            break;
+        }
+        for (path, applied) in record(query, value) {
+            last_event = Some((at, path, applied));
+        }
+    }
+    let mut text = String::new();
+    if then.is_empty() {
+        text.push_str("\n  controls then: all at their initial values");
+    } else {
+        let listed: Vec<String> = then.iter().map(|(p, v)| format!("{p}={v}")).collect();
+        text.push_str(&format!(
+            "\n  controls written by then: {}",
+            listed.join(" ")
+        ));
+    }
+    if let Some((at, path, value)) = last_event {
+        text.push_str(&format!(
+            "\n  last scheduled write before it: frame {at}, {path}={value}"
+        ));
+    }
+    let held = schedule.notes_held_at(frame);
+    if held.is_empty() {
+        text.push_str("\n  notes held then: none");
+    } else {
+        let listed: Vec<String> = held
+            .iter()
+            .map(|(pitch, on)| format!("{pitch} (on at frame {on})"))
+            .collect();
+        text.push_str(&format!("\n  notes held then: {}", listed.join(", ")));
+    }
+    text
+}
+
 /// Three significant digits of a ratio: `27.6`, `1523`, `0.84`.
 fn three_digits(value: f64) -> String {
     let magnitude = value.abs();
@@ -1158,7 +1224,6 @@ fn run_poly(args: &Args) -> Result<(), String> {
     }
     for (flag, set) in [
         ("--out", args.out.is_some()),
-        ("--fail-above", args.fail_above.is_some()),
         ("--eval", !args.evals.is_empty()),
         ("--compare/--ref/--check", verification_requested(args)),
         ("--freqresp", args.freqresp.is_some()),
@@ -1184,7 +1249,6 @@ fn run_poly(args: &Args) -> Result<(), String> {
     )?;
     // the voices and the effect: everything a poly render compiles
     let compile_seconds = compile_started.elapsed().as_secs_f64();
-    let mut timer = args.time.then(|| BlockTimer::new(f64::from(args.sr)));
 
     if args.list_params {
         println!(
@@ -1235,102 +1299,109 @@ fn run_poly(args: &Args) -> Result<(), String> {
     }
 
     let every = args.every.max(1);
-    let mut peak = vec![0.0_f64; poly.outputs()];
-    let mut sum_sq = vec![0.0_f64; poly.outputs()];
-    let mut counted = 0usize;
-
-    let header_needed = !args.quiet && args.format == Format::Csv;
-    if header_needed {
+    if !args.quiet && args.format == Format::Csv {
         print!("frame");
         for ch in 0..poly.outputs() {
             print!(",out{ch}");
         }
         println!();
     }
+    let spec = PolyRenderSpec {
+        frames: args.render,
+        block: args.block,
+        skip: args.skip,
+        schedule: schedule.clone(),
+        limit: args.fail_above,
+        time: args.time,
+    };
+    let dumping = !args.quiet && args.format == Format::Csv;
+    let stats = poly.render(&spec, |frame, samples| {
+        if !dumping || !(frame - spec.skip).is_multiple_of(every) {
+            return;
+        }
+        let mut line = frame.to_string();
+        for value in samples {
+            line.push(',');
+            line.push_str(&fmt.sample(*value));
+        }
+        println!("{line}");
+    })?;
 
-    let mut written = 0usize;
-    while written < args.render {
-        // Apply what is due exactly here, then shorten the block so the next
-        // event also lands on a boundary — the note timing is what a release
-        // measurement reads, so rounding it to the block grid would put a
-        // systematic error straight into the result.
-        for event in schedule.at(written) {
-            match event {
-                Event::NoteOn { pitch, velocity } => {
-                    poly.key_on(*pitch, *velocity);
-                }
-                Event::NoteOff { pitch } => {
-                    poly.key_off(*pitch, false);
-                }
-                Event::SetParam { path, value } => poly.set_all(path, *value)?,
-            }
-        }
-        let mut n = args.block.min(args.render - written);
-        if let Some(next) = schedule.next_after(written)
-            && next > written
-        {
-            n = n.min(next - written);
-        }
-        // the voices, their mix and the effect: what a host's callback runs
-        let started = timer.is_some().then(Instant::now);
-        let block_out = poly.compute(n);
-        if let (Some(timer), Some(started)) = (timer.as_mut(), started) {
-            timer.record(written, n, started.elapsed());
-        }
-        for j in 0..n {
-            let frame = written + j;
-            if frame < args.skip {
-                continue;
-            }
-            for (ch, channel) in block_out.iter().enumerate() {
-                let value = channel[j];
-                if value.is_finite() {
-                    peak[ch] = peak[ch].max(value.abs());
-                    sum_sq[ch] = value.mul_add(value, sum_sq[ch]);
-                }
-            }
-            counted += 1;
-            if !args.quiet
-                && args.format == Format::Csv
-                && (frame - args.skip).is_multiple_of(every)
-            {
-                let mut line = frame.to_string();
-                for channel in &block_out {
-                    line.push(',');
-                    line.push_str(&fmt.sample(channel[j]));
-                }
-                println!("{line}");
-            }
-        }
-        written += n;
+    // A render that went wrong fails, as a scalar one does, and says where it
+    // starts and what had been written and played by then. The statistics of
+    // this path used to skip the samples that were not finite: a voice that
+    // ran away to infinity printed `rms=inf` and the command succeeded.
+    let non_finite = stats.first_non_finite();
+    if let Some((channel, located)) = stats.first_above()
+        && non_finite.is_none_or(|(_, nf)| located.frame <= nf.frame)
+    {
+        let later = non_finite.map_or_else(String::new, |(ch, nf)| {
+            format!(
+                "\n  the render turns non-finite at frame {}, out{ch} ({})",
+                nf.frame,
+                non_finite_name(nf.value)
+            )
+        });
+        return Err(format!(
+            "a sample exceeds --fail-above {}\n  first: frame {}, out{channel} = {}{later}{}",
+            args.fail_above.unwrap_or_default(),
+            located.frame,
+            fmt.sample(located.value),
+            poly_failure_context(located.frame, &fixed, &schedule, &poly)
+        ));
+    }
+    if let Some((channel, located)) = non_finite {
+        return Err(format!(
+            "render produced non-finite samples\n  first: frame {}, out{channel} ({}); {} of {} frames affected{}",
+            located.frame,
+            non_finite_name(located.value),
+            stats.non_finite_frames,
+            args.render,
+            poly_failure_context(located.frame, &fixed, &schedule, &poly)
+        ));
     }
 
-    let denom = counted.max(1) as f64;
-    let timing = timer.map(BlockTimer::finish);
+    // A poly render is silent until a note plays: say which it is.
+    let mut notes: Vec<String> = Vec::new();
+    if stats.is_silent() {
+        notes.push("every output is exactly zero over the window".to_owned());
+        if !schedule.needs_poly() {
+            notes.push("no --note or --chord is scheduled: every voice stays free".to_owned());
+        }
+    }
     if args.format == Format::Json {
-        let channels: Vec<serde_json::Value> = (0..poly.outputs())
-            .map(|ch| {
+        let channels: Vec<serde_json::Value> = stats
+            .channels
+            .iter()
+            .map(|c| {
                 serde_json::json!({
-                    "peak": json_number(peak[ch]),
-                    "rms": json_number((sum_sq[ch] / denom).sqrt()),
+                    "peak": json_number(c.peak),
+                    "rms": json_number(c.rms),
+                    "dc": json_number(c.dc),
+                    "peak_at": c.peak_at,
+                    "subnormal": c.subnormal,
+                    "subnormal_at": c.subnormal_at,
                 })
             })
             .collect();
-        let document = serde_json::json!({
+        let mut document = serde_json::json!({
             "schema_version": 1,
             "dsp": args.file,
             "sr": args.sr,
             "nvoices": args.nvoices,
             "frames": args.render,
+            "window": { "start": stats.window_start, "frames": stats.window_len },
             "active_voices": poly.active_voice_count(),
             "channels": channels,
         });
-        let mut document = document;
         if !clamped.is_empty() {
             document["clamped"] =
                 serde_json::Value::Array(clamped.iter().map(Clamped::json).collect());
         }
-        if let Some(timing) = &timing {
+        if !notes.is_empty() {
+            document["notes"] = serde_json::json!(notes);
+        }
+        if let Some(timing) = &stats.timing {
             let mut json = timing_json(timing);
             json["compile_s"] = json_number(compile_seconds);
             document["timing"] = json;
@@ -1350,33 +1421,40 @@ fn run_poly(args: &Args) -> Result<(), String> {
                 eprintln!("{line}");
             }
         };
+        // the fields a reader keyed on come first; the window and what a
+        // scalar render says of a channel follow them
         emit(format!(
-            "# frames={} sr={} nvoices={} active_voices={}",
+            "# frames={} sr={} nvoices={} active_voices={} window={}..{} ({} frames)",
             args.render,
             args.sr,
             args.nvoices,
-            poly.active_voice_count()
+            poly.active_voice_count(),
+            stats.window_start,
+            stats.window_start + stats.window_len,
+            stats.window_len
         ));
-        for ch in 0..poly.outputs() {
+        for (ch, channel) in stats.channels.iter().enumerate() {
+            let subnormal = channel.subnormal_at.map_or_else(String::new, |frame| {
+                format!(" subnormal={} subnormal_at={frame}", channel.subnormal)
+            });
             emit(format!(
-                "# out{ch}: peak={} rms={}",
-                fmt.sample(peak[ch]),
-                fmt.computed((sum_sq[ch] / denom).sqrt())
+                "# out{ch}: peak={} rms={} dc={} finite={} peak_at={}{subnormal}",
+                fmt.sample(channel.peak),
+                fmt.computed(channel.rms),
+                fmt.computed(channel.dc),
+                if channel.finite { "yes" } else { "no" },
+                channel
+                    .peak_at
+                    .map_or_else(|| "none".to_owned(), |frame| frame.to_string())
             ));
         }
         for clamp in &clamped {
             emit(clamp.line());
         }
-        // A poly render is silent until a note plays: say which it is.
-        if counted > 0 && peak.iter().all(|p| *p == 0.0) {
-            emit("# note: every output is exactly zero over the window".to_owned());
-            if !schedule.needs_poly() {
-                emit(
-                    "# note: no --note or --chord is scheduled: every voice stays free".to_owned(),
-                );
-            }
+        for note in &notes {
+            emit(format!("# note: {note}"));
         }
-        if let Some(timing) = &timing {
+        if let Some(timing) = &stats.timing {
             for line in time_lines(compile_seconds, timing, |w| format!("frame {}", w.frame)) {
                 emit(line);
             }

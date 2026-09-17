@@ -726,7 +726,8 @@ As planned, with these decisions and departures:
   is a normal `f64`, and the statistics are accumulated in `f64`), over the
   window, with the frame of the first: `subnormal=23 subnormal_at=127`, only
   when there is one; always present in the JSON channels. Not in the
-  polyphonic statistics, which have their own, smaller, accumulator.
+  polyphonic statistics at the time, which had their own, smaller, accumulator:
+  see "The polyphonic statistics and failures" at the end of this section.
 - **`--error-format json`.** The report is reached at the Rust level
   (`cranelift_ffi::factory::last_error_diagnostics_json`, per thread, attached
   where a typed error is flattened and published where its summary reaches the
@@ -932,4 +933,47 @@ ringing point named, the JSON runs and the single timing account. Ten
 mutations rejected; one first survived, the fixed controls written at the first
 point only, because the test looked at the first point only: it now checks
 every point against the closed form.
+
+### The polyphonic statistics and failures, 2026-09-17
+
+Asked for as "the subnormal count and the failure context in the polyphonic
+path". Measuring first, again, showed that the path had no failure to give a
+context to: its statistics were a peak and an RMS over **the samples that were
+finite**, so a voice whose loop ran away to infinity printed
+`peak=1.0486543286696841e308 rms=inf` and the command exited 0. D3 of this
+plan, the non-finite render that says nothing, in its purest form.
+
+- The render loop moved from the command line into the library
+  (`PolyProbe::render`, `PolyRenderSpec`), next to `Probe::render` and on the
+  same `StatsAccumulator`: a polyphonic render returns the `RenderStats` of a
+  scalar one. Statistics over the `--skip` window, non-finite samples counted
+  everywhere, the first one located, the peak's frame, subnormals at the
+  instrument's width, the first sample above a limit. `--fail-above`, refused
+  under `--nvoices` until now, is accepted.
+- A render that is not finite, or over the limit, fails as a scalar one does,
+  in text and in JSON, with `poly_failure_context`: the controls written by
+  the failing frame on the voices and on the effect with the values **applied**
+  (under `--clamp`, the clamped ones), the last scheduled write before it, and
+  the notes held then (`Schedule::notes_held_at`: switched on at or before the
+  frame and not switched off by then).
+- The statistics lines are those of a scalar render (`peak`, `rms` first, as
+  before, then `dc`, `finite`, `peak_at`, `subnormal`), the header line gains
+  the window; the JSON channels and document alike. Keys added, none renamed.
+
+Known and left: `--in` means nothing under `--nvoices` (voices are fed
+silence) and is accepted without a word, its default being indistinguishable
+from its absence.
+
+Checks: four tests in `tests/feedback_probe.rs`, one of the library's render in
+`tests/poly_probe.rs` (a note at frame 100 sounds from frame 100 whatever the
+block size), one unit test of the held notes; 371 in the crate. The overflow
+frame (1011) and the first sample above 100 (frame 502, 149) are replayed from
+`y = 1 + fb y` in the test. Eleven mutations rejected: a non-finite render
+succeeding; the writes after the failure listed; a released note still held
+(from the binary and from the schedule); the notes missing; the limit not
+given to the render; subnormals measured as doubles; the window ignoring
+`--skip`; a scheduled event waiting for the next block (from the library and
+from the binary); the requested values in place of the applied ones. One
+expectation of mine was wrong on the way: the test voice sounds from the very
+frame of its note-on, not the next.
 

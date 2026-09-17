@@ -834,6 +834,25 @@ struct Voice {
     paths: poly::VoiceControlPaths,
 }
 
+/// How a polyphonic render should be driven: what [`RenderSpec`] holds, less
+/// what a polyphonic instrument has no use for (its voices are fed silence,
+/// and nothing presses their gates but the notes).
+#[derive(Debug, Clone)]
+pub struct PolyRenderSpec {
+    /// Total frames to render.
+    pub frames: usize,
+    /// Frames per host block, before the schedule shortens one.
+    pub block: usize,
+    /// First frame included in statistics and dump.
+    pub skip: usize,
+    /// Notes and control writes, applied at their exact frames.
+    pub schedule: Schedule,
+    /// Magnitude the window must stay under (`--fail-above`).
+    pub limit: crate::probe::render::RenderLimit,
+    /// Time every host block (`--time`).
+    pub time: bool,
+}
+
 /// Where a broadcast write lands in a polyphonic instrument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolyTarget {
@@ -1249,6 +1268,88 @@ impl PolyProbe {
         let (voice, write) = self.state.key_off(pitch, hard)?;
         apply_write(&self.voices[voice], write);
         Some(voice)
+    }
+
+    /// Whether the instrument was compiled for double-precision samples.
+    #[must_use]
+    pub fn is_double(&self) -> bool {
+        self.voices
+            .first()
+            .is_some_and(|voice| voice.probe.is_double())
+    }
+
+    /// Render `spec`: the scheduled notes and writes applied at their exact
+    /// frames, `on_frame` invoked for each frame at or after the skip point,
+    /// and the statistics of that window returned, **the very statistics a
+    /// scalar render has** ([`RenderStats`]): the first non-finite sample and
+    /// the number of frames affected, the first sample above the limit, the
+    /// peak's frame, the subnormal samples at the instrument's width.
+    ///
+    /// The loop used to live in the command line with statistics of its own,
+    /// a peak and an RMS over the finite samples: a render that ran away to
+    /// infinity reported `rms=inf` and succeeded.
+    ///
+    /// # Errors
+    /// A scheduled write that does not resolve ([`PolyProbe::set_all`]); the
+    /// command line checks them all before rendering.
+    pub fn render<F>(
+        &mut self,
+        spec: &PolyRenderSpec,
+        mut on_frame: F,
+    ) -> Result<RenderStats, String>
+    where
+        F: FnMut(usize, &[f64]),
+    {
+        let mut acc = StatsAccumulator::with_limit(self.outputs, spec.skip, spec.limit)
+            .at_width(self.is_double());
+        let block = spec.block.max(1);
+        let mut timer = spec
+            .time
+            .then(|| BlockTimer::new(f64::from(self.sample_rate)));
+        let mut frame: Frame = vec![0.0; self.outputs];
+        let mut written = 0usize;
+        while written < spec.frames {
+            // Apply what is due exactly here, then shorten the block so the
+            // next event also lands on a boundary: the note timing is what a
+            // release measurement reads, so rounding it to the block grid
+            // would put a systematic error straight into the result.
+            for event in spec.schedule.at(written) {
+                match event {
+                    Event::NoteOn { pitch, velocity } => {
+                        self.key_on(*pitch, *velocity);
+                    }
+                    Event::NoteOff { pitch } => {
+                        self.key_off(*pitch, false);
+                    }
+                    Event::SetParam { path, value } => self.set_all(path, *value)?,
+                }
+            }
+            let mut n = block.min(spec.frames - written);
+            if let Some(next) = spec.schedule.next_after(written)
+                && next > written
+            {
+                n = n.min(next - written);
+            }
+            // the voices, their mix and the effect: what a host's callback runs
+            let started = timer.is_some().then(Instant::now);
+            let block_out = self.compute(n);
+            if let (Some(timer), Some(started)) = (timer.as_mut(), started) {
+                timer.record(written, n, started.elapsed());
+            }
+            for j in 0..n {
+                for (sample, channel) in frame.iter_mut().zip(&block_out) {
+                    *sample = channel[j];
+                }
+                acc.push(written + j, &frame);
+                if written + j >= spec.skip {
+                    on_frame(written + j, &frame);
+                }
+            }
+            written += n;
+        }
+        let mut stats = acc.finish();
+        stats.timing = timer.map(BlockTimer::finish);
+        Ok(stats)
     }
 
     /// Render one host block across every voice, mix, and run the effect.

@@ -946,3 +946,228 @@ process = gate * (freq / 20000) + 0 * gain;
     let expected = 440.0 * 2.0_f64.powf((127.0 - 69.0) / 12.0) / 20000.0;
     assert!((peak_of(&stdout) - expected).abs() < 1e-9, "{stdout}");
 }
+
+// --------------------------------- the polyphonic path: failures, statistics
+//
+// The polyphonic render had statistics of its own, a peak and an RMS over the
+// samples that were finite: a voice that ran away to infinity printed
+// `rms=inf` and the command succeeded. It has the scalar path's statistics
+// now, and fails as a scalar render fails, with what an instrument's failure
+// is explained with: the controls written by then, and the notes held.
+
+/// A voice whose loop gain is its `fb` control: 2 in the steady state at 0.5,
+/// a runaway above 1. One held note: `y = 1 + fb * y`.
+const RUNAWAY: &str = r#"
+freq = hslider("freq", 440, 20, 20000, 0.01);
+gain = hslider("gain", 0.5, 0, 1, 0.001);
+gate = button("gate");
+fb = hslider("fb", 0.5, 0, 4, 0.001);
+process = (gate + 0 * (freq + gain)) : (+ ~ *(fb));
+"#;
+
+/// The first frame at which `y = 1 + fb y` exceeds `level` (infinity for the
+/// overflow), `fb` being 0.5 up to frame 500 and 4 from there.
+fn runaway_frame(level: f64) -> usize {
+    let mut y = 0.0_f64;
+    for frame in 0.. {
+        y = 1.0 + if frame < 500 { 0.5 } else { 4.0 } * y;
+        if y > level || !y.is_finite() {
+            return frame;
+        }
+    }
+    unreachable!()
+}
+
+#[test]
+fn a_polyphonic_render_that_runs_away_fails_and_says_where_it_starts() {
+    let overflow = runaway_frame(f64::MAX);
+    assert_eq!(overflow, 1011, "the replay itself");
+    let base = [
+        "--double",
+        "--nvoices",
+        "2",
+        "-n",
+        "2000",
+        "--quiet",
+        // one note held, one released long before; one write before the
+        // failure and one after it
+        "--note",
+        "60@0",
+        "--note",
+        "64@0..100",
+        "--at",
+        "500",
+        "fb=4",
+        "--at",
+        "1900",
+        "fb=0.5",
+    ];
+    let (ok, stdout, stderr) = probe_binary("poly_runaway", RUNAWAY, &base);
+    assert!(!ok, "a render that is not finite fails: {stdout}");
+    assert!(
+        stderr.contains(&format!(
+            "render produced non-finite samples\n  first: frame {overflow}, out0 (+inf); {} of 2000 frames affected",
+            2000 - overflow
+        )),
+        "{stderr}"
+    );
+    // the write before it, not the one after it
+    assert!(stderr.contains("/fb=4"), "{stderr}");
+    assert!(
+        stderr.contains("last scheduled write before it: frame 500, "),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("frame 1900"), "{stderr}");
+    // the note that is held, not the one that was released
+    assert!(
+        stderr.ends_with("notes held then: 60 (on at frame 0)\n"),
+        "{stderr}"
+    );
+
+    // in JSON too, a failure is a failure and not a document with a null in it
+    let mut json = base.to_vec();
+    json.retain(|a| *a != "--quiet");
+    json.extend(["--format", "json"]);
+    let (ok, stdout, _) = probe_binary("poly_runaway_json", RUNAWAY, &json);
+    assert!(!ok);
+    assert!(stdout.is_empty(), "{stdout}");
+}
+
+#[test]
+fn fail_above_catches_a_polyphonic_runaway_at_its_start() {
+    let above = runaway_frame(100.0);
+    assert_eq!(above, 502, "2, then 9, 37, 149");
+    let (ok, _, stderr) = probe_binary(
+        "poly_fail_above",
+        RUNAWAY,
+        &[
+            "--double",
+            "--nvoices",
+            "2",
+            "-n",
+            "2000",
+            "--quiet",
+            "--note",
+            "60@0",
+            "--at",
+            "500",
+            "fb=4",
+            "--fail-above",
+            "100",
+        ],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("a sample exceeds --fail-above 100\n  first: frame 502, out0 = 149.0"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("the render turns non-finite at frame 1011, out0 (+inf)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("notes held then: 60"), "{stderr}");
+    // under the level nothing fails
+    let (ok, _, stderr) = probe_binary(
+        "poly_fail_above_ok",
+        RUNAWAY,
+        &[
+            "--double",
+            "--nvoices",
+            "2",
+            "-n",
+            "2000",
+            "--quiet",
+            "--note",
+            "60@0",
+            "--fail-above",
+            "100",
+        ],
+    );
+    assert!(ok, "{stderr}");
+}
+
+/// An impulse at the note-on, halved at every sample: `2^-k` at frame `k`,
+/// subnormal in single precision from frame 127 to frame 149.
+#[test]
+fn a_polyphonic_render_has_the_statistics_of_a_scalar_one() {
+    let decay = r#"
+freq = hslider("freq", 440, 20, 20000, 0.01);
+gain = hslider("gain", 0.5, 0, 1, 0.001);
+gate = button("gate");
+process = ((gate - gate') * (gate > 0) + 0 * (freq + gain)) : (+ ~ *(0.5));
+"#;
+    let args = ["--nvoices", "1", "--note", "60@0", "-n", "300", "--quiet"];
+    let (ok, stdout, stderr) = probe_binary("poly_stats", decay, &args);
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains("nvoices=1 active_voices=1 window=0..300 (300 frames)"),
+        "{stdout}"
+    );
+    let line = stdout.lines().find(|l| l.starts_with("# out0")).unwrap();
+    assert!(line.starts_with("# out0: peak=1.0 rms="), "{line}");
+    assert!(
+        line.ends_with(" finite=yes peak_at=0 subnormal=23 subnormal_at=127"),
+        "{line}"
+    );
+    // at the width of the instrument: none in double precision
+    let mut double = args.to_vec();
+    double.push("--double");
+    let (_, stdout, _) = probe_binary("poly_stats_double", decay, &double);
+    let line = stdout.lines().find(|l| l.starts_with("# out0")).unwrap();
+    assert!(line.ends_with(" finite=yes peak_at=0"), "{line}");
+
+    // the window is the one --skip leaves: frames 140 to 149 are subnormal
+    let mut skipped = args.to_vec();
+    skipped.extend(["--skip", "140"]);
+    let (_, stdout, _) = probe_binary("poly_stats_skip", decay, &skipped);
+    assert!(stdout.contains("window=140..300 (160 frames)"), "{stdout}");
+    let line = stdout.lines().find(|l| l.starts_with("# out0")).unwrap();
+    assert!(line.ends_with(" subnormal=10 subnormal_at=140"), "{line}");
+
+    // and the JSON channels carry what a scalar run's carry
+    let mut json = args.to_vec();
+    json.retain(|a| *a != "--quiet");
+    json.extend(["--format", "json"]);
+    let (ok, stdout, stderr) = probe_binary("poly_stats_json", decay, &json);
+    assert!(ok, "{stderr}");
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    let channel = &document["channels"][0];
+    assert_eq!(channel["peak"], 1.0);
+    assert_eq!(channel["peak_at"], 0);
+    assert_eq!(channel["subnormal"], 23);
+    assert_eq!(channel["subnormal_at"], 127);
+    assert!(channel["dc"].as_f64().unwrap() > 0.0);
+    assert_eq!(document["window"]["frames"], 300);
+}
+
+/// Under `--clamp` the context of a failure names the value the voices ran
+/// with, not the one that was typed.
+#[test]
+fn a_polyphonic_failure_lists_the_values_that_were_applied() {
+    let (ok, _, stderr) = probe_binary(
+        "poly_context_clamped",
+        RUNAWAY,
+        &[
+            "--double",
+            "--nvoices",
+            "2",
+            "-n",
+            "2000",
+            "--quiet",
+            "--note",
+            "60@0",
+            "--clamp",
+            "--at",
+            "500",
+            "fb=9",
+        ],
+    );
+    assert!(!ok);
+    // 9 is clamped to the slider's 4: the same runaway, the same frame
+    assert!(
+        stderr.contains("first: frame 1011, out0 (+inf)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("/fb=4\n"), "{stderr}");
+    assert!(!stderr.contains("fb=9"), "{stderr}");
+}

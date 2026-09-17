@@ -150,6 +150,48 @@ fn more_notes_than_voices_steals_rather_than_dropping() {
 }
 
 #[test]
+fn a_render_plays_its_notes_on_their_frames_and_returns_the_scalar_statistics() {
+    // The render loop moved from the command line into the library, where
+    // `Probe::render` lives, with its statistics: a note scheduled at frame
+    // 100 sounds from frame 100, whatever the block size, and the window's
+    // statistics say where the peak is.
+    use cranelift_ffi::probe::engine::PolyRenderSpec;
+    use cranelift_ffi::probe::schedule::{Schedule, parse_note};
+    let mut schedule = Schedule::new();
+    for (frame, event) in parse_note("69@100").unwrap() {
+        schedule.push(frame, event);
+    }
+    let spec = PolyRenderSpec {
+        frames: 2000,
+        block: 64,
+        skip: 0,
+        schedule,
+        limit: None,
+        time: false,
+    };
+    let mut probe = compile(2);
+    let mut first_sound = None;
+    let mut frames = 0;
+    let stats = probe
+        .render(&spec, |frame, samples| {
+            frames += 1;
+            if first_sound.is_none() && samples[0] != 0.0 {
+                first_sound = Some(frame);
+            }
+        })
+        .expect("render");
+    assert_eq!(frames, 2000);
+    // silence up to the note-on, sound from its very frame (the phasor's
+    // first value is one increment, not zero): the block was cut at 100
+    assert_eq!(first_sound, Some(100));
+    assert_eq!(stats.window_len, 2000);
+    assert!(stats.all_finite());
+    let channel = &stats.channels[0];
+    assert!(channel.peak > 1e-4 && channel.peak_at.is_some_and(|at| at >= 100));
+    assert_eq!(probe.active_voice_count(), 1);
+}
+
+#[test]
 fn a_broadcast_write_is_a_widgets_and_stays_in_its_range() {
     // `level` goes from 0 to 1. A voice used to take whatever it was given,
     // while the effect clamped: 7 is now 1 on a voice too, as `Probe::set`

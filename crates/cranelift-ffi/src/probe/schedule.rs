@@ -94,6 +94,33 @@ impl Schedule {
             .collect()
     }
 
+    /// The pitches sounding at `frame`, each with the frame of its note-on:
+    /// every note switched on at or before `frame` and not switched off by
+    /// then, in the order they were played.
+    ///
+    /// What a failed polyphonic render reads to say which notes were held
+    /// when it failed. A pitch played twice is held from its last note-on.
+    #[must_use]
+    pub fn notes_held_at(&self, frame: usize) -> Vec<(i32, usize)> {
+        let mut held: Vec<(i32, usize)> = Vec::new();
+        for (at, events) in &self.events {
+            if *at > frame {
+                break;
+            }
+            for event in events {
+                match event {
+                    Event::NoteOn { pitch, .. } => {
+                        held.retain(|(p, _)| p != pitch);
+                        held.push((*pitch, *at));
+                    }
+                    Event::NoteOff { pitch } => held.retain(|(p, _)| p != pitch),
+                    Event::SetParam { .. } => {}
+                }
+            }
+        }
+        held
+    }
+
     /// Whether nothing is scheduled.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -261,6 +288,23 @@ pub fn parse_chord(text: &str) -> Result<Vec<(usize, Event)>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_notes_held_at_a_frame_are_those_on_and_not_yet_off() {
+        let mut schedule = Schedule::new();
+        for note in ["60@0", "64@10..100", "67@50", "60@200"] {
+            for (frame, event) in parse_note(note).unwrap() {
+                schedule.push(frame, event);
+            }
+        }
+        assert_eq!(schedule.notes_held_at(5), [(60, 0)]);
+        assert_eq!(schedule.notes_held_at(60), [(60, 0), (64, 10), (67, 50)]);
+        // 64 is released at 100, the frame included
+        assert_eq!(schedule.notes_held_at(100), [(60, 0), (67, 50)]);
+        // played again, a pitch is held from its last note-on
+        assert_eq!(schedule.notes_held_at(300), [(67, 50), (60, 200)]);
+        assert!(Schedule::new().notes_held_at(10).is_empty());
+    }
 
     #[test]
     fn note_parses_pitch_velocity_and_span() {

@@ -623,6 +623,34 @@ from the pitch, its gain from the velocity and its gate, whatever the sliders
 declare, and so does the probe. Note 127 is 12 543.85 Hz on a `freq` slider that
 stops at 1000, and reaches the voice as computed.
 
+**Statistics and failures are those of a scalar render.** The header line adds
+the voices (`# frames=300 sr=44100 nvoices=1 active_voices=1 window=0..300 (300
+frames)`), and each output has the line of §6: `peak`, `rms`, `dc`, `finite`,
+`peak_at`, and `subnormal=N subnormal_at=FRAME` when the mix holds subnormal
+samples, counted at the instrument's width (a released voice decays through
+them before it is reclaimed). The JSON channels carry the same fields, and the
+document its `window`. `--skip`, `--fail-above` and `--time` apply.
+
+A render that is not finite, or that exceeds `--fail-above`, fails, and says
+what an instrument's failure is explained with: where it starts, the controls
+written by then on the voices and on the effect with the values they took, the
+last scheduled write before it, and **the notes held then**:
+
+```text
+$ faustprobe --double --nvoices 2 --note 60@0 --note 64@0..100 --at 500 fb=4 -n 2000 --quiet synth.dsp
+faustprobe: render produced non-finite samples
+  first: frame 1011, out0 (+inf); 989 of 2000 frames affected
+  controls written by then: /synth/fb=4
+  last scheduled write before it: frame 500, /synth/fb=4
+  notes held then: 60 (on at frame 0)
+```
+
+Note 64, released at frame 100, is not among them; a write scheduled after the
+failure would not be listed either. Until this was fixed the polyphonic render
+kept statistics of its own, a peak and an RMS over the samples that were
+finite: the render above printed `peak=1.0486543286696841e308 rms=inf` and
+succeeded.
+
 ## 11. The impulse-test protocol
 
 `--protocol impulse-test` pins every rendering condition to the reference
