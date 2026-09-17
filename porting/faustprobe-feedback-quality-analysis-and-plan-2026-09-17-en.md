@@ -774,8 +774,19 @@ counted before the step) was first written as a change that changed nothing
 and survived for that reason; rewritten, it is rejected.
 
 Not done, and known: the polyphonic path still clamps a `--set` in silence
-(F1 refused `--clamp` there instead of reporting); `scripts/fit_rooms.py` still
-uses the two-command form.
+(F1 refused `--clamp` there instead of reporting).
+
+*Later the same day*, `scripts/fit_rooms.py` of `faust-diff-jot` was moved to
+the one-command form (its commits `b1651c8`, `38fd801`): on the nine rooms the
+trajectories are those of the two commands bit for bit, 300 rows each. Running
+it was the first `make rooms` since F1, and F1's range error stopped it on the
+first room: the script renders each fitted model with another program whose
+slider went from 0.1 to 10 s, the studio's fitted time is 0.035 s, and until F1
+that value was clamped in silence. The published row of that room had been
+measured on a model at 0.1 s (T30 error 59 / 134 ms, gain 26.3 dB) while its
+preset used 0.035 s; measured on the fitted model it is 94 / 169 ms and
+38.4 dB. The case §2.1 opened this plan with, found in the project the plan
+was written from.
 
 ### F5, implemented 2026-09-17
 
