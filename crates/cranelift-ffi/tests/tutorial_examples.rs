@@ -599,7 +599,7 @@ fn s10_4_host_loop_with_train() {
             sets: vec![],
         };
         let adam = spec(Optimizer::ADAM, 0.05);
-        let checks = train::fd_check(&factory, SAMPLE_RATE, &adam, 1e-3).expect("fd-check");
+        let checks = train::fd_check(&factory, SAMPLE_RATE, &adam, 1e-3, None).expect("fd-check");
         assert_eq!(checks.len(), 2);
         for c in &checks {
             assert!(
@@ -649,7 +649,8 @@ fn s10_5_block_sweep_goes_through_time() {
             reset_per_block: false,
             sets: vec![],
         };
-        let checks = train::fd_check(&factory, SAMPLE_RATE, &spec(256, 1), 1e-3).expect("fd-check");
+        let checks =
+            train::fd_check(&factory, SAMPLE_RATE, &spec(256, 1), 1e-3, None).expect("fd-check");
         assert_near("fd of the block loss", checks[0].fd, rad_sum, 0.01);
         assert!(
             checks[0].relative_error < 1e-5,

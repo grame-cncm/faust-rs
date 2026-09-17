@@ -6,13 +6,14 @@
 
 use std::process::ExitCode;
 use std::thread;
+use std::time::Instant;
 
 use clap::{ArgAction, Parser, ValueEnum};
 
 use cranelift_ffi::probe::audio_file::read_channels;
 use cranelift_ffi::probe::audio_out::SampleWriter;
 use cranelift_ffi::probe::compare::{Comparison, Samples, Tolerance, compare};
-use cranelift_ffi::probe::engine::{Factory, PolyProbe, Probe, RenderSpec};
+use cranelift_ffi::probe::engine::{Factory, PolyProbe, Probe, RenderSpec, last_compile_failure};
 use cranelift_ffi::probe::eval::{EvalProgram, csv_field};
 use cranelift_ffi::probe::number::{NumberFormat, Precision};
 use cranelift_ffi::probe::params::{ControlKind, ControlMap};
@@ -22,7 +23,8 @@ use cranelift_ffi::probe::render::{InputMode, RenderStats};
 use cranelift_ffi::probe::schedule::{Event, Schedule, parse_at, parse_chord, parse_note};
 use cranelift_ffi::probe::spectrum::{dominant_frequency, sfdr_db, thd_db};
 use cranelift_ffi::probe::sweep::{Reduction, cartesian, parse_axis, parse_reduction};
-use cranelift_ffi::probe::train::{self, Optimizer, TrainSpec};
+use cranelift_ffi::probe::timing::{BlockTimer, Timing, WorstBlock, human_seconds};
+use cranelift_ffi::probe::train::{self, BoundStats, FdCheck, Optimizer, TrainSpec};
 
 /// How rendered frames are printed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -382,10 +384,23 @@ struct Args {
 
     /// Check the gradient lanes of the `--train` controls against central
     /// finite differences of the loss lane, on one block from a fresh
-    /// instance per evaluation, at the controls' initial values. Fails when
-    /// a relative error exceeds `--fd-tolerance`. Alone or before `--train`.
-    #[arg(long = "fd-check")]
-    fd_check: bool,
+    /// instance per evaluation. Fails when a relative error exceeds
+    /// `--fd-tolerance`.
+    ///
+    /// `--fd-check` alone, or `--fd-check=start`, checks at the descent's
+    /// starting point, before it (or instead of it, with `--blocks 0`);
+    /// `--fd-check=end` at the trained values, after it, where a descent is
+    /// finished only if the gradient is small *and* right; `--fd-check=both`
+    /// does both.
+    #[arg(
+        long = "fd-check",
+        value_enum,
+        value_name = "WHERE",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "start"
+    )]
+    fd_check: Option<FdWhere>,
 
     /// Step of the finite differences.
     #[arg(long = "fd-step", default_value_t = 1e-3)]
@@ -394,6 +409,54 @@ struct Args {
     /// Largest accepted `|rad - fd| / max(|fd|, 1)`.
     #[arg(long = "fd-tolerance", default_value_t = 0.02)]
     fd_tolerance: f64,
+
+    /// Add the block's mean gradient, one `grad_CONTROL` column per trained
+    /// control, to each row of `--train`.
+    ///
+    /// A control that stops moving has a vanishing gradient (a flat loss, or
+    /// a minimum) or a vanishing step (a learning rate too small for the
+    /// gradient's scale); the controls alone do not say which.
+    #[arg(long = "train-verbose")]
+    train_verbose: bool,
+
+    /// Report what the run cost: the compilation, the `compute` calls against
+    /// real time, and the worst block against its own deadline.
+    ///
+    /// Behind a flag because these are the only numbers here that differ from
+    /// one run to the next. What is timed is `compute` alone: not the
+    /// excitation, not the statistics, not the printing of the rows.
+    #[arg(long = "time")]
+    time: bool,
+
+    /// How a compile failure is reported: `human`, the compiler's rendered
+    /// diagnostics on stderr (the default), or `json`, the compiler's
+    /// diagnostics-v2 report on stdout (code, ranges, facts,
+    /// machine-applicable fixes) and the one-line summary on stderr.
+    ///
+    /// Any other failure (a value out of range, a non-finite render, a failed
+    /// comparison) is reported as text either way.
+    #[arg(long = "error-format", value_enum, default_value_t = ErrorFormat::Human)]
+    error_format: ErrorFormat,
+}
+
+/// Where `--fd-check` runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum FdWhere {
+    /// At the descent's starting point, before it.
+    Start,
+    /// At the trained values, after the descent.
+    End,
+    /// At both.
+    Both,
+}
+
+/// How a compile failure is reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ErrorFormat {
+    /// The compiler's rendered diagnostics, on stderr.
+    Human,
+    /// The compiler's diagnostics-v2 JSON report, on stdout.
+    Json,
 }
 
 /// The update rule of `--train`.
@@ -909,6 +972,75 @@ fn failure_context(
     text
 }
 
+/// Three significant digits of a ratio: `27.6`, `1523`, `0.84`.
+fn three_digits(value: f64) -> String {
+    let magnitude = value.abs();
+    if !value.is_finite() || magnitude >= 100.0 {
+        format!("{value:.0}")
+    } else if magnitude >= 10.0 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+/// The `# time` lines of `--time`: the compilation, the `compute` calls
+/// against real time, the worst block against its deadline. `worst_name` says
+/// which block that is, a render counting frames and a descent blocks.
+fn time_lines(
+    compile_seconds: f64,
+    timing: &Timing,
+    worst_name: impl Fn(&WorstBlock) -> String,
+) -> Vec<String> {
+    let mut lines = vec![format!(
+        "# time: compile {}",
+        human_seconds(compile_seconds)
+    )];
+    if timing.blocks == 0 {
+        return lines;
+    }
+    lines.push(format!(
+        "# time: compute {} for {} of audio ({} frames in {} block{}): {}x real time",
+        human_seconds(timing.compute_seconds),
+        human_seconds(timing.audio_seconds()),
+        timing.frames,
+        timing.blocks,
+        if timing.blocks == 1 { "" } else { "s" },
+        three_digits(timing.realtime_factor())
+    ));
+    if let (Some(worst), Some(fraction)) = (timing.worst, timing.worst_budget_fraction()) {
+        lines.push(format!(
+            "# time: worst block: {}, {} frames in {}, {}% of its {} budget",
+            worst_name(&worst),
+            worst.frames,
+            human_seconds(worst.seconds),
+            three_digits(100.0 * fraction),
+            human_seconds(timing.budget_seconds(worst.frames))
+        ));
+    }
+    lines
+}
+
+/// [`time_lines`] for the JSON documents. Seconds throughout.
+fn timing_json(timing: &Timing) -> serde_json::Value {
+    serde_json::json!({
+        "compute_s": json_number(timing.compute_seconds),
+        "audio_s": json_number(timing.audio_seconds()),
+        "frames": timing.frames,
+        "blocks": timing.blocks,
+        "realtime_factor": json_number(timing.realtime_factor()),
+        "worst_block": timing.worst.map(|worst| serde_json::json!({
+            "frame": worst.frame,
+            "frames": worst.frames,
+            "seconds": json_number(worst.seconds),
+            "budget_s": json_number(timing.budget_seconds(worst.frames)),
+            "budget_fraction": json_number(
+                timing.worst_budget_fraction().unwrap_or(f64::NAN)
+            ),
+        })),
+    })
+}
+
 /// Names a non-finite sample the way it prints.
 fn non_finite_name(value: f64) -> &'static str {
     if value.is_nan() {
@@ -966,6 +1098,7 @@ fn run_poly(args: &Args) -> Result<(), String> {
     }
     let fmt = number_format(args)?;
 
+    let compile_started = Instant::now();
     let mut poly = PolyProbe::compile(
         &args.file,
         &args.import_dirs,
@@ -976,6 +1109,9 @@ fn run_poly(args: &Args) -> Result<(), String> {
         args.effect.as_deref(),
         args.voice_stop_level,
     )?;
+    // the voices and the effect: everything a poly render compiles
+    let compile_seconds = compile_started.elapsed().as_secs_f64();
+    let mut timer = args.time.then(|| BlockTimer::new(f64::from(args.sr)));
 
     if args.list_params {
         println!(
@@ -1050,7 +1186,12 @@ fn run_poly(args: &Args) -> Result<(), String> {
         {
             n = n.min(next - written);
         }
+        // the voices, their mix and the effect: what a host's callback runs
+        let started = timer.is_some().then(Instant::now);
         let block_out = poly.compute(n);
+        if let (Some(timer), Some(started)) = (timer.as_mut(), started) {
+            timer.record(written, n, started.elapsed());
+        }
         for j in 0..n {
             let frame = written + j;
             if frame < args.skip {
@@ -1080,6 +1221,7 @@ fn run_poly(args: &Args) -> Result<(), String> {
     }
 
     let denom = counted.max(1) as f64;
+    let timing = timer.map(BlockTimer::finish);
     if args.format == Format::Json {
         let channels: Vec<serde_json::Value> = (0..poly.outputs())
             .map(|ch| {
@@ -1098,6 +1240,12 @@ fn run_poly(args: &Args) -> Result<(), String> {
             "active_voices": poly.active_voice_count(),
             "channels": channels,
         });
+        let mut document = document;
+        if let Some(timing) = &timing {
+            let mut json = timing_json(timing);
+            json["compile_s"] = json_number(compile_seconds);
+            document["timing"] = json;
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?
@@ -1136,6 +1284,11 @@ fn run_poly(args: &Args) -> Result<(), String> {
                 );
             }
         }
+        if let Some(timing) = &timing {
+            for line in time_lines(compile_seconds, timing, |w| format!("frame {}", w.frame)) {
+                emit(line);
+            }
+        }
     }
 
     Ok(())
@@ -1158,14 +1311,30 @@ fn run(mut args: Args) -> Result<(), String> {
     if args.effect.is_some() && args.nvoices == 0 {
         return Err("--effect requires --nvoices > 0".to_owned());
     }
+    if args.train_verbose && args.train.is_empty() {
+        return Err("--train-verbose adds the gradients to the rows of --train".to_owned());
+    }
+    // The report's ranges are byte offsets in the source that was compiled,
+    // which under `--eval` is the file wrapped and followed by the
+    // expressions: a fix applied to FILE at those offsets would land
+    // elsewhere. The human text is rewritten for that case; the report is not.
+    if args.error_format == ErrorFormat::Json && !args.evals.is_empty() {
+        return Err(
+            "--error-format json cannot be combined with --eval: the report's offsets would be \
+             those of the wrapped source, not of FILE"
+                .to_owned(),
+        );
+    }
     if args.nvoices > 0 {
         return run_poly(&args);
     }
-    if !args.train.is_empty() || args.fd_check {
+    if !args.train.is_empty() || args.fd_check.is_some() {
         return run_train(&args);
     }
 
+    let compile_started = Instant::now();
     let (factory, eval) = compile_program(&args, args.double)?;
+    let compile_seconds = compile_started.elapsed().as_secs_f64();
     let factory = std::rc::Rc::new(factory);
     let probe = Probe::instantiate(&factory, args.sr)?;
 
@@ -1382,6 +1551,7 @@ fn run(mut args: Args) -> Result<(), String> {
         schedule: schedule.clone(),
         drive_buttons: impulse_test,
         limit: args.fail_above,
+        time: args.time,
     };
 
     let points = cartesian(&axes);
@@ -1452,6 +1622,9 @@ fn run(mut args: Args) -> Result<(), String> {
     let every = args.every.max(1);
     let mut runs: Vec<serde_json::Value> = Vec::new();
     let mut silent_points = 0usize;
+    // `--time` over the renders that have no statistics block of their own
+    // to carry it: a sweep's rows, an `.ir` text
+    let mut total_timing: Option<Timing> = None;
     // a comparison or a check that failed: reported after the output, which
     // carries its details
     let mut verification_failure: Option<String> = None;
@@ -1818,6 +1991,8 @@ fn run(mut args: Args) -> Result<(), String> {
                             "rms": json_number(c.rms),
                             "dc": json_number(c.dc),
                             "peak_at": c.peak_at,
+                            "subnormal": c.subnormal,
+                            "subnormal_at": c.subnormal_at,
                         })
                     })
                     .collect();
@@ -1829,6 +2004,9 @@ fn run(mut args: Args) -> Result<(), String> {
                     shown.insert(path.clone(), json_number(*value));
                 }
                 entry.insert("bargraphs".to_owned(), serde_json::Value::Object(shown));
+            }
+            if let Some(timing) = &stats.timing {
+                entry.insert("timing".to_owned(), timing_json(timing));
             }
             runs.push(serde_json::Value::Object(entry));
         } else if args.format == Format::Ir {
@@ -1895,8 +2073,13 @@ fn run(mut args: Args) -> Result<(), String> {
             for (ch, channel) in stats.channels.iter().enumerate() {
                 // `peak_at` comes last: a reader keyed on the older fields
                 // does not see it
+                // and `subnormal` only when there is one: it costs CPU on a
+                // target that does not flush them, and is where a tail ends
+                let subnormal = channel.subnormal_at.map_or_else(String::new, |frame| {
+                    format!(" subnormal={} subnormal_at={frame}", channel.subnormal)
+                });
                 emit(format!(
-                    "# out{ch}: peak={} rms={} dc={} finite={} peak_at={}",
+                    "# out{ch}: peak={} rms={} dc={} finite={} peak_at={}{subnormal}",
                     fmt.sample(channel.peak),
                     fmt.computed(channel.rms),
                     fmt.computed(channel.dc),
@@ -1918,6 +2101,29 @@ fn run(mut args: Args) -> Result<(), String> {
             for line in &verify_lines {
                 emit(line.clone());
             }
+            if let Some(timing) = &stats.timing {
+                for line in time_lines(compile_seconds, timing, |w| format!("frame {}", w.frame)) {
+                    emit(line);
+                }
+            }
+        }
+        if let Some(timing) = &stats.timing {
+            match total_timing.as_mut() {
+                Some(total) => total.absorb(timing),
+                None => total_timing = Some(timing.clone()),
+            }
+        }
+    }
+
+    // A sweep's rows and an `.ir` text: one account for all the renders.
+    if (sweep_csv || args.format == Format::Ir)
+        && let Some(timing) = &total_timing
+    {
+        if points.len() > 1 {
+            annotate(format!("# time: {} renders", points.len()));
+        }
+        for line in time_lines(compile_seconds, timing, |w| format!("frame {}", w.frame)) {
+            annotate(line);
         }
     }
 
@@ -1945,6 +2151,15 @@ fn run(mut args: Args) -> Result<(), String> {
             // what each output, in order, computes
             object.insert("eval".to_owned(), serde_json::json!(labels));
         }
+        if args.time
+            && let Some(object) = document.as_object_mut()
+        {
+            // each run carries the cost of its own `compute` calls
+            object.insert(
+                "timing".to_owned(),
+                serde_json::json!({ "compile_s": json_number(compile_seconds) }),
+            );
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?
@@ -1960,6 +2175,94 @@ fn run(mut args: Args) -> Result<(), String> {
 ///
 /// Shared by the JSON and CSV sweep paths so the two cannot report different
 /// numbers for the same render.
+/// What the projection onto its range did to a trained control, for the
+/// `# trained` line: nothing is said of a control that never met a bound.
+fn bound_text(stats: &BoundStats, blocks: usize) -> Option<String> {
+    let parts: Vec<String> = [
+        (train::Bound::Lower, stats.on_lower),
+        (train::Bound::Upper, stats.on_upper),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count > 0)
+    .map(|(bound, count)| {
+        format!(
+            "on its {} bound for {count} of {blocks} blocks, {}",
+            bound.name(),
+            if stats.ends_on == Some(bound) {
+                "the last one included"
+            } else {
+                "not the last one"
+            }
+        )
+    })
+    .collect();
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
+/// One `--fd-check`: its lines (none under `--format json`), its JSON, and
+/// the error when a lane departs from the finite differences. `place` is
+/// `start` or `end`; the lines of `start` are those the tool always printed.
+fn fd_check_report(
+    args: &Args,
+    place: &str,
+    checks: &[FdCheck],
+) -> (Vec<String>, serde_json::Value, Option<String>) {
+    let tag = if place == "start" {
+        String::new()
+    } else {
+        format!(" {place}")
+    };
+    let mut worst = 0.0_f64;
+    let mut lines = Vec::new();
+    for check in checks {
+        // at the end of a descent the gradient is small, which is the point:
+        // six decimals would print it as zero
+        lines.push(if place == "start" {
+            format!(
+                "# fd-check {}: rad {:.6} fd {:.6} relative error {:.2e}",
+                check.path, check.rad, check.fd, check.relative_error
+            )
+        } else {
+            format!(
+                "# fd-check{tag} {}: rad {:.6e} fd {:.6e} relative error {:.2e}",
+                check.path, check.rad, check.fd, check.relative_error
+            )
+        });
+        // a NaN error is the worst there is, and `max` would drop it
+        worst = if check.relative_error.is_nan() || worst.is_nan() {
+            f64::NAN
+        } else {
+            worst.max(check.relative_error)
+        };
+    }
+    lines.push(format!(
+        "# fd-check{tag}: block {} frames, step {}, worst relative error {worst:.2e} (tolerance {})",
+        args.block, args.fd_step, args.fd_tolerance
+    ));
+    let passes = worst <= args.fd_tolerance;
+    let json = serde_json::json!({
+        "block": args.block,
+        "step": json_number(args.fd_step),
+        "tolerance": json_number(args.fd_tolerance),
+        "worst_relative_error": json_number(worst),
+        "passes": passes,
+        "checks": checks.iter().map(|check| serde_json::json!({
+            "path": check.path,
+            "rad": json_number(check.rad),
+            "fd": json_number(check.fd),
+            "fd_plain": json_number(check.fd_plain),
+            "relative_error": json_number(check.relative_error),
+        })).collect::<Vec<_>>(),
+    });
+    let failure = (!passes).then(|| {
+        format!(
+            "a gradient lane departs from finite differences by {worst:.2e} at the {place} of the descent, above --fd-tolerance {}",
+            args.fd_tolerance
+        )
+    });
+    (lines, json, failure)
+}
+
 /// `--train` and `--fd-check`: the host loop of a program whose loss and
 /// gradient lanes leave the graph (see `probe::train`).
 fn run_train(args: &Args) -> Result<(), String> {
@@ -1967,7 +2270,6 @@ fn run_train(args: &Args) -> Result<(), String> {
         return Err("--fd-check needs the controls to check: --train CONTROLS".to_owned());
     }
     for (flag, set) in [
-        ("--sweep", !args.sweeps.is_empty()),
         ("--reduce", args.reduce.is_some()),
         ("--at", !args.ats.is_empty()),
         ("--bargraphs", args.bargraphs),
@@ -1975,14 +2277,7 @@ fn run_train(args: &Args) -> Result<(), String> {
             "--protocol impulse-test",
             args.protocol == Protocol::ImpulseTest,
         ),
-    ] {
-        if set {
-            return Err(format!(
-                "{flag} cannot be combined with --train / --fd-check"
-            ));
-        }
-    }
-    for (flag, set) in [
+        ("--format ir", args.format == Format::Ir),
         ("--out", args.out.is_some()),
         ("--fail-above", args.fail_above.is_some()),
         ("--compare/--ref/--check", verification_requested(args)),
@@ -1993,23 +2288,84 @@ fn run_train(args: &Args) -> Result<(), String> {
             ));
         }
     }
+    let fd_at_start = matches!(args.fd_check, Some(FdWhere::Start | FdWhere::Both));
+    let fd_at_end = matches!(args.fd_check, Some(FdWhere::End | FdWhere::Both));
+    if fd_at_end && args.blocks == 0 {
+        return Err(
+            "--fd-check=end checks the trained values: it needs a descent, --blocks > 0".to_owned(),
+        );
+    }
+    let as_json = args.format == Format::Json;
     let fmt = number_format(args)?;
+    let compile_started = Instant::now();
     let factory = std::rc::Rc::new(compile_program(args, args.double)?.0);
+    let compile_seconds = compile_started.elapsed().as_secs_f64();
+
+    // The lines are the output as it comes, a descent being watched; the
+    // JSON document is printed once, at the end or with the failure.
+    let say = |line: String| {
+        if !as_json {
+            println!("{line}");
+        }
+    };
+    let mut report = serde_json::Map::new();
+    let finish = |report: serde_json::Map<String, serde_json::Value>| -> Result<(), String> {
+        if !as_json {
+            return Ok(());
+        }
+        let document = serde_json::json!({
+            "schema_version": 1,
+            "dsp": args.file,
+            "sr": args.sr,
+            "train": report,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&document).map_err(|e| e.to_string())?
+        );
+        Ok(())
+    };
+
     // A `--set` outside its range: on a trained control it would move the
     // starting point, on another it would fix a value that is not the one
-    // asked for, and the descent's rows would show neither.
+    // asked for, and the descent's rows would show neither. The values of a
+    // `--sweep` are starting points and are checked alike.
+    let mut clamped = Vec::new();
+    let mut axes: Vec<(String, Vec<f64>)> = Vec::new();
     {
         let probe = Probe::instantiate(&factory, args.sr)?;
-        let mut clamped = Vec::new();
         for assignment in &args.sets {
             let (path, value) = parse_assignment(assignment)?;
             check_value(probe.controls(), path, value, args.clamp, &mut clamped)?;
         }
-        for clamp in &clamped {
-            println!("{}", clamp.line());
+        for sweep in &args.sweeps {
+            let axis = parse_axis(sweep)?;
+            let applied = axis
+                .values
+                .iter()
+                .map(|value| {
+                    check_value(
+                        probe.controls(),
+                        &axis.path,
+                        *value,
+                        args.clamp,
+                        &mut clamped,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            axes.push((axis.path, applied));
         }
     }
-    let spec = TrainSpec {
+    for clamp in &clamped {
+        say(clamp.line());
+    }
+    if !clamped.is_empty() {
+        report.insert(
+            "clamped".to_owned(),
+            serde_json::Value::Array(clamped.iter().map(Clamped::json).collect()),
+        );
+    }
+    let mut spec = TrainSpec {
         params: args.train.clone(),
         loss_lane: args.loss_lane,
         first_grad_lane: args.grad_lane,
@@ -2028,55 +2384,237 @@ fn run_train(args: &Args) -> Result<(), String> {
             .map(|a| parse_assignment(a).map(|(path, value)| (path.to_owned(), value)))
             .collect::<Result<Vec<_>, _>>()?,
     };
-    if args.fd_check {
-        let checks = train::fd_check(&factory, args.sr, &spec, args.fd_step)?;
-        let mut worst = 0.0_f64;
-        for check in &checks {
-            println!(
-                "# fd-check {}: rad {:.6} fd {:.6} relative error {:.2e}",
-                check.path, check.rad, check.fd, check.relative_error
-            );
-            worst = worst.max(check.relative_error);
-        }
-        println!(
-            "# fd-check: block {} frames, step {}, worst relative error {worst:.2e} (tolerance {})",
-            args.block, args.fd_step, args.fd_tolerance
-        );
-        if worst > args.fd_tolerance {
-            return Err(format!(
-                "a gradient lane departs from finite differences by {worst:.2e}, above --fd-tolerance {}",
-                args.fd_tolerance
+    report.insert(
+        "options".to_owned(),
+        serde_json::json!({
+            "optimizer": match args.optimizer {
+                OptimizerKind::Adam => "adam",
+                OptimizerKind::Sgd => "sgd",
+            },
+            "lr": json_number(args.lr),
+            "block": args.block,
+            "blocks": args.blocks,
+            "reset_per_block": args.reset_per_block,
+        }),
+    );
+
+    // ── grid, then descent ───────────────────────────────────────────────
+    // `--sweep` over trained controls: the loss of one block at every point,
+    // and the descent leaves from the best. What a non-convex loss needs, and
+    // what took a sweep, a parse and a second command.
+    if !axes.is_empty() {
+        let grid = train::grid(&factory, args.sr, &spec, &axes)?;
+        let mut points = Vec::new();
+        for (index, (values, loss)) in grid.points.iter().enumerate() {
+            let at: Vec<String> = grid
+                .paths
+                .iter()
+                .zip(values)
+                .map(|(path, value)| format!("{path}={value}"))
+                .collect();
+            say(format!(
+                "# grid {} loss={}{}",
+                at.join(" "),
+                fmt.loss(*loss),
+                if index == grid.best { " (best)" } else { "" }
             ));
+            let mut set = serde_json::Map::new();
+            for (path, value) in grid.paths.iter().zip(values) {
+                set.insert(path.clone(), json_number(*value));
+            }
+            points.push(serde_json::json!({ "set": set, "loss": json_number(*loss) }));
         }
-        if args.blocks == 0 {
-            return Ok(());
+        say(format!(
+            "# grid: {} points, one block of {} frames each; the descent starts from the best",
+            grid.points.len(),
+            args.block
+        ));
+        report.insert(
+            "grid".to_owned(),
+            serde_json::json!({ "points": points, "best": grid.best }),
+        );
+        // after the `--set` values: on a control given both, the grid decides
+        spec.sets.extend(grid.best_assignments());
+    }
+
+    let mut fd_reports = serde_json::Map::new();
+    if fd_at_start {
+        let checks = train::fd_check(&factory, args.sr, &spec, args.fd_step, None)?;
+        let (lines, json, failure) = fd_check_report(args, "start", &checks);
+        lines.into_iter().for_each(&say);
+        fd_reports.insert("start".to_owned(), json);
+        if let Some(failure) = failure {
+            report.insert("fd_check".to_owned(), serde_json::Value::Object(fd_reports));
+            finish(report)?;
+            return Err(failure);
         }
     }
+    if args.blocks == 0 {
+        if !fd_reports.is_empty() {
+            report.insert("fd_check".to_owned(), serde_json::Value::Object(fd_reports));
+        }
+        if args.time {
+            let none = BlockTimer::new(f64::from(args.sr)).finish();
+            time_lines(compile_seconds, &none, |_| String::new())
+                .into_iter()
+                .for_each(&say);
+            report.insert(
+                "timing".to_owned(),
+                serde_json::json!({ "compile_s": json_number(compile_seconds) }),
+            );
+        }
+        return finish(report);
+    }
+
     let mut header_done = false;
+    let mut rows = Vec::new();
     let every = args.every.max(1);
-    let trained = train::train(&factory, args.sr, &spec, |step| {
+    let outcome = train::train(&factory, args.sr, &spec, |step| {
+        if step.block % every != 0 && step.block != args.blocks {
+            return;
+        }
+        if as_json {
+            rows.push(serde_json::json!({
+                "block": step.block,
+                "loss": json_number(step.loss),
+                "values": step.params.iter().map(|v| json_number(*v)).collect::<Vec<_>>(),
+                "grads": step.grads.iter().map(|g| json_number(*g)).collect::<Vec<_>>(),
+            }));
+            return;
+        }
         if !header_done {
-            println!("block,loss,{}", spec.params.join(","));
+            let mut header = format!("block,loss,{}", spec.params.join(","));
+            if args.train_verbose {
+                for param in &spec.params {
+                    header.push_str(&format!(",grad_{param}"));
+                }
+            }
+            println!("{header}");
             header_done = true;
         }
-        if step.block % every == 0 || step.block == args.blocks {
-            let values: Vec<String> = step.params.iter().map(|v| fmt.computed(*v)).collect();
-            println!(
-                "{},{},{}",
-                step.block,
-                fmt.loss(step.loss),
-                values.join(",")
-            );
+        let mut fields: Vec<String> = step.params.iter().map(|v| fmt.computed(*v)).collect();
+        if args.train_verbose {
+            fields.extend(step.grads.iter().map(|g| fmt.loss(*g)));
         }
-    })?;
-    for (path, value) in trained.paths.iter().zip(&trained.values) {
-        println!("# trained {path}={}", fmt.computed(*value));
+        println!(
+            "{},{},{}",
+            step.block,
+            fmt.loss(step.loss),
+            fields.join(",")
+        );
+    });
+    report.insert("rows".to_owned(), serde_json::Value::Array(rows));
+    let trained = match outcome {
+        Ok(trained) => trained,
+        Err(error) => {
+            // the rows up to the block that failed are the evidence
+            finish(report)?;
+            return Err(error);
+        }
+    };
+
+    let mut notes = Vec::new();
+    let mut trained_json = Vec::new();
+    let mut stopped = Vec::new();
+    for (k, path) in trained.paths.iter().enumerate() {
+        let bounds = &trained.bounds[k];
+        let bound =
+            bound_text(bounds, args.blocks).map_or_else(String::new, |text| format!(" ({text})"));
+        say(format!(
+            "# trained {path}={}{bound}",
+            fmt.computed(trained.values[k])
+        ));
+        if bounds.ends_on.is_some() {
+            stopped.push(path.as_str());
+        }
+        trained_json.push(serde_json::json!({
+            "path": path,
+            "value": json_number(trained.values[k]),
+            "min": json_number(trained.ranges[k].0),
+            "max": json_number(trained.ranges[k].1),
+            "blocks_on_lower": bounds.on_lower,
+            "blocks_on_upper": bounds.on_upper,
+            "ends_on": bounds.ends_on.map(train::Bound::name),
+        }));
     }
-    println!(
+    say(format!(
         "# loss: block 1 {:.6e}, block {} {:.6e}",
         trained.first_loss, args.blocks, trained.last_loss
+    ));
+    say(format!(
+        "# loss: minimum {:.6e} at block {}",
+        trained.min_loss, trained.min_loss_block
+    ));
+    if !stopped.is_empty() {
+        notes.push(format!(
+            "a control that ends on a bound is stopped, not converged: {}",
+            stopped.join(" ")
+        ));
+    }
+    // a ratio means something for a positive loss only
+    if trained.min_loss > 0.0 && trained.last_loss > 10.0 * trained.min_loss {
+        let then: Vec<String> = trained
+            .paths
+            .iter()
+            .zip(&trained.values_at_min)
+            .map(|(path, value)| format!("{path}={}", fmt.computed(*value)))
+            .collect();
+        notes.push(format!(
+            "the last loss is {} times the minimum, which block {} reached with {}",
+            three_digits(trained.last_loss / trained.min_loss),
+            trained.min_loss_block,
+            then.join(" ")
+        ));
+    }
+    for note in &notes {
+        say(format!("# note: {note}"));
+    }
+    report.insert("trained".to_owned(), serde_json::Value::Array(trained_json));
+    report.insert(
+        "loss".to_owned(),
+        serde_json::json!({
+            "first": json_number(trained.first_loss),
+            "last": json_number(trained.last_loss),
+            "min": json_number(trained.min_loss),
+            "min_block": trained.min_loss_block,
+            "values_at_min": trained.values_at_min.iter().map(|v| json_number(*v)).collect::<Vec<_>>(),
+        }),
     );
-    Ok(())
+    if !notes.is_empty() {
+        report.insert("notes".to_owned(), serde_json::json!(notes));
+    }
+
+    // A descent is finished where the gradient is small *and* right: the
+    // same check, at the trained values.
+    let mut failure = None;
+    if fd_at_end {
+        let checks = train::fd_check(
+            &factory,
+            args.sr,
+            &spec,
+            args.fd_step,
+            Some(&trained.values),
+        )?;
+        let (lines, json, failed) = fd_check_report(args, "end", &checks);
+        lines.into_iter().for_each(&say);
+        fd_reports.insert("end".to_owned(), json);
+        failure = failed;
+    }
+    if !fd_reports.is_empty() {
+        report.insert("fd_check".to_owned(), serde_json::Value::Object(fd_reports));
+    }
+    if args.time {
+        time_lines(compile_seconds, &trained.timing, |worst| {
+            format!("block {}", worst.frame / args.block.max(1) + 1)
+        })
+        .into_iter()
+        .for_each(&say);
+        let mut timing = timing_json(&trained.timing);
+        timing["compile_s"] = json_number(compile_seconds);
+        report.insert("timing".to_owned(), timing);
+    }
+    finish(report)?;
+    failure.map_or(Ok(()), Err)
 }
 
 fn reduce_channel(
@@ -2139,10 +2677,11 @@ fn main() -> ExitCode {
     let args = Args::parse();
     // Cranelift JIT plus the faust-rs front end recurse deeply; run on a large
     // stack, as `impulse-cranelift` and the differential tests do.
+    let error_format = args.error_format;
     let result = thread::Builder::new()
         .name("faustprobe".to_owned())
         .stack_size(256 * 1024 * 1024)
-        .spawn(move || run(args))
+        .spawn(move || run(args).map_err(|error| compile_failure_report(error, error_format)))
         .expect("spawn worker thread")
         .join()
         .expect("join worker thread");
@@ -2153,6 +2692,30 @@ fn main() -> ExitCode {
             eprintln!("faustprobe: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Under `--error-format json`, a run that ends on a compile failure prints
+/// the compiler's diagnostics-v2 report on stdout and keeps the first line of
+/// the error, its summary, for stderr. Any other error is returned unchanged.
+///
+/// Called on the thread that compiled: the report is per thread. Whether the
+/// error *is* the last compile failure is decided by its text, since a
+/// failure can be recovered from (the polyphonic wrapper looks for an
+/// `effect` and carries on without one) and the run end on something else.
+fn compile_failure_report(error: String, format: ErrorFormat) -> String {
+    if format != ErrorFormat::Json {
+        return error;
+    }
+    let Some(failure) = last_compile_failure() else {
+        return error;
+    };
+    match failure.diagnostics_json {
+        Some(report) if error.contains(failure.text.as_str()) => {
+            println!("{report}");
+            error.lines().next().unwrap_or_default().to_owned()
+        }
+        _ => error,
     }
 }
 

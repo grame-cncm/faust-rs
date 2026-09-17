@@ -125,6 +125,17 @@ pub struct ChannelStats {
     /// The first sample of the window whose magnitude exceeds
     /// [`RenderLimit`], when a limit was given.
     pub first_above: Option<Located>,
+    /// Samples of the window that are subnormal **at the width the program
+    /// was compiled in**: non-zero and below the smallest normal number of
+    /// that width (about `1.2e-38` in single precision, `2.2e-308` in double).
+    ///
+    /// A decaying tail ends in them, and on a target that does not flush them
+    /// to zero they cost far more than a normal number. Only the outputs are
+    /// seen: a subnormal inside a feedback loop that a later gain lifts or a
+    /// later stage absorbs does not show here.
+    pub subnormal: usize,
+    /// Absolute frame of the first subnormal sample of the window.
+    pub subnormal_at: Option<usize>,
 }
 
 /// A sample and where it is: what turns "the render failed" into a frame to
@@ -157,6 +168,10 @@ pub struct RenderStats {
     /// Frames, in or out of the window, with a non-finite sample on any
     /// channel: whether a render went wrong once and recovered, or for good.
     pub non_finite_frames: usize,
+    /// What the `compute` calls cost, when the render was asked to time them
+    /// (`--time`): never otherwise, a clock being the one thing here that
+    /// differs between two runs.
+    pub timing: Option<crate::probe::timing::Timing>,
 }
 
 impl RenderStats {
@@ -207,6 +222,11 @@ pub(crate) struct StatsAccumulator {
     first_non_finite: Vec<Option<Located>>,
     first_above: Vec<Option<Located>>,
     non_finite_frames: usize,
+    subnormal: Vec<usize>,
+    subnormal_at: Vec<Option<usize>>,
+    /// Whether the samples come from a single-precision program: what
+    /// "subnormal" is measured against.
+    single: bool,
     limit: RenderLimit,
     counted: usize,
     start: usize,
@@ -228,10 +248,21 @@ impl StatsAccumulator {
             first_non_finite: vec![None; channels],
             first_above: vec![None; channels],
             non_finite_frames: 0,
+            subnormal: vec![0; channels],
+            subnormal_at: vec![None; channels],
+            single: false,
             limit,
             counted: 0,
             start,
         }
+    }
+
+    /// The width the samples were computed in: a sample handed over as an
+    /// `f64` is subnormal when it was in the program, and a single-precision
+    /// subnormal is a perfectly normal `f64`.
+    pub(crate) const fn at_width(mut self, double: bool) -> Self {
+        self.single = !double;
+        self
     }
 
     /// Record one frame. `frame` is absolute; frames before the window start
@@ -264,6 +295,16 @@ impl StatsAccumulator {
             }
             self.sum_sq[ch] = value.mul_add(value, self.sum_sq[ch]);
             self.sum[ch] += value;
+            // exact in single precision: the sample was an `f32`
+            let subnormal = if self.single {
+                (value as f32).is_subnormal()
+            } else {
+                value.is_subnormal()
+            };
+            if subnormal {
+                self.subnormal[ch] += 1;
+                self.subnormal_at[ch].get_or_insert(frame);
+            }
         }
         if frame_non_finite {
             self.non_finite_frames += 1;
@@ -284,6 +325,8 @@ impl StatsAccumulator {
                 peak_at: self.peak_at[ch],
                 first_non_finite: self.first_non_finite[ch],
                 first_above: self.first_above[ch],
+                subnormal: self.subnormal[ch],
+                subnormal_at: self.subnormal_at[ch],
             })
             .collect();
         RenderStats {
@@ -291,6 +334,7 @@ impl StatsAccumulator {
             window_len: self.counted,
             channels,
             non_finite_frames: self.non_finite_frames,
+            timing: None,
         }
     }
 }
@@ -424,6 +468,28 @@ mod tests {
 
         // an empty window says nothing about the program
         assert!(!StatsAccumulator::new(1, 5).finish().is_silent());
+    }
+
+    #[test]
+    fn subnormals_are_counted_at_the_width_of_the_program() {
+        // 1e-39 is below the smallest normal `f32` (1.17e-38) and a perfectly
+        // normal `f64`; 1e-310 is subnormal in both.
+        let samples = [1.0, 1e-39, 0.0, -1e-39, 1e-310];
+        let mut single = StatsAccumulator::new(1, 1).at_width(false);
+        let mut double = StatsAccumulator::new(1, 1).at_width(true);
+        // frame 0 is before the window: not counted
+        single.push(0, &[1e-39]);
+        double.push(0, &[1e-310]);
+        for (frame, value) in samples.into_iter().enumerate() {
+            single.push(frame + 1, &[value]);
+            double.push(frame + 1, &[value]);
+        }
+        let (single, double) = (single.finish(), double.finish());
+        // 1e-310 as an `f32` is zero, and zero is not subnormal
+        assert_eq!(single.channels[0].subnormal, 2);
+        assert_eq!(single.channels[0].subnormal_at, Some(2));
+        assert_eq!(double.channels[0].subnormal, 1);
+        assert_eq!(double.channels[0].subnormal_at, Some(5));
     }
 
     #[test]

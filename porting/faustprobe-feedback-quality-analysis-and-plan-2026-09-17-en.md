@@ -16,8 +16,8 @@ error reduced to "errors=1, diagnostics=1").
 This document asks what remains of that kind, and what would make the feedback
 more precise and more attributable. It has two parts: an analysis, whose claims
 about the present tool were each run on the release binary of commit `79f2d6af`,
-and a plan in five phases. **Status: F1, F2 and F3 are implemented (2026-09-17,
-§7); F4 and F5 are not.**
+and a plan in five phases. **Status: F1, F2, F3 and F4 are implemented
+(2026-09-17, §7); F5 is not.**
 
 The design document already states the principle the analysis applies (its §6):
 the tool is a measuring instrument, and an instrument that silently misreports
@@ -658,3 +658,121 @@ command; the width check never gating; a `.npy` read column-major, which a first
 version of the two-output test did not see (its outputs were constant and
 equal) and the rewritten one does.
 
+### F4, implemented 2026-09-17
+
+As planned, with these decisions and departures:
+
+- **Bounds.** A block counts when its step leaves the control on the bound
+  (`<=` / `>=` after the projection). The `# trained` line says for how many
+  blocks and whether the last one is among them (`on its lower bound for 84 of
+  300 blocks, the last one included`, or `..., not the last one` for a control
+  that met a bound and left it); a control that never did is printed as before.
+  One `# note:` names the controls that *end* on a bound: stopped, not
+  converged.
+- **The best loss.** `# loss: minimum M at block B`, the first block that
+  reached it. The ×10 flag is a `# note:` and carries **the controls that
+  block ran with** (`values_at_min`: those before its step), which is what one
+  wants from a descent that left its minimum. It is a ratio, so it is said for
+  a positive minimum only. The old `# loss: block 1 ..., block N ...` line is
+  unchanged.
+- **`--train-verbose`** adds `grad_CONTROL` columns: the block's mean gradient
+  at the controls the block ran with, not the step. The JSON rows always carry
+  `grads`.
+- **`--fd-check[=start|end|both]`.** The value needs its `=` (clap
+  `require_equals`), so that `--fd-check FILE` remains the bare flag followed
+  by the program. `end` needs a descent (`--blocks 0` is refused). Its failure
+  comes after the rows and the trained values, as F2's verdicts do.
+- **The reference of `--fd-check` was the finding of this phase.** Run at the
+  end of the corpus resonator's descent, the check printed `rad 1.2e-11 fd
+  1.7e-2`, a hair under the tolerance, for a gradient that is right. A central
+  difference is off by `f''' h^2 / 6`, which does not shrink with the
+  gradient; scanning `--fd-step` over 1e-2, 1e-3, 1e-4 gave relative errors of
+  3.98e-4, 3.98e-6, 3.98e-8, exactly `h^2`: the number this check had always
+  printed was the finite difference's error, not the gradient's. The reference
+  is now extrapolated from the steps `h` and `h/2` (Richardson, `(4 D(h/2) -
+  D(h)) / 3`, two more evaluations per control): the same start check reads
+  `3.27e-13`, the end check `8.8e-8`, and rounding takes over below `--fd-step
+  1e-4`. The JSON keeps the plain difference as `fd_plain`. This changes the
+  numbers `--fd-check` prints (they shrink); its line format, which
+  `faust-diff-jot` parses, does not change.
+- **Grid, then descent.** `--sweep` with `--train`, every swept control a
+  trained one. One instance, reset per point, as the descent does under
+  `--reset-per-block`: the descent's first block is then the grid's block at
+  the best point, the very same number, which the test asserts. Points are `#
+  grid PATH=V ... loss=L` lines (stdout keeps one CSV table), the best tagged;
+  a non-finite point is listed and never chosen; a tie keeps the first; swept
+  values are range-checked like any write; on a control given `--set` and
+  `--sweep` the grid decides. `--fd-check` at the start runs at the best point.
+- **`--format json` with `--train`** did not exist (the flag was ignored, which
+  is a case of §2.1). It prints one document, at the end or with the failure
+  that ended the run: a failed `--fd-check`, or a loss that is not finite, whose
+  error now names the block **and its controls**. `--format ir` is refused.
+- **A starting point typed on a decimal bound** (`--set x=0.7`, maximum 0.7)
+  was clamped in `f64` against the `f32` bound and left from 0.699999988: the
+  same family as F2's regression, in the host loop. It uses the control's own
+  clamp now.
+- **`--time`.** `compute` alone is timed (`probe/timing.rs`, FFI-free), behind
+  `RenderSpec::time` so that an untimed render reads no clock. The worst block
+  is the worst **against its own budget**: a block cut by an `--at`, or the
+  last one, has a shorter deadline. A sweep's rows and an `.ir` text get one
+  account on stderr; the `.ir` text is untouched, so the flag is accepted under
+  the impulse-test protocol. `--train` and `--nvoices` are timed too; a
+  descent names its worst block by number. What it showed at once: the debug
+  build of the tool compiles 25 times slower than the release one (5.65 s
+  against 230 ms for 400 one-poles) and computes at the same speed.
+- **Subnormals** are counted **at the program's width** (an `f32` subnormal
+  is a normal `f64`, and the statistics are accumulated in `f64`), over the
+  window, with the frame of the first: `subnormal=23 subnormal_at=127`, only
+  when there is one; always present in the JSON channels. Not in the
+  polyphonic statistics, which have their own, smaller, accumulator.
+- **`--error-format json`.** The report is reached at the Rust level
+  (`cranelift_ffi::factory::last_error_diagnostics_json`, per thread, attached
+  where a typed error is flattened and published where its summary reaches the
+  buffer, so that an untyped failure publishes none) and recorded by the probe
+  with the text of the failure (`engine::last_compile_failure`). The binary
+  prints it only when the error it ends on *contains* that text: the
+  polyphonic wrapper recovers from a failed `effect` extraction, and the run
+  may end on something else. It is the **complete** report (the field set the
+  crate documents for FFI consumers and the WebAssembly bindings return), a
+  superset of what `faust-rs --error-format json` prints: a departure from the
+  plan's "as `faust-rs` prints it". stderr keeps the summary line. **Refused
+  with `--eval`**: the ranges are byte offsets in the wrapped source, and a fix
+  applied to the file at those offsets would land elsewhere; the human text is
+  rewritten for that case, the report is not. The open question of §6 stays
+  open: the C ABI does not export the report.
+
+Exit criterion. The studio fit of `faust-diff-jot` as one command (`--sweep
+lt0=... --sweep ltpi=... --train lt0,ltpi --reset-per-block --fd-check=end
+--time`, 25 grid points and 300 passes over 77 202 frames, 17 s): `ltpi=-3.5
+(on its lower bound for 84 of 300 blocks, the last one included)`, minimum at
+block 248, gradients right at the end to 5.3e-6, 34 times real time. It
+replaces `grid_start` and `fit` of `scripts/fit_rooms.py`, a sweep, a parse and
+a second command; the script was left as it is.
+
+Gates: the crate's 329 tests; `--protocol impulse-test` byte-identical to
+`impulse-cranelift` on the 133 corpus programs; `faust-diff-jot` `make test`
+(67/67) and `make invariants` with the new binary.
+
+Checks: `tests/host_loop_probe.rs` (18 tests, on fixtures that carry a
+hand-written gradient lane: the host loop needs a loss and its gradient, not
+`rad`, and a closed form lets every expected number be replayed),
+`tests/cost_probe.rs` (9), six more in `tests/compile_error_probe.rs`, 5 unit
+tests of the timing arithmetic, 1 of the subnormal count. Twenty-three
+mutations rejected: `ends_on` never cleared; the controls of the minimum taken
+after the step; the gradient reported as the step; the grid keeping the highest
+loss; the descent not starting from the best; the grid not writing `--set`;
+the first axis fastest; a tie keeping the last point; `--fd-check=end` at the
+starting values; the plain difference as the reference; the starting point
+clamped in `f64`; a bound counted on the value before the step; any last loss
+above the minimum flagged; a block's budget that of `--block`; the clock
+started after `compute`; the worst block the longest one; `--time` on by
+default; the polyphonic render untimed; subnormals measured as `f64`;
+subnormals counted before the window; any error after a compile failure given
+its report; an untyped failure leaving the previous report published; stderr
+keeping the rendered text under `--error-format json`. One of them (the bound
+counted before the step) was first written as a change that changed nothing
+and survived for that reason; rewritten, it is rejected.
+
+Not done, and known: the polyphonic path still clamps a `--set` in silence
+(F1 refused `--clamp` there instead of reporting); `scripts/fit_rooms.py` still
+uses the two-command form.

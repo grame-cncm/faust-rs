@@ -46,6 +46,7 @@
 //! - [`eval`] — `--eval`: expressions evaluated in a file's scope.
 //! - [`compare`] — two renders compared, first differing frame first; FFI-free.
 //! - [`audio_out`] — a render written to `.npy`, `.wav` or a raw file (`--out`).
+//! - [`timing`] — what the `compute` calls cost, against real time (`--time`).
 
 pub mod audio_file;
 pub mod audio_out;
@@ -61,4 +62,5 @@ pub mod schedule;
 pub mod soundfile;
 pub mod spectrum;
 pub mod sweep;
+pub mod timing;
 pub mod train;

@@ -184,6 +184,14 @@ headers are found. The workspace
 [C and C++ usage guide](../../README.md#compile-errors) has an example and the
 functions of the other APIs.
 
+Rust callers of this crate also reach the typed channel of the same failure:
+`cranelift_ffi::factory::last_error_diagnostics_json()` returns the compiler's
+complete diagnostics-v2 JSON report (code, byte ranges, facts,
+machine-applicable fixes) under the same per-thread contract, or `None` when
+the last error carried no typed diagnostics. `faustprobe --error-format json`
+prints it. It is not exported by the C API, which would freeze that schema into
+the ABI.
+
 ## Known limitations
 
 - Some LLVM-specific API families are intentionally omitted/deferred in V1

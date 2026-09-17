@@ -24,6 +24,7 @@
 
 use std::ffi::{CStr, CString, c_char, c_int};
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::factory::{
     createCCraneliftDSPFactoryFromFile, deleteCCraneliftDSPFactory,
@@ -42,6 +43,7 @@ use crate::probe::params::{Control, ControlKind, ControlMap, Resolution};
 use crate::probe::poly;
 use crate::probe::render::{InputMode, RenderStats, StatsAccumulator};
 use crate::probe::schedule::{Event, Schedule};
+use crate::probe::timing::BlockTimer;
 
 /// How a render should be driven.
 #[derive(Debug, Clone)]
@@ -71,6 +73,9 @@ pub struct RenderSpec {
     /// Magnitude the window must stay under; the first sample above it is
     /// located in the statistics (`--fail-above`).
     pub limit: crate::probe::render::RenderLimit,
+    /// Time every `compute` call (`--time`); the statistics then carry a
+    /// [`crate::probe::timing::Timing`].
+    pub time: bool,
 }
 
 impl Default for RenderSpec {
@@ -83,6 +88,7 @@ impl Default for RenderSpec {
             schedule: Schedule::new(),
             drive_buttons: false,
             limit: None,
+            time: false,
         }
     }
 }
@@ -116,15 +122,53 @@ fn compile_error(error_msg: &[c_char; 4096]) -> String {
         .to_string_lossy()
         .into_owned();
     let complete = getCCompleteCraneliftDSPFactoryError();
-    if complete.is_null() {
-        return summary;
-    }
-    let complete = unsafe { CStr::from_ptr(complete) }.to_string_lossy();
-    if !summary.is_empty() && complete.starts_with(summary.as_str()) {
-        complete.trim_end().to_owned()
-    } else {
+    let text = if complete.is_null() {
         summary
-    }
+    } else {
+        let complete = unsafe { CStr::from_ptr(complete) }.to_string_lossy();
+        if !summary.is_empty() && complete.starts_with(summary.as_str()) {
+            complete.trim_end().to_owned()
+        } else {
+            summary
+        }
+    };
+    // The typed channel of the same failure, read here because here is where
+    // the failure is known to be this one: the report is per thread and a
+    // later failure replaces it.
+    LAST_COMPILE_FAILURE.with(|last| {
+        *last.borrow_mut() = Some(CompileFailure {
+            text: text.clone(),
+            diagnostics_json: crate::factory::last_error_diagnostics_json(),
+        });
+    });
+    text
+}
+
+/// A factory creation that failed: the text the caller was given and the
+/// compiler's diagnostics-v2 JSON report of the same failure, when it had
+/// typed diagnostics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompileFailure {
+    /// What `Factory::compile*` returned as its error.
+    pub text: String,
+    /// Code, ranges, facts and machine-applicable fixes, as one JSON document.
+    pub diagnostics_json: Option<String>,
+}
+
+thread_local! {
+    static LAST_COMPILE_FAILURE: std::cell::RefCell<Option<CompileFailure>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The last factory creation that failed on this thread.
+///
+/// Errors travel through this module as strings, and a failure may be
+/// recovered from (the polyphonic wrapper tries to extract an `effect` and
+/// carries on without one): a caller that ends on an error decides whether it
+/// is this failure by looking for [`CompileFailure::text`] in it.
+#[must_use]
+pub fn last_compile_failure() -> Option<CompileFailure> {
+    LAST_COMPILE_FAILURE.with(|last| last.borrow().clone())
 }
 
 impl Factory {
@@ -588,10 +632,12 @@ impl Probe {
     where
         F: FnMut(usize, &[f64]),
     {
-        let mut acc = StatsAccumulator::with_limit(self.outputs, spec.skip, spec.limit);
+        let double = self.factory.double;
+        let mut acc =
+            StatsAccumulator::with_limit(self.outputs, spec.skip, spec.limit).at_width(double);
         let block = spec.block.max(1);
         let sample_rate = f64::from(self.sample_rate);
-        let double = self.factory.double;
+        let mut timer = spec.time.then(|| BlockTimer::new(sample_rate));
 
         // The two widths differ only in buffer element type; the loop is
         // identical, hence the macro rather than a generic (the FFI takes a
@@ -644,6 +690,9 @@ impl Probe {
                         .iter_mut()
                         .map(|c| c.as_mut_ptr().cast::<FaustFloat>())
                         .collect();
+                    // the `compute` call and nothing else: not the
+                    // excitation, not the statistics, not the dump
+                    let started = timer.is_some().then(Instant::now);
                     // SAFETY: both pointer arrays have the arity the instance
                     // reported, and each buffer holds at least `n` elements of
                     // the compiled width.
@@ -654,6 +703,9 @@ impl Probe {
                             in_ptrs.as_mut_ptr(),
                             out_ptrs.as_mut_ptr(),
                         );
+                    }
+                    if let (Some(timer), Some(started)) = (timer.as_mut(), started) {
+                        timer.record(written, n, started.elapsed());
                     }
                     let mut frame: Frame = vec![0.0; self.outputs];
                     for j in 0..n {
@@ -676,7 +728,9 @@ impl Probe {
         } else {
             run!(f32);
         }
-        acc.finish()
+        let mut stats = acc.finish();
+        stats.timing = timer.map(BlockTimer::finish);
+        stats
     }
 
     /// [`Probe::render`] that keeps the window's samples, for a comparison.

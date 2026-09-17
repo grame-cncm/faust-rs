@@ -25,6 +25,10 @@ use codegen::backends::cranelift::{
 };
 use codegen::json::{JsonBuildOptions, JsonMemoryDescription, build_json_description_from_fir};
 use codegen::memory_layout::MemoryManagerMode;
+use compiler::diagnostics_json::{
+    DiagnosticsCompilerMetadata, DiagnosticsRequestMetadata, SourceTextPolicy,
+    render_complete_diagnostics_v2_json,
+};
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, CompilerError, ComputeMode, ExpandDspRequest,
     FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane,
@@ -1421,6 +1425,71 @@ thread_local! {
     static COMPLETE_ERROR: CompleteError = const { CompleteError::new() };
 }
 
+/// The typed channel of the last error this thread reported: its
+/// diagnostics-v2 JSON report, for Rust callers of this crate.
+///
+/// The same two steps as [`CompleteError`], for the same reason: the bundle
+/// is known where a typed error is flattened to its summary, and the error is
+/// known to have reached the host only where that summary is written to the
+/// buffer. A report whose message does not carry the attached summary (an
+/// argument error, an I/O error) publishes nothing, so a document never
+/// outlives the failure it describes.
+///
+/// Not part of the C ABI: exporting it would freeze the diagnostics-v2 schema
+/// into that ABI, a decision the C API has not taken.
+struct DiagnosticsReport {
+    attached: std::cell::RefCell<Option<(String, String)>>,
+    published: std::cell::RefCell<Option<String>>,
+}
+
+impl DiagnosticsReport {
+    const fn new() -> Self {
+        Self {
+            attached: std::cell::RefCell::new(None),
+            published: std::cell::RefCell::new(None),
+        }
+    }
+
+    fn attach(&self, summary: &str, bundle: &compiler::DiagnosticBundle) {
+        let report = render_complete_diagnostics_v2_json(
+            bundle,
+            DiagnosticsCompilerMetadata::default(),
+            DiagnosticsRequestMetadata {
+                mode: Some("factory".to_owned()),
+                backend: Some("cranelift".to_owned()),
+                normalized_options: Vec::new(),
+            },
+            SourceTextPolicy::AllMemorySources,
+        );
+        *self.attached.borrow_mut() = Some((summary.to_owned(), report));
+    }
+
+    fn report(&self, message: &str) {
+        *self.published.borrow_mut() = match self.attached.borrow_mut().take() {
+            Some((summary, report)) if message.contains(summary.as_str()) => Some(report),
+            _ => None,
+        };
+    }
+}
+
+thread_local! {
+    static DIAGNOSTICS_REPORT: DiagnosticsReport = const { DiagnosticsReport::new() };
+}
+
+/// The complete diagnostics-v2 JSON report (code, ranges, facts,
+/// machine-applicable fixes) of the last error reported on the calling thread
+/// through an `error_msg` buffer, or `None` when that error carried no typed
+/// compiler diagnostics (an argument error, an unreadable file).
+///
+/// The contract of [`getCCompleteCraneliftDSPFactoryError`], one level up: per
+/// thread, not reset by a success, to be read after a call that failed. For
+/// Rust callers of this crate (`faustprobe --error-format json`); the C ABI
+/// does not expose it.
+#[must_use]
+pub fn last_error_diagnostics_json() -> Option<String> {
+    DIAGNOSTICS_REPORT.with(|record| record.published.borrow().clone())
+}
+
 /// Write an error message to a standard 4096-byte Faust error buffer, and
 /// publish its complete text for [`getCCompleteCraneliftDSPFactoryError`].
 ///
@@ -1428,6 +1497,7 @@ thread_local! {
 /// `buf` must point to at least 4096 bytes or be null.
 unsafe fn write_error(buf: *mut c_char, msg: &str) {
     COMPLETE_ERROR.with(|record| record.report(msg));
+    DIAGNOSTICS_REPORT.with(|record| record.report(msg));
     unsafe { write_error_4096(buf, msg) }
 }
 
@@ -1436,6 +1506,7 @@ unsafe fn write_error(buf: *mut c_char, msg: &str) {
 fn summary_of(error: &CompilerError) -> String {
     let summary = error.to_string();
     COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
+    DIAGNOSTICS_REPORT.with(|record| record.attach(&summary, error.diagnostic_bundle()));
     summary
 }
 
@@ -1443,6 +1514,9 @@ fn summary_of(error: &CompilerError) -> String {
 fn service_summary_of(error: &FaustwasmServiceError) -> String {
     let summary = error.to_string();
     COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
+    if let Some(bundle) = &error.diagnostics {
+        DIAGNOSTICS_REPORT.with(|record| record.attach(&summary, bundle));
+    }
     summary
 }
 

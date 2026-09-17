@@ -157,14 +157,17 @@ must run unchanged with Faust C++ should not pass them.
 
 ### 4.4 Rust-only companion tool
 
-- **DIFF-CLI-010 — `faustprobe`.** Status: `extension`. A second binary
+- **DIFF-CLI-011 — `faustprobe`.** Status: `extension`. A second binary
   (`crates/cranelift-ffi`, `src/bin/faustprobe.rs`) that JIT-compiles a program
   with the Cranelift backend and measures it offline: controls set, swept and
-  scheduled from the command line, statistics, bargraph read-out, binary output
-  (`--out`), expressions evaluated in a file's scope (`--eval`), two renders
-  compared and the invariants of one checked (`--compare`, `--ref`, `--check`),
-  a host loop for programs that output a loss and its gradients (`--train`,
-  `--fd-check`). It
+  scheduled from the command line, statistics (subnormal outputs included),
+  bargraph read-out, binary output (`--out`), expressions evaluated in a file's
+  scope (`--eval`), two renders compared and the invariants of one checked
+  (`--compare`, `--ref`, `--check`), a host loop for programs that output a
+  loss and its gradients (`--train`, with a grid of starting points under
+  `--sweep`, and `--fd-check` at the start or the end of the descent), the cost
+  of the `compute` calls against real time (`--time`), and a compile failure as
+  the compiler's diagnostics-v2 JSON report (`--error-format json`). It
   has no C++ counterpart; the closest reference tools are the `impulse-tests`
   runners, whose protocol it reproduces byte for byte under `--protocol
   impulse-test`. Evidence:
@@ -602,6 +605,11 @@ must run unchanged with Faust C++ should not pass them.
   them, so their `std::string& error_msg` holds the complete text, where the
   reference's holds its own one-line message. A host that parses that string
   must not assume one line.
+- The typed channel of the same failure, the diagnostics-v2 JSON report, is
+  reachable for Rust callers of the Cranelift crate only
+  (`cranelift_ffi::factory::last_error_diagnostics_json`, same per-thread
+  contract; `faustprobe --error-format json` prints it). It is deliberately
+  not a sixth C function: exporting it would freeze that schema into the ABI.
 - Compatibility impact: none for a host written against the reference API; the
   functions are additions and the buffer's behavior is unchanged.
 - Evidence: `crates/ffi-common/src/complete_error.rs`, the `complete_error`

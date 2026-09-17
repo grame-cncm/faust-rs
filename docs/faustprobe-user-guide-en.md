@@ -105,6 +105,36 @@ check. (The probe compiles through the C API, whose `error_msg` buffer is 4096
 bytes by contract and carries the summary line only; the rest comes from
 `getCCompleteCraneliftDSPFactoryError`, which any host of that API can call.)
 
+**`--error-format json`** is the same failure for a program instead of a
+person: the compiler's diagnostics-v2 report on stdout, one JSON document and
+nothing else, and the summary line alone on stderr. It carries what the text
+renders, typed: the code, the byte ranges in each source, the facts, and the
+fixes with their edits, so that a machine-applicable fix is applied without
+reading prose:
+
+```json
+"code": "FRS-PARSE-0001",
+"fixes": [{
+  "applicability": "machine_applicable",
+  "edits": [{ "range": { "source_id": 0, "start": 38, "end": 38 }, "replacement": ")" }],
+  "title": "insert `)`"
+}]
+```
+
+It is the complete report, the one the WebAssembly bindings return (every
+label, fact, trace and fix), with `"request": {"backend": "cranelift"}`; the
+schema is that of `faust-rs --check --error-format json`
+(`docs/user-diagnostics-guide-en.md`). Only a compile failure has a report: any
+other error (a value out of range, a non-finite render, a failed comparison)
+is text on stderr under either format, and stdout is then empty. FILE and the
+OTHER of `--compare` are compiled before anything is printed, so the document
+is alone on stdout. It is refused with `--eval`: the report's ranges are byte
+offsets in the source that was compiled, which is then the file wrapped and
+followed by the expressions, and a fix applied to the file at those offsets
+would land elsewhere. The report is reached inside the crate
+(`cranelift_ffi::factory::last_error_diagnostics_json`); the C API does not
+export it, which would freeze that schema into the ABI.
+
 ### Evaluating an expression: `--eval`
 
 `--eval EXPR` probes an expression evaluated **in the scope of the file**
@@ -374,6 +404,27 @@ structure of a sweep.
 and can be redirected; without it they annotate a dump that already owns stdout
 and go to stderr.
 
+### Subnormal samples
+
+A decaying tail ends in subnormal numbers, the ones below the smallest normal
+float (about `1.2e-38` in single precision, `2.2e-308` in double), and on a
+target that does not flush them to zero each costs far more than a normal
+number. When a window holds some, the statistics count them and say where they
+start:
+
+```text
+$ faustprobe -n 200 --quiet halving.dsp          # process = + ~ *(0.5);
+# out0: peak=1.0 rms=0.0816496580927726 dc=0.01 finite=yes peak_at=0 subnormal=23 subnormal_at=127
+```
+
+An impulse halved at every sample is `2^-k` at frame `k`: subnormal in single
+precision from frame 127 to frame 149, and zero after. The count is **at the
+width the program was compiled in**: the same render under `--double` has
+none before frame 1023. The fields appear only when the count is not zero; the
+JSON channels always carry `subnormal` and `subnormal_at` (null when there is
+none). Only the outputs are seen: a subnormal inside a feedback loop that a
+later stage absorbs, or that a gain lifts back, does not show here.
+
 ### When a render fails
 
 A render with a non-finite sample is an error (except in `--format ir`, where
@@ -627,7 +678,7 @@ block, the offline calibration of a program whose target is a measured
 response given by `--in file:` and whose block is the whole response
 (`--block` its length, `--bra-tape` the next power of two, `--sr` the
 rate of the recording). One CSV row per block, thinned by
-`--every`, then the trained values and the first and last loss:
+`--every`, then the trained values, the first and last loss, and the lowest:
 
 ```text
 block,loss,a1,a2
@@ -638,25 +689,15 @@ block,loss,a1,a2
 # trained /ddsp_rad_host_block_resonator/a1=-1.1999999999999915
 # trained /ddsp_rad_host_block_resonator/a2=0.7199999999999901
 # loss: block 1 4.615726e-1, block 600 3.462934e-28
-```
-
-`--fd-check` runs first (or alone, with `--blocks 0`): each gradient lane,
-summed over one block from a fresh instance at the controls' initial
-values, against the central finite difference of the summed loss lane with
-step `--fd-step` (default 1e-3); the command fails when a relative error
-`|rad - fd| / max(|fd|, 1)` exceeds `--fd-tolerance` (default 0.02). It is
-the first thing to run when a gradient looks wrong:
-
-```text
-# fd-check /ddsp_rad_host_block_resonator/a1: rad 476.523699 fd 476.521802 relative error 3.98e-6
-# fd-check /ddsp_rad_host_block_resonator/a2: rad 335.872145 fd 335.873239 relative error 3.26e-6
-# fd-check: block 256 frames, step 0.001, worst relative error 3.98e-6 (tolerance 0.02)
+# loss: minimum 3.462934e-28 at block 600
 ```
 
 The GRU of the second example trains its 27 sliders the same way,
 `--train wz1,wz2,...,bo --lr 0.005 --blocks 2000`, in a fraction of a
-second; `--sweep`, `--reduce`, `--at` and the impulse-test protocol do not
-combine with it.
+second; `--reduce`, `--at`, `--bargraphs`, `--out`, `--format ir`, the
+comparisons of §14 and the impulse-test protocol do not combine with it.
+`--format json` prints one document instead of the rows and the `#` lines
+(below).
 
 `--set` does, with two meanings. On a trained control it is the descent's
 starting point, in place of the slider's initial value: `--set a1=-0.4
@@ -666,9 +707,160 @@ checks the gradients there. On any other control it
 is a fixed value, rewritten on every fresh instance and after every
 `--reset-per-block` reset, since a reset restores the widgets' defaults: the
 way to fit a program whose other controls select a variant (`--set exact=1`)
-without editing it. A starting point found by a `--sweep` of the loss over a
-grid, then a descent from it, is the grid-then-gradient of
-`libraries/optimizers-overview-en.md` done by the host.
+without editing it.
+
+### What the descent says about itself
+
+A loss and the controls are not enough to read a descent. What follows was
+learned by reading tables afterwards, and is now said by the loop.
+
+**A control that ends on a bound is stopped, not converged.** Keeping the
+controls in their range is part of the algorithm; its having been active is
+information. The fit of a studio's impulse response
+(`faust-diff-jot`, 300 passes over a response of 77 202 frames):
+
+```text
+# trained /jot_fit/lt0=-1.0596905749387509
+# trained /jot_fit/ltpi=-3.5 (on its lower bound for 84 of 300 blocks, the last one included)
+# loss: block 1 1.090139e-5, block 300 2.712435e-6
+# loss: minimum 2.712433e-6 at block 248
+# note: a control that ends on a bound is stopped, not converged: /jot_fit/ltpi
+```
+
+The high-frequency decay time wanted to go below what its slider allows: the
+minimum is outside the range, and the value printed is the range's, not the
+room's. A control that met a bound and left it says so too (`on its upper
+bound for 3 of 6 blocks, not the last one`); one that never did is printed as
+before. A block counts when its step leaves the control on the bound.
+
+**The lowest loss, its block, and whether the descent left it.** The last
+block is not the best one when the step is too large or the loss noisy. `#
+loss: minimum` gives the lowest block loss and the first block that reached
+it; when the last loss is more than ten times that minimum (a ratio, so for a
+positive loss only), a note says so **with the controls that block ran with**,
+which are the ones to keep:
+
+```text
+# note: the last loss is 992 times the minimum, which block 5 reached with /jumps/x=0.53125
+```
+
+With a streamed excitation (no `--reset-per-block`) every block sees another
+stretch of the input, and block losses differ for that reason alone: ten is
+a wide margin on purpose, and the note is a fact to look at, not a verdict.
+
+**`--train-verbose`: the gradient behind each step.** A control that stops
+moving has a vanishing gradient (a flat loss, or a minimum) or a vanishing
+step (a learning rate too small for the gradient's scale), and the controls
+alone do not say which. The flag adds one `grad_CONTROL` column per trained
+control: the block's mean gradient, at the controls the block ran with.
+
+```text
+block,loss,a1,a2,grad_a1,grad_a2
+200,2.7272607473475966e-10,-1.2000005084309235,0.7200039032015184,1.296604290850353e-4,7.069383848568409e-5
+```
+
+**A loss that is not finite** stops the descent with the block and the
+controls it ran with (`the loss is not finite at block 12`, then `controls of
+that block: ...`).
+
+### `--fd-check`: is the gradient right, and where
+
+`--fd-check` compares each gradient lane, summed over one block from a fresh
+instance, with finite differences of the summed loss lane, and fails the
+command when a relative error `|rad - fd| / max(|fd|, 1)` exceeds
+`--fd-tolerance` (default 0.02). It is the first thing to run when a gradient
+looks wrong:
+
+```text
+# fd-check /ddsp_rad_host_block_resonator/a1: rad 476.523699 fd 476.523699 relative error 3.27e-13
+# fd-check /ddsp_rad_host_block_resonator/a2: rad 335.872145 fd 335.872145 relative error 4.53e-13
+# fd-check: block 256 frames, step 0.001, worst relative error 4.53e-13 (tolerance 0.02)
+```
+
+Where it runs is the flag's value:
+
+| | |
+|---|---|
+| `--fd-check`, `--fd-check=start` | at the descent's starting point, before it; alone with `--blocks 0` |
+| `--fd-check=end` | at the trained values, after the descent |
+| `--fd-check=both` | both |
+
+The value needs its `=`: `--fd-check FILE` is the bare flag followed by the
+program. A descent is finished where the gradient is small *and* right, and a
+gradient checked where the descent starts can be wrong where it stops (a
+branch of a `select2`, a clipped value, a table read outside the region the
+start explored): `end` checks there. Its lines are tagged and in scientific
+notation, the gradient being small by then:
+
+```text
+# fd-check end /ddsp_rad_host_block_resonator/a1: rad 1.218757e-11 fd 2.030098e-8 relative error 2.03e-8
+```
+
+The check at the end fails the command after the rows and the trained values
+were printed. On a bound, the differences step across it: the program
+computes there as anywhere, the range being the host's business.
+
+*The reference.* `fd` is the central difference at `--fd-step` (default
+1e-3) and at half of it, extrapolated to a zero step, `(4 D(h/2) - D(h)) / 3`.
+A plain central difference is off by the loss's third derivative times `h^2 /
+6`, an error that does not shrink with the gradient: on the resonator above it
+was the whole of the `3.98e-6` this check used to print, and at the end of
+that descent, where the gradient is `1e-11`, it was `1.7e-2`, a hair under
+the tolerance, for a gradient that is right to thirteen digits. The
+extrapolation leaves a term in `h^4`. The JSON document keeps the plain
+difference as `fd_plain`: by how much the two differ is the error the plain
+one had. Below `--fd-step 1e-4` rounding takes over and the agreement
+degrades again; in single precision finite differences say little at any
+step, so check in `--double`.
+
+### Grid, then descent: `--sweep` with `--train`
+
+A non-convex loss wants a good starting point more than a good optimiser
+(`libraries/optimizers-overview-en.md`). `--sweep` on trained controls
+evaluates the loss of **one block** at every point of the grid, each from a
+cleared instance with the `--set` controls written and the other trained
+controls at their starting values, and the descent leaves from the best:
+
+```bash
+faustprobe --double -I libraries --in white:1 --block 256 --train a1,a2 \
+    --sweep a1=-1.5,-0.5,0.5 --sweep a2=0.2,0.8 --lr 0.01 --blocks 600 --every 300 \
+    tests/corpus/ddsp_rad_host_block_resonator.dsp
+```
+
+```text
+# grid /ddsp_rad_host_block_resonator/a1=-1.5 /ddsp_rad_host_block_resonator/a2=0.2 loss=1.11108788577618e64
+# grid /ddsp_rad_host_block_resonator/a1=-1.5 /ddsp_rad_host_block_resonator/a2=0.8 loss=1.5689772403942457e0
+# grid /ddsp_rad_host_block_resonator/a1=-0.5 /ddsp_rad_host_block_resonator/a2=0.2 loss=6.269462583346836e-1 (best)
+...
+# grid: 6 points, one block of 256 frames each; the descent starts from the best
+block,loss,a1,a2
+300,1.1748024609909106e-12,-1.2000004274129334,0.7200003990537392
+...
+# loss: block 1 6.269463e-1, block 600 2.387594e-26
+```
+
+The first point is an unstable filter, and its loss says so; a point where the
+loss is not finite is listed and never chosen. The descent's first block is
+the grid's block at the best point: the same number, which is a check that
+the two agree. The last axis varies fastest, a tie keeps the first point, a
+swept control must be a trained one (`--set` fixes any other), a value out of
+range is an error or a reported `--clamp`, and on a control given both `--set`
+and `--sweep` the grid decides. `--fd-check` then runs at the best point. This
+replaces the two commands, and the parsing between them, that a grid start
+took.
+
+### The JSON document of a descent
+
+`--format json` prints, at the end or with the failure that ended the run,
+one document: `schema_version`, `dsp`, `sr`, and `train` with `options` (the
+optimiser, `lr`, `block`, `blocks`, `reset_per_block`), `clamped`, `grid`
+(`points[]` with `set` and `loss`, `best`), `fd_check` (`start` and `end`:
+`checks[]` with `path`, `rad`, `fd`, `fd_plain`, `relative_error`; `worst_relative_error`,
+`tolerance`, `passes`), `rows[]` (`block`, `loss`, `values`, and `grads`
+always, thinned by `--every`), `trained[]` (`path`, `value`, `min`, `max`,
+`blocks_on_lower`, `blocks_on_upper`, `ends_on`: `"lower"`, `"upper"` or
+null), `loss` (`first`, `last`, `min`, `min_block`, `values_at_min`), `notes`
+and, under `--time`, `timing`.
 
 ## 14. Comparing renders and checking invariants
 
@@ -770,3 +962,45 @@ per block (the block reverse sweep), so they do move with `--block` and
 `--sweep`, `--train`, `--nvoices`, `--format ir` or the impulse-test protocol.
 JSON carries the checks as a `checks` array in the run.
 
+## 15. What a run cost: `--time`
+
+A compiler change that doubles the cost of a program shows in no sample.
+`--time` adds the account of the run to the statistics:
+
+```text
+$ faustprobe -I <faustlibraries> -n 600000 --quiet --time zita.dsp
+# out0: peak=0.14208001 rms=0.00045856125430063227 dc=1.4800001305893652e-6 finite=yes peak_at=9035
+# time: compile 49.6 ms
+# time: compute 34.6 ms for 13.6 s of audio (600000 frames in 9375 blocks): 393x real time
+# time: worst block: frame 182144, 64 frames in 56.5 us, 3.89% of its 1.45 ms budget
+```
+
+- **compile**: the front end and the JIT, for FILE (with `--nvoices`, the
+  voices and the effect).
+- **compute**: the time spent in the `compute` calls and in nothing else: not
+  the excitation, not the statistics, not the printing of the rows, which for
+  a CSV dump is most of the wall-clock time. The factor is the audio's
+  duration over that time: below 1 the program cannot run live on this
+  machine.
+- **worst block**: a host has a deadline per block, and the mean hides the
+  block that would have clicked. The worst is the largest share of its **own**
+  budget: the last block of a render and one cut by an `--at` are shorter, and
+  so is their deadline. It is often the first, which pays for the cold caches.
+
+The lines go where the statistics go. A sweep's rows and an `.ir` text have
+no statistics block, and get one account for all their renders on stderr (`#
+time: 3 renders`, then the three lines); the `.ir` text itself is untouched.
+With `--train` the blocks are the descent's (the grid and `--fd-check` are not
+counted), and the worst is named by its number: `worst block: block 31`.
+`--format json` carries `timing` per run (`compute_s`, `audio_s`, `frames`,
+`blocks`, `realtime_factor`, `worst_block` with `frame`, `frames`, `seconds`,
+`budget_s`, `budget_fraction`) and `timing.compile_s` on the document.
+
+These are the only numbers of the tool that differ from one run to the next,
+which is why they are behind a flag: the default output being the same twice
+is a property the tool is tested for. Compare two timings on a quiet machine,
+with a render long enough for the clock (a second of compute is plenty), and
+use the release build of `faustprobe`: the JIT-compiled code runs at the same
+speed in either build, the compiler does not (four hundred one-poles in
+parallel: compute 60.4 ms against 60.8 ms, compile 230 ms against 5.65 s in a
+debug build).
