@@ -29,6 +29,9 @@ use cranelift_ffi::probe::sweep::{Reduction, cartesian, parse_axis, parse_reduct
 use cranelift_ffi::probe::timing::{BlockTimer, Timing, WorstBlock, human_seconds};
 use cranelift_ffi::probe::train::{self, BoundStats, FdCheck, Optimizer, TrainSpec};
 
+#[path = "faustprobe/determinism.rs"]
+mod determinism;
+
 /// How rendered frames are printed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
@@ -63,6 +66,10 @@ enum Protocol {
     disable_version_flag = true
 )]
 struct Args {
+    /// Internal subprocess protocol for an independent determinism render.
+    #[arg(long, hide = true)]
+    determinism_worker: bool,
+
     /// Faust DSP source file.
     file: String,
 
@@ -2088,19 +2095,15 @@ fn run(mut args: Args) -> Result<(), String> {
                         tolerance,
                     ),
                     Check::Determinism => {
-                        let (again, _) = compile_program(&args, args.double)?;
-                        let same_key = again.sha_key() == factory.sha_key();
+                        let (key, samples) = determinism::render(&args)?;
+                        let same_key = key == factory.sha_key();
                         verify_lines.push(format!(
                             "# {tag}: a second compilation gives {} program key",
                             if same_key { "the same" } else { "ANOTHER" }
                         ));
-                        let fresh = Probe::instantiate(&std::rc::Rc::new(again), args.sr)?;
+                        verify_lines.push(format!("# {tag}: rendered in an independent process"));
                         // two compilations of one source owe each other the very bits
-                        (
-                            render_for_comparison(&fresh, &spec, &fixed, &tag)?,
-                            true,
-                            Tolerance::default(),
-                        )
+                        (samples, true, Tolerance::default())
                     }
                     Check::Width => {
                         let (other_width, _) = compile_program(&args, !args.double)?;
@@ -3446,7 +3449,14 @@ fn main() -> ExitCode {
     let result = thread::Builder::new()
         .name("faustprobe".to_owned())
         .stack_size(256 * 1024 * 1024)
-        .spawn(move || run(args).map_err(|error| compile_failure_report(error, error_format)))
+        .spawn(move || {
+            let result = if args.determinism_worker {
+                determinism::worker(&args)
+            } else {
+                run(args)
+            };
+            result.map_err(|error| compile_failure_report(error, error_format))
+        })
         .expect("spawn worker thread")
         .join()
         .expect("join worker thread");

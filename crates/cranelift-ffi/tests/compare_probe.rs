@@ -408,6 +408,75 @@ fn a_saved_render_keeps_its_outputs_apart() {
 // ------------------------------------------------------------------ --check
 
 #[test]
+fn signed_zero_is_a_failure_at_zero_tolerance() {
+    let fixtures = Fixtures::new("signed_zero");
+    let source = fixtures.write("zero.dsp", "process = 0.0;\n");
+    let reference = fixtures.path("negative-zero.f64");
+    std::fs::write(&reference, (-0.0_f64).to_le_bytes().repeat(4)).unwrap();
+    let args = ["-n", "4", "--ref", &reference, "--format", "json", &source];
+    let (ok, stdout, stderr) = probe(&args);
+    assert!(!ok, "{stdout}");
+    assert!(stderr.contains("first: frame 0"), "{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["runs"][0]["compare"]["agrees"], false);
+    assert_eq!(
+        report["runs"][0]["compare"]["channels"][0]["identical"],
+        false
+    );
+    let (ok, _, stderr) = probe(&[&args[..], &["--tolerance", "1e-12"]].concat());
+    assert!(ok, "{stderr}");
+}
+
+#[test]
+fn independent_determinism_preserves_eval_controls_schedule_and_window() {
+    let fixtures = Fixtures::new("independent_determinism");
+    let source = fixtures.write(
+        "scope.lib",
+        "g = hslider(\"gain\", 1, 0, 2, 0.001);\nf = _ * g : + ~ *(0.5);\n",
+    );
+    for options in [&[][..], &["--double", "--opt-level", "4"][..]] {
+        let (ok, stdout, stderr) = probe(
+            &[
+                options,
+                &[
+                    "--eval",
+                    "f",
+                    "--set",
+                    "gain=0.75",
+                    "--at",
+                    "17",
+                    "gain=0.25",
+                    "--in",
+                    "white:29",
+                    "--sr",
+                    "48000",
+                    "--block",
+                    "7",
+                    "-n",
+                    "91",
+                    "--skip",
+                    "11",
+                    "--quiet",
+                    "--check",
+                    "determinism",
+                    &source,
+                ],
+            ]
+            .concat(),
+        );
+        assert!(ok, "{stderr}");
+        assert!(
+            stdout.contains("# check determinism: rendered in an independent process"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("# check determinism out0: identical"),
+            "{stdout}"
+        );
+    }
+}
+
+#[test]
 fn the_invariants_hold_on_a_program_with_state() {
     let fixtures = Fixtures::new("invariants");
     let stateful = fixtures.write("s.dsp", STATEFUL);

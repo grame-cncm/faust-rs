@@ -632,11 +632,13 @@ FFI-free like `probe/render.rs`). Decisions and findings:
   is looking at. Open question of §6 settled with `--compare-outputs`, general
   to comparisons and checks: on the `rad` fixture the loss lane is identical at
   `--block 256` and the gradient lanes differ from frames 1 and 2.
-- **`--check determinism`** compiles again and says whether the program key is
-  the same. The key is a digest of the canonical FIR, so a second compilation
-  with the same key shares the cached factory and the comparison is then a
-  formality; a different key is a non-deterministic compilation, and the render
-  says whether it matters. It always demands the very bits.
+- **`--check determinism`** compiles and renders again in an independent
+  process and says whether the program key is the same. The key is a digest
+  of the canonical FIR/options; process isolation ensures equal keys cannot
+  cause the C API cache to discard the second JIT and reuse the first.
+  Samples cross the private worker protocol as integer bit patterns. The
+  comparison always demands the very bits, including the sign of zero;
+  a different key is reported and the render says whether it matters.
 - **`--check width`** is a report unless a tolerance is given: the two widths
   never agree to the bit, and a gate that always fails teaches nothing. Its test
   replays the two accumulations of `+(0.1) ~ _` and finds the printed `max_abs`
@@ -1015,4 +1017,3 @@ mutations rejected: the render giving silence; only the first voice fed; the
 second half of a stolen voice reading from the start; a stolen voice given
 silence; the excitation restarting at every block; the missing channel
 accepted; the unfed-input note dropped; `--in` replaced by the impulse.
-

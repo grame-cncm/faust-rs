@@ -155,6 +155,7 @@ fn compare_channel(a: &[f64], b: &[f64], start: usize, tolerance: Tolerance) -> 
         .filter(|v| v.is_finite())
         .fold(0.0_f64, |peak, v| peak.max(v.abs()));
     let limit = tolerance.abs + tolerance.rel * peak;
+    let exact = tolerance.abs == 0.0 && tolerance.rel == 0.0;
     let mut diff = ChannelDiff {
         identical: true,
         max_abs: 0.0,
@@ -172,9 +173,10 @@ fn compare_channel(a: &[f64], b: &[f64], start: usize, tolerance: Tolerance) -> 
             diff.max_abs = distance;
             diff.max_abs_at = Some(start + k);
         }
-        // a NaN distance, from a non-finite sample whose bits differ, is
-        // beyond any tolerance: `distance > limit` alone would let it through
-        let beyond = distance.is_nan() || distance > limit;
+        // The bits already differ: exact mode must reject signed-zero
+        // differences too. Non-finite values require identical bits even
+        // when the tolerance calculation overflows to infinity.
+        let beyond = exact || !value.is_finite() || !reference.is_finite() || distance > limit;
         if beyond && diff.first_beyond.is_none() {
             diff.first_beyond = Some(Disagreement {
                 frame: start + k,
@@ -210,6 +212,26 @@ mod tests {
         let comparison = compare(&a, &a.clone(), Tolerance::default(), None).unwrap();
         assert!(comparison.identical() && comparison.agrees());
         assert_eq!(comparison.channels[1].1.max_abs_at, None);
+    }
+
+    #[test]
+    fn signed_zeros_disagree_only_when_bit_identity_is_required() {
+        let a = samples(12, &[&[0.0]]);
+        let b = samples(12, &[&[-0.0]]);
+        let exact = compare(&a, &b, Tolerance::default(), None).unwrap();
+        assert!(!exact.identical() && !exact.agrees());
+        assert_eq!(exact.first_beyond().unwrap().1.frame, 12);
+        let tolerant = compare(
+            &a,
+            &b,
+            Tolerance {
+                abs: 1e-12,
+                rel: 0.0,
+            },
+            None,
+        )
+        .unwrap();
+        assert!(!tolerant.identical() && tolerant.agrees());
     }
 
     #[test]

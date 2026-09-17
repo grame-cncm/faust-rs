@@ -323,8 +323,9 @@ impl Factory {
     /// the options that shape the code.
     ///
     /// Two compilations of one source give the same key when the compiler is
-    /// deterministic, and then share one cached factory; keys that differ are
-    /// what `--check determinism` has to explain.
+    /// deterministic, and then share one cached factory within a process.
+    /// `--check determinism` uses a separate process so its second render
+    /// executes an independent JIT even when the keys agree.
     #[must_use]
     pub fn sha_key(&self) -> String {
         // SAFETY: `self.factory` is live for as long as `self`; the returned

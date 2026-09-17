@@ -1011,7 +1011,7 @@ makes. The flag repeats.
 |---|---|---|
 | `block[=N1,N2,...]` | a fresh instance at another block size (default 1, 7 and 512; the render's own `--block` is what they are compared with) | the same samples: a DSP that moves with the block size has a defect, or is a `rad` program, see below |
 | `reset` | the same instance again, after a reset | the same samples. Every sweep point and every `--reset-per-block` pass relies on it: a reset that left state behind would contaminate them in silence |
-| `determinism` | an instance of a second compilation of the source | the very bits, whatever the tolerance; the line says whether the two compilations gave the same program key |
+| `determinism` | a second compilation and render in an independent process, with its own factory cache | the very bits, whatever the tolerance; the line says whether the two compilations gave the same program key |
 | `width` | the other sample width (`--double` or not) | a **report** of the distance: `max_abs`, where, the first differing frame. A gate only when a tolerance is given |
 | `all` | all of the above | |
 

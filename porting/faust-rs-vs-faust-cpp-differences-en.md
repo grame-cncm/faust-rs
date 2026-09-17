@@ -175,6 +175,14 @@ must run unchanged with Faust C++ should not pass them.
   impulse-test`. Evidence:
   [`docs/faustprobe-user-guide-en.md`](../docs/faustprobe-user-guide-en.md),
   [`faustprobe-generic-test-tool-design-2026-08-14-en.md`](faustprobe-generic-test-tool-design-2026-08-14-en.md).
+  Comparisons at zero absolute and relative tolerance require bit identity,
+  including signed zeros. `--check determinism` runs its second compilation
+  and render in a separate process so equal FIR keys cannot reuse the first
+  JIT. Its hidden `--determinism-worker` mode and JSON bit-pattern response
+  are a private implementation protocol, not a stable host API. This leaves
+  the C/C++ factory cache contract unchanged. Regression coverage:
+  `crates/cranelift-ffi/tests/compare_probe.rs` and
+  `crates/cranelift-ffi/src/bin/faustprobe/determinism.rs`.
 
 ## 5. Runtime, lowering, and generated-code behavior
 
