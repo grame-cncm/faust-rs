@@ -16,6 +16,7 @@
 
 pub mod abi;
 pub mod args;
+pub mod complete_error;
 pub mod factory_cache;
 pub mod memory;
 pub mod sha1;
@@ -27,6 +28,7 @@ pub use abi::{
     FaustMemoryManagerInfoFn, FaustMemoryType, FfiFaustFloat, MetaGlue, UIGlue,
 };
 pub use args::{FfiCompileArgs, parse_ffi_compile_args};
+pub use complete_error::CompleteError;
 pub use factory_cache::{FactoryCache, FactoryHandle, FactoryRelease};
 pub use memory::{alloc_opaque, free_opaque};
 pub use sha1::{sha1, sha1_hex};

@@ -12,6 +12,7 @@ int main(void) {
     stopMTDSPFactories();
     freeCMemory(0);
     (void)getAllCCraneliftDSPFactories();
+    (void)getCCompleteCraneliftDSPFactoryError();
     (void)getCCraneliftDSPFactoryJSON(factory);
     (void)getCCraneliftDSPFactoryLibraryList(factory);
     (void)writeCCraneliftDSPFactoryToBitcode(factory);

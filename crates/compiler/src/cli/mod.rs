@@ -14,11 +14,14 @@
 pub mod args;
 pub mod diagnostics;
 pub mod fixture_mode;
-pub mod human;
 pub mod runner;
 pub mod source_mode;
 pub mod timer;
 pub mod validate;
+
+/// The terminal renderer lives in the library, so that the FFI layers render
+/// the same text as this binary.
+pub use compiler::diagnostics_human as human;
 
 #[cfg(test)]
 mod tests;

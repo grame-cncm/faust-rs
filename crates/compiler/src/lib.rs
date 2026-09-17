@@ -45,6 +45,7 @@
 // `cargo build`/`check`/`clippy`/`test` directly.
 #![deny(missing_docs)]
 
+pub mod diagnostics_human;
 pub mod diagnostics_json;
 pub mod enrobage;
 pub mod expand;
@@ -500,6 +501,20 @@ pub enum FaustwasmServiceErrorCode {
 }
 
 impl FaustwasmServiceError {
+    /// The retained compiler diagnostics rendered for a terminal, empty when
+    /// the failure carries none. See [`CompilerError::rendered_diagnostics`].
+    #[must_use]
+    pub fn rendered_diagnostics(&self) -> String {
+        self.diagnostics
+            .as_ref()
+            .map_or_else(String::new, |bundle| {
+                diagnostics_human::format_bundle(
+                    bundle,
+                    diagnostics_human::HumanRenderOptions::default(),
+                )
+            })
+    }
+
     /// Builds an error tagged [`FaustwasmServiceErrorCode::Unsupported`].
     ///
     /// Takes any [`Display`](std::fmt::Display) value so a fallible stage can
@@ -2386,6 +2401,21 @@ impl CompilerError {
             Self::CodegenWasm { diagnostics, .. } => diagnostics,
             Self::MissingRoot { diagnostics, .. } => diagnostics,
         }
+    }
+
+    /// Every diagnostic of this error rendered for a terminal (location,
+    /// source snippet, notes, fixes), at the default verbosity and with
+    /// absolute paths: what the `faust-rs` binary prints under
+    /// `--error-format human` below its one-line summary.
+    ///
+    /// The FFI layers hand it to hosts that ask for more than the summary
+    /// their 4096-byte `error_msg` buffer receives.
+    #[must_use]
+    pub fn rendered_diagnostics(&self) -> String {
+        diagnostics_human::format_bundle(
+            self.diagnostic_bundle(),
+            diagnostics_human::HumanRenderOptions::default(),
+        )
     }
 
     /// Compatibility wrapper for callers that still expect an optional bundle.

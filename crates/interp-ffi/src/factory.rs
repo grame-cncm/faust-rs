@@ -21,13 +21,13 @@ use codegen::backends::interp::{
     unregister_foreign_function,
 };
 use compiler::{
-    AuxFileArtifact, Compiler as FaustCompiler, ExpandDspRequest, GenerateAuxFilesRequest,
-    RealType, SignalFirLane, TableInitMode, compile_options_json_string,
-    default_import_search_paths,
+    AuxFileArtifact, Compiler as FaustCompiler, CompilerError, ExpandDspRequest,
+    FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SignalFirLane, TableInitMode,
+    compile_options_json_string, default_import_search_paths,
 };
 use ffi_common::{
-    FfiCompileArgs, decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only,
-    null_c_string_array, optional_c_string_arg,
+    CompleteError, FfiCompileArgs, decode_c_argv as decode_c_argv_shared,
+    free_c_memory_c_string_only, null_c_string_array, optional_c_string_arg,
     parse_ffi_compile_args as parse_ffi_compile_args_shared, required_c_string_arg,
     write_error_4096,
 };
@@ -435,12 +435,51 @@ pub unsafe extern "C" fn freeCMemory(ptr: *mut c_void) {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-/// Write an error message into the C error buffer (max 4095 chars + NUL).
+thread_local! {
+    /// Complete text of the last error this thread reported; see
+    /// [`ffi_common::complete_error`] for the contract.
+    static COMPLETE_ERROR: CompleteError = const { CompleteError::new() };
+}
+
+/// Write an error message into the C error buffer (max 4095 chars + NUL), and
+/// publish its complete text for [`getCCompleteInterpreterDSPFactoryError`].
 ///
 /// # Safety
 /// `buf` must point to at least 4096 bytes or be null.
 unsafe fn write_error(buf: *mut c_char, msg: &str) {
+    COMPLETE_ERROR.with(|record| record.report(msg));
     unsafe { write_error_4096(buf, msg) }
+}
+
+/// Flattens a compiler error to the one-line summary the error buffer
+/// receives, keeping its rendered diagnostics for the report of that summary.
+fn summary_of(error: &CompilerError) -> String {
+    let summary = error.to_string();
+    COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
+    summary
+}
+
+/// [`summary_of`] for the helper-service errors (`expand`, auxiliary files).
+fn service_summary_of(error: &FaustwasmServiceError) -> String {
+    let summary = error.to_string();
+    COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
+    summary
+}
+
+/// Returns the complete text of the last error reported on the calling thread
+/// through an `error_msg` buffer: the message that buffer received, followed
+/// by the compiler's rendered diagnostics (location, source snippet, notes,
+/// fixes) when the failure had some. The buffer is 4096 bytes by contract and
+/// its size cannot grow without breaking existing hosts; this text is not
+/// truncated.
+///
+/// The pointer is owned by the library: do not free it. It is null while no
+/// error was reported on this thread, and stays valid until the next error
+/// reported on this thread. A call that succeeds does not reset it, so read it
+/// after a call that failed.
+#[unsafe(no_mangle)]
+pub extern "C" fn getCCompleteInterpreterDSPFactoryError() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::as_ptr)
 }
 
 /// Auto-detect precision from the `.fbc` header and deserialize the factory.
@@ -600,7 +639,7 @@ fn compile_factory_from_file_fastlane(
             &interp_options,
             SignalFirLane::TransformFastLane,
         )
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| summary_of(&e))?;
     compile_factory_from_fbc_text(&fbc)
 }
 
@@ -647,7 +686,7 @@ fn compile_factory_from_string_fastlane(
             &parsed.search_paths,
             SignalFirLane::TransformFastLane,
         )
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|e| summary_of(&e))?;
     compile_factory_from_fbc_text(&fbc)
 }
 
@@ -849,7 +888,7 @@ pub unsafe extern "C" fn expandCInterpreterDSPFromFile(
                 alloc_c_string(&expanded)
             }
             Err(e) => {
-                write_error(error_msg, &e.to_string());
+                write_error(error_msg, &service_summary_of(&e));
                 std::ptr::null_mut()
             }
         }
@@ -912,7 +951,7 @@ pub unsafe extern "C" fn expandCInterpreterDSPFromString(
                 alloc_c_string(&expanded)
             }
             Err(e) => {
-                write_error(error_msg, &e.to_string());
+                write_error(error_msg, &service_summary_of(&e));
                 std::ptr::null_mut()
             }
         }
@@ -968,7 +1007,7 @@ pub unsafe extern "C" fn generateCInterpreterAuxFilesFromFile(
         match compiler.generate_aux_files(&request) {
             Ok(artifacts) => write_aux_artifacts_to_disk(&artifacts, &args, error_msg),
             Err(e) => {
-                write_error(error_msg, &e.to_string());
+                write_error(error_msg, &service_summary_of(&e));
                 false
             }
         }
@@ -1027,7 +1066,7 @@ pub unsafe extern "C" fn generateCInterpreterAuxFilesFromString(
         match compiler.generate_aux_files(&request) {
             Ok(artifacts) => write_aux_artifacts_to_disk(&artifacts, &args, error_msg),
             Err(e) => {
-                write_error(error_msg, &e.to_string());
+                write_error(error_msg, &service_summary_of(&e));
                 false
             }
         }

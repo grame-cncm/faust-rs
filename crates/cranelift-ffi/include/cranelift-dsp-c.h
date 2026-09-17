@@ -198,6 +198,20 @@ void deleteAllCCraneliftDSPFactories(void);
 char** getAllCCraneliftDSPFactories(void);
 
 /**
+ * Return the complete text of the last error reported on the calling thread
+ * through an `error_msg` buffer: the message that buffer received, followed by
+ * the compiler's rendered diagnostics (location, source snippet, notes, fixes)
+ * when the failure had some. `error_msg` is 4096 bytes by contract and
+ * truncates; this text is whole.
+ *
+ * The pointer is owned by the library: do NOT free it. It is NULL while no
+ * error was reported on this thread and stays valid until the next error
+ * reported on this thread. A successful call does not reset it: read it after
+ * a call that failed.
+ */
+const char* getCCompleteCraneliftDSPFactoryError(void);
+
+/**
  * Return the factory name string.
  * The returned string must be freed with freeCMemory.
  */

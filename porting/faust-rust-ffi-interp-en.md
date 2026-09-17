@@ -183,6 +183,7 @@ Functions: `cache_insert`, `cache_lookup`, `cache_remove_by_ptr`,
 | `deleteAllCInterpreterDSPFactories` | `cache_drain` + drop each `Box` |
 | `getAllCInterpreterDSPFactories` | `cache_all_sha_keys` → null-terminated `*mut *mut c_char` |
 | `getCInterpreterDSPFactoryJSON` | generate JSON from `meta_block` + `ui_block` |
+| `getCCompleteInterpreterDSPFactoryError` | `ffi_common::CompleteError` (per-thread): the `error_msg` text plus the rendered compiler diagnostics, not limited to 4096 bytes; no libfaust equivalent |
 | `getCInterpreterDSPFactoryLibraryList` | always returns empty null-terminated array |
 | `getCLibFaustVersion` | `FAUST_VERSION` constant via `OnceLock<CString>` |
 | `freeCMemory` | `CString::from_raw(ptr)` |

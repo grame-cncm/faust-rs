@@ -26,14 +26,14 @@ use codegen::backends::cranelift::{
 use codegen::json::{JsonBuildOptions, JsonMemoryDescription, build_json_description_from_fir};
 use codegen::memory_layout::MemoryManagerMode;
 use compiler::{
-    AuxFileArtifact, Compiler as FaustCompiler, ComputeMode, ExpandDspRequest,
-    GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane, TableInitMode,
-    default_import_search_paths,
+    AuxFileArtifact, Compiler as FaustCompiler, CompilerError, ComputeMode, ExpandDspRequest,
+    FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane,
+    TableInitMode, default_import_search_paths,
 };
 use ffi_common::{
-    FaustMemoryManager, decode_c_argv as decode_c_argv_shared, free_c_memory_c_string_only,
-    null_c_string_array, optional_c_string_arg, parse_ffi_compile_args, required_c_string_arg,
-    write_error_4096,
+    CompleteError, FaustMemoryManager, decode_c_argv as decode_c_argv_shared,
+    free_c_memory_c_string_only, null_c_string_array, optional_c_string_arg,
+    parse_ffi_compile_args, required_c_string_arg, write_error_4096,
 };
 use fir::{FirMatch, match_fir};
 
@@ -1116,7 +1116,7 @@ fn preflight_compile_file_to_cranelift(
     let search_paths = collect_search_paths_for_file(path, argv);
     let fir = compiler
         .compile_file_to_fir_with_lane(path, &search_paths, SignalFirLane::TransformFastLane)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| summary_of(&e))?;
     let num_inputs = fir_module_num_inputs(&fir.store, fir.module)?;
     let num_outputs = fir_module_num_outputs(&fir.store, fir.module)?;
     let fir = BoxFfiFirModule {
@@ -1157,7 +1157,7 @@ fn preflight_compile_source_to_cranelift(
             &search_paths,
             SignalFirLane::TransformFastLane,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| summary_of(&e))?;
     let num_inputs = fir_module_num_inputs(&fir.store, fir.module)?;
     let num_outputs = fir_module_num_outputs(&fir.store, fir.module)?;
     let fir = BoxFfiFirModule {
@@ -1415,12 +1415,51 @@ fn rebuild_factory_from_source(
     Ok(rebuilt)
 }
 
-/// Write an error message to a standard 4096-byte Faust error buffer.
+thread_local! {
+    /// Complete text of the last error this thread reported; see
+    /// [`ffi_common::complete_error`] for the contract.
+    static COMPLETE_ERROR: CompleteError = const { CompleteError::new() };
+}
+
+/// Write an error message to a standard 4096-byte Faust error buffer, and
+/// publish its complete text for [`getCCompleteCraneliftDSPFactoryError`].
 ///
 /// # Safety
 /// `buf` must point to at least 4096 bytes or be null.
 unsafe fn write_error(buf: *mut c_char, msg: &str) {
+    COMPLETE_ERROR.with(|record| record.report(msg));
     unsafe { write_error_4096(buf, msg) }
+}
+
+/// Flattens a compiler error to the one-line summary the error buffer
+/// receives, keeping its rendered diagnostics for the report of that summary.
+fn summary_of(error: &CompilerError) -> String {
+    let summary = error.to_string();
+    COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
+    summary
+}
+
+/// [`summary_of`] for the helper-service errors (`expand`, auxiliary files).
+fn service_summary_of(error: &FaustwasmServiceError) -> String {
+    let summary = error.to_string();
+    COMPLETE_ERROR.with(|record| record.attach(&summary, &error.rendered_diagnostics()));
+    summary
+}
+
+/// Returns the complete text of the last error reported on the calling thread
+/// through an `error_msg` buffer: the message that buffer received, followed
+/// by the compiler's rendered diagnostics (location, source snippet, notes,
+/// fixes) when the failure had some. The buffer is 4096 bytes by contract and
+/// its size cannot grow without breaking existing hosts; this text is not
+/// truncated.
+///
+/// The pointer is owned by the library: do not free it. It is null while no
+/// error was reported on this thread, and stays valid until the next error
+/// reported on this thread. A call that succeeds does not reset it, so read it
+/// after a call that failed.
+#[unsafe(no_mangle)]
+pub extern "C" fn getCCompleteCraneliftDSPFactoryError() -> *const c_char {
+    COMPLETE_ERROR.with(CompleteError::as_ptr)
 }
 
 /// Runs the shared post-`argv` FFI factory creation flow for Cranelift backend.
@@ -1507,7 +1546,7 @@ pub unsafe extern "C" fn expandCCraneliftDSPFromFile(
                 alloc_c_string(&expanded)
             }
             Err(e) => {
-                write_error(error_msg, &e.to_string());
+                write_error(error_msg, &service_summary_of(&e));
                 std::ptr::null_mut()
             }
         }
@@ -1570,7 +1609,7 @@ pub unsafe extern "C" fn expandCCraneliftDSPFromString(
                 alloc_c_string(&expanded)
             }
             Err(e) => {
-                write_error(error_msg, &e.to_string());
+                write_error(error_msg, &service_summary_of(&e));
                 std::ptr::null_mut()
             }
         }
@@ -1626,7 +1665,7 @@ pub unsafe extern "C" fn generateCCraneliftAuxFilesFromFile(
         match compiler.generate_aux_files(&request) {
             Ok(artifacts) => write_aux_artifacts_to_disk(&artifacts, &args, error_msg),
             Err(e) => {
-                write_error(error_msg, &e.to_string());
+                write_error(error_msg, &service_summary_of(&e));
                 false
             }
         }
@@ -1685,7 +1724,7 @@ pub unsafe extern "C" fn generateCCraneliftAuxFilesFromString(
         match compiler.generate_aux_files(&request) {
             Ok(artifacts) => write_aux_artifacts_to_disk(&artifacts, &args, error_msg),
             Err(e) => {
-                write_error(error_msg, &e.to_string());
+                write_error(error_msg, &service_summary_of(&e));
                 false
             }
         }
