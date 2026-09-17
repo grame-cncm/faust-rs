@@ -312,3 +312,12 @@ the window it used, so the output is self-describing.
   `--vector-size`, `--scheduling-strategy`. Whether probing needs them, or
   whether vector-mode verification stays with the impulse corpus, is not
   settled here.
+
+## 9. Follow-up
+
+`porting/faustprobe-feedback-quality-analysis-and-plan-2026-09-17-en.md` applies
+§6 to the tool as built (where it misreports today) and plans what would make
+its feedback more precise and more attributable: range errors, round-trip
+numbers, localisation of non-finite renders, `--compare`, `--check`, `--eval`,
+host-loop feedback, `--freqresp` (the spectral reduction §7.1 asks for).
+
