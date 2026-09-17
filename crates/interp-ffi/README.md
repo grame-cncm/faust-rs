@@ -100,6 +100,21 @@ still keep distinct compile paths:
 
 This distinction is intentional to preserve behavior parity.
 
+## Compile errors
+
+`error_msg` is 4096 bytes by the libfaust contract (caller-allocated, size never
+passed) and receives the one-line summary of a compiler error.
+`getCCompleteInterpreterDSPFactoryError()` returns the complete text, the
+summary followed by the rendered diagnostics (location, source snippet, notes,
+fixes): per thread, owned by the library (do not free it), null before the
+thread's first error, valid until its next one, not reset by a success, no
+trailing newline. It covers every entry point of `interpreter-dsp-c.h` that
+takes an `error_msg`: factory creation from file, string and bitcode, expansion,
+auxiliary files. The C++ wrapper reads it, so `std::string& error_msg` holds the
+complete text, and is cleared by a success. The workspace
+[C and C++ usage guide](../../README.md#compile-errors) has an example and the
+functions of the other APIs.
+
 ## Build / test
 
 Targeted checks:

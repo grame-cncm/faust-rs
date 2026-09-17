@@ -174,11 +174,15 @@ passed) and receives the one-line summary of a compiler error.
 `getCCompleteCraneliftDSPFactoryError()` returns the complete text, the summary
 followed by the rendered diagnostics (location, source snippet, notes, fixes):
 per thread, owned by the library, null before the thread's first error, valid
-until its next one, not reset by a success. The C++ wrapper reads it, so
+until its next one, not reset by a success, no trailing newline. It covers
+every entry point of `cranelift-dsp-c.h` that takes an `error_msg`, the factories
+from boxes and signals included. The C++ wrapper reads it, so
 `std::string& error_msg` holds the complete text; `faustprobe` prints it.
 `complete_error_cpp_client.cpp` is a C++ host that checks this, run by
 `cargo run -p xtask -- libfaust-export-check` where the Faust architecture
-headers are found.
+headers are found. The workspace
+[C and C++ usage guide](../../README.md#compile-errors) has an example and the
+functions of the other APIs.
 
 ## Known limitations
 

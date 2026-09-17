@@ -167,3 +167,41 @@ This is the mode automated tooling (CI, an IDE, a future MCP server) should
 prefer over `--dump-cpp`/`--dump-sig` when it only needs to know whether a
 DSP is valid: it is the same front-end work with no codegen or dump-text
 side channel to filter out.
+
+## 8. Diagnostics from the C and C++ API
+
+A host that embeds `libfaust-rs` gets the same human text as section 2, without
+running the `faust-rs` command.
+
+In C++, the wrappers (`interpreter-dsp.h`, `cranelift-dsp.h`, `libfaust.h`) put
+it in their `std::string& error_msg`: the summary line, then each diagnostic
+with its location, source line, notes and fix. A success leaves the string
+empty.
+
+In C, `error_msg` is a 4096-byte buffer the caller allocates; it receives the
+summary line only, which for a syntax error is a count (`parse failed for x.dsp:
+errors=1, recoveries=0, diagnostics=1`). The complete text comes from the
+library:
+
+| Header | Function |
+|---|---|
+| `interpreter-dsp-c.h` | `getCCompleteInterpreterDSPFactoryError()` |
+| `cranelift-dsp-c.h` | `getCCompleteCraneliftDSPFactoryError()` |
+| `libfaust-c.h` | `getCCompleteDSPError()` |
+| `libfaust-box-c.h` | `getCCompleteBoxError()` |
+| `libfaust-signal-c.h` | `getCCompleteSignalError()` |
+
+Call it after a call that failed, on the same thread. The pointer belongs to the
+library (do not free it), is null while the thread reported no error, stays
+valid until the thread's next error, and is not reset by a success. The text is
+rendered at the `standard` verbosity with absolute paths and does not end with a
+newline. The workspace README has a
+[complete example](../README.md#compile-errors).
+
+This channel is the human one. A tool that needs typed fields (codes, ranges,
+fixes to apply) should run `faust-rs --check --error-format json` (sections 6
+and 7), or use the `wasm-ffi` bindings, which return the diagnostics-v2 JSON;
+the C API does not expose the JSON channel.
+
+`faustprobe` prints the same text when the program it is asked to measure does
+not compile.

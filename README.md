@@ -264,10 +264,70 @@ Unlike the C++ wrapper, the Cranelift C constructor always takes the
 factory data are owned by `libfaust-rs` and must be released with `freeCMemory()`
 when the corresponding header says so.
 
+### Compile errors
+
+When a program does not compile, the C++ wrappers put the compiler's complete
+diagnostic in their `std::string& error`, so the `std::cerr << error` of the
+examples above prints the location, the source line and the suggested fix:
+
+```
+parse failed for gain: errors=1, recoveries=0, diagnostics=1
+gain:1:21: error [FRS-PARSE-0001] Parsing error at line 1 column 21. Repair sequences found:
+   1: Insert RPAR
+  1 | process = _ : *(0.5 ;
+    |                     ^ unexpected token
+    |                ^ `(` opened here
+  = fix (machine-applicable): insert `)`
+    the parser found only this insertion repair
+```
+
+In C, `error` is a buffer the caller allocates and whose size the library is
+never told: 4096 bytes, as in libfaust, and it cannot grow without overflowing
+existing hosts. It receives the first line above, the summary. The complete text
+is read from the library, one function per API:
+
+| Header | Entry points | Complete text of their last error |
+|---|---|---|
+| `interpreter-dsp-c.h` | Interpreter factories, expansion, auxiliary files | `getCCompleteInterpreterDSPFactoryError()` |
+| `cranelift-dsp-c.h` | Cranelift factories, expansion, auxiliary files | `getCCompleteCraneliftDSPFactoryError()` |
+| `libfaust-c.h` | `expandCDSP*`, `generateCAuxFiles*` | `getCCompleteDSPError()` |
+| `libfaust-box-c.h` | `CDSPToBoxes`, `CboxesToSignals*`, `CcreateSourceFromBoxes` | `getCCompleteBoxError()` |
+| `libfaust-signal-c.h` | `CcreateSourceFromSignals` | `getCCompleteSignalError()` |
+
+```c
+char error[4096] = {0};
+interpreter_dsp_factory* factory =
+    createCInterpreterDSPFactoryFromString("gain", source, 0, NULL, error);
+if (factory == NULL) {
+    /* `error` has the summary; the complete text adds the diagnostic. */
+    const char* complete = getCCompleteInterpreterDSPFactoryError();
+    fprintf(stderr, "%s\n", complete ? complete : error);
+    return 1;
+}
+```
+
+The contract is the same for the five, and is that of `dlerror`:
+
+- the text is the message `error` received, never cut at 4096 bytes, followed
+  by the rendered diagnostics when the failure came from the compiler; an
+  error that has none (a missing file, a null pointer, an unsupported target)
+  is its message;
+- the pointer belongs to the library: do not free it, `freeCMemory()` included;
+- it is per thread: null while the calling thread reported no error, and valid
+  until the next error reported on that thread;
+- a call that succeeds does not reset it, so read it after a call that failed,
+  not instead of testing the call's result;
+- it does not end with a newline.
+
+These five functions are additions of `libfaust-rs`; the reference libfaust has
+no equivalent. The text is the one the `faust-rs` command prints under
+`--error-format human`; see the [diagnostics guide](docs/user-diagnostics-guide-en.md)
+for how to read it.
+
 Cranelift support is experimental: native JIT execution works for the currently
 supported compiler/FIR subset, but full runtime parity and its serialized
 factory format are not yet final. Always check the returned factory and report
-the supplied error string. See the detailed
+the error. See the detailed
 [`Interpreter C/C++ API guide`](crates/interp-ffi/README.md) and
 [`Cranelift C/C++ API guide`](crates/cranelift-ffi/README.md), as well as the
 corresponding `*-dsp-c.h` headers when calling `libfaust-rs` from C.

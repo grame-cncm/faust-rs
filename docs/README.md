@@ -17,7 +17,8 @@ alongside it.
 - [`user-cli-guide-en.md`](user-cli-guide-en.md) — the `faust-rs` compiler
   CLI, option by option.
 - [`user-diagnostics-guide-en.md`](user-diagnostics-guide-en.md) — reading
-  and using compiler diagnostics.
+  and using compiler diagnostics, from the command line and from the C and C++
+  API.
 - [`user-mem0-guide-en.md`](user-mem0-guide-en.md) — the `-mem0` custom
   memory manager.
 - [`faustprobe-user-guide-en.md`](faustprobe-user-guide-en.md) — `faustprobe`,
