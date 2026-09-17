@@ -818,6 +818,7 @@ fn ControlMap::is_empty
 fn ControlMap::iter
 fn ControlMap::len
 fn ControlMap::resolve
+fn ControlMap::writable
 fn EvalProgram::arity_source
 fn EvalProgram::explain
 fn EvalProgram::expr_line
@@ -1005,8 +1006,11 @@ struct Write
 type FaustFloat
 type Frame
 type RenderLimit
+use factory
 use ffi_common::MetaGlue
 use ffi_common::UIGlue
+use poly_probe
+use probe::Probe
 
 ## diagnostics
 const CODEGEN_EMISSION_FAILED

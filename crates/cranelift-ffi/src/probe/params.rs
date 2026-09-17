@@ -266,20 +266,34 @@ impl ControlMap {
     /// Names the bargraph, the candidates of an ambiguous fragment, or the
     /// query when nothing matches.
     pub fn check_write(&self, query: &str, value: f64) -> Result<Write<'_>, String> {
+        let control = self.writable(query)?;
+        Ok(Write {
+            control,
+            requested: value,
+            applied: if value.is_nan() {
+                control.init
+            } else {
+                control.clamp(value)
+            },
+        })
+    }
+
+    /// The one control `query` names, if it can be written.
+    ///
+    /// A bargraph resolves like a control but is an output: a write to it
+    /// would be overwritten by the next `compute`, so a sweep over one would
+    /// print rows that look like a measurement and are not.
+    ///
+    /// # Errors
+    /// Names the bargraph, the candidates of an ambiguous fragment, or the
+    /// query when nothing matches.
+    pub fn writable(&self, query: &str) -> Result<&Control, String> {
         match self.resolve(query) {
             Resolution::Unique(control) if !control.kind.is_writable() => Err(format!(
                 "`{}` is a bargraph, an output of the program: it cannot be set",
                 control.path
             )),
-            Resolution::Unique(control) => Ok(Write {
-                control,
-                requested: value,
-                applied: if value.is_nan() {
-                    control.init
-                } else {
-                    control.clamp(value)
-                },
-            }),
+            Resolution::Unique(control) => Ok(control),
             Resolution::NotFound => Err(format!("no control matching `{query}`")),
             Resolution::Ambiguous(candidates) => Err(format!(
                 "`{query}` is ambiguous, matches: {}",
