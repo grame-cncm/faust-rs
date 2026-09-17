@@ -109,14 +109,19 @@ which is how a start-up transient is excluded. `--every N` prints one frame in
 
 ## 5. Controls
 
-`--list-params` shows what the DSP exposes and exits:
+`--list-params` shows what the DSP exposes, with the kind of every entry
+(`slider`, `nentry`, `checkbox`, `button`, `bargraph`), and exits:
 
 ```
 $ faustprobe --list-params synth.dsp
-path                                               init        min        max       step
-/osc/freq                                           440         50       2000       0.01
-/osc/gain                                           0.5          0          1      0.001
+path                                         kind            init        min        max       step
+/osc/freq                                    slider           440         50       2000       0.01
+/osc/gain                                    slider           0.5          0          1      0.001
+/osc/level                                   bargraph           0          0          1          0
 ```
+
+A bargraph is listed with the controls because it shares their address
+space, but it is an output of the program: see "Bargraphs" below.
 
 `--set PATH=VALUE` writes a control before rendering, repeatable. `PATH` may be
 a full address or a trailing fragment of one, so `--set freq=100` finds
@@ -127,6 +132,10 @@ $ faustprobe --set gain=1 stereo.dsp
 faustprobe: `gain` is ambiguous, matches: /amb/left/gain, /amb/right/gain
 ```
 
+Everything a render will write is checked before any render: an unknown
+path, an ambiguous fragment or a bargraph in `--set`, `--sweep` or `--at` is
+an error, not a render.
+
 `--at FRAME PATH=VALUE` writes a control at an exact frame. The render splits
 its block so the change lands on the requested frame rather than at the next
 block boundary — which is what makes an attack measurable:
@@ -136,6 +145,51 @@ faustprobe --at 0 gate=1 --at 1 gate=0 --in zero -n 5000 pluck.dsp
 ```
 
 That pair is the idiom for a one-sample trigger on a `button`.
+
+### Bargraphs
+
+A `hbargraph` or `vbargraph` is how a Faust program shows a value: a level, a
+detector's state, a learned coefficient, the parameters a preset selected.
+The program writes it, once per sample; a host reads it. `faustprobe` reads
+every bargraph after a render and reports it with the statistics,
+
+```
+$ faustprobe --quiet --set preset=4 jot_presets_bargraph.dsp
+# frames=15000 sr=44100 window=0..15000 (15000 frames)
+# out0: peak=1.000000000 rms=0.008164966 dc=0.000066667 finite=yes
+# bargraph /jot_presets_bargraph/T60_at_dc=1.921500000
+# bargraph /jot_presets_bargraph/gain=29.954550373
+```
+
+and, in `--format json`, as a `bargraphs` object in every run, keyed by path
+(the key is absent when the program has none; the schema version is
+unchanged, the key being an addition). `--bargraphs` puts them in the rows as
+well: one column per bargraph, named by its path, after the outputs in the
+per-frame CSV dump and after the reductions in a sweep's rows, where it is the
+value at the end of each point's render:
+
+```
+$ faustprobe --sweep preset=0,4,7 --reduce rms --bargraphs jot_presets_bargraph.dsp
+preset,rms_out0,rms_out1,/jot_presets_bargraph/T60_at_dc,...
+0,0.125000000,0.125000000,0.290000000,...
+4,0.125000000,0.125000000,1.921500000,...
+```
+
+A bargraph's zone holds the value of the last sample of the last `compute`
+call, so in a per-frame dump a row carries the value at the end of the block
+its frame belongs to: the time resolution is `--block` (and the blocks that
+`--at` splits). Lower `--block` to follow a meter more finely. A bargraph
+cannot be written: `--set`, `--sweep` and `--at` refuse one,
+
+```
+$ faustprobe --set level=1 synth.dsp
+faustprobe: `/osc/level` is a bargraph, an output of the program: it cannot be set
+```
+
+since the program would overwrite the value at the next block and a sweep
+over it would print identical rows that look like a measurement. `--bargraphs`
+does not combine with `--format ir`, `--train`, the impulse-test protocol or
+`--nvoices`.
 
 ## 6. Output formats
 

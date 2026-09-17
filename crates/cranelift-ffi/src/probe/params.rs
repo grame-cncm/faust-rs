@@ -58,6 +58,28 @@ impl ControlKind {
     pub const fn is_writable(self) -> bool {
         !matches!(self, Self::Bargraph)
     }
+
+    /// The name `--list-params` prints for this kind.
+    ///
+    /// A bargraph is listed with the controls because it shares their
+    /// address space, but it is an output: without its kind next to it, a
+    /// listing reads as if it could be set.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Button => "button",
+            Self::CheckButton => "checkbox",
+            Self::Slider => "slider",
+            Self::NumEntry => "nentry",
+            Self::Bargraph => "bargraph",
+        }
+    }
+}
+
+impl std::fmt::Display for ControlKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
 }
 
 /// One discovered control: its address, the zone it writes to, and its range.
@@ -558,6 +580,8 @@ mod tests {
     #[test]
     fn bargraphs_are_not_writable() {
         assert!(!ControlKind::Bargraph.is_writable());
+        assert_eq!(ControlKind::Bargraph.label(), "bargraph");
+        assert_eq!(ControlKind::Slider.to_string(), "slider");
         assert!(ControlKind::Slider.is_writable());
     }
 }

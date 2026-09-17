@@ -113,9 +113,20 @@ struct Args {
     #[arg(long, default_value_t = 1)]
     every: usize,
 
-    /// List the discovered controls and exit.
+    /// List the discovered controls and bargraphs, with their kind, and exit.
     #[arg(long)]
     list_params: bool,
+
+    /// Add the bargraphs to the rendered rows: one column per bargraph in the
+    /// per-frame CSV dump and in a sweep's rows.
+    ///
+    /// A bargraph is written by the program, once per sample, and read here
+    /// after each compute block: a row carries the value at the end of the
+    /// block its frame belongs to, so the time resolution is `--block`.
+    /// Without this flag the bargraphs' values at the end of the render are
+    /// still reported, with the statistics and in the JSON document.
+    #[arg(long)]
+    bargraphs: bool,
 
     /// Print statistics only, no per-frame dump.
     #[arg(long)]
@@ -298,6 +309,9 @@ fn reject_protocol_conflicts(args: &Args) -> Result<(), String> {
     if args.skip != 0 {
         offenders.push("--skip");
     }
+    if args.bargraphs {
+        offenders.push("--bargraphs");
+    }
     if args.every != 1 {
         offenders.push("--every");
     }
@@ -425,6 +439,9 @@ fn run_poly(args: &Args) -> Result<(), String> {
     if args.format == Format::Ir {
         return Err("--format ir is scoped to the scalar impulse-test protocol".to_owned());
     }
+    if args.bargraphs {
+        return Err("--bargraphs reads the scalar Probe only; use --nvoices 0".to_owned());
+    }
 
     let mut poly = PolyProbe::compile(
         &args.file,
@@ -446,13 +463,13 @@ fn run_poly(args: &Args) -> Result<(), String> {
             if poly.has_effect() { "yes" } else { "no" }
         );
         println!(
-            "{:<44} {:>10} {:>10} {:>10} {:>10}",
-            "path (per voice)", "init", "min", "max", "step"
+            "{:<44} {:<9} {:>10} {:>10} {:>10} {:>10}",
+            "path (per voice)", "kind", "init", "min", "max", "step"
         );
         for control in poly.voice_controls().iter() {
             println!(
-                "{:<44} {:>10} {:>10} {:>10} {:>10}",
-                control.path, control.init, control.min, control.max, control.step
+                "{:<44} {:<9} {:>10} {:>10} {:>10} {:>10}",
+                control.path, control.kind, control.init, control.min, control.max, control.step
             );
         }
         return Ok(());
@@ -622,13 +639,13 @@ fn run(mut args: Args) -> Result<(), String> {
 
     if args.list_params {
         println!(
-            "{:<44} {:>10} {:>10} {:>10} {:>10}",
-            "path", "init", "min", "max", "step"
+            "{:<44} {:<9} {:>10} {:>10} {:>10} {:>10}",
+            "path", "kind", "init", "min", "max", "step"
         );
         for control in probe.controls().iter() {
             println!(
-                "{:<44} {:>10} {:>10} {:>10} {:>10}",
-                control.path, control.init, control.min, control.max, control.step
+                "{:<44} {:<9} {:>10} {:>10} {:>10} {:>10}",
+                control.path, control.kind, control.init, control.min, control.max, control.step
             );
         }
         return Ok(());
@@ -665,6 +682,26 @@ fn run(mut args: Args) -> Result<(), String> {
         .iter()
         .map(|a| parse_assignment(a))
         .collect::<Result<Vec<_>, _>>()?;
+    // Everything a render will write is checked before any render: a
+    // bargraph resolves like a control but is an output the program
+    // overwrites, and the scheduled writes of `--at` ignore their errors
+    // inside the render loop, so an unknown or unwritable path would
+    // otherwise pass in silence.
+    for (path, _) in &fixed {
+        probe.check_writable(path)?;
+    }
+    for axis in &axes {
+        probe.check_writable(&axis.path)?;
+    }
+    for path in schedule.param_paths() {
+        probe.check_writable(path)?;
+    }
+    if args.bargraphs && args.format == Format::Ir {
+        return Err("--bargraphs cannot be combined with --format ir".to_owned());
+    }
+    // The bargraphs' paths, for the headers; their values are read after each
+    // block (`Probe::bargraphs`, in the same order).
+    let bargraph_paths: Vec<String> = probe.bargraphs().into_iter().map(|(p, _)| p).collect();
 
     let spec = RenderSpec {
         frames: args.render,
@@ -697,6 +734,9 @@ fn run(mut args: Args) -> Result<(), String> {
                 }
             }
         }
+        if args.bargraphs {
+            header.extend(bargraph_paths.iter().cloned());
+        }
         println!("{}", header.join(","));
     }
 
@@ -720,6 +760,11 @@ fn run(mut args: Args) -> Result<(), String> {
                     print!("frame");
                     for ch in 0..probe.outputs() {
                         print!(",out{ch}");
+                    }
+                    if args.bargraphs {
+                        for path in &bargraph_paths {
+                            print!(",{path}");
+                        }
                     }
                     println!();
                 }
@@ -761,6 +806,14 @@ fn run(mut args: Args) -> Result<(), String> {
                         line.push(',');
                         line.push_str(&format!("{value:.9}"));
                     }
+                    if args.bargraphs {
+                        // read after the block this frame belongs to was
+                        // computed: the value at that block's last sample
+                        for (_, value) in probe.bargraphs() {
+                            line.push(',');
+                            line.push_str(&format!("{value:.9}"));
+                        }
+                    }
                     println!("{line}");
                 }
                 Format::Ir => print!("{}", protocol::frame_line(frame, samples)),
@@ -778,6 +831,8 @@ fn run(mut args: Args) -> Result<(), String> {
         if args.format != Format::Ir && !stats.all_finite() {
             return Err("render produced non-finite samples".to_owned());
         }
+        // what the program's bargraphs show at the end of this render
+        let bargraphs = probe.bargraphs();
 
         if args.format == Format::Json {
             let mut entry = serde_json::Map::new();
@@ -823,6 +878,13 @@ fn run(mut args: Args) -> Result<(), String> {
                     .collect();
                 entry.insert("channels".to_owned(), serde_json::Value::Array(channels));
             }
+            if !bargraphs.is_empty() {
+                let mut shown = serde_json::Map::new();
+                for (path, value) in &bargraphs {
+                    shown.insert(path.clone(), json_number(*value));
+                }
+                entry.insert("bargraphs".to_owned(), serde_json::Value::Object(shown));
+            }
             runs.push(serde_json::Value::Object(entry));
         } else if args.format == Format::Ir {
             // The .ir text is compared byte for byte; emit nothing else.
@@ -844,6 +906,9 @@ fn run(mut args: Args) -> Result<(), String> {
                         row.push(format!("{:.9}", stats.channels[ch].dc));
                     }
                 }
+            }
+            if args.bargraphs {
+                row.extend(bargraphs.iter().map(|(_, v)| format!("{v:.9}")));
             }
             println!("{}", row.join(","));
         } else {
@@ -873,6 +938,9 @@ fn run(mut args: Args) -> Result<(), String> {
                     channel.dc,
                     if channel.finite { "yes" } else { "no" }
                 ));
+            }
+            for (path, value) in &bargraphs {
+                emit(format!("# bargraph {path}={value:.9}"));
             }
         }
     }
@@ -909,6 +977,7 @@ fn run_train(args: &Args) -> Result<(), String> {
         ("--sweep", !args.sweeps.is_empty()),
         ("--reduce", args.reduce.is_some()),
         ("--at", !args.ats.is_empty()),
+        ("--bargraphs", args.bargraphs),
         (
             "--protocol impulse-test",
             args.protocol == Protocol::ImpulseTest,

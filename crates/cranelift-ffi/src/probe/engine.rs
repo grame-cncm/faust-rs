@@ -372,6 +372,68 @@ impl Probe {
 
     /// Return the instance to the state it had just after `init`.
     ///
+    /// Read a zone, at the width the factory was compiled with.
+    ///
+    /// The counterpart of [`Probe::set_zone`], for the zones the program
+    /// writes: a bargraph's value is whatever its signal was at the last
+    /// sample of the last `compute` call.
+    pub(crate) fn get_zone(&self, zone: *mut FfiFaustFloat) -> f64 {
+        if zone.is_null() {
+            return 0.0;
+        }
+        // SAFETY: as for `set_zone`: the zone came from this instance's
+        // `buildUserInterface` and stays valid until the instance is dropped.
+        unsafe {
+            if self.factory.double {
+                *zone.cast::<f64>()
+            } else {
+                f64::from(*zone)
+            }
+        }
+    }
+
+    /// The current value of every bargraph, ordered by path.
+    ///
+    /// A bargraph is updated by `compute`, once per sample, so between two
+    /// calls its zone holds the value of the last sample of the last block:
+    /// read after a render it is the value at the render's end, and its time
+    /// resolution during one is the block size. Before any `compute` it holds
+    /// whatever the instance was initialised with.
+    #[must_use]
+    pub fn bargraphs(&self) -> Vec<(String, f64)> {
+        self.controls
+            .iter()
+            .filter(|c| c.kind == ControlKind::Bargraph)
+            .map(|c| (c.path.clone(), self.get_zone(c.zone)))
+            .collect()
+    }
+
+    /// Check that `query` names exactly one control that can be written.
+    ///
+    /// What `--set`, `--sweep` and `--at` validate before any render: a
+    /// bargraph resolves like a control but is an output, and a write to it
+    /// would be overwritten by the next `compute`, so a sweep over one would
+    /// print rows that look like a measurement and are not.
+    ///
+    /// # Errors
+    /// Names the bargraph, the candidates of an ambiguous fragment, or the
+    /// query when nothing matches.
+    pub fn check_writable(&self, query: &str) -> Result<(), String> {
+        use crate::probe::params::Resolution;
+        match self.controls.resolve(query) {
+            Resolution::Unique(control) if !control.kind.is_writable() => Err(format!(
+                "`{}` is a bargraph, an output of the program: it cannot be set",
+                control.path
+            )),
+            Resolution::Unique(_) => Ok(()),
+            Resolution::NotFound => Err(format!("no control matching `{query}`")),
+            Resolution::Ambiguous(candidates) => Err(format!(
+                "`{query}` is ambiguous, matches: {}",
+                candidates.join(", ")
+            )),
+        }
+    }
+
     /// Controls go back to their declared defaults and every piece of internal
     /// state — delay lines, filter integrators, phase accumulators — is
     /// zeroed. A sweep must do this between points: without it a resonant
@@ -389,11 +451,16 @@ impl Probe {
     /// Apply a value to a control by path, clamped to its declared range.
     ///
     /// # Errors
-    /// Returns a message naming the candidates when the query is ambiguous, or
-    /// stating the query when nothing matches.
+    /// Returns a message naming the candidates when the query is ambiguous,
+    /// stating the query when nothing matches, or naming the bargraph when the
+    /// query is one (an output of the program, which `compute` overwrites).
     pub fn set(&self, query: &str, value: f64) -> Result<(), String> {
         use crate::probe::params::Resolution;
         match self.controls.resolve(query) {
+            Resolution::Unique(control) if !control.kind.is_writable() => Err(format!(
+                "`{}` is a bargraph, an output of the program: it cannot be set",
+                control.path
+            )),
             Resolution::Unique(control) => {
                 self.set_zone(control.zone, control.clamp(value));
                 Ok(())
