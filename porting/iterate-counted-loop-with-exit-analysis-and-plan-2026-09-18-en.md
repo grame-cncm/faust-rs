@@ -197,7 +197,7 @@ is an error, as a `gated` block without an output besides its flag.
 |---|---|
 | range within [0, 1] | as `ondemand`: the body runs once if `H ≠ 0`, the flag is read but cannot matter |
 | integer range wider than [0, 1] | the body runs, then again while its flag was non-zero, at most `H` times |
-| real, non-boolean | error, as for `ondemand` today |
+| real | cast to int first, as the normal form does for the three wrappers and as the C++ reference does: `⌊H⌋` iterations, so a clock of 0.5 never runs the body and 2.5 runs it twice (measured on both compilers, 2026-09-18; the `docs/ondemand-note` said otherwise and is corrected) |
 | constant 0 | the outputs are 0, the body never runs (as `ondemand`) |
 | constant 1 | the body inlined once, its flag output dropped (as `ondemand`'s `H == 1` collapse) |
 
@@ -305,7 +305,43 @@ so no C++ differential, as for `fad`; the mirror points for a later C++
 port are `boxOndemand` and `propagate.cpp`'s clock environment, and
 `generateOD` in `compile_scal.cpp`.
 
-### 2.7 Decisions
+### 2.7 `iterate` as the general form
+
+Asked after §1.5: if `iterate` were the primitive, would the three others
+be instances of it? They are, up to two orthogonal features, and this was
+measured:
+
+- **`ondemand`**, both readings: `iterate` with a flag constantly 1. The
+  clock is cast to int by the normal form (`promote_clocked_family`), so
+  the body runs `⌊H⌋` times whatever the clock's range; the `if` of a range
+  within [0, 1] is the emission of the case `⌊H⌋ ∈ {0, 1}`, an
+  optimization, not a second semantics. (The `select_guard_shape` refusal of
+  a real non-boolean clock is unreachable after that cast.)
+- **`downsampling`**: `ondemand` with a divided clock computed in the parent
+  domain, `((+(1) ~ _) - 1) % H == 0`: identical sample for sample to
+  `downsampling(3)` on white noise. The per-domain `fDSCounter` of the
+  emission is that counter as state rather than as a signal.
+- **`upsampling`**: integer `ondemand` whose body zero-stuffs its input,
+  `x * (i == H - 1)` with `i` the in-sample iteration index: identical
+  sample for sample to `upsampling(3)`. The `ZeroPad` node of propagation is
+  that product done once by the compiler.
+
+What none of the four express and what the two rate wrappers add is the
+**sample rate seen inside** (`SR * H` in `upsampling`, `SR / H` in
+`downsampling`, the `sample_rate` of the clock environment in
+`make_clock_env`): a property of the domain, not of the loop, which a body
+reading `ma.SR` depends on and which no wrapper written in the library can
+set. So the layering is: one loop primitive with a bound and a flag; the
+zero-stuffing of inputs as a body-level rewrite (library or compiler); the
+rate substitution as a domain property; the three keywords as derived
+forms, kept for the programs and the C++ that have them. A compiler that
+took `iterate` as its one guard shape would emit the `if`, the counted loop
+and the modulo as optimizations of the bounded `while` when the flag is
+constant and the bound has the right range, and the vector-mode checkers
+would model one kind. That is the design of §2 seen from the other end; it
+does not change its surface (§3) or its order (§4).
+
+### 2.8 Decisions
 
 - **D1, name and polarity.** `iterate(C)` with a *continue* flag, as
   proposed; or `until(C)` with a *stop* flag. `loop` is out: 24 uses as an
@@ -492,4 +528,4 @@ reverting mutation fails it). Gradient of the solver through the library
 `iterate` on a constant input: −0.240418 against −0.24042 by central
 difference, as through the two-layer form. W4 (the library
 function, `newton_iter`, the documents) not started; W1 to W3, the
-compiler primitive, deferred, D1 to D4 open.
+compiler primitive, deferred, D1 to D4 open (§2.8).

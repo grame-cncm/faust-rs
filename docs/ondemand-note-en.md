@@ -58,11 +58,16 @@ you declare: the compiler infers it from the clock signal's **value range**.
 - If the range is wider, the clock is read as a **count** and the body runs `H`
   times.
 
-Note what the first case does *not* say: it is the range that must lie in
-[0,1], not the individual values. A clock that can take the value `0.5` still
-has range ⊆ [0,1], so it is a condition — and since `0.5 ≠ 0`, the body runs
-**once**, not half a time. There is no fractional execution; if you want a
-count, give the clock a range that exceeds 1.
+Note what the first case does *not* say: it is the range that decides the
+reading, not the individual values, and the value is **cast to int** before
+either reading (the normal form does it for the three wrappers, as the C++
+reference does). A clock that can take the value `0.5` has range ⊆ [0,1], so
+it is a condition; but `int(0.5)` is `0`, so the body does **not** run. A
+clock of `2.5` with a wider range runs the body **twice**. There is no
+fractional execution, and a real clock strictly between 0 and 1 is a clock
+that never fires; if you want a count, give the clock an integer value and a
+range that exceeds 1. (Checked on 2026-09-18 on `faust-rs` and on the C++
+reference branch: both emit `int iSlow0 = (int)(fHslider0)` and test it.)
 
 Constant clocks are simplified away early:
 

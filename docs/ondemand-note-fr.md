@@ -61,12 +61,18 @@ d'horloge.
 - Si l'intervalle est plus large, l'horloge est lue comme un **compte** et le
   corps s'exécute `H` fois.
 
-Attention à ce que le premier cas ne dit *pas* : c'est l'intervalle qui doit
-être inclus dans [0,1], pas chaque valeur qui doit être 0 ou 1. Une horloge
-pouvant valoir `0.5` a bien un intervalle ⊆ [0,1] : c'est donc une condition —
-et comme `0.5 ≠ 0`, le corps s'exécute **une fois**, pas une demi-fois. Il n'y a
-pas d'exécution fractionnaire ; pour obtenir un compte, donnez à l'horloge un
-intervalle qui dépasse 1.
+Attention à ce que le premier cas ne dit *pas* : c'est l'intervalle qui
+décide la lecture, pas les valeurs individuelles, et la valeur est
+**convertie en entier** avant l'une ou l'autre lecture (la forme normale le
+fait pour les trois enrobeurs, comme la référence C++). Une horloge pouvant
+valoir `0.5` a bien un intervalle ⊆ [0,1], c'est donc une condition ; mais
+`int(0.5)` vaut `0`, et le corps ne s'exécute **pas**. Une horloge à `2.5`
+d'intervalle plus large exécute le corps **deux fois**. Il n'y a pas
+d'exécution fractionnaire, et une horloge réelle strictement entre 0 et 1 est
+une horloge qui ne tire jamais ; pour obtenir un compte, donnez à l'horloge
+une valeur entière et un intervalle qui dépasse 1. (Vérifié le 18 septembre
+2026 sur `faust-rs` et sur la branche de référence C++ : les deux émettent
+`int iSlow0 = (int)(fHslider0)` et testent cette valeur.)
 
 Les horloges constantes sont simplifiées très tôt :
 
