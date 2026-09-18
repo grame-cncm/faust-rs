@@ -233,3 +233,16 @@ give the same recordings, and so do sequential and parallel runs. Blessing is
 the line, expected and actual), a case without a recording, a recording
 without a case.
 
+Its first CI run failed on both platforms it runs on, and taught two things.
+On macOS, three recordings held this machine's path after all: a compile
+error cites the file's absolute path, and the diagnostics report its target
+triple; both are masked now (`<CRATE>`, `<TARGET>`). On Linux, 32 cases
+differed in the last digit of a number (`dc=-0.028786570547680666` against
+`...915`, 8.6e-15 relative) and four corpus fingerprints with them: the last
+digit of a sine or a tangent is the math library's. The comparison is now
+byte for byte on the platform the recordings were made on
+(`expected/PLATFORM`, written by a bless) and, elsewhere, the same text with
+the numbers within 1e-9 relative and the fingerprints not compared. A
+refactoring is held to the bit where the recordings are made, and to the
+digits it prints everywhere else.
+

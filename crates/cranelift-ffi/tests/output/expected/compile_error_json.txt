@@ -4,7 +4,7 @@ exit=1
 {
   "compiler": {
     "name": "faust-rs",
-    "target": "aarch64-macos",
+    "target": "<TARGET>",
     "version": "0.8.0"
   },
   "diagnostics": [
@@ -179,7 +179,7 @@ exit=1
             "col": 25,
             "end_col": 29,
             "end_line": 2,
-            "file": "/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp",
+            "file": "<CRATE>/tests/output/dsp/broken.dsp",
             "line": 2
           },
           "message": "failing use",
@@ -196,7 +196,7 @@ exit=1
             "col": 1,
             "end_col": 8,
             "end_line": 2,
-            "file": "/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp",
+            "file": "<CRATE>/tests/output/dsp/broken.dsp",
             "line": 2
           },
           "message": "enclosing definition",
@@ -213,7 +213,7 @@ exit=1
             "col": 1,
             "end_col": 8,
             "end_line": 2,
-            "file": "/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp",
+            "file": "<CRATE>/tests/output/dsp/broken.dsp",
             "line": 2
           },
           "message": "call site",
@@ -257,7 +257,7 @@ exit=1
       "content_hash": "19af70a61159d0c4113c437e8a20ed7050529675ec8d985b6a3e86c81326e8b2",
       "id": 0,
       "kind": "file",
-      "name": "/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp",
+      "name": "<CRATE>/tests/output/dsp/broken.dsp",
       "text": null
     },
     {
@@ -272,5 +272,5 @@ exit=1
 }
 
 --- stderr
-faustprobe: evaluation failed for /Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp: undefined symbol `fooo`
+faustprobe: evaluation failed for <CRATE>/tests/output/dsp/broken.dsp: undefined symbol `fooo`
 

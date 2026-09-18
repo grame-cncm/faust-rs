@@ -184,8 +184,12 @@ git diff --stat crates/cranelift-ffi/tests/output/expected
 ```
 
 A default run takes one corpus program in six; `FAUSTPROBE_CORPUS=all` takes
-them all, which a bless of their recordings needs. Not on Windows (two
-recordings carry the system's wording of a missing file).
+them all, which a bless of their recordings needs. The comparison is byte for
+byte on the platform the recordings were made on (`tests/output/expected/
+PLATFORM`); on another, where the last digit of a sine or a tangent is the
+math library's, the text must be the same and the numbers within 1e-9
+relative, fingerprints not compared. Not on Windows (two recordings carry the
+system's wording of a missing file).
 
 ### Compile errors
 

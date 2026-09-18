@@ -3,8 +3,8 @@ exit=1
 --- stdout
 
 --- stderr
-faustprobe: evaluation failed for /Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp: undefined symbol `fooo`
-/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp:2:25: error [FRS-EVAL-0002] undefined symbol `fooo`
+faustprobe: evaluation failed for <CRATE>/tests/output/dsp/broken.dsp: undefined symbol `fooo`
+<CRATE>/tests/output/dsp/broken.dsp:2:25: error [FRS-EVAL-0002] undefined symbol `fooo`
   2 | process = os.osc(440) : fooo;
     |                         ^^^^ failing use
     | ^^^^^^^ enclosing definition

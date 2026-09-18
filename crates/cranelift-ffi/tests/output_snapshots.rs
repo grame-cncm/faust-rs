@@ -22,9 +22,19 @@
 //! git diff --stat crates/cranelift-ffi/tests/output/expected
 //! ```
 //!
-//! Paths are relative to the crate (`cargo test` runs there), so the
-//! recordings hold no machine's path. Not on Windows: two cases carry the
-//! system's wording of a missing file.
+//! Paths are relative to the crate (`cargo test` runs there), and what a
+//! stream says of the machine (the crate's directory, which a compile error
+//! cites in full, the target triple of a diagnostics report, the temporary
+//! directory) is masked. Not on Windows: two cases carry the system's
+//! wording of a missing file.
+//!
+//! The comparison is byte for byte on the platform the recordings were made
+//! on (`tests/output/expected/PLATFORM`, written by a bless). On another
+//! the last digit of a sine or a tangent is the math library's: the text
+//! must be the same and the numbers within [`RELATIVE_TOLERANCE`], and a
+//! stream recorded as a fingerprint is not compared. So a refactoring is
+//! held to the bit where the recordings were made, and to the digits it
+//! prints everywhere else.
 //!
 //! This is the committed form of the harness that gated the restructuring of
 //! 2026-09-18 (`porting/faustprobe-restructuring-plan-2026-09-18-en.md`).
@@ -46,6 +56,18 @@ const TEXT_LIMIT: usize = 32 * 1024;
 const CORPUS_STRIDE: usize = 6;
 /// Stands for the temporary directory the files of `--out` are written to.
 const TMP: &str = "<TMP>";
+/// Stands for the crate's directory: a compile error cites the file's
+/// absolute path.
+const CRATE: &str = "<CRATE>";
+/// Stands for the target triple a diagnostics report carries.
+const TARGET: &str = "<TARGET>";
+/// The file naming the platform the recordings were made on. There the
+/// comparison is byte for byte; elsewhere the text must be the same and the
+/// numbers within [`RELATIVE_TOLERANCE`], since the last digit of a sine or
+/// a tangent is the math library's, and a fingerprint is not compared.
+const PLATFORM_FILE: &str = "tests/output/expected/PLATFORM";
+/// What another platform's numbers may differ by, relative to the larger.
+const RELATIVE_TOLERANCE: f64 = 1e-9;
 
 struct Case {
     name: String,
@@ -3825,14 +3847,157 @@ fn mask_time(text: &str) -> String {
     out.join("\n")
 }
 
+/// What a stream says of the machine it ran on, replaced by a name: the
+/// temporary directory, the crate's directory, the target triple.
+fn mask_machine(text: &str, tmp: &str) -> String {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .canonicalize()
+        .map_or_else(
+            |_| env!("CARGO_MANIFEST_DIR").to_owned(),
+            |p| p.to_string_lossy().into_owned(),
+        );
+    let masked = text
+        .replace(tmp, TMP)
+        .replace(&crate_dir, CRATE)
+        .replace(env!("CARGO_MANIFEST_DIR"), CRATE);
+    // `"target": "aarch64-macos",` in a diagnostics report
+    let mut out = String::with_capacity(masked.len());
+    let mut rest = masked.as_str();
+    while let Some(at) = rest.find("\"target\": \"") {
+        let value_at = at + "\"target\": \"".len();
+        let value_len = rest[value_at..].find('"').unwrap_or(rest.len() - value_at);
+        out.push_str(&rest[..value_at]);
+        out.push_str(TARGET);
+        rest = &rest[value_at + value_len..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// One stream of the recording: its text, or its fingerprint when long.
 fn stream(label: &str, bytes: &[u8], timed: bool, tmp: &str) -> String {
     if bytes.len() > TEXT_LIMIT {
         return format!("--- {label} (fingerprint)\n{}\n", fingerprint(bytes));
     }
-    let text = String::from_utf8_lossy(bytes).replace(tmp, TMP);
+    let text = mask_machine(&String::from_utf8_lossy(bytes), tmp);
     let text = if timed { mask_time(&text) } else { text };
     format!("--- {label}\n{text}\n")
+}
+
+/// This platform, as the recordings name theirs.
+fn platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// A recording without its fingerprints, which another platform's numbers
+/// do not reproduce: the streams recorded as fingerprints and the `--out`
+/// files.
+fn without_fingerprints(recording: &str) -> String {
+    let mut out = Vec::new();
+    let mut skipping = false;
+    for line in recording.lines() {
+        if line.starts_with("--- ") {
+            skipping = line.ends_with("(fingerprint)") || line.starts_with("--- file ");
+        }
+        if !skipping {
+            out.push(line);
+        }
+    }
+    out.join("\n")
+}
+
+/// The number that starts at `text[at..]`, if one does, as its length: an
+/// optional sign, digits, an optional fraction, an optional exponent.
+fn number_len(text: &str, at: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = at;
+    if bytes.get(i) == Some(&b'-') {
+        i += 1;
+    }
+    let digits_from = i;
+    while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+        i += 1;
+    }
+    if i == digits_from {
+        return 0;
+    }
+    if bytes.get(i) == Some(&b'.') && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
+        i += 1;
+        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+    }
+    if matches!(bytes.get(i), Some(b'e' | b'E')) {
+        let mut j = i + 1;
+        if matches!(bytes.get(j), Some(b'-' | b'+')) {
+            j += 1;
+        }
+        if bytes.get(j).is_some_and(u8::is_ascii_digit) {
+            while bytes.get(j).is_some_and(u8::is_ascii_digit) {
+                j += 1;
+            }
+            i = j;
+        }
+    }
+    i - at
+}
+
+/// Cuts a recording into text and numbers, a number being one that a word
+/// character does not precede (`out0`, `fnv1a64=` are text).
+fn tokens(text: &str) -> Vec<(bool, &str)> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i < text.len() {
+        let after_word = i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+        let len = if after_word { 0 } else { number_len(text, i) };
+        if len > 0 {
+            if start < i {
+                out.push((false, &text[start..i]));
+            }
+            out.push((true, &text[i..i + len]));
+            i += len;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if start < text.len() {
+        out.push((false, &text[start..]));
+    }
+    out
+}
+
+/// Whether two recordings say the same on another platform: the same text,
+/// and numbers within [`RELATIVE_TOLERANCE`]. The first difference otherwise.
+fn same_but_for_the_last_digits(expected: &str, actual: &str) -> Result<(), String> {
+    let (expected, actual) = (without_fingerprints(expected), without_fingerprints(actual));
+    let (want, got) = (tokens(&expected), tokens(&actual));
+    for (k, (a, b)) in want.iter().zip(&got).enumerate() {
+        if a == b {
+            continue;
+        }
+        let close = a.0
+            && b.0
+            && match (a.1.parse::<f64>(), b.1.parse::<f64>()) {
+                (Ok(x), Ok(y)) => (x - y).abs() <= RELATIVE_TOLERANCE * x.abs().max(y.abs()),
+                _ => false,
+            };
+        if !close {
+            let context: String = want[..k].iter().map(|t| t.1).collect::<String>();
+            return Err(format!(
+                "`{}` where `{}` was recorded, after line {}",
+                b.1,
+                a.1,
+                context.matches('\n').count() + 1
+            ));
+        }
+    }
+    if want.len() != got.len() {
+        return Err("one recording is longer than the other".to_owned());
+    }
+    Ok(())
 }
 
 /// Runs one case and returns its recording.
@@ -3877,6 +4042,14 @@ fn every_case_prints_what_it_printed() {
     let expected_dir = Path::new(EXPECTED_DIR);
     fs::create_dir_all(expected_dir).expect("the expected directory");
 
+    let recorded_on = fs::read_to_string(PLATFORM_FILE)
+        .map(|s| s.trim().to_owned())
+        .unwrap_or_default();
+    let exact = bless || recorded_on == platform();
+    if bless {
+        fs::write(PLATFORM_FILE, format!("{}\n", platform())).expect("write the platform");
+    }
+
     let cases = cases();
     let mut names: Vec<String> = cases.iter().map(|c| c.name.clone()).collect();
     names.sort_unstable();
@@ -3917,6 +4090,17 @@ fn every_case_prints_what_it_printed() {
         }
         match fs::read_to_string(&path) {
             Ok(expected) if expected == actual => {}
+            Ok(expected) if !exact => {
+                if let Err(why) = same_but_for_the_last_digits(&expected, &actual) {
+                    findings.push(format!(
+                        "{}: differs from {} (recorded on {recorded_on}, this is {}): {why}\n    command:  {}",
+                        case.name,
+                        path.display(),
+                        platform(),
+                        actual.lines().next().unwrap_or_default()
+                    ));
+                }
+            }
             Ok(expected) => {
                 let (line, want, got) = expected
                     .lines()
@@ -3953,7 +4137,7 @@ fn every_case_prints_what_it_printed() {
         .filter_map(|entry| {
             let path = entry.ok()?.path();
             let stem = path.file_stem()?.to_string_lossy().into_owned();
-            (!known.contains(&stem)).then_some(path)
+            (path.extension().is_some_and(|e| e == "txt") && !known.contains(&stem)).then_some(path)
         })
         .map(|path| {
             if bless {
