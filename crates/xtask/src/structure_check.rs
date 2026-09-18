@@ -9,8 +9,9 @@
 //!    workspace to `signal_fir::vector::{...}`; the `pub use` facade
 //!    re-exports in `signal_fir/mod.rs` are the only allowed mention);
 //! 2. no production file above the review threshold in `crates/transform`,
-//!    `crates/compiler`, `crates/fir`, or `crates/codegen`
-//!    ([`MAX_PRODUCTION_LINES`] lines, `tests.rs` and `tests/` excluded)
+//!    `crates/compiler`, `crates/fir`, `crates/codegen` or
+//!    `crates/cranelift-ffi` ([`MAX_PRODUCTION_LINES`] lines, `tests.rs` and
+//!    `tests/` excluded)
 //!    unless the file is named in [`KNOWN_OVERSIZED_FILES`] with a reason.
 //!    That list is cross-checked both ways: every entry must name a file that
 //!    actually exists and is actually over the threshold, so an exception a
@@ -47,7 +48,8 @@
 //!    allowance hides real dead clusters (the `loop_graph.rs` case E1
 //!    removed masked 11 dead items); scope allowances to items, with a
 //!    reason;
-//! 8. no production function in `crates/transform` above
+//! 8. no production function in a crate of [`FN_THRESHOLD_ROOTS`]
+//!    (`crates/transform`, `crates/cranelift-ffi`) above
 //!    [`MAX_PRODUCTION_FN_LINES`] lines unless it is named in
 //!    [`OVERSIZED_FUNCTIONS`] with a ceiling — the legibility campaign E2
 //!    ratchet (`porting/transform-legibility-analysis-2026-08-25-en.md`).
@@ -201,11 +203,21 @@ const PRODUCER_FILE_NAMES: [&str; 4] = ["build.rs", "produce.rs", "materialize.r
 /// docs for the rest is separate work for whoever takes it on.
 const DOCUMENTED_CRATES: [&str; 2] = ["transform", "compiler"];
 
-/// Review threshold for one production function body in `crates/transform`
-/// (E2 of the legibility campaign). Functions above it must be named in
-/// [`OVERSIZED_FUNCTIONS`]; the list shrinks as recipe decompositions land
-/// and must end empty.
+/// Review threshold for one production function body in the crates of
+/// [`FN_THRESHOLD_ROOTS`] (E2 of the legibility campaign). Functions above it
+/// must be named in [`OVERSIZED_FUNCTIONS`]; the list shrinks as recipe
+/// decompositions land and must end empty.
 const MAX_PRODUCTION_FN_LINES: usize = 200;
+
+/// The crates whose production functions are held to
+/// [`MAX_PRODUCTION_FN_LINES`], as repo-relative path prefixes.
+///
+/// `crates/transform` since E2 (2026-08-25). `crates/cranelift-ffi` since
+/// 2026-09-18, the day `faustprobe` was cut back from an 890-line `run` to
+/// functions of at most 116 lines (`porting/faustprobe-restructuring-plan-2026-09-18-en.md`):
+/// the threshold holds from that day on, so that the next five phases of
+/// probe work do not grow one function per mode again.
+const FN_THRESHOLD_ROOTS: [&str; 2] = ["crates/transform/", "crates/cranelift-ffi/"];
 
 /// Functions still over [`MAX_PRODUCTION_FN_LINES`], each with the ceiling
 /// it measured when listed. Cross-checked both ways: an entry whose function
@@ -375,6 +387,10 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
     collect_rust_files(Path::new("crates/compiler/src"), &mut files)?;
     collect_rust_files(Path::new("crates/fir/src"), &mut files)?;
     collect_rust_files(Path::new("crates/codegen/src"), &mut files)?;
+    // `crates/cranelift-ffi` holds `faustprobe` and its library, under both
+    // thresholds since the 2026-09-18 restructuring (its `src/bin/` is
+    // production too).
+    collect_rust_files(Path::new("crates/cranelift-ffi/src"), &mut files)?;
     files.sort();
 
     let known_oversized: std::collections::BTreeMap<&str, &str> =
@@ -396,56 +412,56 @@ pub fn structure_check() -> Result<(), Box<dyn std::error::Error>> {
                     oversized_seen.insert(exception_path);
                 } else {
                     findings.push(format!(
-                        "{rel}: {lines} lines exceeds the {MAX_PRODUCTION_LINES}-line review                          threshold and is not in KNOWN_OVERSIZED_FILES"
+                        "{rel}: {lines} lines exceeds the {MAX_PRODUCTION_LINES}-line review \
+                         threshold and is not in KNOWN_OVERSIZED_FILES"
                     ));
                 }
             }
         }
 
-        if rel.starts_with("crates/transform/") {
+        let in_transform = rel.starts_with("crates/transform/");
+        if in_transform {
             findings.extend(codename_findings(&rel, &text));
-            if !is_test_file {
-                // A file may declare several functions with one name (trait
-                // impls — `fmt`); the exemption governs the longest of them.
-                let mut longest: std::collections::BTreeMap<String, usize> =
-                    std::collections::BTreeMap::new();
-                for (name, len) in production_fn_spans(&text) {
-                    let slot = longest.entry(name).or_insert(0);
-                    *slot = (*slot).max(len);
+        }
+        if !is_test_file && FN_THRESHOLD_ROOTS.iter().any(|root| rel.starts_with(root)) {
+            // A file may declare several functions with one name (trait
+            // impls — `fmt`); the exemption governs the longest of them.
+            let mut longest: std::collections::BTreeMap<String, usize> =
+                std::collections::BTreeMap::new();
+            for (name, len) in production_fn_spans(&text) {
+                let slot = longest.entry(name).or_insert(0);
+                *slot = (*slot).max(len);
+            }
+            for (name, len) in &longest {
+                let entry = OVERSIZED_FUNCTIONS
+                    .iter()
+                    .find(|(f, n, _)| *f == rel && n == name);
+                if entry.is_some() {
+                    oversized_fn_seen.insert((rel.clone(), name.clone()));
                 }
-                for (name, len) in &longest {
-                    let entry = OVERSIZED_FUNCTIONS
-                        .iter()
-                        .find(|(f, n, _)| *f == rel && n == name);
-                    if entry.is_some() {
-                        oversized_fn_seen.insert((rel.clone(), name.clone()));
-                    }
-                    match entry {
-                        None if *len > MAX_PRODUCTION_FN_LINES => findings.push(format!(
-                            "{rel}: fn `{name}` is {len} lines, over the \
+                match entry {
+                    None if *len > MAX_PRODUCTION_FN_LINES => findings.push(format!(
+                        "{rel}: fn `{name}` is {len} lines, over the \
                              {MAX_PRODUCTION_FN_LINES}-line function threshold and not in \
                              OVERSIZED_FUNCTIONS (decompose it, or list it with a ceiling)"
-                        )),
-                        Some((_, _, ceiling)) if len > ceiling => findings.push(format!(
-                            "{rel}: fn `{name}` grew to {len} lines, past its recorded \
+                    )),
+                    Some((_, _, ceiling)) if len > ceiling => findings.push(format!(
+                        "{rel}: fn `{name}` grew to {len} lines, past its recorded \
                              {ceiling}-line ceiling in OVERSIZED_FUNCTIONS"
-                        )),
-                        Some((_, _, _)) if *len <= MAX_PRODUCTION_FN_LINES => {
-                            findings.push(format!(
-                                "OVERSIZED_FUNCTIONS is stale: `{name}` in {rel} is {len} lines, \
+                    )),
+                    Some((_, _, _)) if *len <= MAX_PRODUCTION_FN_LINES => findings.push(format!(
+                        "OVERSIZED_FUNCTIONS is stale: `{name}` in {rel} is {len} lines, \
                              no longer over the threshold — remove its entry"
-                            ))
-                        }
-                        _ => {}
-                    }
+                    )),
+                    _ => {}
                 }
             }
-            if text.contains("#![allow(dead_code)]") {
-                findings.push(format!(
-                    "{rel}: file-level `#![allow(dead_code)]` (blanket allowances hide \
-                     real dead clusters; scope the allowance to items, with a reason)"
-                ));
-            }
+        }
+        if in_transform && text.contains("#![allow(dead_code)]") {
+            findings.push(format!(
+                "{rel}: file-level `#![allow(dead_code)]` (blanket allowances hide \
+                 real dead clusters; scope the allowance to items, with a reason)"
+            ));
         }
 
         if !rel.ends_with("signal_fir/mod.rs") {
