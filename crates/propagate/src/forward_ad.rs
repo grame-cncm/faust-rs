@@ -1525,12 +1525,30 @@ impl<'a> ForwardADTransform<'a> {
             return self.zero_tangent(seq);
         };
         let y_dual = self.transform(y);
+        // A held lane no seed reaches has a literal zero for a tangent, which
+        // `augment_block` leaves out of the payload: the block holds nothing
+        // for it, so its tangent is the literal itself, not `Seq(block, 0)`.
+        // Sequencing a literal through the block would put an audio-rate value
+        // under a block environment, which the clock-environment inference
+        // rejects (`FRS-SFIR-0008`) when the node survives simplification,
+        // for instance inside a recursion group.
+        let literal: SmallVec<[bool; 2]> = y_dual
+            .tangents
+            .iter()
+            .map(|&t| {
+                matches!(
+                    match_sig(self.arena, t),
+                    SigMatch::Real(_) | SigMatch::Int(_)
+                )
+            })
+            .collect();
         let mut b = SigBuilder::new(self.arena);
         let primal = b.seq(od_aug, y_dual.primal);
         let tangents = y_dual
             .tangents
             .into_iter()
-            .map(|t| b.seq(od_aug, t))
+            .zip(literal)
+            .map(|(t, is_literal)| if is_literal { t } else { b.seq(od_aug, t) })
             .collect::<SmallVec<[SigId; 2]>>();
         Dual { primal, tangents }
     }

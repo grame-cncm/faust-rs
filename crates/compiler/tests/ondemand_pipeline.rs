@@ -777,6 +777,45 @@ fn fad_around_ondemand_leaves_out_the_lane_the_seed_does_not_reach() {
     assert_eq!(out[3][n], 0.0, "the unreached lane's tangent is zero");
 }
 
+/// A held lane the seed does not reach, read back through `Seq` and fed into a
+/// recursion: here the flag of a nested block, held, fed back as that block's
+/// clock (the shape of a bounded loop with an exit written with the existing
+/// wrappers). Its tangent is a literal zero; sequenced through the block it
+/// was an audio-rate value under a block environment, refused by the
+/// clock-environment inference (`FRS-SFIR-0008`) when it survived inside the
+/// recursion group (2026-09-18). The literal stays a literal.
+#[test]
+fn fad_around_nested_block_whose_unreached_flag_is_its_own_clock() {
+    let g = 0.5_f32;
+    let data = vec![1.0_f32, 2.0, 3.0, 4.0];
+    let out = run_od_fad_source(
+        "fad_nested_flag_clock",
+        format!(
+            r#"g = hslider("g", {g}, -10, 10, 0.001);
+               C(x) = x * g, (x > 0.1);
+               shell(t, x) = (gate ~ (!, _)) : (_, !)
+               with {{ gate(go) = ((go | (t != t')), x) : ondemand(C); }};
+               t = (+(1)) ~ _;
+               process = fad((3, t, _) : ondemand(shell), g);"#
+        ),
+        std::slice::from_ref(&data),
+    );
+    assert_eq!(out.len(), 2, "fad bundle = [primal, tangent]");
+    for (n, &x) in data.iter().enumerate() {
+        assert!(
+            (out[0][n] - g * x).abs() < 1.0e-6,
+            "frame {n}: primal {} vs {}",
+            out[0][n],
+            g * x
+        );
+        assert!(
+            (out[1][n] - x).abs() < 1.0e-6,
+            "frame {n}: tangent {} vs the held input {x}",
+            out[1][n]
+        );
+    }
+}
+
 /// Nonlinear fad-*outside*: `fad((clk, x) : ondemand((g·x)²), g)` — the block is
 /// nonlinear in the seed, so the augmented tangent held-output is `2·g·x²`.
 /// Exercises OD_aug through a nonlinear body; gradient checked exactly.
