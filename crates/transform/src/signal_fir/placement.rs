@@ -34,7 +34,9 @@
 //!   node at a boundary must be materialized, otherwise it would be inlined into
 //!   its parent's (faster) execution tier and re-evaluated too frequently.
 //! - **`konst_escapes`**: `Konst` nodes that feed a faster-tier parent
-//!   (`Block`/`Samp`), plus `Konst` descendants of `BlockReverseAD` carriers.
+//!   (`Block`/`Samp`), `Konst` payloads of a `Clocked` annotation (emitted
+//!   at fire time inside a guarded block, so their parent counts as `Samp`),
+//!   plus `Konst` descendants of `BlockReverseAD` carriers.
 //!   These cannot remain stack-local to `instanceConstants()` because their
 //!   value is consumed later from `compute()` or from generated BRA reverse
 //!   sweep code.
@@ -164,9 +166,10 @@ pub(super) fn is_trivial_fir(store: &FirStore, node: FirId) -> bool {
 ///   a *variability boundary* and must be materialized even if they are
 ///   single-use, to guarantee they execute in their own (slower) bucket.
 /// - **`konst_escapes`**: the set of [`SigId`]s whose own variability is
-///   [`Variability::Konst`] but that are consumed by a faster-tier parent or
-///   generated `BlockReverseAD` reverse-sweep code. These hoists need
-///   persistent storage instead of an init-local stack slot.
+///   [`Variability::Konst`] but that are consumed by a faster-tier parent, by
+///   a guarded block (payload of a `Clocked` annotation) or by generated
+///   `BlockReverseAD` reverse-sweep code. These hoists need persistent
+///   storage instead of an init-local stack slot.
 ///
 /// All roots are assumed to be consumed by the `compute` output store, which
 /// runs at sample rate ([`Variability::Samp`]).
@@ -200,7 +203,9 @@ pub(super) fn analyze_signal_sharing(
 /// correctly counts how many parent edges reach each node while avoiding
 /// exponential blowup on dense DAGs.
 ///
-/// `parent_var` is the variability of the calling node (`None` at the root).
+/// `parent_var` is the variability of the calling node (`None` at the root;
+/// [`Variability::Samp`] below a `Clocked` annotation, whose payload is
+/// emitted inside a guarded block of `compute()`).
 /// If `parent_var > my_var` the node is added to `has_higher_parent`,
 /// flagging it as sitting at a variability boundary.  When `my_var` is
 /// [`Variability::Konst`], the same condition means the node escapes the
@@ -239,12 +244,26 @@ fn analyze_sig_rec(
     }
     let child_inside_block_reverse_ad =
         inside_block_reverse_ad || matches!(match_sig(arena, sig), SigMatch::BlockReverseAD { .. });
+    // A `Clocked(env, y)` annotation marks `y` as code of a guarded block: the
+    // lowering emits it at fire time, inside `compute()`, whatever its own
+    // variability (C++ `generateOD` / `generatePermVar` emit the whole held
+    // value inside the block). A `Konst` payload such as `1.0 / SR` is
+    // therefore consumed from `compute()` even though every parent edge in
+    // the signal DAG is `Konst`: it must be hoisted into persistent storage
+    // and its own constant operands must not stay stack-local to
+    // `instanceConstants()`. Seen as the parent's variability, a guarded
+    // block runs at sample rate.
+    let child_parent_var = if matches!(match_sig(arena, sig), SigMatch::Clocked(..)) {
+        Some(Variability::Samp)
+    } else {
+        my_var
+    };
     if let Some(node) = arena.node(sig) {
         for &child_tid in node.children.as_slice() {
             analyze_sig_rec(
                 arena,
                 child_tid,
-                my_var,
+                child_parent_var,
                 sig_types,
                 analysis,
                 child_inside_block_reverse_ad,

@@ -220,3 +220,30 @@ fn downsampling_emits_modulo_counter_guard() {
         "downsampling must guard on the counter and advance it modulo the clock:\n{body}"
     );
 }
+
+/// A `Konst` value held by a wrapper (`1.0 / SR` below) is emitted inside the
+/// guarded block, at fire time, although every parent edge it has in the
+/// signal DAG is `Konst`. Placement must therefore hoist it into persistent
+/// storage and keep the constants it reads out of `instanceConstants()`'s
+/// stack: `fPerm = 1.0f / fConst0` with `float fConst0` local to init was
+/// `FRS-FIR-0001 use of undeclared variable` on every backend (found through
+/// `op.on_change(\(t).(t / ma.SR))` under `fad`, 2026-09-18).
+#[test]
+fn konst_payload_of_a_guarded_block_reads_persistent_constants() {
+    // `compile_cpp` runs the FIR verifier: an undeclared variable is an
+    // error and fails the compilation whether or not warnings are fatal.
+    let cpp = compile_cpp(
+        "od_konst_payload",
+        r#"SR = min(192000.0, max(1.0, fconstant(int fSamplingFreq, <math.h>)));
+process = (_, 1.0) : ondemand(\(a, b).(a / SR, b / SR))(button("c"));"#,
+    );
+    let body = compute_body(&cpp);
+    assert!(
+        !body.contains("/ fConst"),
+        "the guarded block must not divide by an init-local constant:\n{body}"
+    );
+    assert!(
+        body.contains("= fConst") || body.contains("* fConst"),
+        "the held constant is read from a persistent fConst field:\n{body}"
+    );
+}

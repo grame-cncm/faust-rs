@@ -14,10 +14,21 @@
 //! overwhelmingly common small buses therefore neither allocates nor clones an
 //! owned `Vec<SigId>`.
 //!
-//! Memoization is deliberately disabled for a complete propagation containing
-//! clocked wrappers (`ondemand`, upsampling, downsampling). Those allocate a
-//! fresh clock domain per propagation, a side effect that cannot yet be
-//! replayed from a signal result alone.
+//! Clocked wrappers (`ondemand`, upsampling, downsampling) are eligible since
+//! 2026-09-18. A wrapper allocates one clock domain per propagation *miss*;
+//! a hit replays the outputs of the first propagation, and with them the
+//! domain they carry. That is the C++ semantics: `makeClockEnv` names a
+//! domain by the tuple `(parent, slotenv, path, box, inputs)`, so the same
+//! wrapper box reached again in the same context with the same inputs *is*
+//! the same block, and the memo key holds exactly those components (the
+//! parent domain through `PropagationModeKey`). Before this the gate refused
+//! the whole root of any program mentioning a wrapper, and a box shared
+//! between several wrappers was re-propagated once per reference: a
+//! `rir.lib` network held by `op.on_change` under twenty `frame_sum`
+//! ondemand blocks (one per EDR band) and a `fad` grew from 4 159 to
+//! 141 050 signal nodes on its smallest instance, and the 21-tangent
+//! program of `faust-diff-rir` took 17 minutes to compile against 39 s now
+//! (`porting/journal/2026-09-18.md`).
 //!
 //! Forward/reverse AD roots are eligible since 2026-09-16. Their only
 //! propagation-time side effect is the pending forward-AD seed vector: a
@@ -256,12 +267,13 @@ impl PropagateResultMemo {
 
 /// Returns whether exact result replay is side-effect safe for the whole root.
 ///
-/// A visited set makes the analysis linear in the shared flat Box DAG. Only
-/// the clocked wrappers disqualify a root: they allocate a fresh clock domain
-/// per propagation and that delta has no replay protocol yet. Forward and
-/// reverse AD are eligible; their pending-seed delta is recorded per entry
-/// (see the module documentation). The conservative whole-root gate can later
-/// become a per-subtree fact once clock-domain deltas are replayable too.
+/// A visited set makes the analysis linear in the shared flat Box DAG. No
+/// node kind disqualifies a root today: forward and reverse AD record their
+/// pending-seed delta per entry, and a clocked wrapper's domain is part of
+/// the outputs a hit replays (same key, same block; see the module
+/// documentation). The scan is kept so that a node kind with a side effect
+/// that cannot be replayed has one place to say so, and so that a
+/// malformed flat Box is reported before the memo is enabled.
 pub(crate) fn result_memo_is_safe_root(
     arena: &TreeArena,
     root: FlatBoxId,
@@ -273,9 +285,12 @@ pub(crate) fn result_memo_is_safe_root(
             continue;
         }
         match flat_node_kind(arena, node)? {
-            FlatNodeKind::Ondemand(_)
-            | FlatNodeKind::Upsampling(_)
-            | FlatNodeKind::Downsampling(_) => return Ok(false),
+            // A hit replays the clock domain allocated by the miss: the same
+            // wrapper in the same context with the same inputs is the same
+            // block, as in C++ (module documentation).
+            FlatNodeKind::Ondemand(body)
+            | FlatNodeKind::Upsampling(body)
+            | FlatNodeKind::Downsampling(body) => pending.push(body),
             FlatNodeKind::ForwardAD { body, seed } => {
                 pending.push(body);
                 pending.push(seed);
@@ -407,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn root_safety_gate_excludes_clock_side_effects_only() {
+    fn root_safety_gate_admits_ad_and_clocked_wrappers() {
         let mut arena = TreeArena::new();
         let (plain, fad, rad, clocked, fad_over_clocked) = {
             let mut boxes = BoxBuilder::new(&mut arena);
@@ -431,10 +446,13 @@ mod tests {
         assert!(result_memo_is_safe_root(&arena, plain).expect("plain analysis"));
         assert!(result_memo_is_safe_root(&arena, fad).expect("FAD analysis"));
         assert!(result_memo_is_safe_root(&arena, rad).expect("RAD analysis"));
-        assert!(!result_memo_is_safe_root(&arena, clocked).expect("clock analysis"));
         assert!(
-            !result_memo_is_safe_root(&arena, fad_over_clocked).expect("FAD over clock analysis"),
-            "the scan must look through AD nodes to find a clocked wrapper"
+            result_memo_is_safe_root(&arena, clocked).expect("clock analysis"),
+            "a clocked wrapper's domain is replayed with its outputs (same key, same block)"
+        );
+        assert!(
+            result_memo_is_safe_root(&arena, fad_over_clocked).expect("FAD over clock analysis"),
+            "the scan looks through AD nodes and a wrapper below one is admitted too"
         );
     }
 

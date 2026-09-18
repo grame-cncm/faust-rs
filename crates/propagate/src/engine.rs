@@ -1237,7 +1237,10 @@ pub(crate) fn list_length(arena: &TreeArena, mut list: TreeId) -> Option<usize> 
 /// uniqueness token — and only the `SIGCLOCKENV` leaf carrying that id is
 /// embedded in the signal graph. Two structurally identical wrapper instances
 /// therefore always get distinct domains, closing the C++ de Bruijn collision
-/// class (plan §3.4) by construction.
+/// class (plan §3.4) by construction. The propagation result memo does not
+/// reach this function on a hit: the same wrapper box in the same context
+/// with the same inputs replays the domain of its first propagation, as the
+/// C++ tuple would name the same domain (`result_memo` module doc).
 fn make_clock_env(
     arena: &mut TreeArena,
     ctx: &mut PropagateContext<'_>,

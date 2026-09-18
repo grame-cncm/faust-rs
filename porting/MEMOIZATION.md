@@ -996,7 +996,8 @@ Purpose:
 ### 2.15 `propagate`: exact Box-to-Signal result memo
 
 Status: implemented 2026-08-08; the slot-environment restriction removed
-2026-08-30 (`b196ed7e`)
+2026-08-30 (`b196ed7e`); the AD exclusion removed 2026-09-16; the clocked
+wrapper exclusion removed 2026-09-18
 
 Location:
 
@@ -1030,10 +1031,19 @@ Purpose:
 
 Safety and scope:
 
-- a linear whole-root scan enables replay only when the flat Box DAG contains
-  no `ondemand`/upsampling/downsampling wrapper (a fresh clock domain per
-  propagation, no replay protocol yet). It looks through AD nodes: since
-  2026-09-16 forward/reverse AD roots are eligible;
+- a linear whole-root scan of the flat Box DAG runs before the table is
+  enabled. Since 2026-09-18 no node kind disqualifies a root: forward/reverse
+  AD since 2026-09-16, the `ondemand`/upsampling/downsampling wrappers since
+  2026-09-18 (below). The scan is kept as the one place where a node kind
+  with a side effect that cannot be replayed would say so, and it reports a
+  malformed flat Box before any replay;
+- a clocked wrapper allocates one clock domain per propagation **miss**; a
+  hit replays the outputs of the first propagation and with them the domain
+  they carry. The key holds what C++ `makeClockEnv` names a domain by, the
+  tuple `(parent, slotenv, path, box, inputs)` (the parent domain through
+  `PropagationModeKey`), so the same wrapper reached again in the same
+  context with the same inputs *is* the same block, and two structurally
+  identical instances in different contexts still get distinct ids;
 - the pending forward-AD seed vector is replayed, not barred. It is write-only
   during propagation (only the `Rec` arm drains it), so the seeds one call
   appends are a function of its exact key: each entry stores that delta next
@@ -1085,10 +1095,42 @@ Why the AD exclusion was wrong (2026-09-16):
   `result_memo_hit_replays_pending_fad_seeds_across_recursions`
   (`crates/propagate/src/tests.rs`; the second one fails without the replay,
   both fail with the old gate), `hit_replays_the_pending_fad_seed_delta`
-  and `root_safety_gate_excludes_clock_side_effects_only`
+  and `root_safety_gate_admits_ad_and_clocked_wrappers`
   (`result_memo.rs`), and the end-to-end budget
   `crates/compiler/tests/fad_seed_sharing_cost.rs`. §2.5b is the other half
   of the same finding, on the evaluator side.
+
+Why the clocked wrapper exclusion was wrong (2026-09-18):
+
+- the same shape as the AD exclusion: it switched the memo off for the
+  **whole** root of any program mentioning a wrapper. A box shared between
+  several wrappers was re-propagated once per reference, and any `fad` over
+  it augmented each copy. On the `rir.lib` network held by `op.on_change`
+  (an `ondemand` fired when a parameter changes) under the twenty `frame_sum`
+  ondemand blocks of an EDR loss, the propagated DAG of the smallest instance
+  (2 lines, 2 sections, one tangent) was 141 050 nodes against 4 159 with the
+  coefficients taken directly, and the 21-tangent online program of
+  faust-diff-rir compiled in 17 min 29 s against 23 s;
+- the exclusion guarded a side effect, the fresh domain id, that the output
+  bus already carries (as the `SIGCLOCKENV` token of every `Clocked(env, y)`
+  the wrapper emits): replaying the bus replays the domain, and the key is
+  exactly the C++ identity of that domain. What the side table
+  (`clock_domain.rs`) refuses is the *structural* collision of two instances
+  in different contexts, which the key keeps apart; "one fresh id per
+  propagation" in its documentation now reads "per miss";
+- with the replay, the smallest instance is 6 088 nodes, the N=4, B=4, P=4
+  case compiles in 0.42 s instead of 12.5 s (propagation 0.038 s instead of
+  1.38 s), and the online program in 28 s. The change uncovered a placement
+  bug, `FRS-FIR-0001` on a `Konst` value held by a wrapper, fixed the same
+  day in `signal_fir/placement.rs` (not a memo). Golden snapshots unchanged,
+  the impulse tests and the clocked differential tests keep their samples;
+- tests: `a_shared_wrapper_box_is_one_clock_domain_after_the_memo_warms_up`
+  (`par(i, 600, g)` on one shared `g = ondemand(...)` counts fewer than 600
+  domains; 600 with the gate put back) and
+  `different_inputs_of_a_shared_wrapper_box_stay_distinct_domains` (the same
+  `g` under two inputs counts two), both in
+  `crates/compiler/tests/clocked_shared_box_one_domain.rs`. Journal
+  `porting/journal/2026-09-18.md`.
 
 Why the slot-environment restriction was wrong (2026-08-30):
 
