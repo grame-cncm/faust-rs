@@ -1,0 +1,69 @@
+$ faustprobe --double -n 1 --in zero --eval good tests/output/dsp/broken.lib
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: parse failed for tests/output/dsp/broken.lib: errors=1, recoveries=0, diagnostics=1
+tests/output/dsp/broken.lib:2:10: error [FRS-PARSE-0001] Parsing error at line 2 column 10. Repair sequences found:
+    1: Insert ABS
+    2: Insert ACOS
+    3: Insert ADD
+    4: Insert AND
+    5: Insert ASIN
+    6: Insert ASSERTBOUNDS
+    7: Insert ATAN
+    8: Insert ATAN2
+    9: Insert ATTACH
+   10: Insert CEIL
+   11: Insert CONTROL
+   12: Insert COS
+   13: Insert CUT
+   14: Insert DIV
+   15: Insert ENABLE
+   16: Insert EQ
+   17: Insert EXP
+   18: Insert FDELAY
+   19: Insert FLOAT
+   20: Insert FLOATCAST
+   21: Insert FLOOR
+   22: Insert FMOD
+   23: Insert GE
+   24: Insert GT
+   25: Insert HIGHEST
+   26: Insert IDENT
+   27: Insert INT
+   28: Insert INTCAST
+   29: Insert LE
+   30: Insert LOG
+   31: Insert LOG10
+   32: Insert LOWEST
+   33: Insert LSH
+   34: Insert LT
+   35: Insert MAX
+   36: Insert MEM
+   37: Insert MIN
+   38: Insert MOD
+   39: Insert MUL
+   40: Insert NE
+   41: Insert OR
+   42: Insert POWFUN
+   43: Insert POWOP
+   44: Insert PREFIX
+   45: Insert PROCESS
+   46: Insert RDTBL
+   47: Insert REMAINDER
+   48: Insert RINT
+   49: Insert ROUND
+   50: Insert RSH
+   51: Insert RWTBL
+   52: Insert SELECT2
+   53: Insert SELECT3
+   54: Insert SIN
+   55: Insert SQRT
+   56: Insert SUB
+   57: Insert TAN
+   58: Insert WIRE
+   59: Insert XOR
+  2 | bad = 1 +;
+    |          ^ unexpected token
+

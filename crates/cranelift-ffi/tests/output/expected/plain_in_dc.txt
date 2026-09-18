@@ -1,0 +1,8 @@
+$ faustprobe --double --quiet -n 16 --in dc tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+# frames=16 sr=44100 window=0..16 (16 frames)
+# out0: peak=0.5 rms=0.5 dc=0.5 finite=yes peak_at=0
+
+--- stderr
+

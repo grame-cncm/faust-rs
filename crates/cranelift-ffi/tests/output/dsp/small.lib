@@ -1,0 +1,5 @@
+onepole(p) = _ : + ~ *(p);
+twice(x) = x * 2;
+pair = 1, 2;
+scaled = _ * hslider("k", 2, 0, 4, 0.1);
+voice(f) = f * k with { k = 2; };

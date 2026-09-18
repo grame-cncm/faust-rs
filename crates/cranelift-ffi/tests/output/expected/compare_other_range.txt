@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --compare tests/output/dsp/gain.dsp --set-b gain=9 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --compare `tests/output/dsp/gain.dsp`: `gain`=9 is outside the range [0, 1] of /gain/gain (--clamp accepts it, clamped to the range)
+

@@ -1,0 +1,7 @@
+$ faustprobe --double --error-format json --eval good tests/output/dsp/small.lib
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --error-format json cannot be combined with --eval: the report's offsets would be those of the wrapped source, not of FILE
+

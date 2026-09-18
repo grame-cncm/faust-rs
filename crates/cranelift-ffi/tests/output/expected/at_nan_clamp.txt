@@ -1,0 +1,14 @@
+$ faustprobe --double -n 4 --in dc --at 2 gain=nan --clamp tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+frame,out0
+0,0.5
+1,0.5
+2,0.5
+3,0.5
+
+--- stderr
+# frames=4 sr=44100 window=0..4 (4 frames)
+# out0: peak=0.5 rms=0.5 dc=0.5 finite=yes peak_at=0
+# clamped /gain/gain: NaN -> 0.5
+

@@ -1,0 +1,14 @@
+$ faustprobe --double --format ir -n 4 --set gain=7 --clamp tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+number_of_inputs  :   1
+number_of_outputs :   1
+number_of_frames  :      4
+     0 :  1.000000
+     1 :  0.000000
+     2 :  0.000000
+     3 :  0.000000
+
+--- stderr
+# clamped /gain/gain: 7 -> 1
+

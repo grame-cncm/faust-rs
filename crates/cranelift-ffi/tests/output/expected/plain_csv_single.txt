@@ -1,0 +1,17 @@
+$ faustprobe -n 8 tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+frame,out0
+0,0.5
+1,0.0
+2,0.0
+3,0.0
+4,0.0
+5,0.0
+6,0.0
+7,0.0
+
+--- stderr
+# frames=8 sr=44100 window=0..8 (8 frames)
+# out0: peak=0.5 rms=0.1767766952966369 dc=0.0625 finite=yes peak_at=0
+

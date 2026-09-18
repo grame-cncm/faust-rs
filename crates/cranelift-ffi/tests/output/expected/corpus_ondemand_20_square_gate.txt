@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_20_square_gate.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292600 lines=15003 fnv1a64=9550532f6202351d
+--- stderr
+

@@ -1,0 +1,8 @@
+$ faustprobe --double --list-params --eval scaled tests/output/dsp/small.lib
+exit=0
+--- stdout
+path                                         kind            init        min        max       step
+/small/k                                     slider        2.0        0.0        4.0 0.10000000149011612
+
+--- stderr
+

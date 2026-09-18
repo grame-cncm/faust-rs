@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --set-b gain=0.4 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --set-a and --set-b address the two programs of --compare
+

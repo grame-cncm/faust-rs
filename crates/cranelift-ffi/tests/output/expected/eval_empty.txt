@@ -1,0 +1,7 @@
+$ faustprobe --double -n 1 --eval   tests/output/dsp/small.lib
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --eval was given an empty expression
+

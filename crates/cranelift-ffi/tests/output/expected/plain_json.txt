@@ -1,0 +1,32 @@
+$ faustprobe --double --format json -n 64 tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/gain.dsp",
+  "frames": 64,
+  "reduce": null,
+  "runs": [
+    {
+      "channels": [
+        {
+          "dc": 0.0078125,
+          "peak": 0.5,
+          "peak_at": 0,
+          "rms": 0.0625,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "set": {},
+      "window": {
+        "frames": 64,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

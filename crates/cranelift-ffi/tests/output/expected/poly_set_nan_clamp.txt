@@ -1,0 +1,9 @@
+$ faustprobe --double --nvoices 4 --quiet -n 200 --note 60:100@0..150 --set bright=nan --clamp tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+# frames=200 sr=44100 nvoices=4 active_voices=1 window=0..200 (200 frames)
+# out0: peak=0.3582940608287719 rms=0.19371003318396743 dc=-0.010870488561662952 finite=yes peak_at=167
+# clamped /synth/bright: NaN -> 0.5
+
+--- stderr
+

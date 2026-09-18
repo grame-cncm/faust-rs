@@ -1,0 +1,43 @@
+$ faustprobe --double --nvoices 4 --format json --time -n 2000 --note 60:100@0..1500 tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+{
+  "active_voices": 1,
+  "channels": [
+    {
+      "dc": 0.0001742711553817134,
+      "peak": 0.3622328033854998,
+      "peak_at": 167,
+      "rms": 0.16825656401517577,
+      "subnormal": 0,
+      "subnormal_at": null
+    }
+  ],
+  "dsp": "tests/output/dsp/synth.dsp",
+  "frames": 2000,
+  "nvoices": 4,
+  "schema_version": 1,
+  "sr": 44100,
+  "timing": {
+    "audio_s": N,
+    "blocks": N,
+    "compile_s": N,
+    "compute_s": N,
+    "frames": N,
+    "realtime_factor": N,
+    "worst_block": {
+      "budget_fraction": N,
+      "budget_s": N,
+      "frame": N,
+      "frames": N,
+      "seconds": N
+    }
+  },
+  "window": {
+    "frames": 2000,
+    "start": 0
+  }
+}
+
+--- stderr
+

@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet -n 200 --in impulse:3 --note 60:127@0..150 tests/output/dsp/synth_in.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --in impulse:3: the program has one input, channel 0
+

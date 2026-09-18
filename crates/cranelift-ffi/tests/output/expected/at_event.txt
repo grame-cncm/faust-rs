@@ -1,0 +1,21 @@
+$ faustprobe --double -n 12 --in dc --at 6 gain=1 tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+frame,out0
+0,0.5
+1,0.5
+2,0.5
+3,0.5
+4,0.5
+5,0.5
+6,1.0
+7,1.0
+8,1.0
+9,1.0
+10,1.0
+11,1.0
+
+--- stderr
+# frames=12 sr=44100 window=0..12 (12 frames)
+# out0: peak=1.0 rms=0.7905694150420949 dc=0.75 finite=yes peak_at=6
+

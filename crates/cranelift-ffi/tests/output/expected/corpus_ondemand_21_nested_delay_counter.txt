@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_21_nested_delay_counter.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292438 lines=15003 fnv1a64=c5bd16a195bf2c95
+--- stderr
+

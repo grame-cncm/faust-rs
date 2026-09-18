@@ -1,0 +1,7 @@
+$ faustprobe --double --format ir --bargraphs tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --bargraphs cannot be combined with --format ir
+

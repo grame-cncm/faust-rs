@@ -1,0 +1,10 @@
+$ faustprobe --double --quiet -n 4096 --freqresp 8:100:10000 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+# freqresp: 8 frequencies from 100.0 to 10000.0 Hz, from the response of 4096 frames to an impulse on the input
+# freqresp: linear and time-invariant within 1e-9 of the peak (homogeneity 0.0, time_invariance 0.0, superposition 4.295553430345061e-15)
+# freqresp out0: peak=0.0775513726569672 peak_at=9, the last tenth of the window holds 2.1527884038742425e-228 of the energy
+# freqresp out1: peak=0.9333942197498175 peak_at=0, the last tenth of the window holds 0.0 of the energy
+
+--- stderr
+

@@ -1,0 +1,10 @@
+$ faustprobe --double -n 32 --out <TMP>/_out.npy tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+# frames=32 sr=44100 window=0..32 (32 frames)
+# out0: peak=0.5 rms=0.08838834764831845 dc=0.015625 finite=yes peak_at=0
+
+--- stderr
+
+--- file <TMP>/_out.npy
+bytes=384 lines=1 fnv1a64=1810d861a2e3623e

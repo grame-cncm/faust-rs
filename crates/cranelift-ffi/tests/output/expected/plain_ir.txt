@@ -1,0 +1,17 @@
+$ faustprobe --double --format ir -n 8 tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+number_of_inputs  :   1
+number_of_outputs :   1
+number_of_frames  :      8
+     0 :  0.500000
+     1 :  0.000000
+     2 :  0.000000
+     3 :  0.000000
+     4 :  0.000000
+     5 :  0.000000
+     6 :  0.000000
+     7 :  0.000000
+
+--- stderr
+

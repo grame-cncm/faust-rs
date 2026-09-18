@@ -1,0 +1,19 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --sweep a1=-1.5,-0.5,0.5 --sweep a2=0.2,0.8 --lr 0.01 --blocks 20 --every 20 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+# grid /ddsp_rad_host_block_resonator/a1=-1.5 /ddsp_rad_host_block_resonator/a2=0.2 loss=1.11108788577618e64
+# grid /ddsp_rad_host_block_resonator/a1=-1.5 /ddsp_rad_host_block_resonator/a2=0.8 loss=1.5689772403942457e0
+# grid /ddsp_rad_host_block_resonator/a1=-0.5 /ddsp_rad_host_block_resonator/a2=0.2 loss=6.269462583346836e-1 (best)
+# grid /ddsp_rad_host_block_resonator/a1=-0.5 /ddsp_rad_host_block_resonator/a2=0.8 loss=1.5770938546569335e0
+# grid /ddsp_rad_host_block_resonator/a1=0.5 /ddsp_rad_host_block_resonator/a2=0.2 loss=1.3844162292331625e0
+# grid /ddsp_rad_host_block_resonator/a1=0.5 /ddsp_rad_host_block_resonator/a2=0.8 loss=2.382776156176418e0
+# grid: 6 points, one block of 256 frames each; the descent starts from the best
+block,loss,a1,a2
+20,4.28152047910108e-1,-0.6780391284834144,0.16245119195035837
+# trained /ddsp_rad_host_block_resonator/a1=-0.6780391284834144
+# trained /ddsp_rad_host_block_resonator/a2=0.16245119195035837
+# loss: block 1 6.269463e-1, block 20 4.281520e-1
+# loss: minimum 4.281520e-1 at block 20
+
+--- stderr
+

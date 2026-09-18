@@ -1,0 +1,10 @@
+$ faustprobe --double --quiet tests/output/dsp/absent.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: I/O error while reading tests/output/dsp/absent.dsp: No such file or directory (os error 2)
+error [FRS-SRC-0001] cannot read tests/output/dsp/absent.dsp: No such file or directory (os error 2)
+  = note: path: tests/output/dsp/absent.dsp
+  = help: check that the path exists and is a readable file
+

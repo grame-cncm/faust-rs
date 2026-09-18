@@ -1,0 +1,7 @@
+$ faustprobe --protocol impulse-test --sweep q=1,2 tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --protocol impulse-test fixes the rendering conditions; remove --sweep
+

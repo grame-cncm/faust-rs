@@ -1,0 +1,7 @@
+$ faustprobe --double --train-verbose tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --train-verbose adds the gradients to the rows of --train
+

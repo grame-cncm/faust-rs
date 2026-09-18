@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_15_branch_filters.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292491 lines=15003 fnv1a64=0014de5d6aab38be
+--- stderr
+

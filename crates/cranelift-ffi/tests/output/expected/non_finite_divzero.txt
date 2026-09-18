@@ -1,0 +1,9 @@
+$ faustprobe --double --quiet -n 8 tests/output/dsp/divzero.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: render produced non-finite samples
+  first: frame 0, out0 (+inf); 8 of 8 frames affected
+  controls then: all at their initial values
+

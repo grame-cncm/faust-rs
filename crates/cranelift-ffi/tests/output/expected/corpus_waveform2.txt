@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/waveform2.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=300075 lines=15003 fnv1a64=341fe65557996c2c
+--- stderr
+

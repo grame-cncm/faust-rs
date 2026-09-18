@@ -1,0 +1,15 @@
+$ faustprobe --double --quiet -n 64 --compare tests/output/dsp/filt.dsp --compare-outputs 0 --set-b q=2 tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+# frames=64 sr=44100 window=0..64 (64 frames)
+# out0: peak=0.0775513726569672 rms=0.033308892134969854 dc=0.015525161639353986 finite=yes peak_at=9
+# out1: peak=0.9333942197498175 rms=0.12076541172449859 dc=1.788179411091049e-6 finite=yes peak_at=0
+# bargraph /filt/level=0.0775513726569672
+# compare: against tests/output/dsp/filt.dsp, tolerance abs=0 rel=0
+# compare out0: max_abs=0.03279708820971353 at frame 32, max_rel=0.3248340280490965, first beyond tolerance: frame 0 (0.0047304174129274516 vs 0.004892583833893166)
+
+--- stderr
+faustprobe: the render differs from `tests/output/dsp/filt.dsp` beyond the tolerance
+  first: frame 0, out0: 0.0047304174129274516 vs 0.004892583833893166
+  controls then: all at their initial values
+

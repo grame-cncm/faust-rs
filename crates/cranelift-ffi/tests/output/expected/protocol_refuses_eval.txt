@@ -1,0 +1,7 @@
+$ faustprobe --protocol impulse-test --eval 1 tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --protocol impulse-test fixes the rendering conditions; remove --eval
+

@@ -1,0 +1,7 @@
+$ faustprobe --double --sweep gain=0.1,0.2 --reduce loud tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: unknown reduction `loud`; expected rms, peak, energy, dc, f0, sfdr or thd
+

@@ -1,0 +1,8 @@
+$ faustprobe --double --quiet -n 256 --in sine:440 --sweep cutoff=200,2000 --reduce peak tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+200,0.4497259478947585,0.964404315695633
+2000,1.0246772456836353,0.21353926699340497
+
+--- stderr
+

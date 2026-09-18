@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4 --skip 4 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --skip cannot be combined with --freqresp: the transform is that of the whole response, from frame 0
+

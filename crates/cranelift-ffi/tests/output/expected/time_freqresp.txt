@@ -1,0 +1,17 @@
+$ faustprobe --double --quiet --time -n 2048 --freqresp 4 --sweep cutoff=500,2000 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+# freqresp: 4 frequencies from 20.0 to 22050.0 Hz, from the response of 2048 frames to an impulse on the input, at each of 2 sweep points
+# freqresp [cutoff=500]: linear and time-invariant within 1e-9 of the peak (homogeneity 0.0, time_invariance 0.0, superposition 8.330571866975312e-15)
+# freqresp [cutoff=500] out0: peak=0.038903750589709025 peak_at=17, the last tenth of the window holds 1.7880241342090857e-57 of the energy
+# freqresp [cutoff=500] out1: peak=0.9655920584451844 peak_at=0, the last tenth of the window holds 2.5219215642439445e-116 of the energy
+# freqresp [cutoff=2000]: linear and time-invariant within 1e-9 of the peak (homogeneity 0.0, time_invariance 0.0, superposition 1.2114668719437883e-15)
+# freqresp [cutoff=2000] out0: peak=0.15420021825381383 peak_at=4, the last tenth of the window holds 1.9298968898697782e-227 of the energy
+# freqresp [cutoff=2000] out1: peak=0.8745480065502544 peak_at=0, the last tenth of the window holds 0.0 of the energy
+# time: N renders
+# time: compile N T
+# time: compute N T for N T of audio (N frames in N blocks): Nx real time
+# time: worst block: frame N, N frames in N T, N% of its N T budget
+
+--- stderr
+

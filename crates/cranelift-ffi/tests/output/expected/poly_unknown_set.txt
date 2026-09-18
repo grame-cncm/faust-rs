@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet --set nope=1 tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: no control matching `nope` on any voice or the effect
+

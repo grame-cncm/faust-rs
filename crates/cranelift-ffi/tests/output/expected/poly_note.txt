@@ -1,0 +1,8 @@
+$ faustprobe --double --nvoices 4 --quiet -n 4000 --note 60:100@100..2000 tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+# frames=4000 sr=44100 nvoices=4 active_voices=0 window=0..4000 (4000 frames)
+# out0: peak=0.3622328033854998 rms=0.13221996691669968 dc=3.275540236303721e-5 finite=yes peak_at=267
+
+--- stderr
+

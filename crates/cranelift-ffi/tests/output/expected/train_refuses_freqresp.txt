@@ -1,0 +1,7 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --blocks 5 --freqresp 4 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --freqresp cannot be combined with --train / --fd-check
+

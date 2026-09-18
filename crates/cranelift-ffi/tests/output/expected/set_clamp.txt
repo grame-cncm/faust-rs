@@ -1,0 +1,9 @@
+$ faustprobe --double --quiet -n 8 --set gain=7 --clamp tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+# frames=8 sr=44100 window=0..8 (8 frames)
+# out0: peak=1.0 rms=0.3535533905932738 dc=0.125 finite=yes peak_at=0
+# clamped /gain/gain: 7 -> 1
+
+--- stderr
+

@@ -1,0 +1,276 @@
+$ faustprobe --double --quiet --error-format json tests/output/dsp/broken.dsp
+exit=1
+--- stdout
+{
+  "compiler": {
+    "name": "faust-rs",
+    "target": "aarch64-macos",
+    "version": "0.8.0"
+  },
+  "diagnostics": [
+    {
+      "category": "user_code",
+      "code": "FRS-EVAL-0002",
+      "debug": {
+        "box_expr": {
+          "type": "string",
+          "value": "BOXIDENT(sym(\"fooo\"))"
+        },
+        "node_id": {
+          "type": "unsigned",
+          "value": 15
+        }
+      },
+      "detail_code": "undefined-binding",
+      "facts": {
+        "binding_trace_path": {
+          "type": "string_list",
+          "value": [
+            "process"
+          ]
+        },
+        "owner_definition": {
+          "type": "string",
+          "value": "process"
+        },
+        "scope_local": {
+          "type": "string_list",
+          "value": [
+            "aa",
+            "an",
+            "ba",
+            "co",
+            "db",
+            "de",
+            "dm",
+            "dx",
+            "ef",
+            "en",
+            "fd",
+            "fi",
+            "ho",
+            "hy",
+            "it",
+            "la",
+            "ma",
+            "mi",
+            "mo",
+            "no",
+            "os",
+            "pf",
+            "pl",
+            "pm",
+            "process",
+            "qu",
+            "re",
+            "rm",
+            "ro",
+            "sf",
+            "si",
+            "so",
+            "sp",
+            "sy",
+            "ve",
+            "vl",
+            "wa",
+            "wd"
+          ]
+        },
+        "scope_top_level": {
+          "type": "string_list",
+          "value": [
+            "aa",
+            "an",
+            "ba",
+            "co",
+            "db",
+            "de",
+            "dm",
+            "dx",
+            "ef",
+            "en",
+            "fd",
+            "fi",
+            "ho",
+            "hy",
+            "it",
+            "la",
+            "ma",
+            "mi",
+            "mo",
+            "no",
+            "os",
+            "pf",
+            "pl",
+            "pm",
+            "process",
+            "qu",
+            "re",
+            "rm",
+            "ro",
+            "sf",
+            "si",
+            "so",
+            "sp",
+            "sy",
+            "ve",
+            "vl",
+            "wa",
+            "wd"
+          ]
+        },
+        "scope_visible": {
+          "type": "string_list",
+          "value": [
+            "aa",
+            "an",
+            "ba",
+            "co",
+            "db",
+            "de",
+            "dm",
+            "dx",
+            "ef",
+            "en",
+            "fd",
+            "fi",
+            "ho",
+            "hy",
+            "it",
+            "la",
+            "ma",
+            "mi",
+            "mo",
+            "no",
+            "os",
+            "pf",
+            "pl",
+            "pm",
+            "process",
+            "qu",
+            "re",
+            "rm",
+            "ro",
+            "sf",
+            "si",
+            "so",
+            "sp",
+            "sy",
+            "ve",
+            "vl",
+            "wa",
+            "wd"
+          ]
+        },
+        "symbol": {
+          "type": "string",
+          "value": "fooo"
+        }
+      },
+      "fixes": [],
+      "help": [
+        "define the symbol in scope or fix the identifier name",
+        "template: fooo = ...; // define before use",
+        "for top-level aliases: define target before first use"
+      ],
+      "labels": [
+        {
+          "compatibility_span": {
+            "col": 25,
+            "end_col": 29,
+            "end_line": 2,
+            "file": "/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp",
+            "line": 2
+          },
+          "message": "failing use",
+          "range": {
+            "end": 52,
+            "source_id": 0,
+            "start": 48
+          },
+          "role": "use_site",
+          "style": "primary"
+        },
+        {
+          "compatibility_span": {
+            "col": 1,
+            "end_col": 8,
+            "end_line": 2,
+            "file": "/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp",
+            "line": 2
+          },
+          "message": "enclosing definition",
+          "range": {
+            "end": 31,
+            "source_id": 0,
+            "start": 24
+          },
+          "role": "definition_site",
+          "style": "secondary"
+        },
+        {
+          "compatibility_span": {
+            "col": 1,
+            "end_col": 8,
+            "end_line": 2,
+            "file": "/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp",
+            "line": 2
+          },
+          "message": "call site",
+          "range": {
+            "end": 31,
+            "source_id": 0,
+            "start": 24
+          },
+          "role": "call_site",
+          "style": "secondary"
+        }
+      ],
+      "message": "undefined symbol `fooo`",
+      "notes": [
+        "cause: unresolved identifier in current lexical scope",
+        "rule: referenced identifier must be present in visible lexical scope",
+        "computed: `fooo` is not present in current visible scope",
+        "scope.local=aa, an, ba, co, db, de, dm, dx, ef, en, fd, fi, ho, hy, it, la, ma, mi, mo, no, os, pf, pl, pm, process, qu, re, rm, ro, sf, si, so, sp, sy, ve, vl, wa, wd",
+        "scope.visible=aa, an, ba, co, db, de, dm, dx, ef, en, fd, fi, ho, hy, it, la, ma, mi, mo, no, os, pf, pl, pm, process, qu, re, rm, ro, sf, si, so, sp, sy, ve, vl, wa, wd",
+        "scope.top_level=aa, an, ba, co, db, de, dm, dx, ef, en, fd, fi, ho, hy, it, la, ma, mi, mo, no, os, pf, pl, pm, process, qu, re, rm, ro, sf, si, so, sp, sy, ve, vl, wa, wd",
+        "node_id=15",
+        "box_expr=BOXIDENT(sym(\"fooo\"))",
+        "expr=fooo",
+        "error originates from definition 'process'",
+        "binding_trace=process"
+      ],
+      "related": [],
+      "severity": "error",
+      "stage": "eval",
+      "traces": []
+    }
+  ],
+  "request": {
+    "backend": "cranelift",
+    "mode": "ffi",
+    "normalized_options": []
+  },
+  "schema_version": 2,
+  "sources": [
+    {
+      "content_hash": "19af70a61159d0c4113c437e8a20ed7050529675ec8d985b6a3e86c81326e8b2",
+      "id": 0,
+      "kind": "file",
+      "name": "/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp",
+      "text": null
+    },
+    {
+      "content_hash": "dc0b5d2fa3b3b9726658b220c6e825e333c1999a07fe59f55d778037c9f8daa0",
+      "id": 1,
+      "kind": "imported_file",
+      "name": "/usr/local/share/faust/stdfaust.lib",
+      "text": null
+    }
+  ],
+  "status": "failed"
+}
+
+--- stderr
+faustprobe: evaluation failed for /Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp: undefined symbol `fooo`
+

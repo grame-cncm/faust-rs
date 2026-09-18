@@ -1,0 +1,68 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --format json --lr 0.5 --blocks 40 --every 40 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+{
+  "dsp": "../../tests/corpus/ddsp_rad_host_block_resonator.dsp",
+  "schema_version": 1,
+  "sr": 44100,
+  "train": {
+    "loss": {
+      "first": 0.46157261742201783,
+      "last": 478.8693996481356,
+      "min": 0.46157261742201783,
+      "min_block": 1,
+      "values_at_min": [
+        -0.800000011920929,
+        0.5
+      ]
+    },
+    "notes": [
+      "a control that ends on a bound is stopped, not converged: /ddsp_rad_host_block_resonator/a2",
+      "the last loss is 1037 times the minimum, which block 1 reached with /ddsp_rad_host_block_resonator/a1=-0.800000011920929 /ddsp_rad_host_block_resonator/a2=0.5"
+    ],
+    "options": {
+      "block": 256,
+      "blocks": 40,
+      "lr": 0.5,
+      "optimizer": "adam",
+      "reset_per_block": false
+    },
+    "rows": [
+      {
+        "block": 40,
+        "grads": [
+          -11367.257884061697,
+          65755.20588487333
+        ],
+        "loss": 478.8693996481356,
+        "values": [
+          1.4253505060302167,
+          0.9990000128746033
+        ]
+      }
+    ],
+    "trained": [
+      {
+        "blocks_on_lower": 0,
+        "blocks_on_upper": 0,
+        "ends_on": null,
+        "max": 1.9900000095367432,
+        "min": -1.9900000095367432,
+        "path": "/ddsp_rad_host_block_resonator/a1",
+        "value": 1.4253505060302167
+      },
+      {
+        "blocks_on_lower": 0,
+        "blocks_on_upper": 36,
+        "ends_on": "upper",
+        "max": 0.9990000128746033,
+        "min": -0.9990000128746033,
+        "path": "/ddsp_rad_host_block_resonator/a2",
+        "value": 0.9990000128746033
+      }
+    ]
+  }
+}
+
+--- stderr
+

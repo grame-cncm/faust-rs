@@ -1,0 +1,13 @@
+$ faustprobe --double --quiet -n 512 --freqresp 4 --sweep q=50,100 tests/output/dsp/ring.dsp
+exit=0
+--- stdout
+# freqresp: 4 frequencies from 20.0 to 22050.0 Hz, from the response of 512 frames to an impulse on the input, at each of 2 sweep points
+# freqresp [q=50]: linear and time-invariant within 1e-9 of the peak (homogeneity 0.0, time_invariance 0.0, superposition 1.1351691026026216e-14)
+# freqresp [q=50] out0: peak=0.13979983811006794 peak_at=11, the last tenth of the window holds 0.04246637011057475 of the energy
+# note: [q=50] out0 is still ringing 512 frames after the impulse: what -n cut off is of the order of the last tenth's share, and near a resonance the magnitude is off by about its square root (20.6%); raise -n
+# freqresp [q=100]: linear and time-invariant within 1e-9 of the peak (homogeneity 0.0, time_invariance 0.0, superposition 1.120051763429137e-14)
+# freqresp [q=100] out0: peak=0.14089057292051232 peak_at=11, the last tenth of the window holds 0.06285074224409541 of the energy
+# note: [q=100] out0 is still ringing 512 frames after the impulse: what -n cut off is of the order of the last tenth's share, and near a resonance the magnitude is off by about its square root (25.1%); raise -n
+
+--- stderr
+

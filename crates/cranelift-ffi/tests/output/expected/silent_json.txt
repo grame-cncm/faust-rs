@@ -1,0 +1,36 @@
+$ faustprobe --double --format json -n 64 --in zero tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/gain.dsp",
+  "frames": 64,
+  "reduce": null,
+  "runs": [
+    {
+      "channels": [
+        {
+          "dc": 0.0,
+          "peak": 0.0,
+          "peak_at": null,
+          "rms": 0.0,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "notes": [
+        "every output is exactly zero over the window",
+        "input is `zero` and the program has 1 input(s)"
+      ],
+      "set": {},
+      "window": {
+        "frames": 64,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

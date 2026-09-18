@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet --reduce rms tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --sweep/--reduce operate on the scalar Probe only; use --nvoices 0
+

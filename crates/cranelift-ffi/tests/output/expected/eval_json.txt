@@ -1,0 +1,44 @@
+$ faustprobe --double --format json -n 1 --in zero --eval pair tests/output/dsp/small.lib
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/small.lib",
+  "eval": [
+    "pair[0]",
+    "pair[1]"
+  ],
+  "frames": 1,
+  "reduce": null,
+  "runs": [
+    {
+      "channels": [
+        {
+          "dc": 1.0,
+          "peak": 1.0,
+          "peak_at": 0,
+          "rms": 1.0,
+          "subnormal": 0,
+          "subnormal_at": null
+        },
+        {
+          "dc": 2.0,
+          "peak": 2.0,
+          "peak_at": 0,
+          "rms": 2.0,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "set": {},
+      "window": {
+        "frames": 1,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

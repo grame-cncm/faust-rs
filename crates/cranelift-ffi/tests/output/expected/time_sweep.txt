@@ -1,0 +1,13 @@
+$ faustprobe --double --time -n 2048 --in sine:440 --sweep cutoff=200,2000 --reduce rms tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+cutoff,rms_out0,rms_out1
+200,0.16665159371466323,0.641840687621022
+2000,0.7243416902013413,0.15044718965531434
+
+--- stderr
+# time: N renders
+# time: compile N T
+# time: compute N T for N T of audio (N frames in N blocks): Nx real time
+# time: worst block: frame N, N frames in N T, N% of its N T budget
+

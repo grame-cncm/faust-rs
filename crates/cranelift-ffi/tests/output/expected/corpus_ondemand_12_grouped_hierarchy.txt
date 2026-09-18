@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_12_grouped_hierarchy.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292548 lines=15003 fnv1a64=8b06258787eea2f6
+--- stderr
+

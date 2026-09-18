@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_06_nested_signal_path.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=285295 lines=15003 fnv1a64=391d547165e720a2
+--- stderr
+

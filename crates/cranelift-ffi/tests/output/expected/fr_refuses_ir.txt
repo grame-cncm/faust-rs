@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4 --format ir tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --format ir cannot be combined with --freqresp: `.ir` holds frames
+

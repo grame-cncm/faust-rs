@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4 --at 5 gain=1 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --at cannot be combined with --freqresp: a control that changes during the response makes the program time-varying
+

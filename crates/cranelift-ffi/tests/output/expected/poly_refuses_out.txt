@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet --out <TMP>/_p.npy tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --out operates on the scalar Probe only; use --nvoices 0
+

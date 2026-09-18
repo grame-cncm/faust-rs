@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 16 --in impulse:0 tests/output/dsp/osc.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --in impulse:0: the program has no input
+

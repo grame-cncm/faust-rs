@@ -1,0 +1,7 @@
+$ faustprobe --protocol impulse-test --nvoices 2 tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --protocol impulse-test fixes the rendering conditions; remove --nvoices
+

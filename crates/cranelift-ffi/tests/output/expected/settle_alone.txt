@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --settle 10 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --settle delays the impulse of --freqresp; a plain render has --skip
+

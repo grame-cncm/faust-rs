@@ -1,0 +1,9 @@
+$ faustprobe --double --quiet -n 16 --in impulse:1 tests/output/dsp/two_in.dsp
+exit=0
+--- stdout
+# frames=16 sr=44100 window=0..16 (16 frames)
+# out0: peak=1.0 rms=0.25 dc=0.0625 finite=yes peak_at=0
+# out1: peak=1.0 rms=0.25 dc=-0.0625 finite=yes peak_at=0
+
+--- stderr
+

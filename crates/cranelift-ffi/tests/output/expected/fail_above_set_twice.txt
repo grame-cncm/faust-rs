@@ -1,0 +1,11 @@
+$ faustprobe --double --quiet -n 4000 --in dc --set fb=1.5 --set fb=2 --at 3 fb=2.5 --fail-above 100 tests/output/dsp/runaway.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: a sample exceeds --fail-above 100
+  first: frame 5, out0 = 119.125
+  the render turns non-finite at frame 775, out0 (+inf)
+  controls written by then: /runaway/fb=2.5
+  last scheduled write before it: frame 3, /runaway/fb=2.5
+

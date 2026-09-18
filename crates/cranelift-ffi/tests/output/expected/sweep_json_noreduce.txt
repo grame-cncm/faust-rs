@@ -1,0 +1,75 @@
+$ faustprobe --double --format json -n 256 --in sine:440 --sweep cutoff=200,2000 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/filt.dsp",
+  "frames": 256,
+  "reduce": null,
+  "runs": [
+    {
+      "bargraphs": {
+        "/filt/level": 0.24331429027177598
+      },
+      "channels": [
+        {
+          "dc": 0.05081459473410525,
+          "peak": 0.4497259478947585,
+          "peak_at": 62,
+          "rms": 0.20724300675951207,
+          "subnormal": 0,
+          "subnormal_at": null
+        },
+        {
+          "dc": 0.04209867009788619,
+          "peak": 0.964404315695633,
+          "peak_at": 68,
+          "rms": 0.617475265146,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "set": {
+        "cutoff": 200.0
+      },
+      "window": {
+        "frames": 256,
+        "start": 0
+      }
+    },
+    {
+      "bargraphs": {
+        "/filt/level": 1.0235296430161271
+      },
+      "channels": [
+        {
+          "dc": 0.12585769628022656,
+          "peak": 1.0246772456836353,
+          "peak_at": 28,
+          "rms": 0.7154712366413811,
+          "subnormal": 0,
+          "subnormal_at": null
+        },
+        {
+          "dc": -0.0012488020478977572,
+          "peak": 0.21353926699340497,
+          "peak_at": 254,
+          "rms": 0.1493353565903177,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "set": {
+        "cutoff": 2000.0
+      },
+      "window": {
+        "frames": 256,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

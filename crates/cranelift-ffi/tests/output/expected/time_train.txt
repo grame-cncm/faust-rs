@@ -1,0 +1,15 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --time --lr 0.01 --blocks 20 --every 20 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+block,loss,a1,a2
+20,2.0415570437240677e-1,-0.9640616992821818,0.4351546750351019
+# trained /ddsp_rad_host_block_resonator/a1=-0.9640616992821818
+# trained /ddsp_rad_host_block_resonator/a2=0.4351546750351019
+# loss: block 1 4.615726e-1, block 20 2.041557e-1
+# loss: minimum 2.041557e-1 at block 20
+# time: compile N T
+# time: compute N T for N T of audio (N frames in N blocks): Nx real time
+# time: worst block: block N, N frames in N T, N% of its N T budget
+
+--- stderr
+

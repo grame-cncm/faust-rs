@@ -1,0 +1,7 @@
+$ faustprobe --double -n 64 --in dc --at 32 gain=1 --sweep gain=0.1,0.2 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --at writes `gain`, which --sweep is also driving; the scheduled write would override the swept value
+

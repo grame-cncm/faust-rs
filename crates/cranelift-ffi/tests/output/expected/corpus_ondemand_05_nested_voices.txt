@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_05_nested_voices.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292571 lines=15003 fnv1a64=7f01ca43dcad91a7
+--- stderr
+

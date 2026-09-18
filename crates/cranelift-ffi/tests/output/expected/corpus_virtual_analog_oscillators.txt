@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/virtual_analog_oscillators.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=435205 lines=15003 fnv1a64=c8e0952868f7d219
+--- stderr
+

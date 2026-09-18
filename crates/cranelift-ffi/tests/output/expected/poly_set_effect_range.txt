@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet -n 2000 --note 60:100@0..1500 --set wet=7 tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `wet`=7 is outside the range [0, 1] of /faustprobe-effect/wet on the effect (--clamp accepts it, clamped to the range)
+

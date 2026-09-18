@@ -1,0 +1,126 @@
+$ faustprobe -h
+exit=0
+--- stdout
+Probe a Faust DSP: set controls, render offline, report samples and statistics
+
+Usage: faustprobe [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  Faust DSP source file
+
+Options:
+      --eval <EXPR>
+          Evaluate EXPR in the scope of FILE and probe that instead of FILE's `process` (repeatable: the expressions' outputs side by side)
+  -v, --version
+          Print the version and the copyright notice (`-v`, as with faust-rs)
+  -I, --import-dir <DIR>
+          Add a Faust library import directory (repeatable)
+      --double
+          Compile and execute with double-precision samples
+      --opt-level <OPT_LEVEL>
+          Cranelift optimisation level [default: 0]
+      --bra-tape <BRA_TAPE>
+          Samples one `rad` block reverse tape holds (`-bra-tape N` of the compiler): the largest `--block` over which the gradients of a `rad` through delays and recursions are exact. A power of two [default: 8192]
+      --sr <SR>
+          Sample rate in Hz [default: 44100]
+      --block <BLOCK>
+          Frames per compute call [default: 64]
+  -n, --render <RENDER>
+          Frames to render [default: 15000]
+      --set <PATH=VALUE>
+          Set a control before rendering, as `PATH=VALUE` (repeatable)
+      --clamp
+          Accept a `--set`, `--sweep` or `--at` value outside its control's range by clamping it, and say so
+      --in <MODE>
+          Input excitation: zero, impulse, impulse:CH, dc, `white[:SEED]`, sine:HZ, `file:PATH[:CH]` (a .wav, .f64 or .f32 file; input i reads channel i, a mono file feeds every input, `:CH` picks one channel for all) [default: impulse]
+      --skip <SKIP>
+          Exclude the first N frames from both the dump and the statistics [default: 0]
+      --every <EVERY>
+          Print one frame out of N [default: 1]
+      --list-params
+          List the discovered controls and bargraphs, with their kind, and exit
+      --bargraphs
+          Add the bargraphs to the rendered rows: one column per bargraph in the per-frame CSV dump and in a sweep's rows
+      --quiet
+          Print statistics only, no per-frame dump
+      --precision <N|full>
+          Text of the numbers: `full`, the shortest text that parses back to the same float at the width the program was compiled in (the default), or a number of fixed decimals
+      --out <FILE>
+          Write the rendered window to FILE and print the statistics only: `.npy` (shape frames x outputs), `.wav` (IEEE float), or `.f64` / `.f32` (raw, one output), at the width the program was compiled in
+      --compare <OTHER>
+          Compare the render with that of OTHER, a second program compiled in the same process and rendered under the same excitation, schedule and window: per output, the largest difference and where, and **the first frame beyond the tolerance**. Exit status 1 beyond it
+      --ref <FILE>
+          Compare the render with the samples of FILE (`.npy`, `.wav`, `.f64`, `.f32`: what `--out` writes), which must hold the same window
+      --set-a <PATH=VALUE>
+          `--set` for FILE only, under `--compare` (repeatable)
+      --set-b <PATH=VALUE>
+          `--set` for OTHER only, under `--compare` (repeatable)
+      --tolerance <ABS>
+          Largest accepted `|a - b|` in a comparison. Default 0, and with no `--rel-tolerance` either, agreement is bit equality
+      --rel-tolerance <REL>
+          Tolerance relative to the reference's peak on each output, added to `--tolerance`
+      --compare-outputs <N,...>
+          Outputs a comparison or a check looks at (default: all), e.g. `0` for the loss lane of a `rad` program, whose gradient lanes are defined per block and do move with the block size
+      --check <CHECK>
+          Check an invariant of the render (repeatable): `block[=N1,N2,...]`, the same samples at other block sizes (default 1, 7 and 512); `reset`, the same samples again after a reset of the instance, which sweeps and `--reset-per-block` rely on; `determinism`, the same samples from a second compilation; `width`, the distance between the single and the double precision render; `all`
+      --fail-above <LEVEL>
+          Fail when a sample of the window exceeds LEVEL in magnitude, and say at which frame and output first
+      --format <FORMAT>
+          Output format for rendered frames [default: csv] [possible values: csv, ir, json]
+      --sweep <PATH=V1,V2,...>
+          Sweep a control over several values, as `PATH=V1,V2,...` (repeatable)
+      --reduce <R>
+          Reduce each render to one number per channel: rms, peak, energy, dc, f0, `sfdr` or `thd`
+      --f0 <HZ>
+          Fundamental in Hz for `--reduce sfdr` / `--reduce thd`
+      --at <FRAME> <PATH=VALUE>
+          Set a control at an exact frame: `--at FRAME PATH=VALUE` (repeatable)
+      --note <PITCH[:VEL]@ON[..OFF]>
+          Play a note: `PITCH[:VEL]@ON[..OFF]` (repeatable). Requires `--nvoices` > 0
+      --chord <P1,P2,...[:VEL]@ON[..OFF]>
+          Play several pitches at once: `P1,P2,...[:VEL]@ON[..OFF]` (repeatable)
+      --protocol <PROTOCOL>
+          Rendering protocol [default: free] [possible values: free, impulse-test]
+      --nvoices <NVOICES>
+          Polyphonic voice count; 0 renders the DSP directly (default, and the only mode `--protocol impulse-test` accepts) [default: 0]
+      --effect <FILE>
+          Separate effect DSP, run once on the voices' mixed output
+      --voice-stop-level <VOICE_STOP_LEVEL>
+          RMS level below which a releasing voice is reclaimed as free [default: 0.00003162]
+      --train <CONTROLS>
+          Train these controls by gradient descent, the host loop of a `rad` program whose loss and gradients leave the graph: per block of `--block` frames, the loss lane and the gradient lanes are averaged, the optimizer steps the controls (kept in their range), and the next block runs on the same instance. Comma-separated exact paths or unique suffixes, in the order of their gradient lanes. Prints one CSV row per block (`--every` thins them): block, loss, the controls
+      --loss-lane <LOSS_LANE>
+          Output lane of the per-sample loss [default: 0]
+      --grad-lane <GRAD_LANE>
+          Output lane of the first control's gradient; the others follow it [default: 1]
+      --optimizer <OPTIMIZER>
+          Update rule of `--train` [default: adam] [possible values: adam, sgd]
+      --lr <LR>
+          Learning rate of `--train` [default: 0.01]
+      --blocks <BLOCKS>
+          Number of blocks, one step each, of `--train` [default: 100]
+      --reset-per-block
+          Start every `--train` block from a cleared state and from frame 0 of the excitation: one pass over the same response per block, an offline calibration with one epoch per block (with `--in file:` the response is the file). Without it the blocks are the successive stretches of one stream and the state carries over
+      --fd-check[=<WHERE>]
+          Check the gradient lanes of the `--train` controls against central finite differences of the loss lane, on one block from a fresh instance per evaluation. Fails when a relative error exceeds `--fd-tolerance` [possible values: start, end, both]
+      --fd-step <FD_STEP>
+          Step of the finite differences [default: 0.001]
+      --fd-tolerance <FD_TOLERANCE>
+          Largest accepted `|rad - fd| / max(|fd|, 1)` [default: 0.02]
+      --train-verbose
+          Add the block's mean gradient, one `grad_CONTROL` column per trained control, to each row of `--train`
+      --time
+          Report what the run cost: the compilation, the `compute` calls against real time, and the worst block against its own deadline
+      --freqresp <N[:FMIN:FMAX]>
+          The frequency response of a linear program, from its impulse response: `N` log-spaced frequencies from 20 Hz to half the sample rate, or `N:FMIN:FMAX`. Rows `hz,mag_db_out0,phase_out0,...`, the phase in radians
+      --settle <N>
+          Frames of silence rendered before the impulse of `--freqresp`, which then lands on frame N: the time a smoothed control needs to reach its value [default: 0]
+      --linearity-tolerance <REL>
+          Largest accepted departure from linearity under `--freqresp`, relative to the expected response's peak (default 1e-9 in double precision, 1e-4 in single)
+      --error-format <ERROR_FORMAT>
+          How a compile failure is reported: `human`, the compiler's rendered diagnostics on stderr (the default), or `json`, the compiler's diagnostics-v2 report on stdout (code, ranges, facts, machine-applicable fixes) and the one-line summary on stderr [default: human] [possible values: human, json]
+  -h, --help
+          Print help (see more with '--help')
+
+--- stderr
+

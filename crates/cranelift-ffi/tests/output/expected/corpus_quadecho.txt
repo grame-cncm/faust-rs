@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/quadecho.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=690075 lines=15003 fnv1a64=0a03bb72674cf63a
+--- stderr
+

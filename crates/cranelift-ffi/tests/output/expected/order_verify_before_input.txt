@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --compare tests/output/dsp/gain.dsp --ref tests/output/dsp/ref_same.f64 --in triangle tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --compare and --ref both name the reference: give one
+

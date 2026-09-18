@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet --format ir tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --format ir is scoped to the scalar impulse-test protocol
+

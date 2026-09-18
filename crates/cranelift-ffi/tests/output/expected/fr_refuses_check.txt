@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4 --check reset tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --compare/--ref/--check cannot be combined with --freqresp: they look at the samples of a plain render
+

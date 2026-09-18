@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 64 --freqresp 4 --linearity-tolerance=-1 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --linearity-tolerance must be a non-negative number
+

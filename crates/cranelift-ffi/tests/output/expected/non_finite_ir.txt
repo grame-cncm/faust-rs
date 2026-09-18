@@ -1,0 +1,6 @@
+$ faustprobe --double --format ir -n 1200 --in dc --set fb=4 tests/output/dsp/runaway.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=101441 lines=1203 fnv1a64=d6cdb141e166572f
+--- stderr
+

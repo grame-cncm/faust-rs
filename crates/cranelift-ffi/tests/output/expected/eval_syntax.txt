@@ -1,0 +1,70 @@
+$ faustprobe --double -n 1 --in zero --eval twice( tests/output/dsp/small.lib
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: parse failed for tests/output/dsp/small.lib: errors=1, recoveries=0, diagnostics=1
+<eval 0>:1:7: error [FRS-PARSE-0001] Parsing error at line 8 column 1. Repair sequences found:
+    1: Insert ABS, Insert RPAR
+    2: Insert ACOS, Insert RPAR
+    3: Insert ADD, Insert RPAR
+    4: Insert AND, Insert RPAR
+    5: Insert ASIN, Insert RPAR
+    6: Insert ASSERTBOUNDS, Insert RPAR
+    7: Insert ATAN, Insert RPAR
+    8: Insert ATAN2, Insert RPAR
+    9: Insert ATTACH, Insert RPAR
+   10: Insert CEIL, Insert RPAR
+   11: Insert CONTROL, Insert RPAR
+   12: Insert COS, Insert RPAR
+   13: Insert CUT, Insert RPAR
+   14: Insert DIV, Insert RPAR
+   15: Insert ENABLE, Insert RPAR
+   16: Insert EQ, Insert RPAR
+   17: Insert EXP, Insert RPAR
+   18: Insert FDELAY, Insert RPAR
+   19: Insert FLOAT, Insert RPAR
+   20: Insert FLOATCAST, Insert RPAR
+   21: Insert FLOOR, Insert RPAR
+   22: Insert FMOD, Insert RPAR
+   23: Insert GE, Insert RPAR
+   24: Insert GT, Insert RPAR
+   25: Insert HIGHEST, Insert RPAR
+   26: Insert IDENT, Insert RPAR
+   27: Insert INT, Insert RPAR
+   28: Insert INTCAST, Insert RPAR
+   29: Insert LE, Insert RPAR
+   30: Insert LOG, Insert RPAR
+   31: Insert LOG10, Insert RPAR
+   32: Insert LOWEST, Insert RPAR
+   33: Insert LSH, Insert RPAR
+   34: Insert LT, Insert RPAR
+   35: Insert MAX, Insert RPAR
+   36: Insert MEM, Insert RPAR
+   37: Insert MIN, Insert RPAR
+   38: Insert MOD, Insert RPAR
+   39: Insert MUL, Insert RPAR
+   40: Insert NE, Insert RPAR
+   41: Insert OR, Insert RPAR
+   42: Insert POWFUN, Insert RPAR
+   43: Insert POWOP, Insert RPAR
+   44: Insert PREFIX, Insert RPAR
+   45: Insert PROCESS, Insert RPAR
+   46: Insert RDTBL, Insert RPAR
+   47: Insert REMAINDER, Insert RPAR
+   48: Insert RINT, Insert RPAR
+   49: Insert ROUND, Insert RPAR
+   50: Insert RSH, Insert RPAR
+   51: Insert RWTBL, Insert RPAR
+   52: Insert SELECT2, Insert RPAR
+   53: Insert SELECT3, Insert RPAR
+   54: Insert SIN, Insert RPAR
+   55: Insert SQRT, Insert RPAR
+   56: Insert SUB, Insert RPAR
+   57: Insert TAN, Insert RPAR
+   58: Insert WIRE, Insert RPAR
+   59: Insert XOR, Insert RPAR
+  8 | ;
+    | ^ unexpected token
+  = note: <eval 0> is `--eval 'twice('`, line 7 of the source as wrapped
+

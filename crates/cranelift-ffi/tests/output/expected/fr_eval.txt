@@ -1,0 +1,10 @@
+$ faustprobe --double --quiet -n 256 --freqresp 4 --eval onepole(0.5) tests/output/dsp/small.lib
+exit=0
+--- stdout
+# freqresp: 4 frequencies from 20.0 to 22050.0 Hz, from the response of 256 frames to an impulse on the input
+# eval out0 = onepole(0.5)
+# freqresp: linear and time-invariant within 1e-9 of the peak (homogeneity 0.0, time_invariance 0.0, superposition 0.0)
+# freqresp out0: peak=1.0 peak_at=0, the last tenth of the window holds 8.3973451344588535e-140 of the energy
+
+--- stderr
+

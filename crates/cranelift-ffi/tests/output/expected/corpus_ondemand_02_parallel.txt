@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_02_parallel.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292535 lines=15003 fnv1a64=6169d0f9fb94454a
+--- stderr
+

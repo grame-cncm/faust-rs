@@ -1,0 +1,7 @@
+$ faustprobe --double --out <TMP>/_x.npy --sweep gain=0.1,0.2 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --sweep cannot be combined with --out, which writes every frame of one render
+

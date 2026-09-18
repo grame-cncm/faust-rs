@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --sweep gain --set bad tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: expected PATH=V1,V2,..., got `gain`
+

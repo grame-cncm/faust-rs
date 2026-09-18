@@ -1,0 +1,10 @@
+$ faustprobe --double --quiet -n 512 --in sine:440 --skip 128 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+# frames=512 sr=44100 window=128..512 (384 frames)
+# out0: peak=1.0883663193203472 rms=0.7724777948779851 dc=-0.028786570547680666 finite=yes peak_at=484
+# out1: peak=0.4022754556428962 rms=0.28425015423270145 dc=-0.012182440834017651 finite=yes peak_at=157
+# bargraph /filt/level=1.0883663193203472
+
+--- stderr
+

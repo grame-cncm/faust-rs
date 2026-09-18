@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --in sine tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `--in sine` needs a frequency, e.g. sine:440
+

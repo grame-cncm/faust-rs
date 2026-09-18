@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/downsampling_01_accumulator.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=285075 lines=15003 fnv1a64=45856eb3a09b3086
+--- stderr
+

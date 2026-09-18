@@ -1,0 +1,24 @@
+$ faustprobe --double --quiet --compare tests/output/dsp/broken.dsp tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --compare: evaluation failed for /Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp: undefined symbol `fooo`
+/Users/letz/Developpements/RUST/faust-rs/crates/cranelift-ffi/tests/output/dsp/broken.dsp:2:25: error [FRS-EVAL-0002] undefined symbol `fooo`
+  2 | process = os.osc(440) : fooo;
+    |                         ^^^^ failing use
+    | ^^^^^^^ enclosing definition
+    | ^^^^^^^ call site
+  = note: cause: unresolved identifier in current lexical scope
+  = note: rule: referenced identifier must be present in visible lexical scope
+  = note: computed: `fooo` is not present in current visible scope
+  = note: scope.local=aa, an, ba, co, db, de, dm, dx, ef, en, fd, fi, ho, hy, it, la, ma, mi, mo, no, os, pf, pl, pm, process, qu, re, rm, ro, sf, si, so, sp, sy, ve, vl, wa, wd
+  = note: scope.visible=aa, an, ba, co, db, de, dm, dx, ef, en, fd, fi, ho, hy, it, la, ma, mi, mo, no, os, pf, pl, pm, process, qu, re, rm, ro, sf, si, so, sp, sy, ve, vl, wa, wd
+  = note: scope.top_level=aa, an, ba, co, db, de, dm, dx, ef, en, fd, fi, ho, hy, it, la, ma, mi, mo, no, os, pf, pl, pm, process, qu, re, rm, ro, sf, si, so, sp, sy, ve, vl, wa, wd
+  = note: expr=fooo
+  = note: error originates from definition 'process'
+  = note: binding_trace=process
+  = help: define the symbol in scope or fix the identifier name
+  = help: template: fooo = ...; // define before use
+  = help: for top-level aliases: define target before first use
+

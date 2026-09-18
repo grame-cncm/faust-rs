@@ -1,0 +1,9 @@
+$ faustprobe --double -n 8192 --in zero --set gate=1 --sweep freq=440,880 --reduce thd --f0 440 tests/output/dsp/osc.dsp
+exit=0
+--- stdout
+freq,thd_out0
+440,-106.18896981634126
+880,120.37363298937979
+
+--- stderr
+

@@ -1,0 +1,9 @@
+$ faustprobe --double --quiet -n 2048 --freqresp 4 --settle 20000 tests/output/dsp/smoo.dsp
+exit=0
+--- stdout
+# freqresp: 4 frequencies from 20.0 to 22050.0 Hz, from the response of 2048 frames to an impulse on the input at frame 20000
+# freqresp: linear and time-invariant within 1e-9 of the peak (homogeneity 0.0, time_invariance 7.408562667347681e-11, superposition 1.019295760986283e-12)
+# freqresp out0: peak=0.4999999989807047 peak_at=20000, the last tenth of the window holds 0.0 of the energy
+
+--- stderr
+

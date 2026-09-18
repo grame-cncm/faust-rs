@@ -1,0 +1,9 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --set a1=-50 --clamp --lr 0.01 --blocks 20 --every 20 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=1
+--- stdout
+# clamped /ddsp_rad_host_block_resonator/a1: -50 -> -1.9900000095367432
+
+--- stderr
+faustprobe: the loss is not finite at block 3
+  controls of that block: /ddsp_rad_host_block_resonator/a1=-1.9800000095367432 /ddsp_rad_host_block_resonator/a2=0.51
+

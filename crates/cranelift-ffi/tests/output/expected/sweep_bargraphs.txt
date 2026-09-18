@@ -1,0 +1,9 @@
+$ faustprobe --double -n 256 --in sine:440 --sweep cutoff=200,2000 --reduce dc --bargraphs tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+cutoff,dc_out0,dc_out1,/filt/level
+200,0.05081459473410525,0.04209867009788619,0.24331429027177598
+2000,0.12585769628022656,-0.0012488020478977572,1.0235296430161271
+
+--- stderr
+

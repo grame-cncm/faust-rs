@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 64 --ref tests/output/dsp/nothing.f64 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: cannot read tests/output/dsp/nothing.f64: No such file or directory (os error 2)
+

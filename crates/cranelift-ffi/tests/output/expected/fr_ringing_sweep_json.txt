@@ -1,0 +1,92 @@
+$ faustprobe --double --format json -n 512 --freqresp 4 --sweep q=50,100 tests/output/dsp/ring.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/ring.dsp",
+  "frames": 512,
+  "freqresp": {
+    "hz": [
+      20.0,
+      206.612310829,
+      2134.43234931,
+      22050.0
+    ],
+    "input": null,
+    "runs": [
+      {
+        "linearity": {
+          "homogeneity": 0.0,
+          "shift": 37,
+          "superposition": 1.1351691026026216e-14,
+          "time_invariance": 0.0,
+          "tolerance": 1e-9
+        },
+        "notes": [
+          "[q=50] out0 is still ringing 512 frames after the impulse: what -n cut off is of the order of the last tenth's share, and near a resonance the magnitude is off by about its square root (20.6%); raise -n"
+        ],
+        "outputs": [
+          {
+            "mag_db": [
+              1.0001964576217655,
+              -1.8464020067880509,
+              -15.710514954703939,
+              -34.024554811987045
+            ],
+            "output": 0,
+            "peak": 0.13979983811006794,
+            "phase": [
+              -0.35874486938312566,
+              -0.38276935430434067,
+              -2.3270692362982928,
+              6.263455687603873e-14
+            ],
+            "tail_energy_fraction": 0.04246637011057475
+          }
+        ],
+        "set": {
+          "q": 50.0
+        }
+      },
+      {
+        "linearity": {
+          "homogeneity": 0.0,
+          "shift": 37,
+          "superposition": 1.120051763429137e-14,
+          "time_invariance": 0.0,
+          "tolerance": 1e-9
+        },
+        "notes": [
+          "[q=100] out0 is still ringing 512 frames after the impulse: what -n cut off is of the order of the last tenth's share, and near a resonance the magnitude is off by about its square root (25.1%); raise -n"
+        ],
+        "outputs": [
+          {
+            "mag_db": [
+              1.6642114723327666,
+              -2.4066987505968065,
+              -15.205846027613077,
+              -30.837307536957876
+            ],
+            "output": 0,
+            "peak": 0.14089057292051232,
+            "phase": [
+              -0.48342469727534376,
+              -0.6019110227854578,
+              -1.8062613568608175,
+              6.263457026944399e-14
+            ],
+            "tail_energy_fraction": 0.06285074224409541
+          }
+        ],
+        "set": {
+          "q": 100.0
+        }
+      }
+    ],
+    "settle": 0
+  },
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

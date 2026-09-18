@@ -1,0 +1,60 @@
+$ faustprobe --double --format json --time -n 4096 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/filt.dsp",
+  "frames": 4096,
+  "reduce": null,
+  "runs": [
+    {
+      "bargraphs": {
+        "/filt/level": 4.471786166987786e-126
+      },
+      "channels": [
+        {
+          "dc": 0.0002441406250000038,
+          "peak": 0.0775513726569672,
+          "peak_at": 9,
+          "rms": 0.004164029506213499,
+          "subnormal": 0,
+          "subnormal_at": null
+        },
+        {
+          "dc": -8.06564561956482e-20,
+          "peak": 0.9333942197498175,
+          "peak_at": 0,
+          "rms": 0.015095676473119966,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "set": {},
+      "timing": {
+        "audio_s": N,
+        "blocks": N,
+        "compute_s": N,
+        "frames": N,
+        "realtime_factor": N,
+        "worst_block": {
+          "budget_fraction": N,
+          "budget_s": N,
+          "frame": N,
+          "frames": N,
+          "seconds": N
+        }
+      },
+      "window": {
+        "frames": 4096,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100,
+  "timing": {
+    "compile_s": N
+  }
+}
+
+--- stderr
+

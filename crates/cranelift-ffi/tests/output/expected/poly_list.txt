@@ -1,0 +1,12 @@
+$ faustprobe --double --nvoices 4 --list-params tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+4 voice(s), 0 input(s)/voice, 1 output(s), effect: yes
+path (per voice)                             kind            init        min        max       step
+/synth/bright                                slider        0.5        0.0        1.0 0.009999999776482582
+/synth/freq                                  slider      440.0       20.0    20000.0        1.0
+/synth/gain                                  slider        0.5        0.0        1.0 0.009999999776482582
+/synth/gate                                  button        0.0        0.0        1.0        1.0
+
+--- stderr
+

@@ -1,0 +1,45 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --format json --fd-check --blocks 0 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+{
+  "dsp": "../../tests/corpus/ddsp_rad_host_block_resonator.dsp",
+  "schema_version": 1,
+  "sr": 44100,
+  "train": {
+    "fd_check": {
+      "start": {
+        "block": 256,
+        "checks": [
+          {
+            "fd": 476.52369910097764,
+            "fd_plain": 476.52180226776153,
+            "path": "/ddsp_rad_host_block_resonator/a1",
+            "rad": 476.52369910113333,
+            "relative_error": 3.267290263915307e-13
+          },
+          {
+            "fd": 335.8721449067114,
+            "fd_plain": 335.873238588718,
+            "path": "/ddsp_rad_host_block_resonator/a2",
+            "rad": 335.8721449065594,
+            "relative_error": 4.5255108034046255e-13
+          }
+        ],
+        "passes": true,
+        "step": 0.001,
+        "tolerance": 0.02,
+        "worst_relative_error": 4.5255108034046255e-13
+      }
+    },
+    "options": {
+      "block": 256,
+      "blocks": 0,
+      "lr": 0.01,
+      "optimizer": "adam",
+      "reset_per_block": false
+    }
+  }
+}
+
+--- stderr
+

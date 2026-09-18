@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --note 60:100@0..100 tests/output/dsp/osc.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --note/--chord require --nvoices > 0
+

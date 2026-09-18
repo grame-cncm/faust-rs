@@ -1,0 +1,14 @@
+$ faustprobe --double -n 64 --skip 8 --every 16 tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+frame,out0
+8,0.0
+24,0.0
+40,0.0
+56,0.0
+
+--- stderr
+# frames=64 sr=44100 window=8..64 (56 frames)
+# out0: peak=0.0 rms=0.0 dc=0.0 finite=yes peak_at=none
+# note: every output is exactly zero over the window
+

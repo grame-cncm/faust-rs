@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_18_toggle_morph.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292543 lines=15003 fnv1a64=5b01165dc4bd3c10
+--- stderr
+

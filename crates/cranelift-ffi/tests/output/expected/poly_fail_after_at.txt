@@ -1,0 +1,11 @@
+$ faustprobe --double --nvoices 4 --quiet -n 2000 --note 60:100@10..1500 --at 5 wet=1 --at 11 bright=0.3 --fail-above 0.01 tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: a sample exceeds --fail-above 0.01
+  first: frame 11, out0 = -0.011131922513245884
+  controls written by then: /faustprobe-effect/wet=1 /synth/bright=0.3
+  last scheduled write before it: frame 11, /synth/bright=0.3
+  notes held then: 60 (on at frame 10)
+

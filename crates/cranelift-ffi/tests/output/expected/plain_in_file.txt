@@ -1,0 +1,8 @@
+$ faustprobe --double --quiet -n 256 --in file:tests/output/dsp/exc.f64 tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+# frames=256 sr=44100 window=0..256 (256 frames)
+# out0: peak=0.49999510327535174 rms=0.35063346341357066 dc=0.0016519965943993043 finite=yes peak_at=110
+
+--- stderr
+

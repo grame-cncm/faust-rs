@@ -1,0 +1,10 @@
+$ faustprobe --double --quiet -n 64 --in zero tests/output/dsp/osc.dsp
+exit=0
+--- stdout
+# frames=64 sr=44100 window=0..64 (64 frames)
+# out0: peak=0.0 rms=0.0 dc=0.0 finite=yes peak_at=none
+# note: every output is exactly zero over the window
+# note: buttons and checkboxes at 0: /osc/gate
+
+--- stderr
+

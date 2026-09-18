@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 64 --freqresp 4 --in dc tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --freqresp measures an impulse response: `--in dc` is not `impulse` or `impulse:CH`
+

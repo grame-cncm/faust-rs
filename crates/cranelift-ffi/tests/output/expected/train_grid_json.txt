@@ -1,0 +1,81 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --format json --sweep a1=-1.5,-0.5 --lr 0.01 --blocks 20 --every 20 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+{
+  "dsp": "../../tests/corpus/ddsp_rad_host_block_resonator.dsp",
+  "schema_version": 1,
+  "sr": 44100,
+  "train": {
+    "grid": {
+      "best": 1,
+      "points": [
+        {
+          "loss": 14.649103320495279,
+          "set": {
+            "/ddsp_rad_host_block_resonator/a1": -1.5
+          }
+        },
+        {
+          "loss": 0.9361231867157825,
+          "set": {
+            "/ddsp_rad_host_block_resonator/a1": -0.5
+          }
+        }
+      ]
+    },
+    "loss": {
+      "first": 0.9361231867157825,
+      "last": 0.41961750563366773,
+      "min": 0.41961750563366773,
+      "min_block": 20,
+      "values_at_min": [
+        -0.6898694766943982,
+        0.32261935287013793
+      ]
+    },
+    "options": {
+      "block": 256,
+      "blocks": 20,
+      "lr": 0.01,
+      "optimizer": "adam",
+      "reset_per_block": false
+    },
+    "rows": [
+      {
+        "block": 20,
+        "grads": [
+          1.0686068959464328,
+          0.3896008190957073
+        ],
+        "loss": 0.41961750563366773,
+        "values": [
+          -0.699481252873586,
+          0.3151052395380193
+        ]
+      }
+    ],
+    "trained": [
+      {
+        "blocks_on_lower": 0,
+        "blocks_on_upper": 0,
+        "ends_on": null,
+        "max": 1.9900000095367432,
+        "min": -1.9900000095367432,
+        "path": "/ddsp_rad_host_block_resonator/a1",
+        "value": -0.699481252873586
+      },
+      {
+        "blocks_on_lower": 0,
+        "blocks_on_upper": 0,
+        "ends_on": null,
+        "max": 0.9990000128746033,
+        "min": -0.9990000128746033,
+        "path": "/ddsp_rad_host_block_resonator/a2",
+        "value": 0.3151052395380193
+      }
+    ]
+  }
+}
+
+--- stderr
+

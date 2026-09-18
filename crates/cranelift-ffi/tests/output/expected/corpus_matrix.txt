@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/matrix.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=1230075 lines=15003 fnv1a64=3dbbc897266b2f4a
+--- stderr
+

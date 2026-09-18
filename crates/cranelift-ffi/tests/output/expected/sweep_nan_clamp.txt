@@ -1,0 +1,10 @@
+$ faustprobe --double -n 2 --in dc --sweep gain=nan,0.25 --clamp --reduce peak tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+gain,peak_out0
+0.5,0.5
+0.25,0.25
+
+--- stderr
+# clamped /gain/gain: NaN -> 0.5
+

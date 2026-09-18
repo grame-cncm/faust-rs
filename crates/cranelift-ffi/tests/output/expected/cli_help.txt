@@ -1,0 +1,298 @@
+$ faustprobe --help
+exit=0
+--- stdout
+Probe a Faust DSP: set controls, render offline, report samples and statistics
+
+Usage: faustprobe [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>
+          Faust DSP source file
+
+Options:
+      --eval <EXPR>
+          Evaluate EXPR in the scope of FILE and probe that instead of FILE's `process` (repeatable: the expressions' outputs side by side).
+          
+          FILE may be a `.lib`, which has no `process`: the expression sees its definitions unprefixed, as inside the library, and its imports. A question about a sub-expression costs a command, not a file: `--eval 'absorb_pole(1709, 2.0, 0.5)' -n 1 --in zero jot.lib`. The expressions head the CSV columns (`EXPR[j]` for one with several outputs) and everything else applies unchanged: `--set`, `--sweep`, `--list-params`, `--out`, `--train`. A compile error keeps the file's line numbers, and one in an expression is located in `<eval k>`.
+
+  -v, --version
+          Print the version and the copyright notice (`-v`, as with faust-rs)
+
+  -I, --import-dir <DIR>
+          Add a Faust library import directory (repeatable)
+
+      --double
+          Compile and execute with double-precision samples
+
+      --opt-level <OPT_LEVEL>
+          Cranelift optimisation level
+          
+          [default: 0]
+
+      --bra-tape <BRA_TAPE>
+          Samples one `rad` block reverse tape holds (`-bra-tape N` of the compiler): the largest `--block` over which the gradients of a `rad` through delays and recursions are exact. A power of two
+          
+          [default: 8192]
+
+      --sr <SR>
+          Sample rate in Hz
+          
+          [default: 44100]
+
+      --block <BLOCK>
+          Frames per compute call
+          
+          [default: 64]
+
+  -n, --render <RENDER>
+          Frames to render
+          
+          [default: 15000]
+
+      --set <PATH=VALUE>
+          Set a control before rendering, as `PATH=VALUE` (repeatable).
+          
+          PATH may be a full address or a trailing fragment of one; an ambiguous fragment is reported with its candidates rather than resolved arbitrarily. With `--train` / `--fd-check`, a trained control's value is the descent's starting point instead of its initial value, and any other control's is a fixed value, rewritten on every instance and after every `--reset-per-block`.
+
+      --clamp
+          Accept a `--set`, `--sweep` or `--at` value outside its control's range by clamping it, and say so.
+          
+          Without this flag such a value is an error: a Faust host never writes outside a widget's range, so the request is nearly always a typo, and a render clamped in silence is labelled with a value it never used. With it, each clamp is reported (`# clamped PATH: 7 -> 1`, a `clamped` array per JSON run) and a sweep's rows carry the applied value.
+
+      --in <MODE>
+          Input excitation: zero, impulse, impulse:CH, dc, `white[:SEED]`, sine:HZ, `file:PATH[:CH]` (a .wav, .f64 or .f32 file; input i reads channel i, a mono file feeds every input, `:CH` picks one channel for all).
+          
+          `impulse:CH` must name an input the program has. Under `--nvoices` every playing voice receives the excitation, as in `poly-dsp.h`.
+          
+          [default: impulse]
+
+      --skip <SKIP>
+          Exclude the first N frames from both the dump and the statistics
+          
+          [default: 0]
+
+      --every <EVERY>
+          Print one frame out of N
+          
+          [default: 1]
+
+      --list-params
+          List the discovered controls and bargraphs, with their kind, and exit
+
+      --bargraphs
+          Add the bargraphs to the rendered rows: one column per bargraph in the per-frame CSV dump and in a sweep's rows.
+          
+          A bargraph is written by the program, once per sample, and read here after each compute block: a row carries the value at the end of the block its frame belongs to, so the time resolution is `--block`. Without this flag the bargraphs' values at the end of the render are still reported, with the statistics and in the JSON document.
+
+      --quiet
+          Print statistics only, no per-frame dump
+
+      --precision <N|full>
+          Text of the numbers: `full`, the shortest text that parses back to the same float at the width the program was compiled in (the default), or a number of fixed decimals.
+          
+          `--precision 9` is the text this tool printed before it had the flag. Fixed decimals lose small values: `3.3e-8` prints `0.000000033`.
+
+      --out <FILE>
+          Write the rendered window to FILE and print the statistics only: `.npy` (shape frames x outputs), `.wav` (IEEE float), or `.f64` / `.f32` (raw, one output), at the width the program was compiled in.
+          
+          For a long render read by a script: binary, exact, and what `--in file:` reads back. Every frame of the window is written; `--every` thins the text dump, which this replaces.
+
+      --compare <OTHER>
+          Compare the render with that of OTHER, a second program compiled in the same process and rendered under the same excitation, schedule and window: per output, the largest difference and where, and **the first frame beyond the tolerance**. Exit status 1 beyond it.
+          
+          For "this change must not alter a sample", two routes to one result, a preset against the adjustable program set to its values. `--set` applies to both programs (a trailing fragment resolves in each) and must resolve in both; `--set-a` and `--set-b` address FILE or OTHER alone.
+
+      --ref <FILE>
+          Compare the render with the samples of FILE (`.npy`, `.wav`, `.f64`, `.f32`: what `--out` writes), which must hold the same window
+
+      --set-a <PATH=VALUE>
+          `--set` for FILE only, under `--compare` (repeatable)
+
+      --set-b <PATH=VALUE>
+          `--set` for OTHER only, under `--compare` (repeatable)
+
+      --tolerance <ABS>
+          Largest accepted `|a - b|` in a comparison. Default 0, and with no `--rel-tolerance` either, agreement is bit equality
+
+      --rel-tolerance <REL>
+          Tolerance relative to the reference's peak on each output, added to `--tolerance`
+
+      --compare-outputs <N,...>
+          Outputs a comparison or a check looks at (default: all), e.g. `0` for the loss lane of a `rad` program, whose gradient lanes are defined per block and do move with the block size
+
+      --check <CHECK>
+          Check an invariant of the render (repeatable): `block[=N1,N2,...]`, the same samples at other block sizes (default 1, 7 and 512); `reset`, the same samples again after a reset of the instance, which sweeps and `--reset-per-block` rely on; `determinism`, the same samples from a second compilation; `width`, the distance between the single and the double precision render; `all`.
+          
+          The first three must hold to the tolerance (bit equality by default) and fail the command otherwise, naming the first differing frame. `width` is a report, and a gate only when a tolerance is given.
+
+      --fail-above <LEVEL>
+          Fail when a sample of the window exceeds LEVEL in magnitude, and say at which frame and output first.
+          
+          A feedback loop that leaves its stable region runs away for thousands of frames before it turns non-finite; this catches it at the start, and makes "stays bounded under these control changes" an exit status.
+
+      --format <FORMAT>
+          Output format for rendered frames
+
+          Possible values:
+          - csv:  `frame,out0,out1`, each number the shortest text that parses back to the same float (see `--precision`) — the default, pipeable
+          - ir:   The reference impulse-test `.ir` text, with its zero-clamp
+          - json: One versioned JSON object; the only format that carries a sweep
+          
+          [default: csv]
+
+      --sweep <PATH=V1,V2,...>
+          Sweep a control over several values, as `PATH=V1,V2,...` (repeatable).
+          
+          Repeating the flag takes the cartesian product, with the last axis varying fastest. Every point renders from a cleared instance, so one configuration cannot contaminate the next.
+
+      --reduce <R>
+          Reduce each render to one number per channel: rms, peak, energy, dc, f0, `sfdr` or `thd`.
+          
+          `sfdr` and `thd` need a fundamental. It is estimated from the strongest bin unless `--f0` says otherwise, and both want a stationary window: measuring while the spectrum decays smears every partial and reads as off-grid energy..
+
+      --f0 <HZ>
+          Fundamental in Hz for `--reduce sfdr` / `--reduce thd`.
+          
+          Pins what the estimator would otherwise guess. Worth setting whenever the fundamental is known: a signal whose loudest partial is not the fundamental — a bright pluck, a filtered saw — is misread without it.
+
+      --at <FRAME> <PATH=VALUE>
+          Set a control at an exact frame: `--at FRAME PATH=VALUE` (repeatable).
+          
+          The render splits its block so the change lands on the requested frame rather than the next block boundary.
+
+      --note <PITCH[:VEL]@ON[..OFF]>
+          Play a note: `PITCH[:VEL]@ON[..OFF]` (repeatable). Requires `--nvoices` > 0.
+          
+          Velocity defaults to 100. Omitting `..OFF` holds the note to the end of the render, which is how an attack is measured without a release in the way.
+
+      --chord <P1,P2,...[:VEL]@ON[..OFF]>
+          Play several pitches at once: `P1,P2,...[:VEL]@ON[..OFF]` (repeatable)
+
+      --protocol <PROTOCOL>
+          Rendering protocol.
+          
+          `impulse-test` reproduces the reference protocol exactly — sample rate 44100, block 64, impulse on every input, buttons held for the first block, `.ir` output — and rejects any flag that would perturb it, so a regression run cannot be silently mis-configured.
+
+          Possible values:
+          - free:         Whatever the individual flags say
+          - impulse-test: Pin every knob to the reference impulse-test values
+          
+          [default: free]
+
+      --nvoices <NVOICES>
+          Polyphonic voice count; 0 renders the DSP directly (default, and the only mode `--protocol impulse-test` accepts).
+          
+          N > 0 compiles N instances from one JIT and drives them through the polyphonic wrapper ported from `poly-dsp.h` (allocation, stealing, mixing, reclamation below `--voice-stop-level`). The design's `-n` short form is not used here: `-n` already names `--render` (frames), including in this tool's own regression check against `impulse-cranelift`, which this phase must not disturb.
+          
+          `--note` and `--chord` play it; without one every voice stays free and the render is silence. `--set` and `--at` broadcast: the control they name is written on every voice, and on the effect when it resolves there, each within its own range (an error outside it, or `--clamp`). What a note writes (its pitch's frequency, its gain, its gate) is written as computed, whatever the sliders declare, as in `poly-dsp.h`.
+          
+          [default: 0]
+
+      --effect <FILE>
+          Separate effect DSP, run once on the voices' mixed output.
+          
+          Without this, a single-file instrument that declares both `process` and `effect` has its effect extracted automatically the way `FaustPolyDspGenerator` does — wrap the source in `environment{}` and take `dsp_code.effect` — and this flag is unnecessary; pass it to override that guess or to pair a process DSP with an effect declared in a different file. Requires `--nvoices` > 0.
+
+      --voice-stop-level <VOICE_STOP_LEVEL>
+          RMS level below which a releasing voice is reclaimed as free.
+          
+          Default `0.00003162` (-90 dB) is `poly-dsp.h`'s `VOICE_STOP_LEVEL` — the one number in the polyphonic wrapper with an audible consequence (design §3.2): too high truncates long releases, too low never reclaims a voice under sustained play. Requires `--nvoices` > 0.
+          
+          [default: 0.00003162]
+
+      --train <CONTROLS>
+          Train these controls by gradient descent, the host loop of a `rad` program whose loss and gradients leave the graph: per block of `--block` frames, the loss lane and the gradient lanes are averaged, the optimizer steps the controls (kept in their range), and the next block runs on the same instance. Comma-separated exact paths or unique suffixes, in the order of their gradient lanes. Prints one CSV row per block (`--every` thins them): block, loss, the controls
+
+      --loss-lane <LOSS_LANE>
+          Output lane of the per-sample loss
+          
+          [default: 0]
+
+      --grad-lane <GRAD_LANE>
+          Output lane of the first control's gradient; the others follow it
+          
+          [default: 1]
+
+      --optimizer <OPTIMIZER>
+          Update rule of `--train`
+
+          Possible values:
+          - adam: Adam with the paper's betas (0.9, 0.999) and epsilon 1e-8
+          - sgd:  Plain gradient descent
+          
+          [default: adam]
+
+      --lr <LR>
+          Learning rate of `--train`
+          
+          [default: 0.01]
+
+      --blocks <BLOCKS>
+          Number of blocks, one step each, of `--train`
+          
+          [default: 100]
+
+      --reset-per-block
+          Start every `--train` block from a cleared state and from frame 0 of the excitation: one pass over the same response per block, an offline calibration with one epoch per block (with `--in file:` the response is the file). Without it the blocks are the successive stretches of one stream and the state carries over
+
+      --fd-check[=<WHERE>]
+          Check the gradient lanes of the `--train` controls against central finite differences of the loss lane, on one block from a fresh instance per evaluation. Fails when a relative error exceeds `--fd-tolerance`.
+          
+          `--fd-check` alone, or `--fd-check=start`, checks at the descent's starting point, before it (or instead of it, with `--blocks 0`); `--fd-check=end` at the trained values, after it, where a descent is finished only if the gradient is small *and* right; `--fd-check=both` does both.
+
+          Possible values:
+          - start: At the descent's starting point, before it
+          - end:   At the trained values, after the descent
+          - both:  At both
+
+      --fd-step <FD_STEP>
+          Step of the finite differences
+          
+          [default: 0.001]
+
+      --fd-tolerance <FD_TOLERANCE>
+          Largest accepted `|rad - fd| / max(|fd|, 1)`
+          
+          [default: 0.02]
+
+      --train-verbose
+          Add the block's mean gradient, one `grad_CONTROL` column per trained control, to each row of `--train`.
+          
+          A control that stops moving has a vanishing gradient (a flat loss, or a minimum) or a vanishing step (a learning rate too small for the gradient's scale); the controls alone do not say which.
+
+      --time
+          Report what the run cost: the compilation, the `compute` calls against real time, and the worst block against its own deadline.
+          
+          Behind a flag because these are the only numbers here that differ from one run to the next. What is timed is `compute` alone: not the excitation, not the statistics, not the printing of the rows.
+
+      --freqresp <N[:FMIN:FMAX]>
+          The frequency response of a linear program, from its impulse response: `N` log-spaced frequencies from 20 Hz to half the sample rate, or `N:FMIN:FMAX`. Rows `hz,mag_db_out0,phase_out0,...`, the phase in radians.
+          
+          The transform of the `-n` frames of the response is evaluated at each frequency by direct summation, so no bin grid decides where the response is known. Three more renders first check that the program is linear and time-invariant (an impulse of -0.5, one delayed, a sum of two): one that is not is refused, with the first frame at which the property breaks, since its impulse response has no transfer function to give. The share of the energy in the last tenth of the window says whether the response was still ringing when it was cut. With `--sweep`, one response per point, the swept controls heading the rows, each point rendered and checked on its own.
+
+      --settle <N>
+          Frames of silence rendered before the impulse of `--freqresp`, which then lands on frame N: the time a smoothed control needs to reach its value.
+          
+          A program that smooths its sliders (`si.smoo`) is time-varying until they have settled, and the time-invariance check refuses it, rightly: a response taken during the ramp is that of no filter. The response and its `-n` frames are counted from the impulse.
+          
+          [default: 0]
+
+      --linearity-tolerance <REL>
+          Largest accepted departure from linearity under `--freqresp`, relative to the expected response's peak (default 1e-9 in double precision, 1e-4 in single)
+
+      --error-format <ERROR_FORMAT>
+          How a compile failure is reported: `human`, the compiler's rendered diagnostics on stderr (the default), or `json`, the compiler's diagnostics-v2 report on stdout (code, ranges, facts, machine-applicable fixes) and the one-line summary on stderr.
+          
+          Any other failure (a value out of range, a non-finite render, a failed comparison) is reported as text either way.
+
+          Possible values:
+          - human: The compiler's rendered diagnostics, on stderr
+          - json:  The compiler's diagnostics-v2 JSON report, on stdout
+          
+          [default: human]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+--- stderr
+

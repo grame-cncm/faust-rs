@@ -1,0 +1,12 @@
+$ faustprobe --at 5 tests/output/dsp/gain.dsp
+exit=2
+--- stdout
+
+--- stderr
+error: the following required arguments were not provided:
+  <FILE>
+
+Usage: faustprobe --at <FRAME> <PATH=VALUE> <FILE>
+
+For more information, try '--help'.
+

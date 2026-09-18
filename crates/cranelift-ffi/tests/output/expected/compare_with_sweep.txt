@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --compare tests/output/dsp/gain.dsp --sweep gain=0.1,0.2 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --sweep cannot be combined with --compare, --ref or --check, which look at one render
+

@@ -1,0 +1,12 @@
+$ faustprobe --double --quiet -n 2048 --freqresp 4 --sweep gain=0.5,0.7 tests/output/dsp/smoo.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --freqresp: at `gain=0.5`, the program is not linear and time-invariant: its impulse response has no transfer function to give
+  time invariance: the response to an impulse at frame 37 is not the response to an impulse at frame 0, 37 frames later
+  first: frame 37, out0: 0.018652681342096945 where 0.0005 was expected (tolerance 1e-9 of the peak)
+  usual cause: a modulation (an LFO on a coefficient, a tremolo), an envelope, a noise source
+  a smoothed control (si.smoo) is such an envelope until it has settled: --settle N renders N frames of silence before the impulse
+  a program that is not linear is measured at one level and one frequency at a time: --in sine:HZ --skip N --reduce rms
+

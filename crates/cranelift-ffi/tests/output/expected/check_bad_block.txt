@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --check block=0 tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `--check block=0`: `0` is not a block size
+

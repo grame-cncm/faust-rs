@@ -1,0 +1,13 @@
+$ faustprobe --double -n 4 --precision 9 --set gain=0.3 tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+frame,out0
+0,0.300000000
+1,0.000000000
+2,0.000000000
+3,0.000000000
+
+--- stderr
+# frames=4 sr=44100 window=0..4 (4 frames)
+# out0: peak=0.300000000 rms=0.150000000 dc=0.075000000 finite=yes peak_at=0
+

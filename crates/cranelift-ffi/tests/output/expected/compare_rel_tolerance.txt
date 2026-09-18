@@ -1,0 +1,10 @@
+$ faustprobe --double --quiet -n 64 --compare tests/output/dsp/gain.dsp --set-a gain=0.5 --set-b gain=0.500001 --rel-tolerance 1e-3 tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+# frames=64 sr=44100 window=0..64 (64 frames)
+# out0: peak=0.5 rms=0.0625 dc=0.0078125 finite=yes peak_at=0
+# compare: against tests/output/dsp/gain.dsp, tolerance abs=0 rel=0.001
+# compare out0: max_abs=1.0000000000287557e-6 at frame 0, max_rel=1.999996000065511e-6, within tolerance
+
+--- stderr
+

@@ -1,0 +1,14 @@
+$ faustprobe --double --quiet -n 512 --check block=3,64 --check reset tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+# frames=512 sr=44100 window=0..512 (512 frames)
+# out0: peak=0.0775513726569672 rms=0.011777654003617744 dc=0.0019531250000000304 finite=yes peak_at=9
+# out1: peak=0.9333942197498175 rms=0.04269702080296541 dc=-6.452516495651856e-19 finite=yes peak_at=0
+# bargraph /filt/level=2.2150212897178024e-15
+# check block=3 out0: identical
+# check block=3 out1: identical
+# check reset out0: identical
+# check reset out1: identical
+
+--- stderr
+

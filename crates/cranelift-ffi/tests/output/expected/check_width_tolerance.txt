@@ -1,0 +1,16 @@
+$ faustprobe --double --quiet -n 512 --check width --rel-tolerance 1e-12 tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+# frames=512 sr=44100 window=0..512 (512 frames)
+# out0: peak=0.0775513726569672 rms=0.011777654003617744 dc=0.0019531250000000304 finite=yes peak_at=9
+# out1: peak=0.9333942197498175 rms=0.04269702080296541 dc=-6.452516495651856e-19 finite=yes peak_at=0
+# bargraph /filt/level=2.2150212897178024e-15
+# check width: this render in double precision against the single one
+# check width out0: max_abs=2.825894819917518e-7 at frame 20, max_rel=3.643904668888883e-6, first beyond tolerance: frame 0 (0.0047304174129274516 vs 0.00473041832447052)
+# check width out1: max_abs=3.176048307684809e-8 at frame 1, max_rel=3.402687020440325e-8, first beyond tolerance: frame 0 (0.9333942197498175 vs 0.933394193649292)
+
+--- stderr
+faustprobe: --check width failed: the render is not the same
+  first: frame 0, out0: 0.0047304174129274516 vs 0.00473041832447052
+  controls then: all at their initial values
+

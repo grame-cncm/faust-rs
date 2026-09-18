@@ -1,0 +1,191 @@
+$ faustprobe --double --format json -n 512 --check all tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/filt.dsp",
+  "frames": 512,
+  "reduce": null,
+  "runs": [
+    {
+      "bargraphs": {
+        "/filt/level": 2.2150212897178024e-15
+      },
+      "channels": [
+        {
+          "dc": 0.0019531250000000304,
+          "peak": 0.0775513726569672,
+          "peak_at": 9,
+          "rms": 0.011777654003617744,
+          "subnormal": 0,
+          "subnormal_at": null
+        },
+        {
+          "dc": -6.452516495651856e-19,
+          "peak": 0.9333942197498175,
+          "peak_at": 0,
+          "rms": 0.04269702080296541,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "checks": [
+        {
+          "agrees": true,
+          "channels": [
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 0
+            },
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 1
+            }
+          ],
+          "check": "block=1",
+          "gate": true
+        },
+        {
+          "agrees": true,
+          "channels": [
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 0
+            },
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 1
+            }
+          ],
+          "check": "block=7",
+          "gate": true
+        },
+        {
+          "agrees": true,
+          "channels": [
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 0
+            },
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 1
+            }
+          ],
+          "check": "block=512",
+          "gate": true
+        },
+        {
+          "agrees": true,
+          "channels": [
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 0
+            },
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 1
+            }
+          ],
+          "check": "reset",
+          "gate": true
+        },
+        {
+          "agrees": true,
+          "channels": [
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 0
+            },
+            {
+              "first_beyond": null,
+              "identical": true,
+              "max_abs": 0.0,
+              "max_abs_at": null,
+              "max_rel": 0.0,
+              "output": 1
+            }
+          ],
+          "check": "determinism",
+          "gate": true
+        },
+        {
+          "agrees": false,
+          "channels": [
+            {
+              "first_beyond": {
+                "frame": 0,
+                "reference": 0.00473041832447052,
+                "value": 0.0047304174129274516
+              },
+              "identical": false,
+              "max_abs": 2.825894819917518e-7,
+              "max_abs_at": 20,
+              "max_rel": 3.643904668888883e-6,
+              "output": 0
+            },
+            {
+              "first_beyond": {
+                "frame": 0,
+                "reference": 0.933394193649292,
+                "value": 0.9333942197498175
+              },
+              "identical": false,
+              "max_abs": 3.176048307684809e-8,
+              "max_abs_at": 1,
+              "max_rel": 3.402687020440325e-8,
+              "output": 1
+            }
+          ],
+          "check": "width",
+          "gate": false
+        }
+      ],
+      "set": {},
+      "window": {
+        "frames": 512,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

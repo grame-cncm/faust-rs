@@ -1,0 +1,11 @@
+$ faustprobe --double --nvoices 4 --quiet --time -n 2000 --note 60:100@0..1500 tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+# frames=2000 sr=44100 nvoices=4 active_voices=1 window=0..2000 (2000 frames)
+# out0: peak=0.3622328033854998 rms=0.16825656401517577 dc=0.0001742711553817134 finite=yes peak_at=167
+# time: compile N T
+# time: compute N T for N T of audio (N frames in N blocks): Nx real time
+# time: worst block: frame N, N frames in N T, N% of its N T budget
+
+--- stderr
+

@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --set gain tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: expected PATH=VALUE, got `gain`
+

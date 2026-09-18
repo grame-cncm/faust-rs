@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/switcher.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=420075 lines=15003 fnv1a64=d18ac37538d62cb2
+--- stderr
+

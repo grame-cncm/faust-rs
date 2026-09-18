@@ -1,0 +1,43 @@
+$ faustprobe --double --format json -n 512 --in white:3 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/filt.dsp",
+  "frames": 512,
+  "reduce": null,
+  "runs": [
+    {
+      "bargraphs": {
+        "/filt/level": 0.34417328363981964
+      },
+      "channels": [
+        {
+          "dc": 0.0015569714757154827,
+          "peak": 0.47282660434917717,
+          "peak_at": 371,
+          "rms": 0.16313835190147047,
+          "subnormal": 0,
+          "subnormal_at": null
+        },
+        {
+          "dc": -0.00006580830731763845,
+          "peak": 1.2875509981286588,
+          "peak_at": 206,
+          "rms": 0.5487985584995825,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "set": {},
+      "window": {
+        "frames": 512,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

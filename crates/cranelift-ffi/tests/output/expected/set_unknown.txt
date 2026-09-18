@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --set nope=1 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: no control matching `nope`
+

@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --compare tests/output/dsp/gain.dsp --tolerance=-1 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --tolerance must be a non-negative number
+

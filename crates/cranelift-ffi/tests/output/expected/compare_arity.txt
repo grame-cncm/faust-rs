@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 64 --compare tests/output/dsp/filt.dsp tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --compare: `tests/output/dsp/gain.dsp` has 1 output(s) and `tests/output/dsp/filt.dsp` 2
+

@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/osc.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292555 lines=15003 fnv1a64=d484aa26cfd3fe0e
+--- stderr
+

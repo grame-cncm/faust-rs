@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4:9:3 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --freqresp `4:9:3`: the range must satisfy 0 < FMIN <= FMAX <= 22050 Hz (half the sample rate); a log axis has no 0 Hz
+

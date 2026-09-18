@@ -1,0 +1,14 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --lr 0.01 --blocks 60 --every 20 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+block,loss,a1,a2
+20,2.0415570437240677e-1,-0.9640616992821818,0.4351546750351019
+40,1.0458475798654412e-1,-1.0613959222704261,0.5884642251899092
+60,1.3968597593238448e-3,-1.1898469822545077,0.7113177699579064
+# trained /ddsp_rad_host_block_resonator/a1=-1.1898469822545077
+# trained /ddsp_rad_host_block_resonator/a2=0.7113177699579064
+# loss: block 1 4.615726e-1, block 60 1.396860e-3
+# loss: minimum 1.396860e-3 at block 60
+
+--- stderr
+

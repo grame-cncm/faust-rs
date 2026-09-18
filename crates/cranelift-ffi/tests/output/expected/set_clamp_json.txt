@@ -1,0 +1,39 @@
+$ faustprobe --double --format json -n 8 --set gain=7 --clamp tests/output/dsp/gain.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/gain.dsp",
+  "frames": 8,
+  "reduce": null,
+  "runs": [
+    {
+      "channels": [
+        {
+          "dc": 0.125,
+          "peak": 1.0,
+          "peak_at": 0,
+          "rms": 0.3535533905932738,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "clamped": [
+        {
+          "applied": 1.0,
+          "path": "/gain/gain",
+          "requested": 7.0
+        }
+      ],
+      "set": {},
+      "window": {
+        "frames": 8,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

@@ -1,0 +1,10 @@
+$ faustprobe --list-params tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+path                                         kind            init        min        max       step
+/filt/cutoff                                 slider     1000.0       20.0    20000.0        1.0
+/filt/level                                  bargraph        0.0        0.0        1.0        0.0
+/filt/q                                      slider        1.0        0.5       20.0       0.01
+
+--- stderr
+

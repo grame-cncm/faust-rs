@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --check phase tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: unknown check `phase` (expected block[=N1,N2,...], reset, determinism, width or all)
+

@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/upsampling_04_delay.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=285075 lines=15003 fnv1a64=d7b183559042d1a0
+--- stderr
+

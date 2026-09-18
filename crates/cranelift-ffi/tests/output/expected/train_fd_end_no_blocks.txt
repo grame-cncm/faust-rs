@@ -1,0 +1,7 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --fd-check=end --blocks 0 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --fd-check=end checks the trained values: it needs a descent, --blocks > 0
+

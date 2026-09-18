@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 64 --freqresp 4 --in impulse:5 tests/output/dsp/two_in.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --in impulse:5: the program has 2 inputs, channels 0 to 1
+

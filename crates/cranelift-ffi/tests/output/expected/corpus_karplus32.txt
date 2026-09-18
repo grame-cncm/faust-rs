@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/karplus32.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=437261 lines=15003 fnv1a64=221e68bd0b1aff6f
+--- stderr
+

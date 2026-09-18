@@ -1,0 +1,11 @@
+$ faustprobe --double --nvoices 4 --quiet -n 3000 --note 60:100@10..2500 --set fb=4 --fail-above 1e6 tests/output/dsp/synth_fb.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: a sample exceeds --fail-above 1000000
+  first: frame 20, out0 = 1100866.9291338583
+  the render turns non-finite at frame 522, out0 (+inf)
+  controls written by then: /synth_fb/fb=4
+  notes held then: 60 (on at frame 10)
+

@@ -1,0 +1,10 @@
+$ faustprobe --double --nvoices 4 --quiet -n 3000 --note 60:100@10..2500 --note 64:90@40 --set fb=4 tests/output/dsp/synth_fb.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: render produced non-finite samples
+  first: frame 522, out0 (+inf); 2478 of 3000 frames affected
+  controls written by then: /synth_fb/fb=4
+  notes held then: 60 (on at frame 10), 64 (on at frame 40)
+

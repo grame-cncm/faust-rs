@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4 --fail-above 5 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --fail-above cannot be combined with --freqresp: it gates a plain render
+

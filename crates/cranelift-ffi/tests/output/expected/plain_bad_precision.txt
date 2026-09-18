@@ -1,0 +1,7 @@
+$ faustprobe --double -n 4 --precision x tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `--precision x`: expected `full` or a number of decimals
+

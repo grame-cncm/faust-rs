@@ -1,0 +1,7 @@
+$ faustprobe --double --train gain --blocks 5 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: the program has 1 outputs: the loss lane 0 and the gradient lanes 1..1 do not fit
+

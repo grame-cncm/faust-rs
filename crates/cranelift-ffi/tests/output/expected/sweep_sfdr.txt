@@ -1,0 +1,9 @@
+$ faustprobe --double -n 8192 --in zero --set gate=1 --sweep gain=0.2,0.9 --reduce sfdr tests/output/dsp/osc.dsp
+exit=0
+--- stdout
+gain,sfdr_out0
+0.2,95.14465270087703
+0.9,95.14465270087902
+
+--- stderr
+

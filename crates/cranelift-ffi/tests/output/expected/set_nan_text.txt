@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --set gain=loud tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `loud` is not a number in `gain=loud`
+

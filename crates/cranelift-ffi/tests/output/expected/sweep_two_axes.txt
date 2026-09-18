@@ -1,0 +1,11 @@
+$ faustprobe --double -n 256 --in sine:440 --sweep cutoff=200,2000 --sweep q=1,5 --reduce energy tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+cutoff,q,energy_out0,energy_out1
+200,1,10.99511394578513,97.6065799851835
+200,5,27.415750409981143,97.6065799851835
+2000,1,131.0461671580537,5.709068474357081
+2000,5,138.35378403590434,5.709068474357081
+
+--- stderr
+

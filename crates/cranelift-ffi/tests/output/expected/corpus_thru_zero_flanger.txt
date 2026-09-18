@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/thru_zero_flanger.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=420083 lines=15003 fnv1a64=fbff44ce60904eb8
+--- stderr
+

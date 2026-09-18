@@ -1,0 +1,11 @@
+$ faustprobe --double -n 64 --in zero --sweep freq=220,440 --reduce rms tests/output/dsp/osc.dsp
+exit=0
+--- stdout
+freq,rms_out0
+220,0.0
+440,0.0
+
+--- stderr
+# note: every output is exactly zero over the window (at every sweep point)
+# note: buttons and checkboxes at 0: /osc/gate (at every sweep point)
+

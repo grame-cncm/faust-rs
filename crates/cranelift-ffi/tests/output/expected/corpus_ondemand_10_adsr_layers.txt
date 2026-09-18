@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/ondemand_10_adsr_layers.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=292571 lines=15003 fnv1a64=c098b5c67fe6f9b0
+--- stderr
+

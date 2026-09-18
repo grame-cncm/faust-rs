@@ -1,0 +1,8 @@
+$ faustprobe --quiet -n 3000 --set fb=0.9 tests/output/dsp/runaway.dsp
+exit=0
+--- stdout
+# frames=3000 sr=44100 window=0..3000 (3000 frames)
+# out0: peak=1.0 rms=0.041885385742687506 dc=0.0033333325044899815 finite=yes peak_at=0 subnormal=2171 subnormal_at=829
+
+--- stderr
+

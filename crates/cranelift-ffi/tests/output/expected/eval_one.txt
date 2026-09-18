@@ -1,0 +1,16 @@
+$ faustprobe --double -n 6 --eval onepole(0.5) tests/output/dsp/small.lib
+exit=0
+--- stdout
+frame,onepole(0.5)
+0,1.0
+1,0.5
+2,0.25
+3,0.125
+4,0.0625
+5,0.03125
+
+--- stderr
+# frames=6 sr=44100 window=0..6 (6 frames)
+# eval out0 = onepole(0.5)
+# out0: peak=1.0 rms=0.47134697278119864 dc=0.328125 finite=yes peak_at=0
+

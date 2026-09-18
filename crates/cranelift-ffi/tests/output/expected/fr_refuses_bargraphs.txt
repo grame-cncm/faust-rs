@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4 --bargraphs tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --bargraphs cannot be combined with --freqresp: the rows are frequencies, not frames
+

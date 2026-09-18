@@ -167,6 +167,26 @@ c++ -std=c++11 -fsyntax-only -I crates/cranelift-ffi/include -I /path/to/faust/a
   crates/cranelift-ffi/tests/header-smoke/cranelift_dsp_cpp_header_smoke.cpp
 ```
 
+### What `faustprobe` prints
+
+`tests/output_snapshots.rs` runs some four hundred `faustprobe` commands
+(every mode, format and refusal, the failure paths, `--help`, the impulse-test
+corpus through `--protocol impulse-test`) and compares what each printed with
+its recording in `tests/output/expected/`, byte for byte, the numbers of
+`--time` masked. The other tests assert on fragments; this one is what says a
+refactoring changed nothing. A change of output is a decision: record it and
+review the diff before committing it.
+
+```bash
+cargo test -p cranelift-ffi --test output_snapshots
+FAUSTPROBE_BLESS=1 FAUSTPROBE_CORPUS=all cargo test -p cranelift-ffi --test output_snapshots
+git diff --stat crates/cranelift-ffi/tests/output/expected
+```
+
+A default run takes one corpus program in six; `FAUSTPROBE_CORPUS=all` takes
+them all, which a bless of their recordings needs. Not on Windows (two
+recordings carry the system's wording of a missing file).
+
 ### Compile errors
 
 `error_msg` is 4096 bytes by the libfaust contract (caller-allocated, size never

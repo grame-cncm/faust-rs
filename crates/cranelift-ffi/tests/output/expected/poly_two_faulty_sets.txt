@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 2 --quiet --set bright=7 --set bad tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: expected PATH=VALUE, got `bad`
+

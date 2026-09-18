@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --linearity-tolerance 1 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --linearity-tolerance is the tolerance of --freqresp's checks
+

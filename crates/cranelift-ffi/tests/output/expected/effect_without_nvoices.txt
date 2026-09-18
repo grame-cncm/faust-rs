@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --effect tests/output/dsp/gain.dsp tests/output/dsp/osc.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --effect requires --nvoices > 0
+

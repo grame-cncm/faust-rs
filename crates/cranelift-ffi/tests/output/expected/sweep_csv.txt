@@ -1,0 +1,10 @@
+$ faustprobe --double -n 512 --in sine:440 --sweep cutoff=200,440,2000 --reduce rms tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+cutoff,rms_out0,rms_out1
+200,0.18536413709251517,0.6315783584587911
+440,0.6898036517646007,0.4908408490143613
+2000,0.7163092223235303,0.15084854298513461
+
+--- stderr
+

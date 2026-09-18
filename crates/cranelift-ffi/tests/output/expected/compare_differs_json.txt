@@ -1,0 +1,53 @@
+$ faustprobe --double --format json -n 64 --compare tests/output/dsp/gain.dsp --set-b gain=0.4 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+{
+  "dsp": "tests/output/dsp/gain.dsp",
+  "frames": 64,
+  "reduce": null,
+  "runs": [
+    {
+      "channels": [
+        {
+          "dc": 0.0078125,
+          "peak": 0.5,
+          "peak_at": 0,
+          "rms": 0.0625,
+          "subnormal": 0,
+          "subnormal_at": null
+        }
+      ],
+      "compare": {
+        "agrees": false,
+        "channels": [
+          {
+            "first_beyond": {
+              "frame": 0,
+              "reference": 0.4,
+              "value": 0.5
+            },
+            "identical": false,
+            "max_abs": 0.09999999999999998,
+            "max_abs_at": 0,
+            "max_rel": 0.24999999999999994,
+            "output": 0
+          }
+        ],
+        "reference": "tests/output/dsp/gain.dsp"
+      },
+      "set": {},
+      "window": {
+        "frames": 64,
+        "start": 0
+      }
+    }
+  ],
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+faustprobe: the render differs from `tests/output/dsp/gain.dsp` beyond the tolerance
+  first: frame 0, out0: 0.5 vs 0.4
+  controls then: all at their initial values
+

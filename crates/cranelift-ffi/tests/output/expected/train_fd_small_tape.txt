@@ -1,0 +1,10 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --bra-tape 64 --fd-check --blocks 0 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=1
+--- stdout
+# fd-check /ddsp_rad_host_block_resonator/a1: rad 283.329580 fd 476.523699 relative error 4.05e-1
+# fd-check /ddsp_rad_host_block_resonator/a2: rad 182.383669 fd 335.872145 relative error 4.57e-1
+# fd-check: block 256 frames, step 0.001, worst relative error 4.57e-1 (tolerance 0.02)
+
+--- stderr
+faustprobe: a gradient lane departs from finite differences by 4.57e-1 at the start of the descent, above --fd-tolerance 0.02
+

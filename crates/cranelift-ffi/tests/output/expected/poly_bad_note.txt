@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet --note sixty@0 tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `sixty` is not a MIDI pitch in `sixty@0`
+

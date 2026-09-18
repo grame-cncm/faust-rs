@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4 --out <TMP>/_f.npy tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --out cannot be combined with --freqresp: a plain render writes the impulse response
+

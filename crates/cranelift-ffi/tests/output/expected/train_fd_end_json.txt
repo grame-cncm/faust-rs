@@ -1,0 +1,89 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --format json --fd-check=end --lr 0.01 --blocks 60 --every 60 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+{
+  "dsp": "../../tests/corpus/ddsp_rad_host_block_resonator.dsp",
+  "schema_version": 1,
+  "sr": 44100,
+  "train": {
+    "fd_check": {
+      "end": {
+        "block": 256,
+        "checks": [
+          {
+            "fd": 32.66943501248952,
+            "fd_plain": 32.66636519493919,
+            "path": "/ddsp_rad_host_block_resonator/a1",
+            "rad": 32.66943499482249,
+            "relative_error": 5.407817445011838e-10
+          },
+          {
+            "fd": -10.672364915187115,
+            "fd_plain": -10.656554985811765,
+            "path": "/ddsp_rad_host_block_resonator/a2",
+            "rad": -10.672364840812268,
+            "relative_error": 6.968919091974582e-9
+          }
+        ],
+        "passes": true,
+        "step": 0.001,
+        "tolerance": 0.02,
+        "worst_relative_error": 6.968919091974582e-9
+      }
+    },
+    "loss": {
+      "first": 0.46157261742201783,
+      "last": 0.0013968597593238448,
+      "min": 0.0013968597593238448,
+      "min_block": 60,
+      "values_at_min": [
+        -1.1855200902027796,
+        0.7062040450223593
+      ]
+    },
+    "options": {
+      "block": 256,
+      "blocks": 60,
+      "lr": 0.01,
+      "optimizer": "adam",
+      "reset_per_block": false
+    },
+    "rows": [
+      {
+        "block": 60,
+        "grads": [
+          0.11290535799589112,
+          -0.07530191713657794
+        ],
+        "loss": 0.0013968597593238448,
+        "values": [
+          -1.1898469822545077,
+          0.7113177699579064
+        ]
+      }
+    ],
+    "trained": [
+      {
+        "blocks_on_lower": 0,
+        "blocks_on_upper": 0,
+        "ends_on": null,
+        "max": 1.9900000095367432,
+        "min": -1.9900000095367432,
+        "path": "/ddsp_rad_host_block_resonator/a1",
+        "value": -1.1898469822545077
+      },
+      {
+        "blocks_on_lower": 0,
+        "blocks_on_upper": 0,
+        "ends_on": null,
+        "max": 0.9990000128746033,
+        "min": -0.9990000128746033,
+        "path": "/ddsp_rad_host_block_resonator/a2",
+        "value": 0.7113177699579064
+      }
+    ]
+  }
+}
+
+--- stderr
+

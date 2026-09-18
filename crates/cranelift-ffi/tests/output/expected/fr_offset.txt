@@ -1,0 +1,12 @@
+$ faustprobe --double --quiet -n 64 --freqresp 4 tests/output/dsp/offset.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --freqresp: the program is not linear and time-invariant: its impulse response has no transfer function to give
+  homogeneity: the response to an impulse of -0.5 is not -0.5 times the response to an impulse of 1
+  first: frame 0, out0: -0.25 where -0.625 was expected (tolerance 1e-9 of the peak)
+  usual cause: a saturation, a rectifier, a threshold, or an output that does not come from the input
+  with no input at all the program outputs a signal (out0 peaks at 0.25): it is not a function of its input alone
+  a program that is not linear is measured at one level and one frequency at a time: --in sine:HZ --skip N --reduce rms
+

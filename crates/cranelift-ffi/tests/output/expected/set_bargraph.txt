@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --set level=1 tests/output/dsp/filt.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `/filt/level` is a bargraph, an output of the program: it cannot be set
+

@@ -1,0 +1,33 @@
+$ faustprobe --double --nvoices 4 --format json -n 400 --in zero tests/output/dsp/synth_in.dsp
+exit=0
+--- stdout
+{
+  "active_voices": 0,
+  "channels": [
+    {
+      "dc": 0.0,
+      "peak": 0.0,
+      "peak_at": null,
+      "rms": 0.0,
+      "subnormal": 0,
+      "subnormal_at": null
+    }
+  ],
+  "dsp": "tests/output/dsp/synth_in.dsp",
+  "frames": 400,
+  "notes": [
+    "every output is exactly zero over the window",
+    "no --note or --chord is scheduled: every voice stays free",
+    "input is `zero` and a voice has 1 input(s)"
+  ],
+  "nvoices": 4,
+  "schema_version": 1,
+  "sr": 44100,
+  "window": {
+    "frames": 400,
+    "start": 0
+  }
+}
+
+--- stderr
+

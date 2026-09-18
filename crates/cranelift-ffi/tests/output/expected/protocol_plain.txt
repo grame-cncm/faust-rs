@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test tests/output/dsp/filt.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=420231 lines=15003 fnv1a64=233dbcc8843736a0
+--- stderr
+

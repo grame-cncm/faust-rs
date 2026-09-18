@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 2 --freqresp 4 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --freqresp needs a window of at least 4 frames (-n) for its linearity checks
+

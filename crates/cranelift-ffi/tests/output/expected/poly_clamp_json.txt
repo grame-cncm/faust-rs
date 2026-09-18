@@ -1,0 +1,35 @@
+$ faustprobe --double --nvoices 4 --format json -n 2000 --note 60:100@0..1500 --set bright=7 --clamp tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+{
+  "active_voices": 1,
+  "channels": [
+    {
+      "dc": 0.00021622155490216895,
+      "peak": 0.36590030698075676,
+      "peak_at": 167,
+      "rms": 0.1706844121203508,
+      "subnormal": 0,
+      "subnormal_at": null
+    }
+  ],
+  "clamped": [
+    {
+      "applied": 1.0,
+      "path": "/synth/bright",
+      "requested": 7.0
+    }
+  ],
+  "dsp": "tests/output/dsp/synth.dsp",
+  "frames": 2000,
+  "nvoices": 4,
+  "schema_version": 1,
+  "sr": 44100,
+  "window": {
+    "frames": 2000,
+    "start": 0
+  }
+}
+
+--- stderr
+

@@ -1,0 +1,15 @@
+$ faustprobe --double -n 1 --in zero --eval twice(3) --eval pair tests/output/dsp/small.lib
+exit=0
+--- stdout
+frame,twice(3),pair[0],pair[1]
+0,6.0,1.0,2.0
+
+--- stderr
+# frames=1 sr=44100 window=0..1 (1 frames)
+# eval out0 = twice(3)
+# eval out1 = pair[0]
+# eval out2 = pair[1]
+# out0: peak=6.0 rms=6.0 dc=6.0 finite=yes peak_at=0
+# out1: peak=1.0 rms=1.0 dc=1.0 finite=yes peak_at=0
+# out2: peak=2.0 rms=2.0 dc=2.0 finite=yes peak_at=0
+

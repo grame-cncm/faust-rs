@@ -1,0 +1,13 @@
+$ faustprobe --double --quiet --time -n 4096 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+# frames=4096 sr=44100 window=0..4096 (4096 frames)
+# out0: peak=0.0775513726569672 rms=0.004164029506213499 dc=0.0002441406250000038 finite=yes peak_at=9
+# out1: peak=0.9333942197498175 rms=0.015095676473119966 dc=-8.06564561956482e-20 finite=yes peak_at=0
+# bargraph /filt/level=4.471786166987786e-126
+# time: compile N T
+# time: compute N T for N T of audio (N frames in N blocks): Nx real time
+# time: worst block: frame N, N frames in N T, N% of its N T budget
+
+--- stderr
+

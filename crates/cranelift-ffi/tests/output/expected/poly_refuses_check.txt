@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet --check all tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --compare/--ref/--check operates on the scalar Probe only; use --nvoices 0
+

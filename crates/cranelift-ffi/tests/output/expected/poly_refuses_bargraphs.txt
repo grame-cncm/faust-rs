@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet --bargraphs tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --bargraphs reads the scalar Probe only; use --nvoices 0
+

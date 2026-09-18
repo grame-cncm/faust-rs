@@ -1,0 +1,28 @@
+$ faustprobe --double --nvoices 4 --format json -n 4000 --chord 60,64,67:64@0..3000 tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+{
+  "active_voices": 0,
+  "channels": [
+    {
+      "dc": 0.002785789374926663,
+      "peak": 0.5503060713478545,
+      "peak_at": 668,
+      "rms": 0.18220425647350894,
+      "subnormal": 0,
+      "subnormal_at": null
+    }
+  ],
+  "dsp": "tests/output/dsp/synth.dsp",
+  "frames": 4000,
+  "nvoices": 4,
+  "schema_version": 1,
+  "sr": 44100,
+  "window": {
+    "frames": 4000,
+    "start": 0
+  }
+}
+
+--- stderr
+

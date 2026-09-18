@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 64 --freqresp 4 tests/output/dsp/osc.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --freqresp measures the response to an input, and the program has none
+

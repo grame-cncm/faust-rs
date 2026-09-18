@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --quiet --sweep bright=0.1,0.2 tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --sweep/--reduce operate on the scalar Probe only; use --nvoices 0
+

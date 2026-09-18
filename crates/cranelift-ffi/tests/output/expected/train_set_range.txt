@@ -1,0 +1,7 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --set a1=-50 --blocks 20 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: `a1`=-50 is outside the range [-1.99, 1.99] of /ddsp_rad_host_block_resonator/a1 (--clamp accepts it, clamped to the range)
+

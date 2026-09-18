@@ -1,0 +1,87 @@
+$ faustprobe --double --format json --time -n 2048 --freqresp 4 tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/filt.dsp",
+  "frames": 2048,
+  "freqresp": {
+    "hz": [
+      20.0,
+      206.612310829,
+      2134.43234931,
+      22050.0
+    ],
+    "input": null,
+    "runs": [
+      {
+        "linearity": {
+          "homogeneity": 0.0,
+          "shift": 37,
+          "superposition": 4.295553430345061e-15,
+          "time_invariance": 0.0,
+          "tolerance": 1e-9
+        },
+        "outputs": [
+          {
+            "mag_db": [
+              0.0017309607119316134,
+              0.1806361952150426,
+              -12.468146253559292,
+              -331.6935697023842
+            ],
+            "output": 0,
+            "peak": 0.0775513726569672,
+            "phase": [
+              -0.019971476724395424,
+              -0.21220131995304745,
+              -2.6051302049129395,
+              -3.141592653589792
+            ],
+            "tail_energy_fraction": 2.093824714775877e-114
+          },
+          {
+            "mag_db": [
+              -33.99583576782758,
+              -13.891930192739842,
+              -0.8524000083169708,
+              -9.643274665532871e-16
+            ],
+            "output": 1,
+            "peak": 0.9333942197498175,
+            "phase": [
+              1.5508328095428894,
+              1.367371983286831,
+              0.43581700120203465,
+              4.369459005754345e-18
+            ],
+            "tail_energy_fraction": 9.359161953910923e-231
+          }
+        ],
+        "set": {},
+        "timing": {
+          "audio_s": N,
+          "blocks": N,
+          "compute_s": N,
+          "frames": N,
+          "realtime_factor": N,
+          "worst_block": {
+            "budget_fraction": N,
+            "budget_s": N,
+            "frame": N,
+            "frames": N,
+            "seconds": N
+          }
+        }
+      }
+    ],
+    "settle": 0
+  },
+  "schema_version": 1,
+  "sr": 44100,
+  "timing": {
+    "compile_s": N
+  }
+}
+
+--- stderr
+

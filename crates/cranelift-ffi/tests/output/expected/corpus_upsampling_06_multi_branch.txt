@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/upsampling_06_multi_branch.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=346208 lines=15003 fnv1a64=24cafc648234da31
+--- stderr
+

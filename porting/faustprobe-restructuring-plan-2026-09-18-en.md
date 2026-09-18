@@ -209,3 +209,27 @@ Nine harness cases change, all of them these; a test per fix, each failing
 with its defect put back (six mutations). The guide's `--clamp` paragraph
 says what a `nan` becomes.
 
+## 8. The harness, committed
+
+Asked for the same day: "make the harness a committed tool". Not an xtask,
+which was the form offered: an integration test, `crates/cranelift-ffi/tests/
+output_snapshots.rs`, with its recordings in `tests/output/expected/` and its
+fixtures in `tests/output/dsp/`. `cargo test` builds the binary, the test runs
+in the Test step of the CI on every platform but Windows, and nothing was
+added to `xtask`, its subcommand table or the CI file.
+
+The same 399 cases, paths relative to the crate so that no recording holds a
+machine's path; one file per case (`$ faustprobe ARGS`, `exit=`, stdout,
+stderr, the fingerprint of a `--out` file); a stream over 32 KiB recorded as
+a fingerprint (the 133 corpus programs, the two protocol renders of 15000
+frames); the numbers of `--time` masked with the unit that follows them,
+which a duration near a millisecond changes from one run to the next (the one
+flake seen, in one run of five, before the unit was masked). The cases run on
+every core, each in a temporary directory of its own: 11 s in debug for the
+hand-written cases and one corpus program in six, 20 s for all of them
+(`FAUSTPROBE_CORPUS=all`), 1.3 s in release; the debug and release binaries
+give the same recordings, and so do sequential and parallel runs. Blessing is
+`FAUSTPROBE_BLESS=1`. Three findings shown: an altered recording (the case,
+the line, expected and actual), a case without a recording, a recording
+without a case.
+

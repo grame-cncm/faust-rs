@@ -1,0 +1,15 @@
+$ faustprobe --double --quiet -n 4096 --freqresp 4 --sweep q=1,99 --set cutoff=30000 --clamp tests/output/dsp/filt.dsp
+exit=0
+--- stdout
+# freqresp: 4 frequencies from 20.0 to 22050.0 Hz, from the response of 4096 frames to an impulse on the input, at each of 2 sweep points
+# clamped /filt/cutoff: 30000 -> 20000
+# clamped /filt/q: 99 -> 20
+# freqresp [q=1]: linear and time-invariant within 1e-9 of the peak (homogeneity 9e-323, time_invariance 0.0, superposition 2.432884790141836e-16)
+# freqresp [q=1] out0: peak=0.8556377924705626 peak_at=0, the last tenth of the window holds 0.0 of the energy
+# freqresp [q=1] out1: peak=0.2235665865448975 peak_at=1, the last tenth of the window holds 0.0 of the energy
+# freqresp [q=20]: linear and time-invariant within 1e-9 of the peak (homogeneity 9e-323, time_invariance 0.0, superposition 9.139251158888862e-16)
+# freqresp [q=20] out0: peak=0.9718284400536256 peak_at=0, the last tenth of the window holds 6.545876282895122e-24 of the energy
+# freqresp [q=20] out1: peak=0.2235665865448975 peak_at=1, the last tenth of the window holds 0.0 of the energy
+
+--- stderr
+

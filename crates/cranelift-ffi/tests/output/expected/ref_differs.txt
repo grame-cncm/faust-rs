@@ -1,0 +1,13 @@
+$ faustprobe --double --quiet -n 64 --ref tests/output/dsp/ref_diff.f64 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+# frames=64 sr=44100 window=0..64 (64 frames)
+# out0: peak=0.5 rms=0.0625 dc=0.0078125 finite=yes peak_at=0
+# compare: against tests/output/dsp/ref_diff.f64, tolerance abs=0 rel=0
+# compare out0: max_abs=1e-6 at frame 10, max_rel=2e-6, first beyond tolerance: frame 10 (0.0 vs 1e-6)
+
+--- stderr
+faustprobe: the render differs from `tests/output/dsp/ref_diff.f64` beyond the tolerance
+  first: frame 10, out0: 0.0 vs 1e-6
+  controls then: all at their initial values
+

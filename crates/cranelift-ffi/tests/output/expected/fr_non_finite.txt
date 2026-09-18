@@ -1,0 +1,8 @@
+$ faustprobe --double --quiet -n 4000 --freqresp 4 --set fb=4 tests/output/dsp/runaway.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: the impulse response is not finite
+  first: frame 512, out0 (+inf); 3488 of 4000 frames affected
+

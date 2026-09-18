@@ -1,0 +1,6 @@
+$ faustprobe --protocol impulse-test -I ../../tests/impulse-tests/dsp ../../tests/impulse-tests/dsp/tapiir.dsp
+exit=0
+--- stdout (fingerprint)
+bytes=420075 lines=15003 fnv1a64=946b8180f9bed0f6
+--- stderr
+

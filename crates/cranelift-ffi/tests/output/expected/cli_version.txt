@@ -1,0 +1,8 @@
+$ faustprobe -v
+exit=0
+--- stdout
+faustprobe 0.8.0
+Copyright (C) 2002-2026, GRAME - Centre National de Creation Musicale. All rights reserved.
+
+--- stderr
+

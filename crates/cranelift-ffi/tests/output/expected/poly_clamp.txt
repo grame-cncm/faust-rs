@@ -1,0 +1,10 @@
+$ faustprobe --double --nvoices 4 --quiet -n 2000 --note 60:100@0..1500 --set bright=7 --at 500 wet=3 --clamp tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+# frames=2000 sr=44100 nvoices=4 active_voices=1 window=0..2000 (2000 frames)
+# out0: peak=0.6224297632752861 rms=0.30061741736360487 dc=-0.0014290704748671553 finite=yes peak_at=673
+# clamped /synth/bright: 7 -> 1
+# clamped /faustprobe-effect/wet: 3 -> 1
+
+--- stderr
+

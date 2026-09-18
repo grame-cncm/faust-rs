@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --freqresp 4 --reduce rms tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --reduce cannot be combined with --freqresp: the response is the reduction
+

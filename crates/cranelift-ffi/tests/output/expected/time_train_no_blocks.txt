@@ -1,0 +1,10 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --time --fd-check --blocks 0 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+# fd-check /ddsp_rad_host_block_resonator/a1: rad 476.523699 fd 476.523699 relative error 3.27e-13
+# fd-check /ddsp_rad_host_block_resonator/a2: rad 335.872145 fd 335.872145 relative error 4.53e-13
+# fd-check: block 256 frames, step 0.001, worst relative error 4.53e-13 (tolerance 0.02)
+# time: compile N T
+
+--- stderr
+

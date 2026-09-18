@@ -1,0 +1,18 @@
+$ faustprobe --double --quiet -n 64 --check all --eval onepole(0.5) tests/output/dsp/small.lib
+exit=0
+--- stdout
+# frames=64 sr=44100 window=0..64 (64 frames)
+# eval out0 = onepole(0.5)
+# out0: peak=1.0 rms=0.14433756729740643 dc=0.03125 finite=yes peak_at=0
+# check block=1 out0: identical
+# check block=7 out0: identical
+# check block=512 out0: identical
+# check reset out0: identical
+# check determinism: a second compilation gives the same program key
+# check determinism: rendered in an independent process
+# check determinism out0: identical
+# check width: this render in double precision against the single one (a report: no tolerance given)
+# check width out0: identical
+
+--- stderr
+

@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet --in triangle tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: unknown input mode `triangle`
+

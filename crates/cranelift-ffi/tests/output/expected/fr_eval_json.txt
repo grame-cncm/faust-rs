@@ -1,0 +1,56 @@
+$ faustprobe --double --format json -n 256 --freqresp 4 --eval onepole(0.5) tests/output/dsp/small.lib
+exit=0
+--- stdout
+{
+  "dsp": "tests/output/dsp/small.lib",
+  "eval": [
+    "onepole(0.5)"
+  ],
+  "frames": 256,
+  "freqresp": {
+    "hz": [
+      20.0,
+      206.612310829,
+      2134.43234931,
+      22050.0
+    ],
+    "input": null,
+    "runs": [
+      {
+        "linearity": {
+          "homogeneity": 0.0,
+          "shift": 37,
+          "superposition": 0.0,
+          "time_invariance": 0.0,
+          "tolerance": 1e-9
+        },
+        "outputs": [
+          {
+            "mag_db": [
+              6.020529386665281,
+              6.013080190113462,
+              5.288775049740738,
+              -3.521825181113625
+            ],
+            "output": 0,
+            "peak": 1.0,
+            "phase": [
+              -0.002849494008986974,
+              -0.029411784770209407,
+              -0.2788434266635642,
+              -4.0821559971578457e-17
+            ],
+            "tail_energy_fraction": 8.3973451344588535e-140
+          }
+        ],
+        "set": {}
+      }
+    ],
+    "settle": 0
+  },
+  "schema_version": 1,
+  "sr": 44100
+}
+
+--- stderr
+

@@ -1,0 +1,7 @@
+$ faustprobe --double --quiet -n 64 --compare tests/output/dsp/gain.dsp --compare-outputs 3 tests/output/dsp/gain.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --compare-outputs 3: the program has 1 output(s)
+

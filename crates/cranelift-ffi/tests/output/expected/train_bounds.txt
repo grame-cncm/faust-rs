@@ -1,0 +1,14 @@
+$ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --lr 0.5 --blocks 40 --every 40 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
+exit=0
+--- stdout
+block,loss,a1,a2
+40,4.788693996481356e2,1.4253505060302167,0.9990000128746033
+# trained /ddsp_rad_host_block_resonator/a1=1.4253505060302167
+# trained /ddsp_rad_host_block_resonator/a2=0.9990000128746033 (on its upper bound for 36 of 40 blocks, the last one included)
+# loss: block 1 4.615726e-1, block 40 4.788694e2
+# loss: minimum 4.615726e-1 at block 1
+# note: a control that ends on a bound is stopped, not converged: /ddsp_rad_host_block_resonator/a2
+# note: the last loss is 1037 times the minimum, which block 1 reached with /ddsp_rad_host_block_resonator/a1=-0.800000011920929 /ddsp_rad_host_block_resonator/a2=0.5
+
+--- stderr
+
