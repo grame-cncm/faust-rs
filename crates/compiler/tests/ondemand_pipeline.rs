@@ -734,6 +734,49 @@ fn fad_around_ondemand_differentiates_through_the_block() {
     }
 }
 
+/// A held lane the seed does not reach (`0.7 * x` below) has a literal zero
+/// tangent, not a hold: the augmented block must not carry it as a payload
+/// lane (the lowering took it for a hold and refused the block with
+/// `FRS-SFIR-0007 clocked wrapper output is not a PermVar hold`, found on the
+/// unlearned coefficients of a `fl.coefs` block held by `op.on_change` under
+/// `fad`, 2026-09-18). The tangent of that lane is zero and the other lane's
+/// tangent is the held input, as without the extra lane.
+#[test]
+fn fad_around_ondemand_leaves_out_the_lane_the_seed_does_not_reach() {
+    let clk = vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+    let data = vec![1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let g = 0.5_f32;
+    let out = run_od_fad_source(
+        "fad_around_od_unreached_lane",
+        format!(
+            r#"g = hslider("g", {g}, -10, 10, 0.001);
+               process = fad(((_ != 0), _) : ondemand(_ <: (*(g), *(0.7))), g);"#
+        ),
+        &[clk, data.clone()],
+    );
+    assert_eq!(out.len(), 4, "fad bundle = [primal, tangent] per output");
+    let held = data[2];
+    let n = 5;
+    assert!(
+        (out[0][n] - g * held).abs() < 1.0e-6,
+        "primal {} vs {}",
+        out[0][n],
+        g * held
+    );
+    assert!(
+        (out[1][n] - held).abs() < 1.0e-6,
+        "tangent {} vs held input {held}",
+        out[1][n]
+    );
+    assert!(
+        (out[2][n] - 0.7 * held).abs() < 1.0e-6,
+        "primal {} vs {}",
+        out[2][n],
+        0.7 * held
+    );
+    assert_eq!(out[3][n], 0.0, "the unreached lane's tangent is zero");
+}
+
 /// Nonlinear fad-*outside*: `fad((clk, x) : ondemand((g·x)²), g)` — the block is
 /// nonlinear in the seed, so the augmented tangent held-output is `2·g·x²`.
 /// Exercises OD_aug through a nonlinear body; gradient checked exactly.

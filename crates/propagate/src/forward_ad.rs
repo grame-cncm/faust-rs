@@ -1541,7 +1541,11 @@ impl<'a> ForwardADTransform<'a> {
     ///
     /// Payload layout: `[clock, lane₀, lane₀', …, lane₁, lane₁', …]` — the first
     /// child is the (opaque, never differentiated) clock; each subsequent held
-    /// lane is expanded to its primal followed by one tangent per seed. Returns
+    /// lane is expanded to its primal followed by one tangent per seed. A held
+    /// lane no seed reaches has a literal zero for a tangent, not a hold; such
+    /// a tangent is left out of the payload (the block holds nothing for it,
+    /// and its `Seq` consumers read the literal), since the lowering takes
+    /// every payload lane after the clock for a `PermVar` hold. Returns
     /// `None` if `od` is not a clocked wrapper.
     fn augment_block(&mut self, od: SigId) -> Option<SigId> {
         if let Some(&aug) = self.od_aug_cache.get(&od) {
@@ -1561,7 +1565,13 @@ impl<'a> ForwardADTransform<'a> {
         for &lane in held {
             let d = self.transform(lane);
             new_payload.push(d.primal);
-            new_payload.extend(d.tangents);
+            for tangent in d.tangents {
+                match match_sig(self.arena, tangent) {
+                    SigMatch::PermVar(_) => new_payload.push(tangent),
+                    SigMatch::Real(_) | SigMatch::Int(_) => {}
+                    _ => new_payload.push(tangent),
+                }
+            }
         }
         let aug = {
             let mut b = SigBuilder::new(self.arena);
