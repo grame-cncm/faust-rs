@@ -2047,6 +2047,101 @@ pub fn parse_url(url: &str, options: &ParseOptions) -> Result<ParseOutput, Sourc
     .parse_remote_entry(url)
 }
 
+/// The text of a lexing or parsing error, as lrpar's `LexParseError::pp`
+/// renders it, with one difference: the repair sequences are listed in an
+/// order that is the same at every parse.
+///
+/// lrpar deduplicates its repair sequences through a `HashSet` and sorts them
+/// by their length only (`cpctplus::simplify_repairs`); the ties keep the
+/// set's iteration order, which changes with every instance, and its own
+/// documentation says so ("amongst ParseRepairs of the same rank, the ordering
+/// is non-deterministic"). Rendered as lrpar renders them, one error listed
+/// its sixty suggestions in another order at every parse. Here they are
+/// ordered by the number of edits they make, then by their text: a total
+/// order, and the cheapest repairs first as before.
+fn render_lex_parse_error(
+    error: &lrpar::LexParseError<u32, lrlex::DefaultLexerTypes<u32>>,
+    lexer: &dyn lrpar::NonStreamingLexer<'_, lrlex::DefaultLexerTypes<u32>>,
+    epp: &dyn Fn(cfgrammar::TIdx<u32>) -> Option<&'static str>,
+) -> String {
+    use std::fmt::Write as _;
+    match error {
+        lrpar::LexParseError::LexError(e) => {
+            let ((line, col), _) = lexer.line_col(e.span());
+            format!("Lexing error at line {line} column {col}.")
+        }
+        lrpar::LexParseError::ParseError(e) => {
+            let ((line, col), _) = lexer.line_col(e.lexeme().span());
+            let mut out = format!("Parsing error at line {line} column {col}.");
+            if e.repairs().is_empty() {
+                out.push_str(" No repair sequences found.");
+                return out;
+            }
+            let mut sequences: Vec<(usize, String)> = e
+                .repairs()
+                .iter()
+                .map(|sequence| (sequence.len(), render_repair_sequence(sequence, lexer, epp)))
+                .collect();
+            sequences.sort();
+            out.push_str(" Repair sequences found:");
+            let count = sequences.len();
+            for (i, (_, text)) in sequences.iter().enumerate() {
+                // right-aligned numbers, as lrpar pads them
+                let padding = digits(count) - digits(i + 1) + 1;
+                write!(out, "\n  {}{}: {text}", " ".repeat(padding), i + 1).ok();
+            }
+            out
+        }
+    }
+}
+
+/// The number of decimal digits of `n` minus one: lrpar's `log10 as usize`.
+fn digits(n: usize) -> usize {
+    (n as f64).log10() as usize
+}
+
+/// One repair sequence as lrpar words it: `Insert TOKEN`, `Delete text`
+/// (consecutive deletions merged), `Shift text`, joined by `, `.
+fn render_repair_sequence(
+    sequence: &[lrpar::ParseRepair<lrlex::DefaultLexeme<u32>, u32>],
+    lexer: &dyn lrpar::NonStreamingLexer<'_, lrlex::DefaultLexerTypes<u32>>,
+    epp: &dyn Fn(cfgrammar::TIdx<u32>) -> Option<&'static str>,
+) -> String {
+    use lrpar::Lexeme as _;
+    let mut parts = Vec::new();
+    let mut i = 0;
+    while i < sequence.len() {
+        match sequence[i] {
+            lrpar::ParseRepair::Delete(lexeme) => {
+                // merged with the deletions that follow without a gap
+                let mut j = i + 1;
+                let mut last_end = lexeme.span().end();
+                while let Some(lrpar::ParseRepair::Delete(next)) = sequence.get(j)
+                    && next.span().start() == last_end
+                {
+                    last_end = next.span().end();
+                    j += 1;
+                }
+                let text = lexer
+                    .span_str(cfgrammar::Span::new(lexeme.span().start(), last_end))
+                    .replace('\n', "\\n");
+                parts.push(format!("Delete {text}"));
+                i = j;
+            }
+            lrpar::ParseRepair::Insert(token) => {
+                parts.push(format!("Insert {}", epp(token).unwrap_or("?")));
+                i += 1;
+            }
+            lrpar::ParseRepair::Shift(lexeme) => {
+                let text = lexer.span_str(lexeme.span()).replace('\n', "\\n");
+                parts.push(format!("Shift {text}"));
+                i += 1;
+            }
+        }
+    }
+    parts.join(", ")
+}
+
 #[derive(Clone, Debug, Default)]
 struct ParseRecoveryDetails {
     expected_tokens: Vec<Box<str>>,
@@ -2524,7 +2619,7 @@ fn parse_program_with_origins_and_precision(
                 u32::try_from(end_col).unwrap_or(u32::MAX),
             );
         }
-        let message = err.pp(&lexer, &faustparser_y::token_epp).to_string();
+        let message = render_lex_parse_error(&err, &lexer, &faustparser_y::token_epp);
         let recovery = parse_recovery_details(&err, input);
         engine_diagnostics.push(EngineParseDiagnostic {
             code: parser_code_for_lex_parse_error(&err),
