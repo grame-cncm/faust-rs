@@ -834,6 +834,9 @@ impl ParseState {
     ) -> TreeId {
         let span = token_span(&tok);
         self.update_cursor_from_span(lexer, span);
+        if tok.is_err() {
+            return self.node_builder().int(0);
+        }
         let raw = lexer.span_str(span);
         if raw.bytes().all(|b| b.is_ascii_digit()) {
             self.node_builder().int(i32_wrapping_from_str(raw))
@@ -853,6 +856,9 @@ impl ParseState {
     ) -> TreeId {
         let span = token_span(&tok);
         self.update_cursor_from_span(lexer, span);
+        if tok.is_err() {
+            return self.node_builder().real(0.0);
+        }
         let raw = lexer.span_str(span);
         let normalized = raw.strip_suffix('f').unwrap_or(raw);
         match normalized.parse::<f64>() {
@@ -1040,6 +1046,9 @@ impl ParseState {
     ) -> TreeId {
         let span = token_span(&tok);
         self.update_cursor_from_span(lexer, span);
+        if tok.is_err() {
+            return self.node_builder().int(0);
+        }
         let raw = lexer.span_str(span);
         if raw.bytes().all(|b| b.is_ascii_digit()) {
             // C++ does `-str2int(text)`: wrapping-parse unsigned digits, then negate.
@@ -1067,6 +1076,9 @@ impl ParseState {
     ) -> TreeId {
         let span = token_span(&tok);
         self.update_cursor_from_span(lexer, span);
+        if tok.is_err() {
+            return self.node_builder().real(0.0);
+        }
         let raw = lexer.span_str(span);
         let normalized = raw.strip_suffix('f').unwrap_or(raw);
         match normalized.parse::<f64>() {
@@ -1306,6 +1318,15 @@ fn compute_line_starts(input: &str) -> Vec<usize> {
 }
 
 /// Maps one lexer token (or lexer error token) to its raw span.
+/// The span of a token, whether the lexer read it (`Ok`) or error recovery
+/// inserted it (`Err`, lrpar's convention).
+///
+/// An inserted token has no text: the actions that read a literal's text
+/// return their default value for one without a diagnostic, the syntax error
+/// that made the insertion necessary being reported already. Which token the
+/// recovery inserts is its choice, and one that changed from run to run: an
+/// `invalid FLOAT literal` reported for an inserted `FLOAT` and not for an
+/// inserted `INT` made the number of errors change with it.
 fn token_span(tok: &Result<lrlex::DefaultLexeme<u32>, lrlex::DefaultLexeme<u32>>) -> Span {
     match tok {
         Ok(lexeme) | Err(lexeme) => lexeme.span(),

@@ -87,3 +87,28 @@ fn the_text_is_the_one_lrpar_wrote() {
     let text = messages("process = 1 2;\n");
     assert!(text.contains("\n    1: Delete 2\n    2: Insert "), "{text}");
 }
+
+/// A token that error recovery inserted (lrpar hands it to the action as
+/// `Err`) has no text. The literal actions used to read that empty text and
+/// report `invalid FLOAT literal` for an inserted `FLOAT`, and nothing for an
+/// inserted `INT` (every byte of "" is a digit): the number of errors then
+/// followed which repair the recovery had picked, and that pick changed from
+/// run to run.
+#[test]
+fn a_literal_the_recovery_inserted_is_its_default_without_a_diagnostic() {
+    use lrpar::Lexeme as _;
+    use parser::ParseState;
+    let lexerdef = parser::lexerdef();
+    let lexer = lexerdef.lexer("1.5");
+    let inserted = || Err(lrlex::DefaultLexeme::new(0, 0, 0));
+    let mut state = ParseState::new("inserted.dsp");
+    let _ = state.int_from_token(&lexer, inserted());
+    let _ = state.float_from_token(&lexer, inserted());
+    let _ = state.signed_int_from_token(&lexer, inserted(), -1);
+    let _ = state.signed_float_from_token(&lexer, inserted(), -1.0);
+    assert!(state.ctx.diagnostics_is_empty());
+    // a token the lexer read is still checked
+    let read = Ok(lrlex::DefaultLexeme::new(0, 0, 3));
+    let _ = state.int_from_token(&lexer, read);
+    assert!(!state.ctx.diagnostics_is_empty(), "`1.5` is not an INT");
+}
