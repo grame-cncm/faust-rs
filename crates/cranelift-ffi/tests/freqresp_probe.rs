@@ -449,9 +449,13 @@ fn an_impulse_on_one_input_gives_the_responses_from_that_input() {
     assert!((rows(&stdout)[0].1[0].0 - 20.0 * 0.5_f64.log10()).abs() < 1e-12);
     assert!(stderr.contains("on all 2 inputs at once"), "{stderr}");
 
+    // worded as a plain render words it
     let (ok, _, stderr) = probe(&["--in", "impulse:2", "--freqresp", "3", &file]);
     assert!(!ok);
-    assert!(stderr.contains("the program has 2 input(s)"), "{stderr}");
+    assert!(
+        stderr.contains("--in impulse:2: the program has 2 inputs, channels 0 to 1"),
+        "{stderr}"
+    );
 }
 
 // ----------------------------------------------------------------- formats

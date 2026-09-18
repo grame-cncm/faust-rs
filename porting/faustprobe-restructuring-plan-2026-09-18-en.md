@@ -157,8 +157,8 @@ Seventeen mutations in all, ten on the binary's shared helpers, six on the
 factored library code, one on the shared test helper: all rejected, the
 survivor above once its cases existed.
 
-**Inconsistencies found, left as they are** (each is an output, and this was a
-refactoring):
+**Inconsistencies found**, each an output, so left as they were by the
+refactoring and fixed by a change of their own the same day (§7):
 
 1. `--set fb=1.5 --set fb=2 --at 3 fb=2.5` and a failure: the context lists
    the control twice, `fb=2.5 fb=2`. A scheduled write updates the first of
@@ -181,3 +181,31 @@ and `probe/params.rs` (700) are each one subject with its unit tests, under
 the threshold, and were left alone. `cranelift-ffi` is still outside
 `structure-check`; adding the crate to it is a one-line change that would make
 the two thresholds hold from now on.
+
+## 7. The five inconsistencies, fixed
+
+Asked for the same day, once the restructuring was in. Each is a behaviour
+change, decided:
+
+1. A control given twice is one control: the failure context lists it once,
+   with the value it holds (`fb=2.5`). Scalar and polyphonic contexts now
+   accumulate the same way.
+2. One wording, `setup::check_impulse_channel`, for an impulse on an input
+   the program does not have, in every mode.
+3. The polyphonic dump validates `--in` before printing its header: a faulty
+   command line prints nothing on stdout, in every mode.
+4. `--train` parses every `--set` before checking any, as the other modes
+   do: of a malformed `--set` and one out of range, the malformed one is
+   reported.
+5. The render writes what the check reported. `Probe::set` used to clamp on
+   its own, so `--set gain=nan --clamp` said `# clamped /gain/gain: NaN ->
+   0.5`, the failure context said `gain=0.5`, and the render ran with NaN and
+   failed; the same for a scheduled write, a sweep point, a `--freqresp`, and
+   the starting point of a descent (`train::resolve_params`). All five entry
+   points now run with the initial value the line names, and the render
+   succeeds.
+
+Nine harness cases change, all of them these; a test per fix, each failing
+with its defect put back (six mutations). The guide's `--clamp` paragraph
+says what a `nan` becomes.
+

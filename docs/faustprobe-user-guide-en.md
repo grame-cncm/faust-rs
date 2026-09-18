@@ -283,7 +283,10 @@ labelled 7 looks like a measurement of 7. `--clamp` accepts such a value, and
 says what it did: `# clamped /osc/gain: 7 -> 1` with the statistics (on stderr
 before a sweep's rows), a `clamped` array in the JSON runs concerned, and sweep
 rows that carry the value used, `1`, not the one asked for. With `--train` the
-same holds for `--set`: a starting point outside the range is an error.
+same holds for `--set`: a starting point outside the range is an error. A
+`nan` is held by no range: under `--clamp` it is the control's initial value
+(`# clamped /osc/gain: NaN -> 0.5`), and the render, a scheduled write or a
+descent runs with that value, which is what the line says.
 
 The bounds reach a host in single precision, whatever the program's width: a
 range declared `[0.1, 0.7]` is known as `[0.100000001, 0.699999988]`. A value is

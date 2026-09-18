@@ -21,7 +21,8 @@ use crate::report::{
     three_digits, timing_json,
 };
 use crate::setup::{
-    Compiled, assignments, compile_timed, number_format, output_labels, parse_input, sweep_axes,
+    Compiled, assignments, check_impulse_channel, compile_timed, number_format, output_labels,
+    parse_input, sweep_axes,
 };
 use crate::writes::{Clamped, Clamps, applied, check_value, prime};
 
@@ -213,15 +214,11 @@ impl<'a> Family<'a> {
         }
         // The excitation is an impulse, on every input or on one: a transfer
         // function is a response to that and to nothing else.
-        let channel = match parse_input(&args.input)? {
+        let input = parse_input(&args.input)?;
+        check_impulse_channel(&input, probe.inputs())?;
+        let channel = match input {
             InputMode::Impulse => None,
-            InputMode::ImpulseChannel(ch) if ch < probe.inputs() => Some(ch),
-            InputMode::ImpulseChannel(ch) => {
-                return Err(format!(
-                    "--in impulse:{ch}: the program has {} input(s)",
-                    probe.inputs()
-                ));
-            }
+            InputMode::ImpulseChannel(ch) => Some(ch),
             _ => {
                 return Err(format!(
                     "--freqresp measures an impulse response: `--in {}` is not `impulse` or `impulse:CH`",

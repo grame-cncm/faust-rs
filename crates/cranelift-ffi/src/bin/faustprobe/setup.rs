@@ -96,20 +96,7 @@ pub(crate) fn parse_input(spec: &str) -> Result<InputMode, String> {
 /// and reads the samples as if they were at that rate.
 pub(crate) fn parse_input_at(spec: &str, sr: i32, inputs: usize) -> Result<InputMode, String> {
     let input = parse_input(spec)?;
-    // An impulse on an input the program does not have excites nothing, and
-    // the silence that follows does not say why.
-    if let InputMode::ImpulseChannel(channel) = &input
-        && *channel >= inputs
-    {
-        return Err(format!(
-            "--in impulse:{channel}: {}",
-            match inputs {
-                0 => "the program has no input".to_owned(),
-                1 => "the program has one input, channel 0".to_owned(),
-                n => format!("the program has {n} inputs, channels 0 to {}", n - 1),
-            }
-        ));
-    }
+    check_impulse_channel(&input, inputs)?;
     if let InputMode::File {
         sample_rate: Some(rate),
         ..
@@ -121,6 +108,26 @@ pub(crate) fn parse_input_at(spec: &str, sr: i32, inputs: usize) -> Result<Input
         );
     }
     Ok(input)
+}
+
+/// An impulse on an input the program does not have excites nothing, and
+/// the silence that follows does not say why: it is an error, worded the same
+/// in every mode.
+pub(crate) fn check_impulse_channel(input: &InputMode, inputs: usize) -> Result<(), String> {
+    let InputMode::ImpulseChannel(channel) = input else {
+        return Ok(());
+    };
+    if *channel < inputs {
+        return Ok(());
+    }
+    Err(format!(
+        "--in impulse:{channel}: {}",
+        match inputs {
+            0 => "the program has no input".to_owned(),
+            1 => "the program has one input, channel 0".to_owned(),
+            n => format!("the program has {n} inputs, channels 0 to {}", n - 1),
+        }
+    ))
 }
 
 /// Split a `PATH=VALUE` assignment.

@@ -567,3 +567,43 @@ fn a_starting_point_typed_on_a_decimal_bound_is_what_was_typed() {
     let first = json(&stdout)["train"]["loss"]["first"].as_f64().unwrap();
     assert!((first - 0.7).abs() < 1e-12, "{first}");
 }
+
+/// The `--set` values are parsed before any is checked, as in every other
+/// mode: of a malformed one and one out of range, the malformed one is
+/// reported. `--train` used to check them one at a time.
+#[test]
+fn a_malformed_set_is_reported_before_one_out_of_range() {
+    let fixtures = Fixtures::new("set_order");
+    let file = fixtures.write("bound.dsp", BOUND);
+    let (ok, _, stderr) = probe(&[
+        "--double", "--in", "zero", "--train", "x", "--set", "x=-50", "--set", "bad", "--blocks",
+        "5", &file,
+    ]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("expected PATH=VALUE, got `bad`"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("outside the range"), "{stderr}");
+}
+
+/// A descent starts from the value the clamp reported: a NaN is the control's
+/// initial value, not a NaN the first block turns into a loss that is not
+/// finite.
+#[test]
+fn a_descent_starts_from_the_value_the_clamp_reported() {
+    let fixtures = Fixtures::new("nan_start");
+    let file = fixtures.write("bound.dsp", BOUND);
+    let (ok, stdout, stderr) = probe(&[
+        "--double", "--in", "zero", "--train", "x", "--set", "x=nan", "--clamp", "--lr", "0.01",
+        "--blocks", "1", &file,
+    ]);
+    assert!(ok, "{stderr}");
+    assert!(
+        stdout.contains("# clamped /bound/x: NaN -> 1\n"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("NaN\n"), "{stdout}");
+    // the loss of the first block is that of x = 1: (1 - 3)^2 + (0 - 0.5)^2
+    assert!(stdout.contains("# loss: block 1 4.250000e0"), "{stdout}");
+}

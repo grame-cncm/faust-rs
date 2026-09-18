@@ -14,9 +14,7 @@ use cranelift_ffi::probe::train::{self, BoundStats, FdCheck, Optimizer, TrainSpe
 
 use crate::cli::{Args, FdWhere, Format, OptimizerKind, Protocol, refuse, verification_requested};
 use crate::report::{document, json_number, print_json, three_digits, time_lines, timing_json};
-use crate::setup::{
-    assignments, compile_timed, number_format, parse_assignment, parse_input_at, sweep_axes,
-};
+use crate::setup::{assignments, compile_timed, number_format, parse_input_at, sweep_axes};
 use crate::writes::{Clamped, check_value};
 
 /// What the projection onto its range did to a trained control, for the
@@ -311,9 +309,9 @@ fn check_writes(
     let mut clamped = Vec::new();
     let mut axes: GridAxes = Vec::new();
     let probe = Probe::instantiate(factory, args.sr)?;
-    // one at a time: of two faulty `--set`, the first is the one reported
-    for assignment in &args.sets {
-        let (path, value) = parse_assignment(assignment)?;
+    // parsed first, then checked, as in every other mode: of a malformed
+    // `--set` and one out of range, the malformed one is reported
+    for (path, value) in assignments(&args.sets)? {
         check_value(probe.controls(), path, value, args.clamp, &mut clamped)?;
     }
     for axis in sweep_axes(args)? {

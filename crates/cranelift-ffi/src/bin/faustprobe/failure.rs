@@ -109,12 +109,12 @@ pub(crate) fn failure_context(
     controls: &ControlMap,
 ) -> String {
     // the value of each written control at `frame`: its `--set` or sweep
-    // value, then every scheduled write up to that frame
-    let mut by = WrittenBy {
-        // as they were written, a control given twice listed twice
-        then: written.to_vec(),
-        last_event: None,
-    };
+    // value (the last one, for a control given twice), then every scheduled
+    // write up to that frame
+    let mut by = WrittenBy::default();
+    for (path, applied) in written {
+        by.record(path, *applied);
+    }
     for (at, query, value) in schedule.param_writes() {
         if at > frame {
             break;

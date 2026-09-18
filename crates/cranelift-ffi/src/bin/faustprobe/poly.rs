@@ -97,6 +97,18 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         poly.set_all(path, *value)?;
     }
 
+    let spec = PolyRenderSpec {
+        frames: args.render,
+        block: args.block,
+        // every playing voice receives the excitation, as the reference's
+        // `mydsp_poly::compute` hands the host's inputs to each of them;
+        // validated, like every write, before anything is printed
+        input: parse_input_at(&args.input, args.sr, poly.inputs())?,
+        skip: args.skip,
+        schedule: schedule.clone(),
+        limit: args.fail_above,
+        time: args.time,
+    };
     let every = args.every.max(1);
     let dumping = !args.quiet && args.format == Format::Csv;
     if dumping {
@@ -106,17 +118,6 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         }
         println!();
     }
-    let spec = PolyRenderSpec {
-        frames: args.render,
-        block: args.block,
-        // every playing voice receives the excitation, as the reference's
-        // `mydsp_poly::compute` hands the host's inputs to each of them
-        input: parse_input_at(&args.input, args.sr, poly.inputs())?,
-        skip: args.skip,
-        schedule: schedule.clone(),
-        limit: args.fail_above,
-        time: args.time,
-    };
     let stats = poly.render(&spec, |frame, samples| {
         if !dumping || !(frame - spec.skip).is_multiple_of(every) {
             return;

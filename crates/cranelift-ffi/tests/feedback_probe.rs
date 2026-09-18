@@ -1260,3 +1260,117 @@ fn an_impulse_on_an_input_the_program_does_not_have_is_refused() {
     assert!(!ok);
     assert!(stderr.contains("the program has no input"), "{stderr}");
 }
+
+/// A gain the render runs with, whose `fb` control is its loop gain.
+const SCALAR_RUNAWAY: &str = "fb = hslider(\"fb\", 0.5, 0, 4, 0.001);\nprocess = _ : + ~ *(fb);\n";
+
+/// A control given twice is one control: the context of a failure lists it
+/// once, with the value it held. It used to list both `--set` values, the
+/// scheduled write having updated the first of them.
+#[test]
+fn a_control_set_twice_is_listed_once_in_a_failure_context() {
+    let (ok, _, stderr) = probe_source(
+        "set_twice",
+        SCALAR_RUNAWAY,
+        &[
+            "--double",
+            "--quiet",
+            "-n",
+            "200",
+            "--in",
+            "dc",
+            "--set",
+            "fb=1.5",
+            "--set",
+            "fb=2",
+            "--at",
+            "3",
+            "fb=2.5",
+            "--fail-above",
+            "100",
+        ],
+    );
+    assert!(!ok);
+    assert!(
+        stderr.contains("\n  controls written by then: /set_twice/fb=2.5\n"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("last scheduled write before it: frame 3, /set_twice/fb=2.5"),
+        "{stderr}"
+    );
+    assert_eq!(stderr.matches("/set_twice/fb=").count(), 2, "{stderr}");
+}
+
+/// A polyphonic dump prints nothing before its command line is validated:
+/// an impulse on an input the voices do not have leaves no header behind.
+#[test]
+fn a_polyphonic_dump_prints_nothing_before_its_input_is_validated() {
+    let (ok, stdout, stderr) = probe_source(
+        "poly_header",
+        VOICE_WITH_INPUT,
+        &["--double", "--nvoices", "2", "-n", "8", "--in", "impulse:3"],
+    );
+    assert!(!ok);
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("--in impulse:3: the program has one input, channel 0"),
+        "{stderr}"
+    );
+}
+
+/// What the command line says of a clamp is what the render runs with. A NaN
+/// is held by no range: `check_write` reports the control's initial value
+/// as applied, and `Probe::set` used to clamp on its own, sending the NaN to
+/// the zone as it was.
+#[test]
+fn a_nan_written_to_a_control_is_its_initial_value_as_the_clamp_says() {
+    let gain = "process = _ * hslider(\"gain\", 0.5, 0, 1, 0.001);\n";
+    let probe = probe(gain, true);
+    probe.set("gain", f64::NAN).expect("a slider");
+    let (_, value) = probe.control_values()[0];
+    assert_eq!(value, 0.5);
+
+    let (ok, stdout, stderr) = probe_source(
+        "nan_clamp",
+        gain,
+        &[
+            "--double", "-n", "2", "--in", "dc", "--set", "gain=nan", "--clamp",
+        ],
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(stdout, "frame,out0\n0,0.5\n1,0.5\n");
+    assert!(
+        stderr.contains("# clamped /nan_clamp/gain: NaN -> 0.5"),
+        "{stderr}"
+    );
+    // and a scheduled one, and a swept one
+    let (ok, stdout, _) = probe_source(
+        "nan_at",
+        gain,
+        &[
+            "--double", "-n", "4", "--in", "dc", "--at", "2", "gain=nan", "--clamp",
+        ],
+    );
+    assert!(ok);
+    assert_eq!(stdout, "frame,out0\n0,0.5\n1,0.5\n2,0.5\n3,0.5\n");
+    let (ok, stdout, _) = probe_source(
+        "nan_sweep",
+        gain,
+        &[
+            "--double",
+            "--quiet",
+            "-n",
+            "2",
+            "--in",
+            "dc",
+            "--sweep",
+            "gain=nan,0.25",
+            "--clamp",
+            "--reduce",
+            "peak",
+        ],
+    );
+    assert!(ok);
+    assert_eq!(stdout, "0.5,0.5\n0.25,0.25\n");
+}

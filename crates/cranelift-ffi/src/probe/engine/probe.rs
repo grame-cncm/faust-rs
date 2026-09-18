@@ -239,13 +239,18 @@ impl Probe {
 
     /// Apply a value to a control by path, clamped to its declared range.
     ///
+    /// The value written is the one [`ControlMap::check_write`] reports as
+    /// applied, so that what the command line says of a clamp (`# clamped
+    /// PATH: NaN -> 0.5`) is what the render ran with: this used to clamp on
+    /// its own, and a NaN, which no range holds, went to the zone as it was.
+    ///
     /// # Errors
     /// Returns a message naming the candidates when the query is ambiguous,
     /// stating the query when nothing matches, or naming the bargraph when the
     /// query is one (an output of the program, which `compute` overwrites).
     pub fn set(&self, query: &str, value: f64) -> Result<(), String> {
-        let control = self.controls.writable(query)?;
-        self.set_zone(control.zone, control.clamp(value));
+        let write = self.controls.check_write(query, value)?;
+        self.set_zone(write.control.zone, write.applied);
         Ok(())
     }
 

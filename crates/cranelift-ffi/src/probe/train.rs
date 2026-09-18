@@ -263,13 +263,15 @@ fn resolve_params(
     for (query, value) in sets {
         let path = resolve_path(probe, query)?;
         if let Some(param) = params.iter_mut().find(|p| p.path == path) {
-            // the control's own clamp: a value typed on a decimal bound
+            // the value the check reports as applied, which is what the
+            // command line says of it: a value typed on a decimal bound
             // (`0.7` against a bound that reached the host as the `f32`
-            // nearest to it) is in range and stays what was typed
+            // nearest to it) is in range and stays what was typed, one outside
+            // is clamped, and a NaN, which no range holds, is the initial value
             param.init = probe
                 .controls()
-                .get(&path)
-                .map_or(*value, |control| control.clamp(*value));
+                .check_write(query, *value)
+                .map_or(*value, |write| write.applied);
         }
     }
     Ok(params)
