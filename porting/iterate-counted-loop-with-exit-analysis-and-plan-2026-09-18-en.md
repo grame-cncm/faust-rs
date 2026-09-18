@@ -298,8 +298,14 @@ named in the message (`reverse_ad.rs`, `stateful_rad.rs`).
 
 ### 2.6 Outside the design
 
-Vector mode does not cover clocked blocks (roadmap P6, P7); the fourth kind
-is rejected where the three others are. No C++ counterpart: the C++
+Vector mode **does** lower clocked blocks, contrary to what this document
+first said: `-vec` and `-ss` accept the three wrappers and emit a counted
+`vclock_d<i>_fire` loop inside the vector loop, modelled by the `clock_ad`
+checkers (checked 2026-09-18 on `upsampling`, `downsampling` and integer
+`ondemand` programs). The fourth kind needs that lowering and that model
+too: `vector/lower/signal.rs` and `vector/clock_ad/{model,build,check}.rs`
+of the surface (§3) are code to write, not arms to extend. No C++
+counterpart: the C++
 reference branch for clocked wrappers (`8eebea429`) has no such primitive,
 so no C++ differential, as for `fad`; the mirror points for a later C++
 port are `boxOndemand` and `propagate.cpp`'s clock environment, and
@@ -359,6 +365,85 @@ does not change its surface (§3) or its order (§4).
   reference for `rust-only` fixtures, or the FIR verifier plus the three
   emitters' structural tests as the evidence for those backends.
 
+### 2.9 Changing the emitted code, if the semantics stays the same
+
+Asked next: the emitted code may change, provided the semantics does not.
+What that permits depends on what pins the semantics, and on whether the
+pin is on samples or on text. Counted on 2026-09-18:
+
+**Sample-level, independent of the text.** The impulse tests: 133
+programs, of which 39 use a clocked wrapper (21 `ondemand`, 9
+`upsampling`, 9 `downsampling`), against the pinned C++ reference
+`8eebea429`, on eight backends, the vector variants inheriting the gates
+(README, sweep of 2026-08-14: 133 matches on every backend). The 14
+differential tests of `cpp_clocked_differential.rs`, against the same
+binary. The numeric tests of the compiler crate on clocked programs: 41 in
+`ondemand_pipeline.rs`, 32 in `optimizers_lib.rs`, 14 in
+`ddsp_examples.rs`, 2 in `interleave_fft.rs`, 1 in
+`clocked_waveform_regression.rs`. The `faustprobe` output snapshots, whose
+corpus mode renders the 133 impulse programs on Cranelift, byte-exact on
+the platform of record.
+
+**Text-level.** One golden snapshot (the only clocked corpus fixture
+eligible for golden), and the 8 tests of `clocked_emission_structure.rs`
+with their 14 assertions on `if (`, `for (int lOd`, `fDSCounter`,
+`fIOTA_d`: they document the shape, they do not hold the semantics.
+
+So the decision is well founded: a change of shape is checked by oracles
+that compare samples, on every backend, before and after, and the
+text-level tests are rewritten as documentation of the new shape. Three
+conditions make the check real rather than assumed:
+
+1. **The references exist locally before the change.** This machine holds
+   94 of the 133 `.ir` references; the 39 clocked ones are not among them.
+   `make reference` against the C++ checkout regenerates them; the sweep
+   is then run before the change (must be 133 on every backend, as on
+   2026-08-14) and after.
+2. **Every backend, and the vector variants.** The `WhileLoop` emitters
+   have never run on a real program (§2.4) and the interpreter has none;
+   the sweep covers C, C++, interpreter, Cranelift, WASM, AssemblyScript,
+   Rust, Julia, and `-vec -lv 0` / `-vec -lv 1`. Nothing less counts.
+3. **The cost is measured, not the shape.** On Cranelift, an `if`-shaped
+   block against a counted loop of one iteration around a two-pole filter
+   and a `tanh` (10 s of audio, three runs): 3.65, 3.60, 2.71 ms against
+   3.70, 3.72, 3.13 ms, at most 15 % and within the spread in two runs of
+   three. The peepholes (`if` when the range is within [0, 1] and the flag
+   is constant, `for` when the flag is constant) are therefore an
+   optimization to decide per backend from such measurements, the
+   interpreter first, not a requirement.
+
+**"The same semantics" meaning the same samples, to the bit.** That is
+the criterion, and the pins above are not all at that level. Bit-level
+today: the `faustprobe` output snapshots (Cranelift, the numbers printed
+as the shortest text that reads back to the same double, byte-exact on the
+platform of record), and `faustprobe --ref before.npy` or `--compare` at
+tolerance 0 on any program. Tolerance-level: the impulse tests
+(`filesCompare` at 2e-6 with the bounded overrides of `known.mk`) and the
+runtime traces (absolute and relative tolerances): they compare with the
+C++ reference, not the compiler with itself, and a one-bit change passes
+them. So the before-and-after check for this change is the compiler
+against itself, at tolerance 0, per backend: on Cranelift, `--out
+before.npy` on the 24 clocked corpus fixtures and the programs of the
+clocked tests before the change, `--ref before.npy` after; on the other
+backends, the impulse runner's output directories kept before the change
+and diffed after (their `.ir` text is the resolution of that diff; where it
+prints fewer digits than a double holds, the raw output has to be dumped).
+
+Why the bits can move at all when only a loop header changes: a bounded
+`while` against a `for` changes no arithmetic expression; but the FIR
+passes that see the loop body (the CSE materializes shared values as
+statements) may split an expression at a different place, and C and C++
+compilers on arm64 contract `a * b + c` into a fused multiply-add within a
+statement, not across two. A different statement boundary is a different
+rounding. Cranelift does not contract. That is why the bit-level check is
+per backend, and why "no expression changed" is not a proof.
+
+What the change gives up is not semantic: the text parity with the C++
+reference's emission (the sample parity stays), and the readability of an
+`if (gate)` against a `while` with a flag. What it gives: one guard shape
+in the scalar lowering, no `DsModulo` and no per-domain `fDSCounter`, and
+the same in the vector lowering once written.
+
 ## 3. Surface
 
 The fourth kind is added to every arm that names the three others. From the
@@ -374,7 +459,7 @@ sites that name `Upsampling` today:
 | sigtype | `rules.rs` |
 | normalize | `normalform.rs` |
 | transform | `clk_env/mod.rs`, `signal_prepare/verify.rs`, `hgraph/mod.rs` (2), `signal_fir/module/clocked.rs` (4, plus the new shape), `core_lowering.rs` (3), `delay/plan.rs`, `tests/coverage.rs`; vector: `clock_ad/{build,check,model,simulation,tests}.rs`, `assemble/{check,materialize}.rs`, `analysis/{effects,dependencies}.rs`, `lower/signal.rs` |
-| codegen | interpreter `WhileLoop` (D3); the other backends unchanged |
+| codegen | interpreter `WhileLoop` (D3); the other backends unchanged; the vector lowering of the new kind (`vector/lower/signal.rs`, the `vclock` loop with an exit) and its `clock_ad` model are new code, since vector mode lowers clocked blocks (§2.6) |
 | draw, box-ffi | `draw/translate.rs` (2), `schemas/multirate.rs`, `box-ffi/src/lib.rs` |
 | docs | `docs/ondemand-note-{en,fr}.md`, `docs/README.md` (the primitives list), `docs/diagnostics-codes-reference-en.md`, `docs/faust-error-model-en.md`, `libraries/optimizers-overview-{en,fr}.md` §2.5, the tutorial |
 | library | `optimizers.lib`: `newton_iter` (§4, W4) |
