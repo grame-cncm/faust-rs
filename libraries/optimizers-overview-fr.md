@@ -200,7 +200,179 @@ nommés (`learn(x0, ..., x7)`). Et `ma.SR` n'est *pas* adapté dans `ondemand` (
 cadence n'est pas connue statiquement) : tout ce qui dépend de la cadence
 propre du bloc doit être calculé à l'extérieur et passé en entrée.
 
-### 2.5 Ce que ce n'est pas
+### 2.5 Plus vite que l'audio : horloges entières et `upsampling`
+
+Toutes les horloges de cette bibliothèque sont booléennes : un bloc tourne
+zéro ou une fois par échantillon. Les primitives permettent davantage. Une
+horloge *entière* exécute le corps `H` fois par échantillon extérieur, `H`
+étant un signal, donc variable d'un échantillon à l'autre, et `H = 0`
+maintient. À l'intérieur, le temps compte les itérations : une récursion `~`
+dans le corps est une **boucle avec état, à l'exécution**, ce que Faust ne
+sait pas écrire autrement (`par` et `seq` déroulent à la compilation). Les
+entrées sont figées au départ du bloc, les sorties sont celles de la
+dernière itération, et l'état survit d'un échantillon au suivant.
+`upsampling(C)` ajoute deux choses : ses entrées sont bourrées de zéros
+(l'échantillon arrive à la dernière itération, des zéros avant, le `↑₀` de
+`interleave.lib`), et `ma.SR` vaut `SR * H` à l'intérieur. `fad` traverse
+les deux, état compris, par l'augmentation de bloc de la section 2.4. Quatre
+usages en découlent, chacun essayé avec `faustprobe` le 18 septembre 2026 ;
+les programmes sont les lignes citées, en double précision à 48 kHz.
+
+**Les solveurs implicites comme boucle.** `newton(N, F, y0)` déroule `N`
+pas dans le graphe et repart de `y0` à chaque échantillon. Dans un bloc à
+horloge entière, l'itération est une récursion et l'état du bloc *est*
+l'itéré : l'échantillon suivant repart de la solution précédente (un
+démarrage à chaud gratuit), le nombre de pas est un signal, et le code a la
+taille d'un pas :
+
+```faust
+F(x, y) = y - ma.tanh(x - fb * y);                    // y = tanh(x - fb y), une saturation à rétroaction
+step(x, y) = y - (fad(F(x, y), y) : /);
+loop(x) = (K, x) : ondemand(\(xi).(step(xi) ~ _));    // K pas par échantillon, à chaud
+```
+
+Contre `newton(8, ...)` depuis 0, qui coûte 10,2 ms par seconde d'audio
+(`fb` 0,8, un sinus d'amplitude 1) :
+
+| pas par échantillon | écart, 100 Hz | écart, 2 kHz | coût par seconde d'audio |
+|---|---|---|---|
+| 1 | 3,4e-6 | 1,9e-3 | 1,6 ms |
+| 2 | 1,2e-12 | 3,4e-7 | 3,6 ms |
+| 3 | 3e-16 | 1,2e-14 | 5,0 ms |
+
+**Le nombre de pas décidé par la convergence.** L'horloge est calculée hors
+du bloc, avant qu'il ne tourne, donc elle ne peut pas être la convergence
+de l'itération qu'elle lance ; ce que le compilateur émet est une boucle
+`for` comptée, jamais un `while`. Mais un compte peut être décidé à partir
+de ce qui est connu à ce moment-là, et un bloc booléen imbriqué peut
+arrêter l'itération de l'intérieur. Deux couches. Dehors, le résidu du
+démarrage à chaud, `F(x, y_prev)` avec la nouvelle entrée et la solution
+maintenue, décide le compte : 0 quand la solution précédente satisfait déjà
+la tolérance (le bloc ne tourne pas, la sortie est maintenue, comme avec
+`on_change`), un budget `Kmax` sinon. Dedans, un pas par itération tant que
+le résidu de l'itéré courant dépasse la tolérance, les itérations non
+utilisées du budget ne coûtant que le résidu :
+
+```faust
+body(xi) = inner ~ _
+with { inner(y) = ((abs(F(xi, y)) > tol), y) : ondemand(\(yp).(step(xi, yp))); };
+solve(x) = sel ~ _
+with { sel(yp) = ((abs(F(x, yp)) > tol) * Kmax, x) : ondemand(body); };
+```
+
+Mesuré avec `tol` 1e-12 et un budget de 8, les pas étant les tirs du bloc
+intérieur, égal au solveur déroulé à 1,1e-12 :
+
+| entrée | pas par échantillon, moyenne et maximum | coût par seconde d'audio |
+|---|---|---|
+| constante | 0 après le premier échantillon | 0,32 ms |
+| sinus, 100 Hz | 2,4, 3 | 5,9 ms |
+| sinus, 2 kHz | 3,0, 3 | 6,5 ms |
+| bruit blanc | 3,5, 5 | 7,4 ms |
+
+Un solveur qui ne coûte rien tant que son entrée ne bouge pas, et les pas
+qu'il lui faut sinon. Une estimation du compte à partir de la convergence
+quadratique, depuis le résidu du démarrage à chaud, éviterait les tests du
+budget inutilisé ; pas essayé. Le gradient d'un paramètre appris traverse le solveur : la
+tangente de la solution par rapport à `fb` sur une entrée constante vaut
+−0,240418, la différence centrale −0,24042. Deux choses à savoir. La
+tangente d'une itération converge vers la dérivée de son point fixe quand
+l'itération contracte (Christianson, 1994), donc les lanes de tangente
+donnent le bon gradient dès que la primale a convergé ; et avec beaucoup de
+paramètres, un seul `fad` du résidu à la solution, la dérivée implicite
+−F_p / F_y, coûte moins qu'une lane de tangente par itération. C'est le
+modèle analogique appris sur un enregistrement : un écrêteur à diodes, un
+ladder à rétroaction sans délai, une saturation rebouclée, dont les
+paramètres se dérivent à travers le solveur.
+
+**Les non-linéarités suréchantillonnées.** `upsampling(C)` est à lui seul
+l'étage suréchantillonné : le bourrage de zéros par contrat, un filtre
+d'interpolation au rythme interne, la non-linéarité, un filtre de
+décimation, et la dernière itération comme décimation. Un waveshaper appris
+sous une perte spectrale en a besoin : le repliement est une erreur de
+spectre, et le gradient apprendrait à l'annuler plutôt que la forme.
+
+```faust
+SRraw = fconstant(int fSamplingFreq, <math.h>);
+lp = fi.lowpass(6, 20000 * ma.SR / SRraw);            // voir le piège plus bas
+stage(x) = (H, x) : upsampling(\(xi).(xi * H : lp : ma.tanh : lp));
+```
+
+Mesuré sur un sinus à 5250 Hz (choisi pour que les harmoniques repliées
+tombent sur des bins qui ne sont pas des harmoniques), comme rapport de
+l'énergie harmonique au reste du spectre sur une fenêtre de 4096
+échantillons, à un drive de 8 et, pour la chaîne seule, à un drive de 0,5 :
+
+| facteur | tanh, drive 8 | drive 0,5 | coût par seconde d'audio |
+|---|---|---|---|
+| `ma.tanh` nu | 13,5 dB | 66,6 dB | |
+| 2 | 30,7 dB | 84,7 dB | 2,0 ms |
+| 4 | 31,4 dB | 81,1 dB | 3,8 ms |
+| 8 | 30,1 dB | 80,0 dB | 7,3 ms |
+| 16 | 29,7 dB | 79,7 dB | |
+
+Le plateau à 30 dB est la bande de transition du Butterworth d'ordre 6 à
+20 kHz, pas le mécanisme. Le piège : `maths.lib` borne `ma.SR` à 192 kHz,
+donc au-delà de ×4 à 48 kHz les filtres de `filters.lib` sont conçus pour
+un rythme plus bas que celui du bloc (×8 mesurait 15,6 dB et 58,1 dB avant
+la correction). Leur conception ne dépend que de `fc / SR`, donc demander
+`fc * ma.SR / SRraw` conçoit le bon filtre. Le facteur peut être un signal,
+×4 tant qu'un suiveur d'enveloppe dépasse un seuil et ×1 en dessous : le
+programme tourne et reste fini ; le filtre intérieur devient variant dans
+le temps à la commutation, ce qui n'a pas été qualifié plus loin. Le
+gradient traverse le bloc : la dérivée de la moyenne du carré de la sortie
+par rapport au drive rejoint la différence centrale à 2,9e-6 en ×4.
+
+**Plusieurs pas d'optimiseur par tick.** Avec `H = K * frame_clock(N)`,
+toute une boucle `descend_*` tourne `K` fois au tick de trame et jamais
+entre deux : `K` pas sur l'instantané que le tick livre, à chaud depuis la
+trame précédente, ce qui est l'analyse par synthèse par trame du DDSP.
+
+```faust
+learn(x) = (K * il.frame_clock(64), x)
+         : ondemand(\(xi).(op.descend_1D(\(p).(op.mse(p * xi, 0.7 * xi)), op.sgd_g(0.1), -4, 4, 0, 0)));
+```
+
+Mesuré sur un gain depuis 0 avec SGD à 0,1 : avec `K = 1` le paramètre est à
+0,692 après 20 trames ; avec `K = 4` après 5 trames, et à 0,7 à 1e-8 près
+après 20 ; avec `K = 16` à 0,7 à 1e-8 près après 5. Le prix est l'endroit où
+le travail tombe : sur un seul échantillon (la ligne « worst block » de
+`faustprobe --time`), là où la forme booléenne l'étale sur la trame au prix
+d'une trame de latence.
+
+**Une recherche comme boucle.** Une grille de `M` candidats essayés un par
+itération, le candidat fonction du temps local du bloc, l'état gardant le
+meilleur : un code de la taille d'une évaluation, là où `multistart_1D` et
+`grid_then_descend_1D` copient le graphe `M` fois.
+
+```faust
+body(xi) = best ~ (_, _)
+with {
+    i = ((+(1)) ~ _) - 1 : %(M);                  // le temps local : l'indice d'itération
+    cand = -1.0 + 2.0 * i / (M - 1);
+    best(pb, lb) = select2(better, pb, cand), select2(better, lb, l)
+    with { l = loss(cand, xi); better = (l < lb) | (i == 0); };
+};
+grid = (M * clock, _) : ondemand(body);
+```
+
+Seize candidats sur [−1, 1] pour une cible à 0,37 élisent 0,333 en un tick.
+La même boucle est une recherche linéaire à rebours (diviser le pas jusqu'à
+ce que la perte baisse, avec arrêt à l'exécution), les deux évaluations
+d'un pas SPSA dans un échantillon au lieu de deux trames, ou un
+redémarrage.
+
+**Limites.** Les sorties sont celles de la dernière itération, jamais une
+par itération. L'horloge est calculée dehors, donc un critère d'arrêt venu
+de l'intérieur passe par un bloc booléen imbriqué, comme ci-dessus.
+L'horloge est opaque à la dérivée, ce qui est juste (un nombre d'itérations
+est discret), et `rad` ne traverse pas la frontière : l'apprentissage à
+travers ces blocs se fait en `fad` seulement. Le mode vectoriel ne couvre
+pas les blocs d'horloge. Rien de ceci n'est encore empaqueté :
+`newton_loop`, `oversampled`, `descend_*_burst` et `grid_seq` en sont les
+candidats.
+
+### 2.6 Ce que ce n'est pas
 
 `fad`/`rad` ne font pas de Faust un framework d'apprentissage profond, et cette
 bibliothèque ne prétend pas le contraire :
@@ -1024,6 +1196,10 @@ convexité.
   <https://ccrma.stanford.edu/~jos/filters/Lattice_Ladder_Filters.html>
 - V. Zavalishin, *The Art of VA Filter Design* — rétroaction sans délai et
   solveurs implicites.
+- B. Christianson, « Reverse accumulation and attractive fixed points »,
+  Optimization Methods and Software, 1994 — la dérivée d'une itération
+  contractante converge vers la dérivée de son point fixe.
+  <https://doi.org/10.1080/10556789408805572>
 - I. Loshchilov, F. Hutter, « SGDR: Stochastic Gradient Descent with Warm
   Restarts », ICLR 2017. <https://arxiv.org/abs/1608.03983>
 - M. Welling, Y. W. Teh, « Bayesian Learning via Stochastic Gradient Langevin

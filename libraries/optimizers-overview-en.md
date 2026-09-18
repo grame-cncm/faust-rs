@@ -184,7 +184,174 @@ arguments instead (`learn(x0, ..., x7)`). And `ma.SR` is *not* adapted inside
 `ondemand` (its rate is not known statically), so anything that depends on
 the block's own rate must be computed outside and passed in.
 
-### 2.5 What it is not
+### 2.5 Faster than audio: integer clocks and `upsampling`
+
+Every clock in this library is boolean: a block runs zero or one time per
+sample. The primitives allow more. An *integer* clock runs the body `H`
+times per outer sample, `H` being a signal, so it can change from one sample
+to the next, and `H = 0` holds. Inside, time counts iterations: a `~`
+recursion in the body is a **loop with state, at run time**, which Faust has
+no other way to write (`par` and `seq` unroll at compile time). The inputs
+are snapshotted when the block starts, the outputs are those of the last
+iteration, and the state survives from one sample to the next.
+`upsampling(C)` adds two things: its inputs are zero-stuffed (the sample
+arrives on the last iteration, zeros before it, the `↑₀` of
+`interleave.lib`), and `ma.SR` is `SR * H` inside. `fad` crosses both, state
+included, by the block augmentation of section 2.4. Four uses follow, each
+tried with `faustprobe` on 2026-09-18; the programs are the lines quoted,
+in double precision at 48 kHz.
+
+**Implicit solvers as a loop.** `newton(N, F, y0)` unrolls `N` steps in the
+graph and restarts from `y0` at every sample. In an integer-clocked block
+the iteration is a recursion and the block's state *is* the iterate: the
+next sample starts from the previous solution (a warm start for free), the
+number of steps is a signal, and the code has the size of one step:
+
+```faust
+F(x, y) = y - ma.tanh(x - fb * y);                    // y = tanh(x - fb y), a feedback saturator
+step(x, y) = y - (fad(F(x, y), y) : /);
+loop(x) = (K, x) : ondemand(\(xi).(step(xi) ~ _));    // K steps per sample, warm-started
+```
+
+Against `newton(8, ...)` from 0, which costs 10.2 ms per second of audio
+(`fb` 0.8, a sine of amplitude 1):
+
+| steps per sample | difference, 100 Hz | difference, 2 kHz | cost per second of audio |
+|---|---|---|---|
+| 1 | 3.4e-6 | 1.9e-3 | 1.6 ms |
+| 2 | 1.2e-12 | 3.4e-7 | 3.6 ms |
+| 3 | 3e-16 | 1.2e-14 | 5.0 ms |
+
+**The number of steps decided by the convergence.** The clock is computed
+outside the block, before it runs, so it cannot be the convergence of the
+iteration it starts; what the compiler emits is a counted `for` loop, never
+a `while`. But a count can be decided from what is known at that moment,
+and a nested boolean block can stop the iteration from inside. Two layers.
+Outside, the residual of the warm start, `F(x, y_prev)` with the new input
+and the held solution, decides the count: 0 when the previous solution
+already satisfies the tolerance (the block does not run, the output holds,
+as with `on_change`), a budget `Kmax` otherwise. Inside, one step per
+iteration while the residual of the current iterate is above the
+tolerance, the unused iterations of the budget costing the residual alone:
+
+```faust
+body(xi) = inner ~ _
+with { inner(y) = ((abs(F(xi, y)) > tol), y) : ondemand(\(yp).(step(xi, yp))); };
+solve(x) = sel ~ _
+with { sel(yp) = ((abs(F(x, yp)) > tol) * Kmax, x) : ondemand(body); };
+```
+
+Measured with `tol` 1e-12 and a budget of 8, the steps being the inner
+block's fires, equal to the unrolled solver to 1.1e-12:
+
+| input | steps per sample, mean and largest | cost per second of audio |
+|---|---|---|
+| constant | 0 after the first sample | 0.32 ms |
+| sine, 100 Hz | 2.4, 3 | 5.9 ms |
+| sine, 2 kHz | 3.0, 3 | 6.5 ms |
+| white noise | 3.5, 5 | 7.4 ms |
+
+A solver that costs nothing while its input does not move, and the steps
+it needs otherwise. An estimate of the count from the quadratic
+convergence, out of the residual of the warm start, would trim the tests
+of the unused budget; not tried. The gradient of a learned parameter crosses the solver:
+the tangent of the solution with respect to `fb` on a constant input is
+−0.240418, the central difference −0.24042. Two things to know. The
+tangent of an iteration converges to the derivative of its fixed point when
+the iteration contracts (Christianson, 1994), so the tangent lanes give the
+right gradient as soon as the primal has converged; and with many
+parameters one `fad` of the residual at the solution, the implicit
+derivative −F_p / F_y, is cheaper than a tangent lane per iteration. This
+is the virtual-analog model learned from a recording: a diode clipper, a
+zero-delay-feedback ladder, a saturating feedback, whose parameters are
+differentiated through the solver.
+
+**Oversampled nonlinearities.** `upsampling(C)` is the oversampled stage in
+one block: the zero-stuffing by contract, an interpolation filter at the
+inner rate, the nonlinearity, a decimation filter, and the last iteration
+as the decimation. A learned waveshaper under a spectral loss needs it:
+aliasing is a spectral error, and the gradient would learn to cancel it
+rather than the shape.
+
+```faust
+SRraw = fconstant(int fSamplingFreq, <math.h>);
+lp = fi.lowpass(6, 20000 * ma.SR / SRraw);            // see the trap below
+stage(x) = (H, x) : upsampling(\(xi).(xi * H : lp : ma.tanh : lp));
+```
+
+Measured on a 5250 Hz sine (chosen so that the aliased harmonics fall on
+bins that are not harmonics), as the ratio of the harmonic energy to the
+rest of the spectrum on a window of 4096 samples, at a drive of 8 and, for
+the chain alone, at a drive of 0.5:
+
+| factor | tanh, drive 8 | drive 0.5 | cost per second of audio |
+|---|---|---|---|
+| plain `ma.tanh` | 13.5 dB | 66.6 dB | |
+| 2 | 30.7 dB | 84.7 dB | 2.0 ms |
+| 4 | 31.4 dB | 81.1 dB | 3.8 ms |
+| 8 | 30.1 dB | 80.0 dB | 7.3 ms |
+| 16 | 29.7 dB | 79.7 dB | |
+
+The plateau at 30 dB is the transition band of the sixth-order Butterworth
+at 20 kHz, not the mechanism's. The trap: `maths.lib` clamps `ma.SR` at
+192 kHz, so above ×4 at 48 kHz the filters of `filters.lib` are designed
+for a lower rate than the block runs at (×8 measured 15.6 dB and 58.1 dB
+before the correction). Their design depends on `fc / SR` only, so asking
+for `fc * ma.SR / SRraw` designs the right filter. The factor can be a
+signal, ×4 while an envelope follower is above a knee and ×1 below: the
+program runs and stays finite; the filter inside becomes time-varying at
+the switch, which was not qualified further. The gradient crosses the
+block: the derivative of the mean squared output with respect to the drive
+matches the central difference to 2.9e-6 at ×4.
+
+**Several optimizer steps per tick.** With `H = K * frame_clock(N)` a whole
+`descend_*` loop runs `K` times on the frame tick and never in between:
+`K` steps on the snapshot the tick delivers, warm-started from the previous
+frame, which is the per-frame analysis by synthesis of DDSP.
+
+```faust
+learn(x) = (K * il.frame_clock(64), x)
+         : ondemand(\(xi).(op.descend_1D(\(p).(op.mse(p * xi, 0.7 * xi)), op.sgd_g(0.1), -4, 4, 0, 0)));
+```
+
+Measured on a gain from 0 with SGD at 0.1: with `K = 1` the parameter is at
+0.692 after 20 frames; with `K = 4` after 5 frames, and at 0.7 to 1e-8
+after 20; with `K = 16` at 0.7 to 1e-8 after 5. The price is where the work
+lands: on one sample (the "worst block" line of `faustprobe --time`), where
+the boolean form spreads it over the frame at the cost of a frame of
+latency.
+
+**A search as a loop.** A grid of `M` candidates tried one per iteration,
+the candidate a function of the block's local time, the state keeping the
+best: code of the size of one evaluation where `multistart_1D` and
+`grid_then_descend_1D` copy the graph `M` times.
+
+```faust
+body(xi) = best ~ (_, _)
+with {
+    i = ((+(1)) ~ _) - 1 : %(M);                  // local time: the iteration index
+    cand = -1.0 + 2.0 * i / (M - 1);
+    best(pb, lb) = select2(better, pb, cand), select2(better, lb, l)
+    with { l = loss(cand, xi); better = (l < lb) | (i == 0); };
+};
+grid = (M * clock, _) : ondemand(body);
+```
+
+Sixteen candidates on [−1, 1] for a target of 0.37 elect 0.333 in one tick.
+The same loop is a backtracking line search (halve the step until the loss
+falls, stopping at run time), the two evaluations of an SPSA step in one
+sample instead of two frames, or a restart.
+
+**Limits.** The outputs are those of the last iteration, never one per
+iteration. The clock is computed outside, so a stopping criterion from
+inside goes through a nested boolean block, as above. The clock is opaque
+to the derivative, which is right (an iteration count is discrete), and
+`rad` does not cross the boundary: learning through these blocks is `fad`
+only. The vector mode does not cover clocked blocks. None of this is
+packaged yet: `newton_loop`, `oversampled`, `descend_*_burst` and
+`grid_seq` are the candidates.
+
+### 2.6 What it is not
 
 `fad`/`rad` do not turn Faust into a deep-learning framework, and this library
 does not pretend otherwise:
@@ -960,6 +1127,10 @@ under a single rate. Those walls are the ones of section 6 and of section
   <https://ccrma.stanford.edu/~jos/filters/Lattice_Ladder_Filters.html>
 - V. Zavalishin, *The Art of VA Filter Design* — zero-delay feedback and
   implicit solvers.
+- B. Christianson, "Reverse accumulation and attractive fixed points",
+  Optimization Methods and Software, 1994 — the derivative of a
+  contractive iteration converges to the derivative of its fixed point.
+  <https://doi.org/10.1080/10556789408805572>
 - I. Loshchilov, F. Hutter, "SGDR: Stochastic Gradient Descent with Warm
   Restarts", ICLR 2017. <https://arxiv.org/abs/1608.03983>
 - M. Welling, Y. W. Teh, "Bayesian Learning via Stochastic Gradient Langevin
