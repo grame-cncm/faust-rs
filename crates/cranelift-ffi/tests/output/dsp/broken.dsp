@@ -1,2 +1,1 @@
-import("stdfaust.lib");
-process = os.osc(440) : fooo;
+process = _ : fooo;
