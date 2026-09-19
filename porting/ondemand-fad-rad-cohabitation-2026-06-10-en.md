@@ -4,6 +4,15 @@ Date: 2026-06-10
 
 Status: proposed
 
+Implementation clarification (2026-09-19): §6 now distinguishes an augmented
+block's shared primal/tangent domain from the separate domain of an original
+block still consumed outside `fad`. The initial domain-reuse assumption was
+invalid in that case. See the [current implementation explanation and
+review](fad-clock-domains-explanation-and-review-2026-09-19-en.md) for the
+invariant, tests, remaining variable-`ZeroPad` defect, and assurance limits
+at `f18a50c8`. Historical descriptions
+of "current behavior" below remain dated 2026-06-10.
+
 Extracted from §9 of
 [ondemand-clock-domains-analysis-port-plan-2026-06-10-en.md](ondemand-clock-domains-analysis-port-plan-2026-06-10-en.md)
 (the *base plan*) when that document grew too large. Cross-references of
@@ -251,8 +260,9 @@ selector and `int_cast` rules (zero tangent through the condition). This
 is a documented approximation boundary, not a bug.
 
 Conclusion: the exact forward rule is **purely structural** —
-differentiate the body in its own domain and duplicate the boundary
-machinery for the tangent lanes under the *same clock env*:
+differentiate the body and duplicate the boundary machinery for the tangent
+lanes under the *same clock env as the augmented primal*. That env must be
+distinct from the original block's if the original remains reachable (§6):
 
 ```
 fad(ondemand(C), s)  ≡  ondemand(C_aug)     C_aug emits [primal lanes, tangent lanes]
@@ -266,30 +276,30 @@ Concrete `transform()` rules for `forward_ad.rs` (Phase B below):
 
 | Node | Dual rule |
 |---|---|
-| `TempVar(u)` | primal unchanged; tangent `TempVar(u')` |
-| `Clocked(c, u)` | `Clocked(c, u')` — the clock-env child is opaque, **never traversed** (same invariant as the Step-1 `signal_prepare` fix) |
-| `double_clocked(c2, c1, u)` | `double_clocked(c2, c1, u')` |
-| `ZeroPad(u, H)` | `ZeroPad(u', H)` |
+| `TempVar(u)` | primal `TempVar(u_aug)`; tangent `TempVar(u')` |
+| `Clocked(c, u)` | primal `Clocked(c_aug, u_aug)`; tangent `Clocked(c_aug, u')` — rename a twinned domain's opaque token; do not differentiate it |
+| `double_clocked(c2, c1, u)` | same boundary structure over transformed primal/tangents, mapping each twinned domain token |
+| `ZeroPad(u, H)` | tangent `ZeroPad(u', H_aug)` with the transformed primal factor, without differentiating the firing schedule; current variable-factor reconstruction gap recorded in the 2026-09-19 review |
 | `PermVar(u)` | `PermVar(u')` |
-| `Seq(OD, y)` | `Dual { primal: Seq(OD_aug, y), tangent: Seq(OD_aug, y') }` |
-| `OD/US/DS(clockedClock, Y…)` | `OD_aug` = same kind, same clocked clock, payload `Y ∪ Y'` — built **once per source block node** (memoized) |
+| `Seq(OD, y)` | primal `Seq(OD_aug, y_aug)`; tangent `Seq(OD_aug, y')`, except literal zero tangents need no sequencing |
+| `OD/US/DS(clockedClock, Y…)` | `OD_aug` = same kind, transformed primal clock, transformed primal/tangent held lanes in a fresh domain — built **once per source block node per FAD transform** (memoized) |
 
 Design constraints discovered by this analysis:
 
-1. **One block, not two.** All `Seq(OD, …)` consumers must be rebuilt to
-   point at `OD_aug`. If the original block node stayed reachable next to
-   the augmented one, a *stateful* body (delays, recursion) would execute
-   twice per fire and its local `IOTA`/state would advance twice — wrong.
-   Memoizing the OD→OD_aug rewrite per source node (the transform is
-   already memoized per `SigId`) and routing every `Seq` through it gives
-   this for free; the original node becomes unreachable garbage in the
-   arena.
-2. **Clock-env identity is reused, and that is legal.** `OD_aug` carries
-   the same `clock_env2`; inner-domain signals keep their env; inference
-   sees one domain whose subgraph key is `OD_aug`. This also validates the
-   plan §5.3 `ClockDomain` side-table recommendation: block augmentation
-   rewrites *signal* nodes only and must never have to re-mint a domain
-   identity.
+1. **One augmented block for its primal and tangents.** Rewritten
+   `Seq(OD, …)` consumers point at the memoized `OD_aug`; they must not
+   execute one body per tangent. An independent consumer outside `fad`
+   may still read the original `OD`, so the original is not necessarily
+   unreachable. Both blocks can execute, provided they own separate state.
+2. **The augmented block owns a fresh domain.** Since `9e5d9320`,
+   `OD_aug` receives a new `ClockDomain` identity and its nested domains
+   are twinned with mapped parents. Since `21252f16`, rebuilding covers
+   seed-independent subtrees and zero-tangent fallback rules too: no token
+   of an original domain being twinned, or its descendants, may survive
+   in the augmented payload. Its clock is rebuilt as a primal signal even
+   though timing decisions are not differentiated. Reusing the original's
+   domain, as this plan initially proposed, shared delays between two
+   executable blocks when the original was also consumed.
 3. **Tangent lanes terminate at the boundary by recursion into the outer
    domain**: `(snap u)' = snap(u')` re-enters `transform(u)` in the outer
    DAG, so a chain `fad(g*_ : ondemand(F), g)` correctly picks up the
@@ -393,4 +403,3 @@ harness already used by `fad_recursive_runtime.rs` / `rad_runtime.rs` /
 - `fad` under `Rec` with a clocked wrapper in between
   (`suppress_fad` interplay, §6 point 4);
 - `rad` around each wrapper kind (diagnostic snapshot until Phase C).
-

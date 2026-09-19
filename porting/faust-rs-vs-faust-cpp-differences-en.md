@@ -65,6 +65,9 @@ verified Rust extension must not be presented as a proof of C++ parity.
 - Additional adapted behavior: differentiating a read-only table index uses a
   symmetric finite-difference slope. This is a documented derivative model,
   not C++ semantic parity.
+- Implemented correction at `f18a50c8`: bargraphs forward the wrapped signal's
+  tangents while retaining the meter on the rebuilt primal; see the
+  [2026-09-19 review](fad-clock-domains-explanation-and-review-2026-09-19-en.md).
 - Additional adapted behavior (shared with `rad`): a widget referenced from a
   seed is one control in every group context (C++ makes the group path part
   of a widget's identity, and so does `faust-rs` outside seeds, see
@@ -89,6 +92,10 @@ verified Rust extension must not be presented as a proof of C++ parity.
   seed, using an implicit all-ones cotangent for a multi-output body. Temporal
   and recursive bodies use the finite-horizon `BlockReverseAD` fallback; the
   specialized reverse-time recursion route remains disabled.
+- Known gap at `f18a50c8`: the symbolic bargraph path still returns zero
+  contribution despite the bargraph's signal identity. The FAD correction
+  does not fix this RAD path; a numerical witness is recorded in the
+  [2026-09-19 review, §10](fad-clock-domains-explanation-and-review-2026-09-19-en.md#10-what-these-results-do-not-establish).
 - Compatibility impact: the source form and `BlockReverseAD` semantics have no
   pinned C++ source/backend oracle. Validation uses symbolic identities,
   FAD/RAD agreement, finite differences, and optimized/unoptimized runtime
@@ -103,10 +110,20 @@ verified Rust extension must not be presented as a proof of C++ parity.
 - Difference: Rust defines and checks FAD augmentation across supported
   `ondemand`, upsampling, and downsampling boundaries. This is a composition of
   Rust AD with clock-domain machinery, not a parity claim against C++.
+  Implemented at `f18a50c8`: an augmented block owns a fresh domain (including
+  nested state), shared by its primal and tangents; a separately consumed
+  original retains its own domain. Clock decisions are not differentiated.
+  A surviving original-domain annotation is reported as the compiler defect
+  `FadTwinKeepsOriginalDomain`. Reconstruction remains incomplete for a nested
+  `upsampling` factor carrying a twinned outer-domain annotation: `ZeroPad`
+  retains the original factor, and the invariant check rejects the program.
 - Compatibility impact: portable Faust code should not depend on these AD
   combinations unless it explicitly targets `faust-rs`.
 - Evidence:
-  [`ondemand-vec-fad-interleave-synthesis-2026-07-07-en.md`](ondemand-vec-fad-interleave-synthesis-2026-07-07-en.md).
+  [`ondemand-vec-fad-interleave-synthesis-2026-07-07-en.md`](ondemand-vec-fad-interleave-synthesis-2026-07-07-en.md),
+  [implementation explanation and review, 2026-09-19](fad-clock-domains-explanation-and-review-2026-09-19-en.md),
+  [`ondemand_pipeline.rs`](../crates/compiler/tests/ondemand_pipeline.rs),
+  [`fad_recursive_runtime.rs`](../crates/compiler/tests/fad_recursive_runtime.rs).
 
 ## 4. Command-line additions and differences
 
