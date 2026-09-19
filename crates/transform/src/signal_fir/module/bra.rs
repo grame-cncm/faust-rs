@@ -35,6 +35,7 @@ use crate::signal_fir::module::collect_select2_conditions;
 use crate::signal_fir::module::collect_tape_needed_values;
 use crate::signal_fir::module::delay_size_for_amount;
 use crate::signal_fir::module::dump_sig_readable;
+use crate::signal_fir::module::is_trivially_reverse_evaluable;
 use crate::signal_fir::module::list_to_vec;
 use crate::signal_fir::module::match_sig;
 use crate::signal_fir::module::match_sym_rec;
@@ -1465,6 +1466,14 @@ impl<'a> SignalToFirLower<'a> {
     /// counter driven by the outer `build_module` reverse iteration; loading
     /// tape[i0] during the backward sweep at step `n` retrieves the forward
     /// value stored at forward step `n`.
+    ///
+    /// A value that is neither taped nor trivially re-evaluable is refused:
+    /// lowering it here would emit its forward computation inside the
+    /// reverse sweep, and if it holds a recursion, that recursion's state
+    /// update with it, so the forward state would advance once more per
+    /// reverse step and the primal of the next block would be wrong. Such a
+    /// value is a rule that reads an operand `collect_tape_needed_values`
+    /// did not tape; the two must agree, and the error names the signal.
     pub(super) fn load_bra_fwd_value(&mut self, sig: SigId) -> Result<FirId, SignalFirError> {
         if let Some((tape_name, tape_ty)) = self.bra.tape_store_var.get(&sig).cloned() {
             let idx = self.bra_tape_index();
@@ -1473,8 +1482,16 @@ impl<'a> SignalToFirLower<'a> {
                 b.load_table(tape_name, AccessType::Struct, idx, tape_ty)
             };
             Ok(load)
-        } else {
+        } else if self.bra_sweep_is_causal() || is_trivially_reverse_evaluable(self.arena, sig) {
             self.lower_signal(sig)
+        } else {
+            let sig_text = dump_sig_readable(self.arena, sig);
+            Err(SignalFirError::new(
+                SignalFirErrorCode::UnsupportedSignalNode,
+                format!(
+                    "BlockReverseAD: the reverse sweep needs the forward value of {sig_text}, which is neither taped nor re-evaluable without state; the adjoint rule and the tape analysis disagree on this operand"
+                ),
+            ))
         }
     }
 

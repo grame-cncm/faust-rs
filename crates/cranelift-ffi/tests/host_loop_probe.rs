@@ -13,7 +13,7 @@
 //! every expected number below be replayed in the test.
 
 mod common;
-use common::{Fixtures, json, probe};
+use common::{Fixtures, json, probe, probe_source};
 
 /// The minimum of `(x - 3)^2` is outside `[0, 2]`; that of `(y - 0.5)^2` is
 /// inside `[-1, 1]`.
@@ -606,4 +606,42 @@ fn a_descent_starts_from_the_value_the_clamp_reported() {
     assert!(!stdout.contains("NaN\n"), "{stdout}");
     // the loss of the first block is that of x = 1: (1 - 3)^2 + (0 - 0.5)^2
     assert!(stdout.contains("# loss: block 1 4.250000e0"), "{stdout}");
+}
+
+/// The runtime kept a slider's initial value as `f32` and widened it into the
+/// `f64` zone of a `-double` program: `0.02` started at
+/// 0.019999999552965164 where `--set lr=0.02` delivered 0.02, and a descent
+/// stepping by that value followed another trajectory than the same descent
+/// with the slider set. The default is kept at the FIR's precision.
+#[test]
+fn a_slider_starts_from_the_double_its_source_wrote() {
+    let source = "process = hslider(\"lr\", 0.02, 0.0, 1.0, 0.0001);\n";
+    let (ok, by_default, stderr) = probe_source(
+        "slider_default_double.dsp",
+        source,
+        &["--double", "--in", "zero", "-n", "1"],
+    );
+    assert!(ok, "{stderr}");
+    let (ok, by_set, stderr) = probe_source(
+        "slider_set_double.dsp",
+        source,
+        &["--double", "--in", "zero", "-n", "1", "--set", "lr=0.02"],
+    );
+    assert!(ok, "{stderr}");
+    let row = |out: &str| {
+        out.lines()
+            .find(|l| l.starts_with("0,"))
+            .map(str::to_owned)
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        row(&by_default),
+        "0,0.02",
+        "the default must be the very double of the source:\n{by_default}"
+    );
+    assert_eq!(
+        row(&by_set),
+        row(&by_default),
+        "a --set of the default must be the same bits"
+    );
 }

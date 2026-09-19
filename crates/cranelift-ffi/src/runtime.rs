@@ -110,7 +110,10 @@ pub(crate) enum RuntimeUiItem {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RuntimeDescriptor {
     pub(crate) field_inits: HashMap<String, RuntimeFieldInit>,
-    pub(crate) control_defaults: HashMap<String, f32>,
+    /// The initial value of every control, at the precision the FIR carries
+    /// (`f64`): a `-double` program must start from the very double its
+    /// source wrote, not from its `f32` rounding.
+    pub(crate) control_defaults: HashMap<String, f64>,
     /// Ordered `buildUserInterface` callback stream reconstructed from FIR.
     ///
     /// This is the Cranelift-side consumer of the grouped-UI rewrite: runtime
@@ -267,8 +270,8 @@ fn collect_ui_items(
                 hi,
                 step,
             } => {
-                let init = init as f32;
                 desc.control_defaults.insert(var.clone(), init);
+                let init = init as f32;
                 desc.ui_items.push(match typ {
                     fir::SliderType::Horizontal => RuntimeUiItem::HorizontalSlider {
                         label,

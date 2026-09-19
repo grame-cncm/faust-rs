@@ -46,6 +46,7 @@ use crate::signal_fir::placement::Bucket;
 use crate::signal_fir::recursion::RecursionState;
 use crate::signal_fir::{ControlRateMode, ProcessingApi};
 use crate::signal_prepare::SimpleSigType;
+use signals::ad_rules::RadFormulaBuilder;
 
 /// Monotonic counters for all generated variable names.
 #[derive(Default)]
@@ -274,17 +275,36 @@ impl<'a> SignalToFirLower<'a> {
         adj: &mut std::collections::HashMap<SigId, FirId>,
     ) -> Result<(), SignalFirError> {
         let real_ty = self.real_ty.clone();
-        let x_fir = self.load_bra_fwd_value(x)?;
         // The shared formula only sees values. For rules whose derivative can
         // reuse the forward output, pass the tape-loaded current node value so
         // the reverse sweep does not recompute non-trivial temporal operands.
-        let primal = match rule {
-            RadUnaryMathRule::Exp | RadUnaryMathRule::Sqrt | RadUnaryMathRule::Abs => {
-                self.load_bra_fwd_value(sig)?
+        //
+        // `exp`, `exp10` and `sqrt` read the forward output alone (their
+        // derivative is a multiple of it), and `collect_tape_needed_values`
+        // tapes that output, not the operand. The operand must then not be
+        // loaded at all: it is not taped, so `load_bra_fwd_value` would lower
+        // it again in the reverse sweep, and an operand that holds a recursion
+        // (a phasor, a noise source, any `~`) would replay that recursion's
+        // state update in the reverse loop, advancing the forward state once
+        // more per sample of the block. The dead value was eliminated, the
+        // update was not: the primal drifted from the second block on.
+        //
+        // `abs` reads the operand, which is taped, and its own output, which
+        // is not: `|x|` is rebuilt here from the taped operand rather than
+        // loaded, for the same reason.
+        let (x_fir, taped_primal) = match rule {
+            RadUnaryMathRule::Exp | RadUnaryMathRule::Exp10 | RadUnaryMathRule::Sqrt => {
+                let primal = self.load_bra_fwd_value(sig)?;
+                (primal, Some(primal))
             }
-            _ => x_fir,
+            _ => (self.load_bra_fwd_value(x)?, None),
         };
         let mut b = FirRadFormulaBuilder::new(self, real_ty.clone());
+        let primal = match (rule, taped_primal) {
+            (_, Some(primal)) => primal,
+            (RadUnaryMathRule::Abs, None) => b.abs(x_fir),
+            (_, None) => x_fir,
+        };
         let x_adj = rad_unary_contribution(&mut b, rule, x_fir, primal, y_bar);
         Self::add_to_adjoint(&mut self.store, adj, x, x_adj, real_ty);
         Ok(())

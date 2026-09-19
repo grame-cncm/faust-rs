@@ -2610,3 +2610,76 @@ loss = (model - target) * (model - target);"#,
         primal,
     );
 }
+
+/// The reverse rule of `exp` (and `exp10`, `sqrt`) reads the forward output
+/// alone, and the tape analysis tapes that output, not the operand. The
+/// sweep used to load the operand anyway; not taped, it was lowered again in
+/// the reverse loop, and an operand holding a recursion (here the phasor of
+/// the excitation) replayed that recursion's state update once more per
+/// reverse step. The dead value went, the update stayed: the forward state
+/// advanced twice per block, and the primal of every block after the first
+/// was wrong (the loss lane of a `rad` differed between block sizes, which a
+/// primal must never do). Two blocks of 64 must give the samples 64..128 of
+/// one block of 128; before the fix the second block was off by 0.1 on a
+/// loss of 0.01.
+#[test]
+fn a_rad_whose_exp_operand_holds_a_recursion_keeps_the_primal_across_blocks() {
+    let source = r#"
+import("stdfaust.lib");
+a = hslider("a", 0.3, -2, 2, 0.001);
+x = 0.5 * sin(2.0 * ma.PI * os.phasor(1.0, 110.0));
+model = (\(hp).(a * x + exp(0.0 - x * x) * hp)) ~ _;
+target = (\(hp).(0.5 * x + exp(0.0 - x * x) * hp)) ~ _;
+process = rad((model - target) * (model - target), a);
+"#;
+    let whole = run_interp_temp_source("rad-exp-operand-recursion-whole", source, 128);
+    let (block1, block2) = run_interp_two_blocks("rad-exp-operand-recursion", source, 64);
+    assert_eq!(whole.len(), 2, "loss and one gradient lane");
+    let loss = &whole[0];
+    assert!(
+        loss[64..128].iter().any(|v| v.abs() > 1e-6),
+        "the witness must have a loss in its second block"
+    );
+    for (n, (two, one)) in block1.iter().zip(&loss[..64]).enumerate() {
+        assert!(
+            (two - one).abs() <= 1e-6 * one.abs().max(1.0),
+            "first block, frame {n}: two-block render {two} vs single {one}"
+        );
+    }
+    for (n, (two, one)) in block2.iter().zip(&loss[64..128]).enumerate() {
+        assert!(
+            (two - one).abs() <= 1e-6 * one.abs().max(1.0),
+            "second block, frame {}: two-block render {two} vs single {one} (the primal must not depend on the block)",
+            64 + n
+        );
+    }
+}
+
+/// The same defect through `abs`: its rule reads the operand, which is
+/// taped, and its own output `|x|`, which is not; the output was loaded, so
+/// lowered again in the reverse loop with the recursion inside the operand.
+/// `|x|` is now rebuilt from the taped operand, and the reverse sweep
+/// refuses any value that is neither taped nor stateless instead of
+/// replaying it.
+#[test]
+fn a_rad_whose_abs_operand_holds_a_recursion_keeps_the_primal_across_blocks() {
+    let source = r#"
+import("stdfaust.lib");
+a = hslider("a", 0.3, -2, 2, 0.001);
+x = 0.5 * sin(2.0 * ma.PI * os.phasor(1.0, 110.0));
+model = (\(hp).(a * x + 0.5 * abs(x * x - 0.1) * hp)) ~ _;
+target = (\(hp).(0.5 * x + 0.5 * abs(x * x - 0.1) * hp)) ~ _;
+process = rad((model - target) * (model - target), a);
+"#;
+    let whole = run_interp_temp_source("rad-abs-operand-recursion-whole", source, 128);
+    let (_block1, block2) = run_interp_two_blocks("rad-abs-operand-recursion", source, 64);
+    let loss = &whole[0];
+    assert!(loss[64..128].iter().any(|v| v.abs() > 1e-6));
+    for (n, (two, one)) in block2.iter().zip(&loss[64..128]).enumerate() {
+        assert!(
+            (two - one).abs() <= 1e-6 * one.abs().max(1.0),
+            "second block, frame {}: two-block render {two} vs single {one}",
+            64 + n
+        );
+    }
+}
