@@ -491,3 +491,25 @@ fn canonical_compute_matches_every_capability_row() {
         "expected every `-os` backend to be probed, got {checked:?}"
     );
 }
+
+#[test]
+fn asc_aux_files_name_table_sub_modules_after_cn() {
+    use compiler::GenerateAuxFilesRequest;
+
+    // A table generator becomes a `<module>SIG<k>` sub-module during lowering;
+    // the module is the `-cn` class, as on the CLI — not the source file name.
+    const TABLE: &str =
+        "gen = (+(1) ~ _) : float; process = rdtable(64, gen, int(hslider(\"i\", 0, 0, 63, 1)));";
+    let request = GenerateAuxFilesRequest {
+        source_name: "table_name_test.dsp".to_owned(),
+        source: TABLE.to_owned(),
+        args: "-lang asc -cn ExecTest -o /exec.out.ts".to_owned(),
+        ..GenerateAuxFilesRequest::default()
+    };
+    let artifacts = Compiler::new()
+        .generate_aux_files(&request)
+        .expect("asc aux generation must succeed");
+    let asc = String::from_utf8(artifacts[0].content.clone()).expect("utf-8");
+    assert!(asc.contains("class ExecTestSIG0 {"), "{asc}");
+    assert!(!asc.contains("table_name_testSIG0"), "{asc}");
+}
