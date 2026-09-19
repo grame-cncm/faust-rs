@@ -876,58 +876,166 @@ fn fad_around_nested_block_runs_the_iterations_its_flag_asks_for() {
     }
 }
 
-/// The shell of `repeat` (a boolean block gated by "first iteration or the
-/// held flag" inside an integer block) whose inputs are a recursive signal
-/// `r` and its delay `r'`, `r` driven by three library oscillators, consumed
-/// both plainly and through `fad` in one program (found by faust-diff-ts808,
-/// 2026-09-19). Until the fix of that day the augmented twin of a block kept
-/// the original's clock-env token, `Clocked(c, u)' = Clocked(c, u')`, so the
-/// two blocks shared one domain, its local-time delays included: the twin
-/// read a first-iteration test already consumed by the original and never
-/// ran, its lane staying at 0. Each copy alone was right, and so was the
-/// same program with one oscillator or with the excitation as an input,
-/// which is why the shape is kept exactly. The twin now gets a domain of its
-/// own. The library import needs a large stack in a debug build.
+/// A block consumed plainly and under `fad` in one program is one instance
+/// for the propagation (its result memo replays the definition), so `fad`
+/// builds the augmented copy from the very block the plain consumer reads:
+/// the copy must be a block of its own, with its own domain and its own
+/// state. Until 2026-09-19 it kept the original's domain, and the lowering
+/// put the two blocks under one domain suffix sharing every local-time
+/// delay: the copy read a first-iteration test the original had already
+/// consumed in the same sample and its inner solver never ran, its lane
+/// staying constant. The shape is the shell of `repeat` (a boolean block
+/// gated by "first iteration or the held flag" inside an integer block)
+/// around a Newton step that depends on the seed.
+///
+/// The padding in front of the block matters: the propagation memo has a
+/// warm-up of 1,024 calls, and a program small enough to stay under it
+/// propagates the definition twice, into two instances, which do not share
+/// anything and never showed the defect (a hand-reduced witness passed on
+/// the unfixed compiler for that reason). The emitted C++ is checked for
+/// the replay: the copy's domains are numbered right after the original's
+/// (`_d2`, `_d3`); a second propagation would have numbered them `_d4`,
+/// `_d5`, and the test would no longer say anything.
 #[test]
-fn fad_and_plain_copies_of_a_repeat_shell_on_a_recursion_and_its_delay_agree() {
+fn fad_and_plain_copies_of_a_repeat_shell_are_two_blocks_with_their_own_state() {
+    // The padding is deep for the evaluator: a large stack in a debug build.
     std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
-        .spawn(|| {
-            let data = vec![0.0_f32; 256];
-            let out = run_interp_with_inputs(
-                "fad_plain_shared_repeat_shell",
-                r#"import("stdfaust.lib");
-                   g = hslider("g", 0.5, -10, 10, 0.001);
-                   x = 0.2 * (0.6 * os.osc(110.0) + 0.3 * os.osc(220.0) + 0.15 * os.osc(330.0));
-                   r = (\(w).((x - x' + 0.7 * w) / 1.3)) ~ _;
-                   step(a, b, vp, v) = v - (v * v * v + v - a * exp(g) - 0.3 * b - 0.5 * vp) / (3.0 * v * v + 1.0);
-                   C(t, a, b, vp) = v, (abs(v - v') > 1e-6) with { v = (\(w).(step(a, b, vp, w))) ~ _; };
-                   shell(t, a, b, vp) = (gate ~ (!, _)) : (_, !)
-                   with { gate(go) = ((go | (t != t')), t, a, b, vp) : ondemand(C); };
-                   t = (+(1)) ~ _;
-                   blk(vp) = (32, t, r, r', vp) : ondemand(shell);
-                   m = (\(vp).(blk(vp))) ~ _;
-                   process = _ : !, m, (fad(m, g) : _, !);"#,
-                std::slice::from_ref(&data),
-            );
-            assert_eq!(out.len(), 2);
-            let spread = out[1]
-                .iter()
-                .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-            assert!(
-                spread.1 - spread.0 > 1.0e-3,
-                "the fad primal lane is constant: {spread:?}"
-            );
-            for (n, (&plain, &primal)) in out[0].iter().zip(out[1].iter()).enumerate() {
-                assert!(
-                    (plain - primal).abs() < 1.0e-5,
-                    "frame {n}: plain {plain} vs fad primal {primal}"
-                );
-            }
-        })
+        .spawn(fad_and_plain_copies_of_a_repeat_shell_body)
         .expect("spawn the test thread")
         .join()
         .expect("the test thread completes");
+}
+
+fn fad_and_plain_copies_of_a_repeat_shell_body() {
+    let source = r#"g = hslider("g", 0.5, -10, 10, 0.001);
+        pad = par(i, 24, par(j, 24, (i * 24 + j) * 0.00001) :> _) :> _;
+        step(a, v) = v - (v * v * v + v - a * exp(g)) / (3.0 * v * v + 1.0);
+        C(t, a) = v, (abs(v - v') > 1e-6) with { v = (\(w).(step(a, w))) ~ _; };
+        shell(t, a) = (gate ~ (!, _)) : (_, !)
+        with { gate(go) = ((go | (t != t')), t, a) : ondemand(C); };
+        t = (+(1)) ~ _;
+        a = 0.3 * ((+(0.37)) ~ _ : sin);
+        m = (8, t, a) : ondemand(shell);
+        process = pad, m, (fad(m, g) : _, !);"#;
+
+    let cpp = Compiler::new()
+        .compile_source_to_cpp_with_lane(
+            "fad_plain_repeat_shell.dsp",
+            source,
+            &codegen::backends::cpp::CppOptions::default(),
+            compiler::SignalFirLane::TransformFastLane,
+        )
+        .expect("the witness compiles to C++");
+    let domains: BTreeSet<&str> = cpp
+        .match_indices("_d")
+        .map(|(at, _)| {
+            let rest = &cpp[at..];
+            let len = rest[2..]
+                .find(|c: char| !c.is_ascii_digit())
+                .map_or(rest.len(), |n| n + 2);
+            &rest[..len]
+        })
+        .filter(|d| d.len() > 2)
+        .collect();
+    assert_eq!(
+        domains,
+        BTreeSet::from(["_d0", "_d1", "_d2", "_d3"]),
+        "the copy is not built from the replayed instance (its domains would be _d4, _d5): the test would not exercise the shared block"
+    );
+
+    let out = run_interp_with_inputs("fad_plain_repeat_shell", source, &[vec![0.0_f32; 64]]);
+    assert_eq!(out.len(), 3);
+    let spread = out[2]
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    assert!(
+        spread.1 - spread.0 > 1.0e-3,
+        "the fad primal lane is constant: {spread:?}"
+    );
+    for (n, (&plain, &primal)) in out[1].iter().zip(out[2].iter()).enumerate() {
+        assert!(
+            (plain - primal).abs() < 1.0e-5,
+            "frame {n}: plain {plain} vs fad primal {primal}"
+        );
+    }
+}
+
+/// The copy `fad` builds of a block owns every subtree of the block, the
+/// ones no seed reaches included: a delay, a recursion, a bargraph, a
+/// mutable table, a nested block (with or without inputs of its own), under
+/// each of the three wrappers and at both interpreter optimisation levels.
+/// A subtree kept as it was would be annotated with the original's domain
+/// inside the copy, which the clock-environment inference rejects
+/// (`FRS-SFIR-0008`); the bargraph and the table were kept that way on
+/// 2026-09-19, their rules returning the original node. The plain and the
+/// `fad` copies must agree, and the tangent lane is `x * dy/dg`, checked
+/// as `primal / g` on the bodies linear in `g`.
+#[test]
+fn fad_beside_plain_owns_every_subtree_of_the_block() {
+    // (body, whether it is linear in `g`: its tangent is then primal / g)
+    let bodies = [
+        ("x * g", true),
+        ("x' * g", true),
+        ("(x : + ~ _) * g", true),
+        ("((x, x * 2) : ((+, +) ~ (_, _)) : (!, _)) * g", true),
+        ("(x' : hbargraph(\"meter\", -10, 10)) * g", true),
+        ("rwtable(4, 0.0, 0, x', 0) * g", true),
+        ("(2, x) : ondemand(*(g))", true),
+        ("(2, x) : ondemand(+ ~ _) : *(g)", true),
+        ("(x != 0, x) : ondemand(\\(y).(y' * g))", true),
+        (
+            "x * g + ((1, 0) : ondemand(\\(z).((1 : + ~ _) + z)))",
+            false,
+        ),
+        ("(\\(w).(0.5 * w * g + x')) ~ _", false),
+    ];
+    let mut failures = Vec::new();
+    for wrapper in ["ondemand", "upsampling", "downsampling"] {
+        for (body, linear_in_g) in bodies {
+            let source = format!(
+                r#"g = hslider("g", 0.5, 0, 1, 0.01);
+                   body(x) = {body};
+                   block(x) = (2, x) : {wrapper}(body);
+                   process(x) = block(x), fad(block(x), g);"#
+            );
+            for opt in [0, 6] {
+                let stem = "fad_beside_plain_matrix";
+                let out = std::panic::catch_unwind(|| {
+                    run_interp_with_inputs_opt(
+                        stem,
+                        &source,
+                        &[vec![1.0, 2.0, 3.0, 4.0]],
+                        Some(opt),
+                    )
+                });
+                let Ok(out) = out else {
+                    failures.push(format!(
+                        "{wrapper} / {body} / opt {opt}: does not compile or run"
+                    ));
+                    continue;
+                };
+                if out[0] != out[1] {
+                    failures.push(format!(
+                        "{wrapper} / {body} / opt {opt}: plain {:?} vs fad primal {:?}",
+                        out[0], out[1]
+                    ));
+                }
+                if linear_in_g
+                    && out[1]
+                        .iter()
+                        .zip(out[2].iter())
+                        .any(|(&primal, &tangent)| (tangent * 0.5 - primal).abs() > 1.0e-5)
+                {
+                    failures.push(format!(
+                        "{wrapper} / {body} / opt {opt}: tangent {:?} is not primal / g for {:?}",
+                        out[2], out[1]
+                    ));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]

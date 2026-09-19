@@ -94,6 +94,16 @@ pub enum PropagateError {
         node: TreeId,
         kind: &'static str,
     },
+    /// The augmented twin `fad` built for a clocked block still reaches a
+    /// `Clocked` wrapper of the original block's domain, or of a domain
+    /// nested in it: a signal of the twin would live in two sibling domains,
+    /// and the two blocks would share that state. An invariant of the
+    /// forward-mode transformer, checked after every block augmentation;
+    /// its failure is a defect of the compiler, not of the program.
+    FadTwinKeepsOriginalDomain {
+        node: TreeId,
+        domain: u32,
+    },
 }
 
 impl Display for PropagateError {
@@ -200,6 +210,12 @@ impl Display for PropagateError {
                  clock boundary: signal node {} ({kind}); keep the whole differentiated \
                  expression inside one clock domain (FAD Phase A) until boundary \
                  crossing (Phase B) lands",
+                node.as_u32()
+            ),
+            Self::FadTwinKeepsOriginalDomain { node, domain } => write!(
+                f,
+                "fad: the augmented copy of clocked block {} still reaches a signal of the \
+                 original's clock domain #{domain}; this is a defect of the compiler",
                 node.as_u32()
             ),
         }
@@ -560,6 +576,21 @@ impl ToDiagnostic for PropagateError {
             .with_help(
                 "move the whole differentiated expression inside the clocked block \
                  (e.g. ondemand(fad(...)) instead of fad(ondemand(...), ...))",
+            ),
+            Self::FadTwinKeepsOriginalDomain { domain, .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Propagate,
+                codes::PROP_GENERIC_FAILURE,
+                message,
+            )
+            .with_note(format!(
+                "cause: a signal of the augmented block is still annotated with clock \
+                 domain #{domain} (the original block's, or one nested in it), so the two \
+                 blocks would share its state"
+            ))
+            .with_help(
+                "this is a defect of the forward-mode transformer (crates/propagate/src/forward_ad.rs, \
+                 augment_block): please report the program",
             ),
         }
     }

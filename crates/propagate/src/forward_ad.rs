@@ -661,16 +661,38 @@ impl<'a> ForwardADTransform<'a> {
         found
     }
 
-    /// Whether a subtree carries the token of a block whose twin is being
-    /// built: it must then be rebuilt with the twin's token even when no seed
-    /// reaches it.
+    /// Whether a subtree belongs to a block whose twin is being built: it
+    /// carries a token of the block's domain, or of a domain nested in it,
+    /// and must then be rebuilt as the twin's even when no seed reaches it.
+    /// A nested block is owned by the twin too: its own twin is allocated
+    /// when the rebuild reaches its `Seq`, with the parent mapped.
     fn needs_rebuild(&mut self, sig: SigId) -> bool {
-        if self.env_rename.is_empty() {
+        if self.domain_rename.is_empty() {
             return false;
         }
-        self.env_tokens_in(sig)
+        let tokens = self.env_tokens_in(sig);
+        tokens
             .iter()
-            .any(|token| self.env_rename.contains_key(token))
+            .any(|&token| self.token_is_being_twinned(token))
+    }
+
+    /// Whether a clock-env token names a domain being twinned, or a domain
+    /// nested in one (the parent chain of the side table).
+    fn token_is_being_twinned(&self, token: SigId) -> bool {
+        if self.env_rename.contains_key(&token) {
+            return true;
+        }
+        let SigMatch::ClockEnvToken(id) = match_sig(self.arena, token) else {
+            return false;
+        };
+        let mut domain = Some(ClockDomainId::from_u32(id));
+        while let Some(id) = domain {
+            if self.domain_rename.contains_key(&id.as_u32()) {
+                return true;
+            }
+            domain = self.clock_domains.get(id).and_then(|d| d.parent);
+        }
+        false
     }
 
     /// Differentiates one signal, using the shared DAG cache.
@@ -1271,9 +1293,21 @@ impl<'a> ForwardADTransform<'a> {
             SigMatch::Control(x, y) => {
                 self.pass_through_binary(x, y, |b, px, py| b.control(px, py))
             }
-            SigMatch::VBargraph(_, inner) | SigMatch::HBargraph(_, inner) => {
-                let _ = self.transform(inner);
-                self.zero_tangent(sig)
+            SigMatch::VBargraph(control, inner) => {
+                let dual = self.transform(inner);
+                let primal = SigBuilder::new(self.arena).vbargraph(control, dual.primal);
+                Dual {
+                    primal,
+                    tangents: self.zero_tangent_lanes_real(),
+                }
+            }
+            SigMatch::HBargraph(control, inner) => {
+                let dual = self.transform(inner);
+                let primal = SigBuilder::new(self.arena).hbargraph(control, dual.primal);
+                Dual {
+                    primal,
+                    tangents: self.zero_tangent_lanes_real(),
+                }
             }
             SigMatch::FFun(ff, largs) => self.transform_ffun(sig, ff, largs),
             // ── FAD Phase B (roadmap P5), boundary wrappers ──
@@ -1372,10 +1406,41 @@ impl<'a> ForwardADTransform<'a> {
     /// fallback boundary" table for the signal families that currently land
     /// here.
     fn zero_tangent(&mut self, sig: SigId) -> Dual {
+        let primal = if self.needs_rebuild(sig) {
+            self.rebuild_primal(sig)
+        } else {
+            sig
+        };
         Dual {
-            primal: sig,
+            primal,
             tangents: self.zero_tangent_lanes_real(),
         }
+    }
+
+    /// The primal of a subtree kept as it is by its own rule (a bargraph, a
+    /// mutable table, a foreign function without a rule, any node the
+    /// fallback arm meets), rebuilt because it carries the token of a block
+    /// whose twin is being built: the same node over its transformed
+    /// children, so that every `Clocked` wrapper below it gets the twin's
+    /// token and every nested block its own twin. A `Clocked` node is
+    /// renamed here rather than transformed, its token child being no
+    /// signal.
+    fn rebuild_primal(&mut self, sig: SigId) -> SigId {
+        if let SigMatch::Clocked(token, inner) = match_sig(self.arena, sig) {
+            let token = self.env_rename.get(&token).copied().unwrap_or(token);
+            let inner = self.transform(inner).primal;
+            return SigBuilder::new(self.arena).clocked(token, inner);
+        }
+        let Some(node) = self.arena.node(sig).cloned() else {
+            return sig;
+        };
+        let children: Vec<TreeId> = node
+            .children
+            .as_slice()
+            .iter()
+            .map(|&child| self.transform(child).primal)
+            .collect();
+        self.arena.intern(node.kind, &children)
     }
 
     /// Classifies a table source as read-only (differentiable through the
@@ -1412,6 +1477,10 @@ impl<'a> ForwardADTransform<'a> {
     /// differentiated.
     fn transform_rdtbl(&mut self, table: SigId, ridx: SigId) -> Dual {
         let dual_index = self.transform(ridx);
+        // The table is a signal child like any other: its write port and its
+        // generator carry the clock-domain annotations of the block they were
+        // written in, and the twin of that block must write its own table.
+        let table = self.transform(table).primal;
         let readonly = self.is_readonly_table_source(table);
         let mut b = SigBuilder::new(self.arena);
         let primal = b.rdtbl(table, dual_index.primal);
@@ -1714,6 +1783,24 @@ impl<'a> ForwardADTransform<'a> {
                 _ => b.downsampling(&new_payload),
             }
         };
+        // The invariant the twin owes: nothing it holds is still annotated
+        // with the original's domain or one nested in it. Every rule above
+        // rebuilds its node over transformed children, so a violation is a
+        // rule that kept a subtree raw; it is reported as the compiler's
+        // defect rather than left to the clock-environment inference.
+        for &lane in &new_payload {
+            for token in self.env_tokens_in(lane) {
+                if let SigMatch::ClockEnvToken(id) = match_sig(self.arena, token)
+                    && self.token_is_being_twinned(token)
+                    && self.boundary_error.is_none()
+                {
+                    self.boundary_error = Some(PropagateError::FadTwinKeepsOriginalDomain {
+                        node: od,
+                        domain: id,
+                    });
+                }
+            }
+        }
         self.od_aug_cache.insert(od, aug);
         Some(aug)
     }
