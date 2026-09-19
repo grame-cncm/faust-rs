@@ -961,6 +961,68 @@ fn fad_and_plain_copies_of_a_repeat_shell_body() {
     }
 }
 
+/// A `fad` referenced several times inside the body of a recursion (the
+/// loop of a clocked descent, its gradient bus projected once per
+/// parameter), the differentiated loss holding a clocked block with a
+/// recursion in its body (a solver). The propagation expands the `fad`
+/// after the recursion, once per reference; the copies share the original
+/// block instance, and the emitted C++ shows two loops of the outer block
+/// under one domain suffix reading one first-iteration delay: the copy
+/// that runs second never fires its inner block, the parameters it holds
+/// stay at their start, and the block consumed plainly with those
+/// parameters is constant. Routing the gradient bus once through
+/// `par(i, 3, ...)` instead of projecting it three times makes the program
+/// right, and so does a gradient engine without state; the defect is the
+/// compiler's. Found on 2026-09-19 by the online mode of faust-diff-ts808
+/// (`optimizers.lib`'s `descend_3D_clocked`); open.
+#[test]
+#[ignore = "open defect: a fad referenced three times in a recursion body, over a clocked block with a recursion in its body, gives plain copies of the block that disagree"]
+fn fad_referenced_thrice_in_a_recursion_body_over_a_stateful_block_keeps_one_instance() {
+    let out = run_interp_with_inputs(
+        "fad_thrice_in_rec",
+        r#"t = (+(1)) ~ _;
+           x = sin(6.2831853 * 220.0 * float(t) / 48000.0);
+           target = 0.7 * x + 0.3 * x * x + 0.1;
+           clock = (t % 256) == 255;
+           mse(y, r) = (y - r) * (y - r);
+           fsum(c, v) = (+(v)) ~ *(1.0 - c');
+           fmean(c, v) = fsum(c, v) / fsum(c, 1.0);
+           C(u, a, gg, hh, kk) = ((\(w).(0.5 * w + a * gg + a * a * hh + kk)) ~ _), 1;
+           shell(u, a, gg, hh, kk) = (gate ~ (!, _)) : (_, !)
+           with { gate(go) = ((go | (u != u')), u, a, gg, hh, kk) : ondemand(C); };
+           S(g, h, k) = (3, t, x, g, h, k) : ondemand(shell);
+           descend(loss) = (loop ~ (_, _, _))
+           with {
+               loop(p1, p2, p3) = (clock, p1, p2, p3, gm1, gm2, gm3) : ondemand(step)
+               with {
+                   gs = fad(loss(p1, p2, p3), (p1, p2, p3)) : !, _, _, _;
+                   gm1 = fmean(clock, (gs : _, !, !));
+                   gm2 = fmean(clock, (gs : !, _, !));
+                   gm3 = fmean(clock, (gs : !, !, _));
+                   step(q1, q2, q3, h1, h2, h3) = q1 - 0.001 * h1, q2 - 0.001 * h2, q3 - 0.001 * h3;
+               };
+           };
+           l = descend(\(g, h, k).(mse(S(g, h, k), target)));
+           g = l : _, !, !; h = l : !, _, !; k = l : !, !, _;
+           process = _ : !, S(g, h, k), S(g + 0.0 * x', h, k);"#,
+        &[vec![0.0_f32; 20000]],
+    );
+    assert_eq!(out.len(), 2);
+    let spread = out[1]
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    assert!(
+        spread.1 - spread.0 > 1.0e-3,
+        "the rewritten copy is constant: {spread:?}"
+    );
+    for (n, (&a, &b)) in out[0].iter().zip(out[1].iter()).enumerate() {
+        assert!(
+            (a - b).abs() < 1.0e-5,
+            "frame {n}: plain {a} vs rewritten-input copy {b}"
+        );
+    }
+}
+
 /// The copy `fad` builds of a block owns every subtree of the block, the
 /// ones no seed reaches included: a delay, a recursion, a bargraph (on an
 /// input and on the output, where its tangent passes through), a
