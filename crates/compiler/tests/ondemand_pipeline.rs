@@ -131,12 +131,12 @@ fn collect_clock_env_ids(
 #[test]
 fn structurally_identical_ondemand_instances_get_distinct_domains() {
     // The C++ de Bruijn collision class (plan §3.4): two structurally
-    // identical `ondemand` applications in different contexts must yield
-    // *distinct* clock-domain instances.
+    // identical `ondemand` applications in different contexts (here, on
+    // different inputs) must yield *distinct* clock-domain instances.
     let out = compile_inline(
         "od_twice",
         r#"od(x) = (button("gate"), x) : ondemand(*(2));
-           process = _ <: od, od :> _;"#,
+           process = _ <: od, (*(3) : od) :> _;"#,
     );
     assert_eq!(
         out.clock_domains.len(),
@@ -152,6 +152,26 @@ fn structurally_identical_ondemand_instances_get_distinct_domains() {
         ids.len(),
         2,
         "both domain tokens must be reachable and distinct, got ids {ids:?}"
+    );
+}
+
+/// The C++ tuple identity: one wrapper box in one context (slot
+/// environment, UI path, parent domain) on the same inputs is one
+/// instance, however many times the program refers to it, and whatever
+/// the program's size: the propagation memo keys a call that allocates an
+/// identity from its first call (2026-09-19), where its warm-up used to
+/// give a small program one instance per reference.
+#[test]
+fn identical_ondemand_applications_in_one_context_are_one_instance() {
+    let out = compile_inline(
+        "od_twice_same",
+        r#"od(x) = (button("gate"), x) : ondemand(*(2));
+           process = _ <: od, od :> _;"#,
+    );
+    assert_eq!(
+        out.clock_domains.len(),
+        1,
+        "the same wrapper on the same inputs in the same context is one instance"
     );
 }
 
@@ -964,19 +984,21 @@ fn fad_and_plain_copies_of_a_repeat_shell_body() {
 /// A `fad` referenced several times inside the body of a recursion (the
 /// loop of a clocked descent, its gradient bus projected once per
 /// parameter), the differentiated loss holding a clocked block with a
-/// recursion in its body (a solver). The propagation expands the `fad`
-/// after the recursion, once per reference; the copies share the original
-/// block instance, and the emitted C++ shows two loops of the outer block
-/// under one domain suffix reading one first-iteration delay: the copy
-/// that runs second never fires its inner block, the parameters it holds
-/// stay at their start, and the block consumed plainly with those
-/// parameters is constant. Routing the gradient bus once through
-/// `par(i, 3, ...)` instead of projecting it three times makes the program
-/// right, and so does a gradient engine without state; the defect is the
-/// compiler's. Found on 2026-09-19 by the online mode of faust-diff-ts808
-/// (`optimizers.lib`'s `descend_3D_clocked`); open.
+/// recursion in its body (a solver). Until 2026-09-19 the propagation memo
+/// skipped its first 1,024 calls, so in a small program every reference
+/// propagated the `fad` again, every expansion allocated fresh twins, and
+/// the solver block in the loss, propagated once per reference too, was a
+/// different instance each time: the recursion came out in several
+/// copies sharing blocks, two loops of one block under one domain suffix
+/// reading one first-iteration delay, the second never firing its inner
+/// block; the parameters it held stayed at their start and the block
+/// consumed plainly with them was constant. A propagation that allocates
+/// an identity (a clock domain, the twins of an AD expansion) is now
+/// memoised from its first call, as the C++ tuple identity is: one box in
+/// one context with the same inputs is one instance whatever the
+/// program's size. Found by the online mode of faust-diff-ts808
+/// (`optimizers.lib`'s `descend_3D_clocked`).
 #[test]
-#[ignore = "open defect: a fad referenced three times in a recursion body, over a clocked block with a recursion in its body, gives plain copies of the block that disagree"]
 fn fad_referenced_thrice_in_a_recursion_body_over_a_stateful_block_keeps_one_instance() {
     let out = run_interp_with_inputs(
         "fad_thrice_in_rec",

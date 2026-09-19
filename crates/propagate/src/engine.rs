@@ -50,12 +50,23 @@ pub(crate) fn propagate_in_slot_env(
     // (only the `Rec` arm drains it), so the seeds one call appends depend on
     // nothing but its exact key: each entry records that delta and a hit
     // replays it. See `result_memo` for why AD roots were ineligible before.
+    // A call that allocates an identity (a clock domain, the twins of an
+    // AD expansion) is memoised from the first call on: see `key`.
+    let allocates_identity = matches!(
+        flat_node_kind(arena, box_tree)?,
+        FlatNodeKind::Ondemand(_)
+            | FlatNodeKind::Upsampling(_)
+            | FlatNodeKind::Downsampling(_)
+            | FlatNodeKind::ForwardAD { .. }
+            | FlatNodeKind::ReverseAD { .. }
+    );
     let result_key = ctx.memo.results.key(
         box_tree,
         ctx.slot_env.id(),
         ctx.ui_path.id(),
         PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, ctx.suppress_fad),
         inputs,
+        allocates_identity,
     );
     if let Some(key) = result_key {
         if let Some(hit) = ctx.memo.results.get(key) {

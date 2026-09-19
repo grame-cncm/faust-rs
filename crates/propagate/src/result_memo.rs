@@ -215,6 +215,16 @@ impl PropagateResultMemo {
 
     /// Constructs an exact, allocation-free key for buses of at most two
     /// signals. Larger buses allocate only on their first interning miss.
+    ///
+    /// `allocates_identity` names the calls the warm-up must not skip: a
+    /// clocked wrapper allocates a clock domain and an AD node allocates
+    /// the twins of the blocks it augments, so two propagations of one of
+    /// them in one context are two *instances* with separate state, not
+    /// two spellings of one value. The C++ tuple identity makes them one
+    /// whatever the program's size; skipping the memo during the warm-up
+    /// made it depend on the size (2026-09-19: a `fad` referenced three
+    /// times in a recursion body gave three expansions of one solver
+    /// block, and the copies shared the original's state).
     pub(crate) fn key(
         &mut self,
         box_tree: FlatBoxId,
@@ -222,12 +232,13 @@ impl PropagateResultMemo {
         ui_path: UiPathId,
         mode: PropagationModeKey,
         inputs: &[SigId],
+        allocates_identity: bool,
     ) -> Option<PropagateResultKey> {
         if !self.safe_root {
             return None;
         }
         self.eligible_calls = self.eligible_calls.saturating_add(1);
-        if self.eligible_calls <= RESULT_MEMO_WARMUP_CALLS {
+        if self.eligible_calls <= RESULT_MEMO_WARMUP_CALLS && !allocates_identity {
             return None;
         }
         Some(PropagateResultKey {
@@ -381,19 +392,19 @@ mod tests {
 
         for _ in 0..RESULT_MEMO_WARMUP_CALLS {
             assert!(
-                memo.key(box_tree, bound_slot, root_ui, mode, &[signal])
+                memo.key(box_tree, bound_slot, root_ui, mode, &[signal], false)
                     .is_none()
             );
         }
 
         let root = memo
-            .key(box_tree, bound_slot, root_ui, mode, &[signal])
+            .key(box_tree, bound_slot, root_ui, mode, &[signal], false)
             .expect("enabled key");
         let bound = memo
-            .key(box_tree, nested_slot, root_ui, mode, &[signal])
+            .key(box_tree, nested_slot, root_ui, mode, &[signal], false)
             .expect("enabled key");
         let grouped = memo
-            .key(box_tree, nested_slot, grouped_ui, mode, &[signal])
+            .key(box_tree, nested_slot, grouped_ui, mode, &[signal], false)
             .expect("enabled key");
 
         assert_ne!(root, bound);
@@ -414,11 +425,17 @@ mod tests {
         memo.set_enabled(true);
 
         for _ in 0..RESULT_MEMO_WARMUP_CALLS {
-            assert!(memo.key(box_tree, slots.id(), ui.id(), mode, &[]).is_none());
+            assert!(
+                memo.key(box_tree, slots.id(), ui.id(), mode, &[], false)
+                    .is_none()
+            );
         }
         assert!(memo.entries.is_empty());
         assert!(memo.buses.buses.is_empty());
-        assert!(memo.key(box_tree, slots.id(), ui.id(), mode, &[]).is_some());
+        assert!(
+            memo.key(box_tree, slots.id(), ui.id(), mode, &[], false)
+                .is_some()
+        );
     }
 
     #[test]
@@ -471,15 +488,15 @@ mod tests {
         memo.set_enabled(true);
         for _ in 0..RESULT_MEMO_WARMUP_CALLS {
             assert!(
-                memo.key(box_tree, slots.id(), ui.id(), suppressed, &[])
+                memo.key(box_tree, slots.id(), ui.id(), suppressed, &[], false)
                     .is_none()
             );
         }
         let key_suppressed = memo
-            .key(box_tree, slots.id(), ui.id(), suppressed, &[])
+            .key(box_tree, slots.id(), ui.id(), suppressed, &[], false)
             .expect("enabled key");
         let key_expanded = memo
-            .key(box_tree, slots.id(), ui.id(), expanded, &[])
+            .key(box_tree, slots.id(), ui.id(), expanded, &[], false)
             .expect("enabled key");
         assert_ne!(key_suppressed, key_expanded);
 
@@ -492,5 +509,27 @@ mod tests {
         let hit = memo.get(key_expanded).expect("expanded entry");
         assert_eq!(hit.outputs, vec![output, seed]);
         assert!(hit.pending_fad_seeds.is_empty());
+    }
+
+    #[test]
+    fn identity_allocating_calls_are_memoised_during_the_warm_up() {
+        let mut arena = TreeArena::new();
+        let raw_box = BoxBuilder::new(&mut arena).int(1);
+        let box_tree = crate::try_build_flat_box(&arena, raw_box).expect("flat integer box");
+        let slots = SlotEnv::new();
+        let ui = UiPathContext::new();
+        let mode = PropagationModeKey::new(arena.nil(), None, false);
+        let mut memo = PropagateResultMemo::default();
+        memo.set_enabled(true);
+        assert!(
+            memo.key(box_tree, slots.id(), ui.id(), mode, &[], false)
+                .is_none(),
+            "a plain call waits for the warm-up"
+        );
+        assert!(
+            memo.key(box_tree, slots.id(), ui.id(), mode, &[], true)
+                .is_some(),
+            "a call that allocates an identity is keyed from the first call"
+        );
     }
 }
