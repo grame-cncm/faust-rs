@@ -1577,6 +1577,15 @@ impl<'a> ForwardADTransform<'a> {
             _ => return None,
         };
         let (&clock, held) = payload.split_first()?;
+        // The clock is opaque to the derivative (an iteration count, a
+        // comparison), but it is a signal of the transformed program: a
+        // clock that reads a held lane of this block or of a nested one
+        // through a feedback (the library form of `repeat`: continue while
+        // the flag the body produced was non-zero) must read the rebuilt
+        // recursion, whose slots are the augmented block's lanes. Pushed
+        // untransformed, it read the flag of the pre-transform twin, and an
+        // augmented loop ran one iteration per sample (2026-09-19).
+        let clock = self.transform(clock).primal;
         let mut new_payload =
             Vec::with_capacity(1 + held.len() * self.bundle_lane_count() as usize);
         new_payload.push(clock);

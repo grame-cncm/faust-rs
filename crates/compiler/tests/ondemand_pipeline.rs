@@ -819,6 +819,50 @@ fn fad_around_nested_block_whose_unreached_flag_is_its_own_clock() {
 /// Nonlinear fad-*outside*: `fad((clk, x) : ondemand((g·x)²), g)` — the block is
 /// nonlinear in the seed, so the augmented tangent held-output is `2·g·x²`.
 /// Exercises OD_aug through a nonlinear body; gradient checked exactly.
+/// A nested block whose held flag decides, through a feedback, whether the
+/// enclosing integer block iterates again (the library form of `repeat`):
+/// the body is *stateful*, a counter, so that the number of iterations the
+/// augmented block runs is observable. With a flag always 1 and a clock of 5
+/// the counter reads 5, 10, 15, … per sample; with a flag `c % 5 != 3` it
+/// reads 3, 8, 13, …. The seed reaches the body (`+ 0.0 * g`), which is what
+/// makes `augment_block` rebuild the inner block. Before the fix of
+/// 2026-09-19 the augmented block kept its *untransformed* clock, which read
+/// the flag of the pre-transform twin, and ran one iteration per sample.
+#[test]
+fn fad_around_nested_block_runs_the_iterations_its_flag_asks_for() {
+    for (flag, expected) in [
+        ("1", [5.0_f32, 10.0, 15.0, 20.0]),
+        ("(c % 5) != 3", [3.0, 8.0, 13.0, 18.0]),
+    ] {
+        let data = vec![0.0_f32; 4];
+        let out = run_od_fad_source(
+            "fad_nested_flag_iterations",
+            format!(
+                r#"g = hslider("g", 0.5, -10, 10, 0.001);
+                   C(z) = c <: _, ({flag}) with {{ c = (+(1.0 + 0.0 * g)) ~ _; }};
+                   shell(t, x) = (gate ~ (!, _)) : (_, !)
+                   with {{ gate(go) = ((go | (t != t')), x) : ondemand(C); }};
+                   t = (+(1)) ~ _;
+                   process = fad((5, t, _) : ondemand(shell), g);"#
+            ),
+            std::slice::from_ref(&data),
+        );
+        assert_eq!(out.len(), 2, "fad bundle = [primal, tangent]");
+        for (n, &e) in expected.iter().enumerate() {
+            assert!(
+                (out[0][n] - e).abs() < 1.0e-6,
+                "flag {flag}, frame {n}: the counter reads {} where {e} iterations were asked",
+                out[0][n]
+            );
+            assert!(
+                out[1][n].abs() < 1.0e-6,
+                "flag {flag}, frame {n}: tangent {} vs 0",
+                out[1][n]
+            );
+        }
+    }
+}
+
 #[test]
 fn fad_around_ondemand_nonlinear_body_gradient_is_exact() {
     let clk = vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
