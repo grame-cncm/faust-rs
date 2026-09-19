@@ -863,6 +863,52 @@ fn fad_around_nested_block_runs_the_iterations_its_flag_asks_for() {
     }
 }
 
+/// Open defect (2026-09-19, found by faust-diff-ts808): the shell of `repeat`
+/// (a boolean block gated by "first iteration or the held flag" inside an
+/// integer block) whose inputs are a recursive signal `r` *and* its delay
+/// `r'`, under `fad`. On the interpreter the `fad` copy is wrong even alone:
+/// on an impulse it takes one Newton step at frame 0 (it outputs `r` itself)
+/// and diverges from there, on both widths, through the impulse runner as
+/// here. On Cranelift (`faustprobe`) the `fad` copy alone is right and is
+/// wrong (its lane stays 0) only when the plain copy is consumed in the same
+/// program. A single integer `ondemand` on the same inputs, the shell on
+/// `(r, x')`, `(x, x')` or `r'` alone, and two different plain blocks on
+/// `(r, r')` are all right. The mechanism is not isolated; the test records
+/// the shape and is ignored until it is fixed.
+#[test]
+#[ignore = "open defect: fad through a repeat shell on inputs (r, r') runs one iteration on the interpreter, none on Cranelift beside the plain copy"]
+fn fad_and_plain_copies_of_a_repeat_shell_on_a_recursion_and_its_delay_agree() {
+    // an impulse: with a sine starting at 0 the two copies agree, with an
+    // impulse the fad copy takes one Newton step at frame 0 (it outputs the
+    // input r itself) and diverges from there
+    let mut data = vec![0.0_f32; 64];
+    data[0] = 1.0;
+    let out = run_od_fad_source(
+        "fad_plain_shared_repeat_shell",
+        r#"g = hslider("g", 0.5, -10, 10, 0.001);
+           r(x) = (\(w).((x - x' + 0.7 * w) / 1.3)) ~ _;
+           step(a, b, vp, v) = v - (v * v * v + v - a * g - 0.3 * b - 0.5 * vp) / (3.0 * v * v + 1.0);
+           C(t, a, b, vp) = v, (abs(v - v') > 1e-6) with { v = (\(w).(step(a, b, vp, w))) ~ _; };
+           shell(t, a, b, vp) = (gate ~ (!, _)) : (_, !)
+           with { gate(go) = ((go | (t != t')), t, a, b, vp) : ondemand(C); };
+           t = (+(1)) ~ _;
+           blk(x, vp) = (32, t, r(x), r(x)', vp) : ondemand(shell);
+           m(x) = (\(vp).(blk(x, vp))) ~ _;
+           process = _ <: m, (fad(m, g) : _, !);"#
+            .to_string(),
+        std::slice::from_ref(&data),
+    );
+    assert_eq!(out.len(), 2);
+    for n in 0..data.len() {
+        assert!(
+            (out[0][n] - out[1][n]).abs() < 1.0e-6,
+            "frame {n}: plain {} vs fad primal {}",
+            out[0][n],
+            out[1][n]
+        );
+    }
+}
+
 #[test]
 fn fad_around_ondemand_nonlinear_body_gradient_is_exact() {
     let clk = vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
