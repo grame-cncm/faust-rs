@@ -923,3 +923,57 @@ fn fad_tangent_passes_through_a_bargraph() {
         }
     }
 }
+
+// ── A fad box shared by the two branches of a recursion ──────────────────────
+
+/// `f ~ f` with `f = fad(*(g) : +(1), g)`: the `fad` sits at the root of
+/// both branches, so the recursion is in `ExpandAfterRec` mode and the
+/// tangent bundle is emitted after the group over the seeds every
+/// application appended. Two applications of one box are two seed
+/// contributions, whatever the box's sharing, so the program has three
+/// lanes, `[y, dy/dg, dy/dg]`, the same as `fad(f0 ~ f0, (g, g))` around
+/// the plain recursion. The arity used to count the shared box once and
+/// reject the program with an output arity mismatch (2 expected, 3 got).
+#[test]
+fn fad_shared_by_both_branches_of_a_recursion_seeds_once_per_application() {
+    let base = 0.5f32;
+    let eps = 1e-3f32;
+    let fad_source = |g: f32| format!("g = {g}; f = fad(*(g) : +(1), g); process = f ~ f;");
+    let outer_source =
+        |g: f32| format!("g = {g}; f0 = *(g) : +(1); process = fad(f0 ~ f0, (g, g));");
+    let primal_source = |g: f32| format!("g = {g}; f0 = *(g) : +(1); process = f0 ~ f0;");
+    let frames = 12;
+
+    let shared = run_interp_temp_source("fad-shared-rec", &fad_source(base), frames);
+    let outer = run_interp_temp_source("fad-shared-rec-outer", &outer_source(base), frames);
+    let primal = run_interp_temp_source("fad-shared-rec-primal", &primal_source(base), frames);
+    let plus = run_interp_temp_source("fad-shared-rec-plus", &primal_source(base + eps), frames);
+    let minus = run_interp_temp_source("fad-shared-rec-minus", &primal_source(base - eps), frames);
+
+    assert_eq!(
+        shared.len(),
+        3,
+        "one primal lane and one tangent lane per application"
+    );
+    assert_eq!(outer.len(), 3);
+    assert_eq!(primal.len(), 1);
+    for frame in 0..frames {
+        assert_eq!(
+            shared[0][frame], primal[0][frame],
+            "primal lane at frame {frame}"
+        );
+        let fd = (plus[0][frame] - minus[0][frame]) / (2.0 * eps);
+        for lane in 1..3 {
+            assert_close(
+                shared[lane][frame],
+                fd,
+                1e-2,
+                &format!("tangent lane {lane} vs central difference at frame {frame}"),
+            );
+            assert_eq!(
+                shared[lane][frame], outer[lane][frame],
+                "tangent lane {lane} vs the outer fad with a doubled seed at frame {frame}"
+            );
+        }
+    }
+}

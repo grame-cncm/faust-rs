@@ -367,32 +367,32 @@ pub(crate) fn contains_forward_ad(
     Ok(found)
 }
 
-/// Counts the number of [`FlatNodeKind::ForwardAD`] nodes reachable in a flat
-/// box tree. Used by `box_arity_typed` to predict the tangent expansion in
-/// recursive compositions.
+/// Counts the applications of [`FlatNodeKind::ForwardAD`] a flat box tree
+/// makes, one per reference. Used by `box_arity_typed` to predict the tangent
+/// expansion of an `ExpandAfterRec` recursion: the propagation appends the
+/// seeds of a suppressed `fad` each time the box is propagated, so a `fad`
+/// box the two branches of a `~` share (`f ~ f`) is two applications and
+/// contributes its seeds twice. `memo` caches the count per box so a shared
+/// subtree is walked once and counted at every reference.
 pub(crate) fn count_fad_nodes(
     arena: &TreeArena,
     box_tree: FlatBoxId,
-    visited: &mut AHashSet<FlatBoxId>,
+    memo: &mut AHashMap<FlatBoxId, usize>,
 ) -> Result<usize, PropagateError> {
-    if !visited.insert(box_tree) {
-        return Ok(0);
+    if let Some(&count) = memo.get(&box_tree) {
+        return Ok(count);
     }
-    match flat_node_kind(arena, box_tree)? {
-        FlatNodeKind::ForwardAD { .. } => Ok(1),
+    let count = match flat_node_kind(arena, box_tree)? {
+        FlatNodeKind::ForwardAD { .. } => 1,
         FlatNodeKind::Rec(left, right)
         | FlatNodeKind::Seq(left, right)
         | FlatNodeKind::Par(left, right)
         | FlatNodeKind::Split(left, right)
         | FlatNodeKind::Merge(left, right) => {
-            let l = count_fad_nodes(arena, left, visited)?;
-            let r = count_fad_nodes(arena, right, visited)?;
-            Ok(l + r)
+            count_fad_nodes(arena, left, memo)? + count_fad_nodes(arena, right, memo)?
         }
         FlatNodeKind::ReverseAD { body, seeds } => {
-            let b = count_fad_nodes(arena, body, visited)?;
-            let s = count_fad_nodes(arena, seeds, visited)?;
-            Ok(b + s)
+            count_fad_nodes(arena, body, memo)? + count_fad_nodes(arena, seeds, memo)?
         }
         FlatNodeKind::Symbolic { body }
         | FlatNodeKind::Metadata { body }
@@ -401,9 +401,11 @@ pub(crate) fn count_fad_nodes(
         | FlatNodeKind::TGroup { body }
         | FlatNodeKind::Ondemand(body)
         | FlatNodeKind::Upsampling(body)
-        | FlatNodeKind::Downsampling(body) => count_fad_nodes(arena, body, visited),
-        _ => Ok(0),
-    }
+        | FlatNodeKind::Downsampling(body) => count_fad_nodes(arena, body, memo)?,
+        _ => 0,
+    };
+    memo.insert(box_tree, count);
+    Ok(count)
 }
 
 /// `ExpandAfterRec` preserves the historical Rust behavior where `ForwardAD`

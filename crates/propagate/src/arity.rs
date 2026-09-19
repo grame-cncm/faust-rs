@@ -381,9 +381,11 @@ fn box_arity_flat_inner(
             let outputs = match fad_mode {
                 RecFadMode::None => core_outputs,
                 RecFadMode::ExpandAfterRec => {
-                    let mut visited = AHashSet::new();
-                    let n_left = count_fad_nodes(arena, left, &mut visited)?;
-                    let n_right = count_fad_nodes(arena, right, &mut visited)?;
+                    // One tangent bundle per `fad` application: a box both
+                    // branches share is applied twice and seeds twice.
+                    let mut memo = AHashMap::new();
+                    let n_left = count_fad_nodes(arena, left, &mut memo)?;
+                    let n_right = count_fad_nodes(arena, right, &mut memo)?;
                     core_outputs * (1 + n_left + n_right)
                 }
                 RecFadMode::AugmentedState => core_outputs,
