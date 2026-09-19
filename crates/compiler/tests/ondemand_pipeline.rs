@@ -219,6 +219,16 @@ fn clock_inference_and_hgraph_run_on_prepared_ondemand_program() {
 /// Compiles a temp DSP source through the interpreter fast lane and runs it
 /// with explicit per-channel inputs.
 fn run_interp_with_inputs(stem: &str, source: &str, inputs: &[Vec<f32>]) -> Vec<Vec<f32>> {
+    run_interp_with_inputs_opt(stem, source, inputs, None)
+}
+
+/// The same with the interpreter's bytecode optimiser level given (`None`: the default).
+fn run_interp_with_inputs_opt(
+    stem: &str,
+    source: &str,
+    inputs: &[Vec<f32>],
+    opt_level: Option<i32>,
+) -> Vec<Vec<f32>> {
     use std::io::Cursor;
 
     use codegen::backends::interp::{FbcDspInstance, InterpOptions, read_fbc};
@@ -231,7 +241,10 @@ fn run_interp_with_inputs(stem: &str, source: &str, inputs: &[Vec<f32>]) -> Vec<
     let fbc = Compiler::new()
         .compile_file_default_to_interp_with_lane(
             &path,
-            &InterpOptions::default(),
+            &InterpOptions {
+                opt_level: opt_level.unwrap_or(InterpOptions::default().opt_level),
+                ..InterpOptions::default()
+            },
             SignalFirLane::TransformFastLane,
         )
         .unwrap_or_else(|e| panic!("{stem}: interp compilation failed: {e}"));
@@ -866,42 +879,47 @@ fn fad_around_nested_block_runs_the_iterations_its_flag_asks_for() {
 /// Open defect (2026-09-19, found by faust-diff-ts808): the shell of `repeat`
 /// (a boolean block gated by "first iteration or the held flag" inside an
 /// integer block) whose inputs are a recursive signal `r` *and* its delay
-/// `r'`, under `fad`. On the interpreter the `fad` copy is wrong even alone:
-/// on an impulse it takes one Newton step at frame 0 (it outputs `r` itself)
-/// and diverges from there, on both widths, through the impulse runner as
-/// here. On Cranelift (`faustprobe`) the `fad` copy alone is right and is
-/// wrong (its lane stays 0) only when the plain copy is consumed in the same
-/// program. A single integer `ondemand` on the same inputs, the shell on
-/// `(r, x')`, `(x, x')` or `r'` alone, and two different plain blocks on
-/// `(r, r')` are all right. The mechanism is not isolated; the test records
+/// `r'`, with `r` driven by a sum of three oscillators computed in the
+/// program, consumed both plainly and through `fad` in one program: the
+/// `fad` copy's lane is a constant while the plain copy is right. Each copy
+/// alone is right, and so are: the same with one oscillator, or with the
+/// excitation as a program input; a single integer `ondemand` on `(r, r')`;
+/// the shell on `(r, x')`, `(x, x')` or `r'` alone; two different plain
+/// blocks on `(r, r')`. Reproduced on the interpreter (here, and through the
+/// impulse runner) and on Cranelift (`faustprobe`), so it sits in the shared
+/// pipeline after the differentiation rules. Not isolated; the test records
 /// the shape and is ignored until it is fixed.
 #[test]
-#[ignore = "open defect: fad through a repeat shell on inputs (r, r') runs one iteration on the interpreter, none on Cranelift beside the plain copy"]
+#[ignore = "open defect: the fad copy of a repeat shell on (r, r'), r a sum of three oscillators, is constant when the plain copy is consumed too"]
 fn fad_and_plain_copies_of_a_repeat_shell_on_a_recursion_and_its_delay_agree() {
-    // an impulse: with a sine starting at 0 the two copies agree, with an
-    // impulse the fad copy takes one Newton step at frame 0 (it outputs the
-    // input r itself) and diverges from there
-    let mut data = vec![0.0_f32; 64];
-    data[0] = 1.0;
-    let out = run_od_fad_source(
+    let data = vec![0.0_f32; 256];
+    let out = run_interp_with_inputs(
         "fad_plain_shared_repeat_shell",
         r#"g = hslider("g", 0.5, -10, 10, 0.001);
-           r(x) = (\(w).((x - x' + 0.7 * w) / 1.3)) ~ _;
-           step(a, b, vp, v) = v - (v * v * v + v - a * g - 0.3 * b - 0.5 * vp) / (3.0 * v * v + 1.0);
+           x = 0.2 * (0.6 * os.osc(110.0) + 0.3 * os.osc(220.0) + 0.15 * os.osc(330.0));
+           r = (\(w).((x - x' + 0.7 * w) / 1.3)) ~ _;
+           step(a, b, vp, v) = v - (v * v * v + v - a * exp(g) - 0.3 * b - 0.5 * vp) / (3.0 * v * v + 1.0);
            C(t, a, b, vp) = v, (abs(v - v') > 1e-6) with { v = (\(w).(step(a, b, vp, w))) ~ _; };
            shell(t, a, b, vp) = (gate ~ (!, _)) : (_, !)
            with { gate(go) = ((go | (t != t')), t, a, b, vp) : ondemand(C); };
            t = (+(1)) ~ _;
-           blk(x, vp) = (32, t, r(x), r(x)', vp) : ondemand(shell);
-           m(x) = (\(vp).(blk(x, vp))) ~ _;
-           process = _ <: m, (fad(m, g) : _, !);"#
-            .to_string(),
+           blk(vp) = (32, t, r, r', vp) : ondemand(shell);
+           m = (\(vp).(blk(vp))) ~ _;
+           process = _ : !, m, (fad(m, g) : _, !);"#,
         std::slice::from_ref(&data),
     );
     assert_eq!(out.len(), 2);
+    let spread = out[1]
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+    assert!(
+        spread.1 - spread.0 > 1.0e-3,
+        "the fad primal lane is constant: {:?}",
+        spread
+    );
     for n in 0..data.len() {
         assert!(
-            (out[0][n] - out[1][n]).abs() < 1.0e-6,
+            (out[0][n] - out[1][n]).abs() < 1.0e-5,
             "frame {n}: plain {} vs fad primal {}",
             out[0][n],
             out[1][n]
