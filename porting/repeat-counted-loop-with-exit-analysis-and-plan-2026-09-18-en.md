@@ -1,10 +1,15 @@
-# `iterate`: a counted clock loop whose exit is decided inside. Analysis and plan
+# `repeat`: a counted clock loop whose exit is decided inside. Analysis and plan
 
 Date: 2026-09-18
 
 Status: **the semantics is reproducible with the existing wrappers** (§1.5,
 measured the same day); the compiler primitive of §2 is kept as a design for
 a code-generation improvement, not as a need. §8 records what landed.
+
+Renamed 2026-09-19: the primitive is `repeat`. The version of 2026-09-18
+called it `iterate`, a name the journal entries and the commit messages of
+that day keep; the file was renamed with it. The semantics, without the
+implementation, is the subject of `docs/repeat-note-en.md` (and `-fr.md`).
 
 ## Scope
 
@@ -123,8 +128,8 @@ in as an input, differs from its value at the previous iteration in local
 time; no feedback from outside is needed. For any arity:
 
 ```faust
-// C : n -> m + 1, its last output the continue flag; iterate(C) : n + 1 -> m
-iterate(C) = (_, (ba.time + 1, si.bus(n))) : ondemand(shell)
+// C : n -> m + 1, its last output the continue flag; repeat(C) : n + 1 -> m
+repeat(C) = (_, (ba.time + 1, si.bus(n))) : ondemand(shell)
 with {
     n = inputs(C);
     m = outputs(C) - 1;
@@ -146,7 +151,7 @@ kept: equal to the unrolled solver to 1.1e-12, the same steps per sample as
 the two-layer form (2.4, 3.0, 3.5 on the three moving inputs) and cheaper
 than it, since the skipped iterations no longer recompute the residual:
 
-| input | two-layer form of §1.2 | library `iterate` |
+| input | two-layer form of §1.2 | library `repeat` |
 |---|---|---|
 | constant | 0.32 ms | 0.25 ms |
 | sine, 100 Hz | 5.9 ms | 5.3 ms |
@@ -168,7 +173,7 @@ block (`Seq(od_aug, 0)`), an audio-rate value under a block environment,
 which survived inside the recursion group feeding the flag back. The
 literal now stays a literal (`forward_ad.rs`, commit of the day, with the
 nested-flag shape as its test); the gradient of the solver through the
-library `iterate` then equals the central difference (§8).
+library `repeat` then equals the central difference (§8).
 
 So the plan below changes status: **W4 first**, the library function and
 its documentation, on the compiler as it is; W1 to W3 only if the code
@@ -182,10 +187,10 @@ measured difference being under the spread.
 A fourth clocked wrapper, next to `ondemand`, `upsampling`, `downsampling`:
 
 ```faust
-iterate(C)
+repeat(C)
 ```
 
-**Arity.** If `C : u → v+1` then `iterate(C) : u+1 → v`. The extra first
+**Arity.** If `C : u → v+1` then `repeat(C) : u+1 → v`. The extra first
 input is the clock `H`, as for the three others; the last output of `C` is
 the *continue* flag, consumed by the primitive, not exposed. `C` must have
 at least one output besides the flag (`v ≥ 1`); a body with the flag alone
@@ -221,11 +226,11 @@ alternative, a *stop* flag with a name such as `until`, is decision D1.
 
 Propagation (`propagate/src/engine.rs`, `propagate_clocked_wrapper`) builds
 today `SIGOD(Clocked(env, clock), PermVar(Clocked(env, y_i))...)` with a
-fresh `ClockDomainKind`. The new node is a new tag, `SIGITER`, with a new
-`ClockDomainKind::Iterate` and `ClockedWrapperKind::Iterate`:
+fresh `ClockDomainKind`. The new node is a new tag, `SIGREPEAT`, with a new
+`ClockDomainKind::Repeat` and `ClockedWrapperKind::Repeat`:
 
 ```
-SIGITER(Clocked(env, clock), PermVar(Clocked(env, y_1)), …, PermVar(Clocked(env, y_v)), Clocked(env, flag))
+SIGREPEAT(Clocked(env, clock), PermVar(Clocked(env, y_1)), …, PermVar(Clocked(env, y_v)), Clocked(env, flag))
 ```
 
 The flag is the last lane, a `Clocked` payload **without** a `PermVar`: it
@@ -243,7 +248,7 @@ as in the table above.
 
 ### 2.3 The lowering
 
-`decode_clocked_wrapper`: for `Iterate`, the holds are all lanes but the
+`decode_clocked_wrapper`: for `Repeat`, the holds are all lanes but the
 last, the flag is the last. `select_guard_shape`: a fourth shape,
 `CountedLoopWithExit`, for an integer non-boolean clock; `BoolIf` for a
 boolean one (the flag lowered and discarded, or not lowered at all: it
@@ -255,7 +260,7 @@ the sample-end phase (cursor bump, `IfWrapping` advances); `lOd = lOd + 1`
 closes the sample-end phase. `ensure_guarded_block` wraps the body in
 `WhileLoop((lOd < H) & (iStop == 0), body)` under the existing `if (H !=
 0)` guard. The shape of the generated C++ for the solver of §1.2 written
-with `iterate` (a sketch of what W2 must emit, not an emission):
+with `repeat` (a sketch of what W2 must emit, not an emission):
 
 ```c++
 if (iSlow0 != 0) {
@@ -311,13 +316,13 @@ so no C++ differential, as for `fad`; the mirror points for a later C++
 port are `boxOndemand` and `propagate.cpp`'s clock environment, and
 `generateOD` in `compile_scal.cpp`.
 
-### 2.7 `iterate` as the general form
+### 2.7 `repeat` as the general form
 
-Asked after §1.5: if `iterate` were the primitive, would the three others
+Asked after §1.5: if `repeat` were the primitive, would the three others
 be instances of it? They are, up to two orthogonal features, and this was
 measured:
 
-- **`ondemand`**, both readings: `iterate` with a flag constantly 1. The
+- **`ondemand`**, both readings: `repeat` with a flag constantly 1. The
   clock is cast to int by the normal form (`promote_clocked_family`), so
   the body runs `⌊H⌋` times whatever the clock's range; the `if` of a range
   within [0, 1] is the emission of the case `⌊H⌋ ∈ {0, 1}`, an
@@ -341,7 +346,7 @@ set. So the layering is: one loop primitive with a bound and a flag; the
 zero-stuffing of inputs as a body-level rewrite (library or compiler); the
 rate substitution as a domain property; the three keywords as derived
 forms, kept for the programs and the C++ that have them. A compiler that
-took `iterate` as its one guard shape would emit the `if`, the counted loop
+took `repeat` as its one guard shape would emit the `if`, the counted loop
 and the modulo as optimizations of the bounded `while` when the flag is
 constant and the bound has the right range, and the vector-mode checkers
 would model one kind. That is the design of §2 seen from the other end; it
@@ -349,10 +354,24 @@ does not change its surface (§3) or its order (§4).
 
 ### 2.8 Decisions
 
-- **D1, name and polarity.** `iterate(C)` with a *continue* flag, as
-  proposed; or `until(C)` with a *stop* flag. `loop` is out: 24 uses as an
-  identifier in the libraries. `iterate`, `until`, `repeat`, `whilst` have
-  none.
+- **D1, name and polarity.** The name is `repeat` (decided 2026-09-19;
+  the first version of this document said `iterate`). `loop` was out: 24
+  uses as an identifier in the libraries; `iterate`, `until`, `repeat`,
+  `whilst` have none. The polarity stays open. The last output of the body
+  can mean *continue* (non-zero: run again) or *stop* (non-zero: leave).
+  The model of §2.1 is the same either way; what changes is the sense of
+  one bit, and it changes it in every program: a body whose flag is
+  `abs(F) > tol` under the continue reading must become `abs(F) <= tol`
+  under the stop reading, and a program written for one and compiled under
+  the other runs one iteration where it should run to convergence, or the
+  whole budget where it should stop at once. For *continue*: it is what the
+  library form of §1.5 implements and measures, and it follows the
+  convention of `op.gated`, whose last output is a gate with 1 meaning
+  "active". For *stop*: the name reads `repeat … until`, and a convergence
+  test is naturally a stop condition ("converged, so stop"). The decision
+  has to be taken before the first program is written (W4), and cannot be
+  revisited afterwards without changing the meaning of every program;
+  §8 of `docs/repeat-note-en.md` states it the same way.
 - **D2, minimal body.** `v ≥ 1` held output besides the flag (proposed), or
   allow a flag-only body (a loop with state and no output has no observable
   effect in Faust; reject).
@@ -455,7 +474,7 @@ sites that name `Upsampling` today:
 | boxes | `builder.rs`, `matcher.rs` (2), `print.rs` (3), tests |
 | eval | `apply.rs` (arity: `u+1 → v`) |
 | propagate | `flat.rs` (6), `engine.rs` (7), `arity.rs`, `ui_build.rs`, `profile.rs`, `error.rs`, `result_memo.rs`, `clock_domain.rs` (2), `forward_ad.rs` (6), `reverse_ad.rs`, `stateful_rad.rs`, tests |
-| signals | `lib.rs` (tag, `SigMatch::Iterate`, builder, dump), tests |
+| signals | `lib.rs` (tag, `SigMatch::Repeat`, builder, dump), tests |
 | sigtype | `rules.rs` |
 | normalize | `normalform.rs` |
 | transform | `clk_env/mod.rs`, `signal_prepare/verify.rs`, `hgraph/mod.rs` (2), `signal_fir/module/clocked.rs` (4, plus the new shape), `core_lowering.rs` (3), `delay/plan.rs`, `tests/coverage.rs`; vector: `clock_ad/{build,check,model,simulation,tests}.rs`, `assemble/{check,materialize}.rs`, `analysis/{effects,dependencies}.rs`, `lower/signal.rs` |
@@ -470,7 +489,7 @@ goes into functions of its own.
 
 ## 4. Plan
 
-Order after §1.5: W4 alone lands the semantics (the library `iterate`, the
+Order after §1.5: W4 alone lands the semantics (the library `repeat`, the
 solver on it, the documents); W1 to W3 are the compiler primitive, kept
 here for the code generation, and W5 qualifies whatever lands. Each phase
 has its producer, its check written before the producer, and the
@@ -481,18 +500,18 @@ Gates at the end of every phase: the crate tests, `golden-check`,
 ### W1, front end and propagation
 
 Producer: keyword, grammar rule, box tag and builder, print and draw, eval
-arity, `FlatNodeKind::Iterate`, propagation to `SIGITER` with
-`ClockDomainKind::Iterate`, constant-clock folds, sigtype, normal form,
+arity, `FlatNodeKind::Repeat`, propagation to `SIGREPEAT` with
+`ClockDomainKind::Repeat`, constant-clock folds, sigtype, normal form,
 signal_prepare acceptance, and the clean refusal by `signal_fir`
 (`FRS-SFIR-0007`, "not lowered yet") until W2, as P0 did for the three
 others.
 
 Check: `crates/compiler/tests/ondemand_pipeline.rs` gains the arity rule
-(`(_, _) : iterate(\(x).(x + 1, x > 3))` has 2 inputs, 1 output; a body
+(`(_, _) : repeat(\(x).(x + 1, x > 3))` has 2 inputs, 1 output; a body
 with the flag alone is refused), the DAG shape through
 `--dump-sig-dag` (the last lane a `Clocked` without `PermVar`, the others
 `PermVar`), the folds (`H` constant 0 and 1), the memo (600 references of
-one shared `iterate` box share domains, as `clocked_shared_box_one_domain`),
+one shared `repeat` box share domains, as `clocked_shared_box_one_domain`),
 and the structured refusal by `signal_fir`.
 
 Mutation: the flag wrapped in a `PermVar` like a hold; the shape test
@@ -506,15 +525,15 @@ FIR verifier fixtures.
 
 Check, structural (`clocked_emission_structure.rs`): the C++ of the solver
 holds one `while ((lOd0 < ...) & (iStop0 == 0))` and no `for` for the
-`iterate` block; `iStop0` is assigned after the `fPerm` stores and before
+`repeat` block; `iStop0` is assigned after the `fPerm` stores and before
 the cursor bump. Check, numeric (interpreter through
 `run_interp_with_inputs`, Cranelift through `faustprobe` in the output
 snapshots): flag never raised, equal sample for sample to the integer
 `ondemand` with the same body; flag raised at iteration `k`, a `~` counter
 in the body reads `k + 1`; flag raised at iteration 0, exactly one; `H =
 0`, the outputs hold; local time, a delay in the body counts executed
-iterations only; an `iterate` nested in an `ondemand` and in an `iterate`.
-The overview's solver written with `iterate` against the unrolled
+iterations only; an `repeat` nested in an `ondemand` and in an `repeat`.
+The overview's solver written with `repeat` against the unrolled
 `newton(8)`: equal to 1e-12, and the steps counted equal those of the
 two-layer form on the four inputs of §1.2.
 
@@ -526,13 +545,13 @@ with a false flag runs twice).
 
 ### W3, differentiation
 
-Producer: `augment_block` for `Iterate`, primal only for the flag lane;
+Producer: `augment_block` for `Repeat`, primal only for the flag lane;
 `rad` messages.
 
 Check: the tangent of the solver's solution with respect to `fb` on a
 constant input equals the central difference (−0.240418 against −0.24042
 in the two-layer form); a structural test on the augmented payload's arity,
-`1 + v (1 + n) + 1` lanes for `n` seeds; `rad` across an `iterate` refused
+`1 + v (1 + n) + 1` lanes for `n` seeds; `rad` across an `repeat` refused
 with the kind named.
 
 Mutation: the flag lane augmented like a hold; the arity test fails, and
@@ -540,7 +559,7 @@ the lowering refuses the block.
 
 ### W4, library and documents (first)
 
-Producer: `op.iterate(C)` as in §1.5, `op.newton_iter(K, tol, F)` on it (the
+Producer: `op.repeat(C)` as in §1.5, `op.newton_iter(K, tol, F)` on it (the
 solver of §1.2 in one layer: warm start, the outer skip on the held
 solution, the exit on the residual, its step count as a second output so
 that a program can see a budget hit), both with their `#### Test` block;
@@ -549,7 +568,7 @@ the two-layer form as what they are made of; `docs/ondemand-note-*.md` with
 the pattern (a bounded loop with an exit, in the "recipes" of the note).
 
 Check: `crates/compiler/tests/optimizers_lib.rs` runs the four semantics
-cases of §1.5 on `op.iterate` (5, 1, 3 then 2, hold) and `newton_iter`
+cases of §1.5 on `op.repeat` (5, 1, 3 then 2, hold) and `newton_iter`
 against `newton(8)` on the four inputs, steps counted; the tangent of the
 solution through it against the central difference; the doc numbers
 re-measured with the library form and written from the measurement.
@@ -560,7 +579,7 @@ not 1 per sample).
 
 ### W5, qualification
 
-Corpus fixtures `tests/corpus/iterate_*.dsp` (golden-eligible: no
+Corpus fixtures `tests/corpus/repeat_*.dsp` (golden-eligible: no
 project-local library import), `golden-check` blessed and its diff read;
 the output snapshots re-recorded for the new `faustprobe` cases; D4
 settled; `code-graphs`, `structure-check`, `emission-determinism`; the
@@ -577,7 +596,7 @@ values, tangent), recorded now so that the primitive is held to them.
 ## 6. Risks
 
 - **The keyword.** A new keyword breaks any program using it as an
-  identifier; `iterate` and `until` have no use in `faustlibraries` and the
+  identifier; `repeat` and `until` have no use in `faustlibraries` and the
   project libraries today (D1), `loop` has 24.
 - **The `WhileLoop` emitters** have never run on a real program: their
   first fixtures are this feature's; the FIR verifier and the structural
@@ -591,7 +610,7 @@ values, tangent), recorded now so that the primitive is held to them.
 
 ## 7. Alternatives considered
 
-- **No compiler change, the library `iterate` of §1.5**: the semantics in
+- **No compiler change, the library `repeat` of §1.5**: the semantics in
   full, the exit read on the iterate, one layer for the user; the one taken.
 - **No compiler change, estimate the count** from the residual of the warm
   start by the quadratic convergence: keeps everything, trims part of the 4
@@ -605,12 +624,17 @@ values, tangent), recorded now so that the primitive is held to them.
 
 ## 8. Status
 
-2026-09-18. §1.5 measured the same day: the library `iterate` reproduces
+2026-09-18. §1.5 measured the same day: the library `repeat` reproduces
 the semantics with the existing wrappers, and the `fad` defect it uncovered
 is fixed (`forward_ad.rs`, `transform_seq`: a literal tangent is not
 sequenced through the block; the nested-flag shape is its test, the
 reverting mutation fails it). Gradient of the solver through the library
-`iterate` on a constant input: −0.240418 against −0.24042 by central
+`repeat` on a constant input: −0.240418 against −0.24042 by central
 difference, as through the two-layer form. W4 (the library
 function, `newton_iter`, the documents) not started; W1 to W3, the
 compiler primitive, deferred, D1 to D4 open (§2.8).
+
+2026-09-19. The primitive renamed `repeat` (D1, the name; the polarity
+stays open). Its semantics, the three wrappers as its derived forms and
+the uses that motivate it are written up without the implementation in
+`docs/repeat-note-en.md` and `docs/repeat-note-fr.md`.

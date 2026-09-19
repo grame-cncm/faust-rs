@@ -601,6 +601,6 @@ bridge of §4.4.
   iteration, section 2.5 of the optimizers overview).
 - In this repository: `porting/vector-mode-signal-level-analysis-cpp-port-plan-2026-07-10-en.md`
   (section 8, lockstep); `porting/fir-iir-reveal-activation-plan-2026-07-20-en.md`;
-  `porting/iterate-counted-loop-with-exit-analysis-and-plan-2026-09-18-en.md`
+  `porting/repeat-counted-loop-with-exit-analysis-and-plan-2026-09-18-en.md`
   (section 2.9, contraction); `libraries/optimizers-overview-en.md`
   (section 2.5).

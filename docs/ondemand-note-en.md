@@ -386,6 +386,7 @@ that way.
 
 ## See also
 
+- [repeat-note-en.md](repeat-note-en.md) — `repeat`, a bounded loop with an exit, and the three primitives as its derived forms
 - [fad-note-en.md](fad-note-en.md) — forward-mode differentiation
 - [rad-usage-en.md](rad-usage-en.md) — reverse-mode differentiation
 - [ondemand-fft-spectral-comparison-en.md](ondemand-fft-spectral-comparison-en.md) — spectral processing built on these primitives

@@ -77,6 +77,10 @@ alongside it.
 - [`ondemand-note-en.md`](ondemand-note-en.md) /
   [`-fr.md`](ondemand-note-fr.md) — clock domains in `faust-rs`: `ondemand`,
   `upsampling`, `downsampling`.
+- [`repeat-note-en.md`](repeat-note-en.md) /
+  [`-fr.md`](repeat-note-fr.md) — the `repeat` primitive (a bounded loop
+  with an exit): its semantics, and `ondemand` / `upsampling` /
+  `downsampling` as its derived forms; no implementation.
 - [`ondemand-fft-spectral-comparison-en.md`](ondemand-fft-spectral-comparison-en.md)
   — frame-rate FFT via `ondemand`, compared with existing spectral
   environments.

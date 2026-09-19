@@ -415,6 +415,7 @@ par trame.
 
 ## Voir aussi
 
+- [repeat-note-fr.md](repeat-note-fr.md) — `repeat`, une boucle bornée avec sortie, et les trois primitives comme formes dérivées
 - [fad-note-en.md](fad-note-en.md) — différentiation en mode direct
 - [rad-usage-en.md](rad-usage-en.md) — différentiation en mode inverse
 - [ondemand-fft-spectral-comparison-en.md](ondemand-fft-spectral-comparison-en.md) — traitement spectral bâti sur ces primitives
