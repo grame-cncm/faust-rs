@@ -962,7 +962,8 @@ fn fad_and_plain_copies_of_a_repeat_shell_body() {
 }
 
 /// The copy `fad` builds of a block owns every subtree of the block, the
-/// ones no seed reaches included: a delay, a recursion, a bargraph, a
+/// ones no seed reaches included: a delay, a recursion, a bargraph (on an
+/// input and on the output, where its tangent passes through), a
 /// mutable table, a nested block (with or without inputs of its own), under
 /// each of the three wrappers and at both interpreter optimisation levels.
 /// A subtree kept as it was would be annotated with the original's domain
@@ -981,6 +982,7 @@ fn fad_beside_plain_owns_every_subtree_of_the_block() {
         ("((x, x * 2) : ((+, +) ~ (_, _)) : (!, _)) * g", true),
         ("(x' : hbargraph(\"meter\", -10, 10)) * g", true),
         ("rwtable(4, 0.0, 0, x', 0) * g", true),
+        ("(x : + ~ _) * g : hbargraph(\"meter\", -100, 100)", true),
         ("(2, x) : ondemand(*(g))", true),
         ("(2, x) : ondemand(+ ~ _) : *(g)", true),
         ("(x != 0, x) : ondemand(\\(y).(y' * g))", true),

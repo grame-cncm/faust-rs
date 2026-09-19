@@ -348,7 +348,11 @@
 //!
 //! ## Bargraph outputs (`vbargraph`, `hbargraph`)
 //!
-//! Zero tangent for both. Bargraphs are metering outputs, not DSP signal paths.
+//! A bargraph is the identity on its signal (`x : hbargraph(...)` outputs
+//! `x`; the meter is a side effect), so the tangent passes through, as for
+//! `attach`. Until 2026-09-19 the rule gave a zero tangent, on the reading
+//! that a bargraph is a metering output and not a signal path: a loss
+//! displayed on a meter then had a zero gradient.
 //!
 //! # Zero-tangent fallback boundary
 //! Several signal families are intentionally outside the current
@@ -1298,7 +1302,7 @@ impl<'a> ForwardADTransform<'a> {
                 let primal = SigBuilder::new(self.arena).vbargraph(control, dual.primal);
                 Dual {
                     primal,
-                    tangents: self.zero_tangent_lanes_real(),
+                    tangents: dual.tangents,
                 }
             }
             SigMatch::HBargraph(control, inner) => {
@@ -1306,7 +1310,7 @@ impl<'a> ForwardADTransform<'a> {
                 let primal = SigBuilder::new(self.arena).hbargraph(control, dual.primal);
                 Dual {
                     primal,
-                    tangents: self.zero_tangent_lanes_real(),
+                    tangents: dual.tangents,
                 }
             }
             SigMatch::FFun(ff, largs) => self.transform_ffun(sig, ff, largs),

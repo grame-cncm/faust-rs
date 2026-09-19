@@ -895,3 +895,31 @@ process = fad(x ^ y, (x, y));
         );
     }
 }
+
+/// A bargraph is the identity on its signal: the tangent passes through it,
+/// so a loss shown on a meter keeps its gradient. The rule gave a zero
+/// tangent until 2026-09-19.
+#[test]
+fn fad_tangent_passes_through_a_bargraph() {
+    let out = run_interp_temp_source(
+        "fad_through_bargraph",
+        r#"g = hslider("g", 0.5, 0, 1, 0.01);
+           t = (+(1)) ~ _;
+           process = fad(t * g : hbargraph("meter", 0, 1000), g),
+                     fad(t * g : vbargraph("meter2", 0, 1000) : *(2), g);"#,
+        4,
+    );
+    assert_eq!(out.len(), 4);
+    let expected = |n: usize, scale: f32| scale * (n + 1) as f32;
+    let lanes: [(usize, f32, &str); 4] = [
+        (0, 0.5, "primal through hbargraph"),
+        (1, 1.0, "tangent through hbargraph"),
+        (2, 1.0, "primal through vbargraph, doubled"),
+        (3, 2.0, "tangent through vbargraph, doubled"),
+    ];
+    for (lane, scale, label) in lanes {
+        for (n, &value) in out[lane].iter().enumerate() {
+            assert_close(value, expected(n, scale), 1e-6, label);
+        }
+    }
+}
