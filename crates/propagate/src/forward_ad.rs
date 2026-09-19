@@ -1337,11 +1337,18 @@ impl<'a> ForwardADTransform<'a> {
                     move |b, _p, tx| b.clocked(c, tx),
                 )
             }
-            SigMatch::ZeroPad(u, h) => self.unary_chain(
-                u,
-                move |b, p| b.zero_pad(p, h),
-                move |b, _p, tx| b.zero_pad(tx, h),
-            ),
+            SigMatch::ZeroPad(u, h) => {
+                // The factor is opaque to the derivative, as a clock is, but
+                // it is a signal of the transformed program: read from an
+                // input of a block being twinned, it carries that block's
+                // token and must be the twin's (the review of 2026-09-19).
+                let h = self.transform(h).primal;
+                self.unary_chain(
+                    u,
+                    move |b, p| b.zero_pad(p, h),
+                    move |b, _p, tx| b.zero_pad(tx, h),
+                )
+            }
             // ── Block augmentation (the P5 core) ──
             // `Seq(OD, y)` → `{ Seq(OD_aug, y), Seq(OD_aug, y') }` where
             // `OD_aug` interleaves the primal + tangent held-output lanes in the

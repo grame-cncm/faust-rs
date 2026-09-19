@@ -1048,7 +1048,8 @@ fn fad_referenced_thrice_in_a_recursion_body_over_a_stateful_block_keeps_one_ins
 /// The copy `fad` builds of a block owns every subtree of the block, the
 /// ones no seed reaches included: a delay, a recursion, a bargraph (on an
 /// input and on the output, where its tangent passes through), a
-/// mutable table, a nested block (with or without inputs of its own), under
+/// mutable table, a nested block (with or without inputs of its own, and
+/// an `upsampling` whose factor reads an input of the block), under
 /// each of the three wrappers and at both interpreter optimisation levels.
 /// A subtree kept as it was would be annotated with the original's domain
 /// inside the copy, which the clock-environment inference rejects
@@ -1070,6 +1071,7 @@ fn fad_beside_plain_owns_every_subtree_of_the_block() {
         ("(2, x) : ondemand(*(g))", true),
         ("(2, x) : ondemand(+ ~ _) : *(g)", true),
         ("(x != 0, x) : ondemand(\\(y).(y' * g))", true),
+        ("(int(x), x) : upsampling(*(g))", true),
         (
             "x * g + ((1, 0) : ondemand(\\(z).((1 : + ~ _) + z)))",
             false,
