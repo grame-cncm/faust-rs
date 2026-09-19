@@ -876,55 +876,58 @@ fn fad_around_nested_block_runs_the_iterations_its_flag_asks_for() {
     }
 }
 
-/// Open defect (2026-09-19, found by faust-diff-ts808): the shell of `repeat`
-/// (a boolean block gated by "first iteration or the held flag" inside an
-/// integer block) whose inputs are a recursive signal `r` *and* its delay
-/// `r'`, with `r` driven by a sum of three oscillators computed in the
-/// program, consumed both plainly and through `fad` in one program: the
-/// `fad` copy's lane is a constant while the plain copy is right. Each copy
-/// alone is right, and so are: the same with one oscillator, or with the
-/// excitation as a program input; a single integer `ondemand` on `(r, r')`;
-/// the shell on `(r, x')`, `(x, x')` or `r'` alone; two different plain
-/// blocks on `(r, r')`. Reproduced on the interpreter (here, and through the
-/// impulse runner) and on Cranelift (`faustprobe`), so it sits in the shared
-/// pipeline after the differentiation rules. Not isolated; the test records
-/// the shape and is ignored until it is fixed.
+/// The shell of `repeat` (a boolean block gated by "first iteration or the
+/// held flag" inside an integer block) whose inputs are a recursive signal
+/// `r` and its delay `r'`, `r` driven by three library oscillators, consumed
+/// both plainly and through `fad` in one program (found by faust-diff-ts808,
+/// 2026-09-19). Until the fix of that day the augmented twin of a block kept
+/// the original's clock-env token, `Clocked(c, u)' = Clocked(c, u')`, so the
+/// two blocks shared one domain, its local-time delays included: the twin
+/// read a first-iteration test already consumed by the original and never
+/// ran, its lane staying at 0. Each copy alone was right, and so was the
+/// same program with one oscillator or with the excitation as an input,
+/// which is why the shape is kept exactly. The twin now gets a domain of its
+/// own. The library import needs a large stack in a debug build.
 #[test]
-#[ignore = "open defect: the fad copy of a repeat shell on (r, r'), r a sum of three oscillators, is constant when the plain copy is consumed too"]
 fn fad_and_plain_copies_of_a_repeat_shell_on_a_recursion_and_its_delay_agree() {
-    let data = vec![0.0_f32; 256];
-    let out = run_interp_with_inputs(
-        "fad_plain_shared_repeat_shell",
-        r#"g = hslider("g", 0.5, -10, 10, 0.001);
-           x = 0.2 * (0.6 * os.osc(110.0) + 0.3 * os.osc(220.0) + 0.15 * os.osc(330.0));
-           r = (\(w).((x - x' + 0.7 * w) / 1.3)) ~ _;
-           step(a, b, vp, v) = v - (v * v * v + v - a * exp(g) - 0.3 * b - 0.5 * vp) / (3.0 * v * v + 1.0);
-           C(t, a, b, vp) = v, (abs(v - v') > 1e-6) with { v = (\(w).(step(a, b, vp, w))) ~ _; };
-           shell(t, a, b, vp) = (gate ~ (!, _)) : (_, !)
-           with { gate(go) = ((go | (t != t')), t, a, b, vp) : ondemand(C); };
-           t = (+(1)) ~ _;
-           blk(vp) = (32, t, r, r', vp) : ondemand(shell);
-           m = (\(vp).(blk(vp))) ~ _;
-           process = _ : !, m, (fad(m, g) : _, !);"#,
-        std::slice::from_ref(&data),
-    );
-    assert_eq!(out.len(), 2);
-    let spread = out[1]
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
-    assert!(
-        spread.1 - spread.0 > 1.0e-3,
-        "the fad primal lane is constant: {:?}",
-        spread
-    );
-    for n in 0..data.len() {
-        assert!(
-            (out[0][n] - out[1][n]).abs() < 1.0e-5,
-            "frame {n}: plain {} vs fad primal {}",
-            out[0][n],
-            out[1][n]
-        );
-    }
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let data = vec![0.0_f32; 256];
+            let out = run_interp_with_inputs(
+                "fad_plain_shared_repeat_shell",
+                r#"import("stdfaust.lib");
+                   g = hslider("g", 0.5, -10, 10, 0.001);
+                   x = 0.2 * (0.6 * os.osc(110.0) + 0.3 * os.osc(220.0) + 0.15 * os.osc(330.0));
+                   r = (\(w).((x - x' + 0.7 * w) / 1.3)) ~ _;
+                   step(a, b, vp, v) = v - (v * v * v + v - a * exp(g) - 0.3 * b - 0.5 * vp) / (3.0 * v * v + 1.0);
+                   C(t, a, b, vp) = v, (abs(v - v') > 1e-6) with { v = (\(w).(step(a, b, vp, w))) ~ _; };
+                   shell(t, a, b, vp) = (gate ~ (!, _)) : (_, !)
+                   with { gate(go) = ((go | (t != t')), t, a, b, vp) : ondemand(C); };
+                   t = (+(1)) ~ _;
+                   blk(vp) = (32, t, r, r', vp) : ondemand(shell);
+                   m = (\(vp).(blk(vp))) ~ _;
+                   process = _ : !, m, (fad(m, g) : _, !);"#,
+                std::slice::from_ref(&data),
+            );
+            assert_eq!(out.len(), 2);
+            let spread = out[1]
+                .iter()
+                .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+            assert!(
+                spread.1 - spread.0 > 1.0e-3,
+                "the fad primal lane is constant: {spread:?}"
+            );
+            for (n, (&plain, &primal)) in out[0].iter().zip(out[1].iter()).enumerate() {
+                assert!(
+                    (plain - primal).abs() < 1.0e-5,
+                    "frame {n}: plain {plain} vs fad primal {primal}"
+                );
+            }
+        })
+        .expect("spawn the test thread")
+        .join()
+        .expect("the test thread completes");
 }
 
 #[test]

@@ -421,6 +421,7 @@ use tlib::{
 };
 
 use crate::PropagateError;
+use crate::clock_domain::{ClockDomain, ClockDomainId, ClockDomainTable};
 
 /// Internal dual-number carrier used while differentiating one signal graph.
 ///
@@ -487,12 +488,37 @@ struct ForwardADTransform<'a> {
     /// stateful body executes once per fire (cohabitation §6.1 "one block, not
     /// two").
     od_aug_cache: AHashMap<SigId, SigId>,
+    /// The clock-domain table of the propagation run: an augmented block is
+    /// a block of its own and gets a domain of its own, allocated here as a
+    /// twin of the original's (same parent, same kind). Sharing the domain
+    /// with the original, as the augmentation did until 2026-09-19, shares
+    /// the domain's state (local-time delays, holds) between the two blocks
+    /// when both are consumed in one program.
+    clock_domains: &'a mut ClockDomainTable,
+    /// Clock-env token of an original block → token of its augmented twin,
+    /// applied by the `Clocked` arm while the twin's lanes are transformed.
+    env_rename: AHashMap<SigId, SigId>,
+    /// The same map by domain id, for the parent of a nested twin.
+    domain_rename: AHashMap<u32, ClockDomainId>,
+    /// The clock-env tokens a subtree contains, memoized: a subtree no seed
+    /// reaches is still rebuilt when it carries the token of a block being
+    /// augmented, so that the twin does not share the original's inputs and
+    /// state.
+    env_tokens_memo: AHashMap<SigId, SmallVec<[SigId; 2]>>,
 }
 
 impl<'a> ForwardADTransform<'a> {
-    fn new(arena: &'a mut TreeArena, diff_seeds: &[SigId]) -> Self {
+    fn new(
+        arena: &'a mut TreeArena,
+        clock_domains: &'a mut ClockDomainTable,
+        diff_seeds: &[SigId],
+    ) -> Self {
         Self {
             arena,
+            clock_domains,
+            env_rename: AHashMap::new(),
+            domain_rename: AHashMap::new(),
+            env_tokens_memo: AHashMap::new(),
             diff_seed_index: Self::build_seed_index(diff_seeds),
             diff_seeds: diff_seeds.to_vec(),
             aperture_memo: AHashMap::new(),
@@ -610,6 +636,43 @@ impl<'a> ForwardADTransform<'a> {
         result
     }
 
+    /// The clock-env tokens the `Clocked` wrappers of a subtree carry.
+    fn env_tokens_in(&mut self, sig: SigId) -> SmallVec<[SigId; 2]> {
+        if let Some(known) = self.env_tokens_memo.get(&sig) {
+            return known.clone();
+        }
+        let mut found: SmallVec<[SigId; 2]> = SmallVec::new();
+        if let SigMatch::Clocked(token, _) = match_sig(self.arena, sig) {
+            found.push(token);
+        }
+        let children: Vec<TreeId> = self
+            .arena
+            .children(sig)
+            .map(|children| children.to_vec())
+            .unwrap_or_default();
+        for child in children {
+            for token in self.env_tokens_in(child) {
+                if !found.contains(&token) {
+                    found.push(token);
+                }
+            }
+        }
+        self.env_tokens_memo.insert(sig, found.clone());
+        found
+    }
+
+    /// Whether a subtree carries the token of a block whose twin is being
+    /// built: it must then be rebuilt with the twin's token even when no seed
+    /// reaches it.
+    fn needs_rebuild(&mut self, sig: SigId) -> bool {
+        if self.env_rename.is_empty() {
+            return false;
+        }
+        self.env_tokens_in(sig)
+            .iter()
+            .any(|token| self.env_rename.contains_key(token))
+    }
+
     /// Differentiates one signal, using the shared DAG cache.
     ///
     /// Every visited `SigId` is cached so that multi-referenced subtrees are
@@ -674,7 +737,9 @@ impl<'a> ForwardADTransform<'a> {
 
         // A subtree no seed reaches has zero tangents and is kept as it is:
         // in particular a recursion the seeds do not reach is not augmented.
-        if !self.depends_on_seed(sig) {
+        // Unless it belongs to a block being augmented: the twin gets its own
+        // copy, under its own clock-env token (`needs_rebuild`).
+        if !self.depends_on_seed(sig) && !self.needs_rebuild(sig) {
             return self.zero_tangent(sig);
         }
 
@@ -1225,11 +1290,15 @@ impl<'a> ForwardADTransform<'a> {
             SigMatch::PermVar(u) => {
                 self.unary_chain(u, |b, p| b.perm_var(p), |b, _p, tx| b.perm_var(tx))
             }
-            SigMatch::Clocked(c, u) => self.unary_chain(
-                u,
-                move |b, p| b.clocked(c, p),
-                move |b, _p, tx| b.clocked(c, tx),
-            ),
+            SigMatch::Clocked(c, u) => {
+                // inside an augmented block, the twin's token (see `augment_block`)
+                let c = self.env_rename.get(&c).copied().unwrap_or(c);
+                self.unary_chain(
+                    u,
+                    move |b, p| b.clocked(c, p),
+                    move |b, _p, tx| b.clocked(c, tx),
+                )
+            }
             SigMatch::ZeroPad(u, h) => self.unary_chain(
                 u,
                 move |b, p| b.zero_pad(p, h),
@@ -1557,6 +1626,23 @@ impl<'a> ForwardADTransform<'a> {
     /// so its payload carries the interleaved `[primal, tangent₀, …]` held-output
     /// lanes. Memoized per source node so every `Seq` consumer shares one block.
     ///
+    /// The clock-env token of a block, read from its first held lane
+    /// (`PermVar(Clocked(token, y))`), with the domain id the token carries.
+    fn block_env_token(&self, held: &[SigId]) -> Option<(SigId, u32)> {
+        for &lane in held {
+            let inner = match match_sig(self.arena, lane) {
+                SigMatch::PermVar(u) => u,
+                _ => lane,
+            };
+            if let SigMatch::Clocked(token, _) = match_sig(self.arena, inner)
+                && let SigMatch::ClockEnvToken(id) = match_sig(self.arena, token)
+            {
+                return Some((token, id));
+            }
+        }
+        None
+    }
+
     /// Payload layout: `[clock, lane₀, lane₀', …, lane₁, lane₁', …]` — the first
     /// child is the (opaque, never differentiated) clock; each subsequent held
     /// lane is expanded to its primal followed by one tangent per seed. A held
@@ -1577,6 +1663,26 @@ impl<'a> ForwardADTransform<'a> {
             _ => return None,
         };
         let (&clock, held) = payload.split_first()?;
+        // The twin is a block of its own: a fresh domain, twin of the
+        // original's (its parent mapped through the twins already made, for a
+        // nested block), and a fresh token that replaces the original's in
+        // every `Clocked` wrapper of the transformed clock and lanes, the
+        // block's own inputs included (`needs_rebuild` makes the transform
+        // visit them even when no seed reaches them). Sharing the domain
+        // with the original, as the augmentation did until 2026-09-19,
+        // shared its state between the two blocks when both were consumed
+        // in one program.
+        if let Some((token, id)) = self.block_env_token(held)
+            && let Some(domain) = self.clock_domains.get(ClockDomainId::from_u32(id)).cloned()
+        {
+            let parent = domain
+                .parent
+                .map(|p| self.domain_rename.get(&p.as_u32()).copied().unwrap_or(p));
+            let twin = self.clock_domains.alloc(ClockDomain { parent, ..domain });
+            let twin_token = SigBuilder::new(self.arena).clock_env_token(twin.as_u32());
+            self.env_rename.insert(token, twin_token);
+            self.domain_rename.insert(id, twin);
+        }
         // The clock is opaque to the derivative (an iteration count, a
         // comparison), but it is a signal of the transformed program: a
         // clock that reads a held lane of this block or of a nested one
@@ -1731,6 +1837,7 @@ impl<'a> ForwardADTransform<'a> {
 /// pass through unchanged (keeps `fad(expr, ())` a legal identity).
 pub(super) fn generate_fad_signals_multi(
     arena: &mut TreeArena,
+    clock_domains: &mut ClockDomainTable,
     outputs: &[SigId],
     seeds: &[SigId],
 ) -> Result<Vec<SigId>, PropagateError> {
@@ -1738,7 +1845,7 @@ pub(super) fn generate_fad_signals_multi(
         return Ok(outputs.to_vec());
     }
 
-    let mut fad = ForwardADTransform::new(arena, seeds);
+    let mut fad = ForwardADTransform::new(arena, clock_domains, seeds);
     let duals = outputs
         .iter()
         .map(|&sig| fad.transform(sig))
@@ -1926,8 +2033,13 @@ mod tests {
             };
             let n = seeds.len();
 
-            let result = generate_fad_signals_multi(&mut arena, &[expr], &seeds)
-                .expect("FAD must succeed on closed random expressions");
+            let result = generate_fad_signals_multi(
+                &mut arena,
+                &mut ClockDomainTable::new(),
+                &[expr],
+                &seeds,
+            )
+            .expect("FAD must succeed on closed random expressions");
             assert_eq!(
                 result.len(),
                 1 + n,
@@ -1944,8 +2056,13 @@ mod tests {
         let s0 = SigBuilder::new(&mut arena).real(7.0);
         let s1 = SigBuilder::new(&mut arena).real(11.0);
 
-        let result = generate_fad_signals_multi(&mut arena, &[s0, s1], &[s0, s1])
-            .expect("FAD on seed list must succeed");
+        let result = generate_fad_signals_multi(
+            &mut arena,
+            &mut ClockDomainTable::new(),
+            &[s0, s1],
+            &[s0, s1],
+        )
+        .expect("FAD on seed list must succeed");
         // Layout: [s0, ds0/ds0, ds0/ds1, s1, ds1/ds0, ds1/ds1]
         assert_eq!(result.len(), 6);
         assert_eq!(result[0], s0);
@@ -1974,7 +2091,7 @@ mod tests {
 
         // TempVar(u)' = TempVar(u')
         let tv = SigBuilder::new(&mut arena).temp_var(sx);
-        let out = generate_fad_signals_multi(&mut arena, &[tv], &[s])
+        let out = generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[tv], &[s])
             .expect("FAD across a TempVar boundary must succeed");
         assert_eq!(out.len(), 2, "bundle is [primal, tangent]");
         assert!(matches!(match_sig(&arena, out[0]), SigMatch::TempVar(_)));
@@ -1985,14 +2102,14 @@ mod tests {
 
         // PermVar(u)' = PermVar(u')
         let pv = SigBuilder::new(&mut arena).perm_var(sx);
-        let out = generate_fad_signals_multi(&mut arena, &[pv], &[s])
+        let out = generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[pv], &[s])
             .expect("FAD across a PermVar boundary must succeed");
         assert!(matches!(match_sig(&arena, out[1]), SigMatch::PermVar(_)));
 
         // Clocked(c, u)' = Clocked(c, u') — the clock-env child is opaque.
         let env = SigBuilder::new(&mut arena).clock_env_token(0);
         let ck = SigBuilder::new(&mut arena).clocked(env, sx);
-        let out = generate_fad_signals_multi(&mut arena, &[ck], &[s])
+        let out = generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[ck], &[s])
             .expect("FAD across a Clocked boundary must succeed");
         let SigMatch::Clocked(t_env, _) = match_sig(&arena, out[1]) else {
             panic!("Clocked tangent must stay a Clocked wrapper");
@@ -2002,7 +2119,7 @@ mod tests {
         // ZeroPad(u, H)' = ZeroPad(u', H)
         let h = SigBuilder::new(&mut arena).real(1.0);
         let zp = SigBuilder::new(&mut arena).zero_pad(sx, h);
-        let out = generate_fad_signals_multi(&mut arena, &[zp], &[s])
+        let out = generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[zp], &[s])
             .expect("FAD across a ZeroPad boundary must succeed");
         let SigMatch::ZeroPad(_, t_h) = match_sig(&arena, out[1]) else {
             panic!("ZeroPad tangent must stay a ZeroPad wrapper");
@@ -2023,7 +2140,7 @@ mod tests {
         let env = SigBuilder::new(&mut arena).clock_env_token(0);
         let clock = SigBuilder::new(&mut arena).clocked(env, s);
         let od = SigBuilder::new(&mut arena).on_demand(&[clock, sx]);
-        let err = generate_fad_signals_multi(&mut arena, &[od], &[s])
+        let err = generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[od], &[s])
             .expect_err("bare OnDemand outside a Seq must error (defensive)");
         assert!(
             matches!(err, PropagateError::FadUnsupportedNode { .. }),
@@ -2044,8 +2161,9 @@ mod tests {
         let rec = de_bruijn_rec(&mut arena, body);
         let proj0 = SigBuilder::new(&mut arena).proj(0, rec);
 
-        let result = generate_fad_signals_multi(&mut arena, &[proj0], &[s])
-            .expect("FAD on Proj(REC) must succeed");
+        let result =
+            generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[proj0], &[s])
+                .expect("FAD on Proj(REC) must succeed");
         assert_eq!(result.len(), 2);
 
         let primal = result[0];
@@ -2130,8 +2248,9 @@ mod tests {
         let seed = back_delay;
         let expr = SigBuilder::new(&mut arena).add(seed, inner_out);
 
-        let result = generate_fad_signals_multi(&mut arena, &[expr], &[seed])
-            .expect("FAD must succeed on expr = seed + inner_out");
+        let result =
+            generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[expr], &[seed])
+                .expect("FAD must succeed on expr = seed + inner_out");
         assert_eq!(result.len(), 2, "one primal + one tangent lane");
 
         // tangent = 1.0 + proj(1, fad_rec)
@@ -2178,8 +2297,9 @@ mod tests {
         //   tangent(seed)      = 1.0                          [seed check]
         let expr = SigBuilder::new(&mut arena).add(inner_out, seed);
 
-        let result = generate_fad_signals_multi(&mut arena, &[expr], &[seed])
-            .expect("FAD must succeed on expr = inner_out + seed");
+        let result =
+            generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[expr], &[seed])
+                .expect("FAD must succeed on expr = inner_out + seed");
         assert_eq!(result.len(), 2, "one primal + one tangent lane");
 
         let tangent = result[1];

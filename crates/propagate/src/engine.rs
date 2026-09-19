@@ -738,7 +738,7 @@ fn propagate_inner(
             }
 
             if matches!(fad_mode, RecFadMode::ExpandAfterRec) {
-                forward_ad::generate_fad_signals_multi(arena, &outputs, &seeds)
+                forward_ad::generate_fad_signals_multi(arena, ctx.clock_domains, &outputs, &seeds)
             } else {
                 Ok(outputs)
             }
@@ -792,7 +792,12 @@ fn propagate_inner(
                 ctx.pending_fad_seeds.extend(seed_sigs.iter().copied());
                 Ok(body_sigs)
             } else {
-                forward_ad::generate_fad_signals_multi(arena, &body_sigs, &seed_sigs)
+                forward_ad::generate_fad_signals_multi(
+                    arena,
+                    ctx.clock_domains,
+                    &body_sigs,
+                    &seed_sigs,
+                )
             }
         }
         FlatNodeKind::ReverseAD { body, seeds } => {
