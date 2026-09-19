@@ -305,18 +305,24 @@ impl Compiler {
                 &request.virtual_sources,
             )
             .map_err(FaustwasmServiceError::compile_failure)?;
-        let lowered = self
-            .lower_to_fir(
-                &request.source_name,
-                &signals,
-                SignalFirLane::TransformFastLane,
-            )
-            .map_err(FaustwasmServiceError::compile_failure)?;
-
+        // `-cn` names the module before lowering, not only the emitted class:
+        // table-generator sub-modules take their `<module>SIG<k>` names during
+        // FIR lowering (C++ `getFreshID(getClassName() + "SIG")`). Lowering
+        // under the source-derived default left them named after the file
+        // while the class carried `-cn`, so two `-cn` variants of one source
+        // (a `-pn` voice/effect pair) collided on `<file>SIG0`.
         let class_name = argv_value(argv, &["-cn"]).map_or_else(
             || sanitize_cpp_ident(source_name_to_class(&request.source_name).as_str()),
             str::to_owned,
         );
+        let lowered = self
+            .lower_to_fir_with_name(
+                &request.source_name,
+                &signals,
+                SignalFirLane::TransformFastLane,
+                Some(class_name.clone()),
+            )
+            .map_err(FaustwasmServiceError::compile_failure)?;
 
         // Strict C++-style JSON snapshot, embedded as getJSON() in the output —
         // downstream tooling parses it for inputs/outputs and the UI tree
