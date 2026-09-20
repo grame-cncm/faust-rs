@@ -1010,63 +1010,7 @@ ajustées par une perte spectrale par trame de 256 échantillons, les seize
 gradients d'un balayage par trame. Ce qui reste interdit est un `rad` qui
 traverserait la frontière du bloc, une perte dedans et une graine dehors.
 
-## 12. Pour aller plus loin
-
-- **Effets adaptatifs.** La section 6 de
-  [docs/fad-rad-synthesis-fr.md](../docs/fad-rad-synthesis-fr.md) est une
-  boucle de contrôle actif du bruit (FxLMS) écrite avec `fad` ; le fichier du
-  corpus `tests/corpus/auto_wah_fad_host.dsp` est un auto-wah dont les
-  gradients sont exposés à l'hôte.
-- **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
-  différencie une perte calculée sur une trame FFT, le pendant par trame de la
-  section 7.2.
-- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : quatorze
-  programmes DDSP avec leurs tests — un notch adaptatif, un mode calibré par
-  Gauss-Newton, un modèle d'ampli, un diode clipper appris à travers son
-  solveur implicite, une réverbération FDN, une corde accordée à travers son
-  retard fractionnaire (`fad`) ; un annuleur d'écho, un waveshaper neuronal,
-  des gradients par bloc pour un hôte, un ampli GRU entraîné par BPTT par
-  blocs, un synthétiseur harmonique ajusté par une perte spectrale dans un
-  bloc `ondemand` (`rad`) ; une réverbération qui se calibre puis cesse de
-  payer son apprentissage (`gated`, `on_change`).
-- **Beaucoup de paramètres.** `tests/corpus/opt_descend_n_rad_fir16.dsp` et
-  `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` sont les boucles à bus sur des
-  FIR ; `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` fait tourner côte à côte
-  la version directe et la version inverse.
-- **Mode inverse et hôtes.** [docs/rad-note-en.md](../docs/rad-note-en.md)
-  pour l'algorithme, [docs/rad-usage-en.md](../docs/rad-usage-en.md) pour le
-  flux de travail.
-- **Quand le départ est faux.** La section 9 de
-  [optimizers-overview-fr.md](optimizers-overview-fr.md) sur ce que la
-  descente de gradient demande au paysage, et la section 14 ci-dessous pour
-  les outils, un programme chacun.
-- **La bibliothèque elle-même.** Chaque fonction d'[optimizers.lib](optimizers.lib)
-  porte un exemple `#### Test` compilé par la suite de tests ; ce sont les
-  plus petits usages fonctionnels de chaque fonction.
-
-## 13. Murs fréquents
-
-| Symptôme | Cause probable | Remède |
-|---|---|---|
-| Le paramètre ne bouge jamais | sa dérivée est nulle : il traverse un bouton, une case à cocher, une conversion ou une comparaison entière dans le modèle | garder le chemin du paramètre en arithmétique flottante |
-| Il bouge dans le mauvais sens | convention de signe : avec `r = modèle - cible` le gradient MSE est `+2 r j` ; la note de synthèse utilise `err = cible - modèle` et `-err * j` | choisir une convention |
-| `NaN` au bout d'un moment | `abs` (dérivée `x/\|x\|`) ou un filtre devenu instable | pertes lisses (`logcosh`, `pseudo_huber`), coefficients de réflexion pour les pôles |
-| Un paramètre converge, un autre rampe | unités différentes sous une seule vitesse | domaine log, Adam/Lion, ou `lm_2D` |
-| La boucle oscille avec une perte énergétique | l'optimiseur est plus rapide que le lissage de la perte | baisser `lr` sous `1 - a` |
-| Gigue à la fin | pas fixe sur un gradient bruité | `lr_exp`/`lr_cos`, `polyak`, ou SGD au lieu d'Adam |
-| `(a, b) = f(...)` ne parse pas | Faust n'a pas de destructuration | `a = f(...) : _, !; b = f(...) : !, _;` |
-| `mdl(opts)` a la mauvaise arité | une expression multi-sorties est un seul argument | projeter chaque sortie et les passer séparément |
-| Converge en double mais pas en simple précision | perte de précision dans les tangentes récursives | compiler avec `-double` |
-| `sequential composition mismatch` autour d'un bloc `ondemand` | un opérateur de trame à entrées `_` libres utilisé plusieurs fois | donner au corps des arguments nommés, un par échantillon de la trame |
-| Un bloc ignore ce qui se passe dehors | une définition référencée dans le corps est instanciée à nouveau dans le temps du corps, ce n'est pas le signal extérieur | passer les signaux extérieurs en entrées explicites du bloc |
-| Une boucle à bus n'apprend rien, les coefficients errent autour de zéro | `op.mse(_, t)` (toute fonction appliquée à un `_` libre) est un bloc à deux entrées : `:>` répartit les coefficients entre elles | nommer l'entrée de la perte : `\(y).(op.mse(y, t))` |
-| Une boucle `_rad` converge moins vite que la boucle `fad` sur un modèle récursif | dans une boucle, `rad` renvoie le terme direct, l'état passé tenu fixe | les boucles `fad` pour les modèles récursifs, les unes ou les autres pour les modèles sans récursion |
-| Il dérive au lieu de converger, la perte restant haute | le mauvais bassin : un puits trop étroit pour le départ, ou un plateau en pente | une estimation comme `init` (14.2), plusieurs départs (14.4), un redémarrage sur absence de progrès (14.5), une perte qui élargit le puits (14.7) |
-| Il ne bouge jamais alors que la perte est haute | le paramètre n'a pas de dérivée : un retard entier, un `select2`, une table écrite | `spsa_1D_clocked` ou `search_1D_clocked` (14.6) |
-| `multistart` hésite entre deux boucles | leurs pertes lissées sont égales à l'arrondi près, le même puits atteint deux fois | lire le paramètre, pas l'index ; ou moins de départs |
-| La pente `fad` d'un solveur implicite manque d'un terme | l'itération part de `vprev`, le signal même que l'équation tient fixe : `fad(G(vprev, v), v)` avec `v = vprev` dérive les deux | partir d'un prédicteur ou de tout signal distinct |
-
-## 14. Quand le départ est faux
+## 12. Quand le départ est faux
 
 Jusqu'ici tout partait assez près de la réponse. Cette section traite du
 cas contraire : la perte a plusieurs bassins, ou un plateau, ou le paramètre
@@ -1074,7 +1018,7 @@ n'a pas de dérivée du tout. Les outils sont ceux de la section 9 de
 l'overview ; chaque programme ci-dessous s'exécute comme les autres, et ses
 chiffres sont vérifiés par la suite de tests.
 
-### 14.1 Le paysage avant l'optimiseur
+### 12.1 Le paysage avant l'optimiseur
 
 Une perte à deux puits, `(p² - 1)² + 0,3 p` : un puits peu profond en
 `p = 0,96` (perte 0,29) et un puits profond en `p = -1,04` (perte -0,31),
@@ -1092,7 +1036,7 @@ pose à `0,960150`, depuis `p = -1` la seconde à `-1,035579`, et aucune ne
 franchira jamais la barrière. Le point de départ décide de ce qu'on trouve ;
 la suite de cette section consiste à le choisir, ou à le déplacer.
 
-### 14.2 Partir d'une estimation
+### 12.2 Partir d'une estimation
 
 L'outil le plus fort est une estimation extérieure. La corde à guide d'onde
 des `ddsp-examples` a un puits de ±1 Hz autour de sa hauteur, capturé par le
@@ -1126,7 +1070,7 @@ Exécutez avec `-n 60000 --every 12000` : la voie de l'init tient
 soit choisi à la main. Les trente retards coûtent trente produits lissés,
 pas trente modèles.
 
-### 14.3 Quitter un puits peu profond par le bruit
+### 12.3 Quitter un puits peu profond par le bruit
 
 `langevin_g` est le pas SGD plus un bruit d'écart-type `sqrt(2 lr temp)` :
 à température fixe le paramètre échantillonne `exp(-perte / temp)` au lieu
@@ -1155,7 +1099,7 @@ température 0, est SGD bit pour bit. Le bruit quitte un puits peu profond ;
 il n'attire pas sur un plateau plat, et il ne choisit pas le puits le plus
 profond avec certitude.
 
-### 14.4 Plusieurs départs
+### 12.4 Plusieurs départs
 
 Sans estimation, on part de plusieurs endroits. `multistart_1D` fait
 tourner `K` descentes en parallèle et suit celle dont la perte lissée est la
@@ -1199,7 +1143,7 @@ Exécutez avec `-n 80000 --every 16000` : l'index vaut `2`, le départ à
 quelque 60 ms. Une grille n'aurait pas trouvé ce puits : large de ±1 Hz sur
 une plage de 110 à 441 Hz, il lui faudrait des centaines de cellules.
 
-### 14.5 Redémarrer quand rien ne progresse
+### 12.5 Redémarrer quand rien ne progresse
 
 Au prix d'un seul modèle, `descend_1D_restart` parcourt une suite de
 départs : quand la perte lissée est au-dessus de `eps_l` et n'a pas baissé
@@ -1227,7 +1171,7 @@ neuve : sur la corde, le modèle, sa tangente et le moteur gardent l'état de
 la dérive, et un redémarrage depuis 228 Hz ne verrouille pas comme une
 boucle neuve partie de 228 Hz ; la perte à deux puits n'a pas cette mémoire.
 
-### 14.6 Apprendre sans gradient
+### 12.6 Apprendre sans gradient
 
 Certains paramètres n'ont pas de dérivée : une longueur de retard entière,
 un `select2`, une table écrite. `fad` leur donne une tangente nulle et
@@ -1270,7 +1214,7 @@ Exécutez avec `-n 6000 --every 1000` : la recherche lit `0,825585` dès
 1 000, sur la branche qui correspond (la perte y est 0) ; `descend_1D` lit
 `0` tout du long, la tangente à travers la comparaison étant nulle.
 
-### 14.7 Élargir le bassin par la perte
+### 12.7 Élargir le bassin par la perte
 
 Le dernier outil change le paysage lui-même. `bank_log_energy_loss` compare
 des énergies lissées en log par bande d'un banc passe-bande, la forme par
@@ -1306,6 +1250,62 @@ n'achète aucun départ que l'erreur de forme d'onde ne sache pas traiter.
 `corr_loss` retire la pente du plateau mais n'est pas plus large, et
 `frame_spectral_loss` est la forme par trame pour un corps `ondemand`, comme
 en section 11.3.
+
+## 13. Pour aller plus loin
+
+- **Effets adaptatifs.** La section 6 de
+  [docs/fad-rad-synthesis-fr.md](../docs/fad-rad-synthesis-fr.md) est une
+  boucle de contrôle actif du bruit (FxLMS) écrite avec `fad` ; le fichier du
+  corpus `tests/corpus/auto_wah_fad_host.dsp` est un auto-wah dont les
+  gradients sont exposés à l'hôte.
+- **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
+  différencie une perte calculée sur une trame FFT, le pendant par trame de la
+  section 7.2.
+- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : quatorze
+  programmes DDSP avec leurs tests — un notch adaptatif, un mode calibré par
+  Gauss-Newton, un modèle d'ampli, un diode clipper appris à travers son
+  solveur implicite, une réverbération FDN, une corde accordée à travers son
+  retard fractionnaire (`fad`) ; un annuleur d'écho, un waveshaper neuronal,
+  des gradients par bloc pour un hôte, un ampli GRU entraîné par BPTT par
+  blocs, un synthétiseur harmonique ajusté par une perte spectrale dans un
+  bloc `ondemand` (`rad`) ; une réverbération qui se calibre puis cesse de
+  payer son apprentissage (`gated`, `on_change`).
+- **Beaucoup de paramètres.** `tests/corpus/opt_descend_n_rad_fir16.dsp` et
+  `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` sont les boucles à bus sur des
+  FIR ; `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` fait tourner côte à côte
+  la version directe et la version inverse.
+- **Mode inverse et hôtes.** [docs/rad-note-en.md](../docs/rad-note-en.md)
+  pour l'algorithme, [docs/rad-usage-en.md](../docs/rad-usage-en.md) pour le
+  flux de travail.
+- **Quand le départ est faux.** La section 9 de
+  [optimizers-overview-fr.md](optimizers-overview-fr.md) sur ce que la
+  descente de gradient demande au paysage, et la section 12 ci-dessus pour
+  les outils, un programme chacun.
+- **La bibliothèque elle-même.** Chaque fonction d'[optimizers.lib](optimizers.lib)
+  porte un exemple `#### Test` compilé par la suite de tests ; ce sont les
+  plus petits usages fonctionnels de chaque fonction.
+
+## 14. Murs fréquents
+
+| Symptôme | Cause probable | Remède |
+|---|---|---|
+| Le paramètre ne bouge jamais | sa dérivée est nulle : il traverse un bouton, une case à cocher, une conversion ou une comparaison entière dans le modèle | garder le chemin du paramètre en arithmétique flottante |
+| Il bouge dans le mauvais sens | convention de signe : avec `r = modèle - cible` le gradient MSE est `+2 r j` ; la note de synthèse utilise `err = cible - modèle` et `-err * j` | choisir une convention |
+| `NaN` au bout d'un moment | `abs` (dérivée `x/\|x\|`) ou un filtre devenu instable | pertes lisses (`logcosh`, `pseudo_huber`), coefficients de réflexion pour les pôles |
+| Un paramètre converge, un autre rampe | unités différentes sous une seule vitesse | domaine log, Adam/Lion, ou `lm_2D` |
+| La boucle oscille avec une perte énergétique | l'optimiseur est plus rapide que le lissage de la perte | baisser `lr` sous `1 - a` |
+| Gigue à la fin | pas fixe sur un gradient bruité | `lr_exp`/`lr_cos`, `polyak`, ou SGD au lieu d'Adam |
+| `(a, b) = f(...)` ne parse pas | Faust n'a pas de destructuration | `a = f(...) : _, !; b = f(...) : !, _;` |
+| `mdl(opts)` a la mauvaise arité | une expression multi-sorties est un seul argument | projeter chaque sortie et les passer séparément |
+| Converge en double mais pas en simple précision | perte de précision dans les tangentes récursives | compiler avec `-double` |
+| `sequential composition mismatch` autour d'un bloc `ondemand` | un opérateur de trame à entrées `_` libres utilisé plusieurs fois | donner au corps des arguments nommés, un par échantillon de la trame |
+| Un bloc ignore ce qui se passe dehors | une définition référencée dans le corps est instanciée à nouveau dans le temps du corps, ce n'est pas le signal extérieur | passer les signaux extérieurs en entrées explicites du bloc |
+| Une boucle à bus n'apprend rien, les coefficients errent autour de zéro | `op.mse(_, t)` (toute fonction appliquée à un `_` libre) est un bloc à deux entrées : `:>` répartit les coefficients entre elles | nommer l'entrée de la perte : `\(y).(op.mse(y, t))` |
+| Une boucle `_rad` converge moins vite que la boucle `fad` sur un modèle récursif | dans une boucle, `rad` renvoie le terme direct, l'état passé tenu fixe | les boucles `fad` pour les modèles récursifs, les unes ou les autres pour les modèles sans récursion |
+| Il dérive au lieu de converger, la perte restant haute | le mauvais bassin : un puits trop étroit pour le départ, ou un plateau en pente | une estimation comme `init` (12.2), plusieurs départs (12.4), un redémarrage sur absence de progrès (12.5), une perte qui élargit le puits (12.7) |
+| Il ne bouge jamais alors que la perte est haute | le paramètre n'a pas de dérivée : un retard entier, un `select2`, une table écrite | `spsa_1D_clocked` ou `search_1D_clocked` (12.6) |
+| `multistart` hésite entre deux boucles | leurs pertes lissées sont égales à l'arrondi près, le même puits atteint deux fois | lire le paramètre, pas l'index ; ou moins de départs |
+| La pente `fad` d'un solveur implicite manque d'un terme | l'itération part de `vprev`, le signal même que l'équation tient fixe : `fad(G(vprev, v), v)` avec `v = vprev` dérive les deux | partir d'un prédicteur ou de tout signal distinct |
 
 ## Glossaire
 

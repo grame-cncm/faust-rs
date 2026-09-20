@@ -980,63 +980,7 @@ fitted through a spectral loss per 256-sample frame, the sixteen gradients
 from one sweep per frame. What stays forbidden is a `rad` that would cross
 the block's boundary, a loss inside and a seed outside.
 
-## 12. Where to go next
-
-- **Adaptive effects.** Section 6 of
-  [docs/fad-rad-synthesis-en.md](../docs/fad-rad-synthesis-en.md) is an
-  active-noise-control loop (FxLMS) written with `fad`; the corpus file
-  `tests/corpus/auto_wah_fad_host.dsp` is an auto-wah whose gradients are
-  exposed to the host.
-- **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
-  differentiates a loss computed on an FFT frame, the per-frame counterpart of
-  section 7.2.
-- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): fourteen
-  DDSP programs with their tests — an adaptive notch, a mode calibrated by
-  Gauss-Newton, an amp model, a diode clipper learned through its implicit
-  solver, an FDN reverb, a string tuned through its fractional delay
-  (`fad`); an echo canceller, a neural waveshaper, block gradients for a
-  host, a GRU amp trained by block BPTT, a harmonic synthesizer fitted
-  through a spectral loss inside an `ondemand` block (`rad`); a reverb that
-  calibrates itself, then stops paying for it (`gated`, `on_change`).
-- **Many parameters.** `tests/corpus/opt_descend_n_rad_fir16.dsp` and
-  `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` are the bus loops on FIRs;
-  `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` runs the forward and the
-  reverse version side by side.
-- **Reverse mode and hosts.** [docs/rad-note-en.md](../docs/rad-note-en.md)
-  for the algorithm, [docs/rad-usage-en.md](../docs/rad-usage-en.md) for the
-  workflow.
-- **When the start is wrong.** Section 9 of
-  [optimizers-overview-en.md](optimizers-overview-en.md) on what gradient
-  descent asks of the landscape, and section 14 below for the tools, one
-  program each.
-- **The library itself.** Every function of
-  [optimizers.lib](optimizers.lib) carries a `#### Test` example that is
-  compiled by the test suite; they are the smallest working usage of each
-  function.
-
-## 13. Frequently hit walls
-
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| The parameter never moves | its derivative is zero: it passes through a button, a checkbox, an integer cast or comparison inside the model | keep the parameter path in floating-point arithmetic |
-| It moves the wrong way | sign convention: with `r = model - target` the MSE gradient is `+2 r j`; the synthesis note uses `err = target - model` and `-err * j` | pick one convention |
-| `NaN` after a while | `abs` (derivative `x/\|x\|`) or a filter that went unstable | smooth losses (`logcosh`, `pseudo_huber`), reflection coefficients for poles |
-| One parameter converges, another crawls | different units under one learning rate | log domain, Adam/Lion, or `lm_2D` |
-| The loop oscillates with an energy loss | the optimizer is faster than the loss's smoothing | lower `lr` below `1 - a` |
-| Jitter at the end | fixed step size on a noisy gradient | `lr_exp`/`lr_cos`, `polyak`, or SGD instead of Adam |
-| `(a, b) = f(...)` does not parse | Faust has no destructuring | `a = f(...) : _, !; b = f(...) : !, _;` |
-| `mdl(opts)` has the wrong arity | a multi-output expression is one argument | project each output and pass them separately |
-| Convergence in double but not in float | precision loss in recursive tangents | compile with `-double` |
-| `sequential composition mismatch` around an `ondemand` block | a frame operator with free `_` inputs used several times | give the body named arguments, one per frame sample |
-| A block ignores what happens outside | a definition referenced in the body is instantiated again in the body's time, it is not the outer signal | pass outer signals as explicit inputs of the block |
-| A bus loop learns nothing, the taps random-walk near zero | `op.mse(_, t)` (any function applied to a free `_`) is a two-input block: `:>` splits the taps between its inputs | name the loss input: `\(y).(op.mse(y, t))` |
-| A `_rad` loop converges slower than the `fad` one on a recursive model | inside a loop `rad` returns the direct term, the past state held fixed | the `fad` loops for recursive models, either for feed-forward ones |
-| It drifts away instead of converging, the loss staying high | the wrong basin: a well too narrow for the start, or a sloped plateau | an estimate as `init` (14.2), several starts (14.4), a restart on no progress (14.5), a loss that widens the well (14.7) |
-| It never moves although the loss is high | the parameter has no derivative: an integer delay, a `select2`, a written table | `spsa_1D_clocked` or `search_1D_clocked` (14.6) |
-| `multistart` hesitates between two loops | their smoothed losses are equal to rounding, the same well reached twice | read the parameter, not the index; or fewer starts |
-| The `fad` slope of an implicit solver misses a term | the iteration starts from `vprev`, the very signal the equation holds fixed: `fad(G(vprev, v), v)` with `v = vprev` differentiates both | start the iteration from a predictor or any distinct signal |
-
-## 14. When the start is wrong
+## 12. When the start is wrong
 
 Everything so far started close enough to the answer. This section is
 about what happens when it does not: the loss has several basins, or a
@@ -1044,7 +988,7 @@ plateau, or the parameter has no derivative at all. The tools are those
 of section 9 of the overview; every program below is run as the others,
 and its figures checked by the test suite.
 
-### 14.1 The landscape before the optimizer
+### 12.1 The landscape before the optimizer
 
 A loss with two wells, `(p² - 1)² + 0.3 p`: a shallow one at `p = 0.96`
 (loss 0.29) and a deep one at `p = -1.04` (loss -0.31), with a barrier
@@ -1061,7 +1005,7 @@ Run with `-n 4000 --every 1000`: from `p = 1` the first loop settles at
 cross the barrier. Where you start decides what you find; the rest of this
 section is about choosing the start, or moving it.
 
-### 14.2 Starting from an estimate
+### 12.2 Starting from an estimate
 
 The strongest tool is an outside estimate. The waveguide string of
 `ddsp-examples` has a well ±1 Hz wide around its pitch, captured from above
@@ -1093,7 +1037,7 @@ from sample 8 192 on; the pitch reads `223.30` at 12 000, `219.998` at
 24 000 and `220.000007` at 48 000, with no start chosen by hand. The thirty
 lags cost thirty smoothed products, not thirty models.
 
-### 14.3 Leaving a shallow well with noise
+### 12.3 Leaving a shallow well with noise
 
 `langevin_g` is the SGD step plus a noise of standard deviation
 `sqrt(2 lr temp)`: at a fixed temperature the parameter samples
@@ -1121,7 +1065,7 @@ lane, Langevin at temperature 0, is SGD bit for bit. Noise leaves a
 shallow well; it does not pull on a flat plateau, and it does not choose
 the deepest well with certainty.
 
-### 14.4 Several starts
+### 12.4 Several starts
 
 When no estimate is at hand, start from several places. `multistart_1D`
 runs `K` descents in parallel and follows the one whose smoothed loss is
@@ -1165,7 +1109,7 @@ from 16 000 samples on, and the pitch `219.995` at 16 000, `220.000005` at
 not have found this well: ±1 Hz wide over a range of 110 to 441 Hz, it
 would need hundreds of cells.
 
-### 14.5 Restarting when nothing progresses
+### 12.5 Restarting when nothing progresses
 
 For the cost of one model, `descend_1D_restart` walks a sequence of starts:
 when the smoothed loss is above `eps_l` and has not fallen by `rel` over
@@ -1191,7 +1135,7 @@ loop: on the string, the model, its tangent and the engine keep the
 drift's state, and a restart from 228 Hz does not lock the way a fresh
 loop from 228 Hz does; the two-well loss has no such memory.
 
-### 14.6 Learning without a gradient
+### 12.6 Learning without a gradient
 
 Some parameters have no derivative: an integer delay length, a `select2`,
 a written table. `fad` gives them a zero tangent and no loop of the
@@ -1233,7 +1177,7 @@ Run with `-n 6000 --every 1000`: the search reads `0.825585` from 1 000
 on, on the branch that matches (the loss there is 0); `descend_1D` reads
 `0` throughout, the tangent through the comparison being zero.
 
-### 14.7 Widening the basin with the loss
+### 12.7 Widening the basin with the loss
 
 The last tool changes the landscape itself. `bank_log_energy_loss`
 compares smoothed log energies per band of a band-pass bank, the
@@ -1267,6 +1211,62 @@ align. The widening is real; on this string it buys no start the waveform
 error cannot handle. `corr_loss` removes the plateau's slope but is no
 wider, and `frame_spectral_loss` is the per-frame form for an `ondemand`
 body, as in section 11.3.
+
+## 13. Where to go next
+
+- **Adaptive effects.** Section 6 of
+  [docs/fad-rad-synthesis-en.md](../docs/fad-rad-synthesis-en.md) is an
+  active-noise-control loop (FxLMS) written with `fad`; the corpus file
+  `tests/corpus/auto_wah_fad_host.dsp` is an auto-wah whose gradients are
+  exposed to the host.
+- **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
+  differentiates a loss computed on an FFT frame, the per-frame counterpart of
+  section 7.2.
+- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): fourteen
+  DDSP programs with their tests — an adaptive notch, a mode calibrated by
+  Gauss-Newton, an amp model, a diode clipper learned through its implicit
+  solver, an FDN reverb, a string tuned through its fractional delay
+  (`fad`); an echo canceller, a neural waveshaper, block gradients for a
+  host, a GRU amp trained by block BPTT, a harmonic synthesizer fitted
+  through a spectral loss inside an `ondemand` block (`rad`); a reverb that
+  calibrates itself, then stops paying for it (`gated`, `on_change`).
+- **Many parameters.** `tests/corpus/opt_descend_n_rad_fir16.dsp` and
+  `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` are the bus loops on FIRs;
+  `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` runs the forward and the
+  reverse version side by side.
+- **Reverse mode and hosts.** [docs/rad-note-en.md](../docs/rad-note-en.md)
+  for the algorithm, [docs/rad-usage-en.md](../docs/rad-usage-en.md) for the
+  workflow.
+- **When the start is wrong.** Section 9 of
+  [optimizers-overview-en.md](optimizers-overview-en.md) on what gradient
+  descent asks of the landscape, and section 12 above for the tools, one
+  program each.
+- **The library itself.** Every function of
+  [optimizers.lib](optimizers.lib) carries a `#### Test` example that is
+  compiled by the test suite; they are the smallest working usage of each
+  function.
+
+## 14. Frequently hit walls
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| The parameter never moves | its derivative is zero: it passes through a button, a checkbox, an integer cast or comparison inside the model | keep the parameter path in floating-point arithmetic |
+| It moves the wrong way | sign convention: with `r = model - target` the MSE gradient is `+2 r j`; the synthesis note uses `err = target - model` and `-err * j` | pick one convention |
+| `NaN` after a while | `abs` (derivative `x/\|x\|`) or a filter that went unstable | smooth losses (`logcosh`, `pseudo_huber`), reflection coefficients for poles |
+| One parameter converges, another crawls | different units under one learning rate | log domain, Adam/Lion, or `lm_2D` |
+| The loop oscillates with an energy loss | the optimizer is faster than the loss's smoothing | lower `lr` below `1 - a` |
+| Jitter at the end | fixed step size on a noisy gradient | `lr_exp`/`lr_cos`, `polyak`, or SGD instead of Adam |
+| `(a, b) = f(...)` does not parse | Faust has no destructuring | `a = f(...) : _, !; b = f(...) : !, _;` |
+| `mdl(opts)` has the wrong arity | a multi-output expression is one argument | project each output and pass them separately |
+| Convergence in double but not in float | precision loss in recursive tangents | compile with `-double` |
+| `sequential composition mismatch` around an `ondemand` block | a frame operator with free `_` inputs used several times | give the body named arguments, one per frame sample |
+| A block ignores what happens outside | a definition referenced in the body is instantiated again in the body's time, it is not the outer signal | pass outer signals as explicit inputs of the block |
+| A bus loop learns nothing, the taps random-walk near zero | `op.mse(_, t)` (any function applied to a free `_`) is a two-input block: `:>` splits the taps between its inputs | name the loss input: `\(y).(op.mse(y, t))` |
+| A `_rad` loop converges slower than the `fad` one on a recursive model | inside a loop `rad` returns the direct term, the past state held fixed | the `fad` loops for recursive models, either for feed-forward ones |
+| It drifts away instead of converging, the loss staying high | the wrong basin: a well too narrow for the start, or a sloped plateau | an estimate as `init` (12.2), several starts (12.4), a restart on no progress (12.5), a loss that widens the well (12.7) |
+| It never moves although the loss is high | the parameter has no derivative: an integer delay, a `select2`, a written table | `spsa_1D_clocked` or `search_1D_clocked` (12.6) |
+| `multistart` hesitates between two loops | their smoothed losses are equal to rounding, the same well reached twice | read the parameter, not the index; or fewer starts |
+| The `fad` slope of an implicit solver misses a term | the iteration starts from `vprev`, the very signal the equation holds fixed: `fad(G(vprev, v), v)` with `v = vprev` differentiates both | start the iteration from a predictor or any distinct signal |
 
 ## Glossary
 
