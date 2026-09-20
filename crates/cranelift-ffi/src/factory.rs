@@ -28,7 +28,7 @@ use codegen::memory_layout::MemoryManagerMode;
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, CompilerError, ComputeMode, ExpandDspRequest,
     FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane,
-    TableInitMode, default_import_search_paths,
+    TableInitMode, merge_import_search_paths,
 };
 use ffi_common::{
     CompleteError, FaustMemoryManager, decode_c_argv as decode_c_argv_shared,
@@ -1214,17 +1214,20 @@ fn map_c_opt_level(level: c_int) -> CraneliftOptLevel {
     }
 }
 
-/// Builds import search paths for file compilation from default base + `-I` args.
+/// Builds import search paths for file compilation: the `-I` args first, then
+/// the compiler defaults (the source's directory, `FAUST_LIB_PATH`, the
+/// installed libraries).
 ///
-/// Path-based compilation must keep source-directory-relative import semantics,
-/// so file constructors start from the compiler defaults and then append FFI
-/// `-I...` overrides.
+/// The order is the C++ compiler's and the CLI's: a `-I DIR` overrides a
+/// library of the same name found later, which is what `faustprobe -I
+/// some/faustlibraries` relies on to measure a checkout rather than the
+/// installed copy. Appending the `-I` dirs after the defaults instead made
+/// them dead for every standard library name.
 fn collect_search_paths_for_file(path: &Path, argv: &[String]) -> Vec<PathBuf> {
-    let mut paths = default_import_search_paths(path);
-    if let Ok(parsed) = parse_ffi_compile_args(argv) {
-        paths.extend(parsed.search_paths);
-    }
-    paths
+    let extra = parse_ffi_compile_args(argv)
+        .map(|parsed| parsed.search_paths)
+        .unwrap_or_default();
+    merge_import_search_paths(path, &extra)
 }
 
 /// Reads the FIR module input arity from one boxed FIR export.

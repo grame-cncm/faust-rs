@@ -189,9 +189,15 @@ pub fn default_import_search_paths(path: &Path) -> Vec<PathBuf> {
 /// Builds the import search path list for a given source file, merging user-supplied
 /// extra paths with the built-in defaults discovered from the environment.
 ///
+/// `extra_paths` come first: a `-I DIR` overrides a library of the same name
+/// in the source's directory or in the installed libraries, as with the C++
+/// compiler. Every front end (the CLI, the FFI factories) must build its
+/// search paths through this function, never by appending `-I` dirs to
+/// [`default_import_search_paths`], which puts them last.
+///
 /// This is a convenience wrapper over [`build_import_search_paths`] that reads
 /// `FAUST_LIB_PATH` and the current executable location automatically.
-pub(crate) fn merge_import_search_paths(path: &Path, extra_paths: &[PathBuf]) -> Vec<PathBuf> {
+pub fn merge_import_search_paths(path: &Path, extra_paths: &[PathBuf]) -> Vec<PathBuf> {
     build_import_search_paths(
         path,
         extra_paths,

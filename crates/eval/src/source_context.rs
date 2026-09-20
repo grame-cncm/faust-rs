@@ -139,8 +139,10 @@ impl EvalSourceContext {
 
     /// Creates a context rooted at one source file plus optional import search paths.
     ///
-    /// The file parent directory is prepended ahead of explicit `search_paths`,
-    /// matching the effective C++/parser lookup contract for file-backed sessions.
+    /// The file's directory keeps its place when `search_paths` already holds it
+    /// (the compiler passes `-I` dirs, then that directory, then the installed
+    /// libraries: `library("x.lib")` then resolves as `import("x.lib")` does, a
+    /// `-I` dir first); otherwise it is prepended, ahead of everything.
     /// Reusing the same returned context across multiple `eval_process_*` calls
     /// also reuses the same loaded-source cache.
     #[must_use]
@@ -160,7 +162,9 @@ impl EvalSourceContext {
         metadata_store: CompilationMetadataStore,
     ) -> Self {
         let mut ordered = Vec::with_capacity(search_paths.len() + 1);
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path.parent()
+            && !search_paths.iter().any(|existing| existing == parent)
+        {
             ordered.push(parent.to_path_buf());
         }
         for candidate in search_paths {

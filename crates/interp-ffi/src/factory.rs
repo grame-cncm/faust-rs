@@ -23,7 +23,7 @@ use codegen::backends::interp::{
 use compiler::{
     AuxFileArtifact, Compiler as FaustCompiler, CompilerError, ExpandDspRequest,
     FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SignalFirLane, TableInitMode,
-    compile_options_json_string, default_import_search_paths,
+    compile_options_json_string, merge_import_search_paths,
 };
 use ffi_common::{
     CompleteError, FfiCompileArgs, decode_c_argv as decode_c_argv_shared,
@@ -654,8 +654,9 @@ fn compile_factory_from_file_fastlane(
         ..codegen::backends::interp::InterpOptions::default()
     };
 
-    let mut search_paths = default_import_search_paths(path);
-    search_paths.extend(parsed.search_paths);
+    // `-I` dirs first, then the defaults: a `-I DIR` overrides an installed
+    // library of the same name, as with the C++ compiler and the CLI.
+    let search_paths = merge_import_search_paths(path, &parsed.search_paths);
 
     let compiler = apply_table_init(
         with_bra_tape_option(

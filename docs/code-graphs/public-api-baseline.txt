@@ -684,6 +684,7 @@ fn golden_snapshot
 fn golden_snapshot_from_file
 fn make_output_file
 fn maybe_print_error_format_help
+fn merge_import_search_paths
 fn normalize_legacy_args
 fn open_arch_stream
 fn print_bundle
