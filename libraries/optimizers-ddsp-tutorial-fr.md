@@ -6,12 +6,24 @@ contenu ; garder les deux versions synchronisées). Contexte et justification
 des choix : [optimizers-overview-fr.md](optimizers-overview-fr.md).
 
 Ce tutoriel suppose que vous savez lire et écrire du Faust ordinaire, et rien
-d'autre. À la fin, vous aurez écrit des programmes qui apprennent un gain, le
-pôle d'un filtre, la fréquence et le Q d'un filtre résonant et les cinq
-coefficients d'un biquad, le tout dans le graphe Faust, et vous saurez vers
-quel outil vous tourner quand quelque chose ne converge pas. Chaque programme a
-été exécuté sur le compilateur courant ; les valeurs que vous devez observer
-sont données après chacun.
+d'autre. Il part d'un gradient écrit à la main et finit sur des programmes qui
+apprennent dans le graphe Faust : un gain, le pôle d'un filtre, la fréquence
+et le Q d'un filtre résonant, les cinq coefficients d'un biquad maintenus
+stables par des coefficients de réflexion, seize coefficients de FIR obtenus
+d'un seul balayage inverse, un annuleur d'écho et un petit réseau de neurones.
+
+En chemin, la perte devient la vôtre à écrire, la mise à jour reçoit un
+schedule, un gating, une lecture et une remise à zéro, Newton résout ce qui n'a
+pas à être appris, `rad` remet ses gradients à un hôte au lieu d'avancer dans le
+graphe, et `ondemand` fait tourner un optimiseur à sa propre cadence — une
+perte spectrale une fois par trame pendant que le gradient reste à cadence
+audio. Le dernier chapitre est pour les cas où le départ est faux : lire le
+paysage avant de choisir un optimiseur, partir d'une estimation, lancer
+plusieurs départs, redémarrer quand rien ne progresse, élargir le bassin par la
+perte, et descendre sans aucun gradient. À la fin, vous saurez vers quel outil
+vous tourner quand quelque chose ne converge pas. Chaque programme a été
+exécuté sur le compilateur courant ; les valeurs que vous devez observer sont
+données après chacun.
 
 ## 0. Mise en place
 

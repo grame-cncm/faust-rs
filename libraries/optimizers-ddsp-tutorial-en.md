@@ -5,11 +5,23 @@ French version: [optimizers-ddsp-tutorial-fr.md](optimizers-ddsp-tutorial-fr.md)
 rationale: [optimizers-overview-en.md](optimizers-overview-en.md).
 
 This tutorial assumes you can read and write ordinary Faust and nothing else.
-By the end you will have written programs that learn a gain, a filter pole, a
-resonant filter's frequency and Q, and the five coefficients of a biquad, all
-inside the Faust graph, and you will know which tool to reach for when
-something does not converge. Every program was run on the current compiler;
-the numbers you should see are given after each one.
+It starts from a gradient written by hand and ends on programs that learn
+inside the Faust graph: a gain, a filter pole, a resonant filter's frequency
+and Q, the five coefficients of a biquad kept stable through reflection
+coefficients, sixteen FIR taps from one reverse sweep, an echo canceller and
+a small neural network.
+
+Along the way the loss becomes yours to write, the update gets a schedule, a
+gate, a readout and a reset, Newton solves what does not need learning, `rad`
+hands its gradients to a host instead of stepping inside the graph, and
+`ondemand` runs an optimizer at its own rate — a spectral loss once per frame
+while the gradient stays at audio rate. The last chapter is for when the start
+is wrong: reading the landscape before choosing an optimizer, starting from an
+estimate, several starts at once, restarting on no progress, a loss that
+widens the basin, and descending with no gradient at all. By the end you will
+know which tool to reach for when something does not converge. Every program
+was run on the current compiler; the numbers you should see are given after
+each one.
 
 ## 0. Setting up
 
