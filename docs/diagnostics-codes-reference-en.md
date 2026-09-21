@@ -165,6 +165,7 @@ observable in practice today.
 | `FRS-PROP-0002` | `propagate` | Arity mismatch in propagate composition rules (`seq`/`split`/`merge`/UI wiring). | `crates/propagate/src/error.rs:235,247,268,301,398,406,414` |
 | `FRS-PROP-0003` | `propagate` | Recursion/projection contract mismatch in propagate (`rec` arity/alias). | `crates/propagate/src/error.rs:339` |
 | `FRS-PROP-0004` | `propagate` | Automatic differentiation (`fad`/`rad`) reached a clock-domain boundary it cannot cross. | `crates/propagate/src/error.rs:548` |
+| `FRS-PROP-0005` | `propagate` | A seed of `fad`/`rad` is computed from another seed of the same call; a seed is an independent variable, so the other seeds' lanes would be zero through it. | `crates/propagate/src/error.rs`, `AdDependentSeed` |
 | `FRS-PROP-0099` | `propagate` | Generic propagate failure fallback code. | `crates/propagate/src/error.rs:372,380,390,422` |
 
 ### `FRS-COMP-*` — Top-level compiler pipeline (3 codes)

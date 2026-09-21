@@ -830,6 +830,12 @@ fn propagate_inner(
                     outputs: seed_sigs.len(),
                 });
             }
+            crate::dependent_seeds::check_dependent_seeds(
+                arena,
+                &seed_sigs,
+                box_tree.as_tree_id(),
+                "fad",
+            )?;
             let body_inputs: Vec<SigId> = inputs.iter().copied().take(body_arity.inputs).collect();
             let body_sigs = propagate_in_slot_env(arena, body, &body_inputs, ctx)?;
             if ctx.suppress_fad {
@@ -872,6 +878,12 @@ fn propagate_inner(
                     outputs: seed_sigs.len(),
                 });
             }
+            crate::dependent_seeds::check_dependent_seeds(
+                arena,
+                &seed_sigs,
+                box_tree.as_tree_id(),
+                "rad",
+            )?;
             let body_inputs: Vec<SigId> = inputs.iter().copied().take(body_arity.inputs).collect();
             let body_sigs = propagate_in_slot_env(arena, body, &body_inputs, ctx)?;
             if body_sigs.len() != body_arity.outputs {

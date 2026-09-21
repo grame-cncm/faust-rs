@@ -63,6 +63,8 @@ pub const PROP_ARITY_MISMATCH: DiagnosticCode = DiagnosticCode("FRS-PROP-0002");
 pub const PROP_RECURSION_MISMATCH: DiagnosticCode = DiagnosticCode("FRS-PROP-0003");
 /// Automatic differentiation reached a clock-domain boundary it cannot cross.
 pub const PROP_AD_CLOCK_BOUNDARY: DiagnosticCode = DiagnosticCode("FRS-PROP-0004");
+/// A seed of `fad`/`rad` is computed from another seed of the same call.
+pub const PROP_AD_DEPENDENT_SEED: DiagnosticCode = DiagnosticCode("FRS-PROP-0005");
 /// Generic propagate failure fallback code.
 pub const PROP_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-PROP-0099");
 
@@ -173,6 +175,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         PROP_ARITY_MISMATCH,
         PROP_RECURSION_MISMATCH,
         PROP_AD_CLOCK_BOUNDARY,
+        PROP_AD_DEPENDENT_SEED,
         PROP_GENERIC_FAILURE,
         SFIR_INVALID_OPTIONS,
         SFIR_EMPTY_SIGNAL_LIST,

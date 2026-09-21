@@ -1034,6 +1034,7 @@ const PARSE_INVALID_LITERAL
 const PARSE_RECOVERY
 const PARSE_UNEXPECTED_TOKEN
 const PROP_AD_CLOCK_BOUNDARY
+const PROP_AD_DEPENDENT_SEED
 const PROP_ARITY_MISMATCH
 const PROP_GENERIC_FAILURE
 const PROP_RECURSION_MISMATCH
@@ -2039,6 +2040,7 @@ struct BoxArity
 struct ClockDomain
 struct ClockDomainId
 struct ClockDomainTable
+struct DependentSeed
 struct FlatBoxId
 struct PropagateOutput
 struct PropagateUiOptions
@@ -2046,7 +2048,7 @@ struct SignalOrigins
 use api
 use arity
 use clock_domain
-use error::PropagateError
+use error
 use flat
 
 ## signal-ffi

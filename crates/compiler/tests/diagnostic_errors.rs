@@ -1042,3 +1042,86 @@ fn abs_of_an_integer_constant_is_an_integer_and_an_infinity_keeps_its_sign() {
         "output0[i0] = ((FAUSTFLOAT)(-INFINITY));"
     );
 }
+
+// -----------------------------------------------------------------------
+// FRS-PROP-0005: a seed computed from another seed of the same call.
+// -----------------------------------------------------------------------
+
+fn dependent_seed_diagnostic(file: &str) -> compiler::Diagnostic {
+    let compiler = Compiler::new();
+    let source = read_corpus(file);
+    let err = compiler
+        .compile_source_to_signals(file, &source)
+        .expect_err("a seed computed from another seed must fail at the propagate stage");
+    let diagnostics = err.diagnostic_bundle();
+    diagnostics
+        .as_slice()
+        .iter()
+        .find(|d| d.code.0 == "FRS-PROP-0005")
+        .cloned()
+        .unwrap_or_else(|| panic!("no FRS-PROP-0005 diagnostic: {diagnostics:?}"))
+}
+
+#[test]
+fn fad_seed_computed_from_other_seeds_is_refused_with_both_spellings() {
+    let d = dependent_seed_diagnostic("err_fad_dependent_seed.dsp");
+    assert_eq!(d.stage, Stage::Propagate);
+    assert_eq!(
+        d.message.as_ref(),
+        "fad seed 1 `input 0 + input 1` is computed from seeds 2 `input 0` and 3 `input 1`"
+    );
+    assert!(
+        d.notes
+            .iter()
+            .any(|n| n.contains("lanes 2 and 3 would be 0")),
+        "notes: {:?}",
+        d.notes
+    );
+    assert_eq!(d.help.len(), 2, "help: {:?}", d.help);
+    assert!(d.help[0].contains("drop `input 0 + input 1` from the seed list"));
+    assert!(d.help[1].contains("seed it alone"));
+    assert_eq!(
+        d.facts.get(&compiler::FactKey::new("seed")),
+        Some(&DiagnosticValue::from(1u64))
+    );
+    assert_eq!(
+        d.facts.get(&compiler::FactKey::new("depends_on")),
+        Some(&DiagnosticValue::from(vec!["2".to_owned(), "3".to_owned()]))
+    );
+}
+
+#[test]
+fn rad_seed_computed_from_another_seed_is_refused() {
+    let d = dependent_seed_diagnostic("err_rad_dependent_seed.dsp");
+    assert_eq!(
+        d.message.as_ref(),
+        "rad seed 1 `input 0 + input 1` is computed from seed 2 `input 0`"
+    );
+    assert!(
+        d.notes
+            .iter()
+            .any(|n| n.contains("the adjoint of `input 0`"))
+    );
+}
+
+#[test]
+fn a_seed_read_only_through_a_recursion_is_not_a_dependent_seed() {
+    // `s` is the output of a one-pole whose coefficient is the seed `g`; the
+    // walk stops at the recursion, as the differentiation does, so the program
+    // compiles, and the lane of `g` is 0 through `s` (a seed is detached).
+    let source = "g = hslider(\"g\", 0.5, 0.0, 0.99, 0.01);\n\
+                  s = 1.0 : + ~ *(g);\n\
+                  process = fad(s * 2.0, (s, g)) : !, _, _;\n";
+    let sigs = Compiler::new()
+        .compile_source_to_signals("seed_through_recursion.dsp", source)
+        .expect("a seed read through a recursion is legal");
+    assert_eq!(sigs.signals.len(), 2);
+}
+
+#[test]
+fn duplicated_seeds_stay_legal() {
+    let source = "x = hslider(\"x\", 1.0, 0.0, 2.0, 0.01);\nprocess = fad(x * x, (x, x));\n";
+    Compiler::new()
+        .compile_source_to_signals("duplicated_seeds.dsp", source)
+        .expect("(x, x) is not a dependent seed");
+}

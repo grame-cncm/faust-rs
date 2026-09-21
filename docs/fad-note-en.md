@@ -82,24 +82,34 @@ below it. The analysis that settled it, with the programs each reading
 breaks, is
 [`porting/fad-rad-seed-semantics-analysis-2026-09-21-en.md`](../porting/fad-rad-seed-semantics-analysis-2026-09-21-en.md).
 
-*Planned diagnostic (2026-09-21, not implemented yet).* A seed whose
-computation contains a *different* seed (`(s, s)` stays legal) is, in every
-program seen, a mistake whose symptom is a silent zero. The propagation of
-the seed box is to refuse it, in both modes, with the fix the error model
-carries:
+*The diagnostic (2026-09-21).* A seed whose computation contains a
+*different* seed (`(s, s)` stays legal) is, in every program seen, a mistake
+whose symptom is a silent zero. The propagation of the seed box refuses it,
+in both modes, with the two spellings that mean something (`FRS-PROP-0005`,
+`PropagateError::AdDependentSeed`, `crates/propagate/src/dependent_seeds.rs`;
+fixtures `err_fad_dependent_seed.dsp` and `err_rad_dependent_seed.dsp`).
+Inputs are numbered in the message because the names of `process`'s
+arguments are gone after lowering, and controls are named by their
+identifier because the UI program is built after propagation:
 
 ```text
-error [FRS-PROP-0005] fad seed 1 `x + y` is computed from seeds 2 `x` and 3 `y`
+error [FRS-PROP-0005] fad seed 1 `input 0 + input 1` is computed from seeds 2 `input 0` and 3 `input 1`
   = note: cause: a seed is differentiated as an independent variable; what computes it is a constant for every lane
-  = note: lanes 2 and 3 would be 0 wherever the body reads `x + y`, since the tangent of `x` and `y` does not pass through a seed
-  = help: to differentiate with respect to `x` and `y`, drop `x + y` from the seed list: fad(x + y, (x, y))
-  = help: to differentiate with respect to `x + y` as one quantity, seed it alone: fad(x + y, x + y)
+  = note: lanes 2 and 3 would be 0 wherever the body reads `input 0 + input 1`, since the tangent of `input 0` and `input 1` does not pass through a seed
+  = help: to differentiate with respect to `input 0` and `input 1`, drop `input 0 + input 1` from the seed list: fad(…, (input 0, input 1))
+  = help: to differentiate with respect to `input 0 + input 1` as one quantity, seed it alone: fad(…, input 0 + input 1)
 ```
 
-The walk stops at projections as the differentiation does, so a parameter
-that depends on another only through an optimizer's recursion (the library's
-descents) is not reported. Until the diagnostic lands, the program above
-compiles and returns the zeros.
+The walk over a seed's computation is structural, stays in the seed's own
+scope and at the current sample: it does not enter a recursion body, cross a
+reference to an enclosing one, a delay or a clock-domain wrapper. So a
+parameter that depends on another only through an optimizer's recursion (the
+library's descents, each parameter a clamp of a projection of the loop) is
+not reported; neither is a seed that is the output of a recursion reading
+another seed; and neither is `y'` seeded next to `y`, the two variables of
+the implicit equation a Newton solver differentiates
+(`ddsp_fad_diode_clipper_newton.dsp`). A seed met inside another seed's
+computation is recorded and not entered.
 
 A widget used as a seed is one control wherever it is referenced. Ordinary
 Faust makes the group path part of a widget's identity, so a slider read

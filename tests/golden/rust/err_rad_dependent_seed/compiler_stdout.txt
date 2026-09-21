@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_rad_dependent_seed.dsp
+bytes=279
+lines=4
+fnv1a64=12b7b0669d55c330

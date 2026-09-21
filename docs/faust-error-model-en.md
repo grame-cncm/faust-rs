@@ -977,6 +977,7 @@ may be correct and your search path wrong.
 | `FRS-PROP-0002` | `propagate` | A composition arity mismatch — `:`, `<:`, `:>`, or UI wiring. The rule and the computed values come with it. |
 | `FRS-PROP-0003` | `propagate` | A recursion (`~`) whose feedback arities do not satisfy the recursive contract. |
 | `FRS-PROP-0004` | `propagate` | Automatic differentiation (`fad`/`rad`) reached a clock-domain boundary it cannot cross. |
+| `FRS-PROP-0005` | `propagate` | A seed of `fad`/`rad` is computed from another seed of the same call. A seed is an independent variable, so the other seeds' lanes would be zero wherever the body reads it; the two spellings that mean something come with it. |
 | `FRS-PROP-0099` | `propagate` | Any other propagation failure. |
 
 ### 7.4 Signal values and the user interface (`FRS-COMP-*`, `FRS-UI-*`)

@@ -61,6 +61,11 @@ pub enum PropagateError {
         node: TreeId,
         outputs: usize,
     },
+    /// A seed of `fad` or `rad` is computed from another seed of the same
+    /// call. A seed is differentiated as an independent variable, so the
+    /// other seeds' lanes would be zero wherever the body reads it: the
+    /// program is refused with the two spellings that mean something.
+    AdDependentSeed(Box<DependentSeed>),
     RadBodyArity {
         node: TreeId,
         outputs: usize,
@@ -185,6 +190,14 @@ impl Display for PropagateError {
                 f,
                 "fad seed at node {} must produce at least 1 output, got {outputs}",
                 node.as_u32()
+            ),
+            Self::AdDependentSeed(details) => write!(
+                f,
+                "{} seed {} `{}` is computed from {}",
+                details.mode,
+                details.seed,
+                details.seed_text,
+                dependent_seed_list(&details.depends_on)
             ),
             Self::RadBodyArity { node, outputs } => write!(
                 f,
@@ -416,6 +429,55 @@ impl ToDiagnostic for PropagateError {
             )
             .with_note("cause: fad seed expression must produce at least 1 output signal")
             .with_note(format!("seed produced {outputs} output(s)")),
+            Self::AdDependentSeed(details) => {
+                let DependentSeed {
+                    node,
+                    mode,
+                    seed,
+                    seed_text,
+                    depends_on,
+                } = details.as_ref();
+                let derivative = if *mode == "rad" { "adjoint" } else { "tangent" };
+                let lanes = dependent_lane_list(depends_on);
+                let names = depends_on
+                    .iter()
+                    .map(|(_, text)| format!("`{text}`"))
+                    .collect::<Vec<_>>()
+                    .join(" and ");
+                let dropped = depends_on
+                    .iter()
+                    .map(|(_, text)| text.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Diagnostic::new(
+                    Severity::Error,
+                    Stage::Propagate,
+                    codes::PROP_AD_DEPENDENT_SEED,
+                    message,
+                )
+                .with_note(
+                    "cause: a seed is differentiated as an independent variable; what computes it is a constant for every lane",
+                )
+                .with_note(format!(
+                    "{lanes} would be 0 wherever the body reads `{seed_text}`, since the {derivative} of {names} does not pass through a seed"
+                ))
+                .with_help(format!(
+                    "to differentiate with respect to {names}, drop `{seed_text}` from the seed list: {mode}(…, ({dropped}))"
+                ))
+                .with_help(format!(
+                    "to differentiate with respect to `{seed_text}` as one quantity, seed it alone: {mode}(…, {seed_text})"
+                ))
+                .with_fact("node", u64::from(node.as_u32()))
+                .with_fact("mode", *mode)
+                .with_fact("seed", *seed as u64)
+                .with_fact(
+                    "depends_on",
+                    depends_on
+                        .iter()
+                        .map(|(lane, _)| lane.to_string())
+                        .collect::<Vec<String>>(),
+                )
+            }
             Self::RadBodyArity { outputs, .. } => Diagnostic::new(
                 Severity::Error,
                 Stage::Propagate,
@@ -593,5 +655,47 @@ impl ToDiagnostic for PropagateError {
                  augment_block): please report the program",
             ),
         }
+    }
+}
+
+/// The payload of [`PropagateError::AdDependentSeed`], boxed so that the error
+/// stays small on every `Result` it travels through.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependentSeed {
+    /// The `fad`/`rad` box.
+    pub node: TreeId,
+    /// `"fad"` or `"rad"`.
+    pub mode: &'static str,
+    /// 1-based lane of the dependent seed.
+    pub seed: usize,
+    /// A short rendering of the dependent seed.
+    pub seed_text: String,
+    /// 1-based lanes and renderings of the seeds it is computed from.
+    pub depends_on: Vec<(usize, String)>,
+}
+
+/// `seed 2 `x``, `seeds 2 `x` and 3 `y``, `seeds 1 `a`, 2 `b` and 4 `d``.
+fn dependent_seed_list(depends_on: &[(usize, String)]) -> String {
+    let items = depends_on
+        .iter()
+        .map(|(lane, text)| format!("{lane} `{text}`"))
+        .collect::<Vec<_>>();
+    match items.len() {
+        0 => String::from("no seed"),
+        1 => format!("seed {}", items[0]),
+        n => format!("seeds {} and {}", items[..n - 1].join(", "), items[n - 1]),
+    }
+}
+
+/// `lane 2`, `lanes 2 and 3`, `lanes 1, 2 and 4`.
+fn dependent_lane_list(depends_on: &[(usize, String)]) -> String {
+    let items = depends_on
+        .iter()
+        .map(|(lane, _)| lane.to_string())
+        .collect::<Vec<_>>();
+    match items.len() {
+        0 => String::from("no lane"),
+        1 => format!("lane {}", items[0]),
+        n => format!("lanes {} and {}", items[..n - 1].join(", "), items[n - 1]),
     }
 }

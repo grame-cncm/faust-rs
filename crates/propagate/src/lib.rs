@@ -125,6 +125,7 @@ use ui::{
 
 pub mod clock_domain;
 mod context_id;
+mod dependent_seeds;
 mod forward_ad;
 mod profile;
 mod result_memo;
@@ -521,7 +522,7 @@ mod ui_build;
 
 pub use api::{propagate_typed, propagate_typed_with_ui};
 pub use arity::{box_arity_typed, make_sig_input_list};
-pub use error::PropagateError;
+pub use error::{DependentSeed, PropagateError};
 pub use flat::{FlatBoxBuildError, FlatBoxId, try_build_flat_box};
 
 pub(crate) use arity::box_arity_wiring;

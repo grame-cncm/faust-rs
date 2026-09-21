@@ -11,8 +11,9 @@ font-mono: Roboto Mono
 
 **Date:** 2026-09-21
 
-**Status:** analysis and recommendation; not a normative plan. Nothing in the
-compiler changes with this document.
+**Status:** analysis and recommendation; not a normative plan. The semantics
+it recommends keeping is the one the compiler has; the diagnostic of §6.1 was
+implemented the same day (`FRS-PROP-0005`), the rest of §6 is not.
 
 **Studied tree:** `main-dev` at `194f7b12`. Code read:
 `crates/propagate/src/forward_ad.rs` (seed index, `depends_on_seed`,
@@ -339,8 +340,14 @@ JAX arguments, not PyTorch tensors.
 
 Three things should follow, in order of value.
 
-**6.1 A diagnostic for dependent seeds.** A seed computed from another seed
-is, in every program seen, a mistake, and its symptom is a silent zero. At
+**6.1 A diagnostic for dependent seeds.** *Implemented the same day:
+`FRS-PROP-0005`, `PropagateError::AdDependentSeed`,
+`crates/propagate/src/dependent_seeds.rs`, fixtures
+`err_fad_dependent_seed.dsp` and `err_rad_dependent_seed.dsp`; the walk
+does not enter a recursion body nor cross a delay, so the library's
+descents pass, and so does `y'` seeded next to `y` in the Newton solver of
+`ddsp_fad_diode_clipper_newton.dsp`, which the first workspace run caught.* A seed
+computed from another seed is, in every program seen, a mistake, and its symptom is a silent zero. At
 the lowering of the seed box (`engine.rs`, the `ForwardAD` and `ReverseAD`
 arms, after `seed_sigs` is known), walk each seed's subtree once, memoised,
 and report a seed whose subtree contains a *different* seed (`(s, s)` stays

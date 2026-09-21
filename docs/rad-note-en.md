@@ -122,14 +122,16 @@ for `fad`:
   tensors, and the reason is the first bullet. The analysis is
   [`porting/fad-rad-seed-semantics-analysis-2026-09-21-en.md`](../porting/fad-rad-seed-semantics-analysis-2026-09-21-en.md).
 
-*Planned diagnostic (2026-09-21, not implemented yet).* A seed whose
-computation contains a different seed is to be refused at the propagation
-of the seed box, with the same code and text as for `fad`
-(`FRS-PROP-0005`, "rad seed 1 `x + y` is computed from seeds 2 `x` and
-3 `y`", the two `help` lines giving the two spellings `rad(x + y, (x, y))`
-and `rad(x + y, x + y)`). Duplicated seeds stay legal, and the walk stops at
-projections, so the library's descents are not reported. Until then the
-program compiles and returns the zeros.
+*The diagnostic (2026-09-21).* A seed whose computation contains a
+different seed is refused at the propagation of the seed box, with the same
+code and shape as for `fad` (`FRS-PROP-0005`, `PropagateError::AdDependentSeed`,
+`crates/propagate/src/dependent_seeds.rs`): "rad seed 1 `input 0 + input 1`
+is computed from seed 2 `input 0`" for `err_rad_dependent_seed.dsp`, a note
+saying which lanes would be 0 and that the adjoint does not pass through a
+seed, and two `help` lines giving the two spellings, the seed list without
+the dependent seed and the dependent seed alone. Duplicated seeds stay
+legal, and the walk does not enter a recursion body nor cross a delay, so
+the library's descents are not reported, nor `y'` seeded next to `y`.
 
 ## 3. Rule table
 

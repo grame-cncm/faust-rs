@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_fad_dependent_seed.dsp
+bytes=407
+lines=6
+fnv1a64=2fc53101c1087568
