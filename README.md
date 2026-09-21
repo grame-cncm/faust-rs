@@ -248,16 +248,16 @@ cc -std=c11 app.c \
 
 The Cranelift C API has the same lifecycle with backend-specific names:
 
-| Operation | Interpreter C API | Cranelift C API |
-|---|---|---|
-| Header | `interpreter-dsp-c.h` | `cranelift-dsp-c.h` |
+| Operation           | Interpreter C API                                    | Cranelift C API                                               |
+| ------------------- | ---------------------------------------------------- | ------------------------------------------------------------- |
+| Header              | `interpreter-dsp-c.h`                                | `cranelift-dsp-c.h`                                           |
 | Factory from string | `createCInterpreterDSPFactoryFromString(..., error)` | `createCCraneliftDSPFactoryFromString(..., error, opt_level)` |
-| Factory from file | `createCInterpreterDSPFactoryFromFile(..., error)` | `createCCraneliftDSPFactoryFromFile(..., error, opt_level)` |
-| Create instance | `createCInterpreterDSPInstance(factory)` | `createCCraneliftDSPInstance(factory)` |
-| Initialize | `initCInterpreterDSPInstance(dsp, sample_rate)` | `initCCraneliftDSPInstance(dsp, sample_rate)` |
-| Process | `computeCInterpreterDSPInstance(...)` | `computeCCraneliftDSPInstance(...)` |
-| Delete instance | `deleteCInterpreterDSPInstance(dsp)` | `deleteCCraneliftDSPInstance(dsp)` |
-| Delete factory | `deleteCInterpreterDSPFactory(factory)` | `deleteCCraneliftDSPFactory(factory)` |
+| Factory from file   | `createCInterpreterDSPFactoryFromFile(..., error)`   | `createCCraneliftDSPFactoryFromFile(..., error, opt_level)`   |
+| Create instance     | `createCInterpreterDSPInstance(factory)`             | `createCCraneliftDSPInstance(factory)`                        |
+| Initialize          | `initCInterpreterDSPInstance(dsp, sample_rate)`      | `initCCraneliftDSPInstance(dsp, sample_rate)`                 |
+| Process             | `computeCInterpreterDSPInstance(...)`                | `computeCCraneliftDSPInstance(...)`                           |
+| Delete instance     | `deleteCInterpreterDSPInstance(dsp)`                 | `deleteCCraneliftDSPInstance(dsp)`                            |
+| Delete factory      | `deleteCInterpreterDSPFactory(factory)`              | `deleteCCraneliftDSPFactory(factory)`                         |
 
 Unlike the C++ wrapper, the Cranelift C constructor always takes the
 `opt_level` argument. Returned strings such as factory JSON or serialized
@@ -286,13 +286,13 @@ never told: 4096 bytes, as in libfaust, and it cannot grow without overflowing
 existing hosts. It receives the first line above, the summary. The complete text
 is read from the library, one function per API:
 
-| Header | Entry points | Complete text of their last error | Its typed form (JSON) |
-|---|---|---|---|
-| `interpreter-dsp-c.h` | Interpreter factories, expansion, auxiliary files | `getCCompleteInterpreterDSPFactoryError()` | `getCInterpreterDSPFactoryErrorDiagnostics()` |
-| `cranelift-dsp-c.h` | Cranelift factories, expansion, auxiliary files | `getCCompleteCraneliftDSPFactoryError()` | `getCCraneliftDSPFactoryErrorDiagnostics()` |
-| `libfaust-c.h` | `expandCDSP*`, `generateCAuxFiles*` | `getCCompleteDSPError()` | `getCDSPErrorDiagnostics()` |
-| `libfaust-box-c.h` | `CDSPToBoxes`, `CboxesToSignals*`, `CcreateSourceFromBoxes` | `getCCompleteBoxError()` | `getCBoxErrorDiagnostics()` |
-| `libfaust-signal-c.h` | `CcreateSourceFromSignals` | `getCCompleteSignalError()` | none: no failure of this API is typed |
+| Header                | Entry points                                                | Complete text of their last error          | Its typed form (JSON)                         |
+| --------------------- | ----------------------------------------------------------- | ------------------------------------------ | --------------------------------------------- |
+| `interpreter-dsp-c.h` | Interpreter factories, expansion, auxiliary files           | `getCCompleteInterpreterDSPFactoryError()` | `getCInterpreterDSPFactoryErrorDiagnostics()` |
+| `cranelift-dsp-c.h`   | Cranelift factories, expansion, auxiliary files             | `getCCompleteCraneliftDSPFactoryError()`   | `getCCraneliftDSPFactoryErrorDiagnostics()`   |
+| `libfaust-c.h`        | `expandCDSP*`, `generateCAuxFiles*`                         | `getCCompleteDSPError()`                   | `getCDSPErrorDiagnostics()`                   |
+| `libfaust-box-c.h`    | `CDSPToBoxes`, `CboxesToSignals*`, `CcreateSourceFromBoxes` | `getCCompleteBoxError()`                   | `getCBoxErrorDiagnostics()`                   |
+| `libfaust-signal-c.h` | `CcreateSourceFromSignals`                                  | `getCCompleteSignalError()`                | none: no failure of this API is typed         |
 
 ```c
 char error[4096] = {0};
@@ -683,66 +683,72 @@ boundary plus the `foreign-call` runtime bridge.
 
 ### Compiler core
 
-| Crate | Role |
-|---|---|
-| `tlib` | Hash-consed tree arena, symbols, lists, recursive tree helpers |
-| `diagnostics` | Structured diagnostic reports, stable codes, labels, and bundles |
-| `interval` | Interval arithmetic |
-| `algebra` | Shared algebra/rewrite scaffold |
-| `graph` | Shared graph algorithms scaffold |
-| `boxes` | Faust box IR builders and matchers |
-| `parser` | Faust source parser and import handling |
-| `signals` | Faust signal IR builders, matchers, extended math nodes, and shared local RAD rule helpers |
-| `ui` | Grouped UI IR |
-| `eval` | Box-level evaluator and pattern matcher |
-| `propagate` | Box-to-signal propagation, including FAD/RAD expansion |
-| `normalize` | Signal normalization and preparation helpers |
-| `sigtype` | Signal type lattice and inference |
-| `transform` | Signal preparation and signal-to-FIR lowering |
-| `fir` | Faust Intermediate Representation |
-| `foreign-call` | Raw C ABI foreign-function invocation bridge |
-| `codegen` | AssemblyScript, C, C++, Cmajor, Codebox (RNBO), Rust, interpreter, Cranelift, WASM, and Julia backend generation |
-| `draw` | SVG block-diagram rendering |
-| `doc` | Documentation/reporting scaffold |
-| `compiler` | Top-level compiler facade and CLI |
+| Crate          | Role                                                                                                             |
+| -------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `tlib`         | Hash-consed tree arena, symbols, lists, recursive tree helpers                                                   |
+| `diagnostics`  | Structured diagnostic reports, stable codes, labels, and bundles                                                 |
+| `interval`     | Interval arithmetic                                                                                              |
+| `algebra`      | Shared algebra/rewrite scaffold                                                                                  |
+| `graph`        | Shared graph algorithms scaffold                                                                                 |
+| `boxes`        | Faust box IR builders and matchers                                                                               |
+| `parser`       | Faust source parser and import handling                                                                          |
+| `signals`      | Faust signal IR builders, matchers, extended math nodes, and shared local RAD rule helpers                       |
+| `ui`           | Grouped UI IR                                                                                                    |
+| `eval`         | Box-level evaluator and pattern matcher                                                                          |
+| `propagate`    | Box-to-signal propagation, including FAD/RAD expansion                                                           |
+| `normalize`    | Signal normalization and preparation helpers                                                                     |
+| `sigtype`      | Signal type lattice and inference                                                                                |
+| `transform`    | Signal preparation and signal-to-FIR lowering                                                                    |
+| `fir`          | Faust Intermediate Representation                                                                                |
+| `foreign-call` | Raw C ABI foreign-function invocation bridge                                                                     |
+| `codegen`      | AssemblyScript, C, C++, Cmajor, Codebox (RNBO), Rust, interpreter, Cranelift, WASM, and Julia backend generation |
+| `draw`         | SVG block-diagram rendering                                                                                      |
+| `doc`          | Documentation/reporting scaffold                                                                                 |
+| `compiler`     | Top-level compiler facade and CLI                                                                                |
 
 ### FFI adapters
 
-| Crate | Role |
-|---|---|
-| `ffi-common` | Shared ABI, marshalling, allocation, and factory-cache support for FFI adapters |
-| `tree-ffi` | Shared opaque tree-handle support for Box and Signal C APIs |
-| `box-ffi` | Box manipulation C/C++ API |
-| `signal-ffi` | Signal manipulation C/C++ API |
-| `interp-ffi` | Interpreter backend C/C++ API |
+| Crate           | Role                                                                                                                            |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `ffi-common`    | Shared ABI, marshalling, allocation, and factory-cache support for FFI adapters                                                 |
+| `tree-ffi`      | Shared opaque tree-handle support for Box and Signal C APIs                                                                     |
+| `box-ffi`       | Box manipulation C/C++ API                                                                                                      |
+| `signal-ffi`    | Signal manipulation C/C++ API                                                                                                   |
+| `interp-ffi`    | Interpreter backend C/C++ API                                                                                                   |
 | `cranelift-ffi` | Experimental Cranelift backend C/C++ API; also hosts the `impulse-cranelift` and `faustprobe` binaries, which drive its runtime |
-| `libfaust-ffi` | Backend-agnostic libfaust C/C++ API (`expandDSP*`, `generateAuxFiles*`, `generateSHA1`) |
+| `libfaust-ffi`  | Backend-agnostic libfaust C/C++ API (`expandDSP*`, `generateAuxFiles*`, `generateSHA1`)                                         |
 
 ### Distribution and tooling
 
-| Crate | Role |
-|---|---|
-| `impulse-runner` | Interpreter-backed scalar impulse-test runner |
-| `faustprobe` | Generic DSP probe: set controls, render offline, measure (see below) |
-| `xtask` | Developer and CI automation |
-| `faust-ffi` | Unified `libfaust-rs` distribution crate |
-| `wasm-ffi` | Raw WASM ABI for `faustwasm` embedded compiler mode |
+| Crate            | Role                                                                 |
+| ---------------- | -------------------------------------------------------------------- |
+| `impulse-runner` | Interpreter-backed scalar impulse-test runner                        |
+| `faustprobe`     | Generic DSP probe: set controls, render offline, measure (see below) |
+| `xtask`          | Developer and CI automation                                          |
+| `faust-ffi`      | Unified `libfaust-rs` distribution crate                             |
+| `wasm-ffi`       | Raw WASM ABI for `faustwasm` embedded compiler mode                  |
 
 ### Probing a DSP with `faustprobe`
 
-The two impulse runners answer *did the behaviour change?* — a fixed protocol
-compared against a stored reference. `faustprobe` answers *is the behaviour
-correct?*, by setting controls to a chosen operating point and reporting what
+The two impulse runners answer _did the behaviour change?_ — a fixed protocol
+compared against a stored reference. `faustprobe` answers _is the behaviour
+correct?_, by setting controls to a chosen operating point and reporting what
 comes out:
 
-```bash
+```markdown
 # What can be set, with ranges
+
 cargo run --release -p cranelift-ffi --bin faustprobe -- filter.dsp -I lib --list-params
 
 # Steady-state level of a 1 kHz sine through a filter, transient excluded
+
 cargo run --release -p cranelift-ffi --bin faustprobe -- filter.dsp -I lib \
-    --set cutoff=1000 --set resonance=0 \
-    --sr 48000 -n 96000 --skip 48000 --in sine:1000 --quiet
+ --set cutoff=1000 --set resonance=0 \
+ --sr 48000 -n 96000 --skip 48000 --in sine:1000 --quiet
+
+# Build faustprobe to be installed
+
+cargo build --release -p cranelift-ffi --bin faustprobe
 ```
 
 Per-frame CSV goes to stdout and the statistics to stderr, so a dump stays
