@@ -530,7 +530,8 @@ pub(crate) use engine::{
     propagate_in_slot_env, split_compatible, usize_from_int_node,
 };
 pub(crate) use flat::{
-    FlatNodeKind, RecFadMode, contains_forward_ad, count_fad_nodes, flat_node_kind, rec_fad_mode,
+    FlatNodeKind, RecFadMode, contains_forward_ad, count_fad_nodes, flat_node_kind, free_slots,
+    rec_fad_mode,
 };
 pub(crate) use ui_build::{build_ui_program, decode_box_label};
 

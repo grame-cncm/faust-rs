@@ -27,7 +27,9 @@ use ui::UiGroupPathSegment;
 pub(crate) struct SlotEnvId(u32);
 
 impl SlotEnvId {
-    const EMPTY: Self = Self(0);
+    /// The environment with no binding: the key a closed box is memoised on
+    /// whatever the environment it is reached in (`engine::propagate`).
+    pub(crate) const EMPTY: Self = Self(0);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -132,6 +134,22 @@ impl SlotEnv {
         }
         self.current = current;
         saved
+    }
+
+    /// The canonical identity of the active environment restricted to
+    /// `slots`, a sorted list of the slots a box mentions free: the chain of
+    /// their current bindings, interned from the empty environment in that
+    /// order. Two environments that bind those slots to the same signals give
+    /// the same id whatever else they bind and in whatever order, which is
+    /// what a box that reads only those slots depends on
+    /// (`engine::propagate`). `None` when one of them is unbound.
+    pub(crate) fn restricted_id(&mut self, slots: &[BoxId]) -> Option<SlotEnvId> {
+        let mut current = SlotEnvId::EMPTY;
+        for &slot in slots {
+            let signal = self.get_from(self.current, slot)?;
+            current = self.intern_binding(current, slot, signal);
+        }
+        Some(current)
     }
 
     fn intern_binding(&mut self, parent: SlotEnvId, slot: BoxId, signal: SigId) -> SlotEnvId {
@@ -332,5 +350,37 @@ mod tests {
         assert_eq!(path.id(), first);
         path.restore(root_again);
         assert!(path.groups().is_empty());
+    }
+
+    #[test]
+    fn restricted_id_names_only_the_slots_asked() {
+        let mut arena = TreeArena::new();
+        let (a, b, c) = (arena.int(1), arena.int(2), arena.int(3));
+        let (sa, sb, sc) = (arena.int(11), arena.int(12), arena.int(13));
+        let mut env = SlotEnv::new();
+        env.push(a, sa);
+        env.push(b, sb);
+        let ab = env.restricted_id(&[a]).expect("a bound");
+        env.push(c, sc);
+        let abc = env.restricted_id(&[a]).expect("a still bound");
+        assert_eq!(
+            ab, abc,
+            "an unrelated binding must not change the key of a box reading `a` alone"
+        );
+        assert_ne!(env.restricted_id(&[a, b]), env.restricted_id(&[a]));
+        assert_eq!(env.restricted_id(&[a, b]), env.restricted_id(&[a, b]));
+        let d = arena.int(4);
+        assert!(
+            env.restricted_id(&[d]).is_none(),
+            "an unbound slot has no restricted key"
+        );
+        let full = env.id();
+        env.push(a, sc);
+        assert_ne!(
+            env.restricted_id(&[a]).expect("a rebound"),
+            ab,
+            "a rebinding of `a` changes it"
+        );
+        assert_ne!(env.id(), full);
     }
 }

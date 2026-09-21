@@ -434,6 +434,38 @@ must run unchanged with Faust C++ should not pass them.
 - Evidence: `crates/normalize/src/simplify.rs`
   (`abs_of_an_integer_constant_stays_an_integer`).
 
+### DIFF-BEH-013 — one clocked block for one definition, whatever the slot environments it is read in
+
+- Status: `adapted` (fewer clocked-block instances than the C++ reference, same
+  samples), implemented 2026-09-21.
+- C++ `propagate` memoises a call on `(slotenv, path, box, inputs)` and
+  `makeClockEnv` names an `ondemand` block's environment by the same tuple: a
+  definition holding a clocked wrapper, read at the top level and again inside
+  the body of a `boxSymbolic` (every `f ~ g` whose `f` is an unapplied
+  function), is propagated twice and the wrapper becomes two blocks, both
+  computed. Rust keys the result memo on the environment *restricted to the
+  box's free slots* (`propagate::flat::free_slots`,
+  `SlotEnv::restricted_id`), the empty one for a closed box, leaves the
+  `suppress_fad` mode out of the key of a box holding no `fad`, and memoises
+  a recursion holding a `fad` from its first call: the second reading hits
+  the first propagation and replays its domain, so the definition is one
+  block. `t = (clk, x) : ondemand(exp); process = t + ((\(r).(t + 0.5 * r)) ~ _)`
+  emits one `exp` where C++ emits two; a descent of `optimizers.lib` whose
+  loss reads a clocked model that the program reads too runs one model per
+  reading less (`porting/journal/2026-09-21.md`, `porting/MEMOIZATION.md`
+  §2.22).
+- Compatibility impact: the generated code differs from C++ in the number of
+  block instances and their domain ids, never in the samples: the merged
+  blocks had the same clock, the same inputs and the same body, so the same
+  state. `DIFF-BACK-004` already frees the generated text from byte identity.
+  A program that relied on two instances of one definition having two states
+  cannot exist: the two were fed the same signals by construction.
+- A definition that depends on an enclosing recursion's variable and is read
+  at two binder depths is still propagated twice (the variable is lifted
+  under the inner binder), as in C++; recorded as open in the journal.
+- Tests: `crates/compiler/tests/closed_box_memo.rs`,
+  `propagate::tests::closed_clocked_box_is_one_block_across_slot_environments`.
+
 ## 6. Additional backends and delivery forms
 
 ### DIFF-BACK-001 — Cranelift

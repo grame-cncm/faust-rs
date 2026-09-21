@@ -52,19 +52,52 @@ pub(crate) fn propagate_in_slot_env(
     // replays it. See `result_memo` for why AD roots were ineligible before.
     // A call that allocates an identity (a clock domain, the twins of an
     // AD expansion) is memoised from the first call on: see `key`.
+    // A recursion that contains a `fad` allocates identities too: its
+    // expansion after the group (`RecFadMode::ExpandAfterRec`) runs the
+    // forward-AD transform, which gives every clocked block it augments a
+    // twin domain, outside the memo of the blocks themselves. Left to the
+    // warm-up, a second reference to such a recursion — an output of the
+    // descent fed to a clocked block written as `f ~ g`, whose body inlines
+    // the descent's box — expanded it again: a second twin of the model and
+    // a second step block for one learner (2026-09-21).
+    let node_kind = flat_node_kind(arena, box_tree)?;
     let allocates_identity = matches!(
-        flat_node_kind(arena, box_tree)?,
+        node_kind,
         FlatNodeKind::Ondemand(_)
             | FlatNodeKind::Upsampling(_)
             | FlatNodeKind::Downsampling(_)
             | FlatNodeKind::ForwardAD { .. }
             | FlatNodeKind::ReverseAD { .. }
-    );
+    ) || (matches!(node_kind, FlatNodeKind::Rec(..))
+        && contains_forward_ad(arena, box_tree, ctx.cache)?);
+    // A box reads the slot environment through its free slots alone, so its
+    // outputs depend on their bindings and on nothing else in it: the key is
+    // the environment restricted to them, the empty one for a closed box
+    // (`flat::free_slots`, `SlotEnv::restricted_id`). The same definition
+    // reached inside a `boxSymbolic` body, under bindings it does not read,
+    // is then the propagation it already had outside; a program written as
+    // `process(x, t) = ...` mentions its two inputs' slots everywhere and
+    // was, on the full key, propagated once per body it was read in.
+    let free = free_slots(arena, box_tree, &mut ctx.memo.free_slots)?;
+    let slot_env_key = if free.is_empty() {
+        SlotEnvId::EMPTY
+    } else {
+        ctx.slot_env
+            .restricted_id(&free)
+            .unwrap_or_else(|| ctx.slot_env.id())
+    };
+    // `suppress_fad` changes the propagation of a `ForwardAD` box alone (its
+    // primal outputs and its pending seeds); a box that contains none is the
+    // same under either value, so the flag leaves its key. Without this the
+    // target a loss reads inside a recursion (propagated under
+    // `ExpandAfterRec`, the flag set) and the same target read outside were
+    // two propagations, and a clocked target two blocks.
+    let suppress_fad_key = ctx.suppress_fad && contains_forward_ad(arena, box_tree, ctx.cache)?;
     let result_key = ctx.memo.results.key(
         box_tree,
-        ctx.slot_env.id(),
+        slot_env_key,
         ctx.ui_path.id(),
-        PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, ctx.suppress_fad),
+        PropagationModeKey::new(ctx.clock_env, ctx.clock_domain, suppress_fad_key),
         inputs,
         allocates_identity,
     );
@@ -1454,6 +1487,9 @@ pub(crate) struct PropagateMemo {
     /// contains a clocked wrapper. Each entry carries the pending forward-AD
     /// seeds its call appended, so a hit replays that one side effect.
     pub(crate) results: PropagateResultMemo,
+    /// The free slots of a flat box, per box (`flat::free_slots`): a box
+    /// with none is keyed in `results` on the empty slot environment.
+    pub(crate) free_slots: AHashMap<FlatBoxId, std::sync::Arc<[TreeId]>>,
     /// Opt-in C++-comparable propagation attribution. It is dormant unless
     /// `FAUST_PROPAGATE_PROFILE` was present when this traversal was created.
     pub(crate) profile: crate::profile::PropagateProfile,
@@ -1466,6 +1502,7 @@ impl Default for PropagateMemo {
             aperture: AHashMap::new(),
             slot_env_lift: AHashMap::new(),
             results: PropagateResultMemo::default(),
+            free_slots: AHashMap::new(),
             profile: crate::profile::PropagateProfile::default(),
         }
     }

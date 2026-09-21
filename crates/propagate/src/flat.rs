@@ -6,6 +6,7 @@
 //! preserving `TreeArena` sharing.
 
 use super::*;
+use std::sync::Arc;
 
 /// Typed handle for the flat post-eval box subset accepted at the propagation boundary.
 ///
@@ -365,6 +366,83 @@ pub(crate) fn contains_forward_ad(
     };
     cache.forward_ad.insert(box_tree, found);
     Ok(found)
+}
+
+/// The free slots of a flat box: the `Slot` nodes below it that no `Symbolic`
+/// below it binds, as a sorted, deduplicated list of slot box ids. A box with
+/// none is closed with respect to the slot environment: its outputs are a
+/// function of the box, its inputs, the UI path and the clock context alone,
+/// so `engine::propagate` keys it in the result memo on the empty environment.
+/// Without this, a closed definition referenced both outside and inside a
+/// `boxSymbolic` body, the shape of every `f ~ g` whose `f` is an unapplied
+/// function, was propagated once per environment, and each propagation of a
+/// clocked wrapper in it allocated a domain of its own: `t = (clock, x) :
+/// ondemand(exp); process = t + ((\(r).(t + 0.5 * r)) ~ _)` ran two blocks
+/// for one definition, and a descent of `optimizers.lib` whose loss and error
+/// read one clocked target paid the target once per environment (2026-09-21).
+/// The binder matters: `ondemand(\(u).(exp(u) - 1.0))` mentions a slot and is
+/// closed, since its `Symbolic` binds the only one it mentions; the coarser
+/// "mentions a slot" answer would have kept every such block on the full key.
+/// `memo` caches the list per box so a shared subtree is walked once.
+pub(crate) fn free_slots(
+    arena: &TreeArena,
+    box_tree: FlatBoxId,
+    memo: &mut AHashMap<FlatBoxId, Arc<[TreeId]>>,
+) -> Result<Arc<[TreeId]>, FlatBoxBuildError> {
+    if let Some(cached) = memo.get(&box_tree) {
+        return Ok(Arc::clone(cached));
+    }
+    let free: Arc<[TreeId]> = match flat_node_kind(arena, box_tree)? {
+        FlatNodeKind::Slot => Arc::from([box_tree.as_tree_id()]),
+        FlatNodeKind::Rec(left, right)
+        | FlatNodeKind::Seq(left, right)
+        | FlatNodeKind::Par(left, right)
+        | FlatNodeKind::Split(left, right)
+        | FlatNodeKind::Merge(left, right) => union_slots(
+            &free_slots(arena, left, memo)?,
+            &free_slots(arena, right, memo)?,
+        ),
+        FlatNodeKind::ForwardAD { body, seed } => union_slots(
+            &free_slots(arena, body, memo)?,
+            &free_slots(arena, seed, memo)?,
+        ),
+        FlatNodeKind::ReverseAD { body, seeds } => union_slots(
+            &free_slots(arena, body, memo)?,
+            &free_slots(arena, seeds, memo)?,
+        ),
+        FlatNodeKind::Symbolic { body } => {
+            let BoxMatch::Symbolic(slot, _) = match_box(arena, box_tree.as_tree_id()) else {
+                unreachable!("flat symbolic node must decode to BoxMatch::Symbolic")
+            };
+            let inner = free_slots(arena, body, memo)?;
+            inner.iter().copied().filter(|&id| id != slot).collect()
+        }
+        FlatNodeKind::Metadata { body }
+        | FlatNodeKind::VGroup { body }
+        | FlatNodeKind::HGroup { body }
+        | FlatNodeKind::TGroup { body }
+        | FlatNodeKind::Ondemand(body)
+        | FlatNodeKind::Upsampling(body)
+        | FlatNodeKind::Downsampling(body) => free_slots(arena, body, memo)?,
+        _ => Arc::from([]),
+    };
+    memo.insert(box_tree, Arc::clone(&free));
+    Ok(free)
+}
+
+/// The sorted union of two sorted, deduplicated slot lists; shares an operand
+/// when the other is empty, which is the common case.
+fn union_slots(left: &Arc<[TreeId]>, right: &Arc<[TreeId]>) -> Arc<[TreeId]> {
+    if right.is_empty() {
+        return Arc::clone(left);
+    }
+    if left.is_empty() {
+        return Arc::clone(right);
+    }
+    let mut merged: Vec<TreeId> = left.iter().chain(right.iter()).copied().collect();
+    merged.sort_unstable();
+    merged.dedup();
+    Arc::from(merged)
 }
 
 /// Counts the applications of [`FlatNodeKind::ForwardAD`] a flat box tree

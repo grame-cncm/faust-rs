@@ -371,6 +371,161 @@ fn propagate_counting_memo(
     (outputs, memo.profile.result_memo_counts())
 }
 
+/// Propagates `flat` from the top level with the result memo on, and returns
+/// the output bus with the number of clock domains the traversal allocated.
+fn propagate_counting_domains(arena: &mut TreeArena, flat: FlatBoxId) -> (Vec<SigId>, usize) {
+    use crate::clock_domain::ClockDomainTable;
+    use crate::context_id::{SlotEnv, UiPathContext};
+    use crate::engine::{PropagateContext, PropagateMemo, propagate_in_slot_env};
+    use crate::result_memo::result_memo_is_safe_root;
+
+    let ui = build_ui_program(arena, flat, &PropagateUiOptions::default());
+    let mut cache = ArityCache::new();
+    let mut slot_env = SlotEnv::new();
+    let mut memo = PropagateMemo::default();
+    let safe = result_memo_is_safe_root(arena, flat).expect("root analysis");
+    memo.results.set_enabled(safe);
+    let mut clock_domains = ClockDomainTable::new();
+    let mut signal_origins = SignalOrigins::default();
+    let mut ctx = PropagateContext {
+        cache: &mut cache,
+        control_ids: &ui.control_ids,
+        slot_env: &mut slot_env,
+        memo: &mut memo,
+        clock_domains: &mut clock_domains,
+        clock_env: arena.nil(),
+        clock_domain: None,
+        suppress_fad: false,
+        pending_fad_seeds: Vec::new(),
+        ui_path: UiPathContext::new(),
+        signal_origins: &mut signal_origins,
+    };
+    let outputs = propagate_in_slot_env(arena, flat, &[], &mut ctx).expect("propagation");
+    (outputs, clock_domains.len())
+}
+
+/// A closed definition holding a clocked wrapper, referenced outside and
+/// inside a `boxSymbolic` body (the `f ~ g` of an unapplied `f`), is one
+/// block: the result memo keys a box that mentions no slot on the empty slot
+/// environment, so the reference inside the body hits the propagation made
+/// outside and replays its domain. Before 2026-09-21 the key carried the
+/// body's environment, the box was propagated again, and the wrapper got a
+/// second domain: `t = (1, 2.0) : ondemand(exp); process = t + ((\(r).(t +
+/// 0.5 * r)) ~ _)` allocated two.
+#[test]
+fn closed_clocked_box_is_one_block_across_slot_environments() {
+    let mut arena = TreeArena::new();
+    let root = {
+        let mut b = BoxBuilder::new(&mut arena);
+        // `counter = +(1) ~ _`; the clock `(counter % 4) == 3` is a signal
+        // (a constant clock of 1 makes the wrapper transparent, and of 0 a
+        // zero), and `x = counter * 0.001` a stateful input, so the block is
+        // not a constant the propagation folds away.
+        let counter = {
+            let wire = b.wire();
+            let one = b.int(1);
+            let pair = b.par(wire, one);
+            let add = b.add();
+            let inc = b.seq(pair, add);
+            let wire_back = b.wire();
+            b.rec(inc, wire_back)
+        };
+        let clock = {
+            let four = b.int(4);
+            let p = b.par(counter, four);
+            let rem = b.rem();
+            let modulo = b.seq(p, rem);
+            let three = b.int(3);
+            let q = b.par(modulo, three);
+            let eq = b.eq();
+            b.seq(q, eq)
+        };
+        let x = {
+            let scale = b.real(0.001);
+            let p = b.par(counter, scale);
+            let m = b.mul();
+            b.seq(p, m)
+        };
+        let payload = b.par(clock, x);
+        let exp = b.exp();
+        let od = b.ondemand(exp);
+        let t = b.seq(payload, od);
+        let slot = b.slot(1);
+        let half = b.real(0.5);
+        let scaled = {
+            let p = b.par(slot, half);
+            let m = b.mul();
+            b.seq(p, m)
+        };
+        let body = {
+            let p = b.par(t, scaled);
+            let a = b.add();
+            b.seq(p, a)
+        };
+        let sym = b.symbolic(slot, body);
+        let wire = b.wire();
+        let rec = b.rec(sym, wire);
+        let pair = b.par(t, rec);
+        let add = b.add();
+        b.seq(pair, add)
+    };
+    let flat = try_build_flat_box(&arena, root).expect("flat root");
+
+    let (outputs, domains) = propagate_counting_domains(&mut arena, flat);
+
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(
+        domains, 1,
+        "one clocked definition read in two slot environments must be one block"
+    );
+}
+
+/// The analysis behind that key: a `Slot` below a box that no `Symbolic`
+/// below it binds makes it open; a `Symbolic` binding the only slot its body
+/// mentions is closed, as is a box with no slot at all; and the memo caches
+/// the answer per box.
+#[test]
+fn free_slots_stop_at_the_binder() {
+    let mut arena = TreeArena::new();
+    let (closed, open_body, own_binder, other_binder, wrapped) = {
+        let mut b = BoxBuilder::new(&mut arena);
+        let one = b.int(1);
+        let x = b.real(2.0);
+        let payload = b.par(one, x);
+        let exp = b.exp();
+        let od = b.ondemand(exp);
+        let closed = b.seq(payload, od);
+        let slot = b.slot(7);
+        let add = b.add();
+        let pair = b.par(closed, slot);
+        let open_body = b.seq(pair, add);
+        let own_binder = b.symbolic(slot, open_body);
+        let other_slot = b.slot(8);
+        let other_binder = b.symbolic(other_slot, open_body);
+        let wrapped = b.ondemand(open_body);
+        (closed, open_body, own_binder, other_binder, wrapped)
+    };
+    let mut memo = AHashMap::new();
+    let flat = |b| try_build_flat_box(&arena, b).expect("flat box");
+    let mut open = |b, what: &str| {
+        !free_slots(&arena, flat(b), &mut memo)
+            .expect(what)
+            .is_empty()
+    };
+    assert!(!open(closed, "closed"));
+    assert!(open(open_body, "open body"));
+    assert!(
+        !open(own_binder, "own binder"),
+        "a symbolic binding the only slot its body mentions is closed"
+    );
+    assert!(
+        open(other_binder, "other binder"),
+        "a symbolic binding another slot leaves the body's free"
+    );
+    assert!(open(wrapped, "wrapped"));
+    assert!(memo.contains_key(&flat(closed)) && memo.contains_key(&flat(open_body)));
+}
+
 /// Runs `f` on a worker thread with a stack sized for the deep chains below:
 /// several hundred nested `seq` levels overflow a debug test thread.
 fn on_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {

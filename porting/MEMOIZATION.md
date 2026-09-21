@@ -1396,6 +1396,62 @@ Validation:
 
 - `crates/transform/src/schedule/tests/growth.rs`, three tests.
 
+### 2.22 `propagate`: the result memo key restricted to a box's free slots
+
+Status: implemented 2026-09-21
+
+Location:
+
+- `crates/propagate/src/flat.rs` (`free_slots`, `has_free_slot`),
+  `crates/propagate/src/context_id.rs` (`SlotEnv::restricted_id`),
+  `crates/propagate/src/engine.rs` (`propagate`, the key)
+
+Cache:
+
+- `PropagateMemo::free_slots: AHashMap<FlatBoxId, Arc<[TreeId]>>`, the sorted
+  free slots of every flat box met, one walk per shared subtree.
+
+What changed in the key of §2 (the exact C++ tuple):
+
+- the slot environment component is the environment *restricted to the box's
+  free slots*, interned from the empty environment in slot order; the empty
+  id for a closed box. A box reads the environment through its free slots
+  alone, so this names everything its outputs depend on (rule 6) and nothing
+  more,
+- `suppress_fad` is part of the mode only for a box that contains a
+  `ForwardAD` node; the flag changes nothing else,
+- a `Rec` that contains a `fad` is memoised from the first call, with the
+  identity-allocating nodes: its expansion after the group allocates twin
+  domains outside the blocks' entries.
+
+Why the full environment was wrong, not merely coarse: for a plain signal a
+second propagation rebuilds the same hash-consed tree, so the coarse key cost
+time; for a clocked wrapper every miss allocates a domain (`make_clock_env`),
+so it cost a *block*. A closed definition read outside and inside any `f ~ g`
+with `f` unapplied (a `boxSymbolic` body), the shape of every `optimizers.lib`
+descent, was two blocks; the twin a `fad` makes of each, two more. The X-ray
+learner of faust-diff-demo went from 8 clocked blocks to 5 and from 55 to 32
+ms per second of audio, its leader-and-scout pair from 28 blocks to 15 and
+from 207 to 93 (`porting/journal/2026-09-21.md`).
+
+Cost of the key (rule 7): one memoised walk of the flat box DAG for the free
+slots, then per call a lookup and an interning per free slot, usually zero to
+two.
+
+Left open: a box that depends on an enclosing recursion's variable and is
+read at two binder depths is still propagated twice, since the variable is
+lifted under the inner binder and the restricted key differs. The C++
+reference has the same duplication by the same key; merging the blocks would
+be a pass over the prepared DAG, not a key.
+
+Validation:
+
+- `closed_clocked_box_is_one_block_across_slot_environments`,
+  `free_slots_stop_at_the_binder` (`propagate/tests.rs`),
+  `restricted_id_names_only_the_slots_asked` (`context_id.rs`),
+  `crates/compiler/tests/closed_box_memo.rs` (three tests, a four-line
+  witness with its reference frames and the X-ray's shape).
+
 ## 3. Planned Additions
 
 The items below are ordered by expected leverage and safety.
