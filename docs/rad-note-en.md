@@ -102,6 +102,35 @@ Repeated seed lanes preserve the same adjoint identity, so
 computed signal. Absent seeds (those never reached from any primal
 output) yield `0.0`.
 
+**A seed is detached.** Because the collection stops at a seed (§2.1) and
+the accumulation skips it, no adjoint flows below a seed: each seed is
+differentiated as an independent variable, and whatever computes it is a
+constant for every lane. The block sweep (§4) keeps the same stop set. Put
+plainly: a signal you list as a seed becomes an unknown of its own, and the
+compiler forgets how it was computed; `rad(x + y, (x + y, x, y))` is read as a
+body `u` with the three unknowns `u`, `x`, `y`. Two consequences, the same as
+for `fad`:
+
+- a seed that is a recursive state or a clamp of one (the parameters of the
+  library's descents) gets the partial derivative of the loss with the other
+  parameters fixed, and its own computation, the optimizer's recursion, is
+  outside the loss: no carry leaks into it;
+- a seed computed from another seed does not pass that seed's adjoint:
+  `rad(x + y, (x + y, x, y))` gives `1, 0, 0`, not `1, 1, 1`. PyTorch's
+  `autograd.grad(u, [u, x, y])` gives `(1, 1, 1)` because its backward pass
+  does not stop at an input; faust-rs's seeds are JAX arguments, not PyTorch
+  tensors, and the reason is the first bullet. The analysis is
+  [`porting/fad-rad-seed-semantics-analysis-2026-09-21-en.md`](../porting/fad-rad-seed-semantics-analysis-2026-09-21-en.md).
+
+*Planned diagnostic (2026-09-21, not implemented yet).* A seed whose
+computation contains a different seed is to be refused at the propagation
+of the seed box, with the same code and text as for `fad`
+(`FRS-PROP-0005`, "rad seed 1 `x + y` is computed from seeds 2 `x` and
+3 `y`", the two `help` lines giving the two spellings `rad(x + y, (x, y))`
+and `rad(x + y, x + y)`). Duplicated seeds stay legal, and the walk stops at
+projections, so the library's descents are not reported. Until then the
+program compiles and returns the zeros.
+
 ## 3. Rule table
 
 The transpose rules below mirror the forward rules in `forward_ad.rs`
@@ -117,7 +146,7 @@ for every family that admits a causal reverse pass. Notation:
 | `sigInput(_)` | no children |
 | `hslider`, `vslider`, `numentry` (not seed) | no children |
 | `button`, `checkbox` | no children (discrete) |
-| seed `s` | descent stops; final `adjoints[s]` is the gradient lane |
+| seed `s` | descent stops; final `adjoints[s]` is the gradient lane; nothing flows below `s`, so a seed computed from another seed passes no adjoint (§2.3) |
 | comparisons / shifts / bitwise `BinOp` | no contribution |
 
 Foreign constants and variables (`ma.SR`, `fvariable`) and the

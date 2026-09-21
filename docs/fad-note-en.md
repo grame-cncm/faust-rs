@@ -56,6 +56,51 @@ but it must be the same lowered signal that occurs in the differentiated body;
 `fad` does not solve for an arbitrary algebraically equivalent expression.
 Repeated seed lanes are preserved rather than deduplicated.
 
+**A seed is detached.** Each seed is differentiated as an independent
+variable: its tangent is `1` on its own lanes and `0` on every other, and
+whatever computes it is a constant for every lane. The transform returns at a
+seed without visiting its operands, so no tangent passes *through* a seed. Put
+plainly: a signal you list as a seed becomes an unknown of its own, and the
+compiler forgets how it was computed; `fad(x + y, (x + y, x, y))` is read as a
+body `u` with the three unknowns `u`, `x`, `y`. Two consequences:
+
+- a seed that is a recursive state (`prev` in `fad(loss, prev)` inside a `~`
+  body) has tangent exactly `1`, not its sensitivity to itself through time;
+  this is what makes the one-step gradient of an in-graph descent, and the
+  library's multi-parameter descents differentiate `loss(p1, p2)` with `p1`
+  fixed when they ask for `p2`, without any explicit stop-gradient;
+- a seed computed from another seed does not pass that seed's tangent:
+  `fad(x + y, (x + y, x, y))` gives `1, 0, 0`, not `1, 1, 1`, because `x + y`
+  is a third independent variable and the body is that variable. To
+  differentiate with respect to `x` and `y`, seed `(x, y)`; to differentiate
+  with respect to `x + y` as one quantity, seed it alone.
+
+The same rule holds for `rad`. It is the reading of JAX or Zygote, where seeds
+are function arguments and cannot depend on one another, not the reading of
+PyTorch's `autograd.grad`, where an intermediate tensor's gradient flows
+below it. The analysis that settled it, with the programs each reading
+breaks, is
+[`porting/fad-rad-seed-semantics-analysis-2026-09-21-en.md`](../porting/fad-rad-seed-semantics-analysis-2026-09-21-en.md).
+
+*Planned diagnostic (2026-09-21, not implemented yet).* A seed whose
+computation contains a *different* seed (`(s, s)` stays legal) is, in every
+program seen, a mistake whose symptom is a silent zero. The propagation of
+the seed box is to refuse it, in both modes, with the fix the error model
+carries:
+
+```text
+error [FRS-PROP-0005] fad seed 1 `x + y` is computed from seeds 2 `x` and 3 `y`
+  = note: cause: a seed is differentiated as an independent variable; what computes it is a constant for every lane
+  = note: lanes 2 and 3 would be 0 wherever the body reads `x + y`, since the tangent of `x` and `y` does not pass through a seed
+  = help: to differentiate with respect to `x` and `y`, drop `x + y` from the seed list: fad(x + y, (x, y))
+  = help: to differentiate with respect to `x + y` as one quantity, seed it alone: fad(x + y, x + y)
+```
+
+The walk stops at projections as the differentiation does, so a parameter
+that depends on another only through an optimizer's recursion (the library's
+descents) is not reported. Until the diagnostic lands, the program above
+compiles and returns the zeros.
+
 A widget used as a seed is one control wherever it is referenced. Ordinary
 Faust makes the group path part of a widget's identity, so a slider read
 inside `vgroup("a", …)` and again outside it is two controls, in faust-rs as
@@ -723,6 +768,9 @@ For day-to-day use, the following guidelines are accurate:
 - use `fad(expr, seed)` with explicit seed variables,
 - prefer the explicit parallel seed form `(a, b, c)` when differentiating with
   respect to multiple parameters,
+- never seed a quantity computed from another seed: a seed is an independent
+  variable and the other seeds' tangents do not pass through it (§1); seed
+  the parameters, or the quantity alone,
 - use `: !, _` to extract the tangent for a single-seed `fad`,
 - expect robust behavior on feed-forward graphs and on the recursive families
   already covered by the corpus,

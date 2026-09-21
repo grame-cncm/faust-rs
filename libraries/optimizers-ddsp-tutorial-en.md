@@ -179,7 +179,21 @@ section 4.1 shows what changes.
 With `x = 2` and `y = 3`: `6, 3, 2`, twice.
 
 The seeds are whatever signals you list; for a loss with `N` parameters, one
-call gives the `N` derivatives. Most of this tutorial uses `fad`; `rad` comes
+call gives the `N` derivatives.
+
+One rule to keep in mind: **a signal you list as a seed becomes an unknown
+of its own, and the compiler forgets how it was computed.**
+`fad(x + y, (x + y, x, y))` is read as a body `u` with three unknowns `u`,
+`x`, `y`, and gives `1, 0, 0`: `u` depends on `u`, not on `x` or `y`. That
+forgetting is what makes the learning loops of this tutorial work: in
+`fad(loss, prev)`, `prev` is the parameter's current value, computed by the
+recursion from the previous steps, and the derivative must not run back
+through that history. So ask one question at a time. To differentiate with
+respect to `x` and `y`, seed `(x, y)`, which gives `1, 1`. To differentiate
+with respect to the quantity `x + y`, seed it alone. Listing both mixes the
+two questions.
+
+Most of this tutorial uses `fad`; `rad` comes
 back in section 4.1 (many parameters), in section 10 (in real time inside
 the graph, then handed to a host) and in section 11.4 (clocked).
 
@@ -1287,7 +1301,9 @@ body, as in section 11.3.
 - **Loss**: a scalar measure of the error at the current sample.
 - **Gradient**: the derivative of the loss with respect to the parameters;
   **sensitivity** (`j`): the derivative of the model's output.
-- **Seed**: the signal `fad` or `rad` differentiates with respect to.
+- **Seed**: the signal `fad` or `rad` differentiates with respect to. A seed
+  is an unknown of its own: how it is computed is forgotten, so a seed
+  computed from another seed passes nothing (section 2).
 - **Tangent**: a derivative produced by forward-mode AD (`fad`).
 - **Direct term**: the derivative of a recursive model's output with respect
   to a parameter, its past state held fixed; what `rad` returns inside a

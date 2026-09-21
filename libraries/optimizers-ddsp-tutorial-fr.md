@@ -189,7 +189,21 @@ change.
 Avec `x = 2` et `y = 3` : `6, 3, 2`, deux fois.
 
 Les graines sont les signaux que vous listez ; pour une perte à `N`
-paramètres, un appel donne les `N` dérivées. L'essentiel de ce tutoriel
+paramètres, un appel donne les `N` dérivées.
+
+Une règle à garder en tête : **un signal que vous mettez en graine devient
+une inconnue à part entière, et le compilateur oublie comment il a été
+calculé.** `fad(x + y, (x + y, x, y))` est lu comme un corps `u` à trois
+inconnues `u`, `x`, `y`, et donne `1, 0, 0` : `u` dépend de `u`, pas de `x`
+ni de `y`. Cet oubli est ce qui fait marcher les boucles d'apprentissage de
+ce tutoriel : dans `fad(loss, prev)`, `prev` est la valeur courante du
+paramètre, calculée par la récursion à partir des pas précédents, et la
+dérivée ne doit pas remonter cet historique. Posez donc une question à la
+fois. Pour dériver par rapport à `x` et `y`, mettez `(x, y)` en graines, ce
+qui donne `1, 1`. Pour dériver par rapport à la quantité `x + y`, mettez-la
+seule en graine. Lister les trois mélange les deux questions.
+
+L'essentiel de ce tutoriel
 utilise `fad` ; `rad` revient à la section 4.1 (beaucoup de paramètres), à la
 section 10 (en temps réel dans le graphe, puis vers un hôte) et à la section
 11.4 (cadencé).
@@ -1326,7 +1340,10 @@ en section 11.3.
 - **Perte** : une mesure scalaire de l'erreur à l'échantillon courant.
 - **Gradient** : la dérivée de la perte par rapport aux paramètres ;
   **sensibilité** (`j`) : la dérivée de la sortie du modèle.
-- **Graine** : le signal par rapport auquel `fad` ou `rad` dérive.
+- **Graine** : le signal par rapport auquel `fad` ou `rad` dérive. Une graine
+  est une inconnue à part entière : la façon dont elle est calculée est
+  oubliée, si bien qu'une graine calculée à partir d'une autre ne laisse rien
+  passer (section 2).
 - **Tangente** : une dérivée produite par l'AD en mode direct (`fad`).
 - **Terme direct** : la dérivée de la sortie d'un modèle récursif par rapport
   à un paramètre, son état passé tenu fixe ; ce que `rad` renvoie dans une
