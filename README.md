@@ -735,7 +735,7 @@ compared against a stored reference. `faustprobe` answers _is the behaviour
 correct?_, by setting controls to a chosen operating point and reporting what
 comes out:
 
-```markdown
+```
 # What can be set, with ranges
 
 cargo run --release -p cranelift-ffi --bin faustprobe -- filter.dsp -I lib --list-params
