@@ -31,6 +31,12 @@ use std::time::Instant;
 
 const COMPILE_BUDGET_BASELINE: &str = "tests/compile-budget/release-baseline.json";
 const COMPILE_BUDGET_SCHEMA: u32 = 2;
+// A few codegen cases complete in 5 ms. On CI, a repeated measurement of
+// karplus moved from 5 to 10 ms between adjacent documentation-only commits,
+// while the 6 ms front-end calibration and larger cases remained steady.
+// Preserve the normalized percentage gate, but allow this much absolute timer
+// noise; for the larger cases it is negligible.
+const CODEGEN_TIMER_NOISE_MS: u64 = 5;
 
 /// Basket entries that must never silently disappear from the codegen budget.
 const REQUIRED_CODEGEN_CASES: [&str; 5] = [
@@ -210,7 +216,7 @@ pub(crate) fn compile_budget_check(
         return write_updated_baseline(&baseline_path, &mut baseline, &measured, &codegen);
     }
     check_frontend_basket(&baseline, &measured)?;
-    check_codegen_basket(&baseline, &codegen)?;
+    check_codegen_basket(&baseline, &codegen, calibration_ms)?;
 
     println!(
         "compile-budget-check: OK ({} codegen cases scalar + vector, {} front-end cases normalized)",
@@ -389,7 +395,11 @@ fn measure_codegen_basket(
 fn check_codegen_basket(
     baseline: &CompileBudgetBaseline,
     measured: &[CodegenMeasurement],
+    calibration_ms: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let noise_units = CODEGEN_TIMER_NOISE_MS
+        .saturating_mul(1000)
+        .div_ceil(calibration_ms);
     for CodegenMeasurement {
         name,
         scalar_units_milli: scalar_units,
@@ -412,7 +422,8 @@ fn check_codegen_basket(
                 )
                 .into());
             }
-            let ceiling = frontend_ceiling_milli(baseline_units, &baseline.profile);
+            let ceiling = frontend_ceiling_milli(baseline_units, &baseline.profile)
+                .saturating_add(noise_units);
             println!(
                 "codegen budget {:>26}: {mode} {:.3} units (baseline {:.3}, ceiling {:.3})",
                 case.name,
@@ -423,10 +434,11 @@ fn check_codegen_basket(
             if measured_units > ceiling {
                 return Err(format!(
                     "{name} {mode} codegen cost is {:.3} calibration units; baseline is {:.3} \
-                     and the {}% tolerance permits {:.3}.",
+                     and the {}% tolerance plus {} ms timer allowance permits {:.3}.",
                     measured_units as f64 / 1000.0,
                     baseline_units as f64 / 1000.0,
                     baseline.profile.frontend_tolerance_percent,
+                    CODEGEN_TIMER_NOISE_MS,
                     ceiling as f64 / 1000.0,
                 )
                 .into());
@@ -751,9 +763,25 @@ mod tests {
             codegen_cases: vec![case()],
             frontend_cases: Vec::new(),
         };
-        check_codegen_basket(&baseline, &[cg("fixture", 12_400, 24_000)]).unwrap();
-        assert!(check_codegen_basket(&baseline, &[cg("fixture", 20_000, 24_000)]).is_err());
-        assert!(check_codegen_basket(&baseline, &[cg("fixture", 12_400, 40_000)]).is_err());
+        check_codegen_basket(&baseline, &[cg("fixture", 12_400, 24_000)], 5).unwrap();
+        assert!(check_codegen_basket(&baseline, &[cg("fixture", 20_000, 24_000)], 5).is_err());
+        assert!(check_codegen_basket(&baseline, &[cg("fixture", 12_400, 40_000)], 5).is_err());
+    }
+
+    #[test]
+    fn codegen_timer_allowance_covers_short_case_jitter_only() {
+        let mut short = case();
+        short.scalar_units_milli = 833;
+        short.vector_units_milli = 2500;
+        let baseline = CompileBudgetBaseline {
+            schema_version: COMPILE_BUDGET_SCHEMA,
+            profile: profile(),
+            codegen_cases: vec![short],
+            frontend_cases: Vec::new(),
+        };
+        // The CI failure: 5 -> 10 ms with a 6 ms calibration.
+        check_codegen_basket(&baseline, &[cg("fixture", 1666, 2666)], 6).unwrap();
+        assert!(check_codegen_basket(&baseline, &[cg("fixture", 3333, 2666)], 6).is_err());
     }
 
     #[test]
@@ -766,7 +794,7 @@ mod tests {
             codegen_cases: vec![only],
             frontend_cases: Vec::new(),
         };
-        assert!(check_codegen_basket(&baseline, &[cg("fixture", 1, 1)]).is_err());
+        assert!(check_codegen_basket(&baseline, &[cg("fixture", 1, 1)], 5).is_err());
     }
 
     #[test]

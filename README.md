@@ -737,17 +737,14 @@ comes out:
 
 ```
 # What can be set, with ranges
-
 cargo run --release -p cranelift-ffi --bin faustprobe -- filter.dsp -I lib --list-params
 
 # Steady-state level of a 1 kHz sine through a filter, transient excluded
-
 cargo run --release -p cranelift-ffi --bin faustprobe -- filter.dsp -I lib \
  --set cutoff=1000 --set resonance=0 \
  --sr 48000 -n 96000 --skip 48000 --in sine:1000 --quiet
 
 # Build faustprobe to be installed
-
 cargo build --release -p cranelift-ffi --bin faustprobe
 ```
 
