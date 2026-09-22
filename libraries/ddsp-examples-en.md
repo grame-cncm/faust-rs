@@ -63,7 +63,7 @@ Example 11 is the only one whose optimizer runs in an `ondemand` block: its
 loss is computed once per 256-sample frame inside the block and Adam steps
 there, at frame rate, in a block written by hand around `frame_sum` and
 `adam_g`. The clocked loops of the library (`descend_1D_clocked` …
-`descend_5D_clocked`, `descend_N_clocked`, `descend_N_rad_clocked`) package
+`descend_5D_clocked`, `descend_N_fad_clocked`, `descend_N_rad_clocked`) package
 the other clocked pattern, a loss computed at audio rate and its gradient
 averaged over the frame, one step per firing; none of the first eleven uses
 them, section 11 of the tutorial and the fixtures `opt_descend_clocked_gain.dsp`
@@ -243,7 +243,7 @@ nlms(0.01, 1e-6, 0.99), −2, 2, 0, 0, mic, far)`.
 **What is differentiated, and why reverse mode.** The sensitivity of the FIR
 output to tap i is the delayed far-end sample x[n−i]: 64 sensitivities, one
 output. Reverse mode gives all of them from one sweep per sample, where
-`lsq_N` would carry 64 tangents — on a 16-tap FIR the reverse loop compiles
+`lsq_N_fad` would carry 64 tangents — on a 16-tap FIR the reverse loop compiles
 to 3× fewer interpreter instructions, at 64 taps 7× (overview, section 5).
 The body is feed-forward in the taps, so the one-sample horizon of an
 in-graph `rad` loses nothing: the gradient is exact.
@@ -274,7 +274,7 @@ beyond 100 dB on this noiseless room.
 **Try.** Change the room while running (make the response depend on a
 slider): the canceller re-converges. Add a near-end talker: the classic
 double-talk problem — the taps drift; gate the update with `gate_g` on a
-double-talk detector. Compare with `lsq_N` (forward mode): same residual,
+double-talk detector. Compare with `lsq_N_fad` (forward mode): same residual,
 seven times the code.
 
 ## 5. A small neural network learns a waveshaper (`rad`)
@@ -488,7 +488,7 @@ T60 0.568 after the first period, 0.6002 after the second, 0.6000 from
 the third; damping 0.298, 0.2998, 0.29995, 0.30000; the residual falls to
 3e-7.
 
-**Try.** Learn one gain per line (`descend_N`); make the target a
+**Try.** Learn one gain per line (`descend_N_fad`); make the target a
 *different* reverb and the loss `log_energy_loss` on the decay; eight lines;
 a frequency-dependent T60 with a target measured from a room.
 

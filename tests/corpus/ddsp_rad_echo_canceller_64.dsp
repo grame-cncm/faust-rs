@@ -6,7 +6,7 @@
 // subtracts it from the microphone signal, the classic NLMS echo canceller
 // (Haykin). With `lsq_N_rad`, the 64 sensitivities of the FIR output --
 // the delayed far-end samples -- come from one reverse sweep per sample;
-// `lsq_N` would carry 64 tangents for the same trajectory.
+// `lsq_N_fad` would carry 64 tangents for the same trajectory.
 //
 // The echo return loss enhancement, ERLE = 10 log10(power(mic) /
 // power(residual)), passes 30 dB within a few thousand samples.

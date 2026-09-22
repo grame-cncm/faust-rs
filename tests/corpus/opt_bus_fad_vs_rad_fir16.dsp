@@ -1,5 +1,5 @@
 // optimizers.lib: the same sixteen-tap FIR learned by the two bus loss-first
-// loops, `descend_N` (forward mode, sixteen tangents) and `descend_N_rad`
+// loops, `descend_N_fad` (forward mode, sixteen tangents) and `descend_N_rad`
 // (reverse mode, one sweep). The loss has no recursion between the taps and
 // the output, so both loops compute the same gradient and follow the same
 // trajectory; the two residuals are the same signal up to rounding.
@@ -20,7 +20,7 @@ h_star(i) = sin(0.5 * i) * exp(-0.2 * i);
 y_target = fir(par(i, N, h_star(i)));
 
 fir_loss = fir(si.bus(N)) : sq_err with { sq_err(y) = op.mse(y, y_target); };
-h_fad = op.descend_N(N, fir_loss, op.sgd_g(0.02), -2.0, 2.0, 0.0, 0.0);
+h_fad = op.descend_N_fad(N, fir_loss, op.sgd_g(0.02), -2.0, 2.0, 0.0, 0.0);
 h_rad = op.descend_N_rad(N, fir_loss, op.sgd_g(0.02), -2.0, 2.0, 0.0, 0.0);
 
 process = y_target - fir(h_fad), y_target - fir(h_rad);

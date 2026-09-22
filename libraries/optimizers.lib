@@ -21,7 +21,7 @@ declare license "MIT/LGPL-3.0";
 // gradient `g = d(loss)/dp`, so any differentiable loss can be used.
 //
 // The fixed-arity loops (`_1D` to `_5D`) give each parameter its own engine
-// and bounds; the bus loops (`lsq_N`, `descend_N`, `descend_N_clocked` and
+// and bounds; the bus loops (`lsq_N_fad`, `descend_N_fad`, `descend_N_fad_clocked` and
 // their `_rad` twins) take `N` parameters as a bus with one engine and one
 // pair of bounds, and are where reverse mode pays: one sweep for `N`
 // derivatives.
@@ -56,6 +56,14 @@ declare license "MIT/LGPL-3.0";
 // process = op.descend_1D(loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
 // ```
 //
+// Changes in 0.10.0: the six bus loops take `upd`, `lo`, `hi` and `init` as
+// a scalar, the same for every parameter, or as a list of `N`, one per
+// parameter, so that `N` values of different units learn each at its rate,
+// in its range, from its start; a scalar and a list of equal entries give
+// the same samples. Their forward-mode forms are named `lsq_N_fad`,
+// `descend_N_fad` and `descend_N_fad_clocked`, the mode said in the name as
+// in their `_rad` twins; the fixed-arity loops, forward mode only, keep
+// their names.
 // Changes in 0.9.0: initialisation and continuation helpers. `init_latch(T, e)`
 // holds an estimate seen at sample `T` and `init_reset(T)` keeps a loop at its
 // `init` until then, so an outside estimate (a detector) becomes the start of
@@ -101,6 +109,7 @@ declare license "MIT/LGPL-3.0";
 // their recursion instead of detecting the first sample, so they work inside
 // an `ondemand` body whatever its first firing; same trajectories.
 // Changes in 0.7.0: the bus loops `lsq_N`, `descend_N`, `descend_N_clocked`
+// (named `lsq_N_fad`, `descend_N_fad`, `descend_N_fad_clocked` since 0.10.0)
 // and their reverse-mode twins `lsq_N_rad`, `descend_N_rad`,
 // `descend_N_rad_clocked`, for `N` parameters carried as a bus with one
 // engine and one pair of bounds; the library imports the standard libraries
@@ -1643,7 +1652,7 @@ langevin_g(lr, temp, noise, g) = lr * g + sqrt(2.0 * lr * temp) * noise;
 // `optimize_ND` are the original entry points of this library, equivalent to
 // `lsq_ND` with a zero initial value and no reset.
 // For `N` parameters carried as a bus with one engine and one pair of bounds, see
-// `lsq_N` and `lsq_N_rad` in the bus loops.
+// `lsq_N_fad` and `lsq_N_rad` in the bus loops.
 //==========================================================================================
 
 //------------------------------`(op.)lsq_1D`-----------------------------------
@@ -1998,7 +2007,7 @@ optimize_5D(mdl, upd1, upd2, upd3, upd4, upd5, min1, max1, min2, max2, min3, max
 // engine receives its `g = d(loss)/dp`, and the updated parameters are
 // projected on their bounds. The loop outputs the `N` learned parameters.
 // For `N` parameters carried as a bus with one engine and one pair of bounds, see
-// `descend_N` and `descend_N_rad` in the bus loops.
+// `descend_N_fad` and `descend_N_rad` in the bus loops.
 //==========================================================================================
 
 //------------------------------`(op.)descend_1D`-------------------------------
@@ -2505,7 +2514,7 @@ with {
 
 //========================================Bus Loops=========================================
 // Loops for `N` parameters carried as a bus, `N` a constant: the least-squares
-// `lsq_N` and the loss-first `descend_N` and `descend_N_clocked`, each in a
+// `lsq_N_fad` and the loss-first `descend_N_fad` and `descend_N_fad_clocked`, each in a
 // `fad` version and a `rad` version. A bus loop applies one engine and one
 // pair of bounds to all its parameters -- the shape of an adaptive FIR, of a
 // bank of gains, of the coefficients of a long filter -- where the fixed-arity
@@ -2515,7 +2524,7 @@ with {
 // The `rad` versions get the `N` derivatives from one reverse sweep instead of
 // `N` tangents, so their cost grows with the model rather than with `N`: on a
 // 16-tap FIR, `descend_N_rad` compiles to 3x fewer interpreter instructions
-// than `descend_N` and runs 2.5x faster; at 64 taps, 7x fewer and 10x
+// than `descend_N_fad` and runs 2.5x faster; at 64 taps, 7x fewer and 10x
 // faster. The gradient a loop consumes is produced at the same sample, so the
 // reverse sweep sees one sample: through a recursion of the model it returns
 // the direct term, the past state held fixed -- the pseudo-linear-regression
@@ -2535,7 +2544,7 @@ _spread3(N) = route(2 * N + 1, 3 * N, par(i, N, (i + 1, 3 * i + 1, N + 1, 3 * i 
 _nth(i, (x, xs)) = ba.take(i + 1, (x, xs));
 _nth(i, x) = x;
 
-//------------------------------`(op.)lsq_N`------------------------------------
+//------------------------------`(op.)lsq_N_fad`------------------------------------
 // Least-squares loop for `N` parameters carried as a bus, differentiated with
 // `fad`. Each sample, the model is evaluated with the current parameters
 // together with its `N` sensitivities `j_i = d(model)/dp_i`, every parameter
@@ -2546,7 +2555,7 @@ _nth(i, x) = x;
 // #### Usage
 //
 // ```
-// lsq_N(N, mdl, upd, lo, hi, init, reset, target, x) : si.bus(N)
+// lsq_N_fad(N, mdl, upd, lo, hi, init, reset, target, x) : si.bus(N)
 // ```
 //
 // Where:
@@ -2564,17 +2573,17 @@ _nth(i, x) = x;
 //
 // ```
 // fir(h0, h1, h2, h3, sig) = h0 * sig + h1 * sig' + h2 * sig'' + h3 * sig''';
-// taps = op.lsq_N(4, fir, op.nlms(0.02, 1e-6, 0.99), -4, 4, 0, button("reset"), target, x);
+// taps = op.lsq_N_fad(4, fir, op.nlms(0.02, 1e-6, 0.99), -4, 4, 0, button("reset"), target, x);
 // ```
 //
 // #### Test
 // ```
 // op = library("optimizers.lib");
-// lsq_N_test = op.lsq_N(3, \(a, b, c, s).(a * s + b * s' + c * s''), op.nlms(0.02, 0.000001, 0.99), -4, 4, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'', x)
-// with { x = hslider("lsq_N:x", 0, -1, 1, 0.01); };
+// lsq_N_fad_test = op.lsq_N_fad(3, \(a, b, c, s).(a * s + b * s' + c * s''), op.nlms(0.02, 0.000001, 0.99), -4, 4, 0, 0, 0.5 * x + 0.3 * x' - 0.2 * x'', x)
+// with { x = hslider("lsq_N_fad:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_N(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
+lsq_N_fad(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
     model = (si.bus(N), x) : mdl;
     params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
@@ -2585,11 +2594,11 @@ with {
 };
 
 //------------------------------`(op.)lsq_N_rad`--------------------------------
-// `lsq_N` differentiated with `rad`: the `N` sensitivities of the scalar model
+// `lsq_N_fad` differentiated with `rad`: the `N` sensitivities of the scalar model
 // come from one reverse sweep, the economical direction for one output and
 // many parameters. Through a recursion of the model the sensitivity is the
 // direct one, the past output held fixed (pseudo-linear regression), where
-// `lsq_N` carries the exact derivative; for an FIR or any model without
+// `lsq_N_fad` carries the exact derivative; for an FIR or any model without
 // recursion between the parameters and the output the two loops agree.
 //
 // #### Usage
@@ -2598,7 +2607,7 @@ with {
 // lsq_N_rad(N, mdl, upd, lo, hi, init, reset, target, x) : si.bus(N)
 // ```
 //
-// Where: as `lsq_N`.
+// Where: as `lsq_N_fad`.
 //
 // #### Example
 //
@@ -2629,7 +2638,7 @@ with {
          : par(i, N, (_, _, _ : \(d, r, j).(clip(_nth(i, lo) - _nth(i, init), _nth(i, hi) - _nth(i, init), d - _nth(i, upd)(r, j)))));
 };
 
-//------------------------------`(op.)descend_N`--------------------------------
+//------------------------------`(op.)descend_N_fad`--------------------------------
 // Loss-first loop for `N` parameters carried as a bus, differentiated with
 // `fad`. Each sample, one `fad` call gives the `N` gradients of the loss,
 // every parameter takes the step of the same engine `upd(g_i)`, and the
@@ -2638,7 +2647,7 @@ with {
 // #### Usage
 //
 // ```
-// descend_N(N, loss, upd, lo, hi, init, reset) : si.bus(N)
+// descend_N_fad(N, loss, upd, lo, hi, init, reset) : si.bus(N)
 // ```
 //
 // Where:
@@ -2656,17 +2665,17 @@ with {
 // taps = x <: par(i, 16, @(i));
 // fir(h) = (h, taps) : ro.interleave(16, 2) : par(i, 16, *) :> _;
 // fir_loss = fir(si.bus(16)) : \(y).(op.mse(y, target));
-// h = op.descend_N(16, fir_loss, op.sgd_g(0.02), -2, 2, 0, button("reset"));
+// h = op.descend_N_fad(16, fir_loss, op.sgd_g(0.02), -2, 2, 0, button("reset"));
 // ```
 //
 // #### Test
 // ```
 // op = library("optimizers.lib");
-// descend_N_test = op.descend_N(3, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0)
-// with { x = hslider("descend_N:x", 0, -1, 1, 0.01); };
+// descend_N_fad_test = op.descend_N_fad(3, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0)
+// with { x = hslider("descend_N_fad:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_N(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
+descend_N_fad(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
     params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
     step = par(i, N, _dev(reset))
@@ -2676,11 +2685,11 @@ with {
 };
 
 //------------------------------`(op.)descend_N_rad`----------------------------
-// `descend_N` differentiated with `rad`: one reverse sweep for the `N`
+// `descend_N_fad` differentiated with `rad`: one reverse sweep for the `N`
 // gradients instead of `N` tangents, so the cost grows with the loss rather
 // than with `N`. Consumed at the sample that produces it, the reverse gradient
 // sees one sample: through a recursion of the loss it is the direct term, the
-// past state held fixed (pseudo-linear regression), where `descend_N` carries
+// past state held fixed (pseudo-linear regression), where `descend_N_fad` carries
 // the exact derivative; for a loss without recursion between the parameters
 // and the output the two loops follow the same trajectory.
 //
@@ -2690,7 +2699,7 @@ with {
 // descend_N_rad(N, loss, upd, lo, hi, init, reset) : si.bus(N)
 // ```
 //
-// Where: as `descend_N`.
+// Where: as `descend_N_fad`.
 //
 // #### Example
 //
@@ -2721,8 +2730,8 @@ with {
          : par(i, N, (_, _ : \(d, g).(clip(_nth(i, lo) - _nth(i, init), _nth(i, hi) - _nth(i, init), d - _nth(i, upd)(g)))));
 };
 
-//------------------------------`(op.)descend_N_clocked`------------------------
-// `descend_N` with the update clocked by an `ondemand` block, as
+//------------------------------`(op.)descend_N_fad_clocked`------------------------
+// `descend_N_fad` with the update clocked by an `ondemand` block, as
 // `descend_1D_clocked`: the loss and its `fad` run at audio rate, each
 // gradient is averaged over the frame with `frame_mean`, and the `N` engines
 // step once per firing of `clock`. Outputs the `N` learned parameters, held
@@ -2731,33 +2740,33 @@ with {
 // #### Usage
 //
 // ```
-// descend_N_clocked(N, clock, loss, upd, lo, hi, init, reset) : si.bus(N)
+// descend_N_fad_clocked(N, clock, loss, upd, lo, hi, init, reset) : si.bus(N)
 // ```
 //
 // Where:
 //
 // * `clock`: non-zero on the samples where the update runs
-// * the other arguments as `descend_N`
+// * the other arguments as `descend_N_fad`
 //
 // #### Example
 //
 // ```
 // clock = ((+(1) : %(256)) ~ _) == 0;
-// h = op.descend_N_clocked(16, clock, fir_loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -2, 2, 0, button("reset"));
+// h = op.descend_N_fad_clocked(16, clock, fir_loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -2, 2, 0, button("reset"));
 // // three knobs in their own units, a rate, a range and a start per knob
 // adam(lr) = op.adam_g(lr, 0.9, 0.999, 1e-8);
-// knobs = op.descend_N_clocked(3, clock, amp_loss, (adam(0.01), adam(0.02), adam(0.5)),
+// knobs = op.descend_N_fad_clocked(3, clock, amp_loss, (adam(0.01), adam(0.02), adam(0.5)),
 //                              (0.01, 0.0, -60.0), (1.0, 1.0, 0.0), (0.5, 0.5, -10.0), button("reset"));
 // ```
 //
 // #### Test
 // ```
 // op = library("optimizers.lib");
-// descend_N_clocked_test = op.descend_N_clocked(3, clock, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.sgd_g(0.5), -4, 4, 0, 0)
-// with { x = hslider("descend_N_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// descend_N_clocked_test = op.descend_N_fad_clocked(3, clock, \(a, b, c).(op.mse(a * x + b * x' + c * x'', 0.5 * x + 0.3 * x' - 0.2 * x'')), op.sgd_g(0.5), -4, 4, 0, 0)
+// with { x = hslider("descend_N_fad_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_N_clocked(N, clock, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
+descend_N_fad_clocked(N, clock, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
     params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
     step = par(i, N, _dev_clocked(clock, reset))
@@ -2767,7 +2776,7 @@ with {
 };
 
 //------------------------------`(op.)descend_N_rad_clocked`--------------------
-// `descend_N_clocked` differentiated with `rad`: one reverse sweep per sample
+// `descend_N_fad_clocked` differentiated with `rad`: one reverse sweep per sample
 // for the `N` gradients, averaged over the frame, one engine step per firing.
 // The reverse sweep sees one sample (see `descend_N_rad`); the frame average
 // is the mini-batch of those per-sample gradients.
@@ -2778,7 +2787,7 @@ with {
 // descend_N_rad_clocked(N, clock, loss, upd, lo, hi, init, reset) : si.bus(N)
 // ```
 //
-// Where: as `descend_N_clocked`.
+// Where: as `descend_N_fad_clocked`.
 //
 // #### Test
 // ```

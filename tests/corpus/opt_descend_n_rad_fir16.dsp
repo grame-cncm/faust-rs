@@ -1,7 +1,7 @@
 // optimizers.lib: sixteen FIR taps learned with the bus loss-first loop
 // `descend_N_rad` and plain gradient descent (`sgd_g`, the LMS step), on white
 // noise from the standard library. One reverse sweep per sample gives the
-// sixteen gradients of the loss; `descend_N` would need sixteen tangents.
+// sixteen gradients of the loss; `descend_N_fad` would need sixteen tangents.
 //
 // Target system: y_target[n] = sum_i h_i* x[n-i], h_i* = sin(0.5 i) exp(-0.2 i)
 // Learned model: y_pred[n]   = sum_i h_i x[n-i]

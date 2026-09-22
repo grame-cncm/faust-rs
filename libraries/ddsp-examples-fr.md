@@ -67,7 +67,7 @@ L'exemple 11 est le seul dont l'optimiseur tourne dans un bloc `ondemand` :
 sa perte est calculée une fois par trame de 256 échantillons dans le bloc et
 Adam y fait son pas, à la cadence des trames, dans un bloc écrit à la main
 autour de `frame_sum` et `adam_g`. Les boucles cadencées de la bibliothèque
-(`descend_1D_clocked` … `descend_5D_clocked`, `descend_N_clocked`,
+(`descend_1D_clocked` … `descend_5D_clocked`, `descend_N_fad_clocked`,
 `descend_N_rad_clocked`) emballent l'autre motif cadencé, une perte calculée
 à cadence audio et son gradient moyenné sur la trame, un pas par
 déclenchement ; aucun des onze premiers ne les utilise, la section 11 du
@@ -259,7 +259,7 @@ distants retardés ; `lsq_N_rad(64, fir, nlms(0.01, 1e-6, 0.99), −2, 2, 0, 0, 
 **Ce qui est dérivé, et pourquoi le mode inverse.** La sensibilité de la
 sortie du FIR au coefficient i est l'échantillon distant retardé x[n−i] : 64
 sensibilités, une sortie. Le mode inverse les donne toutes en un balayage
-par échantillon, là où `lsq_N` transporterait 64 tangentes — sur un FIR à 16
+par échantillon, là où `lsq_N_fad` transporterait 64 tangentes — sur un FIR à 16
 coefficients la boucle inverse compile en 3× moins d'instructions
 d'interpréteur, à 64 coefficients 7× (synthèse, section 5). Le corps est
 sans récursion vis-à-vis des coefficients, donc l'horizon d'un échantillon
@@ -294,7 +294,7 @@ dépasse 100 dB sur cette pièce sans bruit.
 réponse d'un slider) : l'annuleur reconverge. Ajouter un locuteur proche :
 le problème classique de la double parole — les coefficients dérivent ;
 conditionner la mise à jour avec `gate_g` sur un détecteur de double parole.
-Comparer avec `lsq_N` (mode direct) : même résidu, sept fois le code.
+Comparer avec `lsq_N_fad` (mode direct) : même résidu, sept fois le code.
 
 ## 5. Un petit réseau de neurones apprend un waveshaper (`rad`)
 
@@ -523,7 +523,7 @@ T60 0,568 après la première période, 0,6002 après la deuxième, 0,6000 à
 partir de la troisième ; amortissement 0,298, 0,2998, 0,29995, 0,30000 ; le
 résidu descend à 3e-7.
 
-**À essayer.** Apprendre un gain par ligne (`descend_N`) ; prendre pour cible
+**À essayer.** Apprendre un gain par ligne (`descend_N_fad`) ; prendre pour cible
 une réverbération *différente* et pour perte `log_energy_loss` sur la
 décroissance ; huit lignes ; un T60 dépendant de la fréquence avec une cible
 mesurée dans une salle.

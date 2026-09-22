@@ -405,7 +405,7 @@ briques de base aux boucles prêtes à l'emploi.
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D`, `lsq_1D_restart` | le modèle est différencié, la perte est implicitement l'erreur quadratique ; `lsq_1D_restart` change de départ quand le résidu ne progresse plus |
 | Loss-first loops | `descend_1D` … `descend_5D`, `descend_1D_restart` | la perte est différenciée, quelle qu'elle soit ; `descend_1D_restart` prend le départ suivant quand la perte ne progresse plus |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | pas de second ordre pour deux ou trois paramètres corrélés |
-| Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus, avec un moteur, une paire de bornes et un départ pour tous, ou une liste de `N` pour chacun (depuis 0.10.0), en mode direct ou inverse |
+| Bus loops | `lsq_N_fad`, `descend_N_fad`, `descend_N_fad_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus, avec un moteur, une paire de bornes et un départ pour tous, ou une liste de `N` pour chacun (depuis 0.10.0), en mode direct ou inverse |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | le gradient à cadence audio, moyenné sur la trame, le pas une fois par tir d'une horloge `ondemand` |
 | Gradient-free loops | `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked` | apprendre sans aucune tangente, par deux évaluations de la perte par trame : un retard entier, un `select2`, tout ce que `fad` dérive à zéro |
 | Multi-start loops | `grid_init`, `multistart_1D`, `multistart_lsq_1D`, `grid_then_descend_1D` | plusieurs départs à la fois : `K` descentes en parallèle dont on suit la meilleure, ou `K` candidats notés sans tangente puis une descente depuis le meilleur |
@@ -466,7 +466,7 @@ scalaire, une pénalité sur les paramètres ajoutée à l'erreur. Le prix : le
 moteur ne voit plus `r` et `j` séparément et ne peut donc pas normaliser par la
 sensibilité ; les moteurs adaptatifs (Adam, Lion) jouent ce rôle.
 
-Les **boucles à bus** (`lsq_N`, `descend_N`, `descend_N_clocked`) sont les
+Les **boucles à bus** (`lsq_N_fad`, `descend_N_fad`, `descend_N_fad_clocked`) sont les
 deux mêmes familles pour `N` paramètres portés par un bus, `N` constant, avec
 un moteur, une paire de bornes et un départ pour tous — la forme d'un FIR
 adaptatif ou d'une rangée de gains — ou, depuis 0.10.0, une liste de `N`
@@ -640,7 +640,7 @@ Feintuch, 1976 ; Shynk 1989) et le gradient récursif celui de l'*erreur de
 prédiction récursive* (Ljung & Söderström 1983) : le premier est moins cher
 et converge vers la même solution sous une condition de positivité sur le
 modèle, le second est la direction de descente exacte. La bibliothèque offre
-les deux — `fad` dans les boucles à arité fixe et dans `lsq_N`/`descend_N`,
+les deux — `fad` dans les boucles à arité fixe et dans `lsq_N_fad`/`descend_N_fad`,
 le terme direct dans les jumelles `_rad` — et pour un modèle sans récursion il
 n'y a aucune différence, ce qui est précisément là où le mode inverse paie :
 beaucoup de paramètres, un seul balayage.
@@ -771,7 +771,7 @@ programmes dans le tutoriel.
 | `descend_1D_clocked`, SGD 0,5 par trame de 64 échantillons | gain `0,700000` à 4 000 échantillons |
 | `descend_2D_clocked`, Adam par trame sur `(log f, q)` | `(1200,2, 1,996)` à 10 000 échantillons, puis à moins de 1 % |
 | `lsq_N_rad` + `nlms`, FIR à 8 coefficients au niveau 10 | résidu sous 1e-6 à partir de 1 000 échantillons |
-| `descend_N` contre `descend_N_rad`, FIR à 16 coefficients, LMS 0,02 | même résidu à l'arrondi près ; 3 777 contre 1 182 instructions d'interpréteur, 0,10 s contre 0,04 s pour 200 000 échantillons ; 28 891 contre 4 129 et 1,32 s contre 0,13 s à 64 coefficients |
+| `descend_N_fad` contre `descend_N_rad`, FIR à 16 coefficients, LMS 0,02 | même résidu à l'arrondi près ; 3 777 contre 1 182 instructions d'interpréteur, 0,10 s contre 0,04 s pour 200 000 échantillons ; 28 891 contre 4 129 et 1,32 s contre 0,13 s à 64 coefficients |
 | `rad` contre `fad` dans le graphe sur `y = 1 + p y[n-1]`, `perte = (y - 3)^2` | `rad` -3, -3,75, -3,94 (terme direct), `fad` -3, -5, -6,19 (à travers la récursion) |
 | `init_latch` + `init_reset` sur la corde, estimation par autocorrélation observée 8 192 échantillons | init figé à 222,77 Hz (+1,3 %), hauteur 219,998 à 24 000, `220,000000` dès 48 000, résidu sous 1e-6 |
 | `stalled(0,999, 0,01, 0,1)` sur (gradient, perte) = (0,5, 1), (0, 1), (0, 0,001) | 0, 1, 0 par segment |
@@ -865,7 +865,7 @@ lit les paramètres tenus et rien d'autre ne change :
 
 ```faust
 learn(t) = ps <: (si.bus(P), (loss(t) : op.stop_relative(clock, 20, 40, 300, 0.02)))
-with { ps = op.descend_N_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0); };
+with { ps = op.descend_N_fad_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0); };
 params = t : op.gated(learn);      // P paramètres tenus, puis le drapeau
 ```
 

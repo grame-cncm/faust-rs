@@ -9,7 +9,7 @@ and are versioned with this repository:
   from reflection coefficients), learning-rate schedules, one- to
   five-parameter least-squares and loss-first loops, damped Gauss-Newton
   loops, bus loops for `N` parameters in forward or reverse mode
-  (`lsq_N`/`lsq_N_rad`, `descend_N`/`descend_N_rad`), clocked loops whose
+  (`lsq_N_fad`/`lsq_N_rad`, `descend_N_fad`/`descend_N_rad`), clocked loops whose
   update runs once per firing of an `ondemand` clock, and a Newton solver.
   It imports `signals.lib`, `basics.lib`, `routes.lib` and `maths.lib`, so
   the Faust standard libraries must be on the import path too;

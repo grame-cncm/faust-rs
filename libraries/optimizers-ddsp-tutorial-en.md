@@ -281,8 +281,8 @@ loop for two to five parameters, `lsq_2D` to `lsq_5D` (and `descend_2D` to
 its own engine and bounds — section 5 uses `descend_2D` that way, section
 6 `descend_5D`. That form stops at five. For sixteen FIR taps the library carries the
 parameters as a *bus* and applies one engine and one pair of bounds to all
-of them: `lsq_N(N, mdl, engine, lo, hi, init, reset, target, x)`, and its
-loss-first counterpart `descend_N`, which this example uses in its `rad`
+of them: `lsq_N_fad(N, mdl, engine, lo, hi, init, reset, target, x)`, and its
+loss-first counterpart `descend_N_fad`, which this example uses in its `rad`
 variant. The model becomes a block whose first `N` inputs are the taps:
 
 ```faust
@@ -299,11 +299,11 @@ h = op.descend_N_rad(N, fir_loss, op.sgd_g(0.02), -2.0, 2.0, 0.0, 0.0);
 process = target - fir(h);
 ```
 
-`descend_N_rad` is `descend_N` with `rad` in place of `fad`: one reverse
+`descend_N_rad` is `descend_N_fad` with `rad` in place of `fad`: one reverse
 sweep per sample gives the sixteen gradients where forward mode carries
 sixteen tangents. Run with `-n 1000 --quiet`, then `-n 2000 --skip 1000
 --quiet`, then `-n 3000 --skip 2000 --quiet`: the residual reads rms `0.10`,
-`2e-7`, then `0`. Run both loops (`op.descend_N` is the other): the residuals
+`2e-7`, then `0`. Run both loops (`op.descend_N_fad` is the other): the residuals
 are the same signal to rounding, and the compiled programs are not — 1 182
 interpreter instructions against 3 777, 0.04 s against 0.10 s for 200 000
 samples; 4 129 against 28 891 and 0.13 s against 1.32 s at 64 taps. The
@@ -657,7 +657,7 @@ taps overshoot, falls to `1.4e-4` over the second, `2e-8` over the third and
 `0` afterwards, an echo return loss enhancement beyond 100 dB on this
 noiseless room. The sensitivity of the FIR output to tap `i` is the delayed
 far-end sample `x[n - i]`: 64 sensitivities, one output, which reverse mode
-gives in one sweep per sample where `lsq_N` would carry 64 tangents. The FIR
+gives in one sweep per sample where `lsq_N_fad` would carry 64 tangents. The FIR
 has no recursion with respect to the taps, so the one-sample horizon loses
 nothing. `mu = 0.01`: with 64 taps sharing the step, the stability bound of
 NLMS (`mu < 2/N` in these units) sets it. To try: make `room` depend on a

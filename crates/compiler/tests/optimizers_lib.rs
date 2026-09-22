@@ -229,7 +229,7 @@ fn descend_n_clocked_takes_a_rate_a_range_and_a_start_per_parameter() {
 
 #[test]
 fn bus_loops_with_equal_lists_equal_their_scalar_form() {
-    // The list form of `descend_N` and `descend_N_clocked` with every entry
+    // The list form of `descend_N_fad` and `descend_N_fad_clocked` with every entry
     // equal is the scalar form: the residuals are the same to the bit, so
     // the change of signature moves no existing program.
     let Some(outs) = run_interp_fixture("opt_bus_scalar_vs_lists", 4000) else {
@@ -237,8 +237,8 @@ fn bus_loops_with_equal_lists_equal_their_scalar_form() {
     };
     assert_eq!(outs.len(), 4, "expected the four residuals");
     for (name, scalar, lists) in [
-        ("descend_N", &outs[0], &outs[1]),
-        ("descend_N_clocked", &outs[2], &outs[3]),
+        ("descend_N_fad", &outs[0], &outs[1]),
+        ("descend_N_fad_clocked", &outs[2], &outs[3]),
     ] {
         assert_channel_converges(
             &format!("opt_bus_scalar_vs_lists ({name})"),
@@ -257,7 +257,7 @@ fn bus_loops_with_equal_lists_equal_their_scalar_form() {
 
 #[test]
 fn bus_loops_fad_and_rad_follow_the_same_trajectory_on_an_fir() {
-    // The fixture outputs the residual of `descend_N` and of `descend_N_rad`
+    // The fixture outputs the residual of `descend_N_fad` and of `descend_N_rad`
     // on the same sixteen-tap FIR: both converge, and since the loss has no
     // recursion between the taps and the output, both gradients are the same
     // and the residuals agree to rounding.

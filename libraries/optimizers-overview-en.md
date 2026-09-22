@@ -384,7 +384,7 @@ ready-made loops and what surrounds them.
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D`, `lsq_1D_restart` | the model is differentiated, the loss is implicitly the squared error; `lsq_1D_restart` changes start when the residual stops making progress |
 | Loss-first loops | `descend_1D` … `descend_5D`, `descend_1D_restart` | the loss is differentiated, whatever it is; `descend_1D_restart` takes the next start when the loss stops making progress |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | second-order steps for two or three correlated parameters |
-| Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus, with one engine, one pair of bounds and one start for all, or a list of `N` for each (since 0.10.0), in forward or in reverse mode |
+| Bus loops | `lsq_N_fad`, `descend_N_fad`, `descend_N_fad_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus, with one engine, one pair of bounds and one start for all, or a list of `N` for each (since 0.10.0), in forward or in reverse mode |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | the gradient at audio rate, averaged over the frame, the step once per firing of an `ondemand` clock |
 | Gradient-free loops | `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked` | learning with no tangent at all, from two evaluations of the loss per frame: an integer delay, a `select2`, anything `fad` differentiates to zero |
 | Multi-start loops | `grid_init`, `multistart_1D`, `multistart_lsq_1D`, `grid_then_descend_1D` | several starts at once: `K` descents in parallel, following the best, or `K` candidates scored with no tangent, then one descent from the best |
@@ -444,7 +444,7 @@ The price is that the engine no longer sees `r` and `j` separately, so it
 cannot normalize by the sensitivity; adaptive engines (Adam, Lion) fill that
 role.
 
-The **bus loops** (`lsq_N`, `descend_N`, `descend_N_clocked`) are the same
+The **bus loops** (`lsq_N_fad`, `descend_N_fad`, `descend_N_fad_clocked`) are the same
 two families for `N` parameters carried as a bus, `N` a constant, with one
 engine, one pair of bounds and one start for all of them — the shape of an
 adaptive FIR or of a bank of gains — or, since 0.10.0, a list of `N` for any
@@ -610,7 +610,7 @@ Shynk 1989) and the recursive one the *recursive prediction error* gradient
 (Ljung & Söderström 1983): the first is cheaper and converges to the same
 solution when a positivity condition on the model holds, the second is the
 exact descent direction. The library offers both — `fad` in the fixed-arity
-loops and in `lsq_N`/`descend_N`, the direct term in the `_rad` twins — and
+loops and in `lsq_N_fad`/`descend_N_fad`, the direct term in the `_rad` twins — and
 for a feed-forward model there is no difference at all, which is where
 reverse mode earns its keep: many parameters, one sweep.
 
@@ -732,7 +732,7 @@ in the tutorial.
 | `descend_1D_clocked`, SGD 0.5 per 64-sample frame | gain `0.700000` at 4 000 samples |
 | `descend_2D_clocked`, Adam per frame on `(log f, q)` | `(1200.2, 1.996)` at 10 000 samples, then within 1 % |
 | `lsq_N_rad` + `nlms`, 8-tap FIR at level 10 | residual below 1e-6 from 1 000 samples on |
-| `descend_N` vs `descend_N_rad`, 16-tap FIR, LMS 0.02 | same residual to rounding; 3 777 vs 1 182 interpreter instructions, 0.10 s vs 0.04 s for 200 000 samples; 28 891 vs 4 129 and 1.32 s vs 0.13 s at 64 taps |
+| `descend_N_fad` vs `descend_N_rad`, 16-tap FIR, LMS 0.02 | same residual to rounding; 3 777 vs 1 182 interpreter instructions, 0.10 s vs 0.04 s for 200 000 samples; 28 891 vs 4 129 and 1.32 s vs 0.13 s at 64 taps |
 | in-graph `rad` vs `fad` on `y = 1 + p y[n-1]`, `loss = (y - 3)^2` | `rad` -3, -3.75, -3.94 (direct term), `fad` -3, -5, -6.19 (through the recursion) |
 | `init_latch` + `init_reset` on the string, autocorrelation estimate observed for 8 192 samples | init frozen at 222.77 Hz (+1.3 %), pitch 219.998 at 24 000, `220.000000` from 48 000 on, residual under 1e-6 |
 | `stalled(0.999, 0.01, 0.1)` on (gradient, loss) = (0.5, 1), (0, 1), (0, 0.001) | 0, 1, 0 per segment |
@@ -820,7 +820,7 @@ processes the audio reads the held parameters and nothing else changes:
 
 ```faust
 learn(t) = ps <: (si.bus(P), (loss(t) : op.stop_relative(clock, 20, 40, 300, 0.02)))
-with { ps = op.descend_N_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0); };
+with { ps = op.descend_N_fad_clocked(P, clock, loss(t), op.adam_g(0.03, 0.9, 0.999, 1e-8), lo, hi, 0.0, 0.0); };
 params = t : op.gated(learn);      // P held parameters, then the flag
 ```
 

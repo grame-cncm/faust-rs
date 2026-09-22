@@ -294,8 +294,8 @@ même boucle pour deux à cinq paramètres, `lsq_2D` à `lsq_5D` (et
 son propre argument avec son moteur et ses bornes — la section 5 utilise
 `descend_2D` ainsi, la section 6 `descend_5D`. Cette forme s'arrête à cinq. Pour seize coefficients de
 FIR, la bibliothèque porte les paramètres par un *bus* et applique un
-moteur et une paire de bornes à tous : `lsq_N(N, mdl, moteur, lo, hi, init,
-reset, cible, x)`, et son pendant perte d'abord `descend_N`, que cet exemple
+moteur et une paire de bornes à tous : `lsq_N_fad(N, mdl, moteur, lo, hi, init,
+reset, cible, x)`, et son pendant perte d'abord `descend_N_fad`, que cet exemple
 utilise dans sa variante `rad`. Le modèle devient un bloc dont les `N`
 premières entrées sont les coefficients :
 
@@ -313,11 +313,11 @@ h = op.descend_N_rad(N, fir_loss, op.sgd_g(0.02), -2.0, 2.0, 0.0, 0.0);
 process = target - fir(h);
 ```
 
-`descend_N_rad` est `descend_N` avec `rad` à la place de `fad` : un balayage
+`descend_N_rad` est `descend_N_fad` avec `rad` à la place de `fad` : un balayage
 inverse par échantillon donne les seize gradients, là où le mode direct
 transporte seize tangentes. Exécutez avec `-n 1000 --quiet`, puis `-n 2000
 --skip 1000 --quiet`, puis `-n 3000 --skip 2000 --quiet` : le résidu vaut rms
-`0,10`, `2e-7`, puis `0`. Exécutez les deux boucles (`op.descend_N` est
+`0,10`, `2e-7`, puis `0`. Exécutez les deux boucles (`op.descend_N_fad` est
 l'autre) : les résidus sont le même signal à l'arrondi près, et les
 programmes compilés ne le sont pas — 1 182 instructions d'interpréteur contre 3 777, 0,04 s
 contre 0,10 s pour 200 000 échantillons ; 4 129 contre 28 891 et 0,13 s
@@ -681,7 +681,7 @@ troisième et `0` ensuite, un rehaussement de l'affaiblissement d'écho au-delà
 de 100 dB sur cette pièce sans bruit. La sensibilité de la sortie du FIR au
 coefficient `i` est l'échantillon distant retardé `x[n − i]` : 64
 sensibilités, une sortie, ce que le mode inverse donne en un balayage par
-échantillon là où `lsq_N` transporterait 64 tangentes. Le FIR n'a pas de
+échantillon là où `lsq_N_fad` transporterait 64 tangentes. Le FIR n'a pas de
 récursion vis-à-vis des coefficients, donc l'horizon d'un échantillon ne
 perd rien. `mu = 0,01` : avec 64 coefficients qui partagent le pas, c'est la
 borne de stabilité du NLMS (`mu < 2/N` dans ces unités) qui le fixe. À
