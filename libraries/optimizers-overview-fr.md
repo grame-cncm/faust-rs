@@ -389,7 +389,7 @@ bibliothèque ne prétend pas le contraire :
 
 ## 3. Organisation de la bibliothèque
 
-Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.9.0) est
+Le fichier [optimizers.lib](optimizers.lib) (préfixe `op`, version 0.10.0) est
 documenté fonction par fonction selon la convention des bibliothèques Faust ;
 cette section en donne la carte. Il comporte quinze sections, ordonnées des
 briques de base aux boucles prêtes à l'emploi.
@@ -405,7 +405,7 @@ briques de base aux boucles prêtes à l'emploi.
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D`, `lsq_1D_restart` | le modèle est différencié, la perte est implicitement l'erreur quadratique ; `lsq_1D_restart` change de départ quand le résidu ne progresse plus |
 | Loss-first loops | `descend_1D` … `descend_5D`, `descend_1D_restart` | la perte est différenciée, quelle qu'elle soit ; `descend_1D_restart` prend le départ suivant quand la perte ne progresse plus |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | pas de second ordre pour deux ou trois paramètres corrélés |
-| Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus avec un moteur et une paire de bornes, en mode direct ou inverse |
+| Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` et `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` paramètres en bus, avec un moteur, une paire de bornes et un départ pour tous, ou une liste de `N` pour chacun (depuis 0.10.0), en mode direct ou inverse |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | le gradient à cadence audio, moyenné sur la trame, le pas une fois par tir d'une horloge `ondemand` |
 | Gradient-free loops | `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked` | apprendre sans aucune tangente, par deux évaluations de la perte par trame : un retard entier, un `select2`, tout ce que `fad` dérive à zéro |
 | Multi-start loops | `grid_init`, `multistart_1D`, `multistart_lsq_1D`, `grid_then_descend_1D` | plusieurs départs à la fois : `K` descentes en parallèle dont on suit la meilleure, ou `K` candidats notés sans tangente puis une descente depuis le meilleur |
@@ -468,9 +468,14 @@ sensibilité ; les moteurs adaptatifs (Adam, Lion) jouent ce rôle.
 
 Les **boucles à bus** (`lsq_N`, `descend_N`, `descend_N_clocked`) sont les
 deux mêmes familles pour `N` paramètres portés par un bus, `N` constant, avec
-un moteur et une paire de bornes pour tous — la forme d'un FIR adaptatif ou
-d'une rangée de gains — là où les boucles à arité fixe donnent à chaque
-paramètre les siens. Chacune a une jumelle `_rad` : un balayage inverse par
+un moteur, une paire de bornes et un départ pour tous — la forme d'un FIR
+adaptatif ou d'une rangée de gains — ou, depuis 0.10.0, une liste de `N`
+pour n'importe lequel de `upd`, `lo`, `hi` et `init`, ce qui donne à chaque
+paramètre son taux, sa plage et son départ comme le font les boucles à arité
+fixe, pour tout `N` : trois boutons d'un ampli dans leurs unités, un gain
+dans [0,01, 1], un médium dans [0, 1] et un master dans [−60, 0] dB, chacun
+avec son taux d'Adam. Un scalaire et une liste d'entrées égales donnent les
+mêmes échantillons. Chacune a une jumelle `_rad` : un balayage inverse par
 échantillon pour les `N` dérivées au lieu de `N` tangentes. La section 4.7
 dit ce que ce balayage calcule à travers une récursion.
 

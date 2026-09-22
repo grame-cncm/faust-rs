@@ -368,7 +368,7 @@ does not pretend otherwise:
 
 ## 3. How the library is organized
 
-The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.9.0) is
+The file [optimizers.lib](optimizers.lib) (prefix `op`, version 0.10.0) is
 documented function by function in the Faust libraries convention; this
 section gives the map. It has fifteen sections, ordered from building blocks to
 ready-made loops and what surrounds them.
@@ -384,7 +384,7 @@ ready-made loops and what surrounds them.
 | Least-squares loops | `lsq_1D` … `lsq_5D`, `optimize_1D` … `optimize_5D`, `lsq_1D_restart` | the model is differentiated, the loss is implicitly the squared error; `lsq_1D_restart` changes start when the residual stops making progress |
 | Loss-first loops | `descend_1D` … `descend_5D`, `descend_1D_restart` | the loss is differentiated, whatever it is; `descend_1D_restart` takes the next start when the loss stops making progress |
 | Gauss-Newton loops | `lm_2D`, `lm_3D` | second-order steps for two or three correlated parameters |
-| Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus with one engine and one pair of bounds, in forward or in reverse mode |
+| Bus loops | `lsq_N`, `descend_N`, `descend_N_clocked` and `lsq_N_rad`, `descend_N_rad`, `descend_N_rad_clocked` | `N` parameters as a bus, with one engine, one pair of bounds and one start for all, or a list of `N` for each (since 0.10.0), in forward or in reverse mode |
 | Clocked loops | `frame_sum`, `frame_count`, `frame_mean`, `descend_1D_clocked` … `descend_5D_clocked` | the gradient at audio rate, averaged over the frame, the step once per firing of an `ondemand` clock |
 | Gradient-free loops | `spsa_1D_clocked`, `spsa_N_clocked`, `search_1D_clocked` | learning with no tangent at all, from two evaluations of the loss per frame: an integer delay, a `select2`, anything `fad` differentiates to zero |
 | Multi-start loops | `grid_init`, `multistart_1D`, `multistart_lsq_1D`, `grid_then_descend_1D` | several starts at once: `K` descents in parallel, following the best, or `K` candidates scored with no tangent, then one descent from the best |
@@ -446,9 +446,13 @@ role.
 
 The **bus loops** (`lsq_N`, `descend_N`, `descend_N_clocked`) are the same
 two families for `N` parameters carried as a bus, `N` a constant, with one
-engine and one pair of bounds for all of them — the shape of an adaptive FIR
-or of a bank of gains — where the fixed-arity loops give each parameter its
-own. Each has a `_rad` twin: one reverse sweep per sample for the `N`
+engine, one pair of bounds and one start for all of them — the shape of an
+adaptive FIR or of a bank of gains — or, since 0.10.0, a list of `N` for any
+of `upd`, `lo`, `hi` and `init`, which gives each parameter its own rate,
+range and start as the fixed-arity loops do, for any `N`: three knobs of an
+amplifier in their own units, a gain in [0.01, 1], a mid in [0, 1] and a
+master in [-60, 0] dB, each with its Adam rate. A scalar and a list of equal
+entries give the same samples. Each has a `_rad` twin: one reverse sweep per sample for the `N`
 derivatives instead of `N` tangents. Section 4.7 says what that sweep
 computes through a recursion.
 

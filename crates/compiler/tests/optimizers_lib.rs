@@ -220,6 +220,42 @@ fn descend_n_rad_learns_sixteen_fir_taps() {
 }
 
 #[test]
+fn descend_n_clocked_takes_a_rate_a_range_and_a_start_per_parameter() {
+    // Three parameters of different scales, each with its own Adam rate,
+    // bounds and start given as lists (optimizers.lib 0.10.0): all three
+    // settle together where one scalar rate would leave the largest behind.
+    assert_converges("opt_descend_n_clocked_lists", 16_000, 400, 0.02);
+}
+
+#[test]
+fn bus_loops_with_equal_lists_equal_their_scalar_form() {
+    // The list form of `descend_N` and `descend_N_clocked` with every entry
+    // equal is the scalar form: the residuals are the same to the bit, so
+    // the change of signature moves no existing program.
+    let Some(outs) = run_interp_fixture("opt_bus_scalar_vs_lists", 4000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 4, "expected the four residuals");
+    for (name, scalar, lists) in [
+        ("descend_N", &outs[0], &outs[1]),
+        ("descend_N_clocked", &outs[2], &outs[3]),
+    ] {
+        assert_channel_converges(
+            &format!("opt_bus_scalar_vs_lists ({name})"),
+            scalar,
+            200,
+            0.05,
+        );
+        for (frame, (&a, &b)) in scalar.iter().zip(lists.iter()).enumerate() {
+            assert_eq!(
+                a, b,
+                "{name}: scalar and list forms differ at frame {frame}"
+            );
+        }
+    }
+}
+
+#[test]
 fn bus_loops_fad_and_rad_follow_the_same_trajectory_on_an_fir() {
     // The fixture outputs the residual of `descend_N` and of `descend_N_rad`
     // on the same sixteen-tap FIR: both converge, and since the loss has no

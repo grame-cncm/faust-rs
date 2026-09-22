@@ -1,5 +1,5 @@
 declare name "Faust Differentiable Optimizers Library";
-declare version "0.9.0";
+declare version "0.10.0";
 declare author "faust-rs";
 declare license "MIT/LGPL-3.0";
 
@@ -2529,6 +2529,12 @@ with {
 // Internal helper of the bus loops: `(p1..pN, r, j1..jN)` to `(p1, r, j1, ..., pN, r, jN)`.
 _spread3(N) = route(2 * N + 1, 3 * N, par(i, N, (i + 1, 3 * i + 1, N + 1, 3 * i + 2, N + i + 2, 3 * i + 3)));
 
+// Internal helper of the bus loops: the value for parameter `i` of an
+// argument given once for every parameter (a scalar, an engine) or once per
+// parameter (a list of `N`): `lo`, `hi`, `init` and `upd` accept either.
+_nth(i, (x, xs)) = ba.take(i + 1, (x, xs));
+_nth(i, x) = x;
+
 //------------------------------`(op.)lsq_N`------------------------------------
 // Least-squares loop for `N` parameters carried as a bus, differentiated with
 // `fad`. Each sample, the model is evaluated with the current parameters
@@ -2547,9 +2553,9 @@ _spread3(N) = route(2 * N + 1, 3 * N, par(i, N, (i + 1, 3 * i + 1, N + 1, 3 * i 
 //
 // * `N`: number of parameters, a constant
 // * `mdl`: the model, a block with `N + 1` inputs `(p1, ..., pN, x)` and one output
-// * `upd`: a least-squares engine `(r, j) -> step`, instantiated once per parameter
-// * `lo`, `hi`: bounds of every parameter
-// * `init`: initial value of every parameter
+// * `upd`: a least-squares engine `(r, j) -> step`, instantiated once per parameter, or a list of `N` engines, one per parameter
+// * `lo`, `hi`: bounds of every parameter, or lists of `N` bounds, one pair per parameter
+// * `init`: initial value of every parameter, or a list of `N` initial values
 // * `reset`: non-zero resets every parameter to `init`
 // * `target`: the target signal
 // * `x`: the model input
@@ -2568,14 +2574,14 @@ _spread3(N) = route(2 * N + 1, 3 * N, par(i, N, (i + 1, 3 * i + 1, N + 1, 3 * i 
 // with { x = hslider("lsq_N:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-lsq_N(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(init))
+lsq_N(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
     model = (si.bus(N), x) : mdl;
-    params = par(i, N, clip(lo, hi, +(init)));
+    params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
     step = par(i, N, _dev(reset))
          <: (si.bus(N), (params : fad(model, si.bus(N)) : (_ - target), si.bus(N)))
          : _spread3(N)
-         : par(i, N, (_, _, _ : \(d, r, j).(clip(lo - init, hi - init, d - upd(r, j)))));
+         : par(i, N, (_, _, _ : \(d, r, j).(clip(_nth(i, lo) - _nth(i, init), _nth(i, hi) - _nth(i, init), d - _nth(i, upd)(r, j)))));
 };
 
 //------------------------------`(op.)lsq_N_rad`--------------------------------
@@ -2613,14 +2619,14 @@ with {
 // * J. J. Shynk, "Adaptive IIR filtering", IEEE ASSP Magazine, 1989
 //   (pseudo-linear regression: the instantaneous gradient of a recursive model)
 //------------------------------------------------------------------------------
-lsq_N_rad(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(init))
+lsq_N_rad(N, mdl, upd, lo, hi, init, reset, target, x) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
     model = (si.bus(N), x) : mdl;
-    params = par(i, N, clip(lo, hi, +(init)));
+    params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
     step = par(i, N, _dev(reset))
          <: (si.bus(N), (params : rad(model, si.bus(N)) : (_ - target), si.bus(N)))
          : _spread3(N)
-         : par(i, N, (_, _, _ : \(d, r, j).(clip(lo - init, hi - init, d - upd(r, j)))));
+         : par(i, N, (_, _, _ : \(d, r, j).(clip(_nth(i, lo) - _nth(i, init), _nth(i, hi) - _nth(i, init), d - _nth(i, upd)(r, j)))));
 };
 
 //------------------------------`(op.)descend_N`--------------------------------
@@ -2639,9 +2645,9 @@ with {
 //
 // * `N`: number of parameters, a constant
 // * `loss`: the loss, a block with `N` inputs (the parameters) and one output, closed over the data
-// * `upd`: a gradient engine `g -> step`, instantiated once per parameter
-// * `lo`, `hi`: bounds of every parameter
-// * `init`: initial value of every parameter
+// * `upd`: a gradient engine `g -> step`, instantiated once per parameter, or a list of `N` engines, one per parameter
+// * `lo`, `hi`: bounds of every parameter, or lists of `N` bounds, one pair per parameter
+// * `init`: initial value of every parameter, or a list of `N` initial values
 // * `reset`: non-zero resets every parameter to `init`
 //
 // #### Example
@@ -2660,13 +2666,13 @@ with {
 // with { x = hslider("descend_N:x", 0, -1, 1, 0.01); };
 // ```
 //------------------------------------------------------------------------------
-descend_N(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
+descend_N(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
-    params = par(i, N, clip(lo, hi, +(init)));
+    params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
     step = par(i, N, _dev(reset))
          <: (si.bus(N), (params : fad(loss, si.bus(N)) : !, si.bus(N)))
          : ro.interleave(N, 2)
-         : par(i, N, (_, _ : \(d, g).(clip(lo - init, hi - init, d - upd(g)))));
+         : par(i, N, (_, _ : \(d, g).(clip(_nth(i, lo) - _nth(i, init), _nth(i, hi) - _nth(i, init), d - _nth(i, upd)(g)))));
 };
 
 //------------------------------`(op.)descend_N_rad`----------------------------
@@ -2706,13 +2712,13 @@ with {
 //
 // * J. J. Shynk, "Adaptive IIR filtering", IEEE ASSP Magazine, 1989
 //------------------------------------------------------------------------------
-descend_N_rad(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
+descend_N_rad(N, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
-    params = par(i, N, clip(lo, hi, +(init)));
+    params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
     step = par(i, N, _dev(reset))
          <: (si.bus(N), (params : rad(loss, si.bus(N)) : !, si.bus(N)))
          : ro.interleave(N, 2)
-         : par(i, N, (_, _ : \(d, g).(clip(lo - init, hi - init, d - upd(g)))));
+         : par(i, N, (_, _ : \(d, g).(clip(_nth(i, lo) - _nth(i, init), _nth(i, hi) - _nth(i, init), d - _nth(i, upd)(g)))));
 };
 
 //------------------------------`(op.)descend_N_clocked`------------------------
@@ -2738,6 +2744,10 @@ with {
 // ```
 // clock = ((+(1) : %(256)) ~ _) == 0;
 // h = op.descend_N_clocked(16, clock, fir_loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -2, 2, 0, button("reset"));
+// // three knobs in their own units, a rate, a range and a start per knob
+// adam(lr) = op.adam_g(lr, 0.9, 0.999, 1e-8);
+// knobs = op.descend_N_clocked(3, clock, amp_loss, (adam(0.01), adam(0.02), adam(0.5)),
+//                              (0.01, 0.0, -60.0), (1.0, 1.0, 0.0), (0.5, 0.5, -10.0), button("reset"));
 // ```
 //
 // #### Test
@@ -2747,13 +2757,13 @@ with {
 // with { x = hslider("descend_N_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_N_clocked(N, clock, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
+descend_N_clocked(N, clock, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
-    params = par(i, N, clip(lo, hi, +(init)));
+    params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
     step = par(i, N, _dev_clocked(clock, reset))
          <: (si.bus(N), (params : fad(loss, si.bus(N)) : !, par(i, N, frame_mean(clock))))
          : (clock, si.bus(2 * N)) : ondemand(update);
-    update = ro.interleave(N, 2) : par(i, N, (_, _ : \(q, h).(clip(lo - init, hi - init, q - upd(h)))));
+    update = ro.interleave(N, 2) : par(i, N, (_, _ : \(q, h).(clip(_nth(i, lo) - _nth(i, init), _nth(i, hi) - _nth(i, init), q - _nth(i, upd)(h)))));
 };
 
 //------------------------------`(op.)descend_N_rad_clocked`--------------------
@@ -2777,13 +2787,13 @@ with {
 // with { x = hslider("descend_N_rad_clocked:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
 // ```
 //------------------------------------------------------------------------------
-descend_N_rad_clocked(N, clock, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(init))
+descend_N_rad_clocked(N, clock, loss, upd, lo, hi, init, reset) = (step ~ si.bus(N)) : par(i, N, +(_nth(i, init)))
 with {
-    params = par(i, N, clip(lo, hi, +(init)));
+    params = par(i, N, clip(_nth(i, lo), _nth(i, hi), +(_nth(i, init))));
     step = par(i, N, _dev_clocked(clock, reset))
          <: (si.bus(N), (params : rad(loss, si.bus(N)) : !, par(i, N, frame_mean(clock))))
          : (clock, si.bus(2 * N)) : ondemand(update);
-    update = ro.interleave(N, 2) : par(i, N, (_, _ : \(q, h).(clip(lo - init, hi - init, q - upd(h)))));
+    update = ro.interleave(N, 2) : par(i, N, (_, _ : \(q, h).(clip(_nth(i, lo) - _nth(i, init), _nth(i, hi) - _nth(i, init), q - _nth(i, upd)(h)))));
 };
 
 //=====================================Clocked Loops========================================
