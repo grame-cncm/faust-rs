@@ -783,6 +783,39 @@ but that it had crossed from prototype to a coherent compiler whose remaining
 work could be expressed as parity gaps, optimization work, backend expansion,
 and API completion.
 
+### What the scalar gate adds that the C++ compiler does not have
+
+One departure from the reference deserves to be recorded where a reader of
+the port looks for departures, because nothing in the C++ source points at
+it. The reference orders scalar code by data dependencies alone:
+`compileMultiSignal` builds the immediate-dependency graph and takes its
+depth-first schedule, and a foreign function is an ordinary cached
+expression, shared by common-subexpression elimination and never ordered
+against a delay line or a table. faust-rs offers the same four `-ss`
+strategies on the same graph, and a strategy other than depth-first could
+move a table write past a read of the same table if only data edges
+constrained it. The scalar gate (`transform::signal_fir::build_scalar_gate`)
+therefore runs an **effect orientation** first
+(`transform::hgraph::orient_effect_conflicts`): the stateful nodes of one
+resource are chained in the depth-first baseline order, adjacent pairs only,
+so that every strategy sees the same constraints and reorders only commuting
+work. The facts come from a signal-level effect analysis, the scalar twin of
+the vector plan's.
+
+In that orientation a foreign call is a barrier: Faust has no purity
+declaration, every `ffunction` is of unknown purity, and the conservative
+reading orders it against every stateful node. This is stricter than the
+reference, which assumes purity without saying so; declaring the libm
+functions of `maths.lib` pure would remove the barriers and change the
+schedules of every program that calls one, and the question is left open
+rather than settled by default. The orientation of the barriers was found
+cubic in the number of calls on 2026-09-23 (a sum of 320 `ma.tanh` on
+delayed reads compiled in 14 s, with or without `rad`) and made incremental
+with the edge set unchanged, byte-identical generated code, and a test that
+keeps the pairwise definition as its reference. The module header of
+`crates/transform/src/hgraph/mod.rs` carries the same account next to the
+code.
+
 ## 15. Native C and C++ libraries for the interpreter and Cranelift
 
 The two-month milestone above summarizes the compiler core. Its embedding

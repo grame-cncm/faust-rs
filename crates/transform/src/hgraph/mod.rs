@@ -60,6 +60,38 @@
 //!   edge *targets* may be foreign (externals owned by another graph).
 //!   [`audit_control_variability`] additionally checks that `Control` never
 //!   owns a `Samp`-variability signal.
+//!
+//! # Effect orientation: no C++ counterpart
+//! The reference compiler orders scalar code by data dependencies alone:
+//! `compileMultiSignal` builds `immediateGraph(L)` and takes `dfschedule`,
+//! and a foreign function is an ordinary cached expression
+//! (`generateFFun` through `generateCacheCode`), shared by CSE and never
+//! ordered against a delay line or a table. faust-rs offers the same four
+//! `-ss` strategies on the same graph, and a strategy other than depth-first
+//! may legitimately move a table write past a read of the same table, or a
+//! bargraph write past another, if nothing but data edges constrains it.
+//! [`orient_effect_conflicts`] therefore adds, before any strategy runs, the
+//! ordering edges between compute-time effects that the depth-first baseline
+//! implies: the stateful nodes of one resource (a delay line, a table, a
+//! control, an output) are chained in baseline order, adjacent pairs only,
+//! which is the transitive reduction of that chain; every strategy then sees
+//! the same constraints and reorders only commuting work. The facts come
+//! from the signal-level analysis
+//! (`signal_fir::vector::analysis::ScalarSchedulingEffects`), the scalar
+//! twin of the vector plan's effect orientation.
+//!
+//! A foreign call is a **barrier** in that orientation: Faust has no purity
+//! declaration, every `ffunction` carries `ForeignPurity::Unknown`, and the
+//! conservative reading orders it against every stateful node. That is a
+//! faust-rs choice, stricter than the reference, which assumes purity without
+//! saying so. Declaring the libm functions of `maths.lib` pure would remove
+//! those barriers and change the schedules of every program that calls one
+//! (seven corpus goldens as of 2026-09-23); the question is open, on
+//! purpose. The orientation of the barriers is incremental (two reachability
+//! sets per barrier, extended by the edges added) after it was found cubic
+//! in the number of calls on a sum of `ma.tanh` (2026-09-23); the test
+//! `barrier_orientation_equals_the_pairwise_reference` keeps the pairwise
+//! definition as the reference it must equal edge for edge.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;

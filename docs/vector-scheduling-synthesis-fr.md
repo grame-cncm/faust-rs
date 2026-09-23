@@ -224,6 +224,15 @@ actuel. Un signal n'est recopiable (`Inline`) que s'il est **duplicable** :
 le recalculer ailleurs donne exactement le même résultat, ce qui exige qu'il
 n'ait pas d'effet de bord ni de lecture d'état modifiable.
 
+Le compilateur scalaire a le pendant de ce raisonnement sur les effets : avant
+toute stratégie `-ss`, `transform::hgraph::orient_effect_conflicts` chaîne les
+nœuds à état de chaque ressource dans l'ordre profondeur d'abord et traite tout
+appel étranger comme une barrière, pour qu'une stratégie autre que profondeur
+d'abord ne puisse pas déplacer une écriture de table après une lecture de
+celle-ci. Le compilateur C++ n'a pas cette étape, son ordre étant celui des
+seules dépendances de données ; l'en-tête du module
+`crates/transform/src/hgraph/mod.rs` consigne la différence et ce qu'elle coûte.
+
 ## 6. Le multi-horloge (OD/US/DS)
 
 Jusqu'ici, tout le monde avançait à la même vitesse : un échantillon de sortie

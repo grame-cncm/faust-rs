@@ -208,6 +208,14 @@ inlineable if it is **duplicable**: recomputing it elsewhere yields exactly the
 same result, which requires it to have no side effect and no read of mutable
 state.
 
+The scalar compiler has the counterpart of this effect reasoning: before any
+`-ss` strategy runs, `transform::hgraph::orient_effect_conflicts` chains the
+stateful nodes of each resource in the depth-first order and treats every
+foreign call as a barrier, so that a strategy other than depth-first cannot
+move a table write past a read of it. The C++ compiler has no such step, its
+order being that of the data dependencies alone; the module header of
+`crates/transform/src/hgraph/mod.rs` records the difference and what it costs.
+
 ## 6. Multi-rate (OD/US/DS)
 
 So far everyone moved at the same speed: one output sample per input sample. But
