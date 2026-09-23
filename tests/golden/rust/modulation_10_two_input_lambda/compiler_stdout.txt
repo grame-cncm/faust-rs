@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_10_two_input_lambda.dsp
+bytes=435
+lines=6
+fnv1a64=18a10a08200477dc

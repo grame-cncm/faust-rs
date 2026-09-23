@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_17_same_label_two_groups.dsp
+bytes=442
+lines=6
+fnv1a64=d2ffee2dd1f02afc

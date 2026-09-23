@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_41_two_input_stateful.dsp
+bytes=394
+lines=6
+fnv1a64=2e5fe54398f7248e

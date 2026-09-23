@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_12_two_input_ui.dsp
+bytes=460
+lines=6
+fnv1a64=1b665e66f64f5982

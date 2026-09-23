@@ -193,7 +193,7 @@ use simplify::*;
 use ui_widgets::*;
 
 pub use environment::Environment;
-pub use error::{EvalError, EvalStats};
+pub use error::{EvalError, EvalStats, EvalWarning};
 pub use loop_detector::LoopDetector;
 use loop_detector::on_deep_stack;
 pub use source_context::{EvalSourceContext, SamplePrecision};
@@ -420,6 +420,7 @@ fn eval_entrypoint_full(
             (new_id, name)
         })
         .collect();
+    stats.warnings = std::mem::take(&mut loop_detector.warnings);
     stats.def_names = loop_detector.def_names;
     Ok((result, stats))
 }

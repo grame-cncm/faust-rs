@@ -11,7 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use boxes::{BoxBuilder, BoxMatch, match_box};
 use diagnostics::{Severity, Stage, ToDiagnostic, codes};
-use eval::{Environment, EvalError, EvalSourceContext, LoopDetector, eval_box, eval_process};
+use eval::{
+    Environment, EvalError, EvalRequest, EvalSourceContext, EvalWarning, LoopDetector, eval_box,
+    eval_process,
+};
 use parser::{CompilationMetadataKey, parse_file, parse_program};
 use propagate::ArityCache;
 use tlib::{NodeKind, TreeArena, TreeId};
@@ -2010,7 +2013,11 @@ fn eval_process_lowers_residual_case_to_symbolic_box() {
 }
 
 #[test]
-fn eval_process_modulation_without_matching_widget_leaves_body_unchanged() {
+fn eval_process_modulation_without_matching_widget_keeps_body_adds_slot_and_warns() {
+    // `["gain" -> _]` on a body without a `gain` widget: the body is left as it
+    // is, the default two-input modulator still adds its (dangling) input, as
+    // the reference compiler always wraps the slot, and the run records the
+    // warning the reference prints under `-wall`.
     let mut arena = TreeArena::new();
     let nil = arena.nil();
     let label = arena.string_lit("gain");
@@ -2020,8 +2027,45 @@ fn eval_process_modulation_without_matching_widget_leaves_body_unchanged() {
     let def_process = make_def(&mut arena, "process", nil, modulation);
     let defs = make_defs(&mut arena, &[def_process]);
 
-    let out = eval_process(&mut arena, defs).expect("modulation should evaluate");
+    let (out, stats) =
+        eval::eval(&mut arena, defs, &EvalRequest::default()).expect("modulation should evaluate");
+    let BoxMatch::Symbolic(_, body) = match_box(&arena, out) else {
+        panic!("an unmatched two-input modulation still adds its input");
+    };
+    assert!(matches!(match_box(&arena, body), BoxMatch::Wire));
+    assert_eq!(
+        stats.warnings,
+        vec![EvalWarning::ModulationNoMatch {
+            node: modulation,
+            target: "gain".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn eval_process_modulation_without_matching_widget_and_one_input_modulator_adds_no_input() {
+    // `["gain": *(2) -> _]`: no slot to add, the body comes back as it is.
+    let mut arena = TreeArena::new();
+    let nil = arena.nil();
+    let label = arena.string_lit("gain");
+    let circuit = {
+        let mut b = BoxBuilder::new(&mut arena);
+        let two = b.real(2.0);
+        let mul = b.mul();
+        let wire = b.wire();
+        let pair = b.par(wire, two);
+        b.seq(pair, mul)
+    };
+    let modulation_var = arena.cons(label, circuit);
+    let wire = make_wire(&mut arena);
+    let modulation = BoxBuilder::new(&mut arena).modulation(modulation_var, wire);
+    let def_process = make_def(&mut arena, "process", nil, modulation);
+    let defs = make_defs(&mut arena, &[def_process]);
+
+    let (out, stats) =
+        eval::eval(&mut arena, defs, &EvalRequest::default()).expect("modulation should evaluate");
     assert!(matches!(match_box(&arena, out), BoxMatch::Wire));
+    assert_eq!(stats.warnings.len(), 1);
 }
 
 #[test]

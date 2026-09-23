@@ -126,7 +126,7 @@ pub use diagnostics::{
 };
 use diagnostics::{
     ToDiagnostic,
-    codes::{COMP_TABLE_INIT_SAMPLE_RATE, COMP_TYPE_FAILED},
+    codes::{COMP_TABLE_INIT_SAMPLE_RATE, COMP_TYPE_FAILED, EVAL_MODULATION_NO_MATCH},
 };
 use fir::{
     FirId, FirStore,
@@ -265,6 +265,9 @@ pub struct BoxCompileOutput {
     /// Evaluated `BoxId` → source definition name, forwarded to the signal
     /// output package.
     def_names: std::collections::HashMap<boxes::BoxId, String>,
+    /// The evaluator's non-fatal findings as diagnostics, empty unless the
+    /// semantic warnings are on; merged into [`SignalCompileOutput::warnings`].
+    eval_warnings: DiagnosticBundle,
 }
 
 impl BoxCompileOutput {
@@ -1590,6 +1593,18 @@ impl Compiler {
             }
         })?;
 
+        let eval_warnings = if self.semantic_warnings {
+            eval_warning_diagnostics(
+                &eval_stats.warnings,
+                &output.state.ctx,
+                &output.state.arena,
+                root,
+                self.entrypoint_name.as_ref(),
+            )
+        } else {
+            DiagnosticBundle::new()
+        };
+
         let ep = self.entrypoint_name.as_ref();
         let process_flat = self
             .time_phase("box-flatten", || {
@@ -1645,6 +1660,7 @@ impl Compiler {
             process_flat,
             arity_cache,
             def_names: eval_stats.def_names,
+            eval_warnings,
         })
     }
 
@@ -1670,6 +1686,7 @@ impl Compiler {
             process_flat,
             mut arity_cache,
             def_names,
+            eval_warnings,
         } = boxes;
         let output = &mut parse;
         let source_map = output.diagnostics.source_map().clone();
@@ -1730,6 +1747,7 @@ impl Compiler {
                 self.table_init_sample_rate,
             );
             warnings.extend(table_warnings.as_slice().iter().cloned());
+            warnings.extend(eval_warnings.as_slice().iter().cloned());
             warnings.set_source_map(source_map);
         }
 
@@ -1754,6 +1772,56 @@ impl Compiler {
 /// Warns when a literal table embeds `ma.SR` instead of observing the host's
 /// initialization sample rate. The actual folding is performed by transform;
 /// keeping the advisory here gives every backend the same diagnostic channel.
+/// The evaluator's non-fatal findings as diagnostics, each tied to its box
+/// node and to the source through the same labels an eval error gets.
+///
+/// Only called under the semantic warnings option: the class the reference
+/// compiler prints under `-wall`.
+fn eval_warning_diagnostics(
+    warnings: &[eval::EvalWarning],
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    entrypoint_name: &str,
+) -> DiagnosticBundle {
+    let mut bundle = DiagnosticBundle::new();
+    for warning in warnings {
+        let eval::EvalWarning::ModulationNoMatch { node, target } = warning;
+        let owner =
+            reachable_owner_definition_name_for_node(arena, defs_root, *node, entrypoint_name);
+        let diagnostic = Diagnostic::new(
+            Severity::Warning,
+            Stage::Eval,
+            EVAL_MODULATION_NO_MATCH,
+            format!("no modulation of `{target}` took place: no widget of the expression matches"),
+        )
+        .with_note("cause: a modulation target is matched against the widgets' labels and groups, metadata removed, name first")
+        .with_note(format!("computed: target `{target}`, matching widgets = 0"))
+        .with_note("the expression is kept as it is; a two-input modulator still adds its extra input, unconnected, as the reference compiler does")
+        .with_fact("modulation_target", target.as_str())
+        .with_help("check the label as the interface shows it (`--json`, `faustprobe --list-params`), or name one of its groups, `group/label`");
+        let diagnostic = enrich_diagnostic_with_node(
+            diagnostic,
+            arena,
+            defs_root,
+            *node,
+            owner.as_deref(),
+            entrypoint_name,
+        );
+        let diagnostic = maybe_add_eval_source_labels(
+            diagnostic,
+            ctx,
+            arena,
+            defs_root,
+            *node,
+            owner.as_deref(),
+            entrypoint_name,
+        );
+        bundle.push(diagnostic);
+    }
+    bundle
+}
+
 #[allow(clippy::too_many_arguments)]
 fn const_table_sample_rate_warnings(
     arena: &tlib::TreeArena,

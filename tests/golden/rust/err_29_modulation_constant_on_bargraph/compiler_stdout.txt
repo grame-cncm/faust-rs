@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_29_modulation_constant_on_bargraph.dsp
+bytes=401
+lines=6
+fnv1a64=93443776e26b419a

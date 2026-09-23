@@ -26,9 +26,12 @@ use super::*;
 /// - fully evaluate the body and lower residual closures with [`a2sb`],
 /// - implant the circuit around widgets whose path matches the target.
 ///
-/// The current implementation supports literal/group-path matching, which is
-/// sufficient for the production corpus and the parity fixtures in this
-/// repository.
+/// Targets are matched on the widgets' labels and groups as the reference
+/// does (metadata removed, a label's own `h:sub/x` path decoded, group prefixes
+/// matched in order); a target that matches nothing keeps the body, keeps the
+/// dangling slot of a two-input modulator, and records
+/// [`EvalWarning::ModulationNoMatch`]. Verified against faust 2.88.1 on the
+/// `tests/corpus/modulation_*.dsp` fixtures (samples, arity, interface).
 ///
 /// One important adaptation from C++ is that Rust performs the full rewrite on
 /// the already-evaluated and `a2sb`-lowered body. This keeps `propagate` free of
@@ -88,12 +91,21 @@ pub(crate) fn eval_modulation(
     );
 
     if rewritten == lowered_body {
-        Ok(lowered_body)
-    } else if let Some(slot) = slot {
-        let mut b = BoxBuilder::new(arena);
-        Ok(b.symbolic(slot, rewritten))
-    } else {
-        Ok(rewritten)
+        // No widget matched. The body is kept as it is; a two-input modulator
+        // still gets its extra input, dangling, as the reference compiler
+        // always wraps the slot (`boxSymbolic(slot, mbody)` in `eval.cpp`), so
+        // the arity of the program does not depend on the match.
+        loop_detector.warnings.push(EvalWarning::ModulationNoMatch {
+            node: modulation_node,
+            target: target_label,
+        });
+    }
+    match slot {
+        Some(slot) => {
+            let mut b = BoxBuilder::new(arena);
+            Ok(b.symbolic(slot, rewritten))
+        }
+        None => Ok(rewritten),
     }
 }
 
@@ -131,7 +143,7 @@ pub(crate) fn eval_modulation_label(
         .hd(var)
         .ok_or(EvalError::MalformedListNode { node: var })?;
     let label = eval_label_node(arena, label_node, env, loop_detector)?;
-    Ok(strip_label_metadata(&label).to_owned())
+    Ok(strip_label_metadata(&label))
 }
 
 /// Evaluates the optional modulation circuit, defaulting to multiplication.
@@ -311,10 +323,18 @@ fn implant_widget_if_match(
 
 /// Returns `true` when the effective widget path matches the modulation target.
 ///
-/// Matching is done on metadata-free path segments. Rust currently uses
-/// subsequence matching on the normalized textual path representation, which is
-/// sufficient for the active corpus and mirrors the practical C++ behavior for
-/// the supported subset.
+/// The widget's path is its own label's segments (the label, then the groups
+/// the label opens, innermost first: [`widget_label_path_segments`]) followed
+/// by the enclosing groups, innermost first, every segment without metadata.
+/// The target's segments (name first) must appear in it in order, not
+/// necessarily adjacent: `"a/x"` matches `x` under `hgroup("a", vgroup("b", ...))`.
+///
+/// This is the reference algorithm read as one relation: C++ strips each
+/// target group as the traversal enters the matching group (`matchGroup`,
+/// outermost first, unrelated groups skipped) and asks at the widget whether
+/// what remains is a subsequence of the label's own path
+/// (`isPathMatchingLabel`); the two agree on every path. A target that names
+/// only a group matches every widget under it, in both compilers.
 pub(crate) fn widget_matches_modulation_target(
     arena: &TreeArena,
     label: TreeId,
@@ -324,8 +344,8 @@ pub(crate) fn widget_matches_modulation_target(
     let Some(label) = label_node_text(arena, label) else {
         return false;
     };
-    let mut widget_path = Vec::with_capacity(group_stack.len() + 1);
-    widget_path.push(strip_label_metadata(label).to_owned());
+    let mut widget_path = widget_label_path_segments(label);
+    widget_path.reserve(group_stack.len());
     for group in group_stack.iter().rev() {
         widget_path.push(group.clone());
     }
@@ -342,7 +362,6 @@ pub(crate) fn modulation_target_path(label: &str) -> Vec<String> {
         .filter(|segment| !segment.is_empty())
         .map(strip_label_metadata)
         .filter(|segment| !segment.is_empty())
-        .map(ToOwned::to_owned)
         .rev()
         .collect()
 }

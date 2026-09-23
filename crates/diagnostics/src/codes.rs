@@ -52,6 +52,15 @@ pub const EVAL_SLIDER_INIT_OUT_OF_RANGE: DiagnosticCode = DiagnosticCode("FRS-EV
 /// evaluator folds a numeric sequence (`eval.cpp`, `isBoxSeq` branch), printed
 /// as `ERROR : division by 0 in 2 / 0`.
 pub const EVAL_DIVISION_BY_ZERO: DiagnosticCode = DiagnosticCode("FRS-EVAL-0007");
+/// A widget modulation `["target" ... -> e]` whose target matches no widget
+/// of `e`. A warning, reported with the semantic warnings: the program is
+/// left as it is, with a dangling extra input when the modulator has two
+/// inputs.
+///
+/// C++ equivalent: `WARNING : no modulation of: '...' took place in: ...`,
+/// pushed on `gWarningMessages` by the modulation branch of `eval.cpp` and
+/// printed under `-wall`.
+pub const EVAL_MODULATION_NO_MATCH: DiagnosticCode = DiagnosticCode("FRS-EVAL-0008");
 /// Generic eval failure fallback code.
 pub const EVAL_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0099");
 
@@ -170,6 +179,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         EVAL_REDEFINED_SYMBOL,
         EVAL_SLIDER_INIT_OUT_OF_RANGE,
         EVAL_DIVISION_BY_ZERO,
+        EVAL_MODULATION_NO_MATCH,
         EVAL_GENERIC_FAILURE,
         PROP_UNSUPPORTED_BOX,
         PROP_ARITY_MISMATCH,

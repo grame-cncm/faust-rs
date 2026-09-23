@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_38_smoothed_target.dsp
+bytes=425
+lines=7
+fnv1a64=b11dde9d8ea24d9a

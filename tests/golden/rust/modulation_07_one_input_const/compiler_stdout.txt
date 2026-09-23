@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_07_one_input_const.dsp
+bytes=416
+lines=6
+fnv1a64=bf0b0108a4706016

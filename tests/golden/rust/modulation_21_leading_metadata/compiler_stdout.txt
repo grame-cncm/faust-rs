@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_21_leading_metadata.dsp
+bytes=577
+lines=7
+fnv1a64=db378127a674511d

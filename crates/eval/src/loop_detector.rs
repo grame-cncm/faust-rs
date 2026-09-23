@@ -78,6 +78,8 @@ pub struct LoopDetector {
     ///
     /// C++ equivalent: `setDefNameProperty(result, id)` in `eval.cpp`.
     pub(crate) def_names: std::collections::HashMap<tlib::TreeId, String>,
+    /// Non-fatal findings, handed to [`EvalStats::warnings`](crate::EvalStats::warnings) at the end of the run.
+    pub(crate) warnings: Vec<crate::EvalWarning>,
     pub(crate) automaton_cache: crate::pattern_matcher::AutomatonCache,
     /// Dense store of `PatternMatcherValue` referenced by `boxPatternMatcher` nodes.
     ///
@@ -366,6 +368,7 @@ impl LoopDetector {
             structural_max_depth,
             cancel,
             def_names: std::collections::HashMap::new(),
+            warnings: Vec::new(),
             automaton_cache: crate::pattern_matcher::AutomatonCache::new(),
             pm_store: Vec::new(),
             closure_store: Vec::new(),

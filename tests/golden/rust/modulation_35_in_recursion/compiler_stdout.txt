@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_35_in_recursion.dsp
+bytes=389
+lines=6
+fnv1a64=c25014f454658f76

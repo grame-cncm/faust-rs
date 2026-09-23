@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_27_modulation_three_inputs.dsp
+bytes=406
+lines=6
+fnv1a64=dcce7e002bebb4d8

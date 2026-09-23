@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_23_bargraph_target.dsp
+bytes=375
+lines=6
+fnv1a64=0168b78e32b26017

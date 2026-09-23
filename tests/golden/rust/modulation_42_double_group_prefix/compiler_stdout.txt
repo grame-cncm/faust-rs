@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_42_double_group_prefix.dsp
+bytes=395
+lines=6
+fnv1a64=7a5beecf87ebb6b3

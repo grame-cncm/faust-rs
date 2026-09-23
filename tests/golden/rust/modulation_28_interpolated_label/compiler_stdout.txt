@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_28_interpolated_label.dsp
+bytes=370
+lines=6
+fnv1a64=1601063580846036

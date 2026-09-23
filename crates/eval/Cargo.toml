@@ -15,6 +15,7 @@ propagate = { path = "../propagate" }
 signals = { path = "../signals" }
 stacker = "0.1"
 tlib = { path = "../tlib" }
+ui = { path = "../ui" }
 
 [lints]
 workspace = true

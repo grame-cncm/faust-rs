@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_26_nested.dsp
+bytes=406
+lines=6
+fnv1a64=8b786b0bc08fc4b0

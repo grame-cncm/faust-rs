@@ -175,19 +175,42 @@ pub(crate) fn strip_label_node(arena: &TreeArena, label: TreeId) -> String {
     label_node_text(arena, label)
         .map(strip_label_metadata)
         .unwrap_or_default()
-        .to_owned()
 }
 
-/// Removes Faust metadata suffixes from one textual label.
+/// Removes every Faust metadata declaration from one textual label.
 ///
-/// For example `gain [unit:dB]` becomes `gain`. The returned slice borrows from
-/// the original string and is intended for path matching, not for user-facing
-/// pretty-printing.
-pub(crate) fn strip_label_metadata(label: &str) -> &str {
-    label
-        .split_once('[')
-        .map_or(label, |(prefix, _)| prefix)
-        .trim()
+/// `gain [unit:dB]`, `[1] gain` and `[1] gain [tooltip: ...]` all become
+/// `gain`, trimmed of spaces and tabs: the label the UI shows, and the one a
+/// modulation target is matched against. The extraction is the `ui` crate's
+/// port of the reference `extractMetadata` (escapes, nested brackets), so a
+/// label that starts with a metadata declaration keeps its text, where a cut
+/// at the first `[` would leave nothing.
+///
+/// Source provenance (C++): `removeMetadata` in `compiler/generator/description.cpp`,
+/// applied by `superNormalizePath` (`compiler/propagate/labels.cpp`).
+pub(crate) fn strip_label_metadata(label: &str) -> String {
+    ui::split_label_metadata(label).0
+}
+
+/// The path a widget's own label declares: the label first, then the groups
+/// the label opens, innermost first, every segment without its metadata.
+///
+/// `"h:sub/x [unit:Hz]"` is `["x", "sub"]`, `"x"` is `["x"]`. A label with a
+/// `/` but no `h:`/`v:`/`t:` prefix opens no group and stays one segment, as
+/// in the reference compiler. Root and parent navigation (`/x`, `../x`) has
+/// no enclosing path to act on here and is dropped.
+///
+/// Source provenance (C++): `superNormalizePath(cons(wLabel, nil))` in
+/// `implantWidgetIfMatch` (`compiler/transform/boxModulationImplanter.cpp`),
+/// through `label2path` (`compiler/propagate/labels.cpp`).
+pub(crate) fn widget_label_path_segments(label: &str) -> Vec<String> {
+    let normalized = ui::normalize_widget_label_path(label, &[]);
+    let mut segments = Vec::with_capacity(normalized.groups.len() + 1);
+    segments.push(strip_label_metadata(&normalized.raw_label));
+    for group in normalized.groups.iter().rev() {
+        segments.push(strip_label_metadata(&group.raw_label));
+    }
+    segments
 }
 
 /// Returns the raw textual payload of a label node, if any.

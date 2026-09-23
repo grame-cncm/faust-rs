@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_03_explicit_add.dsp
+bytes=381
+lines=6
+fnv1a64=231e9c26bdc192c0

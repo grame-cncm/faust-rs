@@ -1024,6 +1024,7 @@ const EVAL_DIVISION_BY_ZERO
 const EVAL_GENERIC_FAILURE
 const EVAL_ITERATION_INVALID
 const EVAL_MISSING_PROCESS
+const EVAL_MODULATION_NO_MATCH
 const EVAL_REDEFINED_SYMBOL
 const EVAL_SLIDER_INIT_OUT_OF_RANGE
 const EVAL_UNDEFINED_SYMBOL
@@ -1245,6 +1246,7 @@ use schema
 ## eval
 const CRATE_NAME
 enum EvalError
+enum EvalWarning
 enum SamplePrecision
 enum TransKind
 fn Automaton::final_state

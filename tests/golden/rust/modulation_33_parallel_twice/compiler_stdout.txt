@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=modulation_33_parallel_twice.dsp
+bytes=428
+lines=6
+fnv1a64=531a66bfcf786b4e

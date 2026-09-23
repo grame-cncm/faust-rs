@@ -40,9 +40,31 @@ use crate::suggestions::{SymbolSuggestion, rank_similar_names};
 /// As of the current port, instrumentation is still incremental: the field meanings are stable,
 /// but not every evaluator path updates every counter yet. Consumers should therefore treat these
 /// values as progressively improving telemetry, not as a fully complete profiling contract.
+/// A non-fatal finding of the evaluator.
+///
+/// The compiler reports these under its semantic-warnings option, the class
+/// the reference compiler prints under `-wall`; they never change the result.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EvalWarning {
+    /// A widget modulation whose target matches no widget of its body. The
+    /// body is left as it is, with a dangling extra input when the modulator
+    /// has two inputs, as the reference compiler does.
+    ///
+    /// C++ equivalent: `WARNING : no modulation of: '...' took place in: ...`
+    /// pushed on `gWarningMessages` by the modulation branch of `eval.cpp`.
+    ModulationNoMatch {
+        /// The modulation node.
+        node: TreeId,
+        /// The evaluated target, as the program wrote it (interpolated).
+        target: String,
+    },
+}
+
 #[derive(Clone, Debug, Default)]
 /// Lightweight evaluator statistics returned by opt-in entry points.
 pub struct EvalStats {
+    /// Non-fatal findings collected during the evaluation, in order.
+    pub warnings: Vec<EvalWarning>,
     /// Number of child scopes created via `push_scope()`.
     /// C++ equivalent: `gStats.fEnvLayersPushed`.
     pub env_layers_pushed: u64,
