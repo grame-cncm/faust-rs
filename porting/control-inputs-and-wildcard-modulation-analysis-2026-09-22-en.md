@@ -1,7 +1,7 @@
 # Control inputs as first-class boxes, and a wildcard modulation target: towards a generic adaptive operator
 
 **Date:** 2026-09-22
-**Status:** analysis and contract (no implementation yet)
+**Status:** analysis and contract (no implementation yet); revised 2026-09-23, `cinputs` and `coutputs` return lists rather than counts (section 3.1)
 **Scope:** four box-level primitives, `cinputs(e)`, `cinput(i, e)`, `coutputs(e)`, `coutput(i, e)`, and one extension of widget modulation, the target `"*"`, so that `optimizers.lib` can make an arbitrary Faust program learn its own sliders without the program being rewritten. Measured on the six faust-diff projects and on faust-rs `main-dev` at 7222dcc6.
 
 ---
@@ -46,34 +46,38 @@ The shared slot is the point the wildcard must not inherit: rebinding a program 
 ### 3.1 `cinputs(e)`, `cinput(i, e)`
 
 ```faust
-cinputs(e)       // the number of control inputs of e: its sliders, nentries, buttons and checkboxes, a constant
+cinputs(e)       // the control inputs of e, its sliders, nentries, buttons and checkboxes, as a list of the widget boxes
 cinput(i, e)     // the i-th control input of e (0-based), as the list (widget, init, min, max, step)
 ```
 
+The count is `outputs(cinputs(e))`, a compile-time constant like `inputs(e)`: no counting primitive. (A first version of this document had `cinputs` return the count; the list form replaces it, for the reasons at the end of this section.)
+
 - **What counts.** Every widget that produces a signal: `hslider`, `vslider`, `nentry`, `button`, `checkbox`. Bargraphs do not. A widget reached through several paths of the box DAG is one input (the UI builder's rule); two widgets with the same label in different groups are two.
 - **Order.** The UI order: depth-first traversal of the evaluated box tree, groups entered in place. Stable under `component`, `hgroup`, `library` prefixes.
+- **What `cinputs` returns.** A `par` of the N widget boxes, in that order, the same nodes as in `e`, without metadata: a bus of N signals whose i-th is `ba.take(i + 1, cinputs(e))`, and a list of seeds `fad` and `rad` take as they are. A program without control inputs gives the empty box `0 : !` (no input, no output), so that `outputs(cinputs(e))` is 0; a `par` over it downstream is then an error, and `adaptive_fad` must say so rather than fail on the `par`.
 - **What `cinput` returns.** A list of five boxes, so that `ba.take` reaches each: the widget box itself, its default, its minimum, its maximum, its step (a button or a checkbox: 0, 0, 1, 1). The widget box is **the same node** as in `e`: taken as a seed of `fad` or `rad`, it is recognised by identity, as the seed rule requires (`docs/fad-note-en.md` §1). The four numbers are the evaluated, folded constants of the widget (an expression such as `1.0 / base_tube_gain` is a number here, as `--list-params` shows it).
 - **Metadata.** The label's metadata is kept on the widget box, not in the list. A sixth entry, the scale (`0` linear, `1` for `[scale:log]`, `2` for `[scale:exp]`), is the one metadata a learning space needs; it is proposed as a sixth entry rather than a separate primitive, and is the only open point of this contract (section 6).
-- **When it is evaluated.** At box evaluation, after `eval` and `a2sb` of `e`, exactly as `inputs(e)`; `cinputs` folds to `boxInt(n)`, `cinput` to a `par` of five boxes. `e` must be closed (no free box variables), as `inputs(e)` requires.
+- **When it is evaluated.** At box evaluation, after `eval` and `a2sb` of `e`, exactly as `inputs(e)`; `cinputs` folds to a `par` of the N widget boxes, `cinput` to a `par` of five boxes. `e` must be closed (no free box variables), as `inputs(e)` requires.
 
-With these two, the host-driven calibration of any program is:
+With these two, the host-driven calibration of any program is one line:
 
 ```faust
 e = component("x.dsp");
-U = par(i, cinputs(e), cinput(i, e) : (_, !, !, !, !));      // the widgets, as seeds
-process = fad(op.mse(e, target), U);                           // faustprobe --train on their paths
+process = fad(op.mse(e, target), cinputs(e));                  // faustprobe --train on the widgets' paths
 ```
 
-and the unit cube, or the sliders' own units, come from the same list.
+and the unit cube, or the sliders' own units, come from `cinput`.
+
+**Why a list and not a count.** The two forms carry the same information: with a count, the seeds are `par(i, cinputs(e), cinput(i, e) : (_, !, !, !, !))`, one line more and the width of the tuple written by the caller. The list form makes the most frequent gesture, seeding a descent, a single identifier, drops the counting primitive (`outputs` already counts a bus), and keeps the tuple's width inside `cinput`, the only place a sixth entry (section 6) would change. What it gives up is the analogy of `cinputs` with `inputs`, a number: read as "the control inputs" rather than "their number", the plural is more exact. A list of tuples was considered and rejected: Faust has no list of lists, `(a, b, c, d, e), (f, g, h, i, j)` is ten boxes in parallel, so the count would be `outputs(…) / 5` and every index would move the day the tuple grows.
 
 ### 3.2 `coutputs(e)`, `coutput(i, e)`
 
 ```faust
-coutputs(e)      // the number of bargraphs of e
+coutputs(e)      // the bargraphs of e, as a list of the bargraph boxes
 coutput(i, e)    // the i-th bargraph, as the list (bargraph, min, max)
 ```
 
-Same order, same evaluation. The bargraph box is the `attach`ed signal's carrier: taking it as a signal reads what the program shows, its loss or its learned values, without a second output. Symmetric with `cinput`; not needed by the descents, needed by a page or a test that reads a program's own meters.
+Same order, same evaluation, count by `outputs(coutputs(e))`. The bargraph box is the `attach`ed signal's carrier: taking it as a signal reads what the program shows, its loss or its learned values, without a second output; `coutputs(e)` is all of a program's meters as one bus, what a page or a test reads in one line. Symmetric with `cinput`; not needed by the descents.
 
 ### 3.3 The wildcard target `"*"`
 
@@ -84,44 +88,78 @@ P, x : ["*": (!, _) -> e]                // e with every control input replaced 
 ```
 
 - **Matching.** A target whose last segment is `*` matches every control input whose path has the preceding segments as a subsequence (the existing rule), all of them if there is no preceding segment. Bargraphs are never matched (a modulated bargraph has no meaning). `*` is a whole segment: `"stage*"` is not proposed, the subsequence rule already gives group prefixes, and a glob inside a segment is a second language.
-- **One slot per widget.** Unlike a literal label, whose matches share the modulation's one slot (section 2.2, kept as is for compatibility), a wildcard allocates a fresh slot for each matched widget, in UI order, and the extra inputs are prepended in that order: the first control input of `e` is the first input of the modulated block. `cinput(i, e)` and the i-th extra input of `["*": … -> e]` name the same widget by construction, which is what lets a program use both.
+- **One slot per widget.** Unlike a literal label, whose matches share the modulation's one slot (section 2.2, kept as is for compatibility), a wildcard allocates a fresh slot for each matched widget, in UI order, and the extra inputs are prepended in that order: the first control input of `e` is the first input of the modulated block. `ba.take(i + 1, cinputs(e))`, `cinput(i, e)` and the i-th extra input of `["*": … -> e]` name the same widget by construction, which is what lets a program use all three.
 - **Arity of the modulator.** As today: 0 inputs replaces every matched widget by the circuit (a constant for all: `["*": 0.5 -> e]`, rarely useful), 1 input transforms each, 2 inputs pairs each with its own extra input. Only the 2-input form adds inputs.
 - **No match.** An error, `FRS-EVAL`, "the modulation target `*` matches no control input of the expression", where a literal label that matches nothing is silent today (C++ adds a dangling slot, faust-rs adds none; the wildcard should say so).
 - **The widget in the UI.** Under a 2→1 modulator that drops the widget, `(!, _)`, the widget remains in the interface, now reaching nothing, in both compilers today (`ampmodeler.dsp` shows the same for its four dead sliders). This document does not propose to change it: the rebound program's sliders are then the initial values a host could still read, and a pruning of controls whose signal reaches no output is a separate, general pass (an option of the UI builder) that benefits every program. A learner that wants its learned values visible attaches bargraphs, as the Web programs of the projects do.
 
 ### 3.4 The generic adaptive operator, in `optimizers.lib`
 
-With 3.1 and 3.3 and the 0.10.0 bus loops, and nothing else:
+With 3.1 and 3.3 and the 0.10.0 bus loops, and nothing else. The two operators differ by one word, the loop they call, so the envisaged code is one helper and two names:
 
 ```faust
 //--- `(op.)adaptive_fad`, `(op.)adaptive_rad` ---
 // A program learning all its control inputs while it runs: `e` with its
 // widgets replaced by parameters descended, every firing of `clock`, on the
-// frame mean of the gradients of `loss(model, target)` by `fad`, each
-// parameter in its own units, bounded by its widget's range, started at its
-// default, stepped by its own engine. Inputs: those of `e`, then the target.
-// Outputs: those of `e` on the learned parameters, then the parameters.
-adaptive_fad(e, loss, upd, clock, reset, target) = ...
+// frame mean of the gradients of `loss(model, target)`, by `fad` or by `rad`,
+// each parameter in its own units, bounded by its widget's range, started at
+// its default, stepped by its own engine.
+//
+// adaptive_fad(e, loss, upd, clock, reset, X, t) : si.bus(outputs(e) + N)
+// adaptive_rad(e, loss, upd, clock, reset, X, t) : si.bus(outputs(e) + N)
+//
+// Where:
+// * `e`: the program, closed, with N = outputs(cinputs(e)) control inputs
+// * `loss`: a function of two signals, the model's output and the target's
+//   (`mse`, `pseudo_huber(d)`); summed over the outputs of `e`
+// * `upd`: one engine (`adam_g(lr, b1, b2, eps)`, `sgd_g(lr)`, ...) or a list of N,
+//   the rate in each widget's own units (0.01 on a gain, 0.5 dB on a master)
+// * `clock`: 1 on the samples where a step is taken (a frame's end, gated or not)
+// * `reset`: 1 sends the parameters back to their defaults
+// * `X`: the inputs of `e`, as signals (one for a mono program, `(l, r)` for two)
+// * `t`: the target, outputs(e) signals
+// Outputs: those of `e` on the learned parameters, then the N parameters, in
+// `cinputs` order.
+adaptive_fad(e, loss, upd, clock, reset, X, t) = _adaptive(descend_N_fad_clocked, e, loss, upd, clock, reset, X, t);
+adaptive_rad(e, loss, upd, clock, reset, X, t) = _adaptive(descend_N_rad_clocked, e, loss, upd, clock, reset, X, t);
+
+_adaptive(descend, e, loss, upd, clock, reset, X, t) = model(P), P
 with {
-    N = cinputs(e);
+    N = outputs(cinputs(e));
+    K = outputs(e);
     LO = par(i, N, cinput(i, e) : (!, !, _, !, !));
     HI = par(i, N, cinput(i, e) : (!, !, !, _, !));
     INIT = par(i, N, cinput(i, e) : (!, _, !, !, !));
-    model(P) = P, si.bus(inputs(e)) : ["*": (!, _) -> e];
-    P = descend_N_fad_clocked(N, clock, \(P).(loss(model(P), target)), upd, LO, HI, INIT, reset);
+    model(P) = P, X : ["*": (!, _) -> e];                                        // e on P in place of its widgets, X its audio
+    lossN = model(si.bus(N)) : par(i, K, \(y).(loss(y, ba.take(i + 1, t)))) :> _;   // a box of N inputs, one scalar
+    P = descend(N, clock, lossN, upd, LO, HI, INIT, reset);
 };
 ```
 
-`upd` is one engine or a list of `N`; the rate in a widget's own units is the caller's, as it should be (0.01 on a gain, 0.5 dB on a master).
+and a program that follows a real preamp on every knob of `ampmodeler.dsp`, the model rewritten by nobody:
 
-**Both modes, both named.** `adaptive_rad` is the same body on `descend_N_rad_clocked`, to a word: `cinput` and the wildcard supply seeds and bounds and do not know which mode consumes them. The pair is named in full, `adaptive_fad` and `adaptive_rad`, with no bare `adaptive`: the library's older loops leave the `fad` form unmarked and suffix the twin (`descend_N_fad`, `descend_N_rad`), an inheritance from `fad` having come first, but this is the entry point a reader meets first and the mode is a choice to make knowingly, not a default with an option; two names at the same rank say so, and a third for the same thing is what to avoid. The older pairs keep their names (renaming them would break the six projects for nothing) and the overview says in one sentence that new functions name both modes. What differs is the library's existing contract. Through a recursion `fad` carries the exact derivative at any block size, where `rad` consumed in the graph sees one sample, the direct term with the past state held fixed (pseudo-linear regression), the frame mean being a mini-batch of those; on a model without recursion between the parameters and the output the two follow the same trajectory (`opt_bus_fad_vs_rad_fir16`). `fad` costs one lane per widget (8.7 preamps for 24 lanes on ampmodeler), `rad` one sweep whatever the count, the choice past a few dozen parameters. `rad` refuses written tables, soundfiles, foreign functions and clock-domain crossings where `fad` emits zero tangents, so `adaptive_rad` says at compile time what `adaptive` would learn around in silence. The clocked descent is not a crossing: only the step is inside the `ondemand` block, the loss and its `rad` run at audio rate, as `descend_N_rad_clocked` already does. Host-driven, the same pair: `fad(loss, U)` or `rad(loss, U)` with `U` from `cinput`.
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+e = component("ampmodeler.dsp");
+FRAME = 2048;
+clock = (ba.time % FRAME) == (FRAME - 1);
+process(x, t) = op.adaptive_fad(e, op.mse, op.adam_g(0.01, 0.9, 0.999, 1e-8), clock, button("reset"), x, t);
+// 1 + 29 outputs: the preamp, then its 29 sliders as learned, including the four
+// dead ones (a zero gradient: they stay at their default) and the two volumes
+// that share one gain (section 5)
+```
+
+**Why `X` and `t` are arguments and not inputs.** The clocked loops compose the parameters with the loss, `params : loss`, so `loss` is a box of N inputs; the programs written so far build it with a lambda of literal arity, `\(g, m, v).(mse(model(x, g, m, v), t))`, which a generic N cannot write, Faust having no lambda over a bus. The helper builds the box the other way round: the parameters enter the modulated `e` as its first N inputs, and the only place a signal is used twice, `loss(y, t)`, is after the model, on one wire per output, through a lambda of one parameter. That works only if the audio inputs and the target are signals closed over by the function, hence arguments, as `x` and `t` are in `ampmodeler_online.dsp`. Writing `loss(model(si.bus(N)), t)` instead would fail: `mse(y, t) = (y - t) * (y - t)` mentions `y` twice, and a box of N inputs mentioned twice is a box of 2N inputs. The first draft of this section had `\(P).(loss(model(P), target))`, a box of one input whatever N: the same mistake.
+
+**Both modes, both named.** `adaptive_rad` is `adaptive_fad` on `descend_N_rad_clocked`, one word in `_adaptive`'s call: `cinput` and the wildcard supply seeds and bounds and do not know which mode consumes them. The pair is named in full, `adaptive_fad` and `adaptive_rad`, with no bare `adaptive`: the library's older loops leave the `fad` form unmarked and suffix the twin (`descend_N_fad`, `descend_N_rad`), an inheritance from `fad` having come first, but this is the entry point a reader meets first and the mode is a choice to make knowingly, not a default with an option; two names at the same rank say so, and a third for the same thing is what to avoid. The older pairs keep their names (renaming them would break the six projects for nothing) and the overview says in one sentence that new functions name both modes. What differs is the library's existing contract. Through a recursion `fad` carries the exact derivative at any block size, where `rad` consumed in the graph sees one sample, the direct term with the past state held fixed (pseudo-linear regression), the frame mean being a mini-batch of those; on a model without recursion between the parameters and the output the two follow the same trajectory (`opt_bus_fad_vs_rad_fir16`). `fad` costs one lane per widget (8.7 preamps for 24 lanes on ampmodeler), `rad` one sweep whatever the count, the choice past a few dozen parameters. `rad` refuses written tables, soundfiles, foreign functions and clock-domain crossings where `fad` emits zero tangents, so `adaptive_rad` says at compile time what `adaptive` would learn around in silence. The clocked descent is not a crossing: only the step is inside the `ondemand` block, the loss and its `rad` run at audio rate, as `descend_N_rad_clocked` already does. Host-driven, the same pair: `fad(loss, cinputs(e))` or `rad(loss, cinputs(e))`.
 
 The five projects, rewritten on it:
 
 | project | what the operator gives | what stays by hand |
 |---|---|---|
 | ampmodeler, online (3 knobs) | `["stage1_gain": (!, _), "tonestack_mid": (!, _), "master_volume": (!, _) -> e]` on the original, with the three ranges from `cinput`; or `"*"` and 29 parameters | the choice of the three knobs, the rates |
-| ampmodeler, calibration (24) | `fad(loss, U)` on the original, the unit cube from `cinput`'s ranges | holding the two dead stage-4 values, stage 5 and one of the two volumes: identifiability |
+| ampmodeler, calibration (24) | `fad(loss, cinputs(e))` on the original, the unit cube from `cinput`'s ranges | holding the two dead stage-4 values, stage 5 and one of the two volumes: identifiability |
 | amp (209 parameters) | the same on `amp_effect.dsp`, by `rad` | the sigmoid space and `init`, the flat directions |
 | ts808 (5 values) | the same on the stage with its sliders | the reparametrisation (V_k, β) that makes the loss well-conditioned; the leader–scout pair |
 | jot, rir | the enumeration of the parameters | the EDR loss, the alignment of the response |
@@ -131,10 +169,10 @@ The operator removes the mechanical layer, one library per project; the loss, th
 ## 4. Implementation in faust-rs
 
 1. **Boxes.** Four box kinds in `crates/boxes` (`BOXCINPUTS`, `BOXCINPUT`, `BOXCOUTPUTS`, `BOXCOUTPUT`: tags, builder, matcher, printer), parsed as primitives with 1 and 2 arguments, next to `inputs`/`outputs` in the grammar's primitive table.
-2. **Eval.** Four arms next to `BoxMatch::Inputs`: evaluate and lower the inner box, then a walk shared with `implant_modulation`, `collect_control_inputs(arena, lowered) -> Vec<(TreeId widget, kind, cur, min, max, step)>`, depth-first with the group stack, deduplicating by `TreeId` (the lowered tree is a DAG: the same widget reached twice is one entry, as `ui_build.rs` does with its `visited` cache), skipping bargraphs; the numbers folded by the same evaluation the widget's arguments already went through. `cinputs` returns `boxInt`, `cinput(i, …)` the `par` of the five boxes (an `i` out of range: an error naming the count). The bargraph twins likewise.
+2. **Eval.** Four arms next to `BoxMatch::Inputs`: evaluate and lower the inner box, then a walk shared with `implant_modulation`, `collect_control_inputs(arena, lowered) -> Vec<(TreeId widget, kind, cur, min, max, step)>`, depth-first with the group stack, deduplicating by `TreeId` (the lowered tree is a DAG: the same widget reached twice is one entry, as `ui_build.rs` does with its `visited` cache), skipping bargraphs; the numbers folded by the same evaluation the widget's arguments already went through. `cinputs` returns the `par` of the widget `TreeId`s (the empty box `0 : !` when there are none), `cinput(i, …)` the `par` of the five boxes (an `i` out of range: an error naming the count). The bargraph twins likewise.
 3. **Modulation.** In `eval_modulation`, detect a last segment `*`; then `implant_modulation` takes a `slots: Vec<TreeId>` it fills with a fresh slot per matched widget instead of `rewrite.slot`, and the result is wrapped in `symbolic` once per slot, last slot innermost, so that the first matched widget is the first input. The literal-label path is untouched. The no-match error is new.
-4. **Tests.** Corpus fixtures: `cinputs` on `ampmodeler`-like programs with groups, duplicates and dead widgets (count, order, values against `--list-params`); `cinput` as seeds equal to the hand-written `fad` lanes; `"*"` on a program with 29 widgets equal to the 29 explicit targets to the bit; `"group/*"`; a wildcard that matches nothing. The `impulse-tests` reference cannot cover them (C++ has none of this: an extension, as `fad` and `rad` are, to be listed with them in `docs/`).
-5. **Docs.** The syntax note for the four primitives and the wildcard, the modulation section of the manual port with the "one modulator per target" trap, `optimizers.lib` gaining `adaptive_fad` and `adaptive_rad` and its overview paragraph, the faust-ad skill.
+4. **Tests.** Corpus fixtures: `cinputs` on `ampmodeler`-like programs with groups, duplicates and dead widgets (`outputs(cinputs(e))`, order, `cinput`'s values against `--list-params`); `fad(loss, cinputs(e))` equal to the hand-written `fad` lanes; a program without controls; `"*"` on a program with 29 widgets equal to the 29 explicit targets to the bit; `"group/*"`; a wildcard that matches nothing. The `impulse-tests` reference cannot cover them (C++ has none of this: an extension, as `fad` and `rad` are, to be listed with them in `docs/`).
+5. **Docs.** The syntax note for the four primitives and the wildcard, the modulation section of the manual port with the "one modulator per target" trap, `optimizers.lib` gaining `adaptive_fad` and `adaptive_rad` and its overview paragraph, the faust-ad skill. `adaptive_fad` on `ampmodeler.dsp` against `ampmodeler_online.dsp` with the 26 other parameters' rates at zero: the three knobs must follow the same trajectory to the bit, the test of section 3.4's code.
 
 Estimated size: the eval arms and the walk are a day; the wildcard is an afternoon, the tests and docs another day.
 
