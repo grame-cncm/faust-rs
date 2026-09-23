@@ -88,10 +88,10 @@
 //! re-evaluable: their forward value at a given sample depends on prior state
 //! that is not available in the reverse loop without a tape.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use signals::{BinOp, SigId, SigMatch, match_sig};
-use tlib::{TreeArena, list_to_vec, match_sym_rec, match_sym_ref};
+use tlib::{TreeArena, TreeId, list_to_vec, match_sym_rec, match_sym_ref};
 
 /// Returns `true` if `sig` can be correctly re-evaluated in the **reverse**
 /// sample loop without accessing a recorded tape.
@@ -313,6 +313,79 @@ pub(super) fn collect_bra_postorder(
         _ => {}
     }
     order.push(root);
+}
+
+/// The postorder of the differentiated graph under `roots`, closed over the
+/// recursion slots that graph reads only through a feedback tap.
+///
+/// [`collect_bra_postorder`] enters a recursion through `Proj(slot, SYMREC)`
+/// and walks `bodies[slot]` alone. A slot the carrier never reads outside
+/// the recursion is read inside it through `Delay1(Proj(slot, SYMREF))` or
+/// `Delay(c, Proj(slot, SYMREF))`: a coefficient routed through the `~`
+/// block as a wire, the shape of `(+, _) ~ *` and of the IIR of the AES
+/// paper (`fad_iir_transposed.dsp`). Its body is then never visited, the
+/// carry of that tap has no node to land on, and a seed under the body gets
+/// no adjoint. This walks such bodies as well, repeated until every tap is
+/// covered, and returns with the order the body each uncovered `(var, slot)`
+/// feeds, for the sweep to accumulate the tap's carry into it.
+///
+/// A body walked this way lands after the nodes that reach it only through
+/// the tap, so the reverse walk still meets its adjoint before its children.
+pub(super) fn collect_bra_postorder_closed(
+    arena: &TreeArena,
+    roots: &[SigId],
+    stops: &HashSet<SigId>,
+) -> (Vec<SigId>, HashMap<(TreeId, usize), SigId>) {
+    let mut visited = HashSet::new();
+    let mut order = Vec::new();
+    for &root in roots {
+        collect_bra_postorder(arena, root, stops, &mut visited, &mut order);
+    }
+    let mut uncovered: HashMap<(TreeId, usize), SigId> = HashMap::new();
+    loop {
+        let mut groups: HashMap<TreeId, SigId> = HashMap::new();
+        let mut covered: HashSet<(TreeId, usize)> = HashSet::new();
+        for &sig in &order {
+            if let SigMatch::Proj(slot, group) = match_sig(arena, sig)
+                && let Some((var, body_list)) = match_sym_rec(arena, group)
+            {
+                groups.insert(var, body_list);
+                covered.insert((var, usize::try_from(slot).unwrap_or(usize::MAX)));
+            }
+        }
+        let mut bodies_to_walk = Vec::new();
+        for &sig in &order {
+            let tap = match match_sig(arena, sig) {
+                SigMatch::Delay1(x) | SigMatch::Delay(x, _) => x,
+                _ => continue,
+            };
+            let SigMatch::Proj(slot, inner) = match_sig(arena, tap) else {
+                continue;
+            };
+            let Some(var) = match_sym_ref(arena, inner) else {
+                continue;
+            };
+            let slot = usize::try_from(slot).unwrap_or(usize::MAX);
+            if covered.contains(&(var, slot)) || uncovered.contains_key(&(var, slot)) {
+                continue;
+            }
+            let Some(&body_list) = groups.get(&var) else {
+                continue;
+            };
+            let Some(body) = list_to_vec(arena, body_list).and_then(|b| b.get(slot).copied())
+            else {
+                continue;
+            };
+            uncovered.insert((var, slot), body);
+            bodies_to_walk.push(body);
+        }
+        if bodies_to_walk.is_empty() {
+            return (order, uncovered);
+        }
+        for body in bodies_to_walk {
+            collect_bra_postorder(arena, body, stops, &mut visited, &mut order);
+        }
+    }
 }
 
 /// Collects the `select2` conditions of `postorder`.

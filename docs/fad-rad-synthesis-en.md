@@ -648,6 +648,30 @@ A good `faust-rs` differentiable patch starts with a clear audio model, a clear
 scalar loss, and a small number of parameters, then adds constraints,
 smoothing, and monitoring incrementally.
 
+## 13. The Two Examples of the AES 2025 Paper
+
+"Faust Autodiff: Towards Audio Domain-Specific Machine Learning" (T. Rushton,
+AES AIMLA 2025) differentiates Faust programs at the source level: dual
+signals `<s, grad s>` and one rule per composition operator, implemented by
+pattern matching in a Faust library. Its two examples are in the corpus with
+the paper's own routing, the parameters as slider seeds:
+
+- [`fad_neuron_sigmoid.dsp`](../tests/corpus/fad_neuron_sigmoid.dsp) and
+  [`rad_neuron_sigmoid.dsp`](../tests/corpus/rad_neuron_sigmoid.dsp), the
+  neuron `y = sigmoid(w . x + b)` of its listing 4, with `ro.interleave` (a
+  `route`) in the dot product;
+- [`fad_iir_transposed.dsp`](../tests/corpus/fad_iir_transposed.dsp) and
+  [`rad_iir_transposed.dsp`](../tests/corpus/rad_iir_transposed.dsp), the
+  order-2 IIR of its listing 5, its subtraction re-routed with `_` and `!`.
+
+The paper's limitations do not apply here, because `fad` and `rad` work on
+the signal graph after propagation: `route`, the unapplied `ma.sub` of
+`fi.iir` and the widgets have disappeared. `fad(fi.iir(bv, av), seeds)`
+gives the fixture's tangents to the bit. The tests are in
+[crates/compiler/tests/aes_autodiff_paper.rs](../crates/compiler/tests/aes_autodiff_paper.rs):
+closed form for the neuron, finite differences on every frame for the IIR
+under `fad`, block totals for the IIR under `rad`.
+
 ## See Also
 
 - [fad-note-en.md](fad-note-en.md) — FAD surface and implementation.

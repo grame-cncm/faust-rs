@@ -125,7 +125,7 @@ use sigtype::{SigType, Variability};
 use crate::signal_prepare::SimpleSigType;
 
 use super::block_reverse_ad::{
-    collect_bra_postorder, collect_delay_amounts, collect_select2_conditions,
+    collect_bra_postorder_closed, collect_delay_amounts, collect_select2_conditions,
     collect_tape_needed_values, is_trivially_reverse_evaluable,
 };
 use super::delay::{

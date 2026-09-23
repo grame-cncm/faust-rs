@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=fad_neuron_sigmoid.dsp
+bytes=1291
+lines=34
+fnv1a64=e12182e3a214e5d1

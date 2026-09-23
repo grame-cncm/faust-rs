@@ -714,6 +714,32 @@ La bonne façon de concevoir un patch différentiable dans `faust-rs` est de
 partir d'un modèle audio clair, d'une perte scalaire claire, d'un petit nombre
 de paramètres, puis d'ajouter progressivement bornes, lissage et affichage.
 
+## 13. Les deux exemples du papier AES 2025
+
+« Faust Autodiff: Towards Audio Domain-Specific Machine Learning »
+(T. Rushton, AES AIMLA 2025) différencie les programmes Faust au niveau de
+la source : signaux duaux `<s, grad s>` et une règle par opérateur de
+composition, implémentées par pattern matching dans une bibliothèque Faust.
+Ses deux exemples sont dans le corpus avec le routage du papier, les
+paramètres comme graines curseurs :
+
+- [`fad_neuron_sigmoid.dsp`](../tests/corpus/fad_neuron_sigmoid.dsp) et
+  [`rad_neuron_sigmoid.dsp`](../tests/corpus/rad_neuron_sigmoid.dsp), le
+  neurone `y = sigmoid(w . x + b)` de son listing 4, avec `ro.interleave`
+  (un `route`) dans le produit scalaire ;
+- [`fad_iir_transposed.dsp`](../tests/corpus/fad_iir_transposed.dsp) et
+  [`rad_iir_transposed.dsp`](../tests/corpus/rad_iir_transposed.dsp), l'IIR
+  d'ordre 2 de son listing 5, sa soustraction re-routée avec `_` et `!`.
+
+Les limites du papier ne s'appliquent pas ici, parce que `fad` et `rad`
+travaillent sur le graphe de signaux après propagation : `route`, le
+`ma.sub` non appliqué de `fi.iir` et les widgets ont disparu.
+`fad(fi.iir(bv, av), seeds)` donne les tangentes de la fixture au bit près.
+Les tests sont dans
+[crates/compiler/tests/aes_autodiff_paper.rs](../crates/compiler/tests/aes_autodiff_paper.rs) :
+forme fermée pour le neurone, différences finies à chaque trame pour l'IIR
+sous `fad`, totaux de bloc pour l'IIR sous `rad`.
+
 ## Voir aussi
 
 - [fad-note-en.md](fad-note-en.md) — surface et implémentation de FAD.

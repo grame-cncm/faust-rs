@@ -317,6 +317,18 @@ Cranelift `dsp*` layout is 64-bit, so an instance can hold more than 4 GB
 of them (a 7-second response at 48 kHz, `-bra-tape 524288`, is 5.8 GB
 for that FDN).
 
+The carry of a feedback tap, `Delay1(Proj(slot, SYMREF))` or
+`Delay(c, Proj(slot, SYMREF))`, is loaded at the next reverse step into the
+adjoint of the slot it reads: the `Proj(slot, SYMREC)` node when the carrier
+reads that slot outside the recursion, else the slot's body itself. The
+second case is a coefficient routed through the `~` block as a wire, the
+shape of `(+, _) ~ *` and of the IIR of Rushton's AES 2025 paper
+(`rad_iir_transposed.dsp`), where the body reads the coefficient only
+through its tap; the postorder is closed over such slots
+(`collect_bra_postorder_closed`) so the body is walked and the seed under
+it gets its adjoint. Before that closure the carry landed nowhere and the
+coefficient's gradient was zero (2026-09-23).
+
 A `Delay(d, x)` whose amount is not a literal, a slider-driven integer
 constant over the block or a signal that varies within it, is a scatter
 rather than a fixed shift: `y[n] = x[n - d[n]]`, so `adj[x][n - d[n]] +=
@@ -511,7 +523,12 @@ parity tests in `crates/compiler/tests/rad_runtime.rs`.
   composition, multi-seed, multi-output, repeated/absent seeds,
   read-only table indexing, accepted recursive/block RAD forms,
   plus arity error fixtures (`err_rad_zero_body`, `err_rad_zero_seed`) and
-  the temporal fallback fixture `rad_delay1_block_fallback`.
+  the temporal fallback fixture `rad_delay1_block_fallback`; the two
+  examples of Rushton's AES 2025 paper, the neuron and the IIR with the
+  paper's own routing (`rad_neuron_sigmoid`, `rad_iir_transposed`, with
+  their `fad_` twins), checked in
+  [crates/compiler/tests/aes_autodiff_paper.rs](../crates/compiler/tests/aes_autodiff_paper.rs)
+  against the closed form, finite differences, `fad` and `fi.iir`.
 
 ## 7. Out-of-scope and future work
 

@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=fad_iir_transposed.dsp
+bytes=1439
+lines=32
+fnv1a64=01aaa4fbae823b18

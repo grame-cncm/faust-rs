@@ -29,7 +29,7 @@ use crate::signal_fir::module::RadBinOpRule;
 use crate::signal_fir::module::SigMatch;
 use crate::signal_fir::module::SignalToFirLower;
 use crate::signal_fir::module::TreeId;
-use crate::signal_fir::module::collect_bra_postorder;
+use crate::signal_fir::module::collect_bra_postorder_closed;
 use crate::signal_fir::module::collect_delay_amounts;
 use crate::signal_fir::module::collect_select2_conditions;
 use crate::signal_fir::module::collect_tape_needed_values;
@@ -390,12 +390,12 @@ impl<'a> SignalToFirLower<'a> {
 
         // 1. Collect unified postorder. Seeds are leaves: the walk records them
         //    (their adjoint is the gradient) and does not descend into them.
+        //    The order is closed over the recursion slots read only through
+        //    a feedback tap; `uncovered_bodies` names the body each such
+        //    `(var, slot)` feeds.
         let stops: HashSet<SigId> = seed_sigs.iter().copied().collect();
-        let mut visited = std::collections::HashSet::new();
-        let mut postorder = Vec::new();
-        for &body in body_sigs {
-            collect_bra_postorder(self.arena, body, &stops, &mut visited, &mut postorder);
-        }
+        let (postorder, uncovered_bodies) =
+            collect_bra_postorder_closed(self.arena, body_sigs, &stops);
 
         // 2. Lower cotangent signals.
         let mut cot_firs = Vec::with_capacity(cotangent_sigs.len());
@@ -477,9 +477,18 @@ impl<'a> SignalToFirLower<'a> {
                 continue;
             };
             let slot_usize = usize::try_from(slot).unwrap_or(usize::MAX);
-            // Look up the body_sig whose SYMREC var matches this SYMREF var.
-            let Some(&proj_symrec) = var_slot_to_body_sig.get(&(ref_var, slot_usize)) else {
-                continue;
+            // Look up the body_sig whose SYMREC var matches this SYMREF var:
+            // the `Proj(slot, SYMREC)` node when the carrier reads the slot
+            // outside the recursion, else the slot's body itself, which only
+            // this tap reads (a coefficient routed through the `~` block as
+            // a wire); it received no cotangent and forwards the carry as the
+            // projection would.
+            let target = match var_slot_to_body_sig.get(&(ref_var, slot_usize)) {
+                Some(&proj_symrec) => proj_symrec,
+                None => match uncovered_bodies.get(&(ref_var, slot_usize)) {
+                    Some(&body) if self.signal_fir_type(body)? == real_ty => body,
+                    _ => continue,
+                },
             };
             let carry_load = match amount {
                 None => {
@@ -513,7 +522,7 @@ impl<'a> SignalToFirLower<'a> {
             };
             let carry_load = self.snapshot_bra_carry(carry_load);
             let real_ty = self.real_ty.clone();
-            Self::add_to_adjoint(&mut self.store, &mut adj, proj_symrec, carry_load, real_ty);
+            Self::add_to_adjoint(&mut self.store, &mut adj, target, carry_load, real_ty);
         }
 
         // 3b. Seed cotangent contributions.
@@ -1367,11 +1376,8 @@ impl<'a> SignalToFirLower<'a> {
         // 1. Build postorder over the supplied body roots, stopping at the
         //    seeds as the backward sweep does.
         let stops: HashSet<SigId> = seed_sigs.iter().copied().collect();
-        let mut visited = std::collections::HashSet::new();
-        let mut postorder = Vec::new();
-        for &body in body_sigs {
-            collect_bra_postorder(self.arena, body, &stops, &mut visited, &mut postorder);
-        }
+        let (postorder, _uncovered_bodies) =
+            collect_bra_postorder_closed(self.arena, body_sigs, &stops);
 
         // 2. Determine which values need to be taped.
         let tape_needed = collect_tape_needed_values(self.arena, &postorder);

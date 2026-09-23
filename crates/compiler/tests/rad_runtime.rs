@@ -2683,3 +2683,34 @@ process = rad((model - target) * (model - target), a);
         );
     }
 }
+
+/// A coefficient routed through the `~` block as a wire, `(+, _) ~ *`: the
+/// recursion has two slots, the state and the coefficient, and the body reads
+/// the coefficient only through its feedback tap `Delay1(Proj(1, SYMREF))`,
+/// the carrier never outside. The carry of that tap used to land nowhere
+/// (the sweep re-injected carries into `Proj(slot, SYMREC)` nodes of the
+/// postorder only) and the seed's gradient was zero. The postorder is now
+/// closed over such slots and the carry lands on the slot's body.
+#[test]
+fn rad_coefficient_wired_through_the_recursion_bra_total_grad_matches_fd() {
+    assert_bra_block_total_grad_matches_fd(
+        "rad-wired-coefficient",
+        1,
+        8,
+        &[0.5],
+        &[1e-3],
+        1e-3,
+        |s| {
+            format!(
+                r#"a = hslider("a", {}, -1, 1, 0.001); x = (+(12345) ~ *(1103515245)) * 4.656612873077393e-10; process = rad((x, a : ((+, _) ~ *) : _, !), a);"#,
+                s[0]
+            )
+        },
+        |s| {
+            format!(
+                r#"a = hslider("a", {}, -1, 1, 0.001); x = (+(12345) ~ *(1103515245)) * 4.656612873077393e-10; process = x, a : ((+, _) ~ *) : _, !;"#,
+                s[0]
+            )
+        },
+    );
+}
