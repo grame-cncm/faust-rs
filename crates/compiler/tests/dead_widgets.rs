@@ -137,6 +137,19 @@ const CASES: &[Case] = &[
             step: Some(0.01),
         }],
     },
+    Case {
+        fixture: "ui_dead_08_duplicate_address_dead.dsp",
+        inputs: 1,
+        outputs: 1,
+        controls: &[Control {
+            address: "/ui_dead_08_duplicate_address_dead/gain",
+            kind: "hslider",
+            init: Some(0.5),
+            min: Some(0.0),
+            max: Some(1.0),
+            step: Some(0.01),
+        }],
+    },
 ];
 
 fn corpus_path(file: &str) -> PathBuf {
@@ -318,4 +331,49 @@ fn a_dead_widget_gets_no_field_and_no_ui_entry_in_the_generated_code() {
     assert!(!cpp.contains("fHslider"), "{cpp}");
     assert!(!cpp.contains("addHorizontalSlider"), "{cpp}");
     assert!(cpp.contains("openVerticalBox(\"ui_dead_01_cut\")"), "{cpp}");
+}
+
+#[test]
+fn a_duplicated_address_is_rejected_only_among_the_widgets_shown() {
+    // Two live sliders at one address: rejected, as the reference rejects the
+    // paths of its JSON (`ERROR : path '...' is already used`). The dead
+    // twin of `ui_dead_08` is accepted above, by both compilers.
+    let compiler = Compiler::new();
+    let live = "process = _ : *(hslider(\"gain\", 0.5, 0, 1, 0.01)) : *(hslider(\"gain\", 0.25, 0, 1, 0.01));\n";
+    let error = compiler
+        .compile_source_to_cpp(
+            "live_duplicate.dsp",
+            live,
+            &codegen::backends::cpp::CppOptions::default(),
+        )
+        .expect_err("two live sliders at one address are rejected");
+    assert!(
+        matches!(error, compiler::CompilerError::UiLayout { .. }),
+        "{error}"
+    );
+    assert_eq!(
+        error.diagnostic_bundle().as_slice()[0].code.0,
+        "FRS-UI-0001"
+    );
+    if let Some(cpp_bin) = cpp_bin() {
+        let path = std::env::temp_dir().join(format!(
+            "faust-rs-live-duplicate-{}.dsp",
+            std::process::id()
+        ));
+        fs::write(&path, live).expect("write the temporary program");
+        let output = Command::new(&cpp_bin)
+            .arg("-json")
+            .arg(&path)
+            .arg("-O")
+            .arg(std::env::temp_dir())
+            .output()
+            .expect("run the reference compiler");
+        let _ = fs::remove_file(&path);
+        assert!(!output.status.success(), "the reference rejects it too");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("already used"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

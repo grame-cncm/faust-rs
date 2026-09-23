@@ -41,6 +41,15 @@ pub enum SignalFirErrorCode {
     /// `-os`: neither the `control` nor the `frame` entry point supplies a
     /// block count (C++ `generateFVar` rejects `fFullCount` the same way).
     ForeignCountInExecutionMode,
+    /// Two or more input controls the interface shows claim one runtime
+    /// address, so a host writing to it cannot know which control it drives.
+    /// Checked after dead widgets are pruned, on the interface the module
+    /// shows, as the reference checks the paths it writes to its JSON
+    /// (`json_instructions.hh`, `ERROR : path '...' is already used`). The
+    /// conflicts travel with the error ([`SignalFirError::ui_conflicts`]) for
+    /// the compiler to label every declaration; the code is the interface's,
+    /// `FRS-UI-0001`, not a lowering code.
+    UiDuplicatePath,
     /// The program contains a block-sensitive operation (`BlockReverseAD` or
     /// `ReverseTimeRec`) whose semantics are defined relative to the block
     /// boundary, so it has no one-sample meaning under `-os` (execution
@@ -63,6 +72,7 @@ impl SignalFirErrorCode {
             Self::ClockAnalysis => "FRS-SFIR-0008",
             Self::ForeignCountInExecutionMode => "FRS-SFIR-0009",
             Self::BlockSensitiveOneSample => "FRS-SFIR-0010",
+            Self::UiDuplicatePath => "FRS-UI-0001",
         }
     }
 }
@@ -78,6 +88,9 @@ pub struct SignalFirError {
     message: String,
     signal: Option<SigId>,
     box_origins: Vec<BoxId>,
+    /// The duplicated addresses of a [`SignalFirErrorCode::UiDuplicatePath`],
+    /// ordered by address; empty for every other code.
+    ui_conflicts: Vec<ui::DuplicateControlPath>,
 }
 
 impl SignalFirError {
@@ -89,7 +102,22 @@ impl SignalFirError {
             message: message.into(),
             signal: None,
             box_origins: Vec::new(),
+            ui_conflicts: Vec::new(),
         }
+    }
+
+    /// Attaches the duplicated addresses of a [`SignalFirErrorCode::UiDuplicatePath`].
+    #[must_use]
+    pub fn with_ui_conflicts(mut self, conflicts: Vec<ui::DuplicateControlPath>) -> Self {
+        self.ui_conflicts = conflicts;
+        self
+    }
+
+    /// The duplicated addresses of a [`SignalFirErrorCode::UiDuplicatePath`];
+    /// empty for every other code.
+    #[must_use]
+    pub fn ui_conflicts(&self) -> &[ui::DuplicateControlPath] {
+        &self.ui_conflicts
     }
 
     /// Associates the failure with the prepared Signal that triggered it.

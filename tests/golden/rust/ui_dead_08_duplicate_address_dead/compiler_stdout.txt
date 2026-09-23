@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ui_dead_08_duplicate_address_dead.dsp
+bytes=457
+lines=6
+fnv1a64=8da873a276187145

@@ -195,7 +195,7 @@ below).
 
 | Code | Stage | Meaning | Raised at |
 |---|---|---|---|
-| `FRS-UI-0001` | `propagate` | Two or more UI controls claim the same runtime address, so they are indistinguishable to every host. Carries typed `ui_path`, `control_count`, and `control_labels` fields, and one label per conflicting declaration. | `crates/compiler/src/ui_paths.rs` |
+| `FRS-UI-0001` | `transform` | Two or more UI controls claim the same runtime address, so they are indistinguishable to every host. Carries typed `ui_path`, `control_count`, and `control_labels` fields, and one label per conflicting declaration. | the transform's fast lane once dead widgets are pruned, on the interface the module shows (`SignalFirErrorCode::UiDuplicatePath`, `crates/transform/src/signal_fir/mod.rs`), rendered by `ui_layout_error` (`crates/compiler/src/ui_paths.rs`) |
 
 The C++ compiler raises the equivalent `path '...' is already used` while
 serializing JSON. Rust checks the grouped `UiProgram` right after propagation

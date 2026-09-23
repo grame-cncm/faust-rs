@@ -2544,7 +2544,9 @@ fn SignalFirError::box_origins
 fn SignalFirError::code
 fn SignalFirError::message
 fn SignalFirError::new
+fn SignalFirError::ui_conflicts
 fn SignalFirError::with_box_origins
+fn SignalFirError::with_ui_conflicts
 fn SignalFirErrorCode::as_str
 fn SignalFirRequest::new
 fn SignalFirRequest::with_clock_domains

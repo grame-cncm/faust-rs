@@ -374,6 +374,15 @@ pub(crate) fn transform_error_to_compiler(
     output: &SignalCompileOutput,
     error: SignalFirError,
 ) -> CompilerError {
+    if error.code() == transform::signal_fir::SignalFirErrorCode::UiDuplicatePath {
+        return crate::ui_paths::ui_layout_error(
+            source,
+            &output.ui,
+            &output.parse.state.ctx,
+            output.parse.diagnostics.source_map(),
+            error.ui_conflicts().to_vec(),
+        );
+    }
     let mut diagnostic = signal_fir_diagnostic(&error);
     if let Some(signal) = error.signal() {
         diagnostic = diagnostic.with_debug_fact("signal_id", u64::from(signal.as_u32()));

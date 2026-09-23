@@ -168,7 +168,18 @@ fn a_redefined_symbol_labels_both_declarations() {
 #[test]
 fn two_controls_at_one_ui_address_are_rejected_with_both_sites() {
     let source = "process = hslider(\"gain\", 0, 0, 1, 0.01) + vslider(\"gain\", 0, 0, 2, 0.01);\n";
-    let Err(error) = Compiler::new().compile_source_to_signals("guidance.dsp", source) else {
+    // Found where the reference finds it, on the interface the module shows:
+    // the signals alone say nothing yet, the C++ (or any module) does.
+    assert!(
+        Compiler::new()
+            .compile_source_to_signals("guidance.dsp", source)
+            .is_ok()
+    );
+    let Err(error) = Compiler::new().compile_source_to_cpp(
+        "guidance.dsp",
+        source,
+        &codegen::backends::cpp::CppOptions::default(),
+    ) else {
         panic!("a duplicated UI address must be rejected, as in C++");
     };
     assert!(matches!(error, CompilerError::UiLayout { .. }));

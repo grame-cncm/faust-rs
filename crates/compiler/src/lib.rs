@@ -76,7 +76,6 @@ pub use paths::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signal_lowering::render_cranelift_module_report;
 use signal_lowering::*;
-use ui_paths::check_ui_control_paths;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
@@ -1717,9 +1716,6 @@ impl Compiler {
                 )
                 .with_source_map(source_map.clone())
             })?;
-        self.time_phase("ui-path-check", || {
-            check_ui_control_paths(source, &propagated.ui, &output.state.ctx, &source_map)
-        })?;
         let mut warnings = self
             .time_phase("signal-type-validation", || {
                 validate_signal_types(
@@ -2055,10 +2051,13 @@ pub enum CompilerError {
         /// Rendered diagnostics for this failure.
         diagnostics: DiagnosticBundle,
     },
-    /// Two or more UI controls claim the same runtime address.
+    /// Two or more UI controls the interface shows claim the same runtime
+    /// address.
     ///
-    /// Built by `ui_paths::check_ui_control_paths`, which derives the bundle
-    /// from the same conflict list it stores here so the two cannot disagree.
+    /// Found by the transform's fast lane once dead widgets are pruned
+    /// (`SignalFirErrorCode::UiDuplicatePath`) and rendered by
+    /// `ui_paths::ui_layout_error`, which derives the bundle from the same
+    /// conflict list it stores here so the two cannot disagree.
     UiLayout {
         /// Program provenance; see the shared field convention.
         source: Box<str>,

@@ -894,6 +894,27 @@ fn compile_fastlane_inner(
     let pruned_ui = ui.pruned(|control| live_controls.contains(&control));
     let ui = pruned_ui.as_ref().unwrap_or(ui);
 
+    // The runtime addresses must be distinct among the controls the module
+    // shows, the check the reference makes on the paths it writes to its
+    // JSON: a dead widget at a live widget's address is no conflict, in
+    // either compiler. Bargraph-only collisions are ambiguous, not broken,
+    // and are not rejected, as in the reference.
+    let conflicts = ui::find_duplicate_control_paths(ui)
+        .into_iter()
+        .filter(|conflict| conflict.kind == ui::DuplicatePathKind::InputConflict)
+        .collect::<Vec<_>>();
+    if let Some(first) = conflicts.first() {
+        return Err(SignalFirError::new(
+            SignalFirErrorCode::UiDuplicatePath,
+            format!(
+                "UI path '{}' is claimed by {} controls",
+                first.address,
+                first.controls.len()
+            ),
+        )
+        .with_ui_conflicts(conflicts));
+    }
+
     // Execution-options port D2: `-os` has no meaning for block-sensitive
     // reverse-AD carriers (block-scoped tape/carry state, reverse-order
     // block traversal). Reject with a typed diagnostic instead of inventing

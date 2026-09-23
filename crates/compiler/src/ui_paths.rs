@@ -5,11 +5,15 @@
 //! - `"ERROR : path '<address>' is already used"`
 //!
 //! # Role in pipeline
-//! Runs immediately after propagation has produced the grouped [`UiProgram`],
-//! before any FIR lowering or backend selection. C++ discovers the same
-//! conflict while serializing JSON, which makes rejection depend on whether
-//! JSON is generated; checking the `UiProgram` makes it depend only on the
-//! program.
+//! The conflict is found by the transform's fast lane, once dead widgets have
+//! been pruned, on the interface the module shows
+//! (`SignalFirErrorCode::UiDuplicatePath`, `crates/transform/src/signal_fir/mod.rs`):
+//! the reference checks the paths it writes to its JSON, which are those of
+//! the widgets it generated, so a dead widget at a live widget's address is no
+//! conflict in either compiler. This module renders that error for the facade
+//! (`transform_error_to_compiler`), labeling every declaration. Until
+//! 2026-09-23 the check ran right after propagation, on every widget of the
+//! box tree, and rejected such programs where the reference accepts them.
 //!
 //! # Design invariants
 //! - Conflicts are ordered by address, and controls within one conflict keep UI
@@ -24,37 +28,30 @@ use super::*;
 use diagnostics::codes;
 use ui::{DuplicateControlPath, UiProgram};
 
-/// Rejects a program whose UI controls do not have distinct runtime addresses.
+/// The facade error for controls the interface shows at one runtime address.
 ///
-/// Returns `Ok(())` for the overwhelmingly common case of a conflict-free
-/// program. The check is skipped for UI-free compilation paths, where
-/// [`UiProgram::is_empty`] holds and no `buildUserInterface` is emitted.
-pub(crate) fn check_ui_control_paths(
+/// `conflicts` are the transform's, found on the pruned interface and already
+/// limited to input conflicts (bargraph-only collisions are ambiguous rather
+/// than broken, exactly as in C++, and belong to the warning channel). The
+/// labels come from `program`, the whole registry: the control ids are the
+/// same before and after pruning.
+pub(crate) fn ui_layout_error(
     source: &str,
     program: &UiProgram,
     ctx: &parser::ParserCtx,
     source_map: &SourceMap,
-) -> Result<(), CompilerError> {
-    // Bargraph-only collisions are ambiguous rather than broken, exactly as in
-    // C++; they belong to the warning channel, not to rejection.
-    let conflicts = ui::find_duplicate_control_paths(program)
-        .into_iter()
-        .filter(|conflict| conflict.kind == ui::DuplicatePathKind::InputConflict)
-        .collect::<Vec<_>>();
-    if conflicts.is_empty() {
-        return Ok(());
-    }
-
+    conflicts: Vec<DuplicateControlPath>,
+) -> CompilerError {
     let mut diagnostics = DiagnosticBundle::new();
     for conflict in &conflicts {
         diagnostics.push(duplicate_path_diagnostic(program, ctx, conflict));
     }
     diagnostics.set_source_map(source_map.clone());
-    Err(CompilerError::UiLayout {
+    CompilerError::UiLayout {
         source: source.into(),
         conflicts,
         diagnostics,
-    })
+    }
 }
 
 /// Builds the `FRS-UI-0001` diagnostic for one conflicting address.

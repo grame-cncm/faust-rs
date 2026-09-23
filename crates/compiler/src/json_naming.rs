@@ -68,6 +68,7 @@ pub(crate) fn signal_fir_diagnostic(error: &SignalFirError) -> Diagnostic {
         SignalFirErrorCode::BlockSensitiveOneSample => {
             diagnostics::codes::SFIR_BLOCK_SENSITIVE_ONE_SAMPLE
         }
+        SignalFirErrorCode::UiDuplicatePath => diagnostics::codes::UI_DUPLICATE_PATH,
     };
     // `error.to_string()` renders as "[<the SFIR code>] <message>", and the
     // `Diagnostic` already carries the code, so using Display here printed it
@@ -75,7 +76,9 @@ pub(crate) fn signal_fir_diagnostic(error: &SignalFirError) -> Diagnostic {
     // failed: ...". Take the bare message and let the diagnostic own the code.
     let category = match error.code() {
         SignalFirErrorCode::InvalidOptions => DiagnosticCategory::InvalidOptions,
-        SignalFirErrorCode::ClockAnalysis => DiagnosticCategory::UserCode,
+        SignalFirErrorCode::ClockAnalysis | SignalFirErrorCode::UiDuplicatePath => {
+            DiagnosticCategory::UserCode
+        }
         SignalFirErrorCode::UnsupportedSignalNode
         | SignalFirErrorCode::UnsupportedBinOp
         | SignalFirErrorCode::ClockedNotLowered
