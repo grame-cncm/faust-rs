@@ -193,6 +193,7 @@ pub(super) fn one_control_ui(
         }],
         root_origin: UiRootOrigin::Synthesized,
         emit_ui: true,
+        pinned: Default::default(),
     }
 }
 // ── Variability-driven statement placement (Phase 1) ────────────────────

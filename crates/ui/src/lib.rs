@@ -203,7 +203,7 @@ pub struct ControlRange {
 /// duplicating them in every grouped layout node. This is an `adapted`
 /// representation versus the C++ path encoding, but it preserves behavior
 /// while making later FIR/runtime lookup explicit and testable.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ControlSpec {
     /// Stable registry key also embedded in signal UI leaf nodes.
     pub id: ControlId,
@@ -285,6 +285,11 @@ pub struct UiProgram {
     pub root_origin: UiRootOrigin,
     /// Whether downstream lowering should emit `buildUserInterface`.
     pub emit_ui: bool,
+    /// Controls kept in the layout whatever the signals read: the seeds of
+    /// `fad` and `rad`. A seed the body never reads has a zero tangent and no
+    /// occurrence in the final signals, yet a host trains or probes it by its
+    /// path, so [`UiProgram::pruned`] leaves it in place.
+    pub pinned: BTreeSet<ControlId>,
 }
 
 impl UiProgram {
@@ -299,6 +304,7 @@ impl UiProgram {
             controls: Vec::new(),
             root_origin: UiRootOrigin::Synthesized,
             emit_ui: false,
+            pinned: BTreeSet::new(),
         }
     }
 
@@ -316,6 +322,139 @@ impl UiProgram {
     /// downstream code can keep a simple "always has a root" invariant.
     pub fn is_empty(&self) -> bool {
         !self.emit_ui
+    }
+
+    /// The controls the grouped layout still shows, in tree order.
+    ///
+    /// Equal to every registered control until [`UiProgram::pruned`] has
+    /// removed the ones no signal reads; the lowerings declare a zone for
+    /// these only, so a dead widget gets neither a field nor a
+    /// `buildUserInterface` entry.
+    #[must_use]
+    pub fn controls_in_tree(&self) -> BTreeSet<ControlId> {
+        fn collect(arena: &TreeArena, id: UiId, out: &mut BTreeSet<ControlId>) {
+            match match_ui(arena, id) {
+                UiMatch::Group { children, .. } => {
+                    for child in children {
+                        collect(arena, child, out);
+                    }
+                }
+                UiMatch::InputControl(control)
+                | UiMatch::OutputControl(control)
+                | UiMatch::Soundfile(control) => {
+                    out.insert(control);
+                }
+                UiMatch::Unknown => {}
+            }
+        }
+        let mut out = BTreeSet::new();
+        collect(&self.arena, self.root, &mut out);
+        out
+    }
+
+    /// The same program without the controls `live` rejects: their leaves
+    /// leave the layout, a group left empty leaves with them, the root stays
+    /// (an interface with no control is the root box, opened and closed).
+    /// A [pinned](Self::pinned) control is kept whatever `live` says.
+    ///
+    /// The registry, the ids embedded in the signals and the order of the
+    /// survivors are untouched. `None` when every control is live, so a
+    /// program without dead widgets costs nothing.
+    ///
+    /// # Source provenance (C++)
+    /// The reference builds its interface while generating code
+    /// (`ScalarCompiler::generateHSlider` and its siblings call
+    /// `fUITree.addUIWidget`, `compiler/generator/compile_scal.cpp`), so a
+    /// widget whose signal the simplified graph no longer reaches, cut by
+    /// `!`, absorbed by a folded zero or left in a dead `select2` branch,
+    /// never appears. Rust registers every widget of the box tree during
+    /// propagation and takes them out here, once the final signals are known.
+    #[must_use]
+    pub fn pruned(&self, live: impl Fn(ControlId) -> bool) -> Option<Self> {
+        let live = |control: ControlId| self.pinned.contains(&control) || live(control);
+        let in_tree = self.controls_in_tree();
+        if in_tree.iter().all(|&control| live(control)) {
+            return None;
+        }
+        let mut arena = TreeArena::new();
+        let mut root = rebuild_live(&self.arena, self.root, &live, &mut arena, true)
+            .expect("the root group is always rebuilt");
+        let mut root_origin = self.root_origin;
+        // A root synthesized over several top-level items whose pruning left
+        // one group: that group is the root, as the builder would have made
+        // it had the dead items never existed (the reference has no other
+        // root than the one its surviving widgets give it). An unlabeled
+        // group takes the synthesized root's label, as at build time.
+        if root_origin == UiRootOrigin::Synthesized
+            && let UiMatch::Group {
+                label: root_label,
+                children,
+                ..
+            } = match_ui(&arena, root)
+            && let [only] = children.as_slice()
+            && let UiMatch::Group {
+                kind,
+                label,
+                metadata,
+                children: inner,
+            } = match_ui(&arena, *only)
+        {
+            let label = if label.is_empty() {
+                root_label.to_owned()
+            } else {
+                label.to_owned()
+            };
+            let inner = inner.clone();
+            root = UiBuilder::new(&mut arena).group_with_metadata(kind, &label, &metadata, &inner);
+            root_origin = UiRootOrigin::Explicit;
+        }
+        Some(Self {
+            arena,
+            root,
+            controls: self.controls.clone(),
+            root_origin,
+            emit_ui: self.emit_ui,
+            pinned: self.pinned.clone(),
+        })
+    }
+}
+
+/// Copies one layout node into `into`, without the controls `live` rejects.
+///
+/// A group whose children all went is dropped, unless it is the root.
+fn rebuild_live(
+    from: &TreeArena,
+    id: UiId,
+    live: &impl Fn(ControlId) -> bool,
+    into: &mut TreeArena,
+    is_root: bool,
+) -> Option<UiId> {
+    match match_ui(from, id) {
+        UiMatch::Group {
+            kind,
+            label,
+            metadata,
+            children,
+        } => {
+            let kept = children
+                .into_iter()
+                .filter_map(|child| rebuild_live(from, child, live, into, false))
+                .collect::<Vec<_>>();
+            if kept.is_empty() && !is_root {
+                return None;
+            }
+            Some(UiBuilder::new(into).group_with_metadata(kind, label, &metadata, &kept))
+        }
+        UiMatch::InputControl(control) => {
+            live(control).then(|| UiBuilder::new(into).input_control(control))
+        }
+        UiMatch::OutputControl(control) => {
+            live(control).then(|| UiBuilder::new(into).output_control(control))
+        }
+        UiMatch::Soundfile(control) => {
+            live(control).then(|| UiBuilder::new(into).soundfile(control))
+        }
+        UiMatch::Unknown => None,
     }
 }
 

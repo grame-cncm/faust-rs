@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ui_dead_03_select2_constant.dsp
+bytes=440
+lines=5
+fnv1a64=d81fa0452f51f681

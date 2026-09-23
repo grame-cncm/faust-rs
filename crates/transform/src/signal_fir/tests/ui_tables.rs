@@ -120,7 +120,10 @@ fn section_routing_places_ui_and_state_resets_in_distinct_functions() {
     );
 }
 #[test]
-fn ui_only_slider_still_emits_reset_init() {
+fn unread_slider_leaves_the_interface_and_gets_no_field() {
+    // A slider no signal reads is not part of the program the reference
+    // compiler shows: no field, no reset, no `buildUserInterface` entry,
+    // the root box alone.
     let mut arena = TreeArena::new();
     let ui = one_control_ui(
         ControlKind::HSlider,
@@ -144,36 +147,85 @@ fn ui_only_slider_still_emits_reset_init() {
         &ui,
         &SignalFirOptions::default(),
     ))
-    .expect("UI-only slider should still compile");
+    .expect("an unread slider still compiles");
+    let (reset_stmts, ui_stmts) = reset_and_ui_statements(&out);
+    assert!(
+        !reset_stmts.iter().any(|id| matches!(
+            match_fir(&out.store, *id),
+            FirMatch::StoreVar { ref name, .. } if name == "fHslider0"
+        )),
+        "an unread slider has no field to reset"
+    );
+    assert!(
+        !ui_stmts
+            .iter()
+            .any(|id| matches!(match_fir(&out.store, *id), FirMatch::AddSlider { .. })),
+        "an unread slider is not shown"
+    );
+}
 
-    let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {
-        panic!("module root expected");
-    };
-    let reset_body = find_decl_fun_body(&out.store, functions, "instanceResetUserInterface");
-    let build_ui_body = find_decl_fun_body(&out.store, functions, "buildUserInterface");
+#[test]
+fn pinned_unread_slider_keeps_its_field_and_its_ui_entry() {
+    // A pinned control, the seed of a `fad`/`rad` the body never reads, is
+    // kept whatever the signals read: a host sets it by its path.
+    let mut arena = TreeArena::new();
+    let mut ui = one_control_ui(
+        ControlKind::HSlider,
+        "gain",
+        Some(ControlRange {
+            init: 0.2,
+            min: 0.0,
+            max: 1.0,
+            step: 0.01,
+        }),
+        false,
+        false,
+    );
+    ui.pinned.insert(0);
+    let sig0 = SigBuilder::new(&mut arena).real(0.0);
 
-    let FirMatch::Block(reset_stmts) = match_fir(&out.store, reset_body) else {
-        panic!("reset body block expected");
-    };
-    let FirMatch::Block(ui_stmts) = match_fir(&out.store, build_ui_body) else {
-        panic!("buildUserInterface body block expected");
-    };
-
+    let out = compile_signals_to_fir_fastlane(&SignalFirRequest::new(
+        &arena,
+        &[sig0],
+        0,
+        1,
+        &ui,
+        &SignalFirOptions::default(),
+    ))
+    .expect("a pinned slider compiles");
+    let (reset_stmts, ui_stmts) = reset_and_ui_statements(&out);
     assert!(
         reset_stmts.iter().any(|id| matches!(
             match_fir(&out.store, *id),
             FirMatch::StoreVar { ref name, .. } if name == "fHslider0"
         )),
-        "UI-only controls must still be initialized in instanceResetUserInterface"
+        "a pinned control is initialized in instanceResetUserInterface"
     );
     assert!(
         ui_stmts.iter().any(|id| matches!(
             match_fir(&out.store, *id),
             FirMatch::AddSlider { ref var, .. } if var == "fHslider0"
         )),
-        "buildUserInterface should still expose the UI-only slider"
+        "a pinned control is shown"
     );
 }
+
+/// The statements of `instanceResetUserInterface` and of `buildUserInterface`.
+fn reset_and_ui_statements(out: &SignalFirOutput) -> (Vec<fir::FirId>, Vec<fir::FirId>) {
+    let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {
+        panic!("module root expected");
+    };
+    let reset_body = find_decl_fun_body(&out.store, functions, "instanceResetUserInterface");
+    let build_ui_body = find_decl_fun_body(&out.store, functions, "buildUserInterface");
+    let FirMatch::Block(reset_stmts) = match_fir(&out.store, reset_body) else {
+        panic!("reset body block expected");
+    };
+    let FirMatch::Block(ui_stmts) = match_fir(&out.store, build_ui_body) else {
+        panic!("buildUserInterface body block expected");
+    };
+    (reset_stmts.to_vec(), ui_stmts.to_vec())
+}
+
 #[test]
 fn section_routing_places_table_initialization_in_instance_constants() {
     let mut arena = TreeArena::new();

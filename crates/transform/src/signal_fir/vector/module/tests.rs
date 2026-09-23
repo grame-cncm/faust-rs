@@ -632,6 +632,7 @@ fn slider_ui() -> ui::UiProgram {
         }],
         root_origin: ui::UiRootOrigin::Synthesized,
         emit_ui: true,
+        pinned: Default::default(),
     }
 }
 

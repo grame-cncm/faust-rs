@@ -97,10 +97,12 @@ pub use error::{SignalFirError, SignalFirErrorCode};
 pub use origins::{FirOrigins, FirSignalOrigin};
 
 use fir::{FirId, FirStore, FirType};
-use signals::SigId;
+use std::collections::HashSet;
+
+use signals::{SigId, SigMatch, match_sig};
 use std::time::{Duration, Instant};
 use tlib::TreeArena;
-use ui::UiProgram;
+use ui::{ControlId, UiProgram};
 
 use crate::schedule::SchedulingStrategy;
 use crate::signal_prepare::{
@@ -791,6 +793,46 @@ fn analyze_clocks<'a>(
     }
 }
 
+/// The controls the prepared signals read: every widget, bargraph and
+/// soundfile node reachable from the outputs, through lists and nested
+/// bodies alike.
+fn live_controls(arena: &TreeArena, outputs: &[SigId]) -> HashSet<ControlId> {
+    fn walk(
+        arena: &TreeArena,
+        sig: SigId,
+        visited: &mut HashSet<SigId>,
+        live: &mut HashSet<ControlId>,
+    ) {
+        if !visited.insert(sig) {
+            return;
+        }
+        match match_sig(arena, sig) {
+            SigMatch::Button(control)
+            | SigMatch::Checkbox(control)
+            | SigMatch::VSlider(control)
+            | SigMatch::HSlider(control)
+            | SigMatch::NumEntry(control)
+            | SigMatch::VBargraph(control, _)
+            | SigMatch::HBargraph(control, _)
+            | SigMatch::Soundfile(control) => {
+                live.insert(control);
+            }
+            _ => {}
+        }
+        if let Some(children) = arena.children(sig) {
+            for &child in children {
+                walk(arena, child, visited, live);
+            }
+        }
+    }
+    let mut visited = HashSet::new();
+    let mut live = HashSet::new();
+    for &output in outputs {
+        walk(arena, output, &mut visited, &mut live);
+    }
+    live
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compile_fastlane_inner(
     arena: &TreeArena,
@@ -842,6 +884,15 @@ fn compile_fastlane_inner(
             }
         })
     })?;
+
+    // The interface the module shows is the one the reference builds while
+    // generating code: the widgets the simplified signals still read. A
+    // widget cut by `!`, absorbed by a folded zero or left in a dead
+    // `select2` branch leaves the layout here; its id stays in the registry,
+    // so every lookup by id below is unchanged.
+    let live_controls = live_controls(prepared.arena(), prepared.outputs());
+    let pruned_ui = ui.pruned(|control| live_controls.contains(&control));
+    let ui = pruned_ui.as_ref().unwrap_or(ui);
 
     // Execution-options port D2: `-os` has no meaning for block-sensitive
     // reverse-AD carriers (block-scoped tape/carry state, reverse-order

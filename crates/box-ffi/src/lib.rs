@@ -165,6 +165,7 @@ pub fn signal_only_root_ui(ctx: &BoxContext, module_name: &str) -> UiProgram {
             controls: Vec::new(),
             root_origin: UiRootOrigin::Synthesized,
             emit_ui: true,
+            pinned: Default::default(),
         };
     }
 
@@ -208,6 +209,7 @@ pub fn signal_only_root_ui(ctx: &BoxContext, module_name: &str) -> UiProgram {
         controls,
         root_origin: UiRootOrigin::Synthesized,
         emit_ui: true,
+        pinned: Default::default(),
     }
 }
 

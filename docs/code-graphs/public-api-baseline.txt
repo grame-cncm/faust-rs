@@ -2903,8 +2903,10 @@ fn UiBuilder::vgroup
 fn UiGroupKind::from_raw
 fn UiGroupKind::name
 fn UiProgram::control
+fn UiProgram::controls_in_tree
 fn UiProgram::empty
 fn UiProgram::is_empty
+fn UiProgram::pruned
 fn UiProgramBuilder::ensure_group_path
 fn UiProgramBuilder::find_group_path
 fn UiProgramBuilder::finish

@@ -79,7 +79,12 @@ pub(crate) fn build_vector_ui_fir(
     let mut struct_declarations = Vec::new();
     let mut reset_statements = Vec::new();
 
-    for spec in &program.controls {
+    let shown = program.controls_in_tree();
+    for spec in program
+        .controls
+        .iter()
+        .filter(|spec| shown.contains(&spec.id))
+    {
         let zone = control_zone(program, spec.id)?;
         let typ = if spec.kind == ControlKind::Soundfile {
             FirType::Sound

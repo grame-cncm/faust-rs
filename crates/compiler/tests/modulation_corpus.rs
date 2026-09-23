@@ -64,6 +64,8 @@ struct Case {
     /// `Some(reason)` when faust-rs's interface is known to differ from the
     /// reference's for a cause outside modulation; the live differential then
     /// compares the arity only.
+    /// None today: the widget dropped by `(!, _)` leaves the interface as in
+    /// the reference, dead widgets being pruned once the signals are known.
     ui_differs_from_cpp: Option<&'static str>,
 }
 
@@ -310,27 +312,15 @@ const CASES: &[Case] = &[
         fixture: "modulation_11_two_input_drop.dsp",
         inputs: 2,
         outputs: 1,
-        controls: &[
-            Control {
-                address: "/g/a",
-                kind: "hslider",
-                init: Some(0.5),
-                min: Some(0.0),
-                max: Some(1.0),
-                step: Some(0.01),
-            },
-            Control {
-                address: "/g/b",
-                kind: "hslider",
-                init: Some(0.1),
-                min: Some(0.0),
-                max: Some(1.0),
-                step: Some(0.01),
-            },
-        ],
-        ui_differs_from_cpp: Some(
-            "the widget dropped by `(!, _)` reaches nothing; faust-rs keeps such a widget in the interface where the reference drops it, a difference of the UI builder, not of the modulation",
-        ),
+        controls: &[Control {
+            address: "/g/b",
+            kind: "hslider",
+            init: Some(0.1),
+            min: Some(0.0),
+            max: Some(1.0),
+            step: Some(0.01),
+        }],
+        ui_differs_from_cpp: None,
     },
     Case {
         fixture: "modulation_12_two_input_ui.dsp",

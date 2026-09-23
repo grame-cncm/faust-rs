@@ -75,6 +75,15 @@ impl UiCollector {
                 UiRootOrigin::Synthesized,
             )
         };
+        let pinned = self
+            .controls
+            .iter()
+            .filter(|spec| {
+                spec.source_node
+                    .is_some_and(|node| self.ad_seed_parameters.contains(&node))
+            })
+            .map(|spec| spec.id)
+            .collect();
         UiBuildOutput {
             program: UiProgram {
                 arena,
@@ -82,6 +91,7 @@ impl UiCollector {
                 controls: self.controls,
                 root_origin,
                 emit_ui: true,
+                pinned,
             },
             control_ids: self.control_ids,
         }

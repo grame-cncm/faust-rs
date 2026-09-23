@@ -124,6 +124,7 @@ fn ui_program_keeps_root_and_control_registry() {
         controls,
         root_origin: UiRootOrigin::Explicit,
         emit_ui: true,
+        pinned: Default::default(),
     };
 
     assert_eq!(program.controls.len(), 1);
@@ -207,6 +208,7 @@ fn control_lookup_uses_stable_ids_across_input_output_and_soundfile_controls() {
         ],
         root_origin: UiRootOrigin::Explicit,
         emit_ui: true,
+        pinned: Default::default(),
     };
 
     assert_eq!(
@@ -488,6 +490,7 @@ fn program_with_controls(specs: &[(ControlKind, &str)]) -> UiProgram {
         controls,
         root_origin: UiRootOrigin::Synthesized,
         emit_ui: true,
+        pinned: Default::default(),
     }
 }
 

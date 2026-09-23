@@ -755,7 +755,7 @@ gate = button("gate");
 level = hslider("level", 0.5, 0, 1, 0.001);
 tone = hslider("tone", 0.4, 0.1, 0.7, 0.01);
 meter = level : hbargraph("meter", 0, 1);
-process = gate * meter + 0 * (freq + gain + tone);
+process = gate * meter + min(0, abs(freq + gain + tone));
 effect = _ * hslider("drive", 1, 0, 2, 0.001);
 "#;
 

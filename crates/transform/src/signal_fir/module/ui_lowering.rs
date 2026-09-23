@@ -355,10 +355,12 @@ impl<'a> SignalToFirLower<'a> {
             return Ok(());
         }
         let mut zones = std::collections::BTreeMap::new();
+        let shown = self.ui_program.controls_in_tree();
         let controls = self
             .ui_program
             .controls
             .iter()
+            .filter(|spec| shown.contains(&spec.id))
             .map(|spec| (spec.id, spec.kind))
             .collect::<Vec<_>>();
         for (control, kind) in controls {
