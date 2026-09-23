@@ -804,6 +804,83 @@ doivent atténuer n'existe pas ici, et leur perte spectrale reste à écrire
 chez nous. La lane d'un tap ou d'un pôle situé au-delà du bloc est nulle en
 `rad` (h1023 avec un bloc de 256) : l'horizon documenté.
 
+### Face à la littérature DDSP
+
+Les IIR différentiables en domaine temporel de la littérature restent aux
+ordres 1 à 6. Kuznetsov, Parker et Esqueda (DAFx 2020) entraînent des
+sections d'ordre 1 et 2, un espace d'états d'ordre 2 et 6 et trois biquads
+en série, par rétropropagation tronquée sur des séquences de 2048
+échantillons avec l'autograd de PyTorch. Yu et al. (DAFx 2024, torchlpc)
+écrivent la passe arrière d'un filtre tout-pôle comme un filtrage
+inverse : ordres 1 (compresseur), 2 (TB-303), 6 (phaser) ; un pas
+d'optimisation sur le TB-303 prend 29 à 32 ms en temporel contre 57 à
+1795 ms en échantillonnage fréquentiel selon la fenêtre (lot de 34 notes,
+M1 Pro), un entraînement 17 minutes contre 43. Yu et Fazekas (arXiv
+2511.14390, philtorch) donnent la forme espace d'états générale avec
+gradients analytiques en noyau C++/CUDA, mesurée à l'ordre 2 seulement,
+« les ordres supérieurs étant des cascades de sections » : sur un
+i7-7700K mono-thread, 2^20 échantillons (65 s à 16 kHz) prennent environ
+10 ms en avant et autant en arrière, de l'ordre de 6000× temps réel par
+passe ; l'autograd naïf est « au moins 1000× » plus lent, l'échantillonnage
+fréquentiel entre les deux.
+
+Nos mesures sur le même genre d'objet, 4 biquads en `rad` à 576× temps
+réel avec le primal et ses 20 lanes de gradient en une passe, un IIR
+d'ordre 4 à 1585×, sont dans la classe de ces noyaux dédiés (un facteur de
+quelques unités, tout le faisceau émis d'un coup) et trois ordres de
+grandeur au-dessus de la pratique DDSP par autograd. La différence
+structurelle : un noyau par forme de filtre là-bas, un compilateur pour
+n'importe quel corps ici. Personne n'entraîne en temporel un IIR d'ordre
+64 ou 256 en forme directe ; les ordres élevés passent par
+l'échantillonnage fréquentiel (Nercessian 2020 pour les cascades de
+biquads d'égaliseur, FLAMO, les FDN d'Aalto), là où `rad`, linéaire en le
+corps, les compile en moins de 3 s.
+
+Les FIR de la littérature ne passent jamais par le temporel au-delà de
+quelques dizaines de taps. DDSP (Engel 2020) filtre par échantillonnage
+fréquentiel, 65 magnitudes par trame, fenêtre de Hann de 257, hop 256, et
+convolue des réponses de réverbération de 10 000 à 100 000 échantillons par
+FFT, la convolution directe étant « intraitable ». L'acoustique active
+différentiable (De Bortoli, DAFx 2024) apprend des matrices de 2×2 à 13×4
+FIR d'ordre 100 et 1000 échantillonnées sur 480 000 points de fréquence,
+lots de 2400 points, 10 époques. GRAFX (Lee, DAFx 2024) a un égaliseur FIR
+à phase nulle de 2047 taps par IFFT de 1024 log-magnitudes, convolution
+FFT, et rend des graphes de 350 à 400 processeurs à 25 à 100 graphes par
+seconde sur RTX 3090 avec 5 sources de 2^17 échantillons. Le FDN colorless
+(Dal Santo, DAFx 2023) a 4, 6 ou 8 lignes, 6000 à 9000 modes, sur 480 000
+points de fréquence ; RIR2FDN (2024), 6 lignes, 5,7 à 41,9 s par itération
+sur V100 pour environ 1000 itérations. Notre limite de 4096 taps par
+expansion du graphe temporel couvre un filtre de l'acoustique active
+(ordre 1000) mais pas sa matrice complète (52 filtres de 1000 taps), et
+reste loin des réponses de réverbération DDSP, différentiables seulement
+parce que la FFT rend le gradient gratuit : un FIR long a besoin d'une
+représentation tableau plus boucle, ou d'un chemin FFT, avant d'être
+compétitif.
+
+| | littérature temporelle | littérature fréquentielle | faust-rs |
+|---|---|---|---|
+| IIR petit ordre | notre classe de vitesse, noyaux dédiés | plus lent, repliement | compilé, exact |
+| IIR ordre élevé | absent | seule voie, avec repliement | `rad` linéaire, ordre 256 |
+| FIR long | absent | FFT, gratuit | 4096 taps au plus |
+| lot, GPU | oui | oui | non mesuré |
+| perte spectrale | rare | native | à écrire |
+
+La littérature confirme deux choses : le temporel exact bat le fréquentiel
+dès qu'il est compilé (la conclusion de Yu et Fazekas est la nôtre), et le
+fréquentiel garde le FIR long et le grand FDN. Nos faiblesses ne sont pas
+la vitesse par échantillon mais l'absence de lot et de perte spectrale, et
+le FIR long.
+
+Sources : [Kuznetsov et al. 2020](https://www.dafx.de/paper-archive/2020/proceedings/papers/DAFx2020_paper_52.pdf),
+[Yu et al. 2024](https://arxiv.org/abs/2404.07970),
+[Yu et Fazekas 2025](https://arxiv.org/abs/2511.14390),
+[Engel et al. 2020](https://arxiv.org/abs/2001.04643),
+[De Bortoli et al. 2024](https://www.dafx.de/paper-archive/2024/papers/DAFx24_paper_64.pdf),
+[Lee et al. 2024](https://arxiv.org/abs/2408.03204),
+[Dal Santo et al. 2023](https://www.dafx.de/paper-archive/2023/DAFx23_paper_32.pdf),
+[Dal Santo et al. 2024](https://arxiv.org/abs/2404.00082),
+[FLAMO](https://arxiv.org/abs/2409.08723).
+
 ## Voir aussi
 
 - [fad-note-en.md](fad-note-en.md) — surface et implémentation de FAD.

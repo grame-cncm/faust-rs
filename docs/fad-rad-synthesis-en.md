@@ -735,6 +735,78 @@ must mitigate does not exist here, and their spectral loss remains to be
 written on our side. A lane of a tap or a pole further than the block is
 zero under `rad` (h1023 with a 256-frame block): the documented horizon.
 
+### Against the DDSP literature
+
+Time-domain differentiable IIRs in the literature stay at orders 1 to 6.
+Kuznetsov, Parker and Esqueda (DAFx 2020) train first- and second-order
+sections, a state-space filter of order 2 and 6 and three biquads in
+series, by truncated backpropagation through time over 2048-sample
+sequences with PyTorch's autograd. Yu et al. (DAFx 2024, torchlpc) write
+the backward pass of an all-pole filter as a reverse filtering: orders 1
+(compressor), 2 (TB-303), 6 (phaser); one optimisation step on the TB-303
+takes 29 to 32 ms in the time domain against 57 to 1795 ms by frequency
+sampling depending on the window (batch of 34 notes, M1 Pro), a training
+17 minutes against 43. Yu and Fazekas (arXiv 2511.14390, philtorch) give
+the general state-space form with analytic gradients as a C++/CUDA kernel,
+measured at order 2 only, "higher orders being cascades of sections": on
+an i7-7700K, one thread, 2^20 samples (65 s at 16 kHz) take about 10 ms
+forward and as much backward, some 6000x real time per pass; naive
+autograd is "at least 1000x" slower and frequency sampling in between.
+
+Our measurements on the same kind of object, 4 biquads under `rad` at 576x
+real time with the primal and its 20 gradient lanes in one pass, an order-4
+IIR at 1585x, are in the class of those dedicated kernels (a factor of a
+few, the whole bundle emitted at once) and three orders of magnitude above
+the DDSP practice of autograd. The structural difference: one kernel per
+filter form there, one compiler for any body here. Nobody trains a
+direct-form IIR of order 64 or 256 in the time domain; high orders go
+through frequency sampling (Nercessian 2020 for equaliser biquad cascades,
+FLAMO, the Aalto FDNs), where `rad`, linear in the body, compiles them in
+under 3 s.
+
+FIRs in the literature never go through the time domain beyond a few
+dozen taps. DDSP (Engel 2020) filters by frequency sampling, 65 magnitudes
+per frame, a 257-point Hann window, hop 256, and convolves reverberation
+responses of 10 000 to 100 000 samples by FFT, direct convolution being
+"intractable". Differentiable active acoustics (De Bortoli, DAFx 2024)
+learns matrices of 2x2 to 13x4 FIRs of order 100 and 1000 sampled on
+480 000 frequency points, batches of 2400 points, 10 epochs. GRAFX (Lee,
+DAFx 2024) has a zero-phase 2047-tap FIR equaliser from the IFFT of 1024
+log-magnitudes, FFT convolution, and renders graphs of 350 to 400
+processors at 25 to 100 graphs per second on an RTX 3090 with 5 sources
+of 2^17 samples. The colorless FDN (Dal Santo, DAFx 2023) has 4, 6 or 8
+lines, 6000 to 9000 modes, on 480 000 frequency points; RIR2FDN (2024),
+6 lines, 5.7 to 41.9 s per iteration on a V100 for about 1000 iterations.
+Our 4096-tap limit by expansion of the time-domain graph covers one
+active-acoustics filter (order 1000) but not its full matrix (52 filters
+of 1000 taps), and is far from DDSP's reverberation responses, which are
+differentiable only because the FFT makes the gradient free: a long FIR
+needs a table-plus-loop representation or an FFT path before it competes.
+
+| | time-domain literature | frequency-sampling literature | faust-rs |
+|---|---|---|---|
+| low-order IIR | our class of speed, dedicated kernels | slower, aliasing | compiled, exact |
+| high-order IIR | absent | the only way, with aliasing | `rad` linear, order 256 |
+| long FIR | absent | FFT, free | 4096 taps at most |
+| batches, GPU | yes | yes | not measured |
+| spectral loss | rare | native | to be written |
+
+The literature confirms two things: exact time domain beats frequency
+sampling as soon as it is compiled (Yu and Fazekas's conclusion is ours),
+and frequency sampling keeps the long FIR and the large FDN. Our
+weaknesses are not the speed per sample but the absence of batching and
+of a spectral loss, and the long FIR.
+
+Sources: [Kuznetsov et al. 2020](https://www.dafx.de/paper-archive/2020/proceedings/papers/DAFx2020_paper_52.pdf),
+[Yu et al. 2024](https://arxiv.org/abs/2404.07970),
+[Yu and Fazekas 2025](https://arxiv.org/abs/2511.14390),
+[Engel et al. 2020](https://arxiv.org/abs/2001.04643),
+[De Bortoli et al. 2024](https://www.dafx.de/paper-archive/2024/papers/DAFx24_paper_64.pdf),
+[Lee et al. 2024](https://arxiv.org/abs/2408.03204),
+[Dal Santo et al. 2023](https://www.dafx.de/paper-archive/2023/DAFx23_paper_32.pdf),
+[Dal Santo et al. 2024](https://arxiv.org/abs/2404.00082),
+[FLAMO](https://arxiv.org/abs/2409.08723).
+
 ## See Also
 
 - [fad-note-en.md](fad-note-en.md) — FAD surface and implementation.
