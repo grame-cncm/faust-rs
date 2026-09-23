@@ -740,6 +740,70 @@ Les tests sont dans
 forme fermée pour le neurone, différences finies à chaque trame pour l'IIR
 sous `fad`, totaux de bloc pour l'IIR sous `rad`.
 
+## 14. Quelle taille de FIR ou d'IIR compile
+
+Mesuré le 2026-09-23 avec `faustprobe --double --block 256 -n 48000 --time`
+(Cranelift, un portable Apple), les coefficients comme graines curseurs, le
+faisceau complet de lanes primal et dérivées en sorties. Les gradients ont
+été vérifiés par différences finies sur des lanes prises au hasard jusqu'à
+l'ordre 256 (`--fd-check` avec un `--grad-lane` explicite, `--train`
+attribuant les lanes dans l'ordre de sa liste).
+
+FIR de N taps (`fi.fir`, N graines) :
+
+| N | fad compile | fad calcul | rad compile | rad calcul | mémoire |
+|---|---|---|---|---|---|
+| 64 | 24 ms | 428× temps réel | 30 ms | 61× | 25 Mo |
+| 256 | 0,2 s | 37× | 0,2 s | 9,6× | 70 Mo |
+| 1024 | 5,6 s | 6× | 5,4 s | 1,4× | 0,6 à 0,7 Go |
+| 4096 | 281 s | 1,1× | 265 s | 0,16× | 5 à 9 Go |
+
+IIR forme directe d'ordre N (`fi.iir`, 2N + 1 graines) :
+
+| N | fad compile | fad calcul | rad compile | rad calcul |
+|---|---|---|---|---|
+| 16 | 69 ms | 103× | 19 ms | 131× |
+| 64 | 2,5 s | 1,4× | 0,13 s | 16× |
+| 256 | 198 s | 0,05× | 0,8 s | 4,3× |
+
+Cascade de K biquads (`fi.tf2`, 5K graines) :
+
+| K | fad compile | fad calcul | rad compile | rad calcul |
+|---|---|---|---|---|
+| 16 | 1,05 s | 3,5× | 42 ms | 64× |
+| 64 | 189 s | 0,11× | 0,21 s | 10× |
+| 256 | abandon après 900 s | | 2,6 s | 2,1× |
+
+Ce qu'on peut en dire :
+
+- **FIR : quelques centaines de taps confortablement, un millier au prix
+  de 5 s de compilation, 4096 est la limite pratique** (des minutes et des
+  gigaoctets, encore temps réel en `fad`). Le coût est quadratique : chaque
+  lane de dérivée est elle-même un FIR de N taps, le graphe a N² nœuds.
+  Au-delà, il faudrait un FIR comme tableau de coefficients avec une boucle,
+  ce que ni Faust ni les règles d'AD n'ont aujourd'hui.
+- **IIR : en `rad`, l'ordre 256 ou 256 sections compilent en moins de 3 s
+  et tournent en temps réel.** La passe inverse par blocs est linéaire en la
+  taille du corps. En `fad` sur une récursion, chaque tangente est une
+  récursion complète : quadratique, l'ordre 64 ou 64 sections est le plafond
+  raisonnable (2 à 3 minutes, 5 Go), 256 ne compile pas.
+- **Règle simple** : `fad` pour les petits graphes et l'apprentissage dans
+  le graphe, `rad` dès qu'il y a une récursion d'ordre élevé ou plus d'une
+  centaine de paramètres.
+
+Face à une bibliothèque en échantillonnage fréquentiel comme FLAMO (Dal
+Santo et al., 2025) : là, un FIR de 4096 taps est un produit de réponses en
+fréquence, gratuit en gradient, et un FDN 6×6 se différencie par une
+inversion de matrice ; les tailles ci-dessus sont celles du domaine
+temporel, échantillon par échantillon, avec la récursion exacte. Leurs cas
+(FDN à 6 lignes avec matrice orthogonale, un GEQ par ligne, FIR d'acoustique
+active de quelques milliers de taps) sont atteignables en `rad` sauf le
+dernier, où des milliers de taps par canal sur plusieurs canaux dépassent ce
+qui compile. Deux différences de fond : le repliement temporel qu'ils
+doivent atténuer n'existe pas ici, et leur perte spectrale reste à écrire
+chez nous. La lane d'un tap ou d'un pôle situé au-delà du bloc est nulle en
+`rad` (h1023 avec un bloc de 256) : l'horizon documenté.
+
 ## Voir aussi
 
 - [fad-note-en.md](fad-note-en.md) — surface et implémentation de FAD.

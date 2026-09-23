@@ -672,6 +672,69 @@ gives the fixture's tangents to the bit. The tests are in
 closed form for the neuron, finite differences on every frame for the IIR
 under `fad`, block totals for the IIR under `rad`.
 
+## 14. How Large a FIR or IIR Compiles
+
+Measured on 2026-09-23 with `faustprobe --double --block 256 -n 48000 --time`
+(Cranelift, one Apple laptop), the coefficients as slider seeds, the whole
+bundle of primal and derivative lanes as outputs. Gradients were checked
+against finite differences on lanes picked at random up to order 256
+(`--fd-check` with an explicit `--grad-lane`, since `--train` assigns the
+lanes in the order of its list).
+
+FIR of N taps (`fi.fir`, N seeds):
+
+| N | fad compile | fad compute | rad compile | rad compute | memory |
+|---|---|---|---|---|---|
+| 64 | 24 ms | 428x real time | 30 ms | 61x | 25 MB |
+| 256 | 0.2 s | 37x | 0.2 s | 9.6x | 70 MB |
+| 1024 | 5.6 s | 6x | 5.4 s | 1.4x | 0.6 to 0.7 GB |
+| 4096 | 281 s | 1.1x | 265 s | 0.16x | 5 to 9 GB |
+
+Direct-form IIR of order N (`fi.iir`, 2N + 1 seeds):
+
+| N | fad compile | fad compute | rad compile | rad compute |
+|---|---|---|---|---|
+| 16 | 69 ms | 103x | 19 ms | 131x |
+| 64 | 2.5 s | 1.4x | 0.13 s | 16x |
+| 256 | 198 s | 0.05x | 0.8 s | 4.3x |
+
+Cascade of K biquads (`fi.tf2`, 5K seeds):
+
+| K | fad compile | fad compute | rad compile | rad compute |
+|---|---|---|---|---|
+| 16 | 1.05 s | 3.5x | 42 ms | 64x |
+| 64 | 189 s | 0.11x | 0.21 s | 10x |
+| 256 | given up after 900 s | | 2.6 s | 2.1x |
+
+What follows:
+
+- **FIR: a few hundred taps comfortably, a thousand for 5 s of
+  compilation, 4096 is the practical limit** (minutes and gigabytes, still
+  real time under `fad`). The cost is quadratic: each derivative lane is
+  itself an N-tap FIR, so the graph has N^2 nodes. Beyond that the FIR would
+  have to be a coefficient table with a loop, which neither Faust nor the AD
+  rules have today.
+- **IIR: under `rad`, order 256 or 256 sections compile in under 3 s and
+  run in real time.** The block reverse sweep is linear in the size of the
+  body. Under `fad` on a recursion each tangent is a full recursion:
+  quadratic, so order 64 or 64 sections is the reasonable ceiling (2 to 3
+  minutes, 5 GB), and 256 does not compile.
+- **Rule of thumb**: `fad` for small graphs and in-graph learning, `rad`
+  as soon as there is a high-order recursion or more than a hundred or so
+  parameters.
+
+Against a frequency-sampling library such as FLAMO (Dal Santo et al., 2025):
+there a 4096-tap FIR is a product of frequency responses, free in gradient,
+and a 6x6 FDN differentiates through a matrix inverse; the sizes above are
+those of the time domain, sample by sample, with the exact recursion. Their
+cases (a 6-line FDN with an orthogonal matrix, a GEQ per line, an
+active-acoustics FIR of a few thousand taps) are reachable under `rad`
+except the last, where thousands of taps per channel over several channels
+exceed what compiles. Two differences of substance: the time aliasing they
+must mitigate does not exist here, and their spectral loss remains to be
+written on our side. A lane of a tap or a pole further than the block is
+zero under `rad` (h1023 with a 256-frame block): the documented horizon.
+
 ## See Also
 
 - [fad-note-en.md](fad-note-en.md) — FAD surface and implementation.
