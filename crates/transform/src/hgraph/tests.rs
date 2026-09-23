@@ -473,3 +473,199 @@ fn contains_wrapper_is_true_when_an_ondemand_node_is_reachable() {
         super::contains_wrapper(&arena, &[seq]).expect("pure structural scan cannot fail here")
     );
 }
+
+// ── Effect orientation against the pairwise reference ────────────────────────────────────
+
+/// The orientation of the barriers as it was first written: every (barrier,
+/// stateful node) pair tested with two walks of the graph. Kept here as the
+/// reference the incremental sets of `orient_effect_conflicts` must equal,
+/// edge for edge and in insertion order.
+fn orient_effect_conflicts_pairwise(
+    hgraph: &mut Hgraph,
+    effects: &crate::signal_fir::vector::analysis::ScalarSchedulingEffects,
+) {
+    use std::collections::BTreeMap;
+
+    use crate::signal_fir::vector::analysis::{EffectAtom, ForeignPurity};
+
+    fn add_baseline_edge(
+        hgraph: &mut Hgraph,
+        graph_index: usize,
+        position: &HashMap<SigId, usize>,
+        left: SigId,
+        right: SigId,
+    ) {
+        if left == right {
+            return;
+        }
+        let graph = &hgraph.graphs[graph_index].1;
+        if super::dependency_reachable(graph, left, right)
+            || super::dependency_reachable(graph, right, left)
+        {
+            return;
+        }
+        let (consumer, dependency) = if position[&left] < position[&right] {
+            (right, left)
+        } else {
+            (left, right)
+        };
+        hgraph.graphs[graph_index]
+            .1
+            .add_edge(consumer, dependency, false);
+    }
+
+    for graph_index in 0..hgraph.graphs.len() {
+        let graph = &hgraph.graphs[graph_index].1;
+        let baseline = crate::schedule::schedule(SchedulingStrategy::DepthFirst, graph).unwrap();
+        let position: HashMap<SigId, usize> = baseline
+            .iter()
+            .enumerate()
+            .map(|(position, &sig)| (sig, position))
+            .collect();
+        let nodes: Vec<SigId> = graph
+            .nodes()
+            .iter()
+            .copied()
+            .filter(|&sig| !effects.direct_effects(sig).is_empty())
+            .collect();
+        let mut groups = BTreeMap::<String, Vec<SigId>>::new();
+        let mut foreign_barriers = Vec::new();
+        for &sig in &nodes {
+            for effect in effects.direct_effects(sig) {
+                let key = match effect {
+                    EffectAtom::ReadState(resource) | EffectAtom::WriteState(resource) => {
+                        Some(format!("state {resource:?}"))
+                    }
+                    EffectAtom::ReadTable(table) | EffectAtom::WriteTable(table) => {
+                        Some(format!("table {table}"))
+                    }
+                    EffectAtom::WriteUi(control) => Some(format!("ui {control}")),
+                    EffectAtom::WriteOutput(output) => Some(format!("output {output}")),
+                    EffectAtom::Foreign {
+                        purity: ForeignPurity::Impure | ForeignPurity::Unknown,
+                        ..
+                    } => {
+                        foreign_barriers.push(sig);
+                        None
+                    }
+                    EffectAtom::Foreign { .. } => None,
+                };
+                if let Some(key) = key {
+                    groups.entry(key).or_default().push(sig);
+                }
+            }
+        }
+        for group in groups.values_mut() {
+            group.sort_unstable_by_key(|sig| position[sig]);
+            group.dedup();
+            for pair in group.windows(2) {
+                add_baseline_edge(hgraph, graph_index, &position, pair[0], pair[1]);
+            }
+        }
+        foreign_barriers.sort_unstable_by_key(|sig| position[sig]);
+        foreign_barriers.dedup();
+        for foreign in foreign_barriers {
+            for &node in &nodes {
+                add_baseline_edge(hgraph, graph_index, &position, foreign, node);
+            }
+        }
+    }
+}
+
+/// A sum of foreign calls on delayed reads of one signal, the shape whose
+/// orientation was cubic in the number of calls: each call is a barrier, each
+/// delayed read a stateful node, and the sum a chain the baseline orders.
+/// The incremental orientation must produce the pairwise reference's edges,
+/// per node and in order, so that every schedule stays the same.
+#[test]
+fn barrier_orientation_equals_the_pairwise_reference() {
+    const CALLS: i32 = 12;
+    let mut arena = TreeArena::new();
+    let descriptor = {
+        let int_type = arena.int(0);
+        let real_type = arena.int(1);
+        let name_f32 = arena.symbol("probe_f");
+        let name_f64 = arena.symbol("probe");
+        let names = vec_to_list(&mut arena, &[name_f32, name_f64]);
+        let signature = vec_to_list(&mut arena, &[int_type, names, real_type]);
+        let include = arena.symbol("<probe.h>");
+        let library = arena.symbol("");
+        let tag = arena.intern_tag("FFUN");
+        arena.intern(NodeKind::Tag(tag), &[signature, include, library])
+    };
+    let mut terms = Vec::new();
+    for k in 0..CALLS {
+        let mut b = SigBuilder::new(&mut arena);
+        let x = b.input(0);
+        let gain = b.real(0.5);
+        let scaled = b.mul(x, gain);
+        let amount = b.int(k);
+        let delayed = b.delay(scaled, amount);
+        let args = vec_to_list(&mut arena, &[delayed]);
+        let mut b = SigBuilder::new(&mut arena);
+        terms.push(b.ffun(descriptor, args));
+    }
+    let mut b = SigBuilder::new(&mut arena);
+    let sum = terms[1..]
+        .iter()
+        .fold(terms[0], |acc, &term| b.add(acc, term));
+    let prepared = crate::signal_prepare::prepare_signals_for_fir_verified(
+        &arena,
+        &[sum],
+        &ui::UiProgram::empty(),
+    )
+    .expect("foreign-sum fixture prepares");
+    let domains = ClockDomainTable::new();
+    let envs = annotate(prepared.arena(), &domains, prepared.outputs()).unwrap();
+    let analysis =
+        crate::signal_fir::vector::analysis::analyze_scalar_scheduling_effects(&prepared)
+            .expect("scalar effect analysis succeeds");
+    let hgraph = build_hgraph(
+        prepared.arena(),
+        &domains,
+        &envs,
+        prepared.outputs(),
+        prepared.sig_types_map(),
+    )
+    .unwrap();
+    let top = hgraph.graph(GraphKey::Top).unwrap();
+    let barriers = top
+        .nodes()
+        .iter()
+        .filter(|&&sig| {
+            analysis.direct_effects(sig).iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::signal_fir::vector::analysis::EffectAtom::Foreign { .. }
+                )
+            })
+        })
+        .count();
+    assert_eq!(barriers, CALLS as usize, "one barrier per foreign call");
+
+    let mut incremental = hgraph.clone();
+    orient_effect_conflicts(&mut incremental, &analysis).unwrap();
+    let mut pairwise = hgraph;
+    orient_effect_conflicts_pairwise(&mut pairwise, &analysis);
+
+    assert_eq!(incremental.graphs.len(), pairwise.graphs.len());
+    let mut added = 0;
+    for ((key_a, graph_a), (key_b, graph_b)) in
+        incremental.graphs.iter().zip(pairwise.graphs.iter())
+    {
+        assert_eq!(key_a, key_b);
+        assert_eq!(graph_a.nodes(), graph_b.nodes());
+        for &sig in graph_a.nodes() {
+            assert_eq!(
+                graph_a.edges(sig),
+                graph_b.edges(sig),
+                "edges of {sig:?} differ between the incremental and the pairwise orientation"
+            );
+            added += graph_a.edges(sig).len();
+        }
+    }
+    assert!(
+        added > CALLS as usize,
+        "the orientation added edges to the fixture"
+    );
+}
