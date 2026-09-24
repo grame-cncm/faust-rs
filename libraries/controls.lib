@@ -1,0 +1,699 @@
+declare name "Faust Control Inputs Library";
+declare version "0.1.0";
+declare author "faust-rs";
+declare license "MIT/LGPL-3.0";
+
+//################################ controls.lib ##########################################
+// Control inputs library. Its official prefix is `ct`.
+//
+// This library works on the control inputs of a whole program `e` (its
+// sliders, numentries, buttons and checkboxes) without rewriting it, with the
+// `faust-rs` primitives `cinputs(e)` (the list of the control inputs of `e`),
+// `cinput(i, e)` (the i-th as `(widget, init, min, max, step)`) and the
+// wildcard modulation `["*": (!, _) -> e]` (every control input of `e`
+// replaced by an input, in the same order). See `docs/control-inputs-en.md`.
+//
+// Everything is built on `map(f, e)`: the program `e` whose i-th control
+// reads `f(i, w)` instead of its widget `w`. `f` sees the widget, so the knob
+// can stay in the interface (`smooth`, `cv`, `morph`, `randomize`, `offset`),
+// or ignore it, and the knob leaves the interface (`external`, `normalized`,
+// `relabel`, `sweep`). The control inputs are those present in `e`, dead ones
+// included, in the order of its interface; a button or checkbox is a control
+// input with the range `[0, 1]` and the step 1.
+//
+// The library imports nothing: it needs neither the Faust standard libraries
+// nor `optimizers.lib`. It is a `faust-rs` library: `cinputs`, `cinput`,
+// `fad`, `rad` and the wildcard target `"*"` are not known to the C++ Faust
+// compiler.
+//
+// The Controls library is organized into 6 sections:
+//
+// * [Reading the Controls](#reading-the-controls)
+// * [Rebinding the Controls](#rebinding-the-controls)
+// * [Rebuilding the Interface](#rebuilding-the-interface)
+// * [Exploring Settings](#exploring-settings)
+// * [Testing](#testing)
+// * [Sensitivity](#sensitivity)
+//
+// It should be used using the `ct` environment:
+//
+// ```
+// ct = library("controls.lib");
+// e = component("synth.dsp");
+// process = ct.smooth(0.05, e);
+// ```
+//
+// Changes in 0.1.0: first version.
+//########################################################################################
+
+//==================================Reading the Controls====================================
+// The number of control inputs of `e` and, for the i-th (0-based, in
+// `cinputs` order), its widget and its evaluated default, minimum, maximum
+// and step. The numbers are compile-time constants: they can set the
+// parameters of another widget, size a `par`, or scale a rate.
+//==========================================================================================
+
+//------------------------------`(ct.)count`---------------------------------
+// The number of control inputs of `e`, a compile-time constant.
+//
+// #### Usage
+//
+// ```
+// count(e) : _
+// ```
+//
+// Where:
+//
+// * `e`: a closed program
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// count_test = ct.count(hslider("count:a", 0.5, 0, 1, 0.1) + button("count:b"));
+// ```
+//------------------------------------------------------------------------------
+count(e) = outputs(cinputs(e));
+
+//------------------------------`(ct.)widget`---------------------------------
+// The i-th control input of `e` as a signal, the widget itself: used outside
+// `e`, it stays in the interface.
+//
+// #### Usage
+//
+// ```
+// widget(i, e) : _
+// ```
+//
+// Where:
+//
+// * `i`: the index, 0-based, a constant below `count(e)`
+// * `e`: a closed program
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// widget_test = ct.widget(0, hslider("widget:a", 0.5, 0, 1, 0.1) * 2);
+// ```
+//------------------------------------------------------------------------------
+widget(i, e) = cinput(i, e) : (_, !, !, !, !);
+
+//------------------------------`(ct.)init`---------------------------------
+// The default of the i-th control input of `e`, a constant (0 for a button or
+// a checkbox).
+//
+// #### Usage
+//
+// ```
+// init(i, e) : _
+// ```
+//
+// Where:
+//
+// * `i`: the index, 0-based, a constant below `count(e)`
+// * `e`: a closed program
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// init_test = ct.init(0, hslider("init:a", 0.5, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+init(i, e) = cinput(i, e) : (!, _, !, !, !);
+
+//------------------------------`(ct.)lo`---------------------------------
+// The minimum of the i-th control input of `e`, a constant.
+//
+// #### Usage
+//
+// ```
+// lo(i, e) : _
+// ```
+//
+// Where:
+//
+// * `i`: the index, 0-based, a constant below `count(e)`
+// * `e`: a closed program
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// lo_test = ct.lo(0, hslider("lo:a", 0.5, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+lo(i, e) = cinput(i, e) : (!, !, _, !, !);
+
+//------------------------------`(ct.)hi`---------------------------------
+// The maximum of the i-th control input of `e`, a constant.
+//
+// #### Usage
+//
+// ```
+// hi(i, e) : _
+// ```
+//
+// Where:
+//
+// * `i`: the index, 0-based, a constant below `count(e)`
+// * `e`: a closed program
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// hi_test = ct.hi(0, hslider("hi:a", 0.5, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+hi(i, e) = cinput(i, e) : (!, !, !, _, !);
+
+//------------------------------`(ct.)step`---------------------------------
+// The step of the i-th control input of `e`, a constant.
+//
+// #### Usage
+//
+// ```
+// step(i, e) : _
+// ```
+//
+// Where:
+//
+// * `i`: the index, 0-based, a constant below `count(e)`
+// * `e`: a closed program
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// step_test = ct.step(0, hslider("step:a", 0.5, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+step(i, e) = cinput(i, e) : (!, !, !, !, _);
+
+//------------------------------`(ct.)inits`---------------------------------
+// The defaults of all the control inputs of `e`, as a list of `count(e)`
+// constants in `cinputs` order: the program's preset at load time.
+//
+// #### Usage
+//
+// ```
+// inits(e) : si.bus(count(e))
+// ```
+//
+// Where:
+//
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// inits_test = ct.inits(hslider("inits:a", 0.5, 0, 1, 0.1) + hslider("inits:b", 0.25, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+inits(e) = par(i, count(e), init(i, e));
+
+//==================================Rebinding the Controls==================================
+// The program `e` whose control inputs read something else than their
+// widgets: the same program, unmodified, rebound by the wildcard modulation.
+//==========================================================================================
+
+//------------------------------`(ct.)map`---------------------------------
+// `e` whose i-th control input reads `f(i, w)` instead of its widget `w`, for
+// every control input. `f(i, w)` may keep `w` (the widget stays in the
+// interface) or ignore it (the widget leaves it), and may have inputs of its
+// own: they come first, `f(0, w)`'s then `f(1, w)`'s..., before the inputs of
+// `e`. Every other function of this library but the readers is a `map`.
+//
+// #### Usage
+//
+// ```
+// map(f, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `f`: a function of the index (a constant) and of the widget (a signal)
+// * `e`: a closed program with at least one control input
+//
+// #### Example
+//
+// ```
+// // every control doubled, clamped to its range
+// f(i, w) = max(ct.lo(i, e), min(ct.hi(i, e), 2 * w));
+// process = ct.map(f, e);
+// ```
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// map_test = ct.map(f, e)
+// with { e = hslider("map:a", 0.5, 0, 1, 0.1) * 10 + hslider("map:b", 0.25, 0, 1, 0.1); f(i, w) = w * (i + 1); };
+// ```
+//------------------------------------------------------------------------------
+map(f, e) = (par(i, count(e), f(i, widget(i, e))), _bus(inputs(e))) : ["*": (!, _) -> e];
+
+//------------------------------`(ct.)external`---------------------------------
+// `e` with every control input turned into an audio input, in the widget's
+// own units, in front of the inputs of `e`: all the knobs leave the
+// interface, and a host, another program or a modular patch drives them.
+// The same as `["*": (!, _) -> e]`.
+//
+// #### Usage
+//
+// ```
+// si.bus(count(e) + inputs(e)) : external(e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// external_test = (0.5, 0.25) : ct.external(hslider("external:a", 0, 0, 1, 0.1) * 10 + hslider("external:b", 0, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+external(e) = ["*": (!, _) -> e];
+
+//------------------------------`(ct.)normalized`---------------------------------
+// `e` with every control input driven by an input in `[0, 1]`, mapped
+// linearly onto the widget's range (and clamped): the normalized parameters
+// a plugin host speaks. The knobs leave the interface.
+//
+// #### Usage
+//
+// ```
+// si.bus(count(e) + inputs(e)) : normalized(e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// normalized_test = (0.5, 1) : ct.normalized(hslider("normalized:f", 440, 20, 20000, 1) + hslider("normalized:g", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+normalized(e) = map(_normalized(e), e);
+_normalized(e, i, w, u) = lo(i, e) + _clamp(0, 1, u) * (hi(i, e) - lo(i, e));
+
+//------------------------------`(ct.)cv`---------------------------------
+// `e` with one control-voltage input added to every knob: the i-th control
+// reads `w + depth * c * (max - min)`, clamped to its range, where `c` is
+// the i-th extra input. With `depth = 1` a voltage of 1 sweeps the whole
+// range; the knobs stay in the interface and set the centre. The CV inputs
+// come first, in `cinputs` order, then the inputs of `e`: the layout of a
+// modular module whose every knob has its jack.
+//
+// #### Usage
+//
+// ```
+// si.bus(count(e) + inputs(e)) : cv(depth, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `depth`: the CV scale, as a fraction of each range
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// cv_test = (0.1, -0.1) : ct.cv(1, hslider("cv:a", 0.5, 0, 1, 0.1) * 10 + hslider("cv:b", 0.25, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+cv(depth, e) = map(_cv(e, depth), e);
+_cv(e, depth, i, w, c) = _clamp(lo(i, e), hi(i, e), w + depth * c * (hi(i, e) - lo(i, e)));
+
+//------------------------------`(ct.)smooth`---------------------------------
+// `e` with every control input smoothed by a one-pole low-pass of time
+// constant `t` seconds, starting from its default: no zipper noise whatever
+// the program. Buttons and checkboxes are smoothed too, which softens a
+// `gate`; to smooth one group only, write the modulation with a literal
+// target and `smoother`, `["synth/*": ct.smoother(t) -> e]`.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : smooth(t, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `t`: the time constant in seconds (0: no smoothing)
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// smooth_test = ct.smooth(0.01, hslider("smooth:a", 0.5, 0, 1, 0.1) * 10);
+// ```
+//------------------------------------------------------------------------------
+smooth(t, e) = map(_smooth(e, t), e);
+_smooth(e, t, i, w) = w - init(i, e) : smoother(t) : +(init(i, e));
+
+//------------------------------`(ct.)smoother`---------------------------------
+// The one-pole low-pass of `smooth`, time constant `t` seconds, starting
+// from 0: a modulator for a literal or wildcard target.
+//
+// #### Usage
+//
+// ```
+// _ : smoother(t) : _
+// ```
+//
+// Where:
+//
+// * `t`: the time constant in seconds (0: no smoothing)
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// smoother_test = 1 : ct.smoother(0.01);
+// ```
+//------------------------------------------------------------------------------
+smoother(t) = *(1 - a) : + ~ *(a)
+with {
+    a = exp(-1.0 / max(1e-9, t * _sr));
+};
+
+//==================================Rebuilding the Interface================================
+// The program `e` behind a new interface: other widgets, other labels, other
+// styles, built from the defaults, ranges and steps of its own. The original
+// labels are not available (a label is not a value), so the new widgets are
+// named by their index.
+//==========================================================================================
+
+//------------------------------`(ct.)relabel`---------------------------------
+// `e` whose i-th control input is the widget `wdg(i, init, min, max, step)`,
+// built by the caller with the evaluated parameters of the old one; the old
+// widgets leave the interface. `wdg` names its first parameter `i` to use it
+// in a label, `hslider("P%i", ...)`. The interface sorts labels as text:
+// past ten controls `P10` comes before `P2`.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : relabel(wdg, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `wdg`: a function `(i, init, min, max, step)` returning a widget
+// * `e`: a closed program with at least one control input
+//
+// #### Example
+//
+// ```
+// entry(i, v, a, b, s) = vgroup("params", nentry("p%i", v, a, b, s));
+// process = ct.relabel(entry, e);
+// ```
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// relabel_test = ct.relabel(wdg, hslider("relabel:a", 0.5, 0, 1, 0.1) * 10)
+// with { wdg(i, v, a, b, s) = vslider("relabel:P%i", v, a, b, s); };
+// ```
+//------------------------------------------------------------------------------
+relabel(wdg, e) = map(_relabel(wdg, e), e);
+_relabel(wdg, e, i, w) = wdg(i, init(i, e), lo(i, e), hi(i, e), step(i, e));
+
+//------------------------------`(ct.)knobs`---------------------------------
+// `e` with every control input shown as a knob, `P0`, `P1`, ... in
+// `cinputs` order, with the default, range and step of the old widget: an
+// interface a host renders compactly, the same computation.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : knobs(e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// knobs_test = hgroup("knobs", ct.knobs(hslider("knobs:a", 0.5, 0, 1, 0.1) * 10));
+// ```
+//------------------------------------------------------------------------------
+knobs(e) = relabel(_knob, e);
+_knob(i, v, a, b, s) = hslider("P%i[style:knob]", v, a, b, s);
+
+//==================================Exploring Settings======================================
+// The program `e` played on settings its knobs do not reach alone: a preset
+// morphed in, a random draw, a shifted copy. The knobs stay in the interface
+// and give the starting point.
+//==========================================================================================
+
+//------------------------------`(ct.)morph`---------------------------------
+// `e` morphed from its knobs to a preset: the i-th control reads
+// `w + m * (p_i - w)`, the knob at `m = 0`, the preset at `m = 1`. A button
+// or checkbox in the preset gets its intermediate values too.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : morph(m, P, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `m`: the morph amount, from 0 (the knobs) to 1 (the preset)
+// * `P`: the preset, a list of `count(e)` values in `cinputs` order
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// morph_test = ct.morph(0.5, (1, 0), hslider("morph:a", 0.5, 0, 1, 0.1) * 10 + hslider("morph:b", 0.25, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+morph(m, P, e) = map(_morph(e, m, P), e);
+_morph(e, m, P, i, w) = w + m * (_take(i + 1, P) - w);
+
+//------------------------------`(ct.)randomize`---------------------------------
+// `e` on random settings: on every rising edge of `trig` each control draws
+// a value, uniform over its range and on its step grid, and reads
+// `w + amount * (r - w)`: the knob at `amount = 0`, the draw at 1, a
+// variation around the knob in between. Before the first trigger the draw is
+// the default. Each control has its own generator.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : randomize(trig, amount, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `trig`: draws on each rising edge (a button)
+// * `amount`: from 0 (the knobs) to 1 (the draws)
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// randomize_test = ct.randomize(button("randomize:new"), 1, hslider("randomize:a", 0.5, 0, 1, 0.1) * 10);
+// ```
+//------------------------------------------------------------------------------
+randomize(trig, amount, e) = map(_randomize(e, trig, amount), e);
+_randomize(e, trig, amount, i, w) = w + amount * (r - w)
+with {
+    a = lo(i, e);
+    b = hi(i, e);
+    u = (_noise(i) + 1) * 0.5;
+    draw = _quantize(a, step(i, e), a + u * (b - a));
+    r = _hold(init(i, e), _rise(trig), draw);
+};
+
+//------------------------------`(ct.)offset`---------------------------------
+// `e` with every control shifted by the fraction `d` of its range, clamped:
+// a copy of `e` set slightly apart, for unison voices, a stereo spread or a
+// humanized double, `par(k, 3, ct.offset(0.01 * (k - 1), e))`.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : offset(d, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `d`: the shift, as a fraction of each range (a signal)
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// offset_test = ct.offset(0.1, hslider("offset:a", 0.5, 0, 1, 0.1) * 10);
+// ```
+//------------------------------------------------------------------------------
+offset(d, e) = map(_offset(e, d), e);
+_offset(e, d, i, w) = _clamp(lo(i, e), hi(i, e), w + d * (hi(i, e) - lo(i, e)));
+
+//==================================Testing=================================================
+// The program `e` driven through its whole parameter space, for a test that
+// needs no knowledge of the program: every control swept over its range,
+// and a count of the non-finite outputs.
+//==========================================================================================
+
+//------------------------------`(ct.)sweep`---------------------------------
+// `e` with every control following a triangle over its range, `min` to `max`
+// and back in `T` samples, the i-th delayed by `i / count(e)` of a period so
+// that the controls do not move in lockstep. The knobs leave the interface.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : sweep(T, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `T`: the period in samples, a constant
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// sweep_test = ct.sweep(1000, hslider("sweep:a", 0.5, 0, 1, 0.1) + hslider("sweep:b", 0.5, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+sweep(T, e) = map(_sweep(e, T, count(e)), e);
+_sweep(e, T, n, i, w) = lo(i, e) + _triangle(T, float(i) / float(n)) * (hi(i, e) - lo(i, e));
+
+//------------------------------`(ct.)sweep_one`---------------------------------
+// `e` with its k-th control following a triangle over its range, `min` to
+// `max` and back in `T` samples, the others on their knobs.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : sweep_one(k, T, e) : si.bus(outputs(e))
+// ```
+//
+// Where:
+//
+// * `k`: the index of the swept control, 0-based, a constant
+// * `T`: the period in samples, a constant
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// sweep_one_test = ct.sweep_one(1, 1000, hslider("sweep_one:a", 0.5, 0, 1, 0.1) + hslider("sweep_one:b", 0.5, 0, 1, 0.1));
+// ```
+//------------------------------------------------------------------------------
+sweep_one(k, T, e) = map(_sweep_one(e, k, T), e);
+_sweep_one(e, k, T, i, w) = select2(i == k, w, lo(i, e) + _triangle(T, 0) * (hi(i, e) - lo(i, e)));
+
+//------------------------------`(ct.)nonfinite`---------------------------------
+// The number of non-finite signals (a NaN, an infinity or a magnitude past
+// `1e30`) among `n`, sample by sample: 0 for a healthy program.
+//
+// #### Usage
+//
+// ```
+// si.bus(n) : nonfinite(n) : _
+// ```
+//
+// Where:
+//
+// * `n`: the number of signals, a constant
+//
+// #### Example
+//
+// ```
+// // 0 on every sample if no setting of e breaks it
+// process = ct.sweep(48000, e) : ct.nonfinite(outputs(e));
+// ```
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// nonfinite_test = (1, 1.0 / (_ - 1)) : ct.nonfinite(2);
+// ```
+//------------------------------------------------------------------------------
+nonfinite(n) = par(j, n, _nonfinite) :> _;
+_nonfinite(x) = 1 - (abs(x) < 1e30);
+
+//==================================Sensitivity=============================================
+// How much each control of `e` moves its outputs: the derivatives of the
+// outputs of `e` with respect to all its controls, taken on the knobs'
+// current values by `fad` or `rad`.
+//==========================================================================================
+
+//------------------------------`(ct.)gradient_fad`---------------------------------
+// The outputs of `e` and their derivatives with respect to every control
+// input of `e`, by forward-mode differentiation: `fad(e, cinputs(e))`, the
+// layout of `fad` (each output, then its `count(e)` derivatives, in
+// `cinputs` order). Which knobs matter at the current setting, and which do
+// nothing: a zero derivative is a control the output does not depend on
+// here.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : gradient_fad(e) : si.bus(outputs(e) * (1 + count(e)))
+// ```
+//
+// Where:
+//
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// gradient_fad_test = 1 : ct.gradient_fad(*(hslider("gradient_fad:a", 0.5, 0, 1, 0.1)));
+// ```
+//------------------------------------------------------------------------------
+gradient_fad(e) = fad(e, cinputs(e));
+
+//------------------------------`(ct.)gradient_rad`---------------------------------
+// `gradient_fad` by reverse-mode differentiation, `rad(e, cinputs(e))`: one
+// sweep per sample whatever the number of controls. Its layout is that of
+// `rad`: the outputs of `e`, then the derivatives of **their sum** with
+// respect to each control, in `cinputs` order; for a program with one
+// output, its gradient.
+//
+// #### Usage
+//
+// ```
+// si.bus(inputs(e)) : gradient_rad(e) : si.bus(outputs(e) + count(e))
+// ```
+//
+// Where:
+//
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// gradient_rad_test = 1 : ct.gradient_rad(*(hslider("gradient_rad:a", 0.5, 0, 1, 0.1)));
+// ```
+//------------------------------------------------------------------------------
+gradient_rad(e) = rad(e, cinputs(e));
+
+//==================================Internal helpers========================================
+_bus(n) = par(j, n, _);
+_clamp(a, b, x) = max(a, min(b, x));
+_take(1, (x, xs)) = x;
+_take(1, x) = x;
+_take(n, (x, xs)) = _take(n - 1, xs);
+_sr = min(192000.0, max(1.0, fconstant(int fSamplingFreq, <math.h>)));
+_rise(t) = (t > 0) > (t' > 0);
+// the value `v0` until the first `t`, then the value of `x` at the last `t`
+_hold(v0, t, x) = (select2(t, _, x - v0) ~ _) + v0;
+// uniform in [-1, 1), one generator per seed
+_noise(seed) = (+(12345 + 7919 * seed) ~ *(1103515245)) / 2147483647.0;
+_quantize(a, s, v) = select2(s > 0, v, a + rint((v - a) / max(s, 1e-30)) * s);
+// 0 -> 1 -> 0 over `T` samples, advanced by the fraction `phase` of a period
+_triangle(T, phase) = 1 - abs(2 * p - 1)
+with {
+    n = (+(1) ~ _) - 1;
+    x = float(n) / float(T) + phase;
+    p = x - floor(x);
+};

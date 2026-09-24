@@ -110,6 +110,13 @@ P, x : ["*": (!, _) -> e]     // every control input of e replaced by an input, 
 
 ## 3. What they are for
 
+Every use below works on a program `e` as it is, `component("x.dsp")` or any
+closed expression, without editing it. Most are packaged in
+`libraries/controls.lib` (prefix `ct`, section 4), which imports nothing; the
+learning operators are in `libraries/optimizers.lib`.
+
+### 3.1 Learning the controls
+
 A program learning its own sliders without being rewritten, in
 `libraries/optimizers.lib` (0.11.0):
 
@@ -125,3 +132,94 @@ process(x, t) = op.adaptive_fad(e, op.mse, op.adam_g(0.01, 0.9, 0.999, 1e-8), cl
 with `["*": (!, _) -> e]`; see their documentation in the library. Host-driven,
 `fad(loss, cinputs(e))` or `rad(loss, cinputs(e))` gives the gradient with
 respect to every control of `e`.
+
+### 3.2 The pattern behind the others: a function of every control
+
+`cinput(i, e)` gives each control's widget and its default, range and step,
+`["*": (!, _) -> e]` gives `e` one input per control, so a `par` over the
+controls feeds `e` any function of them:
+
+```faust
+N = outputs(cinputs(e));
+f(i) = ...;   // built from cinput(i, e)
+process = par(i, N, f(i)) : ["*": (!, _) -> e];
+```
+
+The widget boxes `f(i)` reads are the nodes of `e`: a function that reads its
+widget keeps the knob in the interface, one that ignores it removes the knob.
+The default, minimum, maximum and step are compile-time constants, so they can
+set the parameters of a new widget, size a `par`, or scale a rate.
+`ct.map(f, e)` is this pattern, with `f(i, w)` given the index and the widget.
+
+One trap: to pass the constants to a widget, apply the function to them,
+`w(i, ct.init(i, e), ...)`; a lambda composed with `cinput(i, e) : \(w, v, a,
+b, s).(hslider("P", v, a, b, s))` receives signals, not constants, and the
+widget is refused (`FRS-EVAL-0011`), as the C++ compiler refuses any widget
+parameter that is not a number.
+
+### 3.3 Uses
+
+| Use | How | `controls.lib` |
+|---|---|---|
+| No zipper noise on any program | a one-pole on every control, starting at its default | `smooth(t, e)`, `smoother(t)` |
+| A modular module, every knob with its jack | one CV input per control, added to the knob, scaled to its range, clamped | `cv(depth, e)` |
+| Parameters driven by a host or another program | every control an audio input, in its units or normalized to `[0, 1]` | `external(e)`, `normalized(e)` |
+| A new interface: knobs, numeric entries, other groups | new widgets built with each control's default, range and step | `relabel(wdg, e)`, `knobs(e)` |
+| Preset morphing | from the knobs to a preset list, one amount for all | `morph(m, P, e)` |
+| "Randomize" | a draw per control on a trigger, uniform on its range and step grid, mixed with the knob | `randomize(trig, amount, e)` |
+| Unison voices, stereo spread, humanized doubles | copies of `e` with every control shifted by a fraction of its range | `offset(d, e)`, in a `par` |
+| A test with no knowledge of the program | every control swept over its range; a count of non-finite outputs | `sweep(T, e)`, `sweep_one(k, T, e)`, `nonfinite(n)` |
+| Which knobs matter here | the derivatives of the outputs with respect to every control | `gradient_fad(e)`, `gradient_rad(e)` |
+| Learning the controls | a descent on all the controls against a target | `op.adaptive_fad`, `op.adaptive_rad` |
+
+Measured on `ctl_06_testing.dsp`: `ct.sweep(100, 1 / hslider("d", 0.5, -1, 1,
+0.01)) : ct.nonfinite(1)` is 1 on the samples where the sweep crosses `d = 0`
+and 0 elsewhere, the kind of setting a hand-written test forgets.
+
+### 3.4 Limits
+
+- **Labels are not values.** `cinput` gives no label: a rebuilt interface
+  names its widgets by index (`P0`, `P1`, ...), and the interface sorts labels
+  as text, so past ten controls `P10` comes before `P2`. Renaming by the old
+  label would need a primitive giving the i-th label for label interpolation.
+- **`"*"` matches buttons and checkboxes too.** Smoothing every control
+  smooths a `gate`; restrict with a group target, `["synth/*": ct.smoother(t)
+  -> e]`, written in the program because a target is a literal.
+- **Dead controls count** (section 1): `map` gives them an input they ignore.
+- **Bargraphs are read-only.** `coutputs(e)` gives the bargraph boxes and
+  their ranges, not the signals `e` feeds them: turning the meters of a
+  program into outputs, to log them or learn on them, would need a primitive
+  exposing those signals.
+- **Nothing sets a knob.** A program cannot move its own sliders; `randomize`
+  and `morph` replace what the program reads, the knobs keep their positions.
+
+## 4. `controls.lib`
+
+`libraries/controls.lib` (0.1.0, prefix `ct`) packages section 3; it imports
+nothing, so a program needs only `-I libraries`. Sections and functions:
+
+- **Reading the controls:** `count(e)`, `widget(i, e)`, `init(i, e)`,
+  `lo(i, e)`, `hi(i, e)`, `step(i, e)`, `inits(e)`.
+- **Rebinding the controls:** `map(f, e)`, `external(e)`, `normalized(e)`,
+  `cv(depth, e)`, `smooth(t, e)`, `smoother(t)`.
+- **Rebuilding the interface:** `relabel(wdg, e)`, `knobs(e)`.
+- **Exploring settings:** `morph(m, P, e)`, `randomize(trig, amount, e)`,
+  `offset(d, e)`.
+- **Testing:** `sweep(T, e)`, `sweep_one(k, T, e)`, `nonfinite(n)`.
+- **Sensitivity:** `gradient_fad(e)` (each output, then its derivatives with
+  respect to every control), `gradient_rad(e)` (the outputs, then the gradient
+  of their sum).
+
+```faust
+ct = library("controls.lib");
+e = component("synth.dsp");
+process = hgroup("synth", ct.knobs(ct.smooth(0.02, e)));
+```
+
+A function taking `e` needs `e` to have at least one control input (the
+wildcard of `map` matching nothing is `FRS-EVAL-0010`). The inputs a function
+adds come first, one per control in `cinputs` order, then the inputs of `e`.
+Each function is documented in the library with a `#### Test` entry, compiled
+and run by `tests/corpus/ctl_all_functions.dsp`; `tests/corpus/ctl_01` to
+`ctl_07` state their expected outputs, checked by
+`crates/compiler/tests/controls_lib.rs`.

@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ctl_04_interface.dsp
+bytes=698
+lines=11
+fnv1a64=f9226a70acbb2f00

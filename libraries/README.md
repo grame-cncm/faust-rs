@@ -15,10 +15,20 @@ and are versioned with this repository:
   the Faust standard libraries must be on the import path too;
   `tests/corpus/opt_*.dsp` and `crates/compiler/tests/optimizers_lib.rs`
   exercise it (the tests skip when no faustlibraries checkout is found);
-- `interleave.lib` provides frame-rate serialization around `ondemand` blocks.
+- `interleave.lib` provides frame-rate serialization around `ondemand` blocks;
+- `controls.lib` (prefix `ct`) works on the control inputs of a whole program
+  without rewriting it, with the `cinputs`/`cinput` primitives and the `"*"`
+  modulation target: readers of each control's default, range and step, a
+  generic `map`, smoothing, CV inputs, normalized or external parameters,
+  rebuilt interfaces (`knobs`, `relabel`), preset morphing, randomizing,
+  shifted copies, sweeps for testing, and gradients with respect to every
+  control. It imports nothing; `tests/corpus/ctl_*.dsp` and
+  `crates/compiler/tests/controls_lib.rs` exercise it, and
+  [`../docs/control-inputs-en.md`](../docs/control-inputs-en.md) describes the
+  uses.
 
 Add this directory to the Faust import search path when compiling a DSP that
-uses either library:
+uses one of them:
 
 ```sh
 faust-rs -I libraries -I <faustlibraries> -lang cpp program.dsp
@@ -55,7 +65,7 @@ machine learning and differentiable DSP, in English and French:
   a string that tunes itself from its own pitch estimate (`init_latch`) and
   an integer delay learned without a gradient (`spsa_1D_clocked`).
 
-Both libraries follow the Faust libraries documentation conventions
+The libraries follow the Faust libraries documentation conventions
 (<https://faustlibraries.grame.fr/contributing/>): a `declare name`/`version`
 header, section banners, and one documented block per public function with
 `Usage`, `Where`, `Test` and `References` entries.
