@@ -1,5 +1,8 @@
 # Control inputs as boxes: `cinputs`, `cinput`, `coutputs`, `coutput` and the wildcard modulation target `"*"`
 
+French version: [control-inputs-fr.md](control-inputs-fr.md) (same content;
+keep both versions in sync).
+
 faust-rs extensions, not known to the C++ Faust compiler, in the same class as
 `fad` and `rad`. Contract and rationale:
 `porting/control-inputs-and-wildcard-modulation-analysis-2026-09-22-en.md`.
@@ -87,9 +90,9 @@ P, x : ["*": (!, _) -> e]     // every control input of e replaced by an input, 
   `e`: the i-th extra input drives the control `ba.take(i + 1, cinputs(e))`
   describes; a dead control gets its input too, which it ignores, so `"*"`
   adds `outputs(cinputs(e))` inputs. A literal label that matches several
-  widgets gives them one shared input, as in C++; the wildcard does not. `["*": (!, _) -> e]` equals
-  the same modulation written with one literal target per control, listed in
-  interface order.
+  widgets gives them one shared input, as in C++; the wildcard does not.
+  `["*": (!, _) -> e]` equals the same modulation written with one literal
+  target per control, listed in interface order.
 - **Modulator arity.** As for a literal target: 0 inputs replaces every
   matched control by the modulator, 1 input transforms each, 2 inputs pairs
   each with its own extra input. Only the 2-input form adds inputs.
