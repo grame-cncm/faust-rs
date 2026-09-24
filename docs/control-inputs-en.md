@@ -22,19 +22,26 @@ coutput(i, e)    // the i-th bargraph, 0-based, as (bargraph, min, max)
 - **What counts.** A control input is a `hslider`, `vslider`, `nentry`,
   `button` or `checkbox`; a bargraph is a `hbargraph` or `vbargraph`.
   Soundfiles are neither.
-- **Order.** The order of the interface `e` would show on its own, its
-  `buildUserInterface` and its JSON: groups with the same label merged, the
-  children of each group, controls and groups together, sorted by their raw
-  label, `[n]` ordering prefix included, as the C++ compiler sorts them. The
-  order of declaration does not matter:
+- **What is listed.** The control inputs present in `e`, read or not, as
+  `inputs(e)` counts the audio inputs of `e`: `inputs(_ : !)` is 1 although
+  the input is cut, and `outputs(cinputs(hslider("dead",…) : !))` is 1
+  although the slider is. The list is taken on the box, at evaluation, before
+  signals exist; it does not depend on what the compiler later simplifies
+  away. It is therefore a superset of the compiled interface, which shows only
+  the widgets the final signals still read: `hslider("d",…) * 0 +
+  hslider("l",…)` lists `d` and `l`, its interface shows `l`.
+- **Order.** The order of the interface `e` would show if every widget in it
+  were read, its `buildUserInterface` and its JSON: groups with the same label
+  merged, the children of each group, controls and groups together, sorted by
+  their raw label, `[n]` ordering prefix included, as the C++ compiler sorts
+  them. The widgets the interface does show are in its order; a dead widget
+  keeps its place among them. The order of declaration does not matter:
   `hslider("b",…) + hslider("a",…) + hgroup("z", hslider("c",…)) + hslider("[0]y",…)`
   lists `y`, `a`, `b`, `z/c`.
 - **Identity.** A widget reached through several paths of the program is one
   control; the same widget box under two different groups
   (`par(i, 3, vgroup("Op %i", g))`) is one control per group, as in the
-  interface. Widgets the program no longer reads (`hslider("dead",…) : !`) are
-  counted: the list is taken on the box, before the compiled interface prunes
-  dead widgets.
+  interface.
 - **The count** is `outputs(cinputs(e))`, a compile-time constant usable as an
   iteration count. A program without control inputs gives the empty box
   `0 : !`, so the count is 0.
@@ -78,8 +85,9 @@ P, x : ["*": (!, _) -> e]     // every control input of e replaced by an input, 
 - **One input per control.** With a two-input modulator the wildcard adds one
   input **per matched control**, in `cinputs` order, in front of the inputs of
   `e`: the i-th extra input drives the control `ba.take(i + 1, cinputs(e))`
-  describes. A literal label that matches several widgets gives them one
-  shared input, as in C++; the wildcard does not. `["*": (!, _) -> e]` equals
+  describes; a dead control gets its input too, which it ignores, so `"*"`
+  adds `outputs(cinputs(e))` inputs. A literal label that matches several
+  widgets gives them one shared input, as in C++; the wildcard does not. `["*": (!, _) -> e]` equals
   the same modulation written with one literal target per control, listed in
   interface order.
 - **Modulator arity.** As for a literal target: 0 inputs replaces every
