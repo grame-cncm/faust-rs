@@ -1273,8 +1273,8 @@ fn eval_seq_value(
 /// phases (`propagate`, lowering, golden dumps) still consume box trees. This
 /// helper performs that boundary conversion:
 /// - plain box values pass through unchanged,
-/// - abstractions are rebuilt with one scope-local shadowing sentinel for the
-///   bound parameter,
+/// - abstractions and environments are kept as `boxClosure(key)` handles to
+///   the evaluator's closure store, with their captured environment,
 /// - other closures are forced under their captured environment,
 /// - pattern matchers collapse to their original `case` carrier when still
 ///   unapplied.
@@ -1287,17 +1287,22 @@ fn force_value_to_box(
     match value {
         EvalValue::Box(id) => Ok(id),
         EvalValue::Closure(closure) => match match_box(arena, closure.expr) {
-            BoxMatch::Abstr(_, _) => {
-                // Store the closure (abstraction + captured env) in the
-                // side-table and return a boxClosure(key) tree node.
-                // This mirrors the boxPatternMatcher pattern and matches
-                // C++ where closure(expr, genv, visited, lenv) is a tree node.
+            // Store the closure (abstraction or environment + captured env)
+            // in the side-table and return a boxClosure(key) tree node.
+            // This mirrors the boxPatternMatcher pattern and matches C++,
+            // where closure(expr, genv, visited, lenv) is a tree node that
+            // `revEvalList` passes to `applyList` as is. An environment
+            // closure must keep its captured definitions: returning the bare
+            // `environment` node here made `cfg.freq` fail for an
+            // environment passed as a function argument, `cfg` being
+            // re-evaluated to an empty environment. Lowering the handle with
+            // `a2sb` still yields the bare node, as C++ `real_a2sb` does.
+            BoxMatch::Abstr(_, _) | BoxMatch::Environment => {
                 let key = loop_detector.store_closure(closure);
                 let mut b = BoxBuilder::new(arena);
                 let key_node = b.int(key);
                 Ok(b.closure_node(key_node))
             }
-            BoxMatch::Environment => Ok(closure.expr),
             _ => eval_box(arena, closure.expr, &closure.env, loop_detector),
         },
         EvalValue::PatternMatcher(pm) => {

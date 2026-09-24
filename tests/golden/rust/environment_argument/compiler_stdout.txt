@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=environment_argument.dsp
+bytes=1238
+lines=32
+fnv1a64=c44c14591a56a187

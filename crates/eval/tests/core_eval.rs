@@ -2324,3 +2324,61 @@ fn eval_process_tries_case_rules_in_textual_order_like_cpp() {
         );
     }
 }
+
+#[test]
+fn eval_process_accesses_environment_passed_as_argument_like_cpp() {
+    // An environment bound to a function parameter keeps its definitions:
+    // forcing an environment closure to a box used to return the bare
+    // `environment` node, so `cfg.freq` failed with "undefined symbol".
+    let cases: &[(&str, i32)] = &[
+        (
+            "play(cfg) = cfg.freq; low = environment { freq = 220; }; process = play(low);",
+            220,
+        ),
+        (
+            "mk(f) = environment { freq = f; }; freq_of(cfg) = cfg.freq; process = freq_of(mk(330));",
+            330,
+        ),
+        (
+            "mk(f) = environment { freq = f; }; process = mk(330).freq;",
+            330,
+        ),
+        (
+            "outer = environment { inner = environment { x = 7; }; }; get_x(cfg) = cfg.inner.x; process = get_x(outer);",
+            7,
+        ),
+        (
+            "f = \\(cfg).(cfg.freq); low = environment { freq = 220; }; process = f(low);",
+            220,
+        ),
+        (
+            "r(cfg) = cfg[freq = 440;].freq; low = environment { freq = 220; }; process = r(low);",
+            440,
+        ),
+        (
+            "twice(cfg) = cfg.f(cfg.f(1)); e = environment { f(x) = x * 3; }; process = twice(e);",
+            9,
+        ),
+        (
+            "d(c, e) = c.v - e.v; a = environment { v = 5; }; b = environment { v = 2; }; process = d(a, b);",
+            3,
+        ),
+    ];
+    for (source, expected) in cases {
+        let parsed = parse_program(source, "<memory>");
+        assert!(
+            parsed.errors.is_empty(),
+            "parser should accept {source:?}: {:?}",
+            parsed.errors
+        );
+        let mut arena = parsed.state.arena;
+        let root = parsed.root.expect("parse should return a root");
+        let out = eval_process(&mut arena, root)
+            .unwrap_or_else(|e| panic!("{source:?} should evaluate like Faust C++: {e:?}"));
+        assert_eq!(
+            match_box(&arena, out),
+            BoxMatch::Int(*expected),
+            "{source:?} should resolve the member in the argument environment"
+        );
+    }
+}
