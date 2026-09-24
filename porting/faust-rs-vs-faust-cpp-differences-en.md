@@ -133,7 +133,7 @@ verified Rust extension must not be presented as a proof of C++ parity.
 - Difference: the four primitives fold at evaluation to lists of `e`'s widget
   boxes (`cinputs`: the `par` of its sliders, numentries, buttons and
   checkboxes; `cinput`: `(widget, init, min, max, step)`; the bargraph twins
-  `(bargraph, min, max)`), in the order of `e`'s own interface (groups merged,
+  `(bargraph, min, max)`), in the order of `e`'s own interface, dead widgets included (groups merged,
   children sorted by raw label, as the C++ UI is). A wildcard target rebinds
   every matched control input, bargraphs excepted, and gives a two-input
   modulator **one extra input per control** in that order, where a literal

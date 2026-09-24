@@ -8,7 +8,9 @@
 //! Each arm follows `inputs(e)` (`BoxMatch::Inputs` in `lib.rs`): `e` is
 //! evaluated and lowered by [`a2sb`], then its widgets are listed by
 //! [`propagate::control_widgets`], in the order of the interface the program
-//! would show (groups merged by label, children sorted by raw label). A widget
+//! would show (groups merged by label, children sorted by raw label). Dead
+//! widgets are listed, as `inputs(_ : !)` counts a cut input: the list is the
+//! control inputs present in the box, not the pruned compiled interface. A widget
 //! box reached under several group paths is one control per path, as in the
 //! interface. The result is folded at evaluation:
 //!
