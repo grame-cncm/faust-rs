@@ -13,7 +13,7 @@ Files are listed chronologically (oldest day first). Inside each file, entries a
 - [2026-02-17](./2026-02-17.md) (1 entry)
 - [2026-02-18](./2026-02-18.md) (1 entry)
 - [2026-02-19](./2026-02-19.md) (2 entries)
-- [2026-02-20](./2026-02-20.md) (5 entries)
+- [2026-02-20](./2026-02-20.md) (6 entries)
 - [2026-02-21](./2026-02-21.md) (6 entries)
 - [2026-02-22](./2026-02-22.md) (6 entries)
 - [2026-02-23](./2026-02-23.md) (26 entries)
