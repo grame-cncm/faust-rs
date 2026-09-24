@@ -149,7 +149,9 @@ verified Rust extension must not be presented as a proof of C++ parity.
   `optimizers.lib` 0.11.0 (`adaptive_fad`, `adaptive_rad`) depends on them.
 - Evidence: [`docs/control-inputs-en.md`](../docs/control-inputs-en.md),
   [analysis and contract](control-inputs-and-wildcard-modulation-analysis-2026-09-22-en.md),
-  [`control_inputs.rs`](../crates/compiler/tests/control_inputs.rs),
+  [`control_inputs.rs`](../crates/compiler/tests/control_inputs.rs) on the
+  `tests/corpus/cinputs_*.dsp`, `wildcard_*.dsp` and `err_3{0,1}_*.dsp`
+  fixtures,
   `adaptive_operators_follow_the_hand_written_loop` in
   [`optimizers_lib.rs`](../crates/compiler/tests/optimizers_lib.rs).
 

@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=cinputs_01_interface_order.dsp
+bytes=889
+lines=14
+fnv1a64=5c13191a81d2aba9

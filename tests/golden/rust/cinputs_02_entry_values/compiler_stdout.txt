@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=cinputs_02_entry_values.dsp
+bytes=664
+lines=10
+fnv1a64=0f0f35479136939d

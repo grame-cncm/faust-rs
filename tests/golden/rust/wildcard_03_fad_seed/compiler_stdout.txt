@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=wildcard_03_fad_seed.dsp
+bytes=492
+lines=9
+fnv1a64=6f080912fc018c4a

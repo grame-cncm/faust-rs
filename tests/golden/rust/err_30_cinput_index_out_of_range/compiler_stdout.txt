@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_30_cinput_index_out_of_range.dsp
+bytes=362
+lines=6
+fnv1a64=d84e8119fc218adb

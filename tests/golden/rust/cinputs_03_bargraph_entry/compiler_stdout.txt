@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=cinputs_03_bargraph_entry.dsp
+bytes=670
+lines=10
+fnv1a64=d054301190114f9a

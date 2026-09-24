@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_31_wildcard_no_match.dsp
+bytes=421
+lines=6
+fnv1a64=7b96a6d86adec6ef
