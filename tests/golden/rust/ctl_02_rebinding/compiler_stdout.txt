@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ctl_02_rebinding.dsp
+bytes=710
+lines=12
+fnv1a64=d2896457423625f7

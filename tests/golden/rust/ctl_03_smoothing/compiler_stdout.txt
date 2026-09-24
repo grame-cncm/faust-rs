@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ctl_03_smoothing.dsp
+bytes=632
+lines=11
+fnv1a64=8d9e67f109bef29d

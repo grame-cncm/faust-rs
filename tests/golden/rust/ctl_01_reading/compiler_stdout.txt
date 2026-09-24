@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ctl_01_reading.dsp
+bytes=571
+lines=9
+fnv1a64=aa5c2b50282eec1b

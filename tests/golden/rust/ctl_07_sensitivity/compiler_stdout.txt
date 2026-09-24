@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ctl_07_sensitivity.dsp
+bytes=614
+lines=10
+fnv1a64=d40c17e957ee87a3

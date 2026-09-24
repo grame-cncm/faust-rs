@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ctl_05_exploring.dsp
+bytes=958
+lines=16
+fnv1a64=dc7490f9e94c51f4

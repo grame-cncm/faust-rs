@@ -147,14 +147,19 @@ verified Rust extension must not be presented as a proof of C++ parity.
   The C++ compiler rejects the primitives as unknown identifiers and parses a
   wildcard target as a label that matches nothing (a dangling input and a
   warning under `-wall`), so a program using them is a `faust-rs` program.
-  `optimizers.lib` 0.11.0 (`adaptive_fad`, `adaptive_rad`) depends on them.
+  `optimizers.lib` 0.11.0 (`adaptive_fad`, `adaptive_rad`) and the
+  Rust-only library `controls.lib` 0.1.0 (smoothing, CV inputs, rebuilt
+  interfaces, morphing, randomizing, sweeps, gradients over every control of
+  a program) depend on them.
 - Evidence: [`docs/control-inputs-en.md`](../docs/control-inputs-en.md),
   [analysis and contract](control-inputs-and-wildcard-modulation-analysis-2026-09-22-en.md),
   [`control_inputs.rs`](../crates/compiler/tests/control_inputs.rs) on the
   `tests/corpus/cinputs_*.dsp`, `wildcard_*.dsp` and `err_3{0,1}_*.dsp`
   fixtures,
   `adaptive_operators_follow_the_hand_written_loop` in
-  [`optimizers_lib.rs`](../crates/compiler/tests/optimizers_lib.rs).
+  [`optimizers_lib.rs`](../crates/compiler/tests/optimizers_lib.rs),
+  [`controls_lib.rs`](../crates/compiler/tests/controls_lib.rs) on the
+  `tests/corpus/ctl_*.dsp` fixtures.
 
 ## 4. Command-line additions and differences
 
