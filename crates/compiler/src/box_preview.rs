@@ -142,6 +142,25 @@ pub(crate) fn render_human_box_expr(arena: &tlib::TreeArena, node: BoxId, depth:
             render_human_box_expr(arena, min, depth + 1),
             render_human_box_expr(arena, max, depth + 1)
         ),
+        BoxMatch::CInputs(expr) => {
+            format!("cinputs({})", render_human_box_expr(arena, expr, depth + 1))
+        }
+        BoxMatch::COutputs(expr) => {
+            format!(
+                "coutputs({})",
+                render_human_box_expr(arena, expr, depth + 1)
+            )
+        }
+        BoxMatch::CInput(index, expr) => format!(
+            "cinput({}, {})",
+            render_human_box_expr(arena, index, depth + 1),
+            render_human_box_expr(arena, expr, depth + 1)
+        ),
+        BoxMatch::COutput(index, expr) => format!(
+            "coutput({}, {})",
+            render_human_box_expr(arena, index, depth + 1),
+            render_human_box_expr(arena, expr, depth + 1)
+        ),
         BoxMatch::VGroup(label, expr) => format!(
             "vgroup({}, {})",
             render_human_box_expr(arena, label, depth + 1),

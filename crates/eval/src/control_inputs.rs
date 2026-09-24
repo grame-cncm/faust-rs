@@ -76,8 +76,7 @@ pub(crate) fn eval_control_entry(
         ControlList::Inputs => "cinput",
         ControlList::Outputs => "coutput",
     };
-    let index_value = eval_box(arena, index, env, loop_detector)?;
-    let index_value = eval_box_to_i32(arena, index_value)?;
+    let index_value = eval_control_index(arena, node, index, inner, primitive, env, loop_detector)?;
     let widgets = lowered_control_widgets(arena, node, inner, primitive, env, loop_detector)?.1;
     let list_entries = entries(&widgets, list);
     let entry = usize::try_from(index_value)
@@ -86,8 +85,7 @@ pub(crate) fn eval_control_entry(
         .ok_or(EvalError::ControlIndexOutOfRange {
             node,
             primitive,
-            // a negative index is reported as the count, out of range too
-            index: usize::try_from(index_value).unwrap_or(list_entries.len()),
+            index: i64::from(index_value),
             count: list_entries.len(),
         })?;
     let widget = entry.widget;
@@ -110,6 +108,52 @@ pub(crate) fn eval_control_entry(
         }
     };
     Ok(par_list(&mut BoxBuilder::new(arena), &values))
+}
+
+/// Evaluates the index of `cinput(index, inner)` to a compile-time integer.
+///
+/// An index that is not one is [`EvalError::ControlIndexNotConstant`], named
+/// by its source text. When `inner` is itself a constant the arguments are
+/// likely swapped (`cinput(freq, 0)` for `cinput(0, freq)`), and the error
+/// says so.
+fn eval_control_index(
+    arena: &mut TreeArena,
+    node: TreeId,
+    index: TreeId,
+    inner: TreeId,
+    primitive: &'static str,
+    env: &Environment,
+    loop_detector: &mut LoopDetector,
+) -> Result<i32, EvalError> {
+    let value = eval_box(arena, index, env, loop_detector)?;
+    match eval_box_to_i32(arena, value) {
+        Ok(i) => Ok(i),
+        // an index that divides by zero is that error, as for `par` counts
+        Err(division @ EvalError::DivisionByZero { .. }) => Err(division),
+        Err(_) => {
+            let swapped = eval_box(arena, inner, env, loop_detector)
+                .ok()
+                .is_some_and(|value| eval_box_to_i32(arena, value).is_ok());
+            Err(EvalError::ControlIndexNotConstant {
+                node,
+                primitive,
+                index: source_text(arena, index),
+                expression: swapped.then(|| source_text(arena, inner)),
+            })
+        }
+    }
+}
+
+/// An unevaluated argument as the user wrote it, shortened for a message.
+fn source_text(arena: &TreeArena, node: TreeId) -> String {
+    const MAX_CHARS: usize = 60;
+    let text = boxes::box_pp(arena, node, 0, boxes::FloatSize::Single)
+        .unwrap_or_else(|_| "the index".to_owned());
+    if text.chars().count() <= MAX_CHARS {
+        return text;
+    }
+    let head: String = text.chars().take(MAX_CHARS - 1).collect();
+    format!("{head}…")
 }
 
 /// Evaluates and lowers `inner`, then lists its controls (cached per lowered
