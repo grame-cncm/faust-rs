@@ -128,11 +128,21 @@ fn eval_slider_like(
     // calling eval_box then simplifying the result to a boxReal literal when
     // possible, matching C++ `tree(eval2double(param, …))`.
     let label = evaluated_label_node(arena, label, env, loop_detector)?;
+    let kind_name = match kind {
+        SliderKind::VSlider => "vslider",
+        SliderKind::HSlider => "hslider",
+        SliderKind::NumEntry => "nentry",
+    };
     let [cur, min, max, step] = params;
-    let cur = simplify_slider_param(arena, cur, env, loop_detector)?;
-    let min = simplify_slider_param(arena, min, env, loop_detector)?;
-    let max = simplify_slider_param(arena, max, env, loop_detector)?;
-    let step = simplify_slider_param(arena, step, env, loop_detector)?;
+    let widget = |parameter| WidgetParameter {
+        widget: kind_name,
+        label,
+        parameter,
+    };
+    let cur = simplify_slider_param(arena, cur, widget("init"), env, loop_detector)?;
+    let min = simplify_slider_param(arena, min, widget("min"), env, loop_detector)?;
+    let max = simplify_slider_param(arena, max, widget("max"), env, loop_detector)?;
+    let step = simplify_slider_param(arena, step, widget("step"), env, loop_detector)?;
 
     // Mirror C++ `checkRange`: if all three are known constants, verify init ∈ [min, max].
     let as_f64 = |node| match match_box(arena, node) {
@@ -143,11 +153,6 @@ fn eval_slider_like(
     if let (Some(init_val), Some(min_val), Some(max_val)) = (as_f64(cur), as_f64(min), as_f64(max))
         && (init_val < min_val || init_val > max_val)
     {
-        let kind_name = match kind {
-            SliderKind::VSlider => "vslider",
-            SliderKind::HSlider => "hslider",
-            SliderKind::NumEntry => "nentry",
-        };
         let label_text = label_node_text(arena, label).unwrap_or("").to_owned();
         return Err(EvalError::SliderInitOutOfRange {
             kind: kind_name,
@@ -166,30 +171,55 @@ fn eval_slider_like(
     })
 }
 
+/// The widget parameter [`simplify_slider_param`] evaluates, for its error.
+#[derive(Clone, Copy)]
+pub(crate) struct WidgetParameter {
+    widget: &'static str,
+    /// The evaluated label node.
+    label: TreeId,
+    parameter: &'static str,
+}
+
 /// Evaluates a slider/bargraph numeric parameter with the same semantics as
 /// C++ `eval2double`: `eval_box` followed by `propagate + simplify → boxReal`.
 ///
-/// If the expression cannot be reduced to a numeric constant at evaluation
-/// time, the evaluated (but not simplified) box is returned unchanged so that
-/// later passes can still handle it.
+/// A parameter that does not reduce to a number is an error, as in C++:
+/// [`EvalError::WidgetParameterNotConstant`], carrying the arity of the
+/// evaluated box so that the message tells the two C++ refusals apart (a box
+/// that is not `0→1`, `not a constant expression of type : (0->1)`, and a `0→1`
+/// box whose signal is not a number, `the parameter must be a real constant
+/// numerical expression`). Before 2026-09-24 the evaluated box was kept and
+/// the UI builder read it as 0: `0.5 : \(x).(hslider("a", x, 0, 1, 0.1))`
+/// compiled with an init of 0.
 ///
 /// # C++ equivalent
 ///
 /// `tree(eval2double(param, visited, localValEnv))` for slider/bargraph params
-/// in `compiler/evaluate/eval.cpp`.
+/// in `compiler/evaluate/eval.cpp`, whose `tree2double` (`tlib/tree.cpp`)
+/// raises the second refusal.
 pub(crate) fn simplify_slider_param(
     arena: &mut TreeArena,
     param: TreeId,
+    widget: WidgetParameter,
     env: &Environment,
     loop_detector: &mut LoopDetector,
 ) -> Result<TreeId, EvalError> {
     let evaled = eval_box(arena, param, env, loop_detector)?;
-    // Try to reduce to f64 constant → boxReal(x).
-    if let Ok(x) = eval_box_to_f64(arena, evaled) {
-        return Ok(BoxBuilder::new(arena).real(x));
+    match eval_box_to_f64(arena, evaled) {
+        Ok(x) => Ok(BoxBuilder::new(arena).real(x)),
+        Err(division @ EvalError::DivisionByZero { .. }) => Err(division),
+        Err(_) => Err(EvalError::WidgetParameterNotConstant {
+            node: param,
+            widget: widget.widget,
+            label: label_node_text(arena, widget.label)
+                .unwrap_or("")
+                .to_owned(),
+            parameter: widget.parameter,
+            expression: boxes::box_pp(arena, param, 0, boxes::FloatSize::Single)
+                .unwrap_or_else(|_| "the parameter".to_owned()),
+            arity: infer_box_arity_for_apply(arena, evaled, loop_detector),
+        }),
     }
-    // Fallback: return the evaluated box as-is (e.g. pattern var, slot).
-    Ok(evaled)
 }
 
 /// Evaluates one `soundfile` widget.
@@ -265,8 +295,13 @@ pub(crate) fn eval_vbargraph(
 ) -> Result<TreeId, EvalError> {
     let label = evaluated_label_node(arena, label, env, loop_detector)?;
     // C++ uses eval2double for bargraph min/max.
-    let min = simplify_slider_param(arena, min, env, loop_detector)?;
-    let max = simplify_slider_param(arena, max, env, loop_detector)?;
+    let widget = |parameter| WidgetParameter {
+        widget: "vbargraph",
+        label,
+        parameter,
+    };
+    let min = simplify_slider_param(arena, min, widget("min"), env, loop_detector)?;
+    let max = simplify_slider_param(arena, max, widget("max"), env, loop_detector)?;
     Ok(BoxBuilder::new(arena).vbargraph(label, min, max))
 }
 
@@ -281,7 +316,12 @@ pub(crate) fn eval_hbargraph(
 ) -> Result<TreeId, EvalError> {
     let label = evaluated_label_node(arena, label, env, loop_detector)?;
     // C++ uses eval2double for bargraph min/max.
-    let min = simplify_slider_param(arena, min, env, loop_detector)?;
-    let max = simplify_slider_param(arena, max, env, loop_detector)?;
+    let widget = |parameter| WidgetParameter {
+        widget: "hbargraph",
+        label,
+        parameter,
+    };
+    let min = simplify_slider_param(arena, min, widget("min"), env, loop_detector)?;
+    let max = simplify_slider_param(arena, max, widget("max"), env, loop_detector)?;
     Ok(BoxBuilder::new(arena).hbargraph(label, min, max))
 }

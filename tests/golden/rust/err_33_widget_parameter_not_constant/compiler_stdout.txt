@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_33_widget_parameter_not_constant.dsp
+bytes=472
+lines=7
+fnv1a64=d24d5b8200418781

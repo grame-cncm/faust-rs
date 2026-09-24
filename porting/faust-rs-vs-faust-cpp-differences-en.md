@@ -466,6 +466,30 @@ must run unchanged with Faust C++ should not pass them.
 - Tests: `crates/compiler/tests/closed_box_memo.rs`,
   `propagate::tests::closed_clocked_box_is_one_block_across_slot_environments`.
 
+### DIFF-BEH-014 — a widget parameter that is not a compile-time number
+
+- Status: `adapted` (same rejection, different report), fixed 2026-09-24.
+- Both compilers reject a `hslider`, `vslider` or `nentry` init, min, max or
+  step, or a bargraph min or max, that does not fold to a number. C++ stops in
+  `eval2double` (`compiler/evaluate/eval.cpp`) with `not a constant expression
+  of type : (0->1)` when the parameter box is not `0→1` (`_`, `(1, 2)`), and
+  in `tree2double` (`compiler/tlib/tree.cpp`) with `the parameter must be a
+  real constant numerical expression : SigInput[10001]` when it is a `0→1`
+  signal known only at run time (`0.5 : \(x).(hslider("a", x, 0, 1, 0.1))`,
+  a `case` rule applied with `:`, `vslider("a", 0.5, 0, button("b"), 0.1)`).
+  Rust raises `FRS-EVAL-0011` at the same point, located in the source, with
+  the C++ wording, the widget, its label, the parameter and the expression as
+  written.
+- Until 2026-09-24 Rust kept the unevaluated parameter and the UI builder read
+  it as 0: those programs compiled, with an init, a min or a max of 0, and a
+  bargraph whose max was a lambda argument failed later with a propagation
+  arity error.
+- Compatibility impact: none for a program C++ accepts; the programs Rust used
+  to accept are the ones C++ rejects.
+- Evidence: [`err_33_widget_parameter_not_constant.dsp`](../tests/corpus/err_33_widget_parameter_not_constant.dsp),
+  `a_widget_parameter_that_is_not_a_number_is_refused_like_the_reference` in
+  `crates/compiler/tests/diagnostic_errors.rs`.
+
 ## 6. Additional backends and delivery forms
 
 ### DIFF-BACK-001 — Cranelift

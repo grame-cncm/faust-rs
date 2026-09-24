@@ -1125,3 +1125,76 @@ fn duplicated_seeds_stay_legal() {
         .compile_source_to_signals("duplicated_seeds.dsp", source)
         .expect("(x, x) is not a dependent seed");
 }
+
+#[test]
+fn a_widget_parameter_that_is_not_a_number_is_refused_like_the_reference() {
+    // the reported program: a lambda applied with `:` binds its argument to an
+    // input signal, which the slider took as an init of 0
+    let source = read_corpus("err_33_widget_parameter_not_constant.dsp");
+    let err = Compiler::new()
+        .compile_source_to_signals("err_33_widget_parameter_not_constant.dsp", &source)
+        .expect_err("a signal as slider init");
+    let first = &err.diagnostic_bundle().as_slice()[0];
+    assert_eq!(first.code.0, "FRS-EVAL-0011");
+    assert_eq!(first.stage, Stage::Eval);
+    assert_eq!(
+        first.message.as_ref(),
+        "the init of hslider(\"a\") must be a real constant numerical expression, and `x` is not"
+    );
+    assert!(!first.labels.is_empty(), "not located");
+
+    // every widget parameter, both refusals of the reference: a 0->1 signal
+    // (`tree2double`) and a box of another type (`eval2double`)
+    for (source, message) in [
+        (
+            "process = vslider(\"a\", 0.5, 0, button(\"b\"), 0.1);",
+            "the max of vslider(\"a\") must be a real constant numerical expression, and `button(\"b\")` is not",
+        ),
+        (
+            "f = case { (x) => nentry(\"n\", x, 0, 10, 1); };\nprocess = 3 : f;",
+            "the init of nentry(\"n\") must be a real constant numerical expression, and `x` is not",
+        ),
+        (
+            "process = 0.5 : \\(x).(hbargraph(\"m\", 0, x));",
+            "the max of hbargraph(\"m\") must be a real constant numerical expression, and `x` is not",
+        ),
+        (
+            "process = _ <: \\(x).(vbargraph(\"m\", x, 1));",
+            "the min of vbargraph(\"m\") must be a real constant numerical expression, and `x` is not",
+        ),
+        (
+            "process = hslider(\"a\", 0.5, 0, 1, _);",
+            "the step of hslider(\"a\") is not a constant expression of type (0->1): `_` has type (1->1)",
+        ),
+        (
+            "process = hslider(\"a\", (1, 2), 0, 1, 0.1);",
+            "the init of hslider(\"a\") is not a constant expression of type (0->1): `1,2` has type (0->2)",
+        ),
+    ] {
+        let err = Compiler::new()
+            .compile_source_to_signals("widget.dsp", source)
+            .expect_err(source);
+        let first = &err.diagnostic_bundle().as_slice()[0];
+        assert_eq!(first.code.0, "FRS-EVAL-0011", "{source}");
+        assert_eq!(first.message.as_ref(), message, "{source}");
+    }
+
+    // a constant parameter, however written, still compiles; a division by
+    // zero in one stays that error
+    Compiler::new()
+        .compile_source_to_signals(
+            "widget.dsp",
+            "f(x) = hslider(\"a\", x, 0, 2 * x, x / 10); process = f(0.5) + (0.25 : \\(y).(y * 2));",
+        )
+        .expect("constant widget parameters");
+    let err = Compiler::new()
+        .compile_source_to_signals(
+            "widget.dsp",
+            "process = hslider(\"a\", 0.5, 0, 1 / 0, 0.1);",
+        )
+        .expect_err("a division by zero");
+    assert_eq!(
+        err.diagnostic_bundle().as_slice()[0].code.0,
+        "FRS-EVAL-0007"
+    );
+}

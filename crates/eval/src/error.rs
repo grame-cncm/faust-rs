@@ -272,6 +272,20 @@ pub enum EvalError {
         min_bits: u64,
         max_bits: u64,
     },
+    /// A slider, nentry or bargraph parameter that does not evaluate to a
+    /// number. `arity` is the arity of the evaluated parameter box: `(0, 1)`
+    /// for a signal known only at run time (C++ `tree2double`: "the parameter
+    /// must be a real constant numerical expression"), anything else for a box
+    /// of the wrong type (C++ `eval2double`: "not a constant expression of
+    /// type : (0->1)"), `None` when the arity is unknown.
+    WidgetParameterNotConstant {
+        node: TreeId,
+        widget: &'static str,
+        label: String,
+        parameter: &'static str,
+        expression: String,
+        arity: Option<(usize, usize)>,
+    },
     /// A constant expression divides by a constant zero: `2.0 / 0`,
     /// `1 / (2 - 2)`, `par(i, 2, 1.0 / i)` at `i = 0`.
     ///
@@ -460,6 +474,23 @@ impl Display for EvalError {
                     node.as_u32()
                 )
             }
+            Self::WidgetParameterNotConstant {
+                widget,
+                label,
+                parameter,
+                expression,
+                arity,
+                ..
+            } => match arity {
+                Some((ins, outs)) if (*ins, *outs) != (0, 1) => write!(
+                    f,
+                    "the {parameter} of {widget}(\"{label}\") is not a constant expression of type (0->1): `{expression}` has type ({ins}->{outs})"
+                ),
+                _ => write!(
+                    f,
+                    "the {parameter} of {widget}(\"{label}\") must be a real constant numerical expression, and `{expression}` is not"
+                ),
+            },
             // the reference's words: `ERROR : division by 0 in 2 / 0`
             Self::DivisionByZero { detail, .. } => write!(f, "division by 0 in {detail}"),
             Self::SliderInitOutOfRange {
@@ -830,6 +861,29 @@ impl ToDiagnostic for EvalError {
                 ))
                 .with_note("rule: init must satisfy min <= init <= max")
                 .with_help(format!("set init to a value in [{min}, {max}], e.g. {min}"))
+            }
+            Self::WidgetParameterNotConstant { widget, arity, .. } => {
+                let parameters = if widget.ends_with("bargraph") {
+                    "its min and max"
+                } else {
+                    "its init, min, max and step"
+                };
+                let diagnostic = Diagnostic::new(
+                    Severity::Error,
+                    Stage::Eval,
+                    codes::EVAL_WIDGET_PARAMETER_NOT_CONSTANT,
+                    message,
+                )
+                .with_note(format!(
+                    "rule: the parameters of a `{widget}`, {parameters}, are evaluated at compile time and must fold to numbers"
+                ));
+                if *arity == Some((0, 1)) {
+                    diagnostic
+                        .with_note("computed: the parameter is a signal known only at run time: an input, a UI control, or the argument of a function applied with `:`")
+                        .with_help("pass a constant; a function whose argument sets a widget parameter must be called with it, `f(0.5)`, not composed with it, `0.5 : f`")
+                } else {
+                    diagnostic.with_help("pass a single constant number")
+                }
             }
             _ => Diagnostic::new(
                 Severity::Error,

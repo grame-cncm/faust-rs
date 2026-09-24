@@ -61,6 +61,15 @@ pub const EVAL_DIVISION_BY_ZERO: DiagnosticCode = DiagnosticCode("FRS-EVAL-0007"
 /// pushed on `gWarningMessages` by the modulation branch of `eval.cpp` and
 /// printed under `-wall`.
 pub const EVAL_MODULATION_NO_MATCH: DiagnosticCode = DiagnosticCode("FRS-EVAL-0008");
+/// A slider, nentry or bargraph parameter that does not evaluate to a
+/// compile-time number.
+///
+/// C++ equivalent: `eval2double` in `compiler/evaluate/eval.cpp` ("not a
+/// constant expression of type : (0->1)") and `tree2double` in
+/// `compiler/tlib/tree.cpp` ("the parameter must be a real constant numerical
+/// expression"). Numbers 9 and 10 of this family are taken by the unmerged
+/// `control-inputs-wildcard` branch.
+pub const EVAL_WIDGET_PARAMETER_NOT_CONSTANT: DiagnosticCode = DiagnosticCode("FRS-EVAL-0011");
 /// Generic eval failure fallback code.
 pub const EVAL_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0099");
 
@@ -180,6 +189,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         EVAL_SLIDER_INIT_OUT_OF_RANGE,
         EVAL_DIVISION_BY_ZERO,
         EVAL_MODULATION_NO_MATCH,
+        EVAL_WIDGET_PARAMETER_NOT_CONSTANT,
         EVAL_GENERIC_FAILURE,
         PROP_UNSUPPORTED_BOX,
         PROP_ARITY_MISMATCH,
