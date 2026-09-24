@@ -140,7 +140,8 @@ verified Rust extension must not be presented as a proof of C++ parity.
   label shares one input between its matches (kept, as in C++). A wildcard
   matching nothing is the error `FRS-EVAL-0010`; a literal target matching
   nothing stays the C++ warning and dangling input (`FRS-EVAL-0008`). An index
-  past the count is `FRS-EVAL-0009`.
+  that is not a compile-time integer, negative or past the count is
+  `FRS-EVAL-0009`.
 - Compatibility impact: the four names become reserved words, so a program
   that defines `cinputs`, `cinput`, `coutputs` or `coutput` no longer parses.
   The C++ compiler rejects the primitives as unknown identifiers and parses a

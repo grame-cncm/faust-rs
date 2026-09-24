@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_32_cinput_arguments_swapped.dsp
+bytes=528
+lines=9
+fnv1a64=3ec903ce6ecad57d

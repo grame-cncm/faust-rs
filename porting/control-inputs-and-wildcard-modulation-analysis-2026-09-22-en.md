@@ -204,7 +204,7 @@ Branch `control-inputs-wildcard`. Syntax note: `docs/control-inputs-en.md`; regi
 
 **How the wildcard resolves an occurrence.** `implant_wildcard` (`crates/eval/src/modulation.rs`) walks the lowered body with `propagate::UiGroupContext`, the same group-context key the UI builder uses, restarting from the root context at `fad`/`rad` seeds as the builder does, and looks every widget occurrence up in the control list; matching is decided per control on its interface path, so every occurrence of one control (body and seed alike) gets the same slot. The walk is memoized per (box, context).
 
-**Codes.** `FRS-EVAL-0009` (index out of range), `FRS-EVAL-0010` (wildcard matching nothing); an operand that is not a block diagram is `FRS-EVAL-0099`.
+**Codes.** `FRS-EVAL-0009` (index not a compile-time integer, negative, or out of range; a non-constant index next to a constant expression is reported as swapped arguments, `tests/corpus/err_32_cinput_arguments_swapped.dsp`), `FRS-EVAL-0010` (wildcard matching nothing); an operand that is not a block diagram is `FRS-EVAL-0099`.
 
 **Evidence.** `crates/compiler/tests/control_inputs.rs` (order against the program's own JSON, `cinput` values, empty list, a box under three groups, dead widgets, `"*"` equal to one literal target per control to the bit, one-input modulators, `fad` on `cinputs`, a rebound `fad` seed, both error codes, `"stage*"` staying literal); `adaptive_operators_follow_the_hand_written_loop` in `crates/compiler/tests/optimizers_lib.rs` (fixture `tests/corpus/opt_adaptive_vs_hand.dsp`): `adaptive_fad` on a three-slider model follows `descend_N_fad_clocked` written by hand to the bit, `adaptive_rad` converges to the same values. 
 

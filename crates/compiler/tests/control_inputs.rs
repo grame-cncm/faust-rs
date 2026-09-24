@@ -253,6 +253,65 @@ fn a_wildcard_matching_nothing_is_frs_eval_0010() {
     assert_eq!(refusal_codes(name, &fixture(name)), ["FRS-EVAL-0010"]);
 }
 
+/// The message and the help of the error `source` is refused with.
+fn refusal(name: &str, source: &str) -> (String, Vec<String>) {
+    let error = Compiler::new()
+        .compile_source_to_interp(name, source, &InterpOptions::default())
+        .map(|_| ())
+        .expect_err(source);
+    let bundle = error.diagnostic_bundle();
+    let first = bundle.as_slice().first().expect("one diagnostic");
+    (
+        first.message.to_string(),
+        first.help.iter().map(ToString::to_string).collect(),
+    )
+}
+
+#[test]
+fn swapped_arguments_name_the_index_and_suggest_the_order() {
+    let name = "err_32_cinput_arguments_swapped";
+    assert_eq!(refusal_codes(name, &fixture(name)), ["FRS-EVAL-0009"]);
+    let (message, help) = refusal(name, &fixture(name));
+    assert_eq!(
+        message,
+        "the index of `cinput` must be a compile-time integer, and `freq1` is not"
+    );
+    assert_eq!(help, ["write `cinput(0, freq1)`"]);
+}
+
+#[test]
+fn a_signal_index_without_a_constant_expression_suggests_no_swap() {
+    let source =
+        "g = hslider(\"g\", 0, 0, 1, 0.1); process = coutput(g, g : hbargraph(\"m\", 0, 1));";
+    assert_eq!(
+        refusal_codes("control_inputs.dsp", source),
+        ["FRS-EVAL-0009"]
+    );
+    let (message, help) = refusal("control_inputs.dsp", source);
+    assert_eq!(
+        message,
+        "the index of `coutput` must be a compile-time integer, and `g` is not"
+    );
+    assert_eq!(
+        help,
+        [
+            "use an integer constant, or iterate with `par(i, outputs(coutputs(e)), coutput(i, e) : ...)`"
+        ]
+    );
+}
+
+#[test]
+fn a_negative_index_is_reported_as_written() {
+    let (message, _) = refusal(
+        "control_inputs.dsp",
+        "process = cinput(-1, hslider(\"a\", 0, 0, 1, 0.1));",
+    );
+    assert_eq!(
+        message,
+        "`cinput` index -1 is out of range: the expression has 1 control input"
+    );
+}
+
 #[test]
 fn every_other_way_to_the_two_codes() {
     // coutput past the bargraphs, cinput on an expression without controls,

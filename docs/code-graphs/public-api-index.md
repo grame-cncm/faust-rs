@@ -1135,7 +1135,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `const` | `EVAL_SLIDER_INIT_OUT_OF_RANGE` | `crates/diagnostics/src/codes.rs:48` |
 | `const` | `EVAL_DIVISION_BY_ZERO` | `crates/diagnostics/src/codes.rs:54` |
 | `const` | `EVAL_MODULATION_NO_MATCH` | `crates/diagnostics/src/codes.rs:63` |
-| `const` | `EVAL_CONTROL_INDEX_OUT_OF_RANGE` | `crates/diagnostics/src/codes.rs:67` |
+| `const` | `EVAL_CONTROL_INDEX_INVALID` | `crates/diagnostics/src/codes.rs:67` |
 | `const` | `EVAL_MODULATION_WILDCARD_NO_MATCH` | `crates/diagnostics/src/codes.rs:72` |
 | `const` | `EVAL_WIDGET_PARAMETER_NOT_CONSTANT` | `crates/diagnostics/src/codes.rs:81` |
 | `const` | `EVAL_GENERIC_FAILURE` | `crates/diagnostics/src/codes.rs:83` |
@@ -1383,7 +1383,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `enum` | `EvalWarning` | `crates/eval/src/error.rs:48` |
 | `struct` | `EvalStats` | `crates/eval/src/error.rs:65` |
 | `enum` | `EvalError` | `crates/eval/src/error.rs:112` |
-| `fn` | `EvalError::symbol_suggestions` | `crates/eval/src/error.rs:341` |
+| `fn` | `EvalError::symbol_suggestions` | `crates/eval/src/error.rs:351` |
 | `mod` | `suggestions` | `crates/eval/src/lib.rs:181` |
 | `use` | `environment::Environment` | `crates/eval/src/lib.rs:197` |
 | `use` | `error` | `crates/eval/src/lib.rs:198` |

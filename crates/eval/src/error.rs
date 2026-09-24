@@ -202,13 +202,23 @@ pub enum EvalError {
         node: TreeId,
         primitive: &'static str,
     },
-    /// `cinput(i, e)` or `coutput(i, e)` with `i` at or past the count.
-    /// faust-rs extension.
+    /// `cinput(i, e)` or `coutput(i, e)` with `i` negative or at or past the
+    /// count. faust-rs extension.
     ControlIndexOutOfRange {
         node: TreeId,
         primitive: &'static str,
-        index: usize,
+        index: i64,
         count: usize,
+    },
+    /// `cinput(i, e)` or `coutput(i, e)` with an `i` that is not a
+    /// compile-time integer: `index` is its source text, `expression` that of
+    /// `e` when `e` is one, the arguments then likely swapped. faust-rs
+    /// extension.
+    ControlIndexNotConstant {
+        node: TreeId,
+        primitive: &'static str,
+        index: String,
+        expression: Option<String>,
     },
     /// A wildcard modulation target (`"*"`, `"group/*"`) that matches no
     /// control input of its body. faust-rs extension: a literal target that
@@ -458,16 +468,23 @@ impl Display for EvalError {
                 count,
                 ..
             } => {
-                let what = if *primitive == "cinput" {
-                    "control inputs"
-                } else {
-                    "bargraphs"
+                let what = match (*primitive == "cinput", *count == 1) {
+                    (true, true) => "control input",
+                    (true, false) => "control inputs",
+                    (false, true) => "bargraph",
+                    (false, false) => "bargraphs",
                 };
                 write!(
                     f,
                     "`{primitive}` index {index} is out of range: the expression has {count} {what}"
                 )
             }
+            Self::ControlIndexNotConstant {
+                primitive, index, ..
+            } => write!(
+                f,
+                "the index of `{primitive}` must be a compile-time integer, and `{index}` is not"
+            ),
             Self::ModulationWildcardNoMatch { target, .. } => write!(
                 f,
                 "the modulation target `{target}` matches no control input of the expression"
@@ -750,7 +767,7 @@ impl ToDiagnostic for EvalError {
                 Diagnostic::new(
                     Severity::Error,
                     Stage::Eval,
-                    codes::EVAL_CONTROL_INDEX_OUT_OF_RANGE,
+                    codes::EVAL_CONTROL_INDEX_INVALID,
                     message,
                 )
                 .with_note("rule: indices are 0-based, in the order of the program's interface")
@@ -762,6 +779,37 @@ impl ToDiagnostic for EvalError {
                         count - 1
                     )
                 })
+            }
+            Self::ControlIndexNotConstant {
+                primitive,
+                index,
+                expression,
+                ..
+            } => {
+                let list = if *primitive == "cinput" {
+                    "cinputs"
+                } else {
+                    "coutputs"
+                };
+                let diagnostic = Diagnostic::new(
+                    Severity::Error,
+                    Stage::Eval,
+                    codes::EVAL_CONTROL_INDEX_INVALID,
+                    message,
+                )
+                .with_note(format!(
+                    "rule: the signature is `{primitive}(i, e)`, the 0-based index `i` first, a number known at compile time, then the expression `e` whose controls are listed"
+                ));
+                match expression {
+                    Some(expression) => diagnostic
+                        .with_note(format!(
+                            "computed: the second argument `{expression}` is a constant, the arguments look swapped"
+                        ))
+                        .with_help(format!("write `{primitive}({expression}, {index})`")),
+                    None => diagnostic.with_help(format!(
+                        "use an integer constant, or iterate with `par(i, outputs({list}(e)), {primitive}(i, e) : ...)`"
+                    )),
+                }
             }
             Self::ModulationWildcardNoMatch { target, .. } => Diagnostic::new(
                 Severity::Error,

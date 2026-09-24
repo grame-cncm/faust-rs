@@ -55,8 +55,11 @@ coutput(i, e)    // the i-th bargraph, 0-based, as (bargraph, min, max)
 - **Evaluation.** At box evaluation, like `inputs(e)`: `e` is evaluated and
   lowered, then folded. `e` must be a closed block diagram; a function of
   signals (`e(x) = …`) is one.
-- **Errors.** An index at or past the count is `FRS-EVAL-0009`; an expression
-  that is not a block diagram is `FRS-EVAL-0099`.
+- **Errors.** An index that is not a compile-time integer, negative, or at or
+  past the count is `FRS-EVAL-0009`; the message names the index as written,
+  and when the expression is itself a constant (`cinput(freq, 0)`) it says the
+  arguments look swapped and suggests `cinput(0, freq)`. An expression that is
+  not a block diagram is `FRS-EVAL-0099`.
 
 ## 2. The wildcard modulation target `"*"`
 
