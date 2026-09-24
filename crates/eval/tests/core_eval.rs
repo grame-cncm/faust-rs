@@ -2280,3 +2280,47 @@ fn eval_process_modulation_target_label_substitutes_placeholders() {
     };
     expect_label(&arena, label, "gain3");
 }
+
+#[test]
+fn eval_process_tries_case_rules_in_textual_order_like_cpp() {
+    // The first rule that matches wins, in source order, as in the C++
+    // pattern matcher (whose `merge_rules` keeps each state's rules sorted by
+    // index). A general rule written before a specific one hides it. The
+    // automaton used to append rule lists, so `f(0)` picked the later `f(0)`.
+    let cases: &[(&str, i32)] = &[
+        ("f(n) = 1; f(0) = 2; process = f(0);", 1),
+        ("f(n) = 1; f(0) = 2; process = f(3);", 1),
+        (
+            "first_wins = case { (n) => 1; (0) => 2; }; process = first_wins(0);",
+            1,
+        ),
+        ("g(0) = 10; g(n) = 20; process = g(0);", 10),
+        ("g(0) = 10; g(n) = 20; process = g(5);", 20),
+        (
+            "h(x, 0) = 100; h(0, y) = 200; h(x, y) = 300; process = h(0, 0);",
+            100,
+        ),
+        (
+            "h(x, 0) = 100; h(0, y) = 200; h(x, y) = 300; process = h(0, 1);",
+            200,
+        ),
+        ("p(x) = 1; p((a, b)) = 2; process = p((1, 2));", 1),
+    ];
+    for (source, expected) in cases {
+        let parsed = parse_program(source, "<memory>");
+        assert!(
+            parsed.errors.is_empty(),
+            "parser should accept {source:?}: {:?}",
+            parsed.errors
+        );
+        let mut arena = parsed.state.arena;
+        let root = parsed.root.expect("parse should return a root");
+        let out = eval_process(&mut arena, root)
+            .unwrap_or_else(|e| panic!("{source:?} should evaluate like Faust C++: {e:?}"));
+        assert_eq!(
+            match_box(&arena, out),
+            BoxMatch::Int(*expected),
+            "{source:?} should select the first matching rule in textual order"
+        );
+    }
+}

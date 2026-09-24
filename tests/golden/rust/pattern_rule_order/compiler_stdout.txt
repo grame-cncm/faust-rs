@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=pattern_rule_order.dsp
+bytes=907
+lines=27
+fnv1a64=3314216d92944afc

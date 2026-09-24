@@ -453,6 +453,46 @@ fn make_var_state(automaton: &mut Automaton, n: usize, template_state_idx: usize
     start_idx
 }
 
+/// Merges the rule list `rules2` into `rules1`, keeping it sorted by rule index.
+///
+/// Both lists are sorted by [`Rule::r`] (source order); the merge is stable and,
+/// for equal indices, keeps the elements of `rules1` before those of `rules2`.
+/// A final state picks the **first** surviving rule of its list, so this order
+/// is what makes the first matching rule in textual order win: appending
+/// instead would let a later, more specific rule (`f(0)`) shadow an earlier
+/// general one (`f(n)`) whenever the specific rule's trie is built first and
+/// the general rule's completion is merged into it.
+///
+/// # C++ correspondence
+/// `static void merge_rules(list<Rule>&, list<Rule>&)`, which calls
+/// `std::list::merge` with `Rule::operator<` comparing the rule indices.
+fn merge_rules(rules1: &mut Vec<Rule>, rules2: Vec<Rule>) {
+    if rules2.is_empty() {
+        return;
+    }
+    let left = std::mem::take(rules1);
+    let mut merged = Vec::with_capacity(left.len() + rules2.len());
+    let mut a = left.into_iter().peekable();
+    let mut b = rules2.into_iter().peekable();
+    loop {
+        match (a.peek(), b.peek()) {
+            (Some(x), Some(y)) => {
+                // `std::list::merge` moves an element of the second list only
+                // when it is strictly smaller.
+                if y.r < x.r {
+                    merged.push(b.next().expect("peeked"));
+                } else {
+                    merged.push(a.next().expect("peeked"));
+                }
+            }
+            (Some(_), None) => merged.extend(a.by_ref()),
+            (None, Some(_)) => merged.extend(b.by_ref()),
+            (None, None) => break,
+        }
+    }
+    *rules1 = merged;
+}
+
 /// Merges trie rooted at `state2_idx` into `state1_idx` (destructive union).
 ///
 /// After merging, `state1_idx` contains the union of all rules and transitions from both
@@ -467,7 +507,7 @@ fn make_var_state(automaton: &mut Automaton, n: usize, template_state_idx: usize
 /// `static void merge_state(State* s1, State* s2)`.
 fn merge_state(automaton: &mut Automaton, state1_idx: usize, state2_idx: usize) {
     let rules2 = automaton.states[state2_idx].rules.clone();
-    automaton.states[state1_idx].rules.extend(rules2);
+    merge_rules(&mut automaton.states[state1_idx].rules, rules2);
 
     let trans2 = automaton.states[state2_idx].trans.clone();
     if trans2.is_empty() {
