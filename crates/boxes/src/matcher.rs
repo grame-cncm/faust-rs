@@ -139,6 +139,18 @@ pub enum BoxMatch<'a> {
     Modulation(BoxId, BoxId),
     Inputs(BoxId),
     Outputs(BoxId),
+    /// `cinputs(expr)`: the control inputs of `expr`, folded by eval to the
+    /// `par` of its widget boxes. faust-rs extension, no C++ equivalent.
+    CInputs(BoxId),
+    /// `cinput(index, expr)`: one control input of `expr`, folded by eval to
+    /// `(widget, init, min, max, step)`. faust-rs extension.
+    CInput(BoxId, BoxId),
+    /// `coutputs(expr)`: the bargraphs of `expr`, folded by eval to the `par`
+    /// of its bargraph boxes. faust-rs extension.
+    COutputs(BoxId),
+    /// `coutput(index, expr)`: one bargraph of `expr`, folded by eval to
+    /// `(bargraph, min, max)`. faust-rs extension.
+    COutput(BoxId, BoxId),
     /// Automatic differentiation wrapper preserving the wrapped block diagram
     /// until the post-eval propagation boundary.
     ///
@@ -277,6 +289,8 @@ pub fn match_box<'a>(arena: &'a TreeArena, b: BoxId) -> BoxMatch<'a> {
                         BOX_PATTERN_VAR_TAG => BoxMatch::PatternVar(c0),
                         BOX_INPUTS_TAG => BoxMatch::Inputs(c0),
                         BOX_OUTPUTS_TAG => BoxMatch::Outputs(c0),
+                        BOX_CINPUTS_TAG => BoxMatch::CInputs(c0),
+                        BOX_COUTPUTS_TAG => BoxMatch::COutputs(c0),
                         BOX_ONDEMAND_TAG => BoxMatch::Ondemand(c0),
                         BOX_UPSAMPLING_TAG => BoxMatch::Upsampling(c0),
                         BOX_DOWNSAMPLING_TAG => BoxMatch::Downsampling(c0),
@@ -297,6 +311,8 @@ pub fn match_box<'a>(arena: &'a TreeArena, b: BoxId) -> BoxMatch<'a> {
                         BOX_APPL_TAG => BoxMatch::Appl(c0, c1),
                         BOX_ACCESS_TAG => BoxMatch::Access(c0, c1),
                         BOX_SYMBOLIC_TAG => BoxMatch::Symbolic(c0, c1),
+                        BOX_CINPUT_TAG => BoxMatch::CInput(c0, c1),
+                        BOX_COUTPUT_TAG => BoxMatch::COutput(c0, c1),
                         BOX_WITH_LOCAL_DEF_TAG => BoxMatch::WithLocalDef(c0, c1),
                         BOX_MODIF_LOCAL_DEF_TAG => BoxMatch::ModifLocalDef(c0, c1),
                         BOX_METADATA_TAG => BoxMatch::Metadata(c0, c1),

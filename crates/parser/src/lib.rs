@@ -809,6 +809,24 @@ impl ParseState {
                 let prepared_expr = self.prepare_pattern(expr);
                 self.node_builder().outputs(prepared_expr)
             }
+            BoxMatch::CInputs(expr) => {
+                let prepared_expr = self.prepare_pattern(expr);
+                self.node_builder().cinputs(prepared_expr)
+            }
+            BoxMatch::COutputs(expr) => {
+                let prepared_expr = self.prepare_pattern(expr);
+                self.node_builder().coutputs(prepared_expr)
+            }
+            BoxMatch::CInput(index, expr) => {
+                let prepared_index = self.prepare_pattern(index);
+                let prepared_expr = self.prepare_pattern(expr);
+                self.node_builder().cinput(prepared_index, prepared_expr)
+            }
+            BoxMatch::COutput(index, expr) => {
+                let prepared_index = self.prepare_pattern(index);
+                let prepared_expr = self.prepare_pattern(expr);
+                self.node_builder().coutput(prepared_index, prepared_expr)
+            }
             BoxMatch::VGroup(label, expr) => {
                 let prepared_expr = self.prepare_pattern(expr);
                 self.node_builder().vgroup(label, prepared_expr)
@@ -2342,6 +2360,10 @@ fn normalize_expected_token(token: &str) -> Box<str> {
         "IPROD" => "prod",
         "INPUTS" => "inputs",
         "OUTPUTS" => "outputs",
+        "CINPUTS" => "cinputs",
+        "CINPUT" => "cinput",
+        "COUTPUTS" => "coutputs",
+        "COUTPUT" => "coutput",
         "FAUTODIFF" => "fad",
         "RAUTODIFF" => "rad",
         "ONDEMAND" => "ondemand",

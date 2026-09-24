@@ -148,6 +148,10 @@ pub struct LoopDetector {
     /// arena, and what keeps `apply_list`'s per-application probe linear on a
     /// shared box DAG instead of once per path.
     pub(crate) box_arity_cache: crate::apply::BoxArityCache,
+    /// Control inputs and bargraphs of a lowered box, per box: what
+    /// `cinputs`, `cinput`, `coutputs`, `coutput` and the wildcard modulation
+    /// read. `cinput(i, e)` in a `par(i, N, ...)` asks N times for the same box.
+    pub(crate) control_widgets_cache: ahash::HashMap<TreeId, Arc<propagate::ControlWidgets>>,
     /// The boxes the evaluator has produced: only those may take the
     /// normal-form fast path, a source tree of the same shape still having
     /// its constants to fold.
@@ -377,6 +381,7 @@ impl LoopDetector {
             symbolic_box_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             normal_form_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             box_arity_cache: crate::apply::BoxArityCache::with_hasher(ahash::RandomState::new()),
+            control_widgets_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             evaluated_boxes: ahash::HashSet::with_hasher(ahash::RandomState::new()),
             eval_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             structural_depth: 0,

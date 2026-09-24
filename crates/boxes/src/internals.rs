@@ -835,6 +835,34 @@ pub(crate) fn node_outputs(arena: &mut TreeArena, expr: BoxId) -> BoxId {
     intern_tag(arena, BOX_OUTPUTS_TAG, &[expr])
 }
 
+/// Builds `cinputs(expr)`: the control inputs of `expr` as a list of widget
+/// boxes. faust-rs extension, no C++ equivalent.
+#[must_use]
+pub(crate) fn node_cinputs(arena: &mut TreeArena, expr: BoxId) -> BoxId {
+    intern_tag(arena, BOX_CINPUTS_TAG, &[expr])
+}
+
+/// Builds `cinput(index, expr)`: one control input of `expr` as the list
+/// `(widget, init, min, max, step)`. faust-rs extension, no C++ equivalent.
+#[must_use]
+pub(crate) fn node_cinput(arena: &mut TreeArena, index: BoxId, expr: BoxId) -> BoxId {
+    intern_tag(arena, BOX_CINPUT_TAG, &[index, expr])
+}
+
+/// Builds `coutputs(expr)`: the bargraphs of `expr` as a list of bargraph
+/// boxes. faust-rs extension, no C++ equivalent.
+#[must_use]
+pub(crate) fn node_coutputs(arena: &mut TreeArena, expr: BoxId) -> BoxId {
+    intern_tag(arena, BOX_COUTPUTS_TAG, &[expr])
+}
+
+/// Builds `coutput(index, expr)`: one bargraph of `expr` as the list
+/// `(bargraph, min, max)`. faust-rs extension, no C++ equivalent.
+#[must_use]
+pub(crate) fn node_coutput(arena: &mut TreeArena, index: BoxId, expr: BoxId) -> BoxId {
+    intern_tag(arena, BOX_COUTPUT_TAG, &[index, expr])
+}
+
 /// Equivalent to C++ `boxOndemand`.
 #[must_use]
 pub(crate) fn node_ondemand(arena: &mut TreeArena, expr: BoxId) -> BoxId {

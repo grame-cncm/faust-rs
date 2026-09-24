@@ -196,6 +196,27 @@ pub enum EvalError {
         node: TreeId,
         construct: &'static str,
     },
+    /// `cinputs`, `cinput`, `coutputs` or `coutput` applied to an expression
+    /// that does not evaluate to a closed block diagram. faust-rs extension.
+    InvalidControlListOperand {
+        node: TreeId,
+        primitive: &'static str,
+    },
+    /// `cinput(i, e)` or `coutput(i, e)` with `i` at or past the count.
+    /// faust-rs extension.
+    ControlIndexOutOfRange {
+        node: TreeId,
+        primitive: &'static str,
+        index: usize,
+        count: usize,
+    },
+    /// A wildcard modulation target (`"*"`, `"group/*"`) that matches no
+    /// control input of its body. faust-rs extension: a literal target that
+    /// matches nothing is only the warning [`EvalWarning::ModulationNoMatch`].
+    ModulationWildcardNoMatch {
+        node: TreeId,
+        target: String,
+    },
     SourceFileNotFound {
         node: TreeId,
         construct: &'static str,
@@ -427,6 +448,30 @@ impl Display for EvalError {
             Self::InvalidModulationCircuit { reason, .. } => {
                 write!(f, "invalid modulation circuit: {reason}")
             }
+            Self::InvalidControlListOperand { primitive, .. } => write!(
+                f,
+                "`{primitive}` expects a closed block diagram as its expression"
+            ),
+            Self::ControlIndexOutOfRange {
+                primitive,
+                index,
+                count,
+                ..
+            } => {
+                let what = if *primitive == "cinput" {
+                    "control inputs"
+                } else {
+                    "bargraphs"
+                };
+                write!(
+                    f,
+                    "`{primitive}` index {index} is out of range: the expression has {count} {what}"
+                )
+            }
+            Self::ModulationWildcardNoMatch { target, .. } => write!(
+                f,
+                "the modulation target `{target}` matches no control input of the expression"
+            ),
             Self::InvalidSourceReference { construct, .. } => {
                 write!(
                     f,
@@ -682,6 +727,55 @@ impl ToDiagnostic for EvalError {
             .with_note("cause: modulation circuit violates Faust box-arity constraints")
             .with_note(format!("computed: {reason}"))
             .with_help("use a modulation circuit with at most 2 inputs and exactly 1 output"),
+            Self::InvalidControlListOperand { primitive, .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Eval,
+                codes::EVAL_GENERIC_FAILURE,
+                message,
+            )
+            .with_note(format!(
+                "cause: the expression of `{primitive}` still holds unapplied functions or free variables once evaluated"
+            ))
+            .with_help(format!(
+                "pass a block diagram, e.g. `{primitive}(component(\"x.dsp\"))` or `{primitive}(hslider(\"g\", 0, 0, 1, 0.01) : *(2))`"
+            )),
+            Self::ControlIndexOutOfRange {
+                primitive, count, ..
+            } => {
+                let list = if *primitive == "cinput" {
+                    "cinputs"
+                } else {
+                    "coutputs"
+                };
+                Diagnostic::new(
+                    Severity::Error,
+                    Stage::Eval,
+                    codes::EVAL_CONTROL_INDEX_OUT_OF_RANGE,
+                    message,
+                )
+                .with_note("rule: indices are 0-based, in the order of the program's interface")
+                .with_help(if *count == 0 {
+                    format!("the expression has none: `outputs({list}(e))` is 0")
+                } else {
+                    format!(
+                        "use an index in [0, {}], or iterate with `par(i, outputs({list}(e)), ...)`",
+                        count - 1
+                    )
+                })
+            }
+            Self::ModulationWildcardNoMatch { target, .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Eval,
+                codes::EVAL_MODULATION_WILDCARD_NO_MATCH,
+                message,
+            )
+            .with_note(
+                "rule: a wildcard target must rebind at least one slider, numentry, button or checkbox; bargraphs are never matched",
+            )
+            .with_note(format!(
+                "computed: `{target}` matched nothing; group prefixes are matched on the group labels in order, without a `h:`/`v:`/`t:` type prefix"
+            ))
+            .with_help("check the group names with `faust-rs -json`, or use `\"*\"` alone to match every control input"),
             Self::InvalidSourceReference { construct, .. } => Diagnostic::new(
                 Severity::Error,
                 Stage::Eval,

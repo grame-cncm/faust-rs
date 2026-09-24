@@ -644,6 +644,34 @@ impl<'a> BoxBuilder<'a> {
     }
 
     #[must_use]
+    /// Builds `cinputs(expr)`, the control inputs of `expr` as a list of its
+    /// widget boxes (faust-rs extension).
+    pub fn cinputs(&mut self, expr: BoxId) -> BoxId {
+        node_cinputs(self.arena, expr)
+    }
+
+    #[must_use]
+    /// Builds `cinput(index, expr)`, the `index`-th control input of `expr` as
+    /// the list `(widget, init, min, max, step)` (faust-rs extension).
+    pub fn cinput(&mut self, index: BoxId, expr: BoxId) -> BoxId {
+        node_cinput(self.arena, index, expr)
+    }
+
+    #[must_use]
+    /// Builds `coutputs(expr)`, the bargraphs of `expr` as a list of its
+    /// bargraph boxes (faust-rs extension).
+    pub fn coutputs(&mut self, expr: BoxId) -> BoxId {
+        node_coutputs(self.arena, expr)
+    }
+
+    #[must_use]
+    /// Builds `coutput(index, expr)`, the `index`-th bargraph of `expr` as the
+    /// list `(bargraph, min, max)` (faust-rs extension).
+    pub fn coutput(&mut self, index: BoxId, expr: BoxId) -> BoxId {
+        node_coutput(self.arena, index, expr)
+    }
+
+    #[must_use]
     /// Builds one box node for `fad(expr, seed)` and returns its `BoxId`.
     ///
     /// Source provenance (C++):

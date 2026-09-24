@@ -125,6 +125,34 @@ verified Rust extension must not be presented as a proof of C++ parity.
   [`ondemand_pipeline.rs`](../crates/compiler/tests/ondemand_pipeline.rs),
   [`fad_recursive_runtime.rs`](../crates/compiler/tests/fad_recursive_runtime.rs).
 
+### DIFF-SRC-004 — control inputs as boxes and the wildcard modulation target
+
+- Status: `extension`.
+- Rust surface: `cinputs(e)`, `cinput(i, e)`, `coutputs(e)`, `coutput(i, e)`
+  (new keywords), and the modulation target `"*"` / `"group/*"`.
+- Difference: the four primitives fold at evaluation to lists of `e`'s widget
+  boxes (`cinputs`: the `par` of its sliders, numentries, buttons and
+  checkboxes; `cinput`: `(widget, init, min, max, step)`; the bargraph twins
+  `(bargraph, min, max)`), in the order of `e`'s own interface (groups merged,
+  children sorted by raw label, as the C++ UI is). A wildcard target rebinds
+  every matched control input, bargraphs excepted, and gives a two-input
+  modulator **one extra input per control** in that order, where a literal
+  label shares one input between its matches (kept, as in C++). A wildcard
+  matching nothing is the error `FRS-EVAL-0010`; a literal target matching
+  nothing stays the C++ warning and dangling input (`FRS-EVAL-0008`). An index
+  past the count is `FRS-EVAL-0009`.
+- Compatibility impact: the four names become reserved words, so a program
+  that defines `cinputs`, `cinput`, `coutputs` or `coutput` no longer parses.
+  The C++ compiler rejects the primitives as unknown identifiers and parses a
+  wildcard target as a label that matches nothing (a dangling input and a
+  warning under `-wall`), so a program using them is a `faust-rs` program.
+  `optimizers.lib` 0.11.0 (`adaptive_fad`, `adaptive_rad`) depends on them.
+- Evidence: [`docs/control-inputs-en.md`](../docs/control-inputs-en.md),
+  [analysis and contract](control-inputs-and-wildcard-modulation-analysis-2026-09-22-en.md),
+  [`control_inputs.rs`](../crates/compiler/tests/control_inputs.rs),
+  `adaptive_operators_follow_the_hand_written_loop` in
+  [`optimizers_lib.rs`](../crates/compiler/tests/optimizers_lib.rs).
+
 ## 4. Command-line additions and differences
 
 ### 4.1 Rust-only code-generation options

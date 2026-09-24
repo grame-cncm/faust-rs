@@ -515,6 +515,7 @@ impl PropagateUiOptions {
 
 mod api;
 mod arity;
+mod control_widgets;
 mod engine;
 mod error;
 mod flat;
@@ -522,6 +523,7 @@ mod ui_build;
 
 pub use api::{propagate_typed, propagate_typed_with_ui};
 pub use arity::{box_arity_typed, make_sig_input_list};
+pub use control_widgets::{ControlWidget, ControlWidgets, UiGroupContext, control_widgets};
 pub use error::{DependentSeed, PropagateError};
 pub use flat::{FlatBoxBuildError, FlatBoxId, try_build_flat_box};
 

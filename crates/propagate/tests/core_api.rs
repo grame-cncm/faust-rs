@@ -2352,3 +2352,71 @@ fn assert_block_reverse_ad_projections(arena: &TreeArena, outs: &[TreeId]) -> Tr
     }
     carrier
 }
+
+#[test]
+fn control_widgets_lists_controls_in_interface_order_keyed_by_group_context() {
+    // `hslider("b"), hslider("a"), hgroup("z", hslider("c")), hgroup("g",
+    // hslider("c")) : hbargraph("m")`-like program: the interface sorts each
+    // group's children by label (a, b, g, z at the root), the same `c` box
+    // under two groups is two controls, and the bargraph is listed apart.
+    let mut arena = TreeArena::new();
+    let (root, b_slider, a_slider, c_slider, z_group, g_group) = {
+        let label = |arena: &mut TreeArena, text: &str| arena.string_lit(text);
+        let (lb, la, lc, lz, lg, lm) = (
+            label(&mut arena, "b"),
+            label(&mut arena, "a"),
+            label(&mut arena, "c"),
+            label(&mut arena, "z"),
+            label(&mut arena, "g"),
+            label(&mut arena, "m"),
+        );
+        let mut b = BoxBuilder::new(&mut arena);
+        let (zero, half, one, step) = (b.int(0), b.real(0.5), b.int(1), b.real(0.1));
+        let b_slider = b.hslider(lb, half, zero, one, step);
+        let a_slider = b.hslider(la, zero, zero, one, step);
+        let c_slider = b.hslider(lc, one, zero, one, step);
+        let z_group = b.hgroup(lz, c_slider);
+        let g_group = b.hgroup(lg, c_slider);
+        let left = b.par(b_slider, a_slider);
+        let right = b.par(z_group, g_group);
+        let all = b.par(left, right);
+        let add = b.add();
+        let sum = b.seq(all, add);
+        let sum = b.seq(sum, add);
+        let sum = b.seq(sum, add);
+        let meter = b.hbargraph(lm, zero, one);
+        (
+            b.seq(sum, meter),
+            b_slider,
+            a_slider,
+            c_slider,
+            z_group,
+            g_group,
+        )
+    };
+    let flat = propagate::try_build_flat_box(&arena, root).expect("flat box");
+    let widgets = propagate::control_widgets(&arena, flat);
+    let paths: Vec<Vec<String>> = widgets.inputs.iter().map(|w| w.path.clone()).collect();
+    assert_eq!(
+        paths,
+        [vec!["a"], vec!["b"], vec!["g", "c"], vec!["z", "c"]]
+            .map(|p| p.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>())
+    );
+    assert_eq!(
+        widgets.inputs.iter().map(|w| w.widget).collect::<Vec<_>>(),
+        [a_slider, b_slider, c_slider, c_slider]
+    );
+    assert_eq!(widgets.inputs[1].range.map(|r| r.init), Some(0.5));
+    assert_eq!(widgets.outputs.len(), 1);
+    assert_eq!(widgets.outputs[0].kind, ControlKind::HBargraph);
+
+    // an occurrence resolves to its control through the group context
+    let root_context = propagate::UiGroupContext::default();
+    let in_z = root_context.enter(&arena, z_group).expect("a group");
+    let in_g = root_context.enter(&arena, g_group).expect("a group");
+    assert_eq!(widgets.input_index(a_slider, root_context.key()), Some(0));
+    assert_eq!(widgets.input_index(c_slider, in_g.key()), Some(2));
+    assert_eq!(widgets.input_index(c_slider, in_z.key()), Some(3));
+    assert_eq!(widgets.input_index(c_slider, root_context.key()), None);
+    assert!(root_context.enter(&arena, a_slider).is_none());
+}

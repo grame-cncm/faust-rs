@@ -1,6 +1,6 @@
 # Current Faust Source Subset Supported by `faust-rs`
 
-Last updated: 2026-08-30
+Last updated: 2026-09-24
 
 Version: 0.8.0
 
@@ -242,6 +242,12 @@ This snapshot is based on:
   - `docs/faustprobe-user-guide-en.md`
   - `docs/user-cli-guide-en.md`
   - `porting/journal/2026-08-13.md` … `porting/journal/2026-08-28.md`
+- the Rust-only primitives `cinputs(e)`, `cinput(i, e)`, `coutputs(e)`,
+  `coutput(i, e)` (new reserved words) and the wildcard modulation target
+  `"*"` (`DIFF-SRC-004`) landed 2026-09-24 and reviewed against:
+  - `docs/control-inputs-en.md`
+  - `crates/compiler/tests/control_inputs.rs`
+  - `porting/journal/2026-09-24.md`
 
 The corresponding generated reports are:
 
