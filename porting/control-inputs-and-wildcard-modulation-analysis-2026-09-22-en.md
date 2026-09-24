@@ -1,7 +1,7 @@
 # Control inputs as first-class boxes, and a wildcard modulation target: towards a generic adaptive operator
 
 **Date:** 2026-09-22
-**Status:** analysis and contract (no implementation yet); revised 2026-09-23, `cinputs` and `coutputs` return lists rather than counts (section 3.1)
+**Status:** implemented 2026-09-24 (branch `control-inputs-wildcard`), with the decisions and corrections of section 7; revised 2026-09-23, `cinputs` and `coutputs` return lists rather than counts (section 3.1)
 **Scope:** four box-level primitives, `cinputs(e)`, `cinput(i, e)`, `coutputs(e)`, `coutput(i, e)`, and one extension of widget modulation, the target `"*"`, so that `optimizers.lib` can make an arbitrary Faust program learn its own sliders without the program being rewritten. Measured on the six faust-diff projects and on faust-rs `main-dev` at 7222dcc6.
 
 ---
@@ -41,7 +41,7 @@ The shared slot is the point the wildcard must not inherit: rebinding a program 
 
 ### 2.3 The UI builder
 
-`crates/propagate/src/ui_build.rs` walks the validated flat box DAG after propagation, registers each control once (a widget reachable through several paths is one `ControlSpec`) and places it in the group of its body occurrence; the order is the depth-first order of the box tree with the group stack, which is the order of `buildUserInterface` and of `faustprobe --list-params` before it sorts. This is the order `cinput(i, e)` must use, and the one the wildcard must use for its extra inputs, so that a host and a program agree on what "the i-th control" is.
+`crates/propagate/src/ui_build.rs` walks the validated flat box DAG after propagation, registers each control once (a widget reachable through several paths is one `ControlSpec`) and places it in the group of its body occurrence; the order is the depth-first order of the box tree with the group stack, which is the order of `buildUserInterface` and of `faustprobe --list-params` before it sorts. This is the order `cinput(i, e)` must use, and the one the wildcard must use for its extra inputs, so that a host and a program agree on what "the i-th control" is. *Corrected 2026-09-24:* the registration order is depth-first, but the order of `buildUserInterface` is not: the builder sorts each group's children, controls and groups together, by raw label (`[n]` prefix included) and merges groups of the same label, as the C++ compiler does (`b + a + hgroup("z", c) + [0]y + hgroup("g", d)` shows y, a, b, g/d, z/c in both). The implementation uses the interface order (section 7).
 
 ## 3. The contract
 
@@ -55,10 +55,10 @@ cinput(i, e)     // the i-th control input of e (0-based), as the list (widget, 
 The count is `outputs(cinputs(e))`, a compile-time constant like `inputs(e)`: no counting primitive. (A first version of this document had `cinputs` return the count; the list form replaces it, for the reasons at the end of this section.)
 
 - **What counts.** Every widget that produces a signal: `hslider`, `vslider`, `nentry`, `button`, `checkbox`. Bargraphs do not. A widget reached through several paths of the box DAG is one input (the UI builder's rule); two widgets with the same label in different groups are two.
-- **Order.** The UI order: depth-first traversal of the evaluated box tree, groups entered in place. Stable under `component`, `hgroup`, `library` prefixes.
+- **Order.** The UI order: the order of `e`'s own interface, groups merged by label and children sorted by raw label (section 7; the depth-first traversal first written here is not the interface order). Stable under `component`, `hgroup`, `library` prefixes.
 - **What `cinputs` returns.** A `par` of the N widget boxes, in that order, the same nodes as in `e`, without metadata: a bus of N signals whose i-th is `ba.take(i + 1, cinputs(e))`, and a list of seeds `fad` and `rad` take as they are. A program without control inputs gives the empty box `0 : !` (no input, no output), so that `outputs(cinputs(e))` is 0; a `par` over it downstream is then an error, and `adaptive_fad` must say so rather than fail on the `par`.
 - **What `cinput` returns.** A list of five boxes, so that `ba.take` reaches each: the widget box itself, its default, its minimum, its maximum, its step (a button or a checkbox: 0, 0, 1, 1). The widget box is **the same node** as in `e`: taken as a seed of `fad` or `rad`, it is recognised by identity, as the seed rule requires (`docs/fad-note-en.md` §1). The four numbers are the evaluated, folded constants of the widget (an expression such as `1.0 / base_tube_gain` is a number here, as `--list-params` shows it).
-- **Metadata.** The label's metadata is kept on the widget box, not in the list. A sixth entry, the scale (`0` linear, `1` for `[scale:log]`, `2` for `[scale:exp]`), is the one metadata a learning space needs; it is proposed as a sixth entry rather than a separate primitive, and is the only open point of this contract (section 6).
+- **Metadata.** The label's metadata is kept on the widget box, not in the list. A sixth entry, the scale (`0` linear, `1` for `[scale:log]`, `2` for `[scale:exp]`), is the one metadata a learning space needs; it was proposed as a sixth entry rather than a separate primitive (section 6). *Decided 2026-09-24:* no sixth entry for now, the tuple has five.
 - **When it is evaluated.** At box evaluation, after `eval` and `a2sb` of `e`, exactly as `inputs(e)`; `cinputs` folds to a `par` of the N widget boxes, `cinput` to a `par` of five boxes. `e` must be closed (no free box variables), as `inputs(e)` requires.
 
 With these two, the host-driven calibration of any program is one line:
@@ -79,14 +79,14 @@ coutputs(e)      // the bargraphs of e, as a list of the bargraph boxes
 coutput(i, e)    // the i-th bargraph, as the list (bargraph, min, max)
 ```
 
-Same order, same evaluation, count by `outputs(coutputs(e))`. The bargraph box is the `attach`ed signal's carrier: taking it as a signal reads what the program shows, its loss or its learned values, without a second output; `coutputs(e)` is all of a program's meters as one bus, what a page or a test reads in one line. Symmetric with `cinput`; not needed by the descents.
+Same order, same evaluation, count by `outputs(coutputs(e))`. The bargraph box is the `attach`ed signal's carrier: taking it as a signal reads what the program shows, its loss or its learned values, without a second output; `coutputs(e)` is all of a program's meters as one bus, what a page or a test reads in one line. Symmetric with `cinput`; not needed by the descents. *Corrected 2026-09-24:* a bargraph box has one input and one output, so `coutputs(e)` is a bus of N inputs and N outputs; the box alone does not read the value `e` shows, it has to be fed its signal.
 
 ### 3.3 The wildcard target `"*"`
 
 ```faust
 P, x : ["*": (!, _) -> e]                // e with every control input replaced by an input, in cinput order
 ["*": *(0.5) -> e]                       // every control input halved
-["h:amp/*": (!, _) -> e]                 // every control input under the group `amp`
+["amp/*": (!, _) -> e]                   // every control input under the group `amp` (no `h:` prefix, section 2.2)
 ```
 
 - **Matching.** A target whose last segment is `*` matches every control input whose path has the preceding segments as a subsequence (the existing rule), all of them if there is no preceding segment. Bargraphs are never matched (a modulated bargraph has no meaning). `*` is a whole segment: `"stage*"` is not proposed, the subsequence rule already gives group prefixes, and a glob inside a segment is a second language.
@@ -171,7 +171,7 @@ The operator removes the mechanical layer, one library per project; the loss, th
 ## 4. Implementation in faust-rs
 
 1. **Boxes.** Four box kinds in `crates/boxes` (`BOXCINPUTS`, `BOXCINPUT`, `BOXCOUTPUTS`, `BOXCOUTPUT`: tags, builder, matcher, printer), parsed as primitives with 1 and 2 arguments, next to `inputs`/`outputs` in the grammar's primitive table.
-2. **Eval.** Four arms next to `BoxMatch::Inputs`: evaluate and lower the inner box, then a walk shared with `implant_modulation`, `collect_control_inputs(arena, lowered) -> Vec<(TreeId widget, kind, cur, min, max, step)>`, depth-first with the group stack, deduplicating by `TreeId` (the lowered tree is a DAG: the same widget reached twice is one entry, as `ui_build.rs` does with its `visited` cache), skipping bargraphs; the numbers folded by the same evaluation the widget's arguments already went through. `cinputs` returns the `par` of the widget `TreeId`s (the empty box `0 : !` when there are none), `cinput(i, …)` the `par` of the five boxes (an `i` out of range: an error naming the count). The bargraph twins likewise.
+2. **Eval.** Four arms next to `BoxMatch::Inputs`: evaluate and lower the inner box, then a walk shared with `implant_modulation`, `collect_control_inputs(arena, lowered) -> Vec<(TreeId widget, kind, cur, min, max, step)>`, depth-first with the group stack, deduplicating by `TreeId` (the lowered tree is a DAG: the same widget reached twice is one entry, as `ui_build.rs` does with its `visited` cache), skipping bargraphs (*as implemented:* the list is the UI builder's own, keyed by widget and group context, section 7); the numbers folded by the same evaluation the widget's arguments already went through. `cinputs` returns the `par` of the widget `TreeId`s (the empty box `0 : !` when there are none), `cinput(i, …)` the `par` of the five boxes (an `i` out of range: an error naming the count). The bargraph twins likewise.
 3. **Modulation.** In `eval_modulation`, detect a last segment `*`; then `implant_modulation` takes a `slots: Vec<TreeId>` it fills with a fresh slot per matched widget instead of `rewrite.slot`, and the result is wrapped in `symbolic` once per slot, last slot innermost, so that the first matched widget is the first input. The literal-label path is untouched. The no-match error is new.
 4. **Tests.** Corpus fixtures: `cinputs` on `ampmodeler`-like programs with groups, duplicates and dead widgets (`outputs(cinputs(e))`, order, `cinput`'s values against `--list-params`); `fad(loss, cinputs(e))` equal to the hand-written `fad` lanes; a program without controls; `"*"` on a program with 29 widgets equal to the 29 explicit targets to the bit; `"group/*"`; a wildcard that matches nothing. The `impulse-tests` reference cannot cover them (C++ has none of this: an extension, as `fad` and `rad` are, to be listed with them in `docs/`).
 5. **Docs.** The syntax note for the four primitives and the wildcard, the modulation section of the manual port with the "one modulator per target" trap, `optimizers.lib` gaining `adaptive_fad` and `adaptive_rad` and its overview paragraph, the faust-ad skill. `adaptive_fad` on `ampmodeler.dsp` against `ampmodeler_online.dsp` with the 26 other parameters' rates at zero: the three knobs must follow the same trajectory to the bit, the test of section 3.4's code.
@@ -190,3 +190,20 @@ Estimated size: the eval arms and the walk are a day; the wildcard is an afterno
 1. The scale metadata: a sixth entry of `cinput`, or a separate `cscale(i, e)`; the sixth entry is proposed.
 2. Whether a widget rebound by `"*": (!, _)` should leave the UI; not proposed here (section 3.3), and worth an option of the UI builder later.
 3. Whether the wildcard should also be accepted by the C++ compiler; this document only asks that faust-rs's form be one the C++ grammar already parses (it does: a string label), so that a program using it fails there with a clear "no match" rather than a syntax error.
+
+## 7. As implemented (2026-09-24)
+
+Branch `control-inputs-wildcard`. Syntax note: `docs/control-inputs-en.md`; registry entry `DIFF-SRC-004`.
+
+**Decisions taken with the user.**
+
+- *Order:* the interface order, not a depth-first walk (section 2.3 corrected). The list is read off the UI program the propagation builds for the lowered `e` (`propagate::control_widgets`, `crates/propagate/src/control_widgets.rs`), so it cannot drift from the interface: groups merged by label, children sorted by raw label, label paths (`h:sub/x`) and relative group navigation as the UI builder decodes them.
+- *Identity:* one control per widget box **and group context**, the UI builder's key, not per `TreeId`: `par(i, 3, vgroup("Op %i", g))` is three controls, as in the interface, and `"*"` gives it three inputs. Caveat, not changed: as seeds of `fad`/`rad` the three copies of the same box resolve to one control (the seed aliasing of `DIFF-SRC-001`), so `fad(e, cinputs(e))` on such a program merges them.
+- *Scale:* no sixth entry; `cinput` returns five boxes (open point 1 closed).
+- *Scope:* primitives, wildcard, `optimizers.lib` 0.11.0 (`adaptive_fad`, `adaptive_rad`), tests and docs.
+
+**How the wildcard resolves an occurrence.** `implant_wildcard` (`crates/eval/src/modulation.rs`) walks the lowered body with `propagate::UiGroupContext`, the same group-context key the UI builder uses, restarting from the root context at `fad`/`rad` seeds as the builder does, and looks every widget occurrence up in the control list; matching is decided per control on its interface path, so every occurrence of one control (body and seed alike) gets the same slot. The walk is memoized per (box, context).
+
+**Codes.** `FRS-EVAL-0009` (index out of range), `FRS-EVAL-0010` (wildcard matching nothing); an operand that is not a block diagram is `FRS-EVAL-0099`.
+
+**Evidence.** `crates/compiler/tests/control_inputs.rs` (order against the program's own JSON, `cinput` values, empty list, a box under three groups, dead widgets, `"*"` equal to one literal target per control to the bit, one-input modulators, `fad` on `cinputs`, a rebound `fad` seed, both error codes, `"stage*"` staying literal); `adaptive_operators_follow_the_hand_written_loop` in `crates/compiler/tests/optimizers_lib.rs` (fixture `tests/corpus/opt_adaptive_vs_hand.dsp`): `adaptive_fad` on a three-slider model follows `descend_N_fad_clocked` written by hand to the bit, `adaptive_rad` converges to the same values. The ampmodeler comparison of section 4 step 5 lives in the sibling project and was not run here.

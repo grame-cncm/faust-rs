@@ -400,3 +400,35 @@ fn waveform_payload_keeps_parse_order() {
     assert_eq!(list_nth(&arena, list, 1), Some(two));
     assert_eq!(list_nth(&arena, list, 2), Some(three));
 }
+
+#[test]
+fn builder_matches_and_prints_control_list_primitives() {
+    // faust-rs extensions `cinputs(e)`, `cinput(i, e)`, `coutputs(e)`,
+    // `coutput(i, e)`: built, decoded to their own variants with their
+    // operands in order, and printed back in source syntax.
+    let mut arena = TreeArena::new();
+    let (wire, index, nodes) = {
+        let mut b = BoxBuilder::new(&mut arena);
+        let wire = b.wire();
+        let index = b.int(2);
+        let nodes = [
+            b.cinputs(wire),
+            b.cinput(index, wire),
+            b.coutputs(wire),
+            b.coutput(index, wire),
+        ];
+        (wire, index, nodes)
+    };
+    assert_eq!(match_box(&arena, nodes[0]), BoxMatch::CInputs(wire));
+    assert_eq!(match_box(&arena, nodes[1]), BoxMatch::CInput(index, wire));
+    assert_eq!(match_box(&arena, nodes[2]), BoxMatch::COutputs(wire));
+    assert_eq!(match_box(&arena, nodes[3]), BoxMatch::COutput(index, wire));
+    let printed: Vec<String> = nodes
+        .iter()
+        .map(|&node| boxes::box_pp(&arena, node, 0, boxes::FloatSize::Single).expect("printable"))
+        .collect();
+    assert_eq!(
+        printed,
+        ["cinputs(_)", "cinput(2, _)", "coutputs(_)", "coutput(2, _)"]
+    );
+}

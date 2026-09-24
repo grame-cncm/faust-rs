@@ -7,7 +7,10 @@
 //! - `eval_modulation_circuit` — evaluates and arity-checks the circuit argument;
 //! - `implant_modulation` / `implant_widget_if_match` — tree-walking rewriters
 //!   that splice the circuit around every widget whose path matches the target;
-//! - `widget_matches` / `modulation_target_path` — path-matching predicates.
+//! - `widget_matches` / `modulation_target_path` — path-matching predicates;
+//! - `eval_wildcard_modulation` / `implant_wildcard` — the faust-rs wildcard
+//!   target `"*"` (`"group/*"`): every control input matched, one extra input
+//!   per control, in interface order.
 //!
 //! Source provenance (C++): `compiler/evaluate/eval.cpp` modulation branch +
 //! `compiler/transform/boxModulationImplanter.cpp`.
@@ -69,6 +72,22 @@ pub(crate) fn eval_modulation(
             node: modulation_node,
             reason: "circuit should have exactly 1 output",
         });
+    }
+
+    if let Some(group_path) = wildcard_group_path(&target_path) {
+        return eval_wildcard_modulation(
+            arena,
+            modulation_node,
+            &target_label,
+            group_path,
+            &WildcardCircuit {
+                inputs,
+                circuit: modulation_circuit,
+            },
+            body,
+            env,
+            loop_detector,
+        );
     }
 
     let slot = if inputs == 2 {
@@ -364,4 +383,216 @@ pub(crate) fn modulation_target_path(label: &str) -> Vec<String> {
         .filter(|segment| !segment.is_empty())
         .rev()
         .collect()
+}
+
+/// The group prefix of a wildcard target, innermost group first, or `None`
+/// when the target is a literal label.
+///
+/// A target is a wildcard when its last segment is `*` (`target_path` holds
+/// the segments name first): `"*"` gives an empty prefix, `"amp/*"` gives
+/// `["amp"]`. `*` is a whole segment; `"stage*"` is a literal label.
+fn wildcard_group_path(target_path: &[String]) -> Option<&[String]> {
+    match target_path.split_first() {
+        Some((name, groups)) if name == "*" => Some(groups),
+        _ => None,
+    }
+}
+
+/// The modulation circuit of a wildcard modulation and its input count.
+struct WildcardCircuit {
+    inputs: usize,
+    circuit: TreeId,
+}
+
+/// Evaluates a modulation whose target is a wildcard (`"*"`, `"group/*"`).
+///
+/// faust-rs extension, no C++ equivalent (the reference parses the label and
+/// matches nothing). Contract in
+/// `porting/control-inputs-and-wildcard-modulation-analysis-2026-09-22-en.md`
+/// section 3.3:
+///
+/// - the controls are those of `cinputs(body)`, in the same interface order
+///   ([`controls_of_lowered`]); bargraphs are never matched;
+/// - a control matches when the group prefix of the target is a subsequence of
+///   its group path, innermost first (the literal rule, the `*` standing for
+///   the control's own label);
+/// - a two-input circuit gets one fresh slot **per matched control**, where a
+///   literal target shares one slot between its matches, and the slots become
+///   the first inputs of the result in interface order: the i-th extra input
+///   drives the i-th matched control;
+/// - a target that matches no control is an error
+///   ([`EvalError::ModulationWildcardNoMatch`]).
+#[allow(clippy::too_many_arguments)]
+fn eval_wildcard_modulation(
+    arena: &mut TreeArena,
+    modulation_node: TreeId,
+    target_label: &str,
+    group_path: &[String],
+    circuit: &WildcardCircuit,
+    body: TreeId,
+    env: &Environment,
+    loop_detector: &mut LoopDetector,
+) -> Result<TreeId, EvalError> {
+    let evaluated_body = eval_box(arena, body, env, loop_detector)?;
+    let lowered_body = a2sb(arena, evaluated_body, loop_detector)?;
+    let widgets = controls_of_lowered(arena, lowered_body, loop_detector).ok_or(
+        EvalError::InvalidControlListOperand {
+            node: modulation_node,
+            primitive: "a wildcard modulation",
+        },
+    )?;
+    let mut slots: Vec<Option<TreeId>> = Vec::with_capacity(widgets.inputs.len());
+    for entry in &widgets.inputs {
+        let (_label, groups) = entry
+            .path
+            .split_last()
+            .expect("a control path ends with the control's label");
+        let innermost_first: Vec<String> = groups.iter().rev().cloned().collect();
+        let matched = is_subsequence(group_path, &innermost_first);
+        // A zero- or one-input circuit adds no input: the slot is only a mark.
+        slots.push(matched.then(|| {
+            if circuit.inputs == 2 {
+                fresh_slot(arena, loop_detector)
+            } else {
+                circuit.circuit
+            }
+        }));
+    }
+    if slots.iter().all(Option::is_none) {
+        return Err(EvalError::ModulationWildcardNoMatch {
+            node: modulation_node,
+            target: target_label.to_owned(),
+        });
+    }
+    let mut walk = WildcardWalk {
+        widgets: &widgets,
+        slots: &slots,
+        circuit,
+        memo: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+    };
+    let mut rewritten = implant_wildcard(
+        arena,
+        lowered_body,
+        &propagate::UiGroupContext::default(),
+        &mut walk,
+    );
+    if circuit.inputs == 2 {
+        // Last slot innermost: the first matched control is the first input.
+        let mut b = BoxBuilder::new(arena);
+        for slot in slots.iter().rev().flatten() {
+            rewritten = b.symbolic(*slot, rewritten);
+        }
+    }
+    Ok(rewritten)
+}
+
+/// State of one wildcard rewrite.
+struct WildcardWalk<'a> {
+    widgets: &'a propagate::ControlWidgets,
+    /// Per control input, in interface order: its slot (two-input circuit),
+    /// a mark (other circuits), or `None` when it is not matched.
+    slots: &'a [Option<TreeId>],
+    circuit: &'a WildcardCircuit,
+    /// Rewritten box per `(box, group context)`: the lowered body is a DAG.
+    memo: ahash::HashMap<(TreeId, u64), TreeId>,
+}
+
+/// Rewrites every occurrence of a matched control input under `expr`.
+///
+/// The walk keeps the group context the UI builder keys controls with
+/// ([`propagate::UiGroupContext`]), so an occurrence is resolved to the same
+/// control `cinputs` lists; like the UI builder it restarts from the root
+/// context at the seeds of `fad` and `rad`, whose widgets alias the body's.
+fn implant_wildcard(
+    arena: &mut TreeArena,
+    expr: TreeId,
+    context: &propagate::UiGroupContext,
+    walk: &mut WildcardWalk<'_>,
+) -> TreeId {
+    let key = (expr, context.key());
+    if let Some(&done) = walk.memo.get(&key) {
+        return done;
+    }
+    let rewritten = match match_box(arena, expr) {
+        BoxMatch::Button(_)
+        | BoxMatch::Checkbox(_)
+        | BoxMatch::VSlider(..)
+        | BoxMatch::HSlider(..)
+        | BoxMatch::NumEntry(..) => {
+            let slot = walk
+                .widgets
+                .input_index(expr, context.key())
+                .and_then(|index| walk.slots[index]);
+            match slot {
+                None => expr,
+                Some(slot) => {
+                    let mut b = BoxBuilder::new(arena);
+                    match walk.circuit.inputs {
+                        0 => walk.circuit.circuit,
+                        1 => b.seq(expr, walk.circuit.circuit),
+                        _ => {
+                            let pair = b.par(expr, slot);
+                            b.seq(pair, walk.circuit.circuit)
+                        }
+                    }
+                }
+            }
+        }
+        BoxMatch::VBargraph(..) | BoxMatch::HBargraph(..) => expr,
+        BoxMatch::VGroup(label, inner) => {
+            let inner = implant_wildcard_group(arena, expr, inner, context, walk);
+            BoxBuilder::new(arena).vgroup(label, inner)
+        }
+        BoxMatch::HGroup(label, inner) => {
+            let inner = implant_wildcard_group(arena, expr, inner, context, walk);
+            BoxBuilder::new(arena).hgroup(label, inner)
+        }
+        BoxMatch::TGroup(label, inner) => {
+            let inner = implant_wildcard_group(arena, expr, inner, context, walk);
+            BoxBuilder::new(arena).tgroup(label, inner)
+        }
+        BoxMatch::ForwardAD(body, seed) => {
+            let body = implant_wildcard(arena, body, context, walk);
+            let seed = implant_wildcard(arena, seed, &propagate::UiGroupContext::default(), walk);
+            BoxBuilder::new(arena).forward_ad(body, seed)
+        }
+        BoxMatch::ReverseAD(body, seeds) => {
+            let body = implant_wildcard(arena, body, context, walk);
+            let seeds = implant_wildcard(arena, seeds, &propagate::UiGroupContext::default(), walk);
+            BoxBuilder::new(arena).reverse_ad(body, seeds)
+        }
+        _ => match arena.node(expr).cloned() {
+            Some(node) if !node.children.is_empty() => {
+                let mut rebuilt = Vec::with_capacity(node.children.len());
+                let mut changed = false;
+                for child in node.children.as_slice().iter().copied() {
+                    let child_rewritten = implant_wildcard(arena, child, context, walk);
+                    changed |= child_rewritten != child;
+                    rebuilt.push(child_rewritten);
+                }
+                if changed {
+                    arena.intern(node.kind, &rebuilt)
+                } else {
+                    expr
+                }
+            }
+            _ => expr,
+        },
+    };
+    walk.memo.insert(key, rewritten);
+    rewritten
+}
+
+/// Rewrites the body of the group box `group` in the context it opens.
+fn implant_wildcard_group(
+    arena: &mut TreeArena,
+    group: TreeId,
+    inner: TreeId,
+    context: &propagate::UiGroupContext,
+    walk: &mut WildcardWalk<'_>,
+) -> TreeId {
+    let inside = context
+        .enter(arena, group)
+        .expect("a group box enters a group context");
+    implant_wildcard(arena, inner, &inside, walk)
 }

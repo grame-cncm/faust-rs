@@ -759,7 +759,13 @@ impl Printer<'_> {
             | BoxMatch::Upsampling(inner)
             | BoxMatch::Downsampling(inner)
             | BoxMatch::Inputs(inner)
-            | BoxMatch::Outputs(inner) => vec![ChildRef::new(inner, PRIORITY_TOP)],
+            | BoxMatch::Outputs(inner)
+            | BoxMatch::CInputs(inner)
+            | BoxMatch::COutputs(inner) => vec![ChildRef::new(inner, PRIORITY_TOP)],
+            BoxMatch::CInput(index, expr) | BoxMatch::COutput(index, expr) => vec![
+                ChildRef::new(index, PRIORITY_ARGUMENT),
+                ChildRef::new(expr, PRIORITY_ARGUMENT),
+            ],
             // Both operands sit in a comma-separated argument list, so neither
             // may be printed unparenthesized: `rad(a,b : *, seeds)` re-parses
             // as a three-argument call. See `PRIORITY_ARGUMENT`.
@@ -850,6 +856,10 @@ impl Printer<'_> {
             BoxMatch::Downsampling(_) => format!("downsampling({})", parts[0]),
             BoxMatch::Inputs(_) => format!("inputs({})", parts[0]),
             BoxMatch::Outputs(_) => format!("outputs({})", parts[0]),
+            BoxMatch::CInputs(_) => format!("cinputs({})", parts[0]),
+            BoxMatch::COutputs(_) => format!("coutputs({})", parts[0]),
+            BoxMatch::CInput(_, _) => format!("cinput({}, {})", parts[0], parts[1]),
+            BoxMatch::COutput(_, _) => format!("coutput({}, {})", parts[0], parts[1]),
             BoxMatch::ForwardAD(_, _) => format!("fad({}, {})", parts[0], parts[1]),
             BoxMatch::ReverseAD(_, _) => format!("rad({}, {})", parts[0], parts[1]),
             BoxMatch::Modulation(ident, _) => {

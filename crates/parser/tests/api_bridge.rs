@@ -780,3 +780,47 @@ fn imported_box_occurrences_are_remapped_into_the_destination_arena() {
     assert_eq!(origins[0].location.file(), "child.lib");
     assert_eq!(origins[0].location.line(), 1);
 }
+
+#[test]
+fn parse_program_recognizes_control_list_primitives() {
+    // faust-rs extensions: `cinputs`, `cinput`, `coutputs` and `coutput` are
+    // keywords, parsed to their own box nodes; a longer identifier that
+    // starts with one of them stays an identifier.
+    let out = parse_program(
+        "e = hslider(\"g\", 0, 0, 1, 0.1); cinputs_n = 1;\n\
+         process = cinputs(e), cinput(0, e), coutputs(e), coutput(1 + 1, e), cinputs_n;",
+        "bridge_control_lists.dsp",
+    );
+    assert!(
+        out.errors.is_empty(),
+        "unexpected parse errors: {:?}",
+        out.errors
+    );
+    let arena = &out.state.arena;
+    let mut defs = out.root.expect("root should be present");
+    // the one definition whose expression is a `par`: `process`
+    let mut process = None;
+    while let (Some(def), Some(rest)) = (arena.hd(defs), arena.tl(defs)) {
+        let payload = arena.tl(def).expect("definition payload");
+        let expr = arena.tl(payload).expect("definition expression");
+        if matches!(match_box(arena, expr), BoxMatch::Par(_, _)) {
+            process = Some(expr);
+        }
+        defs = rest;
+    }
+    let mut expr = process.expect("process expression");
+    let mut seen = Vec::new();
+    while let BoxMatch::Par(left, right) = match_box(arena, expr) {
+        seen.push(left);
+        expr = right;
+    }
+    seen.push(expr);
+    assert!(matches!(match_box(arena, seen[0]), BoxMatch::CInputs(_)));
+    assert!(matches!(match_box(arena, seen[1]), BoxMatch::CInput(_, _)));
+    assert!(matches!(match_box(arena, seen[2]), BoxMatch::COutputs(_)));
+    assert!(matches!(match_box(arena, seen[3]), BoxMatch::COutput(_, _)));
+    assert!(matches!(
+        match_box(arena, seen[4]),
+        BoxMatch::Ident("cinputs_n")
+    ));
+}

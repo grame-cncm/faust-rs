@@ -144,7 +144,7 @@ observable in practice today.
 | `FRS-SRC-0005` | `source_reader` | A valid remote source was requested without an injected network capability. | `SourceReaderError::NetworkDisabled` → `to_diagnostics` |
 | `FRS-SRC-0006` | `source_reader` | An injected remote transport failed. | `SourceReaderError::RemoteFetch` → `to_diagnostics` |
 
-### `FRS-EVAL-*` — Box evaluation (10 codes)
+### `FRS-EVAL-*` — Box evaluation (12 codes)
 
 | Code | Stage | Meaning | Raised at |
 |---|---|---|---|
@@ -156,6 +156,8 @@ observable in practice today.
 | `FRS-EVAL-0006` | `eval` | Slider/numentry init value is outside the `[min, max]` range. | `crates/eval/src/error.rs:692` |
 | `FRS-EVAL-0007` | `eval` | A constant expression divides by a constant zero (`2.0 / 0`, `1 / (2 - 2)`, `par(i, 2, 1.0 / i)` at `i = 0`), in integers or in reals: the reference compiler's `ERROR : division by 0 in 2 / 0`, no infinity is folded. | `EvalError::DivisionByZero`, raised by `eval_seq_value` where a numeric sequence is folded (`crates/eval/src/lib.rs`) |
 | `FRS-EVAL-0008` | `eval` | Warning, with the semantic warnings only: a widget modulation `["target" ... -> e]` whose target matches no widget of `e`. The program is left as it is, a two-input modulator keeping its dangling extra input, as the reference compiler does (its `WARNING : no modulation of: '...' took place`, under `-wall`). | `EvalWarning::ModulationNoMatch`, recorded by `eval_modulation` (`crates/eval/src/modulation.rs`), reported by the compiler's evaluation phase (`crates/compiler/src/lib.rs`) |
+| `FRS-EVAL-0009` | `eval` | `cinput(i, e)` or `coutput(i, e)` with an index `i` at or past the number of control inputs (bargraphs) of `e`. faust-rs extension, no C++ equivalent. | `EvalError::ControlIndexOutOfRange`, raised by `eval_control_entry` (`crates/eval/src/control_inputs.rs`) |
+| `FRS-EVAL-0010` | `eval` | A wildcard modulation `["*" ... -> e]` or `["group/*" ... -> e]` whose target matches no control input of `e`. An error, where a literal target matching nothing is the warning `FRS-EVAL-0008`. faust-rs extension, no C++ equivalent. | `EvalError::ModulationWildcardNoMatch`, raised by `eval_wildcard_modulation` (`crates/eval/src/modulation.rs`) |
 | `FRS-EVAL-0011` | `eval` | A `hslider`, `vslider` or `nentry` init, min, max or step, or a bargraph min or max, that does not evaluate to a compile-time number: a signal known only at run time (an input, a UI control, the argument of a function applied with `:`), the reference's `ERROR : the parameter must be a real constant numerical expression`, or a box that is not `0→1`, its `not a constant expression of type : (0->1)`. The message names the widget, its label, the parameter and the expression. `0009` and `0010` are taken by the unmerged `control-inputs-wildcard` branch. | `EvalError::WidgetParameterNotConstant`, raised by `simplify_slider_param` (`crates/eval/src/ui_widgets.rs`) |
 | `FRS-EVAL-0099` | `eval` | Generic eval failure fallback code (covers eval-error variants without a dedicated code). | `crates/eval/src/error.rs` (multiple sites, e.g. `:508,517,530,539,554,584,592,603,646,669,704`) |
 

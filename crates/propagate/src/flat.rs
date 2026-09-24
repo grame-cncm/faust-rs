@@ -327,6 +327,12 @@ pub(crate) fn flat_node_kind(
         BoxMatch::PatternVar(_) => Err(flat_box_unexpected(node_id, "patternvar")),
         BoxMatch::Abstr(_, _) => Err(flat_box_unexpected(node_id, "abstr")),
         BoxMatch::Modulation(_, _) => Err(flat_box_unexpected(node_id, "modulation")),
+        // Eval folds the control-input primitives to widget lists; one left
+        // here was never evaluated.
+        BoxMatch::CInputs(_) => Err(flat_box_unexpected(node_id, "cinputs")),
+        BoxMatch::CInput(_, _) => Err(flat_box_unexpected(node_id, "cinput")),
+        BoxMatch::COutputs(_) => Err(flat_box_unexpected(node_id, "coutputs")),
+        BoxMatch::COutput(_, _) => Err(flat_box_unexpected(node_id, "coutput")),
     }
 }
 

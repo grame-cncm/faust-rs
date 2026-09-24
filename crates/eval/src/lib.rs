@@ -166,6 +166,7 @@ use tlib::{NodeKind, TreeArena, TreeId, tree_to_double, tree_to_int};
 
 mod apply;
 mod case;
+mod control_inputs;
 mod definitions;
 pub(crate) mod environment;
 pub(crate) mod error;
@@ -185,6 +186,7 @@ use source_context::CachedLoadedSource;
 
 use apply::*;
 use case::*;
+use control_inputs::*;
 use definitions::*;
 use iteration::*;
 use label::*;
@@ -1100,6 +1102,36 @@ fn eval_value_uncached(
                 Ok(EvalValue::Box(bld.outputs(lowered)))
             }
         }
+        // faust-rs extension: a program's controls as box lists, folded here
+        // like `inputs(e)` (see `control_inputs.rs`).
+        BoxMatch::CInputs(inner) => {
+            eval_control_list(arena, expr, inner, ControlList::Inputs, env, loop_detector)
+                .map(EvalValue::Box)
+        }
+        BoxMatch::COutputs(inner) => {
+            eval_control_list(arena, expr, inner, ControlList::Outputs, env, loop_detector)
+                .map(EvalValue::Box)
+        }
+        BoxMatch::CInput(index, inner) => eval_control_entry(
+            arena,
+            expr,
+            index,
+            inner,
+            ControlList::Inputs,
+            env,
+            loop_detector,
+        )
+        .map(EvalValue::Box),
+        BoxMatch::COutput(index, inner) => eval_control_entry(
+            arena,
+            expr,
+            index,
+            inner,
+            ControlList::Outputs,
+            env,
+            loop_detector,
+        )
+        .map(EvalValue::Box),
         BoxMatch::Inputs(inner) => {
             let inner_val = eval_box(arena, inner, env, loop_detector)?;
             let lowered = a2sb(arena, inner_val, loop_detector)?;
