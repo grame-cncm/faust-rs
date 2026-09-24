@@ -279,6 +279,42 @@ fn bus_loops_fad_and_rad_follow_the_same_trajectory_on_an_fir() {
 }
 
 #[test]
+fn adaptive_operators_follow_the_hand_written_loop() {
+    // `adaptive_fad` on a three-slider model, never rewritten, against
+    // `descend_N_fad_clocked` on the same model written by hand with the
+    // sliders' bounds and defaults copied in interface order: the same
+    // trajectory to the bit. `adaptive_rad` converges too (no recursion
+    // between the controls and the output, so its trajectory is fad's up to
+    // rounding), and the learned controls reach the hidden values.
+    let Some(outs) = run_interp_fixture("opt_adaptive_vs_hand", 16_000) else {
+        return;
+    };
+    assert_eq!(
+        outs.len(),
+        7,
+        "three residuals, a difference, three controls"
+    );
+    assert_channel_converges("opt_adaptive_vs_hand (fad)", &outs[0], 400, 0.05);
+    assert_channel_converges("opt_adaptive_vs_hand (rad)", &outs[2], 400, 0.05);
+    for (frame, (&auto, &hand)) in outs[0].iter().zip(outs[1].iter()).enumerate() {
+        assert_eq!(
+            auto, hand,
+            "adaptive_fad and the hand-written loop differ at frame {frame}"
+        );
+    }
+    assert!(outs[3].iter().all(|&d| d == 0.0));
+    let last = outs[4].len() - 1;
+    for (name, channel, expected) in [("bias", 4, 0.3_f32), ("gain", 5, 0.7), ("slope/c", 6, -2.0)]
+    {
+        let learned = outs[channel][last];
+        assert!(
+            (learned - expected).abs() < 0.05,
+            "{name}: learned {learned}, expected {expected}"
+        );
+    }
+}
+
+#[test]
 fn newton_solves_the_cubic_on_every_frame() {
     // Six unrolled Newton steps on y^3 + y = x, x in [-1, 1]: the residual is
     // at numerical precision from the first frame on.
@@ -851,12 +887,12 @@ fn bank_loss_learns_the_string_from_above() {
 #[test]
 fn every_documented_function_compiles_and_runs() {
     // `opt_all_functions.dsp` instantiates the `#### Test` entry of every
-    // documented function: 99 entries, 165 outputs. It only has to compile,
+    // documented function: 101 entries, 169 outputs. It only has to compile,
     // run, and stay finite.
     let Some(outs) = run_interp_fixture("opt_all_functions", 256) else {
         return;
     };
-    assert_eq!(outs.len(), 165, "expected the outputs of every Test entry");
+    assert_eq!(outs.len(), 169, "expected the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         for (frame, &sample) in samples.iter().enumerate() {
             assert!(

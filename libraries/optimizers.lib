@@ -1,5 +1,5 @@
 declare name "Faust Differentiable Optimizers Library";
-declare version "0.10.0";
+declare version "0.11.0";
 declare author "faust-rs";
 declare license "MIT/LGPL-3.0";
 
@@ -31,7 +31,15 @@ declare license "MIT/LGPL-3.0";
 // (`-I <faustlibraries>`) next to this one (`-I libraries`). It is a
 // `faust-rs` library: `fad` and `rad` are not known to the C++ Faust compiler.
 //
-// The Optimizers library is organized into 13 sections:
+// The adaptive operators (`adaptive_fad`, `adaptive_rad`) take a whole
+// program, `component("x.dsp")` or any closed expression, and learn all its
+// sliders at once, reading their number, ranges and defaults with the
+// `faust-rs` primitives `cinputs`/`cinput` and rebinding them with the
+// wildcard modulation `["*": (!, _) -> e]`: no rewriting of the program.
+// New functions name both modes (`_fad`, `_rad`); the older loops leave the
+// forward mode unmarked where they have no bus (`descend_1D`, ...).
+//
+// The Optimizers library is organized into 16 sections:
 //
 // * [Signal Helpers and Parameter State](#signal-helpers-and-parameter-state)
 // * [Losses and Regularizers](#losses-and-regularizers)
@@ -44,6 +52,7 @@ declare license "MIT/LGPL-3.0";
 // * [Gauss-Newton Loops](#gauss-newton-loops)
 // * [Bus Loops](#bus-loops)
 // * [Clocked Loops](#clocked-loops)
+// * [Adaptive Programs](#adaptive-programs)
 // * [Gradient-Free Loops](#gradient-free-loops)
 // * [Multi-Start Loops](#multi-start-loops)
 // * [Gating and Stopping](#gating-and-stopping)
@@ -56,6 +65,12 @@ declare license "MIT/LGPL-3.0";
 // process = op.descend_1D(loss, op.adam_g(0.01, 0.9, 0.999, 1e-8), -4, 4, 0, 0);
 // ```
 //
+// Changes in 0.11.0: `adaptive_fad` and `adaptive_rad`, a program learning
+// all its control inputs while it runs: the program's widgets are replaced by
+// parameters descended by `descend_N_fad_clocked` / `descend_N_rad_clocked`,
+// each in its widget's own units, bounded by its range and started at its
+// default. They need the `faust-rs` primitives `cinputs`, `cinput` and the
+// wildcard modulation target `"*"`.
 // Changes in 0.10.0: the six bus loops take `upd`, `lo`, `hi` and `init` as
 // a scalar, the same for every parameter, or as a list of `N`, one per
 // parameter, so that `N` values of different units learn each at its rate,
@@ -3137,6 +3152,111 @@ with {
             clip(lo1 - init1, hi1 - init1, q1 - upd1(h1)), clip(lo2 - init2, hi2 - init2, q2 - upd2(h2)), clip(lo3 - init3, hi3 - init3, q3 - upd3(h3)),
             clip(lo4 - init4, hi4 - init4, q4 - upd4(h4)), clip(lo5 - init5, hi5 - init5, q5 - upd5(h5));
     };
+};
+
+//==================================Adaptive Programs=======================================
+// A whole program learning its own sliders. `cinputs(e)` lists the control
+// inputs of `e` (its sliders, numentries, buttons and checkboxes) in the order
+// of its interface, `cinput(i, e)` gives the i-th as `(widget, init, min, max,
+// step)`, and the wildcard modulation `["*": (!, _) -> e]` replaces every one
+// of them by an input, in the same order. The operators of this section use
+// the three to learn every control of an unmodified program, a
+// `component("x.dsp")` for instance, with a clocked bus loop. The model's
+// loss, its coordinates (a frequency learns better on its logarithm) and the
+// identifiability of its parameters remain the model's: two gains in series
+// are learned together, and the loss is flat along their ratio.
+//==========================================================================================
+
+//------------------------------`(op.)adaptive_fad`---------------------------------
+// A program learning all its control inputs while it runs: `e` with its
+// widgets replaced by parameters descended, every firing of `clock`, on the
+// frame mean of the gradients of `loss(model, target)` taken by `fad`, each
+// parameter in its widget's own units, bounded by its range, started at its
+// default, stepped by its own engine (`descend_N_fad_clocked`).
+//
+// #### Usage
+//
+// ```
+// adaptive_fad(e, loss, upd, clock, reset, X, t) : si.bus(outputs(e) + N)
+// ```
+//
+// Where:
+//
+// * `e`: the program, closed, with `N = outputs(cinputs(e))` control inputs
+// * `loss`: a function of two signals, the model's output and the target's
+//   (`mse`, `pseudo_huber(d)`), summed over the outputs of `e`
+// * `upd`: one engine (`adam_g(lr, b1, b2, eps)`, `sgd_g(lr)`, ...) or a list
+//   of `N`, one per control in `cinputs` order, the rate in each widget's units
+// * `clock`: non-zero on the samples where a step is taken (a frame's end)
+// * `reset`: non-zero sends the parameters back to their defaults
+// * `X`: the inputs of `e`, as signals (one for a mono program, `(l, r)` for two)
+// * `t`: the target, `outputs(e)` signals
+//
+// Outputs: those of `e` on the learned parameters, then the `N` parameters, in
+// `cinputs` order. The rebound widgets leave the interface.
+//
+// #### Example
+//
+// ```
+// e = component("ampmodeler.dsp");
+// clock = (ba.time % 2048) == 2047;
+// process(x, t) = op.adaptive_fad(e, op.mse, op.adam_g(0.01, 0.9, 0.999, 1e-8), clock, button("reset"), x, t);
+// ```
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// adaptive_fad_test = op.adaptive_fad(e, op.mse, op.sgd_g(0.5), clock, 0, x, 0.5 * x)
+// with { e(v) = v * hslider("adaptive_fad:g", 1, 0, 2, 0.01); x = hslider("adaptive_fad:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+adaptive_fad(e, loss, upd, clock, reset, X, t) = _adaptive(descend_N_fad_clocked, e, loss, upd, clock, reset, X, t);
+
+//------------------------------`(op.)adaptive_rad`---------------------------------
+// `adaptive_fad` differentiated with `rad` (`descend_N_rad_clocked`): one
+// reverse sweep per sample whatever the number of controls, the choice past a
+// few dozen. Through a recursion the sweep sees one sample, the past state
+// held fixed (pseudo-linear regression), where `fad` carries the exact
+// derivative; on a model without recursion between the controls and the
+// output both follow the same trajectory. `rad` refuses written tables,
+// soundfiles, foreign functions and clock-domain crossings where `fad` gives
+// zero tangents, so `adaptive_rad` says at compile time what `adaptive_fad`
+// would learn around in silence.
+//
+// #### Usage
+//
+// ```
+// adaptive_rad(e, loss, upd, clock, reset, X, t) : si.bus(outputs(e) + N)
+// ```
+//
+// Where: as `adaptive_fad`.
+//
+// #### Test
+// ```
+// op = library("optimizers.lib");
+// adaptive_rad_test = op.adaptive_rad(e, op.mse, op.sgd_g(0.5), clock, 0, x, 0.5 * x)
+// with { e(v) = v * hslider("adaptive_rad:g", 1, 0, 2, 0.01); x = hslider("adaptive_rad:x", 0, -1, 1, 0.01); clock = ((+(1) : %(64)) ~ _) == 0; };
+// ```
+//------------------------------------------------------------------------------
+adaptive_rad(e, loss, upd, clock, reset, X, t) = _adaptive(descend_N_rad_clocked, e, loss, upd, clock, reset, X, t);
+
+// Internal helper of the adaptive operators. The loss is built as a box of `N`
+// inputs, as the clocked loops compose it (`params : loss`): the parameters
+// enter the rebound `e` as its first `N` inputs, `X` after them, and the only
+// signal used twice, the model's output in `loss(y, t)`, is taken on one wire
+// per output through a one-parameter lambda. `X` and `t` are closed over,
+// hence arguments rather than inputs: `loss(model(si.bus(N)), t)` would mention
+// the `N` inputs twice and make a box of `2N`.
+_adaptive(descend, e, loss, upd, clock, reset, X, t) = model(P), P
+with {
+    N = outputs(cinputs(e));
+    K = outputs(e);
+    LO = par(i, N, cinput(i, e) : (!, !, _, !, !));
+    HI = par(i, N, cinput(i, e) : (!, !, !, _, !));
+    INIT = par(i, N, cinput(i, e) : (!, _, !, !, !));
+    model(Q) = Q, X : ["*": (!, _) -> e];
+    lossN = model(si.bus(N)) : par(i, K, \(y).(loss(y, ba.take(i + 1, t)))) :> _;
+    P = descend(N, clock, lossN, upd, LO, HI, INIT, reset);
 };
 
 //==================================Gradient-Free Loops=====================================
