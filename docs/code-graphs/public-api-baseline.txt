@@ -1946,6 +1946,7 @@ fn VirtualSourceMap::is_empty
 fn VirtualSourceMap::iter
 fn VirtualSourceMap::new
 fn VirtualSourceMap::with_source
+fn import_candidates
 fn lex_stream
 fn lex_tokens
 fn lexerdef

@@ -221,7 +221,8 @@ pub struct CliArgs {
     /// `-cn/--class-name`.
     #[arg(long = "cpp-class-name")]
     pub cpp_class_name: Option<String>,
-    /// Extra import search directories.
+    /// Extra import search directories, as given; `run_main` reverses them into
+    /// search order, the last one first, as the C++ compiler does.
     #[arg(short = 'I', long = "import-dir")]
     pub import_dir: Vec<PathBuf>,
     /// Permit explicit HTTP(S) entry sources and imports.

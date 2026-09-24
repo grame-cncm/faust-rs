@@ -1204,9 +1204,14 @@ mod tests {
             "-double".to_owned(),
         ];
         let parsed = parse_ffi_compile_args(&argv).expect("ffi args should parse");
-        assert_eq!(parsed.search_paths.len(), 2);
-        assert_eq!(parsed.search_paths[0], std::path::PathBuf::from("lib1"));
-        assert_eq!(parsed.search_paths[1], std::path::PathBuf::from("lib2"));
+        // search order: the last -I first, as in C++
+        assert_eq!(
+            parsed.search_paths,
+            [
+                std::path::PathBuf::from("lib2"),
+                std::path::PathBuf::from("lib1")
+            ]
+        );
         assert_eq!(parsed.module_name.as_deref(), Some("MyDSP"));
         assert!(parsed.double);
     }

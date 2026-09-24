@@ -89,12 +89,18 @@ fn golden_snapshot_is_stable_for_lf_vs_crlf() {
 // ── default_import_search_paths ───────────────────────────────────────────
 
 #[test]
-fn default_import_search_paths_starts_with_parent_directory() {
+fn default_import_search_paths_end_with_the_parent_directory() {
+    // C++ pushes gMasterDirectory after the installed libraries
     let path = PathBuf::from("/some/dir/file.dsp");
     let paths = build_import_search_paths(&path, &[], None, None);
-    assert_eq!(paths.first(), Some(&PathBuf::from("/some/dir")));
-    assert!(paths.contains(&PathBuf::from("/usr/local/share/faust")));
-    assert!(paths.contains(&PathBuf::from("/usr/share/faust")));
+    assert_eq!(
+        paths,
+        [
+            PathBuf::from("/usr/local/share/faust"),
+            PathBuf::from("/usr/share/faust"),
+            PathBuf::from("/some/dir"),
+        ]
+    );
 }
 
 #[test]
@@ -102,8 +108,8 @@ fn default_import_search_paths_use_dot_for_bare_filename() {
     let path = PathBuf::from("file.dsp");
     let paths = build_import_search_paths(&path, &[], None, None);
     assert!(
-        matches!(paths.first(), Some(first) if first == &PathBuf::from(".") || first == &PathBuf::from("")),
-        "expected first search path to stay local for bare filename, got {paths:?}"
+        matches!(paths.last(), Some(last) if last == &PathBuf::from(".") || last == &PathBuf::from("")),
+        "expected the last search path to be local for a bare filename, got {paths:?}"
     );
 }
 
@@ -123,11 +129,11 @@ fn import_search_paths_place_explicit_dirs_before_cpp_defaults() {
         vec![
             PathBuf::from("/custom/a"),
             PathBuf::from("/custom/b"),
-            PathBuf::from("/project"),
             PathBuf::from("/env/faust"),
             PathBuf::from("/opt/faust/share/faust"),
             PathBuf::from("/usr/local/share/faust"),
             PathBuf::from("/usr/share/faust"),
+            PathBuf::from("/project"),
         ]
     );
 }
@@ -144,14 +150,14 @@ fn import_search_paths_expand_native_path_lists_in_order() {
     let paths = build_import_search_paths(&path, &[], Some(faust_lib_path), None);
 
     assert_eq!(
-        &paths[..4],
+        &paths[..3],
         [
-            PathBuf::from("/project"),
             PathBuf::from("/libraries/current"),
             PathBuf::from("/libraries/dx7"),
             PathBuf::from("/libraries/old"),
         ]
     );
+    assert_eq!(paths.last(), Some(&PathBuf::from("/project")));
 }
 
 #[test]

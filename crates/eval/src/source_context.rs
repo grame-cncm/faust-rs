@@ -190,12 +190,12 @@ impl EvalSourceContext {
     /// precision setting as the root evaluation session.
     ///
     /// Unlike [`Self::for_file_with_metadata`], this method preserves the
-    /// parent's search_paths order (DSP file directory stays at the front) and
-    /// only appends the loaded file's parent directory at the end if it is not
-    /// already present. This matches C++ faust compiler semantics: local library
-    /// overrides placed next to the DSP file win over system libraries, even for
-    /// imports made transitively from within system libraries (e.g. stdfaust.lib
-    /// importing platform.lib).
+    /// parent's search_paths order and only appends the loaded file's parent
+    /// directory at the end if it is not already present, as the C++
+    /// `fopenSearch` appends the directory of each file it opens to
+    /// `gImportDirList`. A library next to the DSP file overrides an installed
+    /// one of the same name only when it is found first: from the working
+    /// directory or through a `-I` (see `parser::import_candidates`).
     #[must_use]
     pub fn for_loaded_file(&self, path: &Path) -> Self {
         let mut search_paths = self.search_paths.clone();

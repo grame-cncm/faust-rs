@@ -1156,26 +1156,7 @@ impl SourceReader {
             return canonicalize_path(raw).ok();
         }
 
-        // Mirror the C++ gImportDirList search order: -I paths (embedded at the head of
-        // search_paths by the compiler) are checked before the local directory of the
-        // currently-importing file.  In C++, `-I` entries are inserted at the front of
-        // gImportDirList via `insert(begin())`, while the importing file's directory is
-        // appended dynamically by `fopenSearch` only after the file is opened — i.e. it
-        // ends up at the back, after the system paths already present in the list.
-        // Reproducing that order: search_paths first, local_dir last (deduplicated).
-        let mut candidates: Vec<PathBuf> = self
-            .search_paths
-            .iter()
-            .map(|base| base.join(name))
-            .collect();
-        if let Some(base) = local_dir {
-            let local_candidate = base.join(name);
-            if !candidates.iter().any(|c| c == &local_candidate) {
-                candidates.push(local_candidate);
-            }
-        }
-
-        for candidate in candidates {
+        for candidate in import_candidates(raw, &self.search_paths, local_dir) {
             let normalized = normalize_logical_path(&candidate);
             if self.virtual_sources.contains(&normalized) {
                 return Some(normalized);
@@ -1205,6 +1186,51 @@ impl SourceReader {
             message: err.to_string().into_boxed_str(),
         })
     }
+}
+
+/// The files an import of `name` may resolve to, in the order the C++
+/// `fopenSearch` (`compiler/parser/enrobage.cpp`) tries them.
+///
+/// 1. The name as given: C++ opens it before walking `gImportDirList`. On
+///    disk that is relative to the process's working directory, so
+///    `faust tests/x.dsp` run from a library checkout imports the checkout's
+///    `demos.lib`, not the installed one, whatever the `-I`; in memory it is
+///    a virtual source registered under that bare name (a library bundle).
+/// 2. Each of `search_paths`, in order. The compiler builds them in the order
+///    of `gImportDirList`: the `-I` directories, the last one given first, then
+///    `FAUST_LIB_PATH`, the installed libraries, and last the main file's
+///    directory (`paths::build_import_search_paths` in the `compiler` crate).
+/// 3. `local_dir`, the importing file's directory, which C++ appends to
+///    `gImportDirList` as it opens files.
+///
+/// An absolute name is its only candidate. Duplicates are dropped. The
+/// parser (`import`) and evaluation (`library`, `component`) both resolve
+/// through this list, so the two cannot order the search differently: they
+/// did, and `import` never tried the working directory while `library` tried
+/// it last.
+#[must_use]
+pub fn import_candidates(
+    name: &Path,
+    search_paths: &[PathBuf],
+    local_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    if name.is_absolute() {
+        return vec![name.to_path_buf()];
+    }
+    let mut candidates: Vec<PathBuf> = Vec::with_capacity(search_paths.len() + 2);
+    let mut push = |candidate: PathBuf| {
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    };
+    push(name.to_path_buf());
+    for base in search_paths {
+        push(base.join(name));
+    }
+    if let Some(base) = local_dir {
+        push(base.join(name));
+    }
+    candidates
 }
 
 fn canonicalize_path(path: &Path) -> Result<PathBuf, SourceReaderError> {

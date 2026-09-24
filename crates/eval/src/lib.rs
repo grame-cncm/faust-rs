@@ -1376,7 +1376,17 @@ fn eval_loaded_source_value(
     let target = source_reference_name(arena, filename)
         .ok_or(EvalError::InvalidSourceReference { node, construct })?;
     let source_context = env.source_context();
-    let candidate_paths = candidate_loaded_source_paths(source_context, &target);
+    let mut candidate_paths = candidate_loaded_source_paths(source_context, &target);
+    // The first candidate that exists decides, as the C++ search does: one
+    // further down the list, already in the cache, must not shadow it.
+    if let Some(first) = candidate_paths.iter().position(|path| {
+        source_context.virtual_sources().contains(path)
+            || path.exists()
+            || source_context
+                .cached_loaded_source_hits(std::slice::from_ref(path), |hit, _| hit.is_some())
+    }) {
+        candidate_paths.truncate(first + 1);
+    }
     let cached = source_context.cached_loaded_source_hits(&candidate_paths, |cached, path| {
         cached.map(|loaded| {
             (
@@ -1573,35 +1583,11 @@ fn source_reference_name(arena: &TreeArena, filename: TreeId) -> Option<String> 
 /// source cache can key lookups deterministically.
 fn candidate_loaded_source_paths(source_context: &EvalSourceContext, target: &str) -> Vec<PathBuf> {
     let target_path = PathBuf::from(target);
-    let mut candidates = Vec::new();
-    if target_path.is_absolute() {
-        candidates.push(target_path);
-        return candidates;
-    }
-    // Global search paths (DSP file directory first) take priority over the
-    // current file's directory, matching C++ faust compiler semantics where a
-    // local platform.lib override in the DSP directory wins over the system
-    // library found next to stdfaust.lib.
-    for base in source_context.search_paths() {
-        let candidate = base.join(target);
-        if !candidates.iter().any(|existing| existing == &candidate) {
-            candidates.push(candidate);
-        }
-    }
-    // Current file's directory as fallback for relative-to-library imports not
-    // covered by the search paths (e.g. a library importing a sibling file
-    // from a directory that is not in the explicit search list).
-    if let Some(current_file) = source_context.current_file() {
-        let base = current_file.parent().unwrap_or_else(|| Path::new("."));
-        let candidate = base.join(target);
-        if !candidates.iter().any(|existing| existing == &candidate) {
-            candidates.push(candidate);
-        }
-    }
-    if !candidates.iter().any(|existing| existing == &target_path) {
-        candidates.push(target_path);
-    }
-    candidates
+    // the C++ search order, shared with the parser's `import`
+    let local_dir = source_context
+        .current_file()
+        .map(|file| file.parent().unwrap_or_else(|| Path::new(".")));
+    parser::import_candidates(&target_path, source_context.search_paths(), local_dir)
 }
 
 /// Evaluates `expr [ defs ]` by copying the captured closure environment and replacing bindings.

@@ -1,14 +1,15 @@
 //! `-I DIR` overrides a standard library.
 //!
-//! The search order is the C++ compiler's: the `-I` dirs, then the source's
-//! directory, then the installed libraries. The FFI file constructor used to
+//! The search order is the C++ compiler's: the name relative to the working
+//! directory, then the `-I` dirs (the last one first), then the installed
+//! libraries, then the source's directory. The FFI file constructor used to
 //! append the `-I` dirs after the defaults, so `faustprobe -I checkout` on a
 //! program importing `analyzers.lib` silently measured the installed copy: a
 //! deliberately wrong permutation in the checkout went unseen. The witness is
 //! a library carrying a standard name that the installed one does not define.
 
 mod common;
-use common::{Fixtures, probe};
+use common::{Fixtures, probe, probe_in};
 
 /// An `analyzers.lib` that defines a symbol the real one does not.
 const MUTATED: &str = "declare name \"analyzers.lib\";\nprobe_marker = 42.0;\n";
@@ -46,7 +47,9 @@ fn an_import_dir_overrides_an_installed_standard_library() {
 #[test]
 fn an_import_dir_comes_before_the_source_directory() {
     // The same library name next to the program and in a `-I` dir: `-I` wins,
-    // as with `faust -I`.
+    // as with `faust -I`. Without `-I`, the installed library comes before the
+    // program's directory, as `gMasterDirectory` is pushed last in C++; the
+    // one next to the program wins only when run from its directory.
     let fixtures = Fixtures::new("import_dir_before_source_dir");
     let lib_dir = fixtures.path("mutated");
     fixtures.write("mutated/analyzers.lib", MUTATED);
@@ -62,7 +65,18 @@ fn an_import_dir_comes_before_the_source_directory() {
     assert!(ok, "{stderr}");
     assert!(stdout.lines().any(|line| line == "0,42.0"), "{stdout}");
 
-    let (ok, stdout, stderr) = probe(&["--double", "-n", "1", "--in", "zero", &program]);
+    let (ok, _, stderr) = probe(&["--double", "-n", "1", "--in", "zero", &program]);
+    assert!(
+        !ok,
+        "the library next to the program shadowed the installed one"
+    );
+    assert!(stderr.contains("probe_marker"), "{stderr}");
+
+    let program_dir = fixtures.dir().join("program");
+    let (ok, stdout, stderr) = probe_in(
+        &program_dir,
+        &["--double", "-n", "1", "--in", "zero", "marker.dsp"],
+    );
     assert!(ok, "{stderr}");
     assert!(stdout.lines().any(|line| line == "0,7.0"), "{stdout}");
 }

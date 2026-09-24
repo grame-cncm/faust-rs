@@ -17,7 +17,9 @@ pub struct FfiCompileArgs {
     /// This dependency-light parsing crate stores the semantic bit; consumers
     /// map it immediately to `codegen::memory_layout::MemoryManagerMode`.
     pub memory_manager0: bool,
-    /// Extra import search paths collected from `-I`.
+    /// Extra import search paths collected from `-I`, in search order: the last
+    /// `-I` first, as the C++ compiler inserts each at the front of
+    /// `gImportDirList` (`global::processCmdline`).
     pub search_paths: Vec<PathBuf>,
     /// Optional class/module name override from `-cn`.
     pub module_name: Option<String>,
@@ -208,6 +210,7 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
     if parsed.memory_manager0 && in_place {
         return Err("-mem0 cannot be combined with -it".to_owned());
     }
+    parsed.search_paths.reverse();
     Ok(parsed)
 }
 
@@ -248,9 +251,11 @@ mod tests {
             "1".to_owned(),
         ];
         let parsed = parse_ffi_compile_args(&argv).unwrap();
-        assert_eq!(parsed.search_paths.len(), 2);
-        assert_eq!(parsed.search_paths[0], PathBuf::from("lib1"));
-        assert_eq!(parsed.search_paths[1], PathBuf::from("lib2"));
+        // search order: the last -I first, as in C++
+        assert_eq!(
+            parsed.search_paths,
+            [PathBuf::from("lib2"), PathBuf::from("lib1")]
+        );
         assert_eq!(parsed.module_name.as_deref(), Some("MyDSP"));
         assert!(parsed.vec_mode);
         assert_eq!(parsed.vec_size, 64);

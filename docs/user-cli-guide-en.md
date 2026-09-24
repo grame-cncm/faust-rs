@@ -318,6 +318,20 @@ Add import search directories. Can be repeated.
 cargo run -p compiler -- --dump-sig main.dsp -I ./lib -I ./third_party/faust
 ```
 
+An `import`, `library` or `component` file is looked up in the C++
+compiler's order:
+
+1. the name as given, relative to the working directory, before any `-I`;
+2. the `-I` directories, the **last one first** (above:
+   `./third_party/faust`, then `./lib`);
+3. `FAUST_LIB_PATH`, then the installed libraries (`<exe>/../share/faust`,
+   `/usr/local/share/faust`, `/usr/share/faust`);
+4. the directory of the main `.dsp` file;
+5. the directory of the importing file.
+
+So a library next to `main.dsp` overrides an installed one of the same name
+only when the compiler is run from that directory, or through `-I`.
+
 ### `-cn, --class-name <name>`
 
 Specify the DSP class name used instead of `mydsp`.

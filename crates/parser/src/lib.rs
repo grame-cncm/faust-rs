@@ -51,6 +51,7 @@ pub use source_reader::{
     PrefetchedRemoteSourceBundleError, RemoteFetchPolicy, RemoteFetchRequest,
     RemoteSourceCapability, RemoteSourceFetcher, SourceFetchError, SourceFetchErrorKind,
     SourceLineOrigin, SourceLocator, SourceReader, SourceReaderError, VirtualSourceMap,
+    import_candidates,
 };
 
 /// Primitive operator family recognized directly by the parser.

@@ -167,14 +167,15 @@ impl FaustInstallPaths {
 ///   `compiler/global.cpp`
 ///
 /// # Effective order
-/// 1. current file parent directory (or `"."` for a bare filename)
-/// 2. `FAUST_LIB_PATH` when present
-/// 3. executable-relative `../share/faust`
-/// 4. `/usr/local/share/faust`
-/// 5. `/usr/share/faust`
+/// 1. `FAUST_LIB_PATH` when present
+/// 2. executable-relative `../share/faust`
+/// 3. `/usr/local/share/faust`
+/// 4. `/usr/share/faust`
+/// 5. current file parent directory (or `"."` for a bare filename)
 ///
 /// This mirrors the C++ hardcoded library-search model as closely as possible
-/// in a standalone Rust binary.
+/// in a standalone Rust binary. Before any of them an import is looked up
+/// relative to the working directory (`parser::import_candidates`).
 #[must_use]
 /// Returns the default Faust import search paths for `path`.
 pub fn default_import_search_paths(path: &Path) -> Vec<PathBuf> {
@@ -189,9 +190,10 @@ pub fn default_import_search_paths(path: &Path) -> Vec<PathBuf> {
 /// Builds the import search path list for a given source file, merging user-supplied
 /// extra paths with the built-in defaults discovered from the environment.
 ///
-/// `extra_paths` come first: a `-I DIR` overrides a library of the same name
-/// in the source's directory or in the installed libraries, as with the C++
-/// compiler. Every front end (the CLI, the FFI factories) must build its
+/// `extra_paths` come first, in search order: a `-I DIR` overrides a library of
+/// the same name in the installed libraries or in the source's directory, as
+/// with the C++ compiler. A front end reading several `-I` from a command line
+/// passes them last one first (`gImportDirList.insert(begin())`). Every front end (the CLI, the FFI factories) must build its
 /// search paths through this function, never by appending `-I` dirs to
 /// [`default_import_search_paths`], which puts them last.
 ///
@@ -208,14 +210,17 @@ pub fn merge_import_search_paths(path: &Path, extra_paths: &[PathBuf]) -> Vec<Pa
 
 /// Core implementation of the import search path algorithm.
 ///
-/// Produces an ordered, deduplicated list following the same priority rules as
-/// the C++ Faust compiler:
+/// Produces an ordered, deduplicated list in the order of the C++
+/// `gImportDirList` (`global::initDirectories`, then `initDocumentNames`):
 ///
 /// 1. User-supplied `extra_paths` (highest priority).
-/// 2. Directory containing the source file.
-/// 3. Paths from the `FAUST_LIB_PATH` environment variable, separated with
+/// 2. Paths from the `FAUST_LIB_PATH` environment variable, separated with
 ///    the host platform's native path separator.
-/// 4. Standard library locations relative to the running executable.
+/// 3. Standard library locations relative to the running executable, then
+///    `/usr/local/share/faust` and `/usr/share/faust`.
+/// 4. Directory containing the source file (`gMasterDirectory`), last: an
+///    installed library wins over one of the same name next to the source,
+///    unless the working directory or a `-I` finds the latter first.
 ///
 /// Parameters are explicit so the function is pure and fully testable without
 /// touching the environment.
@@ -237,13 +242,6 @@ pub(crate) fn build_import_search_paths(
         push_unique(&mut ordered, path.clone());
     }
 
-    push_unique(
-        &mut ordered,
-        path.parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from(".")),
-    );
-
     if let Some(env_path) = faust_lib_path {
         for path in std::env::split_paths(&env_path) {
             push_unique(&mut ordered, path);
@@ -261,6 +259,12 @@ pub(crate) fn build_import_search_paths(
 
     push_unique(&mut ordered, PathBuf::from("/usr/local/share/faust"));
     push_unique(&mut ordered, PathBuf::from("/usr/share/faust"));
+    push_unique(
+        &mut ordered,
+        path.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(".")),
+    );
     ordered
 }
 

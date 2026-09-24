@@ -219,7 +219,9 @@ fn run(options: Options) -> Result<String, String> {
     for opt in &options.compiler_argv {
         argv_storage.push(CString::new(opt.as_str()).map_err(|e| e.to_string())?);
     }
-    for dir in &search {
+    // the last -I is searched first, as in C++: emit the list backwards to keep
+    // its priority
+    for dir in search.iter().rev() {
         argv_storage.push(CString::new("-I").map_err(|e| e.to_string())?);
         argv_storage.push(CString::new(dir.as_str()).map_err(|e| e.to_string())?);
     }

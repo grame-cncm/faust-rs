@@ -823,7 +823,10 @@ pub fn render_fir_verify_report(store: &fir::FirStore, module: fir::FirId, stric
 /// plus the watchdog timeout and drives the requested compilation backend.
 pub fn run_main() {
     let args = normalize_legacy_args(std::env::args());
-    let cli = CliArgs::parse_from(args);
+    let mut cli = CliArgs::parse_from(args);
+    // search order: the last -I first, as the C++ compiler inserts each at the
+    // front of gImportDirList (global::processCmdline)
+    cli.import_dir.reverse();
 
     if handle_early_exit_modes(&cli) {
         return;
