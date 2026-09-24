@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=wildcard_02_one_input_modulator.dsp
+bytes=522
+lines=7
+fnv1a64=63cf12e917609170

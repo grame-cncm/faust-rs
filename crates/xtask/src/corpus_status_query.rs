@@ -203,7 +203,13 @@ pub(crate) enum DivergenceClass {
 /// module (distinguishing by-design gaps from real regressions), so it is
 /// included here even though the brief named only `fad`/`rad`; this is
 /// recorded explicitly rather than silently folded in.
-const EXPECTED_DIVERGENCE_SYMBOLS: &[&str] = &["fad", "rad", "ondemand"];
+///
+/// `cinputs`, `cinput`, `coutputs` and `coutput` (2026-09-24) are the
+/// control-input primitives of `DIFF-SRC-004`; the reference stops on
+/// `undefined symbol : cinputs` (`tests/corpus/cinputs_*.dsp`).
+const EXPECTED_DIVERGENCE_SYMBOLS: &[&str] = &[
+    "fad", "rad", "ondemand", "cinputs", "cinput", "coutputs", "coutput",
+];
 
 /// Detects whether a C++ reference failure is a known, deliberate
 /// `faust-rs`-only feature gap (see [`EXPECTED_DIVERGENCE_SYMBOLS`]) rather

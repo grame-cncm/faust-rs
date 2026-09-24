@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=cinputs_07_fad_seeds.dsp
+bytes=673
+lines=11
+fnv1a64=e73ecf29f7c79765

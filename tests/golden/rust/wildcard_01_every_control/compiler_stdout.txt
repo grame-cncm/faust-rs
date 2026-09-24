@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=wildcard_01_every_control.dsp
+bytes=991
+lines=15
+fnv1a64=163bbc3906a51298

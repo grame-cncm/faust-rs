@@ -6,7 +6,9 @@ faust-rs extensions, not known to the C++ Faust compiler, in the same class as
 Implementation: `crates/eval/src/control_inputs.rs`, the wildcard in
 `crates/eval/src/modulation.rs`, the list itself in
 `crates/propagate/src/control_widgets.rs`. Tests:
-`crates/compiler/tests/control_inputs.rs`.
+`crates/compiler/tests/control_inputs.rs`, on the fixtures
+`tests/corpus/cinputs_*.dsp`, `tests/corpus/wildcard_*.dsp` and
+`tests/corpus/err_3{0,1}_*.dsp`.
 
 ## 1. The four primitives
 

@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=cinputs_05_widget_under_three_groups.dsp
+bytes=714
+lines=10
+fnv1a64=51fbea2172cdcd86

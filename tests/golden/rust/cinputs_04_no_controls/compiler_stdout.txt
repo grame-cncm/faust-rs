@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=cinputs_04_no_controls.dsp
+bytes=411
+lines=7
+fnv1a64=33d3874bd140dfd5
