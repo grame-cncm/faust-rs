@@ -76,8 +76,7 @@ pub const EVAL_MODULATION_WILDCARD_NO_MATCH: DiagnosticCode = DiagnosticCode("FR
 /// C++ equivalent: `eval2double` in `compiler/evaluate/eval.cpp` ("not a
 /// constant expression of type : (0->1)") and `tree2double` in
 /// `compiler/tlib/tree.cpp` ("the parameter must be a real constant numerical
-/// expression"). Numbers 9 and 10 of this family are taken by the unmerged
-/// `control-inputs-wildcard` branch.
+/// expression").
 pub const EVAL_WIDGET_PARAMETER_NOT_CONSTANT: DiagnosticCode = DiagnosticCode("FRS-EVAL-0011");
 /// Generic eval failure fallback code.
 pub const EVAL_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0099");
