@@ -24,8 +24,8 @@ and are versioned with this repository:
   shifted copies, sweeps for testing, and gradients with respect to every
   control. It imports nothing; `tests/corpus/ctl_*.dsp` and
   `crates/compiler/tests/controls_lib.rs` exercise it, and
-  [`../docs/control-inputs-en.md`](../docs/control-inputs-en.md) describes the
-  uses.
+  [`../docs/control-inputs-en.md`](../docs/control-inputs-en.md)
+  ([`fr`](../docs/control-inputs-fr.md)) describes the uses.
 
 Add this directory to the Faust import search path when compiling a DSP that
 uses one of them:
