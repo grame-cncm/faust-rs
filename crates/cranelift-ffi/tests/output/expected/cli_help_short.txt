@@ -132,7 +132,7 @@ Compiler options (as faust-rs):
       --dlt <N>                      Delay above which a line has an exact-size buffer and its own counter (`-dlt N`, default: never)
       --check-table <0|1>            Table index range check (`-ct 0|1`, default 1): with 0 an index out of range is not clamped
       --table-init <MODE>            How the content of `rdtable`/`rwtable` is produced (`-table-init runtime|const`, default runtime) [possible values: runtime, const]
-      --table-init-sample-rate <HZ>  Sample rate `--table-init const` folds `ma.SR` at
+      --table-init-sample-rate <HZ>  The value of `ma.SR` in a table folded by `--table-init const` (required when a table generator reads it)
 
 --- stderr
 

@@ -62,6 +62,12 @@ fn add_symbol_rename_fix(
         return diagnostic;
     };
     let (replacement, explanation) = match error {
+        // An entry point other than `process` was named by the caller (`-pn`):
+        // the misspelling is in the command line, and renaming the definition
+        // it resembles would break the program for everyone else.
+        eval::EvalError::MissingProcessDefinition { entrypoint, .. } if entrypoint != "process" => {
+            return diagnostic;
+        }
         eval::EvalError::MissingProcessDefinition { entrypoint, .. } => (
             entrypoint.clone(),
             format!(

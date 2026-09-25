@@ -528,7 +528,8 @@ pub(crate) struct CompilerOptions {
           value_parser = ["runtime", "const"])]
     pub(crate) table_init: Option<String>,
 
-    /// Sample rate `--table-init const` folds `ma.SR` at.
+    /// The value of `ma.SR` in a table folded by `--table-init const`
+    /// (required when a table generator reads it).
     #[arg(long = "table-init-sample-rate", value_name = "HZ")]
     pub(crate) table_init_sample_rate: Option<i32>,
 }

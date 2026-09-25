@@ -1565,8 +1565,18 @@ impl Compiler {
                     self.entrypoint_name.as_ref(),
                 );
             }
+            if matches!(error, eval::EvalError::MissingProcessDefinition { .. }) {
+                diagnostic = maybe_add_missing_entrypoint_label(
+                    diagnostic,
+                    &error,
+                    &output.state.ctx,
+                    &output.state.arena,
+                    root,
+                );
+            }
             // Guidance runs after labeling: a rename edit needs the primary
-            // label that `maybe_add_eval_source_labels` just resolved.
+            // label that `maybe_add_eval_source_labels` (or, for a missing
+            // entry point, `maybe_add_missing_entrypoint_label`) just resolved.
             diagnostic = add_eval_guidance(
                 diagnostic,
                 &error,

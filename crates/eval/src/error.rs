@@ -113,7 +113,8 @@ pub enum EvalError {
     MissingProcessDefinition {
         /// Requested top-level DSP entry-point name.
         entrypoint: String,
-        /// Parser root definitions list used for fallback source-label resolution.
+        /// Parser root definitions list, where a definition whose name is
+        /// close to `entrypoint` is looked up to label it.
         definitions: TreeId,
         /// Deterministic list of top-level definition names available in this program.
         available_defs: Vec<String>,
@@ -532,7 +533,8 @@ impl ToDiagnostic for EvalError {
                 entrypoint,
                 available_defs,
                 ..
-            } => with_symbol_suggestions(
+            } => {
+                let diagnostic = with_symbol_suggestions(
                 Diagnostic::new(
                     Severity::Error,
                     Stage::Eval,
@@ -561,7 +563,18 @@ impl ToDiagnostic for EvalError {
             .with_help(format!(
                 "define `{entrypoint} = ...;` in the top-level definitions"
             ))
-            .with_help(format!("template: {entrypoint} = _;")),
+            .with_help(format!("template: {entrypoint} = _;"));
+                // Only a caller's choice (`-pn`, `--process-name`, the API's
+                // `with_process_name`) names another entry point.
+                if entrypoint == "process" {
+                    diagnostic
+                } else {
+                    diagnostic.with_help(format!(
+                        "`{entrypoint}` is the entry point asked for with `-pn`/`--process-name` \
+                         instead of `process`: name one of the available definitions there"
+                    ))
+                }
+            }
             Self::UndefinedSymbol {
                 symbol,
                 local_scope,

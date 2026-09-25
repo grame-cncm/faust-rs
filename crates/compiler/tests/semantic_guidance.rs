@@ -77,6 +77,64 @@ fn an_unambiguous_suggestion_carries_an_exact_rename_edit() {
     assert_eq!(fix.edits[0].range.end, 37);
 }
 
+/// The diagnostics of `source` compiled with `entrypoint` as its entry point.
+fn failing_diagnostics_for(entrypoint: &str, source: &str) -> Vec<Diagnostic> {
+    let Err(error) = Compiler::new()
+        .with_process_name(entrypoint)
+        .compile_source_to_signals("guidance.dsp", source)
+    else {
+        panic!("source is expected to fail");
+    };
+    error.diagnostic_bundle().as_slice().to_vec()
+}
+
+#[test]
+fn a_missing_entry_point_with_no_similar_definition_points_nowhere() {
+    // Nothing in the source asks for `nope`: underlining a definition as its
+    // "call site", and dumping the definition list as `expr=`, both misled.
+    for diagnostics in [
+        failing_diagnostics("foo = 1;\nbar = foo;\n"),
+        failing_diagnostics_for("nope", "foo = 1;\nprocess = foo;\n"),
+    ] {
+        let diagnostic = &diagnostics[0];
+        assert_eq!(diagnostic.code.0, "FRS-EVAL-0001");
+        assert!(diagnostic.labels.is_empty(), "{:?}", diagnostic.labels);
+        assert!(diagnostic.fixes.is_empty());
+        assert!(
+            !diagnostic
+                .notes
+                .iter()
+                .any(|note| note.starts_with("expr=") || note.starts_with("box_expr=")),
+            "{:?}",
+            diagnostic.notes
+        );
+    }
+}
+
+#[test]
+fn a_misspelled_process_name_points_at_the_similar_definition_and_edits_nothing() {
+    // `-pn proces`: the misspelling is in the command line, so the definition
+    // it resembles is shown but not renamed.
+    let diagnostics = failing_diagnostics_for("proces", "foo = 1;\nprocess = foo;\n");
+    let diagnostic = &diagnostics[0];
+    let [label] = diagnostic.labels.as_slice() else {
+        panic!("one label expected: {:?}", diagnostic.labels);
+    };
+    assert_eq!(label.style, LabelStyle::Primary);
+    assert_eq!(label.role, LabelRole::DefinitionSite);
+    assert_eq!(label.message.as_ref(), "similar definition");
+    assert!(diagnostic.fixes.is_empty(), "{:?}", diagnostic.fixes);
+    assert_eq!(
+        fact(diagnostic, "suggested_symbols"),
+        Some(&DiagnosticValue::StringList(vec!["process".into()])),
+    );
+    assert!(
+        diagnostic.help.iter().any(|help| help.contains("-pn")),
+        "{:?}",
+        diagnostic.help
+    );
+}
+
 #[test]
 fn a_misspelled_entry_point_renames_the_definition_not_the_suggestion() {
     // The two rename shapes go in opposite directions: an undefined symbol is a

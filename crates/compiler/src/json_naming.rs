@@ -569,10 +569,9 @@ pub(crate) fn bundle_from_diagnostic(diagnostic: Diagnostic) -> DiagnosticBundle
 /// Returns the offending node id for eval errors that carry one.
 pub(crate) fn eval_error_node(error: &eval::EvalError) -> Option<BoxId> {
     match error {
-        eval::EvalError::MissingProcessDefinition {
-            definitions: node, ..
-        }
-        | eval::EvalError::UndefinedSymbol { node, .. }
+        // A missing entry point has no offending node: the definition list
+        // it carries is not a site (see `maybe_add_missing_entrypoint_label`).
+        eval::EvalError::UndefinedSymbol { node, .. }
         | eval::EvalError::MalformedDefinitionNode { node }
         | eval::EvalError::MalformedListNode { node }
         | eval::EvalError::MalformedCaseNode { node }

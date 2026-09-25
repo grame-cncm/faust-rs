@@ -325,7 +325,7 @@ Compiler options (as faust-rs):
           [possible values: runtime, const]
 
       --table-init-sample-rate <HZ>
-          Sample rate `--table-init const` folds `ma.SR` at
+          The value of `ma.SR` in a table folded by `--table-init const` (required when a table generator reads it)
 
 --- stderr
 

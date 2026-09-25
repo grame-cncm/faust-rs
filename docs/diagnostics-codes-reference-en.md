@@ -148,7 +148,7 @@ observable in practice today.
 
 | Code | Stage | Meaning | Raised at |
 |---|---|---|---|
-| `FRS-EVAL-0001` | `eval` | `process` definition is missing. | `crates/eval/src/error.rs:403` |
+| `FRS-EVAL-0001` | `eval` | The entry point (`process`, or the name given to `-pn`) is not defined. The diagnostic has a location only when a definition's name is close to the entry point's, and underlines that definition (`similar definition`); otherwise none, as the reference's `????:-1`. The rename fix is offered for `process` only: a misspelled `-pn` name is fixed on the command line. | `crates/eval/src/error.rs:403` |
 | `FRS-EVAL-0002` | `eval` | Symbol lookup failed during eval (undefined symbol). | `crates/eval/src/error.rs:433` |
 | `FRS-EVAL-0003` | `eval` | Arity mismatch detected during eval (e.g. too many arguments). | `crates/eval/src/error.rs:471,488` |
 | `FRS-EVAL-0004` | `eval` | Invalid iteration construct detected during eval. | `crates/eval/src/error.rs:658` |

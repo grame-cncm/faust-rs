@@ -152,6 +152,35 @@ pub(crate) fn maybe_add_source_label(
     diagnostic
 }
 
+/// Labels a missing entry point: the definition whose name looks like a
+/// misspelling of it, when exactly one does, and nothing otherwise.
+///
+/// Nothing in the source asks for the entry point — its name is the program's
+/// contract (`process`) or comes from `-pn` — so there is no use site to point
+/// at, and the C++ compiler reports this error without a location. The generic
+/// node labelling, given the definition list, underlined its first located
+/// identifier as the "call site": an unrelated line. The rename fix of
+/// `eval_guidance` edits the span labelled here.
+pub(crate) fn maybe_add_missing_entrypoint_label(
+    diagnostic: Diagnostic,
+    error: &eval::EvalError,
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+) -> Diagnostic {
+    let suggestions = error.symbol_suggestions();
+    let Some(best) = eval::unambiguous_suggestion(&suggestions) else {
+        return diagnostic;
+    };
+    let Some(span) = source_span_for_definition_name(ctx, arena, defs_root, &best.name) else {
+        return diagnostic;
+    };
+    diagnostic.with_label(
+        Label::new(LabelStyle::Primary, span, "similar definition")
+            .with_role(LabelRole::DefinitionSite),
+    )
+}
+
 /// Attaches eval-oriented primary/secondary labels when available.
 ///
 /// Label policy:
