@@ -46,6 +46,8 @@ pub(crate) fn render(args: &Args) -> Result<(String, Samples), String> {
     for pair in args.ats.chunks(2) {
         command.arg("--at").args(pair);
     }
+    // The compiler's spellings, which the worker's own normalization reads back.
+    command.args(args.compiler.argv());
     let output = command
         .arg("--")
         .arg(&args.file)

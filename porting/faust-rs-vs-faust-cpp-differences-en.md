@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-09-17 (constant arithmetic and domain errors, error text through the FFI, `faustprobe`); full review 2026-08-13
+Last reviewed: 2026-09-25 (compiler options of the FFI constructors and `faustprobe`); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -186,7 +186,10 @@ must run unchanged with Faust C++ should not pass them.
   of the `compute` calls against real time (`--time`), a compile failure as
   the compiler's diagnostics-v2 JSON report (`--error-format json`), and the
   frequency response of a program checked to be linear and time-invariant
-  (`--freqresp`). It
+  (`--freqresp`). The `faust-rs` options that choose the program or shape its
+  code (`-pn`, `-vec`/`-vs`/`-lv`, `-ss`, `-mcd`, `-dlt`, `-ct`,
+  `-table-init`) are forwarded under their `faust-rs` spellings
+  (`crates/cranelift-ffi/tests/compiler_options_probe.rs`). It
   has no C++ counterpart; the closest reference tools are the `impulse-tests`
   runners, whose protocol it reproduces byte for byte under `--protocol
   impulse-test`. Evidence:
@@ -706,6 +709,26 @@ must run unchanged with Faust C++ should not pass them.
   tests of the FFI crates (which apply the report's fix and compile the
   result), `cargo run -p xtask -- libfaust-export-check`, and
   the workspace README, "Compile errors".
+
+### DIFF-API-007 — the compiler options a factory constructor honors
+
+- Status: `adapted` (narrower).
+- The reference `createDSPFactoryFromFile` / `FromString` hand `argv` to the
+  whole compiler command line. The Rust constructors (Cranelift and
+  Interpreter) read a subset through `ffi_common::parse_ffi_compile_args`:
+  `-I`, `-cn`, `-pn`, `-double`, `-vec`/`-vs`/`-lv`, `-ss`, `-mcd`, `-dlt`,
+  `-ct`, `-table-init`, `--table-init-sample-rate`, `-bra-tape`, `-mem0`,
+  `-it`, `--warn`. A missing or malformed value of one of them is an error.
+- Any other option is ignored, where the reference applies it or rejects it.
+  `-pn`, `-mcd`, `-dlt` and `-ct` were in that case until 2026-09-25: a host
+  asking for another entry point got `process` without a word.
+- Compatibility impact: a host passing an option outside the subset gets the
+  default behavior for it. Options that describe an output (`-o`, `-lang`,
+  `-a`, the dumps) have no effect in either implementation.
+- Evidence: `crates/ffi-common/src/args.rs` (parser and tests),
+  `process_name_delay_and_table_options_reach_the_compiler` in
+  `crates/cranelift-ffi/src/factory/tests.rs` (each option changes the FIR),
+  `crates/cranelift-ffi/tests/compiler_options_probe.rs`.
 
 ## 8. Internal architectural adaptations
 

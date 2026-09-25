@@ -225,13 +225,15 @@ pub(crate) fn number_format(args: &Args) -> Result<NumberFormat, String> {
     Ok(NumberFormat::new(precision, args.double))
 }
 
-/// Compiler arguments the probe forwards verbatim.
+/// Compiler arguments the probe forwards: `--bra-tape` when it is not the
+/// default, and the `faust-rs` options of [`crate::cli::CompilerOptions`].
 pub(crate) fn compiler_args(args: &Args) -> Vec<String> {
     let mut out = Vec::new();
     if args.bra_tape != 8192 {
         out.push("-bra-tape".to_owned());
         out.push(args.bra_tape.to_string());
     }
+    out.extend(args.compiler.argv());
     out
 }
 

@@ -59,6 +59,7 @@ mod error_mapping;
 mod eval_guidance;
 mod golden;
 mod json_naming;
+mod legacy_args;
 mod paths;
 mod service;
 mod signal_lowering;
@@ -72,6 +73,7 @@ use error_mapping::*;
 use eval_guidance::*;
 pub use golden::*;
 pub use json_naming::*;
+pub use legacy_args::normalize_legacy_args;
 pub use paths::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use signal_lowering::render_cranelift_module_report;

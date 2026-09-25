@@ -4,10 +4,11 @@ use std::path::PathBuf;
 
 /// Minimal shared subset of Faust CLI-like options accepted by Rust FFI crates.
 ///
-/// Supported options: `-I <path>`, `-cn <name>`, `-double`, the vector-mode
-/// trio `-vec` / `-vs <n>` / `-lv <n>`, the scheduling-strategy option
-/// `-ss <n>`, the four mode-zero memory-manager aliases, and the non-fatal
-/// diagnostic switch `--warn`.
+/// Supported options: `-I <path>`, `-cn <name>`, `-pn <name>`, `-double`,
+/// the vector-mode trio `-vec` / `-vs <n>` / `-lv <n>`, the scheduling-strategy
+/// option `-ss <n>`, the delay-line options `-mcd <n>` / `-dlt <n>`, the
+/// table-index check `-ct <0|1>`, the four mode-zero memory-manager aliases,
+/// and the non-fatal diagnostic switch `--warn`.
 /// Unknown options are ignored so backend FFI crates can accept broader argv
 /// vectors while incrementally extending support.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -23,6 +24,19 @@ pub struct FfiCompileArgs {
     pub search_paths: Vec<PathBuf>,
     /// Optional class/module name override from `-cn`.
     pub module_name: Option<String>,
+    /// Entry point compiled instead of `process`, from `-pn <name>` (or
+    /// `--process-name <name>`), as the C++ `createDSPFactoryFromFile` and
+    /// `createDSPFactoryFromString` accept it. `None` keeps `process`.
+    pub process_name: Option<String>,
+    /// Largest delay handled by a shifted copy rather than a ring buffer
+    /// (`-mcd <n>`). `None` keeps the compiler's default (16).
+    pub mcd: Option<u32>,
+    /// Delay above which a line uses an exact-size buffer with its own
+    /// counter (`-dlt <n>`). `None` keeps the compiler's default (disabled).
+    pub dlt: Option<u32>,
+    /// Table-index range check (`-ct <0|1>`). `None` keeps the compiler's
+    /// default (checked, as the C++ reference).
+    pub check_table: Option<bool>,
     /// Use double-precision (64-bit) floating-point for internal DSP arithmetic.
     ///
     /// Set by the `-double` flag in the `argv` vector passed to FFI factory
@@ -69,8 +83,9 @@ pub struct FfiCompileArgs {
     pub table_init_sample_rate: Option<i32>,
 }
 
-/// Parses the shared FFI option subset (`-I`, `-cn`, `-double`,
-/// `-vec`/`-vs`/`-lv`, `-ss`, `--table-init`, `--table-init-sample-rate`, `--warn`) from an argv vector. `vec_size` defaults to 32
+/// Parses the shared FFI option subset (`-I`, `-cn`, `-pn`, `-double`,
+/// `-vec`/`-vs`/`-lv`, `-ss`, `-mcd`, `-dlt`, `-ct`, `--table-init`,
+/// `--table-init-sample-rate`, `--warn`) from an argv vector. `vec_size` defaults to 32
 /// when `-vec` is given without `-vs`, matching the Faust CLI.
 /// `scheduling_strategy` defaults to `0` (depth-first) when `-ss` is absent,
 /// mirroring the CLI's `--scheduling-strategy` default.
@@ -96,6 +111,41 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
                 return Err("missing class name after -cn".to_owned());
             };
             parsed.module_name = Some(value.clone());
+            index += 2;
+            continue;
+        }
+        if arg == "-pn" || arg == "--process-name" {
+            let Some(value) = argv.get(index + 1) else {
+                return Err(format!("missing process name after {arg}"));
+            };
+            parsed.process_name = Some(value.clone());
+            index += 2;
+            continue;
+        }
+        if matches!(arg.as_str(), "-mcd" | "--mcd" | "-dlt" | "--dlt") {
+            let Some(value) = argv.get(index + 1) else {
+                return Err(format!("missing value after {arg}"));
+            };
+            let value = value
+                .parse()
+                .map_err(|error| format!("bad {arg} value: {error}"))?;
+            if arg.ends_with("mcd") {
+                parsed.mcd = Some(value);
+            } else {
+                parsed.dlt = Some(value);
+            }
+            index += 2;
+            continue;
+        }
+        if arg == "-ct" || arg == "--check-table" {
+            let Some(value) = argv.get(index + 1) else {
+                return Err(format!("missing value after {arg}"));
+            };
+            parsed.check_table = Some(match value.as_str() {
+                "0" => false,
+                "1" => true,
+                _ => return Err(format!("bad {arg} value `{value}`: expected 0 or 1")),
+            });
             index += 2;
             continue;
         }
@@ -234,6 +284,54 @@ mod tests {
     }
 
     use super::parse_ffi_compile_args;
+
+    fn argv(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    #[test]
+    fn process_name_and_delay_and_table_options_are_parsed() {
+        let parsed = parse_ffi_compile_args(&argv(&[
+            "-pn", "voice", "-mcd", "0", "-dlt", "1024", "-ct", "0",
+        ]))
+        .expect("parse");
+        assert_eq!(parsed.process_name.as_deref(), Some("voice"));
+        assert_eq!(parsed.mcd, Some(0));
+        assert_eq!(parsed.dlt, Some(1024));
+        assert_eq!(parsed.check_table, Some(false));
+        let parsed =
+            parse_ffi_compile_args(&argv(&["--process-name", "effect", "--check-table", "1"]))
+                .expect("parse");
+        assert_eq!(parsed.process_name.as_deref(), Some("effect"));
+        assert_eq!(parsed.check_table, Some(true));
+        let defaults = parse_ffi_compile_args(&[]).expect("parse");
+        assert_eq!(
+            (
+                defaults.process_name,
+                defaults.mcd,
+                defaults.dlt,
+                defaults.check_table
+            ),
+            (None, None, None, None)
+        );
+    }
+
+    #[test]
+    fn process_name_and_delay_and_table_options_reject_bad_values() {
+        for bad in [
+            &["-pn"][..],
+            &["-mcd"],
+            &["-mcd", "-1"],
+            &["-dlt", "x"],
+            &["-ct", "2"],
+            &["-ct"],
+        ] {
+            assert!(
+                parse_ffi_compile_args(&argv(bad)).is_err(),
+                "{bad:?} should be refused"
+            );
+        }
+    }
 
     #[test]
     fn accepts_i_cn_and_vec_options() {

@@ -765,9 +765,11 @@ struct WrappedCppCode
 trait RemoteUrlPolicy
 use codegen::memory_layout::MemoryLayoutFlavor
 use compiler::diagnostics_human
+use compiler::normalize_legacy_args
 use diagnostics
 use golden
 use json_naming
+use legacy_args::normalize_legacy_args
 use paths
 use signal_lowering::render_cranelift_module_report
 use sigtype::InferenceError

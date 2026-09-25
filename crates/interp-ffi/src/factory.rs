@@ -646,7 +646,7 @@ fn compile_factory_from_file_fastlane(
     let table_init = parsed.table_init.clone();
     let real_type = ffi_real_type(&parsed);
     let interp_options = codegen::backends::interp::InterpOptions {
-        module_name: parsed.module_name,
+        module_name: parsed.module_name.clone(),
         compile_options: Some(compile_options_json_string(
             Some("interp"),
             real_type == RealType::Float64,
@@ -659,10 +659,7 @@ fn compile_factory_from_file_fastlane(
     let search_paths = merge_import_search_paths(path, &parsed.search_paths);
 
     let compiler = apply_table_init(
-        with_bra_tape_option(
-            FaustCompiler::new().with_real_type(real_type),
-            parsed.bra_tape,
-        ),
+        with_argv_options(FaustCompiler::new().with_real_type(real_type), &parsed),
         table_init.as_deref(),
         parsed.table_init_sample_rate,
     );
@@ -690,7 +687,10 @@ fn compile_factory_from_string_fastlane(
     let table_init = parsed.table_init.clone();
     let real_type = ffi_real_type(&parsed);
     let interp_options = codegen::backends::interp::InterpOptions {
-        module_name: parsed.module_name.or_else(|| Some(source_name.to_owned())),
+        module_name: parsed
+            .module_name
+            .clone()
+            .or_else(|| Some(source_name.to_owned())),
         compile_options: Some(compile_options_json_string(
             Some("interp"),
             real_type == RealType::Float64,
@@ -699,10 +699,7 @@ fn compile_factory_from_string_fastlane(
     };
 
     let compiler = apply_table_init(
-        with_bra_tape_option(
-            FaustCompiler::new().with_real_type(real_type),
-            parsed.bra_tape,
-        ),
+        with_argv_options(FaustCompiler::new().with_real_type(real_type), &parsed),
         table_init.as_deref(),
         parsed.table_init_sample_rate,
     );
@@ -860,11 +857,28 @@ fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String> {
 }
 
 /// Applies `-bra-tape N` when the argv carried it.
-fn with_bra_tape_option(compiler: FaustCompiler, bra_tape: Option<usize>) -> FaustCompiler {
-    match bra_tape {
-        Some(samples) => compiler.with_bra_tape(samples),
-        None => compiler,
+/// Applies the argv options that reach the compiler facade as they are:
+/// `-bra-tape`, the entry point of `-pn`, the delay-line thresholds `-mcd` and
+/// `-dlt`, and the table-index check `-ct`, each only when given so the
+/// compiler keeps its own defaults otherwise.
+fn with_argv_options(compiler: FaustCompiler, parsed: &FfiCompileArgs) -> FaustCompiler {
+    let mut compiler = compiler;
+    if let Some(samples) = parsed.bra_tape {
+        compiler = compiler.with_bra_tape(samples);
     }
+    if let Some(name) = &parsed.process_name {
+        compiler = compiler.with_process_name(name.as_str());
+    }
+    if let Some(n) = parsed.mcd {
+        compiler = compiler.with_mcd(n);
+    }
+    if let Some(n) = parsed.dlt {
+        compiler = compiler.with_dlt(n);
+    }
+    if let Some(enabled) = parsed.check_table {
+        compiler = compiler.with_check_table(enabled);
+    }
+    compiler
 }
 
 // ── expand / generateAuxFiles ─────────────────────────────────────────────

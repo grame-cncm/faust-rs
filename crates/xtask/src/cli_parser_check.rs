@@ -8,7 +8,7 @@ const FFI_PROTOCOL_SOURCE: &str = "crates/ffi-common/src/args.rs";
 const STANDALONE_ARCHITECTURE: &str = "tests/impulse-tests/archs/impulserust.rs";
 const POLICY_CHECK_SOURCE: &str = "crates/xtask/src/cli_parser_check.rs";
 
-const NORMALIZED_CLAP_ENTRY_POINTS: [(&str, &[&str]); 3] = [
+const NORMALIZED_CLAP_ENTRY_POINTS: [(&str, &[&str]); 4] = [
     (
         "crates/compiler/src/cli/runner.rs",
         &["normalize_legacy_args", "CliArgs::parse_from"],
@@ -20,6 +20,10 @@ const NORMALIZED_CLAP_ENTRY_POINTS: [(&str, &[&str]); 3] = [
     (
         "crates/cranelift-ffi/src/bin/impulse_cranelift.rs",
         &["normalize_legacy_arg", "CliArgs::try_parse_from"],
+    ),
+    (
+        "crates/cranelift-ffi/src/bin/faustprobe/main.rs",
+        &["compiler::normalize_legacy_args", "Args::parse_from"],
     ),
 ];
 

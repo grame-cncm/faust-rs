@@ -294,5 +294,38 @@ Options:
   -h, --help
           Print help (see a summary with '-h')
 
+Compiler options (as faust-rs):
+      --process-name <NAME>
+          Compile the definition NAME instead of `process` (`-pn NAME`), in FILE and in the OTHER of `--compare`
+
+      --vec
+          Vector mode (`-vec`): `compute` as an outer loop over chunks of `--vs` frames
+
+      --vs <N>
+          Vector size of `-vec` (`-vs N`, default 32)
+
+      --lv <0|1>
+          Vector loop variant of `-vec` (`-lv 0|1`, default 0)
+
+      --scheduling-strategy <N>
+          Scheduling strategy (`-ss N`): 0 depth-first (default), 1 breadth-first, 2 interleaved, 3 and above reverse breadth-first
+
+      --mcd <N>
+          Largest delay handled by a shifted copy instead of a ring buffer (`-mcd N`, default 16)
+
+      --dlt <N>
+          Delay above which a line has an exact-size buffer and its own counter (`-dlt N`, default: never)
+
+      --check-table <0|1>
+          Table index range check (`-ct 0|1`, default 1): with 0 an index out of range is not clamped
+
+      --table-init <MODE>
+          How the content of `rdtable`/`rwtable` is produced (`-table-init runtime|const`, default runtime)
+          
+          [possible values: runtime, const]
+
+      --table-init-sample-rate <HZ>
+          Sample rate `--table-init const` folds `ma.SR` at
+
 --- stderr
 

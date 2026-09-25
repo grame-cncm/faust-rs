@@ -82,6 +82,36 @@ summary reach the terminal.
 | `-n, --render N` | frames to render (default 15000) |
 | `--fail-above LEVEL` | fail when a sample of the window exceeds `LEVEL` in magnitude, and say where first (see "When a render fails") |
 
+### The compiler's options
+
+The `faust-rs` options that choose the program or change the code the JIT
+runs are forwarded to the compiler, under the names and single-dash
+spellings of `faust-rs`:
+
+| Flag | Meaning |
+|---|---|
+| `-pn NAME`, `--process-name NAME` | compile the definition `NAME` instead of `process` |
+| `-vec`, `-vs N`, `-lv 0\|1` | vector mode, its chunk size (default 32) and loop variant (default 0); `-vs` and `-lv` need `-vec` |
+| `-ss N`, `--scheduling-strategy N` | scheduling strategy (0 depth-first, the default) |
+| `-mcd N`, `-dlt N` | delay-line thresholds: shifted copy up to `-mcd` (default 16), exact-size buffer above `-dlt` |
+| `-ct 0\|1`, `--check-table 0\|1` | table index range check (default 1) |
+| `-table-init runtime\|const`, `--table-init-sample-rate HZ` | how `rdtable`/`rwtable` content is produced |
+| `-double`, `-bra-tape N` | the spellings of `--double` and `--bra-tape` |
+
+One test of a library's test file, without writing a file around it:
+
+```bash
+faustprobe -I . -pn pink_trombone_demo_test -n 4096 --quiet tests/demos_tests.dsp
+```
+
+They apply to FILE and to the OTHER of `--compare`, and to both processes of
+`--check determinism`. `--process-name` is refused with `--eval`, whose
+expressions are the program, and every one of them with `--nvoices`, whose
+voices are compiled without them. The options that describe an output
+(`-o`, `-lang`, `-a`, the dumps) have no meaning here; `-mem`, `-ec` and
+`-os` would need a host that supplies a memory manager, calls `control`, or
+drives `frame`; any of them is an error, never ignored.
+
 ### When the program does not compile
 
 Nothing is rendered, the exit status is `1`, and the error on stderr is the

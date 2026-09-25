@@ -31,7 +31,7 @@ use compiler::{
     TableInitMode, merge_import_search_paths,
 };
 use ffi_common::{
-    CompleteError, FaustMemoryManager, decode_c_argv as decode_c_argv_shared,
+    CompleteError, FaustMemoryManager, FfiCompileArgs, decode_c_argv as decode_c_argv_shared,
     free_c_memory_c_string_only, null_c_string_array, optional_c_string_arg,
     parse_ffi_compile_args, required_c_string_arg, write_error_4096,
 };
@@ -1100,11 +1100,33 @@ fn compiler_from_argv(argv: &[String]) -> Result<(FaustCompiler, bool, MemoryMan
         Some(samples) => compiler.with_bra_tape(samples),
         None => compiler,
     };
+    let compiler = with_program_options(compiler, &parsed);
     Ok((
         compiler,
         parsed.double,
         memory_manager_mode(parsed.memory_manager0),
     ))
+}
+
+/// Applies the options of `parsed` that choose the program (`-pn`) or shape
+/// its code without changing what it computes (`-mcd`, `-dlt`), and the table
+/// index check (`-ct`), each only when given so the compiler keeps its own
+/// defaults otherwise.
+fn with_program_options(compiler: FaustCompiler, parsed: &FfiCompileArgs) -> FaustCompiler {
+    let mut compiler = compiler;
+    if let Some(name) = &parsed.process_name {
+        compiler = compiler.with_process_name(name.as_str());
+    }
+    if let Some(n) = parsed.mcd {
+        compiler = compiler.with_mcd(n);
+    }
+    if let Some(n) = parsed.dlt {
+        compiler = compiler.with_dlt(n);
+    }
+    if let Some(enabled) = parsed.check_table {
+        compiler = compiler.with_check_table(enabled);
+    }
+    compiler
 }
 
 fn preflight_compile_file_to_cranelift(

@@ -32,6 +32,13 @@ fn refuse_scalar_only(args: &Args) -> Result<(), String> {
     if args.bargraphs {
         return Err("--bargraphs reads the scalar Probe only; use --nvoices 0".to_owned());
     }
+    if args.compiler.any() || args.bra_tape != 8192 {
+        return Err(
+            "the compiler options (-pn, -vec, -ss, -mcd, -dlt, -ct, -table-init, --bra-tape) \
+             reach the scalar Probe only; use --nvoices 0"
+                .to_owned(),
+        );
+    }
     refuse(
         &[
             ("--out", args.out.is_some()),

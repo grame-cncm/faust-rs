@@ -68,6 +68,12 @@ fn run(mut args: Args) -> Result<(), String> {
     // which under `--eval` is the file wrapped and followed by the
     // expressions: a fix applied to FILE at those offsets would land
     // elsewhere. The human text is rewritten for that case; the report is not.
+    if args.compiler.process_name.is_some() && !args.evals.is_empty() {
+        return Err(
+            "--process-name cannot be combined with --eval: the expressions are the program"
+                .to_owned(),
+        );
+    }
     if args.error_format == ErrorFormat::Json && !args.evals.is_empty() {
         return Err(
             "--error-format json cannot be combined with --eval: the report's offsets would be \
@@ -96,7 +102,10 @@ fn run(mut args: Args) -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
-    let args = Args::parse();
+    // `-pn NAME` is two short flags to Clap: the `faust-rs` single-dash
+    // spellings are rewritten to their long flags first, by `faust-rs`'s own
+    // table.
+    let args = Args::parse_from(compiler::normalize_legacy_args(std::env::args()));
     // Cranelift JIT plus the faust-rs front end recurse deeply; run on a large
     // stack, as `impulse-cranelift` and the differential tests do.
     let error_format = args.error_format;

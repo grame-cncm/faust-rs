@@ -459,6 +459,110 @@ pub(crate) struct Args {
     /// comparison) is reported as text either way.
     #[arg(long = "error-format", value_enum, default_value_t = ErrorFormat::Human)]
     pub(crate) error_format: ErrorFormat,
+
+    /// The options of `faust-rs` that choose the program or shape its code.
+    /// Last: their help heading applies to every flag declared after them.
+    #[command(flatten)]
+    pub(crate) compiler: CompilerOptions,
+}
+
+/// The `faust-rs` options a probe forwards to the compiler: those that choose
+/// the program or change the code the JIT runs, under their `faust-rs` names.
+/// The single-dash spellings (`-pn`, `-vec`, `-vs`, `-lv`, `-ss`, `-mcd`,
+/// `-dlt`, `-ct`, `-table-init`, and `-double`, `-bra-tape`) are accepted
+/// too: the command line goes through `faust-rs`'s own
+/// [`compiler::normalize_legacy_args`] first, so the long names here must
+/// stay those of `faust-rs`.
+///
+/// Left out on purpose: the options of an output (`-o`, `-lang`, `-a`, the
+/// dumps), `-mem` (the host would have to supply a memory manager), `-ec`
+/// (the host would have to call `control`) and `-os` (a `frame` entry point,
+/// where a probe drives `compute`). `-I`, `--double` and `--bra-tape` are
+/// probe flags of their own.
+#[derive(Debug, Clone, Default, clap::Args)]
+#[command(next_help_heading = "Compiler options (as faust-rs)")]
+pub(crate) struct CompilerOptions {
+    /// Compile the definition NAME instead of `process` (`-pn NAME`), in FILE
+    /// and in the OTHER of `--compare`.
+    #[arg(long = "process-name", value_name = "NAME")]
+    pub(crate) process_name: Option<String>,
+
+    /// Vector mode (`-vec`): `compute` as an outer loop over chunks of
+    /// `--vs` frames.
+    #[arg(long = "vec")]
+    pub(crate) vec: bool,
+
+    /// Vector size of `-vec` (`-vs N`, default 32).
+    #[arg(long = "vs", value_name = "N", requires = "vec")]
+    pub(crate) vs: Option<u32>,
+
+    /// Vector loop variant of `-vec` (`-lv 0|1`, default 0).
+    #[arg(long = "lv", value_name = "0|1", requires = "vec",
+          value_parser = clap::value_parser!(u8).range(0..=1))]
+    pub(crate) lv: Option<u8>,
+
+    /// Scheduling strategy (`-ss N`): 0 depth-first (default), 1
+    /// breadth-first, 2 interleaved, 3 and above reverse breadth-first.
+    #[arg(long = "scheduling-strategy", value_name = "N")]
+    pub(crate) scheduling_strategy: Option<u32>,
+
+    /// Largest delay handled by a shifted copy instead of a ring buffer
+    /// (`-mcd N`, default 16).
+    #[arg(long = "mcd", value_name = "N")]
+    pub(crate) mcd: Option<u32>,
+
+    /// Delay above which a line has an exact-size buffer and its own counter
+    /// (`-dlt N`, default: never).
+    #[arg(long = "dlt", value_name = "N")]
+    pub(crate) dlt: Option<u32>,
+
+    /// Table index range check (`-ct 0|1`, default 1): with 0 an index out of
+    /// range is not clamped.
+    #[arg(long = "check-table", value_name = "0|1",
+          value_parser = clap::value_parser!(u8).range(0..=1))]
+    pub(crate) check_table: Option<u8>,
+
+    /// How the content of `rdtable`/`rwtable` is produced (`-table-init
+    /// runtime|const`, default runtime).
+    #[arg(long = "table-init", value_name = "MODE",
+          value_parser = ["runtime", "const"])]
+    pub(crate) table_init: Option<String>,
+
+    /// Sample rate `--table-init const` folds `ma.SR` at.
+    #[arg(long = "table-init-sample-rate", value_name = "HZ")]
+    pub(crate) table_init_sample_rate: Option<i32>,
+}
+
+impl CompilerOptions {
+    /// The options given, as the compiler's `argv` spells them.
+    pub(crate) fn argv(&self) -> Vec<String> {
+        let valued = [
+            ("-pn", self.process_name.clone()),
+            ("-ss", self.scheduling_strategy.map(|n| n.to_string())),
+            ("-mcd", self.mcd.map(|n| n.to_string())),
+            ("-dlt", self.dlt.map(|n| n.to_string())),
+            ("-ct", self.check_table.map(|n| n.to_string())),
+            ("--table-init", self.table_init.clone()),
+            (
+                "--table-init-sample-rate",
+                self.table_init_sample_rate.map(|n| n.to_string()),
+            ),
+            ("-vs", self.vs.map(|n| n.to_string())),
+            ("-lv", self.lv.map(|n| n.to_string())),
+        ];
+        let mut out: Vec<String> = self.vec.then(|| "-vec".to_owned()).into_iter().collect();
+        for (flag, value) in valued {
+            if let Some(value) = value {
+                out.extend([flag.to_owned(), value]);
+            }
+        }
+        out
+    }
+
+    /// Whether any was given.
+    pub(crate) fn any(&self) -> bool {
+        !self.argv().is_empty()
+    }
 }
 
 /// Where `--fd-check` runs.

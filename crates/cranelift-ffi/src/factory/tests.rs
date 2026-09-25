@@ -914,3 +914,43 @@ fn cranelift_header_mirrors_the_canonical_memory_manager_abi() {
             .contains("#include \"faust-memory-manager.h\"")
     );
 }
+
+/// The FIR the string constructor compiles `source` to under `argv`.
+fn fir_under(source: &str, argv: &[&str]) -> String {
+    let argv: Vec<String> = argv.iter().map(|arg| (*arg).to_owned()).collect();
+    let compiled = super::preflight_compile_source_to_cranelift("options", source, 0, &argv)
+        .unwrap_or_else(|error| panic!("{argv:?}: {error}"));
+    fir::dump_fir(&compiled.fir.store, compiled.fir.module)
+}
+
+#[test]
+fn process_name_delay_and_table_options_reach_the_compiler() {
+    let _guard = crate::test_serial_guard();
+    // Each option against the same program without it: the FIR must change,
+    // or the option was dropped on the way (as `-pn` was, silently).
+    let cases: [(&str, &[&str]); 5] = [
+        ("process = 1; other = 2;", &["-pn", "other"]),
+        ("process = 1; other = 2;", &["--process-name", "other"]),
+        // a 3-sample delay is a shifted copy up to `-mcd 16`, a ring below
+        ("process = @(3);", &["-mcd", "0"]),
+        // a 100-sample delay is a power-of-two ring unless `-dlt` is lower
+        ("process = @(100);", &["-dlt", "50"]),
+        // an index of unknown range is clamped unless `-ct 0`
+        ("process = rdtable(8, 1.0, int(_));", &["-ct", "0"]),
+    ];
+    for (source, argv) in cases {
+        assert_ne!(
+            fir_under(source, &[]),
+            fir_under(source, argv),
+            "{argv:?} did not change the FIR of `{source}`"
+        );
+    }
+    // and the defaults spelled out change nothing
+    for (source, argv) in [
+        ("process = @(3);", &["-mcd", "16"][..]),
+        ("process = rdtable(8, 1.0, int(_));", &["-ct", "1"]),
+        ("process = 1; other = 2;", &["-pn", "process"]),
+    ] {
+        assert_eq!(fir_under(source, &[]), fir_under(source, argv), "{argv:?}");
+    }
+}
