@@ -27,7 +27,7 @@ pub(crate) struct Compiled {
 
 /// [`compile_program`] at the width of `--double`, timed.
 pub(crate) fn compile_timed(args: &Args) -> Result<Compiled, String> {
-    let (result, seconds) = timed(|| compile_program(args, args.double));
+    let (result, seconds) = timed(|| compile_program(args, args.compile.double));
     let (factory, eval) = result?;
     Ok(Compiled {
         factory: Rc::new(factory),
@@ -222,19 +222,17 @@ pub(crate) fn number_format(args: &Args) -> Result<NumberFormat, String> {
         Some(text) => Precision::parse(text)?,
         None => Precision::RoundTrip,
     };
-    Ok(NumberFormat::new(precision, args.double))
+    Ok(NumberFormat::new(precision, args.compile.double))
 }
 
-/// Compiler arguments the probe forwards: `--bra-tape` when it is not the
-/// default, and the `faust-rs` options of [`crate::cli::CompilerOptions`].
+/// The compile options the probe forwards to a [`Factory`] constructor:
+/// those that differ from their default, as the C API `argv` spells them,
+/// less the precision, which every constructor takes as its own argument.
 pub(crate) fn compiler_args(args: &Args) -> Vec<String> {
-    let mut out = Vec::new();
-    if args.bra_tape != 8192 {
-        out.push("-bra-tape".to_owned());
-        out.push(args.bra_tape.to_string());
-    }
-    out.extend(args.compiler.argv());
-    out
+    let mut options = args.compile.clone();
+    options.double = false;
+    options.single = false;
+    options.to_argv()
 }
 
 /// Collect `--at`, `--note` and `--chord` into one ordered schedule.

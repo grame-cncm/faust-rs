@@ -403,6 +403,11 @@ external DSP interface (`FAUSTFLOAT` audio buffers and UI zones) always stays
 at the type declared by the architecture file; only internal calculations
 switch to `double`.
 
+### `--single`
+
+Single-precision internal DSP arithmetic (`-single` compatibility), the
+default. Of `--double` and `--single`, the last one given wins.
+
 ### `--memory-manager` (`-mem` / `-mem0` compatibility)
 
 Use the host custom memory manager for eligible native DSP state. The four
@@ -690,6 +695,7 @@ parsing, so these historical Faust spellings keep working:
 | `-cn <name>` | `--class-name <name>` |
 | `-scn <name>` | `--super-class-name <name>` |
 | `-double` | `--double` |
+| `-single` | `--single` |
 | `-json` | `--json` |
 | `-mem`, `-mem0` | `--memory-manager` |
 | `-version` | `--version` |

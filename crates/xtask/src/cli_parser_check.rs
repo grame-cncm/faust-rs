@@ -15,11 +15,11 @@ const NORMALIZED_CLAP_ENTRY_POINTS: [(&str, &[&str]); 4] = [
     ),
     (
         "crates/impulse-runner/src/main.rs",
-        &["normalize_legacy_arg", "CliArgs::try_parse_from"],
+        &["compiler::normalize_legacy_args", "CliArgs::try_parse_from"],
     ),
     (
         "crates/cranelift-ffi/src/bin/impulse_cranelift.rs",
-        &["normalize_legacy_arg", "CliArgs::try_parse_from"],
+        &["compiler::normalize_legacy_args", "CliArgs::try_parse_from"],
     ),
     (
         "crates/cranelift-ffi/src/bin/faustprobe/main.rs",

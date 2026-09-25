@@ -67,7 +67,7 @@ use compiler::diagnostics_json::{
     DiagnosticsCompilerMetadata, DiagnosticsRequestMetadata, SourceTextPolicy,
     render_complete_diagnostics_v2_json,
 };
-use compiler::{Compiler, RealType, WasmArtifactBundle, WasmArtifactRequest};
+use compiler::{Compiler, WasmArtifactBundle, WasmArtifactRequest};
 use diagnostic_record::FfiDiagnosticRecord;
 use parser::{PrefetchedRemoteSourceBundle, RemoteFetchPolicy, VirtualSourceMap};
 
@@ -280,22 +280,6 @@ impl ResultRegistryText {
 /// without a host filesystem.
 /// Build a `VirtualSourceMap` from the embedded stdlib bundle extended with
 /// any `--virtual-source name=base64` entries found in `argv`.
-/// Builds the compiler for one helper request, honoring `-pn <name>`
-/// (process entry-point selection — e.g. `-pn effect` compiles the
-/// `effect =` declaration, matching the C++ compiler's option).
-fn compiler_with_process_name_from_argv(argv: &[String]) -> Compiler {
-    let process_name = argv
-        .iter()
-        .position(|arg| arg == "-pn")
-        .and_then(|position| argv.get(position + 1))
-        .cloned();
-    let compiler = Compiler::new();
-    match process_name {
-        Some(process_name) => compiler.with_process_name(process_name),
-        None => compiler,
-    }
-}
-
 fn virtual_sources_from_argv(argv: &[String]) -> VirtualSourceMap {
     let mut vsources = embedded_standard_library_sources();
     let mut i = 0;
@@ -359,6 +343,8 @@ fn prefetched_remote_sources_from_argv(
 #[derive(Debug, Clone)]
 struct ParsedCompileRequest {
     artifact: WasmArtifactRequest,
+    /// The compile options of the `argv`, applied to the compiler.
+    options: compiler::CompileOptionArgs,
     semantic_warnings: bool,
     diagnostics: DiagnosticsRequestMetadata,
     remote_sources: PrefetchedRemoteSourceBundle,
@@ -366,11 +352,12 @@ struct ParsedCompileRequest {
 
 fn diagnostics_request_metadata(
     parsed: &ffi_common::FfiCompileArgs,
+    double: bool,
     internal_memory: bool,
 ) -> DiagnosticsRequestMetadata {
     let mut normalized_options = vec![
         "-lang=wasm".to_owned(),
-        if parsed.double {
+        if double {
             "-double".to_owned()
         } else {
             "-single".to_owned()
@@ -398,7 +385,11 @@ fn diagnostics_request_metadata(
 }
 
 fn default_diagnostics_request(internal_memory: bool) -> DiagnosticsRequestMetadata {
-    diagnostics_request_metadata(&ffi_common::FfiCompileArgs::default(), internal_memory)
+    diagnostics_request_metadata(
+        &ffi_common::FfiCompileArgs::default(),
+        false,
+        internal_memory,
+    )
 }
 
 fn parse_compile_request(
@@ -411,8 +402,9 @@ fn parse_compile_request(
     let _embedded_roots = embedded_standard_library_roots();
     let argv = split_faustwasm_args(args);
     let parsed = ffi_common::parse_ffi_compile_args(&argv)?;
+    let options = compiler::CompileOptionArgs::from_argv(&argv)?;
     let remote_sources = prefetched_remote_sources_from_argv(&argv)?;
-    let mut diagnostics = diagnostics_request_metadata(&parsed, internal_memory);
+    let mut diagnostics = diagnostics_request_metadata(&parsed, options.double, internal_memory);
     diagnostics.normalized_options.extend(
         remote_sources
             .urls()
@@ -422,12 +414,13 @@ fn parse_compile_request(
     request.import_dirs = parsed.search_paths;
     request.virtual_sources = virtual_sources_from_argv(&argv);
     request.wasm_options = WasmOptions {
-        double_precision: parsed.double,
+        double_precision: options.double,
         internal_memory,
         ..WasmOptions::default()
     };
     Ok(ParsedCompileRequest {
         artifact: request,
+        options,
         semantic_warnings: parsed.warnings,
         diagnostics,
         remote_sources,
@@ -465,8 +458,8 @@ fn embedded_standard_library_roots() -> &'static [&'static str] {
 /// Compile one request into a stored success/error payload.
 ///
 /// This is the bridge between the raw string ABI and the typed compiler crate.
-/// It chooses the compiler real type from the requested WASM float mode, then
-/// delegates to [`compiler::Compiler::compile_wasm_artifact`].
+/// It applies the compile options of the request's `argv`, then delegates to
+/// [`compiler::Compiler::compile_wasm_artifact`].
 fn compile_to_stored_result(
     name: &str,
     source: &str,
@@ -482,12 +475,9 @@ fn compile_to_stored_result(
             ));
         }
     };
-    let mut compiler = Compiler::new()
-        .with_real_type(if parsed.artifact.wasm_options.double_precision {
-            RealType::Float64
-        } else {
-            RealType::Float32
-        })
+    let mut compiler = parsed
+        .options
+        .apply(Compiler::new())
         .with_semantic_warnings(parsed.semantic_warnings);
     // Install even an empty bundle so a URL import missing from the host's
     // prefetched graph reports its canonical URL instead of falling through to
@@ -1125,7 +1115,8 @@ pub unsafe extern "C" fn faust_wasm_generate_aux_files(
         Err(_) => return 0,
     };
     let argv = split_faustwasm_args(args);
-    let compiler = compiler_with_process_name_from_argv(&argv);
+    // `generate_aux_files` applies the compile options of `args` itself.
+    let compiler = Compiler::new();
     match compiler.generate_aux_files(&compiler::GenerateAuxFilesRequest {
         source_name: name.to_owned(),
         source: source.to_owned(),
@@ -1186,7 +1177,8 @@ pub unsafe extern "C" fn faust_wasm_generate_aux_files_json(
             Err(error) => return store_text_result(StoredTextResult::err(error)),
         };
         let argv = split_faustwasm_args(args);
-        let compiler = compiler_with_process_name_from_argv(&argv);
+        // `generate_aux_files` applies the compile options of `args` itself.
+        let compiler = Compiler::new();
         match compiler.generate_aux_files(&compiler::GenerateAuxFilesRequest {
             source_name: name.to_owned(),
             source: source.to_owned(),
@@ -1348,6 +1340,28 @@ mod tests {
         assert!(bundle.dsp_json.contains("\"filename\": \"osc.dsp\""));
         assert_eq!(bundle.compile_options, "-lang wasm -single");
         assert!(bundle.warnings.is_empty());
+    }
+
+    #[test]
+    fn the_compile_options_of_the_args_reach_the_compiler() {
+        // `-pn` used to be read by the helper services only: `compile_dsp`
+        // compiled `process` whatever the args said
+        let outputs = |args: &str| {
+            let result =
+                compile_to_stored_result("two.dsp", "process = 1; other = 2, 3;", args, true);
+            let StoredCompileResult::Ok(success) = result else {
+                panic!("{args:?} should compile");
+            };
+            success.artifact.dsp_json.contains("\"outputs\": 2")
+        };
+        assert!(!outputs(""));
+        assert!(outputs("-pn other"));
+        let result = compile_to_stored_result("two.dsp", "process = 1;", "-ss abc", true);
+        let StoredCompileResult::Err(failure) = result else {
+            panic!("a malformed -ss was accepted");
+        };
+        assert!(failure.message().contains("abc"), "{}", failure.message());
+        assert!(failure.diagnostics().is_none());
     }
 
     #[test]

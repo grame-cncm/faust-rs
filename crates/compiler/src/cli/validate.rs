@@ -106,20 +106,20 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
     // table now; backend paths selected without `-lang` are enforced by the
     // same validation at the lowering dispatch.
     //
-    // `cli.vec` is part of the trigger because a backend may reject `-vec` on
+    // `cli.compile.vec` is part of the trigger because a backend may reject `-vec` on
     // its own, with neither `-ec` nor `-os` in play (codebox does).
-    if cli.external_control || cli.one_sample || cli.vec {
+    if cli.compile.external_control || cli.compile.one_sample || cli.compile.vec {
         if let Some(lang) = cli.lang {
             if let Err(error) = compiler::execution::validate_execution_options(
                 cli_backend_id(lang),
-                selected_control_rate_mode(cli),
-                selected_processing_api(cli),
-                selected_compute_mode(cli),
+                cli.compile.control_rate_mode(),
+                cli.compile.processing_api(),
+                cli.compile.compute_mode(),
             ) {
                 eprintln!("ERROR : {error}");
                 std::process::exit(1);
             }
-        } else if cli.one_sample && cli.vec {
+        } else if cli.compile.one_sample && cli.compile.vec {
             eprintln!(
                 "ERROR : {}",
                 compiler::execution::ExecutionOptionsError::OneSampleWithVectorMode
@@ -304,10 +304,10 @@ pub(crate) fn validate_cli_arguments(cli: &CliArgs) -> Option<usize> {
 /// accepts only its C++ backend; C and Cranelift are deliberate faust-rs
 /// extensions frozen by the mem0 Phase 0 report.
 pub(crate) fn validate_memory_manager_options(cli: &CliArgs) -> Result<(), String> {
-    if !cli.memory_manager {
+    if !cli.compile.memory_manager {
         return Ok(());
     }
-    if cli.vec {
+    if cli.compile.vec {
         return Err("-mem0 is currently supported only in scalar mode; remove -vec".to_owned());
     }
 

@@ -175,7 +175,7 @@ pub(crate) fn run_source_mode(
                 if let Err(e) = draw::draw_schema(
                     &out.parse.state.arena,
                     out.process_box,
-                    &cli.process_name,
+                    &cli.compile.process_name,
                     &dir,
                     &draw_config,
                     &out.def_names,
@@ -262,7 +262,7 @@ pub(crate) fn run_source_mode(
                         &out.signals,
                         &out.ui,
                         &transform::signal_prepare::PrepareOptions {
-                            check_table: cli.check_table != 0,
+                            check_table: cli.compile.check_table != 0,
                             drop_clock_annotations: false,
                         },
                     );
@@ -299,8 +299,8 @@ pub(crate) fn run_source_mode(
                 enabled: false,
                 strict: false,
             })
-            .with_process_name(cli.process_name.clone())
-            .with_real_type(selected_real_type(cli))
+            .with_process_name(cli.compile.process_name.clone())
+            .with_real_type(cli.compile.real_type())
             .with_cancel(std::sync::Arc::clone(cancel));
         let result = compiler.compile_file_to_fir_with_lane(
             input_path,
@@ -487,7 +487,7 @@ pub(crate) fn run_source_mode(
         // construction rather than by convention.
         let options = AscOptions {
             class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
-            double_precision: cli.double,
+            double_precision: cli.compile.double,
             compile_options: Some(compile_options_full_string(
                 cli,
                 Some(cli_lang_name(CliLang::Asc)),
@@ -521,7 +521,7 @@ pub(crate) fn run_source_mode(
         // No `class_name`: a codebox file is flat and declares no class, so
         // `-cn` has nothing to name here.
         let options = CodeboxOptions {
-            double_precision: cli.double,
+            double_precision: cli.compile.double,
             test_labels: lang == CliLang::CodeboxTest,
             compile_options: Some(compile_options_full_string(cli, Some(cli_lang_name(lang)))),
         };
@@ -551,7 +551,7 @@ pub(crate) fn run_source_mode(
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = CmajorOptions {
             class_name: selected_class_name(cli).unwrap_or_else(|| "mydsp".to_owned()),
-            real_type: if cli.double {
+            real_type: if cli.compile.double {
                 CmajorRealType::Float64
             } else {
                 CmajorRealType::Float32
@@ -672,7 +672,7 @@ pub(crate) fn run_source_mode(
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = WasmOptions {
-            double_precision: cli.double,
+            double_precision: cli.compile.double,
             ..WasmOptions::default()
         };
         let result = compiler.compile_file_to_wasm_with_lane(
@@ -702,7 +702,7 @@ pub(crate) fn run_source_mode(
         let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = WasmOptions {
-            double_precision: cli.double,
+            double_precision: cli.compile.double,
             ..WasmOptions::default()
         };
         let result = compiler.compile_file_to_wasm_with_lane(
@@ -817,35 +817,35 @@ fn expansion_option_argv(cli: &CliArgs) -> Vec<String> {
         argv.push("-lang".to_owned());
         argv.push(format!("{lang:?}").to_lowercase());
     }
-    if cli.double {
+    if cli.compile.double {
         argv.push("-double".to_owned());
     }
-    if cli.vec {
+    if cli.compile.vec {
         argv.push("-vec".to_owned());
         argv.push("-vs".to_owned());
-        argv.push(cli.vs.to_string());
+        argv.push(cli.compile.vs.to_string());
         argv.push("-lv".to_owned());
-        argv.push(cli.lv.to_string());
+        argv.push(cli.compile.lv.to_string());
     }
-    if cli.scheduling_strategy != 0 {
+    if cli.compile.scheduling_strategy != 0 {
         argv.push("-ss".to_owned());
-        argv.push(cli.scheduling_strategy.to_string());
+        argv.push(cli.compile.scheduling_strategy.to_string());
     }
-    if cli.external_control {
+    if cli.compile.external_control {
         argv.push("-ec".to_owned());
     }
-    if cli.one_sample {
+    if cli.compile.one_sample {
         argv.push("-os".to_owned());
     }
     argv.push("-mcd".to_owned());
-    argv.push(cli.mcd.to_string());
-    if cli.dlt != u32::MAX {
+    argv.push(cli.compile.mcd.to_string());
+    if cli.compile.dlt != u32::MAX {
         argv.push("-dlt".to_owned());
-        argv.push(cli.dlt.to_string());
+        argv.push(cli.compile.dlt.to_string());
     }
-    if cli.bra_tape != 8192 {
+    if cli.compile.bra_tape != 8192 {
         argv.push("-bra-tape".to_owned());
-        argv.push(cli.bra_tape.to_string());
+        argv.push(cli.compile.bra_tape.to_string());
     }
     argv
 }

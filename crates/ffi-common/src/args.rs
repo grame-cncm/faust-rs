@@ -2,13 +2,14 @@
 
 use std::path::PathBuf;
 
-/// Minimal shared subset of Faust CLI-like options accepted by Rust FFI crates.
+/// The options of a C API `argv` that concern the FFI host rather than the
+/// compiled program.
 ///
-/// Supported options: `-I <path>`, `-cn <name>`, `-pn <name>`, `-double`,
-/// the vector-mode trio `-vec` / `-vs <n>` / `-lv <n>`, the scheduling-strategy
-/// option `-ss <n>`, the delay-line options `-mcd <n>` / `-dlt <n>`, the
-/// table-index check `-ct <0|1>`, the four mode-zero memory-manager aliases,
-/// and the non-fatal diagnostic switch `--warn`.
+/// Supported options: `-I <path>`, `-cn <name>`, the four mode-zero
+/// memory-manager aliases, and the non-fatal diagnostic switch `--warn`. The
+/// options of the program itself (`-pn`, `-double`, `-vec`, `-ss`, `-mcd`,
+/// ...) are the compiler's: `compiler::CompileOptionArgs::from_argv` reads
+/// them from the same `argv`, which this crate, dependency-light, cannot see.
 /// Unknown options are ignored so backend FFI crates can accept broader argv
 /// vectors while incrementally extending support.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -24,78 +25,18 @@ pub struct FfiCompileArgs {
     pub search_paths: Vec<PathBuf>,
     /// Optional class/module name override from `-cn`.
     pub module_name: Option<String>,
-    /// Entry point compiled instead of `process`, from `-pn <name>` (or
-    /// `--process-name <name>`), as the C++ `createDSPFactoryFromFile` and
-    /// `createDSPFactoryFromString` accept it. `None` keeps `process`.
-    pub process_name: Option<String>,
-    /// Largest delay handled by a shifted copy rather than a ring buffer
-    /// (`-mcd <n>`). `None` keeps the compiler's default (16).
-    pub mcd: Option<u32>,
-    /// Delay above which a line uses an exact-size buffer with its own
-    /// counter (`-dlt <n>`). `None` keeps the compiler's default (disabled).
-    pub dlt: Option<u32>,
-    /// Table-index range check (`-ct <0|1>`). `None` keeps the compiler's
-    /// default (checked, as the C++ reference).
-    pub check_table: Option<bool>,
-    /// Use double-precision (64-bit) floating-point for internal DSP arithmetic.
-    ///
-    /// Set by the `-double` flag in the `argv` vector passed to FFI factory
-    /// constructors. Mirrors the reference Faust compiler's `-double` option.
-    pub double: bool,
-    /// Samples one `BlockReverseAD` tape holds (`-bra-tape N`): the largest
-    /// `compute` block over which `rad` gradients through delays and
-    /// recursions are exact. `None` keeps the compiler's default (8192).
-    pub bra_tape: Option<usize>,
-    /// Vector mode requested (`-vec`). When false, `vec_size`/`loop_variant` are
-    /// ignored (scalar codegen).
-    pub vec_mode: bool,
-    /// Vector chunk size (`-vs <n>`; Faust default 32). Only meaningful when
-    /// [`Self::vec_mode`] is set.
-    pub vec_size: u32,
-    /// Vector loop variant (`-lv <n>`; 0 = fastest/default, 1 = simple). Only
-    /// meaningful when [`Self::vec_mode`] is set.
-    pub loop_variant: u8,
-    /// Raw signal/loop scheduling-strategy value (`-ss <n>`; Faust default
-    /// `0`, depth-first).
-    ///
-    /// Kept as the raw non-negative integer here (rather than a decoded enum)
-    /// because `ffi-common` is a dependency-light leaf crate and the
-    /// `SchedulingStrategy` enum lives in `transform`. Callers that depend on
-    /// `compiler`/`transform` decode it with
-    /// `transform::schedule::SchedulingStrategy::decode` (re-exported as
-    /// `compiler::SchedulingStrategy`): `0 -> DepthFirst`,
-    /// `1 -> BreadthFirst`, `2 -> Special`, `n >= 3 -> ReverseBreadthFirst`.
-    pub scheduling_strategy: u32,
     /// Collect non-blocking semantic warnings on successful compilations.
     ///
     /// This mirrors the compiler facade's warning policy: warnings are
     /// retained for a diagnostics query but never turn success into failure.
     pub warnings: bool,
-    /// `runtime` when `--table-init runtime` was given, selecting a generated
-    /// sub-module that fills a `rdtable`/`rwtable` at initialization instead of
-    /// folding its contents at compile time.
-    ///
-    /// Kept as the raw string for the same reason as
-    /// [`Self::scheduling_strategy`]: `TableInitMode` lives in `transform`, and
-    /// `ffi-common` is a dependency-light leaf crate.
-    pub table_init: Option<String>,
-    /// Explicit sample rate used to fold `ma.SR` under `--table-init const`.
-    pub table_init_sample_rate: Option<i32>,
 }
 
-/// Parses the shared FFI option subset (`-I`, `-cn`, `-pn`, `-double`,
-/// `-vec`/`-vs`/`-lv`, `-ss`, `-mcd`, `-dlt`, `-ct`, `--table-init`,
-/// `--table-init-sample-rate`, `--warn`) from an argv vector. `vec_size` defaults to 32
-/// when `-vec` is given without `-vs`, matching the Faust CLI.
-/// `scheduling_strategy` defaults to `0` (depth-first) when `-ss` is absent,
-/// mirroring the CLI's `--scheduling-strategy` default.
+/// Parses the FFI host options (`-I`, `-cn`, `-mem0` and its aliases,
+/// `--warn`) from an argv vector, and refuses `-mem0` with `-vec` or `-it`.
 pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String> {
-    let mut parsed = FfiCompileArgs {
-        vec_size: 32,
-        ..FfiCompileArgs::default()
-    };
+    let mut parsed = FfiCompileArgs::default();
     let mut index = 0usize;
-    let mut in_place = false;
     while index < argv.len() {
         let arg = &argv[index];
         if arg == "-I" {
@@ -112,46 +53,6 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
             };
             parsed.module_name = Some(value.clone());
             index += 2;
-            continue;
-        }
-        if arg == "-pn" || arg == "--process-name" {
-            let Some(value) = argv.get(index + 1) else {
-                return Err(format!("missing process name after {arg}"));
-            };
-            parsed.process_name = Some(value.clone());
-            index += 2;
-            continue;
-        }
-        if matches!(arg.as_str(), "-mcd" | "--mcd" | "-dlt" | "--dlt") {
-            let Some(value) = argv.get(index + 1) else {
-                return Err(format!("missing value after {arg}"));
-            };
-            let value = value
-                .parse()
-                .map_err(|error| format!("bad {arg} value: {error}"))?;
-            if arg.ends_with("mcd") {
-                parsed.mcd = Some(value);
-            } else {
-                parsed.dlt = Some(value);
-            }
-            index += 2;
-            continue;
-        }
-        if arg == "-ct" || arg == "--check-table" {
-            let Some(value) = argv.get(index + 1) else {
-                return Err(format!("missing value after {arg}"));
-            };
-            parsed.check_table = Some(match value.as_str() {
-                "0" => false,
-                "1" => true,
-                _ => return Err(format!("bad {arg} value `{value}`: expected 0 or 1")),
-            });
-            index += 2;
-            continue;
-        }
-        if arg == "-double" {
-            parsed.double = true;
-            index += 1;
             continue;
         }
         if matches!(
@@ -175,89 +76,16 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
                 "unsupported memory-manager mode `{arg}`; only -mem0 is implemented"
             ));
         }
-        if arg == "-it" {
-            in_place = true;
-            index += 1;
-            continue;
-        }
-        if arg == "-vec" {
-            parsed.vec_mode = true;
-            index += 1;
-            continue;
-        }
-        if arg == "-vs" {
-            let Some(value) = argv.get(index + 1) else {
-                return Err("missing value after -vs".to_owned());
-            };
-            parsed.vec_size = value
-                .parse()
-                .map_err(|error| format!("bad -vs value: {error}"))?;
-            index += 2;
-            continue;
-        }
-        if arg == "-lv" {
-            let Some(value) = argv.get(index + 1) else {
-                return Err("missing value after -lv".to_owned());
-            };
-            parsed.loop_variant = value
-                .parse()
-                .map_err(|error| format!("bad -lv value: {error}"))?;
-            index += 2;
-            continue;
-        }
-        if arg == "-ss" {
-            let Some(value) = argv.get(index + 1) else {
-                return Err("missing value after -ss".to_owned());
-            };
-            parsed.scheduling_strategy = value
-                .parse()
-                .map_err(|error| format!("bad -ss value: {error}"))?;
-            index += 2;
-            continue;
-        }
-        if arg == "--table-init" || arg == "-table-init" {
-            let Some(value) = argv.get(index + 1) else {
-                return Err("missing value after --table-init".to_owned());
-            };
-            parsed.table_init = Some(value.clone());
-            index += 2;
-            continue;
-        }
-        if arg == "--table-init-sample-rate" {
-            let Some(value) = argv.get(index + 1) else {
-                return Err("missing value after --table-init-sample-rate".to_owned());
-            };
-            parsed.table_init_sample_rate = Some(
-                value
-                    .parse()
-                    .map_err(|error| format!("bad --table-init-sample-rate value: {error}"))?,
-            );
-            index += 2;
-            continue;
-        }
         if arg == "--warn" {
             parsed.warnings = true;
-            index += 1;
-            continue;
-        }
-        if arg == "-bra-tape" || arg == "--bra-tape" {
-            let Some(value) = argv.get(index + 1) else {
-                return Err("missing value after -bra-tape".to_owned());
-            };
-            parsed.bra_tape = Some(
-                value
-                    .parse()
-                    .map_err(|error| format!("bad -bra-tape value: {error}"))?,
-            );
-            index += 2;
-            continue;
         }
         index += 1;
     }
-    if parsed.memory_manager0 && parsed.vec_mode {
+    let given = |names: &[&str]| argv.iter().any(|arg| names.contains(&arg.as_str()));
+    if parsed.memory_manager0 && given(&["-vec", "--vec"]) {
         return Err("-mem0 is currently supported only in scalar mode; remove -vec".to_owned());
     }
-    if parsed.memory_manager0 && in_place {
+    if parsed.memory_manager0 && given(&["-it"]) {
         return Err("-mem0 cannot be combined with -it".to_owned());
     }
     parsed.search_paths.reverse();
@@ -268,86 +96,14 @@ pub fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String>
 mod tests {
     use std::path::PathBuf;
 
-    #[test]
-    fn bra_tape_is_parsed_in_both_spellings() {
-        let parsed = super::parse_ffi_compile_args(&["-bra-tape".to_owned(), "16384".to_owned()])
-            .expect("parse");
-        assert_eq!(parsed.bra_tape, Some(16384));
-        let parsed = super::parse_ffi_compile_args(&["--bra-tape".to_owned(), "4096".to_owned()])
-            .expect("parse");
-        assert_eq!(parsed.bra_tape, Some(4096));
-        assert!(super::parse_ffi_compile_args(&["-bra-tape".to_owned()]).is_err());
-        assert_eq!(
-            super::parse_ffi_compile_args(&[]).expect("parse").bra_tape,
-            None
-        );
-    }
-
     use super::parse_ffi_compile_args;
 
-    fn argv(args: &[&str]) -> Vec<String> {
-        args.iter().map(|arg| (*arg).to_owned()).collect()
-    }
-
     #[test]
-    fn process_name_and_delay_and_table_options_are_parsed() {
-        let parsed = parse_ffi_compile_args(&argv(&[
-            "-pn", "voice", "-mcd", "0", "-dlt", "1024", "-ct", "0",
-        ]))
-        .expect("parse");
-        assert_eq!(parsed.process_name.as_deref(), Some("voice"));
-        assert_eq!(parsed.mcd, Some(0));
-        assert_eq!(parsed.dlt, Some(1024));
-        assert_eq!(parsed.check_table, Some(false));
-        let parsed =
-            parse_ffi_compile_args(&argv(&["--process-name", "effect", "--check-table", "1"]))
-                .expect("parse");
-        assert_eq!(parsed.process_name.as_deref(), Some("effect"));
-        assert_eq!(parsed.check_table, Some(true));
-        let defaults = parse_ffi_compile_args(&[]).expect("parse");
-        assert_eq!(
-            (
-                defaults.process_name,
-                defaults.mcd,
-                defaults.dlt,
-                defaults.check_table
-            ),
-            (None, None, None, None)
-        );
-    }
-
-    #[test]
-    fn process_name_and_delay_and_table_options_reject_bad_values() {
-        for bad in [
-            &["-pn"][..],
-            &["-mcd"],
-            &["-mcd", "-1"],
-            &["-dlt", "x"],
-            &["-ct", "2"],
-            &["-ct"],
-        ] {
-            assert!(
-                parse_ffi_compile_args(&argv(bad)).is_err(),
-                "{bad:?} should be refused"
-            );
-        }
-    }
-
-    #[test]
-    fn accepts_i_cn_and_vec_options() {
-        let argv = vec![
-            "-I".to_owned(),
-            "lib1".to_owned(),
-            "-I".to_owned(),
-            "lib2".to_owned(),
-            "-cn".to_owned(),
-            "MyDSP".to_owned(),
-            "-vec".to_owned(),
-            "-vs".to_owned(),
-            "64".to_owned(),
-            "-lv".to_owned(),
-            "1".to_owned(),
-        ];
+    fn accepts_i_and_cn_and_skips_the_compiler_s_options() {
+        let argv = [
+            "-I", "lib1", "-I", "lib2", "-cn", "MyDSP", "-vec", "-vs", "64", "-pn", "voice",
+        ]
+        .map(str::to_owned);
         let parsed = parse_ffi_compile_args(&argv).unwrap();
         // search order: the last -I first, as in C++
         assert_eq!(
@@ -355,38 +111,7 @@ mod tests {
             [PathBuf::from("lib2"), PathBuf::from("lib1")]
         );
         assert_eq!(parsed.module_name.as_deref(), Some("MyDSP"));
-        assert!(parsed.vec_mode);
-        assert_eq!(parsed.vec_size, 64);
-        assert_eq!(parsed.loop_variant, 1);
-    }
-
-    #[test]
-    fn uses_default_vec_size() {
-        let parsed = parse_ffi_compile_args(&["-vec".to_owned()]).unwrap();
-        assert!(parsed.vec_mode);
-        assert_eq!(parsed.vec_size, 32);
-        assert_eq!(parsed.loop_variant, 0);
-    }
-
-    #[test]
-    fn accepts_ss_option() {
-        let parsed = parse_ffi_compile_args(&["-ss".to_owned(), "3".to_owned()]).unwrap();
-        assert_eq!(parsed.scheduling_strategy, 3);
-    }
-
-    #[test]
-    fn ss_defaults_to_zero_when_absent() {
-        let parsed = parse_ffi_compile_args(&[]).unwrap();
-        assert_eq!(parsed.scheduling_strategy, 0);
-    }
-
-    #[test]
-    fn ss_is_independent_of_vec() {
-        let parsed = parse_ffi_compile_args(&["-ss".to_owned(), "1".to_owned()]).unwrap();
-        assert_eq!(parsed.scheduling_strategy, 1);
-        assert!(!parsed.vec_mode);
-        assert_eq!(parsed.vec_size, 32);
-        assert_eq!(parsed.loop_variant, 0);
+        assert!(!parsed.memory_manager0 && !parsed.warnings);
     }
 
     #[test]
@@ -413,23 +138,5 @@ mod tests {
         assert!(error.contains("scalar mode"), "{error}");
         let error = parse_ffi_compile_args(&["-it".to_owned(), "-mem".to_owned()]).unwrap_err();
         assert!(error.contains("cannot be combined with -it"), "{error}");
-    }
-
-    #[test]
-    fn rejects_missing_ss_value() {
-        let error = parse_ffi_compile_args(&["-ss".to_owned()]).unwrap_err();
-        assert!(error.contains("missing value after -ss"), "{error}");
-    }
-
-    #[test]
-    fn rejects_non_integer_ss_value() {
-        let error = parse_ffi_compile_args(&["-ss".to_owned(), "abc".to_owned()]).unwrap_err();
-        assert!(error.contains("bad -ss value"), "{error}");
-    }
-
-    #[test]
-    fn rejects_negative_ss_value() {
-        let error = parse_ffi_compile_args(&["-ss".to_owned(), "-1".to_owned()]).unwrap_err();
-        assert!(error.contains("bad -ss value"), "{error}");
     }
 }

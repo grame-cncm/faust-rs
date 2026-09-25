@@ -390,7 +390,7 @@ impl Run<'_> {
                 std::path::Path::new(path),
                 probe.outputs(),
                 args.render.saturating_sub(args.skip),
-                args.double,
+                args.compile.double,
                 args.sr,
             )?),
             None => None,

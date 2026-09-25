@@ -52,13 +52,13 @@ fn normalize_legacy_args_maps_dash_ct_to_check_table() {
 fn check_table_defaults_to_on_and_parses_both_values() {
     let cli = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
     assert_eq!(
-        cli.check_table, 1,
+        cli.compile.check_table, 1,
         "-ct defaults to 1 like the C++ compiler"
     );
     let cli = CliArgs::parse_from(["faust-rs", "--check-table", "0", "foo.dsp"]);
-    assert_eq!(cli.check_table, 0);
+    assert_eq!(cli.compile.check_table, 0);
     let cli = CliArgs::parse_from(["faust-rs", "--check-table", "1", "foo.dsp"]);
-    assert_eq!(cli.check_table, 1);
+    assert_eq!(cli.compile.check_table, 1);
     // Out-of-range values are rejected, not silently truncated.
     assert!(CliArgs::try_parse_from(["faust-rs", "--check-table", "2", "foo.dsp"]).is_err());
 }
@@ -85,7 +85,6 @@ fn normalize_legacy_args_maps_dash_fir_to_lang_fir() {
 
 #[test]
 fn vec_flags_map_to_compute_mode() {
-    use super::runner::selected_compute_mode;
     use compiler::ComputeMode;
 
     // Single-dash Faust style `-vec -vs 64 -lv 1` normalizes then parses.
@@ -99,11 +98,11 @@ fn vec_flags_map_to_compute_mode() {
         "foo.dsp".to_owned(),
     ]);
     let cli = CliArgs::parse_from(normalized);
-    assert!(cli.vec);
-    assert_eq!(cli.vs, 64);
-    assert_eq!(cli.lv, 1);
+    assert!(cli.compile.vec);
+    assert_eq!(cli.compile.vs, 64);
+    assert_eq!(cli.compile.lv, 1);
     assert_eq!(
-        selected_compute_mode(&cli),
+        cli.compile.compute_mode(),
         ComputeMode::Vector {
             vec_size: 64,
             loop_variant: 1
@@ -112,10 +111,10 @@ fn vec_flags_map_to_compute_mode() {
 
     // No `-vec` → scalar (default), with the Faust default vector size (32).
     let cli = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
-    assert!(!cli.vec);
-    assert_eq!(cli.vs, ComputeMode::DEFAULT_VEC_SIZE);
-    assert_eq!(cli.vs, 32);
-    assert_eq!(selected_compute_mode(&cli), ComputeMode::Scalar);
+    assert!(!cli.compile.vec);
+    assert_eq!(cli.compile.vs, ComputeMode::DEFAULT_VEC_SIZE);
+    assert_eq!(cli.compile.vs, 32);
+    assert_eq!(cli.compile.compute_mode(), ComputeMode::Scalar);
 }
 
 #[test]
@@ -130,7 +129,7 @@ fn all_documented_mem0_aliases_select_one_typed_mode() {
     ] {
         let normalized = normalize_legacy_args(argv.iter().map(ToString::to_string));
         let cli = CliArgs::parse_from(normalized);
-        assert!(cli.memory_manager, "{argv:?}");
+        assert!(cli.compile.memory_manager, "{argv:?}");
         assert_eq!(
             super::runner::selected_memory_manager_mode(&cli),
             MemoryManagerMode::Mem0,
@@ -203,7 +202,6 @@ fn unported_memory_manager_modes_are_parse_errors() {
 
 #[test]
 fn scheduling_strategy_flag_decodes_all_documented_values() {
-    use super::runner::selected_scheduling_strategy;
     use compiler::SchedulingStrategy;
 
     let cases: [(u32, SchedulingStrategy); 6] = [
@@ -221,9 +219,9 @@ fn scheduling_strategy_flag_decodes_all_documented_values() {
             &n.to_string(),
             "foo.dsp",
         ]);
-        assert_eq!(cli.scheduling_strategy, n);
+        assert_eq!(cli.compile.scheduling_strategy, n);
         assert_eq!(
-            selected_scheduling_strategy(&cli),
+            cli.compile.scheduling(),
             expected,
             "-ss {n} should decode to {expected:?}"
         );
@@ -232,38 +230,28 @@ fn scheduling_strategy_flag_decodes_all_documented_values() {
     // `-ss 3` and `-ss 42` both decode to `ReverseBreadthFirst`.
     let cli3 = CliArgs::parse_from(["faust-rs", "--scheduling-strategy", "3", "foo.dsp"]);
     let cli42 = CliArgs::parse_from(["faust-rs", "--scheduling-strategy", "42", "foo.dsp"]);
-    assert_eq!(
-        selected_scheduling_strategy(&cli3),
-        selected_scheduling_strategy(&cli42)
-    );
+    assert_eq!(cli3.compile.scheduling(), cli42.compile.scheduling());
 }
 
 #[test]
 fn scheduling_strategy_defaults_to_depth_first_in_scalar_and_vector_modes() {
-    use super::runner::selected_scheduling_strategy;
     use compiler::SchedulingStrategy;
 
     let scalar = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
-    assert_eq!(scalar.scheduling_strategy, 0);
-    assert_eq!(
-        selected_scheduling_strategy(&scalar),
-        SchedulingStrategy::DepthFirst
-    );
+    assert_eq!(scalar.compile.scheduling_strategy, 0);
+    assert_eq!(scalar.compile.scheduling(), SchedulingStrategy::DepthFirst);
 
     // `-vec` must not alter the `-ss` default.
     let vector = CliArgs::parse_from(["faust-rs", "--vec", "foo.dsp"]);
-    assert_eq!(vector.scheduling_strategy, 0);
-    assert_eq!(
-        selected_scheduling_strategy(&vector),
-        SchedulingStrategy::DepthFirst
-    );
+    assert_eq!(vector.compile.scheduling_strategy, 0);
+    assert_eq!(vector.compile.scheduling(), SchedulingStrategy::DepthFirst);
 }
 
 #[test]
 fn scheduling_strategy_flag_is_accepted_without_vec() {
     let cli = CliArgs::parse_from(["faust-rs", "--scheduling-strategy", "1", "foo.dsp"]);
-    assert!(!cli.vec);
-    assert_eq!(cli.scheduling_strategy, 1);
+    assert!(!cli.compile.vec);
+    assert_eq!(cli.compile.scheduling_strategy, 1);
 }
 
 #[test]
@@ -310,7 +298,7 @@ fn normalize_legacy_args_maps_dash_ss_to_scheduling_strategy() {
         "3".to_owned(),
         "foo.dsp".to_owned(),
     ]));
-    assert_eq!(cli.scheduling_strategy, 3);
+    assert_eq!(cli.compile.scheduling_strategy, 3);
 }
 
 #[test]
@@ -499,7 +487,7 @@ fn cli_parse_accepts_dump_cranelift() {
 #[test]
 fn cli_parse_accepts_process_name() {
     let cli = CliArgs::parse_from(["faust-rs", "--process-name", "dsp", "foo.dsp"]);
-    assert_eq!(cli.process_name, "dsp");
+    assert_eq!(cli.compile.process_name, "dsp");
 }
 
 #[test]
@@ -1635,20 +1623,20 @@ fn cli_parse_accepts_execution_option_flags_and_spellings() {
         ["faust-rs", "--ext-control", "foo.dsp"],
     ] {
         let cli = CliArgs::parse_from(argv);
-        assert!(cli.external_control, "{argv:?}");
-        assert!(!cli.one_sample, "{argv:?}");
+        assert!(cli.compile.external_control, "{argv:?}");
+        assert!(!cli.compile.one_sample, "{argv:?}");
     }
     for argv in [
         ["faust-rs", "--os", "foo.dsp"],
         ["faust-rs", "--one-sample", "foo.dsp"],
     ] {
         let cli = CliArgs::parse_from(argv);
-        assert!(cli.one_sample, "{argv:?}");
-        assert!(!cli.external_control, "{argv:?}");
+        assert!(cli.compile.one_sample, "{argv:?}");
+        assert!(!cli.compile.external_control, "{argv:?}");
     }
     let cli = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
-    assert!(!cli.external_control);
-    assert!(!cli.one_sample);
+    assert!(!cli.compile.external_control);
+    assert!(!cli.compile.one_sample);
 }
 
 #[test]
@@ -1683,23 +1671,14 @@ fn selected_execution_options_map_cli_flags() {
     use compiler::{ControlRateMode, ProcessingApi};
 
     let cli = CliArgs::parse_from(["faust-rs", "--ec", "--os", "foo.dsp"]);
-    assert_eq!(
-        super::runner::selected_control_rate_mode(&cli),
-        ControlRateMode::External
-    );
-    assert_eq!(
-        super::runner::selected_processing_api(&cli),
-        ProcessingApi::OneSample
-    );
+    assert_eq!(cli.compile.control_rate_mode(), ControlRateMode::External);
+    assert_eq!(cli.compile.processing_api(), ProcessingApi::OneSample);
     let cli = CliArgs::parse_from(["faust-rs", "foo.dsp"]);
     assert_eq!(
-        super::runner::selected_control_rate_mode(&cli),
+        cli.compile.control_rate_mode(),
         ControlRateMode::InlinePerBlock
     );
-    assert_eq!(
-        super::runner::selected_processing_api(&cli),
-        ProcessingApi::Block
-    );
+    assert_eq!(cli.compile.processing_api(), ProcessingApi::Block);
 }
 
 // ─── G8: human renderer policy ────────────────────────────────────────────────

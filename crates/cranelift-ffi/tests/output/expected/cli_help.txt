@@ -21,18 +21,10 @@ Options:
   -I, --import-dir <DIR>
           Add a Faust library import directory (repeatable)
 
-      --double
-          Compile and execute with double-precision samples
-
       --opt-level <OPT_LEVEL>
           Cranelift optimisation level
           
           [default: 0]
-
-      --bra-tape <BRA_TAPE>
-          Samples one `rad` block reverse tape holds (`-bra-tape N` of the compiler): the largest `--block` over which the gradients of a `rad` through delays and recursions are exact. A power of two
-          
-          [default: 8192]
 
       --sr <SR>
           Sample rate in Hz
@@ -296,36 +288,90 @@ Options:
 
 Compiler options (as faust-rs):
       --process-name <NAME>
-          Compile the definition NAME instead of `process` (`-pn NAME`), in FILE and in the OTHER of `--compare`
+          Specify the top-level DSP entry-point name instead of `process` (`-pn <name>`, `--process-name <name>`)
+          
+          [default: process]
 
-      --vec
-          Vector mode (`-vec`): `compute` as an outer loop over chunks of `--vs` frames
+      --double
+          Use double-precision (64-bit) floating-point for internal DSP computation.
+          
+          By default, single-precision (32-bit) `float` is used for internal calculations while the external DSP interface (`FAUSTFLOAT` audio buffers and UI zones) always stays at the type declared by the architecture file.  Passing `--double` switches internal arithmetic to `double`, matching the `-double` option of the reference Faust compiler.
 
-      --vs <N>
-          Vector size of `-vec` (`-vs N`, default 32)
+      --single
+          Use single-precision (32-bit) floating-point for internal DSP computation (`-single`), the default: cancels an earlier `--double`
 
-      --lv <0|1>
-          Vector loop variant of `-vec` (`-lv 0|1`, default 0)
-
-      --scheduling-strategy <N>
-          Scheduling strategy (`-ss N`): 0 depth-first (default), 1 breadth-first, 2 interleaved, 3 and above reverse breadth-first
+      --memory-manager
+          Use the host custom memory manager for eligible native DSP state (`-mem`/`-mem0`/`--memory-manager`/`--memory-manager0`).
+          
+          The four spellings select the same typed `mem0` mode. Only mode zero is implemented: it is scalar-only and restricted to C, C++, and Cranelift; `mem1` through `mem3` are deliberately rejected.
 
       --mcd <N>
-          Largest delay handled by a shifted copy instead of a ring buffer (`-mcd N`, default 16)
+          Maximum delay (in samples) below which the shift/copy strategy is used instead of a circular ring buffer (`-mcd N`).
+          
+          Delays ≤ `mcd` use a statically-shifted array (no `fIOTA`).
+          
+          [default: 16]
+
+      --bra-tape <N>
+          Samples one `BlockReverseAD` tape holds: the largest `compute` block over which `rad` gradients through delays and recursions are exact (`-bra-tape N`). A power of two
+          
+          [default: 8192]
 
       --dlt <N>
-          Delay above which a line has an exact-size buffer and its own counter (`-dlt N`, default: never)
+          Delay-line threshold above which the if-based wrapping strategy is used instead of the default power-of-two circular buffer (`-dlt N`).
+          
+          Delays > `dlt` use an exact-size buffer with a per-line counter variable. Default: disabled (all delays above `mcd` use circular-pow2).
 
       --check-table <0|1>
-          Table index range check (`-ct 0|1`, default 1): with 0 an index out of range is not clamped
+          Check table index range and generate safe accesses (`-ct <0|1>`, `--check-table <0|1>`).
+          
+          With `1` (the default, matching the reference compiler), table indexes the interval analysis cannot prove in-bounds are clamped at the signal level to `max(0, min(index, size-1))`. With `0`, accesses are generated raw and out-of-range indexes are undefined behavior — the reference `-ct 0` contract.
+          
+          [default: 1]
 
       --table-init <MODE>
-          How the content of `rdtable`/`rwtable` is produced (`-table-init runtime|const`, default runtime)
+          How the initial content of `rdtable`/`rwtable` tables is produced.
           
-          [possible values: runtime, const]
+          `runtime` compiles each table generator into a sub-module whose `fill` function computes the content at initialization time, as the C++ reference does; this is the only mode that can express content depending on the sample rate or on a foreign function, and it keeps the emitted source small. `const` evaluates the generator at compile time and emits a literal initializer list; a generator using `ma.SR` also requires `--table-init-sample-rate HZ` to make the frozen value explicit.
+
+          Possible values:
+          - runtime: Compile each table generator into a sub-module filled at initialization time (the C++ reference behavior)
+          - const:   Fold the generator into a literal initializer list at compile time
+          
+          [default: runtime]
 
       --table-init-sample-rate <HZ>
-          The value of `ma.SR` in a table folded by `--table-init const` (required when a table generator reads it)
+          Sample rate embedded when `--table-init const` folds a generated table that reads `ma.SR`. Required for that dependency; ignored otherwise
+
+      --vec
+          Vector mode (`-vec`): restructure `compute()` into an outer chunk loop so the C compiler can auto-vectorize the inner loops (SIMD).
+          
+          Selection is checked: a program shape the vector pipeline cannot certify falls back to scalar lowering instead of emitting unverified code, and certified vector output is bit-exact against scalar output for the same program. Use `-vs`/`-lv` to size and shape the chunk loop.
+
+      --vs <N>
+          Vector size for `-vec` (`-vs N`)
+          
+          [default: 32]
+
+      --lv <0|1>
+          Vector loop variant for `-vec` (`-lv 0|1`, as Faust C++): 0 = fastest (default) — a constant-trip main loop over `count - count % vs` plus a scalar remainder, the autovectorization-friendly form; 1 = simple — a single loop with a runtime `min(vindex + vs, count)` bound
+          
+          [default: 0]
+
+      --scheduling-strategy <N>
+          Signal/loop dependency scheduling strategy (`-ss N`, as Faust C++): `0` = depth-first (default), `1` = breadth-first, `2` = special (interleaved), `n >= 3` = reverse breadth-first. Decoded through `SchedulingStrategy::decode`.
+          
+          Independent of `-vec`/`-vs`/`-lv`: it drives the scalar control/signal schedule and the checked vector loop schedule.
+          
+          `adapted` API mapping vs C++ `atoi`: a missing value, a non-integer value, or a negative value is a hard parse error here instead of silently falling back to `0`.
+          
+          [default: 0]
+
+      --ec
+          External control (`-ec` / `--external-control`, as Faust C++; the legacy `--ext-control` spelling is also accepted): emit control-rate computations in a separate `control` entry point scheduled by the host instead of inline at the start of each block. Subject to per-backend capability validation
+
+      --os
+          One-sample processing (`-os` / `--one-sample`, as Faust C++): emit a one-sample `frame(inputs, outputs)` entry point over flat channel arrays; the canonical block `compute` is kept but emitted empty. Scalar mode only; subject to per-backend capability validation
 
 --- stderr
 

@@ -433,12 +433,20 @@ impl<'a> Verification<'a> {
                 (samples, true, Tolerance::default())
             }
             Check::Width => {
-                let (other_width, _) = compile_program(args, !args.double)?;
+                let (other_width, _) = compile_program(args, !args.compile.double)?;
                 let fresh = Probe::instantiate(&Rc::new(other_width), args.sr)?;
                 lines.push(format!(
                     "# {tag}: this render in {} precision against the {} one{}",
-                    if args.double { "double" } else { "single" },
-                    if args.double { "single" } else { "double" },
+                    if args.compile.double {
+                        "double"
+                    } else {
+                        "single"
+                    },
+                    if args.compile.double {
+                        "single"
+                    } else {
+                        "double"
+                    },
                     if self.explicit_tolerance {
                         ""
                     } else {
@@ -469,7 +477,7 @@ fn other_program(
         path,
         &args.import_dirs,
         &compiler_args(args),
-        args.double,
+        args.compile.double,
         args.opt_level,
     )
     .map_err(|error| format!("--compare: {error}"))?;

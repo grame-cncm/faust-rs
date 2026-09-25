@@ -12,8 +12,6 @@ use codegen::backends::asc::{AscOptions, generate_asc_module};
 use codegen::backends::c::COptions;
 use codegen::backends::cpp::CppOptions;
 use codegen::backends::wasm::WasmOptions;
-pub use transform::schedule::SchedulingStrategy;
-pub use transform::signal_fir::{ComputeMode, ControlRateMode, ProcessingApi, RealType};
 
 impl Compiler {
     // ── Helper service surface (`faustwasm`-oriented) ─────────────────────────────
@@ -80,77 +78,6 @@ impl Compiler {
             .map_err(FaustwasmServiceError::compile_failure)
     }
 
-    /// Returns a copy of this compiler with the compilation options found in a
-    /// raw argv string applied.
-    ///
-    /// Reads the same flag spellings as the `faust-rs` CLI
-    /// (`crates/compiler/src/cli/args.rs`), and selects the same [`RealType`],
-    /// [`ComputeMode`], [`SchedulingStrategy`], [`ControlRateMode`],
-    /// [`ProcessingApi`], and [`TableInitMode`] that
-    /// [`cli::runner::compiler_from_cli`] would build for those flags:
-    ///
-    /// | flag | effect |
-    /// |------|--------|
-    /// | `-double` | double-precision internal DSP computation |
-    /// | `-mcd N` / `-dlt N` | delay-line strategy thresholds |
-    /// | `-vec` (+ `-vs N`, `-lv N`) | vector `compute` shape |
-    /// | `-ss N` / `--scheduling-strategy N` | statement scheduling order |
-    /// | `-ec` / `--external-control` | separate `control` entry point |
-    /// | `-os` / `--one-sample` | `frame` entry point |
-    /// | `--table-init runtime\|const` | generated-table initialization mode |
-    /// | `--table-init-sample-rate N` | sample rate frozen into a `const` table |
-    ///
-    /// These are plain Faust CLI flags rather than a dialect belonging to any
-    /// one caller, which is why decoding them here — instead of only in the
-    /// CLI — keeps [`Compiler::generate_aux_files`] from silently ignoring
-    /// options its callers legitimately pass.
-    ///
-    /// [`cli::runner::compiler_from_cli`]: ../compiler/cli/runner/fn.compiler_from_cli.html
-    fn with_execution_options_from_argv(&self, argv: &[String]) -> Compiler {
-        let has = |names: &[&str]| argv.iter().any(|arg| names.contains(&arg.as_str()));
-        let mut compiler = self.clone();
-        if has(&["-double", "--double"]) {
-            compiler = compiler.with_real_type(RealType::Float64);
-        }
-        if let Some(n) = argv_value_parsed(argv, &["-mcd", "--mcd"]) {
-            compiler = compiler.with_mcd(n);
-        }
-        if let Some(n) = argv_value_parsed(argv, &["-dlt", "--dlt"]) {
-            compiler = compiler.with_dlt(n);
-        }
-        if let Some(mode) = argv_value(argv, &["--table-init", "-table-init"]) {
-            // An unknown value keeps the default rather than failing here; the
-            // CLI layer is where argument validation belongs.
-            match mode {
-                "runtime" => compiler = compiler.with_table_init_mode(TableInitMode::Runtime),
-                "const" => compiler = compiler.with_table_init_mode(TableInitMode::Const),
-                _ => {}
-            }
-        }
-        if let Some(sample_rate) = argv_value_parsed(argv, &["--table-init-sample-rate"]) {
-            compiler = compiler.with_table_init_sample_rate(sample_rate);
-        }
-        if has(&["-vec", "--vec"]) {
-            let vec_size =
-                argv_value_parsed(argv, &["-vs", "--vs"]).unwrap_or(ComputeMode::DEFAULT_VEC_SIZE);
-            let loop_variant = argv_value_parsed(argv, &["-lv", "--lv"]).unwrap_or(0u8);
-            compiler = compiler.with_compute_mode(ComputeMode::Vector {
-                vec_size,
-                loop_variant,
-            });
-        }
-        if let Some(n) = argv_value_parsed(argv, &["-ss", "--scheduling-strategy"]) {
-            compiler = compiler.with_scheduling_strategy(SchedulingStrategy::decode(n));
-        }
-        if has(&["-ec", "--ec", "--external-control", "--ext-control"]) {
-            compiler = compiler.with_control_rate_mode(ControlRateMode::External);
-        }
-        if has(&["-os", "--os", "--one-sample"]) {
-            compiler = compiler.with_processing_api(ProcessingApi::OneSample);
-        }
-        compiler
-    }
-
     /// Generate auxiliary output files from a Faust DSP source.
     ///
     /// Inspects `request.args` for output-format flags and returns one
@@ -166,7 +93,9 @@ impl Compiler {
     /// | `-lang asc` | one AssemblyScript source, via the internal ASC auxiliary-file generator |
     ///
     /// `request.args` also carries the compilation options applied to every
-    /// output; the internal execution-option normalizer lists them.
+    /// output: those of [`CompileOptionArgs`], read by
+    /// [`Compiler::with_argv_options`]. A malformed value is an
+    /// [`FaustwasmServiceErrorCode::InvalidArgument`] error.
     ///
     /// Mirrors: `generateAuxFilesFromString` / `generateAuxFilesFromFile`
     /// (C++ Faust API). Two deliberate deviations: the artifacts are returned
@@ -183,7 +112,9 @@ impl Compiler {
         // Compilation options travel in the same argv string; a derived
         // compiler applies them so downstream compile calls validate them
         // instead of silently ignoring the flags.
-        let compiler = self.with_execution_options_from_argv(&argv);
+        let compiler = self
+            .with_argv_options(&argv)
+            .map_err(FaustwasmServiceError::invalid_argument)?;
 
         // `-lang asc` transpile request: produces one AssemblyScript source
         // artifact instead of the flag-driven outputs.

@@ -26,12 +26,12 @@ use codegen::backends::cranelift::{
 use codegen::json::{JsonBuildOptions, JsonMemoryDescription, build_json_description_from_fir};
 use codegen::memory_layout::MemoryManagerMode;
 use compiler::{
-    AuxFileArtifact, Compiler as FaustCompiler, CompilerError, ComputeMode, ExpandDspRequest,
-    FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SchedulingStrategy, SignalFirLane,
-    TableInitMode, merge_import_search_paths,
+    AuxFileArtifact, CompileOptionArgs, Compiler as FaustCompiler, CompilerError, ExpandDspRequest,
+    FaustwasmServiceError, GenerateAuxFilesRequest, SchedulingStrategy, SignalFirLane,
+    merge_import_search_paths,
 };
 use ffi_common::{
-    CompleteError, FaustMemoryManager, FfiCompileArgs, decode_c_argv as decode_c_argv_shared,
+    CompleteError, FaustMemoryManager, decode_c_argv as decode_c_argv_shared,
     free_c_memory_c_string_only, null_c_string_array, optional_c_string_arg,
     parse_ffi_compile_args, required_c_string_arg, write_error_4096,
 };
@@ -305,13 +305,9 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromSignals(
         create_cranelift_factory_with_argv(&args, error_msg, |args| {
             let fir = export_fir_from_signal_array_handle(&source_name, signals)?;
             let fir_dump = fir::dump_fir(&fir.store, fir.module);
-            let parsed = parse_ffi_compile_args(args)?;
-            let jit = compile_fir_module_to_cranelift(
-                &fir,
-                opt_level,
-                parsed.double,
-                memory_manager_mode(parsed.memory_manager0),
-            )?;
+            let (options, memory_manager) = argv_options(args)?;
+            let jit =
+                compile_fir_module_to_cranelift(&fir, opt_level, options.double, memory_manager)?;
             let foreign_function_fingerprint = foreign_function_registry_fingerprint();
             build_scaffold_factory_common(
                 FactoryBuildSpec {
@@ -368,13 +364,9 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromBoxes(
         create_cranelift_factory_with_argv(&args, error_msg, |args| {
             let fir = export_fir_from_box_handle(&source_name, box_expr)?;
             let fir_dump = fir::dump_fir(&fir.store, fir.module);
-            let parsed = parse_ffi_compile_args(args)?;
-            let jit = compile_fir_module_to_cranelift(
-                &fir,
-                opt_level,
-                parsed.double,
-                memory_manager_mode(parsed.memory_manager0),
-            )?;
+            let (options, memory_manager) = argv_options(args)?;
+            let jit =
+                compile_fir_module_to_cranelift(&fir, opt_level, options.double, memory_manager)?;
             let foreign_function_fingerprint = foreign_function_registry_fingerprint();
             build_scaffold_factory_common(
                 FactoryBuildSpec {
@@ -1063,70 +1055,26 @@ struct CompiledCraneliftFactory {
     foreign_function_fingerprint: String,
 }
 
-/// Runs the real compiler pipeline to FIR, then compiles one Cranelift JIT module.
-/// Builds a [`FaustCompiler`] configured from the shared FFI argv subset:
-/// `-double` selects the real type, `-vec`/`-vs`/`-lv` select the compute mode,
-/// `-ss` selects the scheduling strategy (vectorization port plan phase P2:
-/// plumbing only — the strategy is stored but not yet acted on).
-/// Returns the compiler plus the parsed `double` flag (needed by the JIT).
+/// Builds a [`FaustCompiler`] configured from `argv`: the compile options of
+/// [`CompileOptionArgs`], every one of them, with the precision the JIT needs
+/// and the memory-manager mode of the FFI host.
 fn compiler_from_argv(argv: &[String]) -> Result<(FaustCompiler, bool, MemoryManagerMode), String> {
-    let parsed = parse_ffi_compile_args(argv)?;
-    let compute_mode = if parsed.vec_mode {
-        ComputeMode::Vector {
-            vec_size: parsed.vec_size,
-            loop_variant: parsed.loop_variant,
-        }
-    } else {
-        ComputeMode::Scalar
-    };
-    let compiler = FaustCompiler::new()
-        .with_real_type(if parsed.double {
-            RealType::Float64
-        } else {
-            RealType::Float32
-        })
-        .with_compute_mode(compute_mode)
-        .with_scheduling_strategy(SchedulingStrategy::decode(parsed.scheduling_strategy));
-    let compiler = match parsed.table_init.as_deref() {
-        Some("runtime") => compiler.with_table_init_mode(TableInitMode::Runtime),
-        Some("const") => compiler.with_table_init_mode(TableInitMode::Const),
-        _ => compiler,
-    };
-    let compiler = match parsed.table_init_sample_rate {
-        Some(sample_rate) => compiler.with_table_init_sample_rate(sample_rate),
-        None => compiler,
-    };
-    let compiler = match parsed.bra_tape {
-        Some(samples) => compiler.with_bra_tape(samples),
-        None => compiler,
-    };
-    let compiler = with_program_options(compiler, &parsed);
+    let (options, memory_manager) = argv_options(argv)?;
     Ok((
-        compiler,
-        parsed.double,
-        memory_manager_mode(parsed.memory_manager0),
+        options.apply(FaustCompiler::new()),
+        options.double,
+        memory_manager,
     ))
 }
 
-/// Applies the options of `parsed` that choose the program (`-pn`) or shape
-/// its code without changing what it computes (`-mcd`, `-dlt`), and the table
-/// index check (`-ct`), each only when given so the compiler keeps its own
-/// defaults otherwise.
-fn with_program_options(compiler: FaustCompiler, parsed: &FfiCompileArgs) -> FaustCompiler {
-    let mut compiler = compiler;
-    if let Some(name) = &parsed.process_name {
-        compiler = compiler.with_process_name(name.as_str());
-    }
-    if let Some(n) = parsed.mcd {
-        compiler = compiler.with_mcd(n);
-    }
-    if let Some(n) = parsed.dlt {
-        compiler = compiler.with_dlt(n);
-    }
-    if let Some(enabled) = parsed.check_table {
-        compiler = compiler.with_check_table(enabled);
-    }
-    compiler
+/// The compile options of `argv` and the memory-manager mode of the host, both
+/// checked.
+fn argv_options(argv: &[String]) -> Result<(CompileOptionArgs, MemoryManagerMode), String> {
+    let host = parse_ffi_compile_args(argv)?;
+    Ok((
+        CompileOptionArgs::from_argv(argv)?,
+        memory_manager_mode(host.memory_manager0),
+    ))
 }
 
 fn preflight_compile_file_to_cranelift(

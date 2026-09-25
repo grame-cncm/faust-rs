@@ -110,7 +110,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             &store,
             module,
             &WasmOptions {
-                double_precision: cli.double,
+                double_precision: cli.compile.double,
                 ..WasmOptions::default()
             },
         ) {
@@ -135,7 +135,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             &store,
             module,
             &WasmOptions {
-                double_precision: cli.double,
+                double_precision: cli.compile.double,
                 ..WasmOptions::default()
             },
         ) {
@@ -162,7 +162,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
             // `-lang asc foo.dsp` emitted `class foo` while `-lang cpp`,
             // `-lang julia` and `-lang rust` all emitted `mydsp`.
             class_name: selected_class_name(cli).or_else(|| Some("mydsp".to_owned())),
-            double_precision: cli.double,
+            double_precision: cli.compile.double,
             compile_options: Some(compile_options_full_string(
                 cli,
                 Some(cli_lang_name(CliLang::Asc)),
@@ -191,7 +191,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         // has no `frame` function, and the emitter says so with
         // `FRS-CGEN-CBOX-0002` rather than emitting something plausible.
         let options = CodeboxOptions {
-            double_precision: cli.double,
+            double_precision: cli.compile.double,
             test_labels: lang == CliLang::CodeboxTest,
             compile_options: Some(compile_options_full_string(cli, Some(cli_lang_name(lang)))),
         };
@@ -213,7 +213,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     if matches!(cli.lang, Some(CliLang::Cmajor)) {
         let options = CmajorOptions {
             class_name: selected_class_name(cli).unwrap_or_else(|| "mydsp".to_owned()),
-            real_type: if cli.double {
+            real_type: if cli.compile.double {
                 CmajorRealType::Float64
             } else {
                 CmajorRealType::Float32
@@ -293,7 +293,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
 
     if cli.dump_json {
         let compile_options = compile_options_full_string(cli, cli.lang.map(cli_lang_name));
-        match compile_fixture_to_json_text(&store, module, compile_options, cli.double) {
+        match compile_fixture_to_json_text(&store, module, compile_options, cli.compile.double) {
             Ok(json) => {
                 if cli.lang.is_some() {
                     let output = require_companion_output_path(cli);
@@ -313,7 +313,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     if cli.dump_cpp || matches!(cli.lang, Some(CliLang::Cpp)) || mode_count == 0 {
         let options = CppOptions {
             memory_manager_mode: selected_memory_manager_mode(cli),
-            double_precision: cli.double,
+            double_precision: cli.compile.double,
             class_name: selected_class_name(cli),
             super_class_name: selected_super_class_name(cli),
             compile_options: Some(compile_options_full_string(
@@ -341,7 +341,7 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
     if cli.dump_c || matches!(cli.lang, Some(CliLang::C)) {
         let options = COptions {
             memory_manager_mode: selected_memory_manager_mode(cli),
-            double_precision: cli.double,
+            double_precision: cli.compile.double,
             class_name: selected_class_name(cli),
             compile_options: Some(compile_options_full_string(
                 cli,
@@ -390,7 +390,7 @@ fn emit_fixture_json_companion(
 ) {
     let output = require_companion_output_path(cli);
     let compile_options = compile_options_full_string(cli, Some(backend));
-    match compile_fixture_to_json_text(store, module, compile_options, cli.double) {
+    match compile_fixture_to_json_text(store, module, compile_options, cli.compile.double) {
         Ok(json) => emit_json_companion_output(&json, output),
         Err(err) => {
             eprintln!("JSON fixture generation failed: {err}");

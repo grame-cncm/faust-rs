@@ -21,8 +21,8 @@ use codegen::backends::interp::{
     unregister_foreign_function,
 };
 use compiler::{
-    AuxFileArtifact, Compiler as FaustCompiler, CompilerError, ExpandDspRequest,
-    FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SignalFirLane, TableInitMode,
+    AuxFileArtifact, CompileOptionArgs, Compiler as FaustCompiler, CompilerError, ExpandDspRequest,
+    FaustwasmServiceError, GenerateAuxFilesRequest, RealType, SignalFirLane,
     compile_options_json_string, merge_import_search_paths,
 };
 use ffi_common::{
@@ -643,8 +643,7 @@ fn compile_factory_from_file_fastlane(
     argv: &[String],
 ) -> Result<FbcDspFactoryAny, String> {
     let parsed = parse_ffi_compile_args(argv)?;
-    let table_init = parsed.table_init.clone();
-    let real_type = ffi_real_type(&parsed);
+    let (compiler, real_type) = compiler_from_argv(argv)?;
     let interp_options = codegen::backends::interp::InterpOptions {
         module_name: parsed.module_name.clone(),
         compile_options: Some(compile_options_json_string(
@@ -658,11 +657,6 @@ fn compile_factory_from_file_fastlane(
     // library of the same name, as with the C++ compiler and the CLI.
     let search_paths = merge_import_search_paths(path, &parsed.search_paths);
 
-    let compiler = apply_table_init(
-        with_argv_options(FaustCompiler::new().with_real_type(real_type), &parsed),
-        table_init.as_deref(),
-        parsed.table_init_sample_rate,
-    );
     let fbc = compiler
         .compile_file_to_interp_with_lane(
             path,
@@ -684,8 +678,7 @@ fn compile_factory_from_string_fastlane(
     argv: &[String],
 ) -> Result<FbcDspFactoryAny, String> {
     let parsed = parse_ffi_compile_args(argv)?;
-    let table_init = parsed.table_init.clone();
-    let real_type = ffi_real_type(&parsed);
+    let (compiler, real_type) = compiler_from_argv(argv)?;
     let interp_options = codegen::backends::interp::InterpOptions {
         module_name: parsed
             .module_name
@@ -698,11 +691,6 @@ fn compile_factory_from_string_fastlane(
         ..codegen::backends::interp::InterpOptions::default()
     };
 
-    let compiler = apply_table_init(
-        with_argv_options(FaustCompiler::new().with_real_type(real_type), &parsed),
-        table_init.as_deref(),
-        parsed.table_init_sample_rate,
-    );
     // Forward `-I` as import search paths, as the Cranelift string factory
     // does. `parsed.search_paths` already holds them; without passing them on,
     // only the built-in defaults are searched, so `import("stdfaust.lib")`
@@ -726,35 +714,6 @@ fn compile_factory_from_string_fastlane(
 fn compile_factory_from_fbc_text(fbc: &str) -> Result<FbcDspFactoryAny, String> {
     let mut cursor = std::io::Cursor::new(fbc.as_bytes());
     read_fbc_any(&mut cursor)
-}
-
-/// Map `FfiCompileArgs.double` to a `RealType` for the compiler.
-fn ffi_real_type(parsed: &FfiCompileArgs) -> RealType {
-    if parsed.double {
-        RealType::Float64
-    } else {
-        RealType::Float32
-    }
-}
-
-/// Applies `--table-init` from the shared FFI argv subset.
-///
-/// Without this a caller asking for `runtime` silently got the `const`
-/// default, so a gate run "in runtime mode" would really be re-testing `const`.
-fn apply_table_init(
-    compiler: FaustCompiler,
-    table_init: Option<&str>,
-    table_init_sample_rate: Option<i32>,
-) -> FaustCompiler {
-    let compiler = match table_init {
-        Some("runtime") => compiler.with_table_init_mode(TableInitMode::Runtime),
-        Some("const") => compiler.with_table_init_mode(TableInitMode::Const),
-        _ => compiler,
-    };
-    match table_init_sample_rate {
-        Some(sample_rate) => compiler.with_table_init_sample_rate(sample_rate),
-        None => compiler,
-    }
 }
 
 /// Build a minimal JSON description of a factory's UI and metadata.
@@ -856,29 +815,11 @@ fn parse_ffi_compile_args(argv: &[String]) -> Result<FfiCompileArgs, String> {
     parse_ffi_compile_args_shared(argv)
 }
 
-/// Applies `-bra-tape N` when the argv carried it.
-/// Applies the argv options that reach the compiler facade as they are:
-/// `-bra-tape`, the entry point of `-pn`, the delay-line thresholds `-mcd` and
-/// `-dlt`, and the table-index check `-ct`, each only when given so the
-/// compiler keeps its own defaults otherwise.
-fn with_argv_options(compiler: FaustCompiler, parsed: &FfiCompileArgs) -> FaustCompiler {
-    let mut compiler = compiler;
-    if let Some(samples) = parsed.bra_tape {
-        compiler = compiler.with_bra_tape(samples);
-    }
-    if let Some(name) = &parsed.process_name {
-        compiler = compiler.with_process_name(name.as_str());
-    }
-    if let Some(n) = parsed.mcd {
-        compiler = compiler.with_mcd(n);
-    }
-    if let Some(n) = parsed.dlt {
-        compiler = compiler.with_dlt(n);
-    }
-    if let Some(enabled) = parsed.check_table {
-        compiler = compiler.with_check_table(enabled);
-    }
-    compiler
+/// The compiler `argv` asks for, every option of [`CompileOptionArgs`]
+/// applied, and its precision.
+fn compiler_from_argv(argv: &[String]) -> Result<(FaustCompiler, RealType), String> {
+    let options = CompileOptionArgs::from_argv(argv)?;
+    Ok((options.apply(FaustCompiler::new()), options.real_type()))
 }
 
 // ── expand / generateAuxFiles ─────────────────────────────────────────────
@@ -1227,7 +1168,30 @@ mod tests {
             ]
         );
         assert_eq!(parsed.module_name.as_deref(), Some("MyDSP"));
-        assert!(parsed.double);
+        // `-double` is a compile option, read from the same argv
+        let (_, real_type) =
+            super::compiler_from_argv(&argv).expect("compile options should parse");
+        assert_eq!(real_type, compiler::RealType::Float64);
+    }
+
+    #[test]
+    fn the_compile_options_of_the_argv_reach_the_interp_compiler() {
+        let compile = |argv: &[&str]| {
+            let argv: Vec<String> = argv.iter().map(|arg| (*arg).to_owned()).collect();
+            compile_factory_from_string_fastlane("Options", "process = 1; other = 2, 3;", &argv)
+                .expect("the program compiles")
+        };
+        // `-pn` picks the entry point, `-double` the precision; each used to
+        // be dropped on the way to the interp compiler
+        assert_eq!(compile(&[]).num_outputs(), 1);
+        assert_eq!(compile(&["-pn", "other"]).num_outputs(), 2);
+        assert!(compile(&["-double"]).is_double());
+        let refused = compile_factory_from_string_fastlane(
+            "Options",
+            "process = 1;",
+            &["-ss".to_owned(), "abc".to_owned()],
+        );
+        assert!(refused.is_err(), "a malformed -ss was accepted");
     }
 
     #[test]

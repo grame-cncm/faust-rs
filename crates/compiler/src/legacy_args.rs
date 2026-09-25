@@ -52,6 +52,10 @@ pub fn normalize_legacy_args(args: impl IntoIterator<Item = String>) -> Vec<Stri
             normalized.push("--double".to_owned());
             continue;
         }
+        if arg == "-single" {
+            normalized.push("--single".to_owned());
+            continue;
+        }
         if arg == "-json" {
             normalized.push("--json".to_owned());
             continue;

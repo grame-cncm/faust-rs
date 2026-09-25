@@ -26,18 +26,17 @@
 //! ```
 //! The `.ir` text is written to stdout (the Makefile redirects it to a file).
 
-use std::ffi::OsString;
 use std::iter;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser};
 use codegen::backends::interp::{
     FbcDspInstance, FbcOpcode, FbcReal, InterpOptions, Soundfile, generate_interp_module,
 };
 use compiler::{
-    Compiler, ComputeMode, FirVerifyOptions, RealType, SchedulingStrategy, SignalFirLane,
-    TableInitMode,
+    CompileOptionArgs, Compiler, FirVerifyOptions, SignalFirLane, merge_import_search_paths,
 };
 use fir::{FirId, FirStore};
 
@@ -52,12 +51,9 @@ const DEFAULT_FRAMES: usize = 15000;
 #[derive(Debug)]
 struct Options {
     dsp: PathBuf,
-    double: bool,
     frames: usize,
     import_dirs: Vec<PathBuf>,
-    compute_mode: ComputeMode,
-    scheduling_strategy: SchedulingStrategy,
-    table_init: TableInitMode,
+    compile: CompileOptionArgs,
 }
 
 fn main() -> ExitCode {
@@ -96,19 +92,15 @@ fn run_main(options: Options) -> ExitCode {
 }
 
 fn real_main(options: Options) -> Result<String, String> {
-    let real_type = if options.double {
-        RealType::Float64
-    } else {
-        RealType::Float32
-    };
+    // The last -I is searched first, as in C++, then the installed libraries,
+    // then the DSP's directory.
+    let mut import_dirs = options.import_dirs.clone();
+    import_dirs.reverse();
+    let search_paths = merge_import_search_paths(&options.dsp, &import_dirs);
 
-    let search_paths = resolve_search_paths(&options);
-
-    let compiler = Compiler::new()
-        .with_real_type(real_type)
-        .with_compute_mode(options.compute_mode)
-        .with_scheduling_strategy(options.scheduling_strategy)
-        .with_table_init_mode(options.table_init)
+    let compiler = options
+        .compile
+        .apply(Compiler::new())
         .with_fir_verify_options(FirVerifyOptions {
             enabled: true,
             strict: false,
@@ -122,7 +114,7 @@ fn real_main(options: Options) -> Result<String, String> {
         )
         .map_err(|e| format!("compilation failed for {}: {e}", options.dsp.display()))?;
 
-    if options.double {
+    if options.compile.double {
         run::<f64>(&fir.store, fir.module, options.frames)
     } else {
         run::<f32>(&fir.store, fir.module, options.frames)
@@ -141,14 +133,6 @@ struct CliArgs {
     #[arg(value_name = "FILE")]
     dsp: PathBuf,
 
-    /// Compile and execute with double-precision samples.
-    #[arg(long, overrides_with = "single")]
-    double: bool,
-
-    /// Compile and execute with single-precision samples.
-    #[arg(long, overrides_with = "double")]
-    single: bool,
-
     /// Number of impulse-response frames to emit.
     #[arg(short = 'n', long = "frames", default_value_t = DEFAULT_FRAMES)]
     frames: usize,
@@ -157,108 +141,41 @@ struct CliArgs {
     #[arg(short = 'I', long = "import-dir", value_name = "DIR")]
     import_dirs: Vec<PathBuf>,
 
-    /// Enable vector compilation.
-    #[arg(long = "vectorize")]
-    vectorize: bool,
-
-    /// Vector loop size.
-    #[arg(
-        long = "vector-size",
-        default_value_t = ComputeMode::DEFAULT_VEC_SIZE
-    )]
-    vector_size: u32,
-
-    /// Vector loop variant.
-    #[arg(long = "loop-variant", default_value_t = 0)]
-    loop_variant: u8,
-
-    /// FIR scheduling strategy selector.
-    #[arg(long = "scheduling-strategy", default_value_t = 0)]
-    scheduling_strategy: u32,
-
-    /// How a `rdtable`/`rwtable` initialization signal is computed:
-    /// `const` folds it at compile time, `runtime` emits a generator
-    /// sub-module that fills the table at initialization.
-    #[arg(long = "table-init", value_name = "MODE", default_value = "runtime")]
-    table_init: TableInitArg,
+    /// The compile options, `faust-rs`'s own declaration: `-double`/`-single`,
+    /// `-vec`/`-vs`/`-lv`, `-ss`, `-table-init`, `-pn`, ...
+    #[command(flatten)]
+    compile: CompileOptionArgs,
 }
 
-/// CLI spelling of [`TableInitMode`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum TableInitArg {
-    Const,
-    Runtime,
-}
-
-impl From<TableInitArg> for TableInitMode {
-    fn from(value: TableInitArg) -> Self {
-        match value {
-            TableInitArg::Const => Self::Const,
-            TableInitArg::Runtime => Self::Runtime,
-        }
-    }
-}
-
-/// Parses argv after mapping the legacy Faust one-dash spellings to the
-/// canonical long options declared by [`CliArgs`].
+/// Parses argv after mapping the C++ single-dash spellings to the long flags
+/// of `faust-rs` ([`compiler::normalize_legacy_args`]).
 fn parse_args() -> Result<Options, clap::Error> {
-    parse_args_from(std::env::args_os().skip(1))
+    parse_args_from(std::env::args().skip(1))
 }
 
 fn parse_args_from<I, T>(args: I) -> Result<Options, clap::Error>
 where
     I: IntoIterator<Item = T>,
-    T: Into<OsString>,
+    T: Into<String>,
 {
-    let normalized = iter::once(OsString::from("impulse-runner"))
-        .chain(args.into_iter().map(Into::into).map(normalize_legacy_arg));
+    let normalized = iter::once("impulse-runner".to_owned()).chain(
+        compiler::normalize_legacy_args(args.into_iter().map(Into::into)),
+    );
     let args = CliArgs::try_parse_from(normalized)?;
-    let compute_mode = if args.vectorize {
-        ComputeMode::Vector {
-            vec_size: args.vector_size,
-            loop_variant: args.loop_variant,
-        }
-    } else {
-        ComputeMode::Scalar
-    };
-
+    let conflict = |message| CliArgs::command().error(ErrorKind::ArgumentConflict, message);
+    args.compile.require_block_compute().map_err(conflict)?;
+    if args.compile.memory_manager {
+        return Err(conflict(
+            "-mem0 is an option of the C, C++ and Cranelift backends; this runner executes the FIR"
+                .to_owned(),
+        ));
+    }
     Ok(Options {
         dsp: args.dsp,
-        double: args.double,
         frames: args.frames,
         import_dirs: args.import_dirs,
-        compute_mode,
-        scheduling_strategy: SchedulingStrategy::decode(args.scheduling_strategy),
-        table_init: args.table_init.into(),
+        compile: args.compile,
     })
-}
-
-fn normalize_legacy_arg(arg: OsString) -> OsString {
-    match arg.to_str() {
-        Some("-double") => OsString::from("--double"),
-        Some("-single") => OsString::from("--single"),
-        Some("-vec") => OsString::from("--vectorize"),
-        Some("-vs") => OsString::from("--vector-size"),
-        Some("-lv") => OsString::from("--loop-variant"),
-        Some("-ss") => OsString::from("--scheduling-strategy"),
-        _ => arg,
-    }
-}
-
-/// Builds the import search path list: explicit `-I` dirs first, then the DSP's
-/// own directory, then the system faust libraries when present.
-fn resolve_search_paths(options: &Options) -> Vec<PathBuf> {
-    let mut paths = options.import_dirs.clone();
-    if let Some(parent) = options.dsp.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        paths.push(parent.to_path_buf());
-    }
-    let system_libs = PathBuf::from("/usr/local/share/faust");
-    if system_libs.is_dir() {
-        paths.push(system_libs);
-    }
-    paths
 }
 
 /// Runs the scalar impulse pass for one precision and renders the `.ir` text.
@@ -403,7 +320,9 @@ fn _reference_protocol_note(_: &Path) {}
 mod tests {
     use clap::CommandFactory;
 
-    use super::{CliArgs, ComputeMode, SchedulingStrategy, parse_args_from, soundfile_part_count};
+    use compiler::{ComputeMode, SchedulingStrategy};
+
+    use super::{CliArgs, parse_args_from, soundfile_part_count};
 
     fn parse(args: &[&str]) -> Result<super::Options, clap::Error> {
         parse_args_from(args.iter().copied())
@@ -412,8 +331,11 @@ mod tests {
     #[test]
     fn scheduling_strategy_is_independent_from_compute_mode() {
         let scalar = parse(&["test.dsp", "-ss", "1"]).expect("parse scalar options");
-        assert_eq!(scalar.compute_mode, ComputeMode::Scalar);
-        assert_eq!(scalar.scheduling_strategy, SchedulingStrategy::BreadthFirst);
+        assert_eq!(scalar.compile.compute_mode(), ComputeMode::Scalar);
+        assert_eq!(
+            scalar.compile.scheduling(),
+            SchedulingStrategy::BreadthFirst
+        );
 
         let vector = parse(&[
             "test.dsp",
@@ -425,14 +347,14 @@ mod tests {
         ])
         .expect("parse vector options");
         assert_eq!(
-            vector.compute_mode,
+            vector.compile.compute_mode(),
             ComputeMode::Vector {
                 vec_size: ComputeMode::DEFAULT_VEC_SIZE,
                 loop_variant: 1,
             }
         );
         assert_eq!(
-            vector.scheduling_strategy,
+            vector.compile.scheduling(),
             SchedulingStrategy::ReverseBreadthFirst
         );
     }
@@ -453,7 +375,7 @@ mod tests {
     fn legacy_flags_work_before_the_dsp_and_last_precision_wins() {
         let options = parse(&["-double", "-I", "lib", "test.dsp", "-single", "-n", "8"])
             .expect("parse legacy options");
-        assert!(!options.double);
+        assert!(!options.compile.double);
         assert_eq!(options.frames, 8);
         assert_eq!(options.import_dirs, [std::path::PathBuf::from("lib")]);
     }

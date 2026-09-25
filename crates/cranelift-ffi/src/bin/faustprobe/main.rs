@@ -68,7 +68,13 @@ fn run(mut args: Args) -> Result<(), String> {
     // which under `--eval` is the file wrapped and followed by the
     // expressions: a fix applied to FILE at those offsets would land
     // elsewhere. The human text is rewritten for that case; the report is not.
-    if args.compiler.process_name.is_some() && !args.evals.is_empty() {
+    args.compile.require_block_compute()?;
+    if args.compile.memory_manager {
+        return Err(
+            "-mem0 needs a memory manager from the host, which a probe does not supply".to_owned(),
+        );
+    }
+    if args.compile.process_name != "process" && !args.evals.is_empty() {
         return Err(
             "--process-name cannot be combined with --eval: the expressions are the program"
                 .to_owned(),

@@ -350,11 +350,13 @@ The allowlist must be small and auditable:
 
 - the compiler's legacy-normalization entry point, because it immediately
   invokes `CliArgs::parse_from`;
-- `faustprobe` (`crates/cranelift-ffi/src/bin/faustprobe/main.rs`), which
-  runs its command line through the same `compiler::normalize_legacy_args`
-  (moved from the binary into the library on 2026-09-25 for it) before
-  `Args::parse_from`, so `-pn NAME`, `-vec`, `-ss N`... keep the `faust-rs`
-  spellings;
+- `faustprobe` (`crates/cranelift-ffi/src/bin/faustprobe/main.rs`) and the
+  two impulse runners (`crates/impulse-runner/src/main.rs`,
+  `crates/cranelift-ffi/src/bin/impulse_cranelift.rs`), which run their
+  command line through the same `compiler::normalize_legacy_args` (moved from
+  the binary into the library on 2026-09-25) before Clap, and flatten the
+  same `compiler::CompileOptionArgs` as the `faust-rs` CLI, so `-pn NAME`,
+  `-vec`, `-ss N`... keep one declaration and the `faust-rs` spellings;
 - any generated or standalone architecture source that cannot depend on
   Cargo packages.
 

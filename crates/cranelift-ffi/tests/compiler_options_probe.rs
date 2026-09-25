@@ -98,8 +98,10 @@ fn a_mode_that_cannot_take_the_compiler_options_refuses_them() {
     refused("with_eval", &["-pn", "other", "--eval", "3"], "--eval");
     // the polyphonic wrapper compiles its voices without them
     refused("with_poly", &["-vec", "--nvoices", "1"], "--nvoices 0");
-    // `-vs` without `-vec` would size a loop that does not exist
-    refused("vs_alone", &["-vs", "8"], "--vec");
+    // a probe runs `compute`: no `control`, no `frame`, no host memory manager
+    refused("with_ec", &["-ec"], "-ec compile");
+    refused("with_os", &["-os"], "-os compile");
+    refused("with_mem0", &["-mem0"], "memory manager");
     // a `faust-rs` option the probe does not take is an error, not ignored
     refused("class_name", &["-cn", "Other"], "--class-name");
 }

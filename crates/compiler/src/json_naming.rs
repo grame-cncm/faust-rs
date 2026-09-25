@@ -488,17 +488,6 @@ pub(crate) fn argv_value<'a>(argv: &'a [String], names: &[&str]) -> Option<&'a s
         .map(String::as_str)
 }
 
-/// Like [`argv_value`], parsed as `T`. Returns `None` for a missing flag and
-/// for an unparsable value alike: a hand-parsed argv string decodes on a
-/// best-effort basis, since — unlike the CLI's `clap` parsing — these
-/// helpers have no channel for reporting a hard error to the caller.
-pub(crate) fn argv_value_parsed<T: std::str::FromStr>(
-    argv: &[String],
-    names: &[&str],
-) -> Option<T> {
-    argv_value(argv, names).and_then(|v| v.parse().ok())
-}
-
 /// Extracts `-I <path>` search paths from a whitespace-tokenized argv slice.
 pub(crate) fn parse_search_paths_from_argv(argv: &[String]) -> Vec<PathBuf> {
     let mut paths = Vec::new();

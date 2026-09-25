@@ -25,13 +25,9 @@ pub(crate) fn render(args: &Args) -> Result<(String, Samples), String> {
         ("--render", args.render.to_string()),
         ("--skip", args.skip.to_string()),
         ("--opt-level", args.opt_level.to_string()),
-        ("--bra-tape", args.bra_tape.to_string()),
         ("--in", args.input.clone()),
     ] {
         command.arg(format!("{flag}={value}"));
-    }
-    if args.double {
-        command.arg("--double");
     }
     for (flag, values) in [
         ("--import-dir", &args.import_dirs),
@@ -46,8 +42,9 @@ pub(crate) fn render(args: &Args) -> Result<(String, Samples), String> {
     for pair in args.ats.chunks(2) {
         command.arg("--at").args(pair);
     }
-    // The compiler's spellings, which the worker's own normalization reads back.
-    command.args(args.compiler.argv());
+    // The compiler's spellings, precision included, which the worker's own
+    // normalization reads back.
+    command.args(args.compile.to_argv());
     let output = command
         .arg("--")
         .arg(&args.file)
@@ -64,7 +61,7 @@ pub(crate) fn render(args: &Args) -> Result<(String, Samples), String> {
 }
 
 pub(crate) fn worker(args: &Args) -> Result<(), String> {
-    let (factory, _) = compile_program(args, args.double)?;
+    let (factory, _) = compile_program(args, args.compile.double)?;
     let key = factory.sha_key();
     let probe = Probe::instantiate(&std::rc::Rc::new(factory), args.sr)?;
     let spec = RenderSpec {

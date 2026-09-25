@@ -195,7 +195,7 @@ impl<'a> Family<'a> {
             Some(_) => {
                 return Err("--linearity-tolerance must be a non-negative number".to_owned());
             }
-            None => freqresp::default_tolerance(args.double),
+            None => freqresp::default_tolerance(args.compile.double),
         };
         if args.render < 4 {
             return Err(

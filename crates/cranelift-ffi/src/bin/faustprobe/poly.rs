@@ -16,7 +16,9 @@ use crate::report::{
     Sink, channel_lines, channels_json, document, json_number, print_controls, print_json,
     render_time_lines, timing_json, window_json,
 };
-use crate::setup::{assignments, build_schedule, number_format, parse_input_at, timed};
+use crate::setup::{
+    assignments, build_schedule, compiler_args, number_format, parse_input_at, timed,
+};
 use crate::writes::{Clamped, check_poly_value};
 
 /// What operates on the scalar `Probe` only is refused.
@@ -32,12 +34,12 @@ fn refuse_scalar_only(args: &Args) -> Result<(), String> {
     if args.bargraphs {
         return Err("--bargraphs reads the scalar Probe only; use --nvoices 0".to_owned());
     }
-    if args.compiler.any() || args.bra_tape != 8192 {
-        return Err(
-            "the compiler options (-pn, -vec, -ss, -mcd, -dlt, -ct, -table-init, --bra-tape) \
-             reach the scalar Probe only; use --nvoices 0"
-                .to_owned(),
-        );
+    let given = compiler_args(args);
+    if !given.is_empty() {
+        return Err(format!(
+            "the compiler options ({}) reach the scalar Probe only; use --nvoices 0",
+            given.join(" ")
+        ));
     }
     refuse(
         &[
@@ -65,7 +67,7 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
             &args.file,
             &args.import_dirs,
             args.sr,
-            args.double,
+            args.compile.double,
             args.opt_level,
             args.nvoices,
             args.effect.as_deref(),

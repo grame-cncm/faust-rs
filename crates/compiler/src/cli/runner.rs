@@ -16,9 +16,9 @@ use codegen::backends::wasm::WasmOptions;
 use codegen::fixtures::backend_test_fixtures;
 use codegen::memory_layout::{MemoryLayoutFlavor, MemoryManagerMode};
 use compiler::{
-    Compiler, CompilerError, ComputeMode, ControlRateMode, FaustInstallPaths, FirVerifyOptions,
-    ProcessingApi, RealType, SchedulingStrategy, TableInitMode,
+    Compiler, CompilerError, FaustInstallPaths, FirVerifyOptions,
     enrobage::{EnrobageOptions, wrap_cpp_with_architecture},
+    table_init_name,
 };
 #[cfg(all(feature = "network-imports", not(target_arch = "wasm32")))]
 use compiler::{
@@ -29,8 +29,7 @@ use diagnostics::DiagnosticBundle;
 use fir::checker::verify_fir_module;
 
 use super::args::{
-    CliArgs, CliLang, CliSignalFirLane, ErrorFormat, ErrorVerbosity, TableInitArg,
-    normalize_legacy_args,
+    CliArgs, CliLang, CliSignalFirLane, ErrorFormat, ErrorVerbosity, normalize_legacy_args,
 };
 use super::diagnostics::{format_diagnostics_json_with_verbosity, print_bundle};
 use super::validate::{
@@ -253,13 +252,13 @@ pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) ->
     if cli.allow_network_imports {
         parts.push("--allow-network-imports".to_owned());
     }
-    if cli.one_sample {
+    if cli.compile.one_sample {
         parts.push("-os".to_owned());
     }
-    if cli.external_control {
+    if cli.compile.external_control {
         parts.push("-ec".to_owned());
     }
-    if cli.memory_manager {
+    if cli.compile.memory_manager {
         parts.push("-mem0".to_owned());
     }
     if let Some(name) = cli.class_name.as_deref()
@@ -272,42 +271,46 @@ pub fn compile_options_full_string(cli: &CliArgs, backend_lang: Option<&str>) ->
     {
         parts.push(format!("-scn {name}"));
     }
-    if cli.process_name != d.process_name {
-        parts.push(format!("-pn {}", cli.process_name));
+    if cli.compile.process_name != d.compile.process_name {
+        parts.push(format!("-pn {}", cli.compile.process_name));
     }
-    if cli.mcd != d.mcd {
-        parts.push(format!("-mcd {}", cli.mcd));
+    if cli.compile.mcd != d.compile.mcd {
+        parts.push(format!("-mcd {}", cli.compile.mcd));
     }
-    if cli.dlt != d.dlt {
-        parts.push(format!("-dlt {}", cli.dlt));
+    if cli.compile.dlt != d.compile.dlt {
+        parts.push(format!("-dlt {}", cli.compile.dlt));
     }
-    if cli.bra_tape != d.bra_tape {
-        parts.push(format!("-bra-tape {}", cli.bra_tape));
+    if cli.compile.bra_tape != d.compile.bra_tape {
+        parts.push(format!("-bra-tape {}", cli.compile.bra_tape));
     }
-    if cli.check_table != d.check_table {
-        parts.push(format!("-ct {}", cli.check_table));
+    if cli.compile.check_table != d.compile.check_table {
+        parts.push(format!("-ct {}", cli.compile.check_table));
     }
-    if cli.table_init != d.table_init {
+    if cli.compile.table_init != d.compile.table_init {
         parts.push(format!(
             "-table-init {}",
-            match cli.table_init {
-                TableInitArg::Runtime => "runtime",
-                TableInitArg::Const => "const",
-            }
+            table_init_name(cli.compile.table_init)
         ));
     }
-    if let Some(sample_rate) = cli.table_init_sample_rate {
+    if let Some(sample_rate) = cli.compile.table_init_sample_rate {
         parts.push(format!("--table-init-sample-rate {sample_rate}"));
     }
-    if cli.vec {
+    if cli.compile.vec {
         parts.push("-vec".to_owned());
-        parts.push(format!("-lv {}", cli.lv));
-        parts.push(format!("-vs {}", cli.vs));
+        parts.push(format!("-lv {}", cli.compile.lv));
+        parts.push(format!("-vs {}", cli.compile.vs));
     }
-    if cli.scheduling_strategy != d.scheduling_strategy {
-        parts.push(format!("-ss {}", cli.scheduling_strategy));
+    if cli.compile.scheduling_strategy != d.compile.scheduling_strategy {
+        parts.push(format!("-ss {}", cli.compile.scheduling_strategy));
     }
-    parts.push(if cli.double { "-double" } else { "-single" }.to_owned());
+    parts.push(
+        if cli.compile.double {
+            "-double"
+        } else {
+            "-single"
+        }
+        .to_owned(),
+    );
     parts.join(" ")
 }
 
@@ -418,35 +421,6 @@ pub fn selected_fir_verify_options(cli: &CliArgs) -> FirVerifyOptions {
     }
 }
 
-/// Maps CLI precision switches to the internal DSP real type.
-pub fn selected_real_type(cli: &CliArgs) -> RealType {
-    if cli.double {
-        RealType::Float64
-    } else {
-        RealType::Float32
-    }
-}
-
-/// Maps `--table-init` to the transform-level [`TableInitMode`].
-pub fn selected_table_init_mode(cli: &CliArgs) -> TableInitMode {
-    match cli.table_init {
-        TableInitArg::Runtime => TableInitMode::Runtime,
-        TableInitArg::Const => TableInitMode::Const,
-    }
-}
-
-/// Maps the `-vec`/`-vs`/`-lv` switches to a [`ComputeMode`] (roadmap P6, V1).
-pub fn selected_compute_mode(cli: &CliArgs) -> ComputeMode {
-    if cli.vec {
-        ComputeMode::Vector {
-            vec_size: cli.vs,
-            loop_variant: cli.lv,
-        }
-    } else {
-        ComputeMode::Scalar
-    }
-}
-
 /// Maps the four accepted CLI spellings to the one typed backend mode.
 ///
 /// Source provenance: Faust C++ `compiler/global.cpp` assigns each spelling to
@@ -454,25 +428,17 @@ pub fn selected_compute_mode(cli: &CliArgs) -> ComputeMode {
 /// becoming process-global state in the Rust compiler.
 #[must_use]
 pub fn selected_memory_manager_mode(cli: &CliArgs) -> MemoryManagerMode {
-    if cli.memory_manager {
+    if cli.compile.memory_manager {
         MemoryManagerMode::Mem0
     } else {
         MemoryManagerMode::None
     }
 }
 
-/// Maps `-ss`/`--scheduling-strategy` to a [`SchedulingStrategy`] (vectorization
-/// port plan P2). Reuses [`SchedulingStrategy::decode`]'s total `0/1/2/n>=3`
-/// split; `clap`'s `u32` parsing already rejects missing, non-integer, and
-/// negative values before this function ever runs.
-pub fn selected_scheduling_strategy(cli: &CliArgs) -> SchedulingStrategy {
-    SchedulingStrategy::decode(cli.scheduling_strategy)
-}
-
 /// Maps CLI precision switches to the Julia backend's real type, mirroring
-/// [`selected_real_type`] for the Julia code generator.
+/// [`compiler::CompileOptionArgs::real_type`] for the Julia code generator.
 pub fn selected_julia_real_type(cli: &CliArgs) -> JuliaRealType {
-    if cli.double {
+    if cli.compile.double {
         JuliaRealType::Float64
     } else {
         JuliaRealType::Float32
@@ -480,30 +446,12 @@ pub fn selected_julia_real_type(cli: &CliArgs) -> JuliaRealType {
 }
 
 /// Maps CLI precision switches to the Rust backend's `FaustFloat` alias,
-/// mirroring [`selected_real_type`] for the Rust code generator.
+/// mirroring [`compiler::CompileOptionArgs::real_type`] for the Rust code generator.
 pub fn selected_rust_real_type(cli: &CliArgs) -> RustRealType {
-    if cli.double {
+    if cli.compile.double {
         RustRealType::Float64
     } else {
         RustRealType::Float32
-    }
-}
-
-/// Maps `-ec` to a [`ControlRateMode`].
-pub fn selected_control_rate_mode(cli: &CliArgs) -> ControlRateMode {
-    if cli.external_control {
-        ControlRateMode::External
-    } else {
-        ControlRateMode::InlinePerBlock
-    }
-}
-
-/// Maps `-os` to a [`ProcessingApi`].
-pub fn selected_processing_api(cli: &CliArgs) -> ProcessingApi {
-    if cli.one_sample {
-        ProcessingApi::OneSample
-    } else {
-        ProcessingApi::Block
     }
 }
 
@@ -512,22 +460,9 @@ pub fn compiler_from_cli(
     cli: &CliArgs,
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Compiler {
-    let mut compiler = Compiler::new()
-        .with_fir_verify_options(selected_fir_verify_options(cli))
-        .with_process_name(cli.process_name.clone())
-        .with_real_type(selected_real_type(cli))
-        .with_mcd(cli.mcd)
-        .with_dlt(cli.dlt)
-        .with_bra_tape(cli.bra_tape)
-        .with_table_init_mode(selected_table_init_mode(cli))
-        .with_compute_mode(selected_compute_mode(cli))
-        .with_scheduling_strategy(selected_scheduling_strategy(cli))
-        .with_control_rate_mode(selected_control_rate_mode(cli))
-        .with_processing_api(selected_processing_api(cli))
-        .with_check_table(cli.check_table != 0);
-    if let Some(sample_rate) = cli.table_init_sample_rate {
-        compiler = compiler.with_table_init_sample_rate(sample_rate);
-    }
+    let mut compiler = cli
+        .compile
+        .apply(Compiler::new().with_fir_verify_options(selected_fir_verify_options(cli)));
     #[cfg(all(feature = "network-imports", not(target_arch = "wasm32")))]
     if cli.allow_network_imports {
         compiler = compiler.with_native_network_imports();

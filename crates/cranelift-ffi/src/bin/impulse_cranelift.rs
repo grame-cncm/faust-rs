@@ -9,13 +9,14 @@
 
 use std::alloc::{Layout, alloc, dealloc};
 use std::collections::HashMap;
-use std::ffi::{CStr, CString, OsString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::iter;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::thread;
 
-use clap::Parser;
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser};
 use cranelift_ffi::factory::{
     createCCraneliftDSPFactoryFromFile, deleteCCraneliftDSPFactory, freeCMemory,
     getCCraneliftDSPFactoryJSON, setCCraneliftMemoryManager,
@@ -96,43 +97,14 @@ struct CliArgs {
     #[arg(short = 'n', long = "frames", default_value_t = DEFAULT_FRAMES)]
     frames: usize,
 
-    /// Compile and execute with double-precision samples.
-    #[arg(long, overrides_with = "single")]
-    double: bool,
-
-    /// Compile and execute with single-precision samples.
-    #[arg(long, overrides_with = "double")]
-    single: bool,
-
     /// Add a Faust library import directory.
     #[arg(short = 'I', long = "import-dir", value_name = "DIR")]
     import_dirs: Vec<String>,
 
-    /// Enable vector compilation.
-    #[arg(long = "vectorize")]
-    vectorize: bool,
-
-    /// Vector loop size.
-    #[arg(long = "vector-size")]
-    vector_size: Option<u32>,
-
-    /// Vector loop variant.
-    #[arg(long = "loop-variant")]
-    loop_variant: Option<u8>,
-
-    /// FIR scheduling strategy selector.
-    #[arg(long = "scheduling-strategy")]
-    scheduling_strategy: Option<u32>,
-
-    /// How a `rdtable`/`rwtable` initialization signal is computed:
-    /// `const` folds it at compile time, `runtime` emits a generator
-    /// sub-module that fills the table at initialization.
-    #[arg(long = "table-init", value_name = "MODE")]
-    table_init: Option<String>,
-
-    /// Use the mode-zero custom memory manager and reject JIT fallback stubs.
-    #[arg(long = "memory-manager0")]
-    mem0: bool,
+    /// The compile options, `faust-rs`'s own declaration: `-double`/`-single`,
+    /// `-vec`/`-vs`/`-lv`, `-ss`, `-table-init`, `-mem0`, ...
+    #[command(flatten)]
+    compile: compiler::CompileOptionArgs,
 
     /// Write the factory JSON after semantic validation.
     #[arg(long = "json-output", value_name = "FILE")]
@@ -144,84 +116,44 @@ struct CliArgs {
 }
 
 fn parse_args() -> Result<Options, clap::Error> {
-    parse_args_from(std::env::args_os().skip(1))
+    parse_args_from(std::env::args().skip(1))
 }
 
+/// Parses argv after mapping the C++ single-dash spellings to the long flags
+/// of `faust-rs` ([`compiler::normalize_legacy_args`]).
 fn parse_args_from<I, T>(args: I) -> Result<Options, clap::Error>
 where
     I: IntoIterator<Item = T>,
-    T: Into<OsString>,
+    T: Into<String>,
 {
-    let normalized = iter::once(OsString::from("impulse-cranelift"))
-        .chain(args.into_iter().map(Into::into).map(normalize_legacy_arg));
+    let normalized = iter::once("impulse-cranelift".to_owned()).chain(
+        compiler::normalize_legacy_args(args.into_iter().map(Into::into)),
+    );
     let args = CliArgs::try_parse_from(normalized)?;
-    let mut compiler_argv = Vec::new();
-    if args.vectorize {
-        compiler_argv.push("-vec".to_owned());
-    }
-    if let Some(value) = args.vector_size {
-        compiler_argv.extend(["-vs".to_owned(), value.to_string()]);
-    }
-    if let Some(value) = args.loop_variant {
-        compiler_argv.extend(["-lv".to_owned(), value.to_string()]);
-    }
-    if let Some(value) = args.scheduling_strategy {
-        compiler_argv.extend(["-ss".to_owned(), value.to_string()]);
-    }
-    if let Some(value) = args.table_init {
-        compiler_argv.extend(["--table-init".to_owned(), value]);
-    }
-    if args.mem0 {
-        compiler_argv.push("-mem0".to_owned());
-    }
-
+    args.compile
+        .require_block_compute()
+        .map_err(|message| CliArgs::command().error(ErrorKind::ArgumentConflict, message))?;
     Ok(Options {
         dsp: args.dsp,
         frames: args.frames,
-        double: args.double,
+        double: args.compile.double,
         import_dirs: args.import_dirs,
-        compiler_argv,
-        mem0: args.mem0,
+        compiler_argv: args.compile.to_argv(),
+        mem0: args.compile.memory_manager,
         json_output: args.json_output,
         opt_level: args.opt_level,
     })
 }
 
-fn normalize_legacy_arg(arg: OsString) -> OsString {
-    match arg.to_str() {
-        Some("-double") => OsString::from("--double"),
-        Some("-single") => OsString::from("--single"),
-        Some("-vec") => OsString::from("--vectorize"),
-        Some("-vs") => OsString::from("--vector-size"),
-        Some("-lv") => OsString::from("--loop-variant"),
-        Some("-ss") => OsString::from("--scheduling-strategy"),
-        Some("-mem" | "-mem0" | "--memory-manager") => OsString::from("--memory-manager0"),
-        _ => arg,
-    }
-}
-
 fn run(options: Options) -> Result<String, String> {
-    // Search paths: explicit -I, then the DSP's own dir, then system libs.
-    let mut search = options.import_dirs.clone();
-    if let Some(parent) = PathBuf::from(&options.dsp).parent()
-        && !parent.as_os_str().is_empty()
-    {
-        search.push(parent.to_string_lossy().into_owned());
-    }
-    if PathBuf::from("/usr/local/share/faust").is_dir() {
-        search.push("/usr/local/share/faust".to_owned());
-    }
-
+    // The compile options (with `-double`), then the `-I` dirs as given: the
+    // factory reads them the C++ way, the last one first, and adds the
+    // installed libraries and the DSP's directory after them.
     let mut argv_storage: Vec<CString> = Vec::new();
-    if options.double {
-        argv_storage.push(CString::new("-double").map_err(|e| e.to_string())?);
-    }
     for opt in &options.compiler_argv {
         argv_storage.push(CString::new(opt.as_str()).map_err(|e| e.to_string())?);
     }
-    // the last -I is searched first, as in C++: emit the list backwards to keep
-    // its priority
-    for dir in search.iter().rev() {
+    for dir in &options.import_dirs {
         argv_storage.push(CString::new("-I").map_err(|e| e.to_string())?);
         argv_storage.push(CString::new(dir.as_str()).map_err(|e| e.to_string())?);
     }
@@ -667,7 +599,7 @@ mod tests {
     fn scheduling_strategy_is_normalized_for_the_ffi_factory() {
         let options = parse(&["test.dsp", "-vec", "-lv", "1", "--scheduling-strategy", "3"])
             .expect("parse options");
-        assert_eq!(options.compiler_argv, ["-vec", "-lv", "1", "-ss", "3"]);
+        assert_eq!(options.compiler_argv, ["-lv", "1", "-ss", "3", "-vec"]);
     }
 
     #[test]

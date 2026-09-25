@@ -53,6 +53,7 @@ pub mod expand;
 pub mod remote_fetch;
 
 mod box_preview;
+mod compile_options;
 mod diagnostic_enrichment;
 mod emitters;
 mod error_mapping;
@@ -68,6 +69,7 @@ mod ui_paths;
 pub mod execution;
 
 use box_preview::*;
+pub use compile_options::{CompileOptionArgs, TableInitArg, table_init_name};
 use diagnostic_enrichment::*;
 use error_mapping::*;
 use eval_guidance::*;

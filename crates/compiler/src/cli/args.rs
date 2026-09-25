@@ -7,9 +7,9 @@
 //! rather than re-reading raw process arguments.
 
 use clap::{ArgAction, Parser, ValueEnum};
+use compiler::SignalFirLane;
 pub use compiler::diagnostics_human::{DiagnosticPathStyle, ErrorVerbosity};
 pub use compiler::normalize_legacy_args;
-use compiler::{ComputeMode, SignalFirLane};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -53,18 +53,6 @@ pub enum ErrorFormat {
     Human,
     /// Typed, versioned diagnostics JSON contract.
     Json,
-}
-
-/// CLI spelling of the generated-table initialization strategy
-/// (`--table-init`), mapped to `transform::signal_fir::TableInitMode`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub enum TableInitArg {
-    /// Compile each table generator into a sub-module filled at initialization
-    /// time (the C++ reference behavior).
-    Runtime,
-    /// Fold the generator into a literal initializer list at compile time.
-    #[default]
-    Const,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -233,10 +221,6 @@ pub struct CliArgs {
     /// transport and all builds keep networking disabled by default.
     #[arg(long = "allow-network-imports", action = ArgAction::SetTrue)]
     pub allow_network_imports: bool,
-    /// Specify the top-level DSP entry-point name instead of `process`
-    /// (`-pn <name>`, `--process-name <name>`).
-    #[arg(long = "process-name", default_value = "process")]
-    pub process_name: String,
     /// Wrapper architecture file (`-a` compatibility).
     #[arg(short = 'a', long = "architecture")]
     pub architecture: Option<PathBuf>,
@@ -283,120 +267,10 @@ pub struct CliArgs {
     /// status.
     #[arg(long = "warn", action = ArgAction::SetTrue)]
     pub warn: bool,
-    /// Use double-precision (64-bit) floating-point for internal DSP computation.
-    ///
-    /// By default, single-precision (32-bit) `float` is used for internal
-    /// calculations while the external DSP interface (`FAUSTFLOAT` audio
-    /// buffers and UI zones) always stays at the type declared by the
-    /// architecture file.  Passing `--double` switches internal arithmetic
-    /// to `double`, matching the `-double` option of the reference Faust
-    /// compiler.
-    #[arg(long = "double", action = ArgAction::SetTrue)]
-    pub double: bool,
-    /// Use the host custom memory manager for eligible native DSP state
-    /// (`-mem`/`-mem0`/`--memory-manager`/`--memory-manager0`).
-    ///
-    /// The four spellings select the same typed `mem0` mode. Only mode zero is
-    /// implemented: it is scalar-only and restricted to C, C++, and Cranelift;
-    /// `mem1` through `mem3` are deliberately rejected.
-    #[arg(
-        long = "memory-manager",
-        alias = "memory-manager0",
-        action = ArgAction::SetTrue
-    )]
-    pub memory_manager: bool,
-    /// Maximum delay (in samples) below which the shift/copy strategy is used
-    /// instead of a circular ring buffer (`-mcd N`).
-    ///
-    /// Delays ≤ `mcd` use a statically-shifted array (no `fIOTA`). Default: 16.
-    #[arg(long = "mcd", default_value_t = 16)]
-    pub mcd: u32,
-    /// Samples one `BlockReverseAD` tape holds: the largest `compute` block
-    /// over which `rad` gradients through delays and recursions are exact
-    /// (`-bra-tape N`). A power of two. Default: 8192.
-    #[arg(long = "bra-tape", default_value_t = 8192)]
-    pub bra_tape: usize,
-    /// Delay-line threshold above which the if-based wrapping strategy is used
-    /// instead of the default power-of-two circular buffer (`-dlt N`).
-    ///
-    /// Delays > `dlt` use an exact-size buffer with a per-line counter variable.
-    /// Default: disabled (all delays above `mcd` use circular-pow2).
-    #[arg(long = "dlt", default_value_t = u32::MAX)]
-    pub dlt: u32,
-    /// Check table index range and generate safe accesses (`-ct <0|1>`,
-    /// `--check-table <0|1>`).
-    ///
-    /// With `1` (the default, matching the reference compiler), table
-    /// indexes the interval analysis cannot prove in-bounds are clamped at
-    /// the signal level to `max(0, min(index, size-1))`. With `0`, accesses
-    /// are generated raw and out-of-range indexes are undefined behavior —
-    /// the reference `-ct 0` contract.
-    #[arg(long = "check-table", default_value_t = 1, value_parser = clap::value_parser!(u8).range(0..=1))]
-    pub check_table: u8,
-    /// How the initial content of `rdtable`/`rwtable` tables is produced.
-    ///
-    /// `runtime` compiles each table generator into a sub-module whose `fill`
-    /// function computes the content at initialization time, as the C++
-    /// reference does; this is the only mode that can express content
-    /// depending on the sample rate or on a foreign function, and it keeps the
-    /// emitted source small. `const` evaluates the generator at compile time
-    /// and emits a literal initializer list; a generator using `ma.SR` also
-    /// requires `--table-init-sample-rate HZ` to make the frozen value explicit.
-    #[arg(long = "table-init", value_enum, default_value_t = TableInitArg::Runtime)]
-    pub table_init: TableInitArg,
-    /// Sample rate embedded when `--table-init const` folds a generated table
-    /// that reads `ma.SR`. Required for that dependency; ignored otherwise.
-    #[arg(long = "table-init-sample-rate", value_name = "HZ")]
-    pub table_init_sample_rate: Option<i32>,
-    /// Vector mode (`-vec`): restructure `compute()` into an outer chunk loop
-    /// so the C compiler can auto-vectorize the inner loops (SIMD).
-    ///
-    /// Selection is checked: a program shape the vector pipeline cannot
-    /// certify falls back to scalar lowering instead of emitting unverified
-    /// code, and certified vector output is bit-exact against scalar output
-    /// for the same program. Use `-vs`/`-lv` to size and shape the chunk loop.
-    #[arg(long = "vec", action = ArgAction::SetTrue)]
-    pub vec: bool,
-    /// Vector size for `-vec` (`-vs N`). Default: 32.
-    #[arg(long = "vs", default_value_t = ComputeMode::DEFAULT_VEC_SIZE)]
-    pub vs: u32,
-    /// Vector loop variant for `-vec` (`-lv 0|1`, as Faust C++): 0 = fastest
-    /// (default) — a constant-trip main loop over `count - count % vs` plus a
-    /// scalar remainder, the autovectorization-friendly form; 1 = simple — a
-    /// single loop with a runtime `min(vindex + vs, count)` bound.
-    #[arg(long = "lv", default_value_t = 0)]
-    pub lv: u8,
-    /// Signal/loop dependency scheduling strategy (`-ss N`, as Faust C++):
-    /// `0` = depth-first (default), `1` = breadth-first, `2` = special
-    /// (interleaved), `n >= 3` = reverse breadth-first. Decoded through
-    /// [`compiler::SchedulingStrategy::decode`].
-    ///
-    /// Independent of `-vec`/`-vs`/`-lv`: it drives the scalar control/signal
-    /// schedule and the checked vector loop schedule.
-    ///
-    /// `adapted` API mapping vs C++ `atoi`: a missing value, a non-integer
-    /// value, or a negative value is a hard parse error here instead of
-    /// silently falling back to `0`.
-    #[arg(long = "scheduling-strategy", default_value_t = 0)]
-    pub scheduling_strategy: u32,
-    /// External control (`-ec` / `--external-control`, as Faust C++; the
-    /// legacy `--ext-control` spelling is also accepted): emit control-rate
-    /// computations in a separate `control` entry point scheduled by the
-    /// host instead of inline at the start of each block. Subject to
-    /// per-backend capability validation.
-    #[arg(
-        long = "ec",
-        alias = "external-control",
-        alias = "ext-control",
-        action = ArgAction::SetTrue
-    )]
-    pub external_control: bool,
-    /// One-sample processing (`-os` / `--one-sample`, as Faust C++): emit a
-    /// one-sample `frame(inputs, outputs)` entry point over flat channel
-    /// arrays; the canonical block `compute` is kept but emitted empty.
-    /// Scalar mode only; subject to per-backend capability validation.
-    #[arg(long = "os", alias = "one-sample", action = ArgAction::SetTrue)]
-    pub one_sample: bool,
+    /// The options that choose the program or shape its code, shared with
+    /// `faustprobe`, the impulse runners and the C API `argv`.
+    #[command(flatten)]
+    pub compile: compiler::CompileOptionArgs,
     /// Display compilation phases timing information (`-time`).
     #[arg(long = "compilation-time", action = ArgAction::SetTrue)]
     pub compilation_time: bool,
@@ -456,14 +330,10 @@ mod cli_defaults_tests {
     /// considers "default" (and therefore omits from the header).
     #[test]
     fn cli_defaults_matches_documented_flag_defaults() {
+        // The compile options' defaults are pinned where they are declared,
+        // in `compiler::CompileOptionArgs`; here only that the CLI keeps them.
         let d = cli_defaults();
-        assert_eq!(d.mcd, 16);
-        assert_eq!(d.dlt, u32::MAX);
-        assert_eq!(d.process_name, "process");
-        assert_eq!(d.scheduling_strategy, 0);
-        assert_eq!(d.table_init, TableInitArg::Runtime);
-        assert_eq!(d.lv, 0);
-        assert!(!d.vec);
+        assert_eq!(d.compile, compiler::CompileOptionArgs::default());
         assert!(d.class_name.is_none());
         assert!(d.super_class_name.is_none());
     }
