@@ -140,7 +140,7 @@ pub(crate) fn build_ui_statements(
 ) -> Result<Vec<FirId>, String> {
     let mut statements = Vec::new();
     if program.emit_ui {
-        emit_ui_node(program, program.root, zones, store, &mut statements)?;
+        emit_ui_node(program, program.root, true, zones, store, &mut statements)?;
     }
     Ok(statements)
 }
@@ -160,9 +160,22 @@ fn emit_metadata(
     }
 }
 
+/// The label an `open*Box` statement gets for a group labelled `label`:
+/// C++ `checkNullLabel` (`generator/uitree.cpp`), which names an unlabelled
+/// group `0x00`, the label hosts skip (`PathBuilder::remove0x00`), except at
+/// the root, which is named after the program before this point.
+fn group_label(label: &str, root: bool) -> &str {
+    if label.is_empty() && !root {
+        "0x00"
+    } else {
+        label
+    }
+}
+
 fn emit_ui_node(
     program: &UiProgram,
     node: ui::UiId,
+    root: bool,
     zones: &BTreeMap<ControlId, VectorUiZone>,
     store: &mut FirStore,
     out: &mut Vec<FirId>,
@@ -180,9 +193,9 @@ fn emit_ui_node(
                 UiGroupKind::Horizontal => UiBoxType::Horizontal,
                 UiGroupKind::Tab => UiBoxType::Tab,
             };
-            out.push(FirBuilder::new(store).open_box(typ, label));
+            out.push(FirBuilder::new(store).open_box(typ, group_label(label, root)));
             for child in children {
-                emit_ui_node(program, child, zones, store, out)?;
+                emit_ui_node(program, child, false, zones, store, out)?;
             }
             out.push(FirBuilder::new(store).close_box());
             Ok(())

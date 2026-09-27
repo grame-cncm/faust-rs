@@ -727,3 +727,32 @@ process = vgroup("a", hslider("x", 0, 0, 1, 0.01)) + vgroup("b", hslider("x", 0,
         assert_eq!(err.kind, ErrorKind::UnknownControl, "{backend}");
     }
 }
+
+/// C++ `checkNullLabel` names a group with an empty label `0x00`, and the
+/// C++ `MapUI` of Faust 2.89.2 reports these paths for this program; the
+/// shortnames leave the unnamed group out (`PathBuilder::remove0x00`).
+#[test]
+fn a_group_with_an_empty_label_is_0x00_in_the_paths_as_in_cpp() {
+    const EMPTY: &str = r#"
+declare name "empty";
+process = hgroup("", hslider("g", 0, 0, 1, 0.1)) + hgroup("", hslider("h", 0, 0, 1, 0.1)) + vgroup("0x00", hslider("k", 0, 0, 1, 0.1));
+"#;
+    for backend in both() {
+        let factory =
+            Factory::from_source("empty", EMPTY, &options(backend, Precision::F32)).unwrap();
+        let dsp = factory.create_dsp_instance(48_000).unwrap();
+        let names: Vec<(&str, &str)> = dsp
+            .controls()
+            .map(|c| (c.path.as_str(), c.shortname.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("/empty/0x00/g", "g"),
+                ("/empty/0x00/h", "h"),
+                ("/empty/0x00/k", "k"),
+            ],
+            "{backend}"
+        );
+    }
+}
