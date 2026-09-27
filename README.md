@@ -202,8 +202,9 @@ file-based equivalent.
 Rust: one model over the interpreter and the Cranelift JIT, with the lifecycle
 of the C API and none of its raw pointers. A `Factory` is a compiled program,
 cheap to clone; `Factory::instantiate(sample_rate)` gives a `Dsp` that owns a
-reference to its factory, so it can be stored, moved and sent to another
-thread with no lifetime parameter and no `unsafe` on the host's side. Controls
+reference to its factory, so it can be stored, moved, sent to another thread
+and shared (`Send + Sync`) with no lifetime parameter and no `unsafe` on the
+host's side. Controls
 are addressed by their `/group/label` paths, as with `MapUI` and OSC:
 
 ```rust

@@ -331,3 +331,46 @@ process = hslider("x", 0.1, 0, 1, 0.01) + nentry("y", 0.3, -1.7, 2.9, 0.001)
         }
     }
 }
+
+fn assert_send_sync<T: Send + Sync>() {}
+
+#[test]
+fn dsp_and_factory_are_send_and_sync() {
+    // what PyO3 asks of a `#[pyclass]` field
+    assert_send_sync::<faust::Dsp>();
+    assert_send_sync::<Factory>();
+}
+
+#[test]
+fn one_dsp_can_be_read_from_several_threads_at_once() {
+    for backend in both() {
+        let factory =
+            Factory::from_source("pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
+        let mut dsp = factory.instantiate(44_100).unwrap();
+        dsp.set("/pole/on", 1.0).unwrap();
+        let input = [0.75_f32; 16];
+        let mut output = [0.0_f32; 16];
+        dsp.compute_f32(&[&input], &mut [&mut output]).unwrap();
+        let level = dsp.get("/pole/level").unwrap();
+        let metadata = dsp.metadata();
+        let dsp = &dsp;
+        std::thread::scope(|scope| {
+            let readers: Vec<_> = (0..4)
+                .map(|_| {
+                    scope.spawn(|| {
+                        for _ in 0..200 {
+                            assert_eq!(dsp.get("/pole/level").unwrap(), level);
+                            assert_eq!(dsp.get("/pole/on").unwrap(), 1.0);
+                            assert_eq!(dsp.sample_rate(), 44_100);
+                            assert_eq!(dsp.controls().count(), 2);
+                            assert_eq!(dsp.metadata(), metadata);
+                        }
+                    })
+                })
+                .collect();
+            for reader in readers {
+                reader.join().unwrap();
+            }
+        });
+    }
+}

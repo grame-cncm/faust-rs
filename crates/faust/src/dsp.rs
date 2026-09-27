@@ -8,8 +8,10 @@ use crate::factory::{Factory, FactoryInner};
 use crate::{Backend, Error, ErrorKind, Precision};
 
 /// An instance: its state, its sample rate, its controls. Owns a reference
-/// to its factory, so it can outlive the host's [`Factory`] handles; can be
-/// moved and sent to another thread, not shared between threads.
+/// to its factory, so it can outlive the host's [`Factory`] handles. `Send`
+/// and `Sync`: it can be moved to another thread, and shared, since every
+/// `&self` method only reads; `compute_*`, `set` and the initialisations
+/// take `&mut self`.
 pub struct Dsp {
     // Declared first: dropped before the factory reference below.
     raw: RawInstance,
@@ -25,6 +27,21 @@ pub struct Dsp {
 // SAFETY: the instance pointer is only ever used through `&mut self` or
 // `&self` of one `Dsp`, and both backends' instances are `Send`.
 unsafe impl Send for Dsp {}
+
+// SAFETY: through `&self`, a `Dsp` only reads, so concurrent `&self` calls
+// are concurrent reads of memory nothing writes while they last (writing
+// takes `&mut self`):
+// - `get` reads one zone of the instance's state;
+// - `controls`, `control`, `num_inputs`, `num_outputs`, `backend`,
+//   `precision`, `factory` read this value, the control map (filled once, in
+//   `create`) and the factory's `Arc`;
+// - `sample_rate` reads the instance: `getSampleRateCInterpreterDSPInstance`
+//   an int-heap slot, `getSampleRateCCraneliftDSPInstance` a field;
+// - `metadata` walks the factory's metadata into a sink local to the call:
+//   `metadataCInterpreterDSPInstance` its `meta_block`,
+//   `metadataCCraneliftDSPInstance` its runtime descriptor.
+// A new `&self` method must keep to reads, or this impl goes.
+unsafe impl Sync for Dsp {}
 
 impl Drop for Dsp {
     fn drop(&mut self) {

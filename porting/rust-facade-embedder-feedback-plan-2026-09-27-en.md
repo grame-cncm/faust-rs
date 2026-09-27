@@ -237,6 +237,16 @@ crate. The first plan follows.*
 
 ## 6. After the plan
 
+- F3: `createCInterpreterDSPInstance` calls `(*factory).inner.optimize()`,
+  which takes `&mut FbcDspFactoryAny` on every instantiation, while another
+  instance of the same factory may be computing on another thread with a
+  `&` on it (`compute_with`). After the first instantiation `optimize` only
+  reads its `optimized` flag, so nothing is written, but the two references
+  coexist, which Rust's aliasing rules forbid. It predates P3 (two `Send`
+  instances on two threads suffice) and is not reachable through a `&Dsp`.
+  Fix: check the flag through `&` and take `&mut` only for the first,
+  optimising, call, when the factory has no instance yet.
+
 - F2: `getCInterpreterDSPFactoryJSON` does not return the C++ format. The
   C++ `interpreter_dsp_factory::getJSON` builds a `JSONUI` through
   `buildUserInterface` and `metadata` (the Faust JSON: `ui` tree with
@@ -310,4 +320,27 @@ sorted by label (`v` before `x` in `hslider("x") : vbargraph("v")`), as the
 C++ compiler does. The “declaration order” the embedder asks for is this UI
 order; P5 must keep it rather than re-sort by source position.
 
-P3 to P6 not started.
+### P3, implemented 2026-09-27
+
+Audit of every C entry reached from a `&self` method of `Dsp`:
+`getSampleRateCInterpreterDSPInstance` (an int-heap slot) and
+`getSampleRateCCraneliftDSPInstance` (a field) read the instance;
+`metadataCInterpreterDSPInstance` (`meta_block`, `dispatch_meta`) and
+`metadataCCraneliftDSPInstance` (`runtime.meta_entries`) read the factory
+into a sink local to the call. `get` reads one zone; the other methods read
+the `Dsp` itself. Nothing to fix before the impl.
+
+- `unsafe impl Sync for Dsp` with that argument as its `SAFETY`, and the rule
+  that a new `&self` method keeps to reads.
+- Docs: `Dsp`, `lib.rs`, `README.md` say `Send + Sync`.
+- Tests: `dsp_and_factory_are_send_and_sync` (does not compile on
+  `0f240664`: E0277 on the raw instance pointers, the error PyO3 reported)
+  and `one_dsp_can_be_read_from_several_threads_at_once` (four threads
+  reading `get`, `sample_rate`, `controls`, `metadata` on one `&Dsp`, both
+  backends). Both also pass under ThreadSanitizer (nightly,
+  `-Zsanitizer=thread -Zbuild-std`), with no report.
+
+The audit found one factory-level aliasing issue outside `Dsp`'s `&self`
+paths: follow-up F3 (§6).
+
+P4 to P6 not started.

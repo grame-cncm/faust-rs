@@ -20,7 +20,8 @@
 //!   reference to its factory, so the factory's code lives as long as any of
 //!   its instances, whatever the host does with its own `Factory` handles.
 //!   No lifetime parameter, no `unsafe` for the host: a `Dsp` is a plain
-//!   value that can be stored, moved and sent to another thread;
+//!   value that can be stored, moved, sent to another thread and shared
+//!   (`Send + Sync`: its `&self` methods only read);
 //! - controls are addressed by the paths the C++ `MapUI` and OSC use,
 //!   `/group/label`; [`Dsp::set`] and [`Dsp::get`] read and write them, and
 //!   [`Dsp::controls`] lists them with their kind and range.
