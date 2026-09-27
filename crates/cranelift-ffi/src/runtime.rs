@@ -27,7 +27,8 @@ pub(crate) enum RuntimeFieldInit {
 ///
 /// This enum mirrors the FIR-side UI instructions closely enough for the FFI
 /// runtime to rebuild `buildUserInterface` callbacks without reinterpreting FIR
-/// at instance-construction time.
+/// at instance-construction time. Ranges keep the FIR's `f64`: the C callbacks
+/// get them narrowed to `float`, `control_ranges` at the program's precision.
 #[derive(Clone, Debug)]
 pub(crate) enum RuntimeUiItem {
     OpenTabBox {
@@ -51,38 +52,38 @@ pub(crate) enum RuntimeUiItem {
     VerticalSlider {
         label: String,
         zone: String,
-        init: f32,
-        lo: f32,
-        hi: f32,
-        step: f32,
+        init: f64,
+        lo: f64,
+        hi: f64,
+        step: f64,
     },
     HorizontalSlider {
         label: String,
         zone: String,
-        init: f32,
-        lo: f32,
-        hi: f32,
-        step: f32,
+        init: f64,
+        lo: f64,
+        hi: f64,
+        step: f64,
     },
     NumEntry {
         label: String,
         zone: String,
-        init: f32,
-        lo: f32,
-        hi: f32,
-        step: f32,
+        init: f64,
+        lo: f64,
+        hi: f64,
+        step: f64,
     },
     HorizontalBargraph {
         label: String,
         zone: String,
-        lo: f32,
-        hi: f32,
+        lo: f64,
+        hi: f64,
     },
     VerticalBargraph {
         label: String,
         zone: String,
-        lo: f32,
-        hi: f32,
+        lo: f64,
+        hi: f64,
     },
     Soundfile {
         label: String,
@@ -271,31 +272,30 @@ fn collect_ui_items(
                 step,
             } => {
                 desc.control_defaults.insert(var.clone(), init);
-                let init = init as f32;
                 desc.ui_items.push(match typ {
                     fir::SliderType::Horizontal => RuntimeUiItem::HorizontalSlider {
                         label,
                         zone: var,
                         init,
-                        lo: lo as f32,
-                        hi: hi as f32,
-                        step: step as f32,
+                        lo,
+                        hi,
+                        step,
                     },
                     fir::SliderType::Vertical => RuntimeUiItem::VerticalSlider {
                         label,
                         zone: var,
                         init,
-                        lo: lo as f32,
-                        hi: hi as f32,
-                        step: step as f32,
+                        lo,
+                        hi,
+                        step,
                     },
                     fir::SliderType::NumEntry => RuntimeUiItem::NumEntry {
                         label,
                         zone: var,
                         init,
-                        lo: lo as f32,
-                        hi: hi as f32,
-                        step: step as f32,
+                        lo,
+                        hi,
+                        step,
                     },
                 });
             }
@@ -310,14 +310,14 @@ fn collect_ui_items(
                     fir::BargraphType::Horizontal => RuntimeUiItem::HorizontalBargraph {
                         label,
                         zone: var,
-                        lo: lo as f32,
-                        hi: hi as f32,
+                        lo,
+                        hi,
                     },
                     fir::BargraphType::Vertical => RuntimeUiItem::VerticalBargraph {
                         label,
                         zone: var,
-                        lo: lo as f32,
-                        hi: hi as f32,
+                        lo,
+                        hi,
                     },
                 });
             }

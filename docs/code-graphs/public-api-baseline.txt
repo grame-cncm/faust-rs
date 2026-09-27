@@ -1411,11 +1411,13 @@ fn sha1_hex
 mod abi
 mod args
 mod complete_error
+mod control_range
 mod factory_cache
 mod memory
 mod sha1
 mod strings
 struct CompleteError
+struct ControlRange
 struct FactoryCache
 struct FactoryHandle
 struct FaustMemoryManager
@@ -1431,6 +1433,7 @@ type FfiFaustFloat
 use abi
 use args
 use complete_error::CompleteError
+use control_range::ControlRange
 use factory_cache
 use memory
 use sha1
@@ -1610,6 +1613,7 @@ fn FbcDspFactoryAny::clear_block
 fn FbcDspFactoryAny::compile_options
 fn FbcDspFactoryAny::compute_block
 fn FbcDspFactoryAny::compute_dsp_block
+fn FbcDspFactoryAny::control_ranges
 fn FbcDspFactoryAny::count_offset
 fn FbcDspFactoryAny::execute_block_io_f32
 fn FbcDspFactoryAny::execute_block_io_f64

@@ -13,6 +13,7 @@ use std::ffi::c_void;
 use std::os::raw::c_int;
 
 use codegen::backends::cranelift::{StructFieldKind, StructFieldLayout, StructLayoutPlan};
+use ffi_common::ControlRange;
 use fir::FirType;
 
 use crate::cache::{cache_register_instance, cache_remove_instance};
@@ -400,6 +401,79 @@ pub unsafe extern "C" fn buildUserInterfaceCCraneliftDSPInstance(
     }
 }
 
+/// The ranges of the instance's sliders, numeric entries and bargraphs at
+/// the program's precision: what [`buildUserInterfaceCCraneliftDSPInstance`]
+/// passes as `init`, `min`, `max` and `step`, without the narrowing to the C
+/// ABI's `float` a `-double` program undergoes there. Rust-only, no C symbol;
+/// each [`ControlRange::zone`] is the zone `buildUserInterface` passes.
+///
+/// # Safety
+/// `dsp` may be null (an empty list); otherwise it must be a live instance.
+pub unsafe fn control_ranges(dsp: *mut CraneliftDspInstance) -> Vec<ControlRange> {
+    unsafe {
+        if dsp.is_null() {
+            return Vec::new();
+        }
+        let Some(factory) = (*dsp).factory.as_ref() else {
+            return Vec::new();
+        };
+        let Some(jit) = factory.compiled_jit.as_ref() else {
+            return Vec::new();
+        };
+        let layout = jit.struct_layout();
+        let dsp_state = &mut (*dsp).dsp_state;
+        let mut ranges = Vec::new();
+        for item in &factory.runtime.ui_items {
+            let (zone, bargraph, init, lo, hi, step) = match item {
+                RuntimeUiItem::VerticalSlider {
+                    zone,
+                    init,
+                    lo,
+                    hi,
+                    step,
+                    ..
+                }
+                | RuntimeUiItem::HorizontalSlider {
+                    zone,
+                    init,
+                    lo,
+                    hi,
+                    step,
+                    ..
+                }
+                | RuntimeUiItem::NumEntry {
+                    zone,
+                    init,
+                    lo,
+                    hi,
+                    step,
+                    ..
+                } => (zone, false, *init, *lo, *hi, *step),
+                RuntimeUiItem::HorizontalBargraph { zone, lo, hi, .. }
+                | RuntimeUiItem::VerticalBargraph { zone, lo, hi, .. } => {
+                    (zone, true, 0.0, *lo, *hi, 0.0)
+                }
+                _ => continue,
+            };
+            let Some(ptr) = zone_ptr(dsp_state, layout, zone) else {
+                continue;
+            };
+            // the width of the zone is the precision the program computes with
+            let double = layout.field(zone).is_some_and(|f| f.size_bytes >= 8);
+            let at = |v: f64| if double { v } else { f64::from(v as f32) };
+            ranges.push(ControlRange {
+                zone: ptr,
+                bargraph,
+                init: at(init),
+                min: at(lo),
+                max: at(hi),
+                step: at(step),
+            });
+        }
+        ranges
+    }
+}
+
 /// Trigger metadata callbacks for the instance.
 ///
 /// # Safety
@@ -669,10 +743,10 @@ fn dispatch_ui_runtime(
                             ui.ui_interface,
                             label.as_ptr(),
                             zone,
-                            *init,
-                            *lo,
-                            *hi,
-                            *step,
+                            *init as FaustFloat,
+                            *lo as FaustFloat,
+                            *hi as FaustFloat,
+                            *step as FaustFloat,
                         );
                     }
                 }
@@ -694,10 +768,10 @@ fn dispatch_ui_runtime(
                             ui.ui_interface,
                             label.as_ptr(),
                             zone,
-                            *init,
-                            *lo,
-                            *hi,
-                            *step,
+                            *init as FaustFloat,
+                            *lo as FaustFloat,
+                            *hi as FaustFloat,
+                            *step as FaustFloat,
                         );
                     }
                 }
@@ -719,10 +793,10 @@ fn dispatch_ui_runtime(
                             ui.ui_interface,
                             label.as_ptr(),
                             zone,
-                            *init,
-                            *lo,
-                            *hi,
-                            *step,
+                            *init as FaustFloat,
+                            *lo as FaustFloat,
+                            *hi as FaustFloat,
+                            *step as FaustFloat,
                         );
                     }
                 }
@@ -738,7 +812,13 @@ fn dispatch_ui_runtime(
                             zone_ptr(dsp_state, layout, zone),
                         )
                     {
-                        f(ui.ui_interface, label.as_ptr(), zone, *lo, *hi);
+                        f(
+                            ui.ui_interface,
+                            label.as_ptr(),
+                            zone,
+                            *lo as FaustFloat,
+                            *hi as FaustFloat,
+                        );
                     }
                 }
                 RuntimeUiItem::VerticalBargraph {
@@ -753,7 +833,13 @@ fn dispatch_ui_runtime(
                             zone_ptr(dsp_state, layout, zone),
                         )
                     {
-                        f(ui.ui_interface, label.as_ptr(), zone, *lo, *hi);
+                        f(
+                            ui.ui_interface,
+                            label.as_ptr(),
+                            zone,
+                            *lo as FaustFloat,
+                            *hi as FaustFloat,
+                        );
                     }
                 }
                 RuntimeUiItem::Soundfile { label, url, zone } => {

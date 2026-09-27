@@ -21,6 +21,7 @@ use std::ffi::{c_char, c_void};
 use std::os::raw::c_int;
 
 use codegen::backends::interp::{BlockId, Soundfile};
+use ffi_common::ControlRange;
 
 use crate::cache::{cache_register_instance, cache_remove_instance};
 use crate::types::{
@@ -382,6 +383,23 @@ pub unsafe extern "C" fn buildUserInterfaceCInterpreterDSPInstance(
         // Sync real audio data from the C++ Soundfile objects now that the
         // host has finished populating soundfile_zones.
         sync_soundfiles_from_zones(&mut (*dsp).executor, &(*dsp).soundfile_zones);
+    }
+}
+
+/// The ranges of the instance's sliders, numeric entries and bargraphs at
+/// the program's precision: what [`buildUserInterfaceCInterpreterDSPInstance`]
+/// passes as `init`, `min`, `max` and `step`, without the narrowing to the C
+/// ABI's `float` a `-double` program undergoes there. Rust-only, no C symbol;
+/// each [`ControlRange::zone`] is the zone `buildUserInterface` passes.
+///
+/// # Safety
+/// `dsp` must be a valid non-null instance pointer.
+pub unsafe fn control_ranges(dsp: *mut InterpreterDspInstance) -> Vec<ControlRange> {
+    unsafe {
+        if dsp.is_null() {
+            return Vec::new();
+        }
+        (*(*dsp).factory).inner.control_ranges(&mut (*dsp).executor)
     }
 }
 

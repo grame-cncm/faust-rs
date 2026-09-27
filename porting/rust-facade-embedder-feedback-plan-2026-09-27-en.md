@@ -148,6 +148,10 @@ API mapping: `compute_f64` is **adapted** (no C++ counterpart: the C++
 
 ### P2: exact control ranges in `-double` (§2.1)
 
+*Route changed at implementation, see §7: the interpreter's JSON carries no
+ranges, so the ranges come from a Rust-only `control_ranges` in each FFI
+crate. The first plan follows.*
+
 - The facade reads `init`, `min`, `max` and `step` from the factory's JSON
   (`Factory::json`, already exposed), matched to the controls by path. First
   check that both backends write these values there at the compiled
@@ -224,11 +228,24 @@ API mapping: `compute_f64` is **adapted** (no C++ counterpart: the C++
 - P2 relies on the JSON for exact ranges. The alternative, a Rust-only `f64`
   `UIGlue`, would touch `ffi-common`, shared by both backends and by the C
   ABI; not proposed unless the JSON route fails.
+- P2, settled at implementation: the JSON route failed (§7), and the ranges
+  come from a Rust-only accessor in each FFI crate, which leaves `UIGlue`
+  and `ffi-common`'s C types untouched.
 - P1 keeps the `f64` entry Rust-only. A C entry
   (`computeCInterpreterDSPInstanceDouble`) would help C hosts too but has no
   C++ counterpart; out of scope unless asked.
 
 ## 6. After the plan
+
+- F2: `getCInterpreterDSPFactoryJSON` does not return the C++ format. The
+  C++ `interpreter_dsp_factory::getJSON` builds a `JSONUI` through
+  `buildUserInterface` and `metadata` (the Faust JSON: `ui` tree with
+  `type`, `label`, `address`, `init`, `min`, `max`, `step`, `meta`);
+  faust-rs returns a flat list of UI opcodes (`AddHorizontalSlider`,
+  `address` being a heap offset) with no range. A C API parity defect,
+  found by P2; the fix and its test belong to `interp-ffi`, and the Cranelift
+  JSON (the compiler's `-json` output, with `varname`/`shortname`) should be
+  compared with the C++ `llvm_dsp_factory::getJSON` at the same time.
 
 - F1: the interpreter executor keeps its evaluation stacks across blocks
   instead of allocating them on every block (§2.2); a test with a counting
@@ -261,4 +278,36 @@ API mapping: `compute_f64` is **adapted** (no C++ counterpart: the C++
   `crates/interp-ffi/tests/compute_allocation.rs` (fails on `0f240664`:
   276 704 bytes on every call of a 2-in 2-out 8192-frame block).
 
-P2 to P6 not started.
+### P2, implemented 2026-09-27
+
+The JSON route of §3 failed at its first check: the interpreter's
+`getCInterpreterDSPFactoryJSON` has no ranges at all (F2, §6), and even the
+C++ format prints `float` values with six significant digits. The ranges come
+from the compiled program instead, where both backends keep them at full
+precision:
+
+- `ffi_common::ControlRange` (zone, bargraph flag, `init`, `min`, `max`,
+  `step` as `f64`), a Rust type outside the C ABI;
+- `interp_ffi::instance::control_ranges` reads the factory's
+  `FbcUiInstruction<R>` (`FbcDspFactoryAny::control_ranges`), with the zones
+  `dispatch_ui_f32`/`_f64` pass;
+- `cranelift_ffi::instance::control_ranges` reads `RuntimeUiItem`, whose
+  ranges are now kept in the FIR's `f64` and narrowed at the C callback only;
+  the precision is the zone's width, as `apply_control_defaults` decides it;
+- the facade (`ControlMap::apply_ranges`) replaces the ranges the `UIGlue`
+  walk passed, matched by zone; a bargraph keeps `init = min`.
+
+Tests: `control_ranges_are_those_of_the_compiled_precision`
+(`crates/faust/tests/api.rs`, both backends, both precisions: exact values
+in `-double`, the `f32` values in single, and `get` after `reset_controls`
+equal to `init`; fails on `0f240664` with `interp F64`, `init =
+0.10000000149011612`); `tests/control_ranges.rs` in `interp-ffi` and
+`cranelift-ffi` (zones equal to `buildUserInterface`'s, exact in `-double`,
+the C callbacks still receiving `float`).
+
+Seen on the way, for P5: `buildUserInterface` lists the widgets of a group
+sorted by label (`v` before `x` in `hslider("x") : vbargraph("v")`), as the
+C++ compiler does. The “declaration order” the embedder asks for is this UI
+order; P5 must keep it rather than re-sort by source position.
+
+P3 to P6 not started.

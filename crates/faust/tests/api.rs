@@ -290,3 +290,44 @@ fn f64_buffers_on_a_single_precision_program_are_converted() {
         assert_eq!(output, input.map(|x| f64::from(x as f32)), "{backend}");
     }
 }
+
+#[test]
+fn control_ranges_are_those_of_the_compiled_precision() {
+    // 0.1, 0.01, -1.7, ... are not f32 values: a -double program must report
+    // them as written, a single one as the f32 values its zones hold
+    const RANGES: &str = r#"
+process = hslider("x", 0.1, 0, 1, 0.01) + nentry("y", 0.3, -1.7, 2.9, 0.001)
+        : vbargraph("v", -0.3, 0.7);
+"#;
+    for backend in both() {
+        for precision in [Precision::F32, Precision::F64] {
+            let at = |v: f64| match precision {
+                Precision::F32 => f64::from(v as f32),
+                Precision::F64 => v,
+            };
+            let factory = Factory::from_source("p", RANGES, &options(backend, precision)).unwrap();
+            let mut dsp = factory.instantiate(48_000).unwrap();
+            let what = format!("{backend} {precision:?}");
+            let x = dsp.control("/p/x").unwrap().clone();
+            assert_eq!(
+                (x.init, x.min, x.max, x.step),
+                (at(0.1), 0.0, 1.0, at(0.01)),
+                "{what}"
+            );
+            let y = dsp.control("/p/y").unwrap().clone();
+            assert_eq!(
+                (y.init, y.min, y.max, y.step),
+                (at(0.3), at(-1.7), at(2.9), at(0.001)),
+                "{what}"
+            );
+            let v = dsp.control("/p/v").unwrap().clone();
+            assert_eq!((v.min, v.max), (at(-0.3), at(0.7)), "{what}");
+            // the declared initial value is the one the program resets to
+            dsp.set("/p/x", 0.5).unwrap();
+            dsp.set("/p/y", 0.5).unwrap();
+            dsp.reset_controls();
+            assert_eq!(dsp.get("/p/x").unwrap(), x.init, "{what}");
+            assert_eq!(dsp.get("/p/y").unwrap(), y.init, "{what}");
+        }
+    }
+}

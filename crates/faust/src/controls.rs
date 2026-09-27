@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::ffi::{CStr, c_char, c_void};
 
+use ffi_common::ControlRange;
 use ffi_common::abi::{FfiFaustFloat, MetaGlue, UIGlue};
 
 use crate::Precision;
@@ -30,7 +31,10 @@ impl ControlKind {
     }
 }
 
-/// One control of an instance.
+/// One control of an instance. `init`, `min`, `max` and `step` are the
+/// values the program declares, at its compiled precision: exact for a
+/// `-double` program, the `f32` values its zones hold otherwise. A bargraph
+/// declares no initial value nor step: `init` is its `min`, `step` is 0.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Control {
     /// Its address, `/group/.../label`, as the C++ `MapUI` and OSC build it.
@@ -114,6 +118,26 @@ impl ControlMap {
             }
         }
         Some(true)
+    }
+
+    /// Replaces the ranges the UI builder passed, narrowed to the C ABI's
+    /// `float`, by `ranges`, at the program's precision, matched by zone. A
+    /// bargraph keeps its convention: its initial value is its minimum.
+    pub(crate) fn apply_ranges(&mut self, ranges: &[ControlRange]) {
+        for range in ranges {
+            let Some(entry) = self.entries.values_mut().find(|e| e.zone == range.zone) else {
+                continue;
+            };
+            let control = &mut entry.control;
+            control.min = range.min;
+            control.max = range.max;
+            if range.bargraph {
+                control.init = range.min;
+            } else {
+                control.init = range.init;
+                control.step = range.step;
+            }
+        }
     }
 
     /// The callback table that fills this map; `self` must not move while a

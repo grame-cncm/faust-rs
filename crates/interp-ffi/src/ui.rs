@@ -8,10 +8,13 @@
 //! - `dispatch_ui_f64` — double mode: `f64` heap; scalar parameters narrowed to
 //!   `f32` for callbacks; zone pointers are `*mut f64` reinterpreted as
 //!   `*mut f32` (application must use `FAUSTFLOAT=double`).
+//! - `control_ranges` — the same controls' ranges at the program's precision,
+//!   for Rust callers (`instance::control_ranges`), outside the C ABI.
 
 use std::ffi::{CString, c_void};
 
-use codegen::backends::interp::{FbcMetaInstruction, FbcOpcode, FbcUiInstruction};
+use codegen::backends::interp::{FbcMetaInstruction, FbcOpcode, FbcReal, FbcUiInstruction};
+use ffi_common::ControlRange;
 
 use crate::types::{FaustFloat, MetaGlue, UIGlue};
 
@@ -328,4 +331,42 @@ pub(crate) unsafe fn dispatch_ui_f64(
 fn c_str(s: &str) -> CString {
     let safe = s.replace('\0', "\\0");
     CString::new(safe).unwrap_or_else(|_| CString::new("").unwrap())
+}
+
+/// The ranges of the ranged controls of `ui` (sliders, numeric entries,
+/// bargraphs), each with the zone [`dispatch_ui_f32`] / [`dispatch_ui_f64`]
+/// pass for it, and its values widened to `f64` by `widen` (exact for both
+/// precisions).
+pub(crate) fn control_ranges<R: FbcReal>(
+    ui: &[FbcUiInstruction<R>],
+    real_heap: &mut [R],
+    widen: impl Fn(R) -> f64,
+) -> Vec<ControlRange> {
+    ui.iter()
+        .filter_map(|instr| {
+            let bargraph = match instr.opcode {
+                FbcOpcode::AddVerticalSlider
+                | FbcOpcode::AddHorizontalSlider
+                | FbcOpcode::AddNumEntry => false,
+                FbcOpcode::AddHorizontalBargraph | FbcOpcode::AddVerticalBargraph => true,
+                _ => return None,
+            };
+            let zone = real_heap
+                .get_mut(usize::try_from(instr.offset).ok()?)
+                .map(|r| (r as *mut R).cast::<FaustFloat>())?;
+            let (init, step) = if bargraph {
+                (0.0, 0.0)
+            } else {
+                (widen(instr.init), widen(instr.step))
+            };
+            Some(ControlRange {
+                zone,
+                bargraph,
+                init,
+                min: widen(instr.min),
+                max: widen(instr.max),
+                step,
+            })
+        })
+        .collect()
 }

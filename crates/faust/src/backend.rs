@@ -6,6 +6,7 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::sync::{Mutex, MutexGuard};
 
+use ffi_common::ControlRange;
 use ffi_common::abi::{MetaGlue, UIGlue};
 
 use crate::{Backend, Error, ErrorKind, Precision};
@@ -297,6 +298,15 @@ impl RawInstance {
         // SAFETY: live instance; the caller guarantees the glue.
         unsafe {
             on_instance!(self, p => interp_ffi::instance::buildUserInterfaceCInterpreterDSPInstance(p, glue), cranelift_ffi::instance::buildUserInterfaceCCraneliftDSPInstance(p, glue));
+        }
+    }
+
+    /// The ranges of the ranged controls at the program's precision, keyed by
+    /// the zones `build_user_interface` passes.
+    pub(crate) fn control_ranges(self) -> Vec<ControlRange> {
+        // SAFETY: live instance.
+        unsafe {
+            on_instance!(self, p => interp_ffi::instance::control_ranges(p), cranelift_ffi::instance::control_ranges(p))
         }
     }
 

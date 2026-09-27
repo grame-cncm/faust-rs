@@ -54,6 +54,8 @@ impl Dsp {
         let mut glue = controls.glue();
         // SAFETY: the glue borrows `controls`, which does not move during the call.
         unsafe { raw.build_user_interface(&mut glue) };
+        // the builder's ranges went through the C ABI's `float`
+        controls.apply_ranges(&raw.control_ranges());
         let dsp = Self {
             raw,
             factory,

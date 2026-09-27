@@ -32,6 +32,7 @@ use std::ffi::{c_char, c_void};
 use codegen::backends::interp::{
     BlockId, FbcDspFactory, FbcExecutor, FbcMetaInstruction, Soundfile,
 };
+use ffi_common::ControlRange;
 
 /// `FAUSTFLOAT` type at the C ABI boundary (always `f32`).
 pub type FaustFloat = f32;
@@ -296,6 +297,20 @@ impl FbcDspFactoryAny {
                     "execute_block_io_f64: factory/executor precision mismatch"
                 );
             }
+        }
+    }
+
+    /// The ranges of the ranged controls, at the program's precision, with
+    /// the zones [`Self::dispatch_ui_glue`] passes for them.
+    pub fn control_ranges(&self, exec: &mut FbcExecutorAny) -> Vec<ControlRange> {
+        match (self, exec) {
+            (Self::Float32(f), FbcExecutorAny::Float32(e)) => {
+                crate::ui::control_ranges(&f.ui_block, &mut e.real_heap, f64::from)
+            }
+            (Self::Float64(f), FbcExecutorAny::Float64(e)) => {
+                crate::ui::control_ranges(&f.ui_block, &mut e.real_heap, |x| x)
+            }
+            _ => Vec::new(),
         }
     }
 
