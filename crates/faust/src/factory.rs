@@ -92,20 +92,22 @@ impl Factory {
         self.inner.precision
     }
 
-    /// The name given at compilation: the file stem, or the `name` of
-    /// [`Factory::from_source`].
-    pub fn name(&self) -> &str {
+    /// The factory name: the file stem, or the `name` given to
+    /// [`Factory::from_source`] (`getName`).
+    pub fn get_name(&self) -> &str {
         &self.inner.name
     }
 
-    /// The JSON description of the program: its UI tree and metadata, as the
-    /// C API's `getDSPFactoryJSON` returns it.
-    pub fn json(&self) -> String {
+    /// The JSON description of the DSP, its UI and metadata, as the C API's
+    /// `getDSPFactoryJSON` returns it (`getJSON`).
+    pub fn get_json(&self) -> String {
         self.inner.raw.json()
     }
 
-    /// Creates an instance, initialised at `sample_rate`, its controls at
-    /// their initial values.
+    /// Creates a new DSP instance (`createDSPInstance`), and initialises it
+    /// at `sample_rate`, in Hz, with [`Dsp::init`]: where the C++ instance
+    /// must be initialised by its host before use, this one is ready to
+    /// compute.
     ///
     /// # Errors
     ///
@@ -113,7 +115,7 @@ impl Factory {
     /// backend refuses the instance, or when the Cranelift backend compiled
     /// the program to an empty `compute` (a construct outside its lowering
     /// subset), which would be a silent instance.
-    pub fn instantiate(&self, sample_rate: i32) -> Result<Dsp, Error> {
+    pub fn create_dsp_instance(&self, sample_rate: i32) -> Result<Dsp, Error> {
         Dsp::create(Arc::clone(&self.inner), sample_rate)
     }
 }

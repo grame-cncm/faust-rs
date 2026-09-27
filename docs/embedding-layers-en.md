@@ -56,13 +56,19 @@ the `foreign-call` runtime bridge may opt into `unsafe`.
 ## Layer 3 in the code
 
 The Rust API is the `faust` crate, `crates/faust`. Its public surface is what
-`src/lib.rs` defines and re-exports; the rest is private.
+`src/lib.rs` defines and re-exports; the rest is private. The methods that
+have a counterpart in the C++ `dsp` and `dsp_factory` classes
+(`architecture/faust/dsp/dsp.h`) carry its name in snake case, as the
+`FaustDsp` trait of the Rust architectures does (`getNumInputs` is
+`get_num_inputs`, `instanceClear` is `instance_clear`, `createDSPInstance`
+is `create_dsp_instance`), and their documentation follows `dsp.h`'s; the
+crate page gives the whole table.
 
 | File | Holds |
 | --- | --- |
 | `src/lib.rs` | the crate documentation (model, precision, lifecycle, known gap); `Backend`, `Precision`, `CompileOptions`, `Error`, `ErrorKind`, `version()`; the re-exports |
-| `src/factory.rs` | `Factory`: `from_file`, `from_source`, `instantiate`, `json`, `name`, `backend`, `precision` |
-| `src/dsp.rs` | `Dsp`: `compute_f32`, `compute_f64`, `controls`, `control`, `get`, `set`, `metadata`, the initialisations (`init`, `instance_init`, `reset_controls`, `clear`), the arities and the sample rate; why it is `Send` and `Sync` |
+| `src/factory.rs` | `Factory`: `from_file`, `from_source`, `create_dsp_instance`, `get_json`, `get_name`, `backend`, `precision` |
+| `src/dsp.rs` | `Dsp`: `compute`, `controls`, `control`, `get`, `set`, `metadata`, the initialisations (`init`, `instance_init`, `instance_constants`, `instance_reset_user_interface`, `instance_clear`), `get_num_inputs`, `get_num_outputs`, `get_sample_rate`; why it is `Send` and `Sync` |
 | `src/controls.rs` | `Control`, `ControlKind`; privately, the `UIGlue` walk that finds the controls and builds their `MapUI` paths, and the `MetaGlue` sink of `Dsp::metadata` |
 | `src/backend.rs` | private: `RawFactory` and `RawInstance`, the one place that calls the C entry points of `interp-ffi` and `cranelift-ffi`, and so the crate's `unsafe` |
 | `tests/api.rs`, `tests/ddsp.rs`, `tests/allocation.rs` | the contract on both backends: lifecycle, controls, precision, threads; DDSP programs through the API; no allocation in `compute` |
@@ -100,7 +106,7 @@ Binding layer 2 from Rust would cost:
   `libfaust-rs`, so a `-double` interpreter program has its input and output
   rounded to `f32`. The `f64` path, `interp_ffi::instance::compute_f64`, is a
   Rust function, not part of the C API; `faust` uses it, so
-  `Dsp::compute_f64` is exact on both backends. (The Cranelift C entry point
+  `Dsp::compute` over `f64` buffers is exact on both backends. (The Cranelift C entry point
   runs at the compiled precision behind the same `float**` signature.)
 
 A binding not written in Rust has no layer 3 to reach: layer 2 is the one for
@@ -138,7 +144,7 @@ fn main() -> Result<(), faust::Error> {
         ..CompileOptions::default()
     };
     let factory = Factory::from_source("smoother", SOURCE, &options)?;
-    let mut dsp = factory.instantiate(48_000)?;
+    let mut dsp = factory.create_dsp_instance(48_000)?;
 
     // The controls, addressed by their `MapUI`/OSC path.
     for control in dsp.controls() {
@@ -159,7 +165,7 @@ fn main() -> Result<(), faust::Error> {
     let mut input = vec![0.0_f64; 64];
     input[0] = 1.0;
     let mut output = vec![0.0_f64; 64];
-    dsp.compute_f64(&[&input], &mut [&mut output])?;
+    dsp.compute(64, &[&input], &mut [&mut output])?;
     println!("impulse response: {:?}", &output[..3]);
 
     // A `Dsp` is `Send` and keeps its program alive: the host can drop its
@@ -169,7 +175,7 @@ fn main() -> Result<(), faust::Error> {
     let audio = std::thread::spawn(move || -> Result<f32, faust::Error> {
         let silence = [0.0_f32; 64];
         let mut out = [0.0_f32; 64];
-        dsp.compute_f32(&[&silence], &mut [&mut out])?;
+        dsp.compute(64, &[&silence], &mut [&mut out])?;
         Ok(out[0])
     });
     let next = audio.join().expect("the audio thread")?;

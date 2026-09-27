@@ -751,10 +751,14 @@ must run unchanged with Faust C++ should not pass them.
   points, which it drives with their exact lifecycle (programs shared by SHA
   key, reference counted). It is one of the two contracts of faust-rs, with
   the C API; `ffi-boundary-check` classifies it as a distribution crate.
-- Where it differs from the C API it wraps: a `Dsp` owns a reference to its
-  program and is `Send + Sync`; controls are addressed by their `MapUI` paths;
-  `compute_f32` and `compute_f64` convert host buffers to the compiled
-  precision, and a `-double` interpreter program exchanges exact `f64`
+- Its methods carry the names of the C++ `dsp` and `dsp_factory` classes
+  (`dsp.h`) in snake case, as the `FaustDsp` trait of the Rust architectures
+  does (`get_num_inputs`, `instance_clear`, `create_dsp_instance`, ...).
+  Where it differs from the C API it wraps: a `Dsp` owns a reference to its
+  program and is `Send + Sync`; controls are addressed by their `MapUI` paths
+  instead of a `UI` the host implements; `create_dsp_instance` also
+  initialises; `compute` is generic over `f32` and `f64` and converts host
+  buffers to the compiled precision, and a `-double` interpreter program exchanges exact `f64`
   samples through `interp_ffi::instance::compute_f64`, which the C API does
   not export; `CompileOptions::import_dirs` lists directories first-first,
   where a command line's `-I` puts the last one first (it is emitted

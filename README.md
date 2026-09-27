@@ -217,7 +217,7 @@ file-based equivalent.
 [`crates/faust`](crates/faust) is the supported way to embed faust-rs from
 Rust: one model over the interpreter and the Cranelift JIT, with the lifecycle
 of the C API and none of its raw pointers. A `Factory` is a compiled program,
-cheap to clone; `Factory::instantiate(sample_rate)` gives a `Dsp` that owns a
+cheap to clone; `Factory::create_dsp_instance(sample_rate)` gives a `Dsp` that owns a
 reference to its factory, so it can be stored, moved, sent to another thread
 and shared (`Send + Sync`) with no lifetime parameter and no `unsafe` on the
 host's side. Controls
@@ -228,16 +228,18 @@ use faust::{Backend, CompileOptions, Factory};
 
 let options = CompileOptions { backend: Backend::Cranelift, ..Default::default() };
 let factory = Factory::from_source("gain", r#"process = _ * hslider("gain", 0.5, 0, 1, 0.01);"#, &options)?;
-let mut dsp = factory.instantiate(48_000)?;
+let mut dsp = factory.create_dsp_instance(48_000)?;
 dsp.set("/gain/gain", 0.25)?;
 let input = [1.0_f32; 64];
 let mut output = [0.0_f32; 64];
-dsp.compute_f32(&[&input], &mut [&mut output])?;
+dsp.compute(64, &[&input], &mut [&mut output])?;
 ```
 
-`compute_f32` and `compute_f64` accept host buffers of either width and
-convert when it is not the compiled precision: a `-double` program run through
-`compute_f64` sees its samples unrounded, on both backends. This crate and the C API
+The methods carry the names of the C++ `dsp` class (`dsp.h`) in snake case:
+`get_num_inputs`, `instance_init`, `instance_clear`, `compute(count, inputs,
+outputs)`... `compute` accepts `f32` or `f64` buffers and converts when they
+are not the compiled precision: a `-double` program run over `f64` buffers
+sees its samples unrounded, on both backends. This crate and the C API
 below are the two contracts of faust-rs; the other crates of the workspace are
 implementation details and may change without notice.
 

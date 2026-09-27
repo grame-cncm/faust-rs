@@ -1,4 +1,4 @@
-//! After its first block, `Dsp::compute_f32` and `compute_f64` allocate
+//! After its first block, `Dsp::compute` over `f32` and over `f64` allocates
 //! nothing, on both backends, with buffers of the exchanged width or of the
 //! other one: a host may call them from an audio thread.
 //!
@@ -54,7 +54,7 @@ fn compute_allocates_nothing_after_the_first_block() {
                 ..CompileOptions::default()
             };
             let factory = Factory::from_source("alloc", program, &options).unwrap();
-            let mut dsp = factory.instantiate(48_000).unwrap();
+            let mut dsp = factory.create_dsp_instance(48_000).unwrap();
             let what = format!("{backend} {precision:?}");
 
             let in32 = vec![vec![0.25_f32; FRAMES]; 2];
@@ -67,13 +67,13 @@ fn compute_allocates_nothing_after_the_first_block() {
             {
                 let mut outs32: Vec<&mut [f32]> = out32.iter_mut().map(Vec::as_mut_slice).collect();
                 let mut outs64: Vec<&mut [f64]> = out64.iter_mut().map(Vec::as_mut_slice).collect();
-                dsp.compute_f32(&ins32, &mut outs32).unwrap();
-                dsp.compute_f64(&ins64, &mut outs64).unwrap();
+                dsp.compute(FRAMES, &ins32, &mut outs32).unwrap();
+                dsp.compute(FRAMES, &ins64, &mut outs64).unwrap();
             }
             let mut outs32: Vec<&mut [f32]> = out32.iter_mut().map(Vec::as_mut_slice).collect();
             let mut outs64: Vec<&mut [f64]> = out64.iter_mut().map(Vec::as_mut_slice).collect();
-            let bytes32 = allocated_by(|| dsp.compute_f32(&ins32, &mut outs32).unwrap());
-            let bytes64 = allocated_by(|| dsp.compute_f64(&ins64, &mut outs64).unwrap());
+            let bytes32 = allocated_by(|| dsp.compute(FRAMES, &ins32, &mut outs32).unwrap());
+            let bytes64 = allocated_by(|| dsp.compute(FRAMES, &ins64, &mut outs64).unwrap());
             assert_eq!(
                 (bytes32, bytes64),
                 (0, 0),

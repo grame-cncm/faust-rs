@@ -16,7 +16,7 @@
 //!   are cheap to clone; a clone is another handle on the same compiled
 //!   program;
 //! - a [`Dsp`] is an instance: its state, its sample rate, its controls.
-//!   [`Factory::instantiate`] creates and initialises one. A `Dsp` owns a
+//!   [`Factory::create_dsp_instance`] creates and initialises one. A `Dsp` owns a
 //!   reference to its factory, so the factory's code lives as long as any of
 //!   its instances, whatever the host does with its own `Factory` handles.
 //!   No lifetime parameter, no `unsafe` for the host: a `Dsp` is a plain
@@ -29,12 +29,35 @@
 //! # Precision
 //!
 //! [`CompileOptions::precision`] chooses the type the program computes with.
-//! [`Dsp::compute_f32`] and [`Dsp::compute_f64`] accept host buffers of
-//! either width and convert when it differs from the compiled precision,
-//! which is what both backends exchange: a `-double` program run through
-//! `compute_f64` sees its samples unrounded on either backend. (The
+//! [`Dsp::compute`] accepts host buffers of either width, `f32` or `f64`
+//! (see [`Sample`]), and converts when it differs from the compiled
+//! precision, which is what both backends exchange: a `-double` program run
+//! over `f64` buffers sees its samples unrounded on either backend. (The
 //! interpreter's C ABI exchanges `f32` whatever the precision; this crate
 //! reaches its `f64` path through a Rust entry point of `interp-ffi`.)
+//!
+//! # Names
+//!
+//! The methods that have a counterpart in the C++ `dsp` and `dsp_factory`
+//! classes (`architecture/faust/dsp/dsp.h`) carry its name in snake case, as
+//! the `FaustDsp` trait of the Rust architectures does:
+//!
+//! | `dsp.h` | this crate |
+//! | --- | --- |
+//! | `getNumInputs`, `getNumOutputs`, `getSampleRate` | [`Dsp::get_num_inputs`], [`Dsp::get_num_outputs`], [`Dsp::get_sample_rate`] |
+//! | `init`, `instanceInit`, `instanceConstants` | [`Dsp::init`], [`Dsp::instance_init`], [`Dsp::instance_constants`] |
+//! | `instanceResetUserInterface`, `instanceClear` | [`Dsp::instance_reset_user_interface`], [`Dsp::instance_clear`] |
+//! | `metadata(Meta*)` | [`Dsp::metadata`], which returns the pairs |
+//! | `compute(count, inputs, outputs)` | [`Dsp::compute`], generic over [`Sample`] as `FAUSTFLOAT` |
+//! | `dsp_factory::getName`, `getJSON` | [`Factory::get_name`], [`Factory::get_json`] |
+//! | `dsp_factory::createDSPInstance` | [`Factory::create_dsp_instance`], which also initialises |
+//!
+//! `buildUserInterface` has no counterpart: [`Dsp::controls`], [`Dsp::get`]
+//! and [`Dsp::set`] replace the `UI` a host would implement. Nor has
+//! `clone`, whose C++ semantics (a fresh instance of the same factory) a Rust
+//! `clone` would misname: `dsp.factory().create_dsp_instance(rate)` is it.
+//! What has no counterpart in `dsp.h` (the backend, the precision, the
+//! controls by path) is named the Rust way.
 //!
 //! # Known gap
 //!
@@ -57,11 +80,11 @@
 //!
 //! let options = CompileOptions { backend: Backend::Cranelift, ..Default::default() };
 //! let factory = Factory::from_source("gain", r#"process = _ * hslider("gain", 0.5, 0, 1, 0.01);"#, &options)?;
-//! let mut dsp = factory.instantiate(48_000)?;
+//! let mut dsp = factory.create_dsp_instance(48_000)?;
 //! dsp.set("/gain/gain", 0.25)?;
 //! let input = [1.0_f32; 64];
 //! let mut output = [0.0_f32; 64];
-//! dsp.compute_f32(&[&input], &mut [&mut output])?;
+//! dsp.compute(64, &[&input], &mut [&mut output])?;
 //! assert_eq!(output[0], 0.25);
 //! # Ok::<(), faust::Error>(())
 //! ```
@@ -96,6 +119,15 @@ impl fmt::Display for Backend {
         })
     }
 }
+
+/// A sample type [`Dsp::compute`] exchanges with the host: `f32` or `f64`,
+/// the two widths `FAUSTFLOAT` takes in C++. Sealed: implemented for those
+/// two only.
+pub trait Sample: backend::Width {}
+
+impl Sample for f32 {}
+
+impl Sample for f64 {}
 
 /// The floating-point type a program computes with (`-double` or not).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]

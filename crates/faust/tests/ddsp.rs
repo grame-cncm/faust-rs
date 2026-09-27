@@ -4,7 +4,7 @@
 //! interpreter's Rust types): the same programs must converge to the same
 //! values on the interpreter and on the Cranelift JIT, in `f32` and, for the
 //! JIT, in `f64`. The two host-driven examples run their Adam loop the way a
-//! Rust host would with this API: `set` on the sliders, `compute_f32` for the
+//! Rust host would with this API: `set` on the sliders, `compute` for the
 //! loss and gradient lanes, summed per block.
 //!
 //! The programs import the Faust standard libraries, found through
@@ -92,16 +92,16 @@ fn for_each_config(
 fn render(stem: &str, cfg: (Backend, Precision), root: &Path, frames: usize) -> Vec<Vec<f32>> {
     let factory = compile(stem, cfg, root);
     let mut dsp = factory
-        .instantiate(SAMPLE_RATE)
+        .create_dsp_instance(SAMPLE_RATE)
         .unwrap_or_else(|e| panic!("{stem} [{}]: {e}", label(cfg)));
     assert_eq!(
-        dsp.num_inputs(),
+        dsp.get_num_inputs(),
         0,
         "{stem}: the example must not need inputs"
     );
-    let mut outputs = vec![vec![0.0_f32; frames]; dsp.num_outputs()];
+    let mut outputs = vec![vec![0.0_f32; frames]; dsp.get_num_outputs()];
     let mut slices: Vec<&mut [f32]> = outputs.iter_mut().map(Vec::as_mut_slice).collect();
-    dsp.compute_f32(&[], &mut slices)
+    dsp.compute(frames, &[], &mut slices)
         .unwrap_or_else(|e| panic!("{stem} [{}]: {e}", label(cfg)));
     for (channel, samples) in outputs.iter().enumerate() {
         if let Some(frame) = samples.iter().position(|s| !s.is_finite()) {
@@ -419,13 +419,15 @@ fn path_of(dsp: &Dsp, name: &str) -> String {
 /// One block of a host-driven example from a fresh instance with the given
 /// slider values: the per-lane sums (loss first, then the gradients).
 fn block_sums(factory: &Factory, sliders: &[(&str, f64)], x: &[f32]) -> Vec<f64> {
-    let mut dsp = factory.instantiate(SAMPLE_RATE).expect("instantiate");
+    let mut dsp = factory
+        .create_dsp_instance(SAMPLE_RATE)
+        .expect("instantiate");
     for &(name, value) in sliders {
         dsp.set(&path_of(&dsp, name), value).expect("set slider");
     }
-    let mut lanes = vec![vec![0.0_f32; x.len()]; dsp.num_outputs()];
+    let mut lanes = vec![vec![0.0_f32; x.len()]; dsp.get_num_outputs()];
     let mut outs: Vec<&mut [f32]> = lanes.iter_mut().map(Vec::as_mut_slice).collect();
-    dsp.compute_f32(&[x], &mut outs).expect("block");
+    dsp.compute(x.len(), &[x], &mut outs).expect("block");
     lanes
         .iter()
         .map(|lane| lane.iter().map(|&v| f64::from(v)).sum::<f64>())
@@ -460,7 +462,9 @@ fn rad_host_block_gradients_identify_the_resonator() {
 
         // 2. Training: one instance kept running, one Adam step per block on
         //    the summed lanes, the poles kept inside the stability triangle.
-        let mut dsp = factory.instantiate(SAMPLE_RATE).expect("instantiate");
+        let mut dsp = factory
+            .create_dsp_instance(SAMPLE_RATE)
+            .expect("instantiate");
         let paths = [path_of(&dsp, "a1"), path_of(&dsp, "a2")];
         let mut p = [-0.8_f64, 0.5_f64];
         let (mut m, mut v) = ([0.0_f64; 2], [0.0_f64; 2]);
@@ -473,7 +477,8 @@ fn rad_host_block_gradients_identify_the_resonator() {
             dsp.set(&paths[1], p[1]).unwrap();
             noise.block(&mut x);
             let mut outs: Vec<&mut [f32]> = lanes.iter_mut().map(Vec::as_mut_slice).collect();
-            dsp.compute_f32(&[&x], &mut outs).expect("training block");
+            dsp.compute(x.len(), &[&x], &mut outs)
+                .expect("training block");
             let sums: Vec<f64> = lanes
                 .iter()
                 .map(|lane| lane.iter().map(|&s| f64::from(s)).sum::<f64>() / BLOCK as f64)
@@ -591,7 +596,9 @@ fn rad_gru_amp_trained_by_block_bptt_from_the_host() {
 
         // 2. Training: truncated BPTT, one Adam step per block of 256 on the
         //    summed lanes, the state carried across blocks.
-        let mut dsp = factory.instantiate(SAMPLE_RATE).expect("instantiate");
+        let mut dsp = factory
+            .create_dsp_instance(SAMPLE_RATE)
+            .expect("instantiate");
         let paths: Vec<String> = GRU_PARAMS
             .iter()
             .map(|(name, _)| path_of(&dsp, name))
@@ -610,7 +617,7 @@ fn rad_gru_amp_trained_by_block_bptt_from_the_host() {
             }
             noise.block(&mut x);
             let mut outs: Vec<&mut [f32]> = lanes.iter_mut().map(Vec::as_mut_slice).collect();
-            dsp.compute_f32(&[&x], &mut outs)
+            dsp.compute(x.len(), &[&x], &mut outs)
                 .expect("gru training block");
             let sums: Vec<f64> = lanes
                 .iter()

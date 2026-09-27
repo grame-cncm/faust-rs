@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use crate::backend::{RawInstance, Sample};
+use crate::Sample;
+use crate::backend::{RawInstance, Width};
 use crate::controls::{Control, ControlMap, MetadataSink};
 use crate::factory::{Factory, FactoryInner};
 use crate::{Backend, Error, ErrorKind, Precision};
@@ -10,7 +11,7 @@ use crate::{Backend, Error, ErrorKind, Precision};
 /// An instance: its state, its sample rate, its controls. Owns a reference
 /// to its factory, so it can outlive the host's [`Factory`] handles. `Send`
 /// and `Sync`: it can be moved to another thread, and shared, since every
-/// `&self` method only reads; `compute_*`, `set` and the initialisations
+/// `&self` method only reads; `compute`, `set` and the initialisations
 /// take `&mut self`.
 pub struct Dsp {
     // Declared first: dropped before the factory reference below.
@@ -32,10 +33,10 @@ unsafe impl Send for Dsp {}
 // are concurrent reads of memory nothing writes while they last (writing
 // takes `&mut self`):
 // - `get` reads one zone of the instance's state;
-// - `controls`, `control`, `num_inputs`, `num_outputs`, `backend`,
+// - `controls`, `control`, `get_num_inputs`, `get_num_outputs`, `backend`,
 //   `precision`, `factory` read this value, the control map (filled once, in
 //   `create`) and the factory's `Arc`;
-// - `sample_rate` reads the instance: `getSampleRateCInterpreterDSPInstance`
+// - `get_sample_rate` reads the instance: `getSampleRateCInterpreterDSPInstance`
 //   an int-heap slot, `getSampleRateCCraneliftDSPInstance` a field;
 // - `metadata` walks the factory's metadata into a sink local to the call:
 //   `metadataCInterpreterDSPInstance` its `meta_block`,
@@ -118,40 +119,54 @@ impl Dsp {
         self.factory.precision
     }
 
-    /// The number of input channels `compute_*` expects.
-    pub fn num_inputs(&self) -> usize {
+    /// The number of audio inputs of the instance: the input buffers
+    /// [`Dsp::compute`] takes (`getNumInputs`).
+    pub fn get_num_inputs(&self) -> usize {
         self.inputs
     }
 
-    /// The number of output channels `compute_*` expects.
-    pub fn num_outputs(&self) -> usize {
+    /// The number of audio outputs of the instance: the output buffers
+    /// [`Dsp::compute`] takes (`getNumOutputs`).
+    pub fn get_num_outputs(&self) -> usize {
         self.outputs
     }
 
-    /// The sample rate of the last initialisation.
-    pub fn sample_rate(&self) -> i32 {
+    /// The sample rate currently used by the instance, in Hz: the one of
+    /// the last initialisation (`getSampleRate`).
+    pub fn get_sample_rate(&self) -> i32 {
         self.raw.sample_rate()
     }
 
-    /// Full initialisation at `sample_rate`: the class-level and the
-    /// instance-level constants, the controls at their initial values, the
-    /// state cleared (the `init` of the C++ `dsp` class).
+    /// Global init at `sample_rate`, in Hz: the static tables of the program
+    /// (`classInit`), then [`Dsp::instance_init`] (`init`).
     pub fn init(&mut self, sample_rate: i32) {
         self.raw.init(sample_rate);
     }
 
-    /// The instance-level part of [`Dsp::init`].
+    /// Init instance state at `sample_rate`, in Hz: [`Dsp::instance_constants`],
+    /// [`Dsp::instance_reset_user_interface`], then [`Dsp::instance_clear`]
+    /// (`instanceInit`).
     pub fn instance_init(&mut self, sample_rate: i32) {
         self.raw.instance_init(sample_rate);
     }
 
-    /// Every control back to its initial value.
-    pub fn reset_controls(&mut self) {
+    /// Init instance constant state at `sample_rate`, in Hz: the constants
+    /// that depend on it; the control parameter values and the state are
+    /// kept (`instanceConstants`).
+    pub fn instance_constants(&mut self, sample_rate: i32) {
+        self.raw.instance_constants(sample_rate);
+    }
+
+    /// Init default control parameter values: every control back to the
+    /// initial value the program declares, [`Control::init`]; the state is
+    /// kept (`instanceResetUserInterface`).
+    pub fn instance_reset_user_interface(&mut self) {
         self.raw.instance_reset_user_interface();
     }
 
-    /// The state (delay lines, recursions) cleared; the controls are kept.
-    pub fn clear(&mut self) {
+    /// Init instance state (like delay lines, recursions...) but keep the
+    /// control parameter values (`instanceClear`).
+    pub fn instance_clear(&mut self) {
         self.raw.instance_clear();
     }
 
@@ -192,7 +207,9 @@ impl Dsp {
         }
     }
 
-    /// The `declare` metadata of the program, plus the backend's own entries.
+    /// The `declare` (key, value) metadata of the instance, plus the
+    /// backend's own entries (`metadata`, which calls a `Meta` where this
+    /// returns the pairs).
     pub fn metadata(&self) -> Vec<(String, String)> {
         let mut sink = MetadataSink(Vec::new());
         let mut glue = sink.glue();
@@ -201,145 +218,112 @@ impl Dsp {
         sink.0
     }
 
-    /// The width of the buffers the backend exchanges: the compiled
-    /// precision, on both backends.
-    fn exchanged(&self) -> Precision {
-        self.factory.precision
+    /// DSP instance computation, to be called with successive input and
+    /// output audio buffers (`compute`): `count` frames, one non-interleaved
+    /// buffer per input and per output, each holding at least `count`
+    /// samples; the rest of a longer buffer is left as it is. Inputs and
+    /// outputs are distinct buffers, as the borrows require.
+    ///
+    /// `T` is `f32` or `f64`, the host's `FAUSTFLOAT`. When it is not the
+    /// compiled precision, the samples are converted on the way in and out:
+    /// a `-double` program exchanges exact `f64` samples, on both backends.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Buffers`] when the number of input or output buffers
+    /// differs from [`Dsp::get_num_inputs`] or [`Dsp::get_num_outputs`], or
+    /// when a buffer holds fewer than `count` samples.
+    pub fn compute<T: Sample>(
+        &mut self,
+        count: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> Result<(), Error> {
+        self.check_buffers(count, inputs, outputs)?;
+        let raw = self.raw;
+        match (T::PRECISION, self.factory.precision) {
+            (Precision::F32, Precision::F32) | (Precision::F64, Precision::F64) => {
+                run_channels(
+                    raw,
+                    inputs.iter().map(|c| c.as_ptr().cast_mut()),
+                    outputs.iter_mut().map(|c| c.as_mut_ptr()),
+                    count,
+                );
+            }
+            (_, Precision::F32) => {
+                run_converted(raw, &mut self.scratch_f32, count, inputs, outputs);
+            }
+            (_, Precision::F64) => {
+                run_converted(raw, &mut self.scratch_f64, count, inputs, outputs);
+            }
+        }
+        Ok(())
     }
 
-    fn check_buffers(
+    fn check_buffers<T>(
         &self,
-        inputs: usize,
-        outputs: usize,
-        frames: Option<usize>,
-    ) -> Result<usize, Error> {
-        if inputs != self.inputs || outputs != self.outputs {
+        count: usize,
+        inputs: &[&[T]],
+        outputs: &[&mut [T]],
+    ) -> Result<(), Error> {
+        if inputs.len() != self.inputs || outputs.len() != self.outputs {
             return Err(Error::new(
                 ErrorKind::Buffers,
                 format!(
-                    "{inputs} input and {outputs} output buffers for a DSP with {} inputs and {} outputs",
-                    self.inputs, self.outputs
+                    "{} input and {} output buffers for a DSP with {} inputs and {} outputs",
+                    inputs.len(),
+                    outputs.len(),
+                    self.inputs,
+                    self.outputs
                 ),
             ));
         }
-        frames.ok_or_else(|| {
-            Error::new(
+        let shortest = inputs
+            .iter()
+            .map(|c| c.len())
+            .chain(outputs.iter().map(|c| c.len()))
+            .min();
+        match shortest {
+            Some(frames) if frames < count => Err(Error::new(
                 ErrorKind::Buffers,
-                "a buffer is shorter than the frame count",
-            )
-        })
-    }
-
-    /// Runs the DSP over `f32` buffers: as many input and output channels as
-    /// the arities, the frame count being the shortest buffer's length (the
-    /// rest of a longer buffer is left as it is). On a `-double` program the
-    /// samples are converted to and from `f64`.
-    ///
-    /// # Errors
-    ///
-    /// [`ErrorKind::Buffers`] when the number of input or output channels
-    /// differs from [`Dsp::num_inputs`] or [`Dsp::num_outputs`].
-    pub fn compute_f32(
-        &mut self,
-        inputs: &[&[f32]],
-        outputs: &mut [&mut [f32]],
-    ) -> Result<(), Error> {
-        let frames = shortest(
-            inputs.iter().map(|c| c.len()),
-            outputs.iter().map(|c| c.len()),
-        );
-        let frames = self.check_buffers(inputs.len(), outputs.len(), frames)?;
-        match self.exchanged() {
-            Precision::F32 => self.run_native(inputs, outputs, frames),
-            Precision::F64 => {
-                self.scratch_f64
-                    .resize_with(inputs.len() + outputs.len(), Vec::new);
-                let (ins, outs) = self.scratch_f64.split_at_mut(inputs.len());
-                for (buf, ch) in ins.iter_mut().zip(inputs) {
-                    buf.clear();
-                    buf.extend(ch[..frames].iter().map(|&x| f64::from(x)));
-                }
-                for buf in outs.iter_mut() {
-                    buf.clear();
-                    buf.resize(frames, 0.0);
-                }
-                run_channels(
-                    self.raw,
-                    ins.iter().map(|b| b.as_ptr().cast_mut()),
-                    outs.iter_mut().map(|b| b.as_mut_ptr()),
-                    frames,
-                );
-                for (ch, buf) in outputs.iter_mut().zip(outs.iter()) {
-                    for (dst, &src) in ch[..frames].iter_mut().zip(buf) {
-                        *dst = src as f32;
-                    }
-                }
-                Ok(())
-            }
+                format!("a buffer holds {frames} samples, fewer than the {count} frames asked"),
+            )),
+            _ => Ok(()),
         }
     }
+}
 
-    /// Runs the DSP over `f64` buffers; see [`Dsp::compute_f32`]. Exact on a
-    /// `-double` program, on both backends; on a single-precision one the
-    /// samples are converted to and from `f32`.
-    ///
-    /// # Errors
-    ///
-    /// [`ErrorKind::Buffers`] when the number of input or output channels
-    /// differs from [`Dsp::num_inputs`] or [`Dsp::num_outputs`].
-    pub fn compute_f64(
-        &mut self,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
-    ) -> Result<(), Error> {
-        let frames = shortest(
-            inputs.iter().map(|c| c.len()),
-            outputs.iter().map(|c| c.len()),
-        );
-        let frames = self.check_buffers(inputs.len(), outputs.len(), frames)?;
-        match self.exchanged() {
-            Precision::F64 => self.run_native(inputs, outputs, frames),
-            Precision::F32 => {
-                self.scratch_f32
-                    .resize_with(inputs.len() + outputs.len(), Vec::new);
-                let (ins, outs) = self.scratch_f32.split_at_mut(inputs.len());
-                for (buf, ch) in ins.iter_mut().zip(inputs) {
-                    buf.clear();
-                    buf.extend(ch[..frames].iter().map(|&x| x as f32));
-                }
-                for buf in outs.iter_mut() {
-                    buf.clear();
-                    buf.resize(frames, 0.0);
-                }
-                run_channels(
-                    self.raw,
-                    ins.iter().map(|b| b.as_ptr().cast_mut()),
-                    outs.iter_mut().map(|b| b.as_mut_ptr()),
-                    frames,
-                );
-                for (ch, buf) in outputs.iter_mut().zip(outs.iter()) {
-                    for (dst, &src) in ch[..frames].iter_mut().zip(buf) {
-                        *dst = f64::from(src);
-                    }
-                }
-                Ok(())
-            }
-        }
+/// [`Dsp::compute`] over host buffers of width `T` for a program compiled at
+/// width `U`: the inputs converted into `scratch`, the call, the outputs
+/// converted back. `scratch` keeps its capacity from one call to the next,
+/// so a steady block size allocates nothing.
+fn run_converted<T: Sample, U: Width>(
+    raw: RawInstance,
+    scratch: &mut Vec<Vec<U>>,
+    count: usize,
+    inputs: &[&[T]],
+    outputs: &mut [&mut [T]],
+) {
+    scratch.resize_with(inputs.len() + outputs.len(), Vec::new);
+    let (ins, outs) = scratch.split_at_mut(inputs.len());
+    for (buf, ch) in ins.iter_mut().zip(inputs) {
+        buf.clear();
+        buf.extend(ch[..count].iter().map(|&x| U::from_f64(x.to_f64())));
     }
-
-    fn run_native<T: Sample>(
-        &mut self,
-        inputs: &[&[T]],
-        outputs: &mut [&mut [T]],
-        frames: usize,
-    ) -> Result<(), Error> {
-        run_channels(
-            self.raw,
-            inputs.iter().map(|c| c.as_ptr().cast_mut()),
-            outputs.iter_mut().map(|c| c.as_mut_ptr()),
-            frames,
-        );
-        Ok(())
+    for buf in outs.iter_mut() {
+        buf.clear();
+        buf.resize(count, U::default());
+    }
+    run_channels(
+        raw,
+        ins.iter().map(|b| b.as_ptr().cast_mut()),
+        outs.iter_mut().map(|b| b.as_mut_ptr()),
+        count,
+    );
+    for (ch, buf) in outputs.iter_mut().zip(outs.iter()) {
+        for (dst, &src) in ch[..count].iter_mut().zip(buf) {
+            *dst = T::from_f64(src.to_f64());
+        }
     }
 }
 
@@ -351,7 +335,7 @@ const STACK_CHANNELS: usize = 64;
 /// in arrays, on the stack for at most [`STACK_CHANNELS`] inputs and outputs,
 /// so that a compute call allocates nothing. Inputs are only read by the
 /// backends.
-fn run_channels<T: Sample>(
+fn run_channels<T: Width>(
     raw: RawInstance,
     inputs: impl ExactSizeIterator<Item = *mut T>,
     outputs: impl ExactSizeIterator<Item = *mut T>,
@@ -388,20 +372,7 @@ impl std::fmt::Debug for Dsp {
             .field("backend", &self.backend())
             .field("inputs", &self.inputs)
             .field("outputs", &self.outputs)
-            .field("sample_rate", &self.sample_rate())
+            .field("sample_rate", &self.get_sample_rate())
             .finish()
     }
-}
-
-/// The shortest of all channel lengths; `None` without any channel would
-/// make a frame count meaningless, so a DSP with no inputs nor outputs gets 0.
-fn shortest(
-    inputs: impl Iterator<Item = usize>,
-    outputs: impl Iterator<Item = usize>,
-) -> Option<usize> {
-    let mut all = inputs.chain(outputs).peekable();
-    if all.peek().is_none() {
-        return Some(0);
-    }
-    all.min()
 }

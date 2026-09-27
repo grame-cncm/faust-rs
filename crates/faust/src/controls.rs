@@ -58,7 +58,7 @@ pub struct Control {
     /// The widget that declares it.
     pub kind: ControlKind,
     /// The value it takes at initialisation and after
-    /// [`Dsp::reset_controls`](crate::Dsp::reset_controls).
+    /// [`Dsp::instance_reset_user_interface`](crate::Dsp::instance_reset_user_interface).
     pub init: f64,
     /// The lower bound of its range.
     pub min: f64,

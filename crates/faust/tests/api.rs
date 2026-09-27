@@ -31,9 +31,13 @@ fn controls_have_the_paths_kinds_ranges_and_metadata_of_the_program() {
     for backend in both() {
         let factory =
             Factory::from_source("gain", GAIN, &options(backend, Precision::F32)).unwrap();
-        let dsp = factory.instantiate(48_000).unwrap();
-        assert_eq!((dsp.num_inputs(), dsp.num_outputs()), (1, 1), "{backend}");
-        assert_eq!(dsp.sample_rate(), 48_000);
+        let dsp = factory.create_dsp_instance(48_000).unwrap();
+        assert_eq!(
+            (dsp.get_num_inputs(), dsp.get_num_outputs()),
+            (1, 1),
+            "{backend}"
+        );
+        assert_eq!(dsp.get_sample_rate(), 48_000);
         let paths: Vec<&str> = dsp.controls().map(|c| c.path.as_str()).collect();
         assert_eq!(
             paths,
@@ -69,20 +73,23 @@ fn set_get_and_compute_on_both_backends() {
     for backend in both() {
         let factory =
             Factory::from_source("gain", GAIN, &options(backend, Precision::F32)).unwrap();
-        let mut dsp = factory.instantiate(48_000).unwrap();
+        let mut dsp = factory.create_dsp_instance(48_000).unwrap();
         let input = [1.0_f32; 16];
         let mut output = [0.0_f32; 16];
-        dsp.compute_f32(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         assert!(output.iter().all(|&y| y == 0.5), "{backend}: {output:?}");
         dsp.set("/gain_stage/gain", 0.25).unwrap();
         dsp.set("/gain_stage/offset", 1.0).unwrap();
         assert_eq!(dsp.get("/gain_stage/gain").unwrap(), 0.25);
-        dsp.compute_f32(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         assert!(output.iter().all(|&y| y == 1.25), "{backend}: {output:?}");
         // the same through f64 buffers
         let input64 = [2.0_f64; 16];
         let mut output64 = [0.0_f64; 16];
-        dsp.compute_f64(&[&input64], &mut [&mut output64]).unwrap();
+        dsp.compute(output64.len(), &[&input64], &mut [&mut output64])
+            .unwrap();
         assert!(
             output64.iter().all(|&y| y == 1.5),
             "{backend}: {output64:?}"
@@ -93,10 +100,12 @@ fn set_get_and_compute_on_both_backends() {
             ErrorKind::UnknownControl
         );
         assert_eq!(
-            dsp.compute_f32(&[], &mut [&mut output]).unwrap_err().kind,
+            dsp.compute(output.len(), &[], &mut [&mut output])
+                .unwrap_err()
+                .kind,
             ErrorKind::Buffers
         );
-        dsp.reset_controls();
+        dsp.instance_reset_user_interface();
         assert_eq!(dsp.get("/gain_stage/gain").unwrap(), 0.5);
     }
 }
@@ -107,7 +116,7 @@ fn the_two_backends_produce_the_same_samples_on_a_stateful_program() {
     for backend in both() {
         let factory =
             Factory::from_source("pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
-        let mut dsp = factory.instantiate(44_100).unwrap();
+        let mut dsp = factory.create_dsp_instance(44_100).unwrap();
         dsp.set("/pole/on", 1.0).unwrap();
         assert_eq!(
             dsp.set("/pole/level", 1.0).unwrap_err().kind,
@@ -116,7 +125,8 @@ fn the_two_backends_produce_the_same_samples_on_a_stateful_program() {
         let mut input = [0.0_f32; 32];
         input[0] = 1.0;
         let mut output = [0.0_f32; 32];
-        dsp.compute_f32(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         assert_eq!(output[0], 1.0, "{backend}");
         assert_eq!(output[1], 0.5, "{backend}");
         assert_eq!(output[2], 0.25, "{backend}");
@@ -126,9 +136,10 @@ fn the_two_backends_produce_the_same_samples_on_a_stateful_program() {
             "{backend}"
         );
         // clear empties the recursion, the controls are kept
-        dsp.clear();
+        dsp.instance_clear();
         let silence = [0.0_f32; 32];
-        dsp.compute_f32(&[&silence], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&silence], &mut [&mut output])
+            .unwrap();
         assert!(output.iter().all(|&y| y == 0.0), "{backend}");
         assert_eq!(dsp.get("/pole/on").unwrap(), 1.0, "{backend}");
         outputs.push(output);
@@ -141,13 +152,14 @@ fn the_two_backends_agree_sample_for_sample() {
     for backend in both() {
         let factory =
             Factory::from_source("pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
-        let mut dsp = factory.instantiate(44_100).unwrap();
+        let mut dsp = factory.create_dsp_instance(44_100).unwrap();
         dsp.set("/pole/on", 1.0).unwrap();
         let input: Vec<f32> = (0..256)
             .map(|i| ((i * 7919) % 97) as f32 / 97.0 - 0.5)
             .collect();
         let mut output = vec![0.0_f32; 256];
-        dsp.compute_f32(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         results.push(output);
     }
     assert_eq!(results[0], results[1]);
@@ -159,7 +171,7 @@ fn double_precision_on_both_backends() {
         let factory =
             Factory::from_source("gain", GAIN, &options(backend, Precision::F64)).unwrap();
         assert_eq!(factory.precision(), Precision::F64);
-        let mut dsp = factory.instantiate(48_000).unwrap();
+        let mut dsp = factory.create_dsp_instance(48_000).unwrap();
         dsp.set("/gain_stage/gain", 0.3).unwrap();
         assert!(
             (dsp.get("/gain_stage/gain").unwrap() - 0.3).abs() < 1e-9,
@@ -167,14 +179,16 @@ fn double_precision_on_both_backends() {
         );
         let input = [1.0_f64; 8];
         let mut output = [0.0_f64; 8];
-        dsp.compute_f64(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         assert!(
             output.iter().all(|&y| (y - 0.3).abs() < 1e-6),
             "{backend}: {output:?}"
         );
         let input32 = [1.0_f32; 8];
         let mut output32 = [0.0_f32; 8];
-        dsp.compute_f32(&[&input32], &mut [&mut output32]).unwrap();
+        dsp.compute(output32.len(), &[&input32], &mut [&mut output32])
+            .unwrap();
         assert!(
             output32.iter().all(|&y| (y - 0.3).abs() < 1e-6),
             "{backend}: {output32:?}"
@@ -189,7 +203,7 @@ fn an_instance_outlives_the_host_s_factory_handles() {
             let factory =
                 Factory::from_source("gain", GAIN, &options(backend, Precision::F32)).unwrap();
             let other = factory.clone();
-            let dsp = other.instantiate(48_000).unwrap();
+            let dsp = other.create_dsp_instance(48_000).unwrap();
             drop(factory);
             drop(other);
             dsp
@@ -197,13 +211,15 @@ fn an_instance_outlives_the_host_s_factory_handles() {
         // the factory's code is still there: the instance keeps a reference
         let input = [1.0_f32; 4];
         let mut output = [0.0_f32; 4];
-        dsp.compute_f32(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         assert_eq!(output, [0.5; 4], "{backend}");
-        assert_eq!(dsp.factory().name(), "gain");
+        assert_eq!(dsp.factory().get_name(), "gain");
         // and it can move to another thread
         let handle = std::thread::spawn(move || {
             let mut output = [0.0_f32; 4];
-            dsp.compute_f32(&[&input], &mut [&mut output]).unwrap();
+            dsp.compute(output.len(), &[&input], &mut [&mut output])
+                .unwrap();
             output
         });
         assert_eq!(handle.join().unwrap(), [0.5; 4], "{backend}");
@@ -215,13 +231,15 @@ fn two_factories_of_the_same_program_are_independent_handles() {
     for backend in both() {
         let a = Factory::from_source("gain", GAIN, &options(backend, Precision::F32)).unwrap();
         let b = Factory::from_source("gain", GAIN, &options(backend, Precision::F32)).unwrap();
-        let mut dsp_b = b.instantiate(48_000).unwrap();
+        let mut dsp_b = b.create_dsp_instance(48_000).unwrap();
         drop(a); // the cache keeps the program for `b` and its instance
         let input = [1.0_f32; 4];
         let mut output = [0.0_f32; 4];
-        dsp_b.compute_f32(&[&input], &mut [&mut output]).unwrap();
+        dsp_b
+            .compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         assert_eq!(output, [0.5; 4], "{backend}");
-        assert!(!b.json().is_empty());
+        assert!(!b.get_json().is_empty());
     }
 }
 
@@ -252,10 +270,11 @@ fn a_double_program_exchanges_f64_samples_exactly_on_both_backends() {
         let factory =
             Factory::from_source("wire", "process = _;", &options(backend, Precision::F64))
                 .unwrap();
-        let mut dsp = factory.instantiate(48_000).unwrap();
+        let mut dsp = factory.create_dsp_instance(48_000).unwrap();
         let input = [tiny; 8];
         let mut output = [0.0_f64; 8];
-        dsp.compute_f64(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         assert_eq!(output, [tiny; 8], "{backend}: the input was narrowed");
 
         let factory = Factory::from_source(
@@ -264,9 +283,9 @@ fn a_double_program_exchanges_f64_samples_exactly_on_both_backends() {
             &options(backend, Precision::F64),
         )
         .unwrap();
-        let mut dsp = factory.instantiate(48_000).unwrap();
+        let mut dsp = factory.create_dsp_instance(48_000).unwrap();
         let mut output = [0.0_f64; 8];
-        dsp.compute_f64(&[], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[], &mut [&mut output]).unwrap();
         assert_eq!(
             output, [16_777_217.0; 8],
             "{backend}: the output was narrowed"
@@ -283,10 +302,11 @@ fn f64_buffers_on_a_single_precision_program_are_converted() {
         let factory =
             Factory::from_source("wire", "process = _;", &options(backend, Precision::F32))
                 .unwrap();
-        let mut dsp = factory.instantiate(48_000).unwrap();
+        let mut dsp = factory.create_dsp_instance(48_000).unwrap();
         let input = [tiny, 0.1, -3.5, 16_777_217.0];
         let mut output = [0.0_f64; 4];
-        dsp.compute_f64(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         assert_eq!(output, input.map(|x| f64::from(x as f32)), "{backend}");
     }
 }
@@ -306,7 +326,7 @@ process = hslider("x", 0.1, 0, 1, 0.01) + nentry("y", 0.3, -1.7, 2.9, 0.001)
                 Precision::F64 => v,
             };
             let factory = Factory::from_source("p", RANGES, &options(backend, precision)).unwrap();
-            let mut dsp = factory.instantiate(48_000).unwrap();
+            let mut dsp = factory.create_dsp_instance(48_000).unwrap();
             let what = format!("{backend} {precision:?}");
             let x = dsp.control("/p/x").unwrap().clone();
             assert_eq!(
@@ -325,7 +345,7 @@ process = hslider("x", 0.1, 0, 1, 0.01) + nentry("y", 0.3, -1.7, 2.9, 0.001)
             // the declared initial value is the one the program resets to
             dsp.set("/p/x", 0.5).unwrap();
             dsp.set("/p/y", 0.5).unwrap();
-            dsp.reset_controls();
+            dsp.instance_reset_user_interface();
             assert_eq!(dsp.get("/p/x").unwrap(), x.init, "{what}");
             assert_eq!(dsp.get("/p/y").unwrap(), y.init, "{what}");
         }
@@ -346,11 +366,12 @@ fn one_dsp_can_be_read_from_several_threads_at_once() {
     for backend in both() {
         let factory =
             Factory::from_source("pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
-        let mut dsp = factory.instantiate(44_100).unwrap();
+        let mut dsp = factory.create_dsp_instance(44_100).unwrap();
         dsp.set("/pole/on", 1.0).unwrap();
         let input = [0.75_f32; 16];
         let mut output = [0.0_f32; 16];
-        dsp.compute_f32(&[&input], &mut [&mut output]).unwrap();
+        dsp.compute(output.len(), &[&input], &mut [&mut output])
+            .unwrap();
         let level = dsp.get("/pole/level").unwrap();
         let metadata = dsp.metadata();
         let dsp = &dsp;
@@ -361,7 +382,7 @@ fn one_dsp_can_be_read_from_several_threads_at_once() {
                         for _ in 0..200 {
                             assert_eq!(dsp.get("/pole/level").unwrap(), level);
                             assert_eq!(dsp.get("/pole/on").unwrap(), 1.0);
-                            assert_eq!(dsp.sample_rate(), 44_100);
+                            assert_eq!(dsp.get_sample_rate(), 44_100);
                             assert_eq!(dsp.controls().count(), 2);
                             assert_eq!(dsp.metadata(), metadata);
                         }
@@ -383,7 +404,7 @@ fn a_control_keeps_its_label_as_the_program_wrote_it() {
     for backend in both() {
         let factory =
             Factory::from_source("labels", LABELS, &options(backend, Precision::F32)).unwrap();
-        let dsp = factory.instantiate(48_000).unwrap();
+        let dsp = factory.create_dsp_instance(48_000).unwrap();
         let gain = dsp.control("/labels/my_gain").unwrap();
         assert_eq!(gain.label, "my gain", "{backend}");
         let entry = dsp.control("/labels/a_b__x_").unwrap();
@@ -402,7 +423,7 @@ process = hslider("[2]alpha", 0, 0, 1, 0.1), hslider("[1]beta", 0, 0, 1, 0.1),
     for backend in both() {
         let factory =
             Factory::from_source("ui", ORDERED, &options(backend, Precision::F32)).unwrap();
-        let dsp = factory.instantiate(48_000).unwrap();
+        let dsp = factory.create_dsp_instance(48_000).unwrap();
         let paths: Vec<&str> = dsp.controls().map(|c| c.path.as_str()).collect();
         assert_eq!(
             paths,
@@ -427,7 +448,7 @@ fn a_program_cranelift_cannot_lower_is_refused_at_instantiate() {
         &options(Backend::Cranelift, Precision::F32),
     )
     .unwrap();
-    let err = factory.instantiate(48_000).unwrap_err();
+    let err = factory.create_dsp_instance(48_000).unwrap_err();
     assert_eq!(err.kind, ErrorKind::Instantiate);
     assert!(err.message.contains("did not lower"), "{}", err.message);
 
@@ -448,21 +469,23 @@ fn instances_are_created_while_another_one_computes() {
     for backend in both() {
         let factory =
             Factory::from_source("pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
-        let mut running = factory.instantiate(48_000).unwrap();
+        let mut running = factory.create_dsp_instance(48_000).unwrap();
         running.set("/pole/on", 1.0).unwrap();
         std::thread::scope(|scope| {
             let computing = scope.spawn(move || {
                 let input = [0.5_f32; 64];
                 let mut output = [0.0_f32; 64];
                 for _ in 0..200 {
-                    running.compute_f32(&[&input], &mut [&mut output]).unwrap();
+                    running
+                        .compute(output.len(), &[&input], &mut [&mut output])
+                        .unwrap();
                 }
                 output
             });
             for _ in 0..50 {
-                let dsp = factory.instantiate(48_000).unwrap();
-                assert_eq!(dsp.num_outputs(), 1);
-                assert!(!factory.json().is_empty());
+                let dsp = factory.create_dsp_instance(48_000).unwrap();
+                assert_eq!(dsp.get_num_outputs(), 1);
+                assert!(!factory.get_json().is_empty());
             }
             // the recursion has converged: y = 0.5 + 0.5 * y
             let output = computing.join().unwrap();
@@ -481,9 +504,9 @@ fn scratch(name: &str) -> std::path::PathBuf {
 
 /// The first output sample of `factory`, silent input.
 fn first_sample(factory: &Factory) -> f32 {
-    let mut dsp = factory.instantiate(48_000).unwrap();
+    let mut dsp = factory.create_dsp_instance(48_000).unwrap();
     let mut out = [0.0_f32; 1];
-    dsp.compute_f32(&[], &mut [&mut out]).unwrap();
+    dsp.compute(out.len(), &[], &mut [&mut out]).unwrap();
     out[0]
 }
 
@@ -529,7 +552,7 @@ fn two_state_controls_range_over_0_1_by_1_and_bargraphs_have_no_step() {
     for backend in both() {
         let factory =
             Factory::from_source("one_pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
-        let dsp = factory.instantiate(48_000).unwrap();
+        let dsp = factory.create_dsp_instance(48_000).unwrap();
         for control in dsp.controls() {
             let expected = match control.kind {
                 ControlKind::CheckButton | ControlKind::Button => (0.0, 1.0, 1.0),
@@ -543,5 +566,56 @@ fn two_state_controls_range_over_0_1_by_1_and_bargraphs_have_no_step() {
                 control.path
             );
         }
+    }
+}
+
+#[test]
+fn compute_runs_count_frames_and_refuses_a_shorter_buffer() {
+    for backend in both() {
+        let factory =
+            Factory::from_source("gain", GAIN, &options(backend, Precision::F32)).unwrap();
+        let mut dsp = factory.create_dsp_instance(48_000).unwrap();
+        let input = [1.0_f32; 8];
+        // `count` frames written, the rest of a longer buffer left as it is
+        let mut output = [-1.0_f32; 8];
+        dsp.compute(4, &[&input], &mut [&mut output]).unwrap();
+        assert_eq!(
+            output,
+            [0.5, 0.5, 0.5, 0.5, -1.0, -1.0, -1.0, -1.0],
+            "{backend}"
+        );
+        // a buffer shorter than `count` is refused before the backend runs
+        let mut short = [0.0_f32; 2];
+        let err = dsp.compute(4, &[&input], &mut [&mut short]).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Buffers, "{backend}");
+        assert!(
+            err.message.contains("fewer than the 4 frames"),
+            "{}",
+            err.message
+        );
+    }
+}
+
+#[test]
+fn instance_constants_recomputes_the_rate_dependent_constants_and_keeps_the_controls() {
+    // `ma.SR`, spelled out: the sample rate is an instance constant
+    const RATE: &str = r#"
+process = fconstant(int fSamplingFreq, <math.h>) * hslider("g", 1, 0, 2, 0.01);
+"#;
+    for backend in both() {
+        let factory =
+            Factory::from_source("rate", RATE, &options(backend, Precision::F32)).unwrap();
+        let mut dsp = factory.create_dsp_instance(48_000).unwrap();
+        dsp.set("/rate/g", 0.5).unwrap();
+        dsp.instance_constants(44_100);
+        assert_eq!(dsp.get_sample_rate(), 44_100, "{backend}");
+        assert_eq!(
+            dsp.get("/rate/g").unwrap(),
+            0.5,
+            "{backend}: the control was reset"
+        );
+        let mut out = [0.0_f32; 1];
+        dsp.compute(1, &[], &mut [&mut out]).unwrap();
+        assert_eq!(out[0], 22_050.0, "{backend}");
     }
 }

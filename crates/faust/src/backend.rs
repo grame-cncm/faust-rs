@@ -282,6 +282,13 @@ impl RawInstance {
         }
     }
 
+    pub(crate) fn instance_constants(self, sample_rate: c_int) {
+        // SAFETY: live instance.
+        unsafe {
+            on_instance!(self, p => interp_ffi::instance::instanceConstantsCInterpreterDSPInstance(p, sample_rate), cranelift_ffi::instance::instanceConstantsCCraneliftDSPInstance(p, sample_rate));
+        }
+    }
+
     pub(crate) fn instance_reset_user_interface(self) {
         // SAFETY: live instance.
         unsafe {
@@ -327,7 +334,7 @@ impl RawInstance {
     /// its C entry point and `f64` through `interp_ffi`'s Rust-only
     /// `compute_f64`; the Cranelift C entry point takes either behind its
     /// `float*` signature. The caller guarantees `count` frames in each channel.
-    pub(crate) unsafe fn compute<T: Sample>(
+    pub(crate) unsafe fn compute<T: Width>(
         self,
         count: c_int,
         inputs: &mut [*mut T],
@@ -335,7 +342,7 @@ impl RawInstance {
     ) {
         // SAFETY: live instance; the caller guarantees the buffers and their
         // width. Each cast below is the identity on the width `T::PRECISION`
-        // names, since `Sample` is implemented for `f32` and `f64` only.
+        // names, since `Width` is implemented for `f32` and `f64` only.
         unsafe {
             match (self, T::PRECISION) {
                 (RawInstance::Interp(p), Precision::F32) => {
@@ -365,18 +372,35 @@ impl RawInstance {
     }
 }
 
-/// A sample type the backends exchange. Crate-private and implemented for
-/// `f32` and `f64` only, since [`RawInstance::compute`] casts channel pointers
-/// by `PRECISION`.
-pub(crate) trait Sample: Copy {
+/// The width of a sample type, and the conversions between the two widths.
+/// `pub` in this private module: the sealed supertrait of the public
+/// [`crate::Sample`], implemented for `f32` and `f64` only, since
+/// [`RawInstance::compute`] casts channel pointers by `PRECISION`.
+pub trait Width: Copy + Default {
     /// The width of `Self`.
     const PRECISION: Precision;
+    /// The value as an `f64`, exactly.
+    fn to_f64(self) -> f64;
+    /// The nearest value of `Self` to `value`.
+    fn from_f64(value: f64) -> Self;
 }
 
-impl Sample for f32 {
+impl Width for f32 {
     const PRECISION: Precision = Precision::F32;
+    fn to_f64(self) -> f64 {
+        f64::from(self)
+    }
+    fn from_f64(value: f64) -> Self {
+        value as f32
+    }
 }
 
-impl Sample for f64 {
+impl Width for f64 {
     const PRECISION: Precision = Precision::F64;
+    fn to_f64(self) -> f64 {
+        self
+    }
+    fn from_f64(value: f64) -> Self {
+        value
+    }
 }

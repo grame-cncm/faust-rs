@@ -58,13 +58,19 @@ d'exécution `foreign-call` peuvent autoriser `unsafe`.
 ## La couche 3 dans le code
 
 L'API Rust est la crate `faust`, `crates/faust`. Sa surface publique est ce
-que `src/lib.rs` définit et réexporte ; le reste est privé.
+que `src/lib.rs` définit et réexporte ; le reste est privé. Les méthodes qui
+ont un équivalent dans les classes C++ `dsp` et `dsp_factory`
+(`architecture/faust/dsp/dsp.h`) en portent le nom en snake case, comme le
+trait `FaustDsp` des architectures Rust (`getNumInputs` devient
+`get_num_inputs`, `instanceClear` `instance_clear`, `createDSPInstance`
+`create_dsp_instance`), et leur documentation suit celle de `dsp.h` ; la page
+de la crate donne la table complète.
 
 | Fichier | Contient |
 | --- | --- |
 | `src/lib.rs` | la documentation de la crate (modèle, précision, cycle de vie, lacune connue) ; `Backend`, `Precision`, `CompileOptions`, `Error`, `ErrorKind`, `version()` ; les réexports |
-| `src/factory.rs` | `Factory` : `from_file`, `from_source`, `instantiate`, `json`, `name`, `backend`, `precision` |
-| `src/dsp.rs` | `Dsp` : `compute_f32`, `compute_f64`, `controls`, `control`, `get`, `set`, `metadata`, les initialisations (`init`, `instance_init`, `reset_controls`, `clear`), les arités et la fréquence d'échantillonnage ; pourquoi il est `Send` et `Sync` |
+| `src/factory.rs` | `Factory` : `from_file`, `from_source`, `create_dsp_instance`, `get_json`, `get_name`, `backend`, `precision` |
+| `src/dsp.rs` | `Dsp` : `compute`, `controls`, `control`, `get`, `set`, `metadata`, les initialisations (`init`, `instance_init`, `instance_constants`, `instance_reset_user_interface`, `instance_clear`), `get_num_inputs`, `get_num_outputs`, `get_sample_rate` ; pourquoi il est `Send` et `Sync` |
 | `src/controls.rs` | `Control`, `ControlKind` ; en privé, le parcours `UIGlue` qui trouve les contrôles et construit leurs chemins `MapUI`, et le collecteur `MetaGlue` de `Dsp::metadata` |
 | `src/backend.rs` | privé : `RawFactory` et `RawInstance`, le seul endroit qui appelle les points d'entrée C de `interp-ffi` et `cranelift-ffi`, et donc l'`unsafe` de la crate |
 | `tests/api.rs`, `tests/ddsp.rs`, `tests/allocation.rs` | le contrat sur les deux backends : cycle de vie, contrôles, précision, threads ; des programmes DDSP à travers l'API ; aucune allocation dans `compute` |
@@ -103,7 +109,7 @@ qu'il faut prendre. Lier la couche 2 depuis Rust coûterait :
   `float**` dans `libfaust-rs` : un programme interprété compilé en `-double`
   voit son entrée et sa sortie arrondies en `f32`. Le chemin `f64`,
   `interp_ffi::instance::compute_f64`, est une fonction Rust, hors de l'API C ;
-  `faust` s'en sert, si bien que `Dsp::compute_f64` est exact sur les deux
+  `faust` s'en sert, si bien que `Dsp::compute` sur des buffers `f64` est exact sur les deux
   backends. (Le point d'entrée C de Cranelift calcule à la précision compilée
   derrière la même signature `float**`.)
 
@@ -143,7 +149,7 @@ fn main() -> Result<(), faust::Error> {
         ..CompileOptions::default()
     };
     let factory = Factory::from_source("smoother", SOURCE, &options)?;
-    let mut dsp = factory.instantiate(48_000)?;
+    let mut dsp = factory.create_dsp_instance(48_000)?;
 
     // Les contrôles, désignés par leur chemin `MapUI`/OSC.
     for control in dsp.controls() {
@@ -164,7 +170,7 @@ fn main() -> Result<(), faust::Error> {
     let mut input = vec![0.0_f64; 64];
     input[0] = 1.0;
     let mut output = vec![0.0_f64; 64];
-    dsp.compute_f64(&[&input], &mut [&mut output])?;
+    dsp.compute(64, &[&input], &mut [&mut output])?;
     println!("impulse response: {:?}", &output[..3]);
 
     // Un `Dsp` est `Send` et garde son programme en vie : l'hôte peut lâcher
@@ -174,7 +180,7 @@ fn main() -> Result<(), faust::Error> {
     let audio = std::thread::spawn(move || -> Result<f32, faust::Error> {
         let silence = [0.0_f32; 64];
         let mut out = [0.0_f32; 64];
-        dsp.compute_f32(&[&silence], &mut [&mut out])?;
+        dsp.compute(64, &[&silence], &mut [&mut out])?;
         Ok(out[0])
     });
     let next = audio.join().expect("the audio thread")?;
