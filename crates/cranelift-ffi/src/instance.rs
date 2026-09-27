@@ -9,7 +9,7 @@
 //! function pointer invocation in documented `unsafe` boundaries. Instances are
 //! registered for automatic deletion with their owning cached factory.
 
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 use std::os::raw::c_int;
 
 use codegen::backends::cranelift::{StructFieldKind, StructFieldLayout, StructLayoutPlan};
@@ -665,10 +665,29 @@ unsafe fn ensure_class_storage(factory: *mut CraneliftDspFactory) -> Result<(), 
     }
 }
 
+/// The signature `addVerticalSlider`, `addHorizontalSlider` and `addNumEntry`
+/// share: label, zone, initial value, minimum, maximum, step.
+type SliderCallback = unsafe extern "C" fn(
+    *mut c_void,
+    *const c_char,
+    *mut FaustFloat,
+    FaustFloat,
+    FaustFloat,
+    FaustFloat,
+    FaustFloat,
+);
+
+/// The signature `addHorizontalBargraph` and `addVerticalBargraph` share:
+/// label, zone, minimum, maximum.
+type BargraphCallback =
+    unsafe extern "C" fn(*mut c_void, *const c_char, *mut FaustFloat, FaustFloat, FaustFloat);
+
 /// Replays FIR-derived UI items through the exported `UIGlue` callback table.
 ///
 /// Zone pointers are resolved directly against the native `dsp_state` buffer so
-/// controls and bargraphs share the same storage seen by JIT `compute`.
+/// controls and bargraphs share the same storage seen by JIT `compute`. A
+/// callback the host left null, a label with an interior NUL or a zone that
+/// does not resolve skips the item.
 fn dispatch_ui_runtime(
     runtime: &RuntimeDescriptor,
     layout: &StructLayoutPlan,
@@ -677,53 +696,28 @@ fn dispatch_ui_runtime(
 ) {
     unsafe {
         let ui = &*ui;
+        let host = ui.ui_interface;
         for item in &runtime.ui_items {
             match item {
-                RuntimeUiItem::OpenTabBox { label } => {
-                    if let Some(f) = ui.open_tab_box
-                        && let Ok(label) = std::ffi::CString::new(label.as_str())
-                    {
-                        f(ui.ui_interface, label.as_ptr());
-                    }
-                }
+                RuntimeUiItem::OpenTabBox { label } => open_box(host, ui.open_tab_box, label),
                 RuntimeUiItem::OpenHorizontalBox { label } => {
-                    if let Some(f) = ui.open_horizontal_box
-                        && let Ok(label) = std::ffi::CString::new(label.as_str())
-                    {
-                        f(ui.ui_interface, label.as_ptr());
-                    }
+                    open_box(host, ui.open_horizontal_box, label);
                 }
                 RuntimeUiItem::OpenVerticalBox { label } => {
-                    if let Some(f) = ui.open_vertical_box
-                        && let Ok(label) = std::ffi::CString::new(label.as_str())
-                    {
-                        f(ui.ui_interface, label.as_ptr());
-                    }
+                    open_box(host, ui.open_vertical_box, label);
                 }
                 RuntimeUiItem::CloseBox => {
                     if let Some(f) = ui.close_box {
-                        f(ui.ui_interface);
+                        f(host);
                     }
                 }
                 RuntimeUiItem::Button { label, zone } => {
-                    if let Some(f) = ui.add_button
-                        && let (Ok(label), Some(zone)) = (
-                            std::ffi::CString::new(label.as_str()),
-                            zone_ptr(dsp_state, layout, zone),
-                        )
-                    {
-                        f(ui.ui_interface, label.as_ptr(), zone);
-                    }
+                    let zone = zone_ptr(dsp_state, layout, zone);
+                    add_button(host, ui.add_button, label, zone);
                 }
                 RuntimeUiItem::CheckButton { label, zone } => {
-                    if let Some(f) = ui.add_check_button
-                        && let (Ok(label), Some(zone)) = (
-                            std::ffi::CString::new(label.as_str()),
-                            zone_ptr(dsp_state, layout, zone),
-                        )
-                    {
-                        f(ui.ui_interface, label.as_ptr(), zone);
-                    }
+                    let zone = zone_ptr(dsp_state, layout, zone);
+                    add_button(host, ui.add_check_button, label, zone);
                 }
                 RuntimeUiItem::VerticalSlider {
                     label,
@@ -733,22 +727,14 @@ fn dispatch_ui_runtime(
                     hi,
                     step,
                 } => {
-                    if let Some(f) = ui.add_vertical_slider
-                        && let (Ok(label), Some(zone)) = (
-                            std::ffi::CString::new(label.as_str()),
-                            zone_ptr(dsp_state, layout, zone),
-                        )
-                    {
-                        f(
-                            ui.ui_interface,
-                            label.as_ptr(),
-                            zone,
-                            *init as FaustFloat,
-                            *lo as FaustFloat,
-                            *hi as FaustFloat,
-                            *step as FaustFloat,
-                        );
-                    }
+                    let zone = zone_ptr(dsp_state, layout, zone);
+                    add_slider(
+                        host,
+                        ui.add_vertical_slider,
+                        label,
+                        zone,
+                        [*init, *lo, *hi, *step],
+                    );
                 }
                 RuntimeUiItem::HorizontalSlider {
                     label,
@@ -758,22 +744,9 @@ fn dispatch_ui_runtime(
                     hi,
                     step,
                 } => {
-                    if let Some(f) = ui.add_horizontal_slider
-                        && let (Ok(label), Some(zone)) = (
-                            std::ffi::CString::new(label.as_str()),
-                            zone_ptr(dsp_state, layout, zone),
-                        )
-                    {
-                        f(
-                            ui.ui_interface,
-                            label.as_ptr(),
-                            zone,
-                            *init as FaustFloat,
-                            *lo as FaustFloat,
-                            *hi as FaustFloat,
-                            *step as FaustFloat,
-                        );
-                    }
+                    let zone = zone_ptr(dsp_state, layout, zone);
+                    let range = [*init, *lo, *hi, *step];
+                    add_slider(host, ui.add_horizontal_slider, label, zone, range);
                 }
                 RuntimeUiItem::NumEntry {
                     label,
@@ -783,22 +756,14 @@ fn dispatch_ui_runtime(
                     hi,
                     step,
                 } => {
-                    if let Some(f) = ui.add_num_entry
-                        && let (Ok(label), Some(zone)) = (
-                            std::ffi::CString::new(label.as_str()),
-                            zone_ptr(dsp_state, layout, zone),
-                        )
-                    {
-                        f(
-                            ui.ui_interface,
-                            label.as_ptr(),
-                            zone,
-                            *init as FaustFloat,
-                            *lo as FaustFloat,
-                            *hi as FaustFloat,
-                            *step as FaustFloat,
-                        );
-                    }
+                    let zone = zone_ptr(dsp_state, layout, zone);
+                    add_slider(
+                        host,
+                        ui.add_num_entry,
+                        label,
+                        zone,
+                        [*init, *lo, *hi, *step],
+                    );
                 }
                 RuntimeUiItem::HorizontalBargraph {
                     label,
@@ -806,20 +771,8 @@ fn dispatch_ui_runtime(
                     lo,
                     hi,
                 } => {
-                    if let Some(f) = ui.add_horizontal_bargraph
-                        && let (Ok(label), Some(zone)) = (
-                            std::ffi::CString::new(label.as_str()),
-                            zone_ptr(dsp_state, layout, zone),
-                        )
-                    {
-                        f(
-                            ui.ui_interface,
-                            label.as_ptr(),
-                            zone,
-                            *lo as FaustFloat,
-                            *hi as FaustFloat,
-                        );
-                    }
+                    let zone = zone_ptr(dsp_state, layout, zone);
+                    add_bargraph(host, ui.add_horizontal_bargraph, label, zone, [*lo, *hi]);
                 }
                 RuntimeUiItem::VerticalBargraph {
                     label,
@@ -827,20 +780,8 @@ fn dispatch_ui_runtime(
                     lo,
                     hi,
                 } => {
-                    if let Some(f) = ui.add_vertical_bargraph
-                        && let (Ok(label), Some(zone)) = (
-                            std::ffi::CString::new(label.as_str()),
-                            zone_ptr(dsp_state, layout, zone),
-                        )
-                    {
-                        f(
-                            ui.ui_interface,
-                            label.as_ptr(),
-                            zone,
-                            *lo as FaustFloat,
-                            *hi as FaustFloat,
-                        );
-                    }
+                    let zone = zone_ptr(dsp_state, layout, zone);
+                    add_bargraph(host, ui.add_vertical_bargraph, label, zone, [*lo, *hi]);
                 }
                 RuntimeUiItem::Soundfile { label, url, zone } => {
                     if let Some(f) = ui.add_soundfile
@@ -854,7 +795,7 @@ fn dispatch_ui_runtime(
                         // the loaded Soundfile* directly into the JIT struct.
                         let zone = soundfile_zone_ptr(dsp_state, layout, zone)
                             .unwrap_or(std::ptr::null_mut());
-                        f(ui.ui_interface, label.as_ptr(), url.as_ptr(), zone);
+                        f(host, label.as_ptr(), url.as_ptr(), zone);
                     }
                 }
                 RuntimeUiItem::Declare { zone, key, value } => {
@@ -868,11 +809,100 @@ fn dispatch_ui_runtime(
                             .as_deref()
                             .and_then(|name| zone_ptr(dsp_state, layout, name))
                             .unwrap_or(std::ptr::null_mut());
-                        f(ui.ui_interface, zone, key.as_ptr(), value.as_ptr());
+                        f(host, zone, key.as_ptr(), value.as_ptr());
                     }
                 }
             }
         }
+    }
+}
+
+/// Calls one of the three `open*Box` callbacks with `label`.
+///
+/// # Safety
+/// `callback`, when present, must be a valid host callback for `host`.
+unsafe fn open_box(
+    host: *mut c_void,
+    callback: Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
+    label: &str,
+) {
+    if let Some(f) = callback
+        && let Ok(label) = std::ffi::CString::new(label)
+    {
+        unsafe { f(host, label.as_ptr()) };
+    }
+}
+
+/// Calls `addButton` or `addCheckButton` with `label` and a resolved `zone`.
+///
+/// # Safety
+/// `callback`, when present, must be a valid host callback for `host`.
+unsafe fn add_button(
+    host: *mut c_void,
+    callback: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *mut FaustFloat)>,
+    label: &str,
+    zone: Option<*mut FaustFloat>,
+) {
+    if let Some(f) = callback
+        && let (Ok(label), Some(zone)) = (std::ffi::CString::new(label), zone)
+    {
+        unsafe { f(host, label.as_ptr(), zone) };
+    }
+}
+
+/// Calls one of the three slider-shaped callbacks with `label`, a resolved
+/// `zone` and `[init, lo, hi, step]` narrowed to `FAUSTFLOAT`.
+///
+/// # Safety
+/// `callback`, when present, must be a valid host callback for `host`.
+unsafe fn add_slider(
+    host: *mut c_void,
+    callback: Option<SliderCallback>,
+    label: &str,
+    zone: Option<*mut FaustFloat>,
+    [init, lo, hi, step]: [f64; 4],
+) {
+    if let Some(f) = callback
+        && let (Ok(label), Some(zone)) = (std::ffi::CString::new(label), zone)
+    {
+        unsafe {
+            f(
+                host,
+                label.as_ptr(),
+                zone,
+                init as FaustFloat,
+                lo as FaustFloat,
+                hi as FaustFloat,
+                step as FaustFloat,
+            );
+        }
+    }
+}
+
+/// Calls one of the two bargraph callbacks with `label`, a resolved `zone`
+/// and `[lo, hi]` narrowed to `FAUSTFLOAT`.
+///
+/// # Safety
+/// `callback`, when present, must be a valid host callback for `host`.
+unsafe fn add_bargraph(
+    host: *mut c_void,
+    callback: Option<BargraphCallback>,
+    label: &str,
+    zone: Option<*mut FaustFloat>,
+    [lo, hi]: [f64; 2],
+) {
+    if let Some(f) = callback
+        && let (Ok(label), Some(zone)) = (std::ffi::CString::new(label), zone)
+    {
+        unsafe {
+            f(
+                host,
+                label.as_ptr(),
+                zone,
+                lo as FaustFloat,
+                hi as FaustFloat,
+            )
+        };
     }
 }
 

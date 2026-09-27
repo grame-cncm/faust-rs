@@ -7,8 +7,12 @@
 //! ```
 //!
 //! A crate may depend on crates in its own layer or a layer to its left, but
-//! never on a layer to its right. `foreign-call` is a core runtime bridge and
-//! is the only non-FFI crate allowed to opt into unsafe code.
+//! never on a layer to its right. The distribution crates are what a host
+//! links: `libfaust-rs` (`faust-ffi`) from C and C++, `wasm-ffi` from
+//! `faustwasm`, and `faust`, the safe Rust API over the adapters.
+//! `foreign-call` is a core runtime bridge and
+//! is the only non-FFI crate allowed to opt into unsafe code; `faust` opts in
+//! because it owns the raw factory and instance pointers of the adapters.
 
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -28,9 +32,9 @@ const ADAPTER_CRATES: [&str; 7] = [
     "libfaust-ffi",
 ];
 
-const DISTRIBUTION_CRATES: [&str; 2] = ["faust-ffi", "wasm-ffi"];
+const DISTRIBUTION_CRATES: [&str; 3] = ["faust-ffi", "wasm-ffi", "faust"];
 
-const UNSAFE_ALLOWLIST: [&str; 8] = [
+const UNSAFE_ALLOWLIST: [&str; 9] = [
     "ffi-common",
     "tree-ffi",
     "box-ffi",
@@ -39,6 +43,8 @@ const UNSAFE_ALLOWLIST: [&str; 8] = [
     "cranelift-ffi",
     "libfaust-ffi",
     "wasm-ffi",
+    // The Rust API: its safe surface is built over the adapters' raw pointers.
+    "faust",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -232,6 +238,9 @@ mod tests {
         assert!(layer_for("compiler") < layer_for("box-ffi"));
         assert!(layer_for("box-ffi") < layer_for("faust-ffi"));
         assert_eq!(layer_for("ffi-common"), Layer::Adapter);
+        // the Rust API sits over the adapters it wraps
+        assert!(layer_for("interp-ffi") < layer_for("faust"));
+        assert!(layer_for("cranelift-ffi") < layer_for("faust"));
     }
 
     #[test]
@@ -239,6 +248,7 @@ mod tests {
         assert!(unsafe_allowed_for("foreign-call"));
         assert!(unsafe_allowed_for("ffi-common"));
         assert!(unsafe_allowed_for("wasm-ffi"));
+        assert!(unsafe_allowed_for("faust"));
         assert!(!unsafe_allowed_for("compiler"));
         assert!(!unsafe_allowed_for("faust-ffi"));
     }
