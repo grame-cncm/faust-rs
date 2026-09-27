@@ -390,3 +390,26 @@ fn a_control_keeps_its_label_as_the_program_wrote_it() {
         assert_eq!(entry.label, "a/b (x)", "{backend}");
     }
 }
+
+#[test]
+fn controls_come_in_the_order_of_the_user_interface() {
+    // `[n]` orders the widgets of a group, as in every Faust UI: the order
+    // of `buildUserInterface`, not the alphabetical order of the paths
+    const ORDERED: &str = r#"
+process = hslider("[2]alpha", 0, 0, 1, 0.1), hslider("[1]beta", 0, 0, 1, 0.1),
+          hgroup("[0]group", nentry("[1]zeta", 0, 0, 1, 1), nentry("[0]eta", 0, 0, 1, 1));
+"#;
+    for backend in both() {
+        let factory =
+            Factory::from_source("ui", ORDERED, &options(backend, Precision::F32)).unwrap();
+        let dsp = factory.instantiate(48_000).unwrap();
+        let paths: Vec<&str> = dsp.controls().map(|c| c.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            ["/ui/group/eta", "/ui/group/zeta", "/ui/beta", "/ui/alpha"],
+            "{backend}"
+        );
+        // lookup by path is unchanged
+        assert_eq!(dsp.control("/ui/alpha").unwrap().label, "alpha");
+    }
+}

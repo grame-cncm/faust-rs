@@ -150,7 +150,9 @@ impl Dsp {
         self.raw.instance_clear();
     }
 
-    /// The controls, in path order.
+    /// The controls, in the order of the UI tree: the order
+    /// `buildUserInterface` declares them, where Faust sorts the widgets of a
+    /// group by label (`[n]` prefixes included).
     pub fn controls(&self) -> impl Iterator<Item = &Control> {
         self.controls.iter()
     }

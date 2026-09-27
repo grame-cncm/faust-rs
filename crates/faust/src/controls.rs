@@ -1,7 +1,7 @@
 //! The controls of an instance, discovered through the backend's UI
 //! builder and addressed by path.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_void};
 
 use ffi_common::ControlRange;
@@ -70,9 +70,13 @@ struct Entry {
     zone: *mut FfiFaustFloat,
 }
 
-/// The controls of one instance, by path.
+/// The controls of one instance, in the order the UI builder declared them
+/// (the order of the UI tree, where Faust sorts a group's widgets by label,
+/// `[n]` prefixes included), with an index by path.
 pub(crate) struct ControlMap {
-    entries: BTreeMap<String, Entry>,
+    entries: Vec<Entry>,
+    /// Position in `entries` of each path.
+    by_path: HashMap<String, usize>,
     /// Group labels currently open, innermost last, while building.
     groups: Vec<String>,
     /// Metadata declared before the widget owning its zone arrives.
@@ -84,7 +88,8 @@ pub(crate) struct ControlMap {
 impl ControlMap {
     pub(crate) fn new(precision: Precision) -> Self {
         Self {
-            entries: BTreeMap::new(),
+            entries: Vec::new(),
+            by_path: HashMap::new(),
             groups: Vec::new(),
             pending_metadata: Vec::new(),
             precision,
@@ -92,15 +97,19 @@ impl ControlMap {
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Control> {
-        self.entries.values().map(|e| &e.control)
+        self.entries.iter().map(|e| &e.control)
+    }
+
+    fn entry(&self, path: &str) -> Option<&Entry> {
+        self.by_path.get(path).map(|&i| &self.entries[i])
     }
 
     pub(crate) fn get(&self, path: &str) -> Option<&Control> {
-        self.entries.get(path).map(|e| &e.control)
+        self.entry(path).map(|e| &e.control)
     }
 
     pub(crate) fn read(&self, path: &str) -> Option<f64> {
-        let entry = self.entries.get(path)?;
+        let entry = self.entry(path)?;
         // SAFETY: the zone points into the state of the instance this map
         // belongs to, alive as long as the `Dsp` that owns the map, and its
         // width is the precision recorded at construction.
@@ -115,7 +124,7 @@ impl ControlMap {
     /// Writes `value`; `None` when the path is unknown, `Some(false)` when the
     /// control is read-only.
     pub(crate) fn write(&self, path: &str, value: f64) -> Option<bool> {
-        let entry = self.entries.get(path)?;
+        let entry = self.entry(path)?;
         if !entry.control.kind.is_writable() {
             return Some(false);
         }
@@ -134,7 +143,7 @@ impl ControlMap {
     /// bargraph keeps its convention: its initial value is its minimum.
     pub(crate) fn apply_ranges(&mut self, ranges: &[ControlRange]) {
         for range in ranges {
-            let Some(entry) = self.entries.values_mut().find(|e| e.zone == range.zone) else {
+            let Some(entry) = self.entries.iter_mut().find(|e| e.zone == range.zone) else {
                 continue;
             };
             let control = &mut entry.control;
@@ -215,7 +224,17 @@ impl ControlMap {
             step,
             metadata,
         };
-        self.entries.insert(path, Entry { control, zone });
+        // The compiler refuses two widgets with one path. Should one arrive,
+        // the later zone replaces the earlier, as in the C++ `MapUI`, at the
+        // earlier's position.
+        let entry = Entry { control, zone };
+        match self.by_path.get(&path) {
+            Some(&i) => self.entries[i] = entry,
+            None => {
+                self.by_path.insert(path, self.entries.len());
+                self.entries.push(entry);
+            }
+        }
     }
 }
 

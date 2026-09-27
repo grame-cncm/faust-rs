@@ -356,4 +356,20 @@ paths: follow-up F3 (§6).
   `"a/b (x)"` gives `label == "a/b (x)"` at `/labels/a_b__x_` (does not
   compile on `0f240664`: no field `label`).
 
-P5 and P6 not started.
+### P5, implemented 2026-09-27
+
+- `ControlMap`: a `Vec<Entry>` in the order `buildUserInterface` declares the
+  controls, plus a `HashMap` from path to position; `get`, `read`, `write`
+  look up through it.
+- The order is the UI tree's, not the source's: Faust sorts the widgets of a
+  group by label, `[n]` prefixes included (as noted under P2).
+- Duplicated paths: the compiler refuses them (`UI layout rejected for
+  twice: 1 duplicated control path(s)`), so the planned duplicate test
+  cannot be written from Faust source. The map keeps the `MapUI` rule as a
+  guard, the later zone replacing the earlier at its position, untested.
+- Test: `controls_come_in_the_order_of_the_user_interface` (both backends;
+  `[2]alpha`, `[1]beta` and a `[0]group` holding `[1]zeta`, `[0]eta` list as
+  `/ui/group/eta`, `/ui/group/zeta`, `/ui/beta`, `/ui/alpha`; fails on
+  `0f240664`, which listed them alphabetically).
+
+P6 not started.
