@@ -35,10 +35,19 @@ impl ControlKind {
 /// values the program declares, at its compiled precision: exact for a
 /// `-double` program, the `f32` values its zones hold otherwise. A bargraph
 /// declares no initial value nor step: `init` is its `min`, `step` is 0.
+///
+/// Built by this crate only (`#[non_exhaustive]`): fields may be added
+/// without breaking the hosts that read them.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Control {
-    /// Its address, `/group/.../label`, as the C++ `MapUI` and OSC build it.
+    /// Its address, `/group/.../label`, as the C++ `MapUI` and OSC build it:
+    /// the characters an OSC address cannot hold are replaced by `_`, so the
+    /// label cannot be read back from it.
     pub path: String,
+    /// The label as the program wrote it, without its `[key:value]`
+    /// metadata: `"my gain"` for `hslider("my gain [unit:dB]", ...)`.
+    pub label: String,
     pub kind: ControlKind,
     pub init: f64,
     pub min: f64,
@@ -198,6 +207,7 @@ impl ControlMap {
         let [init, min, max, step] = range.map(f64::from);
         let control = Control {
             path: path.clone(),
+            label: label.to_owned(),
             kind,
             init,
             min,

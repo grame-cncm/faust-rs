@@ -343,4 +343,17 @@ the `Dsp` itself. Nothing to fix before the impl.
 The audit found one factory-level aliasing issue outside `Dsp`'s `&self`
 paths: follow-up F3 (§6).
 
-P4 to P6 not started.
+### P4, implemented 2026-09-27
+
+- `Control::label`: the label `add` received from the UI builder, which is
+  the label as written without its `[key:value]` metadata (the compiler
+  strips it before `buildUserInterface`, on both backends).
+- `#[non_exhaustive]` on `Control` (built by the crate only; hosts read it)
+  and on `ErrorKind` (a host `match` needs a `_` arm). `ControlKind` is left
+  exhaustive: a host matching on it should be told when a kind appears.
+- Test: `a_control_keeps_its_label_as_the_program_wrote_it`, both backends:
+  `"my gain [unit:dB]"` gives `label == "my gain"` at `/labels/my_gain`,
+  `"a/b (x)"` gives `label == "a/b (x)"` at `/labels/a_b__x_` (does not
+  compile on `0f240664`: no field `label`).
+
+P5 and P6 not started.

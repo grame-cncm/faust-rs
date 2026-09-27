@@ -24,7 +24,7 @@
 //!   (`Send + Sync`: its `&self` methods only read);
 //! - controls are addressed by the paths the C++ `MapUI` and OSC use,
 //!   `/group/label`; [`Dsp::set`] and [`Dsp::get`] read and write them, and
-//!   [`Dsp::controls`] lists them with their kind and range.
+//!   [`Dsp::controls`] lists them with their label, kind and range.
 //!
 //! # Precision
 //!
@@ -143,8 +143,10 @@ impl CompileOptions {
     }
 }
 
-/// What went wrong.
+/// What went wrong. `#[non_exhaustive]`: a match needs a `_` arm, so new
+/// kinds can be added without breaking hosts.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ErrorKind {
     /// The program did not compile; the message is the compiler's.
     Compile,

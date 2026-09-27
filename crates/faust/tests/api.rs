@@ -374,3 +374,19 @@ fn one_dsp_can_be_read_from_several_threads_at_once() {
         });
     }
 }
+
+#[test]
+fn a_control_keeps_its_label_as_the_program_wrote_it() {
+    // the path replaces what an OSC address cannot hold, so it cannot give
+    // the label back; the metadata in brackets is not part of the label
+    const LABELS: &str = r#"process = hslider("my gain [unit:dB]", 0.5, 0, 1, 0.01) + nentry("a/b (x)", 0, 0, 1, 1);"#;
+    for backend in both() {
+        let factory =
+            Factory::from_source("labels", LABELS, &options(backend, Precision::F32)).unwrap();
+        let dsp = factory.instantiate(48_000).unwrap();
+        let gain = dsp.control("/labels/my_gain").unwrap();
+        assert_eq!(gain.label, "my gain", "{backend}");
+        let entry = dsp.control("/labels/a_b__x_").unwrap();
+        assert_eq!(entry.label, "a/b (x)", "{backend}");
+    }
+}
