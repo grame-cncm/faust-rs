@@ -11,7 +11,7 @@ use crate::suggestions::{SymbolSuggestion, rank_similar_names};
 
 /// Performance statistics collected during evaluation.
 ///
-/// Returned by [`eval_process_with_stats`](crate::eval_process_with_stats) alongside the evaluated box tree.
+/// Returned by [`eval`](crate::eval) alongside the evaluated box tree.
 /// Provides the same information as the C++ `gGlobal->gStats` fields used for profiling
 /// the evaluator, but without global mutable state — stats are accumulated locally and
 /// returned by value.

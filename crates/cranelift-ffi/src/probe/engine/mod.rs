@@ -51,7 +51,7 @@ pub struct RenderSpec {
     pub skip: usize,
     /// Events to apply at exact frames during the render.
     ///
-    /// Only [`Event::SetParam`] is meaningful on a scalar `Probe`; note
+    /// Only [`Event::SetParam`](crate::probe::schedule::Event::SetParam) is meaningful on a scalar `Probe`; note
     /// events need [`PolyProbe`]. The render loop shortens its block so a
     /// boundary always lands on the next scheduled frame, which is what makes
     /// the timing sample-exact rather than rounded to the block grid.

@@ -78,7 +78,7 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
 
     /// Allocates an empty block (containing only `kReturn`) in the arena.
     ///
-    /// Used by [`super::generate_interp_module`] to fill factory slots for DSP
+    /// Used by [`crate::backends::interp::generate_interp_module`] to fill factory slots for DSP
     /// sections that are not present in the FIR module (e.g. `staticInit`
     /// when the legacy bridge is in use).
     pub fn alloc_empty_block(&mut self) -> BlockId {

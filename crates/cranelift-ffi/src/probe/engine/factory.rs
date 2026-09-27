@@ -9,10 +9,10 @@ use crate::factory::{
 };
 use crate::types::CraneliftDspFactory;
 
-/// A JIT-compiled DSP factory, shared by every [`Probe`] instantiated from
+/// A JIT-compiled DSP factory, shared by every [`Probe`](super::Probe) instantiated from
 /// it.
 ///
-/// Split out from [`Probe`] so a caller — chiefly [`PolyProbe`] — can create
+/// Split out from [`Probe`](super::Probe) so a caller — chiefly [`PolyProbe`](super::PolyProbe) — can create
 /// several independent instances from one compile. `double` is recorded here
 /// rather than per-instance because it is a compile-time argument (`-double`
 /// on the front end's own `argv`, `Probe::compile`'s doc), fixed for every
@@ -165,7 +165,7 @@ impl Factory {
     /// JIT-compile `source` directly, without reading a file.
     ///
     /// Used to compile the `environment{}`-wrapped effect extraction
-    /// ([`PolyProbe::compile`]'s doc): the wrapper is synthesised text, not
+    /// ([`PolyProbe::compile`](super::PolyProbe::compile)'s doc): the wrapper is synthesised text, not
     /// something on disk.
     ///
     /// # Errors

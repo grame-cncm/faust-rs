@@ -35,6 +35,10 @@ url = "2.5"
 [[bin]]
 name = "faust-rs"
 path = "src/main.rs"
+# its rustdoc would land in target/doc/faust_rs, the directory of the
+# `faust_rs` library of faust-ffi (libfaust-rs); the CLI is documented by
+# `--help` and docs/user-cli-guide-en.md
+doc = false
 
 [lints]
 workspace = true

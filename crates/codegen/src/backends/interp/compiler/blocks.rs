@@ -215,7 +215,7 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
     /// If `block_id` does not decode as a [`FirMatch::Block`], an empty block
     /// (containing only `kReturn`) is emitted.
     ///
-    /// This is the building block for [`super::generate_interp_module`] which compiles
+    /// This is the building block for [`crate::backends::interp::generate_interp_module`] which compiles
     /// each named DSP section (init, compute, …) into a separate arena block.
     pub fn compile_fir_block(
         &mut self,

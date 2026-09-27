@@ -401,7 +401,7 @@ impl Probe {
     /// Run exactly one `compute` call over `frames` samples of caller-supplied
     /// input, returning `frames` samples per output channel as `f64`.
     ///
-    /// The primitive [`PolyProbe`] is built on. [`Probe::render`] owns a
+    /// The primitive [`PolyProbe`](super::PolyProbe) is built on. [`Probe::render`] owns a
     /// whole-render loop with button-driving and statistics baked in, which
     /// the polyphonic wrapper cannot reuse: its own block cadence is dictated
     /// by voice legato splits (`computeLegato`, `poly-dsp.h:213`, issues two

@@ -167,7 +167,7 @@ pub(crate) struct EnvStore {
 /// | Redefinition | `addLayerDef` throws `faustexception` on conflicting rebind | `bind_definitions` returns `EvalError::RedefinedSymbol` |
 /// | Barrier | `pushEnvBarrier` / `isEnvBarrier` — stops pattern-matcher lookup | `push_barrier_scope()` / `lookup_until_barrier()` |
 /// | Env copy/rewire | `copyEnvReplaceDefs` + `updateClosures` — for captured-env rewrites | Deferred in the current Rust model |
-/// | Profiling | `gGlobal->gStats.fEnvLayersPushed/fEnvLookups/fEnvLookupTotalDepth` | [`EvalStats`](crate::EvalStats) returned from [`eval_process_with_stats`](crate::eval_process_with_stats) |
+/// | Profiling | `gGlobal->gStats.fEnvLayersPushed/fEnvLookups/fEnvLookupTotalDepth` | [`EvalStats`](crate::EvalStats) returned by [`eval`](crate::eval) |
 ///
 /// # Performance
 ///
@@ -207,7 +207,7 @@ impl Environment {
     /// installs a more specific one.
     ///
     /// Typical callers:
-    /// - [`eval_process_with_source_context`](crate::eval_process_with_source_context) for file-backed compilation,
+    /// - [`eval`](crate::eval) with [`EvalRequest::with_source_context`](crate::EvalRequest::with_source_context) for file-backed compilation,
     /// - targeted tests exercising `component("...")` / `library("...")` parity.
     #[must_use]
     pub fn empty_with_source_context(source_context: EvalSourceContext) -> Self {

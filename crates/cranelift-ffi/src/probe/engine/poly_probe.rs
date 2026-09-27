@@ -17,7 +17,7 @@ struct Voice {
     paths: poly::VoiceControlPaths,
 }
 
-/// How a polyphonic render should be driven: what [`RenderSpec`] holds, less
+/// How a polyphonic render should be driven: what [`RenderSpec`](super::RenderSpec) holds, less
 /// the driving of buttons (nothing presses a voice's gate but a note).
 #[derive(Debug, Clone)]
 pub struct PolyRenderSpec {

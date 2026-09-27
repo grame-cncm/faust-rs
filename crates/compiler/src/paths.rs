@@ -197,7 +197,7 @@ pub fn default_import_search_paths(path: &Path) -> Vec<PathBuf> {
 /// search paths through this function, never by appending `-I` dirs to
 /// [`default_import_search_paths`], which puts them last.
 ///
-/// This is a convenience wrapper over [`build_import_search_paths`] that reads
+/// This is a convenience wrapper over the crate's `build_import_search_paths` that reads
 /// `FAUST_LIB_PATH` and the current executable location automatically.
 pub fn merge_import_search_paths(path: &Path, extra_paths: &[PathBuf]) -> Vec<PathBuf> {
     build_import_search_paths(

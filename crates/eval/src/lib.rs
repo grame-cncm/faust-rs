@@ -140,7 +140,7 @@
 //! - Structural recursive evaluation over box trees.
 //! - Function application and iterative form expansion (`ipar/iseq/isum/iprod`).
 //! - Non-closure partial-application parity (`applyList`) with implicit wire insertion.
-//! - Optional performance statistics via [`eval_process_with_stats`].
+//! - Performance statistics, returned by [`eval`] with the evaluated box.
 //!
 //! # Execution model
 //! 1. Parse all top-level definitions and bind them into a root `Environment`.

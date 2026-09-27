@@ -18,8 +18,9 @@
 //! # Public API mapping status
 //! - [`box_arity_typed`] and [`propagate_typed`] are the primary Rust entry
 //!   points for the post-`eval/a2sb` flat-box contract.
-//! - [`PropagateOutput`], [`propagate_typed_with_ui`], and [`propagate_typed_with_ui_options`]
-//!   are the grouped-UI ownership extensions introduced by the UI IR rewrite.
+//! - [`PropagateOutput`], [`propagate_typed_with_ui`] and its
+//!   [`PropagateUiOptions`] are the grouped-UI ownership extensions introduced
+//!   by the UI IR rewrite.
 //! - `make_sig_input_list(...)` mirrors C++ `makeSigInputList(...)`.
 //! - `FlatBoxId` / [`try_build_flat_box`] are an adapted Rust boundary: they make the
 //!   C++ post-`evalprocess -> a2sb -> propagate` flat-box contract explicit while

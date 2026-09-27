@@ -20,7 +20,7 @@
 //! the uniqueness token, so that collision class is gone by construction.
 //!
 //! "One propagation" means one propagation *miss*: the propagation result
-//! memo ([`crate::result_memo`]) replays, for the same wrapper box reached
+//! memo (the private `result_memo` module) replays, for the same wrapper box reached
 //! again in the same slot environment, UI path, parent domain and inputs,
 //! the outputs of the first propagation, and with them its domain id. That
 //! is what the C++ tuple names too (same components, same domain); what the

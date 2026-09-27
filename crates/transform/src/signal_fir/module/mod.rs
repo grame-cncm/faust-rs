@@ -163,7 +163,7 @@ use rad_formula_builder::FirRadFormulaBuilder;
 /// loss over a whole impulse response in one call sizes the tapes to it.
 ///
 /// The tape index is masked (`i0 & (bra_tape_block_size - 1)`, see
-/// [`SignalToFirLower::bra_tape_index`]), so an over-long block **wraps
+/// the private `SignalToFirLower::bra_tape_index`), so an over-long block **wraps
 /// safely within the array** (aliased/approximate gradients for the tail)
 /// instead of writing out of bounds. The masking relies on the size being a
 /// power of two, which the option validates.
