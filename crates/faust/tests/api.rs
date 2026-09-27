@@ -242,3 +242,51 @@ fn a_program_that_does_not_compile_is_a_typed_error_with_the_compiler_s_message(
         );
     }
 }
+
+#[test]
+fn a_double_program_exchanges_f64_samples_exactly_on_both_backends() {
+    // 1 + 2^-40 and 2^24 + 1 are not representable in f32: a narrowing
+    // anywhere between the host's buffers and the program shows up here
+    let tiny = 1.0 + 2.0_f64.powi(-40);
+    for backend in both() {
+        let factory =
+            Factory::from_source("wire", "process = _;", &options(backend, Precision::F64))
+                .unwrap();
+        let mut dsp = factory.instantiate(48_000).unwrap();
+        let input = [tiny; 8];
+        let mut output = [0.0_f64; 8];
+        dsp.compute_f64(&[&input], &mut [&mut output]).unwrap();
+        assert_eq!(output, [tiny; 8], "{backend}: the input was narrowed");
+
+        let factory = Factory::from_source(
+            "constant",
+            "process = 16777217.0;",
+            &options(backend, Precision::F64),
+        )
+        .unwrap();
+        let mut dsp = factory.instantiate(48_000).unwrap();
+        let mut output = [0.0_f64; 8];
+        dsp.compute_f64(&[], &mut [&mut output]).unwrap();
+        assert_eq!(
+            output, [16_777_217.0; 8],
+            "{backend}: the output was narrowed"
+        );
+    }
+}
+
+#[test]
+fn f64_buffers_on_a_single_precision_program_are_converted() {
+    // the other direction: an f32 program run through f64 buffers computes in
+    // f32, the conversion rounding to the nearest f32 on entry
+    let tiny = 1.0 + 2.0_f64.powi(-40);
+    for backend in both() {
+        let factory =
+            Factory::from_source("wire", "process = _;", &options(backend, Precision::F32))
+                .unwrap();
+        let mut dsp = factory.instantiate(48_000).unwrap();
+        let input = [tiny, 0.1, -3.5, 16_777_217.0];
+        let mut output = [0.0_f64; 4];
+        dsp.compute_f64(&[&input], &mut [&mut output]).unwrap();
+        assert_eq!(output, input.map(|x| f64::from(x as f32)), "{backend}");
+    }
+}

@@ -219,7 +219,8 @@ dsp.compute_f32(&[&input], &mut [&mut output])?;
 ```
 
 `compute_f32` and `compute_f64` accept host buffers of either width and
-convert when it is not the one the backend exchanges. This crate and the C API
+convert when it is not the compiled precision: a `-double` program run through
+`compute_f64` sees its samples unrounded, on both backends. This crate and the C API
 below are the two contracts of faust-rs; the other crates of the workspace are
 implementation details and may change without notice.
 

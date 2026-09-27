@@ -29,10 +29,11 @@
 //!
 //! [`CompileOptions::precision`] chooses the type the program computes with.
 //! [`Dsp::compute_f32`] and [`Dsp::compute_f64`] accept host buffers of
-//! either width and convert when it differs from what the backend exchanges:
-//! the Cranelift JIT exchanges buffers of the compiled precision; the
-//! interpreter's C ABI exchanges `f32` buffers whatever the precision, so an
-//! `f64` interpreter program computes in `f64` between `f32` boundaries.
+//! either width and convert when it differs from the compiled precision,
+//! which is what both backends exchange: a `-double` program run through
+//! `compute_f64` sees its samples unrounded on either backend. (The
+//! interpreter's C ABI exchanges `f32` whatever the precision; this crate
+//! reaches its `f64` path through a Rust entry point of `interp-ffi`.)
 //!
 //! # Known gap
 //!

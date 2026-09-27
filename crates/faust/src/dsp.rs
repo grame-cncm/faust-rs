@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::backend::RawInstance;
+use crate::backend::{RawInstance, Sample};
 use crate::controls::{Control, ControlMap, MetadataSink};
 use crate::factory::{Factory, FactoryInner};
 use crate::{Backend, Error, ErrorKind, Precision};
@@ -165,12 +165,10 @@ impl Dsp {
         sink.0
     }
 
-    /// The width of the buffers the backend exchanges.
+    /// The width of the buffers the backend exchanges: the compiled
+    /// precision, on both backends.
     fn exchanged(&self) -> Precision {
-        match self.backend() {
-            Backend::Interp => Precision::F32,
-            Backend::Cranelift => self.factory.precision,
-        }
+        self.factory.precision
     }
 
     fn check_buffers(
@@ -275,7 +273,7 @@ impl Dsp {
         }
     }
 
-    fn run_native<T>(
+    fn run_native<T: Sample>(
         &mut self,
         inputs: &[&[T]],
         outputs: &mut [&mut [T]],
@@ -285,22 +283,21 @@ impl Dsp {
         Ok(())
     }
 
-    /// The C call: channel pointer arrays of the exchanged width, cast to the
-    /// ABI's `float*`. Inputs are only read by the backends.
-    fn run_raw<T>(raw: RawInstance, inputs: &[&[T]], outputs: &mut [&mut [T]], frames: usize) {
-        let mut in_ptrs: Vec<*mut f32> = inputs
-            .iter()
-            .map(|c| c.as_ptr().cast_mut().cast::<f32>())
-            .collect();
-        let mut out_ptrs: Vec<*mut f32> = outputs
-            .iter_mut()
-            .map(|c| c.as_mut_ptr().cast::<f32>())
-            .collect();
+    /// The C call: channel pointer arrays of the exchanged width. Inputs are
+    /// only read by the backends.
+    fn run_raw<T: Sample>(
+        raw: RawInstance,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+        frames: usize,
+    ) {
+        let mut in_ptrs: Vec<*mut T> = inputs.iter().map(|c| c.as_ptr().cast_mut()).collect();
+        let mut out_ptrs: Vec<*mut T> = outputs.iter_mut().map(|c| c.as_mut_ptr()).collect();
         let count = i32::try_from(frames).unwrap_or(i32::MAX);
         // SAFETY: every channel holds at least `frames` elements of the width
         // the backend exchanges (checked by the callers); the backends do not
         // write to the input channels; the pointer arrays outlive the call.
-        unsafe { raw.compute(count, in_ptrs.as_mut_ptr(), out_ptrs.as_mut_ptr()) };
+        unsafe { raw.compute(count, &mut in_ptrs, &mut out_ptrs) };
     }
 }
 

@@ -8,7 +8,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use ffi_common::abi::{MetaGlue, UIGlue};
 
-use crate::{Backend, Error, ErrorKind};
+use crate::{Backend, Error, ErrorKind, Precision};
 
 /// Size of the C error buffer, the `MIX_BUFFER_SIZE` of the C++ API.
 const ERROR_BUFFER: usize = 4096;
@@ -307,18 +307,62 @@ impl RawInstance {
         }
     }
 
-    /// Runs `count` frames. The pointers address channels of the width the
-    /// backend exchanges (see the crate documentation), cast to the C ABI's
-    /// `float*`; the caller guarantees `count` frames in each.
-    pub(crate) unsafe fn compute(
+    /// Runs `count` frames over channels of `T`, which must be the width the
+    /// backend exchanges for this program (see the crate documentation): the
+    /// compiled precision on both backends. The interpreter takes `f32` through
+    /// its C entry point and `f64` through `interp_ffi`'s Rust-only
+    /// `compute_f64`; the Cranelift C entry point takes either behind its
+    /// `float*` signature. The caller guarantees `count` frames in each channel.
+    pub(crate) unsafe fn compute<T: Sample>(
         self,
         count: c_int,
-        inputs: *mut *mut f32,
-        outputs: *mut *mut f32,
+        inputs: &mut [*mut T],
+        outputs: &mut [*mut T],
     ) {
-        // SAFETY: live instance; the caller guarantees the buffers.
+        // SAFETY: live instance; the caller guarantees the buffers and their
+        // width. Each cast below is the identity on the width `T::PRECISION`
+        // names, since `Sample` is implemented for `f32` and `f64` only.
         unsafe {
-            on_instance!(self, p => interp_ffi::instance::computeCInterpreterDSPInstance(p, count, inputs, outputs), cranelift_ffi::instance::computeCCraneliftDSPInstance(p, count, inputs, outputs));
+            match (self, T::PRECISION) {
+                (RawInstance::Interp(p), Precision::F32) => {
+                    interp_ffi::instance::computeCInterpreterDSPInstance(
+                        p,
+                        count,
+                        inputs.as_mut_ptr().cast::<*mut f32>(),
+                        outputs.as_mut_ptr().cast::<*mut f32>(),
+                    );
+                }
+                (RawInstance::Interp(p), Precision::F64) => interp_ffi::instance::compute_f64(
+                    p,
+                    count,
+                    inputs.as_ptr().cast::<*const f64>(),
+                    outputs.as_ptr().cast::<*mut f64>(),
+                ),
+                (RawInstance::Cranelift(p), _) => {
+                    cranelift_ffi::instance::computeCCraneliftDSPInstance(
+                        p,
+                        count,
+                        inputs.as_mut_ptr().cast::<*mut f32>(),
+                        outputs.as_mut_ptr().cast::<*mut f32>(),
+                    );
+                }
+            }
         }
     }
+}
+
+/// A sample type the backends exchange. Crate-private and implemented for
+/// `f32` and `f64` only, since [`RawInstance::compute`] casts channel pointers
+/// by `PRECISION`.
+pub(crate) trait Sample: Copy {
+    /// The width of `Self`.
+    const PRECISION: Precision;
+}
+
+impl Sample for f32 {
+    const PRECISION: Precision = Precision::F32;
+}
+
+impl Sample for f64 {
+    const PRECISION: Precision = Precision::F64;
 }

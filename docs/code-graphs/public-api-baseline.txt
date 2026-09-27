@@ -1612,6 +1612,7 @@ fn FbcDspFactoryAny::compute_block
 fn FbcDspFactoryAny::compute_dsp_block
 fn FbcDspFactoryAny::count_offset
 fn FbcDspFactoryAny::execute_block_io_f32
+fn FbcDspFactoryAny::execute_block_io_f64
 fn FbcDspFactoryAny::execute_block_on
 fn FbcDspFactoryAny::init_block
 fn FbcDspFactoryAny::int_heap_size
@@ -1640,6 +1641,7 @@ mod types
 mod ui
 struct InterpreterDspFactory
 struct InterpreterDspInstance
+struct IoScratch
 type FaustFloat
 use ffi_common::MetaGlue
 use ffi_common::UIGlue

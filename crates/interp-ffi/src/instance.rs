@@ -14,15 +14,18 @@
 //! transparently.  Audio I/O buffers remain `f32*` at the C ABI boundary;
 //! in double mode, samples are converted `f32 → f64` on entry and
 //! `f64 → f32` on exit inside `computeCInterpreterDSPInstance`.
+//! [`compute_f64`] is the Rust-only counterpart exchanging `f64` buffers, so a
+//! double program's samples cross it unrounded; it has no C symbol.
 
 use std::ffi::{c_char, c_void};
 use std::os::raw::c_int;
 
-use codegen::backends::interp::Soundfile;
+use codegen::backends::interp::{BlockId, Soundfile};
 
 use crate::cache::{cache_register_instance, cache_remove_instance};
 use crate::types::{
-    FaustFloat, FbcExecutorAny, InterpreterDspFactory, InterpreterDspInstance, MetaGlue, UIGlue,
+    FaustFloat, FbcDspFactoryAny, FbcExecutorAny, InterpreterDspFactory, InterpreterDspInstance,
+    IoScratch, MetaGlue, UIGlue,
 };
 use crate::ui::dispatch_meta;
 
@@ -150,6 +153,7 @@ pub unsafe extern "C" fn createCInterpreterDSPInstance(
                 soundfile_zones,
                 initialized: false,
                 cycle: 0,
+                io_scratch: IoScratch::default(),
             },
         )
     }
@@ -348,6 +352,7 @@ pub unsafe extern "C" fn cloneCInterpreterDSPInstance(
                 soundfile_zones: new_soundfile_zones,
                 initialized: (*dsp).initialized,
                 cycle: 0,
+                io_scratch: IoScratch::default(),
             },
         )
     }
@@ -421,20 +426,76 @@ pub unsafe extern "C" fn computeCInterpreterDSPInstance(
     outputs: *mut *mut FaustFloat,
 ) {
     unsafe {
+        compute_with(
+            dsp,
+            count,
+            inputs.cast::<*const FaustFloat>().cast_const(),
+            outputs.cast_const(),
+            FbcDspFactoryAny::execute_block_io_f32,
+        );
+    }
+}
+
+/// Process one buffer of audio samples exchanged as `f64`: the counterpart of
+/// [`computeCInterpreterDSPInstance`] for Rust callers, with no C symbol (the
+/// C ABI, like the C++ `interpreter_dsp`, exchanges `FAUSTFLOAT`).
+///
+/// A double program computes on the buffers as given, so its samples cross
+/// unrounded; a single-precision program gets its inputs rounded to `f32` and
+/// its outputs widened exactly.
+///
+/// # Safety
+/// - `dsp` must be a valid non-null instance pointer.
+/// - Each `inputs[i]` and `outputs[i]` must point to at least `count` `f64`.
+pub unsafe fn compute_f64(
+    dsp: *mut InterpreterDspInstance,
+    count: c_int,
+    inputs: *const *const f64,
+    outputs: *const *mut f64,
+) {
+    unsafe {
+        compute_with(
+            dsp,
+            count,
+            inputs,
+            outputs,
+            FbcDspFactoryAny::execute_block_io_f64,
+        );
+    }
+}
+
+/// Signature of the block runners `compute_with` dispatches to
+/// ([`FbcDspFactoryAny::execute_block_io_f32`] and `_f64`).
+type BlockIo<T> =
+    fn(&FbcDspFactoryAny, &mut FbcExecutorAny, &mut IoScratch, BlockId, &[&[T]], &mut [&mut [T]]);
+
+/// One compute call over buffers of width `T`: publishes the frame count,
+/// runs the control block, then the DSP block through `run_io`.
+///
+/// # Safety
+/// As for [`computeCInterpreterDSPInstance`], with channels of `T`.
+unsafe fn compute_with<T>(
+    dsp: *mut InterpreterDspInstance,
+    count: c_int,
+    inputs: *const *const T,
+    outputs: *const *mut T,
+    run_io: BlockIo<T>,
+) {
+    unsafe {
         if dsp.is_null() || count <= 0 {
             return;
         }
-
-        let factory = &(*(*dsp).factory).inner;
+        let dsp = &mut *dsp;
+        let factory = &(*dsp.factory).inner;
         let n = count as usize;
         let num_in = factory.num_inputs() as usize;
         let num_out = factory.num_outputs() as usize;
 
         // Build input/output slice views.
-        let input_slices: Vec<&[FaustFloat]> = (0..num_in)
+        let input_slices: Vec<&[T]> = (0..num_in)
             .map(|i| std::slice::from_raw_parts(*inputs.add(i), n))
             .collect();
-        let mut output_slices: Vec<&mut [FaustFloat]> = (0..num_out)
+        let mut output_slices: Vec<&mut [T]> = (0..num_out)
             .map(|i| std::slice::from_raw_parts_mut(*outputs.add(i), n))
             .collect();
 
@@ -445,34 +506,33 @@ pub unsafe extern "C" fn computeCInterpreterDSPInstance(
         let count_off_raw = factory.count_offset();
         if count_off_raw >= 0 {
             let count_off = count_off_raw as usize;
-            if let Some(slot) = (*dsp).executor.int_heap_mut().get_mut(count_off) {
+            if let Some(slot) = dsp.executor.int_heap_mut().get_mut(count_off) {
                 *slot = count;
             } else {
                 debug_assert!(
                     false,
-                    "computeCInterpreterDSPInstance: count_offset {count_off} out of int_heap bounds"
+                    "compute: count_offset {count_off} out of int_heap bounds"
                 );
             }
         } else {
             debug_assert!(
                 count_off_raw == -1,
-                "computeCInterpreterDSPInstance: unexpected negative count_offset {count_off_raw}"
+                "compute: unexpected negative count_offset {count_off_raw}"
             );
         }
 
         // Execute control block then DSP block with audio I/O.
-        let compute_block = factory.compute_block();
-        let compute_dsp_block = factory.compute_dsp_block();
-
-        factory.execute_block_on(&mut (*dsp).executor, compute_block);
-        factory.execute_block_io_f32(
-            &mut (*dsp).executor,
-            compute_dsp_block,
+        factory.execute_block_on(&mut dsp.executor, factory.compute_block());
+        run_io(
+            factory,
+            &mut dsp.executor,
+            &mut dsp.io_scratch,
+            factory.compute_dsp_block(),
             &input_slices,
             &mut output_slices,
         );
 
-        (*dsp).cycle += 1;
+        dsp.cycle += 1;
     }
 }
 

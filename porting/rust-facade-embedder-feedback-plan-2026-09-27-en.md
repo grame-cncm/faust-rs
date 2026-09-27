@@ -103,6 +103,14 @@ and `write` dispatch on `Precision`), and `reset_controls` writes the exact
 `collect` and `vec!` on every call, in the audio thread. The C entry point
 has this cost today, independently of the facade.
 
+Measured while fixing it (P1): a compute call also allocates the executor's
+evaluation stacks, `Vec::with_capacity` of the real, int and address stacks in
+`FbcExecutor::execute_block*` (`crates/codegen/src/backends/interp/executor.rs`),
+once per block executed, so twice per `compute` (control block, DSP block):
+10 304 bytes per call for a single-precision program, 14 464 in `-double`,
+independent of the frame count. The C++ interpreter keeps these stacks in the
+executor. Separate from this plan's requests: follow-up F1 (§6).
+
 ## 3. Plan
 
 One commit per step, in this order, each with its journal entry and passing
@@ -132,7 +140,8 @@ builds on it: fix forward, no history rewrite.
 - Tests (`crates/faust/tests/api.rs`), on both backends, `-double`:
   `process = _;` returns `1.0 + 2^-40` exactly; `process = 16777217.0;`
   outputs `16777217`. `interp-ffi`: the C entry point still narrows (C++
-  parity) and does not allocate after the first block of a given size.
+  parity) and, once its buffers have grown, allocates nothing that depends
+  on the frame count (the executor's own per-block stacks remain, §2.2).
 
 API mapping: `compute_f64` is **adapted** (no C++ counterpart: the C++
 `interpreter_dsp` exchanges `FAUSTFLOAT`); additive, no C ABI impact.
@@ -221,6 +230,11 @@ API mapping: `compute_f64` is **adapted** (no C++ counterpart: the C++
 
 ## 6. After the plan
 
+- F1: the interpreter executor keeps its evaluation stacks across blocks
+  instead of allocating them on every block (§2.2); a test with a counting
+  allocator in the style of `crates/interp-ffi/tests/compute_allocation.rs`
+  asserts a later `compute` allocates nothing.
+
 - Answer on issue #17: the commits, the program for P6, what `py-faust-rs`
   can drop (the `Mutex`, the last-segment label, the three xfails).
 - The embedder's own requests not taken: `Dsp::clone()`, soundfiles,
@@ -229,4 +243,22 @@ API mapping: `compute_f64` is **adapted** (no C++ counterpart: the C++
 
 ## 7. Status
 
-Plan only (2026-09-27); no step implemented.
+### P1, implemented 2026-09-27
+
+- `interp-ffi`: `FbcDspFactoryAny::execute_block_io_f64` beside
+  `execute_block_io_f32`, both converting through `IoScratch`, buffers
+  the instance keeps (`InterpreterDspInstance::io_scratch`); the compute
+  body shared by `computeCInterpreterDSPInstance` and the Rust-only
+  `instance::compute_f64` (`compute_with`). C ABI and header unchanged.
+- `faust`: `RawInstance::compute` generic over a crate-private `Sample`
+  (`f32`, `f64`), dispatching the interpreter's `f64` channels to
+  `compute_f64`; `Dsp::exchanged` is the compiled precision on both backends.
+- Tests: `a_double_program_exchanges_f64_samples_exactly_on_both_backends`
+  (fails on `0f240664`: `interp: the input was narrowed`) and
+  `f64_buffers_on_a_single_precision_program_are_converted`
+  (`crates/faust/tests/api.rs`); `crates/interp-ffi/tests/compute_io.rs`
+  (the `f64` entry, and the C entry still narrowing);
+  `crates/interp-ffi/tests/compute_allocation.rs` (fails on `0f240664`:
+  276 704 bytes on every call of a 2-in 2-out 8192-frame block).
+
+P2 to P6 not started.

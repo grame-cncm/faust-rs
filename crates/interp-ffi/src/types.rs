@@ -17,7 +17,9 @@
 //!
 //! Audio I/O (`FAUSTFLOAT*` buffers) always use `f32` at the C ABI boundary.
 //! In double mode, samples are converted `f32 → f64` on input and
-//! `f64 → f32` on output inside `computeCInterpreterDSPInstance`.
+//! `f64 → f32` on output inside `computeCInterpreterDSPInstance`, through
+//! buffers the instance keeps ([`IoScratch`]). Rust callers can exchange `f64`
+//! instead with [`crate::instance::compute_f64`], which no C symbol exports.
 //!
 //! UI zones (sliders, buttons …) live in the instance's `real_heap`.
 //! In double mode, the `real_heap` elements are `f64`; the raw pointer passed
@@ -221,11 +223,11 @@ impl FbcDspFactoryAny {
         }
     }
 
-    /// Execute the DSP block with audio I/O.
+    /// Execute the DSP block with `f32` audio I/O, the width of the C ABI.
     ///
-    /// Audio buffers are always `f32` at the C ABI level.  In double mode,
-    /// inputs are widened `f32 → f64` before execution and outputs are
-    /// narrowed `f64 → f32` after execution.
+    /// A `Float64` program computes in `f64`: its inputs are widened and its
+    /// outputs narrowed through the instance's `scratch` buffers, which are
+    /// reused from one block to the next.
     ///
     /// # Safety
     /// The caller must ensure `inputs`/`outputs` are valid for the duration
@@ -233,6 +235,7 @@ impl FbcDspFactoryAny {
     pub fn execute_block_io_f32(
         &self,
         exec: &mut FbcExecutorAny,
+        scratch: &mut IoScratch,
         block_id: BlockId,
         inputs: &[&[f32]],
         outputs: &mut [&mut [f32]],
@@ -241,31 +244,14 @@ impl FbcDspFactoryAny {
             (Self::Float32(f), FbcExecutorAny::Float32(e)) => {
                 e.execute_block_io(&f.arena, block_id, inputs, outputs);
             }
-            (Self::Float64(f), FbcExecutorAny::Float64(e)) => {
-                // Widen f32 inputs → f64.
-                let f64_inputs: Vec<Vec<f64>> = inputs
-                    .iter()
-                    .map(|sl| sl.iter().map(|&x| x as f64).collect())
-                    .collect();
-                let f64_input_refs: Vec<&[f64]> = f64_inputs.iter().map(|v| v.as_slice()).collect();
-
-                // Allocate f64 output buffers.
-                let n = outputs.first().map_or(0, |s| s.len());
-                let num_out = outputs.len();
-                let mut f64_outputs: Vec<Vec<f64>> =
-                    (0..num_out).map(|_| vec![0.0f64; n]).collect();
-                let mut f64_output_refs: Vec<&mut [f64]> =
-                    f64_outputs.iter_mut().map(|v| v.as_mut_slice()).collect();
-
-                e.execute_block_io(&f.arena, block_id, &f64_input_refs, &mut f64_output_refs);
-
-                // Narrow f64 outputs → f32.
-                for (src, dst) in f64_outputs.iter().zip(outputs.iter_mut()) {
-                    for (&s, d) in src.iter().zip(dst.iter_mut()) {
-                        *d = s as f32;
-                    }
-                }
-            }
+            (Self::Float64(f), FbcExecutorAny::Float64(e)) => run_converted(
+                &mut scratch.f64,
+                inputs,
+                outputs,
+                f64::from,
+                |x| x as f32,
+                |ins, outs| e.execute_block_io(&f.arena, block_id, ins, outs),
+            ),
             _ => {
                 // Precision mismatch between factory and executor — indicates a
                 // bug in the calling code. Asserts in debug, silent in release
@@ -273,6 +259,41 @@ impl FbcDspFactoryAny {
                 debug_assert!(
                     false,
                     "execute_block_io_f32: factory/executor precision mismatch"
+                );
+            }
+        }
+    }
+
+    /// Execute the DSP block with `f64` audio I/O: native for a `Float64`
+    /// program, converted through `scratch` for a `Float32` one (inputs
+    /// rounded to the nearest `f32`, outputs widened exactly).
+    ///
+    /// No C entry point reaches it: the C ABI exchanges `f32`. It serves the
+    /// Rust callers of [`crate::instance::compute_f64`].
+    pub fn execute_block_io_f64(
+        &self,
+        exec: &mut FbcExecutorAny,
+        scratch: &mut IoScratch,
+        block_id: BlockId,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) {
+        match (self, exec) {
+            (Self::Float64(f), FbcExecutorAny::Float64(e)) => {
+                e.execute_block_io(&f.arena, block_id, inputs, outputs);
+            }
+            (Self::Float32(f), FbcExecutorAny::Float32(e)) => run_converted(
+                &mut scratch.f32,
+                inputs,
+                outputs,
+                |x| x as f32,
+                f64::from,
+                |ins, outs| e.execute_block_io(&f.arena, block_id, ins, outs),
+            ),
+            _ => {
+                debug_assert!(
+                    false,
+                    "execute_block_io_f64: factory/executor precision mismatch"
                 );
             }
         }
@@ -398,6 +419,53 @@ impl FbcExecutorAny {
     }
 }
 
+// ── Audio I/O conversion ─────────────────────────────────────────────────────
+
+/// Conversion buffers of one instance, for audio I/O whose width is not the
+/// width its program computes with: one buffer per channel, kept from one
+/// block to the next, so a compute call allocates sample memory only when the
+/// block size or the channel count grows.
+#[derive(Debug, Default)]
+pub struct IoScratch {
+    f32: Vec<Vec<f32>>,
+    f64: Vec<Vec<f64>>,
+}
+
+/// Runs `run` on `inputs` and `outputs` converted to the width `W` through
+/// `scratch`: inputs converted with `widen`, outputs zeroed, then converted
+/// back with `narrow` into the caller's buffers. Each converted channel has
+/// the length of the channel it mirrors.
+fn run_converted<H: Copy, W: Copy + Default>(
+    scratch: &mut Vec<Vec<W>>,
+    inputs: &[&[H]],
+    outputs: &mut [&mut [H]],
+    widen: impl Fn(H) -> W,
+    narrow: impl Fn(W) -> H,
+    run: impl FnOnce(&[&[W]], &mut [&mut [W]]),
+) {
+    let channels = inputs.len() + outputs.len();
+    if scratch.len() < channels {
+        scratch.resize_with(channels, Vec::new);
+    }
+    let (ins, outs) = scratch[..channels].split_at_mut(inputs.len());
+    for (buf, channel) in ins.iter_mut().zip(inputs) {
+        buf.clear();
+        buf.extend(channel.iter().map(|&x| widen(x)));
+    }
+    for (buf, channel) in outs.iter_mut().zip(outputs.iter()) {
+        buf.clear();
+        buf.resize(channel.len(), W::default());
+    }
+    let in_refs: Vec<&[W]> = ins.iter().map(Vec::as_slice).collect();
+    let mut out_refs: Vec<&mut [W]> = outs.iter_mut().map(Vec::as_mut_slice).collect();
+    run(&in_refs, &mut out_refs);
+    for (channel, buf) in outputs.iter_mut().zip(outs.iter()) {
+        for (dst, &src) in channel.iter_mut().zip(buf) {
+            *dst = narrow(src);
+        }
+    }
+}
+
 // ── Opaque wrapper types ──────────────────────────────────────────────────────
 
 /// Opaque DSP factory, exported as `interpreter_dsp_factory*` in C.
@@ -429,6 +497,8 @@ pub struct InterpreterDspInstance {
     pub(crate) initialized: bool,
     /// Number of `compute()` cycles executed.
     pub(crate) cycle: usize,
+    /// Conversion buffers for audio I/O of the other width (see [`IoScratch`]).
+    pub(crate) io_scratch: IoScratch,
 }
 
 // SAFETY: DSP instances are not shared between threads (Faust API contract).

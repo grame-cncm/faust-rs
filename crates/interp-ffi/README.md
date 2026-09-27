@@ -59,6 +59,8 @@ Notes:
   - cache operations
 - `src/instance.rs`
   - instance `extern "C"` lifecycle + compute
+  - `compute_f64`, a Rust-only compute over `f64` buffers (no C symbol),
+    used by the `faust` crate
 - `src/ui.rs`
   - UI/meta callback dispatch helpers
 
