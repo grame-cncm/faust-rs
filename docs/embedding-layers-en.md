@@ -68,16 +68,13 @@ The Rust API is the `faust` crate, `crates/faust`. Its public surface is what
 | `tests/api.rs`, `tests/ddsp.rs`, `tests/allocation.rs` | the contract on both backends: lifecycle, controls, precision, threads; DDSP programs through the API; no allocation in `compute` |
 
 Its documentation is rustdoc: `cargo doc -p faust --open` renders it, the
-crate page first. It builds without warning, and the crate page describes the
-model, but not every public item has a doc comment yet: the plain accessors
-(`Dsp::backend`, `num_inputs`, `sample_rate`, `control`, ...), the fields of
-`Control`, `CompileOptions` and `Error`, and the variants of `ControlKind` and
-`Precision` have none, and the functions that return a `Result` have no
-`# Errors` section. The lints list what is missing:
-
-```bash
-cargo clippy -p faust --lib -- -W missing_docs -W clippy::missing_errors_doc
-```
+crate page first, which describes the model (factories and instances, the
+precision, the lifecycle, the known gap). Every public item has a doc comment,
+and every function that returns a `Result` an `# Errors` section naming the
+`ErrorKind`s it returns. `crates/faust/Cargo.toml` enforces both: it turns on
+the `missing_docs`, `clippy::missing_errors_doc` and
+`clippy::missing_panics_doc` lints, which the workspace's
+`cargo clippy -- -D warnings` makes errors.
 
 ## Which layer to bind
 
@@ -192,7 +189,10 @@ next block starts at 0.005255965
 `Backend::Interp` in place of `Backend::Cranelift` runs the same program on
 the interpreter, with the same results; `Factory::from_file` compiles a
 `.dsp` file, and `CompileOptions::import_dirs` and `args` carry `-I` and the
-other compiler options.
+other compiler options. `import(...)` looks a name up relative to the working
+directory, then in `import_dirs` (the first of the list first), then in the
+installed Faust libraries, then, for a file, in its own directory: the order
+of the C++ compiler.
 
 ## See also
 

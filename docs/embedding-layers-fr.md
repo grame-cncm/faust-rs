@@ -70,17 +70,13 @@ que `src/lib.rs` définit et réexporte ; le reste est privé.
 | `tests/api.rs`, `tests/ddsp.rs`, `tests/allocation.rs` | le contrat sur les deux backends : cycle de vie, contrôles, précision, threads ; des programmes DDSP à travers l'API ; aucune allocation dans `compute` |
 
 Sa documentation est celle de rustdoc : `cargo doc -p faust --open` la
-produit, en commençant par la page de la crate. Elle se construit sans
-avertissement, et la page de la crate décrit le modèle, mais tous les éléments
-publics n'ont pas encore leur commentaire : les accesseurs simples
-(`Dsp::backend`, `num_inputs`, `sample_rate`, `control`, ...), les champs de
-`Control`, `CompileOptions` et `Error`, et les variantes de `ControlKind` et
-`Precision` n'en ont pas, et les fonctions qui renvoient un `Result` n'ont pas
-de section `# Errors`. Les lints listent ce qui manque :
-
-```bash
-cargo clippy -p faust --lib -- -W missing_docs -W clippy::missing_errors_doc
-```
+produit, en commençant par la page de la crate, qui décrit le modèle (factories
+et instances, précision, cycle de vie, lacune connue). Chaque élément public a
+son commentaire, et chaque fonction qui renvoie un `Result` une section
+`# Errors` qui nomme les `ErrorKind` qu'elle renvoie. `crates/faust/Cargo.toml`
+le garantit : il active les lints `missing_docs`, `clippy::missing_errors_doc`
+et `clippy::missing_panics_doc`, dont le `cargo clippy -- -D warnings` du
+workspace fait des erreurs.
 
 ## Quelle couche lier
 
@@ -198,7 +194,10 @@ next block starts at 0.005255965
 `Backend::Interp` à la place de `Backend::Cranelift` fait tourner le même
 programme sur l'interpréteur, avec les mêmes résultats ; `Factory::from_file`
 compile un fichier `.dsp`, et `CompileOptions::import_dirs` et `args` portent
-`-I` et les autres options du compilateur.
+`-I` et les autres options du compilateur. `import(...)` cherche un nom
+relativement au répertoire courant, puis dans `import_dirs` (le premier de la
+liste d'abord), puis dans les bibliothèques Faust installées, puis, pour un
+fichier, dans son propre répertoire : l'ordre du compilateur C++.
 
 ## Voir aussi
 

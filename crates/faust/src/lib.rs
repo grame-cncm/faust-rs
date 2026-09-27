@@ -100,17 +100,26 @@ impl fmt::Display for Backend {
 /// The floating-point type a program computes with (`-double` or not).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Precision {
+    /// Single precision, `f32`: the default, as with `faust-rs`.
     #[default]
     F32,
+    /// Double precision, `f64`: the program is compiled with `-double`.
     F64,
 }
 
 /// How a program is compiled.
 #[derive(Clone, Debug, Default)]
 pub struct CompileOptions {
+    /// The engine the program is compiled for.
     pub backend: Backend,
+    /// The type the program computes with.
     pub precision: Precision,
-    /// Directories searched by `import(...)`, in order (`-I`).
+    /// Directories searched by `import(...)`, `library(...)` and
+    /// `component(...)`, the first of the list first (`-I`). A name is
+    /// looked up relative to the working directory, then in these
+    /// directories, then in the installed Faust libraries, then, for
+    /// [`Factory::from_file`], in the file's own directory: the order of the
+    /// C++ compiler.
     pub import_dirs: Vec<PathBuf>,
     /// The Cranelift optimisation level, 0 to 3; ignored by the interpreter.
     pub opt_level: i32,
@@ -131,7 +140,9 @@ impl CompileOptions {
     /// The argument vector handed to the backend's C entry point.
     pub(crate) fn argv(&self) -> Vec<String> {
         let mut argv = Vec::new();
-        for dir in &self.import_dirs {
+        // The C entry points read `-I` as the C++ compiler does, the last one
+        // first: emitted backwards, the first directory of the list wins.
+        for dir in self.import_dirs.iter().rev() {
             argv.push("-I".to_owned());
             argv.push(dir.to_string_lossy().into_owned());
         }
@@ -164,7 +175,10 @@ pub enum ErrorKind {
 /// An error of this API, with the kind and a message for humans.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
+    /// What went wrong, for a host to act on.
     pub kind: ErrorKind,
+    /// What went wrong, for a human: for [`ErrorKind::Compile`], the
+    /// compiler's own message; for a control, its path.
     pub message: String,
 }
 

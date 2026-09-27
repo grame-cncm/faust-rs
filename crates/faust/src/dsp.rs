@@ -108,22 +108,27 @@ impl Dsp {
         }
     }
 
+    /// The engine the instance runs on.
     pub fn backend(&self) -> Backend {
         self.factory.raw.backend()
     }
 
+    /// The type the instance computes with.
     pub fn precision(&self) -> Precision {
         self.factory.precision
     }
 
+    /// The number of input channels `compute_*` expects.
     pub fn num_inputs(&self) -> usize {
         self.inputs
     }
 
+    /// The number of output channels `compute_*` expects.
     pub fn num_outputs(&self) -> usize {
         self.outputs
     }
 
+    /// The sample rate of the last initialisation.
     pub fn sample_rate(&self) -> i32 {
         self.raw.sample_rate()
     }
@@ -157,11 +162,16 @@ impl Dsp {
         self.controls.iter()
     }
 
+    /// The control at `path`, `None` when the program has none there.
     pub fn control(&self, path: &str) -> Option<&Control> {
         self.controls.get(path)
     }
 
     /// The current value of a control (for a bargraph, what the DSP last wrote).
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::UnknownControl`] when the program has no control at `path`.
     pub fn get(&self, path: &str) -> Result<f64, Error> {
         self.controls
             .read(path)
@@ -169,6 +179,11 @@ impl Dsp {
     }
 
     /// Sets a control, exactly as given: no clamping, see [`Control::clamp`].
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::UnknownControl`] when the program has no control at
+    /// `path`, [`ErrorKind::ReadOnlyControl`] when it is a bargraph.
     pub fn set(&mut self, path: &str, value: f64) -> Result<(), Error> {
         match self.controls.write(path, value) {
             None => Err(Error::new(ErrorKind::UnknownControl, path)),
@@ -216,7 +231,14 @@ impl Dsp {
     }
 
     /// Runs the DSP over `f32` buffers: as many input and output channels as
-    /// the arities, the frame count being the shortest buffer's length.
+    /// the arities, the frame count being the shortest buffer's length (the
+    /// rest of a longer buffer is left as it is). On a `-double` program the
+    /// samples are converted to and from `f64`.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Buffers`] when the number of input or output channels
+    /// differs from [`Dsp::num_inputs`] or [`Dsp::num_outputs`].
     pub fn compute_f32(
         &mut self,
         inputs: &[&[f32]],
@@ -257,7 +279,14 @@ impl Dsp {
         }
     }
 
-    /// Runs the DSP over `f64` buffers; see [`Dsp::compute_f32`].
+    /// Runs the DSP over `f64` buffers; see [`Dsp::compute_f32`]. Exact on a
+    /// `-double` program, on both backends; on a single-precision one the
+    /// samples are converted to and from `f32`.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Buffers`] when the number of input or output channels
+    /// differs from [`Dsp::num_inputs`] or [`Dsp::num_outputs`].
     pub fn compute_f64(
         &mut self,
         inputs: &[&[f64]],

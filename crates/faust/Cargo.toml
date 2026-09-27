@@ -19,6 +19,10 @@ cranelift_ffi = { package = "cranelift-ffi", path = "../cranelift-ffi", default-
 unsafe_code = "allow" # the facade owns the raw factory and instance pointers of the two C APIs
 unused_attributes = "warn"
 unused_lifetimes = "warn"
+# the crate is a contract: every public item carries its documentation
+missing_docs = "warn"
 
 [lints.clippy]
 all = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

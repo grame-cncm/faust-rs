@@ -37,7 +37,14 @@ pub struct Factory {
 
 impl Factory {
     /// Compiles the program of a file. Its directory is searched by
-    /// `import(...)` before `options.import_dirs`.
+    /// `import(...)` after `options.import_dirs` and the installed libraries
+    /// (see [`CompileOptions::import_dirs`]); its name is the file stem.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Compile`](crate::ErrorKind::Compile) when the program
+    /// does not compile, with the compiler's message, or when the path is
+    /// not UTF-8 or an argument holds a NUL byte.
     pub fn from_file(path: impl AsRef<Path>, options: &CompileOptions) -> Result<Self, Error> {
         let path = path.as_ref();
         let text = path
@@ -51,7 +58,15 @@ impl Factory {
     }
 
     /// Compiles `source`; `name` names the program (the root group of its
-    /// controls) and its error messages.
+    /// controls) and its error messages. `import(...)` searches
+    /// `options.import_dirs` and the installed libraries (see
+    /// [`CompileOptions::import_dirs`]).
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Compile`](crate::ErrorKind::Compile) when the program
+    /// does not compile, with the compiler's message, or when the source or
+    /// an argument holds a NUL byte.
     pub fn from_source(name: &str, source: &str, options: &CompileOptions) -> Result<Self, Error> {
         Self::build(Source::Text { name, source }, name.to_owned(), options)
     }
@@ -67,10 +82,12 @@ impl Factory {
         })
     }
 
+    /// The engine the program was compiled for.
     pub fn backend(&self) -> Backend {
         self.inner.raw.backend()
     }
 
+    /// The type the program computes with.
     pub fn precision(&self) -> Precision {
         self.inner.precision
     }
@@ -89,6 +106,13 @@ impl Factory {
 
     /// Creates an instance, initialised at `sample_rate`, its controls at
     /// their initial values.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::Instantiate`](crate::ErrorKind::Instantiate) when the
+    /// backend refuses the instance, or when the Cranelift backend compiled
+    /// the program to an empty `compute` (a construct outside its lowering
+    /// subset), which would be a silent instance.
     pub fn instantiate(&self, sample_rate: i32) -> Result<Dsp, Error> {
         Dsp::create(Arc::clone(&self.inner), sample_rate)
     }

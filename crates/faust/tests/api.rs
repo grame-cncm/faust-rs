@@ -470,3 +470,78 @@ fn instances_are_created_while_another_one_computes() {
         });
     }
 }
+
+/// A scratch directory per test, under the target directory.
+fn scratch(name: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// The first output sample of `factory`, silent input.
+fn first_sample(factory: &Factory) -> f32 {
+    let mut dsp = factory.instantiate(48_000).unwrap();
+    let mut out = [0.0_f32; 1];
+    dsp.compute_f32(&[], &mut [&mut out]).unwrap();
+    out[0]
+}
+
+#[test]
+fn import_dirs_are_searched_in_order_and_before_the_file_s_directory() {
+    // `facade_probe.lib` exists in no installed Faust: each directory gives it
+    // a different value, and the value read says which one was found.
+    let root = scratch("facade_import_order");
+    for (dir, value) in [("first", "0.25"), ("second", "0.5"), ("program", "0.75")] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+        std::fs::write(
+            root.join(dir).join("facade_probe.lib"),
+            format!("value = {value};\n"),
+        )
+        .unwrap();
+    }
+    let program = root.join("program").join("probe.dsp");
+    std::fs::write(&program, "process = library(\"facade_probe.lib\").value;\n").unwrap();
+    for backend in both() {
+        let with_dirs = CompileOptions {
+            import_dirs: vec![root.join("first"), root.join("second")],
+            ..options(backend, Precision::F32)
+        };
+        // the first directory of the list wins, from a source string ...
+        let source = Factory::from_source(
+            "probe",
+            "process = library(\"facade_probe.lib\").value;",
+            &with_dirs,
+        )
+        .unwrap();
+        assert_eq!(first_sample(&source), 0.25, "{backend}");
+        // ... and from a file, whose own directory comes after them
+        let file = Factory::from_file(&program, &with_dirs).unwrap();
+        assert_eq!(first_sample(&file), 0.25, "{backend}");
+        let alone = Factory::from_file(&program, &options(backend, Precision::F32)).unwrap();
+        assert_eq!(first_sample(&alone), 0.75, "{backend}");
+    }
+}
+
+#[test]
+fn two_state_controls_range_over_0_1_by_1_and_bargraphs_have_no_step() {
+    // what `Control::step` documents
+    for backend in both() {
+        let factory =
+            Factory::from_source("one_pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
+        let dsp = factory.instantiate(48_000).unwrap();
+        for control in dsp.controls() {
+            let expected = match control.kind {
+                ControlKind::CheckButton | ControlKind::Button => (0.0, 1.0, 1.0),
+                ControlKind::HorizontalBargraph => (0.0, 10.0, 0.0),
+                other => panic!("unexpected {other:?}"),
+            };
+            assert_eq!(
+                (control.min, control.max, control.step),
+                expected,
+                "{backend} {}",
+                control.path
+            );
+        }
+    }
+}

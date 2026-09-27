@@ -12,12 +12,19 @@ use crate::Precision;
 /// The kind of a control: what the DSP reads or writes through it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ControlKind {
+    /// `button`: 1 while pressed, 0 otherwise.
     Button,
+    /// `checkbox`: 0 or 1.
     CheckButton,
+    /// `hslider`.
     HorizontalSlider,
+    /// `vslider`.
     VerticalSlider,
+    /// `nentry`.
     NumEntry,
+    /// `hbargraph`: written by the DSP, read by the host.
     HorizontalBargraph,
+    /// `vbargraph`: written by the DSP, read by the host.
     VerticalBargraph,
 }
 
@@ -48,10 +55,17 @@ pub struct Control {
     /// The label as the program wrote it, without its `[key:value]`
     /// metadata: `"my gain"` for `hslider("my gain [unit:dB]", ...)`.
     pub label: String,
+    /// The widget that declares it.
     pub kind: ControlKind,
+    /// The value it takes at initialisation and after
+    /// [`Dsp::reset_controls`](crate::Dsp::reset_controls).
     pub init: f64,
+    /// The lower bound of its range.
     pub min: f64,
+    /// The upper bound of its range.
     pub max: f64,
+    /// The step of its range: 1 for a button or a checkbox, whose range is
+    /// `[0, 1]`, 0 for a bargraph.
     pub step: f64,
     /// The `[key:value]` metadata declared on the control, in order.
     pub metadata: Vec<(String, String)>,

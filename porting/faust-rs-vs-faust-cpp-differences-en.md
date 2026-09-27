@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-09-25 (one declaration of the compile options for the CLI, the tools, the FFI constructors and `generateAuxFiles`); full review 2026-08-13
+Last reviewed: 2026-09-27 (the `faust` Rust API); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -742,6 +742,29 @@ must run unchanged with Faust C++ should not pass them.
   `crates/interp-ffi/src/factory.rs`,
   `the_compile_options_of_the_args_reach_the_compiler` in
   `crates/wasm-ffi/src/lib.rs`, `crates/cranelift-ffi/tests/compiler_options_probe.rs`.
+
+### DIFF-API-008 — the `faust` crate, a Rust API over the C API
+
+- Status: `extension`.
+- `crates/faust` has no C++ counterpart: a safe Rust API (`Factory`, `Dsp`,
+  `Control`, `CompileOptions`) over the Interpreter and Cranelift C entry
+  points, which it drives with their exact lifecycle (programs shared by SHA
+  key, reference counted). It is one of the two contracts of faust-rs, with
+  the C API; `ffi-boundary-check` classifies it as a distribution crate.
+- Where it differs from the C API it wraps: a `Dsp` owns a reference to its
+  program and is `Send + Sync`; controls are addressed by their `MapUI` paths;
+  `compute_f32` and `compute_f64` convert host buffers to the compiled
+  precision, and a `-double` interpreter program exchanges exact `f64`
+  samples through `interp_ffi::instance::compute_f64`, which the C API does
+  not export; `CompileOptions::import_dirs` lists directories first-first,
+  where a command line's `-I` puts the last one first (it is emitted
+  backwards so the C entry points see the C++ order).
+- Compatibility impact: none on C and C++ hosts; a Rust host gets a
+  documented, typed API instead of raw pointers.
+- Evidence: `crates/faust/tests/api.rs` (both backends, including
+  `import_dirs_are_searched_in_order_and_before_the_file_s_directory`),
+  `crates/faust/tests/ddsp.rs`, `crates/faust/tests/allocation.rs`,
+  [`docs/embedding-layers-en.md`](../docs/embedding-layers-en.md).
 
 ## 8. Internal architectural adaptations
 
