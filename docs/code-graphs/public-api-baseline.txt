@@ -1621,6 +1621,7 @@ fn FbcDspFactoryAny::execute_block_on
 fn FbcDspFactoryAny::init_block
 fn FbcDspFactoryAny::int_heap_size
 fn FbcDspFactoryAny::is_double
+fn FbcDspFactoryAny::is_optimized
 fn FbcDspFactoryAny::meta_block
 fn FbcDspFactoryAny::name
 fn FbcDspFactoryAny::num_inputs

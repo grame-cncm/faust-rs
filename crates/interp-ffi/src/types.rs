@@ -198,6 +198,14 @@ impl FbcDspFactoryAny {
         }
     }
 
+    /// Whether [`Self::optimize`] has run.
+    pub fn is_optimized(&self) -> bool {
+        match self {
+            Self::Float32(f) => f.is_optimized(),
+            Self::Float64(f) => f.is_optimized(),
+        }
+    }
+
     /// Trigger one-shot bytecode optimization (idempotent).
     pub fn optimize(&mut self) {
         match self {

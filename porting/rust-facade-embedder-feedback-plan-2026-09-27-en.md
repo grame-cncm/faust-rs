@@ -388,3 +388,18 @@ compile time (`FRS-CGEN-INTERP-0003`, unknown math function).
 All six steps are implemented. Open: follow-ups F1 (executor stacks per
 block), F2 (interpreter JSON format, C API parity) and F3 (`&mut` on the
 factory at instantiation), §6.
+
+### F3, implemented 2026-09-27
+
+- `createCInterpreterDSPInstance` reads the `optimized` flag through `&`
+  (`FbcDspFactoryAny::is_optimized`) and takes `&mut` only for the first,
+  optimising, call, which runs before the factory has any instance.
+- The facade serialises `Factory::json` with the lifecycle calls: F2 makes
+  the interpreter's JSON walk a temporary instance, and the first
+  instantiation optimises the factory in place.
+- No test can fail on the old code: `optimize` only read its flag, so no
+  memory is written concurrently and ThreadSanitizer sees nothing; only Miri
+  flags coexisting `&mut` and `&`. `instances_are_created_while_another_one_computes`
+  exercises the path (fifty instantiations and JSON builds while another
+  instance computes, both backends) and passes under ThreadSanitizer.
+

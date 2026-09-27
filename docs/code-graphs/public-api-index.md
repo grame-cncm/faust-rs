@@ -1771,20 +1771,21 @@ _No direct public items found by the source scan._
 | `fn` | `FbcDspFactoryAny::meta_block` | `crates/interp-ffi/src/types.rs:181` |
 | `fn` | `FbcDspFactoryAny::is_double` | `crates/interp-ffi/src/types.rs:189` |
 | `fn` | `FbcDspFactoryAny::soundfile_count` | `crates/interp-ffi/src/types.rs:194` |
-| `fn` | `FbcDspFactoryAny::optimize` | `crates/interp-ffi/src/types.rs:202` |
-| `fn` | `FbcDspFactoryAny::execute_block_on` | `crates/interp-ffi/src/types.rs:215` |
-| `fn` | `FbcDspFactoryAny::execute_block_io_f32` | `crates/interp-ffi/src/types.rs:236` |
-| `fn` | `FbcDspFactoryAny::execute_block_io_f64` | `crates/interp-ffi/src/types.rs:274` |
-| `fn` | `FbcDspFactoryAny::control_ranges` | `crates/interp-ffi/src/types.rs:305` |
-| `enum` | `FbcExecutorAny` | `crates/interp-ffi/src/types.rs:359` |
-| `fn` | `FbcExecutorAny::new_for_factory` | `crates/interp-ffi/src/types.rs:370` |
-| `fn` | `FbcExecutorAny::int_heap` | `crates/interp-ffi/src/types.rs:391` |
-| `fn` | `FbcExecutorAny::int_heap_mut` | `crates/interp-ffi/src/types.rs:399` |
-| `fn` | `FbcExecutorAny::set_soundfile` | `crates/interp-ffi/src/types.rs:409` |
-| `fn` | `FbcExecutorAny::copy_from` | `crates/interp-ffi/src/types.rs:422` |
-| `struct` | `IoScratch` | `crates/interp-ffi/src/types.rs:444` |
-| `struct` | `InterpreterDspFactory` | `crates/interp-ffi/src/types.rs:490` |
-| `struct` | `InterpreterDspInstance` | `crates/interp-ffi/src/types.rs:499` |
+| `fn` | `FbcDspFactoryAny::is_optimized` | `crates/interp-ffi/src/types.rs:202` |
+| `fn` | `FbcDspFactoryAny::optimize` | `crates/interp-ffi/src/types.rs:210` |
+| `fn` | `FbcDspFactoryAny::execute_block_on` | `crates/interp-ffi/src/types.rs:223` |
+| `fn` | `FbcDspFactoryAny::execute_block_io_f32` | `crates/interp-ffi/src/types.rs:244` |
+| `fn` | `FbcDspFactoryAny::execute_block_io_f64` | `crates/interp-ffi/src/types.rs:282` |
+| `fn` | `FbcDspFactoryAny::control_ranges` | `crates/interp-ffi/src/types.rs:313` |
+| `enum` | `FbcExecutorAny` | `crates/interp-ffi/src/types.rs:367` |
+| `fn` | `FbcExecutorAny::new_for_factory` | `crates/interp-ffi/src/types.rs:378` |
+| `fn` | `FbcExecutorAny::int_heap` | `crates/interp-ffi/src/types.rs:399` |
+| `fn` | `FbcExecutorAny::int_heap_mut` | `crates/interp-ffi/src/types.rs:407` |
+| `fn` | `FbcExecutorAny::set_soundfile` | `crates/interp-ffi/src/types.rs:417` |
+| `fn` | `FbcExecutorAny::copy_from` | `crates/interp-ffi/src/types.rs:430` |
+| `struct` | `IoScratch` | `crates/interp-ffi/src/types.rs:452` |
+| `struct` | `InterpreterDspFactory` | `crates/interp-ffi/src/types.rs:498` |
+| `struct` | `InterpreterDspInstance` | `crates/interp-ffi/src/types.rs:507` |
 
 ## `interval`
 

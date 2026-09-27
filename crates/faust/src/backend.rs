@@ -151,8 +151,12 @@ impl RawFactory {
         }
     }
 
-    /// The factory's JSON description (UI tree and metadata).
+    /// The factory's JSON description (UI tree and metadata). Serialised
+    /// with the lifecycle calls: building it may instantiate the program (the
+    /// interpreter, like the C++ one, walks a temporary instance), and a first
+    /// instantiation optimises the factory in place.
     pub(crate) fn json(self) -> String {
+        let _serialised = lifecycle();
         // SAFETY: the factory pointer is a live cache reference; the returned
         // string is heap-allocated by the C API and freed with its allocator.
         unsafe {

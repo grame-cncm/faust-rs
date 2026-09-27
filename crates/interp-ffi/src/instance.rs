@@ -140,8 +140,17 @@ pub unsafe extern "C" fn createCInterpreterDSPInstance(
         if factory.is_null() {
             return std::ptr::null_mut();
         }
-        // Trigger one-shot optimization (idempotent after first call).
-        (*factory).inner.optimize();
+        // One-shot optimization, on the first instantiation only. The flag is
+        // read through a shared reference: once the factory has an instance,
+        // that instance may be computing on another thread with a `&` on the
+        // factory, and a `&mut` must not coexist with it even if nothing is
+        // written. The first instantiation is the only one that writes, and
+        // it runs before any instance exists (instances are created here or
+        // cloned from one). Other readers of the factory (its JSON) are the
+        // caller's to serialize, as with the C++ API.
+        if !(*factory).inner.is_optimized() {
+            (*factory).inner.optimize();
+        }
 
         let sf_count = (*factory).inner.soundfile_count();
         let soundfile_zones = vec![std::ptr::null_mut(); sf_count];

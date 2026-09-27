@@ -440,3 +440,33 @@ fn a_program_cranelift_cannot_lower_is_refused_at_instantiate() {
     assert_eq!(err.kind, ErrorKind::Compile);
     assert!(err.message.contains("frs_unknown_fn"), "{}", err.message);
 }
+
+#[test]
+fn instances_are_created_while_another_one_computes() {
+    // instantiation and the JSON touch the shared factory while an instance
+    // of it computes on another thread (run it under ThreadSanitizer too)
+    for backend in both() {
+        let factory =
+            Factory::from_source("pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
+        let mut running = factory.instantiate(48_000).unwrap();
+        running.set("/pole/on", 1.0).unwrap();
+        std::thread::scope(|scope| {
+            let computing = scope.spawn(move || {
+                let input = [0.5_f32; 64];
+                let mut output = [0.0_f32; 64];
+                for _ in 0..200 {
+                    running.compute_f32(&[&input], &mut [&mut output]).unwrap();
+                }
+                output
+            });
+            for _ in 0..50 {
+                let dsp = factory.instantiate(48_000).unwrap();
+                assert_eq!(dsp.num_outputs(), 1);
+                assert!(!factory.json().is_empty());
+            }
+            // the recursion has converged: y = 0.5 + 0.5 * y
+            let output = computing.join().unwrap();
+            assert!((output[63] - 1.0).abs() < 1e-6, "{backend}: {output:?}");
+        });
+    }
+}
