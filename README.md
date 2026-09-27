@@ -81,6 +81,22 @@ and lifetime contract, plus options for embedding Faust libraries.
 
 ## Use `libfaust-rs` from C and C++
 
+A host reaches the compiler through one of two contracts: the C API of
+`libfaust-rs`, Rust code exported with C linkage that mirrors libfaust's, and
+the Rust API of the `faust` crate, a safe layer over the same entry points.
+Which one to bind depends on the language the host is written in:
+
+```text
+Rust application, or a binding written in Rust (py-faust-rs, ...)  ->  faust        Rust API
+C or C++ application, Cython, cffi, ctypes                         ->  libfaust-rs  C API
+faustwasm                                                          ->  wasm-ffi     WASM ABI
+```
+
+A binding written in Rust could use the C API too, and would pay for it in
+`unsafe` code, a rebuilt control walk and `f32` interpreter samples. The four
+layers and these costs are in [Embedding faust-rs](docs/embedding-layers-en.md)
+([French](docs/embedding-layers-fr.md)).
+
 The `faust-ffi` crate builds one unified C ABI library named `libfaust-rs`, with
 C++ wrappers over the same ABI. It exports the factory and DSP APIs for both the
 bytecode Interpreter and the experimental native Cranelift JIT backend:
@@ -678,6 +694,7 @@ Use the following variables to increase the evaluation depth stack:
 ## Documentation
 
 - [User CLI reference](docs/user-cli-guide-en.md)
+- Embedding faust-rs, the API layers and which one to bind: [English](docs/embedding-layers-en.md) / [French](docs/embedding-layers-fr.md)
 - [User diagnostics guide](docs/user-diagnostics-guide-en.md)
 - [`-mem0` custom memory manager guide](docs/user-mem0-guide-en.md)
 - Clock domains (`ondemand`/`upsampling`/`downsampling`): [English](docs/ondemand-note-en.md) / [French](docs/ondemand-note-fr.md)
@@ -705,10 +722,13 @@ concise, factual, and implementation-oriented.
 ## Workspace crates
 
 The workspace follows a one-way dependency rule:
-`compiler core <- FFI adapters <- distribution`. Run
-`cargo run -p xtask -- ffi-boundary-check` to verify that no dependency points
-rightward and that unsafe-code opt-ins remain confined to the explicit FFI
-boundary plus the `foreign-call` runtime bridge.
+`compiler core <- FFI adapters <- distribution`, the distribution crates being
+what a host links: `faust-ffi` (`libfaust-rs`), `wasm-ffi` and `faust` (the
+Rust API). Run `cargo run -p xtask -- ffi-boundary-check` to verify that no
+dependency points rightward and that unsafe-code opt-ins remain confined to
+the explicit FFI boundary, the `faust` crate over it, and the `foreign-call`
+runtime bridge. [Embedding faust-rs](docs/embedding-layers-en.md) describes
+the layers from a host's side.
 
 ### Compiler core
 
@@ -752,12 +772,11 @@ boundary plus the `foreign-call` runtime bridge.
 | Crate            | Role                                                                 |
 | ---------------- | -------------------------------------------------------------------- |
 | `impulse-runner` | Interpreter-backed scalar impulse-test runner                        |
-| `faustprobe`     | Generic DSP probe: set controls, render offline, measure (see below) |
+| `faustprobe`     | Binary of `cranelift-ffi`: set controls, render offline, measure (see below) |
 | `xtask`          | Developer and CI automation                                          |
 | `faust-ffi`      | Unified `libfaust-rs` distribution crate                             |
 | `wasm-ffi`       | Raw WASM ABI for `faustwasm` embedded compiler mode                  |
 | `faust`          | Supported Rust API: `Factory` and `Dsp` over interpreter and Cranelift |
-| `wasm-ffi`       | Raw WASM ABI for `faustwasm` embedded compiler mode                  |
 
 ### Probing a DSP with `faustprobe`
 

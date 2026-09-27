@@ -9,8 +9,8 @@
 //! A crate may depend on crates in its own layer or a layer to its left, but
 //! never on a layer to its right. The distribution crates are what a host
 //! links: `libfaust-rs` (`faust-ffi`) from C and C++, `wasm-ffi` from
-//! `faustwasm`, and `faust`, the safe Rust API over the adapters.
-//! `foreign-call` is a core runtime bridge and
+//! `faustwasm`, and `faust`, the safe Rust API over the adapters (see
+//! `docs/embedding-layers-en.md`). `foreign-call` is a core runtime bridge and
 //! is the only non-FFI crate allowed to opt into unsafe code; `faust` opts in
 //! because it owns the raw factory and instance pointers of the adapters.
 

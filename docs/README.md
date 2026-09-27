@@ -23,6 +23,10 @@ alongside it.
   memory manager.
 - [`faustprobe-user-guide-en.md`](faustprobe-user-guide-en.md) — `faustprobe`,
   the generic runtime introspection/probing tool.
+- [`embedding-layers-en.md`](embedding-layers-en.md) /
+  [`embedding-layers-fr.md`](embedding-layers-fr.md) — embedding faust-rs: the
+  compiler, the C API (`libfaust-rs`, `wasm-ffi`), the Rust API (`faust`) and
+  the bindings over it, and which layer a host or a binding should bind.
 
 ## Diagnostics reference
 
