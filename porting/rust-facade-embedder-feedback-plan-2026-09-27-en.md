@@ -372,4 +372,19 @@ paths: follow-up F3 (§6).
   `/ui/group/eta`, `/ui/group/zeta`, `/ui/beta`, `/ui/alpha`; fails on
   `0f240664`, which listed them alphabetically).
 
-P6 not started.
+### P6, implemented 2026-09-27
+
+The candidate is confirmed: `process = _ : ffunction(float frs_unknown_fn(float), "", "");`
+compiles on Cranelift with the no-op `compute` stub (a foreign function with
+no bound symbol is outside the lowering subset), and `instantiate` refuses it
+with `ErrorKind::Instantiate`; the interpreter refuses the same program at
+compile time (`FRS-CGEN-INTERP-0003`, unknown math function).
+
+- Test: `a_program_cranelift_cannot_lower_is_refused_at_instantiate`
+  (`crates/faust/tests/api.rs`), asserting both. It pins behaviour that
+  `0f240664` already had: coverage, not a fix.
+- This program goes into the answer on issue #17 (§6).
+
+All six steps are implemented. Open: follow-ups F1 (executor stacks per
+block), F2 (interpreter JSON format, C API parity) and F3 (`&mut` on the
+factory at instantiation), §6.

@@ -413,3 +413,30 @@ process = hslider("[2]alpha", 0, 0, 1, 0.1), hslider("[1]beta", 0, 0, 1, 0.1),
         assert_eq!(dsp.control("/ui/alpha").unwrap().label, "alpha");
     }
 }
+
+#[test]
+fn a_program_cranelift_cannot_lower_is_refused_at_instantiate() {
+    // a foreign function with no bound symbol falls outside the Cranelift
+    // lowering subset: the factory compiles with an empty `compute`, and the
+    // facade refuses to instantiate what would be a silent instance; the
+    // interpreter refuses the program at compile time
+    const FOREIGN: &str = r#"process = _ : ffunction(float frs_unknown_fn(float), "", "");"#;
+    let factory = Factory::from_source(
+        "foreign",
+        FOREIGN,
+        &options(Backend::Cranelift, Precision::F32),
+    )
+    .unwrap();
+    let err = factory.instantiate(48_000).unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Instantiate);
+    assert!(err.message.contains("did not lower"), "{}", err.message);
+
+    let err = Factory::from_source(
+        "foreign",
+        FOREIGN,
+        &options(Backend::Interp, Precision::F32),
+    )
+    .unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Compile);
+    assert!(err.message.contains("frs_unknown_fn"), "{}", err.message);
+}
