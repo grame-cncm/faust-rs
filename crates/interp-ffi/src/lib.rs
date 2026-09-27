@@ -15,6 +15,7 @@
 //! - [`ui`] — UI / meta dispatch helpers.
 //! - [`factory`] — factory `extern "C"` functions (bitcode I/O, cache ops).
 //! - [`instance`] — instance `extern "C"` functions (lifecycle, compute).
+//! - `json` — the factory JSON, in the format of the C++ `getJSON`.
 //!
 //! # Safety model
 //! All `extern "C"` functions are `unsafe` on the caller side.  Null-pointer
@@ -26,6 +27,7 @@
 pub mod cache;
 pub mod factory;
 pub mod instance;
+mod json;
 pub mod types;
 pub mod ui;
 

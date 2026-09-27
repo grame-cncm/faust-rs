@@ -391,7 +391,7 @@ pub unsafe extern "C" fn getCInterpreterDSPFactoryJSON(
         if factory.is_null() {
             return std::ptr::null_mut();
         }
-        let json = build_json(&(*factory).inner);
+        let json = crate::json::factory_json(&(*factory).inner);
         alloc_c_string(&json)
     }
 }
@@ -727,89 +727,6 @@ fn compile_factory_from_fbc_text(fbc: &str) -> Result<FbcDspFactoryAny, String> 
         }
     }
     Ok(factory)
-}
-
-/// Build a minimal JSON description of a factory's UI and metadata.
-fn build_json(inner: &FbcDspFactoryAny) -> String {
-    use std::fmt::Write;
-
-    let mut s = String::new();
-    let _ = writeln!(s, "{{");
-    let _ = writeln!(s, r#"  "name": "{}","#, json_escape(inner.name()));
-    let _ = writeln!(s, r#"  "sha_key": "{}","#, json_escape(inner.sha_key()));
-    let _ = writeln!(
-        s,
-        r#"  "compile_options": "{}","#,
-        json_escape(inner.compile_options())
-    );
-    let _ = writeln!(s, r#"  "version": "{}","#, FAUST_VERSION);
-    let _ = writeln!(s, r#"  "inputs": {},"#, inner.num_inputs());
-    let _ = writeln!(s, r#"  "outputs": {},"#, inner.num_outputs());
-    let _ = writeln!(
-        s,
-        r#"  "precision": "{}","#,
-        if inner.is_double() { "double" } else { "float" }
-    );
-
-    // Meta block
-    let _ = write!(s, r#"  "meta": ["#);
-    for (i, m) in inner.meta_block().iter().enumerate() {
-        if i > 0 {
-            let _ = write!(s, ", ");
-        }
-        let _ = write!(
-            s,
-            r#"{{ "{}": "{}" }}"#,
-            json_escape(&m.key),
-            json_escape(&m.value)
-        );
-    }
-    let _ = writeln!(s, r"],");
-
-    // UI block — widget listing; type-erased via `FbcDspFactoryAny` helpers.
-    let _ = write!(s, r#"  "ui": ["#);
-    match inner {
-        FbcDspFactoryAny::Float32(f) => {
-            for (i, u) in f.ui_block.iter().enumerate() {
-                if i > 0 {
-                    let _ = write!(s, ", ");
-                }
-                let _ = write!(
-                    s,
-                    r#"{{ "type": "{}", "label": "{}", "address": {} }}"#,
-                    json_escape(&format!("{:?}", u.opcode)),
-                    json_escape(&u.label),
-                    u.offset
-                );
-            }
-        }
-        FbcDspFactoryAny::Float64(f) => {
-            for (i, u) in f.ui_block.iter().enumerate() {
-                if i > 0 {
-                    let _ = write!(s, ", ");
-                }
-                let _ = write!(
-                    s,
-                    r#"{{ "type": "{}", "label": "{}", "address": {} }}"#,
-                    json_escape(&format!("{:?}", u.opcode)),
-                    json_escape(&u.label),
-                    u.offset
-                );
-            }
-        }
-    }
-    let _ = writeln!(s, "]");
-    let _ = write!(s, "}}");
-    s
-}
-
-/// Escape a string for JSON output.
-fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
 }
 
 /// Decode the `argc`/`argv` pair from the C API into owned UTF-8 Rust strings.

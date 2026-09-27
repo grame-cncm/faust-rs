@@ -348,7 +348,7 @@ where
 /// widget shares, so every address has to be known first. This mirrors the C++
 /// `ShortnameInstVisitor`, which likewise computes the mapping only once the
 /// enclosing box closes and all full paths are known.
-fn assign_short_names(items: &mut [JsonUiItem]) {
+pub fn assign_short_names(items: &mut [JsonUiItem]) {
     let mut addresses = Vec::new();
     collect_addresses(items, &mut addresses);
     let short_names = crate::shortname::compute_short_names(&addresses);
@@ -784,15 +784,32 @@ fn push_pretty_field_meta_array(
     values: &[JsonMetaEntry],
 ) {
     push_pretty_key(out, first, depth, key);
-    push_pretty_meta_array_value(out, values, depth);
+    push_pretty_meta_array_value(out, values, depth, "[ \n");
 }
 
-fn push_pretty_meta_array_value(out: &mut String, values: &[JsonMetaEntry], depth: usize) {
+/// The `meta` of a group or widget: `JSONUI::addMeta` opens it with `[` and a
+/// line break, where the program's `meta` (`JSONUI::declare`) has `[ `.
+fn push_pretty_field_item_meta_array(
+    out: &mut String,
+    first: &mut bool,
+    depth: usize,
+    values: &[JsonMetaEntry],
+) {
+    push_pretty_key(out, first, depth, "meta");
+    push_pretty_meta_array_value(out, values, depth, "[\n");
+}
+
+fn push_pretty_meta_array_value(
+    out: &mut String,
+    values: &[JsonMetaEntry],
+    depth: usize,
+    open: &str,
+) {
     if values.is_empty() {
         out.push_str("[]");
         return;
     }
-    out.push_str("[ \n");
+    out.push_str(open);
     for (index, entry) in values.iter().enumerate() {
         push_indent(out, depth + 1);
         push_json_meta_object(out, entry);
@@ -922,7 +939,7 @@ fn push_pretty_ui_item(out: &mut String, item: &JsonUiItem, depth: usize) {
             push_pretty_field_string(out, &mut first, depth + 1, "type", typ);
             push_pretty_field_string(out, &mut first, depth + 1, "label", label);
             if !meta.is_empty() {
-                push_pretty_field_meta_array(out, &mut first, depth + 1, "meta", meta);
+                push_pretty_field_item_meta_array(out, &mut first, depth + 1, meta);
             }
             push_pretty_field_ui_array(out, &mut first, depth + 1, "items", items);
             out.push('\n');
@@ -935,14 +952,18 @@ fn push_pretty_ui_item(out: &mut String, item: &JsonUiItem, depth: usize) {
             let mut first = true;
             push_pretty_field_string(out, &mut first, depth + 1, "type", widget.typ);
             push_pretty_field_string(out, &mut first, depth + 1, "label", &widget.label);
-            push_pretty_field_string(out, &mut first, depth + 1, "varname", &widget.varname);
+            // `JSONUI` writes `varname` only when the UI builder passes one, which
+            // a runtime `buildUserInterface` does not
+            if !widget.varname.is_empty() {
+                push_pretty_field_string(out, &mut first, depth + 1, "varname", &widget.varname);
+            }
             push_pretty_field_string(out, &mut first, depth + 1, "shortname", &widget.shortname);
             push_pretty_field_string(out, &mut first, depth + 1, "address", &widget.address);
             if let Some(index) = widget.index {
                 push_pretty_field_u32(out, &mut first, depth + 1, "index", index);
             }
             if !widget.meta.is_empty() {
-                push_pretty_field_meta_array(out, &mut first, depth + 1, "meta", &widget.meta);
+                push_pretty_field_item_meta_array(out, &mut first, depth + 1, &widget.meta);
             }
             if let Some(url) = &widget.soundfile_url {
                 push_pretty_field_string(

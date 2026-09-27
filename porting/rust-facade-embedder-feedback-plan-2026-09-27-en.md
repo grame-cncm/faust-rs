@@ -426,3 +426,43 @@ the facade allocated 32 to 96 bytes per call). Both are binaries of their own,
 with a counting global allocator. The codegen, compiler, FFI and facade
 suites pass (1620 tests).
 
+### F2, implemented 2026-09-27
+
+`getCInterpreterDSPFactoryJSON` now returns the C++ format: the flat
+`JSONUI` description the C++ `interpreter_dsp_factory::getJSON` builds from
+`buildUserInterface` and `metadata` (`name`, `filename`, `inputs`,
+`outputs`, `meta`, then the `ui` tree with `type`,
+`label`, `shortname`, `address`, the widget `meta`, and `init`/`min`/`max`/
+`step`).
+
+- `interp-ffi/src/json.rs` rebuilds that description from the factory's UI
+  and metadata instructions (what those two calls replay): groups and their
+  `declare`s, addresses by the `PathBuilder::buildPath` rule, short names by
+  `codegen::json::assign_short_names` (now public), rendered by
+  `JsonDescription::render_flat`. It replaces a flat list of UI opcodes with
+  heap offsets and no range, plus `sha_key`, `compile_options`, `version` and
+  `precision` fields the C++ does not write.
+- The shared renderer follows two more `JSONUI` rules: `varname` only when
+  one is known (a runtime UI builder passes none), and a group's or widget's
+  `meta` opens with `[` and no space (`addMeta`), the program's with `[ `
+  (`declare`). It keeps writing the program's `meta` when empty, where
+  `JSONUI` omits it: the WASM JSON shares the renderer and its runtime may
+  expect the key; with the compiler gap below, the interpreter's `meta` is
+  `[]` for now.
+- Numbers: a single-precision value is written as the shortest decimal
+  reading back as the same `float` (`0.1`), a double one exactly; the C++
+  stream writes six significant digits. Identical on every value of the
+  corpus below.
+
+Checked against the C++ libfaust 2.89.2 (`getCInterpreterDSPFactoryJSON`
+linked from `/usr/local/lib/libfaust.a`) on three programs, single and
+double: every widget type with ranges and metadata, nested groups with group
+metadata and ambiguous short names, and awkward labels with `[n]` ordering
+and two inputs. The outputs are byte-identical except for the top-level
+`meta` (`[]` here) and `filename` (empty), which come from the program's metadata that faust-rs
+does not yet put in the FIR (the compiler gap noted in `crates/faust/src/lib.rs`).
+`crates/interp-ffi/tests/factory_json.rs` holds three of these references
+and fails on the previous commit.
+
+All three follow-ups are implemented.
+

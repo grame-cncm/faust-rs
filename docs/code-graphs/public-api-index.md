@@ -515,6 +515,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `struct` | `JsonBuildOptions` | `crates/codegen/src/json.rs:233` |
 | `enum` | `JsonBuildError` | `crates/codegen/src/json.rs:272` |
 | `fn` | `build_json_description_from_fir` | `crates/codegen/src/json.rs:295` |
+| `fn` | `assign_short_names` | `crates/codegen/src/json.rs:351` |
 | `fn` | `escape_json_string` | `crates/codegen/src/json.rs:389` |
 | `mod` | `backend_error` | `crates/codegen/src/lib.rs:29` |
 | `mod` | `backends` | `crates/codegen/src/lib.rs:30` |
@@ -1746,8 +1747,8 @@ _No direct public items found by the source scan._
 | `mod` | `cache` | `crates/interp-ffi/src/lib.rs:26` |
 | `mod` | `factory` | `crates/interp-ffi/src/lib.rs:27` |
 | `mod` | `instance` | `crates/interp-ffi/src/lib.rs:28` |
-| `mod` | `types` | `crates/interp-ffi/src/lib.rs:29` |
-| `mod` | `ui` | `crates/interp-ffi/src/lib.rs:30` |
+| `mod` | `types` | `crates/interp-ffi/src/lib.rs:30` |
+| `mod` | `ui` | `crates/interp-ffi/src/lib.rs:31` |
 | `type` | `FaustFloat` | `crates/interp-ffi/src/types.rs:38` |
 | `use` | `ffi_common::UIGlue` | `crates/interp-ffi/src/types.rs:41` |
 | `use` | `ffi_common::MetaGlue` | `crates/interp-ffi/src/types.rs:44` |
