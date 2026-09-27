@@ -89,13 +89,54 @@ pub fn compute_short_names(paths: &[String]) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// The path of a widget labelled `label` in the groups `groups`, outermost
+/// first: C++ `PathBuilder::buildPath` over the labels `pushLabel` stacked.
+///
+/// A `/` inside a group label or the widget label becomes `_`, so each stays
+/// one segment; the segments are joined under a leading `/`; then the
+/// characters awkward in an OSC address (space, `#`, `*`, `,`, `?`,
+/// brackets, braces, parentheses) become `_` over the whole path. These are
+/// the addresses a C++ `MapUI` host sees: `hslider("my gain")` in
+/// `hgroup("fx/1")` of `dsp` is `/dsp/fx_1/my_gain`.
+#[must_use]
+pub fn build_path(groups: &[impl AsRef<str>], label: &str) -> String {
+    let mut path = String::new();
+    for group in groups {
+        path.push('/');
+        path.push_str(&replace_char_list(group.as_ref(), &['/'], '_'));
+    }
+    path.push('/');
+    path.push_str(&replace_char_list(label, &['/'], '_'));
+    replace_char_list(
+        &path,
+        &[' ', '#', '*', ',', '?', '[', ']', '{', '}', '(', ')'],
+        '_',
+    )
+}
+
+/// C++ `PathBuilder::replaceCharList`: every character of `targets` in
+/// `text` replaced by `replacement`.
+fn replace_char_list(text: &str, targets: &[char], replacement: char) -> String {
+    text.chars()
+        .map(|c| if targets.contains(&c) { replacement } else { c })
+        .collect()
+}
+
 /// Whether a character may appear in an identifier as-is.
 fn is_id_char(c: char) -> bool {
     c.is_ascii_alphanumeric()
 }
 
-/// Removes every `/0x00` segment, which the label encoder inserts for unnamed
-/// groups.
+/// Removes every `/0x00` segment, the label the compiler gives an unnamed
+/// group.
+///
+/// This is what C++ `PathBuilder::remove0x00` means to do, not what it does:
+/// its loop, `while ((pos = src.find(from)) && (pos != std::string::npos))`,
+/// reads a `/0x00` found at position 0 as `false` and stops, so a path that
+/// starts with one keeps all of them. The C++ fix is
+/// `while ((pos = src.find(from)) != std::string::npos)`. The compiler names
+/// the outermost group after the program, so a path starting with `/0x00`
+/// does not arise from a Faust program in either implementation.
 fn remove_0x00(src: &str) -> String {
     src.replace("/0x00", "")
 }
@@ -146,6 +187,24 @@ fn cut(src: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_path_keeps_each_label_one_segment_and_osc_safe() {
+        assert_eq!(
+            build_path(&["dsp", "fx/1"], "my gain (dB)"),
+            "/dsp/fx_1/my_gain__dB_"
+        );
+        assert_eq!(build_path(&["synth"], "solo #1"), "/synth/solo__1");
+        assert_eq!(build_path(&[] as &[&str], "g"), "/g");
+    }
+
+    #[test]
+    fn remove_0x00_removes_every_unnamed_group() {
+        assert_eq!(remove_0x00("/p/0x00/a/0x00/b"), "/p/a/b");
+        // including one at the start, where the C++ loop stops (see the doc)
+        assert_eq!(remove_0x00("/0x00/a/0x00/b"), "/a/b");
+        assert_eq!(short(&["/p/0x00/g", "/p/q/g"]), ["p_g", "q_g"]);
+    }
 
     fn short(paths: &[&str]) -> Vec<String> {
         let owned: Vec<String> = paths.iter().map(|p| (*p).to_owned()).collect();

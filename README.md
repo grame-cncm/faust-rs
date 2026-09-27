@@ -229,7 +229,7 @@ use faust::{Backend, CompileOptions, Factory};
 let options = CompileOptions { backend: Backend::Cranelift, ..Default::default() };
 let factory = Factory::from_source("gain", r#"process = _ * hslider("gain", 0.5, 0, 1, 0.01);"#, &options)?;
 let mut dsp = factory.create_dsp_instance(48_000)?;
-dsp.set("/gain/gain", 0.25)?;
+dsp.set_param_value("/gain/gain", 0.25)?; // or its shortname or label, "gain"
 let input = [1.0_f32; 64];
 let mut output = [0.0_f32; 64];
 dsp.compute(64, &[&input], &mut [&mut output])?;

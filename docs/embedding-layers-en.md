@@ -35,7 +35,8 @@ of `py-faust-rs`, in
    headers. `wasm-ffi` is the counterpart for `faustwasm`: a raw WASM ABI
    around the same compiler.
 3. **Rust API.** The `faust` crate: a `Factory` is a compiled program, a
-   `Dsp` an instance, controls are addressed by their `/group/label` paths.
+   `Dsp` an instance, controls are addressed as with `MapUI`, by their
+   `/group/label` path, their shortname or their label.
    It calls layer 2 directly, as Rust functions, with no shared library in
    between, so a `Factory` has exactly the lifecycle of the C API (programs
    shared by SHA key, reference counted). All the `unsafe` of the path lives
@@ -68,8 +69,8 @@ crate page gives the whole table.
 | --- | --- |
 | `src/lib.rs` | the crate documentation (model, precision, lifecycle, known gap); `Backend`, `Precision`, `CompileOptions`, `Error`, `ErrorKind`, `version()`; the re-exports |
 | `src/factory.rs` | `Factory`: `from_file`, `from_source`, `create_dsp_instance`, `get_json`, `get_name`, `backend`, `precision` |
-| `src/dsp.rs` | `Dsp`: `compute`, `controls`, `control`, `get`, `set`, `metadata`, the initialisations (`init`, `instance_init`, `instance_constants`, `instance_reset_user_interface`, `instance_clear`), `get_num_inputs`, `get_num_outputs`, `get_sample_rate`; why it is `Send` and `Sync` |
-| `src/controls.rs` | `Control`, `ControlKind`; privately, the `UIGlue` walk that finds the controls and builds their `MapUI` paths, and the `MetaGlue` sink of `Dsp::metadata` |
+| `src/dsp.rs` | `Dsp`: `compute`, `controls`, `control`, `get_param_value`, `set_param_value`, `metadata`, the initialisations (`init`, `instance_init`, `instance_constants`, `instance_reset_user_interface`, `instance_clear`), `get_num_inputs`, `get_num_outputs`, `get_sample_rate`; why it is `Send` and `Sync` |
+| `src/controls.rs` | `Control`, `ControlKind`; privately, the `UIGlue` walk that finds the controls and builds their `MapUI` paths and shortnames with `codegen::shortname` (the workspace's one port of `PathBuilder`, shared with the JSON and `faustprobe`), and the `MetaGlue` sink of `Dsp::metadata` |
 | `src/backend.rs` | private: `RawFactory` and `RawInstance`, the one place that calls the C entry points of `interp-ffi` and `cranelift-ffi`, and so the crate's `unsafe` |
 | `tests/api.rs`, `tests/ddsp.rs`, `tests/allocation.rs` | the contract on both backends: lifecycle, controls, precision, threads; DDSP programs through the API; no allocation in `compute` |
 
@@ -99,8 +100,9 @@ Binding layer 2 from Rust would cost:
   their lifetimes and the callback tables are handled once, in `faust`.
 - **Rebuilding the user-interface walk.** Listing the controls of a program
   means answering the `UIGlue` callbacks and building the `MapUI`-style paths
-  from the group labels; `faust` does it (`Dsp::controls`, `Dsp::set`,
-  `Dsp::get`).
+  from the group labels, and their shortnames; `faust` does it
+  (`Dsp::controls`, `Dsp::set_param_value`, `Dsp::get_param_value`, which
+  take a path, a shortname or a label, as `MapUI` does).
 - **`f32` samples for the interpreter.** As in C++, the C entry point
   `computeCInterpreterDSPInstance` exchanges `FAUSTFLOAT**`, `float**` in
   `libfaust-rs`, so a `-double` interpreter program has its input and output
@@ -146,19 +148,25 @@ fn main() -> Result<(), faust::Error> {
     let factory = Factory::from_source("smoother", SOURCE, &options)?;
     let mut dsp = factory.create_dsp_instance(48_000)?;
 
-    // The controls, addressed by their `MapUI`/OSC path.
+    // The controls, and two of the three names `MapUI` knows them by.
     for control in dsp.controls() {
         println!(
-            "{} {:?} in [{}, {}], now {}",
-            control.path, control.kind, control.min, control.max, dsp.get(&control.path)?
+            "{} ({}) {:?} in [{}, {}], now {}",
+            control.path,
+            control.shortname,
+            control.kind,
+            control.min,
+            control.max,
+            dsp.get_param_value(&control.path)?
         );
     }
-    let pole = dsp.control("/smoother/pole").expect("declared by the program");
-    let value = pole.clamp(0.99); // `set` writes a value as given
-    dsp.set("/smoother/pole", value)?;
+    // A control is designated by its path, its shortname or its label.
+    let pole = dsp.control("pole").expect("declared by the program");
+    let value = pole.clamp(0.99); // `set_param_value` writes a value as given
+    dsp.set_param_value("/smoother/pole", value)?;
 
     // A misspelled path is an error, never a silent no-op.
-    let error = dsp.set("/smoother/pol", 0.5).unwrap_err();
+    let error = dsp.set_param_value("pol", 0.5).unwrap_err();
     assert_eq!(error.kind, ErrorKind::UnknownControl);
 
     // One block of the impulse response, in `f64` since the program is `-double`.

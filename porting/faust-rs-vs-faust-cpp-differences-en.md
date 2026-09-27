@@ -755,8 +755,10 @@ must run unchanged with Faust C++ should not pass them.
   (`dsp.h`) in snake case, as the `FaustDsp` trait of the Rust architectures
   does (`get_num_inputs`, `instance_clear`, `create_dsp_instance`, ...).
   Where it differs from the C API it wraps: a `Dsp` owns a reference to its
-  program and is `Send + Sync`; controls are addressed by their `MapUI` paths
-  instead of a `UI` the host implements; `create_dsp_instance` also
+  program and is `Send + Sync`; controls are addressed as `MapUI` addresses
+  them (`set_param_value`, `get_param_value`: by path, shortname or label,
+  shortnames computed by a port of `PathBuilder::computeShortNames`) instead
+  of a `UI` the host implements, and a bargraph cannot be written; `create_dsp_instance` also
   initialises; `compute` is generic over `f32` and `f64` and converts host
   buffers to the compiled precision, and a `-double` interpreter program exchanges exact `f64`
   samples through `interp_ffi::instance::compute_f64`, which the C API does

@@ -4,7 +4,7 @@
 //! interpreter's Rust types): the same programs must converge to the same
 //! values on the interpreter and on the Cranelift JIT, in `f32` and, for the
 //! JIT, in `f64`. The two host-driven examples run their Adam loop the way a
-//! Rust host would with this API: `set` on the sliders, `compute` for the
+//! Rust host would with this API: `set_param_value` on the sliders, `compute` for the
 //! loss and gradient lanes, summed per block.
 //!
 //! The programs import the Faust standard libraries, found through
@@ -423,7 +423,8 @@ fn block_sums(factory: &Factory, sliders: &[(&str, f64)], x: &[f32]) -> Vec<f64>
         .create_dsp_instance(SAMPLE_RATE)
         .expect("instantiate");
     for &(name, value) in sliders {
-        dsp.set(&path_of(&dsp, name), value).expect("set slider");
+        dsp.set_param_value(&path_of(&dsp, name), value)
+            .expect("set slider");
     }
     let mut lanes = vec![vec![0.0_f32; x.len()]; dsp.get_num_outputs()];
     let mut outs: Vec<&mut [f32]> = lanes.iter_mut().map(Vec::as_mut_slice).collect();
@@ -473,8 +474,8 @@ fn rad_host_block_gradients_identify_the_resonator() {
         let mut lanes = vec![vec![0.0_f32; BLOCK]; 3];
         let (mut first_loss, mut last_loss) = (0.0_f64, 0.0_f64);
         for iteration in 1..=600 {
-            dsp.set(&paths[0], p[0]).unwrap();
-            dsp.set(&paths[1], p[1]).unwrap();
+            dsp.set_param_value(&paths[0], p[0]).unwrap();
+            dsp.set_param_value(&paths[1], p[1]).unwrap();
             noise.block(&mut x);
             let mut outs: Vec<&mut [f32]> = lanes.iter_mut().map(Vec::as_mut_slice).collect();
             dsp.compute(x.len(), &[&x], &mut outs)
@@ -613,7 +614,7 @@ fn rad_gru_amp_trained_by_block_bptt_from_the_host() {
         let (mut first, mut last) = (0.0_f64, 0.0_f64);
         for iteration in 1..=blocks {
             for (path, &value) in paths.iter().zip(&p) {
-                dsp.set(path, value).unwrap();
+                dsp.set_param_value(path, value).unwrap();
             }
             noise.block(&mut x);
             let mut outs: Vec<&mut [f32]> = lanes.iter_mut().map(Vec::as_mut_slice).collect();

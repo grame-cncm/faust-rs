@@ -11,6 +11,7 @@ name = "faust"
 crate-type = ["rlib"]
 
 [dependencies]
+codegen = { path = "../codegen" }
 ffi-common = { path = "../ffi-common" }
 interp_ffi = { package = "interp-ffi", path = "../interp-ffi" }
 cranelift_ffi = { package = "cranelift-ffi", path = "../cranelift-ffi", default-features = false }

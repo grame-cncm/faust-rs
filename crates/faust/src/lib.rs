@@ -22,9 +22,10 @@
 //!   No lifetime parameter, no `unsafe` for the host: a `Dsp` is a plain
 //!   value that can be stored, moved, sent to another thread and shared
 //!   (`Send + Sync`: its `&self` methods only read);
-//! - controls are addressed by the paths the C++ `MapUI` and OSC use,
-//!   `/group/label`; [`Dsp::set`] and [`Dsp::get`] read and write them, and
-//!   [`Dsp::controls`] lists them with their label, kind and range.
+//! - controls are addressed as the C++ `MapUI` addresses them: by path
+//!   (`/group/label`, the OSC address), by shortname or by label;
+//!   [`Dsp::set_param_value`] and [`Dsp::get_param_value`] write and read
+//!   them, and [`Dsp::controls`] lists them with their names, kind and range.
 //!
 //! # Precision
 //!
@@ -39,10 +40,12 @@
 //! # Names
 //!
 //! The methods that have a counterpart in the C++ `dsp` and `dsp_factory`
-//! classes (`architecture/faust/dsp/dsp.h`) carry its name in snake case, as
-//! the `FaustDsp` trait of the Rust architectures does:
+//! classes (`architecture/faust/dsp/dsp.h`), or in the `MapUI` class a C++
+//! host drives the controls with (`architecture/faust/gui/MapUI.h`), carry
+//! its name in snake case, as the `FaustDsp` trait of the Rust architectures
+//! does:
 //!
-//! | `dsp.h` | this crate |
+//! | C++ | this crate |
 //! | --- | --- |
 //! | `getNumInputs`, `getNumOutputs`, `getSampleRate` | [`Dsp::get_num_inputs`], [`Dsp::get_num_outputs`], [`Dsp::get_sample_rate`] |
 //! | `init`, `instanceInit`, `instanceConstants` | [`Dsp::init`], [`Dsp::instance_init`], [`Dsp::instance_constants`] |
@@ -51,13 +54,15 @@
 //! | `compute(count, inputs, outputs)` | [`Dsp::compute`], generic over [`Sample`] as `FAUSTFLOAT` |
 //! | `dsp_factory::getName`, `getJSON` | [`Factory::get_name`], [`Factory::get_json`] |
 //! | `dsp_factory::createDSPInstance` | [`Factory::create_dsp_instance`], which also initialises |
+//! | `MapUI::setParamValue`, `getParamValue` | [`Dsp::set_param_value`], [`Dsp::get_param_value`]: by path, shortname or label, in that order |
+//! | `MapUI` paths, shortnames and labels | [`Control::path`], [`Control::shortname`], [`Control::label`] |
 //!
-//! `buildUserInterface` has no counterpart: [`Dsp::controls`], [`Dsp::get`]
-//! and [`Dsp::set`] replace the `UI` a host would implement. Nor has
+//! `buildUserInterface` has no counterpart: [`Dsp::controls`] and the
+//! `MapUI`-like methods above replace the `UI` a host would implement. Nor has
 //! `clone`, whose C++ semantics (a fresh instance of the same factory) a Rust
 //! `clone` would misname: `dsp.factory().create_dsp_instance(rate)` is it.
-//! What has no counterpart in `dsp.h` (the backend, the precision, the
-//! controls by path) is named the Rust way.
+//! What has no counterpart in C++ (the backend, the precision, the list of
+//! the controls) is named the Rust way.
 //!
 //! # Known gap
 //!
@@ -81,7 +86,7 @@
 //! let options = CompileOptions { backend: Backend::Cranelift, ..Default::default() };
 //! let factory = Factory::from_source("gain", r#"process = _ * hslider("gain", 0.5, 0, 1, 0.01);"#, &options)?;
 //! let mut dsp = factory.create_dsp_instance(48_000)?;
-//! dsp.set("/gain/gain", 0.25)?;
+//! dsp.set_param_value("gain", 0.25)?; // a path, a shortname or a label
 //! let input = [1.0_f32; 64];
 //! let mut output = [0.0_f32; 64];
 //! dsp.compute(64, &[&input], &mut [&mut output])?;

@@ -604,6 +604,7 @@ dependencies = [
 name = "faust"
 version = "0.8.0"
 dependencies = [
+ "codegen",
  "cranelift-ffi",
  "ffi-common",
  "interp-ffi",

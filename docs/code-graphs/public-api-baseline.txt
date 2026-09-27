@@ -344,6 +344,7 @@ fn build_ir_coverage_test_module
 fn build_json_description_from_fir
 fn build_math_intrinsics_test_module
 fn build_passthrough_test_module
+fn build_path
 fn build_sine_phasor_test_module
 fn build_table_state_delay_test_module
 fn clear_foreign_functions
@@ -1343,9 +1344,9 @@ fn Dsp::compute
 fn Dsp::control
 fn Dsp::controls
 fn Dsp::factory
-fn Dsp::get
 fn Dsp::get_num_inputs
 fn Dsp::get_num_outputs
+fn Dsp::get_param_value
 fn Dsp::get_sample_rate
 fn Dsp::init
 fn Dsp::instance_clear
@@ -1354,7 +1355,7 @@ fn Dsp::instance_init
 fn Dsp::instance_reset_user_interface
 fn Dsp::metadata
 fn Dsp::precision
-fn Dsp::set
+fn Dsp::set_param_value
 fn Factory::backend
 fn Factory::create_dsp_instance
 fn Factory::from_file

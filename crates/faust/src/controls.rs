@@ -52,6 +52,13 @@ pub struct Control {
     /// the characters an OSC address cannot hold are replaced by `_`, so the
     /// label cannot be read back from it.
     pub path: String,
+    /// Its shortest unambiguous name, as the C++ `MapUI` builds it
+    /// (`PathBuilder::computeShortNames`): the last segment of its path
+    /// (`freq`), or, when another control has the same one, as many of its
+    /// last segments as tell them apart, joined by `_` (`osc0_freq`,
+    /// `osc1_freq`). Only letters and digits are kept, a run of other
+    /// characters becoming one `_`.
+    pub shortname: String,
     /// The label as the program wrote it, without its `[key:value]`
     /// metadata: `"my gain"` for `hslider("my gain [unit:dB]", ...)`.
     pub label: String,
@@ -86,11 +93,17 @@ struct Entry {
 
 /// The controls of one instance, in the order the UI builder declared them
 /// (the order of the UI tree, where Faust sorts a group's widgets by label,
-/// `[n]` prefixes included), with an index by path.
+/// `[n]` prefixes included), with the three indexes of the C++ `MapUI`: by
+/// path, by shortname and by label.
 pub(crate) struct ControlMap {
     entries: Vec<Entry>,
     /// Position in `entries` of each path.
     by_path: HashMap<String, usize>,
+    /// Position in `entries` of each shortname, filled by `finish`.
+    by_shortname: HashMap<String, usize>,
+    /// Position in `entries` of each label, filled by `finish`: of the last
+    /// control declared with it, as the C++ `MapUI`'s `std::map` keeps.
+    by_label: HashMap<String, usize>,
     /// Group labels currently open, innermost last, while building.
     groups: Vec<String>,
     /// Metadata declared before the widget owning its zone arrives.
@@ -104,6 +117,8 @@ impl ControlMap {
         Self {
             entries: Vec::new(),
             by_path: HashMap::new(),
+            by_shortname: HashMap::new(),
+            by_label: HashMap::new(),
             groups: Vec::new(),
             pending_metadata: Vec::new(),
             precision,
@@ -114,16 +129,39 @@ impl ControlMap {
         self.entries.iter().map(|e| &e.control)
     }
 
-    fn entry(&self, path: &str) -> Option<&Entry> {
-        self.by_path.get(path).map(|&i| &self.entries[i])
+    /// Computes the shortnames and the label index, once the UI builder has
+    /// declared every control (`MapUI::closeBox` of the outermost group).
+    pub(crate) fn finish(&mut self) {
+        let paths: Vec<String> = self
+            .entries
+            .iter()
+            .map(|e| e.control.path.clone())
+            .collect();
+        let shortnames = codegen::shortname::compute_short_names(&paths);
+        for (i, entry) in self.entries.iter_mut().enumerate() {
+            let shortname = shortnames[&entry.control.path].clone();
+            self.by_shortname.insert(shortname.clone(), i);
+            self.by_label.insert(entry.control.label.clone(), i);
+            entry.control.shortname = shortname;
+        }
     }
 
-    pub(crate) fn get(&self, path: &str) -> Option<&Control> {
-        self.entry(path).map(|e| &e.control)
+    /// The control `key` names, looked up as the C++ `MapUI::setParamValue`
+    /// does: as a path, then as a shortname, then as a label.
+    fn entry(&self, key: &str) -> Option<&Entry> {
+        self.by_path
+            .get(key)
+            .or_else(|| self.by_shortname.get(key))
+            .or_else(|| self.by_label.get(key))
+            .map(|&i| &self.entries[i])
     }
 
-    pub(crate) fn read(&self, path: &str) -> Option<f64> {
-        let entry = self.entry(path)?;
+    pub(crate) fn get(&self, key: &str) -> Option<&Control> {
+        self.entry(key).map(|e| &e.control)
+    }
+
+    pub(crate) fn read(&self, key: &str) -> Option<f64> {
+        let entry = self.entry(key)?;
         // SAFETY: the zone points into the state of the instance this map
         // belongs to, alive as long as the `Dsp` that owns the map, and its
         // width is the precision recorded at construction.
@@ -135,10 +173,10 @@ impl ControlMap {
         })
     }
 
-    /// Writes `value`; `None` when the path is unknown, `Some(false)` when the
-    /// control is read-only.
-    pub(crate) fn write(&self, path: &str, value: f64) -> Option<bool> {
-        let entry = self.entry(path)?;
+    /// Writes `value`; `None` when `key` names no control, `Some(false)` when
+    /// the control is read-only.
+    pub(crate) fn write(&self, key: &str, value: f64) -> Option<bool> {
+        let entry = self.entry(key)?;
         if !entry.control.kind.is_writable() {
             return Some(false);
         }
@@ -193,24 +231,10 @@ impl ControlMap {
         }
     }
 
-    /// The path of `label` in the groups currently open: `PathBuilder::buildPath`
-    /// of the C++ architecture files. A `/` inside the label becomes `_` so the
-    /// label stays one segment; then the characters awkward in an OSC address
-    /// are replaced over the whole path.
+    /// The path of `label` in the groups currently open, as the C++ `MapUI`
+    /// builds it ([`codegen::shortname::build_path`]).
     fn path_for(&self, label: &str) -> String {
-        let label = replace_chars(label, &['/'], '_');
-        let mut path = String::new();
-        for group in self.groups.iter().filter(|g| !g.is_empty()) {
-            path.push('/');
-            path.push_str(group);
-        }
-        path.push('/');
-        path.push_str(&label);
-        replace_chars(
-            &path,
-            &[' ', '#', '*', ',', '?', '[', ']', '{', '}', '(', ')'],
-            '_',
-        )
+        codegen::shortname::build_path(&self.groups, label)
     }
 
     fn add(&mut self, label: &str, kind: ControlKind, zone: *mut FfiFaustFloat, range: [f32; 4]) {
@@ -230,6 +254,7 @@ impl ControlMap {
         let [init, min, max, step] = range.map(f64::from);
         let control = Control {
             path: path.clone(),
+            shortname: String::new(),
             label: label.to_owned(),
             kind,
             init,
@@ -250,12 +275,6 @@ impl ControlMap {
             }
         }
     }
-}
-
-fn replace_chars(text: &str, targets: &[char], replacement: char) -> String {
-    text.chars()
-        .map(|c| if targets.contains(&c) { replacement } else { c })
-        .collect()
 }
 
 unsafe fn text_of(label: *const c_char) -> String {

@@ -35,8 +35,8 @@ La description des couches et du compromis vient de shakfu, auteur de
    avec ses en-têtes C et C++. `wasm-ffi` en est l'équivalent pour
    `faustwasm` : une ABI WASM brute autour du même compilateur.
 3. **API Rust.** La crate `faust` : une `Factory` est un programme compilé, un
-   `Dsp` une instance, les contrôles sont désignés par leur chemin
-   `/groupe/label`. Elle appelle la couche 2 directement, comme des fonctions
+   `Dsp` une instance, les contrôles sont désignés comme avec `MapUI`, par
+   leur chemin `/groupe/label`, leur shortname ou leur label. Elle appelle la couche 2 directement, comme des fonctions
    Rust, sans bibliothèque partagée entre les deux, si bien qu'une `Factory` a
    exactement le cycle de vie de l'API C (programmes partagés par clé SHA,
    comptés par références). Tout l'`unsafe` du chemin est dans cette crate ;
@@ -70,8 +70,8 @@ de la crate donne la table complète.
 | --- | --- |
 | `src/lib.rs` | la documentation de la crate (modèle, précision, cycle de vie, lacune connue) ; `Backend`, `Precision`, `CompileOptions`, `Error`, `ErrorKind`, `version()` ; les réexports |
 | `src/factory.rs` | `Factory` : `from_file`, `from_source`, `create_dsp_instance`, `get_json`, `get_name`, `backend`, `precision` |
-| `src/dsp.rs` | `Dsp` : `compute`, `controls`, `control`, `get`, `set`, `metadata`, les initialisations (`init`, `instance_init`, `instance_constants`, `instance_reset_user_interface`, `instance_clear`), `get_num_inputs`, `get_num_outputs`, `get_sample_rate` ; pourquoi il est `Send` et `Sync` |
-| `src/controls.rs` | `Control`, `ControlKind` ; en privé, le parcours `UIGlue` qui trouve les contrôles et construit leurs chemins `MapUI`, et le collecteur `MetaGlue` de `Dsp::metadata` |
+| `src/dsp.rs` | `Dsp` : `compute`, `controls`, `control`, `get_param_value`, `set_param_value`, `metadata`, les initialisations (`init`, `instance_init`, `instance_constants`, `instance_reset_user_interface`, `instance_clear`), `get_num_inputs`, `get_num_outputs`, `get_sample_rate` ; pourquoi il est `Send` et `Sync` |
+| `src/controls.rs` | `Control`, `ControlKind` ; en privé, le parcours `UIGlue` qui trouve les contrôles et construit leurs chemins et shortnames `MapUI` avec `codegen::shortname` (l'unique portage de `PathBuilder` du workspace, partagé avec le JSON et `faustprobe`), et le collecteur `MetaGlue` de `Dsp::metadata` |
 | `src/backend.rs` | privé : `RawFactory` et `RawInstance`, le seul endroit qui appelle les points d'entrée C de `interp-ffi` et `cranelift-ffi`, et donc l'`unsafe` de la crate |
 | `tests/api.rs`, `tests/ddsp.rs`, `tests/allocation.rs` | le contrat sur les deux backends : cycle de vie, contrôles, précision, threads ; des programmes DDSP à travers l'API ; aucune allocation dans `compute` |
 
@@ -102,8 +102,10 @@ qu'il faut prendre. Lier la couche 2 depuis Rust coûterait :
   fois, dans `faust`.
 - **de refaire le parcours de l'interface utilisateur.** Lister les contrôles
   d'un programme demande de répondre aux callbacks `UIGlue` et de construire
-  les chemins à la `MapUI` à partir des labels des groupes ; `faust` le fait
-  (`Dsp::controls`, `Dsp::set`, `Dsp::get`).
+  les chemins à la `MapUI` à partir des labels des groupes, et leurs
+  shortnames ; `faust` le fait
+  (`Dsp::controls`, `Dsp::set_param_value`, `Dsp::get_param_value`, qui
+  prennent un chemin, un shortname ou un label, comme `MapUI`).
 - **des échantillons `f32` pour l'interpréteur.** Comme en C++, le point
   d'entrée C `computeCInterpreterDSPInstance` échange des `FAUSTFLOAT**`, des
   `float**` dans `libfaust-rs` : un programme interprété compilé en `-double`
@@ -151,19 +153,25 @@ fn main() -> Result<(), faust::Error> {
     let factory = Factory::from_source("smoother", SOURCE, &options)?;
     let mut dsp = factory.create_dsp_instance(48_000)?;
 
-    // Les contrôles, désignés par leur chemin `MapUI`/OSC.
+    // Les contrôles, et deux des trois noms sous lesquels `MapUI` les connaît.
     for control in dsp.controls() {
         println!(
-            "{} {:?} in [{}, {}], now {}",
-            control.path, control.kind, control.min, control.max, dsp.get(&control.path)?
+            "{} ({}) {:?} in [{}, {}], now {}",
+            control.path,
+            control.shortname,
+            control.kind,
+            control.min,
+            control.max,
+            dsp.get_param_value(&control.path)?
         );
     }
-    let pole = dsp.control("/smoother/pole").expect("declared by the program");
-    let value = pole.clamp(0.99); // `set` écrit la valeur telle quelle
-    dsp.set("/smoother/pole", value)?;
+    // Un contrôle est désigné par son chemin, son shortname ou son label.
+    let pole = dsp.control("pole").expect("declared by the program");
+    let value = pole.clamp(0.99); // `set_param_value` écrit la valeur telle quelle
+    dsp.set_param_value("/smoother/pole", value)?;
 
     // Un chemin mal orthographié est une erreur, jamais ignoré en silence.
-    let error = dsp.set("/smoother/pol", 0.5).unwrap_err();
+    let error = dsp.set_param_value("pol", 0.5).unwrap_err();
     assert_eq!(error.kind, ErrorKind::UnknownControl);
 
     // Un bloc de la réponse impulsionnelle, en `f64` puisque le programme est `-double`.

@@ -76,6 +76,7 @@ digraph workspace_crates {
     "eval" -> "signals";
     "eval" -> "tlib";
     "eval" -> "ui";
+    "faust" -> "codegen";
     "faust" -> "cranelift-ffi";
     "faust" -> "ffi-common";
     "faust" -> "interp-ffi";

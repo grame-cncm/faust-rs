@@ -11,7 +11,7 @@ use crate::{Backend, Error, ErrorKind, Precision};
 /// An instance: its state, its sample rate, its controls. Owns a reference
 /// to its factory, so it can outlive the host's [`Factory`] handles. `Send`
 /// and `Sync`: it can be moved to another thread, and shared, since every
-/// `&self` method only reads; `compute`, `set` and the initialisations
+/// `&self` method only reads; `compute`, `set_param_value` and the initialisations
 /// take `&mut self`.
 pub struct Dsp {
     // Declared first: dropped before the factory reference below.
@@ -32,7 +32,7 @@ unsafe impl Send for Dsp {}
 // SAFETY: through `&self`, a `Dsp` only reads, so concurrent `&self` calls
 // are concurrent reads of memory nothing writes while they last (writing
 // takes `&mut self`):
-// - `get` reads one zone of the instance's state;
+// - `get_param_value` reads one zone of the instance's state;
 // - `controls`, `control`, `get_num_inputs`, `get_num_outputs`, `backend`,
 //   `precision`, `factory` read this value, the control map (filled once, in
 //   `create`) and the factory's `Arc`;
@@ -74,6 +74,7 @@ impl Dsp {
         unsafe { raw.build_user_interface(&mut glue) };
         // the builder's ranges went through the C ABI's `float`
         controls.apply_ranges(&raw.control_ranges());
+        controls.finish();
         let dsp = Self {
             raw,
             factory,
@@ -177,32 +178,43 @@ impl Dsp {
         self.controls.iter()
     }
 
-    /// The control at `path`, `None` when the program has none there.
-    pub fn control(&self, path: &str) -> Option<&Control> {
-        self.controls.get(path)
+    /// The control `name` designates, `None` when it designates none; `name`
+    /// is looked up as by [`Dsp::set_param_value`].
+    pub fn control(&self, name: &str) -> Option<&Control> {
+        self.controls.get(name)
     }
 
-    /// The current value of a control (for a bargraph, what the DSP last wrote).
+    /// The current value of a control (for a bargraph, what the DSP last
+    /// wrote), `name` being looked up as by [`Dsp::set_param_value`]
+    /// (`MapUI::getParamValue`).
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::UnknownControl`] when the program has no control at `path`.
-    pub fn get(&self, path: &str) -> Result<f64, Error> {
+    /// [`ErrorKind::UnknownControl`] when `name` designates no control.
+    pub fn get_param_value(&self, name: &str) -> Result<f64, Error> {
         self.controls
-            .read(path)
-            .ok_or_else(|| Error::new(ErrorKind::UnknownControl, path))
+            .read(name)
+            .ok_or_else(|| Error::new(ErrorKind::UnknownControl, name))
     }
 
-    /// Sets a control, exactly as given: no clamping, see [`Control::clamp`].
+    /// Sets a control, exactly as given: no clamping, see [`Control::clamp`]
+    /// (`MapUI::setParamValue`).
+    ///
+    /// `name` is looked up as the C++ `MapUI` does: as a [`Control::path`]
+    /// (`/synth/osc0/freq`), then as a [`Control::shortname`] (`osc0_freq`),
+    /// then as a [`Control::label`] (`freq`). A label several controls share
+    /// designates the last one declared, as in `MapUI`; a path or a
+    /// shortname designates one control only.
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::UnknownControl`] when the program has no control at
-    /// `path`, [`ErrorKind::ReadOnlyControl`] when it is a bargraph.
-    pub fn set(&mut self, path: &str, value: f64) -> Result<(), Error> {
-        match self.controls.write(path, value) {
-            None => Err(Error::new(ErrorKind::UnknownControl, path)),
-            Some(false) => Err(Error::new(ErrorKind::ReadOnlyControl, path)),
+    /// [`ErrorKind::UnknownControl`] when `name` designates no control,
+    /// [`ErrorKind::ReadOnlyControl`] when it is a bargraph (which `MapUI`
+    /// would write, and the DSP overwrite at its next block).
+    pub fn set_param_value(&mut self, name: &str, value: f64) -> Result<(), Error> {
+        match self.controls.write(name, value) {
+            None => Err(Error::new(ErrorKind::UnknownControl, name)),
+            Some(false) => Err(Error::new(ErrorKind::ReadOnlyControl, name)),
             Some(true) => Ok(()),
         }
     }

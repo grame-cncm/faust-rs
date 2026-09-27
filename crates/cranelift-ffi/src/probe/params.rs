@@ -317,36 +317,14 @@ impl ControlMap {
             .collect()
     }
 
-    /// Build the path currently in scope for `label`.
-    ///
-    /// Reproduces `PathBuilder::buildPath` (`architecture/faust/gui/PathBuilder.h:212`)
-    /// exactly, because these addresses are the contract a host sees and must
-    /// agree with what C++ `MapUI` reports for the same DSP:
-    ///
-    /// 1. `/` inside the *label* becomes `_`, so a label like `osc0/volume`
-    ///    stays one path segment instead of silently introducing a group;
-    /// 2. the enclosing group levels are joined with `/`;
-    /// 3. a second pass over the *whole* path replaces the characters that
-    ///    would be awkward in an OSC address.
-    ///
-    /// Skipping step 1 was the first bug this function had: `faustprobe`
-    /// reported `/TIMBRE/amp_env/attack_s` where the C++ host reports
-    /// `/TIMBRE/amp_env_attack_s`, so every address a user had from another
-    /// tool failed to resolve.
+    /// Build the path currently in scope for `label`, as the C++ `MapUI`
+    /// does ([`codegen::shortname::build_path`]): these addresses are the
+    /// contract a host sees and must agree with what C++ reports for the same
+    /// DSP. (A `/` inside a label once became a group of its own here:
+    /// `faustprobe` reported `/TIMBRE/amp_env/attack_s` where the C++ host
+    /// reports `/TIMBRE/amp_env_attack_s`.)
     fn path_for(&self, label: &str) -> String {
-        let label = replace_chars(label, &['/'], '_');
-        let mut path = String::new();
-        for group in &self.groups {
-            path.push('/');
-            path.push_str(group);
-        }
-        path.push('/');
-        path.push_str(&label);
-        replace_chars(
-            &path,
-            &[' ', '#', '*', ',', '?', '[', ']', '{', '}', '(', ')'],
-            '_',
-        )
+        codegen::shortname::build_path(&self.groups, label)
     }
 
     fn insert(&mut self, label: &str, control: Control) {
@@ -380,15 +358,6 @@ impl ControlMap {
     }
 }
 
-/// Replace every character in `targets` with `replacement`.
-///
-/// Mirrors `replaceCharList` from `architecture/faust/gui/PathBuilder.h`.
-fn replace_chars(text: &str, targets: &[char], replacement: char) -> String {
-    text.chars()
-        .map(|c| if targets.contains(&c) { replacement } else { c })
-        .collect()
-}
-
 /// Decode a callback label, mapping null or invalid UTF-8 to an empty string.
 ///
 /// Faust labels are ASCII in practice; tolerating the pathological case keeps
@@ -415,14 +384,9 @@ unsafe extern "C" fn open_box(ui: *mut c_void, label: *const c_char) {
     let Some(map) = (unsafe { map_of(ui) }) else {
         return;
     };
-    let name = unsafe { label_of(label) };
-    // C++ PathBuilder drops empty group labels rather than emitting `//`.
-    if !name.is_empty() {
-        map.groups.push(name);
-    } else {
-        // Push a marker so the matching close pops the right depth.
-        map.groups.push(String::new());
-    }
+    // Every group is pushed, an empty label included, so the matching close
+    // pops the right depth; `build_path` joins it as C++ does.
+    map.groups.push(unsafe { label_of(label) });
 }
 
 unsafe extern "C" fn close_box(ui: *mut c_void) {
