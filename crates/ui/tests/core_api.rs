@@ -2,9 +2,9 @@
 
 use tlib::TreeArena;
 use ui::{
-    ControlKind, ControlRange, ControlSpec, DuplicatePathKind, UiBuilder, UiGroupKind,
-    UiGroupPathSegment, UiGroupSpec, UiMatch, UiProgram, UiProgramBuilder, UiRootOrigin,
-    canonicalize_group_spec, find_duplicate_control_paths, match_ui,
+    AnonymousWidgetNames, ControlKind, ControlRange, ControlSpec, DuplicatePathKind, UiBuilder,
+    UiGroupKind, UiGroupPathSegment, UiGroupSpec, UiMatch, UiProgram, UiProgramBuilder,
+    UiRootOrigin, canonicalize_group_spec, find_duplicate_control_paths, group_ui_label, match_ui,
     normalize_group_label_navigation, normalize_widget_label_path, split_label_metadata,
 };
 
@@ -548,12 +548,52 @@ fn a_soundfile_shares_the_input_namespace() {
 }
 
 #[test]
-fn anonymous_controls_are_excluded_until_cpp_naming_is_ported() {
+fn unlabelled_controls_are_named_as_in_cpp_and_can_conflict() {
+    // two unlabelled sliders are both `/dsp/0x00`: the C++ compiler refuses
+    // the program (`path '/dsp/0x00' is already used`), and so does this check
     let program = program_with_controls(&[(ControlKind::HSlider, ""), (ControlKind::VSlider, "")]);
-    assert!(
-        find_duplicate_control_paths(&program).is_empty(),
-        "C++ renames unlabeled widgets before they can collide"
+    let conflicts = find_duplicate_control_paths(&program);
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].address, "/dsp/0x00");
+    assert_eq!(conflicts[0].kind, DuplicatePathKind::InputConflict);
+    // unlabelled bargraphs get fresh names, and never conflict
+    let program = program_with_controls(&[
+        (ControlKind::HBargraph, ""),
+        (ControlKind::HBargraph, ""),
+        (ControlKind::VBargraph, ""),
+        (ControlKind::HSlider, ""),
+    ]);
+    assert!(find_duplicate_control_paths(&program).is_empty());
+}
+
+#[test]
+fn anonymous_widget_names_count_per_prefix_like_get_fresh_id() {
+    let mut names = AnonymousWidgetNames::default();
+    let got: Vec<String> = [
+        (ControlKind::HBargraph, ""),
+        (ControlKind::VBargraph, ""),
+        (ControlKind::HBargraph, ""),
+        (ControlKind::HSlider, ""),
+        (ControlKind::Button, "go"),
+        (ControlKind::Soundfile, ""),
+    ]
+    .into_iter()
+    .map(|(kind, label)| names.label(kind, label).into_owned())
+    .collect();
+    assert_eq!(
+        got,
+        [
+            "hbargraph0",
+            "vbargraph0",
+            "hbargraph1",
+            "0x00",
+            "go",
+            "0x00"
+        ]
     );
+    assert_eq!(group_ui_label("", false), "0x00");
+    assert_eq!(group_ui_label("", true), "");
+    assert_eq!(group_ui_label("fx", false), "fx");
 }
 
 #[test]

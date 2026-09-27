@@ -624,7 +624,7 @@ process = fconstant(int fSamplingFreq, <math.h>) * hslider("g", 1, 0, 2, 0.01);
 }
 
 /// Paths and shortnames printed by the C++ `MapUI` (`fFullPaths` and
-/// `fFull2Short`) of Faust 2.89.2 for the same programs: the reference the
+/// `fFull2Short`) of Faust 2.89.3 for the same programs: the reference the
 /// port of `PathBuilder::computeShortNames` is checked against.
 #[test]
 fn paths_and_shortnames_are_those_of_the_cpp_mapui() {
@@ -679,7 +679,7 @@ process = vgroup("a", vgroup("x", hslider("g", 0, 0, 1, 0.1))) + vgroup("b", vgr
     }
 }
 
-/// What the C++ `MapUI` of Faust 2.89.2 does with the same program:
+/// What the C++ `MapUI` of Faust 2.89.3 does with the same program:
 /// `setParamValue("a_x", 0.25)` writes `/look/a/x` (a shortname, before the
 /// label of two other controls), `setParamValue("y", 0.5)` writes
 /// `/look/h/y` (the last control declared with that label).
@@ -729,7 +729,7 @@ process = vgroup("a", hslider("x", 0, 0, 1, 0.01)) + vgroup("b", hslider("x", 0,
 }
 
 /// C++ `checkNullLabel` names a group with an empty label `0x00`, and the
-/// C++ `MapUI` of Faust 2.89.2 reports these paths for this program; the
+/// C++ `MapUI` of Faust 2.89.3 reports these paths for this program; the
 /// shortnames leave the unnamed group out (`PathBuilder::remove0x00`).
 #[test]
 fn a_group_with_an_empty_label_is_0x00_in_the_paths_as_in_cpp() {

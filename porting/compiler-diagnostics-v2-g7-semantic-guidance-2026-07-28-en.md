@@ -77,10 +77,11 @@ rejection depend on the program instead of on whether JSON is generated.
 The C++ outcome depends on which control families collide, and
 `DuplicatePathKind` reproduces it exactly: an input control against anything is
 an error (`FRS-UI-0001`), while bargraph against bargraph is only ambiguous and
-does not reject. Anonymous controls are excluded, because C++ renames unlabeled
-widgets (`0x00`, `vbargraph0`, ...) before they can ever collide and `faust-rs`
-has not ported that naming; without the exclusion the check would reject
-programs C++ accepts.
+does not reject. Anonymous controls take the names C++ gives them (`0x00`
+for an input widget, `hbargraph<n>`/`vbargraph<n>` for a bargraph) before the
+check, since 2026-09-27 (`ui::AnonymousWidgetNames`); until then they were
+excluded from it. Two unlabelled input widgets in one group therefore conflict,
+as in C++.
 
 Widget boxes are rebuilt during evaluation, so the hash-consed node the UI
 builder sees is not the node the grammar produced and box provenance cannot be

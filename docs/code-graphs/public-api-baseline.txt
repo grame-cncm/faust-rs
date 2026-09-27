@@ -2956,6 +2956,7 @@ enum DuplicatePathKind
 enum UiGroupKind
 enum UiMatch
 enum UiRootOrigin
+fn AnonymousWidgetNames::label
 fn ControlSpec::synthetic
 fn UiBuilder::group
 fn UiBuilder::group_with_metadata
@@ -2985,11 +2986,13 @@ fn UiProgramBuilder::remove_group_if_empty
 fn canonicalize_group_spec
 fn crate_id
 fn find_duplicate_control_paths
+fn group_ui_label
 fn match_ui
 fn normalize_group_label_navigation
 fn normalize_widget_label_path
 fn ordering_key_from_label
 fn split_label_metadata
+struct AnonymousWidgetNames
 struct ControlRange
 struct ControlSpec
 struct DuplicateControlPath

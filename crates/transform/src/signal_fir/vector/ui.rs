@@ -140,7 +140,16 @@ pub(crate) fn build_ui_statements(
 ) -> Result<Vec<FirId>, String> {
     let mut statements = Vec::new();
     if program.emit_ui {
-        emit_ui_node(program, program.root, true, zones, store, &mut statements)?;
+        let mut names = ui::AnonymousWidgetNames::default();
+        emit_ui_node(
+            program,
+            program.root,
+            true,
+            &mut names,
+            zones,
+            store,
+            &mut statements,
+        )?;
     }
     Ok(statements)
 }
@@ -160,22 +169,14 @@ fn emit_metadata(
     }
 }
 
-/// The label an `open*Box` statement gets for a group labelled `label`:
-/// C++ `checkNullLabel` (`generator/uitree.cpp`), which names an unlabelled
-/// group `0x00`, the label hosts skip (`PathBuilder::remove0x00`), except at
-/// the root, which is named after the program before this point.
-fn group_label(label: &str, root: bool) -> &str {
-    if label.is_empty() && !root {
-        "0x00"
-    } else {
-        label
-    }
-}
-
+/// Emits one UI node, naming the unlabelled groups and widgets as the C++
+/// compiler does ([`ui::group_ui_label`], [`ui::AnonymousWidgetNames`], in
+/// declaration order), for every backend and lane.
 fn emit_ui_node(
     program: &UiProgram,
     node: ui::UiId,
     root: bool,
+    names: &mut ui::AnonymousWidgetNames,
     zones: &BTreeMap<ControlId, VectorUiZone>,
     store: &mut FirStore,
     out: &mut Vec<FirId>,
@@ -193,9 +194,9 @@ fn emit_ui_node(
                 UiGroupKind::Horizontal => UiBoxType::Horizontal,
                 UiGroupKind::Tab => UiBoxType::Tab,
             };
-            out.push(FirBuilder::new(store).open_box(typ, group_label(label, root)));
+            out.push(FirBuilder::new(store).open_box(typ, ui::group_ui_label(label, root)));
             for child in children {
-                emit_ui_node(program, child, false, zones, store, out)?;
+                emit_ui_node(program, child, false, names, zones, store, out)?;
             }
             out.push(FirBuilder::new(store).close_box());
             Ok(())
@@ -208,6 +209,7 @@ fn emit_ui_node(
                 .get(&control)
                 .ok_or_else(|| format!("missing vector UI zone for control id {control}"))?;
             emit_metadata(store, out, &zone.name, &spec.metadata);
+            let label = names.label(spec.kind, &spec.label).into_owned();
             let statement = match spec.kind {
                 ControlKind::Button | ControlKind::Checkbox => FirBuilder::new(store).add_button(
                     if spec.kind == ControlKind::Button {
@@ -215,7 +217,7 @@ fn emit_ui_node(
                     } else {
                         ButtonType::Checkbox
                     },
-                    spec.label.clone(),
+                    label,
                     zone.name.clone(),
                 ),
                 ControlKind::VSlider | ControlKind::HSlider | ControlKind::NumEntry => {
@@ -230,7 +232,7 @@ fn emit_ui_node(
                     };
                     FirBuilder::new(store).add_slider(
                         typ,
-                        spec.label.clone(),
+                        label,
                         zone.name.clone(),
                         SliderRange {
                             init: range.init,
@@ -250,7 +252,7 @@ fn emit_ui_node(
                         } else {
                             BargraphType::Horizontal
                         },
-                        spec.label.clone(),
+                        label,
                         zone.name.clone(),
                         range.min,
                         range.max,
@@ -278,7 +280,7 @@ fn emit_ui_node(
                 .find_map(|(key, value)| (key == "url").then(|| value.clone()))
                 .unwrap_or_default();
             out.push(FirBuilder::new(store).add_soundfile_with_url(
-                spec.label.clone(),
+                names.label(spec.kind, &spec.label).into_owned(),
                 url,
                 zone.name.clone(),
             ));

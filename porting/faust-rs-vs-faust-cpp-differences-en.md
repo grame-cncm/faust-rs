@@ -494,6 +494,39 @@ must run unchanged with Faust C++ should not pass them.
   `a_widget_parameter_that_is_not_a_number_is_refused_like_the_reference` in
   `crates/compiler/tests/diagnostic_errors.rs`.
 
+### DIFF-BEH-015 — the order of widgets with equal labels in a group
+
+- Status: `adapted`, 2026-09-27.
+- Both compilers sort the items of a UI group by their label as written, so
+  widgets with equal labels, typically unlabelled ones, are ordered by
+  whatever order they had before the sort. Rust keeps the source order.
+- C++ up to Faust 2.89.2 built each group's list by prepending (`addKey`,
+  `compiler/generator/uitree.cpp`) and sorted it with an unstable
+  `std::sort` (`sortPropList`): that order was left to the standard library,
+  and `checkNullBargraphLabel` numbered the unlabelled bargraphs in it, so
+  which one was `hbargraph0` depended on it too. Fixed in Faust 2.89.3
+  (`ed7c12606`, a `std::stable_sort` over the insertion order): each
+  unlabelled bargraph now gets the same number in both compilers (the first
+  `hbargraph("")` of the source is `hbargraph0`).
+- What remains: C++ inserts a widget when it compiles its signal, not in
+  source order, so fixed C++ can still list equal-labelled widgets in another
+  order than Rust: for `hslider("", …) + (1 : hbargraph("", …)) + (2 :
+  hbargraph("", …)) + (3 : vbargraph("", …))`, fixed C++ declares
+  `vbargraph0`, `hbargraph0`, `hbargraph1`, `0x00` and Rust `0x00`,
+  `hbargraph0`, `hbargraph1`, `vbargraph0`, each name on the same widget.
+- The names match: an unlabelled group or input widget is `0x00` and an
+  unlabelled bargraph `hbargraph<n>` / `vbargraph<n>`, and two unlabelled
+  input widgets in one group are refused as in C++ (`FRS-UI-0001`,
+  `path '…/0x00' is already used`).
+- Compatibility impact: the order of equal-labelled widgets in
+  `buildUserInterface` and the JSON; against Faust 2.89.2 also which
+  unlabelled bargraph takes which number. Names, paths and values match
+  Faust 2.89.3.
+- Evidence: `crates/compiler/tests/anonymous_ui_labels.rs`,
+  `unlabelled_controls_are_named_as_in_cpp_and_can_conflict` and
+  `anonymous_widget_names_count_per_prefix_like_get_fresh_id` in
+  `crates/ui/tests/core_api.rs`.
+
 ## 6. Additional backends and delivery forms
 
 ### DIFF-BACK-001 — Cranelift
@@ -845,7 +878,6 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-015 | `narrower` | `rep_37_table_rwtable_negative_indices` has different numerical behavior for negative read/write table indices. |
 | DIFF-GAP-016 | `narrower` | `rep_67_variable_delay_shifted_slider` differs for a variable delay whose shifted slider produces a negative intermediate delay expression. |
 | DIFF-GAP-017 | `parity-gap` | A division by a zero that is constant without being a literal when its sequence is evaluated (`z = 0 <: _, !;`), used as a **pattern-matching argument whose value is then unused** (`f(0) = 1; f(n) = 2; process = f(1 / z);`), compiles in Rust and fails in C++ (`ERROR : division by 0 in 1 / 0`): C++ simplifies the argument eagerly and its exception is fatal, Rust folds a pattern argument as an optimization and gives up on this one. With a literal divisor both fail, and wherever the quotient is used (a signal, an iteration count, a route size, a label) Rust reports the division too. Pinned by `a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument` in `crates/compiler/tests/diagnostic_errors.rs`; see `DIFF-BEH-010`. |
-| DIFF-GAP-018 | `parity-gap` | A **widget** with an empty label keeps it: C++ `checkNullLabel` / `checkNullBargraphLabel` (`compiler/generator/uitree.cpp`) name an unlabelled slider, button or entry `0x00` and an unlabelled bargraph `hbargraph<n>` / `vbargraph<n>`, and the resulting labels also set the widgets' order in their group; Rust passes `""` and keeps its own order (`process = hslider("", 0, 0, 1, 0.1) + (1 : hbargraph("", 0, 1));`). A *group* with an empty label is named `0x00` as in C++ since 2026-09-27 (`crates/compiler/tests/empty_group_label.rs`). The duplicate-address check excludes unlabelled widgets until this is closed (`ui::find_duplicate_control_paths`). |
 For a time-stamped quantitative snapshot rather than this durable registry,
 use [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),
 the reports under `porting/phases/`, and `tests/golden/METADATA.toml`.

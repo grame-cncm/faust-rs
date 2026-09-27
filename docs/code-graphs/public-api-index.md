@@ -3218,8 +3218,11 @@ _No direct public items found by the source scan._
 | `enum` | `UiMatch` | `crates/ui/src/lib.rs:1003` |
 | `enum` | `DuplicatePathKind` | `crates/ui/src/lib.rs:1022` |
 | `struct` | `DuplicateControlPath` | `crates/ui/src/lib.rs:1044` |
-| `fn` | `find_duplicate_control_paths` | `crates/ui/src/lib.rs:1074` |
-| `fn` | `match_ui` | `crates/ui/src/lib.rs:1138` |
+| `fn` | `find_duplicate_control_paths` | `crates/ui/src/lib.rs:1073` |
+| `fn` | `group_ui_label` | `crates/ui/src/lib.rs:1157` |
+| `struct` | `AnonymousWidgetNames` | `crates/ui/src/lib.rs:1172` |
+| `fn` | `AnonymousWidgetNames::label` | `crates/ui/src/lib.rs:1180` |
+| `fn` | `match_ui` | `crates/ui/src/lib.rs:1199` |
 
 ## `wasm-ffi`
 

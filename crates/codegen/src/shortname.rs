@@ -130,13 +130,12 @@ fn is_id_char(c: char) -> bool {
 /// Removes every `/0x00` segment, the label the compiler gives an unnamed
 /// group.
 ///
-/// This is what C++ `PathBuilder::remove0x00` means to do, not what it does:
-/// its loop, `while ((pos = src.find(from)) && (pos != std::string::npos))`,
-/// reads a `/0x00` found at position 0 as `false` and stops, so a path that
-/// starts with one keeps all of them. The C++ fix is
-/// `while ((pos = src.find(from)) != std::string::npos)`. The compiler names
-/// the outermost group after the program, so a path starting with `/0x00`
-/// does not arise from a Faust program in either implementation.
+/// As C++ `PathBuilder::remove0x00` does since Faust 2.89.0 (`306b54dac`).
+/// Before, its loop, `while ((pos = src.find(from)) && (pos !=
+/// std::string::npos))`, read a `/0x00` found at position 0 as `false` and
+/// stopped, so a path that started with one kept all of them; the compiler
+/// names the outermost group after the program, so no Faust program produced
+/// such a path.
 fn remove_0x00(src: &str) -> String {
     src.replace("/0x00", "")
 }

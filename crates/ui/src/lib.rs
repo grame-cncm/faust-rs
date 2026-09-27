@@ -1062,12 +1062,11 @@ pub struct DuplicateControlPath {
 /// cross-check between the two path sets; [`DuplicatePathKind`] records which
 /// of the two C++ outcomes applies.
 ///
-/// Anonymous controls are excluded. C++ gives an unlabeled widget a synthesized
-/// unique name (`0x00`, `vbargraph0`, ...) before it ever reaches the path sets,
-/// so unlabeled widgets never collide there. Rust has not ported that naming
-/// yet, which would make every pair of unlabeled widgets in one group look like
-/// a conflict; excluding them keeps this check from rejecting programs C++
-/// accepts. Once anonymous naming lands, the exclusion should go with it.
+/// Unlabelled groups and widgets take the names C++ gives them
+/// ([`group_ui_label`], [`AnonymousWidgetNames`]): two unlabelled sliders in
+/// one group both address `…/0x00` and conflict, as the C++ compiler reports
+/// (`path '/dsp/0x00' is already used`); an unlabelled bargraph gets a fresh
+/// name and never does.
 ///
 /// Results are ordered by address for deterministic diagnostics.
 #[must_use]
@@ -1076,10 +1075,15 @@ pub fn find_duplicate_control_paths(program: &UiProgram) -> Vec<DuplicateControl
         return Vec::new();
     }
     let mut claims: BTreeMap<String, Vec<(ControlId, bool)>> = BTreeMap::new();
-    collect_control_addresses(program, program.root, &mut Vec::new(), &mut claims);
+    let mut walk = AddressWalk {
+        path: Vec::new(),
+        names: AnonymousWidgetNames::default(),
+        claims: &mut claims,
+    };
+    collect_control_addresses(program, program.root, true, &mut walk);
     claims
         .into_iter()
-        .filter(|(address, claimants)| claimants.len() > 1 && !address.ends_with('/'))
+        .filter(|(_, claimants)| claimants.len() > 1)
         .map(|(address, claimants)| DuplicateControlPath {
             kind: if claimants.iter().all(|(_, is_bargraph)| *is_bargraph) {
                 DuplicatePathKind::BargraphOnly
@@ -1100,18 +1104,18 @@ pub fn find_duplicate_control_paths(program: &UiProgram) -> Vec<DuplicateControl
 fn collect_control_addresses(
     program: &UiProgram,
     node: UiId,
-    path: &mut Vec<String>,
-    claims: &mut BTreeMap<String, Vec<(ControlId, bool)>>,
+    root: bool,
+    walk: &mut AddressWalk<'_>,
 ) {
     let (id, is_bargraph) = match match_ui(&program.arena, node) {
         UiMatch::Group {
             label, children, ..
         } => {
-            path.push(label.to_owned());
+            walk.path.push(group_ui_label(label, root).to_owned());
             for child in children {
-                collect_control_addresses(program, child, path, claims);
+                collect_control_addresses(program, child, false, walk);
             }
-            path.pop();
+            walk.path.pop();
             return;
         }
         // Soundfiles are written by the host, so they live in the input
@@ -1124,13 +1128,70 @@ fn collect_control_addresses(
         return;
     };
     let mut address = String::new();
-    for segment in path.iter() {
+    for segment in &walk.path {
         address.push('/');
         address.push_str(segment);
     }
     address.push('/');
-    address.push_str(&control.label);
-    claims.entry(address).or_default().push((id, is_bargraph));
+    address.push_str(&walk.names.label(control.kind, &control.label));
+    walk.claims
+        .entry(address)
+        .or_default()
+        .push((id, is_bargraph));
+}
+
+/// The state of [`collect_control_addresses`]: the groups open, the names of
+/// the unlabelled widgets met so far, the addresses claimed.
+struct AddressWalk<'a> {
+    path: Vec<String>,
+    names: AnonymousWidgetNames,
+    claims: &'a mut BTreeMap<String, Vec<(ControlId, bool)>>,
+}
+
+/// The label a host sees for a group labelled `label`: C++ `checkNullLabel`
+/// (`compiler/generator/uitree.cpp`), which names an unlabelled group `0x00`,
+/// the segment hosts leave out of short names (`PathBuilder::remove0x00`).
+/// Not at the root, which C++ names after the program and Rust renames
+/// before (`PropagateUiOptions`).
+#[must_use]
+pub fn group_ui_label(label: &str, root: bool) -> &str {
+    if label.is_empty() && !root {
+        "0x00"
+    } else {
+        label
+    }
+}
+
+/// The names C++ gives the unlabelled widgets of one user interface, in the
+/// order its `buildUserInterface` declares them: `checkNullLabel` names a
+/// slider, button, checkbox, entry or soundfile `0x00`, and
+/// `checkNullBargraphLabel` names a bargraph `hbargraph<n>` or
+/// `vbargraph<n>` (`global::getFreshID`, one counter per prefix, from 0). A
+/// walk over the interface starts a fresh one.
+#[derive(Clone, Debug, Default)]
+pub struct AnonymousWidgetNames {
+    hbargraphs: usize,
+    vbargraphs: usize,
+}
+
+impl AnonymousWidgetNames {
+    /// The label a host sees for a widget of `kind` labelled `label`: `label`
+    /// itself unless it is empty.
+    pub fn label<'a>(&mut self, kind: ControlKind, label: &'a str) -> std::borrow::Cow<'a, str> {
+        if !label.is_empty() {
+            return std::borrow::Cow::Borrowed(label);
+        }
+        let fresh = |counter: &mut usize, prefix: &str| {
+            let name = format!("{prefix}{counter}");
+            *counter += 1;
+            std::borrow::Cow::Owned(name)
+        };
+        match kind {
+            ControlKind::HBargraph => fresh(&mut self.hbargraphs, "hbargraph"),
+            ControlKind::VBargraph => fresh(&mut self.vbargraphs, "vbargraph"),
+            _ => std::borrow::Cow::Borrowed("0x00"),
+        }
+    }
 }
 
 /// Decodes one UI IR node into its canonical matcher view.

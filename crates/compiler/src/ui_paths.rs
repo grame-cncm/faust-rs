@@ -66,8 +66,24 @@ fn duplicate_path_diagnostic(
     conflict: &DuplicateControlPath,
 ) -> Diagnostic {
     let address = conflict.address.clone();
-    let label = address.rsplit('/').next().unwrap_or_default();
-    let spans = widget_declaration_spans(ctx, label);
+    // The label as written, not the last segment of the address: an
+    // unlabelled widget is written `""` and addressed `0x00`.
+    let label = conflict
+        .controls
+        .first()
+        .and_then(|&id| program.control(id))
+        .map_or_else(
+            || address.rsplit('/').next().unwrap_or_default().to_owned(),
+            |control| control.label.clone(),
+        );
+    // Every unlabelled widget of the program is written `""`: the written
+    // declarations cannot tell the conflicting ones apart, so none is pointed
+    // at, and a note says what happened instead.
+    let spans = if label.is_empty() {
+        Vec::new()
+    } else {
+        widget_declaration_spans(ctx, &label)
+    };
 
     let mut diagnostic = Diagnostic::new(
         Severity::Error,
@@ -131,6 +147,10 @@ fn duplicate_path_diagnostic(
                 .with_role(LabelRole::ConflictsWith),
             );
         }
+    } else if label.is_empty() {
+        diagnostic = diagnostic.with_note(
+            "note: these controls are written with an empty label, which names them `0x00`, as the C++ compiler does; give each a label",
+        );
     } else {
         diagnostic = diagnostic
             .with_note("note: no written widget declaration carries this label; the controls come from generated or loaded code");
