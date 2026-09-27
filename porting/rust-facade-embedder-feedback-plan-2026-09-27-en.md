@@ -403,3 +403,26 @@ factory at instantiation), §6.
   exercises the path (fifty instantiations and JSON builds while another
   instance computes, both backends) and passes under ThreadSanitizer.
 
+### F1, implemented 2026-09-27
+
+After its first block, a compute call now allocates nothing, on both
+backends, through the C entry points and through the facade:
+
+- `FbcExecutor` keeps its evaluation stacks (`ExecStacks`), emptied at the
+  start of each block run and reserved to the C++ capacities, instead of
+  allocating them for every block executed (twice per `compute`);
+- `interp-ffi` gathers the channel slice lists on the stack (`with_slices`,
+  `with_slices_mut`, up to 64 channels, a `Vec` beyond) in `compute_with` and
+  `run_converted`;
+- the facade gathers its channel pointer arrays on the stack the same way
+  (`run_channels`), from the host's buffers or from its conversion buffers.
+
+Tests: `crates/interp-ffi/tests/compute_allocation.rs` (the C entry point in
+single and double precision, and `compute_f64`: zero bytes after the first
+block; they allocated 10 304 to 14 464 bytes per call on the previous
+commit) and `crates/faust/tests/allocation.rs` (`compute_f32` and
+`compute_f64`, both backends, both precisions, native and converted: zero;
+the facade allocated 32 to 96 bytes per call). Both are binaries of their own,
+with a counting global allocator. The codegen, compiler, FFI and facade
+suites pass (1620 tests).
+

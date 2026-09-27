@@ -26,7 +26,7 @@ use ffi_common::ControlRange;
 use crate::cache::{cache_register_instance, cache_remove_instance};
 use crate::types::{
     FaustFloat, FbcDspFactoryAny, FbcExecutorAny, InterpreterDspFactory, InterpreterDspInstance,
-    IoScratch, MetaGlue, UIGlue,
+    IoScratch, MetaGlue, UIGlue, with_slices, with_slices_mut,
 };
 use crate::ui::dispatch_meta;
 
@@ -518,14 +518,6 @@ unsafe fn compute_with<T>(
         let num_in = factory.num_inputs() as usize;
         let num_out = factory.num_outputs() as usize;
 
-        // Build input/output slice views.
-        let input_slices: Vec<&[T]> = (0..num_in)
-            .map(|i| std::slice::from_raw_parts(*inputs.add(i), n))
-            .collect();
-        let mut output_slices: Vec<&mut [T]> = (0..num_out)
-            .map(|i| std::slice::from_raw_parts_mut(*outputs.add(i), n))
-            .collect();
-
         // Store frame count in the 'count' heap slot.
         // count_offset == -1 means the factory has no dedicated count slot
         // (uncommon but valid for DSPs without audio loops).  Casting -1_i32
@@ -548,16 +540,23 @@ unsafe fn compute_with<T>(
             );
         }
 
-        // Execute control block then DSP block with audio I/O.
+        // Execute control block then DSP block with audio I/O, on slice views
+        // of the channels gathered without allocating.
         factory.execute_block_on(&mut dsp.executor, factory.compute_block());
-        run_io(
-            factory,
-            &mut dsp.executor,
-            &mut dsp.io_scratch,
-            factory.compute_dsp_block(),
-            &input_slices,
-            &mut output_slices,
-        );
+        let ins = (0..num_in).map(|i| std::slice::from_raw_parts(*inputs.add(i), n));
+        let outs = (0..num_out).map(|i| std::slice::from_raw_parts_mut(*outputs.add(i), n));
+        with_slices(ins, |ins| {
+            with_slices_mut(outs, |outs| {
+                run_io(
+                    factory,
+                    &mut dsp.executor,
+                    &mut dsp.io_scratch,
+                    factory.compute_dsp_block(),
+                    ins,
+                    outs,
+                );
+            });
+        });
 
         dsp.cycle += 1;
     }

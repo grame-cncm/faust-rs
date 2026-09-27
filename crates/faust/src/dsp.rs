@@ -241,10 +241,12 @@ impl Dsp {
                     buf.clear();
                     buf.resize(frames, 0.0);
                 }
-                let in_refs: Vec<&[f64]> = ins.iter().map(|b| b.as_slice()).collect();
-                let mut out_refs: Vec<&mut [f64]> =
-                    outs.iter_mut().map(|b| b.as_mut_slice()).collect();
-                Self::run_raw(self.raw, &in_refs, &mut out_refs, frames);
+                run_channels(
+                    self.raw,
+                    ins.iter().map(|b| b.as_ptr().cast_mut()),
+                    outs.iter_mut().map(|b| b.as_mut_ptr()),
+                    frames,
+                );
                 for (ch, buf) in outputs.iter_mut().zip(outs.iter()) {
                     for (dst, &src) in ch[..frames].iter_mut().zip(buf) {
                         *dst = src as f32;
@@ -280,10 +282,12 @@ impl Dsp {
                     buf.clear();
                     buf.resize(frames, 0.0);
                 }
-                let in_refs: Vec<&[f32]> = ins.iter().map(|b| b.as_slice()).collect();
-                let mut out_refs: Vec<&mut [f32]> =
-                    outs.iter_mut().map(|b| b.as_mut_slice()).collect();
-                Self::run_raw(self.raw, &in_refs, &mut out_refs, frames);
+                run_channels(
+                    self.raw,
+                    ins.iter().map(|b| b.as_ptr().cast_mut()),
+                    outs.iter_mut().map(|b| b.as_mut_ptr()),
+                    frames,
+                );
                 for (ch, buf) in outputs.iter_mut().zip(outs.iter()) {
                     for (dst, &src) in ch[..frames].iter_mut().zip(buf) {
                         *dst = f64::from(src);
@@ -300,25 +304,51 @@ impl Dsp {
         outputs: &mut [&mut [T]],
         frames: usize,
     ) -> Result<(), Error> {
-        Self::run_raw(self.raw, inputs, outputs, frames);
+        run_channels(
+            self.raw,
+            inputs.iter().map(|c| c.as_ptr().cast_mut()),
+            outputs.iter_mut().map(|c| c.as_mut_ptr()),
+            frames,
+        );
         Ok(())
     }
+}
 
-    /// The C call: channel pointer arrays of the exchanged width. Inputs are
-    /// only read by the backends.
-    fn run_raw<T: Sample>(
-        raw: RawInstance,
-        inputs: &[&[T]],
-        outputs: &mut [&mut [T]],
-        frames: usize,
-    ) {
-        let mut in_ptrs: Vec<*mut T> = inputs.iter().map(|c| c.as_ptr().cast_mut()).collect();
-        let mut out_ptrs: Vec<*mut T> = outputs.iter_mut().map(|c| c.as_mut_ptr()).collect();
-        let count = i32::try_from(frames).unwrap_or(i32::MAX);
-        // SAFETY: every channel holds at least `frames` elements of the width
-        // the backend exchanges (checked by the callers); the backends do not
-        // write to the input channels; the pointer arrays outlive the call.
-        unsafe { raw.compute(count, &mut in_ptrs, &mut out_ptrs) };
+/// Channel counts up to which [`run_channels`] gathers the channel pointers
+/// on the stack; beyond, it allocates the lists.
+const STACK_CHANNELS: usize = 64;
+
+/// The C call over channels of the exchanged width: their pointers gathered
+/// in arrays, on the stack for at most [`STACK_CHANNELS`] inputs and outputs,
+/// so that a compute call allocates nothing. Inputs are only read by the
+/// backends.
+fn run_channels<T: Sample>(
+    raw: RawInstance,
+    inputs: impl ExactSizeIterator<Item = *mut T>,
+    outputs: impl ExactSizeIterator<Item = *mut T>,
+    frames: usize,
+) {
+    let count = i32::try_from(frames).unwrap_or(i32::MAX);
+    // SAFETY: every channel holds at least `frames` elements of the width
+    // the backend exchanges (checked by the callers); the backends do not
+    // write to the input channels; the pointer arrays outlive the call.
+    let run = |ins: &mut [*mut T], outs: &mut [*mut T]| unsafe { raw.compute(count, ins, outs) };
+    let (n_in, n_out) = (inputs.len(), outputs.len());
+    if n_in <= STACK_CHANNELS && n_out <= STACK_CHANNELS {
+        let mut ins = [std::ptr::null_mut(); STACK_CHANNELS];
+        let mut outs = [std::ptr::null_mut(); STACK_CHANNELS];
+        for (slot, p) in ins.iter_mut().zip(inputs) {
+            *slot = p;
+        }
+        for (slot, p) in outs.iter_mut().zip(outputs) {
+            *slot = p;
+        }
+        run(&mut ins[..n_in], &mut outs[..n_out]);
+    } else {
+        run(
+            &mut inputs.collect::<Vec<_>>(),
+            &mut outputs.collect::<Vec<_>>(),
+        );
     }
 }
 

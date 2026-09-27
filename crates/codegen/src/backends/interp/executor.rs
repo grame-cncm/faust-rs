@@ -13,7 +13,10 @@
 //! - Equivalent to C++ `TRACE=0` mode (no tracing / overflow checks).
 //!
 //! # Control flow model
-//! The interpreter uses three stacks local to each `execute_block_io` call:
+//! The interpreter uses three stacks, emptied at the start of each
+//! `execute_block_io` call and kept by the executor from one call to the next
+//! so that executing a block allocates nothing once they have grown (the C++
+//! interpreter keeps them in local arrays):
 //! - `real_stack[512]` — computation stack for REAL values
 //! - `int_stack[512]` — computation stack for integers
 //! - `addr_stack[64]` — return addresses as `(BlockId, pc)` pairs
@@ -39,6 +42,37 @@ use foreign_call::{ScalarType as HostScalarType, Value as HostValue};
 const REAL_STACK_CAPACITY: usize = 512;
 const INT_STACK_CAPACITY: usize = 512;
 const ADDR_STACK_CAPACITY: usize = 64;
+
+/// The evaluation stacks of an executor, kept across block executions.
+struct ExecStacks<R> {
+    real: Vec<R>,
+    int: Vec<i32>,
+    addr: Vec<(BlockId, usize)>,
+}
+
+impl<R> Default for ExecStacks<R> {
+    /// Empty stacks, with no allocation.
+    fn default() -> Self {
+        Self {
+            real: Vec::new(),
+            int: Vec::new(),
+            addr: Vec::new(),
+        }
+    }
+}
+
+impl<R> ExecStacks<R> {
+    /// Empties the stacks and makes sure they hold the C++ capacities, which
+    /// allocates only the first time (or after a panic dropped them).
+    fn prepare(&mut self) {
+        self.real.clear();
+        self.int.clear();
+        self.addr.clear();
+        self.real.reserve(REAL_STACK_CAPACITY);
+        self.int.reserve(INT_STACK_CAPACITY);
+        self.addr.reserve(ADDR_STACK_CAPACITY);
+    }
+}
 
 /// Execution stack kind used in structured runtime errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -427,10 +461,11 @@ struct ExecSite {
 /// # Memory model
 /// - **Int heap** (`int_heap`): counters, indices, loop variables.
 /// - **Real heap** (`real_heap`): state variables, filter memory, UI zones.
-/// - **Execution stacks**: local to each `execute_block_io` call.
+/// - **Execution stacks**: emptied at the start of each `execute_block_io`
+///   call, kept across calls.
 ///
-/// Heap vectors are instance-owned and reused across block executions; only the
-/// transient evaluation stacks are reset per call.
+/// Heaps and stacks are instance-owned and reused across block executions, so
+/// executing a block allocates nothing once the stacks have grown.
 pub struct FbcExecutor<R: FbcReal> {
     /// Integer heap (counters, indices, loop variables).
     pub int_heap: Vec<i32>,
@@ -438,6 +473,8 @@ pub struct FbcExecutor<R: FbcReal> {
     pub real_heap: Vec<R>,
     /// Soundfile slots, indexed by the slot number assigned at compile time.
     pub soundfiles: Vec<Box<Soundfile>>,
+    /// Evaluation stacks, emptied per call, kept across calls.
+    stacks: ExecStacks<R>,
 }
 
 impl<R: FbcReal> FbcExecutor<R> {
@@ -448,6 +485,7 @@ impl<R: FbcReal> FbcExecutor<R> {
             int_heap: vec![0; int_heap_size],
             real_heap: vec![R::default(); real_heap_size],
             soundfiles: Vec::new(),
+            stacks: ExecStacks::default(),
         }
     }
 
@@ -522,8 +560,9 @@ impl<R: FbcReal> FbcExecutor<R> {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
-    /// Core dispatch loop shared by panic-on-error and structured-error entry points.
+    /// Runs one block on the executor's stacks, emptied first. The stacks
+    /// leave `self` for the run, since the dispatch loop borrows both; a
+    /// panic drops them, and the next run allocates them again.
     fn try_execute_block_io_inner(
         &mut self,
         arena: &FbcBlockArena<R>,
@@ -532,12 +571,32 @@ impl<R: FbcReal> FbcExecutor<R> {
         outputs: &mut [&mut [R]],
         last_site: &mut ExecSite,
     ) -> Result<(), FbcExecError> {
+        let mut stacks = std::mem::take(&mut self.stacks);
+        stacks.prepare();
+        let result = self.run_block(arena, block_id, inputs, outputs, last_site, &mut stacks);
+        self.stacks = stacks;
+        result
+    }
+
+    #[allow(clippy::too_many_lines)]
+    /// Core dispatch loop shared by panic-on-error and structured-error entry
+    /// points, on empty `stacks`.
+    fn run_block(
+        &mut self,
+        arena: &FbcBlockArena<R>,
+        block_id: BlockId,
+        inputs: &[&[R]],
+        outputs: &mut [&mut [R]],
+        last_site: &mut ExecSite,
+        stacks: &mut ExecStacks<R>,
+    ) -> Result<(), FbcExecError> {
         use FbcOpcode::*;
 
-        // Execution stacks (local to this call, matching C++ local arrays).
-        let mut real_stack: Vec<R> = Vec::with_capacity(REAL_STACK_CAPACITY);
-        let mut int_stack: Vec<i32> = Vec::with_capacity(INT_STACK_CAPACITY);
-        let mut addr_stack: Vec<(BlockId, usize)> = Vec::with_capacity(ADDR_STACK_CAPACITY);
+        let ExecStacks {
+            real: real_stack,
+            int: int_stack,
+            addr: addr_stack,
+        } = stacks;
 
         // Current execution position.
         let mut cur_block = block_id;
@@ -586,7 +645,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 LoadSoundFieldInt => {
                     // offset1 = soundfile slot index; int_value = field selector
                     // (0 = fLength, 1 = fSR); pops part from int stack.
-                    let part = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)? as usize;
+                    let part = pop_int_stack(int_stack, instr.opcode, cur_block, pc)? as usize;
                     let sf = self
                         .soundfiles
                         .get(o1)
@@ -602,9 +661,9 @@ impl<R: FbcReal> FbcExecutor<R> {
                 LoadSoundFieldReal => {
                     // offset1 = soundfile slot index.
                     // Pops idx, part, chan from int stack (LIFO: idx on top).
-                    let idx = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let part = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)? as usize;
-                    let chan = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)? as usize;
+                    let idx = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let part = pop_int_stack(int_stack, instr.opcode, cur_block, pc)? as usize;
+                    let chan = pop_int_stack(int_stack, instr.opcode, cur_block, pc)? as usize;
                     let sf = self
                         .soundfiles
                         .get(o1)
@@ -614,12 +673,11 @@ impl<R: FbcReal> FbcExecutor<R> {
                     pc += 1;
                 }
                 StoreReal => {
-                    self.real_heap[o1] =
-                        pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    self.real_heap[o1] = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     pc += 1;
                 }
                 StoreInt => {
-                    self.int_heap[o1] = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    self.int_heap[o1] = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     pc += 1;
                 }
                 StoreRealValue => {
@@ -631,24 +689,24 @@ impl<R: FbcReal> FbcExecutor<R> {
                     pc += 1;
                 }
                 LoadIndexedReal => {
-                    let offset = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let offset = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1.wrapping_add(offset as usize)]);
                     pc += 1;
                 }
                 LoadIndexedInt => {
-                    let offset = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let offset = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1.wrapping_add(offset as usize)]);
                     pc += 1;
                 }
                 StoreIndexedReal => {
-                    let offset = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let val = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let offset = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let val = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     self.real_heap[o1.wrapping_add(offset as usize)] = val;
                     pc += 1;
                 }
                 StoreIndexedInt => {
-                    let offset = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let val = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let offset = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let val = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     self.int_heap[o1.wrapping_add(offset as usize)] = val;
                     pc += 1;
                 }
@@ -720,7 +778,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 // ── I/O ─────────────────────────────────────────────────
                 LoadInput => {
                     let sample_idx =
-                        pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)? as usize;
+                        pop_int_stack(int_stack, instr.opcode, cur_block, pc)? as usize;
                     let channel = inputs.get(o1).ok_or_else(|| {
                         FbcExecError::io_oob(instr.opcode, cur_block, pc, o1, sample_idx)
                     })?;
@@ -732,7 +790,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 LoadOutput => {
                     let sample_idx =
-                        pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)? as usize;
+                        pop_int_stack(int_stack, instr.opcode, cur_block, pc)? as usize;
                     let channel = outputs.get(o1).ok_or_else(|| {
                         FbcExecError::io_oob(instr.opcode, cur_block, pc, o1, sample_idx)
                     })?;
@@ -744,8 +802,8 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 StoreOutput => {
                     let sample_idx =
-                        pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)? as usize;
-                    let val = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                        pop_int_stack(int_stack, instr.opcode, cur_block, pc)? as usize;
+                    let val = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     let channel = outputs.get_mut(o1).ok_or_else(|| {
                         FbcExecError::io_oob(instr.opcode, cur_block, pc, o1, sample_idx)
                     })?;
@@ -758,12 +816,12 @@ impl<R: FbcReal> FbcExecutor<R> {
 
                 // ── Cast / Bitcast ──────────────────────────────────────
                 CastReal => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(R::from_i32(v));
                     pc += 1;
                 }
                 CastInt => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v.to_i32());
                     pc += 1;
                 }
@@ -776,12 +834,12 @@ impl<R: FbcReal> FbcExecutor<R> {
                     pc += 1;
                 }
                 BitcastInt => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v.to_bits_i32());
                     pc += 1;
                 }
                 BitcastReal => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(R::from_bits_i32(v));
                     pc += 1;
                 }
@@ -792,181 +850,181 @@ impl<R: FbcReal> FbcExecutor<R> {
 
                 // ── Real arithmetic ─────────────────────────────────────
                 AddReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1 + v2);
                     pc += 1;
                 }
                 SubReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1 - v2);
                     pc += 1;
                 }
                 MultReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1 * v2);
                     pc += 1;
                 }
                 DivReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1 / v2);
                     pc += 1;
                 }
                 RemReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1.fbc_remainder(v2));
                     pc += 1;
                 }
 
                 // ── Int arithmetic ──────────────────────────────────────
                 AddInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1.wrapping_add(v2));
                     pc += 1;
                 }
                 SubInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1.wrapping_sub(v2));
                     pc += 1;
                 }
                 MultInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1.wrapping_mul(v2));
                     pc += 1;
                 }
                 DivInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(if v2 != 0 { v1.wrapping_div(v2) } else { 0 });
                     pc += 1;
                 }
                 RemInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(if v2 != 0 { v1.wrapping_rem(v2) } else { 0 });
                     pc += 1;
                 }
 
                 // ── Int shifts ──────────────────────────────────────────
                 LshInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1.wrapping_shl(v2 as u32));
                     pc += 1;
                 }
                 ARshInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1.wrapping_shr(v2 as u32));
                     pc += 1;
                 }
                 LRshInt => {
                     // Logical right shift: cast to unsigned, shift, cast back.
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 as u32).wrapping_shr(v2 as u32) as i32);
                     pc += 1;
                 }
 
                 // ── Int comparisons ─────────────────────────────────────
                 GTInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 > v2) as i32);
                     pc += 1;
                 }
                 LTInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 < v2) as i32);
                     pc += 1;
                 }
                 GEInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 >= v2) as i32);
                     pc += 1;
                 }
                 LEInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 <= v2) as i32);
                     pc += 1;
                 }
                 EQInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 == v2) as i32);
                     pc += 1;
                 }
                 NEInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 != v2) as i32);
                     pc += 1;
                 }
 
                 // ── Real comparisons → int ──────────────────────────────
                 GTReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 > v2) as i32);
                     pc += 1;
                 }
                 LTReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 < v2) as i32);
                     pc += 1;
                 }
                 GEReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 >= v2) as i32);
                     pc += 1;
                 }
                 LEReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 <= v2) as i32);
                     pc += 1;
                 }
                 EQReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 == v2) as i32);
                     pc += 1;
                 }
                 NEReal => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((v1 != v2) as i32);
                     pc += 1;
                 }
 
                 // ── Int logical ─────────────────────────────────────────
                 ANDInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1 & v2);
                     pc += 1;
                 }
                 ORInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1 | v2);
                     pc += 1;
                 }
                 XORInt => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1 ^ v2);
                     pc += 1;
                 }
@@ -1108,48 +1166,48 @@ impl<R: FbcReal> FbcExecutor<R> {
                 // Standard math: heap OP stack
                 // ═══════════════════════════════════════════════════════
                 AddRealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1] + v);
                     pc += 1;
                 }
                 SubRealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1] - v);
                     pc += 1;
                 }
                 MultRealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1] * v);
                     pc += 1;
                 }
                 DivRealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1] / v);
                     pc += 1;
                 }
                 RemRealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1].fbc_remainder(v));
                     pc += 1;
                 }
 
                 AddIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1].wrapping_add(v));
                     pc += 1;
                 }
                 SubIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1].wrapping_sub(v));
                     pc += 1;
                 }
                 MultIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1].wrapping_mul(v));
                     pc += 1;
                 }
                 DivIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(if v != 0 {
                         self.int_heap[o1].wrapping_div(v)
                     } else {
@@ -1158,7 +1216,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                     pc += 1;
                 }
                 RemIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(if v != 0 {
                         self.int_heap[o1].wrapping_rem(v)
                     } else {
@@ -1168,95 +1226,95 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
 
                 LshIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1].wrapping_shl(v as u32));
                     pc += 1;
                 }
                 ARshIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1].wrapping_shr(v as u32));
                     pc += 1;
                 }
                 LRshIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.int_heap[o1] as u32).wrapping_shr(v as u32) as i32);
                     pc += 1;
                 }
 
                 GTIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.int_heap[o1] > v) as i32);
                     pc += 1;
                 }
                 LTIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.int_heap[o1] < v) as i32);
                     pc += 1;
                 }
                 GEIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.int_heap[o1] >= v) as i32);
                     pc += 1;
                 }
                 LEIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.int_heap[o1] <= v) as i32);
                     pc += 1;
                 }
                 EQIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.int_heap[o1] == v) as i32);
                     pc += 1;
                 }
                 NEIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.int_heap[o1] != v) as i32);
                     pc += 1;
                 }
 
                 GTRealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.real_heap[o1] > v) as i32);
                     pc += 1;
                 }
                 LTRealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.real_heap[o1] < v) as i32);
                     pc += 1;
                 }
                 GERealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.real_heap[o1] >= v) as i32);
                     pc += 1;
                 }
                 LERealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.real_heap[o1] <= v) as i32);
                     pc += 1;
                 }
                 EQRealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.real_heap[o1] == v) as i32);
                     pc += 1;
                 }
                 NERealStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((self.real_heap[o1] != v) as i32);
                     pc += 1;
                 }
 
                 ANDIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1] & v);
                     pc += 1;
                 }
                 ORIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1] | v);
                     pc += 1;
                 }
                 XORIntStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1] ^ v);
                     pc += 1;
                 }
@@ -1265,147 +1323,147 @@ impl<R: FbcReal> FbcExecutor<R> {
                 // Standard math: value OP stack
                 // ═══════════════════════════════════════════════════════
                 AddRealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(rv + v);
                     pc += 1;
                 }
                 SubRealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(rv - v);
                     pc += 1;
                 }
                 MultRealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(rv * v);
                     pc += 1;
                 }
                 DivRealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(rv / v);
                     pc += 1;
                 }
                 RemRealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(rv.fbc_remainder(v));
                     pc += 1;
                 }
 
                 AddIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv.wrapping_add(v));
                     pc += 1;
                 }
                 SubIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv.wrapping_sub(v));
                     pc += 1;
                 }
                 MultIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv.wrapping_mul(v));
                     pc += 1;
                 }
                 DivIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(if v != 0 { iv.wrapping_div(v) } else { 0 });
                     pc += 1;
                 }
                 RemIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(if v != 0 { iv.wrapping_rem(v) } else { 0 });
                     pc += 1;
                 }
 
                 LshIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv.wrapping_shl(v as u32));
                     pc += 1;
                 }
                 ARshIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv.wrapping_shr(v as u32));
                     pc += 1;
                 }
                 LRshIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((iv as u32).wrapping_shr(v as u32) as i32);
                     pc += 1;
                 }
 
                 GTIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((iv > v) as i32);
                     pc += 1;
                 }
                 LTIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((iv < v) as i32);
                     pc += 1;
                 }
                 GEIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((iv >= v) as i32);
                     pc += 1;
                 }
                 LEIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((iv <= v) as i32);
                     pc += 1;
                 }
                 EQIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((iv == v) as i32);
                     pc += 1;
                 }
                 NEIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((iv != v) as i32);
                     pc += 1;
                 }
 
                 GTRealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((rv > v) as i32);
                     pc += 1;
                 }
                 LTRealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((rv < v) as i32);
                     pc += 1;
                 }
                 GERealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((rv >= v) as i32);
                     pc += 1;
                 }
                 LERealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((rv <= v) as i32);
                     pc += 1;
                 }
                 EQRealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((rv == v) as i32);
                     pc += 1;
                 }
                 NERealStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push((rv != v) as i32);
                     pc += 1;
                 }
 
                 ANDIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv & v);
                     pc += 1;
                 }
                 ORIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv | v);
                     pc += 1;
                 }
                 XORIntStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv ^ v);
                     pc += 1;
                 }
@@ -1620,122 +1678,122 @@ impl<R: FbcReal> FbcExecutor<R> {
                 // Extended unary math (stack)
                 // ═══════════════════════════════════════════════════════
                 Abs => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v.wrapping_abs());
                     pc += 1;
                 }
                 Absf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_absf());
                     pc += 1;
                 }
                 Acosf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_acos());
                     pc += 1;
                 }
                 Acoshf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_acosh());
                     pc += 1;
                 }
                 Asinf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_asin());
                     pc += 1;
                 }
                 Asinhf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_asinh());
                     pc += 1;
                 }
                 Atanf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_atan());
                     pc += 1;
                 }
                 Atanhf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_atanh());
                     pc += 1;
                 }
                 Ceilf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_ceil());
                     pc += 1;
                 }
                 Cosf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_cos());
                     pc += 1;
                 }
                 Coshf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_cosh());
                     pc += 1;
                 }
                 Expf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_exp());
                     pc += 1;
                 }
                 Floorf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_floor());
                     pc += 1;
                 }
                 Logf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_log());
                     pc += 1;
                 }
                 Log10f => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_log10());
                     pc += 1;
                 }
                 Rintf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_rint());
                     pc += 1;
                 }
                 Roundf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_round());
                     pc += 1;
                 }
                 Sinf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_sin());
                     pc += 1;
                 }
                 Sinhf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_sinh());
                     pc += 1;
                 }
                 Sqrtf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_sqrt());
                     pc += 1;
                 }
                 Tanf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_tan());
                     pc += 1;
                 }
                 Tanhf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v.fbc_tanh());
                     pc += 1;
                 }
                 Isnanf => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v.fbc_is_nan() as i32);
                     pc += 1;
                 }
                 Isinff => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v.fbc_is_infinite() as i32);
                     pc += 1;
                 }
@@ -1836,52 +1894,52 @@ impl<R: FbcReal> FbcExecutor<R> {
                 // Extended binary math (stack OP stack)
                 // ═══════════════════════════════════════════════════════
                 Atan2f => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1.fbc_atan2(v2));
                     pc += 1;
                 }
                 Fmodf => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1.fbc_fmod(v2));
                     pc += 1;
                 }
                 Powf => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1.fbc_pow(v2));
                     pc += 1;
                 }
                 Max => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1.max(v2));
                     pc += 1;
                 }
                 Maxf => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     // Match C++ std::max semantics: (a < b) ? b : a
                     real_stack.push(if v1 < v2 { v2 } else { v1 });
                     pc += 1;
                 }
                 Min => {
-                    let v1 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(v1.min(v2));
                     pc += 1;
                 }
                 Minf => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     // Match C++ std::min semantics: (b < a) ? b : a
                     real_stack.push(if v2 < v1 { v2 } else { v1 });
                     pc += 1;
                 }
                 Copysignf => {
-                    let v1 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
-                    let v2 = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v1 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
+                    let v2 = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(v1.fbc_copysign(v2));
                     pc += 1;
                 }
@@ -1900,8 +1958,8 @@ impl<R: FbcReal> FbcExecutor<R> {
                     invoke_foreign_call(
                         &signature,
                         addr,
-                        &mut real_stack,
-                        &mut int_stack,
+                        real_stack,
+                        int_stack,
                         instr.opcode,
                         cur_block,
                         pc,
@@ -1947,38 +2005,38 @@ impl<R: FbcReal> FbcExecutor<R> {
                 // Extended binary math (heap OP stack)
                 // ═══════════════════════════════════════════════════════
                 Atan2fStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1].fbc_atan2(v));
                     pc += 1;
                 }
                 FmodfStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1].fbc_fmod(v));
                     pc += 1;
                 }
                 PowfStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(self.real_heap[o1].fbc_pow(v));
                     pc += 1;
                 }
                 MaxStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1].max(v));
                     pc += 1;
                 }
                 MaxfStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     let a = self.real_heap[o1];
                     real_stack.push(if a < v { v } else { a });
                     pc += 1;
                 }
                 MinStack => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(self.int_heap[o1].min(v));
                     pc += 1;
                 }
                 MinfStack => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     let a = self.real_heap[o1];
                     real_stack.push(if v < a { v } else { a });
                     pc += 1;
@@ -1988,37 +2046,37 @@ impl<R: FbcReal> FbcExecutor<R> {
                 // Extended binary math (value OP stack)
                 // ═══════════════════════════════════════════════════════
                 Atan2fStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(rv.fbc_atan2(v));
                     pc += 1;
                 }
                 FmodfStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(rv.fbc_fmod(v));
                     pc += 1;
                 }
                 PowfStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(rv.fbc_pow(v));
                     pc += 1;
                 }
                 MaxStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv.max(v));
                     pc += 1;
                 }
                 MaxfStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(if rv < v { v } else { rv });
                     pc += 1;
                 }
                 MinStackValue => {
-                    let v = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     int_stack.push(iv.min(v));
                     pc += 1;
                 }
                 MinfStackValue => {
-                    let v = pop_real_stack(&mut real_stack, instr.opcode, cur_block, pc)?;
+                    let v = pop_real_stack(real_stack, instr.opcode, cur_block, pc)?;
                     real_stack.push(if v < rv { v } else { rv });
                     pc += 1;
                 }
@@ -2089,7 +2147,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 If => {
                     // Save return address (instruction after If).
                     addr_stack.push((cur_block, pc + 1));
-                    let cond = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let cond = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     if cond != 0 {
                         cur_block =
                             require_branch_target(instr.branch1, instr.opcode, cur_block, pc)?;
@@ -2103,7 +2161,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 SelectReal | SelectInt => {
                     // Save return address.
                     addr_stack.push((cur_block, pc + 1));
-                    let cond = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let cond = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     if cond != 0 {
                         cur_block =
                             require_branch_target(instr.branch1, instr.opcode, cur_block, pc)?;
@@ -2115,7 +2173,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
 
                 CondBranch => {
-                    let cond = pop_int_stack(&mut int_stack, instr.opcode, cur_block, pc)?;
+                    let cond = pop_int_stack(int_stack, instr.opcode, cur_block, pc)?;
                     if cond != 0 {
                         // Loop back: jump to branch1 (loop body start).
                         cur_block =

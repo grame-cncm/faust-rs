@@ -314,14 +314,14 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `FirToFbcCompiler::finalize` | `crates/codegen/src/backends/interp/compiler/lifecycle.rs:65` |
 | `fn` | `FirToFbcCompiler::alloc_empty_block` | `crates/codegen/src/backends/interp/compiler/lifecycle.rs:84` |
 | `fn` | `FirToFbcCompiler::into_parts` | `crates/codegen/src/backends/interp/compiler/lifecycle.rs:96` |
-| `enum` | `FbcStackKind` | `crates/codegen/src/backends/interp/executor.rs:45` |
-| `struct` | `FbcExecError` | `crates/codegen/src/backends/interp/executor.rs:61` |
-| `struct` | `FbcExecutor` | `crates/codegen/src/backends/interp/executor.rs:434` |
-| `fn` | `FbcExecutor::new` | `crates/codegen/src/backends/interp/executor.rs:446` |
-| `fn` | `FbcExecutor::execute_block` | `crates/codegen/src/backends/interp/executor.rs:458` |
-| `fn` | `FbcExecutor::try_execute_block` | `crates/codegen/src/backends/interp/executor.rs:464` |
-| `fn` | `FbcExecutor::execute_block_io` | `crates/codegen/src/backends/interp/executor.rs:484` |
-| `fn` | `FbcExecutor::try_execute_block_io` | `crates/codegen/src/backends/interp/executor.rs:505` |
+| `enum` | `FbcStackKind` | `crates/codegen/src/backends/interp/executor.rs:79` |
+| `struct` | `FbcExecError` | `crates/codegen/src/backends/interp/executor.rs:95` |
+| `struct` | `FbcExecutor` | `crates/codegen/src/backends/interp/executor.rs:469` |
+| `fn` | `FbcExecutor::new` | `crates/codegen/src/backends/interp/executor.rs:483` |
+| `fn` | `FbcExecutor::execute_block` | `crates/codegen/src/backends/interp/executor.rs:496` |
+| `fn` | `FbcExecutor::try_execute_block` | `crates/codegen/src/backends/interp/executor.rs:502` |
+| `fn` | `FbcExecutor::execute_block_io` | `crates/codegen/src/backends/interp/executor.rs:522` |
+| `fn` | `FbcExecutor::try_execute_block_io` | `crates/codegen/src/backends/interp/executor.rs:543` |
 | `struct` | `FbcDspFactory` | `crates/codegen/src/backends/interp/factory.rs:41` |
 | `fn` | `FbcDspFactory::new` | `crates/codegen/src/backends/interp/factory.rs:86` |
 | `fn` | `FbcDspFactory::optimize` | `crates/codegen/src/backends/interp/factory.rs:144` |
@@ -1467,7 +1467,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `Dsp::set` | `crates/faust/src/dsp.rs:172` |
 | `fn` | `Dsp::metadata` | `crates/faust/src/dsp.rs:181` |
 | `fn` | `Dsp::compute_f32` | `crates/faust/src/dsp.rs:220` |
-| `fn` | `Dsp::compute_f64` | `crates/faust/src/dsp.rs:259` |
+| `fn` | `Dsp::compute_f64` | `crates/faust/src/dsp.rs:261` |
 | `struct` | `Factory` | `crates/faust/src/factory.rs:34` |
 | `fn` | `Factory::from_file` | `crates/faust/src/factory.rs:41` |
 | `fn` | `Factory::from_source` | `crates/faust/src/factory.rs:55` |
@@ -1784,8 +1784,8 @@ _No direct public items found by the source scan._
 | `fn` | `FbcExecutorAny::set_soundfile` | `crates/interp-ffi/src/types.rs:417` |
 | `fn` | `FbcExecutorAny::copy_from` | `crates/interp-ffi/src/types.rs:430` |
 | `struct` | `IoScratch` | `crates/interp-ffi/src/types.rs:452` |
-| `struct` | `InterpreterDspFactory` | `crates/interp-ffi/src/types.rs:498` |
-| `struct` | `InterpreterDspInstance` | `crates/interp-ffi/src/types.rs:507` |
+| `struct` | `InterpreterDspFactory` | `crates/interp-ffi/src/types.rs:539` |
+| `struct` | `InterpreterDspInstance` | `crates/interp-ffi/src/types.rs:548` |
 
 ## `interval`
 

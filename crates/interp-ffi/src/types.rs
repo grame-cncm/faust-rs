@@ -454,6 +454,45 @@ pub struct IoScratch {
     f64: Vec<Vec<f64>>,
 }
 
+/// Channel counts up to which [`with_slices`] and [`with_slices_mut`] build
+/// their lists on the stack; beyond, they allocate one.
+const STACK_CHANNELS: usize = 64;
+
+/// Calls `f` with the slices of `channels` gathered in a list, on the stack
+/// for at most [`STACK_CHANNELS`] of them: a compute call allocates nothing.
+pub(crate) fn with_slices<'a, X: 'a, O>(
+    channels: impl ExactSizeIterator<Item = &'a [X]>,
+    f: impl FnOnce(&[&'a [X]]) -> O,
+) -> O {
+    let n = channels.len();
+    if n <= STACK_CHANNELS {
+        let mut list: [&'a [X]; STACK_CHANNELS] = [&[]; STACK_CHANNELS];
+        for (slot, channel) in list.iter_mut().zip(channels) {
+            *slot = channel;
+        }
+        f(&list[..n])
+    } else {
+        f(&channels.collect::<Vec<_>>())
+    }
+}
+
+/// [`with_slices`] for mutable channels.
+pub(crate) fn with_slices_mut<'a, X: 'a, O>(
+    channels: impl ExactSizeIterator<Item = &'a mut [X]>,
+    f: impl FnOnce(&mut [&'a mut [X]]) -> O,
+) -> O {
+    let n = channels.len();
+    if n <= STACK_CHANNELS {
+        let mut list: [&'a mut [X]; STACK_CHANNELS] = std::array::from_fn(|_| Default::default());
+        for (slot, channel) in list.iter_mut().zip(channels) {
+            *slot = channel;
+        }
+        f(&mut list[..n])
+    } else {
+        f(&mut channels.collect::<Vec<_>>())
+    }
+}
+
 /// Runs `run` on `inputs` and `outputs` converted to the width `W` through
 /// `scratch`: inputs converted with `widen`, outputs zeroed, then converted
 /// back with `narrow` into the caller's buffers. Each converted channel has
@@ -479,9 +518,11 @@ fn run_converted<H: Copy, W: Copy + Default>(
         buf.clear();
         buf.resize(channel.len(), W::default());
     }
-    let in_refs: Vec<&[W]> = ins.iter().map(Vec::as_slice).collect();
-    let mut out_refs: Vec<&mut [W]> = outs.iter_mut().map(Vec::as_mut_slice).collect();
-    run(&in_refs, &mut out_refs);
+    with_slices(ins.iter().map(Vec::as_slice), |in_refs| {
+        with_slices_mut(outs.iter_mut().map(Vec::as_mut_slice), |out_refs| {
+            run(in_refs, out_refs);
+        });
+    });
     for (channel, buf) in outputs.iter_mut().zip(outs.iter()) {
         for (dst, &src) in channel.iter_mut().zip(buf) {
             *dst = narrow(src);
