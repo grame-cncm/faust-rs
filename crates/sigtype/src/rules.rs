@@ -1184,7 +1184,7 @@ impl<'a> TypeAnnotator<'a> {
             // ── Foreign ─────────────────────────────────────────────────────
             SigMatch::FFun(ff, args) => self.infer_foreign_fun_type(ff, args),
             // C++: makeSimpleType(tree2int(type), kKonst, kInit, kVect, kNum, interval())
-            SigMatch::FConst(kind, _, _) => self.infer_foreign_const_type(kind),
+            SigMatch::FConst(kind, name, _) => self.infer_foreign_const_type(kind, name),
             // C++: makeSimpleType(tree2int(type), kBlock, kExec, kVect, kNum, interval())
             SigMatch::FVar(kind, _, _) => self.infer_foreign_var_type(kind),
 
@@ -1768,14 +1768,36 @@ impl<'a> TypeAnnotator<'a> {
     /// `fLo = std::numeric_limits<double>::lowest()`, `fHi = std::numeric_limits<double>::max()`.
     /// This is the fully-open interval `[f64::MIN, f64::MAX]` — not NaN/empty.
     /// Rust equivalent: `Interval::new_default()`.
-    fn infer_foreign_const_type(&self, kind: SigId) -> Result<SigType, InferenceError> {
+    fn infer_foreign_const_type(
+        &self,
+        kind: SigId,
+        name: SigId,
+    ) -> Result<SigType, InferenceError> {
+        // PROTOTYPE (faust#1321): with FAUST_RS_MAX_SAMPLE_RATE=R set, the
+        // sampling-frequency constant is typed [1, R] instead of fully open, so
+        // that platform.lib's SR no longer needs its min(192000, ...) clamp to
+        // bound the delay lines sized from it.
+        let range = match std::env::var("FAUST_RS_MAX_SAMPLE_RATE")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+        {
+            Some(r)
+                if matches!(
+                    tlib::tree_to_str(self.arena, name),
+                    Some("fSamplingFreq" | "fSamplingRate")
+                ) =>
+            {
+                interval::Interval::new(1.0, r, 0)
+            }
+            _ => interval::Interval::new_default(),
+        };
         Ok(make_simple(
             self.foreign_nature(kind),
             Variability::Konst,
             Computability::Init,
             Vectorability::Vect,
             Boolean::Num,
-            interval::Interval::new_default(),
+            range,
         ))
     }
 
