@@ -1,5 +1,5 @@
 //! The Rust API of faust-rs: compile a Faust program to a [`Factory`],
-//! instantiate it as [`Dsp`] values, set their controls and run them.
+//! instantiate it as [`Dsp`] values, set their parameters and run them.
 //!
 //! This crate is the supported way to embed faust-rs from Rust. The other
 //! crates of the workspace (`compiler`, `codegen`, `interp-ffi`,
@@ -15,17 +15,17 @@
 //!   and the code (bytecode or machine code) every instance runs. Factories
 //!   are cheap to clone; a clone is another handle on the same compiled
 //!   program;
-//! - a [`Dsp`] is an instance: its state, its sample rate, its controls.
+//! - a [`Dsp`] is an instance: its state, its sample rate, its parameters.
 //!   [`Factory::create_dsp_instance`] creates and initialises one. A `Dsp` owns a
 //!   reference to its factory, so the factory's code lives as long as any of
 //!   its instances, whatever the host does with its own `Factory` handles.
 //!   No lifetime parameter, no `unsafe` for the host: a `Dsp` is a plain
 //!   value that can be stored, moved, sent to another thread and shared
 //!   (`Send + Sync`: its `&self` methods only read);
-//! - controls are addressed as the C++ `MapUI` addresses them: by path
+//! - parameters are addressed as the C++ `MapUI` addresses them: by path
 //!   (`/group/label`, the OSC address), by shortname or by label;
 //!   [`Dsp::set_param_value`] and [`Dsp::get_param_value`] write and read
-//!   them, and [`Dsp::controls`] lists them with their names, kind and range.
+//!   them, and [`Dsp::params`] lists them with their names, kind and range.
 //!
 //! # Precision
 //!
@@ -41,7 +41,7 @@
 //!
 //! The methods that have a counterpart in the C++ `dsp` and `dsp_factory`
 //! classes (`architecture/faust/dsp/dsp.h`), or in the `MapUI` class a C++
-//! host drives the controls with (`architecture/faust/gui/MapUI.h`), carry
+//! host drives the parameters with (`architecture/faust/gui/MapUI.h`), carry
 //! its name in snake case, as the `FaustDsp` trait of the Rust architectures
 //! does:
 //!
@@ -55,14 +55,14 @@
 //! | `dsp_factory::getName`, `getJSON` | [`Factory::get_name`], [`Factory::get_json`] |
 //! | `dsp_factory::createDSPInstance` | [`Factory::create_dsp_instance`], which also initialises |
 //! | `MapUI::setParamValue`, `getParamValue` | [`Dsp::set_param_value`], [`Dsp::get_param_value`]: by path, shortname or label, in that order |
-//! | `MapUI` paths, shortnames and labels | [`Control::path`], [`Control::shortname`], [`Control::label`] |
+//! | `MapUI` paths, shortnames and labels | [`Param::path`], [`Param::shortname`], [`Param::label`] |
 //!
-//! `buildUserInterface` has no counterpart: [`Dsp::controls`] and the
+//! `buildUserInterface` has no counterpart: [`Dsp::params`] and the
 //! `MapUI`-like methods above replace the `UI` a host would implement. Nor has
 //! `clone`, whose C++ semantics (a fresh instance of the same factory) a Rust
 //! `clone` would misname: `dsp.factory().create_dsp_instance(rate)` is it.
 //! What has no counterpart in C++ (the backend, the precision, the list of
-//! the controls) is named the Rust way.
+//! the parameters) is named the Rust way.
 //!
 //! # Known gap
 //!
@@ -71,7 +71,7 @@
 //! `declare` lines from the compiler, but the FIR the interpreter and the
 //! Cranelift backend consume carries an empty `metadata` function, so for
 //! them only the backend's own entries appear (the C API has the same gap).
-//! The name and the control metadata (`[unit:dB]`...) are not affected.
+//! The name and the parameter metadata (`[unit:dB]`...) are not affected.
 //!
 //! # Lifecycle behind the scenes
 //!
@@ -95,13 +95,13 @@
 //! ```
 
 mod backend;
-mod controls;
 mod dsp;
 mod factory;
+mod params;
 
-pub use controls::{Control, ControlKind};
 pub use dsp::Dsp;
 pub use factory::Factory;
+pub use params::{Param, ParamKind};
 
 use std::fmt;
 use std::path::PathBuf;
@@ -200,10 +200,10 @@ pub enum ErrorKind {
     Compile,
     /// The factory could not be instantiated.
     Instantiate,
-    /// No control has this path.
-    UnknownControl,
-    /// The control is a bargraph, written by the DSP only.
-    ReadOnlyControl,
+    /// No parameter has this path.
+    UnknownParam,
+    /// The parameter is a bargraph, written by the DSP only.
+    ReadOnlyParam,
     /// The buffers passed to `compute` do not match the DSP's arities or
     /// hold fewer frames than requested.
     Buffers,
@@ -215,7 +215,7 @@ pub struct Error {
     /// What went wrong, for a host to act on.
     pub kind: ErrorKind,
     /// What went wrong, for a human: for [`ErrorKind::Compile`], the
-    /// compiler's own message; for a control, its path.
+    /// compiler's own message; for a parameter, its path.
     pub message: String,
 }
 

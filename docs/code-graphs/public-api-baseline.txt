@@ -1333,16 +1333,12 @@ use suggestions
 
 ## faust
 enum Backend
-enum ControlKind
 enum ErrorKind
+enum ParamKind
 enum Precision
 fn CompileOptions::for_backend
-fn Control::clamp
-fn ControlKind::is_writable
 fn Dsp::backend
 fn Dsp::compute
-fn Dsp::control
-fn Dsp::controls
 fn Dsp::factory
 fn Dsp::get_num_inputs
 fn Dsp::get_num_outputs
@@ -1354,6 +1350,8 @@ fn Dsp::instance_constants
 fn Dsp::instance_init
 fn Dsp::instance_reset_user_interface
 fn Dsp::metadata
+fn Dsp::param
+fn Dsp::params
 fn Dsp::precision
 fn Dsp::set_param_value
 fn Factory::backend
@@ -1363,17 +1361,19 @@ fn Factory::from_source
 fn Factory::get_json
 fn Factory::get_name
 fn Factory::precision
+fn Param::clamp
+fn ParamKind::is_writable
 fn version
 struct CompileOptions
-struct Control
 struct Dsp
 struct Error
 struct Factory
+struct Param
 trait Sample
 trait Width
-use controls
 use dsp::Dsp
 use factory::Factory
+use params
 
 ## faust-ffi
 use box_ffi

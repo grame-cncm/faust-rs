@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use crate::Sample;
 use crate::backend::{RawInstance, Width};
-use crate::controls::{Control, ControlMap, MetadataSink};
 use crate::factory::{Factory, FactoryInner};
+use crate::params::{MetadataSink, Param, ParamMap};
 use crate::{Backend, Error, ErrorKind, Precision};
 
-/// An instance: its state, its sample rate, its controls. Owns a reference
+/// An instance: its state, its sample rate, its parameters. Owns a reference
 /// to its factory, so it can outlive the host's [`Factory`] handles. `Send`
 /// and `Sync`: it can be moved to another thread, and shared, since every
 /// `&self` method only reads; `compute`, `set_param_value` and the initialisations
@@ -17,7 +17,7 @@ pub struct Dsp {
     // Declared first: dropped before the factory reference below.
     raw: RawInstance,
     factory: Arc<FactoryInner>,
-    controls: ControlMap,
+    params: ParamMap,
     inputs: usize,
     outputs: usize,
     /// Conversion buffers for the width the backend does not exchange.
@@ -34,7 +34,7 @@ unsafe impl Send for Dsp {}
 // takes `&mut self`):
 // - `get_param_value` reads one zone of the instance's state;
 // - `controls`, `control`, `get_num_inputs`, `get_num_outputs`, `backend`,
-//   `precision`, `factory` read this value, the control map (filled once, in
+//   `precision`, `factory` read this value, the parameter map (filled once, in
 //   `create`) and the factory's `Arc`;
 // - `get_sample_rate` reads the instance: `getSampleRateCInterpreterDSPInstance`
 //   an int-heap slot, `getSampleRateCCraneliftDSPInstance` a field;
@@ -68,17 +68,17 @@ impl Dsp {
         let inputs = usize::try_from(raw.num_inputs()).unwrap_or(0);
         let outputs = usize::try_from(raw.num_outputs()).unwrap_or(0);
         // the zones are cells of the instance's state, of the compiled precision
-        let mut controls = ControlMap::new(factory.precision);
-        let mut glue = controls.glue();
+        let mut params = ParamMap::new(factory.precision);
+        let mut glue = params.glue();
         // SAFETY: the glue borrows `controls`, which does not move during the call.
         unsafe { raw.build_user_interface(&mut glue) };
         // the builder's ranges went through the C ABI's `float`
-        controls.apply_ranges(&raw.control_ranges());
-        controls.finish();
+        params.apply_ranges(&raw.control_ranges());
+        params.finish();
         let dsp = Self {
             raw,
             factory,
-            controls,
+            params,
             inputs,
             outputs,
             scratch_f32: Vec::new(),
@@ -152,69 +152,69 @@ impl Dsp {
     }
 
     /// Init instance constant state at `sample_rate`, in Hz: the constants
-    /// that depend on it; the control parameter values and the state are
+    /// that depend on it; the parameter values and the state are
     /// kept (`instanceConstants`).
     pub fn instance_constants(&mut self, sample_rate: i32) {
         self.raw.instance_constants(sample_rate);
     }
 
-    /// Init default control parameter values: every control back to the
-    /// initial value the program declares, [`Control::init`]; the state is
+    /// Init default parameter values: every parameter back to the
+    /// initial value the program declares, [`Param::init`]; the state is
     /// kept (`instanceResetUserInterface`).
     pub fn instance_reset_user_interface(&mut self) {
         self.raw.instance_reset_user_interface();
     }
 
     /// Init instance state (like delay lines, recursions...) but keep the
-    /// control parameter values (`instanceClear`).
+    /// parameter values (`instanceClear`).
     pub fn instance_clear(&mut self) {
         self.raw.instance_clear();
     }
 
-    /// The controls, in the order of the UI tree: the order
+    /// The parameters, in the order of the UI tree: the order
     /// `buildUserInterface` declares them, where Faust sorts the widgets of a
     /// group by label (`[n]` prefixes included).
-    pub fn controls(&self) -> impl Iterator<Item = &Control> {
-        self.controls.iter()
+    pub fn params(&self) -> impl Iterator<Item = &Param> {
+        self.params.iter()
     }
 
-    /// The control `name` designates, `None` when it designates none; `name`
+    /// The parameter `name` designates, `None` when it designates none; `name`
     /// is looked up as by [`Dsp::set_param_value`].
-    pub fn control(&self, name: &str) -> Option<&Control> {
-        self.controls.get(name)
+    pub fn param(&self, name: &str) -> Option<&Param> {
+        self.params.get(name)
     }
 
-    /// The current value of a control (for a bargraph, what the DSP last
+    /// The current value of a parameter (for a bargraph, what the DSP last
     /// wrote), `name` being looked up as by [`Dsp::set_param_value`]
     /// (`MapUI::getParamValue`).
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::UnknownControl`] when `name` designates no control.
+    /// [`ErrorKind::UnknownParam`] when `name` designates no parameter.
     pub fn get_param_value(&self, name: &str) -> Result<f64, Error> {
-        self.controls
+        self.params
             .read(name)
-            .ok_or_else(|| Error::new(ErrorKind::UnknownControl, name))
+            .ok_or_else(|| Error::new(ErrorKind::UnknownParam, name))
     }
 
-    /// Sets a control, exactly as given: no clamping, see [`Control::clamp`]
+    /// Sets a parameter, exactly as given: no clamping, see [`Param::clamp`]
     /// (`MapUI::setParamValue`).
     ///
-    /// `name` is looked up as the C++ `MapUI` does: as a [`Control::path`]
-    /// (`/synth/osc0/freq`), then as a [`Control::shortname`] (`osc0_freq`),
-    /// then as a [`Control::label`] (`freq`). A label several controls share
+    /// `name` is looked up as the C++ `MapUI` does: as a [`Param::path`]
+    /// (`/synth/osc0/freq`), then as a [`Param::shortname`] (`osc0_freq`),
+    /// then as a [`Param::label`] (`freq`). A label several parameters share
     /// designates the last one declared, as in `MapUI`; a path or a
-    /// shortname designates one control only.
+    /// shortname designates one parameter only.
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::UnknownControl`] when `name` designates no control,
-    /// [`ErrorKind::ReadOnlyControl`] when it is a bargraph (which `MapUI`
+    /// [`ErrorKind::UnknownParam`] when `name` designates no parameter,
+    /// [`ErrorKind::ReadOnlyParam`] when it is a bargraph (which `MapUI`
     /// would write, and the DSP overwrite at its next block).
     pub fn set_param_value(&mut self, name: &str, value: f64) -> Result<(), Error> {
-        match self.controls.write(name, value) {
-            None => Err(Error::new(ErrorKind::UnknownControl, name)),
-            Some(false) => Err(Error::new(ErrorKind::ReadOnlyControl, name)),
+        match self.params.write(name, value) {
+            None => Err(Error::new(ErrorKind::UnknownParam, name)),
+            Some(false) => Err(Error::new(ErrorKind::ReadOnlyParam, name)),
             Some(true) => Ok(()),
         }
     }

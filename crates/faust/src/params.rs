@@ -1,4 +1,4 @@
-//! The controls of an instance, discovered through the backend's UI
+//! The parameters of an instance, discovered through the backend's UI
 //! builder and addressed by path.
 
 use std::collections::HashMap;
@@ -9,9 +9,9 @@ use ffi_common::abi::{FfiFaustFloat, MetaGlue, UIGlue};
 
 use crate::Precision;
 
-/// The kind of a control: what the DSP reads or writes through it.
+/// The kind of a parameter: what the DSP reads or writes through it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ControlKind {
+pub enum ParamKind {
     /// `button`: 1 while pressed, 0 otherwise.
     Button,
     /// `checkbox`: 0 or 1.
@@ -28,17 +28,17 @@ pub enum ControlKind {
     VerticalBargraph,
 }
 
-impl ControlKind {
+impl ParamKind {
     /// Whether the host writes it (a bargraph is written by the DSP).
     pub fn is_writable(self) -> bool {
         !matches!(
             self,
-            ControlKind::HorizontalBargraph | ControlKind::VerticalBargraph
+            ParamKind::HorizontalBargraph | ParamKind::VerticalBargraph
         )
     }
 }
 
-/// One control of an instance. `init`, `min`, `max` and `step` are the
+/// One parameter of an instance. `init`, `min`, `max` and `step` are the
 /// values the program declares, at its compiled precision: exact for a
 /// `-double` program, the `f32` values its zones hold otherwise. A bargraph
 /// declares no initial value nor step: `init` is its `min`, `step` is 0.
@@ -47,14 +47,14 @@ impl ControlKind {
 /// without breaking the hosts that read them.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
-pub struct Control {
+pub struct Param {
     /// Its address, `/group/.../label`, as the C++ `MapUI` and OSC build it:
     /// the characters an OSC address cannot hold are replaced by `_`, so the
     /// label cannot be read back from it.
     pub path: String,
     /// Its shortest unambiguous name, as the C++ `MapUI` builds it
     /// (`PathBuilder::computeShortNames`): the last segment of its path
-    /// (`freq`), or, when another control has the same one, as many of its
+    /// (`freq`), or, when another parameter has the same one, as many of its
     /// last segments as tell them apart, joined by `_` (`osc0_freq`,
     /// `osc1_freq`). Only letters and digits are kept, a run of other
     /// characters becoming one `_`.
@@ -63,7 +63,7 @@ pub struct Control {
     /// metadata: `"my gain"` for `hslider("my gain [unit:dB]", ...)`.
     pub label: String,
     /// The widget that declares it.
-    pub kind: ControlKind,
+    pub kind: ParamKind,
     /// The value it takes at initialisation and after
     /// [`Dsp::instance_reset_user_interface`](crate::Dsp::instance_reset_user_interface).
     pub init: f64,
@@ -74,35 +74,35 @@ pub struct Control {
     /// The step of its range: 1 for a button or a checkbox, whose range is
     /// `[0, 1]`, 0 for a bargraph.
     pub step: f64,
-    /// The `[key:value]` metadata declared on the control, in order.
+    /// The `[key:value]` metadata declared on the parameter, in order.
     pub metadata: Vec<(String, String)>,
 }
 
-impl Control {
+impl Param {
     /// `value` brought into `[min, max]`.
     pub fn clamp(&self, value: f64) -> f64 {
         value.clamp(self.min, self.max)
     }
 }
 
-/// A control with its zone, the memory cell of the instance's state it maps to.
+/// A parameter with its zone, the memory cell of the instance's state it maps to.
 struct Entry {
-    control: Control,
+    param: Param,
     zone: *mut FfiFaustFloat,
 }
 
-/// The controls of one instance, in the order the UI builder declared them
+/// The parameters of one instance, in the order the UI builder declared them
 /// (the order of the UI tree, where Faust sorts a group's widgets by label,
 /// `[n]` prefixes included), with the three indexes of the C++ `MapUI`: by
 /// path, by shortname and by label.
-pub(crate) struct ControlMap {
+pub(crate) struct ParamMap {
     entries: Vec<Entry>,
     /// Position in `entries` of each path.
     by_path: HashMap<String, usize>,
     /// Position in `entries` of each shortname, filled by `finish`.
     by_shortname: HashMap<String, usize>,
     /// Position in `entries` of each label, filled by `finish`: of the last
-    /// control declared with it, as the C++ `MapUI`'s `std::map` keeps.
+    /// parameter declared with it, as the C++ `MapUI`'s `std::map` keeps.
     by_label: HashMap<String, usize>,
     /// Group labels currently open, innermost last, while building.
     groups: Vec<String>,
@@ -112,7 +112,7 @@ pub(crate) struct ControlMap {
     precision: Precision,
 }
 
-impl ControlMap {
+impl ParamMap {
     pub(crate) fn new(precision: Precision) -> Self {
         Self {
             entries: Vec::new(),
@@ -125,28 +125,24 @@ impl ControlMap {
         }
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = &Control> {
-        self.entries.iter().map(|e| &e.control)
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Param> {
+        self.entries.iter().map(|e| &e.param)
     }
 
     /// Computes the shortnames and the label index, once the UI builder has
-    /// declared every control (`MapUI::closeBox` of the outermost group).
+    /// declared every parameter (`MapUI::closeBox` of the outermost group).
     pub(crate) fn finish(&mut self) {
-        let paths: Vec<String> = self
-            .entries
-            .iter()
-            .map(|e| e.control.path.clone())
-            .collect();
+        let paths: Vec<String> = self.entries.iter().map(|e| e.param.path.clone()).collect();
         let shortnames = codegen::shortname::compute_short_names(&paths);
         for (i, entry) in self.entries.iter_mut().enumerate() {
-            let shortname = shortnames[&entry.control.path].clone();
+            let shortname = shortnames[&entry.param.path].clone();
             self.by_shortname.insert(shortname.clone(), i);
-            self.by_label.insert(entry.control.label.clone(), i);
-            entry.control.shortname = shortname;
+            self.by_label.insert(entry.param.label.clone(), i);
+            entry.param.shortname = shortname;
         }
     }
 
-    /// The control `key` names, looked up as the C++ `MapUI::setParamValue`
+    /// The parameter `key` names, looked up as the C++ `MapUI::setParamValue`
     /// does: as a path, then as a shortname, then as a label.
     fn entry(&self, key: &str) -> Option<&Entry> {
         self.by_path
@@ -156,8 +152,8 @@ impl ControlMap {
             .map(|&i| &self.entries[i])
     }
 
-    pub(crate) fn get(&self, key: &str) -> Option<&Control> {
-        self.entry(key).map(|e| &e.control)
+    pub(crate) fn get(&self, key: &str) -> Option<&Param> {
+        self.entry(key).map(|e| &e.param)
     }
 
     pub(crate) fn read(&self, key: &str) -> Option<f64> {
@@ -173,11 +169,11 @@ impl ControlMap {
         })
     }
 
-    /// Writes `value`; `None` when `key` names no control, `Some(false)` when
-    /// the control is read-only.
+    /// Writes `value`; `None` when `key` names no parameter, `Some(false)` when
+    /// the parameter is read-only.
     pub(crate) fn write(&self, key: &str, value: f64) -> Option<bool> {
         let entry = self.entry(key)?;
-        if !entry.control.kind.is_writable() {
+        if !entry.param.kind.is_writable() {
             return Some(false);
         }
         // SAFETY: as in `read`.
@@ -198,14 +194,14 @@ impl ControlMap {
             let Some(entry) = self.entries.iter_mut().find(|e| e.zone == range.zone) else {
                 continue;
             };
-            let control = &mut entry.control;
-            control.min = range.min;
-            control.max = range.max;
+            let param = &mut entry.param;
+            param.min = range.min;
+            param.max = range.max;
             if range.bargraph {
-                control.init = range.min;
+                param.init = range.min;
             } else {
-                control.init = range.init;
-                control.step = range.step;
+                param.init = range.init;
+                param.step = range.step;
             }
         }
     }
@@ -237,7 +233,7 @@ impl ControlMap {
         codegen::shortname::build_path(&self.groups, label)
     }
 
-    fn add(&mut self, label: &str, kind: ControlKind, zone: *mut FfiFaustFloat, range: [f32; 4]) {
+    fn add(&mut self, label: &str, kind: ParamKind, zone: *mut FfiFaustFloat, range: [f32; 4]) {
         if zone.is_null() {
             return;
         }
@@ -252,7 +248,7 @@ impl ControlMap {
             }
         });
         let [init, min, max, step] = range.map(f64::from);
-        let control = Control {
+        let param = Param {
             path: path.clone(),
             shortname: String::new(),
             label: label.to_owned(),
@@ -266,7 +262,7 @@ impl ControlMap {
         // The compiler refuses two widgets with one path. Should one arrive,
         // the later zone replaces the earlier, as in the C++ `MapUI`, at the
         // earlier's position.
-        let entry = Entry { control, zone };
+        let entry = Entry { param, zone };
         match self.by_path.get(&path) {
             Some(&i) => self.entries[i] = entry,
             None => {
@@ -287,12 +283,12 @@ unsafe fn text_of(label: *const c_char) -> String {
         .into_owned()
 }
 
-unsafe fn map_of<'a>(ui: *mut c_void) -> Option<&'a mut ControlMap> {
+unsafe fn map_of<'a>(ui: *mut c_void) -> Option<&'a mut ParamMap> {
     if ui.is_null() {
         return None;
     }
-    // SAFETY: `ui` is the `ControlMap` pointer `glue` installed.
-    Some(unsafe { &mut *ui.cast::<ControlMap>() })
+    // SAFETY: `ui` is the `ParamMap` pointer `glue` installed.
+    Some(unsafe { &mut *ui.cast::<ParamMap>() })
 }
 
 unsafe extern "C" fn open_box(ui: *mut c_void, label: *const c_char) {
@@ -359,13 +355,13 @@ macro_rules! bargraph {
     };
 }
 
-two_state!(add_button, ControlKind::Button);
-two_state!(add_check_button, ControlKind::CheckButton);
-ranged!(add_vertical_slider, ControlKind::VerticalSlider);
-ranged!(add_horizontal_slider, ControlKind::HorizontalSlider);
-ranged!(add_num_entry, ControlKind::NumEntry);
-bargraph!(add_horizontal_bargraph, ControlKind::HorizontalBargraph);
-bargraph!(add_vertical_bargraph, ControlKind::VerticalBargraph);
+two_state!(add_button, ParamKind::Button);
+two_state!(add_check_button, ParamKind::CheckButton);
+ranged!(add_vertical_slider, ParamKind::VerticalSlider);
+ranged!(add_horizontal_slider, ParamKind::HorizontalSlider);
+ranged!(add_num_entry, ParamKind::NumEntry);
+bargraph!(add_horizontal_bargraph, ParamKind::HorizontalBargraph);
+bargraph!(add_vertical_bargraph, ParamKind::VerticalBargraph);
 
 unsafe extern "C" fn declare(
     ui: *mut c_void,
@@ -374,7 +370,7 @@ unsafe extern "C" fn declare(
     value: *const c_char,
 ) {
     if let Some(map) = unsafe { map_of(ui) } {
-        // a null zone is a declaration on the enclosing group: not a control's
+        // a null zone is a declaration on the enclosing group: not a parameter's
         if !zone.is_null() {
             let key = unsafe { text_of(key) };
             let value = unsafe { text_of(value) };

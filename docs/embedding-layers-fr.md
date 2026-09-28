@@ -35,7 +35,7 @@ La description des couches et du compromis vient de shakfu, auteur de
    avec ses en-têtes C et C++. `wasm-ffi` en est l'équivalent pour
    `faustwasm` : une ABI WASM brute autour du même compilateur.
 3. **API Rust.** La crate `faust` : une `Factory` est un programme compilé, un
-   `Dsp` une instance, les contrôles sont désignés comme avec `MapUI`, par
+   `Dsp` une instance, les paramètres sont désignés comme avec `MapUI`, par
    leur chemin `/groupe/label`, leur shortname ou leur label. Elle appelle la couche 2 directement, comme des fonctions
    Rust, sans bibliothèque partagée entre les deux, si bien qu'une `Factory` a
    exactement le cycle de vie de l'API C (programmes partagés par clé SHA,
@@ -70,10 +70,10 @@ de la crate donne la table complète.
 | --- | --- |
 | `src/lib.rs` | la documentation de la crate (modèle, précision, cycle de vie, lacune connue) ; `Backend`, `Precision`, `CompileOptions`, `Error`, `ErrorKind`, `version()` ; les réexports |
 | `src/factory.rs` | `Factory` : `from_file`, `from_source`, `create_dsp_instance`, `get_json`, `get_name`, `backend`, `precision` |
-| `src/dsp.rs` | `Dsp` : `compute`, `controls`, `control`, `get_param_value`, `set_param_value`, `metadata`, les initialisations (`init`, `instance_init`, `instance_constants`, `instance_reset_user_interface`, `instance_clear`), `get_num_inputs`, `get_num_outputs`, `get_sample_rate` ; pourquoi il est `Send` et `Sync` |
-| `src/controls.rs` | `Control`, `ControlKind` ; en privé, le parcours `UIGlue` qui trouve les contrôles et construit leurs chemins et shortnames `MapUI` avec `codegen::shortname` (l'unique portage de `PathBuilder` du workspace, partagé avec le JSON et `faustprobe`), et le collecteur `MetaGlue` de `Dsp::metadata` |
+| `src/dsp.rs` | `Dsp` : `compute`, `params`, `param`, `get_param_value`, `set_param_value`, `metadata`, les initialisations (`init`, `instance_init`, `instance_constants`, `instance_reset_user_interface`, `instance_clear`), `get_num_inputs`, `get_num_outputs`, `get_sample_rate` ; pourquoi il est `Send` et `Sync` |
+| `src/params.rs` | `Param`, `ParamKind` ; en privé, le parcours `UIGlue` qui trouve les paramètres et construit leurs chemins et shortnames `MapUI` avec `codegen::shortname` (l'unique portage de `PathBuilder` du workspace, partagé avec le JSON et `faustprobe`), et le collecteur `MetaGlue` de `Dsp::metadata` |
 | `src/backend.rs` | privé : `RawFactory` et `RawInstance`, le seul endroit qui appelle les points d'entrée C de `interp-ffi` et `cranelift-ffi`, et donc l'`unsafe` de la crate |
-| `tests/api.rs`, `tests/ddsp.rs`, `tests/allocation.rs` | le contrat sur les deux backends : cycle de vie, contrôles, précision, threads ; des programmes DDSP à travers l'API ; aucune allocation dans `compute` |
+| `tests/api.rs`, `tests/ddsp.rs`, `tests/allocation.rs` | le contrat sur les deux backends : cycle de vie, paramètres, précision, threads ; des programmes DDSP à travers l'API ; aucune allocation dans `compute` |
 
 Sa documentation est celle de rustdoc : `cargo doc -p faust --open` la
 produit, en commençant par la page de la crate, qui décrit le modèle (factories
@@ -100,11 +100,11 @@ qu'il faut prendre. Lier la couche 2 depuis Rust coûterait :
 - **du code `unsafe` dans le binding.** Les pointeurs bruts de factory et
   d'instance, leurs durées de vie et les tables de callbacks sont traités une
   fois, dans `faust`.
-- **de refaire le parcours de l'interface utilisateur.** Lister les contrôles
+- **de refaire le parcours de l'interface utilisateur.** Lister les paramètres
   d'un programme demande de répondre aux callbacks `UIGlue` et de construire
   les chemins à la `MapUI` à partir des labels des groupes, et leurs
   shortnames ; `faust` le fait
-  (`Dsp::controls`, `Dsp::set_param_value`, `Dsp::get_param_value`, qui
+  (`Dsp::params`, `Dsp::set_param_value`, `Dsp::get_param_value`, qui
   prennent un chemin, un shortname ou un label, comme `MapUI`).
 - **des échantillons `f32` pour l'interpréteur.** Comme en C++, le point
   d'entrée C `computeCInterpreterDSPInstance` échange des `FAUSTFLOAT**`, des
@@ -130,7 +130,7 @@ faust = { path = "../faust-rs/crates/faust" }
 ```
 
 Un programme complet : il compile un lisseur à un pôle pour le JIT Cranelift
-en double précision, liste ses contrôles, en règle un par son chemin, calcule
+en double précision, liste ses paramètres, en règle un par son chemin, calcule
 un bloc, puis passe l'instance à un autre thread, après que l'hôte a lâché sa
 factory.
 
@@ -153,26 +153,26 @@ fn main() -> Result<(), faust::Error> {
     let factory = Factory::from_source("smoother", SOURCE, &options)?;
     let mut dsp = factory.create_dsp_instance(48_000)?;
 
-    // Les contrôles, et deux des trois noms sous lesquels `MapUI` les connaît.
-    for control in dsp.controls() {
+    // Les paramètres, et deux des trois noms sous lesquels `MapUI` les connaît.
+    for param in dsp.params() {
         println!(
             "{} ({}) {:?} in [{}, {}], now {}",
-            control.path,
-            control.shortname,
-            control.kind,
-            control.min,
-            control.max,
-            dsp.get_param_value(&control.path)?
+            param.path,
+            param.shortname,
+            param.kind,
+            param.min,
+            param.max,
+            dsp.get_param_value(&param.path)?
         );
     }
-    // Un contrôle est désigné par son chemin, son shortname ou son label.
-    let pole = dsp.control("pole").expect("declared by the program");
+    // Un paramètre est désigné par son chemin, son shortname ou son label.
+    let pole = dsp.param("pole").expect("declared by the program");
     let value = pole.clamp(0.99); // `set_param_value` écrit la valeur telle quelle
     dsp.set_param_value("/smoother/pole", value)?;
 
     // Un chemin mal orthographié est une erreur, jamais ignoré en silence.
     let error = dsp.set_param_value("pol", 0.5).unwrap_err();
-    assert_eq!(error.kind, ErrorKind::UnknownControl);
+    assert_eq!(error.kind, ErrorKind::UnknownParam);
 
     // Un bloc de la réponse impulsionnelle, en `f64` puisque le programme est `-double`.
     let mut input = vec![0.0_f64; 64];

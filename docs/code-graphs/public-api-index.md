@@ -1449,10 +1449,6 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | Kind | Name | Location |
 |---|---|---|
 | `trait` | `Width` | `crates/faust/src/backend.rs:379` |
-| `enum` | `ControlKind` | `crates/faust/src/controls.rs:14` |
-| `fn` | `ControlKind::is_writable` | `crates/faust/src/controls.rs:33` |
-| `struct` | `Control` | `crates/faust/src/controls.rs:50` |
-| `fn` | `Control::clamp` | `crates/faust/src/controls.rs:83` |
 | `struct` | `Dsp` | `crates/faust/src/dsp.rs:16` |
 | `fn` | `Dsp::factory` | `crates/faust/src/dsp.rs:107` |
 | `fn` | `Dsp::backend` | `crates/faust/src/dsp.rs:114` |
@@ -1465,8 +1461,8 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `Dsp::instance_constants` | `crates/faust/src/dsp.rs:157` |
 | `fn` | `Dsp::instance_reset_user_interface` | `crates/faust/src/dsp.rs:164` |
 | `fn` | `Dsp::instance_clear` | `crates/faust/src/dsp.rs:170` |
-| `fn` | `Dsp::controls` | `crates/faust/src/dsp.rs:177` |
-| `fn` | `Dsp::control` | `crates/faust/src/dsp.rs:183` |
+| `fn` | `Dsp::params` | `crates/faust/src/dsp.rs:177` |
+| `fn` | `Dsp::param` | `crates/faust/src/dsp.rs:183` |
 | `fn` | `Dsp::get_param_value` | `crates/faust/src/dsp.rs:194` |
 | `fn` | `Dsp::set_param_value` | `crates/faust/src/dsp.rs:214` |
 | `fn` | `Dsp::metadata` | `crates/faust/src/dsp.rs:225` |
@@ -1479,9 +1475,9 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `Factory::get_name` | `crates/faust/src/factory.rs:97` |
 | `fn` | `Factory::get_json` | `crates/faust/src/factory.rs:103` |
 | `fn` | `Factory::create_dsp_instance` | `crates/faust/src/factory.rs:118` |
-| `use` | `controls` | `crates/faust/src/lib.rs:102` |
-| `use` | `dsp::Dsp` | `crates/faust/src/lib.rs:103` |
-| `use` | `factory::Factory` | `crates/faust/src/lib.rs:104` |
+| `use` | `dsp::Dsp` | `crates/faust/src/lib.rs:102` |
+| `use` | `factory::Factory` | `crates/faust/src/lib.rs:103` |
+| `use` | `params` | `crates/faust/src/lib.rs:104` |
 | `enum` | `Backend` | `crates/faust/src/lib.rs:111` |
 | `trait` | `Sample` | `crates/faust/src/lib.rs:131` |
 | `enum` | `Precision` | `crates/faust/src/lib.rs:139` |
@@ -1490,6 +1486,10 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `enum` | `ErrorKind` | `crates/faust/src/lib.rs:198` |
 | `struct` | `Error` | `crates/faust/src/lib.rs:214` |
 | `fn` | `version` | `crates/faust/src/lib.rs:240` |
+| `enum` | `ParamKind` | `crates/faust/src/params.rs:14` |
+| `fn` | `ParamKind::is_writable` | `crates/faust/src/params.rs:33` |
+| `struct` | `Param` | `crates/faust/src/params.rs:50` |
+| `fn` | `Param::clamp` | `crates/faust/src/params.rs:83` |
 
 ## `faust-ffi`
 

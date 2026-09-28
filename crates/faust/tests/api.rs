@@ -1,7 +1,7 @@
 //! The facade over both backends: the same program, the same calls, the same
 //! samples.
 
-use faust::{Backend, CompileOptions, ControlKind, ErrorKind, Factory, Precision};
+use faust::{Backend, CompileOptions, ErrorKind, Factory, ParamKind, Precision};
 
 const GAIN: &str = r#"
 declare name "gain_stage";
@@ -9,7 +9,7 @@ process = _ * hslider("gain [unit:dB]", 0.5, 0, 1, 0.01) : +(nentry("offset", 0,
 "#;
 
 /// A one-pole with a button, a checkbox and a bargraph: state, two-state
-/// controls and a value written by the DSP.
+/// parameters and a value written by the DSP.
 const ONE_POLE: &str = r#"
 process = _ : *(checkbox("on")) : + ~ *(0.5) <: attach(_, abs : hbargraph("level", 0, 10));
 "#;
@@ -27,7 +27,7 @@ fn options(backend: Backend, precision: Precision) -> CompileOptions {
 }
 
 #[test]
-fn controls_have_the_paths_kinds_ranges_and_metadata_of_the_program() {
+fn params_have_the_paths_kinds_ranges_and_metadata_of_the_program() {
     for backend in both() {
         let factory =
             Factory::from_source("gain", GAIN, &options(backend, Precision::F32)).unwrap();
@@ -38,14 +38,14 @@ fn controls_have_the_paths_kinds_ranges_and_metadata_of_the_program() {
             "{backend}"
         );
         assert_eq!(dsp.get_sample_rate(), 48_000);
-        let paths: Vec<&str> = dsp.controls().map(|c| c.path.as_str()).collect();
+        let paths: Vec<&str> = dsp.params().map(|c| c.path.as_str()).collect();
         assert_eq!(
             paths,
             ["/gain_stage/gain", "/gain_stage/offset"],
             "{backend}"
         );
-        let gain = dsp.control("/gain_stage/gain").unwrap();
-        assert_eq!(gain.kind, ControlKind::HorizontalSlider);
+        let gain = dsp.param("/gain_stage/gain").unwrap();
+        assert_eq!(gain.kind, ParamKind::HorizontalSlider);
         assert_eq!((gain.init, gain.min, gain.max), (0.5, 0.0, 1.0));
         assert!((gain.step - 0.01).abs() < 1e-6);
         assert_eq!(
@@ -54,8 +54,8 @@ fn controls_have_the_paths_kinds_ranges_and_metadata_of_the_program() {
             "{backend}"
         );
         assert_eq!(
-            dsp.control("/gain_stage/offset").unwrap().kind,
-            ControlKind::NumEntry
+            dsp.param("/gain_stage/offset").unwrap().kind,
+            ParamKind::NumEntry
         );
         assert_eq!(dsp.get_param_value("/gain_stage/gain").unwrap(), 0.5);
         // `metadata()` is the backend's `metadata` entry point; today the FIR
@@ -99,7 +99,7 @@ fn set_get_and_compute_on_both_backends() {
             dsp.set_param_value("/gain_stage/nope", 1.0)
                 .unwrap_err()
                 .kind,
-            ErrorKind::UnknownControl
+            ErrorKind::UnknownParam
         );
         assert_eq!(
             dsp.compute(output.len(), &[], &mut [&mut output])
@@ -122,7 +122,7 @@ fn the_two_backends_produce_the_same_samples_on_a_stateful_program() {
         dsp.set_param_value("/pole/on", 1.0).unwrap();
         assert_eq!(
             dsp.set_param_value("/pole/level", 1.0).unwrap_err().kind,
-            ErrorKind::ReadOnlyControl
+            ErrorKind::ReadOnlyParam
         );
         let mut input = [0.0_f32; 32];
         input[0] = 1.0;
@@ -138,7 +138,7 @@ fn the_two_backends_produce_the_same_samples_on_a_stateful_program() {
                 < 1e-6,
             "{backend}"
         );
-        // clear empties the recursion, the controls are kept
+        // clear empties the recursion, the parameters are kept
         dsp.instance_clear();
         let silence = [0.0_f32; 32];
         dsp.compute(output.len(), &[&silence], &mut [&mut output])
@@ -331,19 +331,19 @@ process = hslider("x", 0.1, 0, 1, 0.01) + nentry("y", 0.3, -1.7, 2.9, 0.001)
             let factory = Factory::from_source("p", RANGES, &options(backend, precision)).unwrap();
             let mut dsp = factory.create_dsp_instance(48_000).unwrap();
             let what = format!("{backend} {precision:?}");
-            let x = dsp.control("/p/x").unwrap().clone();
+            let x = dsp.param("/p/x").unwrap().clone();
             assert_eq!(
                 (x.init, x.min, x.max, x.step),
                 (at(0.1), 0.0, 1.0, at(0.01)),
                 "{what}"
             );
-            let y = dsp.control("/p/y").unwrap().clone();
+            let y = dsp.param("/p/y").unwrap().clone();
             assert_eq!(
                 (y.init, y.min, y.max, y.step),
                 (at(0.3), at(-1.7), at(2.9), at(0.001)),
                 "{what}"
             );
-            let v = dsp.control("/p/v").unwrap().clone();
+            let v = dsp.param("/p/v").unwrap().clone();
             assert_eq!((v.min, v.max), (at(-0.3), at(0.7)), "{what}");
             // the declared initial value is the one the program resets to
             dsp.set_param_value("/p/x", 0.5).unwrap();
@@ -386,7 +386,7 @@ fn one_dsp_can_be_read_from_several_threads_at_once() {
                             assert_eq!(dsp.get_param_value("/pole/level").unwrap(), level);
                             assert_eq!(dsp.get_param_value("/pole/on").unwrap(), 1.0);
                             assert_eq!(dsp.get_sample_rate(), 44_100);
-                            assert_eq!(dsp.controls().count(), 2);
+                            assert_eq!(dsp.params().count(), 2);
                             assert_eq!(dsp.metadata(), metadata);
                         }
                     })
@@ -400,7 +400,7 @@ fn one_dsp_can_be_read_from_several_threads_at_once() {
 }
 
 #[test]
-fn a_control_keeps_its_label_as_the_program_wrote_it() {
+fn a_param_keeps_its_label_as_the_program_wrote_it() {
     // the path replaces what an OSC address cannot hold, so it cannot give
     // the label back; the metadata in brackets is not part of the label
     const LABELS: &str = r#"process = hslider("my gain [unit:dB]", 0.5, 0, 1, 0.01) + nentry("a/b (x)", 0, 0, 1, 1);"#;
@@ -408,15 +408,15 @@ fn a_control_keeps_its_label_as_the_program_wrote_it() {
         let factory =
             Factory::from_source("labels", LABELS, &options(backend, Precision::F32)).unwrap();
         let dsp = factory.create_dsp_instance(48_000).unwrap();
-        let gain = dsp.control("/labels/my_gain").unwrap();
+        let gain = dsp.param("/labels/my_gain").unwrap();
         assert_eq!(gain.label, "my gain", "{backend}");
-        let entry = dsp.control("/labels/a_b__x_").unwrap();
+        let entry = dsp.param("/labels/a_b__x_").unwrap();
         assert_eq!(entry.label, "a/b (x)", "{backend}");
     }
 }
 
 #[test]
-fn controls_come_in_the_order_of_the_user_interface() {
+fn params_come_in_the_order_of_the_user_interface() {
     // `[n]` orders the widgets of a group, as in every Faust UI: the order
     // of `buildUserInterface`, not the alphabetical order of the paths
     const ORDERED: &str = r#"
@@ -427,14 +427,14 @@ process = hslider("[2]alpha", 0, 0, 1, 0.1), hslider("[1]beta", 0, 0, 1, 0.1),
         let factory =
             Factory::from_source("ui", ORDERED, &options(backend, Precision::F32)).unwrap();
         let dsp = factory.create_dsp_instance(48_000).unwrap();
-        let paths: Vec<&str> = dsp.controls().map(|c| c.path.as_str()).collect();
+        let paths: Vec<&str> = dsp.params().map(|c| c.path.as_str()).collect();
         assert_eq!(
             paths,
             ["/ui/group/eta", "/ui/group/zeta", "/ui/beta", "/ui/alpha"],
             "{backend}"
         );
         // lookup by path is unchanged
-        assert_eq!(dsp.control("/ui/alpha").unwrap().label, "alpha");
+        assert_eq!(dsp.param("/ui/alpha").unwrap().label, "alpha");
     }
 }
 
@@ -551,22 +551,22 @@ fn import_dirs_are_searched_in_order_and_before_the_file_s_directory() {
 
 #[test]
 fn two_state_controls_range_over_0_1_by_1_and_bargraphs_have_no_step() {
-    // what `Control::step` documents
+    // what `Param::step` documents
     for backend in both() {
         let factory =
             Factory::from_source("one_pole", ONE_POLE, &options(backend, Precision::F32)).unwrap();
         let dsp = factory.create_dsp_instance(48_000).unwrap();
-        for control in dsp.controls() {
-            let expected = match control.kind {
-                ControlKind::CheckButton | ControlKind::Button => (0.0, 1.0, 1.0),
-                ControlKind::HorizontalBargraph => (0.0, 10.0, 0.0),
+        for param in dsp.params() {
+            let expected = match param.kind {
+                ParamKind::CheckButton | ParamKind::Button => (0.0, 1.0, 1.0),
+                ParamKind::HorizontalBargraph => (0.0, 10.0, 0.0),
                 other => panic!("unexpected {other:?}"),
             };
             assert_eq!(
-                (control.min, control.max, control.step),
+                (param.min, param.max, param.step),
                 expected,
                 "{backend} {}",
-                control.path
+                param.path
             );
         }
     }
@@ -600,7 +600,7 @@ fn compute_runs_count_frames_and_refuses_a_shorter_buffer() {
 }
 
 #[test]
-fn instance_constants_recomputes_the_rate_dependent_constants_and_keeps_the_controls() {
+fn instance_constants_recomputes_the_rate_dependent_constants_and_keeps_the_params() {
     // `ma.SR`, spelled out: the sample rate is an instance constant
     const RATE: &str = r#"
 process = fconstant(int fSamplingFreq, <math.h>) * hslider("g", 1, 0, 2, 0.01);
@@ -615,7 +615,7 @@ process = fconstant(int fSamplingFreq, <math.h>) * hslider("g", 1, 0, 2, 0.01);
         assert_eq!(
             dsp.get_param_value("/rate/g").unwrap(),
             0.5,
-            "{backend}: the control was reset"
+            "{backend}: the parameter was reset"
         );
         let mut out = [0.0_f32; 1];
         dsp.compute(1, &[], &mut [&mut out]).unwrap();
@@ -671,7 +671,7 @@ process = vgroup("a", vgroup("x", hslider("g", 0, 0, 1, 0.1))) + vgroup("b", vgr
                 Factory::from_source(name, source, &options(backend, Precision::F32)).unwrap();
             let dsp = factory.create_dsp_instance(48_000).unwrap();
             let got: Vec<(&str, &str)> = dsp
-                .controls()
+                .params()
                 .map(|c| (c.path.as_str(), c.shortname.as_str()))
                 .collect();
             assert_eq!(got, expected, "{backend} {name}");
@@ -681,10 +681,10 @@ process = vgroup("a", vgroup("x", hslider("g", 0, 0, 1, 0.1))) + vgroup("b", vgr
 
 /// What the C++ `MapUI` of Faust 2.89.3 does with the same program:
 /// `setParamValue("a_x", 0.25)` writes `/look/a/x` (a shortname, before the
-/// label of two other controls), `setParamValue("y", 0.5)` writes
-/// `/look/h/y` (the last control declared with that label).
+/// label of two other parameters), `setParamValue("y", 0.5)` writes
+/// `/look/h/y` (the last parameter declared with that label).
 #[test]
-fn a_control_is_found_by_path_then_shortname_then_label_as_in_mapui() {
+fn a_param_is_found_by_path_then_shortname_then_label_as_in_mapui() {
     const LOOK: &str = r#"
 declare name "look";
 process = vgroup("a", hslider("x", 0, 0, 1, 0.01)) + vgroup("b", hslider("x", 0, 0, 1, 0.01))
@@ -699,7 +699,7 @@ process = vgroup("a", hslider("x", 0, 0, 1, 0.01)) + vgroup("b", hslider("x", 0,
         dsp.set_param_value("y", 0.5).unwrap();
         dsp.set_param_value("/look/g/y", 0.75).unwrap();
         let values: Vec<(&str, f64)> = dsp
-            .controls()
+            .params()
             .map(|c| (c.path.as_str(), dsp.get_param_value(&c.path).unwrap()))
             .collect();
         assert_eq!(
@@ -714,17 +714,17 @@ process = vgroup("a", hslider("x", 0, 0, 1, 0.01)) + vgroup("b", hslider("x", 0,
             ],
             "{backend}"
         );
-        // the three names of one control read the same value
+        // the three names of one parameter read the same value
         for name in ["/look/h/y", "h_y", "y"] {
             assert_eq!(dsp.get_param_value(name).unwrap(), 0.5, "{backend} {name}");
             assert_eq!(
-                dsp.control(name).unwrap().path,
+                dsp.param(name).unwrap().path,
                 "/look/h/y",
                 "{backend} {name}"
             );
         }
         let err = dsp.set_param_value("nothing", 1.0).unwrap_err();
-        assert_eq!(err.kind, ErrorKind::UnknownControl, "{backend}");
+        assert_eq!(err.kind, ErrorKind::UnknownParam, "{backend}");
     }
 }
 
@@ -742,7 +742,7 @@ process = hgroup("", hslider("g", 0, 0, 1, 0.1)) + hgroup("", hslider("h", 0, 0,
             Factory::from_source("empty", EMPTY, &options(backend, Precision::F32)).unwrap();
         let dsp = factory.create_dsp_instance(48_000).unwrap();
         let names: Vec<(&str, &str)> = dsp
-            .controls()
+            .params()
             .map(|c| (c.path.as_str(), c.shortname.as_str()))
             .collect();
         assert_eq!(

@@ -406,12 +406,12 @@ impl Lcg {
     }
 }
 
-/// The path of the control whose label is `name`, whatever the root group.
+/// The path of the parameter whose label is `name`, whatever the root group.
 fn path_of(dsp: &Dsp, name: &str) -> String {
     let suffix = format!("/{name}");
-    dsp.controls()
+    dsp.params()
         .find(|c| c.path.ends_with(&suffix))
-        .unwrap_or_else(|| panic!("control {name} not found"))
+        .unwrap_or_else(|| panic!("parameter {name} not found"))
         .path
         .clone()
 }
