@@ -73,10 +73,17 @@ impl Factory {
 
     fn build(source: Source<'_>, name: String, options: &CompileOptions) -> Result<Self, Error> {
         let raw = RawFactory::create(options.backend, &source, &options.argv(), options.opt_level)?;
+        let Some(precision) = raw.precision() else {
+            raw.delete();
+            return Err(Error::new(
+                ErrorKind::Compile,
+                "the backend did not produce a DSP with a known sample precision",
+            ));
+        };
         Ok(Self {
             inner: Arc::new(FactoryInner {
                 raw,
-                precision: options.precision,
+                precision,
                 name,
             }),
         })
@@ -87,7 +94,7 @@ impl Factory {
         self.inner.raw.backend()
     }
 
-    /// The type the program computes with.
+    /// The sample width of the compiled backend factory.
     pub fn precision(&self) -> Precision {
         self.inner.precision
     }

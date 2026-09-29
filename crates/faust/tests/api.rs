@@ -21,8 +21,61 @@ fn both() -> [Backend; 2] {
 fn options(backend: Backend, precision: Precision) -> CompileOptions {
     CompileOptions {
         backend,
-        precision,
+        args: if precision == Precision::F64 {
+            vec!["-double".to_owned()]
+        } else {
+            Vec::new()
+        },
         ..CompileOptions::default()
+    }
+}
+
+#[test]
+fn precision_flags_control_factory_buffers_and_parameter_zones() {
+    let cases: &[(&[&str], Precision)] = &[
+        (&[], Precision::F32),
+        (&["-single"], Precision::F32),
+        (&["--single"], Precision::F32),
+        (&["-double"], Precision::F64),
+        (&["--double"], Precision::F64),
+        (&["-double", "-single"], Precision::F32),
+        (&["--single", "--double"], Precision::F64),
+    ];
+    for backend in both() {
+        for &(args, precision) in cases {
+            let options = CompileOptions {
+                backend,
+                args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+                ..CompileOptions::default()
+            };
+            let factory = Factory::from_source(
+                "precision",
+                "process = _ + hslider(\"gain\", 0.25, 0, 1, 0.01);",
+                &options,
+            )
+            .unwrap();
+            assert_eq!(factory.precision(), precision, "{backend} {args:?}");
+            let mut dsp = factory.create_dsp_instance(48_000).unwrap();
+            assert_eq!(dsp.precision(), precision, "{backend} {args:?}");
+            dsp.set_param_value("gain", 0.5).unwrap();
+            assert_eq!(dsp.get_param_value("gain").unwrap(), 0.5);
+
+            // Both host widths are valid whatever width the backend compiled.
+            // The unused half also catches a write past the requested slice.
+            let input32 = [1.0_f32; 8];
+            let mut output32 = [-999.0_f32; 16];
+            let (head32, guard32) = output32.split_at_mut(8);
+            dsp.compute(8, &[&input32], &mut [head32]).unwrap();
+            assert_eq!(head32, &[1.5; 8], "{backend} {args:?}");
+            assert_eq!(guard32, &[-999.0; 8], "{backend} {args:?}");
+
+            let input64 = [1.0_f64; 8];
+            let mut output64 = [-999.0_f64; 16];
+            let (head64, guard64) = output64.split_at_mut(8);
+            dsp.compute(8, &[&input64], &mut [head64]).unwrap();
+            assert_eq!(head64, &[1.5; 8], "{backend} {args:?}");
+            assert_eq!(guard64, &[-999.0; 8], "{backend} {args:?}");
+        }
     }
 }
 

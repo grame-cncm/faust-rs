@@ -37,6 +37,17 @@ use crate::cache::{
 };
 use crate::types::{FbcDspFactoryAny, InterpreterDspFactory, alloc_c_string, write_fbc_any};
 
+/// Reports the precision stored in a compiled interpreter factory.
+///
+/// Rust-only: the C ABI has no such query. The caller must hold a live factory
+/// reference for the duration of this call.
+///
+/// # Safety
+/// `factory` must point to a live interpreter factory.
+pub unsafe fn compiled_is_double(factory: *mut InterpreterDspFactory) -> bool {
+    unsafe { (*factory).inner.is_double() }
+}
+
 // ── Version ───────────────────────────────────────────────────────────────────
 
 /// Returns the Faust library version string.

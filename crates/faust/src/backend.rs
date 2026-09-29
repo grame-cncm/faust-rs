@@ -52,6 +52,22 @@ pub(crate) enum Source<'a> {
 }
 
 impl RawFactory {
+    /// The width of the backend artifact, read from the compiled factory.
+    pub(crate) fn precision(self) -> Option<Precision> {
+        // SAFETY: `self` owns a live reference to the factory cache entry.
+        let double = unsafe {
+            match self {
+                Self::Interp(p) => Some(interp_ffi::factory::compiled_is_double(p)),
+                Self::Cranelift(p) => cranelift_ffi::factory::compiled_is_double(p),
+            }
+        }?;
+        Some(if double {
+            Precision::F64
+        } else {
+            Precision::F32
+        })
+    }
+
     /// Compiles `source` for `backend` with the given argument vector.
     pub(crate) fn create(
         backend: Backend,

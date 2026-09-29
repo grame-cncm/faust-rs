@@ -29,7 +29,10 @@
 //!
 //! # Precision
 //!
-//! [`CompileOptions::precision`] chooses the type the program computes with.
+//! [`CompileOptions::args`] selects `-double` or `-single`; without either, the
+//! program computes in single precision. [`Factory::precision`] reports the
+//! backend's compiled width, which [`Dsp::compute`] uses for host buffers
+//! and UI parameter zones.
 //! [`Dsp::compute`] accepts host buffers of either width, `f32` or `f64`
 //! (see [`Sample`]), and converts when it differs from the compiled
 //! precision, which is what both backends exchange: a `-double` program run
@@ -149,8 +152,6 @@ pub enum Precision {
 pub struct CompileOptions {
     /// The engine the program is compiled for.
     pub backend: Backend,
-    /// The type the program computes with.
-    pub precision: Precision,
     /// Directories searched by `import(...)`, `library(...)` and
     /// `component(...)`, the first of the list first (`-I`). A name is
     /// looked up relative to the working directory, then in these
@@ -160,8 +161,10 @@ pub struct CompileOptions {
     pub import_dirs: Vec<PathBuf>,
     /// The Cranelift optimisation level, 0 to 3; ignored by the interpreter.
     pub opt_level: i32,
-    /// Further compiler arguments, verbatim, after the ones the fields above
-    /// produce (for instance `-vec`, `-vs`, `-ss`, `-bra-tape`).
+    /// Further compiler arguments, verbatim, after the import directories
+    /// (for instance `-double`, `-vec`, `-vs`, `-ss`, `-bra-tape`).
+    /// `-double` and `-single` select the compiled sample width; the last
+    /// precision flag wins, and the default is single precision.
     pub args: Vec<String>,
 }
 
@@ -182,9 +185,6 @@ impl CompileOptions {
         for dir in self.import_dirs.iter().rev() {
             argv.push("-I".to_owned());
             argv.push(dir.to_string_lossy().into_owned());
-        }
-        if self.precision == Precision::F64 {
-            argv.push("-double".to_owned());
         }
         argv.extend(self.args.iter().cloned());
         argv

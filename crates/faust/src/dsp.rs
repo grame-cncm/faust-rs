@@ -115,7 +115,7 @@ impl Dsp {
         self.factory.raw.backend()
     }
 
-    /// The type the instance computes with.
+    /// The sample width of the compiled backend instance.
     pub fn precision(&self) -> Precision {
         self.factory.precision
     }

@@ -188,6 +188,7 @@ impl std::error::Error for CraneliftBackendError {}
 ///
 /// API mapping status: `adapted`.
 pub struct JitDspModule {
+    pub(crate) double_precision: bool,
     pub(crate) module_name: String,
     pub(crate) compute_symbol_name: String,
     pub(crate) compute_entry_addr: usize,
@@ -223,6 +224,12 @@ impl std::fmt::Debug for JitDspModule {
 }
 
 impl JitDspModule {
+    /// Whether the generated DSP exchanges 64-bit Faust samples.
+    #[must_use]
+    pub fn double_precision(&self) -> bool {
+        self.double_precision
+    }
+
     /// Returns the FIR module name captured from the FIR `Module` node.
     ///
     /// This is useful for logging/debugging and for predictable symbol naming

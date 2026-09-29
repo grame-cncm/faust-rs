@@ -285,6 +285,7 @@ pub(crate) fn try_generate_cranelift_module(
         .collect::<Result<Vec<_>, CraneliftBackendError>>()?;
 
     Ok(JitDspModule {
+        double_precision: options.double_precision,
         static_init_entry_addr,
         module_name: module_name.to_owned(),
         compute_symbol_name,

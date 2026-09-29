@@ -48,7 +48,11 @@ fn label(cfg: (Backend, Precision)) -> String {
 fn compile(stem: &str, cfg: (Backend, Precision), root: &Path) -> Factory {
     let options = CompileOptions {
         backend: cfg.0,
-        precision: cfg.1,
+        args: if cfg.1 == Precision::F64 {
+            vec!["-double".to_owned()]
+        } else {
+            Vec::new()
+        },
         import_dirs: vec![
             workspace_dir("tests/corpus"),
             workspace_dir("libraries"),

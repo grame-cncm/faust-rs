@@ -147,7 +147,7 @@ fn main() -> Result<(), faust::Error> {
     // Compiler une fois, pour le JIT Cranelift, en double précision (`-double`).
     let options = CompileOptions {
         backend: Backend::Cranelift,
-        precision: Precision::F64,
+        args: vec!["-double".to_owned()],
         ..CompileOptions::default()
     };
     let factory = Factory::from_source("smoother", SOURCE, &options)?;

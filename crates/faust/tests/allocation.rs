@@ -50,7 +50,11 @@ fn compute_allocates_nothing_after_the_first_block() {
         for precision in [Precision::F32, Precision::F64] {
             let options = CompileOptions {
                 backend,
-                precision,
+                args: if precision == Precision::F64 {
+                    vec!["-double".to_owned()]
+                } else {
+                    Vec::new()
+                },
                 ..CompileOptions::default()
             };
             let factory = Factory::from_source("alloc", program, &options).unwrap();

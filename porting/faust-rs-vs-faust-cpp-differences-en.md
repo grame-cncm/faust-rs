@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-09-27 (the `faust` Rust API); full review 2026-08-13
+Last reviewed: 2026-09-30 (the `faust` Rust API); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -795,12 +795,20 @@ must run unchanged with Faust C++ should not pass them.
   initialises; `compute` is generic over `f32` and `f64` and converts host
   buffers to the compiled precision, and a `-double` interpreter program exchanges exact `f64`
   samples through `interp_ffi::instance::compute_f64`, which the C API does
-  not export; `CompileOptions::import_dirs` lists directories first-first,
+  not export; `CompileOptions::args` alone selects `-double` or `-single`,
+  and `Factory::precision` reports the backend's compiled width. The former
+  `CompileOptions::precision` field was removed after
+  [issue #19](https://github.com/grame-cncm/faust-rs/issues/19) showed that a
+  conflicting flag could make the safe API access buffers and UI zones at
+  the wrong width. Existing Rust clients using the field must move their
+  precision choice into `args`; C and C++ clients are unaffected.
+  `CompileOptions::import_dirs` lists directories first-first,
   where a command line's `-I` puts the last one first (it is emitted
   backwards so the C entry points see the C++ order).
 - Compatibility impact: none on C and C++ hosts; a Rust host gets a
   documented, typed API instead of raw pointers.
 - Evidence: `crates/faust/tests/api.rs` (both backends, including
+  `precision_flags_control_factory_buffers_and_parameter_zones` and
   `import_dirs_are_searched_in_order_and_before_the_file_s_directory`),
   `crates/faust/tests/ddsp.rs`, `crates/faust/tests/allocation.rs`,
   [`docs/embedding-layers-en.md`](../docs/embedding-layers-en.md).

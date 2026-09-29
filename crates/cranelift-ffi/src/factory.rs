@@ -44,6 +44,21 @@ use crate::clif::{CLIF_MAGIC, decode_factory_clif, encode_factory_clif};
 use crate::runtime::build_runtime_descriptor;
 use crate::types::{CraneliftDspFactory, FactoryMemoryState, MemoryManagerBinding, alloc_c_string};
 
+/// Reports the sample width used by the compiled Cranelift JIT.
+///
+/// Rust-only: a factory without a JIT has no callable compute body.
+///
+/// # Safety
+/// `factory` must point to a live Cranelift factory.
+pub unsafe fn compiled_is_double(factory: *mut CraneliftDspFactory) -> Option<bool> {
+    unsafe {
+        (*factory)
+            .compiled_jit
+            .as_ref()
+            .map(JitDspModule::double_precision)
+    }
+}
+
 /// Stable version string returned by [`getCLibFaustVersion`].
 const CRANELIFT_FFI_VERSION: &str = concat!("faust-rs-cranelift-ffi/", env!("CARGO_PKG_VERSION"));
 

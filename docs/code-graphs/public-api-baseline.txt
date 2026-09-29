@@ -297,6 +297,7 @@ fn ForeignSignature::encode
 fn JitDspModule::compute_body_lowered
 fn JitDspModule::compute_entry_addr
 fn JitDspModule::compute_symbol_name
+fn JitDspModule::double_precision
 fn JitDspModule::generated_functions_clif
 fn JitDspModule::has_compute_entry
 fn JitDspModule::instance_clear_entry_addr
