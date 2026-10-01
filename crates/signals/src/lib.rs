@@ -1541,7 +1541,7 @@ fn write_dag_node(
         write!(out, "<invalid:{}>", id.as_u32()).expect("String write cannot fail");
         return;
     };
-    let mut child_text = |child: SigId| -> String {
+    let child_text = |child: SigId| -> String {
         match number.get(&child) {
             Some(index) => format!("n{index}"),
             None => {
@@ -1557,12 +1557,12 @@ fn write_dag_node(
             let head = node
                 .children
                 .get(0)
-                .map(&mut child_text)
+                .map(child_text)
                 .unwrap_or_else(|| "<missing>".to_owned());
             let tail = node
                 .children
                 .get(1)
-                .map(&mut child_text)
+                .map(child_text)
                 .unwrap_or_else(|| "<missing>".to_owned());
             write!(out, "cons({head}, {tail})").expect("String write cannot fail");
         }
