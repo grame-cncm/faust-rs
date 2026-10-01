@@ -26,8 +26,6 @@ pub type F32 = f64;
 pub type F64 = f64;
 pub type FaustFloat = F64;
 
-use std::rc::Rc;
-
 unsafe extern "C" {
     #[link_name = "remainder"]
     fn c_remainder(x: f64, y: f64) -> f64;
@@ -93,21 +91,22 @@ const SOUND_CHAN: usize = 2;
 const SOUND_LENGTH: usize = 4096;
 const SOUND_SR: i32 = 44100;
 const SOUND_BUFFER_SIZE: usize = 1024;
-const MAX_CHAN: usize = 64;
 const MAX_SOUNDFILE_PARTS: usize = 256;
 
 /// Host soundfile container matching the field vocabulary emitted by the Rust
-/// backend (`fBuffers`/`fLength`/`fSR`/`fOffset`, C++ `Soundfile` names).
+/// backend (`fBuffers`/`fLength`/`fSR`/`fOffset`/`fChannels`, C++ `Soundfile`
+/// names).
 ///
-/// Channel buffers are `Rc`-shared so the 64-entry channel table can alias the
-/// two real fixture channels without copying, like the pointer table used by
-/// the WASM runner.
+/// `fBuffers` holds the `fChannels` real channels only: the generated code
+/// reads channel `chan % fChannels`, so a 4-output `soundfile` reads channels
+/// 2 and 3 from the two real ones. Contract: `fChannels >= 1`.
 #[allow(non_snake_case)]
 pub struct Soundfile {
-    pub fBuffers: Vec<Rc<Vec<FaustFloat>>>,
+    pub fBuffers: Vec<Vec<FaustFloat>>,
     pub fLength: Vec<i32>,
     pub fSR: Vec<i32>,
     pub fOffset: Vec<i32>,
+    pub fChannels: i32,
 }
 
 impl Default for Soundfile {
@@ -135,8 +134,9 @@ fn soundfile_part_count(url: &str) -> usize {
 }
 
 /// Builds the shared sinusoidal fixture: `real_parts` parts of 4096 frames of
-/// `sin(part + 2*pi*i/4096)` on both channels, then empty 1024-frame parts up
-/// to the 256-part table, all at 44.1 kHz.
+/// `sin(part + chan + 2*pi*i/4096)` (each channel its own phase, the C++
+/// `TestMemoryReader`), then empty 1024-frame parts up to the 256-part table,
+/// all at 44.1 kHz.
 fn make_soundfile(real_parts: usize) -> Soundfile {
     let real_parts = real_parts.min(MAX_SOUNDFILE_PARTS);
     let mut offsets = Vec::with_capacity(MAX_SOUNDFILE_PARTS);
@@ -157,23 +157,22 @@ fn make_soundfile(real_parts: usize) -> Soundfile {
     for part in 0..real_parts {
         let offset = part * SOUND_LENGTH;
         for sample in 0..SOUND_LENGTH {
-            let value = (part as f64 + (2.0 * std::f64::consts::PI * sample as f64) / SOUND_LENGTH as f64)
-                .sin();
-            for channel in channels.iter_mut() {
+            for (chan, channel) in channels.iter_mut().enumerate() {
+                let value = (part as f64
+                    + chan as f64
+                    + (2.0 * std::f64::consts::PI * sample as f64) / SOUND_LENGTH as f64)
+                    .sin();
                 channel[offset + sample] = value as FaustFloat;
             }
         }
     }
-    let shared: Vec<Rc<Vec<FaustFloat>>> = channels.into_iter().map(Rc::new).collect();
-    let buffers = (0..MAX_CHAN)
-        .map(|chan| Rc::clone(&shared[chan % SOUND_CHAN]))
-        .collect();
 
     Soundfile {
-        fBuffers: buffers,
+        fBuffers: channels,
         fLength: lengths,
         fSR: vec![SOUND_SR; MAX_SOUNDFILE_PARTS],
         fOffset: offsets,
+        fChannels: SOUND_CHAN as i32,
     }
 }
 

@@ -174,6 +174,7 @@ pub(crate) fn child_ids(node: &FirMatch) -> Vec<FirId> {
         | FirMatch::AddSlider { .. }
         | FirMatch::AddBargraph { .. }
         | FirMatch::AddSoundfile { .. }
+        | FirMatch::LoadSoundfileChannels { .. }
         | FirMatch::AddMetaDeclare { .. }
         | FirMatch::Label(_) => Vec::new(),
         FirMatch::LoadSoundfileLength { part, .. } | FirMatch::LoadSoundfileRate { part, .. } => {

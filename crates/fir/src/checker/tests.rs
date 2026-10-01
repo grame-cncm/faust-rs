@@ -786,6 +786,50 @@ fn soundfile_access_wrong_struct_type_warns_sf01() {
 }
 
 #[test]
+fn soundfile_channels_access_checks_the_sound_slot() {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let sound_slot = b.declare_var("fSound0", FirType::Int32, AccessType::Struct, None);
+    let dsp_struct = b.block(&[sound_slot]);
+    let channels = b.load_soundfile_channels("fSound0");
+    let drop = b.drop_(channels);
+    let module_id = module_with_struct_and_body(&mut store, dsp_struct, &[drop]);
+
+    let report = verify_fir_module(&store, module_id);
+    assert!(!report.has_errors(), "{report:?}");
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "FIR-SF01" && d.message.contains("fSound0")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn soundfile_buffer_accepts_a_wrapped_channel() {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let sound_slot = b.declare_var("fSound0", FirType::Sound, AccessType::Struct, None);
+    let dsp_struct = b.block(&[sound_slot]);
+    let zero = b.int32(0);
+    let three = b.int32(3);
+    let channels = b.load_soundfile_channels("fSound0");
+    let chan = b.binop(FirBinOp::Rem, three, channels, FirType::Int32);
+    let sample = b.load_soundfile_buffer("fSound0", chan, zero, zero, FirType::Float32);
+    let drop = b.drop_(sample);
+    let module_id = module_with_struct_and_body(&mut store, dsp_struct, &[drop]);
+
+    let report = verify_fir_module(&store, module_id);
+    assert!(!report.has_errors(), "{report:?}");
+    // Only the scaffold's missing DSP API functions (FIR-M07) are reported.
+    assert!(
+        report.diagnostics.iter().all(|d| d.code == "FIR-M07"),
+        "{report:?}"
+    );
+}
+
+#[test]
 fn soundfile_buffer_requires_integer_indices() {
     let mut store = FirStore::new();
     let mut b = FirBuilder::new(&mut store);

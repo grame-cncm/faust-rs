@@ -496,6 +496,7 @@ fn child_ids(node: &FirMatch) -> Vec<FirId> {
         | FirMatch::AddSlider { .. }
         | FirMatch::AddBargraph { .. }
         | FirMatch::AddSoundfile { .. }
+        | FirMatch::LoadSoundfileChannels { .. }
         | FirMatch::AddMetaDeclare { .. }
         | FirMatch::Label(_) => Vec::new(),
         FirMatch::LoadSoundfileLength { part, .. } | FirMatch::LoadSoundfileRate { part, .. } => {
@@ -2819,6 +2820,11 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
                 let part = self.clone_node(part)?;
                 let mut b = FirBuilder::new(self.dst);
                 b.load_soundfile_rate(var, part)
+            }
+            FirMatch::LoadSoundfileChannels { var } => {
+                let var = self.maybe_renamed_unqualified(&var);
+                let mut b = FirBuilder::new(self.dst);
+                b.load_soundfile_channels(var)
             }
             FirMatch::LoadSoundfileBuffer {
                 var,

@@ -1353,6 +1353,7 @@ fn emit_value(store: &FirStore, value: FirId) -> Result<String, CodegenError> {
             let part = emit_index_expr(store, part)?;
             Ok(format!("dsp.{var}.fSR[{part}]"))
         }
+        FirMatch::LoadSoundfileChannels { var } => Ok(format!("dsp.{var}.fChannels")),
         FirMatch::LoadSoundfileBuffer {
             var,
             chan,

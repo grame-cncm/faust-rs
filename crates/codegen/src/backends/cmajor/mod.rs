@@ -1485,6 +1485,7 @@ fn emit_value(
         FirMatch::NewDsp { name, .. } => Ok(format!("new{name}()")),
         FirMatch::LoadSoundfileLength { .. }
         | FirMatch::LoadSoundfileRate { .. }
+        | FirMatch::LoadSoundfileChannels { .. }
         | FirMatch::LoadSoundfileBuffer { .. } => Err(CodegenError::new(
             CodegenErrorCode::Unsupported,
             "soundfile values are not supported by Cmajor",

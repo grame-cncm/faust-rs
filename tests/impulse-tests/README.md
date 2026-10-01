@@ -109,6 +109,16 @@ See the design write-up in
   the wrong oracle; see the Status section's methodology note for what that
   looks like when it happens.
 - `c++` and the Faust standard libraries (default `/usr/local/share/faust`).
+- The soundfile fixtures of every faust-rs lane (interpreter, Cranelift,
+  WASM, AssemblyScript, Rust, Julia, `faust_minimal.h`) follow the C++
+  `TestMemoryReader` of the `rework-soundfile` branch: each channel has its own
+  phase, and only the real channels are provided, the generated code wrapping
+  channel `chan % fChannels` (DIFF-BEH-016 in
+  [`../../porting/faust-rs-vs-faust-cpp-differences-en.md`](../../porting/faust-rs-vs-faust-cpp-differences-en.md)).
+  The `sound` reference must come from a C++ checkout with that fixture
+  (`CPP_TESTS`, `FAUST_ARCH` and `FAUST_CPP` from the same tree); built with
+  an older one, it gives both channels the same signal and `sound` fails on its
+  odd channels.
 - The full `*-mem0` and `all-mem0` targets use the standard `dsp/` reference
   corpus and therefore have the same C++ oracle and Faust-library requirements
   as the ordinary impulse lanes. `mem0-smoke`, the three `*-mem0-smoke`

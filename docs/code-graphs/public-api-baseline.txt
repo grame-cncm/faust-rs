@@ -1503,6 +1503,7 @@ fn FirBuilder::int64
 fn FirBuilder::iterator_for_loop
 fn FirBuilder::label
 fn FirBuilder::load_soundfile_buffer
+fn FirBuilder::load_soundfile_channels
 fn FirBuilder::load_soundfile_length
 fn FirBuilder::load_soundfile_rate
 fn FirBuilder::load_table

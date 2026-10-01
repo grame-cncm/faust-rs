@@ -129,9 +129,10 @@ function createSoundfile(numRealParts) {
   for (let part = 0; part < realParts; part += 1) {
     const partOffset = offsets[part];
     for (let sample = 0; sample < SOUND_LENGTH; sample += 1) {
-      const value = Math.sin(part + (2.0 * Math.PI * sample) / SOUND_LENGTH);
       for (let channel = 0; channel < SOUND_CHAN; channel += 1) {
-        buffers[channel][partOffset + sample] = value;
+        // Each channel has its own phase (the C++ `TestMemoryReader`).
+        buffers[channel][partOffset + sample] =
+          Math.sin(part + channel + (2.0 * Math.PI * sample) / SOUND_LENGTH);
       }
     }
   }
@@ -149,13 +150,18 @@ function createSoundfileHost(soundfiles) {
       const sf = read(slot);
       return sf && sf.sampleRates[part] !== undefined ? sf.sampleRates[part] : SAMPLE_RATE;
     },
+    // fChannels: the generated code reads channel `chan % fChannels`, so
+    // `_soundfileBuffer` only ever receives a real channel.
+    _soundfileChannels(slot) {
+      const sf = read(slot);
+      return sf ? sf.buffers.length : 1;
+    },
     _soundfileBuffer(slot, chan, part, idx) {
       const sf = read(slot);
-      if (!sf) return 0.0;
-      const channel = ((chan % SOUND_CHAN) + SOUND_CHAN) % SOUND_CHAN;
+      if (!sf || !sf.buffers[chan]) return 0.0;
       const offset = sf.offsets[part] || 0;
       const sample = offset + Math.max(0, idx | 0);
-      return sf.buffers[channel][sample] || 0.0;
+      return sf.buffers[chan][sample] || 0.0;
     },
   };
 }

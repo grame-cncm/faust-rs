@@ -14,7 +14,9 @@
 //! Only families whose emitted FIR is provably identical on both paths live
 //! here. Anything touching state, placement, caching, regions, UI, tables,
 //! delays, or recursion stays with its lowerer, and `select2` stays out
-//! until its sharing is proven the same way.
+//! until its sharing is proven the same way. The soundfile buffer read is
+//! here because its channel wrap is a leaf rule: each lowerer resolves the
+//! soundfile zone itself, then both emit the same access.
 //!
 //! # Doctrine
 //! This is **producer-side vocabulary**, exactly like [`FirBuilder`] itself:
@@ -232,4 +234,39 @@ pub(in crate::signal_fir) fn emit_real_const(
         FirType::Float64 => b.float64(value),
         _ => b.float32(value as f32),
     }
+}
+
+/// Emits the read of sample `idx` of part `part` of soundfile channel `chan`.
+///
+/// # Source provenance (C++)
+/// - `InstructionsCompiler::generateSoundfileBuffer`
+///   (`compiler/generator/instructions_compiler.cpp`, `wrapChannel`).
+///
+/// A soundfile can be read with more outputs than its resource has channels
+/// (a stereo file read by `soundfile(label, 4)`): channel `chan` then reads
+/// real channel `chan % fChannels`. The wrap is generated code, not a runtime
+/// duty, so the runtime contract is only `fChannels >= 1` and `fBuffers`
+/// holding `fChannels` pointers. Channel 0 always exists and is left
+/// unwrapped, as in C++. There is no guard against `fChannels == 0`: that is
+/// a runtime obligation, as in C++.
+pub(in crate::signal_fir) fn emit_soundfile_buffer(
+    store: &mut FirStore,
+    var: String,
+    chan: FirId,
+    part: FirId,
+    idx: FirId,
+    typ: FirType,
+) -> FirId {
+    let constant_zero = matches!(
+        fir::match_fir(store, chan),
+        fir::FirMatch::Int32 { value: 0, .. }
+    );
+    let mut b = FirBuilder::new(store);
+    let chan = if constant_zero {
+        chan
+    } else {
+        let channels = b.load_soundfile_channels(var.clone());
+        b.binop(FirBinOp::Rem, chan, channels, FirType::Int32)
+    };
+    b.load_soundfile_buffer(var, chan, part, idx, typ)
 }

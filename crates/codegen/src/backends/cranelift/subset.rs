@@ -382,6 +382,7 @@ pub(crate) fn subset_expr_gap_reason(
         FirMatch::LoadSoundfileRate { part, .. } => {
             subset_expr_gap_reason(store, part, extern_data_symbols, extern_function_symbols)
         }
+        FirMatch::LoadSoundfileChannels { .. } => None,
         FirMatch::LoadSoundfileBuffer {
             chan, part, idx, ..
         } => subset_expr_gap_reason(store, chan, extern_data_symbols, extern_function_symbols)

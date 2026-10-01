@@ -80,6 +80,7 @@ pub(crate) const FIR_ADD_SOUNDFILE_TAG: &str = "FIRST_ADDSOUNDFILE";
 pub(crate) const FIR_V_LOAD_SOUNDFILE_LENGTH_TAG: &str = "FIRST_LOADSOUNDFILELEN";
 pub(crate) const FIR_V_LOAD_SOUNDFILE_RATE_TAG: &str = "FIRST_LOADSOUNDFILERATE";
 pub(crate) const FIR_V_LOAD_SOUNDFILE_BUFFER_TAG: &str = "FIRST_LOADSOUNDFILEBUF";
+pub(crate) const FIR_V_LOAD_SOUNDFILE_CHANNELS_TAG: &str = "FIRST_LOADSOUNDFILECHAN";
 pub(crate) const FIR_ADD_META_DECLARE_TAG: &str = "FIRST_ADDMETA";
 pub(crate) const FIR_LABEL_TAG: &str = "FIRST_LABEL";
 pub(crate) const FIR_MODULE_TAG: &str = "FIRST_MODULE";
@@ -122,6 +123,7 @@ pub(crate) fn is_value_tag(tag: &str) -> bool {
             | FIR_V_LOAD_SOUNDFILE_LENGTH_TAG
             | FIR_V_LOAD_SOUNDFILE_RATE_TAG
             | FIR_V_LOAD_SOUNDFILE_BUFFER_TAG
+            | FIR_V_LOAD_SOUNDFILE_CHANNELS_TAG
     )
 }
 

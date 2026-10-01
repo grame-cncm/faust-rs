@@ -7,6 +7,11 @@
 //!
 //! In the Rust interpreter sample data is stored as `f64` regardless of the
 //! DSP precision mode; the executor converts on the fly via `FbcReal::from_f64`.
+//!
+//! Runtime contract (C++ `architecture/faust/gui/Soundfile.h`): `num_channels
+//! >= 1` and `buffers` holds the `num_channels` real channels, no more. A
+//! channel requested beyond them is wrapped by the generated code
+//! (`chan % fChannels`, see `transform`'s `emit_soundfile_buffer`), not here.
 
 /// Runtime soundfile data: per-part metadata and interleaved channel buffers.
 ///
@@ -55,8 +60,11 @@ impl Soundfile {
     /// - `architecture/faust/gui/Soundfile.h::createSoundfile`
     ///
     /// The real resources are 2-channel, 4096-frame, 44100 Hz sinusoidal
-    /// clips. Remaining soundfile parts are filled with the standard empty
-    /// 1024-frame silent parts so part metadata matches the C++ `Soundfile`.
+    /// clips, `sin(part + chan + 2*pi*i/4096)`: each channel has its own
+    /// phase, so a soundfile read with more outputs than it has channels shows
+    /// the `chan % fChannels` wrap. Remaining soundfile parts are filled with
+    /// the standard empty 1024-frame silent parts so part metadata matches the
+    /// C++ `Soundfile`.
     #[must_use]
     pub fn impulse_test_memory_reader(num_real_parts: usize) -> Self {
         const SOUND_CHAN: usize = 2;
@@ -88,11 +96,11 @@ impl Soundfile {
         for (part, part_offset) in offsets.iter().copied().enumerate().take(real_parts) {
             let part_offset = part_offset as usize;
             for sample in 0..SOUND_LENGTH {
-                let value = (part as f64
-                    + (2.0 * std::f64::consts::PI * sample as f64 / SOUND_LENGTH as f64))
-                    .sin();
-                for channel in buffers.iter_mut().take(SOUND_CHAN) {
-                    channel[part_offset + sample] = value;
+                for (chan, channel) in buffers.iter_mut().enumerate() {
+                    channel[part_offset + sample] = (part as f64
+                        + chan as f64
+                        + (2.0 * std::f64::consts::PI * sample as f64 / SOUND_LENGTH as f64))
+                        .sin();
                 }
             }
         }
@@ -109,20 +117,15 @@ impl Soundfile {
 
     /// Returns the sample at `buffers[chan][offsets[part] + idx]`.
     ///
-    /// Out-of-bounds part/sample accesses return `0.0` (silence). Channels
-    /// beyond the real file channel count are wrapped modulo `num_channels`,
-    /// matching `Soundfile::shareBuffers`.
+    /// Out-of-bounds channel/part/sample accesses return `0.0` (silence). The
+    /// generated code has already wrapped `chan` modulo `num_channels`, so an
+    /// out-of-range channel only comes from malformed bytecode.
     #[must_use]
     pub fn read_sample(&self, chan: usize, part: usize, idx: i32) -> f64 {
         let offset = self.offsets.get(part).copied().unwrap_or(0) as usize;
         let sample_idx = offset.saturating_add(idx.max(0) as usize);
-        let channel_idx = if self.num_channels == 0 {
-            chan
-        } else {
-            chan % self.num_channels
-        };
         self.buffers
-            .get(channel_idx)
+            .get(chan)
             .and_then(|buf| buf.get(sample_idx))
             .copied()
             .unwrap_or(0.0)
@@ -134,7 +137,7 @@ mod tests {
     use super::Soundfile;
 
     #[test]
-    fn read_sample_wraps_shared_channels_like_cpp_soundfile() {
+    fn read_sample_reads_real_channels_only() {
         let sf = Soundfile {
             num_channels: 2,
             num_parts: 1,
@@ -145,8 +148,9 @@ mod tests {
         };
 
         assert_eq!(sf.read_sample(0, 0, 1), 0.5);
-        assert_eq!(sf.read_sample(2, 0, 1), 0.5);
-        assert_eq!(sf.read_sample(3, 0, 1), 1.0);
+        assert_eq!(sf.read_sample(1, 0, 1), 1.0);
+        // The wrap is generated code: the runtime does not duplicate channels.
+        assert_eq!(sf.read_sample(2, 0, 1), 0.0);
     }
 
     #[test]
@@ -158,8 +162,12 @@ mod tests {
         assert_eq!(sf.lengths[0], 4096);
         assert_eq!(sf.sample_rates[0], 44100);
         assert_eq!(sf.offsets[1], 4096);
+        assert_eq!(sf.buffers.len(), 2);
         assert!(sf.read_sample(0, 0, 0).abs() < f64::EPSILON);
         let expected = (2.0 * std::f64::consts::PI / 4096.0).sin();
-        assert!((sf.read_sample(2, 0, 1) - expected).abs() < 1e-15);
+        assert!((sf.read_sample(0, 0, 1) - expected).abs() < 1e-15);
+        // Channel 1 has its own phase, as in the C++ `TestMemoryReader`.
+        let expected = (1.0 + 2.0 * std::f64::consts::PI / 4096.0).sin();
+        assert!((sf.read_sample(1, 0, 1) - expected).abs() < 1e-15);
     }
 }

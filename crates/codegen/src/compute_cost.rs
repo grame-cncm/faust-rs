@@ -386,6 +386,7 @@ impl CostVisitor<'_> {
                 increment(&mut cost.load, "load")?;
                 cost.checked_add_assign(&self.visit(part)?)?;
             }
+            M::LoadSoundfileChannels { .. } => increment(&mut cost.load, "load")?,
             M::LoadSoundfileBuffer {
                 chan, part, idx, ..
             } => {

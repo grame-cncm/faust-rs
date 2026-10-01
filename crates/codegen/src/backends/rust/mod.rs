@@ -1784,6 +1784,7 @@ fn emit_value(
             let part = emit_index_expr(store, options, locked, part)?;
             Ok(format!("self.{var}.fSR[{part}]"))
         }
+        FirMatch::LoadSoundfileChannels { var } => Ok(format!("self.{var}.fChannels")),
         FirMatch::LoadSoundfileBuffer {
             var,
             chan,
@@ -2282,9 +2283,9 @@ fn value_type(store: &FirStore, value: FirId) -> Option<FirType> {
         | FirMatch::FunCall { typ, .. }
         | FirMatch::NullValue { typ }
         | FirMatch::LoadSoundfileBuffer { typ, .. } => Some(typ),
-        FirMatch::LoadSoundfileLength { .. } | FirMatch::LoadSoundfileRate { .. } => {
-            Some(FirType::Int32)
-        }
+        FirMatch::LoadSoundfileLength { .. }
+        | FirMatch::LoadSoundfileRate { .. }
+        | FirMatch::LoadSoundfileChannels { .. } => Some(FirType::Int32),
         _ => None,
     }
 }

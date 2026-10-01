@@ -36,16 +36,21 @@
 /* ── Soundfile ──────────────────────────────────────────────────────────── */
 
 /* Layout the generated code indexes directly:
- *   sample = ((FAUSTFLOAT**)fBuffers)[channel][fOffset[part] + i]
+ *   sample = ((FAUSTFLOAT**)fBuffers)[channel % fChannels][fOffset[part] + i]
  * so the field order and types are a contract, not an implementation choice.
  * `fBuffers` is `void*` because the real Faust runtime picks `float**` or
- * `double**` at load time; here it is always `FAUSTFLOAT**`.
+ * `double**` at load time; here it is always `FAUSTFLOAT**`. This is a prefix
+ * of the C++ `Soundfile` (`fIsDouble` is left out: the fixture is always
+ * `FAUSTFLOAT`). Contract: `fChannels >= 1`, and `fBuffers` holds exactly
+ * `fChannels` pointers.
  */
 struct Soundfile {
-    void* fBuffers;  // FAUSTFLOAT** — MAX_CHAN non-interleaved channel arrays
+    void* fBuffers;  // FAUSTFLOAT** — fChannels non-interleaved channel arrays
     int* fLength;    // frames per part
     int* fSR;        // sample rate per part
     int* fOffset;    // offset of each part inside the global buffer
+    int fChannels;   // number of real channels (the generated wrap divisor)
+    int fParts;      // number of loaded parts
 };
 
 /* ── Metadata sink ──────────────────────────────────────────────────────── */
@@ -118,15 +123,16 @@ class dsp {
  * mirrors `archs/impulserust.rs` and `tools/impulsewasm.js` exactly — a
  * divergence here would look like a codegen bug in `sound.dsp`:
  *
- *   - `SOUND_CHAN` real channels, both carrying the same signal;
- *   - `real_parts` parts of `SOUND_LENGTH` frames of sin(part + 2*pi*i/LENGTH);
+ *   - `SOUND_CHAN` real channels, each with its own phase;
+ *   - `real_parts` parts of `SOUND_LENGTH` frames of
+ *     sin(part + chan + 2*pi*i/LENGTH) (the C++ `TestMemoryReader`);
  *   - the remaining parts up to `MAX_SOUNDFILE_PARTS` are empty and
  *     `SOUND_BUFFER_SIZE` long;
- *   - the `MAX_CHAN` channel-pointer table aliases the real channels modulo
- *     `SOUND_CHAN`, which is how a 4-output `soundfile` reads channels 2 and 3.
+ *   - the channel-pointer table holds the real channels only: a 4-output
+ *     `soundfile` reads channels 2 and 3 through the generated
+ *     `chan % fChannels` wrap.
  */
 
-#define MAX_CHAN 64
 #define MAX_SOUNDFILE_PARTS 256
 
 namespace faust_rs_soundfile {
@@ -193,23 +199,26 @@ inline Soundfile* make(int realParts)
     for (int part = 0; part < realParts; part++) {
         const int offset = part * kLength;
         for (int sample = 0; sample < kLength; sample++) {
-            const double value =
-                std::sin(double(part) + (2.0 * 3.141592653589793 * double(sample)) / double(kLength));
             for (int channel = 0; channel < kChannels; channel++) {
+                const double value = std::sin(double(part) + double(channel) +
+                                              (2.0 * 3.141592653589793 * double(sample)) /
+                                                  double(kLength));
                 fixture->channels[channel][offset + sample] = FAUSTFLOAT(value);
             }
         }
     }
 
-    fixture->table.resize(MAX_CHAN);
-    for (int channel = 0; channel < MAX_CHAN; channel++) {
-        fixture->table[channel] = fixture->channels[channel % kChannels].data();
+    fixture->table.resize(kChannels);
+    for (int channel = 0; channel < kChannels; channel++) {
+        fixture->table[channel] = fixture->channels[channel].data();
     }
 
     fixture->soundfile.fBuffers = fixture->table.data();
     fixture->soundfile.fLength = fixture->lengths.data();
     fixture->soundfile.fSR = fixture->rates.data();
     fixture->soundfile.fOffset = fixture->offsets.data();
+    fixture->soundfile.fChannels = kChannels;
+    fixture->soundfile.fParts = realParts;
     return &fixture->soundfile;
 }
 

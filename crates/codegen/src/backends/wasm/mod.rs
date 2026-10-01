@@ -66,14 +66,16 @@ pub const BACKEND_NAME: &str = "wasm";
 const DEFAULT_MEMORY_PAGES: u32 = 1;
 
 // Byte offsets of the `Soundfile` struct fields (`fBuffers`, `fLength`,
-// `fSR`, `fOffset`, in that member order), as seen through a `Soundfile*`
-// loaded from the DSP struct. WASM's 32-bit linear memory packs each
-// pointer-sized member 4 bytes apart, unlike the 8-byte spacing used by
-// native 64-bit backends (e.g. Cranelift) for the same struct.
+// `fSR`, `fOffset`, `fChannels`, in that member order), as seen through a
+// `Soundfile*` loaded from the DSP struct. WASM's 32-bit linear memory packs
+// each pointer-sized member 4 bytes apart, unlike the 8-byte spacing used by
+// native 64-bit backends (e.g. Cranelift) for the same struct. `fChannels` is
+// an `int` after the four pointers, at 16 in `-single` as in `-double`.
 const SOUNDFILE_BUFFERS_OFFSET: u32 = 0;
 const SOUNDFILE_LENGTH_OFFSET: u32 = 4;
 const SOUNDFILE_RATE_OFFSET: u32 = 8;
 const SOUNDFILE_FRAME_OFFSET_OFFSET: u32 = 12;
+const SOUNDFILE_CHANNELS_OFFSET: u32 = 16;
 
 /// WASM backend compilation options.
 ///
@@ -1886,6 +1888,11 @@ impl ComputeSubsetLowerer<'_> {
                 function.instruction(&Instruction::I32Load(memarg(0)));
                 Ok(())
             }
+            // `fChannels` is a scalar `int` field: loading the field value is
+            // the whole access, with no indexing by part.
+            FirMatch::LoadSoundfileChannels { var } => {
+                self.emit_soundfile_field_ptr(&var, SOUNDFILE_CHANNELS_OFFSET, function)
+            }
             // Computes `((T**)fBuffers)[chan][fFrameOffset[part] + idx]` on the
             // WASM operand stack: first the per-channel buffer pointer
             // (`fBuffers[chan]`), then the sample address within it
@@ -2103,8 +2110,10 @@ impl ComputeSubsetLowerer<'_> {
         })
     }
 
-    /// Pushes the pointer stored in one DSP `Soundfile*` field, then follows one
-    /// field pointer inside the flattened runtime `Soundfile` struct.
+    /// Pushes the pointer stored in one DSP `Soundfile*` field, then loads the
+    /// field at `soundfile_field_offset` inside the flattened runtime
+    /// `Soundfile` struct: a pointer for `fBuffers`/`fLength`/`fSR`/`fOffset`,
+    /// the `int` itself for `fChannels`.
     fn emit_soundfile_field_ptr(
         &mut self,
         var: &str,

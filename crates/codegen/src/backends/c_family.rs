@@ -673,6 +673,10 @@ pub(crate) fn emit_value_common<E>(
             )),
             Err(err) => Err(err),
         },
+        FirMatch::LoadSoundfileChannels { var } => Ok(format!(
+            "{}->fChannels",
+            (ctx.var_ref)(&var, AccessType::Struct)
+        )),
         FirMatch::LoadSoundfileBuffer {
             var,
             chan,

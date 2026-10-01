@@ -1366,6 +1366,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
                 self.lower_load_soundfile_length(&var, part)
             }
             FirMatch::LoadSoundfileRate { var, part } => self.lower_load_soundfile_rate(&var, part),
+            FirMatch::LoadSoundfileChannels { var } => self.lower_load_soundfile_channels(&var),
             FirMatch::LoadSoundfileBuffer {
                 var,
                 chan,
@@ -1801,6 +1802,21 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         let part_v = self.lower_expr(part, Some(&FirType::Int32))?.value();
         let addr = self.indexed_addr(sr_ptr, part_v, 4);
         let result = self.fb.ins().load(types::I32, MemFlagsData::new(), addr, 0);
+        Ok(LoweredExpr::Scalar(result))
+    }
+
+    /// Lowers `LoadSoundfileChannels { var }` → `fSoundN->fChannels`.
+    ///
+    /// Returns an `i32` scalar (FIR Int32). `fChannels` is a scalar `int`
+    /// after the four pointer fields of the packed struct, so it is loaded
+    /// directly, with no indexing by part.
+    fn lower_load_soundfile_channels(&mut self, var: &str) -> Result<LoweredExpr, LoweringError> {
+        let sf_ptr = self.load_soundfile_ptr(var)?;
+        let channels_offset = 4 * self.ptr_ty.bytes() as i32;
+        let result = self
+            .fb
+            .ins()
+            .load(types::I32, MemFlagsData::new(), sf_ptr, channels_offset);
         Ok(LoweredExpr::Scalar(result))
     }
 

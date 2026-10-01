@@ -13,17 +13,20 @@ abstract type dsp end
 abstract type UI end
 abstract type FMeta end
 
+# `fBuffers` holds the `fChannels` real channels only: the generated code reads
+# channel `chan % fChannels`. Contract: `fChannels >= 1`.
 mutable struct Soundfile
     fLength::Vector{Int32}
     fSR::Vector{Int32}
     fOffset::Vector{Int32}
     fBuffers::Vector{Vector{FAUSTFLOAT}}
+    fChannels::Int32
 end
 
 const SOUND_LENGTH = 4096
 const SOUND_BUFFER_SIZE = 1024
 const MAX_SOUNDFILE_PARTS = 256
-const MAX_SOUNDFILE_CHANNELS = 64
+const SOUND_CHAN = 2
 
 function soundfile_part_count(url::String)
     match_result = match(r"\{(.*)\}", url)
@@ -44,14 +47,15 @@ function make_soundfile(real_parts::Int)
     end
 
     # Same deterministic fixture as the C++/Rust impulse runners: each real
-    # soundfile part is a 4096-frame sine wave and every channel aliases it.
-    samples = zeros(FAUSTFLOAT, total_frames)
-    for part in 0:(real_parts - 1), frame in 0:(SOUND_LENGTH - 1)
-        samples[part * SOUND_LENGTH + frame + 1] =
-            FAUSTFLOAT(sin(part + 2 * pi * frame / SOUND_LENGTH))
+    # soundfile part is a 4096-frame sine wave, sin(part + chan + 2*pi*i/4096),
+    # each channel with its own phase so that the channel wrap is observable.
+    buffers = [zeros(FAUSTFLOAT, total_frames) for _ in 1:SOUND_CHAN]
+    for chan in 0:(SOUND_CHAN - 1), part in 0:(real_parts - 1), frame in 0:(SOUND_LENGTH - 1)
+        buffers[chan + 1][part * SOUND_LENGTH + frame + 1] =
+            FAUSTFLOAT(sin(part + chan + 2 * pi * frame / SOUND_LENGTH))
     end
     Soundfile(lengths, fill(Int32(44100), MAX_SOUNDFILE_PARTS), offsets,
-              fill(samples, MAX_SOUNDFILE_CHANNELS))
+              buffers, Int32(SOUND_CHAN))
 end
 
 Soundfile(::Nothing) = make_soundfile(1)

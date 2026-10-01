@@ -1,6 +1,6 @@
 use super::*;
 use crate::checker::{Severity, verify_fir_module};
-use crate::{AccessType, FirBuilder, FirStore, FirType, NamedType, dump_fir};
+use crate::{AccessType, FirBinOp, FirBuilder, FirStore, FirType, NamedType, dump_fir};
 
 fn fun(
     b: &mut FirBuilder<'_>,
@@ -693,7 +693,9 @@ fn inline_module_once_preserves_soundfile_nodes_and_inlines_soundfile_helper() {
         let helper_body = {
             let zero = b.int32(0);
             let rate = b.load_soundfile_rate("fSound0", zero);
-            let ret = b.ret(Some(rate));
+            let channels = b.load_soundfile_channels("fSound0");
+            let sum = b.binop(FirBinOp::Add, rate, channels, FirType::Int32);
+            let ret = b.ret(Some(sum));
             b.block(&[ret])
         };
         let helper = fun(
@@ -756,6 +758,7 @@ fn inline_module_once_preserves_soundfile_nodes_and_inlines_soundfile_helper() {
     let dump = dump_fir(&dst, rewritten);
     assert!(dump.contains("AddSoundfile"), "{dump}");
     assert!(dump.contains("LoadSoundfileRate"), "{dump}");
+    assert!(dump.contains("LoadSoundfileChannels"), "{dump}");
     assert!(!dump.contains("FunCall { name: \"helper\""), "{dump}");
     assert_no_checker_errors(&dst, rewritten);
 }

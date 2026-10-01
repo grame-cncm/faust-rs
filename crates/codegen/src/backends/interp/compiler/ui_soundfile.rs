@@ -210,6 +210,34 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
         Ok(())
     }
 
+    /// Compiles `LoadSoundfileChannels { var }` → `kLoadSoundFieldInt` (fChannels).
+    ///
+    /// # Source provenance (C++)
+    /// - `InterpreterInstructionsCompiler::generateSoundfileBuffer` loads
+    ///   `Soundfile::kChannels` to wrap the requested channel.
+    ///
+    /// `fChannels` is a scalar field: unlike `fLength`/`fSR`, nothing is
+    /// pushed, and the executor pops no part for this selector.
+    pub(super) fn compile_load_soundfile_channels(
+        &mut self,
+        var: &str,
+    ) -> Result<(), CompileError> {
+        let slot = self.soundfile_slots.get(var).copied().ok_or_else(|| {
+            CompileError::UndeclaredVariable {
+                name: var.to_string(),
+            }
+        })?;
+        self.current_block
+            .push(FbcInstruction::with_values_and_offsets(
+                FbcOpcode::LoadSoundFieldInt,
+                2, // int_value = 2 → fChannels field selector (no part)
+                R::default(),
+                slot as i32,
+                0,
+            ));
+        Ok(())
+    }
+
     /// Compiles `LoadSoundfileBuffer { var, chan, part, idx }` → `kLoadSoundFieldReal`.
     ///
     /// # Source provenance (C++)
@@ -217,6 +245,8 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
     ///
     /// Pushes `chan`, `part`, `idx` onto the int stack; the executor pops them
     /// in reverse order and computes `buffers[chan][offsets[part] + idx]`.
+    /// `chan` already carries the `chan % fChannels` wrap built by the
+    /// lowerer, so the executor indexes the real channels only.
     pub(super) fn compile_load_soundfile_buffer(
         &mut self,
         store: &FirStore,

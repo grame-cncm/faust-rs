@@ -6,8 +6,12 @@
 //! runner and the probe therefore install this in-memory reader, matching the
 //! C++ suite's own fixture so the rendered `.ir` is comparable.
 //!
-//! Shared rather than duplicated: the buffer sizes and the channel-sharing
-//! layout are numerically load-bearing, and two copies would drift.
+//! Shared rather than duplicated: the buffer sizes and the per-channel content
+//! are numerically load-bearing, and two copies would drift.
+//!
+//! `fBuffers` holds the real channels only (`fChannels` pointers), as the C++
+//! `Soundfile` does since channels stopped being duplicated up to `MAX_CHAN`:
+//! the generated code reads channel `chan % fChannels`.
 
 use std::ffi::c_void;
 
@@ -45,7 +49,6 @@ impl TestSoundfile {
         const SOUND_LENGTH: usize = 4096;
         const SOUND_SR: i32 = 44100;
         const BUFFER_SIZE: usize = 1024;
-        const MAX_CHAN: usize = 64;
         const MAX_SOUNDFILE_PARTS: usize = 256;
 
         let real_parts = num_real_parts.min(MAX_SOUNDFILE_PARTS);
@@ -70,20 +73,22 @@ impl TestSoundfile {
         let mut buffers = vec![vec![0.0; offset]; SOUND_CHAN];
         for (part, part_offset) in offsets.iter().copied().enumerate().take(real_parts) {
             let part_offset = part_offset as usize;
+            // Each channel has its own phase (`sin(part + chan + ...)`, the
+            // C++ `TestMemoryReader`), so the channel wrap is observable.
             for sample in 0..SOUND_LENGTH {
-                let value = (part as f64
-                    + (2.0 * std::f64::consts::PI * sample as f64 / SOUND_LENGTH as f64))
-                    .sin();
-                for channel in buffers.iter_mut().take(SOUND_CHAN) {
-                    channel[part_offset + sample] = value;
+                for (chan, channel) in buffers.iter_mut().enumerate() {
+                    channel[part_offset + sample] = (part as f64
+                        + chan as f64
+                        + (2.0 * std::f64::consts::PI * sample as f64 / SOUND_LENGTH as f64))
+                        .sin();
                 }
             }
         }
 
-        let mut channel_ptrs = Vec::with_capacity(MAX_CHAN);
-        for channel in 0..MAX_CHAN {
-            channel_ptrs.push(buffers[channel % SOUND_CHAN].as_mut_ptr());
-        }
+        let mut channel_ptrs: Vec<*mut f64> = buffers
+            .iter_mut()
+            .map(|channel| channel.as_mut_ptr())
+            .collect();
 
         let raw = Box::new(RawSoundfile {
             buffers: channel_ptrs.as_mut_ptr().cast::<c_void>(),
@@ -141,11 +146,15 @@ mod tests {
     }
 
     #[test]
-    fn test_soundfile_shares_channels_like_cpp_fixture() {
+    fn test_soundfile_holds_real_channels_only() {
         let mut sf = TestSoundfile::impulse_test_memory_reader(2);
         assert_eq!(sf.lengths[0], 4096);
         assert_eq!(sf.offsets[1], 4096);
+        assert_eq!(sf.raw.channels, 2);
+        assert_eq!(sf.channel_ptrs.len(), 2);
         assert_eq!(sf.channel_ptrs[0], sf.buffers[0].as_mut_ptr());
-        assert_eq!(sf.channel_ptrs[2], sf.buffers[0].as_mut_ptr());
+        assert_eq!(sf.channel_ptrs[1], sf.buffers[1].as_mut_ptr());
+        // Distinct per-channel content, so a missing wrap cannot pass unseen.
+        assert_ne!(sf.buffers[0][1], sf.buffers[1][1]);
     }
 }

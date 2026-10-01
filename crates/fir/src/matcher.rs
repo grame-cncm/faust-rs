@@ -249,6 +249,11 @@ pub enum FirMatch {
         var: String,
         part: FirId,
     },
+    /// C++ parity: `fSoundN->fChannels` (`Soundfile::kChannels`), the divisor
+    /// of the soundfile channel wrap `chan % fChannels`.
+    LoadSoundfileChannels {
+        var: String,
+    },
     /// C++ parity: `LoadSoundfileInst` / `((FAUSTFLOAT**)fSoundN->fBuffers)[chan][fSoundN->fOffset[part] + idx]`.
     LoadSoundfileBuffer {
         var: String,
@@ -886,6 +891,12 @@ pub fn match_fir(store: &FirStore, id: FirId) -> FirMatch {
             };
             FirMatch::LoadSoundfileRate { var, part: *part }
         }
+        (FIR_V_LOAD_SOUNDFILE_CHANNELS_TAG, [_typ, var]) => {
+            let Some(var) = decode_symbol(&store.arena, *var) else {
+                return FirMatch::Unknown;
+            };
+            FirMatch::LoadSoundfileChannels { var }
+        }
         (FIR_V_LOAD_SOUNDFILE_BUFFER_TAG, [typ, var, chan, part, idx]) => {
             let (Some(typ), Some(var)) = (
                 decode_type(&store.arena, *typ),
@@ -1027,6 +1038,7 @@ pub fn fir_match_children(store: &FirStore, id: FirId) -> Vec<FirId> {
         | FirMatch::AddSlider { .. }
         | FirMatch::AddBargraph { .. }
         | FirMatch::AddSoundfile { .. }
+        | FirMatch::LoadSoundfileChannels { .. }
         | FirMatch::AddMetaDeclare { .. }
         | FirMatch::Label(_) => Vec::new(),
         FirMatch::ValueArray { values, .. } => values,

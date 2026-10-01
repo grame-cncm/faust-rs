@@ -839,6 +839,22 @@ fn wasm_compute_lowers_soundfile_access_nodes() {
         ops.iter().any(|op| matches!(op, Operator::F32Load { .. })),
         "soundfile compute should load sample data"
     );
+    // `fChannels` is the int32 after the four 4-byte pointers of `Soundfile`.
+    assert!(
+        ops.windows(3).any(|w| matches!(
+            w,
+            [
+                Operator::I32Const { value: 16 },
+                Operator::I32Add,
+                Operator::I32Load { .. }
+            ]
+        )),
+        "soundfile compute should load fChannels at offset 16"
+    );
+    assert!(
+        ops.iter().any(|op| matches!(op, Operator::I32RemS)),
+        "soundfile compute should wrap the channel modulo fChannels"
+    );
     assert!(
         ops.iter().any(|op| matches!(op, Operator::F32Store { .. })),
         "soundfile compute should write output samples"
@@ -963,7 +979,11 @@ fn build_soundfile_access_module() -> (FirStore, FirId) {
     let rate = b.cast(FirType::Float32, rate_i32);
     let len_i32 = b.load_soundfile_length("fSound0", zero);
     let len = b.cast(FirType::Float32, len_i32);
-    let sample = b.load_soundfile_buffer("fSound0", zero, zero, i0, FirType::Float32);
+    // Channel 1 wrapped as the lowerer builds it: `1 % fSound0->fChannels`.
+    let one = b.int32(1);
+    let channels = b.load_soundfile_channels("fSound0");
+    let chan = b.binop(fir::FirBinOp::Rem, one, channels, FirType::Int32);
+    let sample = b.load_soundfile_buffer("fSound0", chan, zero, i0, FirType::Float32);
     let gain_cur = b.load_var("fGain", AccessType::Struct, FirType::FaustFloat);
     let gain_f32 = b.cast(FirType::Float32, gain_cur);
     let sample_gain = b.binop(fir::FirBinOp::Mul, sample, gain_f32, FirType::Float32);

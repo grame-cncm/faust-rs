@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-09-30 (the `faust` Rust API); full review 2026-08-13
+Last reviewed: 2026-10-01 (soundfile channel wrap); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -526,6 +526,47 @@ must run unchanged with Faust C++ should not pass them.
   `unlabelled_controls_are_named_as_in_cpp_and_can_conflict` and
   `anonymous_widget_names_count_per_prefix_like_get_fresh_id` in
   `crates/ui/tests/core_api.rs`.
+
+### DIFF-BEH-016 — soundfile channel wrap generated as `chan % fChannels`
+
+- Status: `adapted`, 2026-10-01: ahead of the pinned C++ reference, in step
+  with the C++ `rework-soundfile` branch (`49c6d9367`, `5c1b9b257`; follow-up
+  to grame-cncm/faust#1322), not yet in `master-dev`.
+- A `soundfile(label, N)` read whose resource has fewer than `N` channels
+  reads real channel `chan % fChannels`. Rust generates that wrap in every
+  backend (C, C++, Rust, Julia, WASM, AssemblyScript, Cranelift, interpreter),
+  from one lowering rule shared by the scalar and vector lowerers
+  (`emit_soundfile_buffer`, `crates/transform/src/signal_fir/leaf_emit.rs`)
+  over a new FIR load `LoadSoundfileChannels` (`fSoundN->fChannels`).
+  Constant channel 0 is not wrapped, as in C++.
+- The pinned C++ reference (`8eebea429`) instead indexes `fBuffers[chan]`
+  directly and relies on the architecture duplicating channel pointers up to
+  `MAX_CHAN` (64, `Soundfile::shareBuffers`). That limit is gone in Rust: a
+  soundfile can be read with any number of outputs.
+- Runtime contract (the C++ branch's `Soundfile.h`): `fChannels >= 1`, and
+  `fBuffers` holds at least `fChannels` pointers. A `Soundfile` that
+  duplicates pointers still works; one with `fChannels == 0` divides by zero
+  (no guard, as in C++).
+- Rust-only host contracts that change with it: the Rust backend's host
+  `Soundfile` type must expose `fChannels: i32`, the Julia one
+  `fChannels::Int32`, and an AssemblyScript host must provide the import
+  `env._soundfileChannels(slot): i32`. The interpreter encodes the field as
+  `kLoadSoundFieldInt` with selector 2, which pops no part, and its
+  `Soundfile::read_sample` no longer wraps (faust-rs `.fbc` was already not
+  interchangeable with C++).
+- Compatibility impact: generated code now requires `fChannels` to be set
+  correctly, which every C++ runtime does but not faustwasm before its
+  matching release. Code generated earlier, run against a runtime that no
+  longer duplicates channels, reads out of bounds.
+- The impulse fixtures follow the C++ branch's `TestMemoryReader`: each
+  channel has its own phase (`sin(part + chan + ...)`) and only the real
+  channels are provided. The `sound` reference therefore has to be produced by
+  a C++ compiler and `tests/impulse-tests/archs` from that branch; against the
+  pinned checkout, `sound` differs on its odd channels.
+- Evidence: `crates/compiler/tests/soundfile_channel_wrap.rs` (a 1-, 2- and
+  3-channel soundfile read as 70 outputs by the interpreter, scalar and
+  vector; C++ text wraps every channel but 0); the `sound` impulse test on all
+  backend lanes.
 
 ## 6. Additional backends and delivery forms
 

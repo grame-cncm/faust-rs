@@ -837,7 +837,7 @@ impl PureVectorLowerer<'_> {
                 let part = self.lower_dep(scope, part, cur)?;
                 let idx = self.lower_dep(scope, ridx, cur)?;
                 let typ = self.fir_type(signal_id)?;
-                FirBuilder::new(&mut self.store).load_soundfile_buffer(var, chan, part, idx, typ)
+                leaf_emit::emit_soundfile_buffer(&mut self.store, var, chan, part, idx, typ)
             }
             SigMatch::VBargraph(control, inner) => {
                 self.lower_bargraph(scope, control, ui::ControlKind::VBargraph, inner, cur)?

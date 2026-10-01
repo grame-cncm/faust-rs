@@ -644,8 +644,14 @@ impl<R: FbcReal> FbcExecutor<R> {
                 }
                 LoadSoundFieldInt => {
                     // offset1 = soundfile slot index; int_value = field selector
-                    // (0 = fLength, 1 = fSR); pops part from int stack.
-                    let part = pop_int_stack(int_stack, instr.opcode, cur_block, pc)? as usize;
+                    // (0 = fLength, 1 = fSR, 2 = fChannels). fLength and fSR
+                    // pop part from the int stack; fChannels is scalar and
+                    // pops nothing.
+                    let part = if iv == 2 {
+                        0
+                    } else {
+                        pop_int_stack(int_stack, instr.opcode, cur_block, pc)? as usize
+                    };
                     let sf = self
                         .soundfiles
                         .get(o1)
@@ -653,6 +659,7 @@ impl<R: FbcReal> FbcExecutor<R> {
                     let val = match iv {
                         0 => sf.lengths.get(part).copied().unwrap_or(0),
                         1 => sf.sample_rates.get(part).copied().unwrap_or(44100),
+                        2 => i32::try_from(sf.num_channels).unwrap_or(i32::MAX),
                         _ => 0,
                     };
                     int_stack.push(val);

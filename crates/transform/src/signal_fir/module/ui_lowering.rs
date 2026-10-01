@@ -17,6 +17,7 @@ use crate::signal_fir::FirType;
 use crate::signal_fir::SigId;
 use crate::signal_fir::SignalFirError;
 use crate::signal_fir::SignalFirErrorCode;
+use crate::signal_fir::leaf_emit;
 use crate::signal_fir::module::AccessType;
 use crate::signal_fir::module::BargraphType;
 use crate::signal_fir::module::ButtonType;
@@ -194,7 +195,8 @@ impl<'a> SignalToFirLower<'a> {
     }
 
     /// Lowers `SIGSOUNDFILEBUFFER(sf, chan, part, ridx)` →
-    /// `((FAUSTFLOAT**)fSoundN->fBuffers)[chan][fSoundN->fOffset[part] + ridx]`.
+    /// `((FAUSTFLOAT**)fSoundN->fBuffers)[chan % fSoundN->fChannels][fSoundN->fOffset[part] + ridx]`
+    /// (see [`leaf_emit::emit_soundfile_buffer`]).
     pub(super) fn lower_soundfile_buffer(
         &mut self,
         node: SigId,
@@ -208,8 +210,14 @@ impl<'a> SignalToFirLower<'a> {
         let part = self.lower_signal(part)?;
         let idx = self.lower_signal(ridx)?;
         let typ = self.signal_fir_type(node)?;
-        let mut b = FirBuilder::new(&mut self.store);
-        Ok(b.load_soundfile_buffer(var, chan, part, idx, typ))
+        Ok(leaf_emit::emit_soundfile_buffer(
+            &mut self.store,
+            var,
+            chan,
+            part,
+            idx,
+            typ,
+        ))
     }
 
     /// Converts a label signal node to UTF-8 text fallback used by foreign refs.

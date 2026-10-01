@@ -113,8 +113,11 @@ Faust DSP lifecycle (`instanceInit`, `instanceResetUserInterface`,
 `instanceClear`, `compute`). Instance state is addressed as `this.<field>`;
 static struct fields as `<ClassName>.<field>`. Arrays are `StaticArray<T>`,
 numeric literals are cast-wrapped (`<i32>(n)`, `<f32>(n)`, `<f64>(n)`), and
-math routes through `Math.*` / `Mathf.*`. UI/soundfile nodes are lowered to
-comments (parity with the C++ `asc` backend). An optional embedded
+math routes through `Math.*` / `Mathf.*`. UI nodes are lowered to comments
+(parity with the C++ `asc` backend); soundfile reads call host imports
+(`env._soundfileLength`, `_soundfileRate`, `_soundfileChannels`,
+`_soundfileBuffer`), the generated code wrapping the channel as
+`chan % _soundfileChannels(slot)`. An optional embedded
 `getJSON(): string` method is emitted when `AscOptions::json` is provided.
 
 ```rust

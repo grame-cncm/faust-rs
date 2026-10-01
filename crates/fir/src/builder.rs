@@ -815,7 +815,25 @@ impl<'a> FirBuilder<'a> {
         )
     }
 
+    /// C++ parity: `fSoundN->fChannels`, the `Soundfile::kChannels` field load
+    /// `InstructionsCompiler::generateSoundfileBuffer` divides the requested
+    /// channel by. Always returns `Int32` (`int` in the Soundfile struct).
+    #[must_use]
+    pub fn load_soundfile_channels(&mut self, var: impl Into<String>) -> FirId {
+        let typ_id = encode_type(&mut self.store.arena, &FirType::Int32);
+        let var_id = self.store.arena.symbol(var);
+        intern_tag(
+            &mut self.store.arena,
+            FIR_V_LOAD_SOUNDFILE_CHANNELS_TAG,
+            &[typ_id, var_id],
+        )
+    }
+
     /// C++ parity: `LoadSoundfileInst` / `((FAUSTFLOAT**)fSoundN->fBuffers)[chan][fSoundN->fOffset[part] + idx]`.
+    ///
+    /// `chan` indexes `fBuffers` as is: the wrap of a channel beyond the real
+    /// channel count (`chan % fChannels`) is built by the lowerer into `chan`
+    /// itself, see [`Self::load_soundfile_channels`].
     #[must_use]
     pub fn load_soundfile_buffer(
         &mut self,

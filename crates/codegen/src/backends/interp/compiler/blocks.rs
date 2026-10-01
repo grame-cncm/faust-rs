@@ -177,6 +177,10 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
                 let var = var.clone();
                 self.compile_load_soundfile_rate(store, &var, part)
             }
+            FirMatch::LoadSoundfileChannels { ref var } => {
+                let var = var.clone();
+                self.compile_load_soundfile_channels(&var)
+            }
             FirMatch::LoadSoundfileBuffer {
                 ref var,
                 chan,

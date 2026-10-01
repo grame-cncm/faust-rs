@@ -14,7 +14,6 @@ const SOUND_CHAN = 2;
 const SOUND_LENGTH = 4096;
 const SOUND_SR = 44100;
 const SOUND_BUFFER_SIZE = 1024;
-const MAX_CHAN = 64;
 const MAX_SOUNDFILE_PARTS = 256;
 
 function usage() {
@@ -121,9 +120,11 @@ function installSoundfile(memory, dspPtr, zoneIndex, numRealParts, cursor) {
   const realParts = Math.min(numRealParts, MAX_SOUNDFILE_PARTS);
   cursor = align(cursor, 8);
   const rawPtr = cursor;
-  cursor += 16;
+  // fBuffers, fLength, fSR, fOffset (4-byte pointers), fChannels, fParts,
+  // fIsDouble (int32 each).
+  cursor += 28;
   const channelPtrsPtr = align(cursor, 4);
-  cursor = channelPtrsPtr + MAX_CHAN * 4;
+  cursor = channelPtrsPtr + SOUND_CHAN * 4;
   const lengthsPtr = align(cursor, 4);
   cursor = lengthsPtr + MAX_SOUNDFILE_PARTS * 4;
   const sampleRatesPtr = align(cursor, 4);
@@ -153,9 +154,14 @@ function installSoundfile(memory, dspPtr, zoneIndex, numRealParts, cursor) {
   data.setUint32(rawPtr + 4, lengthsPtr, true);
   data.setUint32(rawPtr + 8, sampleRatesPtr, true);
   data.setUint32(rawPtr + 12, offsetsPtr, true);
+  // The generated code reads channel `chan % fChannels`: only the real
+  // channels are provided, and fChannels must be >= 1.
+  data.setInt32(rawPtr + 16, SOUND_CHAN, true);
+  data.setInt32(rawPtr + 20, realParts, true);
+  data.setInt32(rawPtr + 24, 1, true);
 
-  for (let channel = 0; channel < MAX_CHAN; channel += 1) {
-    data.setUint32(channelPtrsPtr + channel * 4, buffersPtr + (channel % SOUND_CHAN) * channelBytes, true);
+  for (let channel = 0; channel < SOUND_CHAN; channel += 1) {
+    data.setUint32(channelPtrsPtr + channel * 4, buffersPtr + channel * channelBytes, true);
   }
   for (let part = 0; part < MAX_SOUNDFILE_PARTS; part += 1) {
     data.setInt32(lengthsPtr + part * 4, part < realParts ? SOUND_LENGTH : SOUND_BUFFER_SIZE, true);
@@ -165,8 +171,9 @@ function installSoundfile(memory, dspPtr, zoneIndex, numRealParts, cursor) {
   for (let part = 0; part < realParts; part += 1) {
     const partOffset = partOffsets[part];
     for (let sample = 0; sample < SOUND_LENGTH; sample += 1) {
-      const value = Math.sin(part + (2.0 * Math.PI * sample) / SOUND_LENGTH);
       for (let channel = 0; channel < SOUND_CHAN; channel += 1) {
+        // Each channel has its own phase (the C++ `TestMemoryReader`).
+        const value = Math.sin(part + channel + (2.0 * Math.PI * sample) / SOUND_LENGTH);
         data.setFloat64(buffersPtr + channel * channelBytes + (partOffset + sample) * 8, value, true);
       }
     }

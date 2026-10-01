@@ -296,6 +296,9 @@ declare function _soundfileLength(slot: i32, part: i32): i32;
 @external("env", "_soundfileRate")
 declare function _soundfileRate(slot: i32, part: i32): i32;
 
+@external("env", "_soundfileChannels")
+declare function _soundfileChannels(slot: i32): i32;
+
 @external("env", "_soundfileBuffer")
 declare function _soundfileBuffer(slot: i32, chan: i32, part: i32, idx: i32): f64;"#
     );
@@ -1028,6 +1031,10 @@ fn emit_value(
                 qualify(&var, AccessType::Struct, class_name)
             ))
         }
+        FirMatch::LoadSoundfileChannels { var } => Ok(format!(
+            "_soundfileChannels(<i32>({}))",
+            qualify(&var, AccessType::Struct, class_name)
+        )),
         FirMatch::LoadSoundfileBuffer {
             var,
             chan,

@@ -544,6 +544,7 @@ impl<'s> VerifyCtx<'s> {
                 self.check_soundfile_slot(id, &var);
                 self.check_soundfile_index_like(id, part, "part");
             }
+            FirMatch::LoadSoundfileChannels { var } => self.check_soundfile_slot(id, &var),
             FirMatch::LoadSoundfileBuffer {
                 var,
                 chan,

@@ -16,6 +16,8 @@ typedef struct Soundfile {
     int* fLength;
     int* fSR;
     int* fOffset;
+    int fChannels;
+    int fParts;
 } Soundfile;
 
 typedef struct {
