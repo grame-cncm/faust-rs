@@ -1,5 +1,5 @@
 faust-rs-golden-v1
 source=ctl_all_functions.dsp
-bytes=2822
-lines=39
-fnv1a64=aa86ae8a03a7ac4e
+bytes=3157
+lines=42
+fnv1a64=a1bd2afbdc7a31d5

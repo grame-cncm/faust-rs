@@ -3187,6 +3187,7 @@ with {
 //   (`mse`, `pseudo_huber(d)`), summed over the outputs of `e`
 // * `upd`: one engine (`adam_g(lr, b1, b2, eps)`, `sgd_g(lr)`, ...) or a list
 //   of `N`, one per control in `cinputs` order, the rate in each widget's units
+//   (`ct.by_range(f, k, e)` of controls.lib builds one per control from its range)
 // * `clock`: non-zero on the samples where a step is taken (a frame's end)
 // * `reset`: non-zero sends the parameters back to their defaults
 // * `X`: the inputs of `e`, as signals (one for a mono program, `(l, r)` for two)

@@ -219,12 +219,14 @@ réglage qu'un test écrit à la main oublie.
 
 ## 4. `controls.lib`
 
-`libraries/controls.lib` (0.1.0, préfixe `ct`) regroupe la section 3 ; elle
+`libraries/controls.lib` (0.2.0, préfixe `ct`) regroupe la section 3 ; elle
 n'importe rien, un programme n'a donc besoin que de `-I libraries`. Sections
 et fonctions :
 
 - **Lire les contrôles :** `count(e)`, `widget(i, e)`, `init(i, e)`,
-  `lo(i, e)`, `hi(i, e)`, `step(i, e)`, `inits(e)`.
+  `lo(i, e)`, `hi(i, e)`, `step(i, e)`, `inits(e)`, `range(i, e)`,
+  `ranges(e)`, `by_range(f, k, e)` (`f` de `k` fois la plage de chaque
+  contrôle : les vitesses par contrôle d'`adaptive_fad`).
 - **Rebrancher les contrôles :** `map(f, e)`, `external(e)`,
   `normalized(e)`, `cv(depth, e)`, `smooth(t, e)`, `smoother(t)`.
 - **Reconstruire l'interface :** `relabel(wdg, e)`, `knobs(e)`.

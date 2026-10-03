@@ -1094,7 +1094,9 @@ Same run. The cutoff reads `2574.69` at 10 000, `2500.47` at 40 000 and
 last 10 000 samples they are `2500.0005` and `1.1999997`, and the residual is
 `2.4e-8` rms. `upd` is a list of `N` engines, one per control in `cinputs`
 order. It can also be a single engine, as above, or engines of different
-kinds.
+kinds. `controls.lib` packages the pattern: `ct.by_range(f, k, e)` is `f`
+applied to `k` times the range of each control, so the list above is
+`ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, e)`.
 
 Three remarks:
 

@@ -198,11 +198,13 @@ and 0 elsewhere, the kind of setting a hand-written test forgets.
 
 ## 4. `controls.lib`
 
-`libraries/controls.lib` (0.1.0, prefix `ct`) packages section 3; it imports
+`libraries/controls.lib` (0.2.0, prefix `ct`) packages section 3; it imports
 nothing, so a program needs only `-I libraries`. Sections and functions:
 
 - **Reading the controls:** `count(e)`, `widget(i, e)`, `init(i, e)`,
-  `lo(i, e)`, `hi(i, e)`, `step(i, e)`, `inits(e)`.
+  `lo(i, e)`, `hi(i, e)`, `step(i, e)`, `inits(e)`, `range(i, e)`,
+  `ranges(e)`, `by_range(f, k, e)` (`f` of `k` times each control's range:
+  the per-control rates of `adaptive_fad`).
 - **Rebinding the controls:** `map(f, e)`, `external(e)`, `normalized(e)`,
   `cv(depth, e)`, `smooth(t, e)`, `smoother(t)`.
 - **Rebuilding the interface:** `relabel(wdg, e)`, `knobs(e)`.

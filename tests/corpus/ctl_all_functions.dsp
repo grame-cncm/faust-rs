@@ -17,6 +17,9 @@ lo_test = ct.lo(0, hslider("lo:a", 0.5, 0, 1, 0.1));
 hi_test = ct.hi(0, hslider("hi:a", 0.5, 0, 1, 0.1));
 step_test = ct.step(0, hslider("step:a", 0.5, 0, 1, 0.1));
 inits_test = ct.inits(hslider("inits:a", 0.5, 0, 1, 0.1) + hslider("inits:b", 0.25, 0, 1, 0.1));
+range_test = ct.range(0, hslider("range:f", 440, 20, 20000, 1));
+ranges_test = ct.ranges(hslider("ranges:f", 440, 20, 20000, 1) * hslider("ranges:g", 0, -1, 1, 0.01));
+by_range_test = ct.by_range(\(s).(s), 0.01, hslider("by_range:f", 440, 20, 20000, 1) * hslider("by_range:g", 0, -1, 1, 0.01));
 map_test = ct.map(f, e)
 with { e = hslider("map:a", 0.5, 0, 1, 0.1) * 10 + hslider("map:b", 0.25, 0, 1, 0.1); f(i, w) = w * (i + 1); };
 external_test = (0.5, 0.25) : ct.external(hslider("external:a", 0, 0, 1, 0.1) * 10 + hslider("external:b", 0, 0, 1, 0.1));
@@ -36,4 +39,4 @@ nonfinite_test = (1, 1.0 / (_ - 1)) : ct.nonfinite(2);
 gradient_fad_test = 1 : ct.gradient_fad(*(hslider("gradient_fad:a", 0.5, 0, 1, 0.1)));
 gradient_rad_test = 1 : ct.gradient_rad(*(hslider("gradient_rad:a", 0.5, 0, 1, 0.1)));
 
-process = count_test, widget_test, init_test, lo_test, hi_test, step_test, inits_test, map_test, external_test, normalized_test, cv_test, smooth_test, smoother_test, relabel_test, knobs_test, morph_test, randomize_test, offset_test, sweep_test, sweep_one_test, nonfinite_test, gradient_fad_test, gradient_rad_test;
+process = count_test, widget_test, init_test, lo_test, hi_test, step_test, inits_test, range_test, ranges_test, by_range_test, map_test, external_test, normalized_test, cv_test, smooth_test, smoother_test, relabel_test, knobs_test, morph_test, randomize_test, offset_test, sweep_test, sweep_one_test, nonfinite_test, gradient_fad_test, gradient_rad_test;

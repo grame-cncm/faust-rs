@@ -896,7 +896,14 @@ lequel la bibliothèque recommande `adaptive_fad`.
 
 **Optimiseur.** `descend_N_fad_clocked`, que fait tourner `adaptive_fad`,
 avec un `adam_g` par curseur. La vitesse de chacun vaut 1 % de la plage de
-son curseur, lue avec `cinput` : 0,3 dB sur le drive, 75 Hz sur la
+son curseur, la liste construite en une ligne par `ct.by_range` de
+[controls.lib](controls.lib) :
+
+```faust
+upd = ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, pedal);
+```
+
+Soit 0,3 dB sur le drive, 75 Hz sur la
 tonalité, 3,8 Hz sur le filtre serré. Il y a un pas tous les 512
 échantillons, sur la moyenne par trame des gradients, et chaque paramètre
 est borné par la plage de son curseur. Une seule vitesse laisserait les

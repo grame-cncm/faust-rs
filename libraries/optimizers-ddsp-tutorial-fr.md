@@ -1127,7 +1127,10 @@ Même exécution. La coupure lit `2574,69` à 10 000, `2500,47` à 40 000 et
 10 000 derniers échantillons ils valent `2500,0005` et `1,1999997`, et le
 résidu `2,4e-8` rms. `upd` est une liste de `N` moteurs, un par contrôle dans
 l'ordre de `cinputs`. Ce peut aussi être un seul moteur, comme plus haut, ou
-des moteurs de natures différentes.
+des moteurs de natures différentes. `controls.lib` regroupe ce motif :
+`ct.by_range(f, k, e)` applique `f` à `k` fois la plage de chaque contrôle,
+si bien que la liste ci-dessus s'écrit
+`ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, e)`.
 
 Trois remarques :
 

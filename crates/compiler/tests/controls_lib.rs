@@ -137,6 +137,15 @@ fn the_readers_give_the_count_the_widget_and_its_parameters() {
 }
 
 #[test]
+fn range_ranges_and_by_range_scale_each_control_to_its_units() {
+    assert_close(
+        &first_samples("ctl_08_ranges", &[]),
+        &[19980.0, 19980.0, 2.0, 1.0, 400.6, 1.04, 1.02],
+        "range, ranges, by_range",
+    );
+}
+
+#[test]
 fn map_external_normalized_and_cv_rebind_every_control() {
     assert_close(
         &first_samples("ctl_02_rebinding", &[0.3, 0.4, 0.2, 0.5, 0.1, -0.1]),
@@ -238,10 +247,10 @@ fn the_gradients_follow_the_fad_and_rad_layouts() {
 
 #[test]
 fn every_documented_function_compiles_and_runs() {
-    // 23 Test entries, 26 outputs (inits and the two gradients give two), one
-    // input (nonfinite_test)
+    // 26 Test entries, 31 outputs (inits, ranges, by_range and the two
+    // gradients give two), one input (nonfinite_test)
     let outs = run("ctl_all_functions", &[0.0], 256);
-    assert_eq!(outs.len(), 26, "the outputs of every Test entry");
+    assert_eq!(outs.len(), 31, "the outputs of every Test entry");
     for (channel, samples) in outs.iter().enumerate() {
         assert!(
             samples.iter().all(|v| v.is_finite()),

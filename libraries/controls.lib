@@ -1,5 +1,5 @@
 declare name "Faust Control Inputs Library";
-declare version "0.1.0";
+declare version "0.2.0";
 declare author "faust-rs";
 declare license "MIT/LGPL-3.0";
 
@@ -43,14 +43,17 @@ declare license "MIT/LGPL-3.0";
 // process = ct.smooth(0.05, e);
 // ```
 //
+// Changes in 0.2.0: `range`, `ranges` and `by_range`, a function of each
+// control's range (the per-control rates of `adaptive_fad`).
+//
 // Changes in 0.1.0: first version.
 //########################################################################################
 
 //==================================Reading the Controls====================================
 // The number of control inputs of `e` and, for the i-th (0-based, in
-// `cinputs` order), its widget and its evaluated default, minimum, maximum
-// and step. The numbers are compile-time constants: they can set the
-// parameters of another widget, size a `par`, or scale a rate.
+// `cinputs` order), its widget and its evaluated default, minimum, maximum,
+// step and range. The numbers are compile-time constants: they can set the
+// parameters of another widget, size a `par`, or scale a rate (`by_range`).
 //==========================================================================================
 
 //------------------------------`(ct.)count`---------------------------------
@@ -207,6 +210,89 @@ step(i, e) = cinput(i, e) : (!, !, !, !, _);
 // ```
 //------------------------------------------------------------------------------
 inits(e) = par(i, count(e), init(i, e));
+
+//------------------------------`(ct.)range`---------------------------------
+// The range of the i-th control input of `e`, `hi(i, e) - lo(i, e)`, a
+// constant: the scale of that control in its own units, 1 for a button or
+// a checkbox.
+//
+// #### Usage
+//
+// ```
+// range(i, e) : _
+// ```
+//
+// Where:
+//
+// * `i`: the index, 0-based, a constant below `count(e)`
+// * `e`: a closed program
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// range_test = ct.range(0, hslider("range:f", 440, 20, 20000, 1));
+// ```
+//------------------------------------------------------------------------------
+range(i, e) = hi(i, e) - lo(i, e);
+
+//------------------------------`(ct.)ranges`---------------------------------
+// The ranges of all the control inputs of `e`, as a list of `count(e)`
+// constants in `cinputs` order.
+//
+// #### Usage
+//
+// ```
+// ranges(e) : si.bus(count(e))
+// ```
+//
+// Where:
+//
+// * `e`: a closed program with at least one control input
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// ranges_test = ct.ranges(hslider("ranges:f", 440, 20, 20000, 1) * hslider("ranges:g", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+ranges(e) = par(i, count(e), range(i, e));
+
+//------------------------------`(ct.)by_range`---------------------------------
+// `f` applied to `k` times the range of each control input of `e`: a list of
+// `count(e)` results in `cinputs` order, each scaled to its control's own
+// units. With `f` a learning engine of `optimizers.lib` and `k` a fraction,
+// it is the list of engines that `adaptive_fad` / `adaptive_rad` take, each
+// control stepping by the same fraction of its range: a frequency in hertz
+// and a gain in decibels then move alike, where one rate for all would
+// leave the frequencies where they are.
+//
+// #### Usage
+//
+// ```
+// by_range(f, k, e)
+// ```
+//
+// Where:
+//
+// * `f`: a function of one constant, the scaled range
+// * `k`: the fraction of each range, a constant
+// * `e`: a closed program with at least one control input
+//
+// #### Example
+//
+// ```
+// op = library("optimizers.lib");
+// upd = ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, e);
+// process(x, t) = op.adaptive_fad(e, op.mse, upd, clock, button("reset"), x, t);
+// ```
+//
+// #### Test
+// ```
+// ct = library("controls.lib");
+// by_range_test = ct.by_range(\(s).(s), 0.01, hslider("by_range:f", 440, 20, 20000, 1) * hslider("by_range:g", 0, -1, 1, 0.01));
+// ```
+//------------------------------------------------------------------------------
+by_range(f, k, e) = par(i, count(e), f(k * range(i, e)));
 
 //==================================Rebinding the Controls==================================
 // The program `e` whose control inputs read something else than their

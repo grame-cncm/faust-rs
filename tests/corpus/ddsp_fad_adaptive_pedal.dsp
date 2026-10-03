@@ -14,8 +14,8 @@
 // defaults with `cinput`, rebinds them with the `"*"` modulation and runs
 // `descend_N_fad_clocked`: one Adam step every 512 samples on the frame
 // mean of the six `fad` gradients of the squared error, each step 1 % of
-// the slider's own range (read with `cinput`), each parameter bounded by
-// its slider's range and started at its default.
+// the slider's own range (`ct.by_range` of controls.lib), each parameter
+// bounded by its slider's range and started at its default.
 //
 // The mid peak is `fi.peak_eq_rm`, smooth in its gain: `fi.peak_eq` takes
 // `abs` of the gain, whose derivative at its 0 dB default is not a number.
@@ -24,7 +24,7 @@
 // -6 dB, 1200 Hz, 5 dB, 150 Hz, 1800 Hz) from 175 000 samples, residual
 // 2e-7 rms over the last 20 000 of 200 000.
 //
-// Requires -I libraries (project-local optimizers.lib) and the directory of the
+// Requires -I libraries (project-local optimizers.lib, controls.lib) and the directory of the
 // Faust standard libraries on the import path (-I <faustlibraries>).
 //
 // Outputs: [drive, level, mid_freq, mid_gain, tight, tone, residual], the
@@ -32,6 +32,7 @@
 
 import("stdfaust.lib");
 op = library("optimizers.lib");
+ct = library("controls.lib");
 
 // the effect, as written for a player
 pedal = hgroup("pedal",
@@ -50,9 +51,7 @@ with { env = 0.55 + 0.45 * sin(2 * ma.PI * os.phasor(1, 1.3)); };
 target = x : hidden;
 
 // one Adam per slider, its step 1 % of the slider's range
-N = outputs(cinputs(pedal));
-range(i) = cinput(i, pedal) : !, !, \(lo, hi).(hi - lo), !;
-upd = par(i, N, op.adam_g(0.01 * range(i), 0.9, 0.999, 1e-8));
+upd = ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, pedal);
 clock = (ba.time % 512) == 511;
 
-process = op.adaptive_fad(pedal, op.mse, upd, clock, 0, x, target) : \(y).(si.bus(N), y - target);
+process = op.adaptive_fad(pedal, op.mse, upd, clock, 0, x, target) : \(y).(si.bus(ct.count(pedal)), y - target);

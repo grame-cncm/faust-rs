@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=ctl_08_ranges.dsp
+bytes=662
+lines=11
+fnv1a64=e219266796528364

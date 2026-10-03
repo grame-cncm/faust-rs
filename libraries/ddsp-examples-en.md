@@ -840,8 +840,14 @@ direct term (tutorial, section 10.5). This is the case for which the library
 recommends `adaptive_fad`.
 
 **Optimizer.** `descend_N_fad_clocked`, which `adaptive_fad` runs, with one
-`adam_g` per slider. Each one's rate is 1 % of its slider's range, read with
-`cinput`: 0.3 dB on the drive, 75 Hz on the tone, 3.8 Hz on the tight
+`adam_g` per slider. Each one's rate is 1 % of its slider's range, the list
+built by `ct.by_range` of [controls.lib](controls.lib) in one line:
+
+```faust
+upd = ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, pedal);
+```
+
+That is 0.3 dB on the drive, 75 Hz on the tone, 3.8 Hz on the tight
 filter. There is one step every 512 samples, on the frame mean of the
 gradients, and every parameter is bounded by its slider's range. A single
 rate would leave the frequencies where they are (tutorial, section 11.5).

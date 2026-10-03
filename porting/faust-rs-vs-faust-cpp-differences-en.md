@@ -148,7 +148,7 @@ verified Rust extension must not be presented as a proof of C++ parity.
   wildcard target as a label that matches nothing (a dangling input and a
   warning under `-wall`), so a program using them is a `faust-rs` program.
   `optimizers.lib` 0.11.0 (`adaptive_fad`, `adaptive_rad`) and the
-  Rust-only library `controls.lib` 0.1.0 (smoothing, CV inputs, rebuilt
+  Rust-only library `controls.lib` 0.2.0 (smoothing, CV inputs, rebuilt
   interfaces, morphing, randomizing, sweeps, gradients over every control of
   a program) depend on them.
 - Evidence: [`docs/control-inputs-en.md`](../docs/control-inputs-en.md),
