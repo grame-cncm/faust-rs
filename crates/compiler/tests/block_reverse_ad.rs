@@ -1356,3 +1356,41 @@ process = rad(rdtable(waveform{0.0, 1.0, 0.0, -1.0}, int(x * 3.0))', x);
         assert_close_f32(outputs[1][n], 0.0, 1.0e-5, &format!("grad[{n}]"));
     }
 }
+
+/// `int(x)` truncates: the block sweep stops the adjoint there, as the
+/// symbolic sweep and FAD do (`docs/rad-note-en.md` §3.5). An integer body
+/// reaches the `IntCast` without an int→real `FloatCast` boundary in
+/// between; the sweep used to forward the adjoint through it, a
+/// straight-through gradient of 10 for `int(10 * x)` where FAD gives 0.
+/// The delay and the integer recursion force the BlockReverseAD fallback.
+#[test]
+fn fir_bra_int_cast_stops_the_adjoint() {
+    let frame_count = BS;
+    for (stem, body, primal) in [
+        (
+            "fir-bra-intcast-delay",
+            "int(x * 10.0)'",
+            [0.0_f32, 5.0, 5.0],
+        ),
+        (
+            "fir-bra-intcast-rec",
+            "int(x * 10.0) : (+ ~ _)",
+            [5.0, 10.0, 15.0],
+        ),
+    ] {
+        let source = format!(
+            r#"
+x = hslider("x", 0.5, 0.0, 1.0, 0.01);
+process = rad({body}, x);
+"#
+        );
+        let outputs = run_bra_source(stem, &source, frame_count);
+        assert_eq!(outputs.len(), 2, "{stem}: layout [primal, grad]");
+        for (n, &want) in primal.iter().enumerate() {
+            assert_close_f32(outputs[0][n], want, 1.0e-5, &format!("{stem} primal[{n}]"));
+        }
+        for n in 0..frame_count {
+            assert_close_f32(outputs[1][n], 0.0, 1.0e-5, &format!("{stem} grad[{n}]"));
+        }
+    }
+}

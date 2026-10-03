@@ -1079,7 +1079,13 @@ impl<'a> SignalToFirLower<'a> {
                     Self::add_to_adjoint(&mut self.store, adj, x, y_bar, real_ty);
                 }
             }
-            SigMatch::IntCast(x) | SigMatch::BitCast(x) => {
+            // `int(x)` truncates: its derivative is zero almost everywhere,
+            // and the adjoint stops here (`docs/rad-note-en.md` §3.5), as in
+            // the symbolic sweep and as FAD's zero tangent. Forwarding it
+            // would hand `x` a straight-through gradient: `rad(int(10 * g)', g)`
+            // read 10 where `fad` reads 0.
+            SigMatch::IntCast(_) => {}
+            SigMatch::BitCast(x) => {
                 Self::add_to_adjoint(&mut self.store, adj, x, y_bar, real_ty);
             }
 

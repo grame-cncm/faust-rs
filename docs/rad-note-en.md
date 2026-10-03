@@ -213,6 +213,12 @@ selector.
 | `int_cast(x)` | no contribution (discontinuous truncation) |
 | `bit_cast(x)` | unsupported representation-level operation; RAD rejects it |
 
+The symbolic sweep and the `BlockReverseAD` sweep apply the same `int_cast`
+rule, and FAD's tangent through `int` is zero too: `rad(int(10 * g)', g)`
+gives 0, not the straight-through 10 that the block sweep returned before
+2026-10-03. The block sweep also treats an int→real `float_cast` as a
+boundary, so that no real adjoint enters integer arithmetic.
+
 ### 3.6 Read-only tables
 
 For `y = rdtbl(T, idx)` where `T` is read-only (a `Waveform` or a
