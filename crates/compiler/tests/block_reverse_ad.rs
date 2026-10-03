@@ -1286,3 +1286,73 @@ process = rad(x@2 * x, x);
     assert_close_f32(outputs[1][frame_count - 2], 2.0, 1.0e-5, "grad[BS-2]");
     assert_close_f32(outputs[1][frame_count - 1], 2.0, 1.0e-5, "grad[BS-1]");
 }
+
+/// A read-only table read on the primal path, as `os.osc` does, inside a
+/// temporal body (the integer phase recursion forces the BlockReverseAD
+/// fallback). The table's contents are constant data and its integer read
+/// index is a gradient boundary, so `rad(table[phase] * x, x)` is the table
+/// value at each sample. Both read-only forms are covered: a `waveform`, and
+/// the write-once table `rdtable(n, generator, index)` builds.
+///
+/// Before this rule the sweep refused the `RdTbl` node (FRS-SFIR-0004),
+/// though `docs/rad-note-en.md` §3.6 lists read-only tables as supported.
+#[test]
+fn fir_bra_readonly_table_read_on_the_primal_path() {
+    let frame_count = BS;
+    let expected = [1.0_f32, 0.0, -1.0, 0.0];
+    for (stem, table) in [
+        (
+            "fir-bra-rdtbl-waveform",
+            "rdtable(waveform{0.0, 1.0, 0.0, -1.0}, phase)",
+        ),
+        (
+            "fir-bra-rdtbl-generated",
+            "rdtable(4, sin(float((+(1) ~ _) - 1) * 1.5707963267948966), phase)",
+        ),
+    ] {
+        let source = format!(
+            r#"
+x = hslider("x", 0.5, 0.0, 1.0, 0.01);
+phase = (+(1) : %(4)) ~ _;
+process = rad({table} * x, x);
+"#
+        );
+        let outputs = run_bra_source(stem, &source, frame_count);
+        assert_eq!(outputs.len(), 2, "{stem}: layout [primal, grad]");
+        for n in 0..frame_count {
+            let value = expected[n % 4];
+            assert_close_f32(
+                outputs[0][n],
+                0.5 * value,
+                1.0e-5,
+                &format!("{stem} primal[{n}]"),
+            );
+            assert_close_f32(outputs[1][n], value, 1.0e-5, &format!("{stem} grad[{n}]"));
+        }
+    }
+}
+
+/// A seed reaching a read-only table only through its integer read index
+/// has a zero gradient, as FAD's tangent through an integer index is zero:
+/// the index is a gradient boundary, and no real adjoint enters the integer
+/// arithmetic that computes it. The delay forces the BlockReverseAD fallback.
+#[test]
+fn fir_bra_seed_in_a_table_index_has_zero_gradient() {
+    let frame_count = BS;
+    let source = r#"
+x = hslider("x", 0.5, 0.0, 1.0, 0.01);
+process = rad(rdtable(waveform{0.0, 1.0, 0.0, -1.0}, int(x * 3.0))', x);
+"#;
+    let outputs = run_bra_source("fir-bra-rdtbl-index-seed", source, frame_count);
+    assert_eq!(outputs.len(), 2, "layout: [primal, grad]");
+    for n in 0..frame_count {
+        let expected_primal = if n == 0 { 0.0 } else { 1.0 };
+        assert_close_f32(
+            outputs[0][n],
+            expected_primal,
+            1.0e-5,
+            &format!("primal[{n}]"),
+        );
+        assert_close_f32(outputs[1][n], 0.0, 1.0e-5, &format!("grad[{n}]"));
+    }
+}

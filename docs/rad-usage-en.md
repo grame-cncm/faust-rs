@@ -330,7 +330,11 @@ cargo run --release -p compiler --example rad_vs_fad_perf
   gradient.
 - **Table-index approximation.** Read-only table lookup differentiates the
   index using a symmetric finite-difference slope; table contents remain
-  constant.
+  constant. The index is an integer in practice (`os.osc` reads its table at
+  `int(phase)`), so a seed that reaches a table only through its index gets
+  a zero gradient, as under FAD. A table read on the primal path, such as an
+  oscillator in the excitation, is supported in both sweeps
+  (`rad-note-en.md` §3.6).
 - **Non-smooth points.** Rules are not automatically regularized; for example,
   the current `abs` derivative uses `x / abs(x)` and may produce `NaN` at zero.
 

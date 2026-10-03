@@ -194,8 +194,8 @@ figures, since the test does not check them.
 
 - **`fi.peak_eq_rm`, not `fi.peak_eq`.** The latter takes `abs` of its gain,
   whose derivative at the 0 dB default is not a number (F1).
-- **A `sin(2 pi phasor)` envelope, not `os.osc`.** This keeps the file
-  runnable under `adaptive_rad` (F2).
+- **A `sin(2 pi phasor)` envelope, not `os.osc`.** This kept the file
+  runnable under `adaptive_rad` while F2 was open (it is now fixed).
 
 ## 5. Findings during prototyping
 
@@ -217,12 +217,16 @@ failed with:
 ```
 
 `docs/rad-note-en.md` §3.6 says read-only tables are supported, with the
-table contents treated as constant. One possible link to check is the runtime
-table fill, now the default (`--table-init runtime`): it may no longer
-present the oscillator table as a write-once `WrTbl(_, _, nil, nil)`.
+table contents treated as constant.
 
-To be investigated separately. Minimal reproducer: any `rad` loop whose loss
-reads `os.osc(f)`. The examples work around it with `sin(2 pi phasor)`.
+**Fixed on 2026-10-03** (journal of that day). The cause was not the
+runtime table fill: the minimal case `rad(os.osc(110) * g, g)` failed under
+`--table-init const` too. The phase recursion of `os.osc` routes the body to
+the `BlockReverseAD` fallback, and that sweep had no `RdTbl` rule. It now
+treats the contents as constant and the integer read index as a gradient
+boundary. `rad` and `fad` agree sample for sample on `os.osc(f) * g`. The
+pedal with an `os.osc` envelope now compiles under `adaptive_rad`. The
+fixture keeps `sin(2 pi phasor)`, which works in both modes.
 
 **F3. `adaptive_rad` drifts on a recursive model** (§4.2). This is expected
 and already documented. It is recorded here as the measured instance the
@@ -243,5 +247,4 @@ example quotes.
      builds on.
   2. Should the ambitious example also quote measured `adaptive_rad` figures,
      with a second test pinning them, or stay qualitative?
-  3. Should F2 be fixed before the examples land, so that the excitation can
-     use `os.osc` as the other examples do?
+  3. ~~Should F2 be fixed before the examples land?~~ Fixed on 2026-10-03.

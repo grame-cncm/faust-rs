@@ -229,6 +229,18 @@ idx_bar += y_bar · slope
 Mutable tables (`WrTbl` with non-nil write ports) refuse adjoint and
 raise `RadUnsupportedNode { kind: "writable-table" }`.
 
+In practice the read index is an integer: `rdtable(n, t, int(phase))`, as
+in `os.osc`, and signal promotion casts any other index. An integer index is
+a gradient boundary, so the contribution above reaches nothing. In the
+symbolic sweep, the `int_cast` that produced the index stops it. In the
+`BlockReverseAD` sweep, which a temporal body such as `os.osc`'s phase
+recursion routes to, `RdTbl` gives its integer index no adjoint at all, as an
+int→real `float_cast` does, so that no real adjoint enters integer
+arithmetic. FAD agrees: the tangent of an integer index is zero. A table read
+on the primal path, such as an oscillator in the excitation, therefore costs
+nothing in the backward sweep. The block sweep refuses a writable table, as
+the symbolic sweep does.
+
 ### 3.7 Foreign functions
 
 Recognised unary FFun families (precision-agnostic match on the
