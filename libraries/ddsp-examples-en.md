@@ -57,7 +57,7 @@ introduction is [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md)
 | 12 | `ddsp_fad_fdn_gated` | calibrate the FDN, then switch its learning off | `fad` in `gated` | `lm_2D` in an `ondemand` gated by `stop_below`, gains by `on_change` | (0.600, 0.300) frozen at the sixth period; the learning then costs nothing |
 | 13 | `ddsp_fad_string_self_tuning` | tune the string from its own pitch estimate, no start chosen by hand | `fad` | `lsq_1D` + `nlms`, `init_latch` and `init_reset` on an autocorrelation peak | init frozen at 222.77 Hz, 220.000000 from 48 000 samples on |
 | 14 | `ddsp_spsa_delay_estimation` | find the integer delay between a signal and its copy | none: two loss evaluations per frame | `spsa_1D_clocked` + Adam per 256-sample frame | `int(d)` 160 → 200 by 25 000 samples, held; the `fad` tangent is identically 0 |
-| 15 | `ddsp_fad_adaptive_pedal` | recall the six sliders of a drive pedal from a recording, the program untouched | `fad` | `adaptive_fad` (`descend_N_fad_clocked`), one Adam per slider at 1 % of its range, a step per 512-sample frame | the six sliders within 1e-4 of the hidden setting in 200 000 samples, residual 2e-7 rms |
+| 15 | `ddsp_fad_adaptive_pedal` | recall the six sliders of a drive pedal from a recording, the program untouched | `fad` | `adaptive_fad` (`descend_N_fad_clocked`), one Adam per slider at 1 % of its range, a step per 512-sample frame | the six sliders within 1e-4 of the hidden setting in 200 000 samples, residual 1.2e-6 rms |
 
 **Where the optimizer runs.** Eight examples take one step per audio sample
 inside the graph, through the loops of the library (`lsq_1D`, `lm_2D`,
@@ -872,14 +872,14 @@ rate would leave the frequencies where they are (tutorial, section 11.6).
 
 | samples | drive | level | mid_freq | mid_gain | tight | tone |
 |---|---|---|---|---|---|---|
-| 25 000 | 18.33 | −4.43 | 1187.2 | 4.13 | 137.7 | 2730.7 |
-| 50 000 | 18.93 | −5.57 | 1201.7 | 5.34 | 144.9 | 1846.3 |
-| 100 000 | 19.94 | −5.95 | 1199.3 | 4.96 | 149.6 | 1808.5 |
-| 150 000 | 19.9996 | −6.0000 | 1199.990 | 4.9996 | 149.997 | 1800.08 |
+| 25 000 | 18.06 | −4.05 | 1179.8 | 5.06 | 144.5 | 1747.7 |
+| 50 000 | 18.75 | −5.44 | 1192.5 | 4.65 | 144.3 | 1839.4 |
+| 100 000 | 19.88 | −5.90 | 1200.7 | 4.98 | 149.6 | 1805.5 |
+| 150 000 | 19.9976 | −5.9988 | 1200.170 | 4.9996 | 149.993 | 1799.91 |
 
-Over the last 20 000 of 200 000 samples the six sliders are within 1e-5 of
-the hidden setting, and the residual is 2e-7 rms. The program runs at about
-130 times real time.
+Over the last 20 000 of 200 000 samples the six sliders are within 3e-5
+(relative) of the hidden setting, and the residual is 1.2e-6 rms. The
+program runs at about 130 times real time.
 
 **With faustprobe.** Columns drive, level, mid_freq, mid_gain, tight, tone
 (the interface order), residual:
@@ -888,8 +888,8 @@ the hidden setting, and the residual is 2e-7 rms. The program runs at about
 faustprobe --double -I libraries -I <faustlibraries> --in zero -n 200000 --every 25000 tests/corpus/ddsp_fad_adaptive_pedal.dsp
 ```
 
-The lines of the table above, then `20.0001, −6.0001, 1199.999, 4.99996,
-150.0001, 1800.015` at 175 000. With `--skip 180000 --quiet`, the `dc` of
+The lines of the table above, then `20.0001, −6.0001, 1200.023, 4.99999,
+150.0008, 1799.9985` at 175 000. With `--skip 180000 --quiet`, the `dc` of
 each column is the learned value and the `rms` of the last one the residual.
 
 **Try.**

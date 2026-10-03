@@ -61,7 +61,7 @@ depuis la racine du dépôt.
 | 12 | `ddsp_fad_fdn_gated` | calibrer la FDN, puis couper son apprentissage | `fad` dans `gated` | `lm_2D` dans un `ondemand` cadencé par `stop_below`, gains par `on_change` | (0,600, 0,300) figés à la sixième période ; l'apprentissage ne coûte plus rien |
 | 13 | `ddsp_fad_string_self_tuning` | accorder la corde depuis sa propre estimation de hauteur, sans départ choisi à la main | `fad` | `lsq_1D` + `nlms`, `init_latch` et `init_reset` sur un pic d'autocorrélation | init figé à 222,77 Hz, 220,000000 dès 48 000 échantillons |
 | 14 | `ddsp_spsa_delay_estimation` | trouver le retard entier entre un signal et sa copie | aucun : deux évaluations de la perte par trame | `spsa_1D_clocked` + Adam par trame de 256 | `int(d)` de 160 à 200 en 25 000 échantillons, tenu ; la tangente `fad` est identiquement nulle |
-| 15 | `ddsp_fad_adaptive_pedal` | retrouver les six curseurs d'une pédale de saturation à partir d'un enregistrement, sans toucher au programme | `fad` | `adaptive_fad` (`descend_N_fad_clocked`), un Adam par curseur à 1 % de sa plage, un pas par trame de 512 échantillons | les six curseurs à 1e-4 du réglage caché en 200 000 échantillons, résidu 2e-7 rms |
+| 15 | `ddsp_fad_adaptive_pedal` | retrouver les six curseurs d'une pédale de saturation à partir d'un enregistrement, sans toucher au programme | `fad` | `adaptive_fad` (`descend_N_fad_clocked`), un Adam par curseur à 1 % de sa plage, un pas par trame de 512 échantillons | les six curseurs à 1e-4 du réglage caché en 200 000 échantillons, résidu 1,2e-6 rms |
 
 **Où tourne l'optimiseur.** Huit exemples font un pas par échantillon audio
 dans le graphe, par les boucles de la bibliothèque (`lsq_1D`, `lm_2D`,
@@ -929,14 +929,14 @@ fréquences où elles sont (tutoriel, section 11.6).
 
 | échantillons | drive | level | mid_freq | mid_gain | tight | tone |
 |---|---|---|---|---|---|---|
-| 25 000 | 18,33 | −4,43 | 1187,2 | 4,13 | 137,7 | 2730,7 |
-| 50 000 | 18,93 | −5,57 | 1201,7 | 5,34 | 144,9 | 1846,3 |
-| 100 000 | 19,94 | −5,95 | 1199,3 | 4,96 | 149,6 | 1808,5 |
-| 150 000 | 19,9996 | −6,0000 | 1199,990 | 4,9996 | 149,997 | 1800,08 |
+| 25 000 | 18,06 | −4,05 | 1179,8 | 5,06 | 144,5 | 1747,7 |
+| 50 000 | 18,75 | −5,44 | 1192,5 | 4,65 | 144,3 | 1839,4 |
+| 100 000 | 19,88 | −5,90 | 1200,7 | 4,98 | 149,6 | 1805,5 |
+| 150 000 | 19,9976 | −5,9988 | 1200,170 | 4,9996 | 149,993 | 1799,91 |
 
 Sur les 20 000 derniers des 200 000 échantillons, les six curseurs sont à
-1e-5 du réglage caché, et le résidu vaut 2e-7 rms. Le programme tourne
-environ 130 fois plus vite que le temps réel.
+3e-5 près (relatif) du réglage caché, et le résidu vaut 1,2e-6 rms. Le
+programme tourne environ 130 fois plus vite que le temps réel.
 
 **Avec faustprobe.** Colonnes drive, level, mid_freq, mid_gain, tight, tone
 (l'ordre de l'interface), résidu :
@@ -945,8 +945,8 @@ environ 130 fois plus vite que le temps réel.
 faustprobe --double -I libraries -I <faustlibraries> --in zero -n 200000 --every 25000 tests/corpus/ddsp_fad_adaptive_pedal.dsp
 ```
 
-Les lignes du tableau ci-dessus, puis `20,0001, −6,0001, 1199,999, 4,99996,
-150,0001, 1800,015` à 175 000. Avec `--skip 180000 --quiet`, le `dc` de
+Les lignes du tableau ci-dessus, puis `20,0001, −6,0001, 1200,023, 4,99999,
+150,0008, 1799,9985` à 175 000. Avec `--skip 180000 --quiet`, le `dc` de
 chaque colonne est la valeur apprise et le `rms` de la dernière le résidu.
 
 **À essayer.**
