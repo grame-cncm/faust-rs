@@ -54,4 +54,9 @@ target = x : hidden;
 upd = ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, pedal);
 clock = (ba.time % 512) == 511;
 
+// adaptive_fad outputs the pedal's audio, then the six learned sliders. The
+// lambda names the audio `y`; its body's free inputs, the `si.bus` of the
+// six sliders, follow `y` as inputs of the lambda, so the six pass through
+// unchanged and the audio is replaced by the residual `y - target`.
+// `ct.count(pedal)` keeps the bus as wide as the pedal has controls.
 process = op.adaptive_fad(pedal, op.mse, upd, clock, 0, x, target) : \(y).(si.bus(ct.count(pedal)), y - target);
