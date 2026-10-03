@@ -779,3 +779,38 @@ fn spsa_delay_estimation_finds_the_integer_delay_without_a_gradient() {
         "the comb should match once the delay is right, got rms {residual}"
     );
 }
+
+#[test]
+fn fad_adaptive_pedal_learns_its_six_sliders_without_being_rewritten() {
+    // [drive, level, mid_freq, mid_gain, tight, tone, residual]: the
+    // pedal's sliders, rebound by `adaptive_fad` and stepped by Adam at 1 %
+    // of their own range every 512 samples, reach the hidden setting of the
+    // same program from its defaults.
+    let Some(outs) = render("ddsp_fad_adaptive_pedal", 200_000) else {
+        return;
+    };
+    assert_eq!(outs.len(), 7);
+    assert_finite("ddsp_fad_adaptive_pedal", &outs);
+    let defaults = [12.0, -12.0, 800.0, 0.0, 80.0, 3000.0];
+    let hidden = [20.0, -6.0, 1200.0, 5.0, 150.0, 1800.0];
+    let names = ["drive", "level", "mid_freq", "mid_gain", "tight", "tone"];
+    for (i, name) in names.iter().enumerate() {
+        assert_eq!(
+            f64::from(outs[i][0]),
+            defaults[i],
+            "{name} should start at its slider's default"
+        );
+        let learned = mean(&outs[i][180_000..]);
+        assert!(
+            (learned - hidden[i]).abs() <= 1e-3 * hidden[i].abs().max(1.0),
+            "{name}: learned {learned}, hidden {}",
+            hidden[i]
+        );
+    }
+    let residual = rms(&outs[6][180_000..]);
+    eprintln!("adaptive pedal: residual {residual:.3e}");
+    assert!(
+        residual < 1e-5,
+        "the pedal should match the recording, got rms {residual}"
+    );
+}

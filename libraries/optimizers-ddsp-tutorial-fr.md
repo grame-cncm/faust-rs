@@ -17,7 +17,8 @@ schedule, un gating, une lecture et une remise à zéro, Newton résout ce qui n
 pas à être appris, `rad` remet ses gradients à un hôte au lieu d'avancer dans le
 graphe, et `ondemand` fait tourner un optimiseur à sa propre cadence — une
 perte spectrale une fois par trame pendant que le gradient reste à cadence
-audio. Le dernier chapitre est pour les cas où le départ est faux : lire le
+audio ; un programme existant, enfin, apprend ses propres curseurs sans
+être réécrit. Le dernier chapitre est pour les cas où le départ est faux : lire le
 paysage avant de choisir un optimiseur, partir d'une estimation, lancer
 plusieurs départs, redémarrer quand rien ne progresse, élargir le bassin par la
 perte, et descendre sans aucun gradient. À la fin, vous saurez vers quel outil
@@ -1036,6 +1037,118 @@ ajustées par une perte spectrale par trame de 256 échantillons, les seize
 gradients d'un balayage par trame. Ce qui reste interdit est un `rad` qui
 traverserait la frontière du bloc, une perte dedans et une graine dehors.
 
+### 11.5 Apprendre les curseurs d'un programme existant
+
+Jusqu'ici chaque paramètre était un argument de fonction, écrit pour que
+`fad` puisse le prendre comme graine. Un vrai programme a plutôt des
+curseurs : des `hslider` dans leurs propres unités, et personne ne veut le
+réécrire en fonction de ses boutons. Trois primitives permettent à un
+programme d'apprendre ses curseurs sans être réécrit :
+
+- `cinputs(e)` liste les entrées de contrôle de `e` dans l'ordre de son
+  interface ;
+- `cinput(i, e)` donne la `i`-ième sous la forme `(widget, défaut, min, max,
+  pas)` ;
+- la modulation joker `["*": (!, _) -> e]` remplace chaque curseur de `e`
+  par une entrée supplémentaire, dans le même ordre. Le modulateur `(!, _)`
+  jette le curseur et transmet la nouvelle entrée.
+
+`op.adaptive_fad(e, perte, upd, horloge, reset, x, t)` assemble les trois
+avec la boucle cadencée de la section 11.2. Elle compte les contrôles, part
+de la valeur par défaut de chacun, les rebranche, et à chaque tir de
+l'horloge fait un pas sur la moyenne par trame de leurs gradients `fad`,
+chaque paramètre borné par la plage de son curseur. Ses sorties sont celles
+de `e` sur les paramètres appris, suivies des paramètres dans l'ordre de
+l'interface. Les curseurs rebranchés quittent l'interface.
+
+Le programme à apprendre tient en deux lignes, écrites comme on écrit un
+effet :
+
+```faust
+e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
+```
+
+D'abord, ce qu'il expose :
+
+```faust
+import("stdfaust.lib");
+e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
+N = outputs(cinputs(e));
+process = N, par(i, N, cinput(i, e) : !, si.bus(4));
+```
+
+Exécutez avec `-n 1` : `2, 1000, 50, 5000, 1, 0.5, 0, 2, 0.01`. C'est le
+nombre de contrôles, puis la valeur par défaut, le minimum, le maximum et le
+pas de `cutoff` et de `gain`, dans l'ordre de l'interface. Ce sont des
+constantes de compilation.
+
+La cible est la même chaîne à 2500 Hz et avec un gain de 1,2. D'abord
+l'appel à `adaptive_fad` tel que le donne la documentation de la
+bibliothèque, avec une seule vitesse d'Adam pour les deux curseurs :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+il = library("interleave.lib");
+e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
+x = 0.3 * no.noise;
+target = x : fi.lowpass(1, 2500) : *(1.2);
+upd = op.adam_g(0.01, 0.9, 0.999, 1e-8);
+process = op.adaptive_fad(e, op.mse, upd, il.frame_clock(256), 0, x, target) : \(y, cutoff, gain).(cutoff, gain, y - target);
+```
+
+Exécutez avec `-n 80000 --every 10000`. La coupure lit `1000,40` à 10 000
+échantillons, `1002,00` à 50 000 et `1002,73` à 70 000 : Adam la déplace
+d'environ sa vitesse, 0,01 Hz par pas. Le gain ne s'arrête pas à 1,2. Il lit
+`0,875`, `1,585` et `1,631`, et compense par le niveau les aigus qui
+manquent. Le résidu vaut encore `0,035` rms sur les 10 000 derniers
+échantillons. C'est de nouveau la section 5.1, sur un vrai programme : une
+seule vitesse pour deux unités, et un mauvais compromis que la perte accepte.
+
+Le remède est aussi celui de la section 5 : donner à chaque curseur une
+vitesse dans ses propres unités. `cinput` donne la plage, si bien qu'un pas
+de 1 % de celle-ci s'écrit une fois pour tout programme :
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+il = library("interleave.lib");
+e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
+x = 0.3 * no.noise;
+target = x : fi.lowpass(1, 2500) : *(1.2);
+N = outputs(cinputs(e));
+range(i) = cinput(i, e) : !, !, \(lo, hi).(hi - lo), !;
+upd = par(i, N, op.adam_g(0.01 * range(i), 0.9, 0.999, 1e-8));
+process = op.adaptive_fad(e, op.mse, upd, il.frame_clock(256), 0, x, target) : \(y, cutoff, gain).(cutoff, gain, y - target);
+```
+
+Même exécution. La coupure lit `2574,69` à 10 000, `2500,47` à 40 000 et
+`2499,98` à 60 000, et le gain `1,1752`, `1,1998` et `1,200001`. Sur les
+10 000 derniers échantillons ils valent `2500,0005` et `1,1999997`, et le
+résidu `2,4e-8` rms. `upd` est une liste de `N` moteurs, un par contrôle dans
+l'ordre de `cinputs`. Ce peut aussi être un seul moteur, comme plus haut, ou
+des moteurs de natures différentes.
+
+Trois remarques :
+
+- `reset`, ici 0, renvoie chaque paramètre à sa valeur par défaut quand il
+  est non nul ; `button("reset")` donne ce bouton à l'hôte.
+- Quand c'est l'hôte qui doit faire les pas (`faustprobe --train`, section
+  10.4), `fad(perte, cinputs(e))` ou `rad(perte, cinputs(e))` donne
+  directement le gradient par rapport à chaque curseur de `e`.
+- Ce que l'opérateur supprime, c'est la réécriture, pas la modélisation. Les
+  coordonnées, les vitesses et ce que la sortie permet d'identifier restent
+  ceux du modèle. Deux gains en série restent un seul gain, et une fonction
+  non dérivable à la valeur par défaut d'un curseur (par exemple `abs` en 0)
+  y arrête toujours la descente.
+
+`adaptive_rad` a la même forme, avec un balayage inverse au lieu de `N`
+tangentes, ce qui vaut la peine au-delà de quelques dizaines de contrôles. À
+travers une récursion, toutefois, il ne voit que le terme direct (section
+10.5) : sur un filtre, prenez `adaptive_fad`. L'exemple 15 de
+[ddsp-examples-fr.md](ddsp-examples-fr.md) apprend ainsi les six curseurs
+d'une pédale de saturation.
+
 ## 12. Quand le départ est faux
 
 Jusqu'ici tout partait assez près de la réponse. Cette section traite du
@@ -1287,7 +1400,7 @@ en section 11.3.
 - **Pertes spectrales.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   différencie une perte calculée sur une trame FFT, le pendant par trame de la
   section 7.2.
-- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : quatorze
+- **Exemples complets.** [ddsp-examples-fr.md](ddsp-examples-fr.md) : quinze
   programmes DDSP avec leurs tests — un notch adaptatif, un mode calibré par
   Gauss-Newton, un modèle d'ampli, un diode clipper appris à travers son
   solveur implicite, une réverbération FDN, une corde accordée à travers son
@@ -1295,7 +1408,9 @@ en section 11.3.
   des gradients par bloc pour un hôte, un ampli GRU entraîné par BPTT par
   blocs, un synthétiseur harmonique ajusté par une perte spectrale dans un
   bloc `ondemand` (`rad`) ; une réverbération qui se calibre puis cesse de
-  payer son apprentissage (`gated`, `on_change`).
+  payer son apprentissage (`gated`, `on_change`) ; une pédale de saturation
+  qui apprend ses six curseurs d'un enregistrement sans être réécrite
+  (`adaptive_fad`).
 - **Beaucoup de paramètres.** `tests/corpus/opt_descend_n_rad_fir16.dsp` et
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` sont les boucles à bus sur des
   FIR ; `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` fait tourner côte à côte
@@ -1331,6 +1446,7 @@ en section 11.3.
 | Il dérive au lieu de converger, la perte restant haute | le mauvais bassin : un puits trop étroit pour le départ, ou un plateau en pente | une estimation comme `init` (12.2), plusieurs départs (12.4), un redémarrage sur absence de progrès (12.5), une perte qui élargit le puits (12.7) |
 | Il ne bouge jamais alors que la perte est haute | le paramètre n'a pas de dérivée : un retard entier, un `select2`, une table écrite | `spsa_1D_clocked` ou `search_1D_clocked` (12.6) |
 | `multistart` hésite entre deux boucles | leurs pertes lissées sont égales à l'arrondi près, le même puits atteint deux fois | lire le paramètre, pas l'index ; ou moins de départs |
+| Un curseur appris saute à sa borne au premier pas et y reste | le modèle passe par une fonction non dérivable à la valeur par défaut du curseur : `fi.peak_eq` prend `abs` de son gain, dont la dérivée en 0 dB n'est pas un nombre | un équivalent lisse (`fi.peak_eq_rm`) ou une autre valeur par défaut (11.5) |
 | La pente `fad` d'un solveur implicite manque d'un terme | l'itération part de `vprev`, le signal même que l'équation tient fixe : `fad(G(vprev, v), v)` avec `v = vprev` dérive les deux | partir d'un prédicteur ou de tout signal distinct |
 
 ## Glossaire

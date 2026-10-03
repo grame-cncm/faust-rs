@@ -15,7 +15,8 @@ Along the way the loss becomes yours to write, the update gets a schedule, a
 gate, a readout and a reset, Newton solves what does not need learning, `rad`
 hands its gradients to a host instead of stepping inside the graph, and
 `ondemand` runs an optimizer at its own rate — a spectral loss once per frame
-while the gradient stays at audio rate. The last chapter is for when the start
+while the gradient stays at audio rate; an existing program, finally, learns
+its own sliders without being rewritten. The last chapter is for when the start
 is wrong: reading the landscape before choosing an optimizer, starting from an
 estimate, several starts at once, restarting on no progress, a loss that
 widens the basin, and descending with no gradient at all. By the end you will
@@ -1006,6 +1007,114 @@ fitted through a spectral loss per 256-sample frame, the sixteen gradients
 from one sweep per frame. What stays forbidden is a `rad` that would cross
 the block's boundary, a loss inside and a seed outside.
 
+### 11.5 Learning the sliders of an existing program
+
+So far every parameter was a function argument, written so that `fad` could
+take it as a seed. A real program has sliders instead. Its parameters are
+`hslider`s in their own units, and nobody wants to rewrite it as a function
+of its knobs. Three primitives let a program learn its sliders without being
+rewritten:
+
+- `cinputs(e)` lists the control inputs of `e` in the order of its
+  interface;
+- `cinput(i, e)` gives the `i`-th as `(widget, default, min, max, step)`;
+- the wildcard modulation `["*": (!, _) -> e]` replaces every slider of `e`
+  by an extra input, in the same order. The modulator `(!, _)` drops the
+  slider and passes the new input.
+
+`op.adaptive_fad(e, loss, upd, clock, reset, x, t)` puts the three together
+with the clocked loop of section 11.2. It counts the controls, starts each
+one at its default, rebinds them, and once per firing of `clock` takes one
+step on the frame mean of their `fad` gradients, each parameter bounded by
+its slider's range. Its outputs are those of `e` on the learned parameters,
+followed by the parameters in interface order. The rebound sliders leave the
+interface.
+
+The program to learn is two lines, written as one writes an effect:
+
+```faust
+e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
+```
+
+First, what it exposes:
+
+```faust
+import("stdfaust.lib");
+e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
+N = outputs(cinputs(e));
+process = N, par(i, N, cinput(i, e) : !, si.bus(4));
+```
+
+Run with `-n 1`: `2, 1000, 50, 5000, 1, 0.5, 0, 2, 0.01`. These are the
+number of controls, then the default, minimum, maximum and step of `cutoff`
+and of `gain`, in interface order. They are compile-time constants.
+
+The target is the same chain at 2500 Hz and gain 1.2. First, the
+`adaptive_fad` call as the library documentation gives it, with one Adam
+rate for both sliders:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+il = library("interleave.lib");
+e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
+x = 0.3 * no.noise;
+target = x : fi.lowpass(1, 2500) : *(1.2);
+upd = op.adam_g(0.01, 0.9, 0.999, 1e-8);
+process = op.adaptive_fad(e, op.mse, upd, il.frame_clock(256), 0, x, target) : \(y, cutoff, gain).(cutoff, gain, y - target);
+```
+
+Run with `-n 80000 --every 10000`. The cutoff reads `1000.40` at 10 000
+samples, `1002.00` at 50 000 and `1002.73` at 70 000: Adam moves it by about
+its rate, 0.01 Hz per step. The gain does not stop at 1.2. It reads `0.875`,
+`1.585` and `1.631`, making up for the missing treble with level. The
+residual is still `0.035` rms over the last 10 000 samples. This is section
+5.1 again, on a real program: one rate for two units, and a wrong compromise
+the loss accepts.
+
+The remedy is also the one from section 5: give each slider a rate in its
+own units. `cinput` gives the range, so 1 % of it per step can be written
+once for any program:
+
+```faust
+import("stdfaust.lib");
+op = library("optimizers.lib");
+il = library("interleave.lib");
+e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
+x = 0.3 * no.noise;
+target = x : fi.lowpass(1, 2500) : *(1.2);
+N = outputs(cinputs(e));
+range(i) = cinput(i, e) : !, !, \(lo, hi).(hi - lo), !;
+upd = par(i, N, op.adam_g(0.01 * range(i), 0.9, 0.999, 1e-8));
+process = op.adaptive_fad(e, op.mse, upd, il.frame_clock(256), 0, x, target) : \(y, cutoff, gain).(cutoff, gain, y - target);
+```
+
+Same run. The cutoff reads `2574.69` at 10 000, `2500.47` at 40 000 and
+`2499.98` at 60 000, and the gain `1.1752`, `1.1998` and `1.200001`. Over the
+last 10 000 samples they are `2500.0005` and `1.1999997`, and the residual is
+`2.4e-8` rms. `upd` is a list of `N` engines, one per control in `cinputs`
+order. It can also be a single engine, as above, or engines of different
+kinds.
+
+Three remarks:
+
+- `reset`, here 0, sends every parameter back to its default when it is
+  non-zero; `button("reset")` gives the host that button.
+- When the host should take the steps (`faustprobe --train`, section 10.4),
+  `fad(loss, cinputs(e))` or `rad(loss, cinputs(e))` gives the gradient with
+  respect to every slider of `e` directly.
+- What the operator removes is the rewriting, not the modelling. The
+  coordinates, the rates and what the output can identify remain the
+  model's. Two gains in series are still one gain, and a function that is
+  not differentiable at a slider's default (for example `abs` at 0) still
+  stops the descent there.
+
+`adaptive_rad` has the same form with one reverse sweep instead of `N`
+tangents, worth it past a few dozen controls. Through a recursion, though, it
+sees only the direct term (section 10.5): on a filter, use `adaptive_fad`.
+Example 15 of [ddsp-examples-en.md](ddsp-examples-en.md) learns the six
+sliders of a drive pedal this way.
+
 ## 12. When the start is wrong
 
 Everything so far started close enough to the answer. This section is
@@ -1248,14 +1357,16 @@ body, as in section 11.3.
 - **Spectral losses.** `tests/corpus/ondemand_fad_spectral_loss_008.dsp`
   differentiates a loss computed on an FFT frame, the per-frame counterpart of
   section 7.2.
-- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): fourteen
+- **Complete examples.** [ddsp-examples-en.md](ddsp-examples-en.md): fifteen
   DDSP programs with their tests — an adaptive notch, a mode calibrated by
   Gauss-Newton, an amp model, a diode clipper learned through its implicit
   solver, an FDN reverb, a string tuned through its fractional delay
   (`fad`); an echo canceller, a neural waveshaper, block gradients for a
   host, a GRU amp trained by block BPTT, a harmonic synthesizer fitted
   through a spectral loss inside an `ondemand` block (`rad`); a reverb that
-  calibrates itself, then stops paying for it (`gated`, `on_change`).
+  calibrates itself, then stops paying for it (`gated`, `on_change`); a
+  drive pedal that learns its six sliders from a recording without being
+  rewritten (`adaptive_fad`).
 - **Many parameters.** `tests/corpus/opt_descend_n_rad_fir16.dsp` and
   `tests/corpus/opt_lsq_n_rad_nlms_fir8.dsp` are the bus loops on FIRs;
   `tests/corpus/opt_bus_fad_vs_rad_fir16.dsp` runs the forward and the
@@ -1292,6 +1403,7 @@ body, as in section 11.3.
 | It drifts away instead of converging, the loss staying high | the wrong basin: a well too narrow for the start, or a sloped plateau | an estimate as `init` (12.2), several starts (12.4), a restart on no progress (12.5), a loss that widens the well (12.7) |
 | It never moves although the loss is high | the parameter has no derivative: an integer delay, a `select2`, a written table | `spsa_1D_clocked` or `search_1D_clocked` (12.6) |
 | `multistart` hesitates between two loops | their smoothed losses are equal to rounding, the same well reached twice | read the parameter, not the index; or fewer starts |
+| A learned slider jumps to its bound on the first step and stays there | the model goes through a function that is not differentiable at the slider's default: `fi.peak_eq` takes `abs` of its gain, whose derivative at 0 dB is not a number | a smooth equivalent (`fi.peak_eq_rm`) or another default (11.5) |
 | The `fad` slope of an implicit solver misses a term | the iteration starts from `vprev`, the very signal the equation holds fixed: `fad(G(vprev, v), v)` with `v = vprev` differentiates both | start the iteration from a predictor or any distinct signal |
 
 ## Glossary

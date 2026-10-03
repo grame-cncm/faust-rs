@@ -26,7 +26,7 @@ rebased `control-inputs-wildcard` (HEAD `64ca84d5` on top of `main-dev`
 
 | # | Deliverable | Pass criterion |
 |---|---|---|
-| D1 | Tutorial §13 "Learning the sliders of an existing program", EN and FR, three programs | `tutorial_examples.rs`: the French tutorial carries the same programs (count 33 → 36); one test per program checks the figures quoted in the text |
+| D1 | Tutorial §11.5 "Learning the sliders of an existing program", EN and FR, three programs | `tutorial_examples.rs`: the French tutorial carries the same programs (count 33 → 36); one test per program checks the figures quoted in the text |
 | D2 | `tests/corpus/ddsp_fad_adaptive_pedal.dsp` + test in `crates/compiler/tests/ddsp_examples.rs` | f32 interpreter: the six sliders start at their defaults and end within 1e-3 (relative) of the hidden setting; residual < 1e-5 rms over the last 20 000 of 200 000 samples. **Done, passing** (residual 7.1e-7, 12 s in debug). |
 | D3 | `ddsp-examples-{en,fr}.md` §15, title, summary table, "where the optimizer runs", "how the tests check" | Figures quoted = figures the D2 test checks, with margins |
 | D4 | Cross-references: `libraries/README.md` ("fourteen"), the tutorial's "Going further" list, the tutorial's "Common walls" table (one row, §5.1) | Wording consistent across EN/FR |
@@ -38,14 +38,14 @@ new fixture: like the other `ddsp_*` fixtures that import the standard
 libraries, it has no golden. The compile budget is unaffected (docs and tests
 only).
 
-## 3. The simple example: tutorial §13
+## 3. The simple example: tutorial §11.5
 
-**Placement.** A new §13, after "When the start is wrong" (§12) and before
-"Going further". The current §13 and §14 become §14 and §15. No test refers
-to them by number.
+**Placement.** §11.5, after "Reverse mode, clocked" (§11.4), next to the
+clocked loops the operator builds on (decided in review; the first draft
+proposed a new §13). No section is renumbered.
 
-**Story.** Until §12 every parameter was a function argument. A real program
-has sliders. §13 shows that the operator turns them into parameters, and that
+**Story.** Until §11.4 every parameter was a function argument. A real program
+has sliders. §11.5 shows that the operator turns them into parameters, and that
 the pitfall of §5.1 (one rate for two units) comes back, with its remedy read
 from the sliders themselves.
 
@@ -133,7 +133,7 @@ pedal = hgroup("pedal",
 hidden = ["tight": 150, "drive": 20, "tone": 1800, "mid_gain": 5, "mid_freq": 1200, "level": -6 -> pedal];
 ```
 
-**What it shows beyond §13:**
+**What it shows beyond §11.5:**
 
 1. **The program is untouched.** The learning wraps a program written for a
    player, groups included.
@@ -234,17 +234,17 @@ example quotes.
 
 ## 6. Status and next steps
 
-- **Implemented, uncommitted:**
+- **Done (2026-10-03):** D1 to D5.
+  - D1: tutorial §11.5 in both languages, with three tests
+    (`s11_5_*` in `crates/cranelift-ffi/tests/tutorial_examples.rs`, program
+    count 36).
   - D2: fixture `tests/corpus/ddsp_fad_adaptive_pedal.dsp` and test
-    `fad_adaptive_pedal_learns_its_six_sliders_without_being_rewritten`;
-  - golden-check passes.
-- **Pending approval of this proposal:**
-  - D1, with its three tests in `crates/cranelift-ffi/tests/tutorial_examples.rs`;
-  - D3, D4 and D5.
+    `fad_adaptive_pedal_learns_its_six_sliders_without_being_rewritten`.
+  - D3: `ddsp-examples` §15, its table row and paragraphs.
+  - D4: the "Common walls" row (§14 of the tutorial), "Going further", and
+    `libraries/README.md`.
 - **Questions for review:**
-  1. Is the placement of the tutorial section right (new §13, renumbering
-     §13 and §14)? The alternative is §11.5, next to the clocked loops it
-     builds on.
+  1. ~~Placement of the tutorial section?~~ §11.5, decided in review.
   2. Should the ambitious example also quote measured `adaptive_rad` figures,
      with a second test pinning them, or stay qualitative?
   3. ~~Should F2 be fixed before the examples land?~~ Fixed on 2026-10-03.

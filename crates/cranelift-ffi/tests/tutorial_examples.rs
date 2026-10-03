@@ -255,7 +255,7 @@ fn french_tutorial_carries_the_same_programs() {
     }
     assert_eq!(
         en.iter().filter(|b| b.is_program()).count(),
-        33,
+        36,
         "the tutorial's program count changed: update the tests"
     );
 }
@@ -758,6 +758,75 @@ fn s11_4_reverse_mode_clocked() {
             4e-7,
         );
         assert!(rms(&outs[0][3000..4000]) < 1e-8, "fourth window");
+    });
+}
+
+/// §11.5: the program exposes `2, 1000, 50, 5000, 1, 0.5, 0, 2, 0.01`.
+#[test]
+fn s11_5_controls_read_with_cinput() {
+    with_libraries("s11_5_cinput", |root| {
+        let outs = render(&program("11.5", 0), &root, InputMode::Zero, 1);
+        let first: Vec<f64> = outs.iter().map(|o| o[0]).collect();
+        assert_eq!(first, [2.0, 1000.0, 50.0, 5000.0, 1.0, 0.5, 0.0, 2.0, 0.01]);
+    });
+}
+
+/// §11.5, one rate for both sliders: the cutoff reads 1000.40, 1002.00 and
+/// 1002.73 at 10 000, 50 000 and 70 000, the gain 0.875, 1.585 and 1.631;
+/// the residual is still 0.035 rms over the last 10 000 samples.
+#[test]
+fn s11_5_one_rate_leaves_the_cutoff_and_overshoots_the_gain() {
+    with_libraries("s11_5_one_rate", |root| {
+        let outs = render(&program("11.5", 1), &root, InputMode::Zero, 80_000);
+        for (frame, cutoff, gain) in [
+            (10_000, 1000.40, 0.875),
+            (50_000, 1002.00, 1.585),
+            (70_000, 1002.73, 1.631),
+        ] {
+            assert_near(&format!("cutoff at {frame}"), outs[0][frame], cutoff, 0.01);
+            assert_near(&format!("gain at {frame}"), outs[1][frame], gain, 0.001);
+        }
+        assert_near(
+            "residual, last 10 000",
+            rms(&outs[2][70_000..]),
+            0.035,
+            0.002,
+        );
+    });
+}
+
+/// §11.5, a rate per slider from its range: the cutoff reads 2574.69,
+/// 2500.47 and 2499.98 at 10 000, 40 000 and 60 000, the gain 1.1752,
+/// 1.1998 and 1.200001; over the last 10 000 samples 2500.0005 and
+/// 1.1999997, the residual 2.4e-8 rms.
+#[test]
+fn s11_5_a_rate_per_slider_learns_both() {
+    with_libraries("s11_5_rate_per_slider", |root| {
+        let outs = render(&program("11.5", 2), &root, InputMode::Zero, 80_000);
+        for (frame, cutoff, gain) in [
+            (10_000, 2574.69, 1.1752),
+            (40_000, 2500.47, 1.1998),
+            (60_000, 2499.98, 1.200_001),
+        ] {
+            assert_near(&format!("cutoff at {frame}"), outs[0][frame], cutoff, 0.01);
+            assert_near(&format!("gain at {frame}"), outs[1][frame], gain, 1e-4);
+        }
+        assert_near(
+            "cutoff, last 10 000",
+            mean(&outs[0][70_000..]),
+            2500.0005,
+            1e-3,
+        );
+        assert_near(
+            "gain, last 10 000",
+            mean(&outs[1][70_000..]),
+            1.199_999_7,
+            1e-6,
+        );
+        assert!(
+            rms(&outs[2][70_000..]) < 3e-8,
+            "the residual should be about 2.4e-8 rms"
+        );
     });
 }
 

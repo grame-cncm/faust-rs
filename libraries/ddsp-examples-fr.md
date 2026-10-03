@@ -1,6 +1,6 @@
-# Quatorze exemples DDSP avec `fad` et `rad`
+# Quinze exemples DDSP avec `fad` et `rad`
 
-Quatorze programmes complets de DSP différentiable, chacun une tâche qu'un
+Quinze programmes complets de DSP différentiable, chacun une tâche qu'un
 ingénieur du son reconnaît, écrits avec les deux primitives de
 différenciation automatique de `faust-rs` et les boucles
 d'[optimizers.lib](optimizers.lib). Trois utilisent `fad`, le mode direct, là
@@ -20,7 +20,9 @@ réverbération une fois fait. Les deux derniers sont nés du travail sur la
 non-convexité (section 9 de l'overview) : la corde de nouveau, qui s'accorde
 depuis sa propre estimation de la hauteur, un détecteur puis le gradient ;
 et un retard entier appris sans aucun gradient, par deux évaluations de la
-perte par trame.
+perte par trame. Le quinzième est un programme ordinaire, écrit avec ses
+curseurs, qui les apprend tous d'un enregistrement sans être réécrit
+(`adaptive_fad`).
 Chaque programme vit dans `tests/corpus/ddsp_*.dsp`, est exécuté par la
 suite de tests
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs))
@@ -59,6 +61,7 @@ depuis la racine du dépôt.
 | 12 | `ddsp_fad_fdn_gated` | calibrer la FDN, puis couper son apprentissage | `fad` dans `gated` | `lm_2D` dans un `ondemand` cadencé par `stop_below`, gains par `on_change` | (0,600, 0,300) figés à la sixième période ; l'apprentissage ne coûte plus rien |
 | 13 | `ddsp_fad_string_self_tuning` | accorder la corde depuis sa propre estimation de hauteur, sans départ choisi à la main | `fad` | `lsq_1D` + `nlms`, `init_latch` et `init_reset` sur un pic d'autocorrélation | init figé à 222,77 Hz, 220,000000 dès 48 000 échantillons |
 | 14 | `ddsp_spsa_delay_estimation` | trouver le retard entier entre un signal et sa copie | aucun : deux évaluations de la perte par trame | `spsa_1D_clocked` + Adam par trame de 256 | `int(d)` de 160 à 200 en 25 000 échantillons, tenu ; la tangente `fad` est identiquement nulle |
+| 15 | `ddsp_fad_adaptive_pedal` | retrouver les six curseurs d'une pédale de saturation à partir d'un enregistrement, sans toucher au programme | `fad` | `adaptive_fad` (`descend_N_fad_clocked`), un Adam par curseur à 1 % de sa plage, un pas par trame de 512 échantillons | les six curseurs à 1e-4 du réglage caché en 200 000 échantillons, résidu 2e-7 rms |
 
 **Où tourne l'optimiseur.** Huit exemples font un pas par échantillon audio
 dans le graphe, par les boucles de la bibliothèque (`lsq_1D`, `lm_2D`,
@@ -85,7 +88,10 @@ que le graphe calcule et fige. L'exemple 14 est le premier dont l'optimiseur
 ne dérive rien : `spsa_1D_clocked`, une boucle de la bibliothèque dans un
 bloc `ondemand` tiré tous les 256 échantillons, évalue la perte à deux
 valeurs du paramètre sur la trame et fait un pas d'Adam sur leur
-différence.
+différence. L'exemple 15 est le seul qui utilise une boucle cadencée de la
+bibliothèque : `adaptive_fad` fait tourner `descend_N_fad_clocked`, les six
+gradients à cadence audio et un pas d'Adam par curseur tous les 512
+échantillons.
 
 ## 1. Suppression d'un ronflement par notch adaptatif (`fad`)
 
@@ -851,6 +857,101 @@ suivre) ; recuire `c` avec `ramp_exp` ; deux retards avec `spsa_N_clocked` ;
 un `select2` entre deux filtres avec `search_1D_clocked`
 (`tests/corpus/opt_search_select2.dsp`).
 
+## Après les primitives d'entrées de contrôle : un de plus
+
+## 15. Une pédale qui retrouve son réglage à partir d'un enregistrement, sans être réécrite (`adaptive_fad`)
+
+**Ce que fait le programme.** Retrouver le réglage d'une pédale de
+saturation à partir d'un enregistrement. Le programme est un effet
+ordinaire, écrit comme on l'écrit pour un musicien, avec six curseurs dans
+leurs propres unités sous un `hgroup` :
+
+- un passe-haut serré (`tight`, Hz) ;
+- un drive vers `tanh` (`drive`, dB) ;
+- un passe-bas de tonalité (`tone`, Hz) ;
+- un pic de médium (`mid_freq`, Hz, et `mid_gain`, dB) ;
+- un niveau (`level`, dB).
+
+Rien en lui ne parle d'apprentissage. L'« enregistrement » est le même
+programme à un réglage caché, construit par des modulations littérales
+nommées :
+
+```faust
+hidden = ["tight": 150, "drive": 20, "tone": 1800, "mid_gain": 5, "mid_freq": 1200, "level": -6 -> pedal];
+```
+
+L'excitation est une dent de scie à 110 Hz avec un peu de bruit, sous une
+enveloppe lente de 0,1 à 1. `op.adaptive_fad(pedal, op.mse, upd, clock, 0,
+x, target)` apprend les six curseurs depuis leurs valeurs par défaut et les
+sort, avec le résidu.
+
+**Ce qui est dérivé, et pourquoi le mode direct.** L'opérateur lit les
+contrôles avec `cinputs` et `cinput`. Il les rebranche par la modulation
+joker `["*": (!, _) -> pedal]`, si bien que les six curseurs deviennent six
+entrées, et `fad` porte les six tangentes à travers toute la chaîne à
+cadence audio. Le modèle est récursif : quatre filtres du premier et du
+second ordre. À travers une récursion `fad` porte la dérivée exacte, là où
+`rad` ne voit que le terme direct (tutoriel, section 10.5). C'est le cas pour
+lequel la bibliothèque recommande `adaptive_fad`.
+
+**Optimiseur.** `descend_N_fad_clocked`, que fait tourner `adaptive_fad`,
+avec un `adam_g` par curseur. La vitesse de chacun vaut 1 % de la plage de
+son curseur, lue avec `cinput` : 0,3 dB sur le drive, 75 Hz sur la
+tonalité, 3,8 Hz sur le filtre serré. Il y a un pas tous les 512
+échantillons, sur la moyenne par trame des gradients, et chaque paramètre
+est borné par la plage de son curseur. Une seule vitesse laisserait les
+fréquences où elles sont (tutoriel, section 11.5).
+
+**Ce qui le rend identifiable.** Deux choix dans le programme :
+
+- **L'enveloppe sépare le drive du niveau.** Les deux sont des gains, l'un
+  avant le `tanh`, l'autre après. À niveau d'entrée constant, la perte ne
+  lirait que leur combinaison ; l'enveloppe attaque le `tanh` à plusieurs
+  profondeurs, et les deux se séparent.
+- **Le pic de médium est `fi.peak_eq_rm`, pas `fi.peak_eq`.** Ce dernier
+  prend `abs` de son gain, dont la dérivée en 0 dB, la valeur par défaut,
+  n'est pas un nombre. Avec `fi.peak_eq`, le premier pas envoie `mid_gain`
+  à sa borne, +12 dB, et il y reste.
+
+**Ce qu'on observe.** Depuis les valeurs par défaut (12 dB, −12 dB, 800 Hz,
+0 dB, 80 Hz, 3000 Hz) :
+
+| échantillons | drive | level | mid_freq | mid_gain | tight | tone |
+|---|---|---|---|---|---|---|
+| 25 000 | 18,29 | −4,58 | 1191,1 | 5,18 | 139,7 | 2707,1 |
+| 50 000 | 19,00 | −5,60 | 1203,6 | 5,35 | 145,2 | 1845,4 |
+| 100 000 | 19,95 | −5,96 | 1199,4 | 4,97 | 149,6 | 1808,7 |
+| 150 000 | 19,9998 | −6,0001 | 1199,999 | 4,9998 | 149,998 | 1800,06 |
+
+Sur les 20 000 derniers des 200 000 échantillons, les six curseurs sont à
+1e-4 du réglage caché, et le résidu vaut 2e-7 rms. Le programme tourne
+environ 130 fois plus vite que le temps réel.
+
+**Avec faustprobe.** Colonnes drive, level, mid_freq, mid_gain, tight, tone
+(l'ordre de l'interface), résidu :
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 200000 --every 25000 tests/corpus/ddsp_fad_adaptive_pedal.dsp
+```
+
+Les lignes du tableau ci-dessus, puis `20,0001, −6,0000, 1199,997, 4,99998,
+150,0004, 1800,005` à 175 000. Avec `--skip 180000 --quiet`, le `dc` de
+chaque colonne est la valeur apprise et le `rms` de la dernière le résidu.
+
+**À essayer.**
+
+- Remplacer `adaptive_fad` par `adaptive_rad`. Le programme compile et
+  tourne plus vite, mais ne converge pas : le drive, le filtre serré et la
+  tonalité s'éloignent du réglage caché. C'est le terme direct à travers les
+  quatre filtres récursifs.
+- Donner à l'enveloppe un niveau constant, et voir le drive et le niveau
+  s'échanger.
+- Revenir à `fi.peak_eq`, et voir `mid_gain` rester collé à +12 dB.
+- Apprendre d'un vrai enregistrement : faire de `x` et `target` les deux
+  entrées du programme (`process(x, target) = ...`) et rendre un fichier à
+  deux canaux, le signal sec et la sortie de la pédale, avec `--in
+  file:...`.
+
 ## Comment les tests les vérifient
 
 Chaque programme est rendu par l'interpréteur sur une instance neuve (les
@@ -875,7 +976,9 @@ la vingtième, ses paramètres bit-constants ensuite et le résidu rendu sous
 230 Hz et bit-constant ensuite, sa hauteur à 0,05 Hz de 220 et son résidu
 sous 1e-3 ; l'estimation de retard avec une voie de tangente identiquement
 nulle, `int(d)` à 200 sur les 10 000 derniers échantillons et un résidu sous
-1e-6. Les programmes tournent en simple précision là et en
+1e-6 ; la pédale avec ses six curseurs partant de leurs valeurs par défaut et
+finissant à 1e-3 (relatif) du réglage caché, son résidu sous 1e-5 rms sur
+les 20 000 derniers échantillons. Les programmes tournent en simple précision là et en
 double sous `faustprobe` ; les deux convergent.
 
 ## D'où viennent les gradients
@@ -886,5 +989,8 @@ balayage inverse par bloc de [docs/rad-note-en.md](../docs/rad-note-en.md),
 dont les carries, les bandes et les horizons sont ce que les exemples 4 à 6
 exercent. L'exemple 14 n'a aucun gradient : son estimation vient de deux
 évaluations de la perte par trame, les boucles sans gradient de la
-bibliothèque. Les boucles à bus et les moteurs sont documentés fonction par
-fonction dans [optimizers.lib](optimizers.lib).
+bibliothèque. L'exemple 15 prend ses graines dans les propres curseurs du
+programme, lus avec `cinputs` et `cinput` et rebranchés par la modulation
+`"*"` ([docs/control-inputs-fr.md](../docs/control-inputs-fr.md)). Les
+boucles à bus et les moteurs sont documentés fonction par fonction dans
+[optimizers.lib](optimizers.lib).

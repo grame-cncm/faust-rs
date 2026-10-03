@@ -1,6 +1,6 @@
-# Fourteen DDSP examples with `fad` and `rad`
+# Fifteen DDSP examples with `fad` and `rad`
 
-Fourteen complete differentiable-DSP programs, each one a task an audio engineer
+Fifteen complete differentiable-DSP programs, each one a task an audio engineer
 recognises, written with the two automatic-differentiation primitives of
 `faust-rs` and the loops of [optimizers.lib](optimizers.lib). Three use
 `fad`, forward mode, where the exact derivative through a recursion is what
@@ -18,7 +18,9 @@ learning off, so that it costs a reverb once done. The last two came out of
 the work on non-convexity (section 9 of the overview): the string again,
 tuning itself from its own estimate of the pitch, a detector then the
 gradient; and an integer delay learned without any gradient, by two
-evaluations of the loss per frame.
+evaluations of the loss per frame. The fifteenth is an ordinary program,
+written with its sliders, that learns all of them from a recording without
+being rewritten (`adaptive_fad`).
 Every program lives in `tests/corpus/ddsp_*.dsp`, is run by the test suite
 ([crates/compiler/tests/ddsp_examples.rs](../crates/compiler/tests/ddsp_examples.rs)),
 and can be watched with `faustprobe`:
@@ -55,6 +57,7 @@ introduction is [optimizers-ddsp-tutorial-en.md](optimizers-ddsp-tutorial-en.md)
 | 12 | `ddsp_fad_fdn_gated` | calibrate the FDN, then switch its learning off | `fad` in `gated` | `lm_2D` in an `ondemand` gated by `stop_below`, gains by `on_change` | (0.600, 0.300) frozen at the sixth period; the learning then costs nothing |
 | 13 | `ddsp_fad_string_self_tuning` | tune the string from its own pitch estimate, no start chosen by hand | `fad` | `lsq_1D` + `nlms`, `init_latch` and `init_reset` on an autocorrelation peak | init frozen at 222.77 Hz, 220.000000 from 48 000 samples on |
 | 14 | `ddsp_spsa_delay_estimation` | find the integer delay between a signal and its copy | none: two loss evaluations per frame | `spsa_1D_clocked` + Adam per 256-sample frame | `int(d)` 160 → 200 by 25 000 samples, held; the `fad` tangent is identically 0 |
+| 15 | `ddsp_fad_adaptive_pedal` | recall the six sliders of a drive pedal from a recording, the program untouched | `fad` | `adaptive_fad` (`descend_N_fad_clocked`), one Adam per slider at 1 % of its range, a step per 512-sample frame | the six sliders within 1e-4 of the hidden setting in 200 000 samples, residual 2e-7 rms |
 
 **Where the optimizer runs.** Eight examples take one step per audio sample
 inside the graph, through the loops of the library (`lsq_1D`, `lm_2D`,
@@ -78,7 +81,10 @@ loop, `lsq_1D` at audio rate, started from an estimate the graph computes
 and freezes. Example 14 is the first whose optimizer differentiates nothing:
 `spsa_1D_clocked`, a library loop in an `ondemand` block fired every 256
 samples, evaluates the loss at two parameter values over the frame and
-steps Adam on their difference.
+steps Adam on their difference. Example 15 is the only one that uses a
+clocked loop of the library: `adaptive_fad` runs `descend_N_fad_clocked`,
+the six gradients at audio rate and one Adam step per slider every 512
+samples.
 
 ## 1. Hum cancellation with an adaptive notch (`fad`)
 
@@ -798,6 +804,95 @@ noise has a bowl one sample wide, and SPSA no slope to follow); anneal `c`
 with `ramp_exp`; two delays with `spsa_N_clocked`; a `select2` between two
 filters with `search_1D_clocked` (`tests/corpus/opt_search_select2.dsp`).
 
+## After the control-input primitives: one more
+
+## 15. A pedal that learns its setting from a recording, without being rewritten (`adaptive_fad`)
+
+**What it does.** Recalling the setting of a drive pedal from a recording
+of it. The program is an ordinary effect, written as one writes it for a
+player, with six sliders in their own units under an `hgroup`:
+
+- a tight high-pass (`tight`, Hz);
+- a drive into `tanh` (`drive`, dB);
+- a tone low-pass (`tone`, Hz);
+- a mid peak (`mid_freq`, Hz, and `mid_gain`, dB);
+- a level (`level`, dB).
+
+Nothing in it mentions learning. The "recording" is the same program at a
+hidden setting, built by named literal modulations:
+
+```faust
+hidden = ["tight": 150, "drive": 20, "tone": 1800, "mid_gain": 5, "mid_freq": 1200, "level": -6 -> pedal];
+```
+
+The excitation is a 110 Hz sawtooth with a little noise, under a slow
+envelope from 0.1 to 1. `op.adaptive_fad(pedal, op.mse, upd, clock, 0, x,
+target)` learns the six sliders from their defaults and outputs them, with
+the residual.
+
+**What is differentiated, and why forward mode.** The operator reads the
+controls with `cinputs` and `cinput`. It rebinds them with the wildcard
+modulation `["*": (!, _) -> pedal]`, so the six sliders become six inputs,
+and `fad` takes the six tangents through the whole chain at audio rate. The
+model is recursive: four first-order and second-order filters. Through a
+recursion `fad` carries the exact derivative, where `rad` sees only the
+direct term (tutorial, section 10.5). This is the case for which the library
+recommends `adaptive_fad`.
+
+**Optimizer.** `descend_N_fad_clocked`, which `adaptive_fad` runs, with one
+`adam_g` per slider. Each one's rate is 1 % of its slider's range, read with
+`cinput`: 0.3 dB on the drive, 75 Hz on the tone, 3.8 Hz on the tight
+filter. There is one step every 512 samples, on the frame mean of the
+gradients, and every parameter is bounded by its slider's range. A single
+rate would leave the frequencies where they are (tutorial, section 11.5).
+
+**What makes it identifiable.** Two choices in the program:
+
+- **The envelope separates drive from level.** Both are gains, one before
+  and one after the `tanh`. At a constant input level the loss would only
+  read their combination; the envelope drives the `tanh` at several depths,
+  and the two separate.
+- **The mid peak is `fi.peak_eq_rm`, not `fi.peak_eq`.** The latter takes
+  `abs` of its gain, whose derivative at the 0 dB default is not a number.
+  Under `fi.peak_eq` the first step sends `mid_gain` to its bound, +12 dB,
+  and it stays there.
+
+**What you see.** From the defaults (12 dB, −12 dB, 800 Hz, 0 dB, 80 Hz,
+3000 Hz):
+
+| samples | drive | level | mid_freq | mid_gain | tight | tone |
+|---|---|---|---|---|---|---|
+| 25 000 | 18.29 | −4.58 | 1191.1 | 5.18 | 139.7 | 2707.1 |
+| 50 000 | 19.00 | −5.60 | 1203.6 | 5.35 | 145.2 | 1845.4 |
+| 100 000 | 19.95 | −5.96 | 1199.4 | 4.97 | 149.6 | 1808.7 |
+| 150 000 | 19.9998 | −6.0001 | 1199.999 | 4.9998 | 149.998 | 1800.06 |
+
+Over the last 20 000 of 200 000 samples the six sliders are within 1e-4 of
+the hidden setting, and the residual is 2e-7 rms. The program runs at about
+130 times real time.
+
+**With faustprobe.** Columns drive, level, mid_freq, mid_gain, tight, tone
+(the interface order), residual:
+
+```sh
+faustprobe --double -I libraries -I <faustlibraries> --in zero -n 200000 --every 25000 tests/corpus/ddsp_fad_adaptive_pedal.dsp
+```
+
+The lines of the table above, then `20.0001, −6.0000, 1199.997, 4.99998,
+150.0004, 1800.005` at 175 000. With `--skip 180000 --quiet`, the `dc` of
+each column is the learned value and the `rms` of the last one the residual.
+
+**Try.**
+
+- Replace `adaptive_fad` by `adaptive_rad`. It compiles and runs faster,
+  but does not converge: drive, tight and tone drift away from the hidden
+  setting. This is the direct term through the four recursive filters.
+- Give the envelope a constant level and watch drive and level trade.
+- Go back to `fi.peak_eq` and watch `mid_gain` stick at +12 dB.
+- Learn from a real recording: make `x` and `target` the program's two
+  inputs (`process(x, target) = ...`) and render a two-channel file, the dry
+  signal and the pedal's output, with `--in file:...`.
+
 ## How the tests check them
 
 Each program renders through the interpreter on a fresh instance (the
@@ -821,7 +916,9 @@ rendered residual under 1e-4 rms; the self-tuning string with its init
 frozen between 220 and 230 Hz and bit-constant afterwards, its pitch within
 0.05 Hz of 220 and its residual under 1e-3; the delay estimation with a
 tangent lane identically zero, `int(d)` at 200 over the last 10 000 samples
-and a residual under 1e-6. The programs run in single precision there
+and a residual under 1e-6; the pedal with its six sliders starting at their
+defaults and ending within 1e-3 (relative) of the hidden setting, its
+residual under 1e-5 rms over the last 20 000 samples. The programs run in single precision there
 and in double under `faustprobe`; both converge.
 
 ## Where the gradients come from
@@ -831,6 +928,9 @@ described in [docs/fad-note-en.md](../docs/fad-note-en.md); `rad` into the
 block reverse sweep of [docs/rad-note-en.md](../docs/rad-note-en.md), whose
 carries, tapes and horizons are what examples 4 to 6 exercise. Example 14
 has no gradient at all: its estimate comes from two evaluations of the loss
-per frame, the gradient-free loops of the library. The bus loops
+per frame, the gradient-free loops of the library. Example 15 takes its
+seeds from the program's own sliders, read with `cinputs` and `cinput` and
+rebound by the `"*"` modulation
+([docs/control-inputs-en.md](../docs/control-inputs-en.md)). The bus loops
 and the engines are documented function by function in
 [optimizers.lib](optimizers.lib).
