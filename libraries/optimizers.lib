@@ -3199,7 +3199,7 @@ with {
 // #### Example
 //
 // ```
-// e = component("ampmodeler.dsp");
+// e = component("effect.dsp");
 // clock = (ba.time % 2048) == 2047;
 // process(x, t) = op.adaptive_fad(e, op.mse, op.adam_g(0.01, 0.9, 0.999, 1e-8), clock, button("reset"), x, t);
 // ```

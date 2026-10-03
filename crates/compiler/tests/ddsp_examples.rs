@@ -791,7 +791,7 @@ fn fad_adaptive_pedal_learns_its_six_sliders_without_being_rewritten() {
     };
     assert_eq!(outs.len(), 7);
     assert_finite("ddsp_fad_adaptive_pedal", &outs);
-    let defaults = [12.0, -12.0, 800.0, 0.0, 80.0, 3000.0];
+    let defaults = [12.0, -12.0, 800.0, -3.0, 80.0, 3000.0];
     let hidden = [20.0, -6.0, 1200.0, 5.0, 150.0, 1800.0];
     let names = ["drive", "level", "mid_freq", "mid_gain", "tight", "tone"];
     for (i, name) in names.iter().enumerate() {

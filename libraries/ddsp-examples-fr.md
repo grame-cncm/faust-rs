@@ -907,31 +907,35 @@ Soit 0,3 dB sur le drive, 75 Hz sur la
 tonalité, 3,8 Hz sur le filtre serré. Il y a un pas tous les 512
 échantillons, sur la moyenne par trame des gradients, et chaque paramètre
 est borné par la plage de son curseur. Une seule vitesse laisserait les
-fréquences où elles sont (tutoriel, section 11.5).
+fréquences où elles sont (tutoriel, section 11.6).
 
-**Ce qui le rend identifiable.** Deux choix dans le programme :
+**Ce qui le rend identifiable.** Trois choix dans le programme :
 
 - **L'enveloppe sépare le drive du niveau.** Les deux sont des gains, l'un
   avant le `tanh`, l'autre après. À niveau d'entrée constant, la perte ne
   lirait que leur combinaison ; l'enveloppe attaque le `tanh` à plusieurs
   profondeurs, et les deux se séparent.
 - **Le pic de médium est `fi.peak_eq_rm`, pas `fi.peak_eq`.** Ce dernier
-  prend `abs` de son gain, dont la dérivée en 0 dB, la valeur par défaut,
-  n'est pas un nombre. Avec `fi.peak_eq`, le premier pas envoie `mid_gain`
-  à sa borne, +12 dB, et il y reste.
+  prend `abs` de son gain, dont la dérivée en 0 dB n'est pas un nombre :
+  parti de là, `mid_gain` saute à sa borne, +12 dB, dès le premier pas.
+- **`mid_gain` part de −3 dB, pas de 0.** À 0 dB le module du pic est plat
+  quelle que soit sa fréquence, si bien que la perte n'y lit presque pas
+  `mid_freq` : une direction presque plate, du genre que montre
+  `ct.gradient_fad` (tutoriel, section 11.5). Depuis −3 dB, le pic a une
+  place à trouver dès le premier pas.
 
 **Ce qu'on observe.** Depuis les valeurs par défaut (12 dB, −12 dB, 800 Hz,
-0 dB, 80 Hz, 3000 Hz) :
+−3 dB, 80 Hz, 3000 Hz) :
 
 | échantillons | drive | level | mid_freq | mid_gain | tight | tone |
 |---|---|---|---|---|---|---|
-| 25 000 | 18,29 | −4,58 | 1191,1 | 5,18 | 139,7 | 2707,1 |
-| 50 000 | 19,00 | −5,60 | 1203,6 | 5,35 | 145,2 | 1845,4 |
-| 100 000 | 19,95 | −5,96 | 1199,4 | 4,97 | 149,6 | 1808,7 |
-| 150 000 | 19,9998 | −6,0001 | 1199,999 | 4,9998 | 149,998 | 1800,06 |
+| 25 000 | 18,33 | −4,43 | 1187,2 | 4,13 | 137,7 | 2730,7 |
+| 50 000 | 18,93 | −5,57 | 1201,7 | 5,34 | 144,9 | 1846,3 |
+| 100 000 | 19,94 | −5,95 | 1199,3 | 4,96 | 149,6 | 1808,5 |
+| 150 000 | 19,9996 | −6,0000 | 1199,990 | 4,9996 | 149,997 | 1800,08 |
 
 Sur les 20 000 derniers des 200 000 échantillons, les six curseurs sont à
-1e-4 du réglage caché, et le résidu vaut 2e-7 rms. Le programme tourne
+1e-5 du réglage caché, et le résidu vaut 2e-7 rms. Le programme tourne
 environ 130 fois plus vite que le temps réel.
 
 **Avec faustprobe.** Colonnes drive, level, mid_freq, mid_gain, tight, tone
@@ -941,8 +945,8 @@ environ 130 fois plus vite que le temps réel.
 faustprobe --double -I libraries -I <faustlibraries> --in zero -n 200000 --every 25000 tests/corpus/ddsp_fad_adaptive_pedal.dsp
 ```
 
-Les lignes du tableau ci-dessus, puis `20,0001, −6,0000, 1199,997, 4,99998,
-150,0004, 1800,005` à 175 000. Avec `--skip 180000 --quiet`, le `dc` de
+Les lignes du tableau ci-dessus, puis `20,0001, −6,0001, 1199,999, 4,99996,
+150,0001, 1800,015` à 175 000. Avec `--skip 180000 --quiet`, le `dc` de
 chaque colonne est la valeur apprise et le `rms` de la dernière le résidu.
 
 **À essayer.**
@@ -953,7 +957,8 @@ chaque colonne est la valeur apprise et le `rms` de la dernière le résidu.
   quatre filtres récursifs.
 - Donner à l'enveloppe un niveau constant, et voir le drive et le niveau
   s'échanger.
-- Revenir à `fi.peak_eq`, et voir `mid_gain` rester collé à +12 dB.
+- Prendre `fi.peak_eq` avec `mid_gain` parti de 0 dB, et voir `mid_gain`
+  rester collé à +12 dB : la dérivée de `abs` en 0 n'est pas un nombre.
 - Apprendre d'un vrai enregistrement : faire de `x` et `target` les deux
   entrées du programme (`process(x, target) = ...`) et rendre un fichier à
   deux canaux, le signal sec et la sortie de la pédale, avec `--in

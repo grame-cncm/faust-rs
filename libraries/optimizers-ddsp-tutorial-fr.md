@@ -1037,32 +1037,20 @@ ajustées par une perte spectrale par trame de 256 échantillons, les seize
 gradients d'un balayage par trame. Ce qui reste interdit est un `rad` qui
 traverserait la frontière du bloc, une perte dedans et une graine dehors.
 
-### 11.5 Apprendre les curseurs d'un programme existant
+### 11.5 Lire et mesurer les curseurs d'un programme
 
 Jusqu'ici chaque paramètre était un argument de fonction, écrit pour que
 `fad` puisse le prendre comme graine. Un vrai programme a plutôt des
 curseurs : des `hslider` dans leurs propres unités, et personne ne veut le
-réécrire en fonction de ses boutons. Trois primitives permettent à un
-programme d'apprendre ses curseurs sans être réécrit :
+réécrire en fonction de ses boutons. Deux primitives les lisent, sans
+réécrire le programme :
 
 - `cinputs(e)` liste les entrées de contrôle de `e` dans l'ordre de son
   interface ;
 - `cinput(i, e)` donne la `i`-ième sous la forme `(widget, défaut, min, max,
-  pas)` ;
-- la modulation joker `["*": (!, _) -> e]` remplace chaque curseur de `e`
-  par une entrée supplémentaire, dans le même ordre. Le modulateur `(!, _)`
-  jette le curseur et transmet la nouvelle entrée.
+  pas)`.
 
-`op.adaptive_fad(e, perte, upd, horloge, reset, x, t)` assemble les trois
-avec la boucle cadencée de la section 11.2. Elle compte les contrôles, part
-de la valeur par défaut de chacun, les rebranche, et à chaque tir de
-l'horloge fait un pas sur la moyenne par trame de leurs gradients `fad`,
-chaque paramètre borné par la plage de son curseur. Ses sorties sont celles
-de `e` sur les paramètres appris, suivies des paramètres dans l'ordre de
-l'interface. Les curseurs rebranchés quittent l'interface.
-
-Le programme à apprendre tient en deux lignes, écrites comme on écrit un
-effet :
+Prenons un programme de deux lignes, écrites comme on écrit un effet :
 
 ```faust
 e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
@@ -1082,7 +1070,139 @@ nombre de contrôles, puis la valeur par défaut, le minimum, le maximum et le
 pas de `cutoff` et de `gain`, dans l'ordre de l'interface. Ce sont des
 constantes de compilation.
 
-La cible est la même chaîne à 2500 Hz et avec un gain de 1,2. D'abord
+Avant d'apprendre les curseurs d'un programme, il vaut la peine de demander
+desquels la sortie dépend vraiment au réglage courant. `controls.lib` répond
+en deux lignes. `ct.gradient_fad(e)` est `fad(e, cinputs(e))` : les sorties
+de `e`, puis la dérivée de chaque sortie par rapport à chaque curseur, dans
+l'ordre de `cinputs`. `ct.gradient_rad(e)` est `rad(e, cinputs(e))` : la même
+question par un seul balayage inverse, quel que soit le nombre de curseurs,
+pour la somme des sorties.
+
+Le programme étudié est un effet à sept curseurs : un passe-haut serré, un
+drive vers `tanh`, un passe-bas de tonalité, un trémolo (`depth`, `rate`), et
+deux gains de sortie en série, `level` et `trim`. Chaque dérivée est
+multipliée par la plage de son curseur (`ct.range`), si bien que toutes les
+colonnes se lisent de la même façon : de combien la sortie bougerait, au
+premier ordre, si ce curseur parcourait toute sa plage.
+
+```faust
+import("stdfaust.lib");
+ct = library("controls.lib");
+e = fi.highpass(1, hslider("tight", 80, 20, 400, 1))
+  : *(ba.db2linear(hslider("drive", 12, 0, 30, 0.1))) : ma.tanh
+  : fi.lowpass(1, hslider("tone", 3000, 500, 8000, 1))
+  : *(1 - hslider("depth", 0, 0, 1, 0.01) * (0.5 + 0.5 * sin(2 * ma.PI * os.phasor(1, hslider("rate", 4, 0.5, 10, 0.01)))))
+  : *(ba.db2linear(hslider("level", -6, -40, 0, 0.1)))
+  : *(ba.db2linear(hslider("trim", 0, -12, 12, 0.1)));
+x = 0.3 * (0.7 * os.sawtooth(110) + 0.3 * no.noise);
+process = x : ct.gradient_fad(e) : _, par(i, ct.count(e), *(ct.range(i, e)));
+```
+
+Exécutez avec `-n 44100 --quiet` et lisez le `rms` de chaque colonne. La
+première est la sortie, `0,174`. Puis, dans l'ordre de `cinputs` (depth,
+drive, level, rate, tight, tone, trim) : `0,107`, `0,443`, `0,804`, `0`,
+`0,397`, `0,0855`, `0,482`. Trois lectures :
+
+- **`rate` vaut exactement zéro.** À `depth = 0` le trémolo est coupé, et sa
+  vitesse ne change rien. Une descente ne le déplacerait jamais : une
+  direction plate, pas un petit gradient.
+- **`level` et `trim` sont un seul gain.** Leurs colonnes sont dans le
+  rapport de leurs plages, `0,804 / 0,482 = 40 / 24` : par décibel, les deux
+  dérivées sont le même signal. Aucune perte ne peut les distinguer, et les
+  apprendre tous deux ne déplace que leur somme.
+- **`tone` déplace peu la sortie à ce réglage** : `0,0855` pour toute sa
+  plage de 7500 Hz, un dixième de la colonne de `level`. Sa dérivée n'est
+  pas nulle, mais une descente sur elle serait lente et bruitée.
+
+La carte dépend du réglage. Avec le trémolo en marche, `rate` s'éveille :
+
+```faust
+import("stdfaust.lib");
+ct = library("controls.lib");
+e = fi.highpass(1, hslider("tight", 80, 20, 400, 1))
+  : *(ba.db2linear(hslider("drive", 12, 0, 30, 0.1))) : ma.tanh
+  : fi.lowpass(1, hslider("tone", 3000, 500, 8000, 1))
+  : *(1 - hslider("depth", 0, 0, 1, 0.01) * (0.5 + 0.5 * sin(2 * ma.PI * os.phasor(1, hslider("rate", 4, 0.5, 10, 0.01)))))
+  : *(ba.db2linear(hslider("level", -6, -40, 0, 0.1)))
+  : *(ba.db2linear(hslider("trim", 0, -12, 12, 0.1)));
+x = 0.3 * (0.7 * os.sawtooth(110) + 0.3 * no.noise);
+on = ["depth": 0.5 -> e];
+process = x : ct.gradient_fad(on) : _, par(i, ct.count(on), *(ct.range(i, on)));
+```
+
+La modulation littérale `["depth": 0.5 -> e]` fixe la profondeur à 0,5 ; ce
+n'est plus un contrôle, et les six colonnes sont drive, level, rate, tight,
+tone, trim. Avec la même exécution, `rate` lit `1,06`, et le `peak` de sa
+colonne croît avec la fenêtre : `2,93` sur une demi-seconde, `6,02` sur
+une, `12,1` sur deux. La phase du trémolo s'accumule, si bien que sa
+dérivée par rapport à la vitesse croît linéairement avec le temps. Une
+sensibilité est un énoncé local, et celle-ci l'est aussi dans le temps :
+une vitesse s'apprend sur une fenêtre courte, ou par une perte qui ne
+dépend pas de la phase.
+
+`ct.gradient_rad` répond à une autre question. Il dérive la **somme** des
+sorties : c'est l'outil pour une seule grandeur scalaire de la sortie par
+rapport à tous les curseurs, en un balayage. Ici, l'énergie de la sortie,
+`y²`, comparée à la même dérivée prise par `fad` :
+
+```faust
+import("stdfaust.lib");
+ct = library("controls.lib");
+e = fi.highpass(1, hslider("tight", 80, 20, 400, 1))
+  : *(ba.db2linear(hslider("drive", 12, 0, 30, 0.1))) : ma.tanh
+  : fi.lowpass(1, hslider("tone", 3000, 500, 8000, 1))
+  : *(1 - hslider("depth", 0, 0, 1, 0.01) * (0.5 + 0.5 * sin(2 * ma.PI * os.phasor(1, hslider("rate", 4, 0.5, 10, 0.01)))))
+  : *(ba.db2linear(hslider("level", -6, -40, 0, 0.1)))
+  : *(ba.db2linear(hslider("trim", 0, -12, 12, 0.1)));
+x = 0.3 * (0.7 * os.sawtooth(110) + 0.3 * no.noise);
+energy = e : \(y).(y * y);
+process = x <: ct.gradient_rad(energy), (ct.gradient_fad(energy) : !, si.bus(ct.count(e)));
+```
+
+Les colonnes sont l'énergie, ses sept voies `rad`, puis ses sept voies
+`fad`. Comme en section 10.5, une voie `rad` est une contribution par
+échantillon au gradient du bloc, qui a un sens sommée sur le bloc. Exécutez
+avec `--block 4096 -n 8192 --out energy.npy` et sommez chaque voie sur
+chaque bloc de 4096 échantillons :
+
+- **premier bloc**, depuis un état remis à zéro : les deux jeux de sommes
+  concordent à `1e-14`. L'énergie baisse avec `depth` (`-219,7`), monte avec
+  `drive` (`20,94`), ne dépend pas de `rate` (`0`), et `level` comme `trim`
+  donnent `29,18`, soit l'énergie du bloc (`126,7`) fois
+  `ln(10)/10 = 0,230259` à tous les chiffres affichés : un décibel d'énergie
+  par décibel de gain, exactement ;
+- **second bloc** : `drive` lit `20,196` par `rad` et `20,206` par `fad`, et
+  `tight` `-0,7925` contre `-0,7899`. Le balayage inverse tient l'état au
+  début du bloc (BPTT tronquée, section 10.5) ; `fad` porte tout
+  l'historique. Les gains et le trémolo, qui n'ont pas d'état, concordent
+  toujours.
+
+`gradient_fad` donne donc une sensibilité par échantillon de chaque sortie à
+chaque curseur, la carte ci-dessus ; `gradient_rad` donne le gradient d'un
+scalaire sommé sur un bloc, pour le coût d'un balayage, ce qui est le choix
+quand les curseurs sont nombreux et que la question est un seul nombre. Ni
+l'un ni l'autre n'est une perte : pour apprendre les curseurs, dérivez une
+perte de la sortie, ce que font `adaptive_fad` et `adaptive_rad`
+(section 11.6, la suivante).
+
+### 11.6 Apprendre les curseurs d'un programme existant
+
+La section 11.5 a lu les curseurs et mesuré leur effet ; les apprendre
+demande une troisième primitive. La modulation joker
+`["*": (!, _) -> e]` remplace chaque curseur de `e` par une entrée
+supplémentaire, dans le même ordre. Le modulateur `(!, _)` jette le
+curseur et transmet la nouvelle entrée.
+
+`op.adaptive_fad(e, perte, upd, horloge, reset, x, t)` assemble les trois
+primitives avec la boucle cadencée de la section 11.2. Elle compte les contrôles, part
+de la valeur par défaut de chacun, les rebranche, et à chaque tir de
+l'horloge fait un pas sur la moyenne par trame de leurs gradients `fad`,
+chaque paramètre borné par la plage de son curseur. Ses sorties sont celles
+de `e` sur les paramètres appris, suivies des paramètres dans l'ordre de
+l'interface. Les curseurs rebranchés quittent l'interface.
+
+Le programme à apprendre est la chaîne à deux curseurs de la section 11.5,
+et la cible est la même chaîne à 2500 Hz et avec un gain de 1,2. D'abord
 l'appel à `adaptive_fad` tel que le donne la documentation de la
 bibliothèque, avec une seule vitesse d'Adam pour les deux curseurs :
 
@@ -1141,16 +1261,20 @@ Trois remarques :
   directement le gradient par rapport à chaque curseur de `e`.
 - Ce que l'opérateur supprime, c'est la réécriture, pas la modélisation. Les
   coordonnées, les vitesses et ce que la sortie permet d'identifier restent
-  ceux du modèle. Deux gains en série restent un seul gain, et une fonction
-  non dérivable à la valeur par défaut d'un curseur (par exemple `abs` en 0)
-  y arrête toujours la descente.
+  ceux du modèle. Deux gains en série restent un seul gain (les colonnes
+  `level` et `trim` de la section 11.5), un curseur dont la colonne est
+  nulle au départ (`rate` à `depth = 0`) ne bouge pas, et une fonction non
+  dérivable à la valeur par défaut d'un curseur (par exemple `abs` en 0) y
+  arrête toujours la descente. Mesurer d'abord la carte dit à quoi
+  s'attendre.
 
 `adaptive_rad` a la même forme, avec un balayage inverse au lieu de `N`
 tangentes, ce qui vaut la peine au-delà de quelques dizaines de contrôles. À
 travers une récursion, toutefois, il ne voit que le terme direct (section
 10.5) : sur un filtre, prenez `adaptive_fad`. L'exemple 15 de
 [ddsp-examples-fr.md](ddsp-examples-fr.md) apprend ainsi les six curseurs
-d'une pédale de saturation.
+d'une pédale de saturation ; son `mid_gain` part de −3 dB plutôt que de 0,
+où le module du pic ne dépend pas de `mid_freq` (section 11.5).
 
 ## 12. Quand le départ est faux
 
@@ -1449,7 +1573,7 @@ en section 11.3.
 | Il dérive au lieu de converger, la perte restant haute | le mauvais bassin : un puits trop étroit pour le départ, ou un plateau en pente | une estimation comme `init` (12.2), plusieurs départs (12.4), un redémarrage sur absence de progrès (12.5), une perte qui élargit le puits (12.7) |
 | Il ne bouge jamais alors que la perte est haute | le paramètre n'a pas de dérivée : un retard entier, un `select2`, une table écrite | `spsa_1D_clocked` ou `search_1D_clocked` (12.6) |
 | `multistart` hésite entre deux boucles | leurs pertes lissées sont égales à l'arrondi près, le même puits atteint deux fois | lire le paramètre, pas l'index ; ou moins de départs |
-| Un curseur appris saute à sa borne au premier pas et y reste | le modèle passe par une fonction non dérivable à la valeur par défaut du curseur : `fi.peak_eq` prend `abs` de son gain, dont la dérivée en 0 dB n'est pas un nombre | un équivalent lisse (`fi.peak_eq_rm`) ou une autre valeur par défaut (11.5) |
+| Un curseur appris saute à sa borne au premier pas et y reste | le modèle passe par une fonction non dérivable à la valeur par défaut du curseur : `fi.peak_eq` prend `abs` de son gain, dont la dérivée en 0 dB n'est pas un nombre | un équivalent lisse (`fi.peak_eq_rm`) ou une autre valeur par défaut (11.6) |
 | La pente `fad` d'un solveur implicite manque d'un terme | l'itération part de `vprev`, le signal même que l'équation tient fixe : `fad(G(vprev, v), v)` avec `v = vprev` dérive les deux | partir d'un prédicteur ou de tout signal distinct |
 
 ## Glossaire

@@ -850,30 +850,34 @@ upd = ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, pedal);
 That is 0.3 dB on the drive, 75 Hz on the tone, 3.8 Hz on the tight
 filter. There is one step every 512 samples, on the frame mean of the
 gradients, and every parameter is bounded by its slider's range. A single
-rate would leave the frequencies where they are (tutorial, section 11.5).
+rate would leave the frequencies where they are (tutorial, section 11.6).
 
-**What makes it identifiable.** Two choices in the program:
+**What makes it identifiable.** Three choices in the program:
 
 - **The envelope separates drive from level.** Both are gains, one before
   and one after the `tanh`. At a constant input level the loss would only
   read their combination; the envelope drives the `tanh` at several depths,
   and the two separate.
 - **The mid peak is `fi.peak_eq_rm`, not `fi.peak_eq`.** The latter takes
-  `abs` of its gain, whose derivative at the 0 dB default is not a number.
-  Under `fi.peak_eq` the first step sends `mid_gain` to its bound, +12 dB,
-  and it stays there.
+  `abs` of its gain, whose derivative at 0 dB is not a number: started
+  there, `mid_gain` jumps to its bound, +12 dB, on the first step.
+- **`mid_gain` starts at −3 dB, not 0.** At 0 dB the peak's magnitude is
+  flat whatever its frequency, so the loss hardly reads `mid_freq` there:
+  a nearly flat direction, of the kind `ct.gradient_fad` shows (tutorial,
+  section 11.5). From −3 dB the peak has a place to be found from the first
+  step.
 
-**What you see.** From the defaults (12 dB, −12 dB, 800 Hz, 0 dB, 80 Hz,
+**What you see.** From the defaults (12 dB, −12 dB, 800 Hz, −3 dB, 80 Hz,
 3000 Hz):
 
 | samples | drive | level | mid_freq | mid_gain | tight | tone |
 |---|---|---|---|---|---|---|
-| 25 000 | 18.29 | −4.58 | 1191.1 | 5.18 | 139.7 | 2707.1 |
-| 50 000 | 19.00 | −5.60 | 1203.6 | 5.35 | 145.2 | 1845.4 |
-| 100 000 | 19.95 | −5.96 | 1199.4 | 4.97 | 149.6 | 1808.7 |
-| 150 000 | 19.9998 | −6.0001 | 1199.999 | 4.9998 | 149.998 | 1800.06 |
+| 25 000 | 18.33 | −4.43 | 1187.2 | 4.13 | 137.7 | 2730.7 |
+| 50 000 | 18.93 | −5.57 | 1201.7 | 5.34 | 144.9 | 1846.3 |
+| 100 000 | 19.94 | −5.95 | 1199.3 | 4.96 | 149.6 | 1808.5 |
+| 150 000 | 19.9996 | −6.0000 | 1199.990 | 4.9996 | 149.997 | 1800.08 |
 
-Over the last 20 000 of 200 000 samples the six sliders are within 1e-4 of
+Over the last 20 000 of 200 000 samples the six sliders are within 1e-5 of
 the hidden setting, and the residual is 2e-7 rms. The program runs at about
 130 times real time.
 
@@ -884,8 +888,8 @@ the hidden setting, and the residual is 2e-7 rms. The program runs at about
 faustprobe --double -I libraries -I <faustlibraries> --in zero -n 200000 --every 25000 tests/corpus/ddsp_fad_adaptive_pedal.dsp
 ```
 
-The lines of the table above, then `20.0001, −6.0000, 1199.997, 4.99998,
-150.0004, 1800.005` at 175 000. With `--skip 180000 --quiet`, the `dc` of
+The lines of the table above, then `20.0001, −6.0001, 1199.999, 4.99996,
+150.0001, 1800.015` at 175 000. With `--skip 180000 --quiet`, the `dc` of
 each column is the learned value and the `rms` of the last one the residual.
 
 **Try.**
@@ -894,7 +898,8 @@ each column is the learned value and the `rms` of the last one the residual.
   but does not converge: drive, tight and tone drift away from the hidden
   setting. This is the direct term through the four recursive filters.
 - Give the envelope a constant level and watch drive and level trade.
-- Go back to `fi.peak_eq` and watch `mid_gain` stick at +12 dB.
+- Use `fi.peak_eq` with `mid_gain` started at 0 dB and watch `mid_gain`
+  stick at +12 dB: the derivative of `abs` at 0 is not a number.
 - Learn from a real recording: make `x` and `target` the program's two
   inputs (`process(x, target) = ...`) and render a two-channel file, the dry
   signal and the pedal's output, with `--in file:...`.

@@ -829,8 +829,8 @@ learned by reading tables afterwards, and is now said by the loop.
 
 **A control that ends on a bound is stopped, not converged.** Keeping the
 controls in their range is part of the algorithm; its having been active is
-information. The fit of a studio's impulse response
-(`faust-diff-jot`, 300 passes over a response of 77 202 frames):
+information. The fit of a Jot reverberator to a studio's impulse response
+(300 passes over a response of 77 202 frames):
 
 ```text
 # trained /jot_fit/lt0=-1.0596905749387509

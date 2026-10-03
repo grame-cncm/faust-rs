@@ -18,7 +18,10 @@
 // bounded by its slider's range and started at its default.
 //
 // The mid peak is `fi.peak_eq_rm`, smooth in its gain: `fi.peak_eq` takes
-// `abs` of the gain, whose derivative at its 0 dB default is not a number.
+// `abs` of the gain, whose derivative at 0 dB is not a number. `mid_gain`
+// starts at -3 dB, not 0: at 0 dB the peak's magnitude is flat whatever
+// `mid_freq`, which the loss then hardly reads; from -3 dB the peak has a
+// place to be found from the first step.
 //
 // Convergence: the six sliders within 1e-4 of the hidden setting (20 dB,
 // -6 dB, 1200 Hz, 5 dB, 150 Hz, 1800 Hz) from 175 000 samples, residual
@@ -40,7 +43,7 @@ pedal = hgroup("pedal",
     : *(ba.db2linear(hslider("drive", 12, 0, 30, 0.1)))
     : ma.tanh
     : fi.lowpass(1, hslider("tone", 3000, 500, 8000, 1))
-    : fi.peak_eq_rm(hslider("mid_gain", 0, -12, 12, 0.1), hslider("mid_freq", 800, 200, 3000, 1), tan(ma.PI * 400 / ma.SR))
+    : fi.peak_eq_rm(hslider("mid_gain", -3, -12, 12, 0.1), hslider("mid_freq", 800, 200, 3000, 1), tan(ma.PI * 400 / ma.SR))
     : *(ba.db2linear(hslider("level", -12, -40, 0, 0.1))));
 
 // the "recorded" pedal: the same program at another setting

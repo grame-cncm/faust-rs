@@ -1007,30 +1007,18 @@ fitted through a spectral loss per 256-sample frame, the sixteen gradients
 from one sweep per frame. What stays forbidden is a `rad` that would cross
 the block's boundary, a loss inside and a seed outside.
 
-### 11.5 Learning the sliders of an existing program
+### 11.5 Reading and measuring the sliders of a program
 
 So far every parameter was a function argument, written so that `fad` could
 take it as a seed. A real program has sliders instead. Its parameters are
 `hslider`s in their own units, and nobody wants to rewrite it as a function
-of its knobs. Three primitives let a program learn its sliders without being
-rewritten:
+of its knobs. Two primitives read them, without rewriting the program:
 
 - `cinputs(e)` lists the control inputs of `e` in the order of its
   interface;
-- `cinput(i, e)` gives the `i`-th as `(widget, default, min, max, step)`;
-- the wildcard modulation `["*": (!, _) -> e]` replaces every slider of `e`
-  by an extra input, in the same order. The modulator `(!, _)` drops the
-  slider and passes the new input.
+- `cinput(i, e)` gives the `i`-th as `(widget, default, min, max, step)`.
 
-`op.adaptive_fad(e, loss, upd, clock, reset, x, t)` puts the three together
-with the clocked loop of section 11.2. It counts the controls, starts each
-one at its default, rebinds them, and once per firing of `clock` takes one
-step on the frame mean of their `fad` gradients, each parameter bounded by
-its slider's range. Its outputs are those of `e` on the learned parameters,
-followed by the parameters in interface order. The rebound sliders leave the
-interface.
-
-The program to learn is two lines, written as one writes an effect:
+Take a program of two lines, written as one writes an effect:
 
 ```faust
 e = fi.lowpass(1, hslider("cutoff", 1000, 50, 5000, 1)) : *(hslider("gain", 0.5, 0, 2, 0.01));
@@ -1049,7 +1037,135 @@ Run with `-n 1`: `2, 1000, 50, 5000, 1, 0.5, 0, 2, 0.01`. These are the
 number of controls, then the default, minimum, maximum and step of `cutoff`
 and of `gain`, in interface order. They are compile-time constants.
 
-The target is the same chain at 2500 Hz and gain 1.2. First, the
+Before learning a program's sliders, it pays to ask which of them the output
+actually depends on at the current setting. `controls.lib` answers with two
+lines. `ct.gradient_fad(e)` is `fad(e, cinputs(e))`: the outputs of `e`, then
+the derivative of each output with respect to every slider, in `cinputs`
+order. `ct.gradient_rad(e)` is `rad(e, cinputs(e))`: the same question by one
+reverse sweep, whatever the number of sliders, for the sum of the outputs.
+
+The program under study is an effect with seven sliders: a tight high-pass,
+a drive into `tanh`, a tone low-pass, a tremolo (`depth`, `rate`), and two
+output gains in series, `level` and `trim`. Each derivative is multiplied by
+its slider's range (`ct.range`), so every column reads the same way: how much
+the output would move, to first order, if that slider crossed its whole
+range.
+
+```faust
+import("stdfaust.lib");
+ct = library("controls.lib");
+e = fi.highpass(1, hslider("tight", 80, 20, 400, 1))
+  : *(ba.db2linear(hslider("drive", 12, 0, 30, 0.1))) : ma.tanh
+  : fi.lowpass(1, hslider("tone", 3000, 500, 8000, 1))
+  : *(1 - hslider("depth", 0, 0, 1, 0.01) * (0.5 + 0.5 * sin(2 * ma.PI * os.phasor(1, hslider("rate", 4, 0.5, 10, 0.01)))))
+  : *(ba.db2linear(hslider("level", -6, -40, 0, 0.1)))
+  : *(ba.db2linear(hslider("trim", 0, -12, 12, 0.1)));
+x = 0.3 * (0.7 * os.sawtooth(110) + 0.3 * no.noise);
+process = x : ct.gradient_fad(e) : _, par(i, ct.count(e), *(ct.range(i, e)));
+```
+
+Run with `-n 44100 --quiet` and read the `rms` of each column. The first is
+the output, `0.174`. Then, in `cinputs` order (depth, drive, level, rate,
+tight, tone, trim): `0.107`, `0.443`, `0.804`, `0`, `0.397`, `0.0855`,
+`0.482`. Three readings:
+
+- **`rate` is exactly zero.** At `depth = 0` the tremolo is off, and its
+  rate changes nothing. A descent would never move it: a flat direction,
+  not a small gradient.
+- **`level` and `trim` are one gain.** Their columns stand in the ratio of
+  their ranges, `0.804 / 0.482 = 40 / 24`: per decibel, the two derivatives
+  are the same signal. No loss can tell them apart, and learning both only
+  moves their sum.
+- **`tone` moves the output little at this setting**: `0.0855` for its
+  whole range of 7500 Hz, a tenth of `level`'s column. Its derivative is not
+  zero, but a descent on it would be slow and noisy.
+
+The map depends on the setting. With the tremolo on, `rate` comes alive:
+
+```faust
+import("stdfaust.lib");
+ct = library("controls.lib");
+e = fi.highpass(1, hslider("tight", 80, 20, 400, 1))
+  : *(ba.db2linear(hslider("drive", 12, 0, 30, 0.1))) : ma.tanh
+  : fi.lowpass(1, hslider("tone", 3000, 500, 8000, 1))
+  : *(1 - hslider("depth", 0, 0, 1, 0.01) * (0.5 + 0.5 * sin(2 * ma.PI * os.phasor(1, hslider("rate", 4, 0.5, 10, 0.01)))))
+  : *(ba.db2linear(hslider("level", -6, -40, 0, 0.1)))
+  : *(ba.db2linear(hslider("trim", 0, -12, 12, 0.1)));
+x = 0.3 * (0.7 * os.sawtooth(110) + 0.3 * no.noise);
+on = ["depth": 0.5 -> e];
+process = x : ct.gradient_fad(on) : _, par(i, ct.count(on), *(ct.range(i, on)));
+```
+
+The literal modulation `["depth": 0.5 -> e]` fixes the depth at 0.5; it is
+no longer a control, and the six columns are drive, level, rate, tight,
+tone, trim. With the same run, `rate` reads `1.06`, and the `peak` of its
+column grows with the window: `2.93` over half a second, `6.02` over one,
+`12.1` over two. The phase of the tremolo accumulates, so its derivative
+with respect to the rate grows linearly with time. A sensitivity is a local
+statement, and this one is local in time too: a rate is learned from a
+short window, or through a loss that does not depend on the phase.
+
+`ct.gradient_rad` answers another question. It differentiates the **sum** of
+the outputs, so it is the tool for one scalar quantity of the output with
+respect to every slider, in one sweep. Here, the output's energy, `y²`,
+compared with the same derivative taken by `fad`:
+
+```faust
+import("stdfaust.lib");
+ct = library("controls.lib");
+e = fi.highpass(1, hslider("tight", 80, 20, 400, 1))
+  : *(ba.db2linear(hslider("drive", 12, 0, 30, 0.1))) : ma.tanh
+  : fi.lowpass(1, hslider("tone", 3000, 500, 8000, 1))
+  : *(1 - hslider("depth", 0, 0, 1, 0.01) * (0.5 + 0.5 * sin(2 * ma.PI * os.phasor(1, hslider("rate", 4, 0.5, 10, 0.01)))))
+  : *(ba.db2linear(hslider("level", -6, -40, 0, 0.1)))
+  : *(ba.db2linear(hslider("trim", 0, -12, 12, 0.1)));
+x = 0.3 * (0.7 * os.sawtooth(110) + 0.3 * no.noise);
+energy = e : \(y).(y * y);
+process = x <: ct.gradient_rad(energy), (ct.gradient_fad(energy) : !, si.bus(ct.count(e)));
+```
+
+The columns are the energy, its seven `rad` lanes, then its seven `fad`
+lanes. As in section 10.5, a `rad` lane is a per-sample contribution to the
+gradient of the block, meaningful as a sum over the block. Run with
+`--block 4096 -n 8192 --out energy.npy` and sum each lane over each block
+of 4096 samples:
+
+- **first block**, from a cleared state: the two sets of sums agree to
+  `1e-14`. The energy falls with `depth` (`-219.7`), rises with `drive`
+  (`20.94`), does not depend on `rate` (`0`), and `level` and `trim` both
+  give `29.18`, which is the block's energy (`126.7`) times
+  `ln(10)/10 = 0.230259` to every printed digit: one decibel of energy per
+  decibel of gain, exactly;
+- **second block**: `drive` reads `20.196` by `rad` and `20.206` by `fad`,
+  and `tight` `-0.7925` against `-0.7899`. The reverse sweep holds the state
+  at the block's start (truncated BPTT, section 10.5); `fad` carries the
+  whole history. The gains and the tremolo, which have no state, still
+  agree.
+
+So `gradient_fad` gives a per-sample sensitivity of every output to every
+slider, the map above; `gradient_rad` gives the gradient of one scalar
+summed over a block, for the cost of one sweep, which is the choice when
+the sliders are many and the question is one number. Neither is a loss:
+to learn the sliders, differentiate a loss of the output, which is what
+`adaptive_fad` and `adaptive_rad` do (section 11.6, next).
+
+### 11.6 Learning the sliders of an existing program
+
+Section 11.5 read the sliders and measured what they do; learning them
+needs a third primitive. The wildcard modulation `["*": (!, _) -> e]`
+replaces every slider of `e` by an extra input, in the same order. The
+modulator `(!, _)` drops the slider and passes the new input.
+
+`op.adaptive_fad(e, loss, upd, clock, reset, x, t)` puts the three
+primitives together with the clocked loop of section 11.2. It counts the controls, starts each
+one at its default, rebinds them, and once per firing of `clock` takes one
+step on the frame mean of their `fad` gradients, each parameter bounded by
+its slider's range. Its outputs are those of `e` on the learned parameters,
+followed by the parameters in interface order. The rebound sliders leave the
+interface.
+
+The program to learn is the two-slider chain of section 11.5, and the
+target is the same chain at 2500 Hz and gain 1.2. First, the
 `adaptive_fad` call as the library documentation gives it, with one Adam
 rate for both sliders:
 
@@ -1107,15 +1223,20 @@ Three remarks:
   respect to every slider of `e` directly.
 - What the operator removes is the rewriting, not the modelling. The
   coordinates, the rates and what the output can identify remain the
-  model's. Two gains in series are still one gain, and a function that is
-  not differentiable at a slider's default (for example `abs` at 0) still
-  stops the descent there.
+  model's. Two gains in series are still one gain (the `level` and `trim`
+  columns of section 11.5), a slider whose column is zero at the start
+  (`rate` at `depth = 0`) does not move, and a function that is not
+  differentiable at a slider's default (for example `abs` at 0) still
+  stops the descent there. Measuring the map first says which of these
+  to expect.
 
 `adaptive_rad` has the same form with one reverse sweep instead of `N`
 tangents, worth it past a few dozen controls. Through a recursion, though, it
 sees only the direct term (section 10.5): on a filter, use `adaptive_fad`.
 Example 15 of [ddsp-examples-en.md](ddsp-examples-en.md) learns the six
-sliders of a drive pedal this way.
+sliders of a drive pedal this way; its `mid_gain` starts at −3 dB rather
+than 0, where the peak's magnitude does not depend on `mid_freq`
+(section 11.5).
 
 ## 12. When the start is wrong
 
@@ -1405,7 +1526,7 @@ body, as in section 11.3.
 | It drifts away instead of converging, the loss staying high | the wrong basin: a well too narrow for the start, or a sloped plateau | an estimate as `init` (12.2), several starts (12.4), a restart on no progress (12.5), a loss that widens the well (12.7) |
 | It never moves although the loss is high | the parameter has no derivative: an integer delay, a `select2`, a written table | `spsa_1D_clocked` or `search_1D_clocked` (12.6) |
 | `multistart` hesitates between two loops | their smoothed losses are equal to rounding, the same well reached twice | read the parameter, not the index; or fewer starts |
-| A learned slider jumps to its bound on the first step and stays there | the model goes through a function that is not differentiable at the slider's default: `fi.peak_eq` takes `abs` of its gain, whose derivative at 0 dB is not a number | a smooth equivalent (`fi.peak_eq_rm`) or another default (11.5) |
+| A learned slider jumps to its bound on the first step and stays there | the model goes through a function that is not differentiable at the slider's default: `fi.peak_eq` takes `abs` of its gain, whose derivative at 0 dB is not a number | a smooth equivalent (`fi.peak_eq_rm`) or another default (11.6) |
 | The `fad` slope of an implicit solver misses a term | the iteration starts from `vprev`, the very signal the equation holds fixed: `fad(G(vprev, v), v)` with `v = vprev` differentiates both | start the iteration from a predictor or any distinct signal |
 
 ## Glossary
