@@ -2326,6 +2326,34 @@ fn eval_process_tries_case_rules_in_textual_order_like_cpp() {
 }
 
 #[test]
+fn eval_process_matches_a_float_comparison_against_an_integer_rule_like_cpp() {
+    // A comparison is an integer even on floats (C++ `gtNode` is a `bool`,
+    // hence `Node(int)`), so `ma.EPSILON > 1e-10` selects `f(1)`: the
+    // precision dispatch of `os.phasor` and `os.saw2ptr` in faustlibraries.
+    // Bitwise operations on floats are integers too (`int(x) & int(y)`).
+    let cases: &[(&str, i32)] = &[
+        ("f(0) = 10; f(1) = 20; process = f(1.2e-7 > 1e-10);", 20),
+        ("f(0) = 10; f(1) = 20; process = f(2.2e-16 > 1e-10);", 10),
+        ("f(0) = 10; f(1) = 20; process = f(1.5 <= 1);", 10),
+        ("f(0) = 10; f(1) = 20; process = f(1.0 == 1);", 20),
+        ("f(0) = 10; f(1) = 20; process = f(3.5 & 1.0);", 20),
+    ];
+    for (source, expected) in cases {
+        let parsed = parse_program(source, "<memory>");
+        assert!(parsed.errors.is_empty(), "parser should accept {source:?}");
+        let mut arena = parsed.state.arena;
+        let root = parsed.root.expect("parse should return a root");
+        let out = eval_process(&mut arena, root)
+            .unwrap_or_else(|e| panic!("{source:?} should evaluate like Faust C++: {e:?}"));
+        assert_eq!(
+            match_box(&arena, out),
+            BoxMatch::Int(*expected),
+            "{source:?}"
+        );
+    }
+}
+
+#[test]
 fn eval_process_accesses_environment_passed_as_argument_like_cpp() {
     // An environment bound to a function parameter keeps its definitions:
     // forcing an environment closure to a box used to return the bare

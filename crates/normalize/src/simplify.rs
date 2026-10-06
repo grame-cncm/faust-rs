@@ -637,6 +637,26 @@ fn fold_binop(op: BinOp, t1: SigId, t2: SigId, arena: &mut TreeArena) -> Option<
         V::I(i) => f64::from(*i),
         V::F(f) => *f,
     };
+    // Comparisons and bitwise operations are integers even on floats, as in
+    // C++ `gtNode` ... `neNode` (a `bool`, so `Node(int)`) and `andNode`,
+    // `orNode`, `xorNode` (`int(x) & int(y)`) in `compiler/tlib/node.hh`. A
+    // pattern argument such as `ma.EPSILON > 1e-10` must fold to `int(1)` to
+    // match the case rule `f(1)`.
+    let int_result = match op {
+        BinOp::Gt => Some(i32::from(a > b)),
+        BinOp::Lt => Some(i32::from(a < b)),
+        BinOp::Ge => Some(i32::from(a >= b)),
+        BinOp::Le => Some(i32::from(a <= b)),
+        BinOp::Eq => Some(i32::from(a == b)),
+        BinOp::Ne => Some(i32::from(a != b)),
+        BinOp::And => Some((a as i32) & (b as i32)),
+        BinOp::Or => Some((a as i32) | (b as i32)),
+        BinOp::Xor => Some((a as i32) ^ (b as i32)),
+        _ => None,
+    };
+    if let Some(i) = int_result {
+        return Some(SigBuilder::new(arena).int(i));
+    }
     let result = match op {
         BinOp::Add => a + b,
         BinOp::Sub => a - b,
@@ -648,19 +668,8 @@ fn fold_binop(op: BinOp, t1: SigId, t2: SigId, arena: &mut TreeArena) -> Option<
             a / b
         }
         BinOp::Rem => a % b,
-        BinOp::Gt => f64::from(a > b),
-        BinOp::Lt => f64::from(a < b),
-        BinOp::Ge => f64::from(a >= b),
-        BinOp::Le => f64::from(a <= b),
-        BinOp::Eq => f64::from(a == b),
-        BinOp::Ne => f64::from(a != b),
-        // Bitwise ops: fall through to integer path via truncation
-        BinOp::And => f64::from((a as i32) & (b as i32)),
-        BinOp::Or => f64::from((a as i32) | (b as i32)),
-        BinOp::Xor => f64::from((a as i32) ^ (b as i32)),
-        BinOp::Lsh | BinOp::ARsh | BinOp::LRsh => {
-            return None; // shift on float undefined
-        }
+        // shift on float undefined
+        _ => return None,
     };
     Some(SigBuilder::new(arena).real(result))
 }
@@ -951,6 +960,25 @@ mod tests {
             SigMatch::Real(v) => assert!((v - 4.0).abs() < 1e-10),
             other => panic!("expected Real(4.0), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn simplify_float_comparison_and_bitwise_are_int_like_cpp() {
+        let mut a = arena();
+        let t = types();
+        let eps = SigBuilder::new(&mut a).real(1.192_092_896e-7);
+        let tiny = SigBuilder::new(&mut a).real(1e-10);
+        let gt = SigBuilder::new(&mut a).binop(BinOp::Gt, eps, tiny);
+        let r = simplify(&mut a, &t, gt);
+        assert_eq!(match_sig(&a, r), SigMatch::Int(1));
+        let le = SigBuilder::new(&mut a).binop(BinOp::Le, eps, tiny);
+        let r = simplify(&mut a, &t, le);
+        assert_eq!(match_sig(&a, r), SigMatch::Int(0));
+        let x = SigBuilder::new(&mut a).real(3.5);
+        let one = SigBuilder::new(&mut a).int(1);
+        let and = SigBuilder::new(&mut a).binop(BinOp::And, x, one);
+        let r = simplify(&mut a, &t, and);
+        assert_eq!(match_sig(&a, r), SigMatch::Int(1));
     }
 
     #[test]
