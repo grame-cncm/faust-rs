@@ -322,12 +322,24 @@ fn propagate_inner(
                 BoxMatch::Attach => binary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y| {
                     b.attach(x, y)
                 }),
+                // C++ `propagate.cpp` (prim2 case, `gEnableFlag` on, its
+                // default): `enable(X,Y) -> sigControl(X*Y, Y != 0)` and
+                // `control(X,Y) -> sigControl(X, Y != 0)`. The product
+                // carries the gate's rate into the value (so a constant X
+                // gated by a control is not hoisted to init time) and gives
+                // X*Y for a gate other than 0/1; the type rules keep
+                // `Control(x, _) = x`, as C++ `sigattributes.cpp`.
                 BoxMatch::Enable => binary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y| {
-                    b.enable(x, y)
+                    let prod = b.mul(x, y);
+                    let zero = b.real(0.0);
+                    let cond = b.ne(y, zero);
+                    b.control(prod, cond)
                 }),
                 BoxMatch::Control => {
                     binary_prim(arena, box_tree.as_tree_id(), inputs, |b, x, y| {
-                        b.control(x, y)
+                        let zero = b.real(0.0);
+                        let cond = b.ne(y, zero);
+                        b.control(x, cond)
                     })
                 }
                 _ => unreachable!("flat prim2 node must decode to a binary primitive"),

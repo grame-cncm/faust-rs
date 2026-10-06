@@ -46,6 +46,47 @@ fn propagate_add_maps_to_signal_binop() {
     );
 }
 
+/// C++ `propagate.cpp` (`gEnableFlag` on): `enable(X,Y)` lowers to
+/// `sigControl(X*Y, Y != 0)` and `control(X,Y)` to `sigControl(X, Y != 0)`.
+/// The product makes `0.8 : enable(0.5)` give 0.4 and keeps a constant gated
+/// by a control at the control's rate.
+#[test]
+fn propagate_enable_and_control_lower_to_cpp_sig_control() {
+    fn gate_cond(arena: &TreeArena, cond: signals::SigId, gate: signals::SigId) {
+        let SigMatch::BinOp(BinOp::Ne, lhs, zero) = match_sig(arena, cond) else {
+            panic!("condition should be gate != 0");
+        };
+        assert_eq!(lhs, gate);
+        assert_eq!(match_sig(arena, zero), SigMatch::Real(0.0));
+    }
+
+    let mut arena = TreeArena::new();
+    let enable = BoxBuilder::new(&mut arena).enable();
+    let inputs = make_sig_input_list(&mut arena, 2);
+    let flat = try_build_flat_box(&arena, enable).unwrap();
+    let out = propagate_typed(&mut arena, flat, &inputs, &mut ArityCache::new())
+        .expect("enable should propagate");
+    assert_eq!(out.len(), 1);
+    let SigMatch::Control(value, cond) = match_sig(&arena, out[0]) else {
+        panic!("enable should lower to Control");
+    };
+    assert_eq!(
+        match_sig(&arena, value),
+        SigMatch::BinOp(BinOp::Mul, inputs[0], inputs[1])
+    );
+    gate_cond(&arena, cond, inputs[1]);
+
+    let control = BoxBuilder::new(&mut arena).control();
+    let flat = try_build_flat_box(&arena, control).unwrap();
+    let out = propagate_typed(&mut arena, flat, &inputs, &mut ArityCache::new())
+        .expect("control should propagate");
+    let SigMatch::Control(value, cond) = match_sig(&arena, out[0]) else {
+        panic!("control should lower to Control");
+    };
+    assert_eq!(value, inputs[0]);
+    gate_cond(&arena, cond, inputs[1]);
+}
+
 #[test]
 fn propagate_seq_par_and_split_composition() {
     let mut arena = TreeArena::new();
