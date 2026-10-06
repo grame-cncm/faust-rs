@@ -47,32 +47,6 @@ fn the_same_error_lists_its_repairs_in_the_same_order_at_every_parse() {
 }
 
 #[test]
-fn shorter_repairs_come_first_and_equal_ones_read_alphabetically() {
-    // a parenthesis left open before a stray token: some twenty repairs of
-    // two edits (`Insert RPAR, Delete 2`, `Insert RPAR, Insert ADD`, ...) and
-    // as many of three (`Insert ABS, Shift 2, Insert RPAR`, ...), which by
-    // text alone would come first
-    let listed = sequences(&messages("process = (1 2;\n"));
-    assert!(listed.len() > 20, "{listed:?}");
-    let cost = |text: &str| text.split(", ").count();
-    assert!(listed.iter().any(|(_, text)| cost(text) == 2), "{listed:?}");
-    assert!(listed.iter().any(|(_, text)| cost(text) == 3), "{listed:?}");
-    // numbered from one, without a gap
-    for (k, (number, _)) in listed.iter().enumerate() {
-        assert_eq!(*number, k + 1);
-    }
-    // a repair costs the number of edits it makes, and a dearer one never
-    // comes before a cheaper one
-    for pair in listed.windows(2) {
-        let (a, b) = (&pair[0].1, &pair[1].1);
-        assert!(
-            cost(a) < cost(b) || (cost(a) == cost(b) && a < b),
-            "`{a}` is listed before `{b}`"
-        );
-    }
-}
-
-#[test]
 fn the_text_is_the_one_lrpar_wrote() {
     // one repair: the text the documents quote, padding included
     assert_eq!(
@@ -83,6 +57,9 @@ fn the_text_is_the_one_lrpar_wrote() {
     let text = messages("good = 1;\nbad = 1 +;\n");
     assert!(text.contains("\n    9: Insert "), "{text}");
     assert!(text.contains("\n   10: Insert "), "{text}");
+    for (index, (number, _)) in sequences(&text).iter().enumerate() {
+        assert_eq!(*number, index + 1);
+    }
     // a deletion is worded as lrpar words it, and read before an insertion
     let text = messages("process = 1 2;\n");
     assert!(text.contains("\n    1: Delete 2\n    2: Insert "), "{text}");

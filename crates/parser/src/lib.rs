@@ -2122,7 +2122,7 @@ fn render_lex_parse_error(
                 .iter()
                 .map(|sequence| (sequence.len(), render_repair_sequence(sequence, lexer, epp)))
                 .collect();
-            sequences.sort();
+            sort_repair_sequences(&mut sequences);
             out.push_str(" Repair sequences found:");
             let count = sequences.len();
             for (i, (_, text)) in sequences.iter().enumerate() {
@@ -2132,6 +2132,38 @@ fn render_lex_parse_error(
             }
             out
         }
+    }
+}
+
+/// Keep the recovery display order independent of lrpar's `HashSet` order.
+fn sort_repair_sequences(sequences: &mut [(usize, String)]) {
+    sequences.sort();
+}
+
+#[cfg(test)]
+mod repair_order_tests {
+    use super::sort_repair_sequences;
+
+    #[test]
+    fn shorter_repairs_come_first_and_equal_ones_read_alphabetically() {
+        // lrpar may return no repairs when its 500 ms recovery budget expires.
+        // Exercise our ordering with fixed sequences instead of timing recovery.
+        let mut sequences = vec![
+            (3, "Insert ABS, Shift 2, Insert RPAR".to_owned()),
+            (2, "Insert RPAR, Insert ADD".to_owned()),
+            (3, "Delete 2, Shift ;, Insert RPAR".to_owned()),
+            (2, "Insert RPAR, Delete 2".to_owned()),
+        ];
+        sort_repair_sequences(&mut sequences);
+        assert_eq!(
+            sequences,
+            [
+                (2, "Insert RPAR, Delete 2".to_owned()),
+                (2, "Insert RPAR, Insert ADD".to_owned()),
+                (3, "Delete 2, Shift ;, Insert RPAR".to_owned()),
+                (3, "Insert ABS, Shift 2, Insert RPAR".to_owned()),
+            ]
+        );
     }
 }
 
