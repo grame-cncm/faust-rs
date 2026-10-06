@@ -850,7 +850,7 @@ upd = ct.by_range(\(lr).(op.adam_g(lr, 0.9, 0.999, 1e-8)), 0.01, pedal);
 That is 0.3 dB on the drive, 75 Hz on the tone, 3.8 Hz on the tight
 filter. There is one step every 512 samples, on the frame mean of the
 gradients, and every parameter is bounded by its slider's range. A single
-rate would leave the frequencies where they are (tutorial, section 11.6).
+rate would leave the frequencies where they are (tutorial, section 13.2).
 
 **What makes it identifiable.** Three choices in the program:
 
@@ -864,7 +864,7 @@ rate would leave the frequencies where they are (tutorial, section 11.6).
 - **`mid_gain` starts at −3 dB, not 0.** At 0 dB the peak's magnitude is
   flat whatever its frequency, so the loss hardly reads `mid_freq` there:
   a nearly flat direction, of the kind `ct.gradient_fad` shows (tutorial,
-  section 11.5). From −3 dB the peak has a place to be found from the first
+  section 13.1). From −3 dB the peak has a place to be found from the first
   step.
 
 **What you see.** From the defaults (12 dB, −12 dB, 800 Hz, −3 dB, 80 Hz,

@@ -907,7 +907,7 @@ Soit 0,3 dB sur le drive, 75 Hz sur la
 tonalité, 3,8 Hz sur le filtre serré. Il y a un pas tous les 512
 échantillons, sur la moyenne par trame des gradients, et chaque paramètre
 est borné par la plage de son curseur. Une seule vitesse laisserait les
-fréquences où elles sont (tutoriel, section 11.6).
+fréquences où elles sont (tutoriel, section 13.2).
 
 **Ce qui le rend identifiable.** Trois choix dans le programme :
 
@@ -921,7 +921,7 @@ fréquences où elles sont (tutoriel, section 11.6).
 - **`mid_gain` part de −3 dB, pas de 0.** À 0 dB le module du pic est plat
   quelle que soit sa fréquence, si bien que la perte n'y lit presque pas
   `mid_freq` : une direction presque plate, du genre que montre
-  `ct.gradient_fad` (tutoriel, section 11.5). Depuis −3 dB, le pic a une
+  `ct.gradient_fad` (tutoriel, section 13.1). Depuis −3 dB, le pic a une
   place à trouver dès le premier pas.
 
 **Ce qu'on observe.** Depuis les valeurs par défaut (12 dB, −12 dB, 800 Hz,
