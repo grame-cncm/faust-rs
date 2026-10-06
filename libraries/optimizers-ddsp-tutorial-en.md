@@ -381,9 +381,12 @@ exponentially from 0.001 towards 0.00001 with a time constant of 20 000
 samples, so the search is fast at first and quiet at the end. Learning rates
 are signals; a schedule is passed where a constant would be.
 
-Run with `-n 30000 --every 10000`: `(1206, 2.003)` at 10 000 samples, then
-within 5 % of `(1200, 2.0)` (`(1233, 2.03)` at 20 000). Good, with a residual
-jitter that Lion's fixed step size leaves.
+Run with `-n 30000 --every 10000`: the pair comes near `(1200, 2.0)` within
+10 000 samples, then jitters around it by a few percent, the residual jitter
+that Lion's fixed step size leaves. The printed values are single samples of
+that jitter; read means instead. With `--skip 20000 --quiet`, the `dc` of
+each column is its mean over the last 10 000 samples, `1199.0` and `1.993`,
+and the `peak` of the frequency, `1275`, says how far one sample strays.
 
 ### 5.3 Fix two: let the algorithm find the scales
 

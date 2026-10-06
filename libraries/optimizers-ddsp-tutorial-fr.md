@@ -399,9 +399,13 @@ constante de temps de 20 000 échantillons, de sorte que la recherche est rapide
 au début et calme à la fin. Les vitesses d'apprentissage sont des signaux ; un
 schedule se passe là où on mettrait une constante.
 
-Exécutez avec `-n 30000 --every 10000` : `(1206, 2,003)` à 10 000
-échantillons, puis à moins de 5 % de `(1200, 2,0)` (`(1233, 2,03)` à 20 000).
-Bien, avec une gigue résiduelle que laisse le pas fixe de Lion.
+Exécutez avec `-n 30000 --every 10000` : le couple s'approche de
+`(1200, 2,0)` en 10 000 échantillons, puis oscille autour de quelques pour
+cent, la gigue résiduelle que laisse le pas fixe de Lion. Les valeurs
+affichées sont des échantillons isolés de cette gigue ; lisez plutôt des
+moyennes. Avec `--skip 20000 --quiet`, le `dc` de chaque colonne est sa
+moyenne sur les 10 000 derniers échantillons, `1199,0` et `1,993`, et le
+`peak` de la fréquence, `1275`, dit jusqu'où s'écarte un échantillon.
 
 ### 5.3 Second remède : laisser l'algorithme trouver les échelles
 

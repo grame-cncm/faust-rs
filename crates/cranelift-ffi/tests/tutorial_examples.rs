@@ -364,22 +364,27 @@ fn s05_1_one_rate_for_two_units() {
     });
 }
 
-/// §5.2: `(1206, 2.003)` at 10 000 samples, then near `(1200, 2.0)` with
-/// the jitter Lion's fixed step leaves.
+/// §5.2: near `(1200, 2.0)` with the jitter Lion's fixed step leaves, so
+/// the checks are on means and bounds, not on single samples: one sample of
+/// the jitter moves by tens of hertz under any rounding change (1206 or 1216
+/// at 10 000 for two `fi.resonlp` realizations of one transfer function).
+/// Means over the last 10 000 samples `1199.0` and `1.993`, frequency peak
+/// `1275`.
 #[test]
 fn s05_2_log_frequency_with_lion() {
     with_libraries("s05_2", |root| {
         let outs = render(&program("5.2", 0), &root, InputMode::Zero, 30_000);
-        assert_near("f at 10000", outs[0][10_000], 1206.0, 1.0);
-        assert_near("q at 10000", outs[1][10_000], 2.003, 0.005);
-        for frame in (11_000..30_000).step_by(1000) {
-            assert_near(
-                &format!("f at {frame}"),
-                outs[0][frame],
-                1200.0,
-                0.05 * 1200.0,
+        assert_near("f mean, last 10 000", mean(&outs[0][20_000..]), 1199.0, 6.0);
+        assert_near("q mean, last 10 000", mean(&outs[1][20_000..]), 1.993, 0.02);
+        for (name, lane, target) in [("f", &outs[0], 1200.0), ("q", &outs[1], 2.0)] {
+            let worst = lane[11_000..]
+                .iter()
+                .map(|v| (v / target - 1.0).abs())
+                .fold(0.0, f64::max);
+            assert!(
+                worst < 0.1,
+                "{name} strays {worst:.3} from {target} after 11 000"
             );
-            assert_near(&format!("q at {frame}"), outs[1][frame], 2.0, 0.05 * 2.0);
         }
     });
 }
