@@ -63,6 +63,7 @@ flowchart LR
     crate_cranelift_ffi --> crate_compiler
     crate_cranelift_ffi --> crate_ffi_common
     crate_cranelift_ffi --> crate_fir
+    crate_cranelift_ffi --> crate_foreign_call
     crate_cranelift_ffi --> crate_interp_ffi
     crate_draw --> crate_boxes
     crate_draw --> crate_tlib
@@ -90,6 +91,7 @@ flowchart LR
     crate_interp_ffi --> crate_codegen
     crate_interp_ffi --> crate_compiler
     crate_interp_ffi --> crate_ffi_common
+    crate_interp_ffi --> crate_foreign_call
     crate_libfaust_ffi --> crate_compiler
     crate_libfaust_ffi --> crate_ffi_common
     crate_normalize --> crate_interval

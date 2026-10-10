@@ -267,11 +267,11 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `backend_id` | `crates/codegen/src/backends/csharp/mod.rs:15` |
 | `const` | `BACKEND_NAME` | `crates/codegen/src/backends/dlang/mod.rs:11` |
 | `fn` | `backend_id` | `crates/codegen/src/backends/dlang/mod.rs:15` |
-| `enum` | `HostScalarType` | `crates/codegen/src/backends/host_function.rs:18` |
-| `fn` | `HostScalarType::c_name` | `crates/codegen/src/backends/host_function.rs:30` |
-| `struct` | `HostFunctionSignature` | `crates/codegen/src/backends/host_function.rs:58` |
-| `fn` | `HostFunctionSignature::parse` | `crates/codegen/src/backends/host_function.rs:73` |
-| `fn` | `HostFunctionSignature::prototype` | `crates/codegen/src/backends/host_function.rs:114` |
+| `enum` | `HostScalarType` | `crates/codegen/src/backends/host_function.rs:16` |
+| `fn` | `HostScalarType::c_name` | `crates/codegen/src/backends/host_function.rs:28` |
+| `struct` | `HostFunctionSignature` | `crates/codegen/src/backends/host_function.rs:47` |
+| `fn` | `HostFunctionSignature::parse` | `crates/codegen/src/backends/host_function.rs:62` |
+| `fn` | `HostFunctionSignature::prototype` | `crates/codegen/src/backends/host_function.rs:103` |
 | `struct` | `BlockId` | `crates/codegen/src/backends/interp/bytecode.rs:33` |
 | `fn` | `BlockId::as_u32` | `crates/codegen/src/backends/interp/bytecode.rs:38` |
 | `struct` | `FbcInstruction` | `crates/codegen/src/backends/interp/bytecode.rs:79` |
@@ -360,9 +360,10 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `registered_foreign_signature` | `crates/codegen/src/backends/interp/foreign.rs:209` |
 | `fn` | `lookup_foreign_function` | `crates/codegen/src/backends/interp/foreign.rs:219` |
 | `fn` | `lookup_foreign_function_for_call` | `crates/codegen/src/backends/interp/foreign.rs:232` |
-| `fn` | `foreign_scalar` | `crates/codegen/src/backends/interp/foreign.rs:268` |
-| `fn` | `registered_signature_fingerprint` | `crates/codegen/src/backends/interp/foreign.rs:281` |
-| `fn` | `clear_registered_foreign_functions_for_tests` | `crates/codegen/src/backends/interp/foreign.rs:298` |
+| `fn` | `libm_signature` | `crates/codegen/src/backends/interp/foreign.rs:269` |
+| `fn` | `foreign_scalar` | `crates/codegen/src/backends/interp/foreign.rs:296` |
+| `fn` | `registered_signature_fingerprint` | `crates/codegen/src/backends/interp/foreign.rs:309` |
+| `fn` | `clear_registered_foreign_functions_for_tests` | `crates/codegen/src/backends/interp/foreign.rs:326` |
 | `struct` | `FbcDspInstance` | `crates/codegen/src/backends/interp/instance.rs:32` |
 | `enum` | `FbcDspRuntimeError` | `crates/codegen/src/backends/interp/instance.rs:45` |
 | `fn` | `FbcDspInstance::new` | `crates/codegen/src/backends/interp/instance.rs:79` |
@@ -1767,6 +1768,13 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `const` | `MAX_ARGS` | `crates/foreign-call/src/lib.rs:48` |
 | `fn` | `is_supported` | `crates/foreign-call/src/lib.rs:57` |
 | `fn` | `invoke` | `crates/foreign-call/src/lib.rs:139` |
+| `enum` | `TypedFunction` | `crates/foreign-call/src/lib.rs:181` |
+| `fn` | `TypedFunction::ret` | `crates/foreign-call/src/lib.rs:209` |
+| `fn` | `TypedFunction::params` | `crates/foreign-call/src/lib.rs:223` |
+| `fn` | `TypedFunction::address` | `crates/foreign-call/src/lib.rs:240` |
+| `struct` | `NamedFunction` | `crates/foreign-call/src/lib.rs:259` |
+| `fn` | `libm_functions` | `crates/foreign-call/src/lib.rs:274` |
+| `fn` | `libm_function` | `crates/foreign-call/src/lib.rs:287` |
 
 ## `graph`
 

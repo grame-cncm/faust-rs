@@ -1302,6 +1302,84 @@ mod tests {
         assert_eq!(key(), libfaust);
     }
 
+    /// `name(args)` computed by the system's C math library.
+    fn libm(name: &str, args: &[foreign_call::Value]) -> f32 {
+        let function = foreign_call::libm_function(name).expect(name).function;
+        match foreign_call::invoke(function.address(), function.ret(), args) {
+            Some(foreign_call::Value::Float32(x)) => x,
+            Some(foreign_call::Value::Float64(x)) => x as f32,
+            other => panic!("{name}: {other:?}"),
+        }
+    }
+
+    extern "C" fn ffi_interp_host_cbrtf(_: f32) -> f32 {
+        42.0
+    }
+
+    /// The `maths.lib` declarations the interpreter has no opcode for call
+    /// the system's C math library, with the checks and conversions of a
+    /// typed registration; a host registration replaces one.
+    #[test]
+    fn a_c_math_library_function_is_called_by_the_interpreter() {
+        use foreign_call::Value::{Float32 as F, Float64 as D, Int32 as I};
+        let _guard = crate::test_serial_guard();
+        clearCInterpreterForeignFunctions();
+        let program = |declaration: &str, process: &str| {
+            format!("f = ffunction({declaration}, <math.h>, \"\");\nprocess = {process};\n")
+        };
+        for (declaration, process, expected) in [
+            (
+                "float cbrtf|cbrt|cbrtl (float)",
+                "f(8.5)",
+                libm("cbrtf", &[F(8.5)]),
+            ),
+            (
+                "float hypotf|hypot|hypotl (float, float)",
+                "f(2.5, 4.5)",
+                libm("hypotf", &[F(2.5), F(4.5)]),
+            ),
+            ("float ldexpf|ldexp|ldexpl (float, int)", "f(1.5, 3)", 12.0),
+            ("int ilogbf|ilogb|ilogbl (float)", "f(10)", 3.0),
+            ("float j0(float)", "f(1.5)", libm("j0", &[D(1.5)])),
+            (
+                "float jn(int, float)",
+                "f(2, 1.5)",
+                libm("jn", &[I(2), D(1.5)]),
+            ),
+        ] {
+            assert_eq!(
+                render_first_output("Libm", &program(declaration, process)),
+                [expected; 4],
+                "{declaration}"
+            );
+        }
+        let Err(error) = compile_factory_from_string_fastlane(
+            "LibmShape",
+            &program("int cbrtf(float)", "f(8)"),
+            &[],
+        ) else {
+            panic!("`int cbrtf(float)` compiled");
+        };
+        assert!(
+            error.contains(
+                "`cbrtf` does not have the signature of the C math library function \
+                 `float cbrtf(float)`: the call has 1 argument and an `int` result"
+            ),
+            "{error}"
+        );
+        unsafe {
+            registerCInterpreterForeignFunction(
+                c"cbrtf".as_ptr(),
+                (ffi_interp_host_cbrtf as *const ()).cast_mut().cast(),
+            );
+        }
+        assert_eq!(
+            render_first_output("LibmHost", &program("float cbrtf(float)", "f(8)")),
+            [42.0; 4]
+        );
+        clearCInterpreterForeignFunctions();
+    }
+
     /// Three mixed arguments, as `jn` and `ldexp` together.
     extern "C" fn ffi_interp_test_mix(x: f32, e: i32, y: f32) -> f32 {
         x * e as f32 + y

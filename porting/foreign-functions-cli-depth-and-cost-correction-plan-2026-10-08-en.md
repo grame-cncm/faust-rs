@@ -10,9 +10,9 @@ and the JIT registration, and a declaration of another shape is refused with
 both signatures, and a host may register a function with its C signature,
 checked the same way, for Cranelift and the interpreter, whose host calls
 now take mixed argument types (agreed with the user; journal 2026-10-10, the
-"W1" entries and the `foreign-call` one); typed C API diagnostics for
-backend errors, and the math functions the inventory lacks (`cbrtf`,
-`hypotf`, `erff`, ...) remain. W3 is
+"W1" entries and the `foreign-call` one), and both call the functions of
+`maths.lib` the inventory lacked from the system's C math library (journal
+2026-10-11); typed C API diagnostics for backend errors remain. W3 is
 implemented (its design amendment below). W4 is implemented, with two
 defects found on the way (journal 2026-10-10, "W4"). W5 and W6 are implemented.
 W7 has its baseline and one fix ([measurements](ondemand-and-foreign-chain-compile-cost-measurements-2026-10-10-en.md)):

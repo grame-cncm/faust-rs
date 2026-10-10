@@ -130,3 +130,104 @@ fn a_math_function_with_another_shape_is_refused_with_both_signatures() {
         }
     }
 }
+
+/// `name(args)` computed by the system's C math library, as the JIT calls it.
+#[cfg(not(target_arch = "wasm32"))]
+fn libm(name: &str, args: &[foreign_call::Value]) -> f64 {
+    let function = foreign_call::libm_function(name)
+        .unwrap_or_else(|| panic!("{name}"))
+        .function;
+    match foreign_call::invoke(function.address(), function.ret(), args) {
+        Some(foreign_call::Value::Float32(x)) => f64::from(x),
+        Some(foreign_call::Value::Float64(x)) => x,
+        Some(foreign_call::Value::Int32(x)) => f64::from(x),
+        other => panic!("{name}: {other:?}"),
+    }
+}
+
+/// The `ffunction` declarations of `maths.lib` the backend has no function
+/// for call the system's C math library: the `float` symbol in single
+/// precision, the `double` one under `-double`, and a single-name `double`
+/// function (`j0`) with its argument converted, as in C.
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn a_c_math_library_function_is_called_from_its_maths_lib_declaration() {
+    use foreign_call::Value::{Float32 as F, Float64 as D, Int32 as I};
+    let as_float = |x: f64| f64::from(x as f32);
+    for double in [false, true] {
+        let real = |x: f32| if double { D(f64::from(x)) } else { F(x) };
+        let precise = |x: f64| if double { x } else { as_float(x) };
+        let symbol = |single: &'static str, double_name: &'static str| {
+            if double { double_name } else { single }
+        };
+        let cases: Vec<(&str, &str, f64)> = vec![
+            (
+                "float cbrtf|cbrt|cbrtl (float)",
+                "f(8.5)",
+                libm(symbol("cbrtf", "cbrt"), &[real(8.5)]),
+            ),
+            (
+                "float hypotf|hypot|hypotl (float, float)",
+                "f(2.5, 4.5)",
+                libm(symbol("hypotf", "hypot"), &[real(2.5), real(4.5)]),
+            ),
+            (
+                "float erff|erf|erfl(float)",
+                "f(0.5)",
+                libm(symbol("erff", "erf"), &[real(0.5)]),
+            ),
+            (
+                "float tgammaf|tgamma|tgammal(float)",
+                "f(4.5)",
+                libm(symbol("tgammaf", "tgamma"), &[real(4.5)]),
+            ),
+            (
+                "float lgammaf|lgamma|lgammal(float)",
+                "f(4.5)",
+                libm(symbol("lgammaf", "lgamma"), &[real(4.5)]),
+            ),
+            ("float ldexpf|ldexp|ldexpl (float, int)", "f(1.5, 3)", 12.0),
+            ("int ilogbf|ilogb|ilogbl (float)", "f(10)", 3.0),
+            // `double` only: the argument converts, the result rounds.
+            ("float j0(float)", "f(1.5)", precise(libm("j0", &[D(1.5)]))),
+            (
+                "float jn(int, float)",
+                "f(2, 1.5)",
+                precise(libm("jn", &[I(2), D(1.5)])),
+            ),
+            (
+                "float nextafter(float, float)",
+                "f(1, 2)",
+                precise(libm("nextafter", &[D(1.0), D(2.0)])),
+            ),
+        ];
+        for (declaration, process, expected) in cases {
+            for opt_level in [0, 3] {
+                let got = impulse(&source(declaration, process), double, opt_level);
+                assert_eq!(
+                    got[0], expected,
+                    "{declaration} [{process}] double={double} opt_level={opt_level}"
+                );
+            }
+        }
+    }
+}
+
+extern "C" fn host_erfcf(_: f32) -> f32 {
+    42.0
+}
+
+/// A host registration replaces a C math library function (one no other
+/// test calls: the registry is process-global).
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn a_host_registration_replaces_a_c_math_library_function() {
+    unsafe {
+        cranelift_ffi::factory::registerCCraneliftForeignFunction(
+            c"erfcf".as_ptr(),
+            (host_erfcf as *const ()).cast_mut().cast(),
+        );
+    }
+    let got = impulse(&source("float erfcf(float)", "f(0.5)"), false, 0);
+    assert_eq!(got[0], 42.0);
+}

@@ -65,6 +65,7 @@ digraph workspace_crates {
     "cranelift-ffi" -> "compiler";
     "cranelift-ffi" -> "ffi-common";
     "cranelift-ffi" -> "fir";
+    "cranelift-ffi" -> "foreign-call";
     "cranelift-ffi" -> "interp-ffi";
     "draw" -> "boxes";
     "draw" -> "tlib";
@@ -92,6 +93,7 @@ digraph workspace_crates {
     "interp-ffi" -> "codegen";
     "interp-ffi" -> "compiler";
     "interp-ffi" -> "ffi-common";
+    "interp-ffi" -> "foreign-call";
     "libfaust-ffi" -> "compiler";
     "libfaust-ffi" -> "ffi-common";
     "normalize" -> "interval";

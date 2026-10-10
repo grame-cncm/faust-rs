@@ -437,6 +437,7 @@ dependencies = [
  "compiler",
  "ffi-common",
  "fir",
+ "foreign-call",
  "interp-ffi",
  "serde_json",
 ]
@@ -915,6 +916,7 @@ dependencies = [
  "codegen",
  "compiler",
  "ffi-common",
+ "foreign-call",
  "serde_json",
 ]
 

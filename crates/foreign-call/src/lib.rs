@@ -175,6 +175,217 @@ fn invoke_bool(addr: usize, ret: ScalarType, args: &[Value]) -> Option<Value> {
     }
 }
 
+/// A C function pointer typed by its signature: the signature a caller reads
+/// from it is the one of the function called.
+#[derive(Clone, Copy, Debug)]
+pub enum TypedFunction {
+    /// `float(float)`.
+    Float(extern "C" fn(f32) -> f32),
+    /// `double(double)`.
+    Double(extern "C" fn(f64) -> f64),
+    /// `float(float, float)`.
+    Float2(extern "C" fn(f32, f32) -> f32),
+    /// `double(double, double)`.
+    Double2(extern "C" fn(f64, f64) -> f64),
+    /// `int(int)`.
+    Int(extern "C" fn(i32) -> i32),
+    /// `int(int, int)`.
+    Int2(extern "C" fn(i32, i32) -> i32),
+    /// `int(float)`.
+    FloatToInt(extern "C" fn(f32) -> i32),
+    /// `int(double)`.
+    DoubleToInt(extern "C" fn(f64) -> i32),
+    /// `float(float, int)`.
+    FloatInt(extern "C" fn(f32, i32) -> f32),
+    /// `double(double, int)`.
+    DoubleInt(extern "C" fn(f64, i32) -> f64),
+    /// `double(int, double)`.
+    IntDouble(extern "C" fn(i32, f64) -> f64),
+}
+
+impl TypedFunction {
+    /// The result type.
+    #[must_use]
+    pub fn ret(self) -> ScalarType {
+        match self {
+            Self::Float(_) | Self::Float2(_) | Self::FloatInt(_) => ScalarType::Float32,
+            Self::Double(_) | Self::Double2(_) | Self::DoubleInt(_) | Self::IntDouble(_) => {
+                ScalarType::Float64
+            }
+            Self::Int(_) | Self::Int2(_) | Self::FloatToInt(_) | Self::DoubleToInt(_) => {
+                ScalarType::Int32
+            }
+        }
+    }
+
+    /// The parameter types, in order.
+    #[must_use]
+    pub fn params(self) -> &'static [ScalarType] {
+        use ScalarType::{Float32, Float64, Int32};
+        match self {
+            Self::Float(_) | Self::FloatToInt(_) => &[Float32],
+            Self::Double(_) | Self::DoubleToInt(_) => &[Float64],
+            Self::Float2(_) => &[Float32, Float32],
+            Self::Double2(_) => &[Float64, Float64],
+            Self::Int(_) => &[Int32],
+            Self::Int2(_) => &[Int32, Int32],
+            Self::FloatInt(_) => &[Float32, Int32],
+            Self::DoubleInt(_) => &[Float64, Int32],
+            Self::IntDouble(_) => &[Int32, Float64],
+        }
+    }
+
+    /// The function's address, for a JIT symbol or [`invoke`].
+    #[must_use]
+    pub fn address(self) -> usize {
+        match self {
+            Self::Float(f) => f as usize,
+            Self::Double(f) => f as usize,
+            Self::Float2(f) => f as usize,
+            Self::Double2(f) => f as usize,
+            Self::Int(f) => f as usize,
+            Self::Int2(f) => f as usize,
+            Self::FloatToInt(f) => f as usize,
+            Self::DoubleToInt(f) => f as usize,
+            Self::FloatInt(f) => f as usize,
+            Self::DoubleInt(f) => f as usize,
+            Self::IntDouble(f) => f as usize,
+        }
+    }
+}
+
+/// A C function under its symbol.
+#[derive(Clone, Copy, Debug)]
+pub struct NamedFunction {
+    /// The C symbol.
+    pub symbol: &'static str,
+    /// The function.
+    pub function: TypedFunction,
+}
+
+/// The functions of the system's C math library a Faust `ffunction` may name
+/// and no backend implements itself (`cbrt`, `hypot`, `erf`, `tgamma`,
+/// `ldexp`, the Bessel functions, ...: the ones `maths.lib` declares), in
+/// their `float` and `double` variants. The C++ LLVM JIT finds them among
+/// the process's symbols; calling the same library gives the results the C
+/// and C++ code generated on the same machine computes. None on wasm32,
+/// which has no C math library.
+#[must_use]
+pub fn libm_functions() -> &'static [NamedFunction] {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        libm::FUNCTIONS
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        &[]
+    }
+}
+
+/// The function of [`libm_functions`] under the C symbol `symbol`.
+#[must_use]
+pub fn libm_function(symbol: &str) -> Option<&'static NamedFunction> {
+    libm_functions()
+        .iter()
+        .find(|function| function.symbol == symbol)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+mod libm {
+    use super::{NamedFunction, TypedFunction};
+
+    // Pure functions of their arguments: no input makes a call undefined.
+    #[cfg_attr(all(unix, not(target_vendor = "apple")), link(name = "m"))]
+    unsafe extern "C" {
+        safe fn cbrtf(x: f32) -> f32;
+        safe fn cbrt(x: f64) -> f64;
+        // MSVC defines `hypotf` inline, over `_hypotf`.
+        #[cfg_attr(windows, link_name = "_hypotf")]
+        safe fn hypotf(x: f32, y: f32) -> f32;
+        safe fn hypot(x: f64, y: f64) -> f64;
+        safe fn erff(x: f32) -> f32;
+        safe fn erf(x: f64) -> f64;
+        safe fn erfcf(x: f32) -> f32;
+        safe fn erfc(x: f64) -> f64;
+        safe fn tgammaf(x: f32) -> f32;
+        safe fn tgamma(x: f64) -> f64;
+        safe fn lgammaf(x: f32) -> f32;
+        safe fn lgamma(x: f64) -> f64;
+        safe fn logbf(x: f32) -> f32;
+        safe fn logb(x: f64) -> f64;
+        safe fn ilogbf(x: f32) -> i32;
+        safe fn ilogb(x: f64) -> i32;
+        safe fn ldexp(x: f64, e: i32) -> f64;
+        safe fn scalbn(x: f64, e: i32) -> f64;
+        safe fn nextafterf(x: f32, y: f32) -> f32;
+        safe fn nextafter(x: f64, y: f64) -> f64;
+        // POSIX, `double` only; MSVC names them with an underscore.
+        #[cfg_attr(windows, link_name = "_j0")]
+        safe fn j0(x: f64) -> f64;
+        #[cfg_attr(windows, link_name = "_j1")]
+        safe fn j1(x: f64) -> f64;
+        #[cfg_attr(windows, link_name = "_jn")]
+        safe fn jn(n: i32, x: f64) -> f64;
+        #[cfg_attr(windows, link_name = "_y0")]
+        safe fn y0(x: f64) -> f64;
+        #[cfg_attr(windows, link_name = "_y1")]
+        safe fn y1(x: f64) -> f64;
+        #[cfg_attr(windows, link_name = "_yn")]
+        safe fn yn(n: i32, x: f64) -> f64;
+    }
+
+    // `ldexpf` and `scalbnf` are inline in MSVC's header, not exported. Over
+    // `double` they are exact: `x * 2^e` of a `float` is a `double` without
+    // rounding, rounded once to `float`, as `ldexpf` rounds it.
+    extern "C" fn ldexpf(x: f32, e: i32) -> f32 {
+        ldexp(f64::from(x), e) as f32
+    }
+
+    extern "C" fn scalbnf(x: f32, e: i32) -> f32 {
+        scalbn(f64::from(x), e) as f32
+    }
+
+    macro_rules! functions {
+        ($($variant:ident($symbol:ident)),* $(,)?) => {
+            &[$(NamedFunction {
+                symbol: stringify!($symbol),
+                function: TypedFunction::$variant($symbol),
+            }),*]
+        };
+    }
+
+    pub(super) static FUNCTIONS: &[NamedFunction] = functions![
+        Float(cbrtf),
+        Double(cbrt),
+        Float2(hypotf),
+        Double2(hypot),
+        Float(erff),
+        Double(erf),
+        Float(erfcf),
+        Double(erfc),
+        Float(tgammaf),
+        Double(tgamma),
+        Float(lgammaf),
+        Double(lgamma),
+        Float(logbf),
+        Double(logb),
+        FloatToInt(ilogbf),
+        DoubleToInt(ilogb),
+        FloatInt(ldexpf),
+        DoubleInt(ldexp),
+        FloatInt(scalbnf),
+        DoubleInt(scalbn),
+        Float2(nextafterf),
+        Double2(nextafter),
+        Double(j0),
+        Double(j1),
+        IntDouble(jn),
+        Double(y0),
+        Double(y1),
+        IntDouble(yn),
+    ];
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +513,51 @@ mod tests {
             Value::Bool(_) => ScalarType::Bool,
             Value::Void => ScalarType::Void,
         }
+    }
+
+    /// Every C math library function is called through `invoke`, by the
+    /// signature its pointer carries.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn the_c_math_library_functions_are_called_by_their_signature() {
+        let mut symbols: Vec<&str> = libm_functions().iter().map(|f| f.symbol).collect();
+        symbols.sort_unstable();
+        let len = symbols.len();
+        symbols.dedup();
+        assert_eq!(symbols.len(), len, "unique symbols");
+        let call = |symbol: &str, args: &[Value]| {
+            let function = libm_function(symbol).expect(symbol).function;
+            let types: Vec<ScalarType> = args.iter().map(scalar_type).collect();
+            assert_eq!(types, function.params(), "{symbol}");
+            assert!(is_supported(function.ret(), function.params()), "{symbol}");
+            invoke(function.address(), function.ret(), args).expect(symbol)
+        };
+        use Value::{Float32, Float64, Int32};
+        assert_eq!(call("cbrtf", &[Float32(8.0)]), Float32(2.0));
+        assert_eq!(call("cbrt", &[Float64(27.0)]), Float64(3.0));
+        assert_eq!(call("hypotf", &[Float32(3.0), Float32(4.0)]), Float32(5.0));
+        assert_eq!(call("ilogbf", &[Float32(10.0)]), Int32(3));
+        assert_eq!(call("logb", &[Float64(10.0)]), Float64(3.0));
+        assert_eq!(call("ldexpf", &[Float32(1.5), Int32(3)]), Float32(12.0));
+        assert_eq!(call("scalbnf", &[Float32(1.5), Int32(2)]), Float32(6.0));
+        assert_eq!(call("ldexp", &[Float64(1.5), Int32(-1)]), Float64(0.75));
+        assert_eq!(call("tgamma", &[Float64(5.0)]), Float64(24.0));
+        assert_eq!(
+            call("nextafterf", &[Float32(1.0), Float32(2.0)]),
+            Float32(1.0 + f32::EPSILON)
+        );
+        // j0(0) = 1, j1(0) = 0, jn(2, 0) = 0.
+        assert_eq!(call("j0", &[Float64(0.0)]), Float64(1.0));
+        assert_eq!(call("jn", &[Int32(2), Float64(0.0)]), Float64(0.0));
+        // An exact `ldexpf`, also at the edges of `float`.
+        assert_eq!(
+            call("ldexpf", &[Float32(1.0), Int32(-149)]),
+            Float32(f32::from_bits(1))
+        );
+        assert_eq!(
+            call("ldexpf", &[Float32(1.0), Int32(128)]),
+            Float32(f32::INFINITY)
+        );
     }
 
     /// `is_supported` accepts every numeric signature up to `MAX_ARGS`

@@ -482,18 +482,29 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
             return Ok(());
         }
 
-        let Some(registered) = registered_foreign_signature(name) else {
-            return Err(CompileError::UnknownMathFunction {
-                name: name.to_string(),
-            });
-        };
-        let (ret, sig_args) = match registered {
-            Some(signature) => {
-                self.compile_typed_foreign_args(store, name, args, typ, &signature)?
+        // A host registration, then a C math library function.
+        let (ret, sig_args) = match registered_foreign_signature(name) {
+            Some(Some(signature)) => {
+                let against = format!(
+                    "the host function registered under that name, `{}`",
+                    signature.prototype(name)
+                );
+                self.compile_typed_foreign_args(store, name, args, typ, &signature, &against)?
             }
-            None => {
+            Some(None) => {
                 self.compile_args(store, args)?;
                 Self::declared_foreign_signature(store, name, args, typ)?
+            }
+            None => {
+                let signature =
+                    libm_signature(name).ok_or_else(|| CompileError::UnknownMathFunction {
+                        name: name.to_string(),
+                    })?;
+                let against = format!(
+                    "the C math library function `{}`",
+                    signature.prototype(name)
+                );
+                self.compile_typed_foreign_args(store, name, args, typ, &signature, &against)?
             }
         };
 
@@ -570,8 +581,8 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
         Ok((ret, sig_args))
     }
 
-    /// Compiles the arguments of a call to a host function registered with
-    /// `signature`, each converted to its parameter's kind (`int` or real;
+    /// Compiles the arguments of a call to a host function of `signature`
+    /// (`against` names it), registered or of the C math library, each converted to its parameter's kind (`int` or real;
     /// the executor converts between `float` and `double`), and returns the
     /// signature the bytecode calls with. A call of another shape is refused
     /// naming both signatures, as the Cranelift backend does.
@@ -582,6 +593,7 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
         args: &[FirId],
         typ: &FirType,
         signature: &HostFunctionSignature,
+        against: &str,
     ) -> Result<(ForeignScalarType, Vec<ForeignScalarType>), CompileError> {
         let call_ret = match typ {
             FirType::Int32 | FirType::Bool => HostScalarType::Int,
@@ -597,10 +609,7 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
             return Err(CompileError::ForeignFunctionSignatureMismatch {
                 reason: signature_mismatch(
                     name,
-                    &format!(
-                        "the host function registered under that name, `{}`",
-                        signature.prototype(name)
-                    ),
+                    against,
                     signature.ret,
                     &signature.params,
                     call_ret,

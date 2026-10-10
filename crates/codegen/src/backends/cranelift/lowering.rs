@@ -1559,7 +1559,7 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         .map_err(LoweringError::Unsupported)?;
         if let Some(call) = resolved {
             let mut values = Vec::with_capacity(args.len());
-            for (arg, param) in args.iter().zip(call.params) {
+            for (arg, param) in args.iter().zip(&call.params) {
                 let param = fir_type(*param);
                 let value = self.lower_expr(*arg, Some(&param))?.value();
                 values.push(self.coerce_value_to_fir_type(value, &param)?);

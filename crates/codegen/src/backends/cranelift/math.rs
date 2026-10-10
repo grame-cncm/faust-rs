@@ -21,10 +21,11 @@
 //! result for a real one or the reverse (the generated C++ keeps the
 //! implementation's type there, against the Faust typing of the call).
 
-use super::host::{HostMath, host_math};
-use super::{ExternFunction, HostScalarType};
+use super::host::host_math;
+use super::{ExternFunction, HostFunctionSignature, HostScalarType};
 use crate::backends::host_function::{faust_declaration, signature_mismatch};
 use fir::{FirMathOp, FirType};
+use foreign_call::{NamedFunction, ScalarType, libm_function};
 use std::collections::HashMap;
 
 /// Maps a FIR unary math op to its `f32` host symbol.
@@ -112,12 +113,48 @@ fn generic_math_symbol(math: FirMathOp, double: bool) -> Option<&'static str> {
 pub(crate) struct HostCall<'a> {
     pub(crate) symbol: &'a str,
     pub(crate) ret: HostScalarType,
-    pub(crate) params: &'a [HostScalarType],
+    pub(crate) params: Vec<HostScalarType>,
+}
+
+/// The host function type of a typed function's parameter or result, which
+/// is `int`, `float` or `double`.
+fn host_type(ty: ScalarType) -> HostScalarType {
+    match ty {
+        ScalarType::Int32 => HostScalarType::Int,
+        ScalarType::Float32 => HostScalarType::Float,
+        ScalarType::Float64 => HostScalarType::Double,
+        ScalarType::Bool | ScalarType::Void => {
+            unreachable!("a typed function takes and returns int, float or double")
+        }
+    }
+}
+
+/// The signature of a typed function.
+fn signature_of(function: &NamedFunction) -> HostFunctionSignature {
+    HostFunctionSignature {
+        ret: host_type(function.function.ret()),
+        params: function
+            .function
+            .params()
+            .iter()
+            .map(|ty| host_type(*ty))
+            .collect(),
+    }
+}
+
+fn typed_call(function: &'static NamedFunction) -> HostCall<'static> {
+    let signature = signature_of(function);
+    HostCall {
+        symbol: function.symbol,
+        ret: signature.ret,
+        params: signature.params,
+    }
 }
 
 /// Resolves the FIR call `name(args) -> ret`, with `arity` arguments, to the
-/// host function the JIT calls: a math function the backend implements, or
-/// else one the host registered (`externs`).
+/// host function the JIT calls: a math function the backend implements, else
+/// one the host registered (`externs`), else one of the system's C math
+/// library ([`foreign_call::libm_functions`]), which a host may so replace.
 ///
 /// `Ok(Some(call))`: a function of known signature, to which the arguments
 /// and the result convert. `Ok(None)`: a host function registered without a
@@ -133,51 +170,84 @@ pub(crate) fn resolve_call<'a>(
     externs: &'a HashMap<String, ExternFunction>,
 ) -> Result<Option<HostCall<'a>>, String> {
     if let Some(math) = resolve_math_call(name, ret, arity, double) {
-        let math = math?;
-        return Ok(Some(HostCall {
-            symbol: math.symbol,
-            ret: math.function.ret(),
-            params: math.function.params(),
-        }));
+        return Ok(Some(typed_call(math?)));
     }
     match externs.get(name) {
         Some(ExternFunction {
             signature: Some(signature),
             ..
         }) => {
-            let call_ret = call_result(name, ret, double)?;
-            if signature.params.len() == arity && signature.ret.is_real() == call_ret.is_real() {
-                Ok(Some(HostCall {
-                    symbol: name,
-                    ret: signature.ret,
-                    params: &signature.params,
-                }))
-            } else {
-                Err(signature_mismatch(
-                    name,
-                    &format!(
-                        "the host function registered under that name, `{}`",
-                        signature.prototype(name)
-                    ),
-                    signature.ret,
-                    &signature.params,
-                    call_ret,
-                    arity,
-                ))
-            }
+            check_shape(
+                name,
+                signature,
+                &format!(
+                    "the host function registered under that name, `{}`",
+                    signature.prototype(name)
+                ),
+                ret,
+                arity,
+                double,
+            )?;
+            Ok(Some(HostCall {
+                symbol: name,
+                ret: signature.ret,
+                params: signature.params.clone(),
+            }))
         }
         Some(_) => Ok(None),
-        // Not a math function the backend implements: a foreign function,
-        // which the JIT can call only at an address the host registered. The
-        // header an `ffunction` names is for the C and C++ backends; the JIT
-        // never compiles it.
-        None => Err(format!(
-            "`{name}` has no Cranelift implementation: it is not a supported math function \
-             and no host function is registered under that name (the JIT does not compile \
-             the header an `ffunction` names, `-I` included); compile with `-lang cpp` or \
-             `-lang c`, or, when embedding, register it with \
-             `registerCCraneliftForeignFunction`"
-        )),
+        None => match libm_function(name) {
+            Some(libm) => {
+                let signature = signature_of(libm);
+                check_shape(
+                    name,
+                    &signature,
+                    &format!(
+                        "the C math library function `{}`",
+                        signature.prototype(name)
+                    ),
+                    ret,
+                    arity,
+                    double,
+                )?;
+                Ok(Some(typed_call(libm)))
+            }
+            // Not a math function the backend implements: a foreign
+            // function, which the JIT can call only at an address the host
+            // registered. The header an `ffunction` names is for the C and
+            // C++ backends; the JIT never compiles it.
+            None => Err(format!(
+                "`{name}` has no Cranelift implementation: it is not a supported math \
+                 function and no host function is registered under that name (the JIT does \
+                 not compile the header an `ffunction` names, `-I` included); compile with \
+                 `-lang cpp` or `-lang c`, or, when embedding, register it with \
+                 `registerCCraneliftForeignFunction`"
+            )),
+        },
+    }
+}
+
+/// Checks that a call of `arity` arguments and result `ret` has the shape of
+/// `signature`, the one of `against`.
+fn check_shape(
+    name: &str,
+    signature: &HostFunctionSignature,
+    against: &str,
+    ret: &FirType,
+    arity: usize,
+    double: bool,
+) -> Result<(), String> {
+    let call_ret = call_result(name, ret, double)?;
+    if signature.params.len() == arity && signature.ret.is_real() == call_ret.is_real() {
+        Ok(())
+    } else {
+        Err(signature_mismatch(
+            name,
+            against,
+            signature.ret,
+            &signature.params,
+            call_ret,
+            arity,
+        ))
     }
 }
 
@@ -194,17 +264,17 @@ fn call_result(name: &str, ret: &FirType, double: bool) -> Result<HostScalarType
 }
 
 /// Resolves the FIR call `name(args) -> ret`, with `arity` arguments, to the
-/// host math function the JIT calls.
+/// math function of [`HOST_MATH`](super::host::HOST_MATH) the JIT calls.
 ///
-/// `None`: `name` is not a math function the backend implements (a foreign
-/// function, bound or not by the host). `Some(Err(reason))`: it is one, but
-/// the call does not have its shape.
+/// `None`: `name` is not one (a foreign function, bound or not by the host,
+/// or a C math library function). `Some(Err(reason))`: it is one, but the
+/// call does not have its shape.
 pub(crate) fn resolve_math_call(
     name: &str,
     ret: &FirType,
     arity: usize,
     double: bool,
-) -> Option<Result<&'static HostMath, String>> {
+) -> Option<Result<&'static NamedFunction, String>> {
     let math = match FirMathOp::from_symbol(name) {
         Some(op) => {
             let wide = match ret {
@@ -217,24 +287,19 @@ pub(crate) fn resolve_math_call(
         }
         None => host_math(name)?,
     };
-    let call_ret = match call_result(name, ret, double) {
-        Ok(call_ret) => call_ret,
-        Err(reason) => return Some(Err(reason)),
-    };
-    let function = math.function;
-    if function.params().len() == arity && function.ret().is_real() == call_ret.is_real() {
-        Some(Ok(math))
-    } else {
-        let faust = faust_declaration(name, function.ret(), function.params());
-        Some(Err(signature_mismatch(
+    let signature = signature_of(math);
+    let faust = faust_declaration(name, signature.ret, &signature.params);
+    Some(
+        check_shape(
             name,
+            &signature,
             &format!("the math function the Cranelift backend implements, `{faust}`"),
-            function.ret(),
-            function.params(),
-            call_ret,
+            ret,
             arity,
-        )))
-    }
+            double,
+        )
+        .map(|()| math),
+    )
 }
 
 #[cfg(test)]
@@ -371,26 +436,31 @@ mod tests {
                 d.function.params().len(),
                 "{op:?}"
             );
-            assert_eq!(f.function.ret(), HostScalarType::Float, "{op:?}");
-            assert_eq!(d.function.ret(), HostScalarType::Double, "{op:?}");
+            assert_eq!(f.function.ret(), ScalarType::Float32, "{op:?}");
+            assert_eq!(d.function.ret(), ScalarType::Float64, "{op:?}");
             assert!(
                 f.function
                     .params()
                     .iter()
-                    .all(|t| *t == HostScalarType::Float)
+                    .all(|t| *t == ScalarType::Float32)
             );
             assert!(
                 d.function
                     .params()
                     .iter()
-                    .all(|t| *t == HostScalarType::Double)
+                    .all(|t| *t == ScalarType::Float64)
             );
         }
     }
 
+    /// No symbol is both a backend math function and a C math library one.
     #[test]
     fn host_math_symbols_are_unique() {
-        let mut symbols: Vec<&str> = HOST_MATH.iter().map(|m| m.symbol).collect();
+        let mut symbols: Vec<&str> = HOST_MATH
+            .iter()
+            .chain(foreign_call::libm_functions())
+            .map(|m| m.symbol)
+            .collect();
         symbols.sort_unstable();
         let len = symbols.len();
         symbols.dedup();
@@ -427,8 +497,7 @@ mod tests {
         ] {
             let reason = resolve_math_call(name, &ret, arity, false)
                 .unwrap()
-                .err()
-                .expect("a signature mismatch");
+                .expect_err("a signature mismatch");
             assert!(
                 reason.contains(&format!("`{name}` does not have")),
                 "{reason}"
@@ -436,13 +505,50 @@ mod tests {
         }
         let reason = resolve_math_call("tanhf", &FirType::Int32, 2, false)
             .unwrap()
-            .err()
-            .expect("a signature mismatch");
+            .expect_err("a signature mismatch");
         assert!(
             reason.contains(
                 "implements, `float tanhf(float)`: the call has 2 arguments and an `int` result"
             ),
             "{reason}"
+        );
+    }
+
+    /// A C math library function resolves after the host registrations,
+    /// which may replace it, with the shape check of the others.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn a_c_math_library_function_resolves_after_the_registrations() {
+        let none = HashMap::new();
+        let call = resolve_call("jn", &FirType::Float32, 2, false, &none)
+            .expect("resolves")
+            .expect("typed");
+        assert_eq!(call.symbol, "jn");
+        assert_eq!(call.ret, HostScalarType::Double);
+        assert_eq!(call.params, [HostScalarType::Int, HostScalarType::Double]);
+        let reason = resolve_call("cbrtf", &FirType::Int32, 1, false, &none)
+            .err()
+            .expect("a signature mismatch");
+        assert!(
+            reason.contains(
+                "`cbrtf` does not have the signature of the C math library function \
+                 `float cbrtf(float)`: the call has 1 argument and an `int` result"
+            ),
+            "{reason}"
+        );
+        let registered: HashMap<String, ExternFunction> = [(
+            "cbrtf".to_owned(),
+            ExternFunction {
+                address: std::ptr::null(),
+                signature: None,
+            },
+        )]
+        .into_iter()
+        .collect();
+        assert!(
+            resolve_call("cbrtf", &FirType::Int32, 1, false, &registered)
+                .expect("the registration, trusted")
+                .is_none()
         );
     }
 }

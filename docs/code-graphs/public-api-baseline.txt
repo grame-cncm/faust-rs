@@ -381,6 +381,7 @@ fn generate_wasm_module_with_context
 fn is_lifecycle_function
 fn is_registered_foreign_function
 fn is_supported_signature
+fn libm_signature
 fn lookup_foreign_function
 fn lookup_foreign_function_for_call
 fn math_lib_lookup
@@ -1636,9 +1637,16 @@ use types
 ## foreign-call
 const MAX_ARGS
 enum ScalarType
+enum TypedFunction
 enum Value
+fn TypedFunction::address
+fn TypedFunction::params
+fn TypedFunction::ret
 fn invoke
 fn is_supported
+fn libm_function
+fn libm_functions
+struct NamedFunction
 
 ## graph
 const CRATE_NAME

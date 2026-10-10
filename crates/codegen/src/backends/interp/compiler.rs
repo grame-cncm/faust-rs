@@ -30,7 +30,7 @@ use super::bytecode::{
     BlockId, BlockStoreData, FbcBlock, FbcBlockArena, FbcInstruction, FbcUiInstruction,
 };
 use super::foreign::{
-    ForeignScalarType, ForeignSignature, foreign_scalar, is_supported_signature,
+    ForeignScalarType, ForeignSignature, foreign_scalar, is_supported_signature, libm_signature,
     registered_foreign_signature,
 };
 use super::opcode::FbcOpcode;

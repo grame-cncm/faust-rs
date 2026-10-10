@@ -4,6 +4,7 @@
 //! symbol registry. These wrappers keep the host ABI explicit and backend-local.
 
 use super::*;
+use foreign_call::{NamedFunction, TypedFunction};
 
 // ── Host math wrappers ────────────────────────────────────────────────────────
 //
@@ -301,65 +302,6 @@ pub(crate) fn clif_type(ty: HostScalarType) -> Type {
     }
 }
 
-/// A host math function, typed by its pointer: the signature the subset
-/// pre-check and the lowering read is the one of the function the JIT calls.
-#[derive(Clone, Copy)]
-pub(crate) enum HostMathFn {
-    Float(extern "C" fn(f32) -> f32),
-    Double(extern "C" fn(f64) -> f64),
-    Float2(extern "C" fn(f32, f32) -> f32),
-    Double2(extern "C" fn(f64, f64) -> f64),
-    Int(extern "C" fn(i32) -> i32),
-    Int2(extern "C" fn(i32, i32) -> i32),
-    FloatToInt(extern "C" fn(f32) -> i32),
-    DoubleToInt(extern "C" fn(f64) -> i32),
-}
-
-impl HostMathFn {
-    /// The result type.
-    pub(crate) fn ret(self) -> HostScalarType {
-        match self {
-            Self::Float(_) | Self::Float2(_) => HostScalarType::Float,
-            Self::Double(_) | Self::Double2(_) => HostScalarType::Double,
-            Self::Int(_) | Self::Int2(_) | Self::FloatToInt(_) | Self::DoubleToInt(_) => {
-                HostScalarType::Int
-            }
-        }
-    }
-
-    /// The parameter types, in order.
-    pub(crate) fn params(self) -> &'static [HostScalarType] {
-        match self {
-            Self::Float(_) | Self::FloatToInt(_) => &[HostScalarType::Float],
-            Self::Double(_) | Self::DoubleToInt(_) => &[HostScalarType::Double],
-            Self::Float2(_) => &[HostScalarType::Float, HostScalarType::Float],
-            Self::Double2(_) => &[HostScalarType::Double, HostScalarType::Double],
-            Self::Int(_) => &[HostScalarType::Int],
-            Self::Int2(_) => &[HostScalarType::Int, HostScalarType::Int],
-        }
-    }
-
-    /// The address the JIT binds the symbol to.
-    fn address(self) -> *const u8 {
-        match self {
-            Self::Float(f) => f as *const u8,
-            Self::Double(f) => f as *const u8,
-            Self::Float2(f) => f as *const u8,
-            Self::Double2(f) => f as *const u8,
-            Self::Int(f) => f as *const u8,
-            Self::Int2(f) => f as *const u8,
-            Self::FloatToInt(f) => f as *const u8,
-            Self::DoubleToInt(f) => f as *const u8,
-        }
-    }
-}
-
-/// One math function the backend implements, under its C symbol.
-pub(crate) struct HostMath {
-    pub(crate) symbol: &'static str,
-    pub(crate) function: HostMathFn,
-}
-
 /// Every math function the Cranelift backend implements: the one inventory
 /// that the subset pre-check and the lowering (through
 /// [`super::math::resolve_math_call`]) and the JIT registration
@@ -369,278 +311,279 @@ pub(crate) struct HostMath {
 /// both result types. The `host_*` helpers above are intentionally tiny
 /// wrappers whose semantics match the interpreter/C++ path (notably `rint`
 /// and `remainder`).
-pub(crate) static HOST_MATH: &[HostMath] = &[
-    HostMath {
+pub(crate) static HOST_MATH: &[NamedFunction] = &[
+    NamedFunction {
         symbol: "sinf",
-        function: HostMathFn::Float(host_sinf),
+        function: TypedFunction::Float(host_sinf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "sin",
-        function: HostMathFn::Double(host_sin),
+        function: TypedFunction::Double(host_sin),
     },
-    HostMath {
+    NamedFunction {
         symbol: "cosf",
-        function: HostMathFn::Float(host_cosf),
+        function: TypedFunction::Float(host_cosf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "cos",
-        function: HostMathFn::Double(host_cos),
+        function: TypedFunction::Double(host_cos),
     },
-    HostMath {
+    NamedFunction {
         symbol: "expf",
-        function: HostMathFn::Float(host_expf),
+        function: TypedFunction::Float(host_expf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "exp",
-        function: HostMathFn::Double(host_exp),
+        function: TypedFunction::Double(host_exp),
     },
-    HostMath {
+    NamedFunction {
         symbol: "exp10f",
-        function: HostMathFn::Float(host_exp10f),
+        function: TypedFunction::Float(host_exp10f),
     },
-    HostMath {
+    NamedFunction {
         symbol: "exp10",
-        function: HostMathFn::Double(host_exp10),
+        function: TypedFunction::Double(host_exp10),
     },
-    HostMath {
+    NamedFunction {
         symbol: "logf",
-        function: HostMathFn::Float(host_logf),
+        function: TypedFunction::Float(host_logf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "log",
-        function: HostMathFn::Double(host_log),
+        function: TypedFunction::Double(host_log),
     },
-    HostMath {
+    NamedFunction {
         symbol: "log10f",
-        function: HostMathFn::Float(host_log10f),
+        function: TypedFunction::Float(host_log10f),
     },
-    HostMath {
+    NamedFunction {
         symbol: "log10",
-        function: HostMathFn::Double(host_log10),
+        function: TypedFunction::Double(host_log10),
     },
-    HostMath {
+    NamedFunction {
         symbol: "sqrtf",
-        function: HostMathFn::Float(host_sqrtf),
+        function: TypedFunction::Float(host_sqrtf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "sqrt",
-        function: HostMathFn::Double(host_sqrt),
+        function: TypedFunction::Double(host_sqrt),
     },
-    HostMath {
+    NamedFunction {
         symbol: "fabsf",
-        function: HostMathFn::Float(host_fabsf),
+        function: TypedFunction::Float(host_fabsf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "fabs",
-        function: HostMathFn::Double(host_fabs),
+        function: TypedFunction::Double(host_fabs),
     },
-    HostMath {
+    NamedFunction {
         symbol: "abs",
-        function: HostMathFn::Int(host_abs),
+        function: TypedFunction::Int(host_abs),
     },
-    HostMath {
+    NamedFunction {
         symbol: "floorf",
-        function: HostMathFn::Float(host_floorf),
+        function: TypedFunction::Float(host_floorf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "floor",
-        function: HostMathFn::Double(host_floor),
+        function: TypedFunction::Double(host_floor),
     },
-    HostMath {
+    NamedFunction {
         symbol: "ceilf",
-        function: HostMathFn::Float(host_ceilf),
+        function: TypedFunction::Float(host_ceilf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "ceil",
-        function: HostMathFn::Double(host_ceil),
+        function: TypedFunction::Double(host_ceil),
     },
-    HostMath {
+    NamedFunction {
         symbol: "tanf",
-        function: HostMathFn::Float(host_tanf),
+        function: TypedFunction::Float(host_tanf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "tan",
-        function: HostMathFn::Double(host_tan),
+        function: TypedFunction::Double(host_tan),
     },
-    HostMath {
+    NamedFunction {
         symbol: "atanf",
-        function: HostMathFn::Float(host_atanf),
+        function: TypedFunction::Float(host_atanf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "atan",
-        function: HostMathFn::Double(host_atan),
+        function: TypedFunction::Double(host_atan),
     },
-    HostMath {
+    NamedFunction {
         symbol: "asinf",
-        function: HostMathFn::Float(host_asinf),
+        function: TypedFunction::Float(host_asinf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "asin",
-        function: HostMathFn::Double(host_asin),
+        function: TypedFunction::Double(host_asin),
     },
-    HostMath {
+    NamedFunction {
         symbol: "acosf",
-        function: HostMathFn::Float(host_acosf),
+        function: TypedFunction::Float(host_acosf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "acos",
-        function: HostMathFn::Double(host_acos),
+        function: TypedFunction::Double(host_acos),
     },
-    HostMath {
+    NamedFunction {
         symbol: "rintf",
-        function: HostMathFn::Float(host_rintf),
+        function: TypedFunction::Float(host_rintf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "rint",
-        function: HostMathFn::Double(host_rint),
+        function: TypedFunction::Double(host_rint),
     },
-    HostMath {
+    NamedFunction {
         symbol: "roundf",
-        function: HostMathFn::Float(host_roundf),
+        function: TypedFunction::Float(host_roundf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "round",
-        function: HostMathFn::Double(host_round),
+        function: TypedFunction::Double(host_round),
     },
-    HostMath {
+    NamedFunction {
         symbol: "min_i",
-        function: HostMathFn::Int2(host_min_i),
+        function: TypedFunction::Int2(host_min_i),
     },
-    HostMath {
+    NamedFunction {
         symbol: "max_i",
-        function: HostMathFn::Int2(host_max_i),
+        function: TypedFunction::Int2(host_max_i),
     },
-    HostMath {
+    NamedFunction {
         symbol: "fminf",
-        function: HostMathFn::Float2(host_fminf),
+        function: TypedFunction::Float2(host_fminf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "fmin",
-        function: HostMathFn::Double2(host_fmin),
+        function: TypedFunction::Double2(host_fmin),
     },
-    HostMath {
+    NamedFunction {
         symbol: "fmaxf",
-        function: HostMathFn::Float2(host_fmaxf),
+        function: TypedFunction::Float2(host_fmaxf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "fmax",
-        function: HostMathFn::Double2(host_fmax),
+        function: TypedFunction::Double2(host_fmax),
     },
-    HostMath {
+    NamedFunction {
         symbol: "powf",
-        function: HostMathFn::Float2(host_powf),
+        function: TypedFunction::Float2(host_powf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "pow",
-        function: HostMathFn::Double2(host_pow),
+        function: TypedFunction::Double2(host_pow),
     },
-    HostMath {
+    NamedFunction {
         symbol: "atan2f",
-        function: HostMathFn::Float2(host_atan2f),
+        function: TypedFunction::Float2(host_atan2f),
     },
-    HostMath {
+    NamedFunction {
         symbol: "atan2",
-        function: HostMathFn::Double2(host_atan2),
+        function: TypedFunction::Double2(host_atan2),
     },
-    HostMath {
+    NamedFunction {
         symbol: "fmodf",
-        function: HostMathFn::Float2(host_fmodf),
+        function: TypedFunction::Float2(host_fmodf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "fmod",
-        function: HostMathFn::Double2(host_fmod),
+        function: TypedFunction::Double2(host_fmod),
     },
-    HostMath {
+    NamedFunction {
         symbol: "remainderf",
-        function: HostMathFn::Float2(host_remainderf),
+        function: TypedFunction::Float2(host_remainderf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "remainder",
-        function: HostMathFn::Double2(host_remainder),
+        function: TypedFunction::Double2(host_remainder),
     },
-    HostMath {
+    NamedFunction {
         symbol: "isnanf",
-        function: HostMathFn::FloatToInt(host_isnanf),
+        function: TypedFunction::FloatToInt(host_isnanf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "isnan",
-        function: HostMathFn::DoubleToInt(host_isnan),
+        function: TypedFunction::DoubleToInt(host_isnan),
     },
-    HostMath {
+    NamedFunction {
         symbol: "isinff",
-        function: HostMathFn::FloatToInt(host_isinff),
+        function: TypedFunction::FloatToInt(host_isinff),
     },
-    HostMath {
+    NamedFunction {
         symbol: "isinf",
-        function: HostMathFn::DoubleToInt(host_isinf),
+        function: TypedFunction::DoubleToInt(host_isinf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "copysignf",
-        function: HostMathFn::Float2(host_copysignf),
+        function: TypedFunction::Float2(host_copysignf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "copysign",
-        function: HostMathFn::Double2(host_copysign),
+        function: TypedFunction::Double2(host_copysign),
     },
-    HostMath {
+    NamedFunction {
         symbol: "acoshf",
-        function: HostMathFn::Float(host_acoshf),
+        function: TypedFunction::Float(host_acoshf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "acosh",
-        function: HostMathFn::Double(host_acosh),
+        function: TypedFunction::Double(host_acosh),
     },
-    HostMath {
+    NamedFunction {
         symbol: "asinhf",
-        function: HostMathFn::Float(host_asinhf),
+        function: TypedFunction::Float(host_asinhf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "asinh",
-        function: HostMathFn::Double(host_asinh),
+        function: TypedFunction::Double(host_asinh),
     },
-    HostMath {
+    NamedFunction {
         symbol: "atanhf",
-        function: HostMathFn::Float(host_atanhf),
+        function: TypedFunction::Float(host_atanhf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "atanh",
-        function: HostMathFn::Double(host_atanh),
+        function: TypedFunction::Double(host_atanh),
     },
-    HostMath {
+    NamedFunction {
         symbol: "coshf",
-        function: HostMathFn::Float(host_coshf),
+        function: TypedFunction::Float(host_coshf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "cosh",
-        function: HostMathFn::Double(host_cosh),
+        function: TypedFunction::Double(host_cosh),
     },
-    HostMath {
+    NamedFunction {
         symbol: "sinhf",
-        function: HostMathFn::Float(host_sinhf),
+        function: TypedFunction::Float(host_sinhf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "sinh",
-        function: HostMathFn::Double(host_sinh),
+        function: TypedFunction::Double(host_sinh),
     },
-    HostMath {
+    NamedFunction {
         symbol: "tanhf",
-        function: HostMathFn::Float(host_tanhf),
+        function: TypedFunction::Float(host_tanhf),
     },
-    HostMath {
+    NamedFunction {
         symbol: "tanh",
-        function: HostMathFn::Double(host_tanh),
+        function: TypedFunction::Double(host_tanh),
     },
 ];
 
 /// The math function the backend implements under the C symbol `symbol`.
-pub(crate) fn host_math(symbol: &str) -> Option<&'static HostMath> {
+pub(crate) fn host_math(symbol: &str) -> Option<&'static NamedFunction> {
     HOST_MATH.iter().find(|math| math.symbol == symbol)
 }
 
-/// Registers the functions of [`HOST_MATH`] as JIT-importable symbols, so the
-/// JIT resolves the calls the lowering emits during finalization.
+/// Registers the functions of [`HOST_MATH`] and of the C math library
+/// ([`foreign_call::libm_functions`]) as JIT-importable symbols, so the JIT
+/// resolves the calls the lowering emits during finalization.
 pub(crate) fn register_host_symbols(jit_builder: &mut JITBuilder) {
-    for math in HOST_MATH {
-        jit_builder.symbol(math.symbol, math.function.address());
+    for math in HOST_MATH.iter().chain(foreign_call::libm_functions()) {
+        jit_builder.symbol(math.symbol, math.function.address() as *const u8);
     }
 }

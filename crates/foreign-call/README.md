@@ -17,6 +17,8 @@ to call a foreign C ABI function by address.
 | `invoke(addr, ret, args)` | Dispatch an `extern "C"` function pointer with a supported signature |
 | `is_supported(ret, args)` | Whether `invoke` can call that signature |
 | `MAX_ARGS` | The largest argument count `invoke` calls with (4) |
+| `TypedFunction`, `NamedFunction` | A C function pointer typed by its signature, under its symbol |
+| `libm_functions()`, `libm_function(symbol)` | The system's C math library functions the backends call for `maths.lib` (`cbrt`, `hypot`, `erf`, `tgamma`, `ldexp`, the Bessel functions, ...); none on wasm32 |
 
 ## Supported signatures
 

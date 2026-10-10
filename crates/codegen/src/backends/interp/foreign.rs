@@ -225,9 +225,9 @@ pub fn lookup_foreign_function(name: &str) -> Option<usize> {
 }
 
 /// Looks up the address of `name` for a call of the host types
-/// `ret(args)`: `Some(Err(()))` when the host registered it with another
-/// signature since the bytecode was compiled, `None` when it is not
-/// registered.
+/// `ret(args)`, in the registry, else among the C math library functions:
+/// `Some(Err(()))` when it has another signature than the bytecode was
+/// compiled for (registered again since), `None` when it is neither.
 #[must_use]
 pub fn lookup_foreign_function_for_call(
     name: &str,
@@ -237,7 +237,15 @@ pub fn lookup_foreign_function_for_call(
     let registry = foreign_function_registry()
         .lock()
         .expect("interp foreign registry mutex");
-    let function = registry.get(name)?;
+    let Some(function) = registry.get(name) else {
+        // A C math library function, after the registrations.
+        let libm = foreign_call::libm_function(name)?.function;
+        return Some(if libm.ret() == ret && libm.params() == args {
+            Ok(libm.address())
+        } else {
+            Err(())
+        });
+    };
     let matches = function.signature.as_ref().is_none_or(|signature| {
         host_scalar(signature.ret) == ret
             && signature.params.len() == args.len()
@@ -251,6 +259,26 @@ pub fn lookup_foreign_function_for_call(
         Ok(function.address)
     } else {
         Err(())
+    })
+}
+
+/// The signature of the system's C math library function `name`
+/// ([`foreign_call::libm_functions`]), which the interpreter calls when no
+/// host registered a function under that name. None on wasm32.
+#[must_use]
+pub fn libm_signature(name: &str) -> Option<HostFunctionSignature> {
+    let function = foreign_call::libm_function(name)?.function;
+    let host = |ty: foreign_call::ScalarType| match ty {
+        foreign_call::ScalarType::Int32 => HostScalarType::Int,
+        foreign_call::ScalarType::Float32 => HostScalarType::Float,
+        foreign_call::ScalarType::Float64 => HostScalarType::Double,
+        foreign_call::ScalarType::Bool | foreign_call::ScalarType::Void => {
+            unreachable!("a typed function takes and returns int, float or double")
+        }
+    };
+    Some(HostFunctionSignature {
+        ret: host(function.ret()),
+        params: function.params().iter().map(|ty| host(*ty)).collect(),
     })
 }
 

@@ -772,8 +772,15 @@ must run unchanged with Faust C++ should not pass them.
   header supplied by `ffunction` is not compiled into a JIT binding. Math
   functions run through backend host wrappers, one inventory (`HOST_MATH` in
   `backends/cranelift/host.rs`, 65 C symbols) that the subset pre-check, the
-  lowering and the JIT registration all read. This is a supported subset, not
-  all of `<math.h>` (no `cbrtf`, `hypotf`, `erff`, ... yet). A declaration
+  lowering and the JIT registration all read. The other functions of
+  `maths.lib` (`cbrt`, `hypot`, `erf`, `erfc`, `tgamma`, `lgamma`, `logb`,
+  `ilogb`, `ldexp`, `scalbn`, `nextafter`, the Bessel `j0` to `yn`; 28 C
+  symbols) are the system's C math library (`foreign_call::libm_functions`,
+  since 2026-10-11), as the C++ LLVM JIT finds them among the process's
+  symbols: the results are those of the C and C++ code generated on the same
+  machine. They come after host registrations, which may replace them; the
+  Bessel functions are `double` only, `_j0`... under MSVC, and wasm32 has
+  none. This is not all of `<math.h>`. A declaration
   names a math function by its C symbol, `float sinf(float)` included since
   2026-10-10. As in the C code the other backends generate, where the
   `<math.h>` declaration decides, the arguments convert to the parameter
@@ -805,7 +812,8 @@ must run unchanged with Faust C++ should not pass them.
   backend API keeps the non-strict default, for corpus diagnostics.
 - Evidence: [`cranelift-backend-plan-en.md`](cranelift-backend-plan-en.md),
   [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md),
-  `crates/cranelift-ffi/tests/math_signature_probe.rs` and
+  `crates/cranelift-ffi/tests/math_signature_probe.rs` (the C math library
+  functions included) and
   `crates/cranelift-ffi/tests/typed_foreign_function_probe.rs`.
 
 ### DIFF-BACK-002 — textual WAT and raw embedded compiler module
@@ -880,7 +888,10 @@ must run unchanged with Faust C++ should not pass them.
   the signatures it enumerates: up to four arguments, each `int`, `float` or
   `double` in any combination, returning one of these or nothing, and the
   `bool` shapes of its first version (`foreign_call::is_supported`, which the
-  bytecode compiler checks). Until 2026-10-10 it enumerated the homogeneous
+  bytecode compiler checks). The functions of the system's C math library that
+  Cranelift calls (DIFF-BACK-001) are called the same way when no host
+  registered the name, checked and converted as typed registrations; the C++
+  interpreter has none of them (since 2026-10-11). Until 2026-10-10 it enumerated the homogeneous
   shapes of up to two arguments only, so `jn(int, float)`, `ldexp(float,
   int)` or `ilogb(float) -> int` from `maths.lib` failed to compile ("outside
   the interpreter foreign-call ABI"), and `void(int)`, accepted by the
@@ -897,7 +908,8 @@ must run unchanged with Faust C++ should not pass them.
   `a_mixed_signature_foreign_function_executes_in_interp_ffi`,
   `a_typed_host_function_is_called_with_its_signature`,
   `a_typed_host_function_declared_with_another_shape_is_refused` and
-  `a_registered_signature_is_in_the_source_key`
+  `a_registered_signature_is_in_the_source_key` and
+  `a_c_math_library_function_is_called_by_the_interpreter`
   (`crates/interp-ffi/src/factory.rs`);
   `test_typed_foreign_call_is_refused_after_its_signature_changes`
   (`crates/codegen/src/backends/interp/compiler/tests.rs`).
