@@ -464,12 +464,8 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
         args: &[FirId],
         typ: &FirType,
     ) -> Result<(), CompileError> {
-        // Compile args in reverse order (stack discipline).
-        for &arg in args.iter().rev() {
-            self.compile_node(store, arg)?;
-        }
-
         if matches!(name, "exp10f" | "exp10") && args.len() == 1 {
+            self.compile_args(store, args)?;
             self.current_block.push(FbcInstruction::with_values(
                 FbcOpcode::RealValue,
                 0,
@@ -481,16 +477,71 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
         }
 
         if let Some(opcode) = math_lib_lookup(name) {
+            self.compile_args(store, args)?;
             self.current_block.push(FbcInstruction::new(opcode));
             return Ok(());
         }
 
-        if !is_registered_foreign_function(name) {
+        let Some(registered) = registered_foreign_signature(name) else {
             return Err(CompileError::UnknownMathFunction {
                 name: name.to_string(),
             });
+        };
+        let (ret, sig_args) = match registered {
+            Some(signature) => {
+                self.compile_typed_foreign_args(store, name, args, typ, &signature)?
+            }
+            None => {
+                self.compile_args(store, args)?;
+                Self::declared_foreign_signature(store, name, args, typ)?
+            }
+        };
+
+        if !is_supported_signature(ret, &sig_args) {
+            return Err(CompileError::UnsupportedForeignFunctionSignature {
+                name: name.to_string(),
+                description: format!(
+                    "ret={ret:?}, args={sig_args:?} are outside the interpreter foreign-call ABI \
+                     (up to {} `int`, `float` or `double` arguments)",
+                    foreign_call::MAX_ARGS
+                ),
+            });
         }
 
+        let signature = ForeignSignature {
+            name: name.to_string(),
+            ret,
+            args: sig_args,
+        };
+        let opcode = match signature.ret {
+            ForeignScalarType::Float32
+            | ForeignScalarType::Float64
+            | ForeignScalarType::FaustFloat => FbcOpcode::ForeignCallReal,
+            ForeignScalarType::Int32 | ForeignScalarType::Bool => FbcOpcode::ForeignCallInt,
+            ForeignScalarType::Void => FbcOpcode::ForeignCallVoid,
+        };
+        self.current_block
+            .push(FbcInstruction::with_name(opcode, signature.encode()));
+        Ok(())
+    }
+
+    /// Compiles call arguments in reverse order (stack discipline).
+    fn compile_args(&mut self, store: &FirStore, args: &[FirId]) -> Result<(), CompileError> {
+        for &arg in args.iter().rev() {
+            self.compile_node(store, arg)?;
+        }
+        Ok(())
+    }
+
+    /// The signature of a call to a host function registered without one:
+    /// the types of the `ffunction` declaration, which the host is trusted
+    /// to match.
+    fn declared_foreign_signature(
+        store: &FirStore,
+        name: &str,
+        args: &[FirId],
+        typ: &FirType,
+    ) -> Result<(ForeignScalarType, Vec<ForeignScalarType>), CompileError> {
         let ret = ForeignScalarType::from_fir_type(typ).ok_or_else(|| {
             CompileError::UnsupportedForeignFunctionSignature {
                 name: name.to_string(),
@@ -516,31 +567,66 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
             })?;
             sig_args.push(scalar);
         }
+        Ok((ret, sig_args))
+    }
 
-        if !is_supported_signature(ret, &sig_args) {
-            return Err(CompileError::UnsupportedForeignFunctionSignature {
-                name: name.to_string(),
-                description: format!(
-                    "ret={ret:?}, args={sig_args:?} are outside the interpreter foreign-call ABI"
+    /// Compiles the arguments of a call to a host function registered with
+    /// `signature`, each converted to its parameter's kind (`int` or real;
+    /// the executor converts between `float` and `double`), and returns the
+    /// signature the bytecode calls with. A call of another shape is refused
+    /// naming both signatures, as the Cranelift backend does.
+    fn compile_typed_foreign_args(
+        &mut self,
+        store: &FirStore,
+        name: &str,
+        args: &[FirId],
+        typ: &FirType,
+        signature: &HostFunctionSignature,
+    ) -> Result<(ForeignScalarType, Vec<ForeignScalarType>), CompileError> {
+        let call_ret = match typ {
+            FirType::Int32 | FirType::Bool => HostScalarType::Int,
+            FirType::Float32 | FirType::Float64 | FirType::FaustFloat => HostScalarType::Float,
+            other => {
+                return Err(CompileError::UnsupportedForeignFunctionSignature {
+                    name: name.to_string(),
+                    description: format!("unsupported return type {other:?}"),
+                });
+            }
+        };
+        if signature.params.len() != args.len() || signature.ret.is_real() != call_ret.is_real() {
+            return Err(CompileError::ForeignFunctionSignatureMismatch {
+                reason: signature_mismatch(
+                    name,
+                    &format!(
+                        "the host function registered under that name, `{}`",
+                        signature.prototype(name)
+                    ),
+                    signature.ret,
+                    &signature.params,
+                    call_ret,
+                    args.len(),
                 ),
             });
         }
-
-        let signature = ForeignSignature {
-            name: name.to_string(),
-            ret,
-            args: sig_args,
-        };
-        let opcode = match signature.ret {
-            ForeignScalarType::Float32
-            | ForeignScalarType::Float64
-            | ForeignScalarType::FaustFloat => FbcOpcode::ForeignCallReal,
-            ForeignScalarType::Int32 | ForeignScalarType::Bool => FbcOpcode::ForeignCallInt,
-            ForeignScalarType::Void => FbcOpcode::ForeignCallVoid,
-        };
-        self.current_block
-            .push(FbcInstruction::with_name(opcode, signature.encode()));
-        Ok(())
+        for (&arg, param) in args.iter().zip(&signature.params).rev() {
+            self.compile_node(store, arg)?;
+            let real = self.current_block_top_is_real();
+            if param.is_real() && !real {
+                self.current_block
+                    .push(FbcInstruction::new(FbcOpcode::CastReal));
+            } else if !param.is_real() && real {
+                self.current_block
+                    .push(FbcInstruction::new(FbcOpcode::CastInt));
+            }
+        }
+        Ok((
+            foreign_scalar(signature.ret),
+            signature
+                .params
+                .iter()
+                .map(|ty| foreign_scalar(*ty))
+                .collect(),
+        ))
     }
 
     // -----------------------------------------------------------------------

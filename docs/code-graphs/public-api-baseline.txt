@@ -365,6 +365,7 @@ fn compute_short_names
 fn crate_id
 fn diagnose_cranelift_compute_subset_gap
 fn escape_json_string
+fn foreign_scalar
 fn generate_asc_module
 fn generate_c_module
 fn generate_cmajor_module
@@ -381,10 +382,14 @@ fn is_lifecycle_function
 fn is_registered_foreign_function
 fn is_supported_signature
 fn lookup_foreign_function
+fn lookup_foreign_function_for_call
 fn math_lib_lookup
 fn optimize_block
 fn read_fbc
 fn register_foreign_function
+fn register_foreign_function_with_signature
+fn registered_foreign_signature
+fn registered_signature_fingerprint
 fn render_flat
 fn unregister_foreign_function
 fn unsupported_sub_modules_message
@@ -409,6 +414,7 @@ mod factory
 mod fbc_to_cpp
 mod fixtures
 mod foreign
+mod host_function
 mod instance
 mod interp
 mod jax
@@ -495,6 +501,7 @@ use api
 use bytecode
 use compiler
 use core
+use crate::backends::host_function
 use executor
 use factory::FbcDspFactory
 use fbc_to_cpp

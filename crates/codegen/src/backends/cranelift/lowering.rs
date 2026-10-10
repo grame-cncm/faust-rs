@@ -1560,12 +1560,12 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         if let Some(call) = resolved {
             let mut values = Vec::with_capacity(args.len());
             for (arg, param) in args.iter().zip(call.params) {
-                let param = param.fir_type();
+                let param = fir_type(*param);
                 let value = self.lower_expr(*arg, Some(&param))?.value();
                 values.push(self.coerce_value_to_fir_type(value, &param)?);
             }
-            let params: Vec<Type> = call.params.iter().map(|p| p.clif_type()).collect();
-            let fref = self.ensure_import(call.symbol, &params, call.ret.clif_type())?;
+            let params: Vec<Type> = call.params.iter().map(|p| clif_type(*p)).collect();
+            let fref = self.ensure_import(call.symbol, &params, clif_type(call.ret))?;
             let call = self.fb.ins().call(fref, &values);
             let result = self.fb.inst_results(call)[0];
             return Ok(LoweredExpr::Scalar(

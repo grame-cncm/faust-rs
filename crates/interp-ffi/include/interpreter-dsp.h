@@ -84,6 +84,8 @@ void metadataCInterpreterDSPInstance(cinterpreter_dsp* dsp, MetaGlue* meta);
 void computeCInterpreterDSPInstance(cinterpreter_dsp* dsp, int count,
                                     FAUSTFLOAT** inputs, FAUSTFLOAT** outputs);
 void registerCInterpreterForeignFunction(const char* name, void* fn_ptr);
+bool registerCInterpreterForeignFunctionWithSignature(const char* name, void* fn_ptr,
+                                                      const char* signature);
 void unregisterCInterpreterForeignFunction(const char* name);
 void clearCInterpreterForeignFunctions(void);
 
@@ -553,6 +555,22 @@ inline void registerInterpreterForeignFunction(
     void* fn_ptr)
 {
     registerCInterpreterForeignFunction(name.c_str(), fn_ptr);
+}
+
+/**
+ * Register a host foreign function with its C signature, e.g.
+ * "float(int, float)": a call converts its arguments and result to it, and
+ * a declaration of another shape fails compilation, naming both. Returns
+ * false, registering nothing, when the signature is not a prototype over
+ * int, float and double.
+ */
+inline bool registerInterpreterForeignFunction(
+    const std::string& name,
+    void* fn_ptr,
+    const std::string& signature)
+{
+    return registerCInterpreterForeignFunctionWithSignature(
+        name.c_str(), fn_ptr, signature.c_str());
 }
 
 /**

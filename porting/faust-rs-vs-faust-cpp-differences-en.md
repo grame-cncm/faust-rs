@@ -885,9 +885,22 @@ must run unchanged with Faust C++ should not pass them.
   int)` or `ilogb(float) -> int` from `maths.lib` failed to compile ("outside
   the interpreter foreign-call ABI"), and `void(int)`, accepted by the
   compiler, failed at execution. Cranelift calls any signature.
-- Evidence: the tests of `crates/foreign-call/src/lib.rs` and
-  `a_mixed_signature_foreign_function_executes_in_interp_ffi`
-  (`crates/interp-ffi/src/factory.rs`).
+- As for Cranelift (DIFF-BACK-001), a host may give the C signature of the
+  function it registers (`registerCInterpreterForeignFunctionWithSignature`,
+  since 2026-10-10): the bytecode converts each argument to its parameter's
+  kind and calls with the registered types, and a call of another shape is a
+  compile error naming both signatures. Bytecode compiled under another
+  signature of the function (read back, or cached) fails at the call
+  (`foreign_function_signature_changed`). The registered signatures enter
+  the factory cache key; without any, the key is the libfaust one.
+- Evidence: the tests of `crates/foreign-call/src/lib.rs`;
+  `a_mixed_signature_foreign_function_executes_in_interp_ffi`,
+  `a_typed_host_function_is_called_with_its_signature`,
+  `a_typed_host_function_declared_with_another_shape_is_refused` and
+  `a_registered_signature_is_in_the_source_key`
+  (`crates/interp-ffi/src/factory.rs`);
+  `test_typed_foreign_call_is_refused_after_its_signature_changes`
+  (`crates/codegen/src/backends/interp/compiler/tests.rs`).
 
 ## 7. Public API and representation adaptations
 

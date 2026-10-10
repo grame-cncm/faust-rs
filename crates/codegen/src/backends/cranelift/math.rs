@@ -23,6 +23,7 @@
 
 use super::host::{HostMath, host_math};
 use super::{ExternFunction, HostScalarType};
+use crate::backends::host_function::{faust_declaration, signature_mismatch};
 use fir::{FirMathOp, FirType};
 use std::collections::HashMap;
 
@@ -234,38 +235,6 @@ pub(crate) fn resolve_math_call(
             arity,
         )))
     }
-}
-
-/// A declaration in the `ffunction` syntax, where `float` is the real type
-/// of either precision.
-fn faust_declaration(name: &str, ret: HostScalarType, params: &[HostScalarType]) -> String {
-    let faust = |ty: HostScalarType| if ty.is_real() { "float" } else { "int" };
-    let params: Vec<&str> = params.iter().map(|ty| faust(*ty)).collect();
-    format!("{} {name}({})", faust(ret), params.join(", "))
-}
-
-/// Explains a call whose shape is not the one of the function it calls,
-/// `against`, and how to declare it.
-fn signature_mismatch(
-    name: &str,
-    against: &str,
-    ret: HostScalarType,
-    params: &[HostScalarType],
-    call_ret: HostScalarType,
-    arity: usize,
-) -> String {
-    let declaration = faust_declaration(name, ret, params);
-    let arguments = if arity == 1 { "argument" } else { "arguments" };
-    format!(
-        "`{name}` does not have the signature of {against}: the call has {arity} {arguments} \
-         and {} result; declare it `{declaration}` in the `ffunction` (the arguments and the \
-         precision convert as in C)",
-        if call_ret.is_real() {
-            "a `float`"
-        } else {
-            "an `int`"
-        }
-    )
 }
 
 #[cfg(test)]

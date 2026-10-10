@@ -108,6 +108,7 @@ pub fn unsupported_sub_modules_message(backend: &str, names: &[String]) -> Strin
 }
 
 pub mod codegen_error;
+pub mod host_function;
 
 pub mod asc;
 pub mod c;

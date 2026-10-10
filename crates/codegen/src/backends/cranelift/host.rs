@@ -283,6 +283,24 @@ extern "C" fn host_tanh(x: f64) -> f64 {
     x.tanh()
 }
 
+/// The FIR type of a value of `ty`.
+pub(crate) fn fir_type(ty: HostScalarType) -> FirType {
+    match ty {
+        HostScalarType::Int => FirType::Int32,
+        HostScalarType::Float => FirType::Float32,
+        HostScalarType::Double => FirType::Float64,
+    }
+}
+
+/// The CLIF type a value of `ty` is passed or returned as.
+pub(crate) fn clif_type(ty: HostScalarType) -> Type {
+    match ty {
+        HostScalarType::Int => types::I32,
+        HostScalarType::Float => types::F32,
+        HostScalarType::Double => types::F64,
+    }
+}
+
 /// A host math function, typed by its pointer: the signature the subset
 /// pre-check and the lowering read is the one of the function the JIT calls.
 #[derive(Clone, Copy)]

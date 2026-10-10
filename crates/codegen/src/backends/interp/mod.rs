@@ -53,7 +53,8 @@ pub use factory::FbcDspFactory;
 pub use fbc_to_cpp::{FbcCppError, FbcCppOptions, generate_cpp_from_fbc};
 pub use foreign::{
     ForeignScalarType, ForeignSignature, clear_foreign_functions, is_registered_foreign_function,
-    lookup_foreign_function, register_foreign_function, unregister_foreign_function,
+    lookup_foreign_function, register_foreign_function, register_foreign_function_with_signature,
+    registered_signature_fingerprint, unregister_foreign_function,
 };
 pub use instance::{FbcDspInstance, FbcDspRuntimeError};
 pub use opcode::{FBC_INSTRUCTION_NAMES, FBC_OPCODE_COUNT, FbcOpcode, INTERP_FILE_VERSION};

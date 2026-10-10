@@ -32,7 +32,7 @@
 //!   raw pointers → `BlockId`, C arrays → `Vec`).
 
 use super::bytecode::{BlockId, BlockStoreData, FbcBlockArena};
-use super::foreign::{ForeignScalarType, ForeignSignature, lookup_foreign_function};
+use super::foreign::{ForeignScalarType, ForeignSignature, lookup_foreign_function_for_call};
 use super::opcode::FbcOpcode;
 use super::real::FbcReal;
 use super::soundfile::Soundfile;
@@ -379,9 +379,12 @@ enum ForeignArg<R: FbcReal> {
     Bool(bool),
 }
 
+/// Calls the host function the bytecode names, at the address registered
+/// now: refused when it is not registered, or registered with a signature
+/// other than the one the bytecode was compiled to call with (bytecode read
+/// back, or a cached factory, after the host registered it again).
 fn invoke_foreign_call<R: FbcReal>(
     signature: &ForeignSignature,
-    addr: usize,
     real_stack: &mut Vec<R>,
     int_stack: &mut Vec<i32>,
     opcode: FbcOpcode,
@@ -423,6 +426,35 @@ fn invoke_foreign_call<R: FbcReal>(
             ForeignArg::Bool(v) => HostValue::Bool(v),
         })
         .collect();
+    let arg_types: Vec<HostScalarType> = host_args
+        .iter()
+        .map(|arg| match arg {
+            HostValue::Int32(_) => HostScalarType::Int32,
+            HostValue::Float32(_) => HostScalarType::Float32,
+            HostValue::Float64(_) => HostScalarType::Float64,
+            HostValue::Bool(_) => HostScalarType::Bool,
+            HostValue::Void => HostScalarType::Void,
+        })
+        .collect();
+    let addr = match lookup_foreign_function_for_call(&signature.name, ret, &arg_types) {
+        Some(Ok(addr)) => addr,
+        Some(Err(())) => {
+            return Err(foreign_error(
+                "foreign_function_signature_changed",
+                opcode,
+                block_id,
+                pc,
+            ));
+        }
+        None => {
+            return Err(foreign_error(
+                "missing_foreign_function_binding",
+                opcode,
+                block_id,
+                pc,
+            ));
+        }
+    };
     match foreign_call::invoke(addr, ret, &host_args) {
         Some(HostValue::Void) => {}
         Some(HostValue::Int32(v)) => int_stack.push(v),
@@ -1954,17 +1986,8 @@ impl<R: FbcReal> FbcExecutor<R> {
                     let signature = ForeignSignature::decode(&instr.name).ok_or_else(|| {
                         foreign_error("invalid_foreign_signature", instr.opcode, cur_block, pc)
                     })?;
-                    let addr = lookup_foreign_function(&signature.name).ok_or_else(|| {
-                        foreign_error(
-                            "missing_foreign_function_binding",
-                            instr.opcode,
-                            cur_block,
-                            pc,
-                        )
-                    })?;
                     invoke_foreign_call(
                         &signature,
-                        addr,
                         real_stack,
                         int_stack,
                         instr.opcode,

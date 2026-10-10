@@ -1,6 +1,8 @@
 use super::*;
+use crate::backends::host_function::HostFunctionSignature;
 use crate::backends::interp::{
-    clear_foreign_functions, register_foreign_function, unregister_foreign_function,
+    clear_foreign_functions, register_foreign_function, register_foreign_function_with_signature,
+    unregister_foreign_function,
 };
 use fir::{FirBinOp, FirBuilder};
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -526,6 +528,64 @@ fn test_roundtrip_registered_foreign_function() {
     assert_eq!(exec.real_heap[0], 1.5);
 
     unregister_foreign_function("interp_test_foreign_gain");
+    clear_foreign_functions();
+}
+
+extern "C" fn interp_test_typed_twice_d(x: f64) -> f64 {
+    2.0 * x + 0.25
+}
+
+/// Bytecode compiled under one registered signature is refused at the call,
+/// not called wrongly, when the host registers the function again with
+/// another signature; with the same one, or without one, it runs.
+#[test]
+fn test_typed_foreign_call_is_refused_after_its_signature_changes() {
+    use super::super::executor::FbcExecutor;
+
+    let _guard = foreign_registry_test_guard();
+    clear_foreign_functions();
+    let name = "interp_test_typed_twice_d";
+    let address: *mut std::ffi::c_void = (interp_test_typed_twice_d as *const ()).cast_mut().cast();
+    let signature = |text| HostFunctionSignature::parse(text, None).expect("a signature");
+    register_foreign_function_with_signature(name, address, signature("double(double)"));
+
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let init_val = b.float32(0.0);
+    let decl = b.declare_var("x", FirType::Float32, AccessType::Struct, Some(init_val));
+    let arg = b.float32(0.5);
+    let call = b.fun_call(name, &[arg], FirType::Float32);
+    let st = b.store_var("x", AccessType::Struct, call);
+    let mut compiler = FirToFbcCompiler::<f32>::new();
+    compiler.compile_node(&store, decl).unwrap();
+    compiler.compile_node(&store, st).unwrap();
+    let result = compiler.finalize().unwrap();
+    let call_instr = result
+        .arena
+        .get(result.entry_block)
+        .instructions
+        .iter()
+        .find(|i| i.opcode == FbcOpcode::ForeignCallReal)
+        .expect("a foreign call");
+    // The bytecode calls with the registered types.
+    assert_eq!(call_instr.name, "interp_test_typed_twice_d|d|d");
+
+    let run = || {
+        let mut exec = FbcExecutor::<f32>::new(
+            result.int_heap_size as usize,
+            result.real_heap_size as usize,
+        );
+        exec.try_execute_block(&result.arena, result.entry_block)
+            .map(|()| exec.real_heap[0])
+    };
+    assert_eq!(run().expect("runs"), 1.25);
+    register_foreign_function_with_signature(name, address, signature("float(float)"));
+    let error = run().expect_err("a changed signature is refused");
+    assert_eq!(error.kind, "foreign_function_signature_changed");
+    register_foreign_function_with_signature(name, address, signature("double(double)"));
+    assert_eq!(run().expect("runs"), 1.25);
+    register_foreign_function(name, address);
+    assert_eq!(run().expect("runs, trusted"), 1.25);
     clear_foreign_functions();
 }
 

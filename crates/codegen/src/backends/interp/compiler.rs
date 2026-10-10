@@ -30,10 +30,12 @@ use super::bytecode::{
     BlockId, BlockStoreData, FbcBlock, FbcBlockArena, FbcInstruction, FbcUiInstruction,
 };
 use super::foreign::{
-    ForeignScalarType, ForeignSignature, is_registered_foreign_function, is_supported_signature,
+    ForeignScalarType, ForeignSignature, foreign_scalar, is_supported_signature,
+    registered_foreign_signature,
 };
 use super::opcode::FbcOpcode;
 use super::real::FbcReal;
+use crate::backends::host_function::{HostFunctionSignature, HostScalarType, signature_mismatch};
 
 // ---------------------------------------------------------------------------
 // Helper types
@@ -115,6 +117,9 @@ pub enum CompileError {
     UnknownMathFunction { name: String },
     /// A foreign function signature cannot be represented by the interpreter.
     UnsupportedForeignFunctionSignature { name: String, description: String },
+    /// A call does not have the shape of the signature its host function was
+    /// registered with; `reason` names both.
+    ForeignFunctionSignatureMismatch { reason: String },
     /// A FIR node kind is not supported by the interpreter backend.
     UnsupportedNode { description: String },
     /// `LoadVarAddress` is not supported (mirrors `faustassert(false)` in C++).
@@ -136,6 +141,7 @@ impl fmt::Display for CompileError {
                     "unsupported foreign function signature for {name}: {description}"
                 )
             }
+            Self::ForeignFunctionSignatureMismatch { reason } => f.write_str(reason),
             Self::UnsupportedNode { description } => {
                 write!(f, "unsupported FIR node: {description}")
             }

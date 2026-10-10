@@ -240,6 +240,16 @@ void stopMTDSPFactories(void);
  * when compiling/executing with the interpreter backend.
  */
 void registerCInterpreterForeignFunction(const char* name, void* fn_ptr);
+/* The same with the function's C signature, e.g. "float(int, float)" or
+ * "double w_d(double)" (types int, float and double; "int(void)" for none;
+ * up to 4 arguments). A call then converts its arguments and result to these
+ * types, as a C prototype makes C do; a declaration of another shape
+ * (argument count, or an int result for a real one or the reverse) fails
+ * compilation, naming both signatures. Without a signature, the call uses
+ * the types of the `ffunction` declaration, unchecked. Returns false,
+ * registering nothing, on a malformed signature. */
+bool registerCInterpreterForeignFunctionWithSignature(const char* name, void* fn_ptr,
+                                                      const char* signature);
 void unregisterCInterpreterForeignFunction(const char* name);
 void clearCInterpreterForeignFunctions(void);
 
