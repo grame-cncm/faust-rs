@@ -350,11 +350,13 @@ must run unchanged with Faust C++ should not pass them.
   recursions reached the 120 s timeout before their depth budget. C++
   `master-dev` regressed the same way in `536ff8ca7`
   ([grame-cncm/faust#1345](https://github.com/grame-cncm/faust/issues/1345)).
-  Parser recovery also invents an empty-name duplicate-definition error for
-  repeated bare foreign statements, which both grammars reject. The
-  [2026-10-08 audit, W5/W6](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w5--explain-the-active-depth-guard-and-build-profile-p2)
-  proposes richer diagnostics without changing numerical defaults or accepted
-  syntax; those corrections are not implemented.
+  A bare `ffunction`/`fconstant`/`fvariable` statement is a syntax error in
+  both grammars. Rust says it is an expression, and to name it or use it in
+  `process`. A definition whose name lrpar's recovery inserted is dropped, so
+  two such statements no longer report "multiple definitions of symbol ''"
+  (until 2026-10-10;
+  [the 2026-10-08 audit, W6](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w6--diagnose-bare-foreign-statements-without-invented-definitions-p2)).
+  No accepted syntax changed.
 - Evidence: [`docs/faust-error-model-en.md`](../docs/faust-error-model-en.md)
   and
   [`docs/diagnostics-codes-reference-en.md`](../docs/diagnostics-codes-reference-en.md);

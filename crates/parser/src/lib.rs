@@ -209,6 +209,11 @@ impl ParseState {
                     self.ctx.error("invalid definition name");
                     return self.nil();
                 };
+                // A definition error recovery made up: its error is reported.
+                if key == RECOVERED_DEFINITION_NAME {
+                    cursor = self.arena.tl(cursor).unwrap_or_else(|| self.nil());
+                    continue;
+                }
                 grouped
                     .entry(key)
                     .and_modify(|(_, variants)| variants.push(payload))
@@ -303,6 +308,16 @@ impl ParseState {
         lexer: &'lexer dyn NonStreamingLexer<'input, DefaultLexerTypes<u32>>,
         tok: Result<lrlex::DefaultLexeme<u32>, lrlex::DefaultLexeme<u32>>,
     ) -> TreeId {
+        // lrpar hands a token its error recovery inserted as `Err`: the
+        // definition it starts is a repair, not one the program wrote. Its
+        // name is a symbol no lexeme can spell, so `format_definitions` drops
+        // it, and it cannot collide with a real name: the repair `Insert
+        // PROCESS` names it `process` otherwise, and two repaired statements
+        // were "multiple definitions of symbol ''".
+        if tok.is_err() {
+            self.update_cursor_from_span(lexer, token_span(&tok));
+            return self.node_builder().ident(RECOVERED_DEFINITION_NAME);
+        }
         let ident = self.ident_from_token(lexer, tok, true);
         self.ctx.note_definition_name(ident);
         ident
@@ -1364,6 +1379,10 @@ fn compute_line_starts(input: &str) -> Vec<usize> {
 /// recovery inserts is its choice, and one that changed from run to run: an
 /// `invalid FLOAT literal` reported for an inserted `FLOAT` and not for an
 /// inserted `INT` made the number of errors change with it.
+/// The name of a definition whose name token error recovery inserted. No
+/// identifier lexeme contains a NUL.
+const RECOVERED_DEFINITION_NAME: &str = "\u{0}recovered";
+
 fn token_span(tok: &Result<lrlex::DefaultLexeme<u32>, lrlex::DefaultLexeme<u32>>) -> Span {
     match tok {
         Ok(lexeme) | Err(lexeme) => lexeme.span(),
@@ -2486,6 +2505,24 @@ fn build_engine_parse_diagnostics(
         }
         if let Some(unexpected) = &error.recovery.unexpected_token {
             diagnostic = diagnostic.with_fact("unexpected_token", unexpected.clone());
+            // A foreign declaration where a statement starts, a definition's
+            // name being expected: C++ rejects it too ("syntax error,
+            // unexpected FFUNCTION"); say what to write instead.
+            if matches!(unexpected.as_ref(), "ffunction" | "fconstant" | "fvariable")
+                && error
+                    .recovery
+                    .expected_tokens
+                    .iter()
+                    .any(|token| token.as_ref() == "process")
+            {
+                diagnostic = diagnostic
+                    .with_note(format!(
+                        "rule: `{unexpected}(...)` is an expression, not a statement; a statement is a definition `name = expression;`, an import or a declaration"
+                    ))
+                    .with_help(format!(
+                        "name it and use the name (`f = {unexpected}(...);`), or write it where a block diagram is expected (`process = {unexpected}(...);`)"
+                    ));
+            }
         }
 
         if direct_source

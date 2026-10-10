@@ -8,8 +8,8 @@ C constructors, which fail by default with no scaffold opt-in (user decision);
 signature checks, typed C API diagnostics for backend errors and the shared
 math inventory remain (journal 2026-10-10, the two "W1" entries). W3 is
 implemented (its design amendment below). W4 is implemented, with two
-defects found on the way (journal 2026-10-10, "W4"). W5 is implemented. W6 and
-W7 are not implemented. The large-program
+defects found on the way (journal 2026-10-10, "W4"). W5 and W6 are implemented.
+W7 is not implemented. The large-program
 cost investigation remains open.
 
 Rust source baseline: `main-dev`, `2199d069e462b34d960321da06d7b0ebbc08d0aa`.
