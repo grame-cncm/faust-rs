@@ -206,6 +206,36 @@ pub fn promote_signals(
         .expect("signal promotion should succeed after canonical type annotation")
 }
 
+/// The declared domain of each argument of a foreign function, in call order,
+/// from its `FFUN(signature, incfile, libfile)` descriptor: `0` is `int`,
+/// `1` is `float`, anything else is left as it is (C++ `kAny`).
+///
+/// The parser stores the argument types last first (`typelist PAR argtype`
+/// conses on the front), hence C++ `ffargtype(ff, len - i)` for argument `i`.
+fn ffun_arg_kinds(arena: &TreeArena, ff: SigId) -> Option<Vec<Option<ReducedSigKind>>> {
+    let node = arena.node(ff)?;
+    let tlib::NodeKind::Tag(tag) = node.kind else {
+        return None;
+    };
+    if arena.tag_name(tag)? != "FFUN" {
+        return None;
+    }
+    let signature = *node.children.as_slice().first()?;
+    let items = tlib::list_to_vec(arena, signature)?;
+    Some(
+        items
+            .get(2..)?
+            .iter()
+            .rev()
+            .map(|ty| match tlib::tree_to_int(arena, *ty) {
+                Some(0) => Some(ReducedSigKind::Int),
+                Some(1) => Some(ReducedSigKind::Real),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
 /// Fast-lane promotion pass shared by `normalize` and FIR preparation.
 ///
 /// This is the current Rust home of the detailed promotion subset previously
@@ -484,10 +514,7 @@ impl<'a> SignalPromoter<'a> {
             SigMatch::Ceil(inner) => self.promote_real_unary(|b, x| b.ceil(x), inner)?,
             SigMatch::Rint(inner) => self.promote_real_unary(|b, x| b.rint(x), inner)?,
             SigMatch::Round(inner) => self.promote_real_unary(|b, x| b.round(x), inner)?,
-            SigMatch::FFun(ff, largs) => {
-                let largs = self.promote(largs)?;
-                SigBuilder::new(self.arena).ffun(ff, largs)
-            }
+            SigMatch::FFun(ff, largs) => self.promote_ffun(ff, largs)?,
             SigMatch::FConst(ty, name, file) => SigBuilder::new(self.arena).fconst(ty, name, file),
             SigMatch::FVar(ty, name, file) => SigBuilder::new(self.arena).fvar(ty, name, file),
             SigMatch::Proj(index, group) => {
@@ -879,6 +906,17 @@ impl<'a> SignalPromoter<'a> {
         promoted_source: SigId,
     ) -> Result<SigId, NormalFormError> {
         let target_ty = self.kind(target)?;
+        self.cast_to_kind(target_ty, source, promoted_source)
+    }
+
+    /// [`Self::smart_cast`] to a numeric domain rather than to another
+    /// signal's (C++ `smartCast(int type, int nature, Tree sig)`).
+    fn cast_to_kind(
+        &mut self,
+        target_ty: ReducedSigKind,
+        source: SigId,
+        promoted_source: SigId,
+    ) -> Result<SigId, NormalFormError> {
         let source_ty = self.kind(source)?;
         if target_ty == source_ty {
             Ok(promoted_source)
@@ -889,6 +927,29 @@ impl<'a> SignalPromoter<'a> {
         } else {
             Ok(promoted_source)
         }
+    }
+
+    /// Promotes a foreign call's arguments, each cast to the type its
+    /// declaration gives it (C++ `SignalPromotion::transformation` on
+    /// `isSigFFun`: `smartCast(ffargtype(ff, len - i), ...)`). Without it an
+    /// integer argument of a `float` parameter reached code generation as an
+    /// integer: C converted it implicitly, the JIT passed it in an integer
+    /// register.
+    fn promote_ffun(&mut self, ff: SigId, largs: SigId) -> Result<SigId, NormalFormError> {
+        let args = tlib::list_to_vec(self.arena, largs).ok_or_else(|| {
+            NormalFormError::Type("malformed foreign function argument list".to_owned())
+        })?;
+        let kinds = ffun_arg_kinds(self.arena, ff).filter(|kinds| kinds.len() == args.len());
+        let mut promoted = Vec::with_capacity(args.len());
+        for (i, arg) in args.into_iter().enumerate() {
+            let value = self.promote(arg)?;
+            promoted.push(match kinds.as_ref().and_then(|kinds| kinds[i]) {
+                Some(kind) => self.cast_to_kind(kind, arg, value)?,
+                None => value,
+            });
+        }
+        let largs = tlib::vec_to_list(self.arena, &promoted);
+        Ok(SigBuilder::new(self.arena).ffun(ff, largs))
     }
 
     /// Rebuilds `source` in the numeric domain expected by `target`.

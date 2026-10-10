@@ -619,6 +619,17 @@ fn infer_box_arity_uncached(
         BoxMatch::Select3 => Some((4, 1)),
         BoxMatch::WriteReadTable => Some((5, 1)),
         BoxMatch::FConst(_, _, _) | BoxMatch::FVar(_, _, _) => Some((0, 1)),
+        // C++ `getBoxType`: `ffarity(ff)` inputs, the signature's length less
+        // its return type and name list, and one output. Without it `f(1)` on
+        // a three-input foreign function was the bare `1 : f`, not the C++
+        // `1, _, _ : f`.
+        BoxMatch::FFun(ff) => {
+            let BoxMatch::Ffunction(signature, _, _) = match_box(arena, ff) else {
+                return None;
+            };
+            let inputs = list_to_vec(arena, signature).ok()?.len().checked_sub(2)?;
+            Some((inputs, 1))
+        }
         BoxMatch::Button(_)
         | BoxMatch::Checkbox(_)
         | BoxMatch::VSlider(_, _, _, _, _)

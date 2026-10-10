@@ -585,9 +585,9 @@ impl<'a> SignalToFirLower<'a> {
     /// Decodes one Faust `FFUN(signature, incfile, libfile)` descriptor.
     /// Extracts a [`ForeignFunProto`] from a Faust `FFUN(signature, _, _)` descriptor.
     ///
-    /// The `signature` list has the layout `[ret_type, [name_f32, name_f64], arg0_type, …]`:
+    /// The `signature` list has the layout `[ret_type, [name_f32, name_f64], argN_type, …, arg0_type]`:
     /// index 0 is the return type code, index 1 is the name list (0=float32 name,
-    /// 1=float64 name), and indices 2+ are argument type codes.  Type codes follow
+    /// 1=float64 name), and indices 2+ are argument type codes, last argument first.  Type codes follow
     /// `foreign_sig_type`: `0` → `Int32`, any other value → `real_ty`.
     pub(super) fn decode_foreign_fun_proto(
         &self,
@@ -630,8 +630,11 @@ impl<'a> SignalToFirLower<'a> {
             })?
             .to_owned();
         let ret = self.foreign_sig_type(items[0]);
+        // The parser stores the argument types last first: C++ reads argument
+        // `i` as `ffargtype(ff, len - i)` (`generateFFun`).
         let args = items[2..]
             .iter()
+            .rev()
             .copied()
             .map(|ty| self.foreign_sig_type(ty))
             .collect();
