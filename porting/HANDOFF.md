@@ -4,19 +4,20 @@ Date: 2026-10-10 (evening)
 
 ## Repo State
 
-- Branch: `main-dev`, 15 commits ahead of `main`. **Nothing is pushed.**
-- HEAD: the `modulation_35_in_recursion` fixture fix on top of `984f7ef6`.
-- Tag `0.9.0` (annotated, "Release 0.9.0") on `5856b1eb`, **local only**.
-  It contains none of the commits listed below after it: the tutorial
-  figures, the audit documentation and the #16/#21/#22 work. `push_main.sh`
-  fast-forwards `main` to `main-dev` (`git merge --ff-only`) and runs
-  `git push --follow-tags`. To have the work in 0.9.0, move the tag to
-  HEAD before pushing.
+- Branch: `main-dev`, HEAD: this handoff commit on top of `4024d172`.
+- **Pushed** on 2026-10-10 at 19:58 (`push_main.sh`): `origin/main` is
+  `4024d172`, and tag `0.9.0` (annotated, "Release 0.9.0") is on `origin`, on
+  `5856b1eb`. The tag contains none of the commits listed below after it
+  (the tutorial figures, the audit documentation, the #16/#21/#22 work).
+  The user chose to leave it there rather than rewrite a published tag:
+  these fixes go into a later release (0.9.1).
+- `4024d172` was amended locally after the push. The amend was undone, and
+  its handoff change is this new commit (the history stays linear).
 
-Commits since `main` (most recent first):
+Commits pushed on 2026-10-10 (most recent first):
 
-- this commit: `modulation_35_in_recursion` no longer has an identically
-  zero output (`DIFF-BEH-019`), and this handoff
+- `4024d172` `modulation_35_in_recursion` no longer has an identically zero
+  output (`DIFF-BEH-019`)
 - `984f7ef6` #16, every pipeline stage runs on the compile stack (`tlib::stack`)
 - `fd5f6e73` an evaluation cycle is blamed on the use that closes it
   (follow-up to WP3, #22)
@@ -126,10 +127,10 @@ accepts `s+s+...` at 30 000 terms, which the structural budget rejects.
 
 ## Next Steps
 
-1. Post the replies to #16, #21 and #22. The drafts are ready and await the
-   user's confirmation.
-2. Push when the user confirms: optionally move tag `0.9.0` to HEAD, then
-   `./push_main.sh`. Then close #16, #20, #21 and #22.
+1. Replies posted on 2026-10-10: #16 (issuecomment-6100525725), #21
+   (issuecomment-6100525893), #22 (issuecomment-6100526119). Each says the fix
+   is on `main-dev` and reaches `main` with the next push (already done).
+2. Close #16, #20, #21 and #22, and push this handoff commit.
 3. File the cost issue for long series of `~` and wide `par` (120 s timeout).
 4. The 2026-10-08 audit work packages W1 and W3 to W7, in the plan's order.
 5. Look at `compile-budget-check`'s calibration floor on fast machines.
