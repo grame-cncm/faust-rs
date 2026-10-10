@@ -249,30 +249,110 @@ pub(crate) fn maybe_add_eval_source_labels(
             .with_note("origin span unavailable; pointing to nearest call/owner site".to_owned());
     }
 
-    let primary = source_span_from_node_or_descendant(ctx, arena, node)
-        .or_else(|| source_span_for_definition_of_expr(ctx, arena, defs_root, node))
-        .or_else(|| {
-            source_span_for_entrypoint_binding_target(ctx, arena, defs_root, entrypoint_name)
-        })
-        .or_else(|| source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name));
-    let Some(primary_span) = primary else {
+    // No owning definition: the node is in a library, in a `with`, or was
+    // built by evaluation. Only a span the sources give at one place is used
+    // (`unique_source_span`): a hash-consed identifier or literal found as a
+    // descendant can be any of its occurrences, in any file (#21 underlined
+    // `ma = library("maths.lib")` in stdfaust.lib). The program's own call is
+    // labelled when the failure is elsewhere or cannot be located.
+    let call = source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name);
+    let failing = source_span_from_node_or_unique_descendant(ctx, arena, node);
+    let Some(failing_span) = failing else {
+        if let Some(call_span) = call {
+            diagnostic = diagnostic.with_label(
+                Label::new(LabelStyle::Primary, call_span, "the call that leads here")
+                    .with_role(LabelRole::CallSite),
+            );
+        }
         return diagnostic;
     };
     diagnostic = diagnostic.with_label(
-        Label::new(LabelStyle::Primary, primary_span.clone(), "call site")
-            .with_role(LabelRole::CallSite),
+        Label::new(
+            LabelStyle::Primary,
+            failing_span.clone(),
+            "failing expression",
+        )
+        .with_role(LabelRole::PrimaryCause),
     );
-    let secondary = source_span_for_definition_of_expr(ctx, arena, defs_root, node)
-        .or_else(|| source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name));
-    if let Some(secondary_span) = secondary
-        && secondary_span != primary_span
+    if let Some(definition_span) = source_span_for_definition_of_expr(ctx, arena, defs_root, node)
+        && definition_span != failing_span
     {
         diagnostic = diagnostic.with_label(
-            Label::new(LabelStyle::Secondary, secondary_span, "definition site")
+            Label::new(LabelStyle::Secondary, definition_span, "definition site")
                 .with_role(LabelRole::DefinitionSite),
         );
     }
+    if let Some(call_span) = call
+        && call_span.file != failing_span.file
+    {
+        diagnostic = diagnostic.with_label(
+            Label::new(LabelStyle::Secondary, call_span, "the call that leads here")
+                .with_role(LabelRole::CallSite),
+        );
+    }
     diagnostic
+}
+
+/// The span of `node` when the sources mention it at a single place.
+///
+/// Hash-consing gives every occurrence of a structurally equal box one node,
+/// so a node met in several places, in one file or across files, has no
+/// single location to point at.
+pub(crate) fn unique_source_span(ctx: &parser::ParserCtx, node: BoxId) -> Option<SourceSpan> {
+    let provenance = ctx.box_provenance();
+    let mut locations = provenance
+        .origins_for(node)
+        .iter()
+        .filter_map(|id| provenance.get(*id))
+        .map(|origin| &origin.location);
+    let first = locations.next()?;
+    locations
+        .all(|location| location == first)
+        .then(|| source_span_from_parser_location(first))
+}
+
+/// [`unique_source_span`] of `node`, or of its first composite descendant
+/// that has one, in depth-first order.
+///
+/// Leaves are skipped: an identifier, a literal or a primitive is the same
+/// node wherever it is written, and the occurrences recorded for it do not
+/// cover every file it appears in, so a single recorded one proves nothing.
+pub(crate) fn source_span_from_node_or_unique_descendant(
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    node: BoxId,
+) -> Option<SourceSpan> {
+    if let Some(span) = unique_source_span(ctx, node) {
+        return Some(span);
+    }
+    let mut stack: Vec<BoxId> = arena.children(node).map(|c| c.to_vec()).unwrap_or_default();
+    stack.reverse();
+    let mut visited = 0usize;
+    while let Some(cur) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            break;
+        }
+        if matches!(
+            match_box(arena, cur),
+            BoxMatch::Ident(_)
+                | BoxMatch::PatternVar(_)
+                | BoxMatch::Int(_)
+                | BoxMatch::Real(_)
+                | BoxMatch::Wire
+                | BoxMatch::Cut
+        ) {
+            continue;
+        }
+        let Some(children) = arena.children(cur).filter(|c| !c.is_empty()) else {
+            continue;
+        };
+        if let Some(span) = unique_source_span(ctx, cur) {
+            return Some(span);
+        }
+        stack.extend(children.iter().rev());
+    }
+    None
 }
 
 /// Labels a recursion on a non-constant argument whose function is not one of

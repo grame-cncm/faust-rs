@@ -1280,3 +1280,41 @@ fn an_evaluation_cycle_names_its_definitions() {
         );
     }
 }
+
+#[test]
+fn a_failure_in_a_library_is_not_labelled_on_a_shared_identifier() {
+    // WP5 of the runaway-recursion plan: with no owning definition, the label
+    // fallback took the first located descendant of the failing rules, here
+    // the identifier `g`, hash-consed with the `g` of the program, and
+    // underlined that `g` as the "call site". Only spans the sources give at
+    // one place are used now, and the program's own call is labelled.
+    let dir = std::env::temp_dir().join(format!("faust-rs-wp5-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(dir.join("glib.lib"), "g = 1;\nk(0) = g;\nk(1) = g + 1;\n").expect("library");
+    let program = dir.join("prog.dsp");
+    std::fs::write(
+        &program,
+        "m = library(\"glib.lib\");\ng = 2;\nprocess = m.k(5) + g;\n",
+    )
+    .expect("program");
+    let err = Compiler::new()
+        .compile_file_to_signals(&program, &[])
+        .expect_err("no rule of k matches 5");
+    let first = &err.diagnostic_bundle().as_slice()[0];
+    assert_eq!(first.message.as_ref(), "no case rule matches arguments");
+    let labels: Vec<_> = first
+        .labels
+        .iter()
+        .map(|l| (l.message.to_string(), l.role, l.span.line, l.span.col))
+        .collect();
+    assert_eq!(
+        labels,
+        [(
+            "the call that leads here".to_owned(),
+            LabelRole::CallSite,
+            3,
+            1
+        )]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

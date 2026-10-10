@@ -2,10 +2,15 @@
 
 Date: 2026-10-10
 
-Status: **analysis and plan**. Nothing is implemented on `main-dev`. A
-prototype of work package WP1 exists, uncommitted, in the working tree of
-`main-dev` at the time of writing (section 7.1); it was used to check the
-design on the examples below.
+Status: **implemented** on `main-dev`, 2026-10-10: WP1 `a06cf99a`, WP3
+`f0f0a424` (with the parser fix `8c5e262c` its labels needed), WP4 `ac35afcd`,
+WP2 `15ad1d02`, WP6 with W2 of the 2026-10-08 plan `c535bd3c`, WP5 in the
+commit that records this status. Decisions taken: D1 dedicated codes
+(`FRS-EVAL-0012`, `FRS-EVAL-0013`, and `FRS-COMP-0008` for WP6), D2 "does not
+reach", D3 the persistent fold session. D4: reported as
+[grame-cncm/faust#1345](https://github.com/grame-cncm/faust/issues/1345). D5
+(closing #16) is left to the maintainer. The analysis below is kept as
+written; section 7.1 described the prototype that became WP1.
 
 Issues:
 [grame-cncm/faust-rs#21](https://github.com/grame-cncm/faust-rs/issues/21)
