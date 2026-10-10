@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-01 (soundfile channel wrap); full review 2026-08-13
+Last reviewed: 2026-10-08 (foreign functions and resource-limit audit); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -207,6 +207,7 @@ must run unchanged with Faust C++ should not pass them.
 | DIFF-CLI-006 | compilation-options text | `adapted` | Rust prints flags only when they differ from the CLI default, except precision, which is always printed. C++ prints some defaults, notably `-mcd`, unconditionally. Rust also records its own `-table-init`, `--table-init-sample-rate`, and `-dlt` settings. |
 | DIFF-CLI-007 | `-ec`/`-os` capability validation | `adapted` | Rust rejects unsupported backend combinations and block-sensitive one-sample programs with stable typed diagnostics. `-ec` on FIR is intentionally exposed as a Rust diagnostic/inspection extension. |
 | DIFF-CLI-008 | unknown or invalid combinations | `adapted` | The Rust CLI generally fails early through typed option validation rather than relying on permissive legacy parsing or a later backend failure. Scripts depending on C++ option coercion must be corrected. |
+| DIFF-CLI-012 | `--timeout` / `-timeout` deadline machinery | `adapted` | Rust combines a cooperative cancellation flag, a CLI watchdog, and phase-boundary checks. Known defect at `2199d069`: `--timeout 0` disables the watchdog but the phase timer still rejects successful compilation against a zero-second limit, contrary to the documented disable setting. The correction is planned, not implemented; see [the 2026-10-08 audit, W2](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w2--make-zero-timeout-disable-all-deadline-checks-p1). |
 | DIFF-CLI-013 | `-v` / `--version` text and the build commit | `adapted` | Rust prints `faust-rs <version>` where C++ prints `FAUST Version <version>`. Both name the build's commit, since the version is the same for every commit between two releases ([grame-cncm/faust-rs#20](https://github.com/grame-cncm/faust-rs/issues/20)), but differently: C++ adds a second line, `Source commit: <9 digits>` (`-modified` for an uncommitted tree, `unknown` without git); Rust appends `(<8 digits> <commit date>)` to the first line, as `rustc` and `cargo` do, and prints the version alone without git. Uncommitted changes are not reflected. The diagnostics JSON `compiler` block carries the full hash and date in optional `commit`/`commit_date` fields. Generated code names the package version only, in both. Scripts parsing the C++ lines must be adapted. Evidence: `crates/compiler/build.rs`, `version_text_reports_this_build_commit`, `json_compiler_block_names_the_commit_of_the_build`. |
 
 ### 4.4 Rust-only companion tool
@@ -305,6 +306,16 @@ must run unchanged with Faust C++ should not pass them.
   the parity objective for portable cases.
 - Duplicate UI paths, FIR verification, backend limitations, and const-table SR
   freezing have dedicated Rust diagnostics.
+- Evaluator limits are logical resource budgets rather than the reference's
+  stack-address check: default identity depth is 1,024 in debug and 32,768 in
+  release; structural lowering also applies a 4,096/32,768 cap; syntactic nesting
+  has a separate 400,000-entry budget. All three guards currently report the
+  same `FRS-EVAL-0099` shape without naming the controlling configuration.
+  Parser recovery also invents an empty-name duplicate-definition error for
+  repeated bare foreign statements, which both grammars reject. The
+  [2026-10-08 audit, W5/W6](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w5--explain-the-active-depth-guard-and-build-profile-p2)
+  proposes richer diagnostics without changing numerical defaults or accepted
+  syntax; those corrections are not implemented.
 - Evidence: [`docs/faust-error-model-en.md`](../docs/faust-error-model-en.md)
   and
   [`docs/diagnostics-codes-reference-en.md`](../docs/diagnostics-codes-reference-en.md).
@@ -616,6 +627,21 @@ must run unchanged with Faust C++ should not pass them.
   adapts LLVM-specific target, IR, machine-code, and object families. Its
   `-mem0` manager is an implemented Rust extension using the shared aligned C
   ABI; there is no direct C++ Cranelift oracle.
+- Foreign host functions use an explicit registered name-to-address map; a
+  header supplied by `ffunction` is not compiled into a JIT binding. Supported
+  math calls such as `tanhf`/`tanh` already work through backend host wrappers.
+  This is a supported subset, not all possible `<math.h>` declarations. Known
+  execution defect at `2199d069`: a missing binding in `compute` can produce a
+  successful factory with a no-op body and `compute_body_lowered=false`.
+  `faustprobe` accepts it and reports zero output as a successful render.
+  Ordinary `-lang cranelift` also exits successfully, while disclosing
+  `compute_body_lowered: false` in its report. The proposed correction rejects
+  unlowered required calls while retaining supported math calls.
+  Generated initialization functions already reject ordinary subset gaps;
+  the JIT panic fallback can also bypass a strict compute check. Production
+  readiness validation and the broader factory failure-policy decision are
+  proposed in [the 2026-10-08 audit, W1](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w1--reject-non-executable-probe-factories-p0),
+  not implemented. This is a correctness defect, not a supported silence policy.
 - Evidence: [`cranelift-backend-plan-en.md`](cranelift-backend-plan-en.md) and
   [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md).
 
@@ -964,6 +990,9 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-015 | `narrower` | `rep_37_table_rwtable_negative_indices` has different numerical behavior for negative read/write table indices. |
 | DIFF-GAP-016 | `narrower` | `rep_67_variable_delay_shifted_slider` differs for a variable delay whose shifted slider produces a negative intermediate delay expression. |
 | DIFF-GAP-017 | `parity-gap` | A division by a zero that is constant without being a literal when its sequence is evaluated (`z = 0 <: _, !;`), used as a **pattern-matching argument whose value is then unused** (`f(0) = 1; f(n) = 2; process = f(1 / z);`), compiles in Rust and fails in C++ (`ERROR : division by 0 in 1 / 0`): C++ simplifies the argument eagerly and its exception is fatal, Rust folds a pattern argument as an optimization and gives up on this one. With a literal divisor both fail, and wherever the quotient is used (a signal, an iteration count, a route size, a label) Rust reports the division too. Pinned by `a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument` in `crates/compiler/tests/diagnostic_errors.rs`; see `DIFF-BEH-010`. |
+| DIFF-GAP-018 | `parity-gap` | At `2199d069`, signal-to-FIR lowering discards foreign include/library operands. C++ output calls a custom `ffunction` without emitting its requested header and fails to build; the pinned C++ generator emits it. Confirmed by a self-contained header and generated-code compilation in [the 2026-10-08 audit, sections 2.1 and W3](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w3--carry-foreign-dependencies-through-fir-and-emit-headers-p1). Dependency preservation is planned, not implemented. |
+| DIFF-GAP-019 | `parity-gap` | At `2199d069`, evaluator arity inference omits `BoxMatch::FFun`, so applying one argument to a three-input foreign block fails with `FRS-PROP-0002`. The pinned C++ compiler appends two implicit wires and produces a two-input DSP. The self-contained differential and correction are recorded in [the 2026-10-08 audit, sections 2.3 and W4](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w4--restore-foreign-block-application-parity-p1); the fix is not implemented. Bare `ffunction` statements remain invalid in both compilers and are not part of this gap. |
+
 For a time-stamped quantitative snapshot rather than this durable registry,
 use [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),
 the reports under `porting/phases/`, and `tests/golden/METADATA.toml`.
