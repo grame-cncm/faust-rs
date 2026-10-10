@@ -215,16 +215,36 @@ pub(super) const INT_FUN_PROTO_ORDER: &[&str] = &["abs", "min_i", "max_i"];
 /// work is internal to a causal `loop ~ _` recursion stay forward-time.
 fn classify_reverse_time_outputs(arena: &TreeArena, signals: &[SigId]) -> Vec<bool> {
     /// Recursively tests whether `sig`'s subtree contains a reverse-time gradient
-    /// projection, stopping at SYMREC boundaries and using `visited` for cycle
-    /// safety.
+    /// projection, stopping at SYMREC boundaries.
+    ///
+    /// The verdict depends on the node only, so `memo` keeps it for every
+    /// output: the outputs of one `ondemand` block share its clocked group,
+    /// which holds all its inputs, and a search per output from an empty set
+    /// made `ondemand(par(i, N, _))` cost N² (0.9 s at N = 2048, 3.5 s at
+    /// 4096, 14 s at 8192, in `fir-lowering`). Hash-consed trees cannot
+    /// contain themselves, so a node is never met again while its own
+    /// verdict is computed; the provisional `false` only guards that.
     fn contains_reverse_time_projection(
         arena: &TreeArena,
         sig: SigId,
-        visited: &mut HashSet<SigId>,
+        memo: &mut HashMap<SigId, bool>,
     ) -> bool {
-        if !visited.insert(sig) {
-            return false;
+        if let Some(&verdict) = memo.get(&sig) {
+            return verdict;
         }
+        memo.insert(sig, false);
+        let verdict = reverse_time_projection_below(arena, sig, memo);
+        memo.insert(sig, verdict);
+        verdict
+    }
+
+    fn reverse_time_projection_below(
+        arena: &TreeArena,
+        sig: SigId,
+        memo: &mut HashMap<SigId, bool>,
+    ) -> bool {
+        #[cfg(test)]
+        reverse_time_classifier_tests::VISITS.set(reverse_time_classifier_tests::VISITS.get() + 1);
         // ReverseTimeRec gradient projections run in the reverse sample loop.
         if matches!(
             match_sig(arena, sig),
@@ -269,13 +289,14 @@ fn classify_reverse_time_outputs(arena: &TreeArena, signals: &[SigId]) -> Vec<bo
                 .as_slice()
                 .iter()
                 .copied()
-                .any(|child| contains_reverse_time_projection(arena, child, visited))
+                .any(|child| contains_reverse_time_projection(arena, child, memo))
         })
     }
 
+    let mut memo = HashMap::new();
     signals
         .iter()
-        .map(|&sig| contains_reverse_time_projection(arena, sig, &mut HashSet::new()))
+        .map(|&sig| contains_reverse_time_projection(arena, sig, &mut memo))
         .collect()
 }
 
@@ -513,5 +534,39 @@ impl<'a> SignalToFirLower<'a> {
             SignalFirErrorCode::UnsupportedSignalNode,
             format!("{detail} (expr={})", dump_sig_readable(self.arena, sig)),
         ))
+    }
+}
+
+#[cfg(test)]
+mod reverse_time_classifier_tests {
+    use super::classify_reverse_time_outputs;
+    use signals::SigBuilder;
+    use std::cell::Cell;
+    use tlib::TreeArena;
+
+    thread_local! {
+        /// Nodes whose verdict `classify_reverse_time_outputs` computed.
+        pub(super) static VISITS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// The outputs of one `ondemand` block share its clocked group, which
+    /// holds all its inputs: each node is classified once for all of them,
+    /// not once per output (the search per output made
+    /// `ondemand(par(i, N, _))` cost N², W7 of the 2026-10-08 plan).
+    #[test]
+    fn outputs_sharing_a_wide_group_classify_each_node_once() {
+        const N: usize = 2_000;
+        let mut arena = TreeArena::new();
+        let mut b = SigBuilder::new(&mut arena);
+        let inputs: Vec<_> = (0..N as i32).map(|i| b.input(i)).collect();
+        let group = b.on_demand(&inputs);
+        let outputs: Vec<_> = inputs.iter().map(|&x| b.add(group, x)).collect();
+        VISITS.set(0);
+        let verdicts = classify_reverse_time_outputs(&arena, &outputs);
+        assert_eq!(verdicts, vec![false; N]);
+        // N outputs, the group, its N inputs and their N indexes: 3N + 1
+        // nodes, against some 2N² for a search per output.
+        let visits = VISITS.get();
+        assert_eq!(visits, 3 * N + 1, "nodes classified");
     }
 }

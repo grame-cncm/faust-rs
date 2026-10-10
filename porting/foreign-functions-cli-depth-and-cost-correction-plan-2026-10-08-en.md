@@ -9,7 +9,10 @@ signature checks, typed C API diagnostics for backend errors and the shared
 math inventory remain (journal 2026-10-10, the two "W1" entries). W3 is
 implemented (its design amendment below). W4 is implemented, with two
 defects found on the way (journal 2026-10-10, "W4"). W5 and W6 are implemented.
-W7 is not implemented. The large-program
+W7 has its baseline and one fix ([measurements](ondemand-and-foreign-chain-compile-cost-measurements-2026-10-10-en.md)):
+`ondemand` no longer costs O(width²) in FIR lowering; the propagation cost of
+wide `par` buses and the quadratic recursive chains, which C++ shares, remain,
+and the compile-budget case could not be calibrated on the measuring machine. The large-program
 cost investigation remains open.
 
 Rust source baseline: `main-dev`, `2199d069e462b34d960321da06d7b0ebbc08d0aa`.
