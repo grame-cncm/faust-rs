@@ -134,6 +134,18 @@ pub fn try_build_flat_box(arena: &TreeArena, root: BoxId) -> Result<FlatBoxId, F
     Ok(flat)
 }
 
+/// [`try_build_flat_box`] with a set of boxes already validated, kept by
+/// the caller across calls: a box validated once is not walked again.
+pub(crate) fn try_build_flat_box_validated(
+    arena: &TreeArena,
+    root: BoxId,
+    validated: &mut AHashSet<FlatBoxId>,
+) -> Result<FlatBoxId, FlatBoxBuildError> {
+    let flat = FlatBoxId::from_tree_id(root);
+    validate_flat_box_recursive(arena, flat, validated)?;
+    Ok(flat)
+}
+
 fn validate_flat_box_recursive(
     arena: &TreeArena,
     node: FlatBoxId,

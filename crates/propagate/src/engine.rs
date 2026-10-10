@@ -477,10 +477,7 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = *ctx
-                .control_ids
-                .get(&(box_tree.as_tree_id(), ctx_hash))
-                .expect("button control id must be registered during UI extraction");
+            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "button");
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.button(control)])
         }
@@ -490,10 +487,7 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = *ctx
-                .control_ids
-                .get(&(box_tree.as_tree_id(), ctx_hash))
-                .expect("checkbox control id must be registered during UI extraction");
+            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "checkbox");
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.checkbox(control)])
         }
@@ -503,10 +497,7 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = *ctx
-                .control_ids
-                .get(&(box_tree.as_tree_id(), ctx_hash))
-                .expect("vslider control id must be registered during UI extraction");
+            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "vslider");
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.vslider(control)])
         }
@@ -516,10 +507,7 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = *ctx
-                .control_ids
-                .get(&(box_tree.as_tree_id(), ctx_hash))
-                .expect("hslider control id must be registered during UI extraction");
+            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "hslider");
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.hslider(control)])
         }
@@ -529,10 +517,7 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 0)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = *ctx
-                .control_ids
-                .get(&(box_tree.as_tree_id(), ctx_hash))
-                .expect("numentry control id must be registered during UI extraction");
+            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "numentry");
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.numentry(control)])
         }
@@ -542,10 +527,7 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 1)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = *ctx
-                .control_ids
-                .get(&(box_tree.as_tree_id(), ctx_hash))
-                .expect("vbargraph control id must be registered during UI extraction");
+            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "vbargraph");
             let value = clock_in_domain(arena, ctx, inputs[0]);
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.vbargraph(control, value)])
@@ -556,10 +538,7 @@ fn propagate_inner(
             };
             expect_input_arity(box_tree.as_tree_id(), inputs, 1)?;
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = *ctx
-                .control_ids
-                .get(&(box_tree.as_tree_id(), ctx_hash))
-                .expect("hbargraph control id must be registered during UI extraction");
+            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "hbargraph");
             let value = clock_in_domain(arena, ctx, inputs[0]);
             let mut b = SigBuilder::new(arena);
             Ok(vec![b.hbargraph(control, value)])
@@ -969,10 +948,7 @@ fn propagate_inner(
             let chan_count = usize_from_int_node(arena, chan, "soundfile channels")?;
             let mut b = SigBuilder::new(arena);
             let ctx_hash = group_path_hash(ctx.ui_path.groups());
-            let control = *ctx
-                .control_ids
-                .get(&(box_tree.as_tree_id(), ctx_hash))
-                .expect("soundfile control id must be registered during UI extraction");
+            let control = ctx.control_id(box_tree.as_tree_id(), ctx_hash, "soundfile");
             let soundfile = b.soundfile(control);
             let part = inputs[0];
             let length = b.soundfile_length(soundfile, part);
@@ -1566,6 +1542,30 @@ pub(crate) struct PropagateContext<'a> {
     /// Source-neutral Box derivations for every Signal output observed at a
     /// validated propagation boundary.
     pub(crate) signal_origins: &'a mut SignalOrigins,
+    /// Constant folding (`api::propagate_fold`): there is no UI program, and a
+    /// widget gets [`FOLD_CONTROL_ID`]. A fold only asks whether the outputs
+    /// are numbers, and a widget's signal is not one whatever its id.
+    pub(crate) fold: bool,
+}
+
+/// The control id of every widget propagated by a constant fold.
+pub(crate) const FOLD_CONTROL_ID: ui::ControlId = ui::ControlId::MAX;
+
+impl PropagateContext<'_> {
+    /// The control id registered for a widget during UI extraction, or
+    /// [`FOLD_CONTROL_ID`] in a constant fold, which extracts no UI.
+    pub(crate) fn control_id(
+        &self,
+        node: tlib::TreeId,
+        group_path: u64,
+        widget: &str,
+    ) -> ui::ControlId {
+        match self.control_ids.get(&(node, group_path)) {
+            Some(&id) => id,
+            None if self.fold => FOLD_CONTROL_ID,
+            None => panic!("{widget} control id must be registered during UI extraction"),
+        }
+    }
 }
 
 /// Lifts De Bruijn references of input signals by one recursion level.

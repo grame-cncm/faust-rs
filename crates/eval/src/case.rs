@@ -105,7 +105,11 @@ pub(crate) fn eval_pattern(
     loop_detector: &mut LoopDetector,
 ) -> Result<TreeId, EvalError> {
     let evaluated = eval_box(arena, pattern, env, loop_detector)?;
-    Ok(pattern_simplification(arena, evaluated))
+    Ok(pattern_simplification(
+        arena,
+        evaluated,
+        &mut loop_detector.fold,
+    ))
 }
 
 /// Simplifies a pattern after evaluation, mirroring C++ `patternSimplification`.
@@ -124,37 +128,45 @@ pub(crate) fn eval_pattern(
 ///
 /// Note: HGroup / VGroup / TGroup / Route are **not** PatternOps in C++ and
 /// are returned unchanged without recursion.
-pub(crate) fn pattern_simplification(arena: &mut TreeArena, pattern: TreeId) -> TreeId {
+///
+/// The patterns of a rule are evaluated again at each application, under the
+/// environment of the call, so `fold`, the caches of the evaluation pass,
+/// keeps the folding of a growing value incremental.
+pub(crate) fn pattern_simplification(
+    arena: &mut TreeArena,
+    pattern: TreeId,
+    fold: &mut crate::simplify::FoldCache,
+) -> TreeId {
     // (a) Try full constant folding on the whole expression first.
-    let folded = simplify_pattern(arena, pattern);
+    let folded = crate::simplify::simplify_pattern_in(arena, pattern, fold);
     if folded != pattern {
         return folded;
     }
     // (b) Recurse into PatternOp children (Par/Seq/Split/Merge/Rec only).
     match match_box(arena, pattern) {
         BoxMatch::Par(a, b) => {
-            let sa = pattern_simplification(arena, a);
-            let sb = pattern_simplification(arena, b);
+            let sa = pattern_simplification(arena, a, fold);
+            let sb = pattern_simplification(arena, b, fold);
             BoxBuilder::new(arena).par(sa, sb)
         }
         BoxMatch::Seq(a, b) => {
-            let sa = pattern_simplification(arena, a);
-            let sb = pattern_simplification(arena, b);
+            let sa = pattern_simplification(arena, a, fold);
+            let sb = pattern_simplification(arena, b, fold);
             BoxBuilder::new(arena).seq(sa, sb)
         }
         BoxMatch::Split(a, b) => {
-            let sa = pattern_simplification(arena, a);
-            let sb = pattern_simplification(arena, b);
+            let sa = pattern_simplification(arena, a, fold);
+            let sb = pattern_simplification(arena, b, fold);
             BoxBuilder::new(arena).split(sa, sb)
         }
         BoxMatch::Merge(a, b) => {
-            let sa = pattern_simplification(arena, a);
-            let sb = pattern_simplification(arena, b);
+            let sa = pattern_simplification(arena, a, fold);
+            let sb = pattern_simplification(arena, b, fold);
             BoxBuilder::new(arena).merge(sa, sb)
         }
         BoxMatch::Rec(a, b) => {
-            let sa = pattern_simplification(arena, a);
-            let sb = pattern_simplification(arena, b);
+            let sa = pattern_simplification(arena, a, fold);
+            let sb = pattern_simplification(arena, b, fold);
             BoxBuilder::new(arena).rec(sa, sb)
         }
         // (c) Everything else (HGroup/VGroup/TGroup/Route/…) — unchanged.

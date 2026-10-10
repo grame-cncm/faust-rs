@@ -843,6 +843,7 @@ fn apply_pattern_matcher_internal(
     s: usize,
     x: TreeId,
     substs: &mut [Subst],
+    fold: &mut crate::simplify::FoldCache,
 ) -> Option<usize> {
     let state = &automaton.states[s];
 
@@ -851,7 +852,7 @@ fn apply_pattern_matcher_internal(
     // recursive sub-tree matching inside Op patterns — e.g., matching the `2`
     // inside `seq(max(1,min(2,4)), x)` against a constant transition.
     let x = if state.match_num {
-        crate::simplify_pattern(arena, x)
+        crate::simplify::simplify_pattern_in(arena, x, fold)
     } else {
         x
     };
@@ -870,19 +871,32 @@ fn apply_pattern_matcher_internal(
             if let Some((op1, x0, x1, x2)) = is_box_pattern_op_ternary(arena, x) {
                 if op == op1 {
                     add_subst(automaton, s, substs);
+                    let cur = apply_pattern_matcher_internal(
+                        arena,
+                        automaton,
+                        trans.state,
+                        x0,
+                        substs,
+                        fold,
+                    )?;
                     let cur =
-                        apply_pattern_matcher_internal(arena, automaton, trans.state, x0, substs)?;
-                    let cur = apply_pattern_matcher_internal(arena, automaton, cur, x1, substs)?;
-                    return apply_pattern_matcher_internal(arena, automaton, cur, x2, substs);
+                        apply_pattern_matcher_internal(arena, automaton, cur, x1, substs, fold)?;
+                    return apply_pattern_matcher_internal(arena, automaton, cur, x2, substs, fold);
                 }
             // Binary match (Seq, Par, …)
             } else if let Some((op1, x0, x1)) = is_box_pattern_op_binary(arena, x)
                 && op == op1
             {
                 add_subst(automaton, s, substs);
-                let cur =
-                    apply_pattern_matcher_internal(arena, automaton, trans.state, x0, substs)?;
-                return apply_pattern_matcher_internal(arena, automaton, cur, x1, substs);
+                let cur = apply_pattern_matcher_internal(
+                    arena,
+                    automaton,
+                    trans.state,
+                    x0,
+                    substs,
+                    fold,
+                )?;
+                return apply_pattern_matcher_internal(arena, automaton, cur, x1, substs, fold);
             }
         }
     }
@@ -905,9 +919,10 @@ pub(crate) fn simplify_dispatch_argument(
     automaton: &Automaton,
     s: usize,
     x: TreeId,
+    fold: &mut crate::simplify::FoldCache,
 ) -> TreeId {
     if automaton.states[s].match_num {
-        crate::simplify_pattern(arena, x)
+        crate::simplify::simplify_pattern_in(arena, x, fold)
     } else {
         x
     }
@@ -994,11 +1009,12 @@ pub(crate) fn apply_pattern_matcher(
     s: usize,
     x: TreeId,
     env_out: &mut [Option<Environment>],
+    fold: &mut crate::simplify::FoldCache,
 ) -> (Option<usize>, Option<TreeId>) {
     let n = automaton.n_rules();
     let mut substs: Vec<Subst> = vec![Vec::new(); n];
 
-    let s_idx = match apply_pattern_matcher_internal(arena, automaton, s, x, &mut substs) {
+    let s_idx = match apply_pattern_matcher_internal(arena, automaton, s, x, &mut substs, fold) {
         None => return (None, None),
         Some(s) => s,
     };

@@ -138,6 +138,35 @@ pub fn try_simplify_const(arena: &mut TreeArena, sig: SigId) -> Result<SigId, Di
     returning_division_by_zero(|| simplify_const(arena, sig))
 }
 
+/// A cache of [`simplify_const`] kept from one call to the next: C++ stores
+/// `simplify()` results on the trees (`SIMPLIFIED`) for the whole compilation.
+///
+/// Valid as long as the arena it was used with: the entries are hash-consed
+/// signals, simplified in the empty type context of a constant fold.
+#[derive(Default)]
+pub struct ConstSimplifyCache(SimplifyCache);
+
+/// [`try_simplify_const`] with a cache kept by the caller, so that simplifying
+/// `x - 1` after `x` simplifies one node.
+///
+/// # Errors
+/// As [`try_simplify_const`].
+pub fn try_simplify_const_cached(
+    arena: &mut TreeArena,
+    cache: &mut ConstSimplifyCache,
+    sig: SigId,
+) -> Result<SigId, DivisionByZero> {
+    let types = HashMap::new();
+    let result =
+        returning_division_by_zero(|| simplify_with_cache(arena, &mut cache.0, &types, sig));
+    if result.is_err() {
+        // the unwind left the in-progress sentinels of the nodes it was in:
+        // kept, they would read as "not simplifiable" in every later call
+        cache.0.clear();
+    }
+    result
+}
+
 /// Runs `work` and turns the one unwind the normalizer raises on purpose, a
 /// [`DivisionByZero`], into an `Err`. Every other payload is an internal
 /// failure and keeps unwinding: swallowing it here would hand the caller an

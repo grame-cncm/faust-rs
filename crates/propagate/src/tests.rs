@@ -366,6 +366,7 @@ fn propagate_counting_memo(
         pending_fad_seeds: Vec::new(),
         ui_path: UiPathContext::new(),
         signal_origins: &mut signal_origins,
+        fold: false,
     };
     let outputs = propagate_in_slot_env(arena, flat, &[], &mut ctx).expect("propagation");
     (outputs, memo.profile.result_memo_counts())
@@ -399,6 +400,7 @@ fn propagate_counting_domains(arena: &mut TreeArena, flat: FlatBoxId) -> (Vec<Si
         pending_fad_seeds: Vec::new(),
         ui_path: UiPathContext::new(),
         signal_origins: &mut signal_origins,
+        fold: false,
     };
     let outputs = propagate_in_slot_env(arena, flat, &[], &mut ctx).expect("propagation");
     (outputs, clock_domains.len())

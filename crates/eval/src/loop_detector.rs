@@ -186,6 +186,9 @@ pub struct LoopDetector {
     /// progress on a number but is too deep, or never stops for another
     /// reason ([`EvalError::RecursionDepthExceeded`]).
     pub(crate) numeric_dispatches: Vec<NumericDispatch>,
+    /// The caches of constant folding, kept for the pass: a fold costs what
+    /// is new in the expression, as in C++ (`crate::simplify::FoldCache`).
+    pub(crate) fold: crate::simplify::FoldCache,
 }
 
 /// One dispatch of a `case` argument on numeric patterns: see
@@ -435,6 +438,7 @@ impl LoopDetector {
             eval_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             structural_depth: 0,
             numeric_dispatches: Vec::new(),
+            fold: crate::simplify::FoldCache::default(),
         }
     }
 
@@ -895,6 +899,43 @@ mod tests {
             }
         }
         eval_process_with_budget("process = + ~ *(0.5);", 1024).expect("a recursion through ~");
+    }
+
+    /// Folding a pattern argument costs what is new in it (WP2 of the
+    /// runaway-recursion plan): `x` grows by one node per level and is
+    /// compared with 0 at each level. With caches rebuilt at each fold this
+    /// was quadratic, 35 s at 4 000 levels in release; it is now a fraction of
+    /// a second. The budget below is two orders of magnitude above the linear
+    /// cost of a debug build.
+    #[test]
+    fn folding_a_growing_argument_is_linear() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .stack_size(512 * 1024 * 1024)
+            .spawn(move || {
+                let source = "g(0, x) = x;\ng(n, 0) = 0;\ng(n, x) = g(n-1, x-1);\nprocess = g(2000, hslider(\"x\", 0.5, 0, 1, 0.01));";
+                let parsed = parser::parse_program(source, "linear_folding.dsp");
+                let mut arena = parsed.state.arena;
+                let root = parsed.root.expect("a parsed program");
+                let mut env = crate::Environment::empty();
+                crate::definitions::bind_definitions(&mut arena, root, &mut env).unwrap();
+                // above the debug structural cap of 4 096: 2 000 levels take
+                // about 8 000 frames
+                let mut detector = super::LoopDetector::with_max_depth(1 << 16);
+                detector.structural_max_depth = 1 << 16;
+                let entry = BoxBuilder::new(&mut arena).ident("process");
+                let result = crate::eval_value(&mut arena, entry, &env, &mut detector)
+                    .and_then(|v| crate::a2sb_value(&mut arena, v, &mut detector));
+                let _ = sender.send(result.map(|_| ()));
+            })
+            .expect("spawn worker");
+        let evaluated = receiver
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .expect("2 000 levels of folding a growing argument must finish within the budget");
+        assert!(
+            evaluated.is_ok(),
+            "a finite recursion evaluates: {evaluated:?}"
+        );
     }
 
     #[test]

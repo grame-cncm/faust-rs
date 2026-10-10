@@ -1832,9 +1832,11 @@ fn promote_table_signals
 fn simplify_const
 fn simplify_signals_fastlane
 fn try_simplify_const
+fn try_simplify_const_cached
 mod normalform
 mod rec_merge
 mod table_promote
+struct ConstSimplifyCache
 struct DivisionByZero
 struct NormalFormOpts
 struct TableRangeWarning
@@ -2111,6 +2113,7 @@ fn control_widgets
 fn crate_id
 fn iir_filter_to_de_bruijn_rec_group
 fn make_sig_input_list
+fn propagate_fold
 fn propagate_typed
 fn propagate_typed_with_ui
 fn transpose_lti_de_bruijn_rec_scaffold
@@ -2128,6 +2131,7 @@ struct ControlWidget
 struct ControlWidgets
 struct DependentSeed
 struct FlatBoxId
+struct FoldSession
 struct PropagateOutput
 struct PropagateUiOptions
 struct SignalOrigins

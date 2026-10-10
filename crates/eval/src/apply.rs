@@ -165,8 +165,14 @@ pub(crate) fn apply_pattern_matcher_value(
         // compile-time simplification pass used by pattern preparation. Without
         // this, selector expressions like `((l != 0) & ...) * 2` remain residual
         // box trees and only catch-all rules match.
-        let arg = box_simplification(arena, raw_arg);
-        let arg = pattern_matcher::simplify_dispatch_argument(arena, &pm.automaton, pm.state, arg);
+        let arg = crate::simplify::box_simplification_in(arena, raw_arg, &mut loop_detector.fold);
+        let arg = pattern_matcher::simplify_dispatch_argument(
+            arena,
+            &pm.automaton,
+            pm.state,
+            arg,
+            &mut loop_detector.fold,
+        );
         // A dispatch on numeric patterns is recorded, so that a recursion that
         // exhausts a depth budget without ever dispatching on a number, its
         // argument going past the numeric patterns to the variable rule each
@@ -214,6 +220,7 @@ pub(crate) fn apply_pattern_matcher_value(
             pm.state,
             arg,
             &mut pm.envs,
+            &mut loop_detector.fold,
         );
         let Some(new_state) = new_state else {
             // The rejected argument is part of the attempt: it is what the

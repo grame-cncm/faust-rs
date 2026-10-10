@@ -319,6 +319,16 @@ must run unchanged with Faust C++ should not pass them.
   (a non-constant expression, a cancellation or timeout, a non-identifier
   parameter) has its own cause; the "internal: malformed or unsupported
   intermediate form" cause is left to internal forms.
+- Constant folding during evaluation (pattern dispatch, box simplification,
+  the patterns of rules) keeps its propagation and simplification caches for
+  the whole pass (`propagate::FoldSession`, `normalize::ConstSimplifyCache`),
+  as C++ 2.84.3 memoizes them on the trees. Before 2026-10-10 each fold
+  started from empty caches, so a recursion on a growing argument compared
+  with a number was quadratic: `g(n-1, x-1)` with `x` a slider took 35 s at
+  `n = 4000` (C++ 2.84.3: 0.1 s), and in release the simplest runaway
+  recursions reached the 120 s timeout before their depth budget. C++
+  `master-dev` regressed the same way in `536ff8ca7`
+  ([grame-cncm/faust#1345](https://github.com/grame-cncm/faust/issues/1345)).
   Parser recovery also invents an empty-name duplicate-definition error for
   repeated bare foreign statements, which both grammars reject. The
   [2026-10-08 audit, W5/W6](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w5--explain-the-active-depth-guard-and-build-profile-p2)

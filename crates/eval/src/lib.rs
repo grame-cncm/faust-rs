@@ -1973,7 +1973,7 @@ mod simplify_helpers_tests {
     fn simplify_pattern_literal_int() {
         let mut arena = TreeArena::default();
         let b7 = BoxBuilder::new(&mut arena).int(7);
-        let result = super::simplify_pattern(&mut arena, b7);
+        let result = super::simplify::simplify_pattern_in(&mut arena, b7, &mut Default::default());
         assert!(matches!(match_box(&arena, result), BoxMatch::Int(7)));
     }
 
@@ -1984,7 +1984,8 @@ mod simplify_helpers_tests {
     fn simplify_pattern_arithmetic_expression() {
         let mut arena = TreeArena::default();
         let box_add = make_int_add(&mut arena, 2, 3);
-        let result = super::simplify_pattern(&mut arena, box_add);
+        let result =
+            super::simplify::simplify_pattern_in(&mut arena, box_add, &mut Default::default());
         assert!(
             matches!(match_box(&arena, result), BoxMatch::Int(5)),
             "expected boxInt(5)"
@@ -2005,7 +2006,7 @@ mod simplify_helpers_tests {
             let op = b.div();
             b.seq(args, op)
         };
-        let result = super::simplify_pattern(&mut arena, div);
+        let result = super::simplify::simplify_pattern_in(&mut arena, div, &mut Default::default());
         match match_box(&arena, result) {
             BoxMatch::Real(v) => assert!((v - (1.0 / 3.0)).abs() < 1e-12),
             other => panic!("expected boxReal(1/3), got {other:?}"),
@@ -2017,7 +2018,8 @@ mod simplify_helpers_tests {
     fn simplify_pattern_wire_unchanged() {
         let mut arena = TreeArena::default();
         let wire = BoxBuilder::new(&mut arena).wire();
-        let result = super::simplify_pattern(&mut arena, wire);
+        let result =
+            super::simplify::simplify_pattern_in(&mut arena, wire, &mut Default::default());
         assert_eq!(result, wire, "Wire should be returned unchanged");
     }
 

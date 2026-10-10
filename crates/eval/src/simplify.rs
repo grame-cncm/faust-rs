@@ -47,17 +47,53 @@ pub(crate) fn propagate_box_and_simplify(
     arena: &mut TreeArena,
     box_id: TreeId,
 ) -> Result<Option<SigId>, normalize::DivisionByZero> {
-    let Ok(flat) = try_build_flat_box(arena, box_id) else {
-        return Ok(None);
-    };
-    let mut cache = ArityCache::new();
-    let Ok(signals) = propagate_typed(arena, flat, &[], &mut cache) else {
+    propagate_box_and_simplify_in(arena, box_id, &mut FoldCache::default())
+}
+
+/// [`propagate_box_and_simplify`] with the caches of one evaluation pass.
+///
+/// C++ memoizes every step of a fold on the trees (`isBoxNumeric`: `a2sb`,
+/// `getBoxType`, `boxPropagateSig`, `simplify`), so folding `x - 1` after `x`
+/// costs one node. Here `fold` keeps those caches for the pass (WP2 of the
+/// runaway-recursion plan): without it, a fold costs the size of the whole
+/// expression, and a recursion on a growing argument is quadratic.
+pub(crate) fn propagate_box_and_simplify_in(
+    arena: &mut TreeArena,
+    box_id: TreeId,
+    fold: &mut FoldCache,
+) -> Result<Option<SigId>, normalize::DivisionByZero> {
+    let Ok(signals) = propagate::propagate_fold(arena, box_id, &mut fold.session) else {
         return Ok(None);
     };
     let [sig] = signals.as_slice() else {
         return Ok(None);
     };
-    try_simplify_const(arena, *sig).map(Some)
+    normalize::try_simplify_const_cached(arena, &mut fold.simplify, *sig).map(Some)
+}
+
+/// The caches of constant folding for one evaluation pass: propagation and
+/// simplification (see [`propagate_box_and_simplify_in`]). Owned by the
+/// `LoopDetector`.
+#[derive(Default)]
+pub(crate) struct FoldCache {
+    session: propagate::FoldSession,
+    simplify: normalize::ConstSimplifyCache,
+}
+
+impl Clone for FoldCache {
+    /// A clone starts with empty caches: a cache is never needed for
+    /// correctness.
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl std::fmt::Debug for FoldCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FoldCache")
+            .field("session", &self.session)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Tries to reduce a box to a numeric literal for pattern matching.
@@ -75,7 +111,11 @@ pub(crate) fn propagate_box_and_simplify(
 /// # C++ equivalent
 ///
 /// `Tree simplifyPattern(Tree value)` in `compiler/evaluate/eval.cpp`.
-pub(crate) fn simplify_pattern(arena: &mut TreeArena, box_id: TreeId) -> TreeId {
+pub(crate) fn simplify_pattern_in(
+    arena: &mut TreeArena,
+    box_id: TreeId,
+    fold: &mut FoldCache,
+) -> TreeId {
     // Fast path: already a literal — return unchanged, no type coercion.
     //
     // C++ `isBoxNumeric` short-circuits on any `boxInt` / `boxReal` literal and
@@ -90,7 +130,7 @@ pub(crate) fn simplify_pattern(arena: &mut TreeArena, box_id: TreeId) -> TreeId 
     }
     // the fold is an optimization here: on a division by zero the pattern
     // argument stays as written (see `propagate_box_and_simplify`)
-    let Ok(Some(sig)) = propagate_box_and_simplify(arena, box_id) else {
+    let Ok(Some(sig)) = propagate_box_and_simplify_in(arena, box_id, fold) else {
         return box_id;
     };
     // For arithmetic expressions, the signal type determines the result type:
@@ -400,11 +440,20 @@ const SIMPLIFIED_BOX_PROPERTY: &str = "simplified-box";
 /// `static Tree boxSimplification(Tree box)` in
 /// `compiler/evaluate/eval.cpp`.
 pub(crate) fn box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeId {
+    box_simplification_in(arena, box_id, &mut FoldCache::default())
+}
+
+/// [`box_simplification`] with the caches of one evaluation pass.
+pub(crate) fn box_simplification_in(
+    arena: &mut TreeArena,
+    box_id: TreeId,
+    fold: &mut FoldCache,
+) -> TreeId {
     let key = arena.property_key(SIMPLIFIED_BOX_PROPERTY);
     if let Some(cached) = arena.node_property(box_id, key) {
         return cached;
     }
-    let result = numeric_box_simplification(arena, box_id);
+    let result = numeric_box_simplification_in(arena, box_id, fold);
     arena.set_node_property(box_id, key, result);
     result
 }
@@ -416,14 +465,18 @@ pub(crate) fn box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeI
 ///
 /// `static Tree numericBoxSimplification(Tree box)` in
 /// `compiler/evaluate/eval.cpp`.
-pub(crate) fn numeric_box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeId {
+pub(crate) fn numeric_box_simplification_in(
+    arena: &mut TreeArena,
+    box_id: TreeId,
+    fold: &mut FoldCache,
+) -> TreeId {
     // Fast path: already a numeric literal.
     match match_box(arena, box_id) {
         BoxMatch::Int(_) | BoxMatch::Real(_) => return box_id,
         _ => {}
     }
     // General path: propagate + simplify → try to extract a numeric constant.
-    if let Ok(Some(sig)) = propagate_box_and_simplify(arena, box_id) {
+    if let Ok(Some(sig)) = propagate_box_and_simplify_in(arena, box_id, fold) {
         match match_sig(arena, sig) {
             SigMatch::Real(x) => {
                 // Observable C++ parity:
@@ -448,7 +501,7 @@ pub(crate) fn numeric_box_simplification(arena: &mut TreeArena, box_id: TreeId) 
         }
     }
     // Not a numeric constant: simplify children recursively.
-    inside_box_simplification(arena, box_id)
+    inside_box_simplification_in(arena, box_id, fold)
 }
 
 /// Recurses into composite boxes, calling [`box_simplification`] on each
@@ -461,7 +514,11 @@ pub(crate) fn numeric_box_simplification(arena: &mut TreeArena, box_id: TreeId) 
 ///
 /// `static Tree insideBoxSimplification(Tree box)` in
 /// `compiler/evaluate/eval.cpp`.
-pub(crate) fn inside_box_simplification(arena: &mut TreeArena, box_id: TreeId) -> TreeId {
+pub(crate) fn inside_box_simplification_in(
+    arena: &mut TreeArena,
+    box_id: TreeId,
+    fold: &mut FoldCache,
+) -> TreeId {
     match match_box(arena, box_id) {
         // ── Leaves — return unchanged ──────────────────────────────────────
         BoxMatch::Int(_)
@@ -506,69 +563,69 @@ pub(crate) fn inside_box_simplification(arena: &mut TreeArena, box_id: TreeId) -
 
         // ── Recursive on 1 child ──────────────────────────────────────────
         BoxMatch::VGroup(label, body) => {
-            let sb = box_simplification(arena, body);
+            let sb = box_simplification_in(arena, body, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.vgroup(label, sb)
         }
         BoxMatch::HGroup(label, body) => {
-            let sb = box_simplification(arena, body);
+            let sb = box_simplification_in(arena, body, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.hgroup(label, sb)
         }
         BoxMatch::TGroup(label, body) => {
-            let sb = box_simplification(arena, body);
+            let sb = box_simplification_in(arena, body, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.tgroup(label, sb)
         }
         BoxMatch::Symbolic(slot, body) => {
-            let sb = box_simplification(arena, body);
+            let sb = box_simplification_in(arena, body, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.symbolic(slot, sb)
         }
 
         // ── Recursive on 2 children ───────────────────────────────────────
         BoxMatch::Seq(a, b) => {
-            let sa = box_simplification(arena, a);
-            let sb = box_simplification(arena, b);
+            let sa = box_simplification_in(arena, a, fold);
+            let sb = box_simplification_in(arena, b, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.seq(sa, sb)
         }
         BoxMatch::Par(a, b) => {
-            let sa = box_simplification(arena, a);
-            let sb = box_simplification(arena, b);
+            let sa = box_simplification_in(arena, a, fold);
+            let sb = box_simplification_in(arena, b, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.par(sa, sb)
         }
         BoxMatch::Split(a, b) => {
-            let sa = box_simplification(arena, a);
-            let sb = box_simplification(arena, b);
+            let sa = box_simplification_in(arena, a, fold);
+            let sb = box_simplification_in(arena, b, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.split(sa, sb)
         }
         BoxMatch::Merge(a, b) => {
-            let sa = box_simplification(arena, a);
-            let sb = box_simplification(arena, b);
+            let sa = box_simplification_in(arena, a, fold);
+            let sb = box_simplification_in(arena, b, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.merge(sa, sb)
         }
         BoxMatch::Rec(a, b) => {
-            let sa = box_simplification(arena, a);
-            let sb = box_simplification(arena, b);
+            let sa = box_simplification_in(arena, a, fold);
+            let sb = box_simplification_in(arena, b, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.rec(sa, sb)
         }
 
         // ── Metadata: simplify body, keep metadata list ───────────────────
         BoxMatch::Metadata(body, meta) => {
-            let sb = box_simplification(arena, body);
+            let sb = box_simplification_in(arena, body, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.metadata(sb, meta)
         }
 
         // ── Route: simplify ins/outs, keep spec ──────────────────────────
         BoxMatch::Route(ins, outs, routes) => {
-            let si = box_simplification(arena, ins);
-            let so = box_simplification(arena, outs);
+            let si = box_simplification_in(arena, ins, fold);
+            let so = box_simplification_in(arena, outs, fold);
             let mut bld = BoxBuilder::new(arena);
             bld.route(si, so, routes)
         }

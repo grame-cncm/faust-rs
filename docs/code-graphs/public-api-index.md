@@ -1416,10 +1416,10 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `eval_box` | `crates/eval/src/lib.rs:696` |
 | `fn` | `crate_id` | `crates/eval/src/lib.rs:1799` |
 | `struct` | `LoopDetector` | `crates/eval/src/loop_detector.rs:52` |
-| `fn` | `LoopDetector::new` | `crates/eval/src/loop_detector.rs:371` |
-| `fn` | `LoopDetector::with_cancel` | `crates/eval/src/loop_detector.rs:386` |
-| `fn` | `LoopDetector::with_max_depth` | `crates/eval/src/loop_detector.rs:399` |
-| `fn` | `LoopDetector::cancel_flag` | `crates/eval/src/loop_detector.rs:505` |
+| `fn` | `LoopDetector::new` | `crates/eval/src/loop_detector.rs:374` |
+| `fn` | `LoopDetector::with_cancel` | `crates/eval/src/loop_detector.rs:389` |
+| `fn` | `LoopDetector::with_max_depth` | `crates/eval/src/loop_detector.rs:402` |
+| `fn` | `LoopDetector::cancel_flag` | `crates/eval/src/loop_detector.rs:509` |
 | `type` | `Path` | `crates/eval/src/pattern_matcher.rs:73` |
 | `struct` | `Rule` | `crates/eval/src/pattern_matcher.rs:85` |
 | `fn` | `Rule::new` | `crates/eval/src/pattern_matcher.rs:96` |
@@ -1970,9 +1970,9 @@ _No direct public items found by the source scan._
 | `use` | `mterm::DivisionByZero` | `crates/normalize/src/lib.rs:34` |
 | `use` | `rec_merge::merge_isomorphic_symrec_groups` | `crates/normalize/src/lib.rs:35` |
 | `use` | `simplify` | `crates/normalize/src/lib.rs:36` |
-| `use` | `table_promote` | `crates/normalize/src/lib.rs:37` |
-| `const` | `CRATE_NAME` | `crates/normalize/src/lib.rs:39` |
-| `fn` | `crate_id` | `crates/normalize/src/lib.rs:43` |
+| `use` | `table_promote` | `crates/normalize/src/lib.rs:39` |
+| `const` | `CRATE_NAME` | `crates/normalize/src/lib.rs:41` |
+| `fn` | `crate_id` | `crates/normalize/src/lib.rs:45` |
 | `struct` | `DivisionByZero` | `crates/normalize/src/mterm.rs:60` |
 | `struct` | `NormalFormOpts` | `crates/normalize/src/normalform.rs:55` |
 | `enum` | `NormalFormError` | `crates/normalize/src/normalform.rs:64` |
@@ -1984,6 +1984,8 @@ _No direct public items found by the source scan._
 | `fn` | `merge_isomorphic_symrec_groups` | `crates/normalize/src/rec_merge.rs:26` |
 | `fn` | `simplify_const` | `crates/normalize/src/simplify.rs:115` |
 | `fn` | `try_simplify_const` | `crates/normalize/src/simplify.rs:137` |
+| `struct` | `ConstSimplifyCache` | `crates/normalize/src/simplify.rs:147` |
+| `fn` | `try_simplify_const_cached` | `crates/normalize/src/simplify.rs:154` |
 | `struct` | `TableRangeWarning` | `crates/normalize/src/table_promote.rs:60` |
 | `fn` | `promote_table_signals` | `crates/normalize/src/table_promote.rs:116` |
 
@@ -2220,7 +2222,9 @@ _No direct public items found by the source scan._
 | Kind | Name | Location |
 |---|---|---|
 | `fn` | `propagate_typed_with_ui` | `crates/propagate/src/api.rs:27` |
-| `fn` | `propagate_typed` | `crates/propagate/src/api.rs:100` |
+| `fn` | `propagate_typed` | `crates/propagate/src/api.rs:101` |
+| `struct` | `FoldSession` | `crates/propagate/src/api.rs:132` |
+| `fn` | `propagate_fold` | `crates/propagate/src/api.rs:183` |
 | `fn` | `make_sig_input_list` | `crates/propagate/src/arity.rs:13` |
 | `fn` | `box_arity_typed` | `crates/propagate/src/arity.rs:37` |
 | `struct` | `ClockDomainId` | `crates/propagate/src/clock_domain.rs:47` |
