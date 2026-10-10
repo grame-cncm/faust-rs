@@ -6,8 +6,8 @@ Status: analysis completed for the small reproductions. W2 is implemented
 (`c535bd3c`). W1 is implemented for the CLI, every `faustprobe` mode and the
 C constructors, which fail by default with no scaffold opt-in (user decision);
 signature checks, typed C API diagnostics for backend errors and the shared
-math inventory remain (journal 2026-10-10, the two "W1" entries). W3 to W7 are
-not implemented. The large-program
+math inventory remain (journal 2026-10-10, the two "W1" entries). W3 is
+implemented (its design amendment below). W4 to W7 are not implemented. The large-program
 cost investigation remains open.
 
 Rust source baseline: `main-dev`, `2199d069e462b34d960321da06d7b0ebbc08d0aa`.
@@ -453,6 +453,52 @@ uses, scalar/vector paths, initialization calls, and nested generator
 dependencies are covered. A structural test proves descriptor dependencies
 survive FIR construction and relevant rewrites. Empty headers do not emit
 `#include ""`. Test fixtures provide their own compact headers and DSPs.
+
+#### W3 design amendment (2026-10-10, agreed with the user, implemented)
+
+Reference behavior (pinned C++): each code container holds two
+`std::set<std::string>`, `fIncludeFileSet` and `fLibrarySet`
+(`code_container.hh`). `generateFFun` adds the header and the library of every
+foreign function it lowers, `generateFVar` the header (before the `count`
+case), `generateFConst` the header too, so `ma.SR` brings `<math.h>`.
+`collectIncludeFile`/`collectLibrary` merge the sub-containers' sets.
+`produceClass` prints `/* link with : ... */` (`printLibrary`, empty names
+included) then one `#include` per header longer than two characters
+(`printIncludeFile`), after `FAUSTFLOAT` and before `FAUSTCLASS`, the headers
+interleaved with the standard ones in byte order. The JSON `library_list` is
+unrelated.
+
+Representation: one FIR statement node, `DeclareDependency { kind:
+FirDependencyKind::{Include, Library}, name }`, in a module's or sub-module's
+`globals`, next to the prototypes, one per distinct string, in byte order.
+Rejected: a new `Module` field (it changes the dump and fingerprint of every
+program, so every serialized Cranelift factory, and some 130 `b.module(...)`
+calls); and the data inside the prototype `DeclareFun` (`fvariable` and
+`fconstant` have none, and C++ keeps the sets on the container). The lowering
+records only what it lowers, so only reachable descriptors count, and two
+descriptors of one symbol keep both headers. No global state, no side table.
+Interning makes flattening's deduplication an id comparison.
+
+Decisions:
+
+- A string of two characters or fewer (`""`, `<>`) is not recorded, for
+  headers as in C++, and for libraries too (user decision: C++ prints
+  `/* link with : "" */`, which says nothing).
+- `ma.SR` adds no `<math.h>` (user decision): Rust lowers
+  `fconstant(int fSamplingFreq, <math.h>)` to the `fSampleRate` field, the
+  prelude has `<cmath>`, and parity would change the output of every program
+  using `ma.SR`.
+- The C and C++ backends print the dependencies after their fixed prelude,
+  leaving out the headers it has, in the reference's position. The order is
+  the prelude, then the program's headers, not one merged sort.
+- A table generator keeps its foreign prototypes and dependencies in its own
+  `globals` (before, it dropped the prototypes too); flattening hoists them
+  without duplicates.
+- A foreign variable is no longer declared by the C and C++ backends (a C++
+  member of the same name shadowed the header's global): the header declares
+  it, as in C++.
+- `-vec` programs with a foreign function fall back to the scalar path, which
+  carries the dependencies; no vector change.
 
 ### W4 — restore foreign-block application parity (P1)
 

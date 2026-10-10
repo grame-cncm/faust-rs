@@ -266,6 +266,7 @@ fn generate_c_module_step(
             .unwrap_or(&module.name),
         effective_options.compile_options.as_deref(),
         mem0.is_some(),
+        &crate::backends::c_family::ForeignDependencies::of(store, module_id),
     );
     if mem0.is_some() {
         let _ = writeln!(out, "static faust_memory_manager* fClassManager = NULL;");
@@ -309,6 +310,7 @@ fn emit_c_header(
     module_name: &str,
     compile_options: Option<&str>,
     mem0: bool,
+    dependencies: &crate::backends::c_family::ForeignDependencies,
 ) {
     let _ = writeln!(
         out,
@@ -358,6 +360,8 @@ fn emit_c_header(
     let _ = writeln!(out, "#include <stdint.h>");
     let _ = writeln!(out, "#include <stdlib.h>");
     let _ = writeln!(out, "#include <string.h>");
+    // The foreign functions' headers, where C `produceClass` prints them.
+    dependencies.emit(out, &["<math.h>", "<stdint.h>", "<stdlib.h>", "<string.h>"]);
     let _ = writeln!(out);
     if mem0 {
         let _ = writeln!(out, "{FAUST_MEMORY_MANAGER_HEADER}");
@@ -624,7 +628,9 @@ fn allocated_sub_containers(store: &FirStore, block: FirId) -> Vec<(String, Stri
 /// Emits one FIR block worth of struct fields.
 ///
 /// Only `DeclareVar` and `DeclareTable` entries contribute concrete state
-/// fields; helper declarations are ignored.
+/// fields; helper declarations are ignored, and so are foreign variables
+/// (`AccessType::Global`), which their header declares and the code reads by
+/// name (C `generateFVar` declares nothing either).
 fn emit_struct_fields(
     store: &FirStore,
     out: &mut String,
@@ -645,6 +651,10 @@ fn emit_struct_fields(
 
     for item in items {
         match match_fir(store, item) {
+            FirMatch::DeclareVar {
+                access: AccessType::Global,
+                ..
+            } => {}
             FirMatch::DeclareVar { name, typ, .. } => {
                 if options.memory_manager_mode.is_mem0()
                     && externalize_mem0_arrays

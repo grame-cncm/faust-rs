@@ -27,7 +27,7 @@
 //! | FIR-S02 | E | Duplicate struct field name in `dsp_struct` |
 //! | FIR-S03 | E | Struct field has `Void` type |
 //! | FIR-S04 | W | Struct array field has size 0 |
-//! | FIR-G01 | E | Globals block contains a non-`DeclareVar`/`DeclareTable`/`DeclareFun` node |
+//! | FIR-G01 | E | Globals block contains a non-`DeclareVar`/`DeclareTable`/`DeclareFun`/`DeclareDependency` node |
 //! | FIR-G02 | E | Global declaration has wrong access type |
 //! | FIR-G03 | E | Duplicate global variable name |
 //! | FIR-F01 | E | Function type is not `FirType::Fun` |

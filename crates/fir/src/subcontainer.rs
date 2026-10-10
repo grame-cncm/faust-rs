@@ -160,6 +160,12 @@ pub fn flatten_sub_modules(
 
     let dsp_struct = append_block(store, dsp_struct, &hoisted_struct);
     let static_decls = append_block(store, static_decls, &hoisted_static);
+    // Interned: what the parent already declares has the same id.
+    let parent_globals = match match_fir(store, globals) {
+        FirMatch::Block(items) => items,
+        _ => Vec::new(),
+    };
+    hoisted_globals.retain(|item| !parent_globals.contains(item));
     let globals = append_block(store, globals, &hoisted_globals);
 
     let mut b = FirBuilder::new(store);
@@ -551,7 +557,13 @@ fn collect_sub_modules(
             hoisted_static.extend(items);
         }
         if let FirMatch::Block(items) = match_fir(store, globals) {
-            hoisted_globals.extend(items);
+            // FIR nodes are interned: a prototype, header or extern the parent
+            // or another generator already declares has the same id.
+            for item in items {
+                if !hoisted_globals.contains(&item) {
+                    hoisted_globals.push(item);
+                }
+            }
         }
 
         views.insert(

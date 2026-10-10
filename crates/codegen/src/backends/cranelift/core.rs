@@ -860,6 +860,9 @@ pub(crate) fn build_struct_layout_for_module(
             // Fast-lane FIR may place helper math prototypes (`fmin`, `pow`, ...)
             // in module globals. They are declarations, not `dsp*` state fields.
             FirMatch::DeclareFun { body: None, .. } => {}
+            // A foreign function's header or library: no `dsp*` field (the
+            // JIT does not compile headers).
+            FirMatch::DeclareDependency { .. } => {}
             other => {
                 return Err(CraneliftBackendError::unsupported_module_shape(format!(
                     "unsupported globals entry for Cranelift dsp* layout: {other:?}"

@@ -397,6 +397,7 @@ impl CostVisitor<'_> {
             | M::NewDsp { .. }
             | M::DeclareFun { .. }
             | M::DeclareStructType { .. }
+            | M::DeclareDependency { .. }
             | M::DeclareBufferIterators { .. }
             | M::IteratorForLoop { .. }
             | M::OpenBox { .. }

@@ -499,8 +499,12 @@ impl<'a> SignalToFirLower<'a> {
         _sig: SigId,
         kind: SigId,
         name: SigId,
-        _file: SigId,
+        file: SigId,
     ) -> Result<FirId, SignalFirError> {
+        // C++ `generateFVar` records the header before the `count` case.
+        let file = tree_to_str(self.arena, file).unwrap_or_default().to_owned();
+        self.used_protos
+            .note_dependency(fir::FirDependencyKind::Include, &file);
         let name = self.label_text(name);
         let typ = self.foreign_sig_type(kind);
         let mut b = FirBuilder::new(&mut self.store);
@@ -563,6 +567,12 @@ impl<'a> SignalToFirLower<'a> {
         for arg in args {
             lowered_args.push(self.lower_signal(arg)?);
         }
+        // C++ `generateFFun`: `addIncludeFile`, `addLibrary`, at every call,
+        // so two descriptors of one symbol keep both their headers.
+        self.used_protos
+            .note_dependency(fir::FirDependencyKind::Include, &proto.include);
+        self.used_protos
+            .note_dependency(fir::FirDependencyKind::Library, &proto.library);
         self.used_protos
             .foreign_fun_protos
             .entry(proto.name.clone())
@@ -583,7 +593,7 @@ impl<'a> SignalToFirLower<'a> {
         &self,
         ff: SigId,
     ) -> Result<ForeignFunProto, SignalFirError> {
-        let Some((signature, _, _)) = match_ffunction_node(self.arena, ff) else {
+        let Some((signature, incfile, libfile)) = match_ffunction_node(self.arena, ff) else {
             return self.unsupported_node(ff, "SIGFFUN descriptor is not an FFUNCTION node");
         };
         let items = list_to_vec(self.arena, signature).ok_or_else(|| {
@@ -625,7 +635,17 @@ impl<'a> SignalToFirLower<'a> {
             .copied()
             .map(|ty| self.foreign_sig_type(ty))
             .collect();
-        Ok(ForeignFunProto { name, ret, args })
+        Ok(ForeignFunProto {
+            name,
+            ret,
+            args,
+            include: tree_to_str(self.arena, incfile)
+                .unwrap_or_default()
+                .to_owned(),
+            library: tree_to_str(self.arena, libfile)
+                .unwrap_or_default()
+                .to_owned(),
+        })
     }
 
     /// Decodes one Faust foreign signature type code (`0=int`, otherwise real).

@@ -323,10 +323,12 @@ impl<'s> VerifyCtx<'s> {
                         stmt_id, &name, &typ, &args, body, None, false,
                     );
                 }
+                // A header or library the code depends on: no symbol, no storage.
+                FirMatch::DeclareDependency { .. } => {}
                 _ => {
                     self.error(
                         "FIR-G01",
-                        "globals block contains a node that is not DeclareVar, DeclareTable, or DeclareFun",
+                        "globals block contains a node that is not DeclareVar, DeclareTable, DeclareFun, or DeclareDependency",
                         stmt_id,
                     );
                 }

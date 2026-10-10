@@ -165,6 +165,7 @@ pub(crate) fn child_ids(node: &FirMatch) -> Vec<FirId> {
         | FirMatch::NullValue { .. }
         | FirMatch::NewDsp { .. }
         | FirMatch::DeclareStructType { .. }
+        | FirMatch::DeclareDependency { .. }
         | FirMatch::DeclareBufferIterators { .. }
         | FirMatch::ShiftArrayVar { .. }
         | FirMatch::NullStatement

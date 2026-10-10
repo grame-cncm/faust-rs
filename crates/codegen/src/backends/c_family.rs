@@ -30,7 +30,77 @@
 
 use std::fmt::Write as _;
 
-use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
+use fir::{AccessType, FirBinOp, FirDependencyKind, FirId, FirMatch, FirStore, FirType, match_fir};
+use std::collections::BTreeSet;
+
+/// The headers and libraries a module's foreign functions and variables
+/// depend on, over its `globals` and, recursively, its sub-modules'.
+///
+/// C++ provenance: `CodeContainer::collectIncludeFile` / `collectLibrary`,
+/// which merge the sub-containers' sets into one `std::set` each, so the
+/// order is byte order and a dependency appears once.
+#[derive(Debug, Default)]
+pub(crate) struct ForeignDependencies {
+    includes: BTreeSet<String>,
+    libraries: BTreeSet<String>,
+}
+
+impl ForeignDependencies {
+    /// Collects the `DeclareDependency` nodes of `module` (a `Module` or a
+    /// `SubModule`) and of its nested sub-modules.
+    pub(crate) fn of(store: &FirStore, module: FirId) -> Self {
+        let mut deps = Self::default();
+        deps.collect(store, module);
+        deps
+    }
+
+    fn collect(&mut self, store: &FirStore, module: FirId) {
+        let (globals, sub_modules) = match match_fir(store, module) {
+            FirMatch::Module {
+                globals,
+                sub_modules,
+                ..
+            }
+            | FirMatch::SubModule {
+                globals,
+                sub_modules,
+                ..
+            } => (globals, sub_modules),
+            _ => return,
+        };
+        if let FirMatch::Block(items) = match_fir(store, globals) {
+            for item in items {
+                if let FirMatch::DeclareDependency { kind, name } = match_fir(store, item) {
+                    match kind {
+                        FirDependencyKind::Include => self.includes.insert(name),
+                        FirDependencyKind::Library => self.libraries.insert(name),
+                    };
+                }
+            }
+        }
+        if let FirMatch::Block(subs) = match_fir(store, sub_modules) {
+            for sub in subs {
+                self.collect(store, sub);
+            }
+        }
+    }
+
+    /// Writes the libraries as a comment and the headers as `#include`
+    /// lines, as C++ `printLibrary` then `printIncludeFile` do, leaving out
+    /// the headers of `already_included` (the backend's own prelude).
+    /// Nothing is linked: the comment tells the user what to link with.
+    pub(crate) fn emit(&self, out: &mut String, already_included: &[&str]) {
+        if !self.libraries.is_empty() {
+            let names: Vec<&str> = self.libraries.iter().map(String::as_str).collect();
+            let _ = writeln!(out, "/* link with : {} */", names.join(", "));
+        }
+        for include in &self.includes {
+            if !already_included.contains(&include.as_str()) {
+                let _ = writeln!(out, "#include {include}");
+            }
+        }
+    }
+}
 
 /// Syntax parameters distinguishing the C-family textual backends (`c`, `cpp`).
 ///

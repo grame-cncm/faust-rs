@@ -69,8 +69,8 @@ pub use store::FirStore;
 /// code generation on the compile stack ([`tlib::stack`]).
 pub use tlib::on_compile_stack;
 pub use types::{
-    AccessType, BargraphType, ButtonType, FirBinOp, FirMathOp, FirType, NamedType, SliderRange,
-    SliderType, UiBoxType,
+    AccessType, BargraphType, ButtonType, FirBinOp, FirDependencyKind, FirMathOp, FirType,
+    NamedType, SliderRange, SliderType, UiBoxType,
 };
 
 pub(crate) use dump::child_ids;

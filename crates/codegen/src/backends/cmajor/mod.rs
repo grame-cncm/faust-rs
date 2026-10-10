@@ -788,7 +788,9 @@ fn emit_field_block(
             | FirMatch::DeclareStructType { .. } => {
                 emit_stmt(store, out, options, stmt, indent, EmitContext::Field)?;
             }
+            // A dependency is a header for the C-family backends; no field.
             FirMatch::DeclareFun { .. }
+            | FirMatch::DeclareDependency { .. }
             | FirMatch::Label(_)
             | FirMatch::NullStatement
             | FirMatch::Block(_) => {}

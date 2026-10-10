@@ -176,11 +176,15 @@ fn assemble_sub_module(
     // C5). Taking it from the lowering — not from the caller's spec — is what
     // makes nesting work at arbitrary depth.
     let nested = std::mem::take(&mut lower.sub_modules);
+    // The generator's foreign functions keep their prototypes and headers,
+    // which it alone lowered (it has its own `SignalToFirLower`).
+    let mut global_items = foreign_declarations(lower);
+    global_items.extend(lower.sections.global_declarations.iter().copied());
     let mut b = FirBuilder::new(&mut lower.store);
     let functions = b.block(&[instance_init, fill]);
     let dsp_struct = b.block(&lower.sections.struct_declarations);
     let static_decls = b.block(&lower.sections.static_declarations);
-    let globals = b.block(&lower.sections.global_declarations);
+    let globals = b.block(&global_items);
     Ok(b.sub_module(
         spec.name.clone(),
         spec.elem_ty.clone(),
@@ -696,7 +700,31 @@ fn collect_prototype_declarations(lower: &mut SignalToFirLower<'_>) -> Vec<FirId
         };
         math_prototypes.push(proto);
     }
-    for proto in lower.used_protos.foreign_fun_protos.values() {
+    math_prototypes.extend(foreign_declarations(lower));
+    math_prototypes.extend(lower.sections.global_declarations.iter().copied());
+    math_prototypes
+}
+
+/// The headers and libraries the lowered foreign functions and variables
+/// depend on, then the prototypes of those functions, in stable order.
+///
+/// A table generator's module carries its own (C++
+/// `CodeContainer::collectIncludeFile` merges the sub-containers' sets into
+/// the class): flattening appends them to the parent's `globals`.
+fn foreign_declarations(lower: &mut SignalToFirLower<'_>) -> Vec<FirId> {
+    let mut declarations = Vec::new();
+    let dependencies = lower.used_protos.dependencies.clone();
+    for (kind, name) in dependencies {
+        let mut b = FirBuilder::new(&mut lower.store);
+        declarations.push(b.declare_dependency(kind, name));
+    }
+    let protos: Vec<_> = lower
+        .used_protos
+        .foreign_fun_protos
+        .values()
+        .cloned()
+        .collect();
+    for proto in protos {
         let proto_args: Vec<NamedType> = proto
             .args
             .iter()
@@ -706,23 +734,19 @@ fn collect_prototype_declarations(lower: &mut SignalToFirLower<'_>) -> Vec<FirId
                 typ: typ.clone(),
             })
             .collect();
-        let decl = {
-            let mut b = FirBuilder::new(&mut lower.store);
-            b.declare_fun(
-                proto.name.clone(),
-                FirType::Fun {
-                    args: proto.args.clone(),
-                    ret: Box::new(proto.ret.clone()),
-                },
-                &proto_args,
-                None,
-                false,
-            )
-        };
-        math_prototypes.push(decl);
+        let mut b = FirBuilder::new(&mut lower.store);
+        declarations.push(b.declare_fun(
+            proto.name,
+            FirType::Fun {
+                args: proto.args,
+                ret: Box::new(proto.ret),
+            },
+            &proto_args,
+            None,
+            false,
+        ));
     }
-    math_prototypes.extend(lower.sections.global_declarations.iter().copied());
-    math_prototypes
+    declarations
 }
 
 /// Splits the tagged compute-preamble statements by ownership: classic mode

@@ -728,6 +728,29 @@ must run unchanged with Faust C++ should not pass them.
 
 ## 6. Additional backends and delivery forms
 
+### DIFF-BACK-006 — headers and libraries of foreign functions in C and C++
+
+- Status: `adapted`, 2026-10-10.
+- As in C++, the header of every `ffunction` and `fvariable` the program
+  reaches, table generators included, is printed once as `#include`, before
+  the class, and a header of two characters or fewer (`""`) is not. The
+  libraries are printed as a `/* link with : ... */` comment; nothing is
+  linked. In FIR they are `DeclareDependency` nodes in `globals`.
+- Differences: the program's headers follow the backend's fixed prelude
+  (minus the headers it already has) instead of being sorted together with
+  it; an empty library is not printed (C++ prints `/* link with : "" */`);
+  `ma.SR` (`fconstant(int fSamplingFreq, <math.h>)`) adds no `#include
+  <math.h>`, the prelude having `<cmath>` (C++) or `<math.h>` (C).
+- A foreign variable is not declared by the generated code: its header
+  declares it, as in C++. Until 2026-10-10 the C++ backend declared it as a
+  member, which shadowed the header's global.
+- It replaces `DIFF-GAP-018` (until 2026-10-10 the headers were dropped and
+  the generated code calling a custom `ffunction` did not build).
+- Evidence: `crates/compiler/tests/foreign_dependencies.rs` builds and runs
+  the generated C and C++ (scalar and `-vec`) against the minimal architecture
+  with a test-local header; the design is the W3 amendment of
+  [the 2026-10-08 audit](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w3-design-amendment-2026-10-10-agreed-with-the-user-implemented).
+
 ### DIFF-BACK-001 — Cranelift
 
 - Status: `extension`.
@@ -1103,7 +1126,6 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-015 | `narrower` | `rep_37_table_rwtable_negative_indices` has different numerical behavior for negative read/write table indices. |
 | DIFF-GAP-016 | `narrower` | `rep_67_variable_delay_shifted_slider` differs for a variable delay whose shifted slider produces a negative intermediate delay expression. |
 | DIFF-GAP-017 | `parity-gap` | A division by a zero that is constant without being a literal when its sequence is evaluated (`z = 0 <: _, !;`), used as a **pattern-matching argument whose value is then unused** (`f(0) = 1; f(n) = 2; process = f(1 / z);`), compiles in Rust and fails in C++ (`ERROR : division by 0 in 1 / 0`): C++ simplifies the argument eagerly and its exception is fatal, Rust folds a pattern argument as an optimization and gives up on this one. With a literal divisor both fail, and wherever the quotient is used (a signal, an iteration count, a route size, a label) Rust reports the division too. Pinned by `a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument` in `crates/compiler/tests/diagnostic_errors.rs`; see `DIFF-BEH-010`. |
-| DIFF-GAP-018 | `parity-gap` | At `2199d069`, signal-to-FIR lowering discards foreign include/library operands. C++ output calls a custom `ffunction` without emitting its requested header and fails to build; the pinned C++ generator emits it. Confirmed by a self-contained header and generated-code compilation in [the 2026-10-08 audit, sections 2.1 and W3](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w3--carry-foreign-dependencies-through-fir-and-emit-headers-p1). Dependency preservation is planned, not implemented. |
 | DIFF-GAP-019 | `parity-gap` | At `2199d069`, evaluator arity inference omits `BoxMatch::FFun`, so applying one argument to a three-input foreign block fails with `FRS-PROP-0002`. The pinned C++ compiler appends two implicit wires and produces a two-input DSP. The self-contained differential and correction are recorded in [the 2026-10-08 audit, sections 2.3 and W4](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w4--restore-foreign-block-application-parity-p1); the fix is not implemented. Bare `ffunction` statements remain invalid in both compilers and are not part of this gap. |
 
 For a time-stamped quantitative snapshot rather than this durable registry,

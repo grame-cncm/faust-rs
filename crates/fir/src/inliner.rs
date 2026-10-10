@@ -487,6 +487,7 @@ fn child_ids(node: &FirMatch) -> Vec<FirId> {
         | FirMatch::NullValue { .. }
         | FirMatch::NewDsp { .. }
         | FirMatch::DeclareStructType { .. }
+        | FirMatch::DeclareDependency { .. }
         | FirMatch::DeclareBufferIterators { .. }
         | FirMatch::ShiftArrayVar { .. }
         | FirMatch::NullStatement
@@ -2578,6 +2579,10 @@ impl<'a, 'b> HygienicCloner<'a, 'b> {
             FirMatch::DeclareStructType { typ } => {
                 let mut b = FirBuilder::new(self.dst);
                 b.declare_struct_type(typ)
+            }
+            FirMatch::DeclareDependency { kind, name } => {
+                let mut b = FirBuilder::new(self.dst);
+                b.declare_dependency(kind, name)
             }
             FirMatch::DeclareBufferIterators {
                 name1,

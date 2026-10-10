@@ -19,6 +19,19 @@ pub enum AccessType {
     Global,
 }
 
+/// What a [`FirMatch::DeclareDependency`] names.
+///
+/// API mapping status: `adapted`. C++ keeps the two sets on its code
+/// container (`CodeContainer::fIncludeFileSet`, `fLibrarySet`); FIR carries
+/// them as declarations in the module's `globals`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FirDependencyKind {
+    /// A header to include, with its delimiters: `"file.h"` or `<file.h>`.
+    Include,
+    /// A library to link with, as written in the source.
+    Library,
+}
+
 /// FIR primitive type model.
 ///
 /// FIR keeps result types explicit on value nodes so backend passes can emit

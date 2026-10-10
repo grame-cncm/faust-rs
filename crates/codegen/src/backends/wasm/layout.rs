@@ -239,7 +239,8 @@ impl WasmMemoryLayout {
                         format!("unsupported table access class in WASM layout: {access:?}"),
                     ));
                 }
-                FirMatch::DeclareFun { body: None, .. } => {}
+                // A header or library of a foreign function: no storage.
+                FirMatch::DeclareFun { body: None, .. } | FirMatch::DeclareDependency { .. } => {}
                 FirMatch::DeclareVar { .. } | FirMatch::DeclareTable { .. } => {}
                 other => {
                     return Err(WasmBackendError::new(
@@ -349,7 +350,8 @@ impl WasmMemoryLayout {
                         )
                     })?;
                 }
-                FirMatch::DeclareFun { body: None, .. } => {}
+                // A header or library of a foreign function: no storage.
+                FirMatch::DeclareFun { body: None, .. } | FirMatch::DeclareDependency { .. } => {}
                 FirMatch::DeclareVar { .. } | FirMatch::DeclareTable { .. } => {}
                 other => {
                     return Err(WasmBackendError::new(

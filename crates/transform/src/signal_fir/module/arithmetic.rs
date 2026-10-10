@@ -55,6 +55,20 @@ pub(super) struct UsedPrototypes {
     pub(super) foreign_fun_protos: BTreeMap<String, ForeignFunProto>,
     /// Extern globals requested by `SIGFVAR` lowering, keyed by symbol name.
     pub(super) foreign_vars: BTreeMap<String, FirType>,
+    /// Headers and libraries of the foreign functions and variables lowered,
+    /// in C++ `std::set` order (C++ `addIncludeFile`, `addLibrary`).
+    pub(super) dependencies: std::collections::BTreeSet<(fir::FirDependencyKind, String)>,
+}
+
+impl UsedPrototypes {
+    /// Records one header or library operand. A string of two characters or
+    /// fewer is an empty one (`""`, `<>`) and is not recorded, as C++
+    /// `CodeContainer::printIncludeFile` does not print it.
+    pub(super) fn note_dependency(&mut self, kind: fir::FirDependencyKind, text: &str) {
+        if text.len() > 2 {
+            self.dependencies.insert((kind, text.to_owned()));
+        }
+    }
 }
 
 impl leaf_emit::LeafPrototypes for UsedPrototypes {

@@ -477,6 +477,10 @@ struct ForeignFunProto {
     name: String,
     ret: FirType,
     args: Vec<FirType>,
+    /// The header operand, with its delimiters (`"file.h"`, `<file.h>`).
+    include: String,
+    /// The library operand, as written (`""` when there is none).
+    library: String,
 }
 
 /// Matches one raw Faust `FFUN(signature, incfile, libfile)` descriptor node.

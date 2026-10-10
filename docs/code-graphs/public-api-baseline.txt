@@ -1464,6 +1464,7 @@ enum AccessType
 enum BargraphType
 enum ButtonType
 enum FirBinOp
+enum FirDependencyKind
 enum FirFunctionSection
 enum FirHygienicCloneError
 enum FirInlineAnalysisError
@@ -1495,6 +1496,7 @@ fn FirBuilder::cast
 fn FirBuilder::close_box
 fn FirBuilder::control
 fn FirBuilder::declare_buffer_iterators
+fn FirBuilder::declare_dependency
 fn FirBuilder::declare_fun
 fn FirBuilder::declare_struct_type
 fn FirBuilder::declare_table

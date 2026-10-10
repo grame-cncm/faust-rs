@@ -400,6 +400,26 @@ impl<'a> FirBuilder<'a> {
         }
     }
 
+    /// A header or library the generated code depends on; see
+    /// [`FirMatch::DeclareDependency`](crate::FirMatch::DeclareDependency).
+    #[must_use]
+    pub fn declare_dependency(
+        &mut self,
+        kind: FirDependencyKind,
+        name: impl Into<String>,
+    ) -> FirId {
+        let kind_id = self.store.arena.int(match kind {
+            FirDependencyKind::Include => 0,
+            FirDependencyKind::Library => 1,
+        });
+        let name_id = self.store.arena.symbol(name);
+        intern_tag(
+            &mut self.store.arena,
+            FIR_DECLARE_DEPENDENCY_TAG,
+            &[kind_id, name_id],
+        )
+    }
+
     /// C++ parity: `DeclareStructTypeInst`.
     #[must_use]
     pub fn declare_struct_type(&mut self, typ: FirType) -> FirId {

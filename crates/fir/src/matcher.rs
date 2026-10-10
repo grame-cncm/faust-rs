@@ -143,6 +143,13 @@ pub enum FirMatch {
     DeclareStructType {
         typ: FirType,
     },
+    /// A header or library the generated code depends on, recorded where a
+    /// foreign function or variable is lowered (C++ `addIncludeFile`,
+    /// `addLibrary`). It sits in a module's `globals` and owns no storage.
+    DeclareDependency {
+        kind: FirDependencyKind,
+        name: String,
+    },
     DeclareBufferIterators {
         name1: String,
         name2: String,
@@ -634,6 +641,17 @@ pub fn match_fir(store: &FirStore, id: FirId) -> FirMatch {
                 is_inline,
             }
         }
+        (FIR_DECLARE_DEPENDENCY_TAG, [kind, name]) => {
+            let kind = match decode_i32(&store.arena, *kind) {
+                Some(0) => FirDependencyKind::Include,
+                Some(1) => FirDependencyKind::Library,
+                _ => return FirMatch::Unknown,
+            };
+            let Some(name) = decode_symbol(&store.arena, *name) else {
+                return FirMatch::Unknown;
+            };
+            FirMatch::DeclareDependency { kind, name }
+        }
         (FIR_DECLARE_STRUCT_TYPE_TAG, [typ]) => {
             let Some(typ) = decode_type(&store.arena, *typ) else {
                 return FirMatch::Unknown;
@@ -1029,6 +1047,7 @@ pub fn fir_match_children(store: &FirStore, id: FirId) -> Vec<FirId> {
         | FirMatch::NullValue { .. }
         | FirMatch::NewDsp { .. }
         | FirMatch::DeclareStructType { .. }
+        | FirMatch::DeclareDependency { .. }
         | FirMatch::DeclareBufferIterators { .. }
         | FirMatch::ShiftArrayVar { .. }
         | FirMatch::NullStatement
