@@ -601,11 +601,10 @@ impl Display for EvalError {
                     "recursion does not reach its base case: argument {position} is matched against {numbers}, but is not a compile-time constant"
                 )
             }
-            Self::NotAConstantExpression { node } => {
+            Self::NotAConstantExpression { .. } => {
                 write!(
                     f,
-                    "expression is not a compile-time numeric constant (type 0→1): node {}",
-                    node.as_u32()
+                    "expression is not a compile-time numeric constant (type 0→1)"
                 )
             }
             Self::WidgetParameterNotConstant {
@@ -1144,13 +1143,95 @@ impl ToDiagnostic for EvalError {
                     diagnostic.with_help("pass a single constant number")
                 }
             }
+            Self::NotAConstantExpression { .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Eval,
+                codes::EVAL_GENERIC_FAILURE,
+                message,
+            )
+            .with_note("cause: an expression the compiler evaluates at compile time does not fold to a number")
+            .with_note("rule: it must reduce to a single number: a literal, a constant expression, or a constant definition")
+            .with_help("pass a constant; a UI control, an input, or the argument of a function applied with `:` is a signal known only at run time"),
+            Self::Cancelled => Diagnostic::new(
+                Severity::Error,
+                Stage::Eval,
+                codes::EVAL_GENERIC_FAILURE,
+                message,
+            )
+            .with_note("cause: the compilation was cancelled before evaluation finished: the `--timeout` limit was reached, or the host asked for it")
+            .with_help("raise `--timeout` if the program is large; a recursion whose argument never becomes a constant can also run until the limit"),
+            Self::NonIdentifierParameter { .. } | Self::NonIdentifierIterationVariable { .. } => {
+                Diagnostic::new(
+                    Severity::Error,
+                    Stage::Eval,
+                    codes::EVAL_GENERIC_FAILURE,
+                    message,
+                )
+                .with_note("cause: a lambda parameter or an iteration variable is not an identifier; the parser rejects this in source, so the box was built through the API")
+                .with_help("use an identifier: `\\(x).(...)`, `par(i, N, ...)`")
+            }
+            // internal forms only: every error a program or a run can cause has
+            // its own arm above
             _ => Diagnostic::new(
                 Severity::Error,
                 Stage::Eval,
                 codes::EVAL_GENERIC_FAILURE,
                 message,
             )
-            .with_note("cause: evaluator reached an unsupported or malformed intermediate form"),
+            .with_note("cause: internal: the evaluator reached a malformed or unsupported intermediate form"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EvalError;
+    use diagnostics::ToDiagnostic;
+
+    fn notes(error: &EvalError) -> Vec<String> {
+        error
+            .to_diagnostic()
+            .notes
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    /// Only internal forms get the catch-all cause; every error a program, the
+    /// API or a run can cause has its own (#22, WP4 of the runaway-recursion
+    /// plan).
+    #[test]
+    fn the_catch_all_cause_is_for_internal_forms_only() {
+        let arena = tlib::TreeArena::new();
+        let node = arena.nil();
+        let internal =
+            "cause: internal: the evaluator reached a malformed or unsupported intermediate form";
+        for error in [
+            EvalError::NotAConstantExpression { node },
+            EvalError::Cancelled,
+            EvalError::NonIdentifierParameter { node },
+            EvalError::NonIdentifierIterationVariable { node },
+            EvalError::LoopDetected {
+                node,
+                cycle: vec!["x".to_owned(), "x".to_owned()],
+            },
+        ] {
+            let notes = notes(&error);
+            assert!(notes.iter().any(|n| n.starts_with("cause: ")), "{error:?}");
+            assert!(!notes.iter().any(|n| n == internal), "{error:?}: {notes:?}");
+        }
+        for error in [
+            EvalError::MalformedListNode { node },
+            EvalError::InternalError {
+                message: "test".to_owned(),
+            },
+        ] {
+            assert!(notes(&error).iter().any(|n| n == internal), "{error:?}");
+        }
+        // no internal node number in the message
+        assert_eq!(
+            EvalError::NotAConstantExpression { node }.to_string(),
+            "expression is not a compile-time numeric constant (type 0→1)"
+        );
     }
 }

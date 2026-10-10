@@ -310,7 +310,15 @@ must run unchanged with Faust C++ should not pass them.
   stack-address check: default identity depth is 1,024 in debug and 32,768 in
   release; structural lowering also applies a 4,096/32,768 cap; syntactic nesting
   has a separate 400,000-entry budget. All three guards currently report the
-  same `FRS-EVAL-0099` shape without naming the controlling configuration.
+  same `FRS-EVAL-0099` shape without naming the controlling configuration,
+  except a recursion on a non-constant numeric-pattern argument, reported as
+  `FRS-EVAL-0012` ([DIFF-BEH-017](#diff-beh-017--a-recursion-on-a-non-constant-numeric-pattern-argument)).
+  An evaluation cycle is `FRS-EVAL-0013`
+  ([DIFF-BEH-018](#diff-beh-018--an-evaluation-cycle-names-its-definitions)).
+  Since 2026-10-10 every evaluator error a program, the API or a run can cause
+  (a non-constant expression, a cancellation or timeout, a non-identifier
+  parameter) has its own cause; the "internal: malformed or unsupported
+  intermediate form" cause is left to internal forms.
   Parser recovery also invents an empty-name duplicate-definition error for
   repeated bare foreign statements, which both grammars reject. The
   [2026-10-08 audit, W5/W6](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w5--explain-the-active-depth-guard-and-build-profile-p2)
