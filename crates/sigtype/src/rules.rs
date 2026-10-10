@@ -659,6 +659,9 @@ pub struct TypeAnnotator<'a> {
     in_progress: HashSet<SigId>,
     /// Non-fatal domain observations collected while inferring.
     warnings: Vec<InferenceWarning>,
+    /// Recursive group bodies inferred while solving the fixpoint.
+    #[cfg(test)]
+    body_inferences: usize,
 }
 
 impl<'a> TypeAnnotator<'a> {
@@ -671,6 +674,8 @@ impl<'a> TypeAnnotator<'a> {
             env: HashMap::new(),
             in_progress: HashSet::new(),
             warnings: Vec::new(),
+            #[cfg(test)]
+            body_inferences: 0,
         }
     }
 
@@ -691,9 +696,17 @@ impl<'a> TypeAnnotator<'a> {
         &mut self,
         outputs: &[SigId],
     ) -> Result<HashMap<SigId, SigType>, InferenceError> {
+        self.annotate_with(outputs, Self::solve_recursive_groups)
+    }
+
+    fn annotate_with(
+        &mut self,
+        outputs: &[SigId],
+        solve: fn(&mut Self, &mut RecTypingState) -> Result<(), InferenceError>,
+    ) -> Result<HashMap<SigId, SigType>, InferenceError> {
         let mut rec_state = RecTypingState::discover(self.arena, outputs)?;
         if !rec_state.groups.is_empty() {
-            self.solve_recursive_groups(&mut rec_state)?;
+            solve(self, &mut rec_state)?;
             self.env.clear();
             self.in_progress.clear();
             self.seed_rec_groups(&rec_state.groups, &rec_state.current);
@@ -1337,7 +1350,92 @@ impl<'a> TypeAnnotator<'a> {
         Ok(())
     }
 
+    /// Finds an upper bound of the least fixpoint of the recursive groups'
+    /// types, as C++ `typeAnnotation` does: an iteration of
+    /// `updateRecTypes` over every group, each reading the approximations of
+    /// the previous iteration (a Jacobi iteration), then widened.
+    ///
+    /// A group's next approximation depends only on the approximations its
+    /// body reads ([`GroupCones`]), so a group none of whose read
+    /// approximations changed in any field in the previous iteration would
+    /// compute its current one again: only the others are recomputed, and
+    /// only their cones leave the memo. The approximations, widening ages and iteration
+    /// count are those of the full iteration, which a chain of N recursions
+    /// ran N + 1 times over every group: N² for a cost now proportional to
+    /// the groups that change ([`Self::solve_recursive_groups_jacobi`], kept
+    /// as the reference, checks it in tests).
     fn solve_recursive_groups(&mut self, state: &mut RecTypingState) -> Result<(), InferenceError> {
+        for _ in std::iter::repeat_n((), RECURSIVE_NARROWING_LIMIT) {
+            self.update_rec_types(&state.groups, &mut state.upper, true)?;
+        }
+
+        let cones = GroupCones::new(self.arena, &state.groups)?;
+        self.env.clear();
+        self.in_progress.clear();
+        self.seed_rec_groups(&state.groups, &state.current);
+        let mut stale: Vec<usize> = (0..state.groups.len()).collect();
+        while !stale.is_empty() {
+            for &g in &stale {
+                for node in &cones.cone[g] {
+                    self.env.remove(node);
+                }
+            }
+            // Every recomputed group reads the previous approximations: the
+            // seeds change only once the pass is over.
+            let mut changed = Vec::new();
+            let mut progress = false;
+            for &g in &stale {
+                let group = &state.groups[g];
+                let inferred = self.infer(group.body_list)?;
+                #[cfg(test)]
+                {
+                    self.body_inferences += 1;
+                }
+                let previous = &state.current[g];
+                let next = merge_rec_approximation(previous, &inferred, group.arity, false)?;
+                let widened = apply_recursive_widening(
+                    previous.clone(),
+                    next,
+                    state.upper[g].clone(),
+                    &mut state.age_min[g],
+                    &mut state.age_max[g],
+                )?;
+                // The iteration ends when no approximation changes by `==`,
+                // which ignores `lsb` and `res`, as in C++. It assigns every
+                // new approximation all the same, so an `lsb` alone still
+                // reaches the next iteration's readers.
+                progress |= widened != *previous;
+                if !identical(&widened, previous) {
+                    changed.push((g, widened));
+                }
+            }
+            let mut next_stale = Vec::new();
+            for (g, widened) in changed {
+                let group = &state.groups[g];
+                self.env.insert(group.rec_sig, widened.clone());
+                self.env.insert(group.var, widened.clone());
+                state.current[g] = widened;
+                next_stale.extend_from_slice(&cones.readers[g]);
+            }
+            if !progress {
+                break;
+            }
+            next_stale.sort_unstable();
+            next_stale.dedup();
+            stale = next_stale;
+        }
+        self.env.clear();
+        self.in_progress.clear();
+        Ok(())
+    }
+
+    /// The full iteration [`Self::solve_recursive_groups`] skips work in,
+    /// as C++ `typeAnnotation` runs it: the reference its tests compare to.
+    #[cfg(test)]
+    fn solve_recursive_groups_jacobi(
+        &mut self,
+        state: &mut RecTypingState,
+    ) -> Result<(), InferenceError> {
         for _ in std::iter::repeat_n((), RECURSIVE_NARROWING_LIMIT) {
             self.update_rec_types(&state.groups, &mut state.upper, true)?;
         }
@@ -1369,6 +1467,8 @@ impl<'a> TypeAnnotator<'a> {
         Ok(())
     }
 
+    /// C++ `updateRecTypes`: every group's body inferred once from the
+    /// current approximations, merged into them.
     fn update_rec_types(
         &mut self,
         groups: &[RecGroup],
@@ -1381,31 +1481,12 @@ impl<'a> TypeAnnotator<'a> {
 
         let mut next = Vec::with_capacity(groups.len());
         for (group, old) in groups.iter().zip(approximations.iter()) {
-            let old_tuplet = as_tuplet_type(old)?;
             let inferred = self.infer(group.body_list)?;
-            let new_tuplet = as_tuplet_type(&inferred)?;
-            let mut items = Vec::with_capacity(group.arity);
-            for j in 0..group.arity {
-                let old_comp = &old_tuplet.components[j];
-                let mut component = new_tuplet.components[j].clone();
-                // Join variability and computability with the old approximation
-                // so the kSamp/kInit floor from the initial TREC seed is
-                // preserved across iterations — matching C++ joinType semantics
-                // in updateRecTypes.  Without this, a body that ignores its
-                // recursive input could lower a component to kKonst/kComp,
-                // allowing Proj nodes to be hoisted out of the sample loop.
-                component = component
-                    .promote_variability(old_comp.variability())
-                    .promote_computability(old_comp.computability());
-                let merged_i = if inter {
-                    interval::intersection(component.interval(), old_comp.interval())
-                } else {
-                    interval::reunion(component.interval(), old_comp.interval())
-                };
-                component = component.promote_interval(merged_i);
-                items.push(component);
+            #[cfg(test)]
+            {
+                self.body_inferences += 1;
             }
-            next.push(make_tuplet(items));
+            next.push(merge_rec_approximation(old, &inferred, group.arity, inter)?);
         }
 
         approximations.clone_from_slice(&next);
@@ -2016,6 +2097,118 @@ fn as_tuplet_type(ty: &SigType) -> Result<&crate::types::TupletType, InferenceEr
 /// Apply the C++ widening logic from `typeAnnotation(...)` to one recursive
 /// group after `updateRecTypes(..., inter = false)` has produced a new
 /// approximation.
+/// The next approximation of a recursive group from `old` and the type its
+/// body inferred, as C++ `updateRecTypes` builds it: each component's
+/// interval joined with (or, `inter`, intersected with) the old one.
+fn merge_rec_approximation(
+    old: &SigType,
+    inferred: &SigType,
+    arity: usize,
+    inter: bool,
+) -> Result<SigType, InferenceError> {
+    let old_tuplet = as_tuplet_type(old)?;
+    let new_tuplet = as_tuplet_type(inferred)?;
+    let mut items = Vec::with_capacity(arity);
+    for j in 0..arity {
+        let old_comp = &old_tuplet.components[j];
+        let mut component = new_tuplet.components[j].clone();
+        // Join variability and computability with the old approximation
+        // so the kSamp/kInit floor from the initial TREC seed is
+        // preserved across iterations — matching C++ joinType semantics
+        // in updateRecTypes.  Without this, a body that ignores its
+        // recursive input could lower a component to kKonst/kComp,
+        // allowing Proj nodes to be hoisted out of the sample loop.
+        component = component
+            .promote_variability(old_comp.variability())
+            .promote_computability(old_comp.computability());
+        let merged_i = if inter {
+            interval::intersection(component.interval(), old_comp.interval())
+        } else {
+            interval::reunion(component.interval(), old_comp.interval())
+        };
+        component = component.promote_interval(merged_i);
+        items.push(component);
+    }
+    Ok(make_tuplet(items))
+}
+
+/// Whether `a` and `b` are the same type in every field, `lsb` and `res`
+/// included, which `==` ignores.
+fn identical(a: &SigType, b: &SigType) -> bool {
+    a == b && format!("{a:?}") == format!("{b:?}")
+}
+
+/// What inferring each recursive group's body reads and memoises.
+///
+/// Inference stops at a `SYMREC` node, whose type is its group's seeded
+/// approximation, and at a `SYMREF(var)`, which reads it: a body's type is a
+/// function of the approximations of the groups it reaches so, and of
+/// nothing else the fixpoint changes.
+struct GroupCones {
+    /// For each group, the nodes its body's inference may memoise (a
+    /// superset: every node reachable from the body, stopping at those).
+    cone: Vec<Vec<SigId>>,
+    /// For each group, the groups whose body reads its approximation.
+    readers: Vec<Vec<usize>>,
+}
+
+impl GroupCones {
+    fn new(arena: &TreeArena, groups: &[RecGroup]) -> Result<Self, InferenceError> {
+        let mut by_rec = HashMap::with_capacity(groups.len());
+        let mut by_var = HashMap::with_capacity(groups.len());
+        for (g, group) in groups.iter().enumerate() {
+            by_rec.insert(group.rec_sig, g);
+            by_var.insert(group.var, g);
+        }
+        let mut cone = Vec::with_capacity(groups.len());
+        let mut readers = vec![Vec::new(); groups.len()];
+        for (g, group) in groups.iter().enumerate() {
+            let mut nodes = Vec::new();
+            let mut reads = Vec::new();
+            let mut visited = HashSet::new();
+            let mut stack = vec![group.body_list];
+            while let Some(sig) = stack.pop() {
+                if !visited.insert(sig) {
+                    continue;
+                }
+                // A group's node or variable holds its seed: read, never
+                // memoised by the body.
+                if let Some(&read) = by_rec.get(&sig).or_else(|| by_var.get(&sig)) {
+                    reads.push(read);
+                    continue;
+                }
+                nodes.push(sig);
+                if let Some(var) = match_sym_ref(arena, sig) {
+                    if let Some(&read) = by_var.get(&var) {
+                        reads.push(read);
+                    }
+                    continue;
+                }
+                if arena.is_nil(sig) {
+                    continue;
+                }
+                let node = arena.node(sig).ok_or_else(|| {
+                    InferenceError::structure(
+                        Some(sig),
+                        format!(
+                            "missing node {} during recursive cone discovery",
+                            sig.as_u32()
+                        ),
+                    )
+                })?;
+                stack.extend(node.children.as_slice().iter().copied());
+            }
+            reads.sort_unstable();
+            reads.dedup();
+            for read in reads {
+                readers[read].push(g);
+            }
+            cone.push(nodes);
+        }
+        Ok(Self { cone, readers })
+    }
+}
+
 fn apply_recursive_widening(
     prev: SigType,
     next: SigType,
@@ -2685,5 +2878,149 @@ mod tests {
         assert_eq!(types[&output].nature(), Nature::Real);
         let body_items = list_to_vec(&arena, body).expect("body list");
         assert_eq!(types[&body_items[0]].nature(), Nature::Real);
+    }
+
+    /// Runs `f` on a thread whose stack holds a deep recursion chain: the
+    /// annotator recurses along it, as the compiler's own stages do on its
+    /// compile thread.
+    fn on_big_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(256 << 20)
+            .spawn(f)
+            .expect("spawn")
+            .join()
+            .expect("the test thread panicked");
+    }
+
+    /// A chain of `n` recursions from input 0, `y_k = y_{k-1} + 0.5 * y_k'`
+    /// (`halve`, whose `lsb` falls at every iteration) or
+    /// `y_k = y_{k-1} + sin(y_k')`; `nested` puts a second recursion inside
+    /// each body, `pair` gives each group a second component that ignores
+    /// the recursion.
+    fn recursion_chain(
+        arena: &mut TreeArena,
+        n: usize,
+        halve: bool,
+        nested: bool,
+        pair: bool,
+    ) -> SigId {
+        let mut previous = SigBuilder::new(arena).input(0);
+        for k in 0..n {
+            let var = arena.symbol(format!("W{k}"));
+            let self_ref = sym_ref(arena, var);
+            let own = SigBuilder::new(arena).proj(0, self_ref);
+            let feedback = if halve {
+                let half = SigBuilder::new(arena).real(0.5);
+                SigBuilder::new(arena).binop(BinOp::Mul, half, own)
+            } else {
+                SigBuilder::new(arena).sin(own)
+            };
+            let mut value = SigBuilder::new(arena).binop(BinOp::Add, previous, feedback);
+            if nested {
+                let inner_var = arena.symbol(format!("V{k}"));
+                let inner_ref = sym_ref(arena, inner_var);
+                let inner_own = SigBuilder::new(arena).proj(0, inner_ref);
+                let inner_value = SigBuilder::new(arena).sin(inner_own);
+                let inner_value = SigBuilder::new(arena).binop(BinOp::Add, value, inner_value);
+                let inner_body = arena.cons(inner_value, arena.nil());
+                let inner = sym_rec(arena, inner_var, inner_body);
+                value = SigBuilder::new(arena).proj(0, inner);
+            }
+            let tail = if pair {
+                let constant = SigBuilder::new(arena).int(7);
+                arena.cons(constant, arena.nil())
+            } else {
+                arena.nil()
+            };
+            let body = arena.cons(value, tail);
+            let rec = sym_rec(arena, var, body);
+            previous = SigBuilder::new(arena).proj(0, rec);
+        }
+        previous
+    }
+
+    /// The types of a map in every field, by node.
+    fn exact(types: &HashMap<SigId, SigType>) -> Vec<(u32, String)> {
+        let mut entries: Vec<_> = types
+            .iter()
+            .map(|(sig, ty)| (sig.as_u32(), format!("{ty:?}")))
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    /// The solver recomputes only the groups whose read approximations
+    /// changed; it must give the types and warnings of the full Jacobi
+    /// iteration of C++ `typeAnnotation`.
+    #[test]
+    fn the_incremental_fixpoint_gives_the_jacobi_types() {
+        on_big_stack(the_incremental_fixpoint_gives_the_jacobi_types_body);
+    }
+
+    fn the_incremental_fixpoint_gives_the_jacobi_types_body() {
+        let ui = empty_ui();
+        for (n, halve, nested, pair) in [
+            (1, true, false, false),
+            (40, true, false, false),
+            (40, false, false, false),
+            (12, true, true, false),
+            (12, false, true, false),
+            (12, true, false, true),
+            (8, true, true, true),
+        ] {
+            let mut arena = TreeArena::new();
+            let out = recursion_chain(&mut arena, n, halve, nested, pair);
+            // A second output reading an inner group of the chain too.
+            let side = SigBuilder::new(&mut arena).delay1(out);
+            let outputs = [out, side];
+            let mut reference = TypeAnnotator::new(&arena, &ui);
+            let expected = reference
+                .annotate_with(&outputs, TypeAnnotator::solve_recursive_groups_jacobi)
+                .expect("reference");
+            let mut annotator = TypeAnnotator::new(&arena, &ui);
+            let got = annotator.annotate(&outputs).expect("annotation");
+            // `==` on types ignores `lsb`: compare every field.
+            assert_eq!(
+                exact(&got),
+                exact(&expected),
+                "n={n} halve={halve} nested={nested} pair={pair}"
+            );
+            assert_eq!(annotator.warnings(), reference.warnings());
+        }
+    }
+
+    /// A chain of N recursions took N + 1 iterations over its N groups, N²
+    /// body inferences; each group is now inferred a bounded number of
+    /// times, as long as its approximation stops changing (a feedback whose
+    /// `lsb` falls at every iteration, as `halve` makes it, changes all the
+    /// way and is recomputed as Jacobi recomputes it).
+    #[test]
+    fn a_chain_of_recursions_infers_each_body_a_bounded_number_of_times() {
+        on_big_stack(a_chain_of_recursions_infers_each_body_a_bounded_number_of_times_body);
+    }
+
+    fn a_chain_of_recursions_infers_each_body_a_bounded_number_of_times_body() {
+        let ui = empty_ui();
+        let n = 200;
+        let mut arena = TreeArena::new();
+        let out = recursion_chain(&mut arena, n, false, false, false);
+        let mut reference = TypeAnnotator::new(&arena, &ui);
+        reference
+            .annotate_with(&[out], TypeAnnotator::solve_recursive_groups_jacobi)
+            .expect("reference");
+        let mut annotator = TypeAnnotator::new(&arena, &ui);
+        annotator.annotate(&[out]).expect("annotation");
+        assert!(
+            reference.body_inferences >= n * n,
+            "{}",
+            reference.body_inferences
+        );
+        // A bounded number per group, while its approximation and its
+        // predecessor's settle: 30N - 354 here, from N = 50 to 800.
+        assert!(
+            annotator.body_inferences <= 40 * n,
+            "{} body inferences for {n} groups",
+            annotator.body_inferences
+        );
     }
 }

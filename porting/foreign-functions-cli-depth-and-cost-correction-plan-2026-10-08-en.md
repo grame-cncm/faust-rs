@@ -18,7 +18,8 @@ implemented (its design amendment below). W4 is implemented, with two
 defects found on the way (journal 2026-10-10, "W4"). W5 and W6 are implemented.
 W7 has its baseline and one fix ([measurements](ondemand-and-foreign-chain-compile-cost-measurements-2026-10-10-en.md)):
 `ondemand` no longer costs O(width²) in FIR lowering, nor a wide `par` in
-propagation; the quadratic recursive chains, which C++ shares, remain, and the
+propagation, nor the recursive types' fixpoint on a chain of recursions
+(C++ shares that one); the foreign-call ordering barriers remain, and the
 compile-budget case could not be calibrated on the measuring machine. The large-program
 cost investigation remains open.
 

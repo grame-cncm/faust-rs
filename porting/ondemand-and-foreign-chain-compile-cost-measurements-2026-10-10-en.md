@@ -16,7 +16,7 @@ alone is nearly linear.
 - Host: Apple M5, 10 cores, 32 GiB, macOS 26.7.1. Load average 4 to 5 during
   the runs (an interactive machine, not an idle one); each figure is the
   median of three runs, whose spread stayed under 3%.
-- faust-rs: release build of `ffbd4bbe` (rustc 1.99.0), then of the fix below;
+- faust-rs: release build of `ffbd4bbe` (rustc 1.99.0), then of the fixes below;
   `--timeout 0 -lang cpp -o /dev/null`, default depth limits.
 - C++: the pinned reference build, `faust` 2.84.3
   (`master-dev-ocpp-od-fir-2-FIR19`, `8eebea429`), `-lang cpp -o /dev/null`.
@@ -84,22 +84,47 @@ At 16384 the rest is in `signal-fir` (0.66 s, of which `fir-prepare-normalize`
 
 `chain(n) = chain(n-1) : stage`, `process = chain(N)`.
 
-| N = 2048 | Rust | C++ |
-|---|---:|---:|
-| `stage = w` (no state) | 0.18 s, 39 MB | 0.03 s, 31 MB |
-| `stage = + ~ w` | 23.7 s, 911 MB | 55.2 s, 7.6 GB |
-| the same in `ondemand`, button clock | 31.2 s | 61.5 s |
-| the same, constant clock | 24.0 s | 53.3 s |
-| control `stage = + ~ sin` | 14.1 s | 51.1 s |
-| control in `ondemand` | 16.9 s, 879 MB | 50.8 s, 8.0 GB |
+| N = 2048 | Rust before | Rust after | C++ |
+|---|---:|---:|---:|
+| `stage = w` (no state) | 0.18 s, 39 MB | | 0.03 s, 31 MB |
+| `stage = + ~ w` | 23.7 s, 911 MB | 12.2 s, 869 MB | 55.2 s, 7.6 GB |
+| the same in `ondemand`, button clock | 31.2 s | 14.4 s | 61.5 s |
+| the same, constant clock | 24.0 s | 12.2 s | 53.3 s |
+| control `stage = + ~ sin` | 14.1 s | 2.6 s | 51.1 s |
+| control in `ondemand` | 16.9 s, 879 MB | 3.8 s, 840 MB | 50.8 s, 8.0 GB |
 
-Every recursive variant is quadratic in both compilers, ×4 to ×5 per doubling
+Every recursive variant was quadratic in both compilers, ×4 to ×5 per doubling
 (`+ ~ w`: Rust 1.08 s at 512, 4.83 s at 1024, 23.7 s at 2048; C++ 3.41 s,
 13.5 s, 55.2 s). The foreign call is not the cause (the `sin` control has the
-same shape), nor is `ondemand` (it adds 20 to 30% in Rust, 10% in C++). Rust is
-2 to 3.6 times faster than the C++ reference here, with about a ninth of its
-memory. The series of N recursions is what costs, in both; the fix above does
-not change these figures (`sin_rec_od` at 1024: 6.1 s before, 4.2 s after).
+same shape), nor is `ondemand` (it adds 20 to 30% in Rust, 10% in C++). The
+`ondemand` fix of section 1 does not change these figures (`sin_rec_od` at
+1024: 6.1 s before, 4.2 s after).
+
+`--compilation-time` put the `sin` control's cost in `fir-prepare-normalize`
+(4.0 s of 4.2 s at 1024), sampling in `sigtype::TypeAnnotator`: the fixpoint
+of the recursive groups' types, which the preparation runs six times. As C++
+`typeAnnotation` does, it iterated `updateRecTypes` over every group, each
+reading the previous iteration's approximations, until none changes. In a
+chain, group k reads group k − 1, so a change crosses one group per
+iteration: N + 1 iterations over N groups.
+
+Fix (`solve_recursive_groups`): the same iteration, recomputing only the
+groups one of whose read approximations changed in the previous iteration,
+and clearing only their part of the memo. `==` on types ignores `lsb` and
+`res`, as in C++, so the end of the iteration is decided by `==` while a
+change of any field, `lsb` included, reaches the readers, as the full
+iteration assigns every new approximation. The types are those of the full
+iteration, field for field: checked on every annotation of the corpus (4 918
+in 610 files) and of the 2 227 `faustlibraries` tests (18 547), whose
+generated C++ is unchanged in scalar and `-vec` mode. A chain whose
+approximations settle costs about 30 body inferences per group (`+ ~ sin`);
+one whose `lsb` falls at every iteration (`+ ~ *(0.5)`) still changes all
+the way, and is recomputed as the full iteration recomputes it, half its work.
+
+`fir-prepare-normalize` falls to 1.1 s at 2048. What remains of `+ ~ w` is
+`fir-effect-orientation` (9.8 s at 2048, ×5 per doubling): every foreign
+call is an ordering barrier against every stateful node, N × N. The `sin`
+control has no barrier.
 
 ## 3. What the report's figures were
 
@@ -121,6 +146,6 @@ is the one fixed above.
   per output; `a_nested_par_propagates_each_leaf_once_and_no_inner_par`
   (propagate) counts the memo probes of a 4 000-leaf chain, 2 977 against
   6 975 with a propagation per `Par` level.
-- The quadratic recursive chains, which C++ shares.
+- The foreign-call barriers of `fir-effect-orientation` (section 2).
 - The report's original write-chain program (`fft_foreign-on-demand.dsp`) was
   not available.
