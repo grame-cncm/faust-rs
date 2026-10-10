@@ -3,9 +3,11 @@
 Date: 2026-10-08
 
 Status: analysis completed for the small reproductions. W2 is implemented
-(`c535bd3c`). W1 is implemented for the CLI and every `faustprobe` mode; the C
-constructor policy, signature checks and the shared math inventory remain
-(journal 2026-10-10, "W1"). W3 to W7 are not implemented. The large-program
+(`c535bd3c`). W1 is implemented for the CLI, every `faustprobe` mode and the
+C constructors, which fail by default with no scaffold opt-in (user decision);
+signature checks, typed C API diagnostics for backend errors and the shared
+math inventory remain (journal 2026-10-10, the two "W1" entries). W3 to W7 are
+not implemented. The large-program
 cost investigation remains open.
 
 Rust source baseline: `main-dev`, `2199d069e462b34d960321da06d7b0ebbc08d0aa`.

@@ -138,17 +138,17 @@ impl Factory {
 
     /// Fails unless the factory's `compute` was lowered.
     ///
-    /// The C constructors accept a `compute` the JIT cannot lower and give it a
-    /// no-op body (a foreign function with no registered host binding, a JIT
-    /// panic on a huge body). That body writes nothing, so a render of it reads
-    /// as silence, a plausible result: the probe refuses the factory instead.
-    /// The failure is recorded as the last compile failure, without typed
-    /// diagnostics, the backend having none for it.
+    /// A `compute` the JIT cannot lower (a foreign function with no registered
+    /// host binding, a JIT panic on a huge body) has a no-op body that writes
+    /// nothing, so a render of it reads as silence, a plausible result. The C
+    /// constructors already refuse it; this check keeps every probe mode safe
+    /// on its own. The failure is recorded as the last compile failure,
+    /// without typed diagnostics, the backend having none for it.
     ///
     /// # Errors
     /// The backend's `[FRS-CGEN-CLIF-0002] Cranelift cannot lower `compute`: ...`,
     /// naming the first construct it could not lower.
-    pub(super) fn require_executable(self) -> Result<Self, String> {
+    fn require_executable(self) -> Result<Self, String> {
         // SAFETY: `self.factory` is live for as long as `self`.
         let ready = match unsafe { (*self.factory).compiled_jit.as_ref() } {
             Some(jit) => jit
@@ -246,31 +246,9 @@ impl Factory {
         double: bool,
         opt_level: i32,
     ) -> Result<Self, String> {
-        Self::compile_from_string_unchecked(
-            name,
-            source,
-            import_dirs,
-            extra_args,
-            double,
-            opt_level,
-        )?
-        .require_executable()
-    }
-
-    /// [`Factory::compile_from_string_with_args`] without
-    /// [`Factory::require_executable`], for a caller that tells a program that
-    /// does not compile from one that compiles to a no-op.
-    pub(super) fn compile_from_string_unchecked(
-        name: &str,
-        source: &str,
-        import_dirs: &[String],
-        extra_args: &[String],
-        double: bool,
-        opt_level: i32,
-    ) -> Result<Self, String> {
         let c_name = CString::new(name).map_err(|e| e.to_string())?;
         let c_source = CString::new(source).map_err(|e| e.to_string())?;
-        Self::create_unchecked(import_dirs, extra_args, double, |argc, argv, err| unsafe {
+        Self::create(import_dirs, extra_args, double, |argc, argv, err| unsafe {
             createCCraneliftDSPFactoryFromString(
                 c_name.as_ptr(),
                 c_source.as_ptr(),

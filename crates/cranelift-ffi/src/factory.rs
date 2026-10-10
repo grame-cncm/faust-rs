@@ -1163,6 +1163,11 @@ fn preflight_compile_source_to_cranelift(
 ///
 /// `double` must match the precision the FIR was produced with so the backend
 /// resolves `FAUSTFLOAT` to the same width (`F64` under `-double`).
+///
+/// Strict: a `compute` the backend cannot lower (a foreign function with no
+/// registered binding, a JIT panic) fails the factory, whatever constructor
+/// or restoration route reaches here. Its no-op fallback writes no output, so
+/// a host would run silence as if the program had produced it.
 fn compile_fir_module_to_cranelift(
     fir: &BoxFfiFirModule,
     opt_level: c_int,
@@ -1175,6 +1180,7 @@ fn compile_fir_module_to_cranelift(
         opt_level: map_c_opt_level(opt_level),
         extern_function_symbols,
         double_precision: double,
+        fail_on_subset_gap: true,
         ..CraneliftOptions::default()
     };
     generate_cranelift_module(&fir.store, fir.module, &options).map_err(|e| e.to_string())

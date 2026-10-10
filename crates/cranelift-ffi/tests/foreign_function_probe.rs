@@ -1,10 +1,10 @@
 //! A foreign function the JIT cannot call is a compile error, not silence.
 //!
-//! The C factory constructors accept a `compute` the Cranelift backend cannot
-//! lower and give it a no-op body. That body writes no output, so a probe of
-//! it rendered zeros as a successful result (the 2026-10-08 audit, W1). Every
-//! probe compiles through one boundary, `Factory::create`, which now refuses
-//! such a factory and names the function.
+//! The C factory constructors gave a `compute` the Cranelift backend cannot
+//! lower a no-op body. That body writes no output, so a probe of it rendered
+//! zeros as a successful result (the 2026-10-08 audit, W1). The constructors
+//! now refuse such a program and name the function; every probe compiles
+//! through one boundary, `Factory::create`, which checks it again.
 //!
 //! The registry of host functions is process-global: each test registers its
 //! own names and never clears it.
@@ -85,8 +85,8 @@ fn an_unbound_foreign_call_is_refused_and_named() {
             message.contains("`w1_unbound` has no Cranelift implementation"),
             "{message}"
         );
-        assert!(message.contains("no-op"), "{message}");
         // The failure is the thread's last one, as for a front-end error.
+        // The backend reports no typed diagnostics through the C API.
         let failure = last_compile_failure().expect("recorded");
         assert_eq!(failure.text, message);
         assert_eq!(failure.diagnostics_json, None);

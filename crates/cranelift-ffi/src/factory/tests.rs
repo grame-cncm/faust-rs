@@ -827,19 +827,18 @@ fn unregister_foreign_function_removes_future_binding() {
             1,
         )
     };
+    // The C constructors are strict: an unbound foreign function fails the
+    // factory instead of giving it a no-op `compute`.
     assert!(
-        !factory.is_null(),
-        "factory creation failed after unregister: {}",
-        unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy()
+        factory.is_null(),
+        "a no-op factory was created after unregister"
     );
-
-    unsafe {
-        assert!(
-            !(*factory).compute_body_lowered,
-            "unregistered foreign function should fall back to the stub path"
-        );
-        assert!(deleteCCraneliftDSPFactory(factory));
-    }
+    let message = unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy();
+    assert!(message.contains("[FRS-CGEN-CLIF-0002]"), "{message}");
+    assert!(
+        message.contains("`ffi_test_foreign_gain` has no Cranelift implementation"),
+        "{message}"
+    );
     super::clear_registered_foreign_functions();
 }
 
@@ -869,19 +868,15 @@ fn clear_foreign_functions_removes_all_future_bindings() {
             1,
         )
     };
+    // The C constructors are strict: an unbound foreign function fails the
+    // factory instead of giving it a no-op `compute`.
+    assert!(factory.is_null(), "a no-op factory was created after clear");
+    let message = unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy();
+    assert!(message.contains("[FRS-CGEN-CLIF-0002]"), "{message}");
     assert!(
-        !factory.is_null(),
-        "factory creation failed after clear: {}",
-        unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy()
+        message.contains("`ffi_test_foreign_gain` has no Cranelift implementation"),
+        "{message}"
     );
-
-    unsafe {
-        assert!(
-            !(*factory).compute_body_lowered,
-            "cleared foreign functions should fall back to the stub path"
-        );
-        assert!(deleteCCraneliftDSPFactory(factory));
-    }
     super::clear_registered_foreign_functions();
 }
 

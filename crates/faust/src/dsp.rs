@@ -84,8 +84,10 @@ impl Dsp {
             scratch_f32: Vec::new(),
             scratch_f64: Vec::new(),
         };
-        // The Cranelift backend compiles a program whose `compute` falls outside
-        // its lowering subset to an empty stub and says so in the metadata only.
+        // The Cranelift backend can give a `compute` outside its lowering
+        // subset an empty stub, and says so in the metadata only. Its C
+        // constructors refuse such a program; this keeps the facade safe on
+        // its own.
         if dsp.backend() == Backend::Cranelift
             && dsp
                 .metadata()

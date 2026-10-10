@@ -290,19 +290,23 @@ impl PolyProbe {
              dsp_code = environment{{ {source} }};\n\
              process = adaptor(dsp_code.process, dsp_code.effect) : dsp_code.effect;\n"
         );
-        let Ok(factory) = Factory::compile_from_string_unchecked(
+        // A program without `effect` fails in the front end. An error of the
+        // Cranelift backend (`FRS-CGEN-CLIF-*`) means the front end accepted
+        // the effect, which the JIT cannot run: that is an error, not "no
+        // effect".
+        let factory = match Factory::compile_from_string(
             "faustprobe-effect",
             &wrapped,
             import_dirs,
-            &[],
             double,
             opt_level,
-        ) else {
-            return Ok(None);
+        ) {
+            Ok(factory) => factory,
+            Err(error) if error.contains("[FRS-CGEN-CLIF-") => {
+                return Err(format!("the program's `effect`: {error}"));
+            }
+            Err(_) => return Ok(None),
         };
-        let factory = factory
-            .require_executable()
-            .map_err(|error| format!("the program's `effect`: {error}"))?;
         let Ok(probe) = Probe::instantiate(&Rc::new(factory), sample_rate) else {
             return Ok(None);
         };

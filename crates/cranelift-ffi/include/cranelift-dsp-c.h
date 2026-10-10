@@ -286,6 +286,12 @@ void stopMTDSPFactories(void);
 
 /* Rust extension: foreign-function registry used by `ffunction(...)`
  * when compiling/executing with the Cranelift backend.
+ *
+ * The JIT does not compile the header an `ffunction` names. A call that is
+ * neither a math function the backend implements nor registered here before
+ * the factory is created makes factory creation fail, with `error_msg`
+ * naming the function (FRS-CGEN-CLIF-0002); no factory with an empty
+ * `compute` is returned.
  */
 void registerCCraneliftForeignFunction(const char* name, void* fn_ptr);
 void unregisterCCraneliftForeignFunction(const char* name);

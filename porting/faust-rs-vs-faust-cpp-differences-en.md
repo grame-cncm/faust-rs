@@ -749,10 +749,12 @@ must run unchanged with Faust C++ should not pass them.
   `FRS-CGEN-CLIF-0002`, naming the function: `-lang cranelift` and
   `--dump-cranelift` compile in strict mode, and every probe mode refuses an
   unlowered factory (`JitDspModule::require_lowered_compute`). A JIT panic no
-  longer gets past strict mode. The C factory constructors still accept the
-  fallback and expose `cranelift-compute-body-lowered`. Whether they fail by
-  default is the open decision of
-  [the 2026-10-08 audit, W1](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w1--reject-non-executable-probe-factories-p0).
+  longer gets past strict mode. The C factory constructors and the bitcode
+  restore compile in strict mode too, with no scaffold opt-in (the user's
+  decision on
+  [the 2026-10-08 audit, W1](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w1--reject-non-executable-probe-factories-p0)):
+  factory creation fails and `error_msg` names the function. Only the Rust
+  backend API keeps the non-strict default, for corpus diagnostics.
 - Evidence: [`cranelift-backend-plan-en.md`](cranelift-backend-plan-en.md) and
   [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md).
 
