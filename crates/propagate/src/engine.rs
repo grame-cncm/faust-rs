@@ -651,17 +651,42 @@ fn propagate_inner(
             propagate_in_slot_env(arena, right, &mid, ctx)
         }
         FlatNodeKind::Par(left, right) => {
-            let left_arity = box_arity_typed(arena, left, ctx.cache)?;
-            let right_arity = box_arity_typed(arena, right, ctx.cache)?;
-            let left_out = propagate_in_slot_env(arena, left, &inputs[..left_arity.inputs], ctx)?;
-            let mut right_out = propagate_in_slot_env(
-                arena,
-                right,
-                &inputs[left_arity.inputs..left_arity.inputs + right_arity.inputs],
-                ctx,
-            )?;
-            let mut out = left_out;
-            out.append(&mut right_out);
+            // A nested `par` is one n-ary composition: `par(i, N, _)` is a
+            // chain of N `Par` nodes. Each level going through
+            // `propagate_in_slot_env` keyed its memo on its own input bus,
+            // stored its outputs, recorded their origins and copied them
+            // into its parent's vector, all proportional to its width, so
+            // the chain cost N² (3.1 s for N = 16 384, 2026-10-10). `Par` is
+            // associative: its leaves are propagated on their slices, in
+            // order, and the outputs concatenated once. The leaves and this
+            // node keep their memo entries and origins; the inner `Par`
+            // nodes, which only concatenate, have none.
+            let mut leaves = Vec::new();
+            let mut stack = vec![right, left];
+            while let Some(node) = stack.pop() {
+                match flat_node_kind(arena, node)? {
+                    FlatNodeKind::Par(l, r) => {
+                        stack.push(r);
+                        stack.push(l);
+                    }
+                    _ => leaves.push(node),
+                }
+            }
+            let mut out = Vec::with_capacity(inputs.len());
+            let mut offset = 0;
+            for leaf in leaves {
+                let leaf_inputs = box_arity_typed(arena, leaf, ctx.cache)?.inputs;
+                let end = offset + leaf_inputs;
+                let Some(slice) = inputs.get(offset..end) else {
+                    return Err(PropagateError::InputArityMismatch {
+                        node: leaf.as_tree_id(),
+                        expected: leaf_inputs,
+                        got: inputs.len().saturating_sub(offset),
+                    });
+                };
+                out.extend(propagate_in_slot_env(arena, leaf, slice, ctx)?);
+                offset = end;
+            }
             Ok(out)
         }
         FlatNodeKind::Split(left, right) => {

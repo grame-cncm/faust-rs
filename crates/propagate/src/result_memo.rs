@@ -75,7 +75,7 @@ use crate::clock_domain::ClockDomainId;
 use crate::context_id::{SlotEnvId, UiPathId};
 use crate::{FlatBoxBuildError, FlatBoxId, FlatNodeKind, flat_node_kind};
 
-const RESULT_MEMO_WARMUP_CALLS: u32 = 1_024;
+pub(crate) const RESULT_MEMO_WARMUP_CALLS: u32 = 1_024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct BusId(u32);

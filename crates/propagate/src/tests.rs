@@ -554,6 +554,54 @@ fn deep_constant_chain(arena: &mut TreeArena, levels: usize) -> BoxId {
     chain
 }
 
+/// A nested `par` is propagated as one n-ary composition: its leaves in
+/// order, each once, and none of the inner `Par` nodes, whose propagation
+/// keyed the memo on, stored and recorded a bus as wide as theirs, so a chain
+/// of N cost N² (`par(i, 16384, _)`: 3.1 s in propagation, 2026-10-10).
+/// Both nestings, the outputs in input order.
+#[test]
+fn a_nested_par_propagates_each_leaf_once_and_no_inner_par() {
+    on_big_stack(a_nested_par_propagates_each_leaf_once_and_no_inner_par_body);
+}
+
+fn a_nested_par_propagates_each_leaf_once_and_no_inner_par_body() {
+    const N: i32 = 4_000;
+    for right_nested in [true, false] {
+        let mut arena = TreeArena::new();
+        let root = {
+            let mut b = BoxBuilder::new(&mut arena);
+            let leaves: Vec<_> = (0..N).map(|i| b.int(i)).collect();
+            if right_nested {
+                let mut acc = leaves[leaves.len() - 1];
+                for &leaf in leaves[..leaves.len() - 1].iter().rev() {
+                    acc = b.par(leaf, acc);
+                }
+                acc
+            } else {
+                let mut acc = leaves[0];
+                for &leaf in &leaves[1..] {
+                    acc = b.par(acc, leaf);
+                }
+                acc
+            }
+        };
+        let flat = try_build_flat_box(&arena, root).expect("flat par chain");
+        let (outputs, (probes, _)) = propagate_counting_memo(&mut arena, flat, true);
+        let expected: Vec<_> = {
+            let mut b = SigBuilder::new(&mut arena);
+            (0..N).map(|i| b.int(i)).collect()
+        };
+        assert_eq!(outputs, expected, "right_nested={right_nested}");
+        // The root and its N leaves: the memo is probed past its warm-up.
+        let calls = u64::try_from(N).unwrap() + 1;
+        assert_eq!(
+            probes,
+            calls - u64::from(crate::result_memo::RESULT_MEMO_WARMUP_CALLS),
+            "right_nested={right_nested}"
+        );
+    }
+}
+
 /// Regression for the 2026-09-16 `fad` compile-time blow-up: a root that
 /// contains a forward-AD node is eligible for the exact result memo, so the
 /// second reference to a shared subtree inside the `fad` body is a hit and

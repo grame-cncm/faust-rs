@@ -55,12 +55,30 @@ themselves), so one memo serves every output. `fir-lowering` falls to 0.017 s
 at 2048 and 0.035 s at 4096; the total is 0.52 s at 4096, under the C++ 1.25 s.
 `golden-check` is unchanged.
 
-What remains quadratic is propagation, and it is not specific to `ondemand`:
-the bus without `ondemand` goes from 0.80 s at 8192 to 3.10 s at 16384 in
-propagation. Each level of the nested `par` interns its input bus, N − k
-wide, as a memo key (`result_memo::BusInterner::key`), which hashes and copies
-it. `ondemand` propagates its body once more, which doubles it. The C++
-reference is also quadratic on these programs. Not changed here.
+What remained quadratic was propagation, and it was not specific to
+`ondemand`: the bus without `ondemand` went from 0.80 s at 8192 to 3.10 s at
+16384 in propagation. `par(i, N, _)` is a chain of N `Par` nodes, and each
+level went through `propagate_in_slot_env`: it interned its input bus, N − k
+wide, as a memo key (`result_memo::BusInterner::key`), stored its outputs,
+recorded their origins and copied them into its parent's vector. `ondemand`
+propagates its body once more, which doubled it. The C++ reference is also
+quadratic on these programs.
+
+Second fix: `Par` is associative, so the `Par` arm of `propagate_inner`
+collects the leaves of the nested chain (an explicit stack, either nesting),
+propagates each on its slice and concatenates once. The leaves and the
+outermost `Par` keep their memo entries and origins; the inner `Par` nodes,
+which only concatenate, have none.
+
+| N | bus, propagation | bus, total | `ondemand`, total | `ondemand`, C++ |
+|---:|---:|---:|---:|---:|
+| 4096 | | | 0.16 s | 1.25 s |
+| 8192 | 0.80 s → 0.007 s | 0.15 s | 0.34 s | |
+| 16384 | 3.10 s → 0.006 s | 0.25 s | 0.74 s | |
+
+At 16384 the rest is in `signal-fir` (0.66 s, of which `fir-prepare-normalize`
+0.28 s and `fir-lowering` 0.16 s), about linear (×2.2 from 8192).
+`golden-check` is unchanged.
 
 ## 2. Recursive foreign chains
 
@@ -97,11 +115,12 @@ is the one fixed above.
 - No case in the release `compile-budget-check` gate: on this machine its
   calibration program takes 3 ms, under the 4 ms floor, and the tool stops
   before measuring, so no baseline in calibration units could be recorded.
-  The fix is guarded instead by
-  `outputs_sharing_a_wide_group_classify_each_node_once` (transform), which
-  counts the nodes classified: 3N + 1, against 8 004 000 for N = 2 000 with a
-  search per output.
-- The propagation cost of wide `par` buses, and the quadratic recursive
-  chains, which C++ shares.
+  The fixes are guarded instead by counting tests:
+  `outputs_sharing_a_wide_group_classify_each_node_once` (transform) counts
+  the nodes classified, 3N + 1 against 8 004 000 for N = 2 000 with a search
+  per output; `a_nested_par_propagates_each_leaf_once_and_no_inner_par`
+  (propagate) counts the memo probes of a 4 000-leaf chain, 2 977 against
+  6 975 with a propagation per `Par` level.
+- The quadratic recursive chains, which C++ shares.
 - The report's original write-chain program (`fft_foreign-on-demand.dsp`) was
   not available.
