@@ -21,8 +21,10 @@
 //! result for a real one or the reverse (the generated C++ keeps the
 //! implementation's type there, against the Faust typing of the call).
 
-use super::host::{HostMath, MathScalar, host_math};
+use super::host::{HostMath, host_math};
+use super::{ExternFunction, HostScalarType};
 use fir::{FirMathOp, FirType};
+use std::collections::HashMap;
 
 /// Maps a FIR unary math op to its `f32` host symbol.
 fn unary_math_symbol_f32(math: FirMathOp) -> Option<&'static str> {
@@ -105,67 +107,159 @@ fn generic_math_symbol(math: FirMathOp, double: bool) -> Option<&'static str> {
     }
 }
 
+/// A call the JIT emits to a host function of known signature.
+pub(crate) struct HostCall<'a> {
+    pub(crate) symbol: &'a str,
+    pub(crate) ret: HostScalarType,
+    pub(crate) params: &'a [HostScalarType],
+}
+
+/// Resolves the FIR call `name(args) -> ret`, with `arity` arguments, to the
+/// host function the JIT calls: a math function the backend implements, or
+/// else one the host registered (`externs`).
+///
+/// `Ok(Some(call))`: a function of known signature, to which the arguments
+/// and the result convert. `Ok(None)`: a host function registered without a
+/// signature, called with the types of the declaration. `Err(reason)`: no
+/// such function, or one of another shape. `double` resolves a `FaustFloat`
+/// result; it only picks between two math variants of the same shape, so a
+/// caller without the precision may pass either value to check a call.
+pub(crate) fn resolve_call<'a>(
+    name: &'a str,
+    ret: &FirType,
+    arity: usize,
+    double: bool,
+    externs: &'a HashMap<String, ExternFunction>,
+) -> Result<Option<HostCall<'a>>, String> {
+    if let Some(math) = resolve_math_call(name, ret, arity, double) {
+        let math = math?;
+        return Ok(Some(HostCall {
+            symbol: math.symbol,
+            ret: math.function.ret(),
+            params: math.function.params(),
+        }));
+    }
+    match externs.get(name) {
+        Some(ExternFunction {
+            signature: Some(signature),
+            ..
+        }) => {
+            let call_ret = call_result(name, ret, double)?;
+            if signature.params.len() == arity && signature.ret.is_real() == call_ret.is_real() {
+                Ok(Some(HostCall {
+                    symbol: name,
+                    ret: signature.ret,
+                    params: &signature.params,
+                }))
+            } else {
+                Err(signature_mismatch(
+                    name,
+                    &format!(
+                        "the host function registered under that name, `{}`",
+                        signature.prototype(name)
+                    ),
+                    signature.ret,
+                    &signature.params,
+                    call_ret,
+                    arity,
+                ))
+            }
+        }
+        Some(_) => Ok(None),
+        // Not a math function the backend implements: a foreign function,
+        // which the JIT can call only at an address the host registered. The
+        // header an `ffunction` names is for the C and C++ backends; the JIT
+        // never compiles it.
+        None => Err(format!(
+            "`{name}` has no Cranelift implementation: it is not a supported math function \
+             and no host function is registered under that name (the JIT does not compile \
+             the header an `ffunction` names, `-I` included); compile with `-lang cpp` or \
+             `-lang c`, or, when embedding, register it with \
+             `registerCCraneliftForeignFunction`"
+        )),
+    }
+}
+
+/// The C type of a call's result: `FaustFloat` is `double` under `-double`.
+fn call_result(name: &str, ret: &FirType, double: bool) -> Result<HostScalarType, String> {
+    match ret {
+        FirType::Int32 => Ok(HostScalarType::Int),
+        FirType::Float32 => Ok(HostScalarType::Float),
+        FirType::Float64 => Ok(HostScalarType::Double),
+        FirType::FaustFloat if double => Ok(HostScalarType::Double),
+        FirType::FaustFloat => Ok(HostScalarType::Float),
+        _ => Err(format!("`{name}` is called with a {ret:?} result")),
+    }
+}
+
 /// Resolves the FIR call `name(args) -> ret`, with `arity` arguments, to the
 /// host math function the JIT calls.
 ///
 /// `None`: `name` is not a math function the backend implements (a foreign
 /// function, bound or not by the host). `Some(Err(reason))`: it is one, but
-/// the call does not have its shape. `double` resolves a `FaustFloat` result;
-/// it only picks between two variants of the same shape, so a caller without
-/// the precision may pass either value to check a call.
+/// the call does not have its shape.
 pub(crate) fn resolve_math_call(
     name: &str,
     ret: &FirType,
     arity: usize,
     double: bool,
 ) -> Option<Result<&'static HostMath, String>> {
-    let ret_kind = match ret {
-        FirType::Int32 => MathScalar::Int,
-        FirType::Float32 => MathScalar::Float,
-        FirType::Float64 => MathScalar::Double,
-        FirType::FaustFloat if double => MathScalar::Double,
-        FirType::FaustFloat => MathScalar::Float,
-        _ => return Some(Err(format!("`{name}` is called with a {ret:?} result"))),
-    };
     let math = match FirMathOp::from_symbol(name) {
         Some(op) => {
-            let symbol = generic_math_symbol(op, ret_kind == MathScalar::Double)?;
+            let wide = match ret {
+                FirType::Float64 => true,
+                FirType::FaustFloat => double,
+                _ => false,
+            };
+            let symbol = generic_math_symbol(op, wide)?;
             host_math(symbol).expect("every FIR math op variant is in HOST_MATH")
         }
         None => host_math(name)?,
     };
+    let call_ret = match call_result(name, ret, double) {
+        Ok(call_ret) => call_ret,
+        Err(reason) => return Some(Err(reason)),
+    };
     let function = math.function;
-    if function.params().len() == arity && function.ret().is_real() == ret_kind.is_real() {
+    if function.params().len() == arity && function.ret().is_real() == call_ret.is_real() {
         Some(Ok(math))
     } else {
+        let faust = faust_declaration(name, function.ret(), function.params());
         Some(Err(signature_mismatch(
             name,
+            &format!("the math function the Cranelift backend implements, `{faust}`"),
             function.ret(),
             function.params(),
-            ret_kind,
+            call_ret,
             arity,
         )))
     }
 }
 
-/// Explains a call whose shape is not the one the backend implements, in the
-/// `ffunction` syntax, where `float` is the real type of either precision.
+/// A declaration in the `ffunction` syntax, where `float` is the real type
+/// of either precision.
+fn faust_declaration(name: &str, ret: HostScalarType, params: &[HostScalarType]) -> String {
+    let faust = |ty: HostScalarType| if ty.is_real() { "float" } else { "int" };
+    let params: Vec<&str> = params.iter().map(|ty| faust(*ty)).collect();
+    format!("{} {name}({})", faust(ret), params.join(", "))
+}
+
+/// Explains a call whose shape is not the one of the function it calls,
+/// `against`, and how to declare it.
 fn signature_mismatch(
     name: &str,
-    ret: MathScalar,
-    params: &[MathScalar],
-    call_ret: MathScalar,
+    against: &str,
+    ret: HostScalarType,
+    params: &[HostScalarType],
+    call_ret: HostScalarType,
     arity: usize,
 ) -> String {
-    let faust = |ty: MathScalar| if ty.is_real() { "float" } else { "int" };
-    let params: Vec<&str> = params.iter().map(|ty| faust(*ty)).collect();
-    let implemented = format!("{} {name}({})", faust(ret), params.join(", "));
+    let declaration = faust_declaration(name, ret, params);
     let arguments = if arity == 1 { "argument" } else { "arguments" };
     format!(
-        "`{name}` does not have the signature of the math function the Cranelift backend \
-         implements, `{implemented}`: the call has {arity} {arguments} and {} result; \
-         declare it `{implemented}` in the `ffunction` (the arguments and the precision \
-         convert as in C)",
+        "`{name}` does not have the signature of {against}: the call has {arity} {arguments} \
+         and {} result; declare it `{declaration}` in the `ffunction` (the arguments and the \
+         precision convert as in C)",
         if call_ret.is_real() {
             "a `float`"
         } else {
@@ -308,10 +402,20 @@ mod tests {
                 d.function.params().len(),
                 "{op:?}"
             );
-            assert_eq!(f.function.ret(), MathScalar::Float, "{op:?}");
-            assert_eq!(d.function.ret(), MathScalar::Double, "{op:?}");
-            assert!(f.function.params().iter().all(|t| *t == MathScalar::Float));
-            assert!(d.function.params().iter().all(|t| *t == MathScalar::Double));
+            assert_eq!(f.function.ret(), HostScalarType::Float, "{op:?}");
+            assert_eq!(d.function.ret(), HostScalarType::Double, "{op:?}");
+            assert!(
+                f.function
+                    .params()
+                    .iter()
+                    .all(|t| *t == HostScalarType::Float)
+            );
+            assert!(
+                d.function
+                    .params()
+                    .iter()
+                    .all(|t| *t == HostScalarType::Double)
+            );
         }
     }
 

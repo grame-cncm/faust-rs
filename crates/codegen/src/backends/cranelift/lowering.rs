@@ -4,7 +4,7 @@
 //! expressions, statements, stack slots, and struct-field access. Unsupported
 //! shapes are filtered by `subset` before this lowering path is used.
 
-use super::math::resolve_math_call;
+use super::math::resolve_call;
 use super::*;
 use cranelift_frontend::Variable;
 
@@ -200,7 +200,7 @@ pub(crate) struct ComputeLowering<'a, 'b, 'c> {
     pub(crate) extern_data_ids: &'a HashMap<String, DataId>,
     /// Registered host addresses for foreign function symbols resolved through
     /// `CraneliftOptions::extern_function_symbols`.
-    pub(crate) extern_function_symbols: &'a HashMap<String, *const c_void>,
+    pub(crate) extern_function_symbols: &'a HashMap<String, ExternFunction>,
     /// 64-bit (`double`) precision flag: resolves `FaustFloat` to `F64`/8 bytes.
     double: bool,
     _marker: std::marker::PhantomData<&'c ()>,
@@ -1535,9 +1535,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     }
 
     /// Lowers FIR calls to imported host functions: a math function of
-    /// [`HOST_MATH`](super::host::HOST_MATH) (`sinf`, `pow`, ...), its arguments
-    /// and result converted as in C ([`resolve_math_call`]), or else a foreign
-    /// function the host registered.
+    /// [`HOST_MATH`](super::host::HOST_MATH) (`sinf`, `pow`, ...) or a host
+    /// function registered with a signature, its arguments and result
+    /// converted as in C ([`resolve_call`]), or else a host function
+    /// registered without one.
     fn lower_fun_call(
         &mut self,
         name: &str,
@@ -1548,39 +1549,42 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         // arms below are selected consistently under `-double`.
         let canon = self.canon_real(typ);
         let typ = &canon;
-        if let Some(math) = resolve_math_call(name, typ, args.len(), self.double) {
-            let math = math.map_err(LoweringError::Unsupported)?;
-            let function = math.function;
+        let resolved = resolve_call(
+            name,
+            typ,
+            args.len(),
+            self.double,
+            self.extern_function_symbols,
+        )
+        .map_err(LoweringError::Unsupported)?;
+        if let Some(call) = resolved {
             let mut values = Vec::with_capacity(args.len());
-            for (arg, param) in args.iter().zip(function.params()) {
+            for (arg, param) in args.iter().zip(call.params) {
                 let param = param.fir_type();
                 let value = self.lower_expr(*arg, Some(&param))?.value();
                 values.push(self.coerce_value_to_fir_type(value, &param)?);
             }
-            let params: Vec<Type> = function.params().iter().map(|p| p.clif_type()).collect();
-            let fref = self.ensure_import(math.symbol, &params, function.ret().clif_type())?;
+            let params: Vec<Type> = call.params.iter().map(|p| p.clif_type()).collect();
+            let fref = self.ensure_import(call.symbol, &params, call.ret.clif_type())?;
             let call = self.fb.ins().call(fref, &values);
             let result = self.fb.inst_results(call)[0];
             return Ok(LoweredExpr::Scalar(
                 self.coerce_value_to_fir_type(result, typ)?,
             ));
         }
-        if self.extern_function_symbols.contains_key(name) {
-            let mut lowered_args = Vec::with_capacity(args.len());
-            let mut param_types = Vec::with_capacity(args.len());
-            for arg in args {
-                let value = self.lower_expr(*arg, None)?.value();
-                param_types.push(self.fb.func.dfg.value_type(value));
-                lowered_args.push(value);
-            }
-            let ret = self.fir_type_to_clif(typ)?;
-            let fref = self.ensure_import(name, &param_types, ret)?;
-            let call = self.fb.ins().call(fref, &lowered_args);
-            return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
+        // A host function registered without a signature: called with the
+        // types of the declaration, which the host is trusted to match.
+        let mut lowered_args = Vec::with_capacity(args.len());
+        let mut param_types = Vec::with_capacity(args.len());
+        for arg in args {
+            let value = self.lower_expr(*arg, None)?.value();
+            param_types.push(self.fb.func.dfg.value_type(value));
+            lowered_args.push(value);
         }
-        Err(LoweringError::Unsupported(format!(
-            "unsupported function call `{name}`"
-        )))
+        let ret = self.fir_type_to_clif(typ)?;
+        let fref = self.ensure_import(name, &param_types, ret)?;
+        let call = self.fb.ins().call(fref, &lowered_args);
+        Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]))
     }
 
     /// Declares/imports a CLIF function and caches the `FuncRef` by signature key.
@@ -1778,7 +1782,7 @@ pub(crate) struct FunctionBodyLoweringContext<'a> {
     pub(crate) static_table_elem_types: &'a HashMap<String, FirType>,
     pub(crate) external_static_tables: &'a HashSet<String>,
     pub(crate) extern_data_ids: &'a HashMap<String, DataId>,
-    pub(crate) extern_function_symbols: &'a HashMap<String, *const c_void>,
+    pub(crate) extern_function_symbols: &'a HashMap<String, ExternFunction>,
     /// 64-bit (`double`) precision: resolves `FaustFloat` to `F64`.
     pub(crate) double: bool,
 }

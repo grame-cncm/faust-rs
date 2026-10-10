@@ -283,39 +283,6 @@ extern "C" fn host_tanh(x: f64) -> f64 {
     x.tanh()
 }
 
-/// The C type of a math function's parameter or result.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MathScalar {
-    Int,
-    Float,
-    Double,
-}
-
-impl MathScalar {
-    /// The FIR type of a value of this C type.
-    pub(crate) fn fir_type(self) -> FirType {
-        match self {
-            Self::Int => FirType::Int32,
-            Self::Float => FirType::Float32,
-            Self::Double => FirType::Float64,
-        }
-    }
-
-    /// The CLIF type passed or returned at the call.
-    pub(crate) fn clif_type(self) -> Type {
-        match self {
-            Self::Int => types::I32,
-            Self::Float => types::F32,
-            Self::Double => types::F64,
-        }
-    }
-
-    /// Whether this is a real type (`float` or `double`) rather than `int`.
-    pub(crate) fn is_real(self) -> bool {
-        !matches!(self, Self::Int)
-    }
-}
-
 /// A host math function, typed by its pointer: the signature the subset
 /// pre-check and the lowering read is the one of the function the JIT calls.
 #[derive(Clone, Copy)]
@@ -332,25 +299,25 @@ pub(crate) enum HostMathFn {
 
 impl HostMathFn {
     /// The result type.
-    pub(crate) fn ret(self) -> MathScalar {
+    pub(crate) fn ret(self) -> HostScalarType {
         match self {
-            Self::Float(_) | Self::Float2(_) => MathScalar::Float,
-            Self::Double(_) | Self::Double2(_) => MathScalar::Double,
+            Self::Float(_) | Self::Float2(_) => HostScalarType::Float,
+            Self::Double(_) | Self::Double2(_) => HostScalarType::Double,
             Self::Int(_) | Self::Int2(_) | Self::FloatToInt(_) | Self::DoubleToInt(_) => {
-                MathScalar::Int
+                HostScalarType::Int
             }
         }
     }
 
     /// The parameter types, in order.
-    pub(crate) fn params(self) -> &'static [MathScalar] {
+    pub(crate) fn params(self) -> &'static [HostScalarType] {
         match self {
-            Self::Float(_) | Self::FloatToInt(_) => &[MathScalar::Float],
-            Self::Double(_) | Self::DoubleToInt(_) => &[MathScalar::Double],
-            Self::Float2(_) => &[MathScalar::Float, MathScalar::Float],
-            Self::Double2(_) => &[MathScalar::Double, MathScalar::Double],
-            Self::Int(_) => &[MathScalar::Int],
-            Self::Int2(_) => &[MathScalar::Int, MathScalar::Int],
+            Self::Float(_) | Self::FloatToInt(_) => &[HostScalarType::Float],
+            Self::Double(_) | Self::DoubleToInt(_) => &[HostScalarType::Double],
+            Self::Float2(_) => &[HostScalarType::Float, HostScalarType::Float],
+            Self::Double2(_) => &[HostScalarType::Double, HostScalarType::Double],
+            Self::Int(_) => &[HostScalarType::Int],
+            Self::Int2(_) => &[HostScalarType::Int, HostScalarType::Int],
         }
     }
 

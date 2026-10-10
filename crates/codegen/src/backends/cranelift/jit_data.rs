@@ -259,7 +259,7 @@ pub(crate) fn declare_jit_function(
     struct_layout: &StructLayoutPlan,
     fail_on_subset_gap: bool,
     extern_data_symbols: &HashMap<String, *const c_void>,
-    extern_function_symbols: &HashMap<String, *const c_void>,
+    extern_function_symbols: &HashMap<String, ExternFunction>,
     // When `true`, skip subset lowering and always emit a `return` stub.
     // Used by the JIT-panic fallback path in `generate_cranelift_module`.
     force_stub: bool,

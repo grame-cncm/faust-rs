@@ -7,10 +7,11 @@ Status: analysis completed for the small reproductions. W2 is implemented
 C constructors, which fail by default with no scaffold opt-in (user decision);
 the math functions have one inventory, read by the pre-check, the lowering
 and the JIT registration, and a declaration of another shape is refused with
-both signatures (journal 2026-10-10, the three "W1" entries); the typed
-registration of host functions (agreed with the user), typed C API
-diagnostics for backend errors, and the math functions the inventory lacks
-(`cbrtf`, `hypotf`, `erff`, ...) remain. W3 is
+both signatures, and a host may register a function with its C signature,
+checked the same way (agreed with the user; journal 2026-10-10, the four
+"W1" entries); the interpreter's typed registration, typed C API diagnostics
+for backend errors, and the math functions the inventory lacks (`cbrtf`,
+`hypotf`, `erff`, ...) remain. W3 is
 implemented (its design amendment below). W4 is implemented, with two
 defects found on the way (journal 2026-10-10, "W4"). W5 and W6 are implemented.
 W7 has its baseline and one fix ([measurements](ondemand-and-foreign-chain-compile-cost-measurements-2026-10-10-en.md)):

@@ -783,7 +783,12 @@ must run unchanged with Faust C++ should not pass them.
   declared for a real function or the reverse (`int tanhf(int)`), naming both
   signatures; the generated C++ compiles that one, keeping the real result
   against the Faust typing of the call. A math name now takes precedence over
-  a host registration of the same name. A
+  a host registration of the same name. A host may give the C signature of
+  the function it registers (`registerCCraneliftForeignFunctionWithSignature`,
+  `"float(int, float, float)"`, a Rust extension since 2026-10-10); the call
+  then follows the same rule against it. Registered by name and address only,
+  as C++ `registerForeignFunction` takes a name only, the function is called
+  with the types of its `ffunction` declaration, unchecked. A
   call the JIT cannot lower (a foreign function with no registered binding)
   makes the backend's non-strict default emit a no-op `compute`, with
   `compute_body_lowered=false` and the reason in `compute_subset_gap()`.
@@ -800,7 +805,8 @@ must run unchanged with Faust C++ should not pass them.
   backend API keeps the non-strict default, for corpus diagnostics.
 - Evidence: [`cranelift-backend-plan-en.md`](cranelift-backend-plan-en.md),
   [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md),
-  and `crates/cranelift-ffi/tests/math_signature_probe.rs`.
+  `crates/cranelift-ffi/tests/math_signature_probe.rs` and
+  `crates/cranelift-ffi/tests/typed_foreign_function_probe.rs`.
 
 ### DIFF-BACK-002 — textual WAT and raw embedded compiler module
 

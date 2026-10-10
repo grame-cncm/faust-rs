@@ -1,6 +1,6 @@
 use super::{
-    BACKEND_NAME, CraneliftBackendErrorCode, CraneliftOptions, StructFieldKind, backend_id,
-    generate_cranelift_module,
+    BACKEND_NAME, CraneliftBackendErrorCode, CraneliftOptions, ExternFunction, StructFieldKind,
+    backend_id, generate_cranelift_module,
 };
 use crate::fixtures::build_sine_phasor_test_module;
 use crate::memory_layout::MemoryManagerMode;
@@ -720,7 +720,10 @@ fn compile_module_lowers_custom_foreign_fun_with_extern_function_symbol() {
     let options = CraneliftOptions {
         extern_function_symbols: [(
             "test_foreign_gain".to_string(),
-            (test_foreign_gain as *const ()).cast::<c_void>(),
+            ExternFunction {
+                address: (test_foreign_gain as *const ()).cast::<c_void>(),
+                signature: None,
+            },
         )]
         .into_iter()
         .collect(),
@@ -2347,4 +2350,40 @@ fn struct_layout_offsets_are_not_limited_to_four_gigabytes() {
         four_gib
     );
     assert_eq!(layout.size_bytes(), four_gib + 8);
+}
+
+#[test]
+fn a_host_signature_parses_from_a_c_prototype() {
+    use super::{HostFunctionSignature, HostScalarType};
+    let parse = |text| HostFunctionSignature::parse(text, Some("w"));
+    let signature = parse("double ( int , float,double )").expect("parses");
+    assert_eq!(signature.ret, HostScalarType::Double);
+    assert_eq!(
+        signature.params,
+        [
+            HostScalarType::Int,
+            HostScalarType::Float,
+            HostScalarType::Double
+        ]
+    );
+    assert_eq!(signature.to_string(), "double(int, float, double)");
+    assert_eq!(signature.prototype("w"), "double w(int, float, double)");
+    assert_eq!(parse("float w(float)"), parse("float(float)"));
+    for empty in ["int()", "int(void)", "int w( )"] {
+        assert_eq!(parse(empty).expect(empty).params, []);
+    }
+    for (text, reason) in [
+        ("float(long)", "`long` is not a host function type"),
+        ("void(float)", "`void` is not a host function type"),
+        ("float", "is not a C prototype"),
+        ("float(float", "is not a C prototype"),
+        ("float w y(float)", "is not a C prototype"),
+        ("float other(float)", "names `other`, not `w`"),
+        ("float(float,)", "`` is not a host function type"),
+    ] {
+        let error = parse(text).expect_err(text);
+        assert!(error.contains(reason), "{text}: {error}");
+    }
+    // Without a name to check, any name is accepted.
+    assert!(HostFunctionSignature::parse("float other(float)", None).is_ok());
 }

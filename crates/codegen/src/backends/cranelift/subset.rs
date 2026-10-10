@@ -4,7 +4,7 @@
 //! This module provides the deterministic pre-checks and first-gap reasons used
 //! by strict validation and progress reports.
 
-use super::math::resolve_math_call;
+use super::math::resolve_call;
 use super::*;
 
 /// Fast pre-check: returns `true` when the current subset matcher accepts the
@@ -17,7 +17,7 @@ pub(crate) fn function_body_matches_current_subset(
     store: &FirStore,
     function_decl: FirId,
     extern_data_symbols: &HashMap<String, *const c_void>,
-    extern_function_symbols: &HashMap<String, *const c_void>,
+    extern_function_symbols: &HashMap<String, ExternFunction>,
 ) -> bool {
     function_body_subset_gap_reason_from_decl(
         store,
@@ -40,7 +40,7 @@ pub(crate) fn compute_body_subset_gap_reason_from_compute_decl(
     store: &FirStore,
     compute_decl: FirId,
     extern_data_symbols: &HashMap<String, *const c_void>,
-    extern_function_symbols: &HashMap<String, *const c_void>,
+    extern_function_symbols: &HashMap<String, ExternFunction>,
 ) -> Option<String> {
     function_body_subset_gap_reason_from_decl(
         store,
@@ -62,7 +62,7 @@ pub(crate) fn function_body_subset_gap_reason_from_decl(
     store: &FirStore,
     function_decl: FirId,
     extern_data_symbols: &HashMap<String, *const c_void>,
-    extern_function_symbols: &HashMap<String, *const c_void>,
+    extern_function_symbols: &HashMap<String, ExternFunction>,
 ) -> Option<String> {
     let body = match match_fir(store, function_decl) {
         FirMatch::DeclareFun {
@@ -82,7 +82,7 @@ pub(crate) fn subset_stmt_gap_reason(
     store: &FirStore,
     id: FirId,
     extern_data_symbols: &HashMap<String, *const c_void>,
-    extern_function_symbols: &HashMap<String, *const c_void>,
+    extern_function_symbols: &HashMap<String, ExternFunction>,
 ) -> Option<String> {
     match match_fir(store, id) {
         FirMatch::Block(items) => items.into_iter().find_map(|x| {
@@ -251,7 +251,7 @@ pub(crate) fn subset_expr_gap_reason(
     store: &FirStore,
     id: FirId,
     extern_data_symbols: &HashMap<String, *const c_void>,
-    extern_function_symbols: &HashMap<String, *const c_void>,
+    extern_function_symbols: &HashMap<String, ExternFunction>,
 ) -> Option<String> {
     match match_fir(store, id) {
         FirMatch::Int32 { .. }
@@ -337,28 +337,19 @@ pub(crate) fn subset_expr_gap_reason(
             subset_expr_gap_reason(store, value, extern_data_symbols, extern_function_symbols)
         }
         FirMatch::FunCall { name, args, typ } => {
-            // The precision only picks between two variants of one shape.
-            let gap = match resolve_math_call(&name, &typ, args.len(), false) {
-                Some(Ok(_)) => None,
-                Some(Err(reason)) => Some(reason),
-                None if extern_function_symbols.contains_key(&name) => None,
-                // Not a math function the backend implements: a foreign
-                // function, which the JIT can call only at an address the host
-                // registered. The header an `ffunction` names is for the C and
-                // C++ backends; the JIT never compiles it.
-                None => Some(format!(
-                    "`{name}` has no Cranelift implementation: it is not a supported math \
-                     function and no host function is registered under that name (the JIT \
-                     does not compile the header an `ffunction` names, `-I` included); \
-                     compile with `-lang cpp` or `-lang c`, or, when embedding, register \
-                     it with `registerCCraneliftForeignFunction`"
-                )),
-            };
-            gap.or_else(|| {
-                args.into_iter().find_map(|x| {
-                    subset_expr_gap_reason(store, x, extern_data_symbols, extern_function_symbols)
+            // The precision only picks between two math variants of one shape.
+            resolve_call(&name, &typ, args.len(), false, extern_function_symbols)
+                .err()
+                .or_else(|| {
+                    args.into_iter().find_map(|x| {
+                        subset_expr_gap_reason(
+                            store,
+                            x,
+                            extern_data_symbols,
+                            extern_function_symbols,
+                        )
+                    })
                 })
-            })
         }
         FirMatch::Cast { value, .. } => {
             subset_expr_gap_reason(store, value, extern_data_symbols, extern_function_symbols)

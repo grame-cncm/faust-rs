@@ -29,6 +29,145 @@ pub enum CraneliftOptLevel {
     SpeedAndSize,
 }
 
+/// The C type of a host function's parameter or result.
+///
+/// API mapping status: `extension`; the C++ LLVM backend's
+/// `registerForeignFunction` takes a name only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HostScalarType {
+    /// `int` (32 bits).
+    Int,
+    /// `float`.
+    Float,
+    /// `double`.
+    Double,
+}
+
+impl HostScalarType {
+    /// The C spelling.
+    #[must_use]
+    pub fn c_name(self) -> &'static str {
+        match self {
+            Self::Int => "int",
+            Self::Float => "float",
+            Self::Double => "double",
+        }
+    }
+
+    /// The FIR type of a value of this C type.
+    pub(crate) fn fir_type(self) -> FirType {
+        match self {
+            Self::Int => FirType::Int32,
+            Self::Float => FirType::Float32,
+            Self::Double => FirType::Float64,
+        }
+    }
+
+    /// The CLIF type passed or returned at the call.
+    pub(crate) fn clif_type(self) -> Type {
+        match self {
+            Self::Int => types::I32,
+            Self::Float => types::F32,
+            Self::Double => types::F64,
+        }
+    }
+
+    /// Whether this is a real type (`float` or `double`) rather than `int`.
+    pub(crate) fn is_real(self) -> bool {
+        !matches!(self, Self::Int)
+    }
+}
+
+/// The C signature of a host function, as a host registers it:
+/// `float(int, float, float)`.
+///
+/// API mapping status: `extension` (see [`HostScalarType`]).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct HostFunctionSignature {
+    /// The result type.
+    pub ret: HostScalarType,
+    /// The parameter types, in order.
+    pub params: Vec<HostScalarType>,
+}
+
+impl HostFunctionSignature {
+    /// Parses a C prototype without or with its function name:
+    /// `float(int, float)`, `double w_d(double)`, `int()`, `int(void)`.
+    /// The types are `int`, `float` and `double`; `name`, when given, must be
+    /// the one written.
+    ///
+    /// # Errors
+    /// The reason, when `text` is not such a prototype.
+    pub fn parse(text: &str, name: Option<&str>) -> Result<Self, String> {
+        let scalar = |word: &str| match word {
+            "int" => Ok(HostScalarType::Int),
+            "float" => Ok(HostScalarType::Float),
+            "double" => Ok(HostScalarType::Double),
+            other => Err(format!(
+                "`{other}` is not a host function type (`int`, `float` or `double`)"
+            )),
+        };
+        let malformed = || format!("`{text}` is not a C prototype such as `float(int, float)`");
+        let (head, rest) = text.split_once('(').ok_or_else(malformed)?;
+        let params = rest
+            .trim_end()
+            .strip_suffix(')')
+            .ok_or_else(malformed)?
+            .trim();
+        let mut head = head.split_whitespace();
+        let ret = scalar(head.next().ok_or_else(malformed)?)?;
+        if let Some(written) = head.next()
+            && let Some(name) = name.filter(|name| *name != written)
+        {
+            return Err(format!(
+                "the prototype `{text}` names `{written}`, not `{name}`"
+            ));
+        }
+        if head.next().is_some() {
+            return Err(malformed());
+        }
+        let params = if params.is_empty() || params == "void" {
+            Vec::new()
+        } else {
+            params
+                .split(',')
+                .map(|param| scalar(param.trim()))
+                .collect::<Result<_, _>>()?
+        };
+        Ok(Self { ret, params })
+    }
+
+    /// The prototype under `name`: `float name(int, float)`.
+    #[must_use]
+    pub fn prototype(&self, name: &str) -> String {
+        let params: Vec<&str> = self.params.iter().map(|ty| ty.c_name()).collect();
+        format!("{} {name}({})", self.ret.c_name(), params.join(", "))
+    }
+}
+
+impl std::fmt::Display for HostFunctionSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let params: Vec<&str> = self.params.iter().map(|ty| ty.c_name()).collect();
+        write!(f, "{}({})", self.ret.c_name(), params.join(", "))
+    }
+}
+
+/// A foreign function a host binds for the JIT.
+///
+/// API mapping status: `adapted`. C++ LLVM's `registerForeignFunction` takes
+/// a name and lets the JIT find the symbol in the process; here the host
+/// gives the address, and may give the signature.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExternFunction {
+    /// The address the JIT calls.
+    pub address: *const c_void,
+    /// The signature the host declared, if any. With one, a call converts
+    /// its arguments and result to it, as a C prototype makes C do, and a
+    /// call of another shape is refused. Without one, the JIT trusts the
+    /// `ffunction` declaration, as C++ does.
+    pub signature: Option<HostFunctionSignature>,
+}
+
 /// Options controlling Cranelift backend compilation (scaffold).
 ///
 /// This mirrors the shape planned in `porting/cranelift-backend-plan-en.md`,
@@ -62,13 +201,13 @@ pub struct CraneliftOptions {
     /// The backend imports these as external data symbols and loads them
     /// directly from JIT-resolved storage during `compute` lowering.
     pub extern_data_symbols: HashMap<String, *const c_void>,
-    /// Optional host addresses for foreign function symbols referenced by FIR
-    /// `FunCall` nodes that are not covered by the built-in math registry.
+    /// Host functions for foreign function symbols referenced by FIR
+    /// `FunCall` nodes that are not math functions the backend implements.
     ///
     /// This provides the Cranelift equivalent of LLVM's
-    /// `registerForeignFunction`, but uses an explicit name -> pointer map
+    /// `registerForeignFunction`, but uses an explicit name -> function map
     /// rather than process-global symbol lookup.
-    pub extern_function_symbols: HashMap<String, *const c_void>,
+    pub extern_function_symbols: HashMap<String, ExternFunction>,
     /// Use 64-bit (`double`) precision for `FAUSTFLOAT` I/O, UI zones and state.
     ///
     /// When `true`, the abstract [`FirType::FaustFloat`] maps to Cranelift `F64`

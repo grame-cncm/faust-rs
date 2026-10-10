@@ -21,7 +21,8 @@ use std::sync::{Mutex, OnceLock};
 
 use box_ffi::{BoxFfiFirModule, export_fir_from_box_handle, export_fir_from_signal_array_handle};
 use codegen::backends::cranelift::{
-    CraneliftOptLevel, CraneliftOptions, JitDspModule, generate_cranelift_module,
+    CraneliftOptLevel, CraneliftOptions, ExternFunction, HostFunctionSignature, JitDspModule,
+    generate_cranelift_module,
 };
 use codegen::json::{JsonBuildOptions, JsonMemoryDescription, build_json_description_from_fir};
 use codegen::memory_layout::MemoryManagerMode;
@@ -62,26 +63,46 @@ pub unsafe fn compiled_is_double(factory: *mut CraneliftDspFactory) -> Option<bo
 /// Stable version string returned by [`getCLibFaustVersion`].
 const CRANELIFT_FFI_VERSION: &str = concat!("faust-rs-cranelift-ffi/", env!("CARGO_PKG_VERSION"));
 
-fn foreign_function_registry() -> &'static Mutex<HashMap<String, usize>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+/// One host function: its address, and the signature the host gave, if any.
+#[derive(Clone)]
+struct RegisteredFunction {
+    address: usize,
+    signature: Option<HostFunctionSignature>,
+}
+
+fn foreign_function_registry() -> &'static Mutex<HashMap<String, RegisteredFunction>> {
+    static REGISTRY: OnceLock<Mutex<HashMap<String, RegisteredFunction>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn snapshot_registered_foreign_functions() -> HashMap<String, *const c_void> {
+fn snapshot_registered_foreign_functions() -> HashMap<String, ExternFunction> {
     foreign_function_registry()
         .lock()
         .expect("foreign function registry mutex")
         .iter()
-        .map(|(name, addr)| (name.clone(), (*addr as *const c_void)))
+        .map(|(name, function)| {
+            (
+                name.clone(),
+                ExternFunction {
+                    address: function.address as *const c_void,
+                    signature: function.signature.clone(),
+                },
+            )
+        })
         .collect()
 }
 
+/// The registry in the factory cache key: a name re-registered at another
+/// address or with another signature compiles anew.
 fn foreign_function_registry_fingerprint() -> String {
     let mut entries: Vec<_> = foreign_function_registry()
         .lock()
         .expect("foreign function registry mutex")
         .iter()
-        .map(|(name, addr)| format!("{name}=0x{addr:x}"))
+        .map(|(name, function)| match &function.signature {
+            Some(signature) => format!("{name}=0x{:x}:{signature}", function.address),
+            None => format!("{name}=0x{:x}", function.address),
+        })
         .collect();
     entries.sort();
     entries.join(",")
@@ -113,7 +134,10 @@ pub extern "C" fn getCLibFaustVersion() -> *const c_char {
 /// Register one host foreign function for subsequent Cranelift factory builds.
 ///
 /// The registration is process-global and must happen before compiling the DSP
-/// factory that references the symbol through `ffunction(...)`.
+/// factory that references the symbol through `ffunction(...)`. A call uses
+/// the types of the `ffunction` declaration, which the host must match, as
+/// with C++ `registerForeignFunction`;
+/// [`registerCCraneliftForeignFunctionWithSignature`] checks them.
 ///
 /// # Safety
 /// - `name` must be a valid null-terminated C string.
@@ -130,10 +154,65 @@ pub unsafe extern "C" fn registerCCraneliftForeignFunction(
     let Ok(name) = unsafe { std::ffi::CStr::from_ptr(name) }.to_str() else {
         return;
     };
+    register_foreign_function(name, fn_ptr, None);
+}
+
+/// Register one host foreign function with its C signature, for subsequent
+/// Cranelift factory builds.
+///
+/// `signature` is a C prototype, without or with the function's name:
+/// `"float(int, float, float)"`, `"double w_d(double)"`, `"int(void)"`, with
+/// the types `int`, `float` and `double`. A call then converts its
+/// arguments and its result to these types, as a C prototype makes C do, and
+/// a declaration of another shape (argument count, or an `int` result for a
+/// real one or the reverse) makes factory creation fail, naming both. A
+/// function registered with [`registerCCraneliftForeignFunction`] is called
+/// with the types of its `ffunction` declaration, unchecked.
+///
+/// Returns `false`, registering nothing, when an argument is null or
+/// `signature` is not such a prototype.
+///
+/// # Safety
+/// - `name` and `signature` must be valid null-terminated C strings.
+/// - `fn_ptr` must be a valid callable function address with that signature.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn registerCCraneliftForeignFunctionWithSignature(
+    name: *const c_char,
+    fn_ptr: *mut c_void,
+    signature: *const c_char,
+) -> bool {
+    if name.is_null() || fn_ptr.is_null() || signature.is_null() {
+        return false;
+    }
+    // SAFETY: caller provides valid C strings per the function contract.
+    let (Ok(name), Ok(signature)) = (
+        unsafe { std::ffi::CStr::from_ptr(name) }.to_str(),
+        unsafe { std::ffi::CStr::from_ptr(signature) }.to_str(),
+    ) else {
+        return false;
+    };
+    let Ok(signature) = HostFunctionSignature::parse(signature, Some(name)) else {
+        return false;
+    };
+    register_foreign_function(name, fn_ptr, Some(signature));
+    true
+}
+
+fn register_foreign_function(
+    name: &str,
+    fn_ptr: *mut c_void,
+    signature: Option<HostFunctionSignature>,
+) {
     foreign_function_registry()
         .lock()
         .expect("foreign function registry mutex")
-        .insert(name.to_owned(), fn_ptr as usize);
+        .insert(
+            name.to_owned(),
+            RegisteredFunction {
+                address: fn_ptr as usize,
+                signature,
+            },
+        );
 }
 
 /// Unregister one previously registered host foreign function.

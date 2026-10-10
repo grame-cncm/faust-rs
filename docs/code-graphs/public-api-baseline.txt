@@ -191,6 +191,7 @@ enum FbcSerialError
 enum FbcStackKind
 enum ForeignScalarType
 enum HeapType
+enum HostScalarType
 enum JsonBuildError
 enum JsonUiItem
 enum JuliaRealType
@@ -298,6 +299,9 @@ fn ForeignScalarType::from_code
 fn ForeignScalarType::from_fir_type
 fn ForeignSignature::decode
 fn ForeignSignature::encode
+fn HostFunctionSignature::parse
+fn HostFunctionSignature::prototype
+fn HostScalarType::c_name
 fn JitDspModule::compute_body_lowered
 fn JitDspModule::compute_entry_addr
 fn JitDspModule::compute_subset_gap
@@ -437,6 +441,7 @@ struct CppOptions
 struct CraneliftBackendError
 struct CraneliftOptions
 struct EvalError
+struct ExternFunction
 struct FbcBlock
 struct FbcBlockArena
 struct FbcCompileResult
@@ -451,6 +456,7 @@ struct FbcUiInstruction
 struct FieldLayout
 struct FirToFbcCompiler
 struct ForeignSignature
+struct HostFunctionSignature
 struct InterpOptions
 struct JitDspModule
 struct JsonBuildOptions

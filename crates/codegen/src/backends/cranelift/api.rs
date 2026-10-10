@@ -144,8 +144,8 @@ pub(crate) fn try_generate_cranelift_module(
     for (name, addr) in &options.extern_data_symbols {
         jit_builder.symbol(name, (*addr).cast::<u8>());
     }
-    for (name, addr) in &options.extern_function_symbols {
-        jit_builder.symbol(name, (*addr).cast::<u8>());
+    for (name, function) in &options.extern_function_symbols {
+        jit_builder.symbol(name, function.address.cast::<u8>());
     }
     let mut jit = JITModule::new(jit_builder);
     let ptr_size = jit.target_config().pointer_type().bytes();

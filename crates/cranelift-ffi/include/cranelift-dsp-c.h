@@ -294,6 +294,16 @@ void stopMTDSPFactories(void);
  * `compute` is returned.
  */
 void registerCCraneliftForeignFunction(const char* name, void* fn_ptr);
+/* The same with the function's C signature, e.g. "float(int, float, float)"
+ * or "double w_d(double)" (types int, float and double; "int(void)" for none).
+ * A call then converts its arguments and result to these types, as a C
+ * prototype makes C do; a declaration of another shape (argument count, or
+ * an int result for a real one or the reverse) fails factory creation,
+ * naming both signatures. Without a signature, the call uses the types of
+ * the `ffunction` declaration, unchecked, as C++ `registerForeignFunction`
+ * does. Returns false, registering nothing, on a malformed signature. */
+bool registerCCraneliftForeignFunctionWithSignature(const char* name, void* fn_ptr,
+                                                    const char* signature);
 void unregisterCCraneliftForeignFunction(const char* name);
 void clearCCraneliftForeignFunctions(void);
 

@@ -158,7 +158,7 @@ Phase-0 implication for `cranelift_dsp`:
 |---|---|---|---|---|---|
 | Class init on factory | `classCInit` | n/a | `classCCraneliftInit` (naming pending) | `decision-pending` | LLVM-specific pattern; may be represented via instance APIs only |
 | Memory manager setter | `setCMemoryManager` | n/a (in current interpreter C header) | `setCCraneliftMemoryManager` | `adapted` | Implemented for factories compiled with `-mem0`; copies ABI-v1 callbacks/context, describes immediately, allocates class zones before instance zones, and allocates no state until instance creation. Restored factories require fresh binding. |
-| Register foreign function | `registerCForeignFunction` | n/a | `registerCCraneliftForeignFunction` / `unregisterCCraneliftForeignFunction` | `adapted` | Implemented with an explicit Cranelift name-to-host-pointer registry. |
+| Register foreign function | `registerCForeignFunction` | n/a | `registerCCraneliftForeignFunction` / `registerCCraneliftForeignFunctionWithSignature` / `unregisterCCraneliftForeignFunction` | `adapted` | Implemented with an explicit Cranelift name-to-host-pointer registry. The `WithSignature` form (an `extension`) also takes the C signature, against which each call is converted or refused. |
 | Machine target getter | `getCDSPMachineTarget` | n/a | `getCCraneliftDSPMachineTarget` | `v1-deferred` | Naming locked; deferred in V1 |
 
 ## 3.7 DSP instance functions (C API)

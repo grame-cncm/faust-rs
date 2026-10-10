@@ -889,6 +889,12 @@ fn cpp_header_exposes_cranelift_foreign_function_api() {
     .expect("cranelift C++ header should be readable");
 
     assert!(header.contains("inline void registerCraneliftForeignFunction("));
+    assert!(header.contains("inline bool registerCraneliftForeignFunction("));
+    assert!(header.contains("bool registerCCraneliftForeignFunctionWithSignature("));
+    assert!(
+        include_str!("../../include/cranelift-dsp-c.h")
+            .contains("bool registerCCraneliftForeignFunctionWithSignature(")
+    );
     assert!(
         header.contains("inline void unregisterCraneliftForeignFunction(const std::string& name)")
     );

@@ -100,6 +100,8 @@ void metadataCCraneliftDSPInstance(ccranelift_dsp* dsp, MetaGlue* meta);
 void computeCCraneliftDSPInstance(ccranelift_dsp* dsp, int count,
                                   FAUSTFLOAT** inputs, FAUSTFLOAT** outputs);
 void registerCCraneliftForeignFunction(const char* name, void* fn_ptr);
+bool registerCCraneliftForeignFunctionWithSignature(const char* name, void* fn_ptr,
+                                                    const char* signature);
 void unregisterCCraneliftForeignFunction(const char* name);
 void clearCCraneliftForeignFunctions(void);
 
@@ -623,6 +625,22 @@ inline void registerCraneliftForeignFunction(
     void* fn_ptr)
 {
     registerCCraneliftForeignFunction(name.c_str(), fn_ptr);
+}
+
+/**
+ * Register a host foreign function with its C signature, e.g.
+ * "float(int, float, float)": a call converts its arguments and result to
+ * it, and a declaration of another shape fails the factory, naming both.
+ * Returns false, registering nothing, when the signature is not a prototype
+ * over int, float and double.
+ */
+inline bool registerCraneliftForeignFunction(
+    const std::string& name,
+    void* fn_ptr,
+    const std::string& signature)
+{
+    return registerCCraneliftForeignFunctionWithSignature(
+        name.c_str(), fn_ptr, signature.c_str());
 }
 
 inline void unregisterCraneliftForeignFunction(const std::string& name)
