@@ -1563,6 +1563,7 @@ fn documented_frs_codes() -> std::collections::BTreeSet<String> {
         "FRS-EVAL-0010",
         "FRS-EVAL-0011",
         "FRS-EVAL-0012",
+        "FRS-EVAL-0013",
         "FRS-EVAL-0099",
         "FRS-FIR-0001",
         "FRS-FIR-0002",

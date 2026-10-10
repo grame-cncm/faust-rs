@@ -51,6 +51,15 @@ use crate::error::EvalError;
 #[derive(Clone, Debug)]
 pub struct LoopDetector {
     pub(crate) call_stack: Vec<LoopFrame>,
+    /// The identifier each `call_stack` frame resolves, index for index:
+    /// the definition of a `SymbolEnv` frame, the name bound to the box of a
+    /// `TreeEnv` frame. Kept apart so that it plays no part in frame identity;
+    /// it is what names the definitions of a cycle
+    /// ([`EvalError::LoopDetected`]).
+    pub(crate) call_names: Vec<SymId>,
+    /// Where on `call_stack` the last cycle started: the index of the frame
+    /// that was entered again. Read by [`Self::cycle_names`].
+    pub(crate) cycle_start: Option<usize>,
     pub(crate) max_depth: usize,
     /// Syntactic nesting depth of [`eval_value`](crate::eval_value) calls, and
     /// its budget: see [`Self::enter_eval`].
@@ -404,6 +413,8 @@ impl LoopDetector {
             depth_limit_from_env(DEFAULT_EVAL_NESTING_DEPTH_ENV, DEFAULT_EVAL_NESTING_DEPTH);
         Self {
             call_stack: Vec::new(),
+            call_names: Vec::new(),
+            cycle_start: None,
             max_depth,
             eval_depth: 0,
             nesting_max_depth,
@@ -555,8 +566,13 @@ impl LoopDetector {
     /// [`EvalError::LoopDetected`] if the same pair is already on the stack and
     /// [`EvalError::RecursionDepthExceeded`] past `max_depth`. Pair with
     /// [`leave`](Self::leave).
-    pub(crate) fn enter_tree(&mut self, id: TreeId, env_key: EnvFrameKey) -> Result<(), EvalError> {
-        self.enter(LoopFrame::TreeEnv { id, env_key }, id)
+    pub(crate) fn enter_tree(
+        &mut self,
+        id: TreeId,
+        env_key: EnvFrameKey,
+        name: SymId,
+    ) -> Result<(), EvalError> {
+        self.enter(LoopFrame::TreeEnv { id, env_key }, id, name)
     }
 
     /// Pushes a frame keyed by `(symbol, environment)` and checks for a cycle.
@@ -569,7 +585,7 @@ impl LoopDetector {
         env_key: EnvFrameKey,
         node: TreeId,
     ) -> Result<(), EvalError> {
-        self.enter(LoopFrame::SymbolEnv { sym, env_key }, node)
+        self.enter(LoopFrame::SymbolEnv { sym, env_key }, node, sym)
     }
 
     /// Pushes `frame` after the cycle and depth checks shared by both `enter_*`
@@ -577,21 +593,45 @@ impl LoopDetector {
     ///
     /// Returns [`EvalError::LoopDetected`] (blaming `node`) if `frame` is already
     /// on the stack, or [`EvalError::RecursionDepthExceeded`] once `max_depth` is
-    /// reached.
-    fn enter(&mut self, frame: LoopFrame, node: TreeId) -> Result<(), EvalError> {
-        if self.call_stack.contains(&frame) {
-            return Err(EvalError::LoopDetected { node });
+    /// reached. The error's cycle is empty: the caller, which has the arena,
+    /// names it with [`Self::cycle_names`].
+    fn enter(&mut self, frame: LoopFrame, node: TreeId, name: SymId) -> Result<(), EvalError> {
+        if let Some(start) = self.call_stack.iter().position(|f| *f == frame) {
+            self.cycle_start = Some(start);
+            return Err(EvalError::LoopDetected {
+                node,
+                cycle: Vec::new(),
+            });
         }
         if self.call_stack.len() >= self.max_depth {
             return Err(self.depth_exceeded(self.max_depth));
         }
         self.call_stack.push(frame);
+        self.call_names.push(name);
         Ok(())
+    }
+
+    /// The definitions of the cycle last detected, from the one entered again
+    /// to the one that refers back to it, closed by the first: `process`,
+    /// `effect`, `cut`, `process`. Empty when no cycle was detected.
+    pub(crate) fn cycle_names(&self, arena: &tlib::TreeArena) -> Vec<String> {
+        let Some(start) = self.cycle_start else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = self.call_names[start..]
+            .iter()
+            .map(|sym| arena.symbol_name(*sym).unwrap_or("?").to_owned())
+            .collect();
+        if let Some(first) = names.first().cloned() {
+            names.push(first);
+        }
+        names
     }
 
     /// Pops the most recently entered frame, balancing an `enter_*` call.
     pub(crate) fn leave(&mut self) {
         let _ = self.call_stack.pop();
+        let _ = self.call_names.pop();
     }
 
     /// Enters a structural lowering frame (`a2sb` / `a2sb_value`).
@@ -816,6 +856,45 @@ mod tests {
                 other => panic!("{source}: expected RecursionDepthExceeded, got {other:?}"),
             }
         }
+    }
+
+    /// An evaluation cycle names its definitions, closed by the first one
+    /// (#22); a recursion through `~` is not a cycle.
+    #[test]
+    fn an_evaluation_cycle_names_its_definitions() {
+        for (source, cycle) in [
+            ("x = x;\nprocess = x;", vec!["x", "x"]),
+            ("a = b;\nb = a;\nprocess = a;", vec!["a", "b", "a"]),
+            (
+                "a = b + 1;\nb = c * 2;\nc = a;\nprocess = a;",
+                vec!["a", "b", "c", "a"],
+            ),
+            // the shape of the issue: `process` passed to a function
+            (
+                "fade(g) = *(g);\ncut = hslider(\"Cut\", 0, 0, 1, 0.01) : fade(process);\neffect = _ * (1 - cut);\nprocess = effect, cut;",
+                vec!["process", "effect", "cut", "process"],
+            ),
+            (
+                "process = f with { f = g + 1; g = f * 2; };",
+                vec!["f", "g", "f"],
+            ),
+        ] {
+            match eval_process_with_budget(source, 1024) {
+                Err(err @ super::EvalError::LoopDetected { .. }) => {
+                    let super::EvalError::LoopDetected { cycle: got, .. } = &err else {
+                        unreachable!()
+                    };
+                    assert_eq!(got, &cycle, "{source}");
+                    assert_eq!(
+                        err.to_string(),
+                        format!("endless evaluation cycle: {}", cycle.join(" → ")),
+                        "{source}"
+                    );
+                }
+                other => panic!("{source}: expected LoopDetected, got {other:?}"),
+            }
+        }
+        eval_process_with_budget("process = + ~ *(0.5);", 1024).expect("a recursion through ~");
     }
 
     #[test]

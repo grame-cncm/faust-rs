@@ -1615,6 +1615,7 @@ impl Compiler {
                 &error,
                 &output.state.ctx,
                 &output.state.arena,
+                root,
                 &source_map,
             );
             let mut diagnostics =

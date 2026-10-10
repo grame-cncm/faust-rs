@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_35_evaluation_cycle.dsp
+bytes=545
+lines=10
+fnv1a64=9c911aed876226cd

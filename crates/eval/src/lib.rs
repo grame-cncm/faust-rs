@@ -1192,7 +1192,9 @@ fn eval_ident_value(
                 // Shadowing sentinel used for lambda parameters in lexical scopes.
                 return Ok(EvalValue::Box(expr));
             }
-            loop_detector.enter_tree(value, env.frame_key())?;
+            loop_detector
+                .enter_tree(value, env.frame_key(), binding_sym)
+                .map_err(|e| e.with_cycle_names(loop_detector, arena))?;
             let out = eval_value(arena, value, env, loop_detector);
             loop_detector.leave();
             out
@@ -1204,11 +1206,9 @@ fn eval_ident_value(
             ) {
                 return Ok(EvalValue::Closure(closure));
             }
-            loop_detector.enter_symbol_env(
-                binding_sym,
-                env.frame_key_for(binding_env_id),
-                closure.expr,
-            )?;
+            loop_detector
+                .enter_symbol_env(binding_sym, env.frame_key_for(binding_env_id), closure.expr)
+                .map_err(|e| e.with_cycle_names(loop_detector, arena))?;
             let out = eval_value(arena, closure.expr, &closure.env, loop_detector);
             loop_detector.leave();
             // Record def-name → box mapping for SVG folding (C++ setDefNameProperty).

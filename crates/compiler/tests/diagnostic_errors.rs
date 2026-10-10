@@ -1238,3 +1238,45 @@ fn a_recursion_on_a_non_constant_pattern_argument_names_it() {
         .join()
         .expect("worker thread should finish");
 }
+
+#[test]
+fn an_evaluation_cycle_names_its_definitions() {
+    // grame-cncm/faust-rs#22: "recursive evaluation loop on node 55", with a
+    // catch-all cause about a malformed intermediate form
+    let source = read_corpus("err_35_evaluation_cycle.dsp");
+    let err = Compiler::new()
+        .compile_source_to_signals("err_35_evaluation_cycle.dsp", &source)
+        .expect_err("an evaluation cycle");
+    let first = &err.diagnostic_bundle().as_slice()[0];
+    assert_eq!(first.code.0, "FRS-EVAL-0013");
+    assert_eq!(
+        first.message.as_ref(),
+        "endless evaluation cycle: process → effect → cut → process"
+    );
+    assert!(
+        first.notes.iter().all(|n| !n.contains("malformed")),
+        "{:?}",
+        first.notes
+    );
+    assert_eq!(
+        first.facts.get(&compiler::FactKey::new("cycle")),
+        Some(&DiagnosticValue::from(vec![
+            "process".to_owned(),
+            "effect".to_owned(),
+            "cut".to_owned(),
+            "process".to_owned(),
+        ]))
+    );
+    // every definition of the cycle is located, on its own line
+    for (name, line) in [("effect", 9), ("cut", 8)] {
+        assert!(
+            first
+                .labels
+                .iter()
+                .any(|l| l.message.as_ref() == format!("`{name}`, in the cycle")
+                    && l.span.line == line),
+            "{name}: {:?}",
+            first.labels
+        );
+    }
+}

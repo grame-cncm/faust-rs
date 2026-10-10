@@ -86,6 +86,14 @@ pub const EVAL_WIDGET_PARAMETER_NOT_CONSTANT: DiagnosticCode = DiagnosticCode("F
 /// C++ equivalent: none. The reference evaluates such a program until its
 /// stack-overflow check or its `-t` timeout stops it.
 pub const EVAL_CASE_ARGUMENT_NOT_CONSTANT: DiagnosticCode = DiagnosticCode("FRS-EVAL-0012");
+/// An evaluation cycle: a definition needed, directly or through other
+/// definitions, to evaluate itself (`x = x;`). The message names the
+/// definitions of the cycle.
+///
+/// C++ equivalent: `loopDetector::detect` in
+/// `compiler/evaluate/loopDetector.cpp`, "endless evaluation cycle of <k>
+/// steps".
+pub const EVAL_EVALUATION_CYCLE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0013");
 /// Generic eval failure fallback code.
 pub const EVAL_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0099");
 
@@ -209,6 +217,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         EVAL_MODULATION_WILDCARD_NO_MATCH,
         EVAL_WIDGET_PARAMETER_NOT_CONSTANT,
         EVAL_CASE_ARGUMENT_NOT_CONSTANT,
+        EVAL_EVALUATION_CYCLE,
         EVAL_GENERIC_FAILURE,
         PROP_UNSUPPORTED_BOX,
         PROP_ARITY_MISMATCH,

@@ -105,7 +105,7 @@ pub struct EvalStats {
 /// | `MissingProcessDefinition` | `evalerror("... process is not defined")` in `eval.cpp` |
 /// | `UndefinedSymbol` | `evalerror("... unknown id")` in `eval.cpp` |
 /// | `RedefinedSymbol` | `throw faustexception("redefinition of symbols …")` in `environment.cpp` |
-/// | `LoopDetected` | `faustassert` in C++ loop detector (aborts rather than throws) |
+/// | `LoopDetected` | `loopDetector::detect` in `loopDetector.cpp`: `endless evaluation cycle of <k> steps` |
 /// | `RecursionDepthExceeded` | `stackOverflowDetector::detect()` in C++ loop detector |
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Typed evaluator failure surface.
@@ -271,8 +271,20 @@ pub enum EvalError {
         /// The `TreeId` of the conflicting second definition.
         second_def: TreeId,
     },
+    /// An evaluation cycle: a definition is entered again, in the same
+    /// environment, while its own evaluation is in progress. `x = x;`, or
+    /// `a = b + 1; b = c * 2; c = a;`.
+    ///
+    /// C++ `loopDetector::detect` finds it by sampling (every 400 steps, over
+    /// the last 1024) and reports `endless evaluation cycle of <k> steps`;
+    /// Rust detects it at once, by frame identity on `LoopDetector`, and
+    /// names it.
     LoopDetected {
+        /// The body of the definition entered again.
         node: TreeId,
+        /// The definitions of the cycle, closed by the first one:
+        /// `["process", "effect", "cut", "process"]`. Empty when unknown.
+        cycle: Vec<String>,
     },
     RecursionDepthExceeded {
         max_depth: usize,
@@ -421,6 +433,24 @@ fn with_symbol_suggestions(diagnostic: Diagnostic, suggestions: &[SymbolSuggesti
         )
 }
 
+impl EvalError {
+    /// Names the cycle of a [`Self::LoopDetected`] from the call stack of
+    /// `detector`; every other error is returned unchanged.
+    pub(crate) fn with_cycle_names(
+        self,
+        detector: &crate::LoopDetector,
+        arena: &tlib::TreeArena,
+    ) -> Self {
+        match self {
+            Self::LoopDetected { node, .. } => Self::LoopDetected {
+                node,
+                cycle: detector.cycle_names(arena),
+            },
+            other => other,
+        }
+    }
+}
+
 impl Display for EvalError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -548,8 +578,12 @@ impl Display for EvalError {
                     "symbol `{symbol}` redefined with a different value in the same scope"
                 )
             }
-            Self::LoopDetected { node } => {
-                write!(f, "recursive evaluation loop on node {}", node.as_u32())
+            Self::LoopDetected { cycle, .. } => {
+                if cycle.is_empty() {
+                    write!(f, "endless evaluation cycle")
+                } else {
+                    write!(f, "endless evaluation cycle: {}", cycle.join(" → "))
+                }
             }
             Self::RecursionDepthExceeded { max_depth } => {
                 write!(f, "stack overflow in eval (depth budget {max_depth})")
@@ -1006,6 +1040,27 @@ impl ToDiagnostic for EvalError {
                 "rule: iterator count must be integer, non-negative, and within supported range",
             )
             .with_help("iteration count must be a non-negative integer in target range"),
+            Self::LoopDetected { cycle, .. } => {
+                let definitions = cycle.len().saturating_sub(1);
+                let diagnostic = Diagnostic::new(
+                    Severity::Error,
+                    Stage::Eval,
+                    codes::EVAL_EVALUATION_CYCLE,
+                    message,
+                )
+                .with_note("cause: evaluating each of these definitions requires the next one, and the last requires the first: nothing in between ends the recursion")
+                .with_note("rule: a definition cannot depend on itself, directly or through other definitions; a signal that feeds back goes through the recursive composition `~`");
+                let diagnostic = if cycle.is_empty() {
+                    diagnostic
+                } else {
+                    diagnostic
+                        .with_note(format!(
+                            "computed: a cycle of {definitions} definition(s), entered again in the same environment"
+                        ))
+                        .with_fact("cycle", cycle.clone())
+                };
+                diagnostic.with_help("break the cycle: to feed a signal back, write the loop with `~` (`process = + ~ f;`); otherwise compute the shared part once, without referring back to the definition that uses it")
+            }
             Self::RecursionDepthExceeded { max_depth } => Diagnostic::new(
                 Severity::Error,
                 Stage::Eval,

@@ -13,7 +13,8 @@
 //! - `add_redefinition_labels` — both conflicting declaration sites;
 //! - `add_nonconstant_case_argument` — the argument a recursion dispatched on
 //!   without ever reaching a numeric rule, and the rules it was matched
-//!   against.
+//!   against;
+//! - `add_cycle_labels` — every top-level definition of an evaluation cycle.
 
 use super::*;
 
@@ -31,11 +32,13 @@ pub(crate) fn add_eval_guidance(
     error: &eval::EvalError,
     ctx: &parser::ParserCtx,
     arena: &tlib::TreeArena,
+    defs_root: BoxId,
     source_map: &SourceMap,
 ) -> Diagnostic {
     diagnostic = add_symbol_rename_fix(diagnostic, error, source_map);
     diagnostic = add_pattern_attempt_trace(diagnostic, error, arena);
     diagnostic = add_nonconstant_case_argument(diagnostic, error, arena);
+    diagnostic = add_cycle_labels(diagnostic, error, ctx, arena, defs_root);
     add_redefinition_labels(diagnostic, error, ctx)
 }
 
@@ -288,6 +291,46 @@ fn describe_runtime_argument(arena: &tlib::TreeArena, argument: BoxId) -> String
                 .join(", ")
         ),
     }
+}
+
+/// Labels each top-level definition of an evaluation cycle.
+///
+/// The generic labels point at the use that closes the cycle and at the
+/// entry point, which leaves the definitions themselves unlabelled
+/// (`x = x;`). A definition local to a `with` or a library is not among the
+/// top-level ones and gets no label; the message names it.
+fn add_cycle_labels(
+    mut diagnostic: Diagnostic,
+    error: &eval::EvalError,
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+) -> Diagnostic {
+    let eval::EvalError::LoopDetected { cycle, .. } = error else {
+        return diagnostic;
+    };
+    // the last name closes the cycle: it is the first one again
+    let mut seen = std::collections::HashSet::new();
+    for name in cycle.iter().take(cycle.len().saturating_sub(1)) {
+        if !seen.insert(name.as_str()) {
+            continue;
+        }
+        let Some(span) = source_span_for_definition_name(ctx, arena, defs_root, name) else {
+            continue;
+        };
+        if diagnostic.labels.iter().any(|label| label.span == span) {
+            continue;
+        }
+        diagnostic = diagnostic.with_label(
+            Label::new(
+                LabelStyle::Secondary,
+                span,
+                format!("`{name}`, in the cycle"),
+            )
+            .with_role(LabelRole::DefinitionSite),
+        );
+    }
+    diagnostic
 }
 
 /// One declared `case` rule, rendered for diagnostics.

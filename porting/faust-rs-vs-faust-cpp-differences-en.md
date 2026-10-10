@@ -641,6 +641,28 @@ must run unchanged with Faust C++ should not pass them.
   `crates/eval/src/loop_detector.rs`, and the
   [analysis](eval-runaway-recursion-and-cycle-diagnostics-analysis-and-plan-2026-10-10-en.md).
 
+### DIFF-BEH-018 — an evaluation cycle names its definitions
+
+- Status: `adapted` (same rejection, a different report), 2026-10-10
+  ([#22](https://github.com/grame-cncm/faust-rs/issues/22)).
+- A definition that needs itself, directly or through other definitions
+  (`x = x;`, `a = b + 1; b = c * 2; c = a;`, `process` passed to a function
+  that `process` uses), is rejected by both compilers. C++
+  `loopDetector::detect` samples the last 1024 evaluations every 400 steps and
+  reports `ERROR : after <n> evaluation steps, the compiler has detected an
+  endless evaluation cycle of <k> steps`. Rust detects the re-entered frame at
+  once on its call stack and reports `FRS-EVAL-0013 endless evaluation cycle:
+  process → effect → cut → process`, with a label on each top-level definition
+  of the cycle.
+- Until 2026-10-10 Rust reported `FRS-EVAL-0099 recursive evaluation loop on
+  node <n>`, with the catch-all cause of malformed internal forms.
+- Compatibility impact: none on accepted programs. Scripts matching the C++
+  text see another message.
+- Evidence: [`err_35_evaluation_cycle.dsp`](../tests/corpus/err_35_evaluation_cycle.dsp),
+  `an_evaluation_cycle_names_its_definitions` in
+  `crates/compiler/tests/diagnostic_errors.rs` and in
+  `crates/eval/src/loop_detector.rs`.
+
 ## 6. Additional backends and delivery forms
 
 ### DIFF-BACK-001 — Cranelift
