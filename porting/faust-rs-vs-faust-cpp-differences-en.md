@@ -701,6 +701,31 @@ must run unchanged with Faust C++ should not pass them.
   `an_evaluation_cycle_is_blamed_on_the_use_that_closes_it` in
   `diagnostic_errors.rs`.
 
+### DIFF-BEH-019 — a signal proved constant by its interval keeps its widgets
+
+- Status: `parity-gap`, 2026-10-10.
+- C++ `1aafc196a` (2026-10-06, first released in 2.90.4) runs
+  `newConstantPropagation` in `InstructionsCompiler::prepare`, as the `ocpp`
+  compiler has done since 2024. A signal whose interval is a single value
+  becomes that value, and the widgets it alone used leave the interface, since
+  Faust builds the interface from the simplified signals. Rust has no
+  interval-driven constant propagation: such a signal is computed, and its
+  widgets stay.
+- Observed on `process = ["a" -> r] ~ _;` with
+  `r = + : *(hslider("a", 0.5, 0, 1, 0.01));`. The recursion
+  y = a·(x₁+x₂)·y' starts at 0 and stays 0. C++ 2.90.4 and later emits
+  `output0 = 0.0f` with no slider; Rust computes `fRec0` (always 0) and
+  keeps `/…/a`. The samples are equal (all zero), but the interface differs.
+- Compatibility impact: none on samples. A host that reads the interface
+  (JSON, UI, OSC paths) sees widgets that C++ ≥ 2.90.4 drops, on programs
+  whose output does not depend on them.
+- Evidence: until 2026-10-10 this was the fixture
+  `modulation_35_in_recursion.dsp`, and the live differential of
+  `crates/compiler/tests/modulation_corpus.rs` failed against any local
+  `faust` ≥ 2.90.4. Its block now adds the slider (y = x₁ + x₂ + a·y'), which
+  both compilers compute: the interface is the one frozen from 2.88.1, equal
+  in 2.90.6, and the 15 000 impulse-test samples are equal to the bit.
+
 ## 6. Additional backends and delivery forms
 
 ### DIFF-BACK-001 — Cranelift

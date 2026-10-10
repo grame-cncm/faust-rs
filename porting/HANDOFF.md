@@ -4,8 +4,8 @@ Date: 2026-10-10 (evening)
 
 ## Repo State
 
-- Branch: `main-dev`, 14 commits ahead of `main`. **Nothing is pushed.**
-- HEAD: the #16 commit (compile stack) on top of `fd5f6e73`.
+- Branch: `main-dev`, 15 commits ahead of `main`. **Nothing is pushed.**
+- HEAD: the `modulation_35_in_recursion` fixture fix on top of `984f7ef6`.
 - Tag `0.9.0` (annotated, "Release 0.9.0") on `5856b1eb`, **local only**.
   It contains none of the commits listed below after it: the tutorial
   figures, the audit documentation and the #16/#21/#22 work. `push_main.sh`
@@ -15,8 +15,9 @@ Date: 2026-10-10 (evening)
 
 Commits since `main` (most recent first):
 
-- this commit: #16, every pipeline stage runs on the compile stack
-  (`tlib::stack`), and this handoff
+- this commit: `modulation_35_in_recursion` no longer has an identically
+  zero output (`DIFF-BEH-019`), and this handoff
+- `984f7ef6` #16, every pipeline stage runs on the compile stack (`tlib::stack`)
 - `fd5f6e73` an evaluation cycle is blamed on the use that closes it
   (follow-up to WP3, #22)
 - `015d2a6e` WP5: an eval failure in library code is not labelled on a
@@ -112,9 +113,11 @@ accepts `s+s+...` at 30 000 terms, which the structural budget rejects.
 - `cargo fmt`, `clippy --workspace --all-targets -D warnings`, the five
   structure gates and `code-graphs --check`: pass.
 - `cargo test --workspace --all-targets --no-fail-fast` on the final tree
-  (both commits): 157 targets, 3142 passed. The one failure is the known
-  live modulation differential against the local `/usr/local/bin/faust`,
-  which CI skips. The intermediate commit `fd5f6e73` was checked alone with
+  (the #22 and #16 commits): 157 targets, 3142 passed. The one failure was
+  the live modulation differential against the local `/usr/local/bin/faust`
+  (CI skips it). The fixture commit fixes it: the fixture's output was
+  identically zero, and C++ ≥ 2.90.4 (`1aafc196a`, found by bisection) folds
+  it and drops its slider. `modulation_corpus` and `golden-check` pass. The intermediate commit `fd5f6e73` was checked alone with
   fmt, clippy, the `eval` tests, `diagnostic_errors` and the gates.
 - `compile-budget-check` cannot measure on this machine. Its calibration DSP
   takes 3 ms, below the 4 ms floor, so it stops before measuring.
