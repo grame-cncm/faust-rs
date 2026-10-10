@@ -1,5 +1,5 @@
 #=
-Code generated with faust-rs 0.8.0
+Code generated with faust-rs 0.9.0
 Compilation options: -lang julia -single
 =#
 
@@ -63,7 +63,7 @@ function init!(dsp::mydsp{T}, sample_rate::Int32) where {T}
 	instanceInit!(dsp, sample_rate)
 end
 
-getJSON(dsp::mydsp{T}) where {T} = "{\"name\": \"simple\",\"filename\": \"simple.dsp\",\"version\": \"0.8.0\",\"compile_options\": \"-lang julia -single\",\"size\": 8,\"inputs\": 1,\"outputs\": 1,\"meta\": [],\"ui\": [ {\"type\": \"vgroup\",\"label\": \"simple\",\"items\": [ {\"type\": \"hslider\",\"label\": \"g\",\"varname\": \"fHslider0\",\"shortname\": \"g\",\"address\": \"/simple/g\",\"init\": 0.5,\"min\": 0,\"max\": 1,\"step\": 0.01}]}]}"
+getJSON(dsp::mydsp{T}) where {T} = "{\"name\": \"simple\",\"filename\": \"simple.dsp\",\"version\": \"0.9.0\",\"compile_options\": \"-lang julia -single\",\"size\": 8,\"inputs\": 1,\"outputs\": 1,\"meta\": [],\"ui\": [ {\"type\": \"vgroup\",\"label\": \"simple\",\"items\": [ {\"type\": \"hslider\",\"label\": \"g\",\"varname\": \"fHslider0\",\"shortname\": \"g\",\"address\": \"/simple/g\",\"init\": 0.5,\"min\": 0,\"max\": 1,\"step\": 0.01}]}]}"
 
 function buildUserInterface!(dsp::mydsp{T}, ui_interface::UI) where {T}
 	openVerticalBox!(ui_interface, "simple")
