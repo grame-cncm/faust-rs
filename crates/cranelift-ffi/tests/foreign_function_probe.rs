@@ -85,12 +85,55 @@ fn an_unbound_foreign_call_is_refused_and_named() {
             message.contains("`w1_unbound` has no Cranelift implementation"),
             "{message}"
         );
-        // The failure is the thread's last one, as for a front-end error.
-        // The backend reports no typed diagnostics through the C API.
+        // The failure is the thread's last one, as for a front-end error, and
+        // its diagnostics-v2 report is the CLI's: `FRS-CODEGEN-0001` with the
+        // backend's code as `detail_code`. Before, a backend error reached the
+        // C API as text only.
         let failure = last_compile_failure().expect("recorded");
         assert_eq!(failure.text, message);
-        assert_eq!(failure.diagnostics_json, None);
+        let report: serde_json::Value =
+            serde_json::from_str(failure.diagnostics_json.as_deref().expect("a report"))
+                .expect("one JSON document");
+        assert_eq!(report["schema_version"], 2);
+        assert_eq!(report["status"], "failed");
+        assert_eq!(report["request"]["backend"], "cranelift");
+        let diagnostic = &report["diagnostics"][0];
+        assert_eq!(diagnostic["code"], "FRS-CODEGEN-0001");
+        assert_eq!(diagnostic["detail_code"], "FRS-CGEN-CLIF-0002");
+        assert_eq!(diagnostic["stage"], "codegen");
+        assert_eq!(diagnostic["category"], "unsupported_feature");
+        assert_eq!(diagnostic["facts"]["backend"]["value"], "cranelift");
+        assert!(
+            diagnostic["message"]
+                .as_str()
+                .is_some_and(|text| text.contains("`w1_unbound` has no Cranelift implementation")),
+            "{diagnostic}"
+        );
     }
+}
+
+/// A signature mismatch reaches the typed channel too, with its message.
+#[test]
+fn a_backend_signature_mismatch_has_a_typed_report() {
+    let message = compile_error(
+        "t = ffunction(int tanhf(int), <math.h>, \"\");\nprocess = t;\n",
+        false,
+    );
+    let failure = last_compile_failure().expect("recorded");
+    assert_eq!(failure.text, message);
+    let report: serde_json::Value =
+        serde_json::from_str(failure.diagnostics_json.as_deref().expect("a report"))
+            .expect("one JSON document");
+    let diagnostic = &report["diagnostics"][0];
+    assert_eq!(diagnostic["detail_code"], "FRS-CGEN-CLIF-0002");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|text| text.contains(
+                "implements, `float tanhf(float)`: the call has 1 argument and an `int` result"
+            )),
+        "{diagnostic}"
+    );
 }
 
 #[test]
@@ -184,10 +227,24 @@ fn the_binary_renders_nothing_and_fails() {
         .arg(&path)
         .output()
         .expect("run faustprobe");
+    let json = Command::new(env!("CARGO_BIN_EXE_faustprobe"))
+        .args(["-n", "4", "--error-format", "json"])
+        .arg(&path)
+        .output()
+        .expect("run faustprobe");
     let _ = std::fs::remove_file(&path);
 
     assert!(!out.status.success());
     assert!(out.stdout.is_empty(), "no statistics for a refused factory");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("`w1_unbound`"), "{stderr}");
+    // Under `--error-format json`, the CLI's report on stdout.
+    assert!(!json.status.success());
+    let stdout = String::from_utf8_lossy(&json.stdout);
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+    assert_eq!(report["diagnostics"][0]["code"], "FRS-CODEGEN-0001");
+    assert_eq!(
+        report["diagnostics"][0]["detail_code"],
+        "FRS-CGEN-CLIF-0002"
+    );
 }

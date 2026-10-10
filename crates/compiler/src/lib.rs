@@ -2431,6 +2431,39 @@ impl CompilerError {
         Self::Import(Box::new(err), diagnostics)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    /// Builds the [`CompilerError::CodegenCranelift`] of a Cranelift backend
+    /// failure on `source`, with the `FRS-CODEGEN-0001` diagnostic the CLI
+    /// reports (`detail_code` the backend's `FRS-CGEN-CLIF-*` code).
+    ///
+    /// For the embedding layers, which compile FIR to Cranelift themselves:
+    /// the C factory constructors publish its diagnostics-v2 report. The
+    /// backend's errors name no FIR node, so the error carries no source
+    /// label, through the CLI either.
+    #[must_use]
+    pub fn from_cranelift_backend(source: &str, error: CraneliftBackendError) -> Self {
+        Self::CodegenCranelift {
+            source: source.into(),
+            diagnostics: Self::cranelift_backend_diagnostics(source, &error),
+            error,
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    /// The diagnostics of a Cranelift backend failure, before any FIR trace.
+    pub(crate) fn cranelift_backend_diagnostics(
+        source: &str,
+        error: &CraneliftBackendError,
+    ) -> DiagnosticBundle {
+        Self::codegen_diagnostics(
+            source,
+            "cranelift",
+            error.code.as_str(),
+            &error.message,
+            DiagnosticCategory::UnsupportedFeature,
+        )
+    }
+
     /// Builds the `FRS-CODEGEN-0001` bundle for one backend emission failure.
     ///
     /// `backend` is the `-lang` name (`cpp`, `c`, `julia`, `interp`, `wasm`),

@@ -852,13 +852,14 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `Compiler::compile_parsed_to_signals` | `crates/compiler/src/lib.rs:1485` |
 | `enum` | `CompilerError` | `crates/compiler/src/lib.rs:2073` |
 | `fn` | `CompilerError::import` | `crates/compiler/src/lib.rs:2429` |
-| `fn` | `CompilerError::codegen_wasm` | `crates/compiler/src/lib.rs:2479` |
-| `fn` | `CompilerError::missing_root` | `crates/compiler/src/lib.rs:2500` |
-| `fn` | `CompilerError::expand_failed` | `crates/compiler/src/lib.rs:2524` |
-| `fn` | `CompilerError::diagnostic_bundle` | `crates/compiler/src/lib.rs:2550` |
-| `fn` | `CompilerError::rendered_diagnostics` | `crates/compiler/src/lib.rs:2585` |
-| `fn` | `CompilerError::diagnostics_report_json` | `crates/compiler/src/lib.rs:2598` |
-| `fn` | `CompilerError::diagnostics` | `crates/compiler/src/lib.rs:2605` |
+| `fn` | `CompilerError::from_cranelift_backend` | `crates/compiler/src/lib.rs:2444` |
+| `fn` | `CompilerError::codegen_wasm` | `crates/compiler/src/lib.rs:2512` |
+| `fn` | `CompilerError::missing_root` | `crates/compiler/src/lib.rs:2533` |
+| `fn` | `CompilerError::expand_failed` | `crates/compiler/src/lib.rs:2557` |
+| `fn` | `CompilerError::diagnostic_bundle` | `crates/compiler/src/lib.rs:2583` |
+| `fn` | `CompilerError::rendered_diagnostics` | `crates/compiler/src/lib.rs:2618` |
+| `fn` | `CompilerError::diagnostics_report_json` | `crates/compiler/src/lib.rs:2631` |
+| `fn` | `CompilerError::diagnostics` | `crates/compiler/src/lib.rs:2638` |
 | `struct` | `FaustInstallPaths` | `crates/compiler/src/paths.rs:23` |
 | `fn` | `FaustInstallPaths::from_parts` | `crates/compiler/src/paths.rs:47` |
 | `fn` | `FaustInstallPaths::from_environment` | `crates/compiler/src/paths.rs:107` |
@@ -884,8 +885,8 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | Kind | Name | Location |
 |---|---|---|
 | `fn` | `cache_status` | `crates/cranelift-ffi/src/cache.rs:76` |
-| `fn` | `factory_status` | `crates/cranelift-ffi/src/factory.rs:811` |
-| `fn` | `last_error_diagnostics_json` | `crates/cranelift-ffi/src/factory.rs:1501` |
+| `fn` | `factory_status` | `crates/cranelift-ffi/src/factory.rs:821` |
+| `fn` | `last_error_diagnostics_json` | `crates/cranelift-ffi/src/factory.rs:1520` |
 | `fn` | `instance_status` | `crates/cranelift-ffi/src/instance.rs:561` |
 | `mod` | `cache` | `crates/cranelift-ffi/src/lib.rs:29` |
 | `mod` | `factory` | `crates/cranelift-ffi/src/lib.rs:31` |

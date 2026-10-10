@@ -668,6 +668,7 @@ fn CompilerError::diagnostic_bundle
 fn CompilerError::diagnostics
 fn CompilerError::diagnostics_report_json
 fn CompilerError::expand_failed
+fn CompilerError::from_cranelift_backend
 fn CompilerError::import
 fn CompilerError::missing_root
 fn CompilerError::rendered_diagnostics

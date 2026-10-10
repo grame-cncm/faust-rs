@@ -808,8 +808,12 @@ must run unchanged with Faust C++ should not pass them.
   restore compile in strict mode too, with no scaffold opt-in (the user's
   decision on
   [the 2026-10-08 audit, W1](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w1--reject-non-executable-probe-factories-p0)):
-  factory creation fails and `error_msg` names the function. Only the Rust
-  backend API keeps the non-strict default, for corpus diagnostics.
+  factory creation fails and `error_msg` names the function. Since
+  2026-10-11 a backend error also has its diagnostics-v2 report in
+  `getCCraneliftDSPFactoryErrorDiagnostics`, the CLI's `FRS-CODEGEN-0001`
+  with `detail_code` `FRS-CGEN-CLIF-*` (it was text only), and `faustprobe
+  --error-format json` prints it. Only the Rust backend API keeps the
+  non-strict default, for corpus diagnostics.
 - Evidence: [`cranelift-backend-plan-en.md`](cranelift-backend-plan-en.md),
   [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md),
   `crates/cranelift-ffi/tests/math_signature_probe.rs` (the C math library

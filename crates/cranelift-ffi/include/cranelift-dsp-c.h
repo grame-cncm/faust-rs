@@ -290,8 +290,10 @@ void stopMTDSPFactories(void);
  * The JIT does not compile the header an `ffunction` names. A call that is
  * neither a math function the backend implements nor registered here before
  * the factory is created makes factory creation fail, with `error_msg`
- * naming the function (FRS-CGEN-CLIF-0002); no factory with an empty
- * `compute` is returned.
+ * naming the function (FRS-CGEN-CLIF-0002) and, as for a front-end error,
+ * its diagnostics-v2 report in getCCraneliftDSPFactoryErrorDiagnostics()
+ * (code FRS-CODEGEN-0001, detail_code FRS-CGEN-CLIF-0002); no factory with
+ * an empty `compute` is returned.
  */
 void registerCCraneliftForeignFunction(const char* name, void* fn_ptr);
 /* The same with the function's C signature, e.g. "float(int, float, float)"

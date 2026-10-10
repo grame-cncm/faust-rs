@@ -243,13 +243,7 @@ pub(crate) fn lower_cranelift_error_to_compiler(
         LowerToCraneliftError::Codegen { error, origins } => CompilerError::CodegenCranelift {
             source: source.into(),
             diagnostics: enrich_backend_bundle(
-                CompilerError::codegen_diagnostics(
-                    source,
-                    "cranelift",
-                    error.code.as_str(),
-                    &error.message,
-                    DiagnosticCategory::UnsupportedFeature,
-                ),
+                CompilerError::cranelift_backend_diagnostics(source, &error),
                 output,
                 &origins,
                 error.fir_node(),

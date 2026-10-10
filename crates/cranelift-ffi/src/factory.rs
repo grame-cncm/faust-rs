@@ -400,8 +400,13 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromSignals(
             let fir = export_fir_from_signal_array_handle(&source_name, signals)?;
             let fir_dump = fir::dump_fir(&fir.store, fir.module);
             let (options, memory_manager) = argv_options(args)?;
-            let jit =
-                compile_fir_module_to_cranelift(&fir, opt_level, options.double, memory_manager)?;
+            let jit = compile_fir_module_to_cranelift(
+                &source_name,
+                &fir,
+                opt_level,
+                options.double,
+                memory_manager,
+            )?;
             let foreign_function_fingerprint = foreign_function_registry_fingerprint();
             build_scaffold_factory_common(
                 FactoryBuildSpec {
@@ -459,8 +464,13 @@ pub unsafe extern "C" fn createCCraneliftDSPFactoryFromBoxes(
             let fir = export_fir_from_box_handle(&source_name, box_expr)?;
             let fir_dump = fir::dump_fir(&fir.store, fir.module);
             let (options, memory_manager) = argv_options(args)?;
-            let jit =
-                compile_fir_module_to_cranelift(&fir, opt_level, options.double, memory_manager)?;
+            let jit = compile_fir_module_to_cranelift(
+                &source_name,
+                &fir,
+                opt_level,
+                options.double,
+                memory_manager,
+            )?;
             let foreign_function_fingerprint = foreign_function_registry_fingerprint();
             build_scaffold_factory_common(
                 FactoryBuildSpec {
@@ -1178,6 +1188,7 @@ fn preflight_compile_file_to_cranelift(
 ) -> Result<CompiledCraneliftFactory, String> {
     let (compiler, double, memory_manager_mode) = compiler_from_argv(argv)?;
     let search_paths = collect_search_paths_for_file(path, argv);
+    let source = path.display().to_string();
     let fir = compiler
         .compile_file_to_fir_with_lane(path, &search_paths, SignalFirLane::TransformFastLane)
         .map_err(|e| summary_of(&e))?;
@@ -1189,7 +1200,8 @@ fn preflight_compile_file_to_cranelift(
         num_inputs,
         num_outputs,
     };
-    let jit = compile_fir_module_to_cranelift(&fir, opt_level, double, memory_manager_mode)?;
+    let jit =
+        compile_fir_module_to_cranelift(&source, &fir, opt_level, double, memory_manager_mode)?;
     Ok(CompiledCraneliftFactory {
         fir,
         jit,
@@ -1230,7 +1242,8 @@ fn preflight_compile_source_to_cranelift(
         num_inputs,
         num_outputs,
     };
-    let jit = compile_fir_module_to_cranelift(&fir, opt_level, double, memory_manager_mode)?;
+    let jit =
+        compile_fir_module_to_cranelift(source_name, &fir, opt_level, double, memory_manager_mode)?;
     Ok(CompiledCraneliftFactory {
         fir,
         jit,
@@ -1247,7 +1260,12 @@ fn preflight_compile_source_to_cranelift(
 /// registered binding, a JIT panic) fails the factory, whatever constructor
 /// or restoration route reaches here. Its no-op fallback writes no output, so
 /// a host would run silence as if the program had produced it.
+///
+/// A backend failure is the compiler's `FRS-CODEGEN-0001` error, as the CLI
+/// reports it: its diagnostics-v2 report reaches
+/// [`getCCraneliftDSPFactoryErrorDiagnostics`], as a front-end error's does.
 fn compile_fir_module_to_cranelift(
+    source: &str,
     fir: &BoxFfiFirModule,
     opt_level: c_int,
     double: bool,
@@ -1262,7 +1280,8 @@ fn compile_fir_module_to_cranelift(
         fail_on_subset_gap: true,
         ..CraneliftOptions::default()
     };
-    generate_cranelift_module(&fir.store, fir.module, &options).map_err(|e| e.to_string())
+    generate_cranelift_module(&fir.store, fir.module, &options)
+        .map_err(|error| summary_of(&CompilerError::from_cranelift_backend(source, error)))
 }
 
 /// Converts the dependency-light FFI parser bit into the canonical codegen
