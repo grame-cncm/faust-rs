@@ -295,6 +295,24 @@ impl ParseState {
         self.ctx.set_def_prop_at_cursor(sym);
     }
 
+    /// Builds the `boxIdent` of a definition name and notes that occurrence
+    /// as the definition's location ([`ParserCtx::note_definition_name`]).
+    #[must_use]
+    pub fn definition_name_from_token<'lexer, 'input: 'lexer>(
+        &mut self,
+        lexer: &'lexer dyn NonStreamingLexer<'input, DefaultLexerTypes<u32>>,
+        tok: Result<lrlex::DefaultLexeme<u32>, lrlex::DefaultLexeme<u32>>,
+    ) -> TreeId {
+        let ident = self.ident_from_token(lexer, tok, true);
+        self.ctx.note_definition_name(ident);
+        ident
+    }
+
+    /// Notes the occurrence of `sym` just read as a definition name.
+    pub fn note_definition_name(&mut self, sym: TreeId) {
+        self.ctx.note_definition_name(sym);
+    }
+
     /// Builds `boxIdent` from a token and optionally marks use property.
     #[must_use]
     pub fn ident_from_token<'lexer, 'input: 'lexer>(

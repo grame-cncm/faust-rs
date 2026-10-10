@@ -254,6 +254,11 @@ pub struct ParserCtx {
     use_prop_key: PropertyKey,
     box_provenance: BoxProvenance,
     definition_candidate_floor: HashMap<TreeId, usize>,
+    /// The name occurrences of the definitions being parsed, innermost last:
+    /// the symbol and the index, in its origin list, of the occurrence the
+    /// grammar read as a definition name (`DefName`, `RecName`). A definition
+    /// nested in a `with` is pushed and popped before the enclosing one.
+    pending_definition_names: Vec<(TreeId, usize)>,
     widget_declarations: Vec<WidgetDeclaration>,
 }
 
@@ -312,6 +317,7 @@ impl ParserCtx {
             box_provenance: BoxProvenance::default(),
             widget_declarations: Vec::new(),
             definition_candidate_floor: HashMap::new(),
+            pending_definition_names: Vec::new(),
         }
     }
 
@@ -586,8 +592,49 @@ impl ParserCtx {
         }
     }
 
+    /// Notes that the occurrence of `sym` just recorded is the name of a
+    /// definition, for [`Self::set_def_prop_at_cursor`] to locate it when the
+    /// definition is complete.
+    ///
+    /// Without it, the location was the first use of the symbol after its
+    /// previous definition, which is a use elsewhere when the name is used
+    /// before it is defined: in `a = b + 1; b = c * 2;`, `b` was "defined" at
+    /// its use in `a`.
+    pub fn note_definition_name(&mut self, sym: TreeId) {
+        let recorded = self.box_provenance.origins_for(sym).len();
+        if let Some(last) = recorded.checked_sub(1) {
+            self.pending_definition_names.push((sym, last));
+        }
+    }
+
     /// Convenience hook: set definition property from current parser cursor.
+    ///
+    /// The location is the definition's name occurrence noted by
+    /// [`Self::note_definition_name`]; otherwise, the first use of `sym`
+    /// recorded since its previous definition, or the cursor.
     pub fn set_def_prop_at_cursor(&mut self, sym: TreeId) {
+        // entries above the definition's own are left by definitions that a
+        // syntax error turned into recovery statements: drop them
+        if let Some(at) = self
+            .pending_definition_names
+            .iter()
+            .rposition(|(pending, _)| *pending == sym)
+        {
+            let (_, index) = self.pending_definition_names[at];
+            self.pending_definition_names.truncate(at);
+            let noted = self
+                .box_provenance
+                .origins_for(sym)
+                .get(index)
+                .and_then(|id| self.box_provenance.get(*id))
+                .map(|origin| origin.location.clone());
+            if let Some(location) = noted {
+                let recorded = self.box_provenance.origins_for(sym).len();
+                self.definition_candidate_floor.insert(sym, recorded);
+                self.set_def_prop_location(sym, location);
+                return;
+            }
+        }
         let candidates = self.box_provenance.origins_for(sym);
         let floor = self
             .definition_candidate_floor

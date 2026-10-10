@@ -1877,6 +1877,7 @@ fn ParseState::binary_prim
 fn ParseState::cons
 fn ParseState::declare_definition_metadata_from_tokens
 fn ParseState::declare_metadata_from_token
+fn ParseState::definition_name_from_token
 fn ParseState::doc_statement
 fn ParseState::float_from_token
 fn ParseState::foreign_name_slots
@@ -1897,6 +1898,7 @@ fn ParseState::nil
 fn ParseState::node_case_checked
 fn ParseState::node_foreign_function
 fn ParseState::node_lambda
+fn ParseState::note_definition_name
 fn ParseState::note_doc_char
 fn ParseState::note_doc_listing
 fn ParseState::note_doc_metadata_tag_from_token
@@ -1947,6 +1949,7 @@ fn ParserCtx::lst_mdoctags
 fn ParserCtx::new
 fn ParserCtx::note_declared_definition_metadata
 fn ParserCtx::note_declared_metadata
+fn ParserCtx::note_definition_name
 fn ParserCtx::note_doc_block
 fn ParserCtx::note_doc_char
 fn ParserCtx::note_doc_listing

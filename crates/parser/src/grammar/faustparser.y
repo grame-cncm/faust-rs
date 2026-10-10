@@ -228,15 +228,20 @@ RecDefinition -> tlib::TreeId:
 
 DefName -> tlib::TreeId:
       IDENT {
-          crate::with_state(state, |state| state.ident_from_token($lexer, $1, true))
+          crate::with_state(state, |state| state.definition_name_from_token($lexer, $1))
       }
     | PROCESS {
-          crate::with_state(state, |state| state.ident_from_token($lexer, $1, true))
+          crate::with_state(state, |state| state.definition_name_from_token($lexer, $1))
       }
     ;
 
 RecName -> tlib::TreeId:
-      DELAY1 IdentExpr { $2 }
+      DELAY1 IdentExpr {
+          crate::with_state(state, |state| {
+              state.note_definition_name($2);
+              $2
+          })
+      }
     ;
 
 ParamList -> tlib::TreeId:
