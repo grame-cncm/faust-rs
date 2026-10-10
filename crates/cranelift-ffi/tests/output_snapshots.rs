@@ -61,6 +61,10 @@ const TMP: &str = "<TMP>";
 const CRATE: &str = "<CRATE>";
 /// Stands for the target triple a diagnostics report carries.
 const TARGET: &str = "<TARGET>";
+/// Stand for the Git commit of the build, and its date, a diagnostics report
+/// carries: they change with every commit of the binary under test.
+const COMMIT: &str = "<COMMIT>";
+const COMMIT_DATE: &str = "<COMMIT_DATE>";
 /// The file naming the platform the recordings were made on. There the
 /// comparison is byte for byte; elsewhere the text must be the same and the
 /// numbers within [`RELATIVE_TOLERANCE`], since the last digit of a sine or
@@ -3847,8 +3851,9 @@ fn mask_time(text: &str) -> String {
     out.join("\n")
 }
 
-/// What a stream says of the machine it ran on, replaced by a name: the
-/// temporary directory, the crate's directory, the target triple.
+/// What a stream says of the machine and the build it ran on, replaced by a
+/// name: the temporary directory, the crate's directory, the target triple, the
+/// commit and its date.
 fn mask_machine(text: &str, tmp: &str) -> String {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .canonicalize()
@@ -3860,14 +3865,23 @@ fn mask_machine(text: &str, tmp: &str) -> String {
         .replace(tmp, TMP)
         .replace(&crate_dir, CRATE)
         .replace(env!("CARGO_MANIFEST_DIR"), CRATE);
-    // `"target": "aarch64-macos",` in a diagnostics report
-    let mut out = String::with_capacity(masked.len());
-    let mut rest = masked.as_str();
-    while let Some(at) = rest.find("\"target\": \"") {
-        let value_at = at + "\"target\": \"".len();
+    // `"target": "aarch64-macos",` in a diagnostics report, and the same for
+    // `"commit"` and `"commit_date"`
+    let masked = mask_json_string(&masked, "target", TARGET);
+    let masked = mask_json_string(&masked, "commit", COMMIT);
+    mask_json_string(&masked, "commit_date", COMMIT_DATE)
+}
+
+/// Replaces the value of every `"key": "value"` in `text` by `placeholder`.
+fn mask_json_string(text: &str, key: &str, placeholder: &str) -> String {
+    let pattern = format!("\"{key}\": \"");
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(&pattern) {
+        let value_at = at + pattern.len();
         let value_len = rest[value_at..].find('"').unwrap_or(rest.len() - value_at);
         out.push_str(&rest[..value_at]);
-        out.push_str(TARGET);
+        out.push_str(placeholder);
         rest = &rest[value_at + value_len..];
     }
     out.push_str(rest);

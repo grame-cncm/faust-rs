@@ -662,7 +662,15 @@ These flags are only meaningful together with `--svg`.
 These print one line and exit before any compilation.
 
 - `-v, --version` (`-version` compatibility): print `faust-rs <version>` plus
-  copyright text.
+  copyright text. A build from a Git checkout follows the version with the
+  short commit hash and its date, `faust-rs 0.8.0 (2199d069 2026-10-06)`; a
+  build from a source archive prints the version alone. The package version
+  only changes at a release, so every commit between two releases prints the
+  same one: to check that a binary is the commit a project pins
+  (`cargo install --git ... --rev <hash>`), compare the commit, or the
+  `compiler.commit` field of the diagnostics JSON (`--check --error-format
+  json`), which carries the full hash. Generated code names the package
+  version only.
 - `--libdir` (`-libdir`): print the directory containing libfaust libraries.
 - `--includedir` (`-includedir`): print the directory containing Faust
   headers.

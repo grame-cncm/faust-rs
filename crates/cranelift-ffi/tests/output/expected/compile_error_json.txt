@@ -3,6 +3,8 @@ exit=1
 --- stdout
 {
   "compiler": {
+    "commit": "<COMMIT>",
+    "commit_date": "<COMMIT_DATE>",
     "name": "faust-rs",
     "target": "<TARGET>",
     "version": "0.8.0"

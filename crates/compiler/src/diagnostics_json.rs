@@ -32,6 +32,11 @@ pub struct DiagnosticsCompilerMetadata {
     pub version: String,
     /// Target architecture/operating-system description.
     pub target: String,
+    /// Full hash of the Git commit of the build, when known. The package
+    /// version is the same for every commit between two releases.
+    pub commit: Option<String>,
+    /// Committer date (`YYYY-MM-DD`) of `commit`, present exactly when it is.
+    pub commit_date: Option<String>,
 }
 
 impl Default for DiagnosticsCompilerMetadata {
@@ -40,6 +45,8 @@ impl Default for DiagnosticsCompilerMetadata {
             name: "faust-rs".to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
             target: format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
+            commit: crate::Compiler::commit().map(str::to_owned),
+            commit_date: crate::Compiler::commit_date().map(str::to_owned),
         }
     }
 }
@@ -219,13 +226,20 @@ pub fn render_diagnostics_v2_json(
         })
         .collect::<Vec<_>>();
 
+    let mut compiler = json!({
+        "name": options.compiler.name,
+        "version": options.compiler.version,
+        "target": options.compiler.target,
+    });
+    // Optional fields: written only for a build that knows its commit.
+    if let (Some(commit), Some(date)) = (&options.compiler.commit, &options.compiler.commit_date) {
+        compiler["commit"] = json!(commit);
+        compiler["commit_date"] = json!(date);
+    }
+
     serde_json::to_string_pretty(&json!({
         "schema_version": 2,
-        "compiler": {
-            "name": options.compiler.name,
-            "version": options.compiler.version,
-            "target": options.compiler.target,
-        },
+        "compiler": compiler,
         "request": {
             "mode": options.request.mode,
             "backend": options.request.backend,

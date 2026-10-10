@@ -1082,6 +1082,25 @@ impl Compiler {
         env!("CARGO_PKG_VERSION")
     }
 
+    #[must_use]
+    /// Returns the full hash of the Git commit this build comes from, or
+    /// `None` when it was not built from a Git checkout of the repository
+    /// (see `crates/compiler/build.rs`).
+    ///
+    /// The package version is the same for every commit between two
+    /// releases; the commit tells them apart. It is reported by `--version`
+    /// and the diagnostics JSON, never written into generated code.
+    pub fn commit() -> Option<&'static str> {
+        option_env!("FAUST_RS_COMMIT")
+    }
+
+    #[must_use]
+    /// Returns the committer date (`YYYY-MM-DD`) of [`Compiler::commit`],
+    /// present exactly when the commit is.
+    pub fn commit_date() -> Option<&'static str> {
+        option_env!("FAUST_RS_COMMIT_DATE")
+    }
+
     /// Parses one source string through the production parser crate.
     ///
     /// Returns [`CompilerError::Parse`] when parser recovery/errors are present.

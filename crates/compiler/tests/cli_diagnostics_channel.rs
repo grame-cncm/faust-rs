@@ -163,6 +163,37 @@ fn assert_diagnostics_v2_shape(value: &serde_json::Value, case: &Path) {
         "compiler for {}",
         case.display()
     );
+    // `commit` and `commit_date` are optional, but come together.
+    let commit = value["compiler"].get("commit");
+    let commit_date = value["compiler"].get("commit_date");
+    assert_eq!(
+        commit.is_some(),
+        commit_date.is_some(),
+        "compiler commit and commit_date for {}",
+        case.display()
+    );
+    if let (Some(commit), Some(date)) = (commit, commit_date) {
+        let commit = commit.as_str().unwrap_or_default();
+        assert!(
+            matches!(commit.len(), 40 | 64)
+                && commit
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "compiler commit for {}: {commit}",
+            case.display()
+        );
+        let date = date.as_str().unwrap_or_default();
+        assert!(
+            date.len() == 10
+                && date.bytes().enumerate().all(|(i, b)| if i == 4 || i == 7 {
+                    b == b'-'
+                } else {
+                    b.is_ascii_digit()
+                }),
+            "compiler commit_date for {}: {date}",
+            case.display()
+        );
+    }
     assert!(
         value["request"].is_object(),
         "request for {}",
@@ -310,6 +341,29 @@ fn json_schema_and_every_negative_corpus_entry_are_structurally_valid() {
             );
         }
     }
+}
+
+#[test]
+fn json_compiler_block_names_the_commit_of_the_build() {
+    // grame-cncm/faust-rs#20: the package version is the same for every commit
+    // between two releases, so a downstream pin is checked against the commit.
+    let output = run_check_json(&corpus_path("err_01_parse_missing_rhs.dsp"), &[]);
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("v2 output should be one JSON document");
+    let compiler_block = &value["compiler"];
+    assert_eq!(compiler_block["version"], compiler::Compiler::version());
+    assert_eq!(
+        compiler_block
+            .get("commit")
+            .and_then(serde_json::Value::as_str),
+        compiler::Compiler::commit()
+    );
+    assert_eq!(
+        compiler_block
+            .get("commit_date")
+            .and_then(serde_json::Value::as_str),
+        compiler::Compiler::commit_date()
+    );
 }
 
 // ─── D1 x D2: one failure case per stage-family namespace ──────────────────

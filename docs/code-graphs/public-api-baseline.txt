@@ -528,6 +528,8 @@ fn CompileOptionArgs::real_type
 fn CompileOptionArgs::require_block_compute
 fn CompileOptionArgs::scheduling
 fn CompileOptionArgs::to_argv
+fn Compiler::commit
+fn Compiler::commit_date
 fn Compiler::compile_file
 fn Compiler::compile_file_default
 fn Compiler::compile_file_default_to_asc

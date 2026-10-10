@@ -23,7 +23,21 @@
       "properties": {
         "name": { "const": "faust-rs" },
         "version": { "type": "string" },
-        "target": { "type": "string" }
+        "target": { "type": "string" },
+        "commit": {
+          "description": "Full hash of the Git commit of the build; absent when the build does not know it. The version is the same for every commit between two releases.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "commit_date": {
+          "description": "Committer date of commit.",
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        }
+      },
+      "dependentRequired": {
+        "commit": ["commit_date"],
+        "commit_date": ["commit"]
       }
     },
     "request": {

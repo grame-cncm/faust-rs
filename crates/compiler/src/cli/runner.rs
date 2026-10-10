@@ -93,11 +93,31 @@ pub fn maybe_print_error_format_help(enabled: bool) {
 }
 
 /// Renders the `-v` / `--version` output.
+///
+/// The first line is `faust-rs <version>`, followed, for a build from a Git
+/// checkout, by the short commit hash and its date, as `rustc` and `cargo`
+/// print them: `faust-rs 0.8.0 (2199d069 2026-10-06)`. Every commit between
+/// two releases has the same package version; the commit tells them apart.
 pub fn render_version_text() -> String {
     format!(
         "faust-rs {}\nCopyright (C) 2002-2026, GRAME - Centre National de Creation Musicale. All rights reserved.",
-        Compiler::version()
+        version_line(
+            Compiler::version(),
+            Compiler::commit(),
+            Compiler::commit_date()
+        )
     )
+}
+
+/// The version and, when both are known, the 8-digit commit and its date.
+pub(super) fn version_line(version: &str, commit: Option<&str>, date: Option<&str>) -> String {
+    match (commit, date) {
+        (Some(commit), Some(date)) => {
+            let short = commit.get(..8).unwrap_or(commit);
+            format!("{version} ({short} {date})")
+        }
+        _ => version.to_owned(),
+    }
 }
 
 /// Renders the first requested Faust directory-info flag, following the C++

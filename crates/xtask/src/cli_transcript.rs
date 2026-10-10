@@ -70,8 +70,10 @@
 //!    directory under `target/`, never into the per-run output directory.
 //! 2. **Genuinely unstable fields must be normalized, and only those.** The
 //!    Cranelift report prints a runtime `compute_entry_addr`, which differs on
-//!    every execution; it is replaced by a placeholder. Nothing else is
-//!    rewritten, so a real change cannot hide behind a normalization rule.
+//!    every execution; it is replaced by a placeholder. So is the commit that
+//!    `--version` prints after the package version, which changes with every
+//!    commit of the binary under test. Nothing else is rewritten, so a real
+//!    change cannot hide behind a normalization rule.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -354,5 +356,67 @@ fn run(binary: &Path, args: &[&str]) -> String {
         rest = &after[hex_len..];
     }
     normalized.push_str(rest);
-    normalized
+    normalize_version_commit(&normalized)
+}
+
+/// Replaces the build's commit on the `--version` line,
+/// `faust-rs 0.8.0 (2199d069 2026-10-06)`, by `(NORMALIZED)`. The package
+/// version stays: it changes only at a release, and then on purpose.
+fn normalize_version_commit(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let body = line.trim_end_matches('\n');
+        match version_commit_start(body) {
+            Some(at) => {
+                out.push_str(&body[..at]);
+                out.push_str("(NORMALIZED)");
+                out.push_str(&line[body.len()..]);
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
+/// Where `(<8 hex digits> <YYYY-MM-DD>)` starts on a `faust-rs <version>`
+/// line that ends with it.
+fn version_commit_start(line: &str) -> Option<usize> {
+    let words: Vec<&str> = line.split(' ').collect();
+    let [name, _version, commit, date] = words.as_slice() else {
+        return None;
+    };
+    let commit = commit.strip_prefix('(')?;
+    let date = date.strip_suffix(')')?;
+    let is_date = date.len() == 10
+        && date.bytes().enumerate().all(|(i, b)| match i {
+            4 | 7 => b == b'-',
+            _ => b.is_ascii_digit(),
+        });
+    (*name == "faust-rs"
+        && commit.len() == 8
+        && commit.bytes().all(|b| b.is_ascii_hexdigit())
+        && is_date)
+        .then(|| line.len() - commit.len() - date.len() - 3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_version_commit;
+
+    #[test]
+    fn the_version_commit_is_normalized_and_nothing_else() {
+        assert_eq!(
+            normalize_version_commit("faust-rs 0.8.0 (2199d069 2026-10-06)\nCopyright\n"),
+            "faust-rs 0.8.0 (NORMALIZED)\nCopyright\n"
+        );
+        // A build without a commit, and lines that only look alike, are kept.
+        for text in [
+            "faust-rs 0.8.0\n",
+            "faust-rs 0.8.0 (2199d069)\n",
+            "faust-rs 0.8.0 (2199d06z 2026-10-06)\n",
+            "// Code generated with faust-rs 0.8.0 (2199d069 2026-10-06)\n",
+        ] {
+            assert_eq!(normalize_version_commit(text), text);
+        }
+    }
 }

@@ -302,7 +302,8 @@ against the schema for every entry of the negative corpus, enforced by
 ```jsonc
 {
   "schema_version": 2,
-  "compiler": { "name": "faust-rs", "version": "...", "target": "..." },
+  "compiler": { "name": "faust-rs", "version": "...", "target": "...",
+                "commit": "...", "commit_date": "YYYY-MM-DD" },
   "request": { "mode": null, "backend": null, "normalized_options": [] },
   "status": "failed",
   "sources": [
@@ -312,6 +313,10 @@ against the schema for every entry of the negative corpus, enforced by
   "diagnostics": [ /* ... */ ]
 }
 ```
+
+`compiler.commit` (the full hash) and `compiler.commit_date` identify the build
+when it comes from a Git checkout, and are absent otherwise: `version` is the
+same for every commit between two releases.
 
 `sources` is the immutable snapshot of what was actually compiled. Diagnostic
 ranges index into it by `source_id`, and `content_hash` lets a tool detect that

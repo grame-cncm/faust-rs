@@ -24,7 +24,7 @@ use super::diagnostics::{
     format_diagnostics_json_with_verbosity,
 };
 use super::runner::{
-    emit_wasm_output, render_directory_info, render_version_text, render_wast_output,
+    emit_wasm_output, render_directory_info, render_version_text, render_wast_output, version_line,
 };
 use super::validate::validate_memory_manager_options;
 
@@ -588,6 +588,49 @@ fn version_mentions_faust_copyright() {
     assert!(rendered.contains(
         "Copyright (C) 2002-2026, GRAME - Centre National de Creation Musicale. All rights reserved."
     ));
+}
+
+#[test]
+fn version_line_names_the_commit_of_a_git_build() {
+    let commit = "2199d069e462b34d960321da06d7b0ebbc08d0aa";
+    assert_eq!(
+        version_line("0.8.0", Some(commit), Some("2026-10-06")),
+        "0.8.0 (2199d069 2026-10-06)"
+    );
+    // Outside a Git checkout, or with one of the two missing: the version alone.
+    assert_eq!(version_line("0.8.0", None, None), "0.8.0");
+    assert_eq!(version_line("0.8.0", Some(commit), None), "0.8.0");
+}
+
+#[test]
+fn version_text_reports_this_build_commit() {
+    let first = render_version_text()
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    match (Compiler::commit(), Compiler::commit_date()) {
+        (Some(commit), Some(date)) => {
+            assert_eq!(commit.len(), 40, "full hash expected, got {commit}");
+            assert!(commit.bytes().all(|b| b.is_ascii_hexdigit()));
+            assert!(is_iso_date(date), "YYYY-MM-DD expected, got {date}");
+            assert_eq!(
+                first,
+                format!("faust-rs {} ({} {date})", Compiler::version(), &commit[..8])
+            );
+        }
+        (None, None) => assert_eq!(first, format!("faust-rs {}", Compiler::version())),
+        other => panic!("commit and date must be known together, got {other:?}"),
+    }
+}
+
+fn is_iso_date(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 10
+        && bytes.iter().enumerate().all(|(i, b)| match i {
+            4 | 7 => *b == b'-',
+            _ => b.is_ascii_digit(),
+        })
 }
 
 #[test]
