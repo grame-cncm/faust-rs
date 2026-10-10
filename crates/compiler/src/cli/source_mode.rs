@@ -81,7 +81,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.parse {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file(input_path, &cli.import_dir);
         timer.phase("parse");
@@ -102,7 +107,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_box {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file(input_path, &cli.import_dir);
         timer.phase("parse");
@@ -124,7 +134,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.export_dsp {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // The recorded `compile_options` are rebuilt from the parsed model
         // rather than read back from `std::env::args`. C++ records its raw
@@ -144,7 +159,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.svg {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // Use eval+propagate to get the evaluated process box (post-eval form).
         let result = compiler.compile_file_to_signals(input_path, &cli.import_dir);
@@ -193,7 +213,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_sig {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file_to_signals(input_path, &cli.import_dir);
         timer.phase("signals");
@@ -221,7 +246,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_sig_dag {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file_to_signals(input_path, &cli.import_dir);
         timer.phase("signals");
@@ -246,7 +276,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_sig_dag_prepared {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file_to_signals(input_path, &cli.import_dir);
         timer.phase("signals");
@@ -293,7 +328,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_fir_verify {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = Compiler::new()
             .with_fir_verify_options(FirVerifyOptions {
                 enabled: false,
@@ -335,7 +375,12 @@ pub(crate) fn run_source_mode(
         // block above rejects `--check --no-fir-verify`, so verification
         // always actually runs here -- unlike `--dump-fir-verify`, which
         // disables the built-in verify to report it manually.
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file_to_fir_with_lane(
             input_path,
@@ -353,7 +398,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_fir || matches!(cli.lang, Some(CliLang::Fir)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file_to_fir_with_lane(
             input_path,
@@ -380,7 +430,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_json && cli.lang.is_none() {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file_to_json_with_compile_options_memory_and_class_name(
             input_path,
@@ -403,7 +458,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_interp || matches!(cli.lang, Some(CliLang::Interp)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // Honor `-cn`/`--class-name` like every other textual backend; this
         // used to be a hardcoded default, so the flag was silently ignored.
@@ -442,7 +502,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_cranelift || matches!(cli.lang, Some(CliLang::Cranelift)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let lane = selected_codegen_lane(cli).into_compiler_lane();
         let options = CraneliftOptions {
@@ -476,7 +541,12 @@ pub(crate) fn run_source_mode(
     }
 
     if matches!(cli.lang, Some(CliLang::Asc)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // Route through the facade helper, exactly like the Julia branch below.
         // The previous code lowered to FIR generically and called
@@ -516,7 +586,12 @@ pub(crate) fn run_source_mode(
     }
 
     if let Some(lang @ (CliLang::Codebox | CliLang::CodeboxTest)) = cli.lang {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         // No `class_name`: a codebox file is flat and declares no class, so
         // `-cn` has nothing to name here.
@@ -547,7 +622,12 @@ pub(crate) fn run_source_mode(
     }
 
     if matches!(cli.lang, Some(CliLang::Cmajor)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = CmajorOptions {
             class_name: selected_class_name(cli).unwrap_or_else(|| "mydsp".to_owned()),
@@ -589,7 +669,12 @@ pub(crate) fn run_source_mode(
     }
 
     if matches!(cli.lang, Some(CliLang::Julia)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = JuliaOptions {
             class_name: selected_class_name(cli),
@@ -625,7 +710,12 @@ pub(crate) fn run_source_mode(
     }
 
     if matches!(cli.lang, Some(CliLang::Rust)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let result = compiler.compile_file_to_fir_with_lane(
             input_path,
@@ -669,7 +759,12 @@ pub(crate) fn run_source_mode(
     }
 
     if matches!(cli.lang, Some(CliLang::Wasm)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = WasmOptions {
             double_precision: cli.compile.double,
@@ -699,7 +794,12 @@ pub(crate) fn run_source_mode(
     }
 
     if matches!(cli.lang, Some(CliLang::Wast)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = WasmOptions {
             double_precision: cli.compile.double,
@@ -728,7 +828,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_cpp || matches!(cli.lang, Some(CliLang::Cpp)) || mode_count == 0 {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = CppOptions {
             memory_manager_mode: selected_memory_manager_mode(cli),
@@ -763,7 +868,12 @@ pub(crate) fn run_source_mode(
     }
 
     if cli.dump_c || matches!(cli.lang, Some(CliLang::C)) {
-        let mut timer = CompilationTimer::new(cli.timeout, cli.compilation_time);
+        let mut timer = CompilationTimer::new(
+            cli.timeout,
+            cli.compilation_time,
+            cli.error_format,
+            cli.error_verbosity,
+        );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let options = COptions {
             memory_manager_mode: selected_memory_manager_mode(cli),

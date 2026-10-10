@@ -182,6 +182,7 @@ observable in practice today.
 | `FRS-COMP-0005` | `compiler` | Parse reported no errors yet exposed no root node. Internal invariant guard — reaching it means a compiler bug, not a DSP mistake (an empty file fails later with `FRS-EVAL-0001`). | `CompilerError::missing_root` |
 | `FRS-COMP-0006` | `transform` | `--table-init const` embedded an explicit `ma.SR` value in a generated table; emitted as a non-fatal `--warn` diagnostic. | `Compiler::pipeline_boxes_to_signals` |
 | `FRS-COMP-0007` | `compiler` | `-e` expansion cannot serialize the evaluated program: it has no output signal, or its box contains a shape with no Faust source syntax. Expansion refuses rather than emitting a placeholder, because its contract is that the output re-compiles. | `CompilerError::expand_failed` |
+| `FRS-COMP-0008` | `compiler` | The compilation exceeded the CLI `--timeout` limit (0 disables it). Emitted by the CLI from its per-phase check or its watchdog, which then exits with status 1. Human mode prints `ERROR: compilation timeout ...` on stderr; under `--error-format json` it is the run's one diagnostics document on stdout. | `timeout_diagnostic` / `report_timeout` (`crates/compiler/src/cli/timer.rs`) |
 
 ### `FRS-CODEGEN-*` — Backend emission (1 code)
 

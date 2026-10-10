@@ -545,7 +545,10 @@ line — the report C++ prints under `-wall` from its own table promotion.
 
 `--compilation-time` (`-time` compatibility) prints per-phase timing lines to
 stderr. `--timeout` sets a global compilation timeout in seconds (default:
-`120`; `0` disables the watchdog).
+`120`; `0` disables it, for the watchdog and the per-phase check alike). A
+compilation that exceeds it fails with `FRS-COMP-0008`: one `ERROR:
+compilation timeout ...` line on stderr, or, under `--error-format json`, one
+diagnostics document on stdout like any other failure.
 
 ### `--fir-fixture <name>` and `--list-fir-fixtures`
 

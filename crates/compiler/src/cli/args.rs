@@ -274,7 +274,7 @@ pub struct CliArgs {
     /// Display compilation phases timing information (`-time`).
     #[arg(long = "compilation-time", action = ArgAction::SetTrue)]
     pub compilation_time: bool,
-    /// Maximum compilation time in seconds (default: 120).
+    /// Maximum compilation time in seconds (default: 120; 0 disables it).
     #[arg(long = "timeout", default_value_t = 120)]
     pub timeout: u64,
     /// Generate SVG block-diagram files in `<name>-svg/` (`-svg`).

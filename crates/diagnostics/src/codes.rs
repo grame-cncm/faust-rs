@@ -180,6 +180,13 @@ pub const COMP_TABLE_INIT_SAMPLE_RATE: DiagnosticCode = DiagnosticCode("FRS-COMP
 /// contains a shape with no Faust source syntax — the expansion's contract is
 /// that its output re-compiles, so emitting a placeholder is not an option.
 pub const COMP_EXPAND_FAILED: DiagnosticCode = DiagnosticCode("FRS-COMP-0007");
+/// The compilation exceeded the CLI `--timeout` limit.
+///
+/// Emitted by the CLI, which then exits with status 1. Under `--error-format
+/// json` it is the one diagnostics document of the run, so that a consumer
+/// always gets a document. C++ equivalent: the `-t` timeout, which stops the
+/// process with a text message.
+pub const COMP_TIMEOUT: DiagnosticCode = DiagnosticCode("FRS-COMP-0008");
 
 /// Backend code generation failed while emitting from FIR.
 ///
@@ -242,6 +249,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         COMP_MISSING_ROOT,
         COMP_TABLE_INIT_SAMPLE_RATE,
         COMP_EXPAND_FAILED,
+        COMP_TIMEOUT,
         CODEGEN_EMISSION_FAILED,
     ]
 }

@@ -620,10 +620,10 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `emit_cli_json_companion_for_backend` | `crates/compiler/src/cli/runner.rs:612` |
 | `fn` | `render_fir_verify_report` | `crates/compiler/src/cli/runner.rs:750` |
 | `fn` | `run_main` | `crates/compiler/src/cli/runner.rs:779` |
-| `struct` | `CompilationTimer` | `crates/compiler/src/cli/timer.rs:11` |
-| `fn` | `CompilationTimer::new` | `crates/compiler/src/cli/timer.rs:24` |
-| `fn` | `CompilationTimer::phase` | `crates/compiler/src/cli/timer.rs:35` |
-| `fn` | `CompilationTimer::total` | `crates/compiler/src/cli/timer.rs:49` |
+| `struct` | `CompilationTimer` | `crates/compiler/src/cli/timer.rs:84` |
+| `fn` | `CompilationTimer::new` | `crates/compiler/src/cli/timer.rs:101` |
+| `fn` | `CompilationTimer::phase` | `crates/compiler/src/cli/timer.rs:118` |
+| `fn` | `CompilationTimer::total` | `crates/compiler/src/cli/timer.rs:130` |
 | `enum` | `TableInitArg` | `crates/compiler/src/compile_options.rs:23` |
 | `struct` | `CompileOptionArgs` | `crates/compiler/src/compile_options.rs:44` |
 | `fn` | `CompileOptionArgs::from_argv` | `crates/compiler/src/compile_options.rs:210` |
@@ -1176,8 +1176,9 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `const` | `COMP_MISSING_ROOT` | `crates/diagnostics/src/codes.rs:174` |
 | `const` | `COMP_TABLE_INIT_SAMPLE_RATE` | `crates/diagnostics/src/codes.rs:176` |
 | `const` | `COMP_EXPAND_FAILED` | `crates/diagnostics/src/codes.rs:182` |
-| `const` | `CODEGEN_EMISSION_FAILED` | `crates/diagnostics/src/codes.rs:191` |
-| `fn` | `all_codes` | `crates/diagnostics/src/codes.rs:196` |
+| `const` | `COMP_TIMEOUT` | `crates/diagnostics/src/codes.rs:189` |
+| `const` | `CODEGEN_EMISSION_FAILED` | `crates/diagnostics/src/codes.rs:198` |
+| `fn` | `all_codes` | `crates/diagnostics/src/codes.rs:203` |
 | `mod` | `codes` | `crates/diagnostics/src/lib.rs:33` |
 | `use` | `codes::all_codes` | `crates/diagnostics/src/lib.rs:37` |
 | `use` | `model_v2` | `crates/diagnostics/src/lib.rs:38` |

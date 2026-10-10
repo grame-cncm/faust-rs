@@ -719,3 +719,44 @@ fn error_format_json_failure_with_dump_mode_is_clean_json_on_stdout() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+// ─── --timeout 0 disables the deadline (W2 of the 2026-10-08 plan) ─────────
+
+#[test]
+fn zero_timeout_disables_the_deadline_in_source_and_fixture_modes() {
+    // the phase timer used to reject every compilation against a zero-second
+    // limit while the watchdog took 0 as "disabled"
+    let dir = std::env::temp_dir().join(format!("faust-rs-zero-timeout-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let tiny = dir.join("tiny_zero_timeout.dsp");
+    std::fs::write(&tiny, "process = _ : *(0.5);\n").expect("write the program");
+    for flag in ["--timeout", "-timeout"] {
+        let output = Command::new(bin_path())
+            .args(["--check", flag, "0"])
+            .arg(&tiny)
+            .output()
+            .expect("run faust-rs");
+        assert!(
+            output.status.success(),
+            "{flag} 0: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let output = Command::new(bin_path())
+        .args([
+            "--fir-fixture",
+            "sine_phasor",
+            "--timeout",
+            "0",
+            "-lang",
+            "cpp",
+        ])
+        .output()
+        .expect("run faust-rs");
+    assert!(
+        output.status.success(),
+        "fixture mode: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

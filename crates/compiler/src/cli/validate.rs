@@ -44,20 +44,21 @@ pub(crate) fn spawn_timeout_watchdog(
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let timeout_secs = cli.timeout;
-        if timeout_secs > 0 {
+        let (format, verbosity) = (cli.error_format, cli.error_verbosity);
+        if let Some(limit) = super::timer::deadline(timeout_secs) {
             let cancel_clone = std::sync::Arc::clone(&cancel);
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(timeout_secs));
+                std::thread::sleep(limit);
                 // First, try cooperative cancellation (for eval phase).
                 cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
                 // Give the cooperative path a grace period to take effect.
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 // If still alive, force exit (for non-eval phase hangs).
-                eprintln!(
-                    "ERROR: compilation timeout ({}s limit exceeded)",
-                    timeout_secs,
+                super::timer::report_timeout(
+                    super::timer::timeout_diagnostic(timeout_secs, None, None),
+                    format,
+                    verbosity,
                 );
-                std::process::exit(1);
             });
         }
     }
