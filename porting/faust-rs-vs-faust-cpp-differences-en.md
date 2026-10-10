@@ -869,6 +869,26 @@ must run unchanged with Faust C++ should not pass them.
 - Evidence: `porting/wasm-julia-maturity-diff-gap-005-analysis-and-plan-2026-08-14-en.md`
   (`G5-W4`).
 
+### DIFF-BACK-007 — host functions called by the interpreter
+
+- Status: `extension`.
+- The C++ FBC interpreter calls no host function: an `ffunction` outside its
+  math table is an error. faust-rs keeps that table and adds a registry
+  (`registerCInterpreterForeignFunction`, name and address), which the
+  executor calls through `foreign_call::invoke`.
+- Rust has no call whose signature is built at run time, so `invoke` calls
+  the signatures it enumerates: up to four arguments, each `int`, `float` or
+  `double` in any combination, returning one of these or nothing, and the
+  `bool` shapes of its first version (`foreign_call::is_supported`, which the
+  bytecode compiler checks). Until 2026-10-10 it enumerated the homogeneous
+  shapes of up to two arguments only, so `jn(int, float)`, `ldexp(float,
+  int)` or `ilogb(float) -> int` from `maths.lib` failed to compile ("outside
+  the interpreter foreign-call ABI"), and `void(int)`, accepted by the
+  compiler, failed at execution. Cranelift calls any signature.
+- Evidence: the tests of `crates/foreign-call/src/lib.rs` and
+  `a_mixed_signature_foreign_function_executes_in_interp_ffi`
+  (`crates/interp-ffi/src/factory.rs`).
+
 ## 7. Public API and representation adaptations
 
 ### DIFF-API-001 — owned Rust compiler facade

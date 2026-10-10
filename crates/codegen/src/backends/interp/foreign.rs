@@ -74,26 +74,26 @@ pub struct ForeignSignature {
 }
 
 /// Returns `true` if the interpreter runtime can execute this foreign-call
-/// signature with the current bounded scalar ABI.
+/// signature.
 ///
-/// The shape restrictions (0-2 args, all args the same type, and that type
-/// matching `ret` unless `ret` is `Void`) mirror the finite set of
-/// `extern "C" fn` signatures that `foreign_call::invoke` hand-enumerates and
-/// dispatches to via `transmute`; there is no generic FFI call path, so any
-/// signature outside that fixed table cannot actually be invoked at runtime.
+/// `foreign_call::invoke` calls a function through a pointer type known at
+/// compile time, so it calls the signatures it enumerates only:
+/// [`foreign_call::is_supported`] (up to [`foreign_call::MAX_ARGS`] `int`,
+/// `float` or `double` arguments in any combination, and the `bool` shapes).
+/// `FaustFloat` is `float` or `double`, which are supported alike.
 #[must_use]
 pub fn is_supported_signature(ret: ForeignScalarType, args: &[ForeignScalarType]) -> bool {
-    match args {
-        [] => true,
-        [arg] => *arg != ForeignScalarType::Void && (*arg == ret || ret == ForeignScalarType::Void),
-        [arg0, arg1] => {
-            *arg0 != ForeignScalarType::Void
-                && *arg1 != ForeignScalarType::Void
-                && arg0 == arg1
-                && (*arg0 == ret || ret == ForeignScalarType::Void)
+    let abi = |ty: ForeignScalarType| match ty {
+        ForeignScalarType::Int32 => foreign_call::ScalarType::Int32,
+        ForeignScalarType::Float32 | ForeignScalarType::FaustFloat => {
+            foreign_call::ScalarType::Float32
         }
-        _ => false,
-    }
+        ForeignScalarType::Float64 => foreign_call::ScalarType::Float64,
+        ForeignScalarType::Bool => foreign_call::ScalarType::Bool,
+        ForeignScalarType::Void => foreign_call::ScalarType::Void,
+    };
+    let args: Vec<_> = args.iter().map(|ty| abi(*ty)).collect();
+    foreign_call::is_supported(abi(ret), &args)
 }
 
 impl ForeignSignature {

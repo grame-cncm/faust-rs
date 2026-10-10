@@ -1755,9 +1755,11 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 
 | Kind | Name | Location |
 |---|---|---|
-| `enum` | `ScalarType` | `crates/foreign-call/src/lib.rs:11` |
-| `enum` | `Value` | `crates/foreign-call/src/lib.rs:26` |
-| `fn` | `invoke` | `crates/foreign-call/src/lib.rs:45` |
+| `enum` | `ScalarType` | `crates/foreign-call/src/lib.rs:19` |
+| `enum` | `Value` | `crates/foreign-call/src/lib.rs:34` |
+| `const` | `MAX_ARGS` | `crates/foreign-call/src/lib.rs:48` |
+| `fn` | `is_supported` | `crates/foreign-call/src/lib.rs:57` |
+| `fn` | `invoke` | `crates/foreign-call/src/lib.rs:139` |
 
 ## `graph`
 

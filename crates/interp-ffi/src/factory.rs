@@ -1088,6 +1088,16 @@ mod tests {
         x * 2.0
     }
 
+    /// The shape of `jn(int, float)`.
+    extern "C" fn ffi_interp_test_jn(n: i32, x: f32) -> f32 {
+        n as f32 * 100.0 + x
+    }
+
+    /// Three mixed arguments, as `jn` and `ldexp` together.
+    extern "C" fn ffi_interp_test_mix(x: f32, e: i32, y: f32) -> f32 {
+        x * e as f32 + y
+    }
+
     #[test]
     fn parse_ffi_compile_args_accepts_i_cn_and_double() {
         let argv = vec![
@@ -1337,6 +1347,63 @@ mod tests {
         unsafe {
             unregisterCInterpreterForeignFunction(c"ffi_interp_test_gain".as_ptr());
         }
+        clearCInterpreterForeignFunctions();
+        unsafe { deleteCInterpreterDSPInstance(dsp) };
+        assert!(unsafe { deleteCInterpreterDSPFactory(factory_ptr) });
+    }
+
+    /// A host function of mixed argument types is called: `foreign_call`
+    /// enumerated the homogeneous signatures of up to two arguments only, so
+    /// `jn(int, float)`, `ldexp(float, int)` and their kind failed to compile
+    /// ("outside the interpreter foreign-call ABI").
+    #[test]
+    fn a_mixed_signature_foreign_function_executes_in_interp_ffi() {
+        let _guard = crate::test_serial_guard();
+        use crate::instance::{
+            computeCInterpreterDSPInstance, createCInterpreterDSPInstance,
+            deleteCInterpreterDSPInstance, initCInterpreterDSPInstance,
+        };
+        clearCInterpreterForeignFunctions();
+        unsafe {
+            registerCInterpreterForeignFunction(
+                c"ffi_interp_test_jn".as_ptr(),
+                (ffi_interp_test_jn as *const ()).cast_mut().cast(),
+            );
+            registerCInterpreterForeignFunction(
+                c"ffi_interp_test_mix".as_ptr(),
+                (ffi_interp_test_mix as *const ()).cast_mut().cast(),
+            );
+        }
+        let factory_any = compile_factory_from_string_fastlane(
+            "ExecMixed",
+            "jn = ffunction(float ffi_interp_test_jn(int, float), \"t.h\", \"\");\n\
+             mix = ffunction(float ffi_interp_test_mix(float, int, float), \"t.h\", \"\");\n\
+             process = _ <: jn(2), mix(_, 3, 0.25);\n",
+            &["-cn".to_owned(), "ExecMixed".to_owned()],
+        )
+        .expect("a mixed signature compiles");
+        let factory_ptr = cache_test_factory(factory_any);
+        let dsp = unsafe { createCInterpreterDSPInstance(factory_ptr) };
+        assert!(!dsp.is_null(), "instance creation must succeed");
+        unsafe { initCInterpreterDSPInstance(dsp, 44100) };
+
+        const FRAMES: usize = 4;
+        let input_data = [0.5_f32; FRAMES];
+        let mut jn_out = vec![0.0_f32; FRAMES];
+        let mut mix_out = vec![0.0_f32; FRAMES];
+        let mut inputs = [input_data.as_ptr().cast_mut()];
+        let mut outputs = [jn_out.as_mut_ptr(), mix_out.as_mut_ptr()];
+        unsafe {
+            computeCInterpreterDSPInstance(
+                dsp,
+                FRAMES as i32,
+                inputs.as_mut_ptr(),
+                outputs.as_mut_ptr(),
+            );
+        }
+        assert_eq!(jn_out, [200.5; FRAMES]);
+        assert_eq!(mix_out, [1.75; FRAMES]);
+
         clearCInterpreterForeignFunctions();
         unsafe { deleteCInterpreterDSPInstance(dsp) };
         assert!(unsafe { deleteCInterpreterDSPFactory(factory_ptr) });

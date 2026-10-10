@@ -1627,9 +1627,11 @@ use tlib::on_compile_stack
 use types
 
 ## foreign-call
+const MAX_ARGS
 enum ScalarType
 enum Value
 fn invoke
+fn is_supported
 
 ## graph
 const CRATE_NAME
