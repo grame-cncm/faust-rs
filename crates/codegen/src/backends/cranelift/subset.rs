@@ -4,6 +4,7 @@
 //! This module provides the deterministic pre-checks and first-gap reasons used
 //! by strict validation and progress reports.
 
+use super::math::resolve_math_call;
 use super::*;
 
 /// Fast pre-check: returns `true` when the current subset matcher accepts the
@@ -335,53 +336,29 @@ pub(crate) fn subset_expr_gap_reason(
         FirMatch::Neg { value, .. } => {
             subset_expr_gap_reason(store, value, extern_data_symbols, extern_function_symbols)
         }
-        FirMatch::FunCall { name, args, .. } => {
-            if extern_function_symbols.contains_key(&name) {
-                args.into_iter().find_map(|x| {
-                    subset_expr_gap_reason(store, x, extern_data_symbols, extern_function_symbols)
-                })
-            } else if fir::FirMathOp::from_symbol(&name).is_none()
-                && !matches!(
-                    name.as_str(),
-                    "abs"
-                        | "min_i"
-                        | "max_i"
-                        | "isnanf"
-                        | "isnan"
-                        | "isinff"
-                        | "isinf"
-                        | "copysignf"
-                        | "copysign"
-                        | "acoshf"
-                        | "acosh"
-                        | "asinhf"
-                        | "asinh"
-                        | "atanhf"
-                        | "atanh"
-                        | "coshf"
-                        | "cosh"
-                        | "sinhf"
-                        | "sinh"
-                        | "tanhf"
-                        | "tanh"
-                )
-            {
+        FirMatch::FunCall { name, args, typ } => {
+            // The precision only picks between two variants of one shape.
+            let gap = match resolve_math_call(&name, &typ, args.len(), false) {
+                Some(Ok(_)) => None,
+                Some(Err(reason)) => Some(reason),
+                None if extern_function_symbols.contains_key(&name) => None,
                 // Not a math function the backend implements: a foreign
                 // function, which the JIT can call only at an address the host
                 // registered. The header an `ffunction` names is for the C and
                 // C++ backends; the JIT never compiles it.
-                Some(format!(
+                None => Some(format!(
                     "`{name}` has no Cranelift implementation: it is not a supported math \
                      function and no host function is registered under that name (the JIT \
                      does not compile the header an `ffunction` names, `-I` included); \
                      compile with `-lang cpp` or `-lang c`, or, when embedding, register \
                      it with `registerCCraneliftForeignFunction`"
-                ))
-            } else {
+                )),
+            };
+            gap.or_else(|| {
                 args.into_iter().find_map(|x| {
                     subset_expr_gap_reason(store, x, extern_data_symbols, extern_function_symbols)
                 })
-            }
+            })
         }
         FirMatch::Cast { value, .. } => {
             subset_expr_gap_reason(store, value, extern_data_symbols, extern_function_symbols)

@@ -283,80 +283,379 @@ extern "C" fn host_tanh(x: f64) -> f64 {
     x.tanh()
 }
 
-/// Registers Rust host math functions as JIT-importable symbols.
+/// The C type of a math function's parameter or result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MathScalar {
+    Int,
+    Float,
+    Double,
+}
+
+impl MathScalar {
+    /// The FIR type of a value of this C type.
+    pub(crate) fn fir_type(self) -> FirType {
+        match self {
+            Self::Int => FirType::Int32,
+            Self::Float => FirType::Float32,
+            Self::Double => FirType::Float64,
+        }
+    }
+
+    /// The CLIF type passed or returned at the call.
+    pub(crate) fn clif_type(self) -> Type {
+        match self {
+            Self::Int => types::I32,
+            Self::Float => types::F32,
+            Self::Double => types::F64,
+        }
+    }
+
+    /// Whether this is a real type (`float` or `double`) rather than `int`.
+    pub(crate) fn is_real(self) -> bool {
+        !matches!(self, Self::Int)
+    }
+}
+
+/// A host math function, typed by its pointer: the signature the subset
+/// pre-check and the lowering read is the one of the function the JIT calls.
+#[derive(Clone, Copy)]
+pub(crate) enum HostMathFn {
+    Float(extern "C" fn(f32) -> f32),
+    Double(extern "C" fn(f64) -> f64),
+    Float2(extern "C" fn(f32, f32) -> f32),
+    Double2(extern "C" fn(f64, f64) -> f64),
+    Int(extern "C" fn(i32) -> i32),
+    Int2(extern "C" fn(i32, i32) -> i32),
+    FloatToInt(extern "C" fn(f32) -> i32),
+    DoubleToInt(extern "C" fn(f64) -> i32),
+}
+
+impl HostMathFn {
+    /// The result type.
+    pub(crate) fn ret(self) -> MathScalar {
+        match self {
+            Self::Float(_) | Self::Float2(_) => MathScalar::Float,
+            Self::Double(_) | Self::Double2(_) => MathScalar::Double,
+            Self::Int(_) | Self::Int2(_) | Self::FloatToInt(_) | Self::DoubleToInt(_) => {
+                MathScalar::Int
+            }
+        }
+    }
+
+    /// The parameter types, in order.
+    pub(crate) fn params(self) -> &'static [MathScalar] {
+        match self {
+            Self::Float(_) | Self::FloatToInt(_) => &[MathScalar::Float],
+            Self::Double(_) | Self::DoubleToInt(_) => &[MathScalar::Double],
+            Self::Float2(_) => &[MathScalar::Float, MathScalar::Float],
+            Self::Double2(_) => &[MathScalar::Double, MathScalar::Double],
+            Self::Int(_) => &[MathScalar::Int],
+            Self::Int2(_) => &[MathScalar::Int, MathScalar::Int],
+        }
+    }
+
+    /// The address the JIT binds the symbol to.
+    fn address(self) -> *const u8 {
+        match self {
+            Self::Float(f) => f as *const u8,
+            Self::Double(f) => f as *const u8,
+            Self::Float2(f) => f as *const u8,
+            Self::Double2(f) => f as *const u8,
+            Self::Int(f) => f as *const u8,
+            Self::Int2(f) => f as *const u8,
+            Self::FloatToInt(f) => f as *const u8,
+            Self::DoubleToInt(f) => f as *const u8,
+        }
+    }
+}
+
+/// One math function the backend implements, under its C symbol.
+pub(crate) struct HostMath {
+    pub(crate) symbol: &'static str,
+    pub(crate) function: HostMathFn,
+}
+
+/// Every math function the Cranelift backend implements: the one inventory
+/// that the subset pre-check and the lowering (through
+/// [`super::math::resolve_math_call`]) and the JIT registration
+/// ([`register_host_symbols`]) read, so the three cannot disagree.
 ///
-/// The Cranelift lowering emits imported calls for many FIR math operations
-/// (`sin`, `pow`, `fmin`, etc.). This function binds those symbol names to Rust
-/// implementations so the JIT can resolve them during finalization.
-///
-/// Both `f32` (`*f`) and `f64` symbol variants are registered where the subset
-/// lowering supports both result types. The `host_*` helpers immediately above
-/// are intentionally tiny wrappers whose semantics match the interpreter/C++
-/// path (notably `rint` and `remainder`).
+/// Both `f32` (`*f`) and `f64` variants are listed where the backend supports
+/// both result types. The `host_*` helpers above are intentionally tiny
+/// wrappers whose semantics match the interpreter/C++ path (notably `rint`
+/// and `remainder`).
+pub(crate) static HOST_MATH: &[HostMath] = &[
+    HostMath {
+        symbol: "sinf",
+        function: HostMathFn::Float(host_sinf),
+    },
+    HostMath {
+        symbol: "sin",
+        function: HostMathFn::Double(host_sin),
+    },
+    HostMath {
+        symbol: "cosf",
+        function: HostMathFn::Float(host_cosf),
+    },
+    HostMath {
+        symbol: "cos",
+        function: HostMathFn::Double(host_cos),
+    },
+    HostMath {
+        symbol: "expf",
+        function: HostMathFn::Float(host_expf),
+    },
+    HostMath {
+        symbol: "exp",
+        function: HostMathFn::Double(host_exp),
+    },
+    HostMath {
+        symbol: "exp10f",
+        function: HostMathFn::Float(host_exp10f),
+    },
+    HostMath {
+        symbol: "exp10",
+        function: HostMathFn::Double(host_exp10),
+    },
+    HostMath {
+        symbol: "logf",
+        function: HostMathFn::Float(host_logf),
+    },
+    HostMath {
+        symbol: "log",
+        function: HostMathFn::Double(host_log),
+    },
+    HostMath {
+        symbol: "log10f",
+        function: HostMathFn::Float(host_log10f),
+    },
+    HostMath {
+        symbol: "log10",
+        function: HostMathFn::Double(host_log10),
+    },
+    HostMath {
+        symbol: "sqrtf",
+        function: HostMathFn::Float(host_sqrtf),
+    },
+    HostMath {
+        symbol: "sqrt",
+        function: HostMathFn::Double(host_sqrt),
+    },
+    HostMath {
+        symbol: "fabsf",
+        function: HostMathFn::Float(host_fabsf),
+    },
+    HostMath {
+        symbol: "fabs",
+        function: HostMathFn::Double(host_fabs),
+    },
+    HostMath {
+        symbol: "abs",
+        function: HostMathFn::Int(host_abs),
+    },
+    HostMath {
+        symbol: "floorf",
+        function: HostMathFn::Float(host_floorf),
+    },
+    HostMath {
+        symbol: "floor",
+        function: HostMathFn::Double(host_floor),
+    },
+    HostMath {
+        symbol: "ceilf",
+        function: HostMathFn::Float(host_ceilf),
+    },
+    HostMath {
+        symbol: "ceil",
+        function: HostMathFn::Double(host_ceil),
+    },
+    HostMath {
+        symbol: "tanf",
+        function: HostMathFn::Float(host_tanf),
+    },
+    HostMath {
+        symbol: "tan",
+        function: HostMathFn::Double(host_tan),
+    },
+    HostMath {
+        symbol: "atanf",
+        function: HostMathFn::Float(host_atanf),
+    },
+    HostMath {
+        symbol: "atan",
+        function: HostMathFn::Double(host_atan),
+    },
+    HostMath {
+        symbol: "asinf",
+        function: HostMathFn::Float(host_asinf),
+    },
+    HostMath {
+        symbol: "asin",
+        function: HostMathFn::Double(host_asin),
+    },
+    HostMath {
+        symbol: "acosf",
+        function: HostMathFn::Float(host_acosf),
+    },
+    HostMath {
+        symbol: "acos",
+        function: HostMathFn::Double(host_acos),
+    },
+    HostMath {
+        symbol: "rintf",
+        function: HostMathFn::Float(host_rintf),
+    },
+    HostMath {
+        symbol: "rint",
+        function: HostMathFn::Double(host_rint),
+    },
+    HostMath {
+        symbol: "roundf",
+        function: HostMathFn::Float(host_roundf),
+    },
+    HostMath {
+        symbol: "round",
+        function: HostMathFn::Double(host_round),
+    },
+    HostMath {
+        symbol: "min_i",
+        function: HostMathFn::Int2(host_min_i),
+    },
+    HostMath {
+        symbol: "max_i",
+        function: HostMathFn::Int2(host_max_i),
+    },
+    HostMath {
+        symbol: "fminf",
+        function: HostMathFn::Float2(host_fminf),
+    },
+    HostMath {
+        symbol: "fmin",
+        function: HostMathFn::Double2(host_fmin),
+    },
+    HostMath {
+        symbol: "fmaxf",
+        function: HostMathFn::Float2(host_fmaxf),
+    },
+    HostMath {
+        symbol: "fmax",
+        function: HostMathFn::Double2(host_fmax),
+    },
+    HostMath {
+        symbol: "powf",
+        function: HostMathFn::Float2(host_powf),
+    },
+    HostMath {
+        symbol: "pow",
+        function: HostMathFn::Double2(host_pow),
+    },
+    HostMath {
+        symbol: "atan2f",
+        function: HostMathFn::Float2(host_atan2f),
+    },
+    HostMath {
+        symbol: "atan2",
+        function: HostMathFn::Double2(host_atan2),
+    },
+    HostMath {
+        symbol: "fmodf",
+        function: HostMathFn::Float2(host_fmodf),
+    },
+    HostMath {
+        symbol: "fmod",
+        function: HostMathFn::Double2(host_fmod),
+    },
+    HostMath {
+        symbol: "remainderf",
+        function: HostMathFn::Float2(host_remainderf),
+    },
+    HostMath {
+        symbol: "remainder",
+        function: HostMathFn::Double2(host_remainder),
+    },
+    HostMath {
+        symbol: "isnanf",
+        function: HostMathFn::FloatToInt(host_isnanf),
+    },
+    HostMath {
+        symbol: "isnan",
+        function: HostMathFn::DoubleToInt(host_isnan),
+    },
+    HostMath {
+        symbol: "isinff",
+        function: HostMathFn::FloatToInt(host_isinff),
+    },
+    HostMath {
+        symbol: "isinf",
+        function: HostMathFn::DoubleToInt(host_isinf),
+    },
+    HostMath {
+        symbol: "copysignf",
+        function: HostMathFn::Float2(host_copysignf),
+    },
+    HostMath {
+        symbol: "copysign",
+        function: HostMathFn::Double2(host_copysign),
+    },
+    HostMath {
+        symbol: "acoshf",
+        function: HostMathFn::Float(host_acoshf),
+    },
+    HostMath {
+        symbol: "acosh",
+        function: HostMathFn::Double(host_acosh),
+    },
+    HostMath {
+        symbol: "asinhf",
+        function: HostMathFn::Float(host_asinhf),
+    },
+    HostMath {
+        symbol: "asinh",
+        function: HostMathFn::Double(host_asinh),
+    },
+    HostMath {
+        symbol: "atanhf",
+        function: HostMathFn::Float(host_atanhf),
+    },
+    HostMath {
+        symbol: "atanh",
+        function: HostMathFn::Double(host_atanh),
+    },
+    HostMath {
+        symbol: "coshf",
+        function: HostMathFn::Float(host_coshf),
+    },
+    HostMath {
+        symbol: "cosh",
+        function: HostMathFn::Double(host_cosh),
+    },
+    HostMath {
+        symbol: "sinhf",
+        function: HostMathFn::Float(host_sinhf),
+    },
+    HostMath {
+        symbol: "sinh",
+        function: HostMathFn::Double(host_sinh),
+    },
+    HostMath {
+        symbol: "tanhf",
+        function: HostMathFn::Float(host_tanhf),
+    },
+    HostMath {
+        symbol: "tanh",
+        function: HostMathFn::Double(host_tanh),
+    },
+];
+
+/// The math function the backend implements under the C symbol `symbol`.
+pub(crate) fn host_math(symbol: &str) -> Option<&'static HostMath> {
+    HOST_MATH.iter().find(|math| math.symbol == symbol)
+}
+
+/// Registers the functions of [`HOST_MATH`] as JIT-importable symbols, so the
+/// JIT resolves the calls the lowering emits during finalization.
 pub(crate) fn register_host_symbols(jit_builder: &mut JITBuilder) {
-    jit_builder.symbol("sinf", host_sinf as *const u8);
-    jit_builder.symbol("sin", host_sin as *const u8);
-    jit_builder.symbol("cosf", host_cosf as *const u8);
-    jit_builder.symbol("cos", host_cos as *const u8);
-    jit_builder.symbol("expf", host_expf as *const u8);
-    jit_builder.symbol("exp", host_exp as *const u8);
-    jit_builder.symbol("exp10f", host_exp10f as *const u8);
-    jit_builder.symbol("exp10", host_exp10 as *const u8);
-    jit_builder.symbol("logf", host_logf as *const u8);
-    jit_builder.symbol("log", host_log as *const u8);
-    jit_builder.symbol("log10f", host_log10f as *const u8);
-    jit_builder.symbol("log10", host_log10 as *const u8);
-    jit_builder.symbol("sqrtf", host_sqrtf as *const u8);
-    jit_builder.symbol("sqrt", host_sqrt as *const u8);
-    jit_builder.symbol("fabsf", host_fabsf as *const u8);
-    jit_builder.symbol("fabs", host_fabs as *const u8);
-    jit_builder.symbol("abs", host_abs as *const u8);
-    jit_builder.symbol("floorf", host_floorf as *const u8);
-    jit_builder.symbol("floor", host_floor as *const u8);
-    jit_builder.symbol("ceilf", host_ceilf as *const u8);
-    jit_builder.symbol("ceil", host_ceil as *const u8);
-    jit_builder.symbol("tanf", host_tanf as *const u8);
-    jit_builder.symbol("tan", host_tan as *const u8);
-    jit_builder.symbol("atanf", host_atanf as *const u8);
-    jit_builder.symbol("atan", host_atan as *const u8);
-    jit_builder.symbol("asinf", host_asinf as *const u8);
-    jit_builder.symbol("asin", host_asin as *const u8);
-    jit_builder.symbol("acosf", host_acosf as *const u8);
-    jit_builder.symbol("acos", host_acos as *const u8);
-    jit_builder.symbol("rintf", host_rintf as *const u8);
-    jit_builder.symbol("rint", host_rint as *const u8);
-    jit_builder.symbol("roundf", host_roundf as *const u8);
-    jit_builder.symbol("round", host_round as *const u8);
-    jit_builder.symbol("min_i", host_min_i as *const u8);
-    jit_builder.symbol("max_i", host_max_i as *const u8);
-    jit_builder.symbol("fminf", host_fminf as *const u8);
-    jit_builder.symbol("fmin", host_fmin as *const u8);
-    jit_builder.symbol("fmaxf", host_fmaxf as *const u8);
-    jit_builder.symbol("fmax", host_fmax as *const u8);
-    jit_builder.symbol("powf", host_powf as *const u8);
-    jit_builder.symbol("pow", host_pow as *const u8);
-    jit_builder.symbol("atan2f", host_atan2f as *const u8);
-    jit_builder.symbol("atan2", host_atan2 as *const u8);
-    jit_builder.symbol("fmodf", host_fmodf as *const u8);
-    jit_builder.symbol("fmod", host_fmod as *const u8);
-    jit_builder.symbol("remainderf", host_remainderf as *const u8);
-    jit_builder.symbol("remainder", host_remainder as *const u8);
-    jit_builder.symbol("isnanf", host_isnanf as *const u8);
-    jit_builder.symbol("isnan", host_isnan as *const u8);
-    jit_builder.symbol("isinff", host_isinff as *const u8);
-    jit_builder.symbol("isinf", host_isinf as *const u8);
-    jit_builder.symbol("copysignf", host_copysignf as *const u8);
-    jit_builder.symbol("copysign", host_copysign as *const u8);
-    jit_builder.symbol("acoshf", host_acoshf as *const u8);
-    jit_builder.symbol("acosh", host_acosh as *const u8);
-    jit_builder.symbol("asinhf", host_asinhf as *const u8);
-    jit_builder.symbol("asinh", host_asinh as *const u8);
-    jit_builder.symbol("atanhf", host_atanhf as *const u8);
-    jit_builder.symbol("atanh", host_atanh as *const u8);
-    jit_builder.symbol("coshf", host_coshf as *const u8);
-    jit_builder.symbol("cosh", host_cosh as *const u8);
-    jit_builder.symbol("sinhf", host_sinhf as *const u8);
-    jit_builder.symbol("sinh", host_sinh as *const u8);
-    jit_builder.symbol("tanhf", host_tanhf as *const u8);
-    jit_builder.symbol("tanh", host_tanh as *const u8);
+    for math in HOST_MATH {
+        jit_builder.symbol(math.symbol, math.function.address());
+    }
 }

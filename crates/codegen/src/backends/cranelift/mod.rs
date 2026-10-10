@@ -56,6 +56,7 @@ mod core;
 mod host;
 mod jit_data;
 mod lowering;
+mod math;
 mod subset;
 
 pub use api::{diagnose_cranelift_compute_subset_gap, generate_cranelift_module};

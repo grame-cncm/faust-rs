@@ -769,9 +769,21 @@ must run unchanged with Faust C++ should not pass them.
   `-mem0` manager is an implemented Rust extension using the shared aligned C
   ABI; there is no direct C++ Cranelift oracle.
 - Foreign host functions use an explicit registered name-to-address map; a
-  header supplied by `ffunction` is not compiled into a JIT binding. Supported
-  math calls such as `tanhf`/`tanh` already work through backend host wrappers.
-  This is a supported subset, not all possible `<math.h>` declarations. A
+  header supplied by `ffunction` is not compiled into a JIT binding. Math
+  functions run through backend host wrappers, one inventory (`HOST_MATH` in
+  `backends/cranelift/host.rs`, 65 C symbols) that the subset pre-check, the
+  lowering and the JIT registration all read. This is a supported subset, not
+  all of `<math.h>` (no `cbrtf`, `hypotf`, `erff`, ... yet). A declaration
+  names a math function by its C symbol, `float sinf(float)` included since
+  2026-10-10. As in the C code the other backends generate, where the
+  `<math.h>` declaration decides, the arguments convert to the parameter
+  types and the result to the declared one, precision included
+  (`float tanhf(float)` under `-double` calls `tanhf`). A different argument
+  count is refused, as the generated C fails to compile. So is an `int` result
+  declared for a real function or the reverse (`int tanhf(int)`), naming both
+  signatures; the generated C++ compiles that one, keeping the real result
+  against the Faust typing of the call. A math name now takes precedence over
+  a host registration of the same name. A
   call the JIT cannot lower (a foreign function with no registered binding)
   makes the backend's non-strict default emit a no-op `compute`, with
   `compute_body_lowered=false` and the reason in `compute_subset_gap()`.
@@ -786,8 +798,9 @@ must run unchanged with Faust C++ should not pass them.
   [the 2026-10-08 audit, W1](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w1--reject-non-executable-probe-factories-p0)):
   factory creation fails and `error_msg` names the function. Only the Rust
   backend API keeps the non-strict default, for corpus diagnostics.
-- Evidence: [`cranelift-backend-plan-en.md`](cranelift-backend-plan-en.md) and
-  [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md).
+- Evidence: [`cranelift-backend-plan-en.md`](cranelift-backend-plan-en.md),
+  [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md),
+  and `crates/cranelift-ffi/tests/math_signature_probe.rs`.
 
 ### DIFF-BACK-002 — textual WAT and raw embedded compiler module
 

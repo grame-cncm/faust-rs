@@ -4,6 +4,7 @@
 //! expressions, statements, stack slots, and struct-field access. Unsupported
 //! shapes are filtered by `subset` before this lowering path is used.
 
+use super::math::resolve_math_call;
 use super::*;
 use cranelift_frontend::Variable;
 
@@ -1533,10 +1534,10 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         Ok(LoweredExpr::Scalar(out))
     }
 
-    /// Lowers FIR math calls to imported host functions (`sinf`, `pow`, ...).
-    ///
-    /// Supported operations are determined by the `*_math_symbol_*` helpers and
-    /// are intentionally explicit to keep subset coverage auditable.
+    /// Lowers FIR calls to imported host functions: a math function of
+    /// [`HOST_MATH`](super::host::HOST_MATH) (`sinf`, `pow`, ...), its arguments
+    /// and result converted as in C ([`resolve_math_call`]), or else a foreign
+    /// function the host registered.
     fn lower_fun_call(
         &mut self,
         name: &str,
@@ -1547,89 +1548,22 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
         // arms below are selected consistently under `-double`.
         let canon = self.canon_real(typ);
         let typ = &canon;
-        match (name, typ, args) {
-            ("abs", FirType::Int32, [x]) => {
-                let xv = self.lower_expr(*x, Some(typ))?.value();
-                let xv = self.coerce_value_to_fir_type(xv, typ)?;
-                let fref = self.ensure_import("abs", &[types::I32], types::I32)?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
+        if let Some(math) = resolve_math_call(name, typ, args.len(), self.double) {
+            let math = math.map_err(LoweringError::Unsupported)?;
+            let function = math.function;
+            let mut values = Vec::with_capacity(args.len());
+            for (arg, param) in args.iter().zip(function.params()) {
+                let param = param.fir_type();
+                let value = self.lower_expr(*arg, Some(&param))?.value();
+                values.push(self.coerce_value_to_fir_type(value, &param)?);
             }
-            ("min_i", FirType::Int32, [x, y]) | ("max_i", FirType::Int32, [x, y]) => {
-                let xv = self.lower_expr(*x, Some(typ))?.value();
-                let xv = self.coerce_value_to_fir_type(xv, typ)?;
-                let yv = self.lower_expr(*y, Some(typ))?.value();
-                let yv = self.coerce_value_to_fir_type(yv, typ)?;
-                let fref = self.ensure_import(name, &[types::I32, types::I32], types::I32)?;
-                let call = self.fb.ins().call(fref, &[xv, yv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            ("isnanf", FirType::Int32, [x]) => {
-                let xv = self.lower_expr(*x, Some(&FirType::Float32))?.value();
-                let xv = self.coerce_value_to_fir_type(xv, &FirType::Float32)?;
-                let fref = self.ensure_import("isnanf", &[types::F32], types::I32)?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            ("isnan", FirType::Int32, [x]) => {
-                let xv = self.lower_expr(*x, Some(&FirType::Float64))?.value();
-                let xv = self.coerce_value_to_fir_type(xv, &FirType::Float64)?;
-                let fref = self.ensure_import("isnan", &[types::F64], types::I32)?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            ("isinff", FirType::Int32, [x]) => {
-                let xv = self.lower_expr(*x, Some(&FirType::Float32))?.value();
-                let xv = self.coerce_value_to_fir_type(xv, &FirType::Float32)?;
-                let fref = self.ensure_import("isinff", &[types::F32], types::I32)?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            ("isinf", FirType::Int32, [x]) => {
-                let xv = self.lower_expr(*x, Some(&FirType::Float64))?.value();
-                let xv = self.coerce_value_to_fir_type(xv, &FirType::Float64)?;
-                let fref = self.ensure_import("isinf", &[types::F64], types::I32)?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            ("copysignf", FirType::FaustFloat | FirType::Float32, [x, y]) => {
-                let mut xv = self.lower_expr(*x, Some(&FirType::Float32))?.value();
-                let mut yv = self.lower_expr(*y, Some(&FirType::Float32))?.value();
-                xv = self.coerce_value_to_fir_type(xv, &FirType::Float32)?;
-                yv = self.coerce_value_to_fir_type(yv, &FirType::Float32)?;
-                let fref =
-                    self.ensure_import("copysignf", &[types::F32, types::F32], types::F32)?;
-                let call = self.fb.ins().call(fref, &[xv, yv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            ("copysign", FirType::Float64, [x, y]) => {
-                let mut xv = self.lower_expr(*x, Some(&FirType::Float64))?.value();
-                let mut yv = self.lower_expr(*y, Some(&FirType::Float64))?.value();
-                xv = self.coerce_value_to_fir_type(xv, &FirType::Float64)?;
-                yv = self.coerce_value_to_fir_type(yv, &FirType::Float64)?;
-                let fref = self.ensure_import("copysign", &[types::F64, types::F64], types::F64)?;
-                let call = self.fb.ins().call(fref, &[xv, yv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            (
-                "acoshf" | "asinhf" | "atanhf" | "coshf" | "sinhf" | "tanhf",
-                FirType::FaustFloat | FirType::Float32,
-                [x],
-            ) => {
-                let xv = self.lower_expr(*x, Some(&FirType::Float32))?.value();
-                let xv = self.coerce_value_to_fir_type(xv, &FirType::Float32)?;
-                let fref = self.ensure_import(name, &[types::F32], types::F32)?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            ("acosh" | "asinh" | "atanh" | "cosh" | "sinh" | "tanh", FirType::Float64, [x]) => {
-                let xv = self.lower_expr(*x, Some(&FirType::Float64))?.value();
-                let xv = self.coerce_value_to_fir_type(xv, &FirType::Float64)?;
-                let fref = self.ensure_import(name, &[types::F64], types::F64)?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
-            }
-            _ => {}
+            let params: Vec<Type> = function.params().iter().map(|p| p.clif_type()).collect();
+            let fref = self.ensure_import(math.symbol, &params, function.ret().clif_type())?;
+            let call = self.fb.ins().call(fref, &values);
+            let result = self.fb.inst_results(call)[0];
+            return Ok(LoweredExpr::Scalar(
+                self.coerce_value_to_fir_type(result, typ)?,
+            ));
         }
         if self.extern_function_symbols.contains_key(name) {
             let mut lowered_args = Vec::with_capacity(args.len());
@@ -1644,73 +1578,9 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
             let call = self.fb.ins().call(fref, &lowered_args);
             return Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]));
         }
-        let math = fir::FirMathOp::from_symbol(name).ok_or_else(|| {
-            LoweringError::Unsupported(format!("unsupported function call `{name}`"))
-        })?;
-        match (math, typ, args) {
-            (math, FirType::FaustFloat | FirType::Float32, [x])
-                if unary_math_symbol_f32(math).is_some() =>
-            {
-                let mut xv = self.lower_expr(*x, Some(typ))?.value();
-                xv = self.coerce_value_to_fir_type(xv, typ)?;
-                let fref = self.ensure_unary_import(
-                    unary_math_symbol_f32(math).expect("guarded by is_some"),
-                    types::F32,
-                )?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]))
-            }
-            (math, FirType::Float64, [x]) if unary_math_symbol_f64(math).is_some() => {
-                let mut xv = self.lower_expr(*x, Some(typ))?.value();
-                xv = self.coerce_value_to_fir_type(xv, typ)?;
-                let fref = self.ensure_unary_import(
-                    unary_math_symbol_f64(math).expect("guarded by is_some"),
-                    types::F64,
-                )?;
-                let call = self.fb.ins().call(fref, &[xv]);
-                Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]))
-            }
-            (math, FirType::FaustFloat | FirType::Float32, [x, y])
-                if binary_math_symbol_f32(math).is_some() =>
-            {
-                let mut xv = self.lower_expr(*x, Some(typ))?.value();
-                let mut yv = self.lower_expr(*y, Some(typ))?.value();
-                xv = self.coerce_value_to_fir_type(xv, typ)?;
-                yv = self.coerce_value_to_fir_type(yv, typ)?;
-                let fref = self.ensure_binary_import(
-                    binary_math_symbol_f32(math).expect("guarded by is_some"),
-                    types::F32,
-                )?;
-                let call = self.fb.ins().call(fref, &[xv, yv]);
-                Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]))
-            }
-            (math, FirType::Float64, [x, y]) if binary_math_symbol_f64(math).is_some() => {
-                let mut xv = self.lower_expr(*x, Some(typ))?.value();
-                let mut yv = self.lower_expr(*y, Some(typ))?.value();
-                xv = self.coerce_value_to_fir_type(xv, typ)?;
-                yv = self.coerce_value_to_fir_type(yv, typ)?;
-                let fref = self.ensure_binary_import(
-                    binary_math_symbol_f64(math).expect("guarded by is_some"),
-                    types::F64,
-                )?;
-                let call = self.fb.ins().call(fref, &[xv, yv]);
-                Ok(LoweredExpr::Scalar(self.fb.inst_results(call)[0]))
-            }
-            _ => Err(LoweringError::Unsupported(format!(
-                "unsupported function call lowering `{name}` with typ={typ:?} args={}",
-                args.len()
-            ))),
-        }
-    }
-
-    /// Ensures a cached unary imported function reference exists.
-    fn ensure_unary_import(&mut self, symbol: &str, ty: Type) -> Result<FuncRef, LoweringError> {
-        self.ensure_import(symbol, &[ty], ty)
-    }
-
-    /// Ensures a cached binary imported function reference exists.
-    fn ensure_binary_import(&mut self, symbol: &str, ty: Type) -> Result<FuncRef, LoweringError> {
-        self.ensure_import(symbol, &[ty, ty], ty)
+        Err(LoweringError::Unsupported(format!(
+            "unsupported function call `{name}`"
+        )))
     }
 
     /// Declares/imports a CLIF function and caches the `FuncRef` by signature key.
@@ -1886,84 +1756,6 @@ impl<'a, 'b, 'c> ComputeLowering<'a, 'b, 'c> {
     }
 }
 
-/// Maps a FIR unary math op to the imported `f32` host symbol used by lowering.
-///
-/// Returns `None` when the operation is not yet supported in the current
-/// subset-lowering implementation.
-pub(crate) fn unary_math_symbol_f32(math: fir::FirMathOp) -> Option<&'static str> {
-    Some(match math {
-        fir::FirMathOp::Sin => "sinf",
-        fir::FirMathOp::Cos => "cosf",
-        fir::FirMathOp::Acos => "acosf",
-        fir::FirMathOp::Asin => "asinf",
-        fir::FirMathOp::Atan => "atanf",
-        fir::FirMathOp::Tan => "tanf",
-        fir::FirMathOp::Exp => "expf",
-        fir::FirMathOp::Exp10 => "exp10f",
-        fir::FirMathOp::Log => "logf",
-        fir::FirMathOp::Log10 => "log10f",
-        fir::FirMathOp::Sqrt => "sqrtf",
-        fir::FirMathOp::Abs => "fabsf",
-        fir::FirMathOp::Floor => "floorf",
-        fir::FirMathOp::Ceil => "ceilf",
-        fir::FirMathOp::Rint => "rintf",
-        fir::FirMathOp::Round => "roundf",
-        _ => return None,
-    })
-}
-
-/// Maps a FIR unary math op to the imported `f64` host symbol used by lowering.
-///
-/// Returns `None` when the operation is not yet supported in the current
-/// subset-lowering implementation.
-pub(crate) fn unary_math_symbol_f64(math: fir::FirMathOp) -> Option<&'static str> {
-    Some(match math {
-        fir::FirMathOp::Sin => "sin",
-        fir::FirMathOp::Cos => "cos",
-        fir::FirMathOp::Acos => "acos",
-        fir::FirMathOp::Asin => "asin",
-        fir::FirMathOp::Atan => "atan",
-        fir::FirMathOp::Tan => "tan",
-        fir::FirMathOp::Exp => "exp",
-        fir::FirMathOp::Exp10 => "exp10",
-        fir::FirMathOp::Log => "log",
-        fir::FirMathOp::Log10 => "log10",
-        fir::FirMathOp::Sqrt => "sqrt",
-        fir::FirMathOp::Abs => "fabs",
-        fir::FirMathOp::Floor => "floor",
-        fir::FirMathOp::Ceil => "ceil",
-        fir::FirMathOp::Rint => "rint",
-        fir::FirMathOp::Round => "round",
-        _ => return None,
-    })
-}
-
-/// Maps a FIR binary math op to the imported `f32` host symbol used by lowering.
-pub(crate) fn binary_math_symbol_f32(math: fir::FirMathOp) -> Option<&'static str> {
-    Some(match math {
-        fir::FirMathOp::Pow => "powf",
-        fir::FirMathOp::Min => "fminf",
-        fir::FirMathOp::Max => "fmaxf",
-        fir::FirMathOp::Atan2 => "atan2f",
-        fir::FirMathOp::Fmod => "fmodf",
-        fir::FirMathOp::Remainder => "remainderf",
-        _ => return None,
-    })
-}
-
-/// Maps a FIR binary math op to the imported `f64` host symbol used by lowering.
-pub(crate) fn binary_math_symbol_f64(math: fir::FirMathOp) -> Option<&'static str> {
-    Some(match math {
-        fir::FirMathOp::Pow => "pow",
-        fir::FirMathOp::Min => "fmin",
-        fir::FirMathOp::Max => "fmax",
-        fir::FirMathOp::Atan2 => "atan2",
-        fir::FirMathOp::Fmod => "fmod",
-        fir::FirMathOp::Remainder => "remainder",
-        _ => return None,
-    })
-}
-
 /// Attempts to lower the FIR `compute` body into the current Cranelift subset.
 ///
 /// Returns `Ok(true)` when lowering succeeds and a real body is emitted.
@@ -2069,129 +1861,4 @@ fn field_offset_imm(field: &StructFieldLayout) -> Result<i64, LoweringError> {
             field.name, field.offset_bytes
         ))
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        binary_math_symbol_f32, binary_math_symbol_f64, unary_math_symbol_f32,
-        unary_math_symbol_f64,
-    };
-    use fir::FirMathOp;
-
-    const ALL_MATH_OPS: &[FirMathOp] = &[
-        FirMathOp::Pow,
-        FirMathOp::Min,
-        FirMathOp::Max,
-        FirMathOp::Sin,
-        FirMathOp::Cos,
-        FirMathOp::Acos,
-        FirMathOp::Asin,
-        FirMathOp::Atan,
-        FirMathOp::Atan2,
-        FirMathOp::Tan,
-        FirMathOp::Exp,
-        FirMathOp::Exp10,
-        FirMathOp::Log,
-        FirMathOp::Log10,
-        FirMathOp::Sqrt,
-        FirMathOp::Abs,
-        FirMathOp::Fmod,
-        FirMathOp::Remainder,
-        FirMathOp::Floor,
-        FirMathOp::Ceil,
-        FirMathOp::Rint,
-        FirMathOp::Round,
-    ];
-
-    enum Kind {
-        Unary,
-        Binary,
-    }
-
-    /// Expected `(kind, f32 symbol, f64 symbol)` for every `FirMathOp`.
-    ///
-    /// This match has no `_` arm on purpose: adding a new `FirMathOp`
-    /// variant breaks this function at compile time, forcing the new op to
-    /// be classified here instead of silently falling through the
-    /// `_ => None` arms in the `*_math_symbol_*` tables above.
-    fn expected(op: FirMathOp) -> (Kind, &'static str, &'static str) {
-        match op {
-            FirMathOp::Sin => (Kind::Unary, "sinf", "sin"),
-            FirMathOp::Cos => (Kind::Unary, "cosf", "cos"),
-            FirMathOp::Acos => (Kind::Unary, "acosf", "acos"),
-            FirMathOp::Asin => (Kind::Unary, "asinf", "asin"),
-            FirMathOp::Atan => (Kind::Unary, "atanf", "atan"),
-            FirMathOp::Tan => (Kind::Unary, "tanf", "tan"),
-            FirMathOp::Exp => (Kind::Unary, "expf", "exp"),
-            FirMathOp::Exp10 => (Kind::Unary, "exp10f", "exp10"),
-            FirMathOp::Log => (Kind::Unary, "logf", "log"),
-            FirMathOp::Log10 => (Kind::Unary, "log10f", "log10"),
-            FirMathOp::Sqrt => (Kind::Unary, "sqrtf", "sqrt"),
-            FirMathOp::Abs => (Kind::Unary, "fabsf", "fabs"),
-            FirMathOp::Floor => (Kind::Unary, "floorf", "floor"),
-            FirMathOp::Ceil => (Kind::Unary, "ceilf", "ceil"),
-            FirMathOp::Rint => (Kind::Unary, "rintf", "rint"),
-            FirMathOp::Round => (Kind::Unary, "roundf", "round"),
-            FirMathOp::Pow => (Kind::Binary, "powf", "pow"),
-            FirMathOp::Min => (Kind::Binary, "fminf", "fmin"),
-            FirMathOp::Max => (Kind::Binary, "fmaxf", "fmax"),
-            FirMathOp::Atan2 => (Kind::Binary, "atan2f", "atan2"),
-            FirMathOp::Fmod => (Kind::Binary, "fmodf", "fmod"),
-            FirMathOp::Remainder => (Kind::Binary, "remainderf", "remainder"),
-        }
-    }
-
-    #[test]
-    fn math_symbol_tables_match_every_fir_math_op() {
-        for op in ALL_MATH_OPS {
-            let (kind, f32_sym, f64_sym) = expected(*op);
-            match kind {
-                Kind::Unary => {
-                    assert_eq!(
-                        unary_math_symbol_f32(*op),
-                        Some(f32_sym),
-                        "{op:?}: wrong/missing f32 unary symbol"
-                    );
-                    assert_eq!(
-                        unary_math_symbol_f64(*op),
-                        Some(f64_sym),
-                        "{op:?}: wrong/missing f64 unary symbol"
-                    );
-                    assert_eq!(
-                        binary_math_symbol_f32(*op),
-                        None,
-                        "{op:?}: unary op unexpectedly has an f32 binary symbol"
-                    );
-                    assert_eq!(
-                        binary_math_symbol_f64(*op),
-                        None,
-                        "{op:?}: unary op unexpectedly has an f64 binary symbol"
-                    );
-                }
-                Kind::Binary => {
-                    assert_eq!(
-                        binary_math_symbol_f32(*op),
-                        Some(f32_sym),
-                        "{op:?}: wrong/missing f32 binary symbol"
-                    );
-                    assert_eq!(
-                        binary_math_symbol_f64(*op),
-                        Some(f64_sym),
-                        "{op:?}: wrong/missing f64 binary symbol"
-                    );
-                    assert_eq!(
-                        unary_math_symbol_f32(*op),
-                        None,
-                        "{op:?}: binary op unexpectedly has an f32 unary symbol"
-                    );
-                    assert_eq!(
-                        unary_math_symbol_f64(*op),
-                        None,
-                        "{op:?}: binary op unexpectedly has an f64 unary symbol"
-                    );
-                }
-            }
-        }
-    }
 }

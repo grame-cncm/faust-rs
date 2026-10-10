@@ -5,8 +5,12 @@ Date: 2026-10-08
 Status: analysis completed for the small reproductions. W2 is implemented
 (`c535bd3c`). W1 is implemented for the CLI, every `faustprobe` mode and the
 C constructors, which fail by default with no scaffold opt-in (user decision);
-signature checks, typed C API diagnostics for backend errors and the shared
-math inventory remain (journal 2026-10-10, the two "W1" entries). W3 is
+the math functions have one inventory, read by the pre-check, the lowering
+and the JIT registration, and a declaration of another shape is refused with
+both signatures (journal 2026-10-10, the three "W1" entries); the typed
+registration of host functions (agreed with the user), typed C API
+diagnostics for backend errors, and the math functions the inventory lacks
+(`cbrtf`, `hypotf`, `erff`, ...) remain. W3 is
 implemented (its design amendment below). W4 is implemented, with two
 defects found on the way (journal 2026-10-10, "W4"). W5 and W6 are implemented.
 W7 has its baseline and one fix ([measurements](ondemand-and-foreign-chain-compile-cost-measurements-2026-10-10-en.md)):

@@ -695,6 +695,32 @@ fn cranelift_rejects_an_unbound_foreign_call_and_keeps_supported_math() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    // A math function declared with another shape names both signatures.
+    let shape = dir.join("shape.dsp");
+    std::fs::write(
+        &shape,
+        "t = ffunction(int tanhf(int), <math.h>, \"\");\nprocess = t;\n",
+    )
+    .expect("write the program");
+    let output = Command::new(bin_path())
+        .arg(&shape)
+        .args(["-lang", "cranelift", "--error-format", "json"])
+        .output()
+        .expect("run faust-rs");
+    assert!(!output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout must be UTF-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout must be one clean JSON document: {e}\n{stdout}"));
+    let diag = &parsed["diagnostics"][0];
+    assert_eq!(diag["detail_code"], "FRS-CGEN-CLIF-0002");
+    let message = diag["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(
+            "implements, `float tanhf(float)`: the call has 1 argument and an `int` result"
+        ),
+        "{diag}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

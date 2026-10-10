@@ -91,7 +91,7 @@ const MAX_PRODUCTION_LINES: usize = 2_000;
 /// exception — leaving it here would let the list silently accumulate dead
 /// entries, so a shrunk file is flagged as a stale exception to remove
 /// rather than passing silently.
-const KNOWN_OVERSIZED_FILES: [(&str, &str); 12] = [
+const KNOWN_OVERSIZED_FILES: [(&str, &str); 11] = [
     (
         "crates/transform/src/signal_fir/vector/lower/signal.rs",
         "numerically sensitive lowering path, kept structurally intact by          design (readability plan §7); this is the file that drove the old          threshold up twice before P6 named it as an exception instead",
@@ -135,10 +135,6 @@ const KNOWN_OVERSIZED_FILES: [(&str, &str); 12] = [
     (
         "crates/codegen/src/backends/interp/executor.rs",
         "interpreter dispatch loop, deliberately not split in P3: splitting          it by opcode family the way `fbc_to_cpp.rs` was split would add a          second match per executed instruction in the hottest loop of the          product, and no gate in this repository measures interpreter          throughput to prove that cost absent (see the P3 journal entry,          commit 11fd5c40)",
-    ),
-    (
-        "crates/codegen/src/backends/cranelift/lowering.rs",
-        "not analyzed by this campaign; backlog for a future codegen phase",
     ),
 ];
 
