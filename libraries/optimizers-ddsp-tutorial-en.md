@@ -68,6 +68,44 @@ The library is loaded with a prefix:
 op = library("optimizers.lib");
 ```
 
+### 0.1 The figures depend on the libraries
+
+The programs of this page go through the Faust standard libraries, and
+`fad` and `rad` differentiate that code exactly as it is written, not the
+ideal filter or oscillator it stands for. A descent then accumulates what the
+derivatives see, step after step. So the figures quoted here belong to one
+state of the libraries, and a change you would hardly hear can move them:
+
+- **The same filter, realized differently.** Two realizations of one
+  transfer function, for example a direct form and a trapezoidal
+  integrator, give the same output while the parameters stay constant.
+  Learning moves the parameters at every update, and the two realizations
+  do not respond identically to a moving coefficient. The path of the
+  descent changes a little; where it converges usually does not.
+- **A corrected test signal.** An oscillator that loses a small DC offset
+  or gets a better transition sample changes the input of the program, so
+  the loss and the gradients change with it.
+- **A safety bound.** A library clamps a parameter where a formula would
+  break, for example a frequency limited just below Nyquist or a gain
+  floored at a minimum. Beyond the bound, the derivative is exactly zero. A
+  bound that never acts on a sound played by hand can therefore stop a
+  descent that pushes a parameter there, with a gradient of 0 and no error.
+
+What to take from it:
+
+- Read the shape of a run first: where it converges, how fast, the order of
+  magnitude of the residual. Read its last digits second. The values in the
+  middle of a descent are the first to move.
+- With a figure of your own, note the commit of the libraries and of the
+  compiler (`faust-rs --version` names it).
+- When a run changes after an update of the libraries, find which function
+  of the model changed: `git log` on the libraries, or a bisection over their
+  commits with the program as the test. The change is often a deliberate
+  improvement, which the learning happens to measure.
+- If a gradient is exactly 0 where you expected one, look for a `min`, a
+  `max` or a `select2` in the definition of the function the parameter goes
+  through.
+
 ## 1. The smallest learning loop, by hand
 
 Start with a gain. Some hidden system multiplies a signal by `0.7`; we hear its
@@ -1376,7 +1414,7 @@ of 4096 samples:
 
 - **first block**, from a cleared state: the two sets of sums agree to
   `1e-14`. The energy falls with `depth` (`-219.7`), rises with `drive`
-  (`20.94`), does not depend on `rate` (`0`), and `level` and `trim` both
+  (`20.95`), does not depend on `rate` (`0`), and `level` and `trim` both
   give `29.18`, which is the block's energy (`126.7`) times
   `ln(10)/10 = 0.230259` to every printed digit: one decibel of energy per
   decibel of gain, exactly;
@@ -1449,10 +1487,12 @@ upd = par(i, N, op.adam_g(0.01 * range(i), 0.9, 0.999, 1e-8));
 process = op.adaptive_fad(e, op.mse, upd, il.frame_clock(256), 0, x, target) : \(y, cutoff, gain).(cutoff, gain, y - target);
 ```
 
-Same run. The cutoff reads `2574.69` at 10 000, `2500.47` at 40 000 and
+Same run. The cutoff reads `2574.73` at 10 000, `2500.47` at 40 000 and
 `2499.98` at 60 000, and the gain `1.1752`, `1.1998` and `1.200001`. Over the
 last 10 000 samples they are `2500.0005` and `1.1999997`, and the residual is
-`2.4e-8` rms. `upd` is a list of `N` engines, one per control in `cinputs`
+`2.4e-8` rms. The value at 10 000 is in the middle of the descent, the kind
+of figure that moves first when the libraries change (section 0.1); the last
+three are its end point. `upd` is a list of `N` engines, one per control in `cinputs`
 order. It can also be a single engine, as above, or engines of different
 kinds. `controls.lib` packages the pattern: `ct.by_range(f, k, e)` is `f`
 applied to `k` times the range of each control, so the list above is
@@ -1523,7 +1563,8 @@ case of section 12.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| The parameter never moves | its derivative is zero: it passes through a button, a checkbox, an integer cast or comparison inside the model | keep the parameter path in floating-point arithmetic |
+| The parameter never moves | its derivative is zero: it passes through a button, a checkbox, an integer cast or comparison inside the model, or a library bound (`min`, `max`) it has reached (0.1) | keep the parameter path in floating-point arithmetic, and inside the bounds |
+| The figures of this page differ in their last digits | the libraries changed since the page was written: a realization, a test signal, a bound (0.1) | compare where the run converges first; bisect the library commits if the end point moved |
 | It moves the wrong way | sign convention: with `r = model - target` the MSE gradient is `+2 r j`; the synthesis note uses `err = target - model` and `-err * j` | pick one convention |
 | `NaN` after a while | `abs` (derivative `x/\|x\|`) or a filter that went unstable | smooth losses (`logcosh`, `pseudo_huber`), reflection coefficients for poles |
 | One parameter converges, another crawls | different units under one learning rate | log domain, Adam/Lion, or `lm_2D` |

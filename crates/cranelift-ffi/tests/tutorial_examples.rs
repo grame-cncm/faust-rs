@@ -17,6 +17,14 @@
 //! skip when neither exists, as the corpus tests do. They render on a 64 MiB
 //! thread, as every corpus test does (the `fad` and `rad` expansions build
 //! deep trees at compile time).
+//!
+//! The figures depend on the state of the libraries. A library change can
+//! move them without being a regression: `fad` and `rad` differentiate the
+//! code as written, so a new realization of the same filter, a corrected
+//! test signal or a new bound shows in a descent (tutorial section 0.1).
+//! When a test fails after an update of the libraries, bisect their commits
+//! with `FAUST_RS_FAUSTLIBRARIES_ROOT` pointing at a worktree. If the change
+//! is deliberate, update the figure in both tutorials and here, together.
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -984,7 +992,7 @@ fn s13_1_rate_comes_alive_and_grows_with_time() {
 }
 
 /// §13.1: the energy's rad and fad lanes, summed over blocks of 4096: equal
-/// to 1e-14 over the first block (depth -219.7, drive 20.94, rate 0, level
+/// to 1e-14 over the first block (depth -219.7, drive 20.95, rate 0, level
 /// = trim = 29.18 = energy x ln(10)/10), drive 20.196 against 20.206 and
 /// tight -0.7925 against -0.7899 over the second.
 #[test]
@@ -1005,7 +1013,7 @@ fn s13_1_energy_gradient_rad_against_fad() {
             );
         }
         assert_near("depth", sum(1, 0), -219.7, 0.05);
-        assert_near("drive", sum(2, 0), 20.94, 0.005);
+        assert_near("drive", sum(2, 0), 20.95, 0.005);
         assert_eq!(sum(4, 0), 0.0, "rate");
         let energy = sum(0, 0);
         assert_near("energy", energy, 126.7, 0.05);
@@ -1052,7 +1060,7 @@ fn s13_2_one_rate_leaves_the_cutoff_and_overshoots_the_gain() {
     });
 }
 
-/// §13.2, a rate per slider from its range: the cutoff reads 2574.69,
+/// §13.2, a rate per slider from its range: the cutoff reads 2574.73,
 /// 2500.47 and 2499.98 at 10 000, 40 000 and 60 000, the gain 1.1752,
 /// 1.1998 and 1.200001; over the last 10 000 samples 2500.0005 and
 /// 1.1999997, the residual 2.4e-8 rms.
@@ -1061,7 +1069,7 @@ fn s13_2_a_rate_per_slider_learns_both() {
     with_libraries("s13_2_rate_per_slider", |root| {
         let outs = render(&program("13.2", 1), &root, InputMode::Zero, 80_000);
         for (frame, cutoff, gain) in [
-            (10_000, 2574.69, 1.1752),
+            (10_000, 2574.73, 1.1752),
             (40_000, 2500.47, 1.1998),
             (60_000, 2499.98, 1.200_001),
         ] {

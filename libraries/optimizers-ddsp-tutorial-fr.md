@@ -73,6 +73,46 @@ La bibliothèque se charge avec un préfixe :
 op = library("optimizers.lib");
 ```
 
+### 0.1 Les valeurs dépendent des bibliothèques
+
+Les programmes de cette page passent par les bibliothèques standard de Faust,
+et `fad` et `rad` dérivent ce code exactement tel qu'il est écrit, pas le
+filtre ou l'oscillateur idéal qu'il représente. Une descente cumule ensuite ce
+que voient les dérivées, pas après pas. Les valeurs citées ici appartiennent
+donc à un état des bibliothèques, et un changement qu'on entendrait à peine
+peut les déplacer :
+
+- **Le même filtre, réalisé autrement.** Deux réalisations d'une même
+  fonction de transfert, par exemple une forme directe et un intégrateur
+  trapézoïdal, donnent la même sortie tant que les paramètres restent
+  constants. L'apprentissage déplace les paramètres à chaque mise à jour, et
+  les deux réalisations ne répondent pas de la même façon à un coefficient
+  qui bouge. Le chemin de la descente change un peu ; son point d'arrivée, en
+  général, non.
+- **Un signal de test corrigé.** Un oscillateur qui perd une petite
+  composante continue ou gagne un meilleur échantillon de transition change
+  l'entrée du programme, et la perte et les gradients changent avec elle.
+- **Une borne de sécurité.** Une bibliothèque borne un paramètre là où une
+  formule casserait, par exemple une fréquence limitée juste sous Nyquist ou
+  un gain plancher. Au-delà de la borne, la dérivée vaut exactement zéro. Une
+  borne qui n'agit jamais sur un son joué à la main peut donc arrêter une
+  descente qui y pousse un paramètre, avec un gradient nul et sans erreur.
+
+Ce qu'il faut en retenir :
+
+- Lire d'abord la forme d'une exécution : où elle converge, à quelle vitesse,
+  l'ordre de grandeur du résidu. Lire ses derniers chiffres ensuite. Les
+  valeurs du milieu d'une descente sont les premières à bouger.
+- Avec une valeur à soi, noter le commit des bibliothèques et celui du
+  compilateur (`faust-rs --version` le donne).
+- Quand une exécution change après une mise à jour des bibliothèques, chercher
+  quelle fonction du modèle a changé : `git log` sur les bibliothèques, ou une
+  bissection sur leurs commits avec le programme comme test. Le changement est
+  souvent une amélioration voulue, que l'apprentissage se trouve mesurer.
+- Si un gradient vaut exactement 0 là où on en attendait un, chercher un
+  `min`, un `max` ou un `select2` dans la définition de la fonction que
+  traverse le paramètre.
+
 ## 1. La plus petite boucle d'apprentissage, à la main
 
 Commençons par un gain. Un système caché multiplie un signal par `0,7` ; nous
@@ -1421,7 +1461,7 @@ chaque bloc de 4096 échantillons :
 
 - **premier bloc**, depuis un état remis à zéro : les deux jeux de sommes
   concordent à `1e-14`. L'énergie baisse avec `depth` (`-219,7`), monte avec
-  `drive` (`20,94`), ne dépend pas de `rate` (`0`), et `level` comme `trim`
+  `drive` (`20,95`), ne dépend pas de `rate` (`0`), et `level` comme `trim`
   donnent `29,18`, soit l'énergie du bloc (`126,7`) fois
   `ln(10)/10 = 0,230259` à tous les chiffres affichés : un décibel d'énergie
   par décibel de gain, exactement ;
@@ -1496,10 +1536,12 @@ upd = par(i, N, op.adam_g(0.01 * range(i), 0.9, 0.999, 1e-8));
 process = op.adaptive_fad(e, op.mse, upd, il.frame_clock(256), 0, x, target) : \(y, cutoff, gain).(cutoff, gain, y - target);
 ```
 
-Même exécution. La coupure lit `2574,69` à 10 000, `2500,47` à 40 000 et
+Même exécution. La coupure lit `2574,73` à 10 000, `2500,47` à 40 000 et
 `2499,98` à 60 000, et le gain `1,1752`, `1,1998` et `1,200001`. Sur les
 10 000 derniers échantillons ils valent `2500,0005` et `1,1999997`, et le
-résidu `2,4e-8` rms. `upd` est une liste de `N` moteurs, un par contrôle dans
+résidu `2,4e-8` rms. La valeur à 10 000 est au milieu de la descente, le
+genre de valeur qui bouge en premier quand les bibliothèques changent
+(section 0.1) ; les trois dernières sont son point d'arrivée. `upd` est une liste de `N` moteurs, un par contrôle dans
 l'ordre de `cinputs`. Ce peut aussi être un seul moteur, comme plus haut, ou
 des moteurs de natures différentes. `controls.lib` regroupe ce motif :
 `ct.by_range(f, k, e)` applique `f` à `k` fois la plage de chaque contrôle,
@@ -1571,7 +1613,8 @@ de là, la descente se pose dans un autre bassin, le cas de la section 12.
 
 | Symptôme | Cause probable | Remède |
 |---|---|---|
-| Le paramètre ne bouge jamais | sa dérivée est nulle : il traverse un bouton, une case à cocher, une conversion ou une comparaison entière dans le modèle | garder le chemin du paramètre en arithmétique flottante |
+| Le paramètre ne bouge jamais | sa dérivée est nulle : il traverse un bouton, une case à cocher, une conversion ou une comparaison entière dans le modèle, ou une borne de la bibliothèque (`min`, `max`) qu'il a atteinte (0.1) | garder le chemin du paramètre en arithmétique flottante, et dans les bornes |
+| Les valeurs de cette page diffèrent dans leurs derniers chiffres | les bibliothèques ont changé depuis l'écriture de la page : une réalisation, un signal de test, une borne (0.1) | comparer d'abord où l'exécution converge ; bissecter les commits des bibliothèques si le point d'arrivée a bougé |
 | Il bouge dans le mauvais sens | convention de signe : avec `r = modèle - cible` le gradient MSE est `+2 r j` ; la note de synthèse utilise `err = cible - modèle` et `-err * j` | choisir une convention |
 | `NaN` au bout d'un moment | `abs` (dérivée `x/\|x\|`) ou un filtre devenu instable | pertes lisses (`logcosh`, `pseudo_huber`), coefficients de réflexion pour les pôles |
 | Un paramètre converge, un autre rampe | unités différentes sous une seule vitesse | domaine log, Adam/Lion, ou `lm_2D` |
