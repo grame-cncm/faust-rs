@@ -244,7 +244,7 @@ pub(crate) fn declare_extern_data_symbols_in_jit(
 /// - Finalizes definitions and returns:
 ///   - exported symbol name,
 ///   - finalized function address,
-///   - whether a real body was lowered.
+///   - why the body is the stub (`None` when a real body was lowered).
 ///
 /// # History
 /// This helper started as pure stub emission during bring-up under the name
@@ -269,7 +269,7 @@ pub(crate) fn declare_jit_function(
     external_static_tables: &HashSet<String>,
     extern_data_ids: &HashMap<String, DataId>,
     double: bool,
-) -> Result<(String, usize, bool, String), CraneliftBackendError> {
+) -> Result<(String, usize, Option<String>, String), CraneliftBackendError> {
     let ptr_ty = jit.target_config().pointer_type();
     let function_symbol_name = symbol_name.to_owned();
 
@@ -317,7 +317,7 @@ pub(crate) fn declare_jit_function(
         })?;
 
     let mut fb_ctx = FunctionBuilderContext::new();
-    let compute_body_lowered;
+    let subset_gap;
     {
         let mut fb = FunctionBuilder::new(&mut ctx.func, &mut fb_ctx);
         let entry = fb.create_block();
@@ -348,7 +348,8 @@ pub(crate) fn declare_jit_function(
                 &mut fb,
                 function_decl,
             ) {
-                Ok(lowered) => compute_body_lowered = lowered,
+                Ok(true) => subset_gap = None,
+                Ok(false) => subset_gap = Some("lowering left the body unlowered".to_owned()),
                 Err(LoweringError::Unsupported(reason)) => {
                     return Err(CraneliftBackendError::unsupported_module_shape(format!(
                         "Cranelift subset matcher drift: pre-check accepted `compute`, but lowering rejected it: {reason}"
@@ -361,21 +362,26 @@ pub(crate) fn declare_jit_function(
         } else {
             // Emit a valid no-op `compute` stub when either:
             // - the FIR body exceeds the currently supported lowering subset, or
-            // - `force_stub` was set by the JIT-panic fallback path.
-            if fail_on_subset_gap && !force_stub {
-                let reason = function_body_subset_gap_reason_from_decl(
+            // - `force_stub` was set by the JIT-panic fallback path, whose
+            //   caller has already refused it in strict mode.
+            let reason = if force_stub {
+                "the Cranelift JIT panicked while compiling the lowered body \
+                 (branch-offset overflow?)"
+                    .to_owned()
+            } else {
+                function_body_subset_gap_reason_from_decl(
                     store,
                     function_decl,
                     extern_data_symbols,
                     extern_function_symbols,
                 )
-                .unwrap_or_else(|| "unknown subset-gap reason".to_owned());
-                return Err(CraneliftBackendError::unsupported_module_shape(format!(
-                    "Cranelift strict mode rejected fallback to `{function_name}` stub: {reason}"
-                )));
+                .unwrap_or_else(|| "unknown subset-gap reason".to_owned())
+            };
+            if fail_on_subset_gap && !force_stub {
+                return Err(CraneliftBackendError::not_lowered(&function_name, &reason));
             }
             emit_return_stub(&mut fb);
-            compute_body_lowered = false;
+            subset_gap = Some(reason);
         }
         fb.seal_all_blocks();
         fb.finalize(jit.target_config());
@@ -401,10 +407,5 @@ pub(crate) fn declare_jit_function(
         CraneliftBackendError::jit_failure(format!("finalize_definitions failed: {e}"))
     })?;
     let addr = jit.get_finalized_function(func_id) as usize;
-    Ok((
-        function_symbol_name,
-        addr,
-        compute_body_lowered,
-        compute_clif_text,
-    ))
+    Ok((function_symbol_name, addr, subset_gap, compute_clif_text))
 }

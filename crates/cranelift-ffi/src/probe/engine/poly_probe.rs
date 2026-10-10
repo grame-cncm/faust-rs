@@ -151,7 +151,7 @@ impl PolyProbe {
                 double,
                 opt_level,
                 outputs,
-            )
+            )?
         };
 
         Ok(Self::assemble(
@@ -260,8 +260,12 @@ impl PolyProbe {
     }
 
     /// Attempt the `environment{}` effect extraction described on
-    /// [`PolyProbe::compile`]; `None` on any failure, including "no `effect`
-    /// declared".
+    /// [`PolyProbe::compile`]; `None` on any failure to compile, including
+    /// "no `effect` declared".
+    ///
+    /// # Errors
+    /// An effect that compiles but whose `compute` the JIT could not lower:
+    /// carrying on without it would render the bus as if it had no effect.
     fn try_extract_inline_effect(
         path: &str,
         import_dirs: &[String],
@@ -269,8 +273,10 @@ impl PolyProbe {
         double: bool,
         opt_level: i32,
         expected_inputs: usize,
-    ) -> Option<Probe> {
-        let source = std::fs::read_to_string(path).ok()?;
+    ) -> Result<Option<Probe>, String> {
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return Ok(None);
+        };
         // Verbatim structure of `dsp_poly_factory::getEffectCode`
         // (`poly-dsp.h:1020`): `adapt`/`adaptor` reconcile the process DSP's
         // output arity with the effect's input arity so `dsp_code.effect` can
@@ -284,20 +290,27 @@ impl PolyProbe {
              dsp_code = environment{{ {source} }};\n\
              process = adaptor(dsp_code.process, dsp_code.effect) : dsp_code.effect;\n"
         );
-        let factory = Factory::compile_from_string(
+        let Ok(factory) = Factory::compile_from_string_unchecked(
             "faustprobe-effect",
             &wrapped,
             import_dirs,
+            &[],
             double,
             opt_level,
-        )
-        .ok()?;
-        let probe = Probe::instantiate(&Rc::new(factory), sample_rate).ok()?;
+        ) else {
+            return Ok(None);
+        };
+        let factory = factory
+            .require_executable()
+            .map_err(|error| format!("the program's `effect`: {error}"))?;
+        let Ok(probe) = Probe::instantiate(&Rc::new(factory), sample_rate) else {
+            return Ok(None);
+        };
         // The adaptor already reconciled arity against the process DSP, so a
         // mismatch here would mean the extraction produced something
         // unexpected; be conservative and decline rather than mix buffers of
         // the wrong width.
-        (probe.inputs() == expected_inputs).then_some(probe)
+        Ok((probe.inputs() == expected_inputs).then_some(probe))
     }
 
     /// Number of voices in the bus.

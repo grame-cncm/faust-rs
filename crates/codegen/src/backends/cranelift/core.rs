@@ -133,6 +133,12 @@ impl CraneliftBackendError {
         }
     }
 
+    /// The `UnsupportedModuleShape` error of a function the backend cannot
+    /// lower, shared by strict mode and [`JitDspModule::require_lowered_compute`].
+    pub(crate) fn not_lowered(function: &str, reason: &str) -> Self {
+        Self::unsupported_module_shape(format!("Cranelift cannot lower `{function}`: {reason}"))
+    }
+
     /// Builds a `MissingCompute` backend error.
     pub(crate) fn missing_compute(message: impl Into<String>) -> Self {
         Self {
@@ -196,6 +202,8 @@ pub struct JitDspModule {
     pub(crate) instance_constants_entry_addr: usize,
     pub(crate) instance_clear_entry_addr: usize,
     pub(crate) compute_body_lowered: bool,
+    /// Why `compute` is the no-op fallback; `None` when it was lowered.
+    pub(crate) compute_subset_gap: Option<String>,
     pub(crate) generated_functions_clif: Vec<(String, String)>,
     pub(crate) struct_layout: StructLayoutPlan,
     pub(crate) mem0_analysis: Option<Mem0Analysis>,
@@ -296,6 +304,36 @@ impl JitDspModule {
     #[must_use]
     pub fn compute_body_lowered(&self) -> bool {
         self.compute_body_lowered
+    }
+
+    /// Why `compute` is the no-op fallback (the first subset gap, or the JIT
+    /// panic that forced the stub); `None` when it was lowered.
+    #[must_use]
+    pub fn compute_subset_gap(&self) -> Option<&str> {
+        self.compute_subset_gap.as_deref()
+    }
+
+    /// Fails unless `compute` was lowered: the fallback returns without
+    /// writing its outputs, so running it renders whatever the buffers held
+    /// (zeros, in a fresh host) as if the program had produced it.
+    ///
+    /// A host that executes the module calls this first; only the
+    /// non-strict default of [`CraneliftOptions::fail_on_subset_gap`] can
+    /// produce such a module.
+    ///
+    /// # Errors
+    /// `UnsupportedModuleShape`, naming `compute` and the reason of the
+    /// fallback.
+    pub fn require_lowered_compute(&self) -> Result<(), CraneliftBackendError> {
+        if self.compute_body_lowered {
+            return Ok(());
+        }
+        Err(CraneliftBackendError::not_lowered(
+            "compute",
+            self.compute_subset_gap
+                .as_deref()
+                .unwrap_or("unknown subset-gap reason"),
+        ))
     }
 
     /// Returns textual CLIF IR generated for all backend-defined DSP functions.

@@ -25,13 +25,16 @@ use super::*;
 /// - Otherwise:
 ///   - when `options.fail_on_subset_gap == false` (default), the backend emits
 ///     a valid no-op `compute` stub and returns success with
-///     `compute_body_lowered() == false`;
+///     `compute_body_lowered() == false` and the reason in
+///     `compute_subset_gap()`;
 ///   - when `options.fail_on_subset_gap == true`, compilation fails with
 ///     `UnsupportedModuleShape`.
 ///
-/// This "compile-success + stub fallback" policy is intentional during bring-up
-/// because it allows end-to-end integration and corpus diagnostics to progress
-/// while lowering coverage is expanded.
+/// The stub fallback lets corpus diagnostics and inspection progress while
+/// lowering coverage is expanded. It is not executable: the stub writes no
+/// output, so a host that runs the module calls
+/// [`JitDspModule::require_lowered_compute`] first, and the `-lang cranelift`
+/// CLI compiles in strict mode.
 ///
 /// # Errors
 /// Returns [`CraneliftBackendError`] for:
@@ -92,14 +95,25 @@ fn generate_cranelift_module_step(
     // may panic when the generated function body is so large that conditional
     // branch offsets exceed the ±1 MiB `B.cond` displacement limit and the
     // island-emission logic fails to insert veneers in time.  We catch that
-    // panic here and retry with `force_stub=true` so hosts get the controlled
-    // no-op fallback instead of a process abort.
+    // panic here instead of letting it abort the process. Strict mode reports
+    // it; otherwise we retry with `force_stub=true`, and the module carries
+    // the panic as the reason of its no-op fallback.
     let first_attempt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(test)]
+        if super::tests::INJECT_JIT_PANIC.get() {
+            panic!("injected Cranelift JIT panic");
+        }
         try_generate_cranelift_module(store, module, options, &module_name, compute_decl, false)
     }));
 
     match first_attempt {
         Ok(result) => result,
+        Err(_panic) if options.fail_on_subset_gap => {
+            Err(CraneliftBackendError::jit_failure(format!(
+                "Cranelift JIT panicked while compiling `{module_name}::compute` \
+                 (branch-offset overflow?); strict mode refuses the no-op fallback"
+            )))
+        }
         Err(_panic) => {
             // Cranelift JIT panicked (most likely AArch64 branch-range exceeded).
             // The partial JIT module created in `try_generate_cranelift_module`
@@ -169,7 +183,7 @@ pub(crate) fn try_generate_cranelift_module(
     let external_static_tables: HashSet<_> = static_data.external.keys().cloned().collect();
     let extern_data_ids =
         declare_extern_data_symbols_in_jit(&mut jit, &options.extern_data_symbols)?;
-    let (compute_symbol_name, compute_entry_addr, compute_body_lowered, compute_clif_text) =
+    let (compute_symbol_name, compute_entry_addr, compute_subset_gap, compute_clif_text) =
         declare_jit_function(
             &format!("{module_name}::compute"),
             compute_decl,
@@ -300,7 +314,8 @@ pub(crate) fn try_generate_cranelift_module(
         compute_entry_addr,
         instance_constants_entry_addr,
         instance_clear_entry_addr,
-        compute_body_lowered,
+        compute_body_lowered: compute_subset_gap.is_none(),
+        compute_subset_gap,
         generated_functions_clif,
         struct_layout,
         mem0_analysis,

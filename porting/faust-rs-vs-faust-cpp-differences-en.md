@@ -740,18 +740,19 @@ must run unchanged with Faust C++ should not pass them.
 - Foreign host functions use an explicit registered name-to-address map; a
   header supplied by `ffunction` is not compiled into a JIT binding. Supported
   math calls such as `tanhf`/`tanh` already work through backend host wrappers.
-  This is a supported subset, not all possible `<math.h>` declarations. Known
-  execution defect at `2199d069`: a missing binding in `compute` can produce a
-  successful factory with a no-op body and `compute_body_lowered=false`.
-  `faustprobe` accepts it and reports zero output as a successful render.
-  Ordinary `-lang cranelift` also exits successfully, while disclosing
-  `compute_body_lowered: false` in its report. The proposed correction rejects
-  unlowered required calls while retaining supported math calls.
-  Generated initialization functions already reject ordinary subset gaps;
-  the JIT panic fallback can also bypass a strict compute check. Production
-  readiness validation and the broader factory failure-policy decision are
-  proposed in [the 2026-10-08 audit, W1](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w1--reject-non-executable-probe-factories-p0),
-  not implemented. This is a correctness defect, not a supported silence policy.
+  This is a supported subset, not all possible `<math.h>` declarations. A
+  call the JIT cannot lower (a foreign function with no registered binding)
+  makes the backend's non-strict default emit a no-op `compute`, with
+  `compute_body_lowered=false` and the reason in `compute_subset_gap()`.
+  Until `2199d069`, `faustprobe` rendered that body's zeros as a successful
+  result and `-lang cranelift` exited 0. Both now fail with
+  `FRS-CGEN-CLIF-0002`, naming the function: `-lang cranelift` and
+  `--dump-cranelift` compile in strict mode, and every probe mode refuses an
+  unlowered factory (`JitDspModule::require_lowered_compute`). A JIT panic no
+  longer gets past strict mode. The C factory constructors still accept the
+  fallback and expose `cranelift-compute-body-lowered`. Whether they fail by
+  default is the open decision of
+  [the 2026-10-08 audit, W1](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w1--reject-non-executable-probe-factories-p0).
 - Evidence: [`cranelift-backend-plan-en.md`](cranelift-backend-plan-en.md) and
   [`cranelift-dsp-ffi-parity-matrix-en.md`](cranelift-dsp-ffi-parity-matrix-en.md).
 

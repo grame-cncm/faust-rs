@@ -335,9 +335,9 @@ pub(crate) fn lower_signals_to_cranelift_report(
         origins: lowered.origins.clone(),
     })?;
 
-    // A subset gap is a lowering *limitation* to report, not a failure: the
-    // module still compiles, with an unlowered compute body. Only a hard
-    // backend error stops the report.
+    // Outside strict mode a subset gap is a lowering *limitation* to report,
+    // not a failure: the module still compiles, with an unlowered compute
+    // body. The CLI compiles in strict mode, where the gap is the error.
     let subset_gap = diagnose_cranelift_compute_subset_gap(&lowered.store, lowered.module)
         .map_err(|error| LowerToCraneliftError::Codegen {
             error,

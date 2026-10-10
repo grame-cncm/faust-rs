@@ -86,8 +86,10 @@ pub(crate) fn run_fir_fixture_mode(cli: &CliArgs, fixture_name: &str, mode_count
         let compiled = match generate_cranelift_module(
             &store,
             module,
+            // Strict, as in source mode: no no-op stub behind a success.
             &CraneliftOptions {
                 memory_manager_mode: selected_memory_manager_mode(cli),
+                fail_on_subset_gap: true,
                 ..CraneliftOptions::default()
             },
         ) {

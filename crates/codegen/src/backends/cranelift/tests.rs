@@ -5,7 +5,23 @@ use super::{
 use crate::fixtures::build_sine_phasor_test_module;
 use crate::memory_layout::MemoryManagerMode;
 use fir::{AccessType, FirBinOp, FirBuilder, FirId, FirType, NamedType};
+use std::cell::Cell;
 use std::ffi::c_void;
+
+thread_local! {
+    /// Makes the first compilation attempt of `generate_cranelift_module`
+    /// panic, as Cranelift does on AArch64 when a body exceeds its branch
+    /// range, without needing such a body.
+    pub(super) static INJECT_JIT_PANIC: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Runs `f` with [`INJECT_JIT_PANIC`] set on this thread.
+fn with_injected_jit_panic<T>(f: impl FnOnce() -> T) -> T {
+    INJECT_JIT_PANIC.set(true);
+    let result = f();
+    INJECT_JIT_PANIC.set(false);
+    result
+}
 
 #[test]
 /// Verifies the public backend identifier remains stable.
@@ -378,6 +394,15 @@ fn compile_module_falls_back_to_stub_without_strict_subset_mode() {
     let compiled = generate_cranelift_module(&store, module, &CraneliftOptions::default())
         .expect("default mode should allow subset-gap fallback");
     assert!(!compiled.compute_body_lowered());
+    // The fallback is not executable, and says why.
+    let gap = compiled.compute_subset_gap().expect("a stub has a reason");
+    assert!(gap.contains("std::erf"), "{gap}");
+    let err = compiled
+        .require_lowered_compute()
+        .expect_err("a stub must not pass as executable");
+    assert_eq!(err.code, CraneliftBackendErrorCode::UnsupportedModuleShape);
+    assert!(err.message.contains("cannot lower `compute`"), "{err}");
+    assert!(err.message.contains("std::erf"), "{err}");
 }
 
 #[test]
@@ -391,7 +416,36 @@ fn compile_module_fails_on_subset_gap_with_strict_mode() {
     let err = generate_cranelift_module(&store, module, &options)
         .expect_err("strict mode must reject subset-gap fallback");
     assert_eq!(err.code, CraneliftBackendErrorCode::UnsupportedModuleShape);
-    assert!(err.message.contains("strict mode rejected fallback"));
+    assert!(err.message.contains("cannot lower `compute`"), "{err}");
+}
+
+#[test]
+/// A JIT panic falls back to the stub only outside strict mode, and the stub
+/// carries the panic as its reason.
+fn a_jit_panic_is_a_stub_with_its_reason_or_a_strict_error() {
+    let (store, module) = build_subset_lowerable_compute_module();
+    let compiled = with_injected_jit_panic(|| {
+        generate_cranelift_module(&store, module, &CraneliftOptions::default())
+    })
+    .expect("default mode falls back to the stub after a JIT panic");
+    assert!(!compiled.compute_body_lowered());
+    let gap = compiled.compute_subset_gap().expect("a stub has a reason");
+    assert!(gap.contains("panicked"), "{gap}");
+    assert!(compiled.require_lowered_compute().is_err());
+
+    let strict = CraneliftOptions {
+        fail_on_subset_gap: true,
+        ..CraneliftOptions::default()
+    };
+    let err = with_injected_jit_panic(|| generate_cranelift_module(&store, module, &strict))
+        .expect_err("strict mode must not turn a JIT panic into a stub");
+    assert_eq!(err.code, CraneliftBackendErrorCode::JitFailure);
+    assert!(err.message.contains("panicked"), "{err}");
+
+    // Without the injected panic the same module lowers.
+    let compiled = generate_cranelift_module(&store, module, &strict).expect("lowerable");
+    assert!(compiled.require_lowered_compute().is_ok());
+    assert_eq!(compiled.compute_subset_gap(), None);
 }
 
 #[test]
@@ -683,6 +737,18 @@ fn compile_module_falls_back_when_custom_foreign_fun_symbol_is_missing() {
     let compiled = generate_cranelift_module(&store, module, &CraneliftOptions::default())
         .expect("missing foreign function binding should fall back to the stub in default mode");
     assert!(!compiled.compute_body_lowered());
+    let err = compiled
+        .require_lowered_compute()
+        .expect_err("not executable");
+    assert!(
+        err.message
+            .contains("`test_foreign_gain` has no Cranelift implementation"),
+        "{err}"
+    );
+    assert!(
+        err.message.contains("registerCCraneliftForeignFunction"),
+        "{err}"
+    );
 }
 
 /// Builds a minimal `compute` body that reads one FIR `AccessType::Global`

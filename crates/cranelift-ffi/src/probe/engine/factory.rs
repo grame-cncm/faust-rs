@@ -125,10 +125,58 @@ impl Factory {
         })
     }
 
+    /// [`Factory::create_unchecked`], then [`Factory::require_executable`]:
+    /// every probe compiles through here, so no mode renders a no-op body.
+    fn create(
+        import_dirs: &[String],
+        extra_args: &[String],
+        double: bool,
+        create: impl FnOnce(c_int, *const *const c_char, *mut c_char) -> *mut CraneliftDspFactory,
+    ) -> Result<Self, String> {
+        Self::create_unchecked(import_dirs, extra_args, double, create)?.require_executable()
+    }
+
+    /// Fails unless the factory's `compute` was lowered.
+    ///
+    /// The C constructors accept a `compute` the JIT cannot lower and give it a
+    /// no-op body (a foreign function with no registered host binding, a JIT
+    /// panic on a huge body). That body writes nothing, so a render of it reads
+    /// as silence, a plausible result: the probe refuses the factory instead.
+    /// The failure is recorded as the last compile failure, without typed
+    /// diagnostics, the backend having none for it.
+    ///
+    /// # Errors
+    /// The backend's `[FRS-CGEN-CLIF-0002] Cranelift cannot lower `compute`: ...`,
+    /// naming the first construct it could not lower.
+    pub(super) fn require_executable(self) -> Result<Self, String> {
+        // SAFETY: `self.factory` is live for as long as `self`.
+        let ready = match unsafe { (*self.factory).compiled_jit.as_ref() } {
+            Some(jit) => jit
+                .require_lowered_compute()
+                .map_err(|error| error.to_string()),
+            None => Err("the Cranelift factory has no JIT-compiled code".to_owned()),
+        };
+        let Err(error) = ready else {
+            return Ok(self);
+        };
+        let text = format!(
+            "{error}\n  the factory's `compute` would be a no-op that writes no output, \
+             so it is not rendered"
+        );
+        LAST_COMPILE_FAILURE.with(|last| {
+            *last.borrow_mut() = Some(CompileFailure {
+                text: text.clone(),
+                diagnostics_json: None,
+            });
+        });
+        Err(text)
+    }
+
     /// Builds the compiler's `argv` (`-I DIR`..., `-double`, the extra
     /// arguments verbatim), calls `create` with it and with the buffer the
-    /// error summary goes to, and owns the factory that comes back.
-    fn create(
+    /// error summary goes to, and owns the factory that comes back, executable
+    /// or not.
+    fn create_unchecked(
         import_dirs: &[String],
         extra_args: &[String],
         double: bool,
@@ -198,9 +246,31 @@ impl Factory {
         double: bool,
         opt_level: i32,
     ) -> Result<Self, String> {
+        Self::compile_from_string_unchecked(
+            name,
+            source,
+            import_dirs,
+            extra_args,
+            double,
+            opt_level,
+        )?
+        .require_executable()
+    }
+
+    /// [`Factory::compile_from_string_with_args`] without
+    /// [`Factory::require_executable`], for a caller that tells a program that
+    /// does not compile from one that compiles to a no-op.
+    pub(super) fn compile_from_string_unchecked(
+        name: &str,
+        source: &str,
+        import_dirs: &[String],
+        extra_args: &[String],
+        double: bool,
+        opt_level: i32,
+    ) -> Result<Self, String> {
         let c_name = CString::new(name).map_err(|e| e.to_string())?;
         let c_source = CString::new(source).map_err(|e| e.to_string())?;
-        Self::create(import_dirs, extra_args, double, |argc, argv, err| unsafe {
+        Self::create_unchecked(import_dirs, extra_args, double, |argc, argv, err| unsafe {
             createCCraneliftDSPFactoryFromString(
                 c_name.as_ptr(),
                 c_source.as_ptr(),

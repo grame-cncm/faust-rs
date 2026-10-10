@@ -300,6 +300,7 @@ fn ForeignSignature::decode
 fn ForeignSignature::encode
 fn JitDspModule::compute_body_lowered
 fn JitDspModule::compute_entry_addr
+fn JitDspModule::compute_subset_gap
 fn JitDspModule::compute_symbol_name
 fn JitDspModule::double_precision
 fn JitDspModule::generated_functions_clif
@@ -309,6 +310,7 @@ fn JitDspModule::instance_constants_entry_addr
 fn JitDspModule::jit_module_is_alive
 fn JitDspModule::mem0_analysis
 fn JitDspModule::module_name
+fn JitDspModule::require_lowered_compute
 fn JitDspModule::static_init_entry_addr
 fn JitDspModule::static_memory_slots
 fn JitDspModule::struct_layout

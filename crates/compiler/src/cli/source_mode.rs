@@ -510,8 +510,11 @@ pub(crate) fn run_source_mode(
         );
         let compiler = compiler_from_cli(cli, Some(std::sync::Arc::clone(cancel)));
         let lane = selected_codegen_lane(cli).into_compiler_lane();
+        // Strict: a `compute` the JIT cannot lower is an error, not a no-op
+        // stub reported as a successful compilation.
         let options = CraneliftOptions {
             memory_manager_mode: selected_memory_manager_mode(cli),
+            fail_on_subset_gap: true,
             ..CraneliftOptions::default()
         };
         let result = compiler.compile_file_to_cranelift_report_with_lane(

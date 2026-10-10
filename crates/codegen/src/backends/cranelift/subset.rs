@@ -366,7 +366,17 @@ pub(crate) fn subset_expr_gap_reason(
                         | "tanh"
                 )
             {
-                Some(format!("unsupported math call in subset: {name}"))
+                // Not a math function the backend implements: a foreign
+                // function, which the JIT can call only at an address the host
+                // registered. The header an `ffunction` names is for the C and
+                // C++ backends; the JIT never compiles it.
+                Some(format!(
+                    "`{name}` has no Cranelift implementation: it is not a supported math \
+                     function and no host function is registered under that name (the JIT \
+                     does not compile the header an `ffunction` names, `-I` included); \
+                     compile with `-lang cpp` or `-lang c`, or, when embedding, register \
+                     it with `registerCCraneliftForeignFunction`"
+                ))
             } else {
                 args.into_iter().find_map(|x| {
                     subset_expr_gap_reason(store, x, extern_data_symbols, extern_function_symbols)

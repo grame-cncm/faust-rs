@@ -547,6 +547,62 @@ fn codegen_backend_failure_is_structured() {
     );
 }
 
+/// `-lang cranelift` fails on a foreign function the JIT cannot call, rather
+/// than reporting a successful compilation of a no-op `compute` (the
+/// 2026-10-08 audit, W1). A math function the backend implements still
+/// compiles. The headers are named, never read: the programs are
+/// self-contained.
+#[test]
+fn cranelift_rejects_an_unbound_foreign_call_and_keeps_supported_math() {
+    let dir = std::env::temp_dir().join(format!("faust_rs_cli_w1_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let unbound = dir.join("unbound.dsp");
+    std::fs::write(
+        &unbound,
+        "f = ffunction(float w1_unbound(float), \"w1.h\", \"\");\nprocess = f;\n",
+    )
+    .expect("write the program");
+    let output = Command::new(bin_path())
+        .arg(&unbound)
+        .args(["-lang", "cranelift", "--error-format", "json"])
+        .output()
+        .expect("run faust-rs");
+    assert!(!output.status.success(), "a no-op compute must not succeed");
+    let stdout = String::from_utf8(output.stdout).expect("stdout must be UTF-8");
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout must be one clean JSON document: {e}\n{stdout}"));
+    let diag = &parsed["diagnostics"][0];
+    assert_eq!(diag["code"], "FRS-CODEGEN-0001");
+    assert_eq!(diag["detail_code"], "FRS-CGEN-CLIF-0002");
+    let message = diag["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("`w1_unbound` has no Cranelift implementation"),
+        "{diag}"
+    );
+
+    let tanh = dir.join("tanh.dsp");
+    std::fs::write(
+        &tanh,
+        "t = ffunction(float tanhf|tanh|tanhl(float), <math.h>, \"\");\nprocess = t;\n",
+    )
+    .expect("write the program");
+    for precision in [None, Some("-double")] {
+        let output = Command::new(bin_path())
+            .arg(&tanh)
+            .args(["-lang", "cranelift"])
+            .args(precision)
+            .output()
+            .expect("run faust-rs");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("compute_body_lowered: true"),
+            "{precision:?}: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Division by a constant zero must be a structured diagnostic, not a panic.
 ///
 /// Parity: the reference C++ compiler rejects `process = _ / (0 : *(0));`
