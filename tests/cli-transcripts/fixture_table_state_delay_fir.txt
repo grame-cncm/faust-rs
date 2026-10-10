@@ -1,6 +1,5 @@
-#84 Module { num_inputs: 1, num_outputs: 1, name: "table_state_delay", dsp_struct: TreeId(77), globals: TreeId(80), functions: TreeId(82), static_decls: TreeId(77), sub_modules: TreeId(77) }
-  #77 Block([])
-  #80 Block([TreeId(8), TreeId(15)])
+#83 Module { num_inputs: 1, num_outputs: 1, name: "table_state_delay", dsp_struct: TreeId(78), globals: TreeId(79), functions: TreeId(81), static_decls: TreeId(79), sub_modules: TreeId(79) }
+  #78 Block([TreeId(8), TreeId(15)])
     #8 DeclareVar { name: "fWriteIdx", typ: Int32, access: Struct, init: Some(TreeId(5)) }
       #5 Int32 { value: 0, typ: Int32 }
     #15 DeclareTable { name: "fDelay", access: Struct, elem_type: FaustFloat, values: [TreeId(3), TreeId(3), TreeId(3), TreeId(3)] }
@@ -8,18 +7,19 @@
       #3 Float32 { value: 0.0, typ: Float32 }
       #3 Float32 { value: 0.0, typ: Float32 }
       #3 Float32 { value: 0.0, typ: Float32 }
-  #82 Block([TreeId(76)])
-    #76 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(56)), is_inline: false }
-      #56 Block([TreeId(23), TreeId(25), TreeId(52)])
+  #79 Block([])
+  #81 Block([TreeId(75)])
+    #75 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(55)), is_inline: false }
+      #55 Block([TreeId(23), TreeId(25), TreeId(51)])
         #23 DeclareVar { name: "input0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(19)) }
           #19 LoadTable { name: "inputs", access: FunArgs, index: TreeId(5), typ: Ptr(FaustFloat) }
             #5 Int32 { value: 0, typ: Int32 }
         #25 DeclareVar { name: "output0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(21)) }
           #21 LoadTable { name: "outputs", access: FunArgs, index: TreeId(5), typ: Ptr(FaustFloat) }
             #5 Int32 { value: 0, typ: Int32 }
-        #52 SimpleForLoop { var: "i0", upper: TreeId(27), body: TreeId(51), is_reverse: false }
+        #51 SimpleForLoop { var: "i0", upper: TreeId(27), body: TreeId(50), is_reverse: false }
           #27 LoadVar { name: "count", access: FunArgs, typ: Int32 }
-          #51 Block([TreeId(35), TreeId(36), TreeId(38), TreeId(46)])
+          #50 Block([TreeId(35), TreeId(36), TreeId(38), TreeId(45)])
             #35 DeclareVar { name: "tmpRead", typ: FaustFloat, access: Stack, init: Some(TreeId(33)) }
               #33 LoadTable { name: "fDelay", access: Struct, index: TreeId(32), typ: FaustFloat }
                 #32 LoadVar { name: "fWriteIdx", access: Struct, typ: Int32 }
@@ -30,15 +30,15 @@
             #38 StoreTable { name: "output0", access: Stack, index: TreeId(30), value: TreeId(37) }
               #30 LoadVar { name: "i0", access: Loop, typ: Int32 }
               #37 LoadVar { name: "tmpRead", access: Stack, typ: FaustFloat }
-            #46 StoreVar { name: "fWriteIdx", access: Struct, value: TreeId(45) }
-              #45 Select2 { cond: TreeId(44), then_value: TreeId(5), else_value: TreeId(40), typ: Int32 }
-                #44 BinOp { op: Ge, lhs: TreeId(40), rhs: TreeId(41), typ: Bool }
+            #45 StoreVar { name: "fWriteIdx", access: Struct, value: TreeId(44) }
+              #44 Select2 { cond: TreeId(43), then_value: TreeId(5), else_value: TreeId(40), typ: Int32 }
+                #43 BinOp { op: Ge, lhs: TreeId(40), rhs: TreeId(41), typ: Int32 }
                   #40 BinOp { op: Add, lhs: TreeId(32), rhs: TreeId(39), typ: Int32 }
                     #32 LoadVar { name: "fWriteIdx", access: Struct, typ: Int32 }
                     #39 Int32 { value: 1, typ: Int32 }
                   #41 Int32 { value: 4, typ: Int32 }
                 #5 Int32 { value: 0, typ: Int32 }
                 #40 BinOp { op: Add, lhs: TreeId(32), rhs: TreeId(39), typ: Int32 }
-  #77 Block([])
-  #77 Block([])
+  #79 Block([])
+  #79 Block([])
 EXIT=0

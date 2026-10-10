@@ -1,9 +1,10 @@
-#107 Module { num_inputs: 1, num_outputs: 1, name: "control_flow", dsp_struct: TreeId(101), globals: TreeId(103), functions: TreeId(105), static_decls: TreeId(101), sub_modules: TreeId(101) }
-  #101 Block([])
-  #103 Block([TreeId(5)])
+#115 Module { num_inputs: 1, num_outputs: 1, name: "control_flow", dsp_struct: TreeId(108), globals: TreeId(110), functions: TreeId(112), static_decls: TreeId(113), sub_modules: TreeId(113) }
+  #108 Block([TreeId(5)])
     #5 DeclareVar { name: "fMode", typ: Int32, access: Struct, init: Some(TreeId(3)) }
       #3 Int32 { value: 1, typ: Int32 }
-  #105 Block([TreeId(100)])
+  #110 Block([TreeId(106)])
+    #106 DeclareFun { name: "fabs", typ: Fun { args: [Float64], ret: Float64 }, args: [NamedType { name: "arg0", typ: Float64 }], body: None, is_inline: false }
+  #112 Block([TreeId(100)])
     #100 DeclareFun { name: "compute", typ: Fun { args: [Ptr(Obj), Int32, Ptr(Ptr(FaustFloat)), Ptr(Ptr(FaustFloat))], ret: Void }, args: [NamedType { name: "dsp", typ: Ptr(Obj) }, NamedType { name: "count", typ: Int32 }, NamedType { name: "inputs", typ: Ptr(Ptr(FaustFloat)) }, NamedType { name: "outputs", typ: Ptr(Ptr(FaustFloat)) }], body: Some(TreeId(80)), is_inline: false }
       #80 Block([TreeId(16), TreeId(18), TreeId(22), TreeId(75)])
         #16 DeclareVar { name: "input0", typ: Ptr(FaustFloat), access: Stack, init: Some(TreeId(12)) }
@@ -16,24 +17,25 @@
           #7 Int32 { value: 0, typ: Int32 }
         #75 SimpleForLoop { var: "i0", upper: TreeId(20), body: TreeId(74), is_reverse: false }
           #20 LoadVar { name: "count", access: FunArgs, typ: Int32 }
-          #74 Block([TreeId(55), TreeId(62), TreeId(69), TreeId(49)])
+          #74 Block([TreeId(55), TreeId(62), TreeId(69), TreeId(50)])
             #55 StoreVar { name: "acc", access: Stack, value: TreeId(54) }
-              #54 BinOp { op: Add, lhs: TreeId(53), rhs: TreeId(31), typ: Int32 }
+              #54 BinOp { op: Add, lhs: TreeId(53), rhs: TreeId(32), typ: Int32 }
                 #53 LoadVar { name: "acc", access: Stack, typ: Int32 }
-                #31 LoadVar { name: "fMode", access: Struct, typ: Int32 }
+                #32 LoadVar { name: "fMode", access: Struct, typ: Int32 }
             #62 If { cond: TreeId(52), then_block: TreeId(61), else_block: None }
-              #52 BinOp { op: Gt, lhs: TreeId(26), rhs: TreeId(30), typ: Bool }
-                #26 LoadTable { name: "input0", access: Stack, index: TreeId(25), typ: FaustFloat }
-                  #25 LoadVar { name: "i0", access: Loop, typ: Int32 }
-                #30 Float64 { value: 0.0, typ: Float64 }
+              #52 BinOp { op: Gt, lhs: TreeId(29), rhs: TreeId(31), typ: Int32 }
+                #29 Cast { typ: Float64, value: TreeId(26) }
+                  #26 LoadTable { name: "input0", access: Stack, index: TreeId(25), typ: FaustFloat }
+                    #25 LoadVar { name: "i0", access: Loop, typ: Int32 }
+                #31 Float64 { value: 0.0, typ: Float64 }
               #61 Block([TreeId(59)])
                 #59 StoreVar { name: "fMode", access: Struct, value: TreeId(58) }
                   #58 Select2 { cond: TreeId(52), then_value: TreeId(3), else_value: TreeId(57), typ: Int32 }
-                    #52 BinOp { op: Gt, lhs: TreeId(26), rhs: TreeId(30), typ: Bool }
+                    #52 BinOp { op: Gt, lhs: TreeId(29), rhs: TreeId(31), typ: Int32 }
                     #3 Int32 { value: 1, typ: Int32 }
                     #57 Int32 { value: 2, typ: Int32 }
             #69 If { cond: TreeId(52), then_block: TreeId(65), else_block: Some(TreeId(68)) }
-              #52 BinOp { op: Gt, lhs: TreeId(26), rhs: TreeId(30), typ: Bool }
+              #52 BinOp { op: Gt, lhs: TreeId(29), rhs: TreeId(31), typ: Int32 }
               #65 Block([TreeId(63)])
                 #63 Drop(TreeId(26))
                   #26 LoadTable { name: "input0", access: Stack, index: TreeId(25), typ: FaustFloat }
@@ -41,22 +43,22 @@
                 #66 Drop(TreeId(27))
                   #27 Neg { value: TreeId(26), typ: FaustFloat }
                     #26 LoadTable { name: "input0", access: Stack, index: TreeId(25), typ: FaustFloat }
-            #49 Switch { cond: TreeId(31), cases: [(0, TreeId(34)), (1, TreeId(37))], default: Some(TreeId(44)) }
-              #31 LoadVar { name: "fMode", access: Struct, typ: Int32 }
-              #34 Block([TreeId(32)])
-                #32 StoreTable { name: "output0", access: Stack, index: TreeId(25), value: TreeId(26) }
+            #50 Switch { cond: TreeId(32), cases: [(0, TreeId(35)), (1, TreeId(38))], default: Some(TreeId(45)) }
+              #32 LoadVar { name: "fMode", access: Struct, typ: Int32 }
+              #35 Block([TreeId(33)])
+                #33 StoreTable { name: "output0", access: Stack, index: TreeId(25), value: TreeId(26) }
                   #25 LoadVar { name: "i0", access: Loop, typ: Int32 }
                   #26 LoadTable { name: "input0", access: Stack, index: TreeId(25), typ: FaustFloat }
-              #37 Block([TreeId(35)])
-                #35 StoreTable { name: "output0", access: Stack, index: TreeId(25), value: TreeId(27) }
+              #38 Block([TreeId(36)])
+                #36 StoreTable { name: "output0", access: Stack, index: TreeId(25), value: TreeId(27) }
                   #25 LoadVar { name: "i0", access: Loop, typ: Int32 }
                   #27 Neg { value: TreeId(26), typ: FaustFloat }
-              #44 Block([TreeId(42)])
-                #42 StoreTable { name: "output0", access: Stack, index: TreeId(25), value: TreeId(41) }
+              #45 Block([TreeId(43)])
+                #43 StoreTable { name: "output0", access: Stack, index: TreeId(25), value: TreeId(42) }
                   #25 LoadVar { name: "i0", access: Loop, typ: Int32 }
-                  #41 FunCall { name: "fabs", args: [TreeId(38)], typ: Float64 }
-                    #38 Cast { typ: Float64, value: TreeId(26) }
-                      #26 LoadTable { name: "input0", access: Stack, index: TreeId(25), typ: FaustFloat }
-  #101 Block([])
-  #101 Block([])
+                  #42 Cast { typ: FaustFloat, value: TreeId(41) }
+                    #41 FunCall { name: "fabs", args: [TreeId(29)], typ: Float64 }
+                      #29 Cast { typ: Float64, value: TreeId(26) }
+  #113 Block([])
+  #113 Block([])
 EXIT=0

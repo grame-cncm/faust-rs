@@ -124,16 +124,21 @@ fn metadata_fun_type() -> FirType {
     }
 }
 
-/// Wraps globals/functions into a complete FIR `Module`.
+/// Wraps struct fields, globals and functions into a complete FIR `Module`.
+///
+/// As in the FIR the compiler produces (which the FIR checker accepts): the
+/// `kStruct` fields go to `dsp_struct`, and `globals` holds the prototypes of
+/// the math functions `compute` calls.
 fn module_with_functions(
     b: &mut FirBuilder<'_>,
     name: &str,
+    fields: &[FirId],
     globals: &[FirId],
     functions: &[FirId],
     num_inputs: usize,
     num_outputs: usize,
 ) -> FirId {
-    let dsp_struct = b.block(&[]);
+    let dsp_struct = b.block(fields);
     let globals = b.block(globals);
     let functions = b.block(functions);
     let static_decls = b.block(&[]);
@@ -146,6 +151,27 @@ fn module_with_functions(
         functions,
         static_decls,
         &[],
+    )
+}
+
+/// Declares the prototype of a double-precision math function, as the
+/// compiler does for every math call (`sin`, `fabs`, `pow`, ...).
+fn math_prototype(b: &mut FirBuilder<'_>, op: FirMathOp, arity: usize) -> FirId {
+    let args: Vec<NamedType> = (0..arity)
+        .map(|i| NamedType {
+            name: format!("arg{i}"),
+            typ: FirType::Float64,
+        })
+        .collect();
+    b.declare_fun(
+        op.symbol(),
+        FirType::Fun {
+            args: vec![FirType::Float64; arity],
+            ret: Box::new(FirType::Float64),
+        },
+        &args,
+        None,
+        false,
     )
 }
 
@@ -237,16 +263,20 @@ pub fn build_sine_phasor_test_module() -> (FirStore, FirId) {
     let one = b.float64(1.0);
     let two_pi = b.float64(std::f64::consts::TAU);
 
+    // The zones are `FAUSTFLOAT`, read in the computation's type.
+    let freq = b.cast(FirType::Float64, freq);
+    let gain = b.cast(FirType::Float64, gain);
     let phase_inc = b.binop(FirBinOp::Div, freq, sample_rate, FirType::Float64);
     let next_phase = b.binop(FirBinOp::Add, phase, phase_inc, FirType::Float64);
     let wrapped_phase_minus = b.binop(FirBinOp::Sub, next_phase, one, FirType::Float64);
-    let wrap_cond = b.binop(FirBinOp::Ge, next_phase, one, FirType::Bool);
+    let wrap_cond = b.binop(FirBinOp::Ge, next_phase, one, FirType::Int32);
     let wrapped_phase = b.select2(wrap_cond, wrapped_phase_minus, next_phase, FirType::Float64);
     let store_phase = b.store_var("fPhase", AccessType::Struct, wrapped_phase);
 
     let phase_angle = b.binop(FirBinOp::Mul, two_pi, wrapped_phase, FirType::Float64);
     let sine = b.math_call(FirMathOp::Sin, &[phase_angle], FirType::Float64);
     let out = b.binop(FirBinOp::Mul, gain, sine, FirType::Float64);
+    let out = b.cast(FirType::FaustFloat, out);
     let out_chan = b.int32(0);
     let out_ptr_ty = FirType::Ptr(Box::new(FirType::FaustFloat));
     let out_ptr = b.load_table("outputs", AccessType::FunArgs, out_chan, out_ptr_ty.clone());
@@ -259,10 +289,12 @@ pub fn build_sine_phasor_test_module() -> (FirStore, FirId) {
     let sample_loop = b.simple_for_loop("i0", count, sample_body, false);
     let compute_body = b.block(&[out_alias, sample_loop]);
     let compute = declare_compute_fn(&mut b, compute_body);
+    let sin_proto = math_prototype(&mut b, FirMathOp::Sin, 1);
     let module = module_with_functions(
         &mut b,
         "mydsp",
         &[dec_freq, dec_gain, dec_phase],
+        &[sin_proto],
         &[build_ui, compute],
         0,
         1,
@@ -301,7 +333,7 @@ pub fn build_passthrough_test_module() -> (FirStore, FirId) {
     let compute_body = b.block(&[in_alias, out_alias, sample_loop]);
     let compute = declare_compute_fn(&mut b, compute_body);
 
-    let module = module_with_functions(&mut b, "passthrough", &[], &[compute], 1, 1);
+    let module = module_with_functions(&mut b, "passthrough", &[], &[], &[compute], 1, 1);
     (store, module)
 }
 
@@ -434,28 +466,37 @@ pub fn build_gain_bias_ui_meta_test_module() -> (FirStore, FirId) {
     let (in_alias, out_alias) = io_aliases_for_mono_compute(&mut b);
     let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
     let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+    // `FAUSTFLOAT` samples and zones are read in the computation's type,
+    // `Float64`, and the results written back as `FAUSTFLOAT`.
     let x = b.load_table("input0", AccessType::Stack, i0, FirType::FaustFloat);
+    let x = b.cast(FirType::Float64, x);
     let gain = b.load_var("fGain", AccessType::Struct, FirType::FaustFloat);
+    let gain = b.cast(FirType::Float64, gain);
     let bias = b.load_var("fBias", AccessType::Struct, FirType::FaustFloat);
+    let bias = b.cast(FirType::Float64, bias);
     let gate = b.load_var("fGate", AccessType::Struct, FirType::FaustFloat);
+    let gate = b.cast(FirType::Float64, gate);
     let zero = b.float64(0.0);
-    let gate_is_on = b.binop(FirBinOp::Gt, gate, zero, FirType::Bool);
-    let gated = b.select2(gate_is_on, x, zero, FirType::FaustFloat);
-    let scaled = b.binop(FirBinOp::Mul, gated, gain, FirType::FaustFloat);
-    let y = b.binop(FirBinOp::Add, scaled, bias, FirType::FaustFloat);
-    let y_f64 = b.cast(FirType::Float64, y);
-    let level_abs = b.math_call(FirMathOp::Abs, &[y_f64], FirType::Float64);
+    let gate_is_on = b.binop(FirBinOp::Gt, gate, zero, FirType::Int32);
+    let gated = b.select2(gate_is_on, x, zero, FirType::Float64);
+    let scaled = b.binop(FirBinOp::Mul, gated, gain, FirType::Float64);
+    let y = b.binop(FirBinOp::Add, scaled, bias, FirType::Float64);
+    let level_abs = b.math_call(FirMathOp::Abs, &[y], FirType::Float64);
+    let level_abs = b.cast(FirType::FaustFloat, level_abs);
     let store_level = b.store_var("fLevel", AccessType::Struct, level_abs);
+    let y = b.cast(FirType::FaustFloat, y);
     let store_out = b.store_table("output0", AccessType::Stack, i0, y);
     let loop_body = b.block(&[store_level, store_out]);
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[in_alias, out_alias, sample_loop]);
     let compute = declare_compute_fn(&mut b, compute_body);
 
+    let fabs_proto = math_prototype(&mut b, FirMathOp::Abs, 1);
     let module = module_with_functions(
         &mut b,
         "gain_bias_ui_meta",
         &globals,
+        &[fabs_proto],
         &[build_ui, metadata, reset_ui, compute],
         1,
         1,
@@ -525,7 +566,7 @@ pub fn build_table_state_delay_test_module() -> (FirStore, FirId) {
     let one_i = b.int32(1);
     let idx_plus = b.binop(FirBinOp::Add, idx, one_i, FirType::Int32);
     let four_i = b.int32(4);
-    let ge_wrap = b.binop(FirBinOp::Ge, idx_plus, four_i, FirType::Bool);
+    let ge_wrap = b.binop(FirBinOp::Ge, idx_plus, four_i, FirType::Int32);
     let zero_i = b.int32(0);
     let wrap = b.select2(ge_wrap, zero_i, idx_plus, FirType::Int32);
     let store_idx = b.store_var("fWriteIdx", AccessType::Struct, wrap);
@@ -534,7 +575,8 @@ pub fn build_table_state_delay_test_module() -> (FirStore, FirId) {
     let compute_body = b.block(&[in_alias, out_alias, sample_loop]);
     let compute = declare_compute_fn(&mut b, compute_body);
 
-    let module = module_with_functions(&mut b, "table_state_delay", &globals, &[compute], 1, 1);
+    let module =
+        module_with_functions(&mut b, "table_state_delay", &globals, &[], &[compute], 1, 1);
     (store, module)
 }
 
@@ -574,14 +616,17 @@ pub fn build_control_flow_test_module() -> (FirStore, FirId) {
     let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
     let x = b.load_table("input0", AccessType::Stack, i0, FirType::FaustFloat);
     let neg_x = b.neg(x, FirType::FaustFloat);
+    // The comparison and `abs` compute in `Float64`, as the compiler's FIR
+    // reads a `FAUSTFLOAT` sample in the computation's type.
+    let x_f64 = b.cast(FirType::Float64, x);
     let zero_f = b.float64(0.0);
     let mode = b.load_var("fMode", AccessType::Struct, FirType::Int32);
     let store_x = b.store_table("output0", AccessType::Stack, i0, x);
     let mode_case0 = b.block(&[store_x]);
     let store_neg_x = b.store_table("output0", AccessType::Stack, i0, neg_x);
     let mode_case1 = b.block(&[store_neg_x]);
-    let x_f64 = b.cast(FirType::Float64, x);
     let abs_x = b.math_call(FirMathOp::Abs, &[x_f64], FirType::Float64);
+    let abs_x = b.cast(FirType::FaustFloat, abs_x);
     let store_abs_x = b.store_table("output0", AccessType::Stack, i0, abs_x);
     let mode_default = b.block(&[store_abs_x]);
     let mode_switch = b.switch(
@@ -590,7 +635,7 @@ pub fn build_control_flow_test_module() -> (FirStore, FirId) {
         Some(mode_default),
     );
 
-    let x_is_pos = b.binop(FirBinOp::Gt, x, zero_f, FirType::Bool);
+    let x_is_pos = b.binop(FirBinOp::Gt, x_f64, zero_f, FirType::Int32);
     let acc_cur = b.load_var("acc", AccessType::Stack, FirType::Int32);
     let acc_next = b.binop(FirBinOp::Add, acc_cur, mode, FirType::Int32);
     let store_acc = b.store_var("acc", AccessType::Stack, acc_next);
@@ -612,7 +657,16 @@ pub fn build_control_flow_test_module() -> (FirStore, FirId) {
     let compute_body = b.block(&[in_alias, out_alias, acc_decl, sample_loop]);
     let compute = declare_compute_fn(&mut b, compute_body);
 
-    let module = module_with_functions(&mut b, "control_flow", &globals, &[compute], 1, 1);
+    let fabs_proto = math_prototype(&mut b, FirMathOp::Abs, 1);
+    let module = module_with_functions(
+        &mut b,
+        "control_flow",
+        &globals,
+        &[fabs_proto],
+        &[compute],
+        1,
+        1,
+    );
     (store, module)
 }
 
@@ -652,13 +706,31 @@ pub fn build_math_intrinsics_test_module() -> (FirStore, FirId) {
     let scaled = b.binop(FirBinOp::Mul, maxv, half2, FirType::Float64);
     let neg_atan = b.neg(atan, FirType::Float64);
     let y = b.binop(FirBinOp::Add, scaled, neg_atan, FirType::Float64);
+    let y = b.cast(FirType::FaustFloat, y);
     let write = b.store_table("output0", AccessType::Stack, i0, y);
     let loop_body = b.block(&[write]);
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[in_alias, out_alias, sample_loop]);
     let compute = declare_compute_fn(&mut b, compute_body);
 
-    let module = module_with_functions(&mut b, "math_intrinsics", &[], &[compute], 1, 1);
+    let prototypes = [
+        math_prototype(&mut b, FirMathOp::Abs, 1),
+        math_prototype(&mut b, FirMathOp::Sin, 1),
+        math_prototype(&mut b, FirMathOp::Cos, 1),
+        math_prototype(&mut b, FirMathOp::Pow, 2),
+        math_prototype(&mut b, FirMathOp::Min, 2),
+        math_prototype(&mut b, FirMathOp::Max, 2),
+        math_prototype(&mut b, FirMathOp::Atan2, 2),
+    ];
+    let module = module_with_functions(
+        &mut b,
+        "math_intrinsics",
+        &[],
+        &prototypes,
+        &[compute],
+        1,
+        1,
+    );
     (store, module)
 }
 
@@ -700,31 +772,34 @@ pub fn build_heavy_bench_test_module() -> (FirStore, FirId) {
     let z = b.float32(0.0);
     for idx in 0..STAGES {
         let name = format!("s{idx}");
-        globals.push(b.declare_var(&name, FirType::FaustFloat, AccessType::Struct, Some(z)));
+        globals.push(b.declare_var(&name, FirType::Float32, AccessType::Struct, Some(z)));
     }
 
     let (in_alias, out_alias) = io_aliases_for_mono_compute(&mut b);
     let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
     let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+    // The state computes in `Float32`; the `FAUSTFLOAT` sample is converted
+    // on the way in and out, as in the compiler's FIR.
     let x = b.load_table("input0", AccessType::Stack, i0, FirType::FaustFloat);
-    let acc_init = b.declare_var("acc", FirType::FaustFloat, AccessType::Stack, Some(x));
+    let x = b.cast(FirType::Float32, x);
+    let acc_init = b.declare_var("acc", FirType::Float32, AccessType::Stack, Some(x));
 
     let mut sample_stmts = Vec::<FirId>::with_capacity((STAGES * 2) + 2);
     sample_stmts.push(acc_init);
     for idx in 0..STAGES {
         let name = format!("s{idx}");
-        let s = b.load_var(&name, AccessType::Struct, FirType::FaustFloat);
-        let acc_cur = b.load_var("acc", AccessType::Stack, FirType::FaustFloat);
-        let mixed = b.binop(FirBinOp::Add, acc_cur, s, FirType::FaustFloat);
+        let s = b.load_var(&name, AccessType::Struct, FirType::Float32);
+        let acc_cur = b.load_var("acc", AccessType::Stack, FirType::Float32);
+        let mixed = b.binop(FirBinOp::Add, acc_cur, s, FirType::Float32);
         let coeff = b.float32((0.62 + 0.013 * idx as f64) as f32);
-        let scaled = b.binop(FirBinOp::Mul, mixed, coeff, FirType::FaustFloat);
-        let z2 = b.binop(FirBinOp::Mul, scaled, scaled, FirType::FaustFloat);
-        let z3 = b.binop(FirBinOp::Mul, z2, scaled, FirType::FaustFloat);
+        let scaled = b.binop(FirBinOp::Mul, mixed, coeff, FirType::Float32);
+        let z2 = b.binop(FirBinOp::Mul, scaled, scaled, FirType::Float32);
+        let z3 = b.binop(FirBinOp::Mul, z2, scaled, FirType::Float32);
         let curve_k = b.float32((0.05 + 0.004 * idx as f64) as f32);
-        let shaped = b.binop(FirBinOp::Mul, z3, curve_k, FirType::FaustFloat);
-        let nonlin = b.binop(FirBinOp::Sub, scaled, shaped, FirType::FaustFloat);
+        let shaped = b.binop(FirBinOp::Mul, z3, curve_k, FirType::Float32);
+        let nonlin = b.binop(FirBinOp::Sub, scaled, shaped, FirType::Float32);
         let fb_gain = b.float32(0.97);
-        let feedback = b.binop(FirBinOp::Mul, nonlin, fb_gain, FirType::FaustFloat);
+        let feedback = b.binop(FirBinOp::Mul, nonlin, fb_gain, FirType::Float32);
         let store_state = b.store_var(&name, AccessType::Struct, feedback);
         sample_stmts.push(store_state);
         let acc_next = feedback;
@@ -732,9 +807,10 @@ pub fn build_heavy_bench_test_module() -> (FirStore, FirId) {
         sample_stmts.push(store_acc);
     }
 
-    let acc_final = b.load_var("acc", AccessType::Stack, FirType::FaustFloat);
+    let acc_final = b.load_var("acc", AccessType::Stack, FirType::Float32);
     let out_scale = b.float32((1.0 / STAGES as f64) as f32);
-    let y = b.binop(FirBinOp::Mul, acc_final, out_scale, FirType::FaustFloat);
+    let y = b.binop(FirBinOp::Mul, acc_final, out_scale, FirType::Float32);
+    let y = b.cast(FirType::FaustFloat, y);
     let write = b.store_table("output0", AccessType::Stack, i0, y);
     sample_stmts.push(write);
 
@@ -742,7 +818,7 @@ pub fn build_heavy_bench_test_module() -> (FirStore, FirId) {
     let sample_loop = b.simple_for_loop("i0", count, sample_body, false);
     let compute_body = b.block(&[in_alias, out_alias, sample_loop]);
     let compute = declare_compute_fn(&mut b, compute_body);
-    let module = module_with_functions(&mut b, "heavy_bench", &globals, &[compute], 1, 1);
+    let module = module_with_functions(&mut b, "heavy_bench", &globals, &[], &[compute], 1, 1);
     (store, module)
 }
 
@@ -908,6 +984,44 @@ mod tests {
     fn sine_fixture_is_still_exposed() {
         let (store, module) = build_sine_phasor_test_module();
         assert!(matches!(match_fir(&store, module), FirMatch::Module { .. }));
+    }
+
+    /// Every fixture but `ir_coverage` is FIR the compiler could have
+    /// produced: the FIR checker finds no error in it, and the Cranelift
+    /// backend lowers its `compute` in strict mode, in both precisions.
+    /// `ir_coverage` holds nodes no producer emits, which the C-family,
+    /// interpreter and Cranelift backends reject on purpose.
+    ///
+    /// Before, five fixtures failed the checker (fields in `globals`, math
+    /// calls without a prototype, `FAUSTFLOAT` compared with or stored from a
+    /// `Float64`), and the Cranelift verifier rejected two of them
+    /// (`fcmp.f32` on an `f64` constant).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn runtime_fixtures_are_valid_fir_and_lower_in_cranelift() {
+        use crate::backends::cranelift::{CraneliftOptions, generate_cranelift_module};
+        for (name, build) in backend_test_fixtures() {
+            if *name == "ir_coverage" {
+                continue;
+            }
+            let (store, module) = build();
+            let report = fir::checker::verify_fir_module(&store, module);
+            let errors: Vec<String> = report
+                .errors()
+                .map(|d| format!("[{}] {}", d.code, d.message))
+                .collect();
+            assert!(errors.is_empty(), "{name}: {errors:#?}");
+            for double_precision in [false, true] {
+                let options = CraneliftOptions {
+                    fail_on_subset_gap: true,
+                    double_precision,
+                    ..CraneliftOptions::default()
+                };
+                let compiled = generate_cranelift_module(&store, module, &options)
+                    .unwrap_or_else(|e| panic!("{name} (double={double_precision}): {e}"));
+                assert!(compiled.compute_body_lowered(), "{name}");
+            }
+        }
     }
 
     #[test]

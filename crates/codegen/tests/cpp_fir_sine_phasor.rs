@@ -30,10 +30,11 @@ fn fir_module_sine_phasor_with_freq_and_gain_sliders_generates_cpp() {
         "void compute(int count, FAUSTFLOAT** RESTRICT inputs, FAUSTFLOAT** RESTRICT outputs)"
     ));
     assert!(cpp.contains("fPhase = "));
-    assert!(cpp.contains("(fFreq / 48000.0)"));
+    // The `FAUSTFLOAT` zones are read as `double`, the computation's type.
+    assert!(cpp.contains("(((double)(fFreq)) / 48000.0)"));
     assert!(cpp.contains("for (int i0 = 0; i0 < count; ++i0) {"));
-    assert!(cpp.contains("output0[i0] = "));
+    assert!(cpp.contains("output0[i0] = ((FAUSTFLOAT)("));
     assert!(cpp.contains(" ? "));
     assert!(cpp.contains("std::sin"));
-    assert!(cpp.contains("(fGain * std::sin"));
+    assert!(cpp.contains("(((double)(fGain)) * std::sin"));
 }
