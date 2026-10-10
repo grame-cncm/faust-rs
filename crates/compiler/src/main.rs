@@ -28,9 +28,10 @@ fn main() {
     // logical frames costs ~4 KiB of real stack each on the diverging-`case`
     // worst path (see `crates/eval/src/loop_detector.rs`), so 128 MiB may
     // actually be touched; the rest is margin, and an untouched stack is
-    // virtual memory that costs nothing. Library embedders that run the
-    // compiler on their own threads must provide comparable stack headroom or
-    // use a lower evaluator depth budget.
+    // virtual memory that costs nothing. It is also the compile stack of
+    // `tlib::stack`: a library embedder's thread needs no such headroom, since
+    // each pipeline stage entered with less than 256 MiB left moves to a fresh
+    // stack of this size, while on this thread the stages run in place.
     let outcome = std::thread::Builder::new()
         .stack_size(512 * 1024 * 1024)
         .spawn(cli::runner::run_main)

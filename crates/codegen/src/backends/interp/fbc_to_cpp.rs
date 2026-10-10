@@ -173,6 +173,13 @@ pub fn generate_cpp_from_fbc<R: FbcReal>(
     factory: &FbcDspFactory<R>,
     options: &FbcCppOptions,
 ) -> Result<String, FbcCppError> {
+    fir::on_compile_stack(|| generate_cpp_from_fbc_step(factory, options))
+}
+
+fn generate_cpp_from_fbc_step<R: FbcReal>(
+    factory: &FbcDspFactory<R>,
+    options: &FbcCppOptions,
+) -> Result<String, FbcCppError> {
     CppGen::new(factory, options).generate()
 }
 

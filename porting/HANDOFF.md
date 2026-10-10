@@ -1,25 +1,42 @@
 # Session Handoff
 
-Date: 2026-10-10
+Date: 2026-10-10 (evening)
 
 ## Repo State
 
-- Branch: `main-dev`
-- HEAD: the documentation commit on top of
-  `8fb34c4507e24e3b059813d0692749da466c88f0`
-- Tag `0.9.0` (annotated, "Release 0.9.0") on `5856b1eb`, **local only**: not
-  pushed, `main` not fast-forwarded. `push_main.sh` does both
-  (`git merge --ff-only main-dev` on `main`, then `git push --follow-tags`).
+- Branch: `main-dev`, 14 commits ahead of `main`. **Nothing is pushed.**
+- HEAD: the #16 commit (compile stack) on top of `fd5f6e73`.
+- Tag `0.9.0` (annotated, "Release 0.9.0") on `5856b1eb`, **local only**.
+  It contains none of the commits listed below after it: the tutorial
+  figures, the audit documentation and the #16/#21/#22 work. `push_main.sh`
+  fast-forwards `main` to `main-dev` (`git merge --ff-only`) and runs
+  `git push --follow-tags`. To have the work in 0.9.0, move the tag to
+  HEAD before pushing.
 
-Recent commits (most recent first):
+Commits since `main` (most recent first):
 
-- this commit: the 2026-10-08 audit documentation (correction plan, registry
-  entries, journal) and the `nffunction` proposal
-- `8fb34c45` Tutorial: figures of 13.1 and 13.2 after two library fixes; why
-  learning is sensitive to them
-- `5856b1eb` Release 0.9.0
-- `58bee35b` --version and the diagnostics JSON name the build's commit
-- `2199d069` parser: make repair-order regression independent of recovery timeout
+- this commit: #16, every pipeline stage runs on the compile stack
+  (`tlib::stack`), and this handoff
+- `fd5f6e73` an evaluation cycle is blamed on the use that closes it
+  (follow-up to WP3, #22)
+- `015d2a6e` WP5: an eval failure in library code is not labelled on a
+  hash-consed occurrence
+- `c535bd3c` WP6 + W2: one deadline rule, `--timeout 0` disables it, a
+  timeout is a diagnostic in JSON too (`FRS-COMP-0008`)
+- `15ad1d02` WP2: constant folding keeps its caches for the evaluation pass
+  (quadratic → linear)
+- `ac35afcd` WP4: the catch-all cause is left to internal forms
+- `f0f0a424` WP3: an evaluation cycle names its definitions
+  (`FRS-EVAL-0013`, #22)
+- `8c5e262c` parser: a definition is located at its name, even when the name
+  is used earlier
+- `a06cf99a` WP1: a recursion on a non-constant numeric-pattern argument is
+  named (`FRS-EVAL-0012`, #21)
+- `5c7ac277` the analysis and correction plan for #21 and #22
+- `20669a61` the 2026-10-08 audit documentation and the `nffunction` proposal
+- `8fb34c45` Tutorial: figures of 13.1/13.2 after two library fixes
+- `5856b1eb` Release 0.9.0 (tag)
+- `58bee35b` `--version` and the diagnostics JSON name the build's commit (#20)
 
 ## Working Tree
 
@@ -29,56 +46,96 @@ Recent commits (most recent first):
 
 ## What Changed (2026-10-10)
 
-- [grame-cncm/faust-rs#20](https://github.com/grame-cncm/faust-rs/issues/20):
-  `crates/compiler/build.rs` records the commit of `HEAD`. `--version` prints
-  `faust-rs 0.9.0 (5856b1eb 2026-10-10)`, the diagnostics JSON `compiler`
-  block has optional `commit`/`commit_date`, and generated code keeps the
-  package version only. Registry `DIFF-CLI-013`. The issue has no reply yet.
-- Release 0.9.0: workspace version, 70 CLI transcripts and 2 faustprobe
-  snapshots, all version-only changes.
-- Tutorial §0.1 (en/fr): why `fad`/`rad` learning is sensitive to fine
-  library changes. The 13.1/13.2 figures were updated after two deliberate
-  faustlibraries fixes, found by bisection.
+- [#20](https://github.com/grame-cncm/faust-rs/issues/20): `--version` prints
+  `faust-rs 0.9.0 (<hash> <date>)`; the JSON `compiler` block has
+  `commit`/`commit_date` (`DIFF-CLI-013`). Replied on the issue; it is still
+  open, to close once pushed.
+- [#21](https://github.com/grame-cncm/faust-rs/issues/21) and
+  [#22](https://github.com/grame-cncm/faust-rs/issues/22): the
+  [analysis and plan](eval-runaway-recursion-and-cycle-diagnostics-analysis-and-plan-2026-10-10-en.md)
+  is fully carried out (WP1 to WP6). Registry `DIFF-BEH-017`, `DIFF-BEH-018`,
+  `DIFF-CLI-012` updated. Fixtures `err_34_case_argument_not_constant.dsp` and
+  `err_35_evaluation_cycle.dsp`.
+- WP2 also fixes valid programs: `g(n-1, x-1)` with a slider took 35 s at 4000
+  levels, now 0.10 s (C++ 2.84.3: 0.08 s).
+- The same quadratic regression in C++ `master-dev` (commit `536ff8ca7`,
+  `PropagateMemoScope`) is reported as
+  [grame-cncm/faust#1345](https://github.com/grame-cncm/faust/issues/1345),
+  Yann pinged. That issue also proposes a regression methodology for
+  `tests/TESTING.md`.
+- W2 of the 2026-10-08 plan is done (with WP6). W1 and W3 to W7 are still
+  open.
+
+## Issue #16 (deep programs abort the host)
+
+`2d477161` (2026-09-08, in `origin/main`) grew the evaluator's stack. This
+commit does the rest (journal entry "#16: a deep program compiles on a host
+thread"):
+
+- `tlib::stack::on_compile_stack`, the C++ `callFun` without a thread: a
+  stage entered with less than 256 MiB left runs on a fresh 512 MiB stack.
+  It is at the entry of 23 stages: the compiler's `pipeline_to_boxes`,
+  `pipeline_boxes_to_signals` and FIR lowering, then propagation, signal
+  preparation, FIR lowering and verification, and every backend's
+  `generate_*_module`. `codegen` reaches it through `fir::on_compile_stack`.
+- `on_deep_stack` (8 MiB segments) only where no budget bounds the
+  recursion: the evaluator (plus `a2sb`) and the parser's import expansion.
+- A per-function guard in every recursive pass was tried and dropped (the
+  decision agreed with the user): too many functions, and every new pass
+  would be exposed.
+- Measured on an 8 MiB worker: all 12 CLI backends compile 30 000-level
+  chains, and `1+1+...+1` at 1 000 000 levels reports `FRS-EVAL-0099`.
+
+Left open, noted in the journal: 7 500 `~` in series and 30 000 `sin` in
+parallel hit the 120 s timeout (a cost problem; no issue filed yet). C++ 2.90.6
+accepts `s+s+...` at 30 000 terms, which the structural budget rejects.
 
 ## Decisions / Constraints
 
-- The user chose the `rustc` form for the commit
-  (`faust-rs X (hash date)` on the first line), not the C++ second line
-  `Source commit:`. Uncommitted changes are not reflected (no `-dirty`).
-- 56 CLI transcripts already differed from the CLI at `2199d069`
-  (include-path order, generated code). That drift was left unrecorded; a
-  re-record of it needs its own reviewed commit.
-- The 2026-10-08 audit decisions still apply, unimplemented: see the
-  [correction plan](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md).
-  The registry entries `DIFF-CLI-012`, `DIFF-BEH-005` (depth guards) and
-  `DIFF-BACK-001` (foreign bindings) describe current, unfixed behavior.
+- Diagnostic codes: `FRS-EVAL-0012` (non-constant numeric-pattern argument),
+  `FRS-EVAL-0013` (evaluation cycle), `FRS-COMP-0008` (timeout).
+- `FRS-EVAL-0012` is chosen only once a depth budget has run out, so no
+  accepted program changes. The conditions are: the same `case`, nested at
+  least three times, a non-numeric argument at one position, and no numeric
+  dispatch in those applications.
+- A cycle is blamed on the identifier that re-enters the definition. Its
+  owner is the cycle's last definition when that is top-level, since the
+  identifier is hash-consed.
+- **Security**: the Faust interval/memory-safety exploit witness must not be
+  published; it goes to Yann privately.
+- The `rustc` form for the commit in `--version` (user choice).
+- 56 CLI transcripts already differed from the CLI at `2199d069`. That drift
+  is still unrecorded and needs its own reviewed commit.
 
 ## Validation Run
 
 - `cargo fmt`, `clippy --workspace --all-targets -D warnings`, the five
   structure gates and `code-graphs --check`: pass.
-- `cargo test --workspace --all-targets --no-fail-fast`: 3119 passed. One
-  failure that CI skips: the live modulation differential against the local
-  `/usr/local/bin/faust`, which is newer than the pinned reference
-  (`modulation_35_in_recursion`'s controls). The two s13 tutorial failures
-  are fixed in `8fb34c45`.
+- `cargo test --workspace --all-targets --no-fail-fast` on the final tree
+  (both commits): 157 targets, 3142 passed. The one failure is the known
+  live modulation differential against the local `/usr/local/bin/faust`,
+  which CI skips. The intermediate commit `fd5f6e73` was checked alone with
+  fmt, clippy, the `eval` tests, `diagnostic_errors` and the gates.
 - `compile-budget-check` cannot measure on this machine. Its calibration DSP
-  takes 3 ms, below the 4 ms floor, so the tool stops before measuring.
+  takes 3 ms, below the 4 ms floor, so it stops before measuring.
+- The CLI timeout (`FRS-COMP-0008` in JSON) was checked by hand only. An
+  automated test would depend on machine speed.
 
 ## Next Steps
 
-1. Push when the user confirms: `./push_main.sh` (main and the `0.9.0`
-   tag). The tag is before `8fb34c45`, so it can be moved first if the
-   tutorial fix should be in 0.9.0.
-2. Reply to issue #20 (Losera offered a PR; the change is done).
-3. The audit work packages W1 to W7, in the plan's order.
-4. Look at `compile-budget-check`'s calibration floor on fast machines.
+1. Post the replies to #16, #21 and #22. The drafts are ready and await the
+   user's confirmation.
+2. Push when the user confirms: optionally move tag `0.9.0` to HEAD, then
+   `./push_main.sh`. Then close #16, #20, #21 and #22.
+3. File the cost issue for long series of `~` and wide `par` (120 s timeout).
+4. The 2026-10-08 audit work packages W1 and W3 to W7, in the plan's order.
+5. Look at `compile-budget-check`'s calibration floor on fast machines.
 
 ## Useful Commands to Resume
 
 ```sh
 git status --short
-./target/debug/faust-rs --version
-cargo run -q -p xtask -- cli-transcript-check
-cargo test -p cranelift-ffi --test tutorial_examples
+git log --oneline main..main-dev
+./target/debug/faust-rs --check tests/corpus/err_35_evaluation_cycle.dsp
+cargo test -p compiler --test diagnostic_errors cycle
 ```

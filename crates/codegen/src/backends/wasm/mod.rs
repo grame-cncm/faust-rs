@@ -303,6 +303,17 @@ pub fn generate_wasm_module_with_context(
     options: &WasmOptions,
     json_context: &WasmJsonContext,
 ) -> Result<WasmModule, WasmBackendError> {
+    fir::on_compile_stack(|| {
+        generate_wasm_module_with_context_step(store, module, options, json_context)
+    })
+}
+
+fn generate_wasm_module_with_context_step(
+    store: &FirStore,
+    module: FirId,
+    options: &WasmOptions,
+    json_context: &WasmJsonContext,
+) -> Result<WasmModule, WasmBackendError> {
     // WASM has no nested container: one linear memory, one flat function list.
     // A table generator is therefore inlined with its state merged into the
     // DSP's own fields, which is what upstream does for this backend

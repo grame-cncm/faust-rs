@@ -183,6 +183,14 @@ pub fn generate_interp_module<R: real::FbcReal>(
     module: fir::FirId,
     options: &InterpOptions,
 ) -> Result<FbcDspFactory<R>, CodegenError> {
+    fir::on_compile_stack(|| generate_interp_module_step(store, module, options))
+}
+
+fn generate_interp_module_step<R: real::FbcReal>(
+    store: &fir::FirStore,
+    module: fir::FirId,
+    options: &InterpOptions,
+) -> Result<FbcDspFactory<R>, CodegenError> {
     use fir::match_fir;
     use std::collections::HashMap;
 

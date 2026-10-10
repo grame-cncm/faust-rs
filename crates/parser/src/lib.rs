@@ -3064,7 +3064,8 @@ impl StructuralImportExpander {
         current_file: &SourceLocator,
         reports: &mut ImportExpansionReports<'_>,
     ) -> Result<TreeId, SourceReaderError> {
-        match match_box(arena, id) {
+        // a deeply nested expression recurses here once per level
+        tlib::on_deep_stack(|| match match_box(arena, id) {
             BoxMatch::WithLocalDef(body, defs) => {
                 let body = self.rewrite_nested_imports(arena, ctx, body, current_file, reports)?;
                 // Nested local-definition lists need their own duplicate-import
@@ -3149,7 +3150,7 @@ impl StructuralImportExpander {
                 };
                 Ok(arena.intern(new_kind, &rewritten))
             }
-        }
+        })
     }
 
     fn parse_single_source(

@@ -39,6 +39,7 @@
 mod arena;
 mod property;
 mod recursion;
+pub mod stack;
 
 pub use arena::{ChildList, NodeKind, TreeArena, TreeId, TreeNode};
 pub use property::{PropertyKey, PropertyStore};
@@ -50,6 +51,7 @@ pub use recursion::{
     match_de_bruijn_rec, match_de_bruijn_ref, match_sym_rec, match_sym_ref, sym_rec, sym_ref,
     validate_closed_de_bruijn_tree, validate_symbolic_recursion_tree,
 };
+pub use stack::{on_compile_stack, on_deep_stack};
 
 /// Stable crate identifier used by workspace tooling and diagnostics.
 pub const CRATE_NAME: &str = "tlib";

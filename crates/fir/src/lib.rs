@@ -65,6 +65,9 @@ pub use builder::FirBuilder;
 pub use dump::{canonical_fir_fingerprint, dump_fir};
 pub use matcher::{FirMatch, fir_match_children, match_fir};
 pub use store::FirStore;
+/// Re-exported for the backends, which depend on `fir` only: each runs its
+/// code generation on the compile stack ([`tlib::stack`]).
+pub use tlib::on_compile_stack;
 pub use types::{
     AccessType, BargraphType, ButtonType, FirBinOp, FirMathOp, FirType, NamedType, SliderRange,
     SliderType, UiBoxType,

@@ -145,6 +145,14 @@ pub fn generate_asc_module(
     module: FirId,
     options: &AscOptions,
 ) -> Result<String, CodegenError> {
+    fir::on_compile_stack(|| generate_asc_module_step(store, module, options))
+}
+
+fn generate_asc_module_step(
+    store: &FirStore,
+    module: FirId,
+    options: &AscOptions,
+) -> Result<String, CodegenError> {
     let module = decode_module(store, module)?;
     let class_name = options
         .class_name

@@ -315,6 +315,21 @@ must run unchanged with Faust C++ should not pass them.
   `FRS-EVAL-0012` ([DIFF-BEH-017](#diff-beh-017--a-recursion-on-a-non-constant-numeric-pattern-argument)).
   An evaluation cycle is `FRS-EVAL-0013`
   ([DIFF-BEH-018](#diff-beh-018--an-evaluation-cycle-names-its-definitions)).
+- Native stack: C++ runs each compilation on a thread whose stack it sizes
+  itself (`callFun`, `MAX_STACK_SIZE`). Rust does the same without a thread
+  (`tlib::stack`). Each pipeline stage entered with less than 256 MiB of
+  stack left runs on a fresh 512 MiB stack, the stack of the CLI's worker
+  thread: the frontend after parsing, propagation, signal preparation, FIR
+  lowering and verification, and each backend's code generation. The
+  evaluator and the parser's import expansion, which no budget bounds, grow
+  8 MiB segments as they recurse. A host thread of 8 MiB therefore compiles
+  what the CLI compiles, at any depth the budgets accept
+  ([#16](https://github.com/grame-cncm/faust-rs/issues/16)). Until
+  2026-10-10, an 8 MiB thread aborted the process (`SIGABRT`, no diagnostic)
+  between 2 000 and 8 000 levels of a chain no pass simplifies
+  (`_ : +(1) : ...`) in a release build, in whichever pass came first, and
+  the parser aborted even the CLI between 400 000 and 600 000 levels of
+  `1+1+...+1`.
   Since 2026-10-10 every evaluator error a program, the API or a run can cause
   (a non-constant expression, a cancellation or timeout, a non-identifier
   parameter) has its own cause; the "internal: malformed or unsupported
@@ -336,7 +351,9 @@ must run unchanged with Faust C++ should not pass them.
   syntax; those corrections are not implemented.
 - Evidence: [`docs/faust-error-model-en.md`](../docs/faust-error-model-en.md)
   and
-  [`docs/diagnostics-codes-reference-en.md`](../docs/diagnostics-codes-reference-en.md).
+  [`docs/diagnostics-codes-reference-en.md`](../docs/diagnostics-codes-reference-en.md);
+  for the native stack, `crates/compiler/tests/deep_expressions.rs` (every
+  backend on an 8 MiB thread) and `crates/parser/tests/deep_nesting.rs`.
 
 ### DIFF-BEH-006 — `-e` expansion and `expandDSP` result
 

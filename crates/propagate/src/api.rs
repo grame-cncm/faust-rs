@@ -31,6 +31,18 @@ pub fn propagate_typed_with_ui(
     cache: &mut ArityCache,
     ui_options: &PropagateUiOptions,
 ) -> Result<PropagateOutput, PropagateError> {
+    tlib::on_compile_stack(|| {
+        propagate_typed_with_ui_step(arena, box_tree, inputs, cache, ui_options)
+    })
+}
+
+fn propagate_typed_with_ui_step(
+    arena: &mut TreeArena,
+    box_tree: FlatBoxId,
+    inputs: &[SigId],
+    cache: &mut ArityCache,
+    ui_options: &PropagateUiOptions,
+) -> Result<PropagateOutput, PropagateError> {
     propagate_typed_with_origins_policy(
         arena,
         box_tree,

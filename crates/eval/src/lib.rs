@@ -504,7 +504,7 @@ fn a2sb(
     }
 
     loop_detector.enter_structural()?;
-    let outcome = a2sb_match(arena, expr, loop_detector);
+    let outcome = on_deep_stack(|| a2sb_match(arena, expr, loop_detector));
     loop_detector.leave_structural();
     let result = outcome?;
     loop_detector.symbolic_box_cache.insert(expr, result);

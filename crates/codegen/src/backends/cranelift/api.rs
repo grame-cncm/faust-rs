@@ -43,6 +43,14 @@ pub fn generate_cranelift_module(
     module: FirId,
     options: &CraneliftOptions,
 ) -> Result<JitDspModule, CraneliftBackendError> {
+    fir::on_compile_stack(|| generate_cranelift_module_step(store, module, options))
+}
+
+fn generate_cranelift_module_step(
+    store: &FirStore,
+    module: FirId,
+    options: &CraneliftOptions,
+) -> Result<JitDspModule, CraneliftBackendError> {
     // Cranelift has no nested container: one JIT module, one flat set of
     // compiled functions. A table generator is therefore inlined with its state
     // merged into the DSP struct, as for the other flat backends
@@ -316,6 +324,13 @@ pub(crate) fn try_generate_cranelift_module(
 /// prioritizing backend work, but should not be treated as a stable machine
 /// interface.
 pub fn diagnose_cranelift_compute_subset_gap(
+    store: &FirStore,
+    module: FirId,
+) -> Result<Option<String>, CraneliftBackendError> {
+    fir::on_compile_stack(|| diagnose_cranelift_compute_subset_gap_step(store, module))
+}
+
+fn diagnose_cranelift_compute_subset_gap_step(
     store: &FirStore,
     module: FirId,
 ) -> Result<Option<String>, CraneliftBackendError> {

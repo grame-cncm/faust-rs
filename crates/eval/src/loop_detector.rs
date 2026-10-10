@@ -250,28 +250,11 @@ const DEFAULT_EVAL_NESTING_DEPTH_ENV: &str = "FAUST_RS_DEFAULT_EVAL_NESTING_DEPT
 /// [`DEFAULT_EVAL_NESTING_DEPTH_ENV`] to a positive integer to override.
 const DEFAULT_EVAL_NESTING_DEPTH: usize = 400_000;
 
-/// Stack the evaluator keeps in reserve before it continues on a fresh
-/// segment: the deepest native call chain between two guarded entries must
-/// fit in it, with a wide margin for debug builds.
-const STACK_RED_ZONE: usize = 256 * 1024;
-
-/// Size of the heap-allocated stack segments the evaluator grows onto.
-const STACK_SEGMENT: usize = 8 * 1024 * 1024;
-
-/// Runs `f`, on a freshly allocated stack segment if the current stack has
-/// less than [`STACK_RED_ZONE`] bytes left.
-///
-/// This is what the C++ evaluator's stack-address check becomes in Rust:
-/// instead of throwing when the stack runs low, the evaluator moves to
-/// another one (`stacker::maybe_grow`, the mechanism rustc itself uses), so
-/// no depth of input overflows the native stack, in the CLI's 512 MiB
-/// worker as in an 8 MiB host thread of `libfaust-rs`. On targets without
-/// stack switching the call runs in place. The recursion is bounded
-/// separately, by [`LoopDetector::enter_eval`] and the structural budget.
-#[inline]
-pub(crate) fn on_deep_stack<R>(f: impl FnOnce() -> R) -> R {
-    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
-}
+/// The C++ evaluator's stack-address check becomes, in Rust, a move to a
+/// fresh stack segment instead of a throw ([`tlib::stack`]): no depth of input
+/// overflows the native stack. The recursion is bounded separately, by
+/// [`LoopDetector::enter_eval`] and the structural budget.
+pub(crate) use tlib::on_deep_stack;
 
 /// Default fallback budget for identity-tracked evaluator recursion.
 ///

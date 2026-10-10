@@ -1524,6 +1524,15 @@ impl Compiler {
     fn pipeline_to_boxes(
         &self,
         source: &str,
+        output: ParseOutput,
+        eval_source_context: Option<eval::EvalSourceContext>,
+    ) -> Result<BoxCompileOutput, CompilerError> {
+        tlib::on_compile_stack(|| self.pipeline_to_boxes_step(source, output, eval_source_context))
+    }
+
+    fn pipeline_to_boxes_step(
+        &self,
+        source: &str,
         mut output: ParseOutput,
         eval_source_context: Option<eval::EvalSourceContext>,
     ) -> Result<BoxCompileOutput, CompilerError> {
@@ -1731,6 +1740,14 @@ impl Compiler {
     /// reusing its arity cache and flattened box so the split costs no repeated
     /// work.
     fn pipeline_boxes_to_signals(
+        &self,
+        source: &str,
+        boxes: BoxCompileOutput,
+    ) -> Result<SignalCompileOutput, CompilerError> {
+        tlib::on_compile_stack(|| self.pipeline_boxes_to_signals_step(source, boxes))
+    }
+
+    fn pipeline_boxes_to_signals_step(
         &self,
         source: &str,
         boxes: BoxCompileOutput,

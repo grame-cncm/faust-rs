@@ -455,6 +455,17 @@ pub fn prepare_signals_for_fir_with_options(
     ui: &UiProgram,
     options: &PrepareOptions,
 ) -> Result<PreparedSignals, SignalPrepareError> {
+    tlib::on_compile_stack(|| {
+        prepare_signals_for_fir_with_options_step(src_arena, outputs, ui, options)
+    })
+}
+
+fn prepare_signals_for_fir_with_options_step(
+    src_arena: &TreeArena,
+    outputs: &[SigId],
+    ui: &UiProgram,
+    options: &PrepareOptions,
+) -> Result<PreparedSignals, SignalPrepareError> {
     let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None, options)?;
     verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
     prepared.verify(ui)?;
@@ -484,6 +495,17 @@ pub fn prepare_signals_for_fir_verified_with_options(
     ui: &UiProgram,
     options: &PrepareOptions,
 ) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
+    tlib::on_compile_stack(|| {
+        prepare_signals_for_fir_verified_with_options_step(src_arena, outputs, ui, options)
+    })
+}
+
+fn prepare_signals_for_fir_verified_with_options_step(
+    src_arena: &TreeArena,
+    outputs: &[SigId],
+    ui: &UiProgram,
+    options: &PrepareOptions,
+) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
     let prepared = prepare_signals_for_fir_unverified(src_arena, outputs, ui, None, options)?;
     verify::verify_prepared_output_arity(outputs.len(), prepared.outputs.len())?;
     prepared.into_verified(ui)
@@ -497,6 +519,18 @@ pub fn prepare_signals_for_fir_verified_with_options(
 /// recursion conversion, promotion, simplification, recursion merging, and
 /// delay canonicalization.
 pub fn prepare_signals_for_fir_verified_with_origins(
+    src_arena: &TreeArena,
+    outputs: &[SigId],
+    ui: &UiProgram,
+    origins: &propagate::SignalOrigins,
+    options: &PrepareOptions,
+) -> Result<VerifiedPreparedSignals, SignalPrepareError> {
+    tlib::on_compile_stack(|| {
+        prepare_signals_for_fir_verified_with_origins_step(src_arena, outputs, ui, origins, options)
+    })
+}
+
+fn prepare_signals_for_fir_verified_with_origins_step(
     src_arena: &TreeArena,
     outputs: &[SigId],
     ui: &UiProgram,

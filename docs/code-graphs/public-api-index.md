@@ -176,7 +176,7 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `CodegenErrorCode::as_str` | `crates/codegen/src/backends/asc/mod.rs:87` |
 | `type` | `CodegenError` | `crates/codegen/src/backends/asc/mod.rs:106` |
 | `fn` | `generate_asc_module` | `crates/codegen/src/backends/asc/mod.rs:143` |
-| `fn` | `backend_id` | `crates/codegen/src/backends/asc/mod.rs:1702` |
+| `fn` | `backend_id` | `crates/codegen/src/backends/asc/mod.rs:1710` |
 | `const` | `BACKEND_NAME` | `crates/codegen/src/backends/c/mod.rs:44` |
 | `struct` | `COptions` | `crates/codegen/src/backends/c/mod.rs:67` |
 | `enum` | `CodegenErrorCode` | `crates/codegen/src/backends/c/mod.rs:127` |
@@ -208,8 +208,8 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `type` | `CodegenError` | `crates/codegen/src/backends/codebox/mod.rs:102` |
 | `fn` | `codebox_var_name` | `crates/codegen/src/backends/codebox/mod.rs:128` |
 | `fn` | `generate_codebox_module` | `crates/codegen/src/backends/codebox/mod.rs:137` |
-| `const` | `BACKEND_NAME` | `crates/codegen/src/backends/codebox/mod.rs:1243` |
-| `fn` | `backend_id` | `crates/codegen/src/backends/codebox/mod.rs:1247` |
+| `const` | `BACKEND_NAME` | `crates/codegen/src/backends/codebox/mod.rs:1251` |
+| `fn` | `backend_id` | `crates/codegen/src/backends/codebox/mod.rs:1255` |
 | `trait` | `CodegenErrorCode` | `crates/codegen/src/backends/codegen_error.rs:26` |
 | `struct` | `BackendError` | `crates/codegen/src/backends/codegen_error.rs:37` |
 | `fn` | `BackendError::new` | `crates/codegen/src/backends/codegen_error.rs:45` |
@@ -223,9 +223,9 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `CodegenErrorCode::as_str` | `crates/codegen/src/backends/cpp/mod.rs:141` |
 | `type` | `CodegenError` | `crates/codegen/src/backends/cpp/mod.rs:161` |
 | `fn` | `generate_cpp_module` | `crates/codegen/src/backends/cpp/mod.rs:209` |
-| `fn` | `backend_id` | `crates/codegen/src/backends/cpp/mod.rs:2049` |
+| `fn` | `backend_id` | `crates/codegen/src/backends/cpp/mod.rs:2057` |
 | `fn` | `generate_cranelift_module` | `crates/codegen/src/backends/cranelift/api.rs:41` |
-| `fn` | `diagnose_cranelift_compute_subset_gap` | `crates/codegen/src/backends/cranelift/api.rs:318` |
+| `fn` | `diagnose_cranelift_compute_subset_gap` | `crates/codegen/src/backends/cranelift/api.rs:326` |
 | `const` | `BACKEND_NAME` | `crates/codegen/src/backends/cranelift/core.rs:10` |
 | `fn` | `backend_id` | `crates/codegen/src/backends/cranelift/core.rs:14` |
 | `enum` | `CraneliftOptLevel` | `crates/codegen/src/backends/cranelift/core.rs:22` |
@@ -834,15 +834,15 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `Compiler::compile_file_to_boxes` | `crates/compiler/src/lib.rs:1382` |
 | `fn` | `Compiler::compile_file_default_to_signals` | `crates/compiler/src/lib.rs:1471` |
 | `fn` | `Compiler::compile_parsed_to_signals` | `crates/compiler/src/lib.rs:1485` |
-| `enum` | `CompilerError` | `crates/compiler/src/lib.rs:2056` |
-| `fn` | `CompilerError::import` | `crates/compiler/src/lib.rs:2412` |
-| `fn` | `CompilerError::codegen_wasm` | `crates/compiler/src/lib.rs:2462` |
-| `fn` | `CompilerError::missing_root` | `crates/compiler/src/lib.rs:2483` |
-| `fn` | `CompilerError::expand_failed` | `crates/compiler/src/lib.rs:2507` |
-| `fn` | `CompilerError::diagnostic_bundle` | `crates/compiler/src/lib.rs:2533` |
-| `fn` | `CompilerError::rendered_diagnostics` | `crates/compiler/src/lib.rs:2568` |
-| `fn` | `CompilerError::diagnostics_report_json` | `crates/compiler/src/lib.rs:2581` |
-| `fn` | `CompilerError::diagnostics` | `crates/compiler/src/lib.rs:2588` |
+| `enum` | `CompilerError` | `crates/compiler/src/lib.rs:2073` |
+| `fn` | `CompilerError::import` | `crates/compiler/src/lib.rs:2429` |
+| `fn` | `CompilerError::codegen_wasm` | `crates/compiler/src/lib.rs:2479` |
+| `fn` | `CompilerError::missing_root` | `crates/compiler/src/lib.rs:2500` |
+| `fn` | `CompilerError::expand_failed` | `crates/compiler/src/lib.rs:2524` |
+| `fn` | `CompilerError::diagnostic_bundle` | `crates/compiler/src/lib.rs:2550` |
+| `fn` | `CompilerError::rendered_diagnostics` | `crates/compiler/src/lib.rs:2585` |
+| `fn` | `CompilerError::diagnostics_report_json` | `crates/compiler/src/lib.rs:2598` |
+| `fn` | `CompilerError::diagnostics` | `crates/compiler/src/lib.rs:2605` |
 | `struct` | `FaustInstallPaths` | `crates/compiler/src/paths.rs:23` |
 | `fn` | `FaustInstallPaths::from_parts` | `crates/compiler/src/paths.rs:47` |
 | `fn` | `FaustInstallPaths::from_environment` | `crates/compiler/src/paths.rs:107` |
@@ -1417,10 +1417,10 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `fn` | `eval_box` | `crates/eval/src/lib.rs:696` |
 | `fn` | `crate_id` | `crates/eval/src/lib.rs:1801` |
 | `struct` | `LoopDetector` | `crates/eval/src/loop_detector.rs:52` |
-| `fn` | `LoopDetector::new` | `crates/eval/src/loop_detector.rs:374` |
-| `fn` | `LoopDetector::with_cancel` | `crates/eval/src/loop_detector.rs:389` |
-| `fn` | `LoopDetector::with_max_depth` | `crates/eval/src/loop_detector.rs:402` |
-| `fn` | `LoopDetector::cancel_flag` | `crates/eval/src/loop_detector.rs:509` |
+| `fn` | `LoopDetector::new` | `crates/eval/src/loop_detector.rs:357` |
+| `fn` | `LoopDetector::with_cancel` | `crates/eval/src/loop_detector.rs:372` |
+| `fn` | `LoopDetector::with_max_depth` | `crates/eval/src/loop_detector.rs:385` |
+| `fn` | `LoopDetector::cancel_flag` | `crates/eval/src/loop_detector.rs:492` |
 | `type` | `Path` | `crates/eval/src/pattern_matcher.rs:73` |
 | `struct` | `Rule` | `crates/eval/src/pattern_matcher.rs:85` |
 | `fn` | `Rule::new` | `crates/eval/src/pattern_matcher.rs:96` |
@@ -1655,8 +1655,8 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `const` | `DSP_API_FUNCTIONS` | `crates/fir/src/checker.rs:249` |
 | `enum` | `InitStatus` | `crates/fir/src/checker.rs:270` |
 | `fn` | `verify_fir_module` | `crates/fir/src/checker.rs:467` |
-| `fn` | `verify_module_structure` | `crates/fir/src/checker.rs:478` |
-| `fn` | `verify_fir_function` | `crates/fir/src/checker.rs:503` |
+| `fn` | `verify_module_structure` | `crates/fir/src/checker.rs:482` |
+| `fn` | `verify_fir_function` | `crates/fir/src/checker.rs:514` |
 | `fn` | `dump_fir` | `crates/fir/src/dump.rs:14` |
 | `fn` | `canonical_fir_fingerprint` | `crates/fir/src/dump.rs:32` |
 | `struct` | `FirInlineOptions` | `crates/fir/src/inliner.rs:60` |
@@ -1701,7 +1701,8 @@ This is a lightweight source scan for public items. Use `cargo doc --workspace -
 | `use` | `dump` | `crates/fir/src/lib.rs:65` |
 | `use` | `matcher` | `crates/fir/src/lib.rs:66` |
 | `use` | `store::FirStore` | `crates/fir/src/lib.rs:67` |
-| `use` | `types` | `crates/fir/src/lib.rs:68` |
+| `use` | `tlib::on_compile_stack` | `crates/fir/src/lib.rs:70` |
+| `use` | `types` | `crates/fir/src/lib.rs:71` |
 | `enum` | `FirMatch` | `crates/fir/src/matcher.rs:11` |
 | `fn` | `match_fir` | `crates/fir/src/matcher.rs:319` |
 | `fn` | `fir_match_children` | `crates/fir/src/matcher.rs:1012` |
@@ -2156,8 +2157,8 @@ _No direct public items found by the source scan._
 | `fn` | `parse_program_with_imports` | `crates/parser/src/lib.rs:2026` |
 | `fn` | `parse_file` | `crates/parser/src/lib.rs:2066` |
 | `fn` | `parse_url` | `crates/parser/src/lib.rs:2099` |
-| `fn` | `parse_minimal` | `crates/parser/src/lib.rs:3266` |
-| `fn` | `set_use_prop_from_token` | `crates/parser/src/lib.rs:3272` |
+| `fn` | `parse_minimal` | `crates/parser/src/lib.rs:3267` |
+| `fn` | `set_use_prop_from_token` | `crates/parser/src/lib.rs:3273` |
 | `enum` | `CompilationMetadataKey` | `crates/parser/src/metadata.rs:22` |
 | `fn` | `CompilationMetadataKey::global` | `crates/parser/src/metadata.rs:39` |
 | `fn` | `CompilationMetadataKey::scoped` | `crates/parser/src/metadata.rs:49` |
@@ -2223,9 +2224,9 @@ _No direct public items found by the source scan._
 | Kind | Name | Location |
 |---|---|---|
 | `fn` | `propagate_typed_with_ui` | `crates/propagate/src/api.rs:27` |
-| `fn` | `propagate_typed` | `crates/propagate/src/api.rs:101` |
-| `struct` | `FoldSession` | `crates/propagate/src/api.rs:132` |
-| `fn` | `propagate_fold` | `crates/propagate/src/api.rs:183` |
+| `fn` | `propagate_typed` | `crates/propagate/src/api.rs:113` |
+| `struct` | `FoldSession` | `crates/propagate/src/api.rs:144` |
+| `fn` | `propagate_fold` | `crates/propagate/src/api.rs:195` |
 | `fn` | `make_sig_input_list` | `crates/propagate/src/arity.rs:13` |
 | `fn` | `box_arity_typed` | `crates/propagate/src/arity.rs:37` |
 | `struct` | `ClockDomainId` | `crates/propagate/src/clock_domain.rs:47` |
@@ -2596,18 +2597,20 @@ _No direct public items found by the source scan._
 | `fn` | `TreeArena::children` | `crates/tlib/src/arena.rs:633` |
 | `fn` | `TreeArena::len` | `crates/tlib/src/arena.rs:639` |
 | `fn` | `TreeArena::is_empty` | `crates/tlib/src/arena.rs:647` |
-| `use` | `arena` | `crates/tlib/src/lib.rs:43` |
-| `use` | `property` | `crates/tlib/src/lib.rs:44` |
-| `use` | `recursion` | `crates/tlib/src/lib.rs:45` |
-| `const` | `CRATE_NAME` | `crates/tlib/src/lib.rs:55` |
-| `fn` | `crate_id` | `crates/tlib/src/lib.rs:59` |
-| `fn` | `tree_to_str` | `crates/tlib/src/lib.rs:68` |
-| `fn` | `tree_to_int` | `crates/tlib/src/lib.rs:79` |
-| `fn` | `tree_to_double` | `crates/tlib/src/lib.rs:90` |
-| `enum` | `ListValidationError` | `crates/tlib/src/lib.rs:99` |
-| `fn` | `vec_to_list` | `crates/tlib/src/lib.rs:124` |
-| `fn` | `list_to_vec` | `crates/tlib/src/lib.rs:141` |
-| `fn` | `validate_faust_list` | `crates/tlib/src/lib.rs:156` |
+| `mod` | `stack` | `crates/tlib/src/lib.rs:42` |
+| `use` | `arena` | `crates/tlib/src/lib.rs:44` |
+| `use` | `property` | `crates/tlib/src/lib.rs:45` |
+| `use` | `recursion` | `crates/tlib/src/lib.rs:46` |
+| `use` | `stack` | `crates/tlib/src/lib.rs:54` |
+| `const` | `CRATE_NAME` | `crates/tlib/src/lib.rs:57` |
+| `fn` | `crate_id` | `crates/tlib/src/lib.rs:61` |
+| `fn` | `tree_to_str` | `crates/tlib/src/lib.rs:70` |
+| `fn` | `tree_to_int` | `crates/tlib/src/lib.rs:81` |
+| `fn` | `tree_to_double` | `crates/tlib/src/lib.rs:92` |
+| `enum` | `ListValidationError` | `crates/tlib/src/lib.rs:101` |
+| `fn` | `vec_to_list` | `crates/tlib/src/lib.rs:126` |
+| `fn` | `list_to_vec` | `crates/tlib/src/lib.rs:143` |
+| `fn` | `validate_faust_list` | `crates/tlib/src/lib.rs:158` |
 | `struct` | `PropertyKey` | `crates/tlib/src/property.rs:18` |
 | `struct` | `PropertyStore` | `crates/tlib/src/property.rs:26` |
 | `fn` | `PropertyStore::new` | `crates/tlib/src/property.rs:42` |
@@ -2649,6 +2652,12 @@ _No direct public items found by the source scan._
 | `fn` | `de_bruijn_to_sym_many` | `crates/tlib/src/recursion.rs:300` |
 | `fn` | `validate_closed_de_bruijn_tree` | `crates/tlib/src/recursion.rs:325` |
 | `fn` | `validate_symbolic_recursion_tree` | `crates/tlib/src/recursion.rs:344` |
+| `const` | `STACK_RED_ZONE` | `crates/tlib/src/stack.rs:34` |
+| `const` | `STACK_SEGMENT` | `crates/tlib/src/stack.rs:37` |
+| `const` | `COMPILE_STACK_RESERVE` | `crates/tlib/src/stack.rs:41` |
+| `const` | `COMPILE_STACK_SIZE` | `crates/tlib/src/stack.rs:46` |
+| `fn` | `on_deep_stack` | `crates/tlib/src/stack.rs:53` |
+| `fn` | `on_compile_stack` | `crates/tlib/src/stack.rs:63` |
 
 ## `transform`
 
@@ -3162,9 +3171,9 @@ _No direct public items found by the source scan._
 | `fn` | `SignalPrepareError::box_origins` | `crates/transform/src/signal_prepare/mod.rs:382` |
 | `fn` | `prepare_signals_for_fir` | `crates/transform/src/signal_prepare/mod.rs:443` |
 | `fn` | `prepare_signals_for_fir_with_options` | `crates/transform/src/signal_prepare/mod.rs:452` |
-| `fn` | `prepare_signals_for_fir_verified` | `crates/transform/src/signal_prepare/mod.rs:466` |
-| `fn` | `prepare_signals_for_fir_verified_with_options` | `crates/transform/src/signal_prepare/mod.rs:481` |
-| `fn` | `prepare_signals_for_fir_verified_with_origins` | `crates/transform/src/signal_prepare/mod.rs:499` |
+| `fn` | `prepare_signals_for_fir_verified` | `crates/transform/src/signal_prepare/mod.rs:477` |
+| `fn` | `prepare_signals_for_fir_verified_with_options` | `crates/transform/src/signal_prepare/mod.rs:492` |
+| `fn` | `prepare_signals_for_fir_verified_with_origins` | `crates/transform/src/signal_prepare/mod.rs:521` |
 | `fn` | `PreparedSignals::verify` | `crates/transform/src/signal_prepare/verify.rs:51` |
 | `fn` | `PreparedSignals::into_verified` | `crates/transform/src/signal_prepare/verify.rs:97` |
 

@@ -595,7 +595,6 @@ dependencies = [
  "parser",
  "propagate",
  "signals",
- "stacker",
  "tlib",
  "ui",
 ]
@@ -1618,6 +1617,7 @@ version = "0.9.0"
 dependencies = [
  "ahash",
  "clap",
+ "stacker",
 ]
 
 [[package]]

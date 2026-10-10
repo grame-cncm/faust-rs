@@ -249,6 +249,14 @@ pub fn generate_julia_module(
     module: FirId,
     options: &JuliaOptions,
 ) -> Result<String, CodegenError> {
+    fir::on_compile_stack(|| generate_julia_module_step(store, module, options))
+}
+
+fn generate_julia_module_step(
+    store: &FirStore,
+    module: FirId,
+    options: &JuliaOptions,
+) -> Result<String, CodegenError> {
     // Julia has no nested container and its `classInit!` takes the DSP, so a
     // table generator is inlined with its state merged into the DSP struct.
     // This is what upstream does — `julia_code_container.cpp` runs

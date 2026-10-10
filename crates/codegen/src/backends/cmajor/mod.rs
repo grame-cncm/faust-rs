@@ -243,6 +243,14 @@ pub fn generate_cmajor_module(
     module: FirId,
     options: &CmajorOptions,
 ) -> Result<String, CodegenError> {
+    fir::on_compile_stack(|| generate_cmajor_module_step(store, module, options))
+}
+
+fn generate_cmajor_module_step(
+    store: &FirStore,
+    module: FirId,
+    options: &CmajorOptions,
+) -> Result<String, CodegenError> {
     validate_identifier(&options.class_name, "processor")?;
     // Cmajor has no shared static storage, so a generated table is a processor
     // field — the adaptation this backend's own plan documents at §4.5. The

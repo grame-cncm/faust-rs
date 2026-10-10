@@ -219,6 +219,14 @@ pub fn generate_c_module(
     module: FirId,
     options: &COptions,
 ) -> Result<String, CodegenError> {
+    fir::on_compile_stack(|| generate_c_module_step(store, module, options))
+}
+
+fn generate_c_module_step(
+    store: &FirStore,
+    module: FirId,
+    options: &COptions,
+) -> Result<String, CodegenError> {
     let module_id = module;
     let module = decode_module(store, module_id)?;
     let class_name = options

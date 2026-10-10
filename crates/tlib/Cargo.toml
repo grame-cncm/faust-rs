@@ -11,3 +11,4 @@ workspace = true
 [dependencies]
 ahash = { version = "0.8", default-features = false, features = ["std"] }
 clap.workspace = true
+stacker = "0.1"

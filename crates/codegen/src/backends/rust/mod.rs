@@ -270,6 +270,14 @@ pub fn generate_rust_module(
     module: FirId,
     options: &RustOptions,
 ) -> Result<String, CodegenError> {
+    fir::on_compile_stack(|| generate_rust_module_step(store, module, options))
+}
+
+fn generate_rust_module_step(
+    store: &FirStore,
+    module: FirId,
+    options: &RustOptions,
+) -> Result<String, CodegenError> {
     let module = decode_module(store, module)?;
     let class_name = options.class_name.as_deref().unwrap_or("mydsp").to_owned();
     let functions = collect_module_functions(store, module.functions)?;

@@ -139,6 +139,14 @@ pub fn generate_codebox_module(
     module: FirId,
     options: &CodeboxOptions,
 ) -> Result<String, CodegenError> {
+    fir::on_compile_stack(|| generate_codebox_module_step(store, module, options))
+}
+
+fn generate_codebox_module_step(
+    store: &FirStore,
+    module: FirId,
+    options: &CodeboxOptions,
+) -> Result<String, CodegenError> {
     // Codebox folds the whole lifecycle into one entry point and has no nested
     // container, so a table generator is inlined into the program that calls
     // it. `StackLocals` applies for the same reason it does to a static

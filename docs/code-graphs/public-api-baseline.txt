@@ -1609,6 +1609,7 @@ use builder::FirBuilder
 use dump
 use matcher
 use store::FirStore
+use tlib::on_compile_stack
 use types
 
 ## foreign-call
@@ -2381,9 +2382,13 @@ use rules
 use types
 
 ## tlib
+const COMPILE_STACK_RESERVE
+const COMPILE_STACK_SIZE
 const CRATE_NAME
 const DEBRUIJNREC_TAG
 const DEBRUIJNREF_TAG
+const STACK_RED_ZONE
+const STACK_SEGMENT
 const SYMREC_TAG
 const SYMREF_TAG
 enum ChildList
@@ -2463,6 +2468,8 @@ fn match_de_bruijn_rec
 fn match_de_bruijn_ref
 fn match_sym_rec
 fn match_sym_ref
+fn on_compile_stack
+fn on_deep_stack
 fn sym_rec
 fn sym_ref
 fn tree_to_double
@@ -2472,6 +2479,7 @@ fn validate_closed_de_bruijn_tree
 fn validate_faust_list
 fn validate_symbolic_recursion_tree
 fn vec_to_list
+mod stack
 struct PropertyKey
 struct PropertyStore
 struct TreeArena
@@ -2480,6 +2488,7 @@ struct TreeNode
 use arena
 use property
 use recursion
+use stack
 
 ## transform
 const CRATE_NAME

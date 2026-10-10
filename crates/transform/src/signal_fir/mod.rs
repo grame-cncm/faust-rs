@@ -639,6 +639,12 @@ impl<'a> SignalFirRequest<'a> {
 pub fn compile_signals_to_fir_fastlane(
     request: &SignalFirRequest<'_>,
 ) -> Result<SignalFirOutput, SignalFirError> {
+    tlib::on_compile_stack(|| compile_signals_to_fir_fastlane_step(request))
+}
+
+fn compile_signals_to_fir_fastlane_step(
+    request: &SignalFirRequest<'_>,
+) -> Result<SignalFirOutput, SignalFirError> {
     let tape = request.options.bra_tape_block_size;
     if tape == 0 || !tape.is_power_of_two() {
         return Err(SignalFirError::new(
