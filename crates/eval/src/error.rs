@@ -280,7 +280,8 @@ pub enum EvalError {
     /// Rust detects it at once, by frame identity on `LoopDetector`, and
     /// names it.
     LoopDetected {
-        /// The body of the definition entered again.
+        /// The use that closes the cycle: the identifier of the definition
+        /// entered again.
         node: TreeId,
         /// The definitions of the cycle, closed by the first one:
         /// `["process", "effect", "cut", "process"]`. Empty when unknown.

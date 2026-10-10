@@ -1267,18 +1267,49 @@ fn an_evaluation_cycle_names_its_definitions() {
             "process".to_owned(),
         ]))
     );
-    // every definition of the cycle is located, on its own line
-    for (name, line) in [("effect", 9), ("cut", 8)] {
-        assert!(
-            first
-                .labels
-                .iter()
-                .any(|l| l.message.as_ref() == format!("`{name}`, in the cycle")
-                    && l.span.line == line),
-            "{name}: {:?}",
-            first.labels
-        );
+    // every definition of the cycle is located, on its own line; the last
+    // one, `cut`, encloses the use that closes the cycle
+    let labels: Vec<_> = first
+        .labels
+        .iter()
+        .map(|l| (l.message.to_string(), l.span.line, l.span.col))
+        .collect();
+    for label in [
+        ("`effect`, in the cycle", 9, 1),
+        ("enclosing definition", 8, 1),
+        ("failing use", 8, 44),
+    ] {
+        let label = (label.0.to_owned(), label.1, label.2);
+        assert!(labels.contains(&label), "{label:?}: {labels:?}");
     }
+}
+
+#[test]
+fn an_evaluation_cycle_is_blamed_on_the_use_that_closes_it() {
+    // The identifier `a` is shared by `c = a` and `process = a`: the cycle is
+    // blamed on the use in the body of its last definition, `c`.
+    let source = "a = b + 1;\nb = c * 2;\nc = a;\nprocess = a;\n";
+    let err = Compiler::new()
+        .compile_source_to_signals("cycle.dsp", source)
+        .expect_err("an evaluation cycle");
+    let first = &err.diagnostic_bundle().as_slice()[0];
+    assert_eq!(
+        first.message.as_ref(),
+        "endless evaluation cycle: a → b → c → a"
+    );
+    let labels: Vec<_> = first
+        .labels
+        .iter()
+        .map(|l| (l.message.to_string(), l.span.line, l.span.col))
+        .collect();
+    assert!(
+        labels.contains(&("failing use".to_owned(), 3, 5)),
+        "{labels:?}"
+    );
+    assert!(
+        labels.contains(&("enclosing definition".to_owned(), 3, 1)),
+        "{labels:?}"
+    );
 }
 
 #[test]

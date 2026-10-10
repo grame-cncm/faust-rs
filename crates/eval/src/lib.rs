@@ -1207,7 +1207,9 @@ fn eval_ident_value(
                 return Ok(EvalValue::Closure(closure));
             }
             loop_detector
-                .enter_symbol_env(binding_sym, env.frame_key_for(binding_env_id), closure.expr)
+                // a cycle is blamed on the use that closes it, the identifier,
+                // not on the body it re-enters
+                .enter_symbol_env(binding_sym, env.frame_key_for(binding_env_id), expr)
                 .map_err(|e| e.with_cycle_names(loop_detector, arena))?;
             let out = eval_value(arena, closure.expr, &closure.env, loop_detector);
             loop_detector.leave();

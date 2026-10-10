@@ -1558,13 +1558,29 @@ impl Compiler {
         });
         let (process_box, eval_stats) = eval_result.map_err(|error| {
             let node = eval_error_node(&error);
-            let owner = node.and_then(|n| {
-                reachable_owner_definition_name_for_node(
-                    &output.state.arena,
-                    root,
-                    n,
-                    self.entrypoint_name.as_ref(),
-                )
+            // The use that closes a cycle is in the body of its last
+            // definition, `c` in `a → b → c → a`: the identifier is shared by
+            // every use of `a`, so a search for its owner could find another.
+            let cycle_owner = match &error {
+                eval::EvalError::LoopDetected { cycle, .. } => cycle
+                    .len()
+                    .checked_sub(2)
+                    .map(|last| cycle[last].as_str())
+                    .filter(|name| {
+                        find_definition_name_and_expr(&output.state.arena, root, name).is_some()
+                    })
+                    .map(Box::<str>::from),
+                _ => None,
+            };
+            let owner = cycle_owner.or_else(|| {
+                node.and_then(|n| {
+                    reachable_owner_definition_name_for_node(
+                        &output.state.arena,
+                        root,
+                        n,
+                        self.entrypoint_name.as_ref(),
+                    )
+                })
             });
             let mut diagnostic = error.to_diagnostic();
             if let Some(n) = node {

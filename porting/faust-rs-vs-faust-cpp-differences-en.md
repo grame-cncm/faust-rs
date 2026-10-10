@@ -671,7 +671,8 @@ must run unchanged with Faust C++ should not pass them.
   endless evaluation cycle of <k> steps`. Rust detects the re-entered frame at
   once on its call stack and reports `FRS-EVAL-0013 endless evaluation cycle:
   process → effect → cut → process`, with a label on each top-level definition
-  of the cycle.
+  of the cycle. The primary label is the use that closes the cycle, the
+  `process` written in `cut`, inside its definition.
 - Until 2026-10-10 Rust reported `FRS-EVAL-0099 recursive evaluation loop on
   node <n>`, with the catch-all cause of malformed internal forms.
 - Compatibility impact: none on accepted programs. Scripts matching the C++
@@ -679,7 +680,9 @@ must run unchanged with Faust C++ should not pass them.
 - Evidence: [`err_35_evaluation_cycle.dsp`](../tests/corpus/err_35_evaluation_cycle.dsp),
   `an_evaluation_cycle_names_its_definitions` in
   `crates/compiler/tests/diagnostic_errors.rs` and in
-  `crates/eval/src/loop_detector.rs`.
+  `crates/eval/src/loop_detector.rs`;
+  `an_evaluation_cycle_is_blamed_on_the_use_that_closes_it` in
+  `diagnostic_errors.rs`.
 
 ## 6. Additional backends and delivery forms
 
