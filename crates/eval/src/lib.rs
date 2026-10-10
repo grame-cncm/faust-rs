@@ -195,7 +195,9 @@ use simplify::*;
 use ui_widgets::*;
 
 pub use environment::Environment;
-pub use error::{EvalError, EvalStats, EvalWarning};
+pub use error::{
+    DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EvalError, EvalStats, EvalWarning,
+};
 pub use loop_detector::LoopDetector;
 use loop_detector::on_deep_stack;
 pub use source_context::{EvalSourceContext, SamplePrecision};
@@ -2391,7 +2393,10 @@ mod simplify_helpers_tests {
         assert!(
             matches!(
                 err,
-                crate::EvalError::RecursionDepthExceeded { max_depth: 1_000 }
+                crate::EvalError::RecursionDepthExceeded {
+                    max_depth: 1_000,
+                    ..
+                }
             ),
             "got {err:?}"
         );

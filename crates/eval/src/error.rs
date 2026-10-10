@@ -107,6 +107,169 @@ pub struct EvalStats {
 /// | `RedefinedSymbol` | `throw faustexception("redefinition of symbols …")` in `environment.cpp` |
 /// | `LoopDetected` | `loopDetector::detect` in `loopDetector.cpp`: `endless evaluation cycle of <k> steps` |
 /// | `RecursionDepthExceeded` | `stackOverflowDetector::detect()` in C++ loop detector |
+/// Which depth guard of the evaluator stopped it
+/// ([`EvalError::RecursionDepthExceeded`]).
+///
+/// API mapping status: `adapted`. C++ has one guard, a check of the stack
+/// address (`stackOverflowDetector`); Rust bounds three logical depths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepthGuard {
+    /// Nested applications of definitions, the frames the cycle detector
+    /// tracks by identity (`FAUST_RS_DEFAULT_EVAL_MAX_DEPTH`).
+    Definitions,
+    /// Lowering the evaluated expression to a box (`a2sb`), bounded by the
+    /// smaller of the definitions limit and the structural cap
+    /// (`FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH`).
+    Structural,
+    /// The syntactic nesting of the expression, entries of `eval`
+    /// (`FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH`).
+    Nesting,
+}
+
+/// Where a depth limit of the evaluator came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DepthLimitSource {
+    /// The compiled default of this build profile.
+    Default,
+    /// The environment variable of the limit.
+    Environment,
+    /// The caller, through `LoopDetector::with_max_depth`.
+    Api,
+}
+
+/// One depth limit and where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DepthLimit {
+    /// The limit, in the guard's unit (frames or entries).
+    pub value: usize,
+    /// Where it came from.
+    pub source: DepthLimitSource,
+}
+
+/// The depth guard that fired, and the three limits of the detector then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DepthContext {
+    /// The guard that fired.
+    pub guard: DepthGuard,
+    /// `FAUST_RS_DEFAULT_EVAL_MAX_DEPTH`, or the caller's limit.
+    pub definitions: DepthLimit,
+    /// `FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH`.
+    pub structural: DepthLimit,
+    /// `FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH`.
+    pub nesting: DepthLimit,
+}
+
+/// The variables of the three limits.
+pub(crate) const EVAL_MAX_DEPTH_VAR: &str = "FAUST_RS_DEFAULT_EVAL_MAX_DEPTH";
+pub(crate) const STRUCTURAL_MAX_DEPTH_VAR: &str = "FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH";
+pub(crate) const EVAL_NESTING_DEPTH_VAR: &str = "FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH";
+
+impl DepthContext {
+    /// The guard's name in the diagnostics JSON facts.
+    fn guard_name(&self) -> &'static str {
+        match self.guard {
+            DepthGuard::Definitions => "definitions",
+            DepthGuard::Structural => "structural",
+            DepthGuard::Nesting => "nesting",
+        }
+    }
+
+    /// The variables whose limit bound, one unless the structural guard's
+    /// two limits are equal.
+    fn binding_variables(&self) -> Vec<&'static str> {
+        match self.guard {
+            DepthGuard::Definitions => vec![EVAL_MAX_DEPTH_VAR],
+            DepthGuard::Nesting => vec![EVAL_NESTING_DEPTH_VAR],
+            DepthGuard::Structural => {
+                let (d, s) = (self.definitions.value, self.structural.value);
+                match d.cmp(&s) {
+                    std::cmp::Ordering::Less => vec![EVAL_MAX_DEPTH_VAR],
+                    std::cmp::Ordering::Greater => vec![STRUCTURAL_MAX_DEPTH_VAR],
+                    std::cmp::Ordering::Equal => {
+                        vec![EVAL_MAX_DEPTH_VAR, STRUCTURAL_MAX_DEPTH_VAR]
+                    }
+                }
+            }
+        }
+    }
+
+    /// Whether a limit that bound is the compiled default, whose value
+    /// depends on the build profile.
+    fn binds_a_profile_default(&self) -> bool {
+        let defaults = |limit: DepthLimit| limit.source == DepthLimitSource::Default;
+        match self.guard {
+            DepthGuard::Definitions => defaults(self.definitions),
+            DepthGuard::Nesting => false,
+            DepthGuard::Structural => self.binding_variables().iter().any(|var| match *var {
+                EVAL_MAX_DEPTH_VAR => defaults(self.definitions),
+                _ => defaults(self.structural),
+            }),
+        }
+    }
+
+    fn describe(var: &str, limit: DepthLimit) -> String {
+        let source = match limit.source {
+            DepthLimitSource::Default if cfg!(debug_assertions) => "default of this debug build",
+            DepthLimitSource::Default => "default of this release build",
+            DepthLimitSource::Environment => "set in the environment",
+            DepthLimitSource::Api => "set by the caller",
+        };
+        format!("{} ({var}, {source})", limit.value)
+    }
+
+    /// What the guard counts, for the cause note.
+    fn cause(&self, max_depth: usize) -> String {
+        match self.guard {
+            DepthGuard::Definitions => format!(
+                "cause: definitions applied inside one another more than {max_depth} deep (frames of the cycle detector)"
+            ),
+            DepthGuard::Structural => format!(
+                "cause: lowering the evaluated expression to a block diagram went more than {max_depth} levels deep"
+            ),
+            DepthGuard::Nesting => format!(
+                "cause: the expression is nested more than {max_depth} evaluation levels deep (a binary operator costs two)"
+            ),
+        }
+    }
+
+    /// The limit that ran out, and where it came from.
+    fn limit_note(&self, max_depth: usize) -> String {
+        match self.guard {
+            DepthGuard::Definitions => format!(
+                "limit: {}",
+                Self::describe(EVAL_MAX_DEPTH_VAR, self.definitions)
+            ),
+            DepthGuard::Nesting => format!(
+                "limit: {}",
+                Self::describe(EVAL_NESTING_DEPTH_VAR, self.nesting)
+            ),
+            DepthGuard::Structural => format!(
+                "limit: {max_depth}, the smaller of the definitions limit {} and the structural cap {}",
+                Self::describe(EVAL_MAX_DEPTH_VAR, self.definitions),
+                Self::describe(STRUCTURAL_MAX_DEPTH_VAR, self.structural),
+            ),
+        }
+    }
+
+    /// The help: what to check, and how to raise the limit that bound.
+    fn help(&self, max_depth: usize) -> String {
+        let raise = self
+            .binding_variables()
+            .iter()
+            .map(|var| format!("`{var}={}`", max_depth.saturating_mul(2)))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        match self.guard {
+            DepthGuard::Nesting => format!(
+                "a finite expression this deeply nested compiles with a higher limit ({raise}); a long chain is better written with an iteration (`sum`, `par`, `seq`)"
+            ),
+            DepthGuard::Definitions | DepthGuard::Structural => format!(
+                "if the recursion is meant to end, check for a missing base case or a recursive call that does not move towards it; a finite program this deep compiles with a higher limit ({raise})"
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// Typed evaluator failure surface.
 pub enum EvalError {
@@ -287,8 +450,13 @@ pub enum EvalError {
         /// `["process", "effect", "cut", "process"]`. Empty when unknown.
         cycle: Vec<String>,
     },
+    /// A depth guard of the evaluator ran out ("stack overflow in eval", as
+    /// C++ says when its stack check fires).
     RecursionDepthExceeded {
+        /// The limit that ran out.
         max_depth: usize,
+        /// Which guard fired, and the detector's limits.
+        context: DepthContext,
     },
     /// A depth budget ran out in a recursion through a `case` whose argument
     /// is matched against numeric patterns but is not a compile-time number:
@@ -586,7 +754,7 @@ impl Display for EvalError {
                     write!(f, "endless evaluation cycle: {}", cycle.join(" → "))
                 }
             }
-            Self::RecursionDepthExceeded { max_depth } => {
+            Self::RecursionDepthExceeded { max_depth, .. } => {
                 write!(f, "stack overflow in eval (depth budget {max_depth})")
             }
             Self::CaseArgumentNotConstant {
@@ -1061,17 +1229,37 @@ impl ToDiagnostic for EvalError {
                 };
                 diagnostic.with_help("break the cycle: to feed a signal back, write the loop with `~` (`process = + ~ f;`); otherwise compute the shared part once, without referring back to the definition that uses it")
             }
-            Self::RecursionDepthExceeded { max_depth } => Diagnostic::new(
-                Severity::Error,
-                Stage::Eval,
-                codes::EVAL_GENERIC_FAILURE,
-                message,
-            )
-            .with_note("cause: evaluator recursion exhausted the guarded stack budget")
-            .with_note(format!(
-                "computed: the evaluator crossed its recursion budget before finishing ({max_depth} frames)"
-            ))
-            .with_help("check recursive definitions for a missing base case or non-decreasing recursive call"),
+            Self::RecursionDepthExceeded { max_depth, context } => {
+                let mut diagnostic = Diagnostic::new(
+                    Severity::Error,
+                    Stage::Eval,
+                    codes::EVAL_GENERIC_FAILURE,
+                    message,
+                )
+                .with_note(context.cause(*max_depth))
+                .with_note(context.limit_note(*max_depth));
+                if context.binds_a_profile_default() && cfg!(debug_assertions) {
+                    diagnostic = diagnostic.with_note(format!(
+                        "build: debug, whose defaults are lower than release: {EVAL_MAX_DEPTH_VAR} {} and {STRUCTURAL_MAX_DEPTH_VAR} {} (release: {} and {})",
+                        crate::loop_detector::DEBUG_DEFAULT_EVAL_MAX_DEPTH,
+                        crate::loop_detector::DEBUG_STRUCTURAL_HARD_MAX_DEPTH,
+                        crate::loop_detector::RELEASE_DEFAULT_EVAL_MAX_DEPTH,
+                        crate::loop_detector::RELEASE_STRUCTURAL_HARD_MAX_DEPTH,
+                    ));
+                }
+                diagnostic
+                    .with_fact("depth_guard", context.guard_name())
+                    .with_fact("depth_limit", *max_depth as u64)
+                    .with_fact(
+                        "depth_limit_variables",
+                        context
+                            .binding_variables()
+                            .iter()
+                            .map(|var| (*var).to_owned())
+                            .collect::<Vec<_>>(),
+                    )
+                    .with_help(context.help(*max_depth))
+            }
             Self::CaseArgumentNotConstant { max_depth, .. } => Diagnostic::new(
                 Severity::Error,
                 Stage::Eval,

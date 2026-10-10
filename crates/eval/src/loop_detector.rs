@@ -8,7 +8,7 @@ use tlib::TreeId;
 
 use crate::SymId;
 use crate::environment::{ClosureValue, EnvFrameKey, EvalCacheKey, EvalValue, PatternMatcherValue};
-use crate::error::EvalError;
+use crate::error::{DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EvalError};
 
 /// Infinite loop detector for recursive symbol expansion.
 ///
@@ -61,6 +61,12 @@ pub struct LoopDetector {
     /// that was entered again. Read by [`Self::cycle_names`].
     pub(crate) cycle_start: Option<usize>,
     pub(crate) max_depth: usize,
+    /// Where `max_depth` came from, for the diagnostic of an exhausted guard.
+    pub(crate) max_depth_source: DepthLimitSource,
+    /// Where `structural_max_depth` came from.
+    pub(crate) structural_source: DepthLimitSource,
+    /// Where `nesting_max_depth` came from.
+    pub(crate) nesting_source: DepthLimitSource,
     /// Syntactic nesting depth of [`eval_value`](crate::eval_value) calls, and
     /// its budget: see [`Self::enter_eval`].
     pub(crate) eval_depth: usize,
@@ -219,14 +225,14 @@ pub(crate) struct NonConstantArgument {
 const NONCONSTANT_RECURSION_REPEATS: usize = 3;
 
 /// Environment variable overriding the default evaluator recursion budget.
-const DEFAULT_EVAL_MAX_DEPTH_ENV: &str = "FAUST_RS_DEFAULT_EVAL_MAX_DEPTH";
+const DEFAULT_EVAL_MAX_DEPTH_ENV: &str = crate::error::EVAL_MAX_DEPTH_VAR;
 
 /// Environment variable overriding the structural lowering recursion cap.
-const STRUCTURAL_HARD_MAX_DEPTH_ENV: &str = "FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH";
+const STRUCTURAL_HARD_MAX_DEPTH_ENV: &str = crate::error::STRUCTURAL_MAX_DEPTH_VAR;
 
 /// Environment variable overriding the syntactic nesting budget of the
 /// evaluator, [`DEFAULT_EVAL_NESTING_DEPTH`].
-const DEFAULT_EVAL_NESTING_DEPTH_ENV: &str = "FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH";
+const DEFAULT_EVAL_NESTING_DEPTH_ENV: &str = crate::error::EVAL_NESTING_DEPTH_VAR;
 
 /// Default budget for the syntactic nesting of `eval_value` calls.
 ///
@@ -313,10 +319,15 @@ pub(crate) use tlib::on_deep_stack;
 /// case. 32 768 lets the whole reference tree compile by default; anything
 /// deeper still gets the clean `FAUST_RS_DEFAULT_EVAL_MAX_DEPTH` opt-in.
 const DEFAULT_EVAL_MAX_DEPTH: usize = if cfg!(debug_assertions) {
-    1_024
+    DEBUG_DEFAULT_EVAL_MAX_DEPTH
 } else {
-    32_768
+    RELEASE_DEFAULT_EVAL_MAX_DEPTH
 };
+
+/// [`DEFAULT_EVAL_MAX_DEPTH`] of each profile, which the diagnostic of a debug
+/// build quotes.
+pub(crate) const DEBUG_DEFAULT_EVAL_MAX_DEPTH: usize = 1_024;
+pub(crate) const RELEASE_DEFAULT_EVAL_MAX_DEPTH: usize = 32_768;
 
 /// Default fallback hard cap for structural lowering recursion.
 ///
@@ -334,10 +345,14 @@ const DEFAULT_EVAL_MAX_DEPTH: usize = if cfg!(debug_assertions) {
 /// that asked for more, which is how a raised evaluator budget would appear to
 /// have no effect. It follows the profile for the same reason.
 const STRUCTURAL_HARD_MAX_DEPTH: usize = if cfg!(debug_assertions) {
-    4_096
+    DEBUG_STRUCTURAL_HARD_MAX_DEPTH
 } else {
-    32_768
+    RELEASE_STRUCTURAL_HARD_MAX_DEPTH
 };
+
+/// [`STRUCTURAL_HARD_MAX_DEPTH`] of each profile.
+pub(crate) const DEBUG_STRUCTURAL_HARD_MAX_DEPTH: usize = 4_096;
+pub(crate) const RELEASE_STRUCTURAL_HARD_MAX_DEPTH: usize = 32_768;
 
 impl LoopDetector {
     /// Creates a detector with the default maximum recursion depth.
@@ -383,7 +398,13 @@ impl LoopDetector {
     /// by `FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH` or its compiled fallback.
     #[must_use]
     pub fn with_max_depth(max_depth: usize) -> Self {
-        Self::with_parts(max_depth, Arc::new(AtomicBool::new(false)))
+        Self::with_parts(
+            DepthLimit {
+                value: max_depth,
+                source: DepthLimitSource::Api,
+            },
+            Arc::new(AtomicBool::new(false)),
+        )
     }
 
     /// Shared constructor behind [`new`](Self::new), [`with_cancel`](Self::with_cancel)
@@ -392,19 +413,22 @@ impl LoopDetector {
     /// Reads the structural hard-limit from the environment, then initializes all
     /// empty stacks, caches and side-tables from the given `max_depth` and
     /// `cancel` flag.
-    fn with_parts(max_depth: usize, cancel: Arc<AtomicBool>) -> Self {
-        let structural_max_depth =
+    fn with_parts(max_depth: DepthLimit, cancel: Arc<AtomicBool>) -> Self {
+        let structural =
             depth_limit_from_env(STRUCTURAL_HARD_MAX_DEPTH_ENV, STRUCTURAL_HARD_MAX_DEPTH);
-        let nesting_max_depth =
+        let nesting =
             depth_limit_from_env(DEFAULT_EVAL_NESTING_DEPTH_ENV, DEFAULT_EVAL_NESTING_DEPTH);
         Self {
             call_stack: Vec::new(),
             call_names: Vec::new(),
             cycle_start: None,
-            max_depth,
+            max_depth: max_depth.value,
+            max_depth_source: max_depth.source,
+            structural_source: structural.source,
+            nesting_source: nesting.source,
             eval_depth: 0,
-            nesting_max_depth,
-            structural_max_depth,
+            nesting_max_depth: nesting.value,
+            structural_max_depth: structural.value,
             cancel,
             def_names: std::collections::HashMap::new(),
             warnings: Vec::new(),
@@ -436,7 +460,12 @@ impl LoopDetector {
     /// reported. Otherwise the generic [`EvalError::RecursionDepthExceeded`]:
     /// a recursion that descends on a number is too deep or misses its base
     /// case, whatever its other arguments are.
-    fn depth_exceeded(&self, max_depth: usize) -> EvalError {
+    fn depth_exceeded(&self, guard: DepthGuard) -> EvalError {
+        let max_depth = match guard {
+            DepthGuard::Definitions => self.max_depth,
+            DepthGuard::Structural => self.max_depth.min(self.structural_max_depth),
+            DepthGuard::Nesting => self.nesting_max_depth,
+        };
         let frames = &self.numeric_dispatches;
         for (i, d) in frames.iter().enumerate() {
             let Some(arg) = &d.nonconstant else { continue };
@@ -456,7 +485,29 @@ impl LoopDetector {
                 };
             }
         }
-        EvalError::RecursionDepthExceeded { max_depth }
+        EvalError::RecursionDepthExceeded {
+            max_depth,
+            context: self.depth_context(guard),
+        }
+    }
+
+    /// The guard that fired and the three limits, with where each came from.
+    fn depth_context(&self, guard: DepthGuard) -> DepthContext {
+        DepthContext {
+            guard,
+            definitions: DepthLimit {
+                value: self.max_depth,
+                source: self.max_depth_source,
+            },
+            structural: DepthLimit {
+                value: self.structural_max_depth,
+                source: self.structural_source,
+            },
+            nesting: DepthLimit {
+                value: self.nesting_max_depth,
+                source: self.nesting_source,
+            },
+        }
     }
 
     /// A detector with the given syntactic nesting budget, for tests.
@@ -464,6 +515,7 @@ impl LoopDetector {
     pub(crate) fn with_nesting_max_depth(nesting_max_depth: usize) -> Self {
         let mut detector = Self::new();
         detector.nesting_max_depth = nesting_max_depth;
+        detector.nesting_source = DepthLimitSource::Api;
         detector
     }
 
@@ -477,7 +529,7 @@ impl LoopDetector {
     /// [`on_deep_stack`]). Pair with [`leave_eval`](Self::leave_eval).
     pub(crate) fn enter_eval(&mut self) -> Result<(), EvalError> {
         if self.eval_depth >= self.nesting_max_depth {
-            return Err(self.depth_exceeded(self.nesting_max_depth));
+            return Err(self.depth_exceeded(DepthGuard::Nesting));
         }
         self.eval_depth += 1;
         Ok(())
@@ -591,7 +643,7 @@ impl LoopDetector {
             });
         }
         if self.call_stack.len() >= self.max_depth {
-            return Err(self.depth_exceeded(self.max_depth));
+            return Err(self.depth_exceeded(DepthGuard::Definitions));
         }
         self.call_stack.push(frame);
         self.call_names.push(name);
@@ -631,7 +683,7 @@ impl LoopDetector {
     pub(crate) fn enter_structural(&mut self) -> Result<(), EvalError> {
         let limit = self.max_depth.min(self.structural_max_depth);
         if self.structural_depth >= limit {
-            return Err(self.depth_exceeded(limit));
+            return Err(self.depth_exceeded(DepthGuard::Structural));
         }
         self.structural_depth += 1;
         Ok(())
@@ -646,14 +698,23 @@ impl LoopDetector {
 
 /// Reads a recursion-depth limit from the environment variable `var_name`,
 /// falling back to `fallback` when it is unset or invalid.
-fn depth_limit_from_env(var_name: &str, fallback: usize) -> usize {
+fn depth_limit_from_env(var_name: &str, fallback: usize) -> DepthLimit {
     depth_limit_from_env_value(std::env::var_os(var_name).as_deref(), fallback)
 }
 
 /// Pure core of [`depth_limit_from_env`], taking the raw value directly so it
 /// can be unit-tested without touching process environment.
-fn depth_limit_from_env_value(raw: Option<&OsStr>, fallback: usize) -> usize {
-    raw.and_then(parse_depth_limit).unwrap_or(fallback)
+fn depth_limit_from_env_value(raw: Option<&OsStr>, fallback: usize) -> DepthLimit {
+    match raw.and_then(parse_depth_limit) {
+        Some(value) => DepthLimit {
+            value,
+            source: DepthLimitSource::Environment,
+        },
+        None => DepthLimit {
+            value: fallback,
+            source: DepthLimitSource::Default,
+        },
+    }
 }
 
 /// Parses a depth limit, accepting only strictly positive integers.
@@ -929,7 +990,7 @@ mod tests {
         }
         assert!(matches!(
             detector.enter_eval(),
-            Err(super::EvalError::RecursionDepthExceeded { max_depth: 4 })
+            Err(super::EvalError::RecursionDepthExceeded { max_depth: 4, .. })
         ));
         // the budget is separate from the call-stack one
         assert!(detector.call_stack.is_empty());
@@ -981,7 +1042,8 @@ mod tests {
         assert!(matches!(
             detector.enter_structural(),
             Err(EvalError::RecursionDepthExceeded {
-                max_depth: DEFAULT_EVAL_MAX_DEPTH
+                max_depth: DEFAULT_EVAL_MAX_DEPTH,
+                ..
             })
         ));
     }
@@ -996,9 +1058,136 @@ mod tests {
         assert!(matches!(
             detector.enter_structural(),
             Err(EvalError::RecursionDepthExceeded {
-                max_depth: STRUCTURAL_HARD_MAX_DEPTH
+                max_depth: STRUCTURAL_HARD_MAX_DEPTH,
+                ..
             })
         ));
+    }
+
+    /// The error of an exhausted guard: its context, and the diagnostic's
+    /// notes, help and facts.
+    fn exhausted(result: Result<(), EvalError>) -> (DepthContext, Vec<String>, String) {
+        use diagnostics::ToDiagnostic;
+        let error = result.expect_err("the guard runs out");
+        let EvalError::RecursionDepthExceeded { context, .. } = error else {
+            panic!("not a depth error: {error:?}");
+        };
+        let diagnostic = error.to_diagnostic();
+        let notes = diagnostic.notes.iter().map(ToString::to_string).collect();
+        let help = diagnostic.help.iter().map(ToString::to_string).collect();
+        (context, notes, help)
+    }
+
+    /// Each guard names itself and the limit that ran out, with where it
+    /// came from (W5 of the 2026-10-08 plan).
+    #[test]
+    fn an_exhausted_guard_names_itself_and_its_limit() {
+        // Definitions, limit from the API.
+        let mut arena = tlib::TreeArena::new();
+        let env = crate::Environment::empty();
+        let name = arena.intern_symbol("f");
+        let mut detector = LoopDetector::with_max_depth(2);
+        let mut result = Ok(());
+        for i in 0..3 {
+            let id = BoxBuilder::new(&mut arena).int(i);
+            result = detector.enter_tree(id, env.frame_key(), name);
+        }
+        let (context, notes, help) = exhausted(result);
+        assert_eq!(context.guard, DepthGuard::Definitions);
+        assert_eq!(context.definitions.source, DepthLimitSource::Api);
+        assert!(
+            notes[0].contains("definitions applied inside one another more than 2"),
+            "{notes:?}"
+        );
+        assert!(
+            notes[1].contains("2 (FAUST_RS_DEFAULT_EVAL_MAX_DEPTH, set by the caller)"),
+            "{notes:?}"
+        );
+        assert!(help.contains("missing base case"), "{help}");
+        assert!(
+            help.contains("`FAUST_RS_DEFAULT_EVAL_MAX_DEPTH=4`"),
+            "{help}"
+        );
+
+        // Structural, bound by the definitions limit.
+        let mut detector = LoopDetector::with_max_depth(2);
+        detector.enter_structural().unwrap();
+        detector.enter_structural().unwrap();
+        let (context, notes, help) = exhausted(detector.enter_structural());
+        assert_eq!(context.guard, DepthGuard::Structural);
+        assert!(
+            notes[1].contains("the smaller of the definitions limit 2"),
+            "{notes:?}"
+        );
+        assert!(
+            help.contains("`FAUST_RS_DEFAULT_EVAL_MAX_DEPTH=4`"),
+            "{help}"
+        );
+        assert!(!help.contains("STRUCTURAL"), "{help}");
+
+        // Structural, bound by the structural cap.
+        let mut detector = LoopDetector::with_max_depth(10);
+        detector.structural_max_depth = 3;
+        for _ in 0..3 {
+            detector.enter_structural().unwrap();
+        }
+        let (_, _, help) = exhausted(detector.enter_structural());
+        assert!(
+            help.contains("`FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH=6`"),
+            "{help}"
+        );
+        assert!(!help.contains("EVAL_MAX_DEPTH"), "{help}");
+
+        // Structural, the two limits equal: both are named.
+        let mut detector = LoopDetector::with_max_depth(3);
+        detector.structural_max_depth = 3;
+        for _ in 0..3 {
+            detector.enter_structural().unwrap();
+        }
+        let (_, _, help) = exhausted(detector.enter_structural());
+        assert!(
+            help.contains(
+                "`FAUST_RS_DEFAULT_EVAL_MAX_DEPTH=6` and `FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH=6`"
+            ),
+            "{help}"
+        );
+
+        // Nesting.
+        let mut detector = LoopDetector::with_nesting_max_depth(1);
+        detector.enter_eval().unwrap();
+        let (context, notes, help) = exhausted(detector.enter_eval());
+        assert_eq!(context.guard, DepthGuard::Nesting);
+        assert!(
+            notes[0].contains("nested more than 1 evaluation levels deep"),
+            "{notes:?}"
+        );
+        assert!(
+            help.contains("`FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH=2`"),
+            "{help}"
+        );
+    }
+
+    /// The default limits are attributed to the build profile.
+    #[test]
+    fn a_default_limit_names_the_build_profile() {
+        let mut detector = LoopDetector::with_max_depth(1);
+        detector.max_depth_source = DepthLimitSource::Default;
+        detector.enter_structural().unwrap();
+        let (_, notes, _) = exhausted(detector.enter_structural());
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        assert!(
+            notes[1].contains(&format!("default of this {profile} build")),
+            "{notes:?}"
+        );
+        assert_eq!(
+            notes.iter().any(|n| n.starts_with("build: debug")),
+            cfg!(debug_assertions),
+            "{notes:?}"
+        );
     }
 
     #[test]
@@ -1012,7 +1201,7 @@ mod tests {
 
         assert!(matches!(
             detector.enter_structural(),
-            Err(EvalError::RecursionDepthExceeded { max_depth: 3 })
+            Err(EvalError::RecursionDepthExceeded { max_depth: 3, .. })
         ));
     }
 
@@ -1020,18 +1209,31 @@ mod tests {
     fn depth_limit_env_parser_accepts_positive_values() {
         assert_eq!(
             depth_limit_from_env_value(Some(OsStr::new(" 2048 ")), 64),
-            2_048
+            DepthLimit {
+                value: 2_048,
+                source: DepthLimitSource::Environment,
+            }
         );
     }
 
     #[test]
     fn depth_limit_env_parser_rejects_missing_zero_or_invalid_values() {
-        assert_eq!(depth_limit_from_env_value(None, 64), 64);
-        assert_eq!(depth_limit_from_env_value(Some(OsStr::new("0")), 64), 64);
-        assert_eq!(depth_limit_from_env_value(Some(OsStr::new("-1")), 64), 64);
+        let fallback = DepthLimit {
+            value: 64,
+            source: DepthLimitSource::Default,
+        };
+        assert_eq!(depth_limit_from_env_value(None, 64), fallback);
+        assert_eq!(
+            depth_limit_from_env_value(Some(OsStr::new("0")), 64),
+            fallback
+        );
+        assert_eq!(
+            depth_limit_from_env_value(Some(OsStr::new("-1")), 64),
+            fallback
+        );
         assert_eq!(
             depth_limit_from_env_value(Some(OsStr::new("not-a-depth")), 64),
-            64
+            fallback
         );
     }
 }

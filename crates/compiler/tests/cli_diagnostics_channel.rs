@@ -547,6 +547,101 @@ fn codegen_backend_failure_is_structured() {
     );
 }
 
+/// Each of the evaluator's three depth guards names itself and the limit that
+/// ran out, in the JSON facts and the notes (the 2026-10-08 audit, W5). The
+/// budgets are lowered per subprocess, never in this process's environment.
+#[test]
+fn an_exhausted_depth_guard_names_itself_and_its_limit() {
+    let dir = std::env::temp_dir().join(format!("faust_rs_cli_w5_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let aliases: String = std::iter::once("a0 = 1;".to_owned())
+        .chain((1..=100).map(|i| format!("a{i} = a{};", i - 1)))
+        .chain(std::iter::once("process = a100;".to_owned()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let nested = format!("process = {};\n", vec!["1"; 200].join("+"));
+    let chain = "chain(0) = 0;\nchain(n) = chain(n-1) + 1;\nprocess = chain(200);\n";
+    /// A program, the budgets lowered for it, and the guard and variables
+    /// its diagnostic must name.
+    type Case<'a> = (
+        &'a str,
+        &'a str,
+        &'a [(&'a str, &'a str)],
+        &'a str,
+        &'a [&'a str],
+    );
+    let cases: [Case<'_>; 4] = [
+        (
+            "aliases",
+            &aliases,
+            &[("FAUST_RS_DEFAULT_EVAL_MAX_DEPTH", "64")],
+            "definitions",
+            &["FAUST_RS_DEFAULT_EVAL_MAX_DEPTH"],
+        ),
+        (
+            "chain_cap",
+            chain,
+            &[("FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH", "64")],
+            "structural",
+            &["FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH"],
+        ),
+        (
+            "chain_tie",
+            chain,
+            &[
+                ("FAUST_RS_DEFAULT_EVAL_MAX_DEPTH", "64"),
+                ("FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH", "64"),
+            ],
+            "structural",
+            &[
+                "FAUST_RS_DEFAULT_EVAL_MAX_DEPTH",
+                "FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH",
+            ],
+        ),
+        (
+            "nested",
+            &nested,
+            &[("FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH", "64")],
+            "nesting",
+            &["FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH"],
+        ),
+    ];
+    for (stem, source, env, guard, variables) in cases {
+        let path = dir.join(format!("{stem}.dsp"));
+        std::fs::write(&path, source).expect("write the program");
+        let mut command = Command::new(bin_path());
+        command
+            .arg(&path)
+            .args(["--check", "--error-format", "json"])
+            .env_remove("FAUST_RS_DEFAULT_EVAL_MAX_DEPTH")
+            .env_remove("FAUST_RS_STRUCTURAL_HARD_MAX_DEPTH")
+            .env_remove("FAUST_RS_DEFAULT_EVAL_NESTING_DEPTH");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let output = command.output().expect("run faust-rs");
+        assert!(!output.status.success(), "{stem}");
+        let stdout = String::from_utf8(output.stdout).expect("stdout must be UTF-8");
+        let parsed: serde_json::Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|e| panic!("{stem}: one JSON document: {e}\n{stdout}"));
+        let diag = &parsed["diagnostics"][0];
+        assert_eq!(diag["code"], "FRS-EVAL-0099", "{stem}");
+        assert_eq!(
+            diag["facts"]["depth_guard"]["value"], guard,
+            "{stem}: {diag}"
+        );
+        assert_eq!(diag["facts"]["depth_limit"]["value"], 64, "{stem}: {diag}");
+        assert_eq!(
+            diag["facts"]["depth_limit_variables"]["value"],
+            serde_json::json!(variables),
+            "{stem}: {diag}"
+        );
+        let notes = diag["notes"].to_string();
+        assert!(notes.contains("set in the environment"), "{stem}: {notes}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `-lang cranelift` fails on a foreign function the JIT cannot call, rather
 /// than reporting a successful compilation of a no-op `compute` (the
 /// 2026-10-08 audit, W1). A math function the backend implements still

@@ -1271,6 +1271,8 @@ use schema
 
 ## eval
 const CRATE_NAME
+enum DepthGuard
+enum DepthLimitSource
 enum EvalError
 enum EvalWarning
 enum SamplePrecision
@@ -1326,6 +1328,8 @@ fn rank_similar_names
 fn unambiguous_suggestion
 mod suggestions
 struct Automaton
+struct DepthContext
+struct DepthLimit
 struct Environment
 struct EvalRequest
 struct EvalSourceContext

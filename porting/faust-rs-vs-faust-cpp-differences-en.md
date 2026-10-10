@@ -309,9 +309,15 @@ must run unchanged with Faust C++ should not pass them.
 - Evaluator limits are logical resource budgets rather than the reference's
   stack-address check: default identity depth is 1,024 in debug and 32,768 in
   release; structural lowering also applies a 4,096/32,768 cap; syntactic nesting
-  has a separate 400,000-entry budget. All three guards currently report the
-  same `FRS-EVAL-0099` shape without naming the controlling configuration,
-  except a recursion on a non-constant numeric-pattern argument, reported as
+  has a separate 400,000-entry budget. Each guard reports `FRS-EVAL-0099`
+  ("stack overflow in eval", the C++ wording) naming itself, the limit that
+  ran out and where it came from (profile default, environment variable, or
+  API), with the variable to raise; for structural lowering, which of its two
+  limits bound, both on a tie. JSON facts: `depth_guard`, `depth_limit`,
+  `depth_limit_variables` (since 2026-10-10, W5 of
+  [the 2026-10-08 audit](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w5--explain-the-active-depth-guard-and-build-profile-p2);
+  the variables are documented in the [CLI guide](../docs/user-cli-guide-en.md#12-evaluation-depth-limits)).
+  The exception is a recursion on a non-constant numeric-pattern argument, reported as
   `FRS-EVAL-0012` ([DIFF-BEH-017](#diff-beh-017--a-recursion-on-a-non-constant-numeric-pattern-argument)).
   An evaluation cycle is `FRS-EVAL-0013`
   ([DIFF-BEH-018](#diff-beh-018--an-evaluation-cycle-names-its-definitions)).
