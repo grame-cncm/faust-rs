@@ -1576,15 +1576,27 @@ impl Compiler {
                     owner.as_deref(),
                     self.entrypoint_name.as_ref(),
                 );
-                diagnostic = maybe_add_eval_source_labels(
-                    diagnostic,
-                    &output.state.ctx,
-                    &output.state.arena,
-                    root,
-                    n,
-                    owner.as_deref(),
-                    self.entrypoint_name.as_ref(),
-                );
+                diagnostic = if matches!(error, eval::EvalError::CaseArgumentNotConstant { .. })
+                    && owner.is_none()
+                {
+                    add_library_recursion_call_label(
+                        diagnostic,
+                        &output.state.ctx,
+                        &output.state.arena,
+                        root,
+                        self.entrypoint_name.as_ref(),
+                    )
+                } else {
+                    maybe_add_eval_source_labels(
+                        diagnostic,
+                        &output.state.ctx,
+                        &output.state.arena,
+                        root,
+                        n,
+                        owner.as_deref(),
+                        self.entrypoint_name.as_ref(),
+                    )
+                };
             }
             if matches!(error, eval::EvalError::MissingProcessDefinition { .. }) {
                 diagnostic = maybe_add_missing_entrypoint_label(

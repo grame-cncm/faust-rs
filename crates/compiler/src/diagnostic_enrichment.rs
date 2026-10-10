@@ -275,6 +275,39 @@ pub(crate) fn maybe_add_eval_source_labels(
     diagnostic
 }
 
+/// Labels a recursion on a non-constant argument whose function is not one of
+/// the program's top-level definitions: a function of a library, or one local
+/// to a `with`.
+///
+/// The rules the evaluator reports carry no source location of their own,
+/// and their located descendants are identifiers shared by every file
+/// (`ma`, `s`), which the generic fallback of [`maybe_add_eval_source_labels`]
+/// would underline in an unrelated library. The entry point's definition is
+/// the program's own call that leads to the recursion, so it alone is
+/// labelled.
+pub(crate) fn add_library_recursion_call_label(
+    diagnostic: Diagnostic,
+    ctx: &parser::ParserCtx,
+    arena: &tlib::TreeArena,
+    defs_root: BoxId,
+    entrypoint_name: &str,
+) -> Diagnostic {
+    let diagnostic = diagnostic.with_note(
+        "the recursing function is not a top-level definition of this program: it is defined in a library or inside a `with`",
+    );
+    match source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name) {
+        Some(span) => diagnostic.with_label(
+            Label::new(
+                LabelStyle::Primary,
+                span,
+                "the call that leads to the recursion",
+            )
+            .with_role(LabelRole::CallSite),
+        ),
+        None => diagnostic,
+    }
+}
+
 /// Selects the exact parser occurrence of `node` inside one top-level
 /// definition when hash-consing gave the semantic node multiple candidates.
 ///

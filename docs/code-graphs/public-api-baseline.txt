@@ -1038,6 +1038,7 @@ const COMP_MISSING_ROOT
 const COMP_TABLE_INIT_SAMPLE_RATE
 const COMP_TYPE_FAILED
 const EVAL_ARITY_MISMATCH
+const EVAL_CASE_ARGUMENT_NOT_CONSTANT
 const EVAL_CONTROL_INDEX_INVALID
 const EVAL_DIVISION_BY_ZERO
 const EVAL_GENERIC_FAILURE
@@ -1312,7 +1313,6 @@ fn Rule::new
 fn Trans::is_const
 fn Trans::is_op
 fn Trans::is_var
-fn apply_pattern_matcher
 fn crate_id
 fn eval
 fn eval_box

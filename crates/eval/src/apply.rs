@@ -156,6 +156,7 @@ pub(crate) fn apply_pattern_matcher_value(
     }
 
     loop_detector.enter_structural()?;
+    let mut dispatched = false;
     let result = on_deep_stack(|| {
         let raw_arg = arena
             .hd(larg)
@@ -165,6 +166,48 @@ pub(crate) fn apply_pattern_matcher_value(
         // this, selector expressions like `((l != 0) & ...) * 2` remain residual
         // box trees and only catch-all rules match.
         let arg = box_simplification(arena, raw_arg);
+        let arg = pattern_matcher::simplify_dispatch_argument(arena, &pm.automaton, pm.state, arg);
+        // A dispatch on numeric patterns is recorded, so that a recursion that
+        // exhausts a depth budget without ever dispatching on a number, its
+        // argument going past the numeric patterns to the variable rule each
+        // time, is reported as such.
+        let patterns =
+            pattern_matcher::unreachable_numeric_patterns(arena, &pm.automaton, pm.state, arg);
+        let nonconstant = if !patterns.is_empty() {
+            let mut patterns = patterns;
+            // in increasing order, not the automaton's transition order
+            let value = |arena: &TreeArena, p: TreeId| match match_box(arena, p) {
+                BoxMatch::Int(i) => f64::from(i),
+                BoxMatch::Real(x) => x,
+                _ => f64::NAN,
+            };
+            patterns.sort_by(|a, b| value(arena, *a).total_cmp(&value(arena, *b)));
+            let patterns = patterns
+                .into_iter()
+                .map(|p| {
+                    boxes::box_pp(arena, p, 0, boxes::FloatSize::Single)
+                        .unwrap_or_else(|_| "a number".to_owned())
+                })
+                .collect();
+            Some(Some(crate::loop_detector::NonConstantArgument {
+                argument: arg,
+                patterns,
+            }))
+        } else if pattern_matcher::dispatches_on_number(arena, &pm.automaton, pm.state, arg) {
+            Some(None)
+        } else {
+            None
+        };
+        if let Some(nonconstant) = nonconstant {
+            loop_detector
+                .numeric_dispatches
+                .push(crate::loop_detector::NumericDispatch {
+                    rules: pm.original_rules,
+                    position: pm.rev_param_list.len() + 1,
+                    nonconstant,
+                });
+            dispatched = true;
+        }
         let (new_state, _) = pattern_matcher::apply_pattern_matcher(
             arena,
             &pm.automaton,
@@ -212,6 +255,9 @@ pub(crate) fn apply_pattern_matcher_value(
             arguments: pm.rev_param_list.clone(),
         })
     });
+    if dispatched {
+        loop_detector.numeric_dispatches.pop();
+    }
     loop_detector.leave_structural();
     result
 }

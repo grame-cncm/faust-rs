@@ -277,6 +277,30 @@ pub enum EvalError {
     RecursionDepthExceeded {
         max_depth: usize,
     },
+    /// A depth budget ran out in a recursion through a `case` whose argument
+    /// is matched against numeric patterns but is not a compile-time number:
+    /// no numeric rule can match it, every call takes the variable rule, and
+    /// the recursion does not reach its base case. `f(0) = _; f(n) = f(n-1);`
+    /// applied to a UI control, or a library filter whose order is one
+    /// (`fi.bandpass(hslider("Q", ...), fl, fu)`).
+    ///
+    /// Raised instead of [`Self::RecursionDepthExceeded`] when the same rules
+    /// are being applied, nested several times, at the same argument
+    /// position on such an argument (see `LoopDetector::depth_exceeded`).
+    /// The C++ reference has no such check: it evaluates until its stack
+    /// check or its timeout stops it.
+    CaseArgumentNotConstant {
+        /// Rules of the recursing `case`.
+        node: TreeId,
+        /// 1-based position of the argument.
+        position: usize,
+        /// The argument at the outermost application, as dispatched on.
+        argument: TreeId,
+        /// The numeric patterns it cannot reach, rendered.
+        patterns: Vec<String>,
+        /// The budget the recursion exhausted.
+        max_depth: usize,
+    },
     /// A box expression was expected to evaluate to a compile-time numeric
     /// constant (type 0→1 with a numeric value), but did not.
     ///
@@ -529,6 +553,19 @@ impl Display for EvalError {
             }
             Self::RecursionDepthExceeded { max_depth } => {
                 write!(f, "stack overflow in eval (depth budget {max_depth})")
+            }
+            Self::CaseArgumentNotConstant {
+                position, patterns, ..
+            } => {
+                let numbers = match patterns.as_slice() {
+                    [one] => format!("the number {one}"),
+                    [init @ .., last] => format!("the numbers {} and {last}", init.join(", ")),
+                    [] => "numbers".to_owned(),
+                };
+                write!(
+                    f,
+                    "recursion does not reach its base case: argument {position} is matched against {numbers}, but is not a compile-time constant"
+                )
             }
             Self::NotAConstantExpression { node } => {
                 write!(
@@ -980,6 +1017,18 @@ impl ToDiagnostic for EvalError {
                 "computed: the evaluator crossed its recursion budget before finishing ({max_depth} frames)"
             ))
             .with_help("check recursive definitions for a missing base case or non-decreasing recursive call"),
+            Self::CaseArgumentNotConstant { max_depth, .. } => Diagnostic::new(
+                Severity::Error,
+                Stage::Eval,
+                codes::EVAL_CASE_ARGUMENT_NOT_CONSTANT,
+                message,
+            )
+            .with_note("cause: the function chooses its rule by comparing this argument with numbers, and the argument is a signal known only at run time, so no numeric rule can match and every call takes the general rule")
+            .with_note("rule: an argument matched against numeric patterns must fold to a number at compile time for the recursion to end")
+            .with_note(format!(
+                "computed: the recursion went past its budget of {max_depth} frames with the argument still not a number"
+            ))
+            .with_help("pass a constant number here: a literal, a constant expression or a constant definition. A UI control, an input or a smoothed control is not one; in a library function, such an argument (a filter order, a number of stages) is documented as a constant"),
             Self::DivisionByZero { detail, .. } => Diagnostic::new(
                 Severity::Error,
                 Stage::Eval,

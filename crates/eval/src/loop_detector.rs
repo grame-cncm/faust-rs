@@ -166,7 +166,45 @@ pub struct LoopDetector {
     /// `RecursionDepthExceeded` gracefully, matching the reference C++
     /// compiler's `"stack overflow in eval"` error.
     pub(crate) structural_depth: usize,
+    /// The `case` applications in progress that dispatch an argument on
+    /// numeric patterns, outermost first.
+    ///
+    /// Pushed and popped with the structural frame of
+    /// `apply_pattern_matcher_value`, only for such a dispatch. When a depth
+    /// budget runs out, they tell a recursion that does not reach its numeric
+    /// base case because its argument is not a compile-time constant
+    /// ([`EvalError::CaseArgumentNotConstant`]) from a recursion that does
+    /// progress on a number but is too deep, or never stops for another
+    /// reason ([`EvalError::RecursionDepthExceeded`]).
+    pub(crate) numeric_dispatches: Vec<NumericDispatch>,
 }
+
+/// One dispatch of a `case` argument on numeric patterns: see
+/// [`LoopDetector::numeric_dispatches`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NumericDispatch {
+    /// The rules of the `case`, as `PatternMatcherValue::original_rules`.
+    pub(crate) rules: TreeId,
+    /// 1-based position of the argument.
+    pub(crate) position: usize,
+    /// `None` when the argument is a number. Otherwise the argument as the
+    /// matcher dispatched on it, which can reach none of the patterns.
+    pub(crate) nonconstant: Option<NonConstantArgument>,
+}
+
+/// An argument that is not a number, dispatched on numeric patterns.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NonConstantArgument {
+    /// The argument as the matcher dispatched on it.
+    pub(crate) argument: TreeId,
+    /// The numeric patterns it cannot reach, rendered.
+    pub(crate) patterns: Vec<String>,
+}
+
+/// How many nested applications of one `case` on a non-constant argument make
+/// a depth overflow a recursion on that argument. A non-recursive function
+/// with a numeric pattern applied to a signal appears once.
+const NONCONSTANT_RECURSION_REPEATS: usize = 3;
 
 /// Environment variable overriding the default evaluator recursion budget.
 const DEFAULT_EVAL_MAX_DEPTH_ENV: &str = "FAUST_RS_DEFAULT_EVAL_MAX_DEPTH";
@@ -385,7 +423,42 @@ impl LoopDetector {
             evaluated_boxes: ahash::HashSet::with_hasher(ahash::RandomState::new()),
             eval_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             structural_depth: 0,
+            numeric_dispatches: Vec::new(),
         }
+    }
+
+    /// The error for a depth budget of `max_depth` that ran out.
+    ///
+    /// [`EvalError::CaseArgumentNotConstant`] when one `case` is being
+    /// applied, nested at least [`NONCONSTANT_RECURSION_REPEATS`] times, with
+    /// an argument at the same position that cannot reach its numeric
+    /// patterns, and no application of that `case` from the first of them on
+    /// dispatches any argument on a number: the recursion makes no progress
+    /// a numeric rule could stop. The outermost of those applications is
+    /// reported. Otherwise the generic [`EvalError::RecursionDepthExceeded`]:
+    /// a recursion that descends on a number is too deep or misses its base
+    /// case, whatever its other arguments are.
+    fn depth_exceeded(&self, max_depth: usize) -> EvalError {
+        let frames = &self.numeric_dispatches;
+        for (i, d) in frames.iter().enumerate() {
+            let Some(arg) = &d.nonconstant else { continue };
+            let mut repeats = 0;
+            let mut stalled = true;
+            for e in frames[i..].iter().filter(|e| e.rules == d.rules) {
+                stalled &= e.nonconstant.is_some();
+                repeats += usize::from(e.position == d.position && e.nonconstant.is_some());
+            }
+            if stalled && repeats >= NONCONSTANT_RECURSION_REPEATS {
+                return EvalError::CaseArgumentNotConstant {
+                    node: d.rules,
+                    position: d.position,
+                    argument: arg.argument,
+                    patterns: arg.patterns.clone(),
+                    max_depth,
+                };
+            }
+        }
+        EvalError::RecursionDepthExceeded { max_depth }
     }
 
     /// A detector with the given syntactic nesting budget, for tests.
@@ -406,9 +479,7 @@ impl LoopDetector {
     /// [`on_deep_stack`]). Pair with [`leave_eval`](Self::leave_eval).
     pub(crate) fn enter_eval(&mut self) -> Result<(), EvalError> {
         if self.eval_depth >= self.nesting_max_depth {
-            return Err(EvalError::RecursionDepthExceeded {
-                max_depth: self.nesting_max_depth,
-            });
+            return Err(self.depth_exceeded(self.nesting_max_depth));
         }
         self.eval_depth += 1;
         Ok(())
@@ -512,9 +583,7 @@ impl LoopDetector {
             return Err(EvalError::LoopDetected { node });
         }
         if self.call_stack.len() >= self.max_depth {
-            return Err(EvalError::RecursionDepthExceeded {
-                max_depth: self.max_depth,
-            });
+            return Err(self.depth_exceeded(self.max_depth));
         }
         self.call_stack.push(frame);
         Ok(())
@@ -535,7 +604,7 @@ impl LoopDetector {
     pub(crate) fn enter_structural(&mut self) -> Result<(), EvalError> {
         let limit = self.max_depth.min(self.structural_max_depth);
         if self.structural_depth >= limit {
-            return Err(EvalError::RecursionDepthExceeded { max_depth: limit });
+            return Err(self.depth_exceeded(limit));
         }
         self.structural_depth += 1;
         Ok(())
@@ -584,6 +653,171 @@ pub(crate) enum LoopFrame {
 
 #[cfg(test)]
 mod tests {
+    use boxes::{BoxBuilder, BoxMatch, match_box};
+
+    /// Runs `f` on a thread with the CLI's 512 MiB stack: a debug evaluator
+    /// frame costs tens of KiB, more than a test thread holds at budget 64.
+    fn on_big_stack<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024 * 1024)
+            .spawn(f)
+            .expect("spawn worker")
+            .join()
+            .expect("the worker should finish, not abort")
+    }
+
+    /// Evaluates `process` of `source` with an identity and structural budget
+    /// of `max_depth`, as `eval_entrypoint_full` does with the default one.
+    fn eval_process_with_budget(source: &str, max_depth: usize) -> Result<(), super::EvalError> {
+        let source = source.to_owned();
+        on_big_stack(move || eval_process_with_budget_here(&source, max_depth))
+    }
+
+    fn eval_process_with_budget_here(
+        source: &str,
+        max_depth: usize,
+    ) -> Result<(), super::EvalError> {
+        let parsed = parser::parse_program(source, "nonconstant_recursion.dsp");
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let mut arena = parsed.state.arena;
+        let root = parsed.root.expect("a parsed program");
+        let mut env = crate::Environment::empty();
+        crate::definitions::bind_definitions(&mut arena, root, &mut env)?;
+        let mut detector = super::LoopDetector::with_max_depth(max_depth);
+        let entry = BoxBuilder::new(&mut arena).ident("process");
+        let value = crate::eval_value(&mut arena, entry, &env, &mut detector)?;
+        crate::a2sb_value(&mut arena, value, &mut detector)?;
+        assert!(
+            detector.numeric_dispatches.is_empty(),
+            "every dispatch is popped"
+        );
+        Ok(())
+    }
+
+    const CHAIN: &str = "chain(0) = _;\nchain(n) = chain(n-1) : *(0.5);\n";
+
+    /// A recursion whose argument, compared with numbers, is a signal does
+    /// not reach its base case; the error names the argument's position and
+    /// the numbers, and keeps the outermost argument (#21).
+    #[test]
+    fn a_recursion_on_a_signal_compared_with_numbers_is_named() {
+        for (source, position, numbers) in [
+            (
+                format!("{CHAIN}process = chain(hslider(\"order\", 3, 0, 8, 1));"),
+                1,
+                vec!["0"],
+            ),
+            // the shape of fi.bandpass: base cases 0 and 1, step 2
+            (
+                "bp(0) = _;\nbp(1) = *(0.5);\nbp(o) = bp(o-2) : *(0.25);\nprocess = bp(hslider(\"order\", 4, 1, 8, 1));".to_owned(),
+                1,
+                vec!["0", "1"],
+            ),
+            (
+                format!("{CHAIN}smooth = *(0.001) : + ~ *(0.999);\nprocess = chain(hslider(\"order\", 3, 0, 8, 1) : smooth);"),
+                1,
+                vec!["0"],
+            ),
+            (
+                format!("{CHAIN}process = chain(int(hslider(\"order\", 3, 0, 8, 1)));"),
+                1,
+                vec!["0"],
+            ),
+            (
+                "g(x, 0) = x;\ng(x, n) = g(x*0.5, n-1);\nprocess = g(_, nentry(\"n\", 3, 0, 8, 1));".to_owned(),
+                2,
+                vec!["0"],
+            ),
+            (
+                "even(0) = 1;\neven(n) = odd(n-1);\nodd(0) = 0;\nodd(n) = even(n-1);\nprocess = even(button(\"b\"));".to_owned(),
+                1,
+                vec!["0"],
+            ),
+            (format!("{CHAIN}process = _ <: \\(n).(chain(n));"), 1, vec!["0"]),
+        ] {
+            match eval_process_with_budget(&source, 64) {
+                Err(super::EvalError::CaseArgumentNotConstant {
+                    position: got_position,
+                    patterns,
+                    max_depth,
+                    ..
+                }) => {
+                    assert_eq!(got_position, position, "{source}");
+                    assert_eq!(patterns, numbers, "{source}");
+                    assert_eq!(max_depth, 64, "{source}");
+                }
+                other => panic!("{source}: expected CaseArgumentNotConstant, got {other:?}"),
+            }
+        }
+    }
+
+    /// The reported argument is the one the caller passed, before the
+    /// recursion rewrote it (`n - 1 - 1 ...`).
+    #[test]
+    fn the_outermost_argument_is_reported() {
+        on_big_stack(the_outermost_argument_is_reported_here);
+    }
+
+    fn the_outermost_argument_is_reported_here() {
+        let source = format!("{CHAIN}process = chain(hslider(\"order\", 3, 0, 8, 1));");
+        let parsed = parser::parse_program(&source, "outermost.dsp");
+        let mut arena = parsed.state.arena;
+        let root = parsed.root.expect("a parsed program");
+        let mut env = crate::Environment::empty();
+        crate::definitions::bind_definitions(&mut arena, root, &mut env).unwrap();
+        let mut detector = super::LoopDetector::with_max_depth(64);
+        let entry = BoxBuilder::new(&mut arena).ident("process");
+        let err = crate::eval_value(&mut arena, entry, &env, &mut detector)
+            .and_then(|v| crate::a2sb_value(&mut arena, v, &mut detector))
+            .expect_err("a recursion on a slider");
+        let super::EvalError::CaseArgumentNotConstant { argument, .. } = err else {
+            panic!("got {err:?}");
+        };
+        assert!(
+            matches!(match_box(&arena, argument), BoxMatch::HSlider(..)),
+            "the slider itself, not slider - 1 - 1 ..."
+        );
+    }
+
+    /// Valid programs are not affected: a constant, a signal where no number
+    /// is tested, a numeric pattern without recursion, and a finite recursion
+    /// that descends on a number while a signal is also tested.
+    #[test]
+    fn valid_programs_still_evaluate() {
+        for source in [
+            format!("{CHAIN}process = chain(3);"),
+            format!("{CHAIN}N = 2 + 1;\nprocess = chain(N);"),
+            "g(x, 0) = x;\ng(x, n) = g(x*0.5, n-1);\nprocess = g(hslider(\"x\", 0.5, 0, 1, 0.01), 3);".to_owned(),
+            "h(0) = 1;\nh(x) = x*2;\nprocess = h(hslider(\"x\", 0.5, 0, 1, 0.01));".to_owned(),
+            "g(0, x) = x;\ng(n, 0) = 0;\ng(n, x) = g(n-1, x);\nprocess = g(3, hslider(\"x\", 0.5, 0, 1, 0.01));".to_owned(),
+        ] {
+            eval_process_with_budget(&source, 64).unwrap_or_else(|e| panic!("{source}: {e:?}"));
+        }
+    }
+
+    /// A runaway recursion that progresses on a number, or has no numeric
+    /// pattern, keeps the generic error, whatever its other arguments are.
+    #[test]
+    fn other_runaway_recursions_keep_the_generic_error() {
+        for source in [
+            // a real missing base case, on constants
+            "f(0) = _;\nf(n) = f(n+1) : *(0.5);\nprocess = f(3);".to_owned(),
+            // the recursion skips its base case
+            "f(0) = _;\nf(n) = f(n-2) : *(0.5);\nprocess = f(3);".to_owned(),
+            // descends on a number while a signal is tested against 0
+            "g(0, x) = x;\ng(n, 0) = 0;\ng(n, x) = g(n+1, x) : *(0.999);\nprocess = g(3, hslider(\"x\", 0.5, 0, 1, 0.01));".to_owned(),
+            // one dispatch on a signal, then a runaway recursion on constants
+            "f(0) = _;\nf(n) = f(n+1) : *(0.999);\nh(0) = _;\nh(x) = f(3);\nprocess = h(hslider(\"x\", 0.5, 0, 1, 0.01));".to_owned(),
+            // stopped by a run-time test: no numeric pattern
+            "f(n) = select2(n > 0, _, f(n-1) : *(0.5));\nprocess = f(hslider(\"n\", 3, 0, 8, 1));".to_owned(),
+        ] {
+            match eval_process_with_budget(&source, 64) {
+                Err(super::EvalError::RecursionDepthExceeded { .. }) => {}
+                other => panic!("{source}: expected RecursionDepthExceeded, got {other:?}"),
+            }
+        }
+    }
+
     #[test]
     fn eval_nesting_trips_at_its_budget() {
         let mut detector = super::LoopDetector::with_nesting_max_depth(4);

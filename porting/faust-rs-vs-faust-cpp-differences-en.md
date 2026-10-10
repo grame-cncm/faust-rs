@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-08 (foreign functions and resource-limit audit); full review 2026-08-13
+Last reviewed: 2026-10-10 (runaway recursion and evaluation cycles); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -615,6 +615,31 @@ must run unchanged with Faust C++ should not pass them.
   3-channel soundfile read as 70 outputs by the interpreter, scalar and
   vector; C++ text wraps every channel but 0); the `sound` impulse test on all
   backend lanes.
+
+### DIFF-BEH-017 — a recursion on a non-constant numeric-pattern argument
+
+- Status: `extension` (same rejection, a diagnostic C++ does not have), added
+  2026-10-10 ([#21](https://github.com/grame-cncm/faust-rs/issues/21)).
+- A function defined by numeric patterns, `f(0) = ...; f(n) = f(n-1) ...`,
+  applied to a signal (a UI control, an input, `fi.bandpass` with a slider as
+  its order) can never reach its numeric base case. Both compilers reject it
+  when a depth limit runs out. C++ reports `ERROR : stack overflow in eval`
+  (2.84.3, 16 MB stack), or runs until its timeout (2.90.6, 256 MB stack and
+  quadratic folding; `fi.bandpass` in both). Rust reports `FRS-EVAL-0012`,
+  naming the argument's position, the numbers it is compared with, and the
+  controls or inputs it depends on.
+- The diagnostic is chosen only once a depth budget has run out, so no
+  accepted program changes. It requires the same `case` nested at least three
+  times on a non-numeric argument at one position, and no numeric dispatch of
+  that `case` from the first of them on. A recursion that descends on a number
+  while another argument is a signal keeps `FRS-EVAL-0099`.
+- Compatibility impact: none on accepted programs. Scripts matching the C++
+  text see another message.
+- Evidence: [`err_34_case_argument_not_constant.dsp`](../tests/corpus/err_34_case_argument_not_constant.dsp),
+  `a_recursion_on_a_non_constant_pattern_argument_names_it` in
+  `crates/compiler/tests/diagnostic_errors.rs`, the tests of
+  `crates/eval/src/loop_detector.rs`, and the
+  [analysis](eval-runaway-recursion-and-cycle-diagnostics-analysis-and-plan-2026-10-10-en.md).
 
 ## 6. Additional backends and delivery forms
 

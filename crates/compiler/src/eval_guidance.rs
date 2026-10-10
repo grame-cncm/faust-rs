@@ -10,7 +10,10 @@
 //!   candidate wins unambiguously;
 //! - `add_pattern_attempt_trace` — the declared `case` rules and the arguments
 //!   actually dispatched on, without evaluator environments or automaton state;
-//! - `add_redefinition_labels` — both conflicting declaration sites.
+//! - `add_redefinition_labels` — both conflicting declaration sites;
+//! - `add_nonconstant_case_argument` — the argument a recursion dispatched on
+//!   without ever reaching a numeric rule, and the rules it was matched
+//!   against.
 
 use super::*;
 
@@ -32,6 +35,7 @@ pub(crate) fn add_eval_guidance(
 ) -> Diagnostic {
     diagnostic = add_symbol_rename_fix(diagnostic, error, source_map);
     diagnostic = add_pattern_attempt_trace(diagnostic, error, arena);
+    diagnostic = add_nonconstant_case_argument(diagnostic, error, arena);
     add_redefinition_labels(diagnostic, error, ctx)
 }
 
@@ -191,6 +195,99 @@ fn add_pattern_attempt_trace(
             kind: TraceKind::Evaluation,
             frames,
         })
+}
+
+/// Names the argument of a recursion that never reached a numeric rule.
+///
+/// The evaluator gives the position, the argument as first dispatched on and
+/// the numeric patterns it could not reach; rendering the argument and the
+/// declared rules needs the arena. The argument is the one of the outermost
+/// application, the value the caller passed, before the recursion rewrote it
+/// (`n - 1 - 1 ...`).
+fn add_nonconstant_case_argument(
+    diagnostic: Diagnostic,
+    error: &eval::EvalError,
+    arena: &tlib::TreeArena,
+) -> Diagnostic {
+    let eval::EvalError::CaseArgumentNotConstant {
+        node,
+        position,
+        argument,
+        patterns,
+        ..
+    } = error
+    else {
+        return diagnostic;
+    };
+    let argument = describe_runtime_argument(arena, *argument);
+    let rules = declared_case_rules(arena, *node)
+        .iter()
+        .take(MAX_TRACED_RULES)
+        .map(|rule| format!("({})", rule.patterns.join(", ")))
+        .collect::<Vec<_>>();
+    diagnostic
+        .with_note(format!(
+            "computed: argument {position} is {argument}, matched against the rules {}",
+            rules.join(", ")
+        ))
+        .with_fact(
+            "case_argument_position",
+            u64::try_from(*position).unwrap_or(u64::MAX),
+        )
+        .with_fact("case_argument", argument)
+        .with_fact("case_numeric_patterns", patterns.clone())
+        .with_fact("pattern_rules", rules)
+}
+
+/// What makes an argument known only at run time, in source terms.
+///
+/// The argument is an evaluated box: the functions it went through are
+/// closures and the parameters of a lambda applied with `:` are slots, neither
+/// of which has a source spelling. What the programmer can act on is the UI
+/// control or the input it comes from, so those are named, up to three. An
+/// argument with neither is rendered whole.
+fn describe_runtime_argument(arena: &tlib::TreeArena, argument: BoxId) -> String {
+    const MAX_NAMED: usize = 3;
+    let mut controls = Vec::new();
+    let mut input = false;
+    let mut stack = vec![argument];
+    let mut visited = 0usize;
+    while let Some(cur) = stack.pop() {
+        visited += 1;
+        if visited > 4096 || controls.len() == MAX_NAMED {
+            break;
+        }
+        match match_box(arena, cur) {
+            BoxMatch::Button(_)
+            | BoxMatch::Checkbox(_)
+            | BoxMatch::HSlider(..)
+            | BoxMatch::VSlider(..)
+            | BoxMatch::NumEntry(..) => {
+                let rendered = compact_human_box_preview(arena, cur);
+                if !controls.contains(&rendered) {
+                    controls.push(rendered);
+                }
+                continue;
+            }
+            BoxMatch::Slot(_) | BoxMatch::Wire => input = true,
+            _ => {}
+        }
+        if let Some(children) = arena.children(cur) {
+            stack.extend(children.iter().rev());
+        }
+    }
+    match (controls.as_slice(), input) {
+        ([], false) => format!("`{}`", compact_human_box_preview(arena, argument)),
+        ([], true) => "an input signal".to_owned(),
+        (controls, _) => format!(
+            "a signal that depends on {}",
+            controls
+                .iter()
+                .map(|c| format!("`{c}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 /// One declared `case` rule, rendered for diagnostics.

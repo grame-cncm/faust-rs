@@ -1198,3 +1198,43 @@ fn a_widget_parameter_that_is_not_a_number_is_refused_like_the_reference() {
         "FRS-EVAL-0007"
     );
 }
+
+#[test]
+fn a_recursion_on_a_non_constant_pattern_argument_names_it() {
+    // grame-cncm/faust-rs#21: the order of fi.bandpass as a slider used to give
+    // "stack overflow in eval" with help about a missing base case
+    let source = read_corpus("err_34_case_argument_not_constant.dsp");
+    std::thread::Builder::new()
+        .stack_size(512 * 1024 * 1024)
+        .spawn(move || {
+            let err = Compiler::new()
+                .compile_source_to_signals("err_34_case_argument_not_constant.dsp", &source)
+                .expect_err("a recursion on a slider");
+            let first = &err.diagnostic_bundle().as_slice()[0];
+            assert_eq!(first.code.0, "FRS-EVAL-0012");
+            assert_eq!(first.stage, Stage::Eval);
+            assert_eq!(
+                first.message.as_ref(),
+                "recursion does not reach its base case: argument 2 is matched against the numbers 0 and 1, but is not a compile-time constant"
+            );
+            // the control, not the evaluated box, and the declared rules
+            assert!(
+                first.notes.iter().any(|n| n.contains(
+                    "argument 2 is a signal that depends on `hslider(\"order\", 4, 1, 8, 1)`, matched against the rules (s, 0, nh), (s, 1, nh), (s, o, nh)"
+                )),
+                "{:?}",
+                first.notes
+            );
+            assert_eq!(
+                first.facts.get(&compiler::FactKey::new("case_argument_position")),
+                Some(&DiagnosticValue::from(2_u64))
+            );
+            // the definition of `bp` and the call in `process`
+            let roles: Vec<_> = first.labels.iter().map(|l| l.role).collect();
+            assert!(roles.contains(&LabelRole::DefinitionSite), "{roles:?}");
+            assert!(roles.contains(&LabelRole::CallSite), "{roles:?}");
+        })
+        .expect("spawn worker")
+        .join()
+        .expect("worker thread should finish");
+}

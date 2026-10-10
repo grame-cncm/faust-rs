@@ -78,6 +78,14 @@ pub const EVAL_MODULATION_WILDCARD_NO_MATCH: DiagnosticCode = DiagnosticCode("FR
 /// `compiler/tlib/tree.cpp` ("the parameter must be a real constant numerical
 /// expression").
 pub const EVAL_WIDGET_PARAMETER_NOT_CONSTANT: DiagnosticCode = DiagnosticCode("FRS-EVAL-0011");
+/// A recursion through a `case` whose argument, matched against numeric
+/// patterns, is not a compile-time number, so that no numeric rule ever
+/// matches and the recursion exhausts a depth budget: a filter order passed
+/// as a UI control, `fi.bandpass(hslider(...), fl, fu)`.
+///
+/// C++ equivalent: none. The reference evaluates such a program until its
+/// stack-overflow check or its `-t` timeout stops it.
+pub const EVAL_CASE_ARGUMENT_NOT_CONSTANT: DiagnosticCode = DiagnosticCode("FRS-EVAL-0012");
 /// Generic eval failure fallback code.
 pub const EVAL_GENERIC_FAILURE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0099");
 
@@ -200,6 +208,7 @@ pub fn all_codes() -> &'static [DiagnosticCode] {
         EVAL_CONTROL_INDEX_INVALID,
         EVAL_MODULATION_WILDCARD_NO_MATCH,
         EVAL_WIDGET_PARAMETER_NOT_CONSTANT,
+        EVAL_CASE_ARGUMENT_NOT_CONSTANT,
         EVAL_GENERIC_FAILURE,
         PROP_UNSUPPORTED_BOX,
         PROP_ARITY_MISMATCH,

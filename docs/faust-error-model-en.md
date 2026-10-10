@@ -972,6 +972,7 @@ may be correct and your search path wrong.
 | `FRS-EVAL-0005` | `eval` | A symbol redefined with a different value in the same scope. |
 | `FRS-EVAL-0006` | `eval` | A slider or `nentry` whose init value is outside its `[min, max]` range. |
 | `FRS-EVAL-0007` | `eval` | A constant expression divides by a constant zero, in integers or in reals (§6.11). |
+| `FRS-EVAL-0012` | `eval` | A recursion that does not reach its base case because an argument compared with numbers is a signal (a UI control, an input): names the position, the numbers and the controls. |
 | `FRS-EVAL-0099` | `eval` | Any other evaluation failure, including a failed `case` match, an unresolvable `component`/`library`, and evaluator recursion limits. |
 
 ### 7.3 Connecting the blocks (`FRS-PROP-*`)

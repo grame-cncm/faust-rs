@@ -1,0 +1,5 @@
+faust-rs-golden-v1
+source=err_34_case_argument_not_constant.dsp
+bytes=627
+lines=11
+fnv1a64=ea5b9ea227c96c15
