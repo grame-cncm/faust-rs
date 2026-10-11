@@ -202,7 +202,24 @@ impl<'a> GeneratorInterpreter<'a> {
                 let rhs = self.eval(y)?;
                 Ok(self.eval_binop(sig, op, lhs, rhs))
             }
-            SigMatch::Pow(x, y) => Ok(self.eval(x)?.powf(self.eval(y)?)),
+            SigMatch::Pow(x, y) => {
+                let lhs = self.eval(x)?;
+                let rhs = self.eval(y)?;
+                // Same prepared integer-power contract as powprim.hh and
+                // leaf_emit::emit_pow, including table-init=const generators.
+                let value = if self.simple_type(sig) == Some(SimpleSigType::Int) {
+                    (if let SigMatch::Int(exponent) = match_sig(self.arena, y)
+                        && (0..=8).contains(&exponent)
+                    {
+                        (lhs as i32).wrapping_pow(exponent as u32)
+                    } else {
+                        lhs.powf(rhs).round_ties_even() as i32
+                    }) as f64
+                } else {
+                    lhs.powf(rhs)
+                };
+                Ok(value)
+            }
             SigMatch::Min(x, y) => Ok(self.eval(x)?.min(self.eval(y)?)),
             SigMatch::Max(x, y) => Ok(self.eval(x)?.max(self.eval(y)?)),
             SigMatch::FloatCast(x) => self.eval(x),

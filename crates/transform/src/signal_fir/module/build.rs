@@ -644,6 +644,12 @@ fn collect_prototype_declarations(lower: &mut SignalToFirLower<'_>) -> Vec<FirId
         if !lower.used_protos.math_ops.contains(op) {
             continue;
         }
+        if lower.used_protos.integer_pow
+            && math_real_ty == FirType::Float64
+            && matches!(op, FirMathOp::Pow | FirMathOp::Rint)
+        {
+            continue;
+        }
         let arity = match op {
             FirMathOp::Pow
             | FirMathOp::Min
@@ -662,7 +668,7 @@ fn collect_prototype_declarations(lower: &mut SignalToFirLower<'_>) -> Vec<FirId
         let proto = {
             let mut b = FirBuilder::new(&mut lower.store);
             b.declare_fun(
-                op.symbol(),
+                crate::signal_fir::leaf_emit::math_symbol(*op, &math_real_ty),
                 FirType::Fun {
                     args: vec![math_real_ty.clone(); arity],
                     ret: Box::new(math_real_ty.clone()),
@@ -673,6 +679,11 @@ fn collect_prototype_declarations(lower: &mut SignalToFirLower<'_>) -> Vec<FirId
             )
         };
         math_prototypes.push(proto);
+    }
+    if lower.used_protos.integer_pow {
+        math_prototypes.extend(crate::signal_fir::leaf_emit::integer_pow_prototypes(
+            &mut lower.store,
+        ));
     }
     for name in INT_FUN_PROTO_ORDER {
         if !lower.used_protos.int_fun_names.contains(name) {

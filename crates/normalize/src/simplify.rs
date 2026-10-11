@@ -341,6 +341,16 @@ fn match_simplification(
     if let Some((tag, x, y)) = maybe_binary_math {
         let vx = numeric_val(arena, x);
         let vy = numeric_val(arena, y);
+        // powprim.hh::computeSigOutput folds positive integer powers with
+        // int32 wrapping multiplication, keeping the integer nature.
+        if tag == 'P'
+            && let (SigMatch::Int(base), SigMatch::Int(exponent)) =
+                (match_sig(arena, x), match_sig(arena, y))
+            && exponent > 0
+        {
+            let folded = SigBuilder::new(arena).int(base.wrapping_pow(exponent as u32));
+            return normalize_add_term(arena, types, folded);
+        }
         if let (Some(a), Some(b)) = (vx, vy) {
             let result = match tag {
                 'A' => a.atan2(b),
@@ -358,7 +368,7 @@ fn match_simplification(
             // C++ parity: `min`/`max` are xtended primitives whose
             // `computeSigOutput` preserves the integer type when both
             // operands are `SigInt`.  All other two-arg math functions
-            // (atan2, fmod, remainder, pow) always produce `SigReal`.
+            // (atan2, fmod, remainder, and the remaining pow cases) produce `SigReal`.
             let folded = if matches!(tag, 'D' | 'E')
                 && matches!(match_sig(arena, x), SigMatch::Int(_))
                 && matches!(match_sig(arena, y), SigMatch::Int(_))
@@ -792,6 +802,31 @@ mod tests {
     use signals::SigMatch;
 
     use super::*;
+
+    #[test]
+    fn positive_integer_pow_folding_preserves_exact_int32_and_wrap() {
+        for (base, exponent, expected) in [(25, 6, 244140625), (-3, 3, -27), (65536, 2, 0)] {
+            let mut arena = TreeArena::new();
+            let mut b = SigBuilder::new(&mut arena);
+            let x = b.int(base);
+            let y = b.int(exponent);
+            let pow = b.pow(x, y);
+            let folded = simplification(&mut arena, &HashMap::new(), pow);
+            let actual = match match_sig(&arena, folded) {
+                SigMatch::Int(value) => value,
+                SigMatch::BinOp(BinOp::Mul, lhs, rhs) => {
+                    let (SigMatch::Int(lhs), SigMatch::Int(rhs)) =
+                        (match_sig(&arena, lhs), match_sig(&arena, rhs))
+                    else {
+                        panic!("integer factors expected")
+                    };
+                    lhs.wrapping_mul(rhs)
+                }
+                other => panic!("integer constant expected: {other:?}"),
+            };
+            assert_eq!(actual, expected);
+        }
+    }
 
     fn arena() -> TreeArena {
         TreeArena::new()

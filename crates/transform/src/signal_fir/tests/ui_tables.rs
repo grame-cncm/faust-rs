@@ -558,6 +558,42 @@ fn siggen_interpreter_delay1_uses_previous_step_for_non_recursive_sources() {
         interpret_generator_for_test(&arena, generator, 4).expect("generator should interpret");
     assert_eq!(values, vec![0.0, 1.0, 2.0, 3.0]);
 }
+
+#[test]
+fn siggen_integer_pow_rounds_runtime_exponents_and_wraps_small_constant_powers() {
+    let mut arena = TreeArena::new();
+    let mut b = SigBuilder::new(&mut arena);
+    let zero = b.int(0);
+    let six = b.int(6);
+    let exponents = b.waveform(&[zero, six]);
+    let base = b.int(25);
+    let pow = b.pow(base, exponents);
+    assert_eq!(
+        interpret_generator_for_test(&arena, pow, 2).unwrap(),
+        vec![1.0, 244140625.0]
+    );
+
+    let mut b = SigBuilder::new(&mut arena);
+    let zero = b.int(0);
+    let minus_one = b.int(-1);
+    let exponents = b.waveform(&[zero, minus_one]);
+    let two = b.int(2);
+    let pow = b.pow(two, exponents);
+    assert_eq!(
+        interpret_generator_for_test(&arena, pow, 2).unwrap(),
+        vec![1.0, 0.0]
+    );
+
+    let mut b = SigBuilder::new(&mut arena);
+    let base = b.int(65536);
+    let bases = b.waveform(&[base]);
+    let exponent = b.int(2);
+    let pow = b.pow(bases, exponent);
+    assert_eq!(
+        interpret_generator_for_test(&arena, pow, 2).unwrap(),
+        vec![0.0, 0.0]
+    );
+}
 #[test]
 fn int_waveform_declares_int32_table() {
     let mut arena = TreeArena::new();

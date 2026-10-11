@@ -276,6 +276,10 @@ pub(crate) fn resolve_math_call(
     double: bool,
 ) -> Option<Result<&'static NamedFunction, String>> {
     let math = match FirMathOp::from_symbol(name) {
+        // The new FIR aliases also name fixed-precision C symbols. Preserve
+        // their host signature even when a foreign declaration widens its
+        // result; only canonical unsuffixed FIR names pick by result type.
+        Some(_) if matches!(name, "powf" | "rintf") => host_math(name)?,
         Some(op) => {
             let wide = match ret {
                 FirType::Float64 => true,
@@ -481,6 +485,8 @@ mod tests {
         assert_eq!(ok("std::pow", FirType::Float64, 2, false), "pow");
         // C symbols name one variant; the precision converts.
         assert_eq!(ok("tanhf", FirType::Float64, 1, true), "tanhf");
+        assert_eq!(ok("powf", FirType::Float64, 2, true), "powf");
+        assert_eq!(ok("rintf", FirType::Float64, 1, true), "rintf");
         assert_eq!(ok("sinf", FirType::FaustFloat, 1, false), "sinf");
         assert_eq!(ok("isnan", FirType::Int32, 1, false), "isnan");
         assert_eq!(ok("abs", FirType::Int32, 1, false), "abs");

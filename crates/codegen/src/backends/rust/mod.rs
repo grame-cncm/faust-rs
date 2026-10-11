@@ -388,6 +388,9 @@ fn emit_rust_header(out: &mut String, options: &RustOptions) {
             let _ = writeln!(out, "#[cfg(not(target_arch = \"wasm32\"))]");
             let _ = writeln!(out, "mod ffi {{");
             let _ = writeln!(out, "    use core::ffi::c_float;");
+            // powprim.hh's integer-power path uses double rint even in a
+            // single-precision DSP. The surrounding F32/F64 API is unchanged.
+            let _ = writeln!(out, "    use core::ffi::c_double;");
             let _ = writeln!(out);
             let _ = writeln!(
                 out,
@@ -399,6 +402,7 @@ fn emit_rust_header(out: &mut String, options: &RustOptions) {
                 "        pub fn remainderf(from: c_float, to: c_float) -> c_float;"
             );
             let _ = writeln!(out, "        pub fn rintf(val: c_float) -> c_float;");
+            let _ = writeln!(out, "        pub fn rint(val: c_double) -> c_double;");
             let _ = writeln!(out, "    }}");
             let _ = writeln!(out, "}}");
             let _ = writeln!(out);
@@ -417,6 +421,15 @@ fn emit_rust_header(out: &mut String, options: &RustOptions) {
             let _ = writeln!(
                 out,
                 "    #[cfg(target_arch = \"wasm32\")]\n    libm::rintf(val)"
+            );
+            let _ = writeln!(out, "}}");
+            let _ = writeln!(out);
+            let _ = writeln!(out, "fn rint_f64(val: f64) -> f64 {{");
+            let _ = writeln!(out, "    #[cfg(not(target_arch = \"wasm32\"))]");
+            let _ = writeln!(out, "    unsafe {{ ffi::rint(val) }}");
+            let _ = writeln!(
+                out,
+                "    #[cfg(target_arch = \"wasm32\")]\n    libm::rint(val)"
             );
             let _ = writeln!(out, "}}");
             let _ = writeln!(out);
@@ -2975,7 +2988,8 @@ mod tests {
         assert!(out.contains("fn rint_f32(val: f32) -> f32 {"));
         assert!(out.contains("unsafe { ffi::rintf(val) }"));
         assert!(out.contains("libm::rintf(val)"));
-        assert!(!out.contains("c_double"));
+        assert!(out.contains("fn rint_f64(val: f64) -> f64 {"));
+        assert!(out.contains("pub fn rint(val: c_double) -> c_double;"));
     }
 
     #[test]

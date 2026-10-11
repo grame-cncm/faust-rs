@@ -128,7 +128,8 @@ fn finish_vector_module(
         })
         .collect::<Vec<_>>();
     let mut control_statements = program.control_statements().to_vec();
-    let math_ops = program.math_ops().clone();
+    let math_ops = program.sample_math_ops.clone();
+    let integer_pow = program.integer_pow;
     let int_helpers = program.int_helpers().clone();
     let mut control_output_stores = Vec::new();
     let mut clock_output_stores = Vec::new();
@@ -187,6 +188,7 @@ fn finish_vector_module(
         table_declarations: &table_declarations,
         table_init_statements: &table_init_statements,
         math_ops: &math_ops,
+        integer_pow,
         int_helpers: &int_helpers,
         assembly: &assembly,
         control_output_stores: &control_output_stores,

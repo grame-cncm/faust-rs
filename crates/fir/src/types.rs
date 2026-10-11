@@ -160,12 +160,13 @@ impl FirMathOp {
         }
     }
 
-    /// Parses a FIR math symbol, accepting both canonical and `std::` forms.
+    /// Parses canonical/`std::` FIR math names and the single-precision
+    /// `powf`/`rintf` aliases used alongside integer-power double calls.
     #[must_use]
     pub fn from_symbol(name: &str) -> Option<Self> {
         let symbol = name.strip_prefix("std::").unwrap_or(name);
         match symbol {
-            "pow" => Some(Self::Pow),
+            "pow" | "powf" => Some(Self::Pow),
             "fmin" => Some(Self::Min),
             "fmax" => Some(Self::Max),
             "sin" => Some(Self::Sin),
@@ -185,7 +186,7 @@ impl FirMathOp {
             "remainder" => Some(Self::Remainder),
             "floor" => Some(Self::Floor),
             "ceil" => Some(Self::Ceil),
-            "rint" => Some(Self::Rint),
+            "rint" | "rintf" => Some(Self::Rint),
             "round" => Some(Self::Round),
             _ => None,
         }

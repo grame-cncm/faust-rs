@@ -60,6 +60,7 @@ struct LowerCursor<'c> {
 /// Adapter implementing [`leaf_emit::LeafPrototypes`] over the vector
 /// lowerer's prototype containers.
 struct VectorProtoSink<'a> {
+    integer_pow: &'a mut bool,
     /// Used math intrinsics.
     math_ops: &'a mut HashSet<FirMathOp>,
     /// Used integer helper names.
@@ -67,6 +68,9 @@ struct VectorProtoSink<'a> {
 }
 
 impl leaf_emit::LeafPrototypes for VectorProtoSink<'_> {
+    fn note_integer_pow(&mut self) {
+        *self.integer_pow = true;
+    }
     fn note_math_op(&mut self, op: FirMathOp) {
         self.math_ops.insert(op);
     }
@@ -93,6 +97,7 @@ struct PureVectorLowerer<'a> {
     table_init_statements: Vec<FirId>,
     table_stores: BTreeMap<u64, Vec<FirId>>,
     math_ops: HashSet<FirMathOp>,
+    integer_pow: bool,
     int_helpers: BTreeSet<&'static str>,
     state_plan: Option<&'a VerifiedVectorStatePlan>,
     ui_stores: BTreeMap<LowerScope, Vec<FirId>>,
@@ -275,6 +280,7 @@ pub(super) fn lower_vector_program_impl<'a>(
         table_init_statements: Vec::new(),
         table_stores: BTreeMap::new(),
         math_ops: HashSet::new(),
+        integer_pow: false,
         int_helpers: BTreeSet::new(),
         state_plan,
         ui_stores: BTreeMap::new(),
@@ -366,7 +372,15 @@ pub(super) fn lower_vector_program_impl<'a>(
         control_state_fields: lowerer.promoted_control_fields,
         regions,
         routed,
-        math_ops: lowerer.math_ops,
+        math_ops: {
+            let mut ops = lowerer.math_ops.clone();
+            if lowerer.integer_pow {
+                ops.extend([FirMathOp::Pow, FirMathOp::Rint]);
+            }
+            ops
+        },
+        sample_math_ops: lowerer.math_ops,
+        integer_pow: lowerer.integer_pow,
         int_helpers: lowerer.int_helpers,
     })
 }
@@ -895,7 +909,7 @@ impl PureVectorLowerer<'_> {
             SigMatch::BinOp(op, lhs, rhs) => {
                 self.lower_binop(scope, signal_id, op, (lhs, rhs), cur)?
             }
-            SigMatch::Pow(lhs, rhs) => self.lower_math2(scope, FirMathOp::Pow, lhs, rhs, cur)?,
+            SigMatch::Pow(lhs, rhs) => self.lower_pow(scope, signal_id, lhs, rhs, cur)?,
             SigMatch::Min(lhs, rhs) => {
                 self.lower_minmax(scope, signal_id, (lhs, rhs), true, cur)?
             }
@@ -2014,6 +2028,31 @@ impl PureVectorLowerer<'_> {
         })
     }
 
+    /// Uses the certified nature and the same integer-power emitter as scalar.
+    fn lower_pow(
+        &mut self,
+        scope: LowerScope,
+        signal_id: u64,
+        lhs: SigId,
+        rhs: SigId,
+        cur: &mut LowerCursor<'_>,
+    ) -> Result<FirId, PureVectorLowerError> {
+        let result_ty = self.fir_type(signal_id)?;
+        let lhs = self.lower_dep(scope, lhs, cur)?;
+        let rhs = self.lower_dep(scope, rhs, cur)?;
+        Ok(leaf_emit::emit_pow(
+            &mut self.store,
+            &mut VectorProtoSink {
+                integer_pow: &mut self.integer_pow,
+                math_ops: &mut self.math_ops,
+                int_helpers: &mut self.int_helpers,
+            },
+            lhs,
+            rhs,
+            result_ty,
+        ))
+    }
+
     fn lower_math1(
         &mut self,
         scope: LowerScope,
@@ -2025,6 +2064,7 @@ impl PureVectorLowerer<'_> {
         Ok(leaf_emit::emit_math_call1(
             &mut self.store,
             &mut VectorProtoSink {
+                integer_pow: &mut self.integer_pow,
                 math_ops: &mut self.math_ops,
                 int_helpers: &mut self.int_helpers,
             },
@@ -2047,6 +2087,7 @@ impl PureVectorLowerer<'_> {
         Ok(leaf_emit::emit_math_call2(
             &mut self.store,
             &mut VectorProtoSink {
+                integer_pow: &mut self.integer_pow,
                 math_ops: &mut self.math_ops,
                 int_helpers: &mut self.int_helpers,
             },
@@ -2072,6 +2113,7 @@ impl PureVectorLowerer<'_> {
         Ok(leaf_emit::emit_minmax(
             &mut self.store,
             &mut VectorProtoSink {
+                integer_pow: &mut self.integer_pow,
                 math_ops: &mut self.math_ops,
                 int_helpers: &mut self.int_helpers,
             },
@@ -2096,6 +2138,7 @@ impl PureVectorLowerer<'_> {
         Ok(leaf_emit::emit_abs(
             &mut self.store,
             &mut VectorProtoSink {
+                integer_pow: &mut self.integer_pow,
                 math_ops: &mut self.math_ops,
                 int_helpers: &mut self.int_helpers,
             },

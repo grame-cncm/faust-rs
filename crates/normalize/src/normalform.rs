@@ -481,7 +481,9 @@ impl<'a> SignalPromoter<'a> {
             }
             SigMatch::BinOp(op, left, right) => self.promote_binop(sig, op, left, right)?,
             SigMatch::Pow(left, right) => {
-                self.promote_real_binary(|b, l, r| b.pow(l, r), left, right)?
+                // C++ sigPromotion.cpp: promote to the primitive's result
+                // nature, preserving integer pow operands until FIR emission.
+                self.promote_minmax(|b, l, r| b.pow(l, r), left, right)?
             }
             SigMatch::Min(left, right) => {
                 self.promote_minmax(|b, l, r| b.min(l, r), left, right)?
@@ -1090,6 +1092,32 @@ mod tests {
     }
 
     // ── promote_signals ───────────────────────────────────────────────────
+
+    #[test]
+    fn pow_promotion_keeps_integer_operands_and_promotes_mixed_pairs() {
+        let mut a = arena();
+        let u = ui();
+        let mut b = SigBuilder::new(&mut a);
+        let base = b.int(25);
+        let input = b.input(0);
+        let exponent = b.int_cast(input);
+        let integer = b.pow(base, exponent);
+        let mixed = b.pow(base, input);
+        let types = sigtype::TypeAnnotator::new(&a, &u)
+            .annotate(&[integer, mixed])
+            .unwrap();
+        let promoted = promote_signals(&mut a, &types, &[integer])[0];
+        assert_eq!(match_sig(&a, promoted), SigMatch::Pow(base, exponent));
+        let promoted = promote_signals(&mut a, &types, &[mixed])[0];
+        let SigMatch::Pow(lhs, rhs) = match_sig(&a, promoted) else {
+            panic!("pow expected")
+        };
+        assert!(matches!(
+            match_sig(&a, lhs),
+            SigMatch::FloatCast(_) | SigMatch::Real(_)
+        ));
+        assert_eq!(rhs, input);
+    }
 
     #[test]
     fn promote_signals_no_change_for_same_type_binop() {

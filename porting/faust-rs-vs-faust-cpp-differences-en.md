@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-10 (runaway recursion and evaluation cycles); full review 2026-08-13
+Last reviewed: 2026-10-11 (integer runtime powers); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -733,6 +733,36 @@ must run unchanged with Faust C++ should not pass them.
   `faust` ≥ 2.90.4. Its block now adds the slider (y = x₁ + x₂ + a·y'), which
   both compilers compute: the interface is the one frozen from 2.88.1, equal
   in 2.90.6, and the 15 000 impulse-test samples are equal to the bit.
+
+### DIFF-BEH-020 — integer powers with a runtime exponent
+
+- Status: `reference-fix` relative to the pinned `8eebea429`; aligned with
+  C++ correction `eb21fcccff1ead7fe286f35614a464bea70a5fe2` (2026-10-08).
+- Implemented: `pow` preserves the union of its operand natures, as C++
+  `PowPrim::inferSigType` does. Integer runtime powers lower to double `pow`,
+  double `rint`, then an int32 cast in both scalar and checked vector FIR.
+  The pinned compiler computes at sample precision and truncates, which can
+  lose a unit under fast math or beyond 2^24 in single precision.
+- Positive integer constant folding preserves int32 wrapping arithmetic;
+  small nonnegative constant exponents use wrapping multiplies. Compile-time
+  table generators follow the same prepared integer semantics. Mixed/real
+  powers retain sample precision. FIR uses `powf`/`rintf` for single-precision
+  calls and `pow`/`rint` for double calls to avoid conflicting prototypes.
+  `FirMathOp::from_symbol` accepts these two additional C spellings (`adapted`
+  internal API; no signature or host DSP API change).
+- Compatibility impact: integer arithmetic consuming `pow` now runs before
+  conversion to an audio sample. For example, `pow(25, 6*s) - (1 + 244140624*s)`
+  is exactly zero for `s` in {0, 1} in generated C++, including fast math.
+  This does not define a new policy for NaN, infinity, or out-of-range casts.
+- Scope limit shared with the C++ interpreter: FBC has one real precision per
+  factory, so a single-precision FBC program cannot retain these double
+  intermediates. Double FBC is covered with optimization levels 0 and max;
+  a mixed-precision FBC extension is not implemented by this change. Source:
+  C++ `interpreter_instructions.hh::visit(CastInst*)`, Rust
+  `codegen/backends/interp/compiler/expressions.rs::compile_cast`.
+- Evidence: `crates/compiler/tests/integer_pow.rs`,
+  `crates/compiler/tests/integer_pow_rust.rs`, sigtype/normalization unit tests,
+  and [the journal entry](journal/2026-10-11.md).
 
 ## 6. Additional backends and delivery forms
 

@@ -1906,6 +1906,10 @@ fn emit_cpp_fun_name(name: &str) -> String {
         return name.to_owned();
     }
     match name {
+        // Explicit C float symbols keep their precision even when a foreign
+        // declaration supplies double operands. The FIR aliases must not
+        // turn these into the overloaded double std::pow/std::rint calls.
+        "powf" | "rintf" => return name.to_owned(),
         "abs" => return "std::abs".to_owned(),
         "min_i" => return "std::min<int>".to_owned(),
         "max_i" => return "std::max<int>".to_owned(),
@@ -2090,6 +2094,33 @@ pub fn backend_id() -> &'static str {
 mod tests {
     use super::*;
     use fir::{FirBinOp, FirBuilder};
+
+    #[test]
+    fn float_math_symbols_keep_host_precision_with_double_operands() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let base = b.float64(25.0);
+        let exponent = b.float64(6.0);
+        let single = b.fun_call("powf", &[base, exponent], FirType::Float64);
+        let double = b.math_call(FirMathOp::Pow, &[base, exponent], FirType::Float64);
+        let rounded = b.fun_call("rintf", &[base], FirType::Float64);
+        let options = CppOptions::default();
+        assert!(
+            emit_value(&store, &options, single)
+                .unwrap()
+                .starts_with("powf(")
+        );
+        assert!(
+            emit_value(&store, &options, double)
+                .unwrap()
+                .starts_with("std::pow(")
+        );
+        assert!(
+            emit_value(&store, &options, rounded)
+                .unwrap()
+                .starts_with("rintf(")
+        );
+    }
 
     #[test]
     /// DRIFT 3 regression (C-family plan §2.3): a constant folded to `-0.0`

@@ -40,7 +40,11 @@ impl<'lower, 'arena> FirRadFormulaBuilder<'lower, 'arena> {
     /// backend knows to provide the corresponding math helper.
     fn math_call(&mut self, op: FirMathOp, args: &[FirId]) -> FirId {
         self.lower.used_protos.math_ops.insert(op);
-        FirBuilder::new(&mut self.lower.store).math_call(op, args, self.real_ty.clone())
+        FirBuilder::new(&mut self.lower.store).fun_call(
+            crate::signal_fir::leaf_emit::math_symbol(op, &self.real_ty),
+            args,
+            self.real_ty.clone(),
+        )
     }
 }
 

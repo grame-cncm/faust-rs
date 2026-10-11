@@ -872,7 +872,9 @@ impl<'a> TypeAnnotator<'a> {
                 let ty = self.infer(y)?;
                 let itv = interval::ops::math::pow(tx.interval(), ty.interval());
                 let t = union_types(tx, ty);
-                Ok(float_cast(t).promote_interval(itv))
+                // C++ powprim.hh::inferSigType (and NatureAlg::Pow): unlike
+                // atan2/fmod, integer operands retain an integer result.
+                Ok(t.promote_interval(itv))
             }
 
             SigMatch::Min(x, y) => {
@@ -2351,6 +2353,25 @@ mod tests {
         let ui = empty_ui();
         let mut ann = TypeAnnotator::new(arena, &ui);
         ann.annotate(outputs).expect_err("annotation should fail")
+    }
+
+    #[test]
+    fn pow_unites_operand_natures_including_negative_integer_exponents() {
+        let mut arena = TreeArena::new();
+        let mut b = SigBuilder::new(&mut arena);
+        let input = b.input(0);
+        let integer = b.int_cast(input);
+        let base = b.int(25);
+        let negative = b.int(-1);
+        let integer_pow = b.pow(base, integer);
+        let negative_pow = b.pow(integer, negative);
+        let mixed_pow = b.pow(base, input);
+        let mixed_base = b.pow(input, integer);
+        let types = annotate(&arena, &[integer_pow, negative_pow, mixed_pow, mixed_base]);
+        assert_eq!(types[&integer_pow].nature(), Nature::Int);
+        assert_eq!(types[&negative_pow].nature(), Nature::Int);
+        assert_eq!(types[&mixed_pow].nature(), Nature::Real);
+        assert_eq!(types[&mixed_base].nature(), Nature::Real);
     }
 
     #[test]

@@ -227,7 +227,7 @@ fn pow_min_max_and_unary_math_lower_to_fir_fun_calls() {
     let FirMatch::Block(globals_items) = match_fir(&out.store, globals) else {
         panic!("module globals block expected");
     };
-    for expected in ["sin", "pow"] {
+    for expected in ["sin", "powf"] {
         assert!(
             globals_items.iter().any(|id| {
                 matches!(
@@ -254,7 +254,7 @@ fn pow_min_max_and_unary_math_lower_to_fir_fun_calls() {
     let FirMatch::FunCall { name, args, .. } = match_fir(&out.store, store_value) else {
         panic!("top-level pow should lower to FIR fun call");
     };
-    assert_eq!(name, "pow");
+    assert_eq!(name, "powf");
     assert_eq!(args.len(), 2);
 
     let FirMatch::FunCall { name: lhs_name, .. } = match_fir(&out.store, args[0]) else {

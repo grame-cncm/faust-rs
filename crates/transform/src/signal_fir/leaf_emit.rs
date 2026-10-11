@@ -24,7 +24,9 @@
 //! evidence and never call these emitters (producer/checker doctrine in
 //! `vector/mod.rs`).
 
-use fir::{FirBinOp, FirBuilder, FirId, FirMathOp, FirStore, FirType};
+use fir::{
+    FirBinOp, FirBuilder, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir,
+};
 use signals::BinOp;
 
 /// Where a lowerer records the math intrinsics and integer helper functions
@@ -36,6 +38,84 @@ pub(in crate::signal_fir) trait LeafPrototypes {
     fn note_math_op(&mut self, op: FirMathOp);
     /// Records one used integer helper (`abs`, `min_i`, `max_i`).
     fn note_int_helper(&mut self, name: &'static str);
+    /// Requests the double pow/rint prototypes used by integer powers.
+    fn note_integer_pow(&mut self);
+}
+
+/// Distinguishes the two precisions when integer power introduces double math
+/// into a single-precision module. Other math symbols retain their FIR spelling.
+pub(in crate::signal_fir) fn math_symbol(op: FirMathOp, typ: &FirType) -> &'static str {
+    match (op, typ) {
+        (FirMathOp::Pow, FirType::Float32) => "powf",
+        (FirMathOp::Rint, FirType::Float32) => "rintf",
+        _ => op.symbol(),
+    }
+}
+
+/// Emits integer power as in C++ `powprim.hh::generateCode`, commit
+/// eb21fcccff1ead7fe286f35614a464bea70a5fe2. Runtime exponents use double
+/// pow followed by rint before the int32 cast; rounding at sample precision
+/// would already have lost integers above 2^24. Small constant powers keep
+/// wrapping integer multiplication, as the C++ manual-power path does.
+pub(in crate::signal_fir) fn emit_pow(
+    store: &mut FirStore,
+    protos: &mut impl LeafPrototypes,
+    lhs: FirId,
+    rhs: FirId,
+    result_ty: FirType,
+) -> FirId {
+    if result_ty != FirType::Int32 {
+        return emit_math_call2(store, protos, FirMathOp::Pow, lhs, rhs, result_ty);
+    }
+    if let FirMatch::Int32 {
+        value: exponent, ..
+    } = match_fir(store, rhs)
+        && (0..=8).contains(&exponent)
+    {
+        let mut b = FirBuilder::new(store);
+        if exponent == 0 {
+            return b.int32(1);
+        }
+        let mut value = lhs;
+        for _ in 1..exponent {
+            value = b.binop(FirBinOp::Mul, value, lhs, FirType::Int32);
+        }
+        return value;
+    }
+    protos.note_integer_pow();
+    let mut b = FirBuilder::new(store);
+    let lhs = b.cast(FirType::Float64, lhs);
+    let rhs = b.cast(FirType::Float64, rhs);
+    let power = b.math_call(FirMathOp::Pow, &[lhs, rhs], FirType::Float64);
+    let rounded = b.math_call(FirMathOp::Rint, &[power], FirType::Float64);
+    b.cast(FirType::Int32, rounded)
+}
+
+/// Double prototypes are separate from single powf/rintf declarations, so
+/// mixed integer/real programs have no conflicting function signatures.
+pub(in crate::signal_fir) fn integer_pow_prototypes(store: &mut FirStore) -> Vec<FirId> {
+    [FirMathOp::Pow, FirMathOp::Rint]
+        .into_iter()
+        .map(|op| {
+            let arity = if op == FirMathOp::Pow { 2 } else { 1 };
+            let args = (0..arity)
+                .map(|i| NamedType {
+                    name: format!("arg{i}"),
+                    typ: FirType::Float64,
+                })
+                .collect::<Vec<_>>();
+            FirBuilder::new(store).declare_fun(
+                op.symbol(),
+                FirType::Fun {
+                    args: vec![FirType::Float64; arity],
+                    ret: Box::new(FirType::Float64),
+                },
+                &args,
+                None,
+                false,
+            )
+        })
+        .collect()
 }
 
 /// Maps one signal binary operator to its FIR operator and result type:
@@ -155,7 +235,7 @@ pub(in crate::signal_fir) fn emit_math_call1(
     real_ty: FirType,
 ) -> FirId {
     protos.note_math_op(op);
-    FirBuilder::new(store).math_call(op, &[value], real_ty)
+    FirBuilder::new(store).fun_call(math_symbol(op, &real_ty), &[value], real_ty)
 }
 
 /// Emits one binary math intrinsic call at the internal real precision and
@@ -169,7 +249,7 @@ pub(in crate::signal_fir) fn emit_math_call2(
     real_ty: FirType,
 ) -> FirId {
     protos.note_math_op(op);
-    FirBuilder::new(store).math_call(op, &[lhs, rhs], real_ty)
+    FirBuilder::new(store).fun_call(math_symbol(op, &real_ty), &[lhs, rhs], real_ty)
 }
 
 /// Emits `min`/`max` over already-lowered operands: an explicit `min_i` /

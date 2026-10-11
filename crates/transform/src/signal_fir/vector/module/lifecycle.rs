@@ -18,6 +18,7 @@ pub(super) struct FinalModuleContext<'a> {
     pub(super) table_declarations: &'a [FirId],
     pub(super) table_init_statements: &'a [FirId],
     pub(super) math_ops: &'a std::collections::HashSet<fir::FirMathOp>,
+    pub(super) integer_pow: bool,
     pub(super) int_helpers: &'a std::collections::BTreeSet<&'static str>,
     pub(super) assembly: &'a VectorFirAssembly,
     pub(super) control_output_stores: &'a [FirId],
@@ -220,7 +221,7 @@ pub(super) fn assemble_module(
             false,
         )
     });
-    let globals = build_prototypes(store, real_type, math_ops, int_helpers);
+    let globals = build_prototypes(store, real_type, math_ops, int_helpers, context.integer_pow);
     // `staticInit` is emitted only when there is something to fill. A module
     // with no generated table keeps the pre-sub-module shape, so nothing in
     // the 16-mode certification sees a new function.
@@ -312,10 +313,17 @@ pub(super) fn build_prototypes(
     real_type: FirType,
     math_ops: &std::collections::HashSet<fir::FirMathOp>,
     int_helpers: &std::collections::BTreeSet<&'static str>,
+    integer_pow: bool,
 ) -> FirId {
     let mut prototypes = Vec::new();
     for op in MATH_PROTO_ORDER {
         if !math_ops.contains(op) {
+            continue;
+        }
+        if integer_pow
+            && real_type == FirType::Float64
+            && matches!(op, fir::FirMathOp::Pow | fir::FirMathOp::Rint)
+        {
             continue;
         }
         let arity = match op {
@@ -334,7 +342,7 @@ pub(super) fn build_prototypes(
             })
             .collect::<Vec<_>>();
         prototypes.push(FirBuilder::new(store).declare_fun(
-            op.symbol(),
+            crate::signal_fir::leaf_emit::math_symbol(*op, &real_type),
             FirType::Fun {
                 args: vec![real_type.clone(); arity],
                 ret: Box::new(real_type.clone()),
@@ -343,6 +351,9 @@ pub(super) fn build_prototypes(
             None,
             false,
         ));
+    }
+    if integer_pow {
+        prototypes.extend(crate::signal_fir::leaf_emit::integer_pow_prototypes(store));
     }
     for name in INT_FUN_PROTO_ORDER {
         if !int_helpers.contains(name) {

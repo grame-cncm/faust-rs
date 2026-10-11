@@ -61,6 +61,9 @@ pub struct VerifiedPureVectorProgram {
     pub(super) regions: Vec<PureVectorRegionBody>,
     pub(super) routed: VerifiedRoutedFir,
     pub(super) math_ops: HashSet<FirMathOp>,
+    /// Calls at the configured sample precision, separate from double int pow.
+    pub(in crate::signal_fir) sample_math_ops: HashSet<FirMathOp>,
+    pub(in crate::signal_fir) integer_pow: bool,
     pub(super) int_helpers: BTreeSet<&'static str>,
 }
 impl VerifiedPureVectorProgram {

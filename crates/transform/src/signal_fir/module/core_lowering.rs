@@ -242,7 +242,7 @@ impl<'a> SignalToFirLower<'a> {
             }
             SigMatch::Proj(index, group) => self.lower_proj(sig, index, group)?,
             SigMatch::BinOp(op, lhs, rhs) => self.lower_binop(sig, op, lhs, rhs)?,
-            SigMatch::Pow(lhs, rhs) => self.lower_math2(FirMathOp::Pow, lhs, rhs)?,
+            SigMatch::Pow(lhs, rhs) => self.lower_pow(sig, lhs, rhs)?,
             SigMatch::Min(lhs, rhs) => self.lower_minmax(sig, lhs, rhs, true)?,
             SigMatch::Max(lhs, rhs) => self.lower_minmax(sig, lhs, rhs, false)?,
             SigMatch::Sin(value) => self.lower_math1(FirMathOp::Sin, value)?,
