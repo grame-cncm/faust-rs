@@ -246,6 +246,15 @@ found by a user, not by a gate. Treat cost like behavior.
 - Outstanding debt and the correction plan live in
   `porting/compile-time-provenance-regression-analysis-and-plan-2026-07-30-en.md`.
   Lower the baseline as each step lands.
+- **Memoization registry (mandatory).** A change that adds, removes,
+  rescopes or re-keys a memo — a cache, a result table, a visited set reused
+  across calls, a memo kept or invalidated more selectively — updates
+  `porting/MEMOIZATION.md` in the same commit: a §2 entry for a new site
+  (location, key, lifetime and invalidation, what it was measured to save,
+  validation), or the existing entry it changes, dated. A memo tried and
+  rejected is recorded too (§3 or §6). Check §1's rules before adding one:
+  the repeat rate measured, the key naming everything the value depends on,
+  the cost of the key counted.
 
 ## 10. Recursion and RouteIR Guidance
 

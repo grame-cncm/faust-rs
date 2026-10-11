@@ -73,7 +73,8 @@ a fresh arena must see an empty table — if yes, the arena should own it.
 Entries are numbered in the order they were written down, not by crate: a
 letter suffix marks a sibling of an existing entry, a new number an area the
 document had not covered. The inventory was last swept against the code on
-2026-09-11, over every commit since 2026-06-22.
+2026-09-11, over every commit since 2026-06-22; §2.11, §2.15 and §2.23 were
+updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -743,6 +744,38 @@ The thing worth recording:
 - this is still memoized analysis state rather than a lookup cache: the
   annotator seeds recursion groups and iterates them to a fixpoint.
 
+Within one annotation, the fixpoint (updated 2026-10-11, `9787e027`):
+
+- the recursive groups' types are C++ `typeAnnotation`'s Jacobi iteration,
+  `updateRecTypes` over every group reading the previous iteration's
+  approximations, and the memo was cleared at every iteration
+  (`update_rec_types`, as C++ `startNewVisit`). In a chain of N recursions a
+  change crosses one group per iteration: N + 1 iterations of N bodies, run
+  six times per compilation by `retype()`,
+- `env` now survives the iterations. `GroupCones` records, per group, the
+  nodes its body's inference may memoise (stopping at `SYMREC` nodes and
+  `SYMREF` variables, whose types are the seeded approximations) and the
+  groups that read it. An iteration recomputes only the groups one of whose
+  read approximations changed in the previous one, after removing their
+  cones from `env`; the others would compute their approximation again,
+- the key is still the `SigId`, valid for one assignment of the seeds:
+  the cones are exactly what a seed change invalidates (rule 6). `==` on
+  types ignores `lsb` and `res`, as in C++, so a change is any field's change,
+  which reaches the readers, while the end of the iteration is decided by
+  `==`, as in C++. Tracking changes by `==` first left stale `lsb` seeds and
+  changed 65 node types of `dm.springreverb_demo`,
+- measured: `+ ~ sin` chained N times, `fir-prepare-normalize` took 4.0 s
+  at N = 1024 (×4 to ×5 per doubling) and takes 1.1 s at 2048; 30 body
+  inferences per group from N = 50 to 800, against N + 1. A
+  feedback whose `lsb` falls at every iteration (`+ ~ *(0.5)`) changes all
+  the way and costs half the full iteration, still N².
+
+Validation: `the_incremental_fixpoint_gives_the_jacobi_types` against the
+full iteration, kept test-only as `solve_recursive_groups_jacobi`, every
+field and the warnings; `a_chain_of_recursions_infers_each_body_a_bounded_number_of_times`.
+Both solvers were also compared on every annotation of the corpus (4 918) and
+of the 2 227 `faustlibraries` tests (18 547), field for field.
+
 ### 2.12 `transform`: signal-to-FIR lowering cache, scoped by region
 
 Status: implemented; scope stack since 2026-07-15 (`b6d589a6`)
@@ -997,7 +1030,17 @@ Purpose:
 
 Status: implemented 2026-08-08; the slot-environment restriction removed
 2026-08-30 (`b196ed7e`); the AD exclusion removed 2026-09-16; the clocked
-wrapper exclusion removed 2026-09-18
+wrapper exclusion removed 2026-09-18; inner `Par` nodes no longer probed
+2026-10-10 (`1abe4c4e`)
+
+Note (2026-10-10): `par(i, N, _)` is a chain of N `Par` nodes, and each
+level was propagated through `propagate_in_slot_env`, interning its N − k
+wide input bus as a memo key: the key cost N² (rule 7), 3.10 s of
+propagation at N = 16384. The `Par` arm of `propagate_inner` now collects the
+leaves of a nested chain and propagates each on its slice, so the leaves and
+the outermost `Par` keep their entries and the inner `Par` nodes, which only
+concatenate, have none: 0.006 s. `a_nested_par_propagates_each_leaf_once_and_no_inner_par`
+counts the probes (2 977 against 6 975 for a 4 000-leaf chain).
 
 Location:
 
@@ -1452,6 +1495,33 @@ Validation:
   `crates/compiler/tests/closed_box_memo.rs` (three tests, a four-line
   witness with its reference frames and the X-ray's shape).
 
+### 2.23 `transform`: reverse-time output classifier memo
+
+Status: implemented 2026-10-10 (`f84c6808`)
+
+Location:
+
+- `crates/transform/src/signal_fir/module/mod.rs`,
+  `classify_reverse_time_outputs`
+
+Cache:
+
+- `memo: HashMap<SigId, bool>`, one per call, shared by every output:
+  whether a reverse-time gradient projection is below the node (stopping at
+  `SYMREC` boundaries).
+
+Why: the search started from an empty visited set for each output, and the
+outputs of one `ondemand` block share its clocked group, which holds all its
+inputs, so `ondemand(par(i, N, _))` walked the block N times: `fir-lowering`
+3.47 s at N = 4096, 14 s at 8192. The verdict is a function of the node alone
+(rule 6), and hash-consed trees cannot contain themselves, so the
+provisional `false` written before the recursion only guards that: 0.035 s
+at 4096.
+
+Validation: `outputs_sharing_a_wide_group_classify_each_node_once` counts the
+nodes classified, 3N + 1 against 8 004 000 for N = 2 000 with a search per
+output.
+
 ## 3. Planned Additions
 
 The items below are ordered by expected leverage and safety.
@@ -1763,3 +1833,21 @@ Current order, revised 2026-09-11:
 Nothing on this list should be written before its hit rate is measured on a
 case where the stage dominates; `FAUST_PROPAGATE_PROFILE` is the model for the
 instrument, and every future cache should ship one.
+
+### The W7 cost corrections (2026-10-10, 2026-10-11)
+
+Quadratic costs found by the measurements of
+`porting/ondemand-and-foreign-chain-compile-cost-measurements-2026-10-10-en.md`:
+
+| change | result |
+|---|---|
+| reverse-time classifier memo shared by the outputs (§2.23) | `ondemand(par(i, 4096, _))` 3.95 s → 0.52 s |
+| inner `Par` nodes out of the result memo (§2.15) | a 16384-wide bus: 3.10 s → 0.006 s of propagation |
+| type fixpoint memo kept across iterations (§2.11) | 2048 chained `+ ~ sin`: 14.1 s → 2.6 s |
+| foreign-call barriers through their transitive reduction | 2048 chained `+ ~ w`: 12.2 s → 2.2 s |
+
+The first three are memoization, and two of them a better scope or a key
+that costs less rather than a new cache, the shape of the 2026-09-11 table.
+The last is not memoization (fewer ordering edges) and is recorded here only
+to complete the series; see the journal of 2026-10-11.
+
