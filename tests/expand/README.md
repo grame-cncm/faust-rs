@@ -10,6 +10,16 @@ option. See
 - `oracle/` — the corresponding `faust -e` output, captured from the reference
   C++ compiler.
 
+The import fixture uses `dsp/expand_test_library.lib`, a compact library
+written for this test, with metadata, table generation and recursive state.
+It exercises both `import(...)` and scoped `library(...)` calls.
+It requires no installed Faust standard libraries. Metadata normalization
+alone cannot stabilize a reference when upstream library algorithms change.
+The reference for this fixture was captured with Faust 2.84.3 from the pinned
+C++ checkout (`8eebea4294a44a5260484c750d332781ed9f8ffd`), using
+`faust -e <fixture> -o <capture>` and recompiling the capture, via the workflow
+below.
+
 ## Regenerating the oracle
 
 ```bash

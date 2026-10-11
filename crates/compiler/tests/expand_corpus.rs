@@ -9,9 +9,9 @@
 //!
 //! Host-dependent lines (compiler version, option spelling, library paths)
 //! and the libraries' own editorial metadata (versions, license strings) are
-//! normalized exactly as `xtask expand-oracle` normalizes them when recording,
-//! so a difference here is a difference in what the two compilers actually
-//! emit — not in which faustlibraries release happens to be on the machine.
+//! normalized exactly as `xtask expand-oracle` normalizes them when recording.
+//! Imports use a small corpus-local library: masking metadata cannot hide
+//! algorithm changes between installed faustlibraries releases.
 
 use std::path::{Path, PathBuf};
 
@@ -32,6 +32,8 @@ fn expand_dir(kind: &str) -> PathBuf {
         .join("tests")
         .join("expand")
         .join(kind)
+        .canonicalize()
+        .expect("the expansion corpus directory must exist")
 }
 
 /// Returns the corpus fixtures in deterministic name order.
@@ -143,6 +145,34 @@ fn expansions_match_the_cpp_reference() {
         compared >= 30,
         "the differential covered only {compared} fixtures; the corpus looks truncated"
     );
+}
+
+#[test]
+fn library_import_uses_only_corpus_local_sources() {
+    let expansion = expand(&expand_dir("dsp").join("020_library_import.dsp"));
+    let imports: Vec<PathBuf> = expansion
+        .lines()
+        .filter(|line| line.starts_with("declare library_path"))
+        .map(|line| {
+            let (_, value) = line.split_once(' ').expect("declaration keyword");
+            let (_, value) = value.split_once(' ').expect("declaration key");
+            PathBuf::from(
+                value
+                    .strip_prefix('"')
+                    .and_then(|value| value.strip_suffix("\";"))
+                    .expect("quoted import path"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        imports,
+        [expand_dir("dsp")
+            .join("expand_test_library.lib")
+            .canonicalize()
+            .expect("corpus-local library")],
+        "the import fixture must not resolve installed Faust libraries"
+    );
+    assert!(expansion.contains("declare expand_test_library_lib_name \"Expansion Test Library\";"));
 }
 
 /// Re-expands an already-expanded document.

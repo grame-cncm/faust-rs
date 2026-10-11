@@ -1,0 +1,9 @@
+// Test-local definitions, independent of the installed Faust libraries.
+// Keep table generation and two recursion carriers in the import round trip.
+declare name "Expansion Test Library";
+declare version "1.0";
+
+expansion_test_phase(freq) = (+(freq / 48000.0) ~ _) : \(phase).(phase - floor(phase));
+expansion_test_osc(freq) = rdtable(64,
+    (+(1) ~ _) : %(64) : float : *(0.09817477042468103) : sin,
+    expansion_test_phase(freq) : *(64) : int);

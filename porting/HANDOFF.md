@@ -5,16 +5,21 @@ Date: 2026-10-11
 ## Repo State
 
 - Branch: `main-dev`
-- Commit: the commit containing this handoff, parent
-  `e7c320f093a2240789a858b9aab3ce500852f858`.
-- The user requested committing the correction with the validation limits
-  reported below. No push is part of this session.
+- HEAD: the commit containing this handoff, parent
+  `63f0ee248a4bc7692f0c99a62e2a379315395dac` (integer pow port).
+- Current follow-up: correct the pasted expansion-corpus failure. The user
+  requested committing the correction with the validation limits below.
+  No push was requested.
 
 ## Working Tree
 
-- The changes listed below are included in this commit; no other tracked or
-  untracked changes are left after committing.
-- Tracked implementation changes: `crates/sigtype/src/rules.rs`,
+- The integer pow changes listed below are included in the parent commit.
+- This commit includes `crates/compiler/tests/expand_corpus.rs`,
+  `tests/expand/{README.md,dsp/020_library_import.dsp,oracle/020_library_import.dsp}`,
+  `porting/journal/2026-10-11.md`, and this handoff.
+- New file: `tests/expand/dsp/expand_test_library.lib`. No other tracked or
+  non-ignored untracked changes remain after committing.
+- Committed implementation changes: `crates/sigtype/src/rules.rs`,
   `crates/normalize/src/{normalform,simplify}.rs`, `crates/fir/src/types.rs`,
   the shared/scalar/vector power emission and prototype assembly under
   `crates/transform/src/signal_fir/`, its table-generator interpreter and tests,
@@ -27,6 +32,20 @@ Date: 2026-10-11
 - Ignored local scripts `build_all`, `dummy_fdn`, `push_main.sh` are untouched.
 
 ## What Changed / Decisions
+
+Expansion follow-up: replace `stdfaust.lib` in `020_library_import` with a
+compact corpus-local library authored for the test. It preserves table
+generation, two recursion carriers, and both `import` and scoped `library`
+calls without using an installed library. The corpus helper supplies
+canonical paths for consistent import identity.
+Check the expansion's single imported path as a canonical `PathBuf`, and
+assert scoped library metadata. Re-capture through `xtask expand-oracle`,
+using the pinned C++ checkout `8eebea4294a44a5260484c750d332781ed9f8ffd`,
+Faust 2.84.3, flags `-e <fixture> -o <capture>` (default single/scalar).
+Only the import fixture's oracle changes. Production compiler code, public
+APIs, compatibility differences and memoization are unchanged.
+
+Previous session:
 
 Port C++ `eb21fcccff1ead7fe286f35614a464bea70a5fe2` (#1340): runtime integer
 pow uses double pow/rint before int32 conversion in scalar and checked vector
@@ -47,6 +66,18 @@ so its matching precision limitation was established from the source.
 
 ## Validation Run
 
+- Expansion follow-up: all eight `expand_corpus` tests pass; C++ oracle
+  check accepts 33 references with the same two unsupported fixtures.
+- Follow-up formatting, workspace clippy, all five static gates, and
+  golden-check pass.
+- `cargo test --workspace --all-targets --no-fail-fast`, rerun with permission
+  to bind the HTTP fixture server, passes every target except
+  `cranelift-ffi::output_snapshots` (the same 53 pre-existing mismatches).
+  The final scoped-library/canonical-path adjustment also passes a fresh
+  eight-test expansion run and workspace clippy.
+
+Previous session:
+
 - Native generated C++: single/double, scalar/vector, `-O2` and
   `-O3 -ffast-math`: exact zero residuals for 250^1, 25^6, (-3)^3; small-power
   wrap and negative runtime exponents covered too.
@@ -65,10 +96,9 @@ so its matching precision limitation was established from the source.
 
 ## Open Issues / Blockers
 
-- The unmodified expansion oracle `020_library_import` does not match the
-  local current Faust libraries (the oscillator's phasor implementation has
-  changed). The pre-change release binary `19efd550` reproduces exactly the
-  same mismatch.
+- The expansion oracle drift is resolved by the corpus-local fixture above.
+  Previously the local oscillator phasor change failed even with pre-change
+  release binary `19efd550`.
 - `cranelift-ffi::output_snapshots` reports 53 stale recordings. All 53
   match the pre-change release faustprobe too (46 exactly; seven after
   removing timing fields). No snapshot refresh is part of this correction.
@@ -81,10 +111,8 @@ so its matching precision limitation was established from the source.
 
 ## Next Steps
 
-1. Resolve the independent reference drift and rerun the complete workspace
-   suite; obtain a successful release cost gate on a suitable runner and CI.
-2. Review CI results before publication. No baseline or golden refresh is
-   part of this correction.
-3. The expansion-oracle and faustprobe recording drift need separate
-   resolution; single FBC precision extension is outside this C++ commit's
-   port scope.
+1. Review the committed expansion-fixture correction and its captured
+   reference (`cargo run -p xtask -- expand-oracle --check`).
+2. Resolve the separate faustprobe recording drift; obtain a successful
+   release cost gate on a suitable runner and green CI before publication.
+3. Single FBC precision extension is outside this C++ commit's port scope.
