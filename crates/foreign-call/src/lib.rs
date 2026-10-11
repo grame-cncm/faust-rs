@@ -533,15 +533,35 @@ mod tests {
             invoke(function.address(), function.ret(), args).expect(symbol)
         };
         use Value::{Float32, Float64, Int32};
-        assert_eq!(call("cbrtf", &[Float32(8.0)]), Float32(2.0));
-        assert_eq!(call("cbrt", &[Float64(27.0)]), Float64(3.0));
-        assert_eq!(call("hypotf", &[Float32(3.0), Float32(4.0)]), Float32(5.0));
+        // C math implementations need not round these approximations to the
+        // same bit pattern: glibc's cbrt(27) is one ulp above 3. Keep the
+        // signature checks above and allow only a few rounding units here.
+        let approximate = |symbol: &str, args: &[Value], expected: Value| {
+            let result = call(symbol, args);
+            let (actual, expected, epsilon) = match (result, expected) {
+                (Float32(actual), Float32(expected)) => (
+                    f64::from(actual),
+                    f64::from(expected),
+                    f64::from(f32::EPSILON),
+                ),
+                (Float64(actual), Float64(expected)) => (actual, expected, f64::EPSILON),
+                _ => panic!("{symbol}: unexpected return type {result:?}"),
+            };
+            let tolerance = 4.0 * epsilon * expected.abs();
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "{symbol}: expected {expected}, got {actual} (tolerance {tolerance})"
+            );
+        };
+        approximate("cbrtf", &[Float32(8.0)], Float32(2.0));
+        approximate("cbrt", &[Float64(27.0)], Float64(3.0));
+        approximate("hypotf", &[Float32(3.0), Float32(4.0)], Float32(5.0));
         assert_eq!(call("ilogbf", &[Float32(10.0)]), Int32(3));
         assert_eq!(call("logb", &[Float64(10.0)]), Float64(3.0));
         assert_eq!(call("ldexpf", &[Float32(1.5), Int32(3)]), Float32(12.0));
         assert_eq!(call("scalbnf", &[Float32(1.5), Int32(2)]), Float32(6.0));
         assert_eq!(call("ldexp", &[Float64(1.5), Int32(-1)]), Float64(0.75));
-        assert_eq!(call("tgamma", &[Float64(5.0)]), Float64(24.0));
+        approximate("tgamma", &[Float64(5.0)], Float64(24.0));
         assert_eq!(
             call("nextafterf", &[Float32(1.0), Float32(2.0)]),
             Float32(1.0 + f32::EPSILON)
