@@ -828,109 +828,47 @@ pub fn orient_effect_conflicts(
                 add_baseline_edge(hgraph, graph_index, &position, pair[0], pair[1]);
             }
         }
-        foreign_barriers.sort_unstable_by_key(|sig| position[sig]);
-        foreign_barriers.dedup();
-        // A barrier is ordered against every stateful node. Testing each pair
-        // with two walks of the graph made this cubic in the number of
-        // foreign calls (every `ffunction` is a barrier today: a sum of K
-        // `ma.tanh` compiled in seconds at K = 160, minutes at 320). The
-        // same edges come out of two sets per barrier, the nodes it reaches
-        // and the nodes that reach it, walked once and extended by the
-        // edges added along the way: an edge out of the barrier extends the
-        // first set from its target, an edge into it extends the second
-        // from its source, which is what a fresh walk would have found.
+        // A barrier is ordered against every effect node. Testing each pair
+        // with two walks of the graph was cubic in the number of foreign
+        // calls (every `ffunction` is a barrier today), and keeping the
+        // pairwise edges was still quadratic: a chain of N recursions
+        // through a foreign function added an edge from each call to each
+        // state write, N² edges. The baseline orders every effect node, so
+        // its transitive reduction carries the same orders: the barriers
+        // chained in baseline order, each other effect node after the
+        // barrier before it and before the one after it, O(E) edges. Each
+        // edge follows the baseline, a linear extension of the graph, so
+        // none closes a cycle.
         if !foreign_barriers.is_empty() {
-            let mut predecessors = predecessor_lists(&hgraph.graphs[graph_index].1);
-            for foreign in foreign_barriers {
-                let graph = &hgraph.graphs[graph_index].1;
-                let mut forward = AHashSet::new();
-                extend_forward(graph, &mut forward, foreign);
-                let mut backward = AHashSet::new();
-                extend_backward(&predecessors, &mut backward, foreign);
-                for &node in &nodes {
-                    if node == foreign || forward.contains(&node) || backward.contains(&node) {
-                        continue;
+            let barriers: AHashSet<SigId> = foreign_barriers.iter().copied().collect();
+            let mut effects = nodes.clone();
+            effects.sort_unstable_by_key(|sig| position[sig]);
+            effects.dedup();
+            let graph = &mut hgraph.graphs[graph_index].1;
+            let mut previous_barrier: Option<SigId> = None;
+            let mut since_barrier: Vec<SigId> = Vec::new();
+            for sig in effects {
+                if barriers.contains(&sig) {
+                    if since_barrier.is_empty()
+                        && let Some(barrier) = previous_barrier
+                    {
+                        graph.add_edge(sig, barrier, false);
                     }
-                    let (consumer, dependency) = if position[&foreign] < position[&node] {
-                        (node, foreign)
-                    } else {
-                        (foreign, node)
-                    };
-                    hgraph.graphs[graph_index]
-                        .1
-                        .add_edge(consumer, dependency, false);
-                    predecessors.entry(dependency).or_default().push(consumer);
-                    let graph = &hgraph.graphs[graph_index].1;
-                    if dependency == node {
-                        extend_forward(graph, &mut forward, node);
-                    } else {
-                        extend_backward(&predecessors, &mut backward, node);
+                    for &node in &since_barrier {
+                        graph.add_edge(sig, node, false);
                     }
+                    since_barrier.clear();
+                    previous_barrier = Some(sig);
+                } else {
+                    if let Some(barrier) = previous_barrier {
+                        graph.add_edge(sig, barrier, false);
+                    }
+                    since_barrier.push(sig);
                 }
             }
         }
     }
     Ok(())
-}
-
-/// The owned sources of every instantaneous edge, keyed by target: the
-/// graph's adjacency reversed, over the edges `dependency_reachable` walks.
-fn predecessor_lists(graph: &Digraph) -> AHashMap<SigId, Vec<SigId>> {
-    let mut predecessors: AHashMap<SigId, Vec<SigId>> = AHashMap::new();
-    for &sig in graph.nodes() {
-        for edge in graph.edges(sig) {
-            if edge.delayed || !graph.contains(edge.to) {
-                continue;
-            }
-            predecessors.entry(edge.to).or_default().push(sig);
-        }
-    }
-    predecessors
-}
-
-/// Adds to `reached` every node reachable from `from` through instantaneous
-/// edges, `from` excluded unless a cycle brings it back; nodes already in
-/// the set are not walked again.
-fn extend_forward(graph: &Digraph, reached: &mut AHashSet<SigId>, from: SigId) {
-    let mut stack = vec![from];
-    let mut visited = AHashSet::new();
-    while let Some(sig) = stack.pop() {
-        if !visited.insert(sig) {
-            continue;
-        }
-        for edge in graph.edges(sig) {
-            if edge.delayed || !graph.contains(edge.to) {
-                continue;
-            }
-            if reached.insert(edge.to) {
-                stack.push(edge.to);
-            }
-        }
-    }
-}
-
-/// Adds to `reaching` every node from which `to` is reachable through
-/// instantaneous edges, walking the predecessor lists; nodes already in the
-/// set are not walked again.
-fn extend_backward(
-    predecessors: &AHashMap<SigId, Vec<SigId>>,
-    reaching: &mut AHashSet<SigId>,
-    to: SigId,
-) {
-    let mut stack = vec![to];
-    let mut visited = AHashSet::new();
-    while let Some(sig) = stack.pop() {
-        if !visited.insert(sig) {
-            continue;
-        }
-        if let Some(sources) = predecessors.get(&sig) {
-            for &source in sources {
-                if reaching.insert(source) {
-                    stack.push(source);
-                }
-            }
-        }
-    }
 }
 
 fn dependency_reachable(graph: &Digraph, from: SigId, to: SigId) -> bool {

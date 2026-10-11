@@ -87,9 +87,9 @@ At 16384 the rest is in `signal-fir` (0.66 s, of which `fir-prepare-normalize`
 | N = 2048 | Rust before | Rust after | C++ |
 |---|---:|---:|---:|
 | `stage = w` (no state) | 0.18 s, 39 MB | | 0.03 s, 31 MB |
-| `stage = + ~ w` | 23.7 s, 911 MB | 12.2 s, 869 MB | 55.2 s, 7.6 GB |
-| the same in `ondemand`, button clock | 31.2 s | 14.4 s | 61.5 s |
-| the same, constant clock | 24.0 s | 12.2 s | 53.3 s |
+| `stage = + ~ w` | 23.7 s, 911 MB | 2.2 s, 843 MB | 55.2 s, 7.6 GB |
+| the same in `ondemand`, button clock | 31.2 s | 3.3 s | 61.5 s |
+| the same, constant clock | 24.0 s | 2.2 s | 53.3 s |
 | control `stage = + ~ sin` | 14.1 s | 2.6 s | 51.1 s |
 | control in `ondemand` | 16.9 s, 879 MB | 3.8 s, 840 MB | 50.8 s, 8.0 GB |
 
@@ -121,10 +121,19 @@ approximations settle costs about 30 body inferences per group (`+ ~ sin`);
 one whose `lsb` falls at every iteration (`+ ~ *(0.5)`) still changes all
 the way, and is recomputed as the full iteration recomputes it, half its work.
 
-`fir-prepare-normalize` falls to 1.1 s at 2048. What remains of `+ ~ w` is
-`fir-effect-orientation` (9.8 s at 2048, ×5 per doubling): every foreign
-call is an ordering barrier against every stateful node, N × N. The `sin`
-control has no barrier.
+`fir-prepare-normalize` falls to 1.1 s at 2048. What remained of `+ ~ w`
+(12.2 s) was `fir-effect-orientation` (9.8 s at 2048, ×5 per doubling):
+every foreign call is an ordering barrier against every effect node, and
+the orientation added an edge from each call to each state write it was not
+already ordered with, about N² edges. Second fix: their transitive
+reduction, the barriers chained in baseline order and each other effect
+node after the barrier before it and before the one after it, which orders
+the same pairs with O(E) edges. `fir-effect-orientation` falls to 0.22 s,
+the total to 2.2 s. The edges differ, so a schedule may: the generated C++
+of 2 of the 2 227 `faustlibraries` tests (`ja_processor_stereo`, and its UI
+variant) and of the corpus's `math.dsp` is reordered, in scalar mode only,
+and their outputs are bitwise identical to the previous compiler's over
+48 000 samples (and within the tests' tolerance of the references).
 
 ## 3. What the report's figures were
 
@@ -146,6 +155,7 @@ is the one fixed above.
   per output; `a_nested_par_propagates_each_leaf_once_and_no_inner_par`
   (propagate) counts the memo probes of a 4 000-leaf chain, 2 977 against
   6 975 with a propagation per `Par` level.
-- The foreign-call barriers of `fir-effect-orientation` (section 2).
+- A feedback whose `lsb` falls at every iteration (`+ ~ *(0.5)`) still types
+  its chain in the square of its length, as C++ does (section 2).
 - The report's original write-chain program (`fft_foreign-on-demand.dsp`) was
   not available.

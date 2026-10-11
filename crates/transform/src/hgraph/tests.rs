@@ -11,7 +11,7 @@ use tlib::{NodeKind, TreeArena, vec_to_list};
 
 use super::{
     Digraph, GraphKey, Hgraph, HgraphError, audit_control_variability, audit_hgraph, build_hgraph,
-    needs_subgraph, orient_effect_conflicts, schedule,
+    dependency_reachable, needs_subgraph, orient_effect_conflicts, schedule,
 };
 use crate::clk_env::annotate;
 use crate::schedule::SchedulingStrategy;
@@ -575,11 +575,13 @@ fn orient_effect_conflicts_pairwise(
 /// A sum of foreign calls on delayed reads of one signal, the shape whose
 /// orientation was cubic in the number of calls: each call is a barrier, each
 /// delayed read a stateful node, and the sum a chain the baseline orders.
-/// The incremental orientation must produce the pairwise reference's edges,
-/// per node and in order, so that every schedule stays the same.
+/// The orientation adds the transitive reduction of the pairwise reference's
+/// orders: every pair of effect nodes must be ordered as the reference
+/// orders it, through O(E) edges where the reference adds one per barrier
+/// and incomparable node.
 #[test]
-fn barrier_orientation_equals_the_pairwise_reference() {
-    const CALLS: i32 = 12;
+fn barrier_orientation_keeps_the_pairwise_orders_with_linear_edges() {
+    const CALLS: i32 = 24;
     let mut arena = TreeArena::new();
     let descriptor = {
         let int_type = arena.int(0);
@@ -643,29 +645,153 @@ fn barrier_orientation_equals_the_pairwise_reference() {
         .count();
     assert_eq!(barriers, CALLS as usize, "one barrier per foreign call");
 
-    let mut incremental = hgraph.clone();
-    orient_effect_conflicts(&mut incremental, &analysis).unwrap();
-    let mut pairwise = hgraph;
-    orient_effect_conflicts_pairwise(&mut pairwise, &analysis);
+    let (added_reduced, added_pairwise) = compare_with_pairwise_orientation(hgraph, &analysis);
+    assert!(
+        added_reduced > 0,
+        "the orientation added edges to the fixture"
+    );
+    assert!(
+        added_reduced <= 3 * barriers,
+        "{added_reduced} edges for {barriers} barriers"
+    );
+    assert!(added_pairwise > 0);
+}
 
-    assert_eq!(incremental.graphs.len(), pairwise.graphs.len());
-    let mut added = 0;
-    for ((key_a, graph_a), (key_b, graph_b)) in
-        incremental.graphs.iter().zip(pairwise.graphs.iter())
-    {
+/// Orients `hgraph` both ways and checks that every pair of effect nodes is
+/// ordered by the reduction as by the pairwise reference, and every barrier
+/// against every effect node; returns the edges each added.
+fn compare_with_pairwise_orientation(
+    hgraph: Hgraph,
+    analysis: &crate::signal_fir::vector::analysis::ScalarSchedulingEffects,
+) -> (usize, usize) {
+    let edge_count = |hgraph: &Hgraph| -> usize {
+        hgraph
+            .graphs
+            .iter()
+            .map(|(_, graph)| {
+                graph
+                    .nodes()
+                    .iter()
+                    .map(|&sig| graph.edges(sig).len())
+                    .sum::<usize>()
+            })
+            .sum()
+    };
+    let before = edge_count(&hgraph);
+    let mut reduced = hgraph.clone();
+    orient_effect_conflicts(&mut reduced, analysis).unwrap();
+    let mut pairwise = hgraph;
+    orient_effect_conflicts_pairwise(&mut pairwise, analysis);
+
+    assert_eq!(reduced.graphs.len(), pairwise.graphs.len());
+    for ((key_a, graph_a), (key_b, graph_b)) in reduced.graphs.iter().zip(pairwise.graphs.iter()) {
         assert_eq!(key_a, key_b);
         assert_eq!(graph_a.nodes(), graph_b.nodes());
-        for &sig in graph_a.nodes() {
-            assert_eq!(
-                graph_a.edges(sig),
-                graph_b.edges(sig),
-                "edges of {sig:?} differ between the incremental and the pairwise orientation"
-            );
-            added += graph_a.edges(sig).len();
+        let effects: Vec<SigId> = graph_a
+            .nodes()
+            .iter()
+            .copied()
+            .filter(|&sig| !analysis.direct_effects(sig).is_empty())
+            .collect();
+        for &from in &effects {
+            for &to in &effects {
+                if from != to {
+                    assert_eq!(
+                        dependency_reachable(graph_a, from, to),
+                        dependency_reachable(graph_b, from, to),
+                        "{from:?} -> {to:?}: the reduction and the pairwise reference disagree"
+                    );
+                }
+            }
+        }
+        // Every barrier ends up ordered against every other effect node.
+        for &barrier in &effects {
+            let is_barrier = analysis.direct_effects(barrier).iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::signal_fir::vector::analysis::EffectAtom::Foreign { .. }
+                )
+            });
+            if !is_barrier {
+                continue;
+            }
+            for &node in &effects {
+                assert!(
+                    node == barrier
+                        || dependency_reachable(graph_a, barrier, node)
+                        || dependency_reachable(graph_a, node, barrier),
+                    "{barrier:?} and {node:?} are unordered"
+                );
+            }
         }
     }
+    (
+        edge_count(&reduced) - before,
+        edge_count(&pairwise) - before,
+    )
+}
+
+/// A chain of N recursions through a foreign function, `y_k = f(y_{k-1}) +
+/// y_k'`: each call is a barrier, and each state write is incomparable with
+/// the calls of the other stages, so the pairwise orientation adds about N²
+/// edges. The reduction orders the same pairs with O(N).
+#[test]
+fn a_chain_of_foreign_recursions_is_ordered_with_linear_edges() {
+    const STAGES: usize = 40;
+    let mut arena = TreeArena::new();
+    let descriptor = {
+        let real_type = arena.int(1);
+        let name_f32 = arena.symbol("chain_f");
+        let name_f64 = arena.symbol("chain");
+        let names = vec_to_list(&mut arena, &[name_f32, name_f64]);
+        let signature = vec_to_list(&mut arena, &[real_type, names, real_type]);
+        let include = arena.symbol("<chain.h>");
+        let library = arena.symbol("");
+        let tag = arena.intern_tag("FFUN");
+        arena.intern(NodeKind::Tag(tag), &[signature, include, library])
+    };
+    let mut previous = SigBuilder::new(&mut arena).input(0);
+    for stage in 0..STAGES {
+        let args = vec_to_list(&mut arena, &[previous]);
+        let call = SigBuilder::new(&mut arena).ffun(descriptor, args);
+        let var = arena.int(2000 + i64::try_from(stage).expect("small"));
+        let reference = tlib::sym_ref(&mut arena, var);
+        let mut b = SigBuilder::new(&mut arena);
+        let back = b.proj(0, reference);
+        let delayed = b.delay1(back);
+        let def = b.binop(BinOp::Add, call, delayed);
+        let body = vec_to_list(&mut arena, &[def]);
+        let group = tlib::sym_rec(&mut arena, var, body);
+        previous = SigBuilder::new(&mut arena).proj(0, group);
+    }
+    let prepared = crate::signal_prepare::prepare_signals_for_fir_verified(
+        &arena,
+        &[previous],
+        &ui::UiProgram::empty(),
+    )
+    .expect("foreign-chain fixture prepares");
+    let domains = ClockDomainTable::new();
+    let envs = annotate(prepared.arena(), &domains, prepared.outputs()).unwrap();
+    let analysis =
+        crate::signal_fir::vector::analysis::analyze_scalar_scheduling_effects(&prepared)
+            .expect("scalar effect analysis succeeds");
+    let hgraph = build_hgraph(
+        prepared.arena(),
+        &domains,
+        &envs,
+        prepared.outputs(),
+        prepared.sig_types_map(),
+    )
+    .unwrap();
+    let (added_reduced, added_pairwise) = compare_with_pairwise_orientation(hgraph, &analysis);
+    // A few effect nodes per stage (the call, the state read and write),
+    // each with at most two edges: 199 for 40 stages.
     assert!(
-        added > CALLS as usize,
-        "the orientation added edges to the fixture"
+        added_reduced <= 6 * STAGES,
+        "{added_reduced} edges for {STAGES} stages"
+    );
+    assert!(
+        added_pairwise >= STAGES * STAGES / 4,
+        "the pairwise reference adds {added_pairwise} edges for {STAGES} stages"
     );
 }
