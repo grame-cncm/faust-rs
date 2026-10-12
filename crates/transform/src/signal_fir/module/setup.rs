@@ -263,9 +263,9 @@ impl<'a> SignalToFirLower<'a> {
     /// recursive, or otherwise already materialized in forward storage. This
     /// method therefore performs the tape-aware loads first, then delegates
     /// only the pointwise algebra to `ad_rules`. For formulas that can reuse the
-    /// forward node output (`exp`, `sqrt`, `abs`), `sig` is loaded as `primal`
-    /// so the local transpose uses the recorded forward value rather than a
-    /// second computation.
+    /// forward node output (`exp`, `exp10`, `sqrt`, `tan`), `sig` is loaded as
+    /// `primal` so the local transpose uses the recorded forward value rather
+    /// than a second computation.
     pub(super) fn propagate_bra_unary_math_adj(
         &mut self,
         rule: RadUnaryMathRule,
@@ -279,8 +279,8 @@ impl<'a> SignalToFirLower<'a> {
         // reuse the forward output, pass the tape-loaded current node value so
         // the reverse sweep does not recompute non-trivial temporal operands.
         //
-        // `exp`, `exp10` and `sqrt` read the forward output alone (their
-        // derivative is a multiple of it), and `collect_tape_needed_values`
+        // `exp`, `exp10`, `sqrt` and `tan` read the forward output alone
+        // (their derivative is a function of it: `tan' = 1 + tan²`), and `collect_tape_needed_values`
         // tapes that output, not the operand. The operand must then not be
         // loaded at all: it is not taped, so `load_bra_fwd_value` would lower
         // it again in the reverse sweep, and an operand that holds a recursion
@@ -293,7 +293,10 @@ impl<'a> SignalToFirLower<'a> {
         // is not: `|x|` is rebuilt here from the taped operand rather than
         // loaded, for the same reason.
         let (x_fir, taped_primal) = match rule {
-            RadUnaryMathRule::Exp | RadUnaryMathRule::Exp10 | RadUnaryMathRule::Sqrt => {
+            RadUnaryMathRule::Exp
+            | RadUnaryMathRule::Exp10
+            | RadUnaryMathRule::Sqrt
+            | RadUnaryMathRule::Tan => {
                 let primal = self.load_bra_fwd_value(sig)?;
                 (primal, Some(primal))
             }

@@ -601,6 +601,7 @@ impl<'a> ReverseADTransform<'a> {
         let primal = match rule {
             RadUnaryMathRule::Exp => b.exp(x),
             RadUnaryMathRule::Sqrt => b.sqrt(x),
+            RadUnaryMathRule::Tan => b.tan(x),
             RadUnaryMathRule::Abs => b.abs(x),
             _ => x,
         };
@@ -1233,6 +1234,46 @@ mod tests {
         let branches = list_to_vec(&arena, transposed_body).expect("transposed body list");
         assert!(dump_contains_real(&arena, branches[0], 11.0));
         assert!(dump_contains_real(&arena, branches[1], 13.0));
+    }
+
+    fn contains_node(arena: &TreeArena, root: SigId, needle: &dyn Fn(SigId) -> bool) -> bool {
+        needle(root)
+            || arena.node(root).is_some_and(|node| {
+                node.children
+                    .as_slice()
+                    .iter()
+                    .any(|&child| contains_node(arena, child, needle))
+            })
+    }
+
+    /// The symbolic `tan` adjoint is `y_bar * (1 + tan(x)²)` on the primal
+    /// `tan(x)` node (hash-consed, so the gradient lane shares it with the
+    /// primal lane) and calls no `cos`.
+    #[test]
+    fn rad_tan_gradient_reuses_primal_node_without_cos() {
+        let mut arena = TreeArena::new();
+        let (seed, primal) = {
+            let mut b = SigBuilder::new(&mut arena);
+            let seed = b.real(0.3);
+            let x = b.input(0);
+            let arg = b.mul(seed, x);
+            (seed, b.tan(arg))
+        };
+        let out = generate_rad_signals(&mut arena, &[primal], &[seed])
+            .expect("feed-forward tan should differentiate symbolically");
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0], primal);
+        assert!(
+            contains_node(&arena, out[1], &|n| n == primal),
+            "the gradient must reuse the primal tan node"
+        );
+        assert!(
+            !contains_node(&arena, out[1], &|n| matches!(
+                match_sig(&arena, n),
+                SigMatch::Cos(_)
+            )),
+            "the tan gradient must not call cos"
+        );
     }
 
     #[test]

@@ -205,14 +205,15 @@ impl RadFormulaBuilder for SigBuilder<'_> {
 /// Returns the local contribution for one unary math rule.
 ///
 /// `primal` is the forward value of the matched node. Builders that lower
-/// block-reverse AD can pass a tape load for `exp`, `sqrt`, and `abs`, while
-/// symbolic builders can pass the reconstructed primal expression.
+/// block-reverse AD can pass a tape load for `exp`, `exp10`, `sqrt` and
+/// `tan`, while symbolic builders can pass the reconstructed primal
+/// expression (hash-consed onto the forward node).
 ///
 /// Formulas:
 ///
 /// - `sin(x)`: `y_bar * cos(x)`
 /// - `cos(x)`: `-y_bar * sin(x)`
-/// - `tan(x)`: `y_bar / cos(x)^2`
+/// - `tan(x)`: `y_bar * (1 + tan(x)^2)` using `primal` (no `cos` call)
 /// - `exp(x)`: `y_bar * exp(x)` using `primal`
 /// - `log(x)`: `y_bar / x`
 /// - `log10(x)`: `y_bar / (x * ln(10))`
@@ -239,9 +240,10 @@ pub fn rad_unary_contribution<B: RadFormulaBuilder>(
             b.mul(y_bar, neg_sin)
         }
         RadUnaryMathRule::Tan => {
-            let cos_x = b.cos(x);
-            let cos_sq = b.mul(cos_x, cos_x);
-            b.div(y_bar, cos_sq)
+            let one = b.one();
+            let tan_sq = b.mul(primal, primal);
+            let sec_sq = b.add(one, tan_sq);
+            b.mul(y_bar, sec_sq)
         }
         RadUnaryMathRule::Exp => b.mul(y_bar, primal),
         RadUnaryMathRule::Exp10 => {
@@ -550,6 +552,112 @@ mod tests {
                 && asin_dump.contains("op=sub (-)")
                 && asin_dump.contains("op=mul (*)"),
             "asin derivative should use sqrt(1 - x*x), got {asin_dump}"
+        );
+    }
+
+    /// Plain-`f64` builder so the shared formulas can be evaluated directly.
+    struct F64Builder;
+
+    impl RadFormulaBuilder for F64Builder {
+        type Value = f64;
+        fn zero(&mut self) -> f64 {
+            0.0
+        }
+        fn one(&mut self) -> f64 {
+            1.0
+        }
+        fn ln_10(&mut self) -> f64 {
+            std::f64::consts::LN_10
+        }
+        fn add(&mut self, x: f64, y: f64) -> f64 {
+            x + y
+        }
+        fn sub(&mut self, x: f64, y: f64) -> f64 {
+            x - y
+        }
+        fn mul(&mut self, x: f64, y: f64) -> f64 {
+            x * y
+        }
+        fn div(&mut self, x: f64, y: f64) -> f64 {
+            x / y
+        }
+        fn pow(&mut self, x: f64, y: f64) -> f64 {
+            x.powf(y)
+        }
+        fn log(&mut self, x: f64) -> f64 {
+            x.ln()
+        }
+        fn cos(&mut self, x: f64) -> f64 {
+            x.cos()
+        }
+        fn sin(&mut self, x: f64) -> f64 {
+            x.sin()
+        }
+        fn sqrt(&mut self, x: f64) -> f64 {
+            x.sqrt()
+        }
+        fn abs(&mut self, x: f64) -> f64 {
+            x.abs()
+        }
+        fn floor(&mut self, x: f64) -> f64 {
+            x.floor()
+        }
+        fn round(&mut self, x: f64) -> f64 {
+            x.round()
+        }
+        fn lt(&mut self, x: f64, y: f64) -> f64 {
+            f64::from(u8::from(x < y))
+        }
+        fn le(&mut self, x: f64, y: f64) -> f64 {
+            f64::from(u8::from(x <= y))
+        }
+        fn gt(&mut self, x: f64, y: f64) -> f64 {
+            f64::from(u8::from(x > y))
+        }
+        fn ge(&mut self, x: f64, y: f64) -> f64 {
+            f64::from(u8::from(x >= y))
+        }
+        fn select_nonzero(&mut self, cond: f64, when_true: f64, when_false: f64) -> f64 {
+            if cond != 0.0 { when_true } else { when_false }
+        }
+    }
+
+    /// `tan' = 1 + tan²` built on the primal agrees with the analytic
+    /// `1 / cos²` at points spread over `(-π/2, π/2)`, including near the
+    /// poles where both grow large.
+    #[test]
+    fn ad_rules_tan_contribution_matches_analytic_derivative() {
+        for x in [-1.5, -0.9, -0.25, 0.0, 0.3, 0.785, 1.2, 1.55] {
+            let y_bar = 0.75;
+            let primal = f64::tan(x);
+            let got =
+                rad_unary_contribution(&mut F64Builder, RadUnaryMathRule::Tan, x, primal, y_bar);
+            let expected = y_bar / (x.cos() * x.cos());
+            let rel = ((got - expected) / expected).abs();
+            assert!(
+                rel < 1e-12,
+                "tan'({x}): got {got}, expected {expected}, rel {rel}"
+            );
+        }
+    }
+
+    /// The symbolic `tan` contribution reads the primal and never calls `cos`.
+    #[test]
+    fn ad_rules_tan_contribution_reuses_primal_without_cos() {
+        let mut arena = TreeArena::new();
+        let mut b = SigBuilder::new(&mut arena);
+        let x = b.input(0);
+        let y_bar = b.real(2.0);
+        let primal = b.tan(x);
+        let grad = rad_unary_contribution(&mut b, RadUnaryMathRule::Tan, x, primal, y_bar);
+        let dump = dump_sig_readable(&arena, grad);
+        assert!(
+            !dump.contains("SIGCOS") && !dump.contains("op=div (/)"),
+            "tan derivative should not rebuild cos(x)^2 or divide, got {dump}"
+        );
+        assert!(
+            dump.contains("SIGTAN") && dump.contains("op=add (+)"),
+            "tan derivative should be y_bar * (1 + tan(x)^2), got {dump}"
         );
     }
 

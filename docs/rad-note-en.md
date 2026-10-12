@@ -175,7 +175,7 @@ same closed-form derivatives as FAD:
 |-----------|---------|
 | `sin(x)` | `cos(x)` |
 | `cos(x)` | `-sin(x)` |
-| `tan(x)` | `1 / cos²(x)` |
+| `tan(x)` | `1 + tan²(x)` (built on the primal `tan(x)`; no `cos`) |
 | `exp(x)` | `exp(x)` |
 | `log(x)` | `1 / x` |
 | `log10(x)` | `1 / (x · ln 10)` |

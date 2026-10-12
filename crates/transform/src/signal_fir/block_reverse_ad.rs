@@ -436,15 +436,17 @@ pub(super) fn collect_delay_amounts(arena: &TreeArena, postorder: &[SigId]) -> H
 /// | `Min(lhs, rhs)` / `Max(lhs, rhs)`| `lhs` if not trivial; `rhs` if not trivial |
 /// | `Pow(x, y)`                       | `x`, `y`, and `sig` (= `x^y`) if either not trivial |
 /// | `Atan2(y, x)`                     | `lhs` if not trivial; `rhs` if not trivial |
-/// | `Sin(x)` / `Cos(x)` / `Tan(x)`   | `x` if not trivial                         |
+/// | `Sin(x)` / `Cos(x)`              | `x` if not trivial                         |
 /// | `Asin(x)` / `Acos(x)` / `Atan(x)`| `x` if not trivial                         |
 /// | `Log(x)` / `Log10(x)` / `Abs(x)` | `x` if not trivial                         |
-/// | `Exp(x)`                          | `sig` (= `exp(x)`) if `x` not trivial      |
+/// | `Exp(x)` / `Exp10(x)`             | `sig` (= `exp(x)`) if `x` not trivial      |
 /// | `Sqrt(x)`                         | `sig` (= `sqrt(x)`) if `x` not trivial     |
+/// | `Tan(x)`                          | `sig` (= `tan(x)`) if `x` not trivial      |
 ///
-/// For `Exp` and `Sqrt` the backward rule reuses the node value itself
-/// (`y_bar * val[sig]` and `y_bar / (2 * val[sig])` respectively), so `sig`
-/// is taped rather than `x` when `x` is not trivially re-evaluable.
+/// For `Exp`, `Sqrt` and `Tan` the backward rule reuses the node value itself
+/// (`y_bar * val[sig]`, `y_bar / (2 * val[sig])` and
+/// `y_bar * (1 + val[sig]²)` respectively), so `sig` is taped rather than `x`
+/// when `x` is not trivially re-evaluable.
 ///
 /// The returned set may be empty when all backward operands are trivially
 /// re-evaluable (the common case for purely feedforward bodies).
@@ -517,7 +519,6 @@ pub(super) fn collect_tape_needed_values(arena: &TreeArena, postorder: &[SigId])
             }
             SigMatch::Sin(x)
             | SigMatch::Cos(x)
-            | SigMatch::Tan(x)
             | SigMatch::Log(x)
             | SigMatch::Log10(x)
             | SigMatch::Asin(x)
@@ -528,7 +529,7 @@ pub(super) fn collect_tape_needed_values(arena: &TreeArena, postorder: &[SigId])
                     needed.insert(x);
                 }
             }
-            SigMatch::Exp(x) | SigMatch::Exp10(x) | SigMatch::Sqrt(x)
+            SigMatch::Exp(x) | SigMatch::Exp10(x) | SigMatch::Sqrt(x) | SigMatch::Tan(x)
                 if !is_trivially_reverse_evaluable(arena, x) =>
             {
                 // Backward rule uses val[sig], not x directly.

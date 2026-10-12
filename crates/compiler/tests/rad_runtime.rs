@@ -2714,3 +2714,141 @@ fn rad_coefficient_wired_through_the_recursion_bra_total_grad_matches_fd() {
         },
     );
 }
+
+// ---------------------------------------------------------------------------
+// `tan` derivative: `1 + tan²` on the primal, in FAD, symbolic RAD and BRA
+// ---------------------------------------------------------------------------
+
+/// FAD of `tan(a)` equals the analytic `1 / cos²(a)` at points spread over
+/// `(-π/2, π/2)`; the rule now computes it as `1 + tan²(a)` from the primal.
+#[test]
+fn fad_tan_tangent_matches_analytic_derivative() {
+    for a in [-1.3_f32, -0.6, 0.0, 0.4, 0.785, 1.2] {
+        let source =
+            format!(r#"a = hslider("a", {a}, -1.5, 1.5, 0.0001); process = fad(tan(a), a);"#);
+        let out = run_interp_temp_source("fad-tan-analytic", &source, 2);
+        assert_eq!(out.len(), 2, "layout is [primal, tangent]");
+        let a64 = f64::from(a);
+        let expected = (1.0 / (a64.cos() * a64.cos())) as f32;
+        for (primal, tangent) in out[0].iter().zip(&out[1]) {
+            assert_close(*primal, a.tan(), 1.0e-6, &format!("tan({a}) primal"));
+            assert_close(*tangent, expected, 1.0e-6, &format!("tan'({a}) tangent"));
+        }
+    }
+}
+
+#[test]
+fn rad_vs_fad_parity_on_tan() {
+    let rad = || {
+        r#"
+a = hslider("a", 0.5, -2.0, 2.0, 0.001);
+b = hslider("b", 0.7, -2.0, 2.0, 0.001);
+process = rad(tan(a*b) + tan(b), (a, b));
+"#
+        .to_string()
+    };
+    let fad = || {
+        r#"
+a = hslider("a", 0.5, -2.0, 2.0, 0.001);
+b = hslider("b", 0.7, -2.0, 2.0, 0.001);
+process = fad(tan(a*b) + tan(b), (a, b));
+"#
+        .to_string()
+    };
+    assert_rad_matches_fad("rad-vs-fad-tan", 1, 2, 4, 1.0e-5, rad, fad);
+}
+
+#[test]
+fn rad_tan_matches_central_difference() {
+    fn rad_source(seeds: &[f32]) -> String {
+        let (a, b) = (seeds[0], seeds[1]);
+        format!(
+            r#"
+a = hslider("a", {a}, -2.0, 2.0, 0.001);
+b = hslider("b", {b}, -2.0, 2.0, 0.001);
+process = rad(tan(a*b), (a, b));
+"#
+        )
+    }
+    fn primal_source(seeds: &[f32]) -> String {
+        let (a, b) = (seeds[0], seeds[1]);
+        format!(
+            r#"
+a = hslider("a", {a}, -2.0, 2.0, 0.001);
+b = hslider("b", {b}, -2.0, 2.0, 0.001);
+process = tan(a*b);
+"#
+        )
+    }
+    assert_rad_matches_central_difference(
+        "tan",
+        1,
+        4,
+        &[0.9, 1.1],
+        &[1.0e-3, 1.0e-3],
+        5.0e-3,
+        rad_source,
+        primal_source,
+    );
+}
+
+/// `tan` in a nonlinear recursion: the BRA sweep tapes the forward `tan`
+/// output and reads `tan' = 1 + tan²` from it. The block total gradient must
+/// still match a finite difference of the block-sum primal.
+#[test]
+fn rad_tan_in_recursive_body_bra_total_grad_matches_fd() {
+    assert_bra_block_total_grad_matches_fd(
+        "rad-tan-nl-one-pole",
+        1,
+        8,
+        &[0.1],
+        &[5e-4],
+        5e-2,
+        |s| {
+            format!(
+                r#"c = hslider("c", {}, -0.9, 0.9, 0.001); process = rad(c : +~(*(0.5) : tan), c);"#,
+                s[0]
+            )
+        },
+        |s| {
+            format!(
+                r#"c = hslider("c", {}, -0.9, 0.9, 0.001); process = c : +~(*(0.5) : tan);"#,
+                s[0]
+            )
+        },
+    );
+}
+
+/// The generated code computes `tan` once and no `cos` at all, in FAD,
+/// symbolic RAD and the BRA reverse sweep. The former `1 / cos²` rule added
+/// one `cos` call per differentiated `tan` (2026-10-13: +18 % on a four-stage
+/// Newton solver differentiated with `fad`).
+#[test]
+fn tan_derivative_emits_no_cos_in_generated_cpp() {
+    use codegen::backends::cpp::CppOptions;
+    let cases = [
+        (
+            "fad",
+            r#"a = hslider("a", 0.3, -1.5, 1.5, 0.001); process = _ : fad(tan(a*_), a);"#,
+        ),
+        (
+            "rad",
+            r#"a = hslider("a", 0.3, -1.5, 1.5, 0.001); process = _ : rad(tan(a*_), a);"#,
+        ),
+        (
+            "bra",
+            r#"c = hslider("c", 0.1, -0.9, 0.9, 0.001); process = rad(c : +~(*(0.5) : tan), c);"#,
+        ),
+    ];
+    for (label, source) in cases {
+        let cpp = Compiler::new()
+            .compile_source_to_cpp(&format!("tan_{label}.dsp"), source, &CppOptions::default())
+            .unwrap_or_else(|e| panic!("{label}: compilation failed: {e}"));
+        assert_eq!(
+            cpp.matches("std::tan(").count(),
+            1,
+            "{label}: one tan call\n{cpp}"
+        );
+        assert!(!cpp.contains("std::cos("), "{label}: no cos call\n{cpp}");
+    }
+}

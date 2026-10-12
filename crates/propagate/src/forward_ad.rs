@@ -122,7 +122,7 @@
 //! |----------|--------------------|-----------------|
 //! | `sin(x)` | `cos(x)` | `cos(x) * x'` |
 //! | `cos(x)` | `−sin(x)` | `(0 - sin(x)) * x'` |
-//! | `tan(x)` | `1 / cos²(x)` | `(1 / cos(x)²) * x'` |
+//! | `tan(x)` | `1 + tan²(x)` | `(1 + tan(x)²) * x'` — reuses the primal `tan(x)` node |
 //! | `exp(x)` | `exp(x)` | `exp(x) * x'` |
 //! | `log(x)` | `1 / x` | `(1 / x) * x'` |
 //! | `log10(x)` | `1 / (x · ln 10)` | `(1 / (x * log(10))) * x'` |
@@ -905,17 +905,26 @@ impl<'a> ForwardADTransform<'a> {
                     b.mul(neg_sin_x, tangent_x)
                 },
             ),
-            SigMatch::Tan(x) => self.unary_chain(
-                x,
-                |b, primal_x| b.tan(primal_x),
-                |b, primal_x, tangent_x| {
-                    let cos_x = b.cos(primal_x);
-                    let cos_sq = b.mul(cos_x, cos_x);
-                    let one = b.real(1.0);
-                    let inv = b.div(one, cos_sq);
-                    b.mul(inv, tangent_x)
-                },
-            ),
+            SigMatch::Tan(x) => {
+                // tan' = 1 + tan², written on the primal output node itself
+                // (not a rebuilt `tan`), so the derivative is one
+                // multiply-add over a value the primal already computes;
+                // `1 / cos²` would add a `cos`, a square and a division.
+                let dual_x = self.transform(x);
+                let mut b = SigBuilder::new(self.arena);
+                let primal = b.tan(dual_x.primal);
+                let tangents = dual_x
+                    .tangents
+                    .into_iter()
+                    .map(|tx| {
+                        let tan_sq = b.mul(primal, primal);
+                        let one = b.real(1.0);
+                        let sec_sq = b.add(one, tan_sq);
+                        b.mul(sec_sq, tx)
+                    })
+                    .collect::<SmallVec<[SigId; 2]>>();
+                Dual { primal, tangents }
+            }
             SigMatch::Exp(x) => self.unary_chain(
                 x,
                 |b, primal_x| b.exp(primal_x),
@@ -2172,6 +2181,51 @@ mod tests {
         assert_eq!(result[2], zero, "ds0/ds1 must be 0.0");
         assert_eq!(result[4], zero, "ds1/ds0 must be 0.0");
         assert_eq!(result[5], one, "ds1/ds1 must be 1.0");
+    }
+
+    /// Returns whether `needle` occurs in the DAG rooted at `root`.
+    fn sig_contains(arena: &TreeArena, root: SigId, needle: &dyn Fn(SigId) -> bool) -> bool {
+        needle(root)
+            || arena.node(root).is_some_and(|node| {
+                node.children
+                    .as_slice()
+                    .iter()
+                    .any(|&child| sig_contains(arena, child, needle))
+            })
+    }
+
+    /// `tan' = 1 + tan²` is written on the primal output node: the tangent
+    /// lane references the very `SigId` of the primal `tan(x)` and contains
+    /// no `cos` (the former `1 / cos²` rule added one `cos` per tan seed).
+    #[test]
+    fn fad_tan_tangent_reuses_primal_node_without_cos() {
+        let mut arena = TreeArena::new();
+        let s = SigBuilder::new(&mut arena).real(0.3);
+        let x = SigBuilder::new(&mut arena).input(0);
+        let sx = SigBuilder::new(&mut arena).mul(s, x);
+        let tan_sx = SigBuilder::new(&mut arena).tan(sx);
+
+        let out =
+            generate_fad_signals_multi(&mut arena, &mut ClockDomainTable::new(), &[tan_sx], &[s])
+                .expect("FAD of tan must succeed");
+        assert_eq!(out.len(), 2, "bundle is [primal, tangent]");
+        let primal = out[0];
+        assert!(matches!(match_sig(&arena, primal), SigMatch::Tan(_)));
+        assert!(
+            sig_contains(&arena, out[1], &|n| n == primal),
+            "the tangent must reuse the primal tan node"
+        );
+        assert!(
+            !sig_contains(&arena, out[1], &|n| matches!(
+                match_sig(&arena, n),
+                SigMatch::Cos(_)
+            )),
+            "the tan tangent must not call cos"
+        );
+        let tan_count_ok = !sig_contains(&arena, out[1], &|n| {
+            n != primal && matches!(match_sig(&arena, n), SigMatch::Tan(_))
+        });
+        assert!(tan_count_ok, "the tangent must not build a second tan node");
     }
 
     /// FAD Phase B (roadmap P5): the boundary *wrapper* rules commute with
