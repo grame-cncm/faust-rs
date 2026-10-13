@@ -1,0 +1,53 @@
+// Test-local stand-ins for the library functions the recorded programs use
+// (os.osc, os.sawtooth, si.smoo, fi.resonlp, fi.lowpass(1), fi.highpass(1),
+// en.adsr, ba.slidingMax), so that what faustprobe prints does not depend on
+// the Faust libraries installed on the machine (AGENTS.md §3). They have the
+// shape the programs need, not the libraries' algorithms.
+
+SR = min(192000.0, max(1.0, fconstant(int fSamplingFreq, <math.h>)));
+PI = 3.141592653589793;
+
+// A phase in [0, 1[ at frequency f, its sine and its naive sawtooth.
+phasor(f) = (+(f / SR) : \(x).(x - floor(x))) ~ _;
+osc(f) = sin(2.0 * PI * phasor(f));
+sawtooth(f) = 2.0 * phasor(f) - 1.0;
+
+// One-pole smoothing of a control.
+smoo = *(1.0 - p) : + ~ *(p) with { p = 0.999; };
+
+// First- and second-order direct forms.
+tf1(b0, b1, a1) = _ <: *(b0), (mem : *(b1)) :> + ~ *(0.0 - a1);
+tf2(b0, b1, b2, a1, a2) = sub ~ conv2(a1, a2) : conv3(b0, b1, b2)
+with {
+    conv3(k0, k1, k2, x) = k0 * x + k1 * x' + k2 * x'';
+    conv2(k0, k1, x) = k0 * x + k1 * x';
+    sub(x, y) = y - x;
+};
+
+// Bilinear one-pole low-pass and high-pass at fc.
+lowpass1(fc) = tf1(k / (1.0 + k), k / (1.0 + k), (k - 1.0) / (1.0 + k))
+with { k = tan(PI * fc / SR); };
+highpass1(fc) = tf1(1.0 / (1.0 + k), -1.0 / (1.0 + k), (k - 1.0) / (1.0 + k))
+with { k = tan(PI * fc / SR); };
+
+// Resonant low-pass (RBJ biquad) at fc, quality q, gain g.
+resonlp(fc, q, g) = tf2(g * (1.0 - c) / (2.0 * a0), g * (1.0 - c) / a0, g * (1.0 - c) / (2.0 * a0),
+                        -2.0 * c / a0, (1.0 - al) / a0)
+with {
+    w = 2.0 * PI * fc / SR;
+    c = cos(w);
+    al = sin(w) / (2.0 * q);
+    a0 = 1.0 + al;
+};
+
+// A peak follower: the larger of |x| and the previous peak, decaying.
+peak = abs : max ~ *(0.995);
+
+// An envelope: one-pole towards sus while the gate is on (time constant
+// att), then a linear release that reaches 0 in rel seconds, so that a
+// released voice falls silent and its voice is freed.
+asr(att, sus, rel, gate) = (\(e).(select2(on, max(0.0, e - sus / (rel * SR)), e + (sus - e) * c))) ~ _
+with {
+    on = gate > 0;
+    c = 1.0 - exp(-1.0 / (att * SR));
+};

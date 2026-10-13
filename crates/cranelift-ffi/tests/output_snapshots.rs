@@ -22,6 +22,21 @@
 //! git diff --stat crates/cranelift-ffi/tests/output/expected
 //! ```
 //!
+//! Nothing here reads the Faust libraries installed on the machine, whose
+//! next version would change the recordings (AGENTS.md §3): the programs of
+//! the hand-written cases import only `tests/output/dsp/mini.lib`, test-local
+//! stand-ins for the few library functions they use, and a corpus program
+//! that names a file outside its directory (`stdfaust.lib`, `music.lib`, ...)
+//! is not recorded by default; the impulse-test harness compares those with
+//! the C++ compiler on the installed libraries.
+//! `case_programs_need_no_installed_library` keeps the hand-written programs
+//! so. For a local refactoring gate, `FAUSTPROBE_LIBS=installed` records
+//! those corpus programs too, against the libraries installed on the machine,
+//! in `tests/output/expected/installed-libs/`: they hold only on a machine
+//! whose libraries are the ones they were blessed with, so bless them again
+//! (`FAUSTPROBE_LIBS=installed FAUSTPROBE_BLESS=1 FAUSTPROBE_CORPUS=all`)
+//! after the libraries change, before the refactoring.
+//!
 //! Paths are relative to the crate (`cargo test` runs there), and what a
 //! stream says of the machine (the crate's directory, which a compile error
 //! cites in full, the target triple of a diagnostics report, the temporary
@@ -47,6 +62,9 @@ use std::process::Command;
 
 /// Where the recordings live, relative to the crate.
 const EXPECTED_DIR: &str = "tests/output/expected";
+/// Where the recordings of the corpus programs that read an installed Faust
+/// library live, recorded only under `FAUSTPROBE_LIBS=installed`.
+const LIBS_EXPECTED_DIR: &str = "tests/output/expected/installed-libs";
 /// The impulse-test corpus, relative to the crate.
 const CORPUS_DIR: &str = "../../tests/impulse-tests/dsp";
 /// A stream longer than this is recorded as a fingerprint.
@@ -76,13 +94,22 @@ const RELATIVE_TOLERANCE: f64 = 1e-9;
 struct Case {
     name: String,
     args: Vec<String>,
+    /// The directory of its recording.
+    expected: &'static str,
 }
 
 fn case(name: &str, args: &[&str]) -> Case {
     Case {
         name: name.to_owned(),
         args: args.iter().map(|a| (*a).to_owned()).collect(),
+        expected: EXPECTED_DIR,
     }
+}
+
+/// Whether the corpus programs that read an installed library are recorded
+/// (`FAUSTPROBE_LIBS=installed`).
+fn with_installed_libraries() -> bool {
+    std::env::var_os("FAUSTPROBE_LIBS").is_some_and(|v| v == "installed")
 }
 
 /// The hand-written cases, then the corpus: every program of it when
@@ -93,14 +120,21 @@ fn cases() -> Vec<Case> {
     let mut cases = hand_written();
     for (index, path) in corpus().into_iter().enumerate() {
         if full || index % CORPUS_STRIDE == 0 {
-            cases.push(corpus_case(&path));
+            cases.push(corpus_case(&path, EXPECTED_DIR));
+        }
+    }
+    if with_installed_libraries() {
+        for (index, path) in library_corpus().into_iter().enumerate() {
+            if full || index % CORPUS_STRIDE == 0 {
+                cases.push(corpus_case(&path, LIBS_EXPECTED_DIR));
+            }
         }
     }
     cases
 }
 
-/// The corpus programs, sorted by name.
-fn corpus() -> Vec<PathBuf> {
+/// Every corpus program, sorted by name.
+fn corpus_programs() -> Vec<PathBuf> {
     let mut corpus: Vec<PathBuf> = fs::read_dir(CORPUS_DIR)
         .expect("the impulse-test corpus")
         .map(|entry| entry.expect("a corpus entry").path())
@@ -110,12 +144,69 @@ fn corpus() -> Vec<PathBuf> {
     corpus
 }
 
+/// The corpus programs that need no file outside their directory, sorted by
+/// name.
+fn corpus() -> Vec<PathBuf> {
+    corpus_programs()
+        .into_iter()
+        .filter(|path| self_contained(path))
+        .collect()
+}
+
+/// The corpus programs that name a file outside their directory, an
+/// installed Faust library, sorted by name.
+fn library_corpus() -> Vec<PathBuf> {
+    corpus_programs()
+        .into_iter()
+        .filter(|path| !self_contained(path))
+        .collect()
+}
+
+/// Whether a Faust source needs only the files beside it: every file it
+/// names in `import`, `library` or `component` exists in its directory and
+/// needs only the files beside it in turn. A source that names one of the
+/// Faust libraries would read the copy installed on the machine.
+fn self_contained(path: &Path) -> bool {
+    fn visit(path: &Path, seen: &mut Vec<PathBuf>) -> bool {
+        if seen.iter().any(|p| p == path) {
+            return true;
+        }
+        seen.push(path.to_path_buf());
+        let Ok(text) = fs::read_to_string(path) else {
+            return false;
+        };
+        let dir = path.parent().unwrap_or(Path::new("."));
+        imported_names(&text)
+            .into_iter()
+            .all(|name| visit(&dir.join(name), seen))
+    }
+    visit(path, &mut Vec::new())
+}
+
+/// The file names a Faust source passes to `import`, `library` and
+/// `component`, comments included: a name in a comment only makes the test
+/// more cautious.
+fn imported_names(text: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    for keyword in ["import(\"", "library(\"", "component(\""] {
+        let mut rest = text;
+        while let Some(at) = rest.find(keyword) {
+            rest = &rest[at + keyword.len()..];
+            if let Some(end) = rest.find('"') {
+                names.push(&rest[..end]);
+                rest = &rest[end..];
+            }
+        }
+    }
+    names
+}
+
 fn corpus_name(path: &Path) -> String {
     format!("corpus_{}", path.file_stem().unwrap().to_string_lossy())
 }
 
-fn corpus_case(path: &Path) -> Case {
-    case(
+fn corpus_case(path: &Path, expected: &'static str) -> Case {
+    let mut case = case(
         &corpus_name(path),
         &[
             "--protocol",
@@ -124,7 +215,9 @@ fn corpus_case(path: &Path) -> Case {
             CORPUS_DIR,
             &path.to_string_lossy(),
         ],
-    )
+    );
+    case.expected = expected;
+    case
 }
 
 fn hand_written() -> Vec<Case> {
@@ -4048,6 +4141,42 @@ fn record(case: &Case, tmp: &Path) -> String {
     text
 }
 
+/// The programs of the hand-written cases need no installed library, and the
+/// corpus filter is not empty-handed: a program that imports `stdfaust.lib`
+/// is not self-contained, `tests/output/dsp/filt.dsp` (which imports
+/// `mini.lib`) is.
+#[test]
+fn case_programs_need_no_installed_library() {
+    let dir = Path::new("tests/output/dsp");
+    let mut programs: Vec<PathBuf> = fs::read_dir(dir)
+        .expect("the case programs")
+        .map(|entry| entry.expect("a case program").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|ext| ext == "dsp" || ext == "lib")
+        })
+        .collect();
+    programs.sort();
+    let needy: Vec<String> = programs
+        .iter()
+        .filter(|path| !self_contained(path))
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(
+        needy.is_empty(),
+        "case programs naming a file outside tests/output/dsp (an installed Faust library?): {needy:?}"
+    );
+    assert!(self_contained(&dir.join("filt.dsp")));
+    assert_eq!(
+        imported_names("import(\"stdfaust.lib\");\nx = library(\"a.lib\");"),
+        ["stdfaust.lib", "a.lib"]
+    );
+    let corpus = corpus();
+    assert!(!corpus.is_empty(), "no self-contained corpus program");
+    let all = fs::read_dir(CORPUS_DIR).expect("the corpus").count();
+    assert!(corpus.len() < all, "the corpus filter excluded nothing");
+}
+
 #[test]
 fn every_case_prints_what_it_printed() {
     let bless = std::env::var_os("FAUSTPROBE_BLESS").is_some();
@@ -4055,6 +4184,10 @@ fn every_case_prints_what_it_printed() {
     fs::create_dir_all(&tmp).expect("a temporary directory");
     let expected_dir = Path::new(EXPECTED_DIR);
     fs::create_dir_all(expected_dir).expect("the expected directory");
+    let libs = with_installed_libraries();
+    if libs {
+        fs::create_dir_all(LIBS_EXPECTED_DIR).expect("the installed-libs directory");
+    }
 
     let recorded_on = fs::read_to_string(PLATFORM_FILE)
         .map(|s| s.trim().to_owned())
@@ -4072,6 +4205,7 @@ fn every_case_prints_what_it_printed() {
     // the recordings of the corpus programs a default run skips are not stale
     let mut known: Vec<String> = corpus().iter().map(|p| corpus_name(p)).collect();
     known.extend(names.iter().cloned());
+    let known_libs: Vec<String> = library_corpus().iter().map(|p| corpus_name(p)).collect();
 
     // the cases are independent, and most of their time is the compiler's:
     // run them on every core, each in a temporary directory of its own
@@ -4097,7 +4231,7 @@ fn every_case_prints_what_it_printed() {
     let mut findings: Vec<String> = Vec::new();
     for (case, actual) in cases.iter().zip(recordings) {
         let actual = actual.expect("every case was recorded");
-        let path = expected_dir.join(format!("{}.txt", case.name));
+        let path = Path::new(case.expected).join(format!("{}.txt", case.name));
         if bless {
             fs::write(&path, &actual).expect("write the recording");
             continue;
@@ -4146,20 +4280,29 @@ fn every_case_prints_what_it_printed() {
         }
     }
     // a recording with no case is stale: a renamed case leaves one behind
-    let mut stale: Vec<String> = fs::read_dir(expected_dir)
-        .expect("the expected directory")
-        .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            let stem = path.file_stem()?.to_string_lossy().into_owned();
-            (path.extension().is_some_and(|e| e == "txt") && !known.contains(&stem)).then_some(path)
-        })
-        .map(|path| {
-            if bless {
-                let _ = fs::remove_file(&path);
-            }
-            format!("{}: recording without a case", path.display())
-        })
-        .collect();
+    let mut dirs = vec![(expected_dir, &known)];
+    if libs {
+        dirs.push((Path::new(LIBS_EXPECTED_DIR), &known_libs));
+    }
+    let mut stale: Vec<String> = Vec::new();
+    for (dir, known) in dirs {
+        stale.extend(
+            fs::read_dir(dir)
+                .expect("the expected directory")
+                .filter_map(|entry| {
+                    let path = entry.ok()?.path();
+                    let stem = path.file_stem()?.to_string_lossy().into_owned();
+                    (path.extension().is_some_and(|e| e == "txt") && !known.contains(&stem))
+                        .then_some(path)
+                })
+                .map(|path| {
+                    if bless {
+                        let _ = fs::remove_file(&path);
+                    }
+                    format!("{}: recording without a case", path.display())
+                }),
+        );
+    }
     if !bless {
         findings.append(&mut stale);
     }

@@ -191,6 +191,21 @@ math library's, the text must be the same and the numbers within 1e-9
 relative, fingerprints not compared. Not on Windows (two recordings carry the
 system's wording of a missing file).
 
+Nothing in the default run reads the Faust libraries installed on the
+machine. The programs of the hand-written cases use `tests/output/dsp/mini.lib`,
+test-local stand-ins for the few library functions they need
+(`case_programs_need_no_installed_library` keeps them so), and the corpus
+programs that import a library (`stdfaust.lib`, `music.lib`, ...; 80 of 133)
+are left out. For a local refactoring gate, `FAUSTPROBE_LIBS=installed` adds
+them, compared with `tests/output/expected/installed-libs/`. Those recordings
+hold only against the libraries they were blessed with: after the libraries
+change, bless them again before the refactoring.
+
+```bash
+FAUSTPROBE_LIBS=installed FAUSTPROBE_BLESS=1 FAUSTPROBE_CORPUS=all cargo test -p cranelift-ffi --test output_snapshots
+FAUSTPROBE_LIBS=installed FAUSTPROBE_CORPUS=all cargo test -p cranelift-ffi --test output_snapshots
+```
+
 ### Compile errors
 
 `error_msg` is 4096 bytes by the libfaust contract (caller-allocated, size never

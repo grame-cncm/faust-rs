@@ -2,8 +2,8 @@ $ faustprobe --double -n 8192 --in zero --set gate=1 --sweep freq=440,880 --redu
 exit=0
 --- stdout
 freq,thd_out0
-440,-106.18896981634126
-880,120.37363298937979
+440,-123.19153924279235
+880,120.77842919721726
 
 --- stderr
 

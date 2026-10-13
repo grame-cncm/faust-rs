@@ -2,7 +2,7 @@ $ faustprobe --double --nvoices 4 --quiet -n 200 --in dc --note 60:127@0..150 te
 exit=0
 --- stdout
 # frames=200 sr=44100 nvoices=4 active_voices=0 window=0..200 (200 frames)
-# out0: peak=1.0999986097456824 rms=0.8720993536370647 dc=0.7532440705767393 finite=yes peak_at=42
+# out0: peak=1.0999986309953667 rms=0.8717447623616283 dc=0.7529247063791121 finite=yes peak_at=41
 
 --- stderr
 

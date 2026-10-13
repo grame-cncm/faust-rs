@@ -4,7 +4,7 @@ exit=1
 
 --- stderr
 faustprobe: a sample exceeds --fail-above 0.01
-  first: frame 13, out0 = -0.012894781744421897
+  first: frame 14, out0 = -0.014299842265821597
   controls written by then: /synth/bright=0.2
   notes held then: 60 (on at frame 10)
 
