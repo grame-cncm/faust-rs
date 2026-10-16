@@ -14,7 +14,9 @@
 //! - `add_nonconstant_case_argument` — the argument a recursion dispatched on
 //!   without ever reaching a numeric rule, and the rules it was matched
 //!   against;
-//! - `add_cycle_labels` — every top-level definition of an evaluation cycle.
+//! - `add_cycle_labels` — every top-level definition of an evaluation cycle;
+//! - `add_unary_minus_access` — an access into a unary minus (`-L.g`), which
+//!   the grammar reads `(0 - L).g`.
 
 use super::*;
 
@@ -39,7 +41,49 @@ pub(crate) fn add_eval_guidance(
     diagnostic = add_pattern_attempt_trace(diagnostic, error, arena);
     diagnostic = add_nonconstant_case_argument(diagnostic, error, arena);
     diagnostic = add_cycle_labels(diagnostic, error, ctx, arena, defs_root);
+    diagnostic = add_unary_minus_access(diagnostic, error, arena);
     add_redefinition_labels(diagnostic, error, ctx)
+}
+
+/// Explains an access into a unary minus: `-L.g(2, k)` reads
+/// `((0 - L).g)(2, k)`, since the grammar's unary minus takes the name `L`
+/// alone, so the access applies to a number, not to the environment `L`
+/// (C++: `no environment to access`).
+fn add_unary_minus_access(
+    diagnostic: Diagnostic,
+    error: &eval::EvalError,
+    arena: &tlib::TreeArena,
+) -> Diagnostic {
+    let eval::EvalError::ExpectedClosureValue {
+        node,
+        context: "access",
+    } = error
+    else {
+        return diagnostic;
+    };
+    // The parser's unary minus: `boxSeq(boxPar(0, x), Sub)`.
+    let BoxMatch::Seq(pair, op) = match_box(arena, *node) else {
+        return diagnostic;
+    };
+    let (BoxMatch::Par(zero, operand), BoxMatch::Sub) =
+        (match_box(arena, pair), match_box(arena, op))
+    else {
+        return diagnostic;
+    };
+    if !matches!(match_box(arena, zero), BoxMatch::Int(0)) {
+        return diagnostic;
+    }
+    let name = match match_box(arena, operand) {
+        BoxMatch::Ident(name) => name.to_owned(),
+        _ => "…".to_owned(),
+    };
+    diagnostic
+        .with_note(format!(
+            "rule: the unary `-` applies to `{name}` alone, so `-{name}.f` reads `(0 - {name}).f`, an access into a number"
+        ))
+        .with_help(format!(
+            "subtract the whole access from zero: `0 - {name}.f(...)`, in parentheses where the context needs them"
+        ))
 }
 
 /// Proposes an exact rename when exactly one visible symbol is the clear match.

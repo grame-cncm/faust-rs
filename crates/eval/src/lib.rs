@@ -426,6 +426,11 @@ fn eval_entrypoint_full(
             (new_id, name)
         })
         .collect();
+    let cache = &loop_detector.symbolic_box_cache;
+    stats.composition_origins = std::mem::take(&mut loop_detector.composition_origins)
+        .into_iter()
+        .map(|(built, source)| (cache.get(&built).copied().unwrap_or(built), source))
+        .collect();
     stats.warnings = std::mem::take(&mut loop_detector.warnings);
     stats.def_names = loop_detector.def_names;
     Ok((result, stats))
@@ -1301,7 +1306,9 @@ fn eval_seq_value(
     }
 
     let mut bld = BoxBuilder::new(arena);
-    Ok(EvalValue::Box(bld.seq(a1, a2)))
+    let built = bld.seq(a1, a2);
+    loop_detector.record_composition_origin(built, seq);
+    Ok(EvalValue::Box(built))
 }
 
 /// Reifies one evaluator value back into box IR.

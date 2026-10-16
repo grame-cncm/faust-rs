@@ -37,7 +37,14 @@ pub(crate) fn map_children(
         // matching can still see tupled functions the same way C++ does.
         children.push(force_value_to_box(arena, value, loop_detector)?);
     }
-    Ok(arena.intern(node.kind, &children))
+    let built = arena.intern(node.kind, &children);
+    if matches!(
+        match_box(arena, expr),
+        BoxMatch::Par(..) | BoxMatch::Split(..) | BoxMatch::Merge(..) | BoxMatch::Rec(..)
+    ) {
+        loop_detector.record_composition_origin(built, expr);
+    }
+    Ok(built)
 }
 
 /// Binds a parser definition list into an environment, enforcing the no-redefinition rule.

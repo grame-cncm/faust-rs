@@ -80,6 +80,7 @@ pub(crate) fn add_paired_propagate_context(
 /// This policy reflects the common Faust failure mode where the concrete bad
 /// composition is inside a helper definition but only becomes observable once
 /// referenced by `process`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn maybe_add_source_label(
     mut diagnostic: Diagnostic,
     ctx: &parser::ParserCtx,
@@ -88,7 +89,31 @@ pub(crate) fn maybe_add_source_label(
     node: BoxId,
     owner_definition: Option<&str>,
     entrypoint_name: &str,
+    composition_origins: Option<&std::collections::HashMap<BoxId, Option<BoxId>>>,
 ) -> Diagnostic {
+    // A composition built by evaluation has no position of its own; the one
+    // it was evaluated from does, when the sources write it at one place.
+    // Its descendants would mislead: the first located one is usually in
+    // the body of a function the composition called (`(_, _)` of `m` for a
+    // faulty `m(1) : …`). A box built from two compositions, or from one the
+    // sources write at several places, gets no composition label.
+    if let Some(origin) = composition_origins.and_then(|origins| origins.get(&node)) {
+        if let Some(span) = origin.and_then(|source| unique_source_span(ctx, source)) {
+            return diagnostic.with_label(
+                Label::new(LabelStyle::Primary, span, "failing composition")
+                    .with_role(LabelRole::Operator),
+            );
+        }
+        let fallback =
+            source_span_for_entrypoint_definition(ctx, arena, defs_root, entrypoint_name);
+        if let Some(span) = fallback {
+            diagnostic = diagnostic.with_label(
+                Label::new(LabelStyle::Primary, span, "the call that leads here")
+                    .with_role(LabelRole::CallSite),
+            );
+        }
+        return diagnostic;
+    }
     if let Some(owner) = owner_definition {
         let exact_span = source_span_for_node_in_definition(ctx, arena, defs_root, node, owner);
         let owner_span = source_span_for_definition_name(ctx, arena, defs_root, owner);

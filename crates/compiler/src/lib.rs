@@ -268,6 +268,9 @@ pub struct BoxCompileOutput {
     /// Evaluated `BoxId` → source definition name, forwarded to the signal
     /// output package.
     def_names: std::collections::HashMap<boxes::BoxId, String>,
+    /// Evaluated composition box → the source composition it came from, for
+    /// the source labels of propagation errors (`EvalStats::composition_origins`).
+    composition_origins: std::collections::HashMap<boxes::BoxId, Option<boxes::BoxId>>,
     /// The evaluator's non-fatal findings as diagnostics, empty unless the
     /// semantic warnings are on; merged into [`SignalCompileOutput::warnings`].
     eval_warnings: DiagnosticBundle,
@@ -1689,6 +1692,7 @@ impl Compiler {
                     root,
                     ep,
                     false,
+                    &eval_stats.composition_origins,
                 )
                 .with_source_map(source_map.clone())
             })?;
@@ -1707,6 +1711,7 @@ impl Compiler {
                     root,
                     ep,
                     true,
+                    &eval_stats.composition_origins,
                 )
                 .with_source_map(source_map.clone())
             })?;
@@ -1730,6 +1735,7 @@ impl Compiler {
             process_flat,
             arity_cache,
             def_names: eval_stats.def_names,
+            composition_origins: eval_stats.composition_origins,
             eval_warnings,
         })
     }
@@ -1764,6 +1770,7 @@ impl Compiler {
             process_flat,
             mut arity_cache,
             def_names,
+            composition_origins,
             eval_warnings,
         } = boxes;
         let output = &mut parse;
@@ -1792,6 +1799,7 @@ impl Compiler {
                     root,
                     ep,
                     true,
+                    &composition_origins,
                 )
                 .with_source_map(source_map.clone())
             })?;

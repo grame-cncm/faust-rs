@@ -96,6 +96,10 @@ pub struct LoopDetector {
     ///
     /// C++ equivalent: `setDefNameProperty(result, id)` in `eval.cpp`.
     pub(crate) def_names: std::collections::HashMap<tlib::TreeId, String>,
+    /// The source composition each composition box built by evaluation comes
+    /// from (`None` once two sources built the same box), handed to
+    /// [`EvalStats::composition_origins`](crate::EvalStats::composition_origins).
+    pub(crate) composition_origins: std::collections::HashMap<tlib::TreeId, Option<tlib::TreeId>>,
     /// Non-fatal findings, handed to [`EvalStats::warnings`](crate::EvalStats::warnings) at the end of the run.
     pub(crate) warnings: Vec<crate::EvalWarning>,
     pub(crate) automaton_cache: crate::pattern_matcher::AutomatonCache,
@@ -403,6 +407,25 @@ pub(crate) const DEBUG_STRUCTURAL_HARD_MAX_DEPTH: usize = 4_096;
 pub(crate) const RELEASE_STRUCTURAL_HARD_MAX_DEPTH: usize = 32_768;
 
 impl LoopDetector {
+    /// Records that evaluating the source composition `source` built the
+    /// composition box `built`. Positions are the parser's, on source nodes:
+    /// a box built by evaluation has none, and its first located descendant
+    /// is usually inside a called function's body, not the faulty
+    /// composition. A box built from two sources has no single origin.
+    pub(crate) fn record_composition_origin(&mut self, built: tlib::TreeId, source: tlib::TreeId) {
+        if built == source {
+            return;
+        }
+        self.composition_origins
+            .entry(built)
+            .and_modify(|origin| {
+                if *origin != Some(source) {
+                    *origin = None;
+                }
+            })
+            .or_insert(Some(source));
+    }
+
     /// Creates a detector with the default maximum recursion depth.
     ///
     /// The default is deliberately lower than the structural hard cap: recursive
@@ -479,6 +502,7 @@ impl LoopDetector {
             structural_max_depth: structural.value,
             cancel,
             def_names: std::collections::HashMap::new(),
+            composition_origins: std::collections::HashMap::new(),
             warnings: Vec::new(),
             automaton_cache: crate::pattern_matcher::AutomatonCache::new(),
             pm_store: Vec::new(),

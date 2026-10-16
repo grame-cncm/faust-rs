@@ -753,10 +753,7 @@ Primitive -> tlib::TreeId:
       }
     | IdentExpr { $1 }
     | SUB IdentExpr {
-          crate::with_state(state, |state| {
-              let zero = state.node_builder().int(0);
-              state.binary_prim(zero, $2, crate::PrimitiveOp::Sub)
-          })
+          crate::with_state(state, |state| state.unary_minus_from_token($lexer, $1, $2))
       }
     | LPAR Expression RPAR { $2 }
     ;

@@ -87,6 +87,12 @@ pub struct EvalStats {
     /// C++ equivalent: the property set by `setDefNameProperty(result, id)` in
     /// `compiler/evaluate/eval.cpp`.
     pub def_names: std::collections::HashMap<tlib::TreeId, String>,
+    /// For each composition box (`:`, `,`, `<:`, `:>`, `~`) the evaluation
+    /// built, the source composition it was evaluated from, or `None` when
+    /// two sources built the same box. Lets a later arity error point at the
+    /// composition written in the program rather than inside a function the
+    /// composition called.
+    pub composition_origins: std::collections::HashMap<tlib::TreeId, Option<tlib::TreeId>>,
 }
 
 /// Evaluator error.

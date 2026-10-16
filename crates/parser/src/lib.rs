@@ -1156,6 +1156,21 @@ impl ParseState {
         self.mark_use_from_token(lexer, tok, node)
     }
 
+    /// Builds the unary minus `-x` as C++ does, `boxSeq(boxPar(0, x), Sub)`,
+    /// tagged with the span of its `-` token so a later error on it (`-L.g`
+    /// reads `(0 - L).g`) can point at it.
+    #[must_use]
+    pub fn unary_minus_from_token<'lexer, 'input: 'lexer>(
+        &mut self,
+        lexer: &'lexer dyn NonStreamingLexer<'input, DefaultLexerTypes<u32>>,
+        tok: Result<lrlex::DefaultLexeme<u32>, lrlex::DefaultLexeme<u32>>,
+        operand: TreeId,
+    ) -> TreeId {
+        let zero = self.node_builder().int(0);
+        let node = self.binary_prim(zero, operand, PrimitiveOp::Sub);
+        self.mark_use_from_token(lexer, tok, node)
+    }
+
     /// Builds `boxSeq(left, right)` and tags it with the operator token span.
     #[must_use]
     pub fn seq_from_token<'lexer, 'input: 'lexer>(
@@ -2523,6 +2538,53 @@ fn build_engine_parse_diagnostics(
                         "name it and use the name (`f = {unexpected}(...);`), or write it where a block diagram is expected (`process = {unexpected}(...);`)"
                     ));
             }
+            // A name Faust C++ accepts but faust-rs reserves: the repair
+            // sequences never say why the word cannot be a name. The error is
+            // at the word itself (`rad = 2.0;`) or at the token after it,
+            // when the parser took the word for its primitive and expected
+            // `(` (`x * rad with …`).
+            let reserved = Some(unexpected.as_ref())
+                .filter(|word| faust_rs_reserved_word(word).is_some())
+                .or_else(|| {
+                    previous_word(input, error.span.start())
+                        .filter(|word| faust_rs_reserved_word(word).is_some())
+                });
+            if let Some(word) = reserved
+                && let Some((primitive, reference_reserves_it)) = faust_rs_reserved_word(word)
+            {
+                let unexpected = word;
+                let cpp = if reference_reserves_it {
+                    "the Faust C++ releases accept it as an identifier (the C++ reference branch of faust-rs reserves it too)"
+                } else {
+                    "Faust C++ accepts it as an identifier"
+                };
+                diagnostic = diagnostic
+                    .with_note(format!(
+                        "`{unexpected}` is a reserved word of faust-rs, the {primitive}; {cpp}"
+                    ))
+                    .with_help(format!(
+                        "rename the definition and its uses, for instance to `{unexpected}_`"
+                    ));
+            }
+            // `-max(1, 2)`: the unary minus of the grammar takes a name or a
+            // number, never a primitive (C++ rejects it as well).
+            if previous_char_is_minus(input, error.span.start())
+                && unexpected
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphabetic())
+                && unexpected
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            {
+                diagnostic = diagnostic
+                    .with_note(format!(
+                        "rule: the unary `-` applies only to a name or a number (`-x`, `-2`), not to the primitive `{unexpected}`"
+                    ))
+                    .with_help(format!(
+                        "subtract from zero: `0 - {unexpected}(...)`, in parentheses where the context needs them; `-({unexpected}(...))` would be the partial application `_ - {unexpected}(...)`"
+                    ));
+            }
         }
 
         if direct_source
@@ -2673,6 +2735,57 @@ fn unmatched_opening_delimiter(input: &str, end: usize, wanted: char) -> Option<
         .into_iter()
         .rev()
         .find(|(_, opening)| *opening == wanted)
+}
+
+/// The words faust-rs reserves although Faust C++ accepts them as names:
+/// what each one is, and whether the C++ reference branch of faust-rs
+/// (`8eebea429`) reserves it too (the C++ releases do not).
+fn faust_rs_reserved_word(word: &str) -> Option<(&'static str, bool)> {
+    Some(match word {
+        "fad" => (
+            "forward-mode differentiation primitive `fad(expr, seeds)`",
+            false,
+        ),
+        "rad" => (
+            "reverse-mode differentiation primitive `rad(expr, seeds)`",
+            false,
+        ),
+        "cinputs" => ("control-input primitive `cinputs(e)`", false),
+        "cinput" => ("control-input primitive `cinput(i, e)`", false),
+        "coutputs" => ("control-output primitive `coutputs(e)`", false),
+        "coutput" => ("control-output primitive `coutput(i, e)`", false),
+        "ondemand" => ("clock-domain primitive `ondemand(f)`", true),
+        "upsampling" => ("clock-domain primitive `upsampling(f)`", true),
+        "downsampling" => ("clock-domain primitive `downsampling(f)`", true),
+        _ => return None,
+    })
+}
+
+/// The identifier-like word that ends at the last non-blank character
+/// before `end`, if that character ends one.
+fn previous_word(input: &str, end: usize) -> Option<&str> {
+    let (_, last_end) = previous_token_range(input, end)?;
+    let prefix = input.get(..last_end)?;
+    let start = prefix
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_')
+        .last()
+        .map(|(index, _)| index)?;
+    Some(&prefix[start..])
+}
+
+/// Whether the last non-blank character before `end` is a lone `-` (not the
+/// end of `->`, `<-` or `--`).
+fn previous_char_is_minus(input: &str, end: usize) -> bool {
+    let Some((start, _)) = previous_token_range(input, end) else {
+        return false;
+    };
+    input.get(start..=start) == Some("-")
+        && !input
+            .get(..start)
+            .and_then(|before| before.chars().next_back())
+            .is_some_and(|ch| matches!(ch, '-' | '<' | '>'))
 }
 
 fn previous_token_range(input: &str, end: usize) -> Option<(usize, usize)> {

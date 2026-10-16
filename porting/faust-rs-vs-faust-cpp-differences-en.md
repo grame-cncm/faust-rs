@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded); full review 2026-08-13
+Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -78,7 +78,11 @@ verified Rust extension must not be presented as a proof of C++ parity.
   `crates/compiler/src/tests.rs`, described in
   [`docs/fad-note-en.md`](../docs/fad-note-en.md) §2.1.
 - Compatibility impact: DSPs using this form are `faust-rs` programs and must
-  not be expected to compile with the pinned C++ compiler.
+  not be expected to compile with the pinned C++ compiler. `fad` is a
+  reserved word of the faust-rs grammar, where both C++ compilers accept it
+  as an identifier: a C++ program naming something `fad` fails to parse, and
+  since 2026-10-16 the parse error says so and proposes a rename
+  (`crates/compiler/tests/diagnostic_hints.rs`).
 - Evidence:
   [`docs/fad-rad-synthesis-en.md`](../docs/fad-rad-synthesis-en.md),
   [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),
@@ -99,7 +103,10 @@ verified Rust extension must not be presented as a proof of C++ parity.
 - Compatibility impact: the source form and `BlockReverseAD` semantics have no
   pinned C++ source/backend oracle. Validation uses symbolic identities,
   FAD/RAD agreement, finite differences, and optimized/unoptimized runtime
-  comparisons.
+  comparisons. `rad` is a reserved word of the faust-rs grammar, where both C++ compilers
+  accept it as an identifier: a C++ program naming something `rad` (an angle,
+  a radius) fails to parse, and since 2026-10-16 the parse error says so and
+  proposes a rename (`crates/compiler/tests/diagnostic_hints.rs`).
 - Evidence: [`docs/rad-note-en.md`](../docs/rad-note-en.md),
   [`docs/rad-usage-en.md`](../docs/rad-usage-en.md), and
   `crates/compiler/tests/rad_runtime.rs`.
@@ -357,6 +364,19 @@ must run unchanged with Faust C++ should not pass them.
   (until 2026-10-10;
   [the 2026-10-08 audit, W6](foreign-functions-cli-depth-and-cost-correction-plan-2026-10-08-en.md#w6--diagnose-bare-foreign-statements-without-invented-definitions-p2)).
   No accepted syntax changed.
+  Since 2026-10-16 three parse and propagation errors say more than C++
+  (points 7 to 9 of the faust-coopiano port's `faust-rs-issues/RAPPORT.md`,
+  outside this repository): a faust-rs reserved word used as a name (`fad`, `rad`,
+  `cinput(s)`, `coutput(s)`, and `ondemand`, `upsampling`, `downsampling`,
+  which the C++ reference branch reserves too but the C++ releases do not)
+  is named as such with a rename proposed; a unary minus before a primitive
+  (`-max(1, 2)`) or before an access (`-L.g(2, k)`, read `(0 - L).g`) states
+  the rule and proposes `0 - …`, the access error now located at the `-`;
+  and an arity error on a composition built by evaluation is located at the
+  composition the program writes, through the evaluator's
+  `EvalStats::composition_origins`, instead of the first located node inside
+  the function it called (none when two places built it). C++ gives no
+  position for the last two. Evidence: `crates/compiler/tests/diagnostic_hints.rs`.
 - Evidence: [`docs/faust-error-model-en.md`](../docs/faust-error-model-en.md)
   and
   [`docs/diagnostics-codes-reference-en.md`](../docs/diagnostics-codes-reference-en.md);

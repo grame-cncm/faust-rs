@@ -1958,6 +1958,7 @@ fn ParseState::signed_float_from_token
 fn ParseState::signed_int_from_token
 fn ParseState::split_from_token
 fn ParseState::symbol_from_token
+fn ParseState::unary_minus_from_token
 fn ParseState::uqstring_from_token
 fn ParseState::waveform_box_from_ctx
 fn ParserCtx::accept_definition
