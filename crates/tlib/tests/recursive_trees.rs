@@ -251,3 +251,48 @@ fn pair_children(arena: &TreeArena, id: tlib::TreeId) -> Option<(tlib::TreeId, t
         _ => None,
     }
 }
+
+#[test]
+fn contains_recursion_marks_recursion_nodes_and_everything_above_them() {
+    // The kContainsRec bit of C++ tlib: a recursion node occurs in the tree.
+    let mut arena = TreeArena::new();
+    let x = arena.symbol("x");
+    let y = arena.symbol("y");
+    let plain = pair(&mut arena, x, y);
+    assert!(!arena.contains_recursion(x));
+    assert!(!arena.contains_recursion(plain));
+    assert!(!arena.contains_recursion(arena.nil()));
+
+    // De Bruijn form: the reference, the binder, and their ancestors.
+    let r1 = de_bruijn_ref(&mut arena, 1);
+    let body = pair(&mut arena, r1, x);
+    let rec = de_bruijn_rec(&mut arena, body);
+    let above = pair(&mut arena, plain, rec);
+    for id in [r1, body, rec, above] {
+        assert!(arena.contains_recursion(id), "{id:?}");
+    }
+
+    // Symbolic form, where a self-reference is SYMREF(var): true inside the
+    // definition as outside it.
+    let sym = de_bruijn_to_sym(&mut arena, rec).expect("closed tree");
+    let (var, sym_body) = match_sym_rec(&arena, sym).expect("SYMREC");
+    let self_ref = sym_ref(&mut arena, var);
+    assert!(arena.contains_recursion(self_ref));
+    assert!(arena.contains_recursion(sym_body));
+    assert!(arena.contains_recursion(sym));
+    let rebuilt = sym_rec(&mut arena, var, plain);
+    assert!(
+        arena.contains_recursion(rebuilt),
+        "SYMREC is a recursion node itself"
+    );
+
+    // Hash-consing returns the same node, with the same bit.
+    let again = pair(&mut arena, x, y);
+    assert_eq!(again, plain);
+    assert!(!arena.contains_recursion(again));
+    let triple = arena.intern_tag("TRIPLE");
+    let wide = arena.intern(NodeKind::Tag(triple), &[x, y, rec]);
+    assert!(arena.contains_recursion(wide), "arity >= 3 propagates too");
+    let flat = arena.intern(NodeKind::Tag(triple), &[x, y, plain]);
+    assert!(!arena.contains_recursion(flat));
+}

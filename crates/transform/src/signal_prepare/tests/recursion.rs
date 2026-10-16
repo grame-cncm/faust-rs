@@ -125,9 +125,10 @@ fn prepare_signals_for_fir_keeps_integer_recursive_min_feedback_int() {
         panic!("prepared body should stay SIGMIN");
     };
     assert_eq!(match_sig(&prepared.arena, cap), SigMatch::Int(3));
-    let SigMatch::BinOp(_, prev, inc) = match_sig(&prepared.arena, sum) else {
+    let SigMatch::BinOp(_, lhs, rhs) = match_sig(&prepared.arena, sum) else {
         panic!("prepared min lhs should stay integer addition");
     };
+    let (prev, inc) = feedback_and_increment(&prepared.arena, lhs, rhs);
     assert!(
         !matches!(match_sig(&prepared.arena, prev), SigMatch::FloatCast(_)),
         "integer recursive feedback should not be promoted to float before SIGMIN"
@@ -169,14 +170,29 @@ fn prepare_signals_for_fir_keeps_integer_recursive_abs_feedback_int() {
     let SigMatch::Abs(sum) = match_sig(&prepared.arena, prepared_body) else {
         panic!("prepared body should stay SIGABS");
     };
-    let SigMatch::BinOp(_, prev, inc) = match_sig(&prepared.arena, sum) else {
+    let SigMatch::BinOp(_, lhs, rhs) = match_sig(&prepared.arena, sum) else {
         panic!("prepared abs operand should stay integer addition");
     };
+    let (prev, inc) = feedback_and_increment(&prepared.arena, lhs, rhs);
     assert!(
         !matches!(match_sig(&prepared.arena, prev), SigMatch::FloatCast(_)),
         "integer recursive feedback should not be promoted to float before SIGABS"
     );
     assert_eq!(match_sig(&prepared.arena, inc), SigMatch::Int(1));
+}
+
+/// The operands of `prev + 1`, in either order: normalization joins the
+/// state term `prev` last, so the sum is `1 + prev` (DIFF-BEH-023).
+fn feedback_and_increment(
+    arena: &tlib::TreeArena,
+    lhs: signals::SigId,
+    rhs: signals::SigId,
+) -> (signals::SigId, signals::SigId) {
+    if matches!(match_sig(arena, lhs), SigMatch::Int(_)) {
+        (rhs, lhs)
+    } else {
+        (lhs, rhs)
+    }
 }
 #[test]
 fn recursive_fixpoint_recomputes_body_types_after_real_widening() {

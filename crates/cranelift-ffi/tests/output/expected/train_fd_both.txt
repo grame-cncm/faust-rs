@@ -1,11 +1,11 @@
 $ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 --fd-check=both --lr 0.01 --blocks 60 --every 60 ../../tests/corpus/ddsp_rad_host_block_resonator.dsp
 exit=0
 --- stdout
-# fd-check /ddsp_rad_host_block_resonator/a1: rad 476.523699 fd 476.523699 relative error 3.27e-13
-# fd-check /ddsp_rad_host_block_resonator/a2: rad 335.872145 fd 335.872145 relative error 4.53e-13
-# fd-check: block 256 frames, step 0.001, worst relative error 4.53e-13 (tolerance 0.02)
+# fd-check /ddsp_rad_host_block_resonator/a1: rad 476.523699 fd 476.523699 relative error 4.46e-13
+# fd-check /ddsp_rad_host_block_resonator/a2: rad 335.872145 fd 335.872145 relative error 5.37e-13
+# fd-check: block 256 frames, step 0.001, worst relative error 5.37e-13 (tolerance 0.02)
 block,loss,a1,a2
-60,1.3968597593238448e-3,-1.1898469822545077,0.7113177699579064
+60,1.3968597593238424e-3,-1.1898469822545077,0.7113177699579064
 # trained /ddsp_rad_host_block_resonator/a1=-1.1898469822545077
 # trained /ddsp_rad_host_block_resonator/a2=0.7113177699579064
 # loss: block 1 4.615726e-1, block 60 1.396860e-3

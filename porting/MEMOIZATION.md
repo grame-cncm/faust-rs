@@ -1850,6 +1850,43 @@ same merge, same arena length as the full walk);
 group against N·M for the full walk); generated C++ byte-identical over the
 corpus differential recorded in `porting/journal/2026-10-16.md`.
 
+### 2.25 `tlib`: the contains-recursion bit of every node
+
+Status: implemented 2026-10-16
+
+Location:
+
+- `crates/tlib/src/arena.rs`, `TreeArena::contains_recursion`, read by
+  `normalize::mterm::state_order` (`Aterm::normalized_tree`,
+  `Mterm::complexity`)
+
+Cache:
+
+- `contains_rec: Vec<bool>`, parallel to the nodes: a `SYMREC`, `SYMREF`,
+  `DEBRUIJNREC` or `DEBRUIJNREF` node occurs in the tree. It is computed
+  once, when the node is interned, from its tag and its children's bits. Its
+  key is the node itself, and the value depends on nothing else.
+
+Lifetime: the arena's. Nodes are hash-consed and never rewritten, so an entry
+never goes stale (rule 6), and no invalidation exists.
+
+Why: the late state join of the normalized sums (DIFF-BEH-023, upstream
+`d4d51e5ed`) needs "does some state reach this term" for every term of every
+sum, and for every factor that `Mterm::complexity` weighs. `greatest_divisor`
+calls `complexity` from its pair scan. C++ reads it in O(1) off tlib's
+`kContainsRec` bit, synthesized at node creation; a walk per query would be
+O(subtree) inside that scan. A walk memoized in a property table would need
+`&mut TreeArena` in `complexity`, which takes `&TreeArena`.
+
+Cost: one byte per node, plus an OR over the children of each new node at
+intern time; hash-cons hits pay nothing. The cost was measured with a manual
+A/B of the compilation baskets; the figures are in the
+[journal entry](journal/2026-10-16.md).
+
+Validation: `contains_recursion_marks_recursion_nodes_and_everything_above_them`
+(each recursion tag, De Bruijn and symbolic forms, arities 1, 2 and 3 or more,
+hash-cons hits), and the normalize tests of DIFF-BEH-023.
+
 ## 3. Planned Additions
 
 The items below are ordered by expected leverage and safety.

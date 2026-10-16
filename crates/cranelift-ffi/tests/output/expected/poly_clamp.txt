@@ -2,7 +2,7 @@ $ faustprobe --double --nvoices 4 --quiet -n 2000 --note 60:100@0..1500 --set br
 exit=0
 --- stdout
 # frames=2000 sr=44100 nvoices=4 active_voices=1 window=0..2000 (2000 frames)
-# out0: peak=0.6224296173879112 rms=0.2978088186135508 dc=-0.0031154540252791964 finite=yes peak_at=673
+# out0: peak=0.6224296173879107 rms=0.2978088186135508 dc=-0.003115454025279687 finite=yes peak_at=673
 # clamped /synth/bright: 7 -> 1
 # clamped /faustprobe-effect/wet: 3 -> 1
 

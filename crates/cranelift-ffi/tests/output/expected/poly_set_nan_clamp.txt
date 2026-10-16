@@ -2,7 +2,7 @@ $ faustprobe --double --nvoices 4 --quiet -n 200 --note 60:100@0..150 --set brig
 exit=0
 --- stdout
 # frames=200 sr=44100 nvoices=4 active_voices=1 window=0..200 (200 frames)
-# out0: peak=0.2908708940105789 rms=0.14955398043221443 dc=-0.001587064246410204 finite=yes peak_at=167
+# out0: peak=0.2908708940105789 rms=0.14955398043221443 dc=-0.0015870642464102048 finite=yes peak_at=167
 # clamped /synth/bright: NaN -> 0.5
 
 --- stderr

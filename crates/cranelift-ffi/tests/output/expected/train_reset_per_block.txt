@@ -2,9 +2,9 @@ $ faustprobe --double -I ../../libraries --in white:1 --block 256 --train a1,a2 
 exit=0
 --- stdout
 block,loss,a1,a2
-20,2.4962182505556718e-1,-0.9666440054271905,0.42691407052357383
-# trained /ddsp_rad_host_block_resonator/a1=-0.9666440054271905
-# trained /ddsp_rad_host_block_resonator/a2=0.42691407052357383
+20,2.496218250555669e-1,-0.9666440054271906,0.426914070523574
+# trained /ddsp_rad_host_block_resonator/a1=-0.9666440054271906
+# trained /ddsp_rad_host_block_resonator/a2=0.426914070523574
 # loss: block 1 4.615726e-1, block 20 2.496218e-1
 # loss: minimum 2.496218e-1 at block 20
 

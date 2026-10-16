@@ -11,24 +11,24 @@ exit=1
         "block": 256,
         "checks": [
           {
-            "fd": 476.52369910097764,
+            "fd": 476.5236991009208,
             "fd_plain": 476.52180226776153,
             "path": "/ddsp_rad_host_block_resonator/a1",
-            "rad": 476.52369910113333,
-            "relative_error": 3.267290263915307e-13
+            "rad": 476.5236991011332,
+            "relative_error": 4.4577815685479953e-13
           },
           {
-            "fd": 335.8721449067114,
-            "fd_plain": 335.873238588718,
+            "fd": 335.87214490673983,
+            "fd_plain": 335.87323858868956,
             "path": "/ddsp_rad_host_block_resonator/a2",
             "rad": 335.8721449065594,
-            "relative_error": 4.5255108034046255e-13
+            "relative_error": 5.371717011968985e-13
           }
         ],
         "passes": false,
         "step": 0.001,
         "tolerance": 1e-30,
-        "worst_relative_error": 4.5255108034046255e-13
+        "worst_relative_error": 5.371717011968985e-13
       }
     },
     "options": {
@@ -42,5 +42,5 @@ exit=1
 }
 
 --- stderr
-faustprobe: a gradient lane departs from finite differences by 4.53e-13 at the start of the descent, above --fd-tolerance 0.000000000000000000000000000001
+faustprobe: a gradient lane departs from finite differences by 5.37e-13 at the start of the descent, above --fd-tolerance 0.000000000000000000000000000001
 

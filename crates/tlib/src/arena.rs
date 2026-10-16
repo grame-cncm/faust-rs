@@ -16,6 +16,7 @@ use std::sync::Arc;
 use ahash::AHashMap;
 
 use crate::property::{PropertyKey, PropertyStore};
+use crate::recursion::{DEBRUIJNREC_TAG, DEBRUIJNREF_TAG, SYMREC_TAG, SYMREF_TAG};
 
 /// Arena-local identifier of an interned tree node.
 ///
@@ -248,6 +249,13 @@ pub struct TreeArena {
     /// is a silent wrong answer rather than a crash. Living here, it is created
     /// and dropped with the arena and cannot outlive its keys.
     properties: PropertyStore<TreeId>,
+    /// `contains_rec[id]`: a recursion node occurs in the tree rooted at `id`
+    /// (see [`Self::contains_recursion`]). Parallel to `nodes`, computed when a
+    /// node is first interned from its tag and its children's bits.
+    contains_rec: Vec<bool>,
+    /// Tag ids of `SYMREC`, `SYMREF`, `DEBRUIJNREC` and `DEBRUIJNREF`,
+    /// interned when the arena is created so the bit costs no string lookup.
+    rec_tags: [u32; 4],
 }
 
 impl Default for TreeArena {
@@ -298,7 +306,11 @@ impl TreeArena {
             symbol_interner: SymbolTable::new(),
             nil: TreeId(0),
             properties: PropertyStore::new(),
+            contains_rec: Vec::with_capacity(nodes_capacity),
+            rec_tags: [0; 4],
         };
+        arena.rec_tags = [SYMREC_TAG, SYMREF_TAG, DEBRUIJNREC_TAG, DEBRUIJNREF_TAG]
+            .map(|tag| arena.tag_registry.intern(tag));
         let nil = arena.intern(NodeKind::Nil, &[]);
         arena.nil = nil;
         arena
@@ -346,6 +358,7 @@ impl TreeArena {
         additional_interner_n: usize,
     ) {
         self.nodes.reserve(additional_nodes);
+        self.contains_rec.reserve(additional_nodes);
         self.interner0.reserve(additional_interner0);
         self.interner1.reserve(additional_interner1);
         self.interner2.reserve(additional_interner2);
@@ -368,6 +381,7 @@ impl TreeArena {
                     return *id;
                 }
                 let id = TreeId(self.nodes.len() as u32);
+                self.contains_rec.push(self.is_rec_tag(&kind));
                 self.nodes.push(TreeNode {
                     kind: kind.clone(),
                     children: ChildList::empty(),
@@ -381,6 +395,8 @@ impl TreeArena {
                     return *id;
                 }
                 let id = TreeId(self.nodes.len() as u32);
+                let rec = self.is_rec_tag(&key.0) || self.contains_recursion(*a);
+                self.contains_rec.push(rec);
                 self.nodes.push(TreeNode {
                     kind: key.0.clone(),
                     children: ChildList::one(*a),
@@ -394,6 +410,10 @@ impl TreeArena {
                     return *id;
                 }
                 let id = TreeId(self.nodes.len() as u32);
+                let rec = self.is_rec_tag(&key.0)
+                    || self.contains_recursion(*a)
+                    || self.contains_recursion(*b);
+                self.contains_rec.push(rec);
                 self.nodes.push(TreeNode {
                     kind: key.0.clone(),
                     children: ChildList::two(*a, *b),
@@ -414,6 +434,9 @@ impl TreeArena {
                     return *id;
                 }
                 let id = TreeId(self.nodes.len() as u32);
+                let rec = self.is_rec_tag(&key.kind)
+                    || children.iter().any(|&c| self.contains_recursion(c));
+                self.contains_rec.push(rec);
                 self.nodes.push(TreeNode {
                     kind: key.kind.clone(),
                     children: ChildList::Many(children),
@@ -422,6 +445,29 @@ impl TreeArena {
                 id
             }
         }
+    }
+
+    /// True when a recursion node — `SYMREC`, `SYMREF`, `DEBRUIJNREC` or
+    /// `DEBRUIJNREF` — occurs in the tree rooted at `id`: "some state reaches
+    /// this tree". O(1), read off a bit computed when the node was interned.
+    ///
+    /// C++: `CTree::containsRec()`, the `kContainsRec` bit of
+    /// `compiler/tlib/tree.hh` (upstream Faust 2.90; the pinned reference
+    /// predates it). Upstream sets it on `SYMREC`, `DEBRUIJN` and `DEBRUIJNREF`;
+    /// `SYMREF` is added here because faust-rs writes a self-reference inside a
+    /// definition as `proj(i, SYMREF(var))` where C++ reuses the rec node, and
+    /// the bit must stay true inside a definition as outside it. Unknown ids
+    /// read `false`.
+    #[must_use]
+    pub fn contains_recursion(&self, id: TreeId) -> bool {
+        self.contains_rec
+            .get(id.0 as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn is_rec_tag(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Tag(tag) if self.rec_tags.contains(tag))
     }
 
     /// List constructor equivalent to C++ `cons(a, b)`.

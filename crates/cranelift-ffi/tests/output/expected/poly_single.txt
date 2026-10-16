@@ -2,7 +2,7 @@ $ faustprobe --nvoices 2 --quiet -n 2000 --note 60:100@0..1500 tests/output/dsp/
 exit=0
 --- stdout
 # frames=2000 sr=44100 nvoices=2 active_voices=1 window=0..2000 (2000 frames)
-# out0: peak=0.3082909 rms=0.1622052244344866 dc=-0.0001870340880159347 finite=yes peak_at=336
+# out0: peak=0.3082909 rms=0.1622052214082224 dc=-0.00018703146040570574 finite=yes peak_at=336
 
 --- stderr
 

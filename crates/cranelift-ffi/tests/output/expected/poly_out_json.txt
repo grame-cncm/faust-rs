@@ -5,10 +5,10 @@ exit=0
   "active_voices": 1,
   "channels": [
     {
-      "dc": -0.003847309279744965,
-      "peak": 0.307983519683269,
+      "dc": -0.0038473092797452965,
+      "peak": 0.3079835196832688,
       "peak_at": 673,
-      "rms": 0.16283698147660433,
+      "rms": 0.1628369814766043,
       "subnormal": 0,
       "subnormal_at": null
     }
@@ -27,4 +27,4 @@ exit=0
 --- stderr
 
 --- file <TMP>/_p.npy
-bytes=12128 lines=33 fnv1a64=16974075c779b6f3
+bytes=12128 lines=28 fnv1a64=7a5b39e4ac8d6bf8

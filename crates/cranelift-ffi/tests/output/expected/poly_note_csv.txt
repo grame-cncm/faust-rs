@@ -9,5 +9,5 @@ frame,out0
 
 --- stderr
 # frames=400 sr=44100 nvoices=4 active_voices=1 window=0..400 (400 frames)
-# out0: peak=0.2519298439389379 rms=0.10230877989478324 dc=-0.005103144448525455 finite=yes peak_at=267
+# out0: peak=0.2519298439389379 rms=0.10230877989478324 dc=-0.005103144448525466 finite=yes peak_at=267
 

@@ -2458,6 +2458,7 @@ fn TreeArena::clone_forest_from
 fn TreeArena::clone_forest_from_with_mapping
 fn TreeArena::clone_subtree_from
 fn TreeArena::cons
+fn TreeArena::contains_recursion
 fn TreeArena::float
 fn TreeArena::get_symbol
 fn TreeArena::hd

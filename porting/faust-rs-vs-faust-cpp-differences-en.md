@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -856,6 +856,61 @@ must run unchanged with Faust C++ should not pass them.
   the left-associated products bit for bit at optimization levels 0 and
   max), faust-coopiano `faust-rs-issues/RAPPORT.md` point 4, and the
   [journal entry](journal/2026-10-16.md).
+
+### DIFF-BEH-023 — normalized sums join the terms that depend on state last
+
+- Status: `adapted` (follows upstream Faust 2.90, not the pinned reference),
+  2026-10-16.
+- The pinned reference (`8eebea429`, Faust 2.84.3) buckets the terms of a
+  normalized sum by order (numbers, constants, user interface, audio) and
+  folds them from the highest order down. A sum mixing a constant, a control
+  and a recursion's state, such as `1 - c - o`, is therefore
+  `(1 - o) - c`: the slow `1 - c` is not one subtree and cannot be hoisted,
+  and `1 - o` rounds. Upstream commit `d4d51e5ed` (Yann Orlarey,
+  2026-08-09) adds a fifth order, "audio-recursive", for the terms that a
+  recursion node reaches (tlib's `kContainsRec` bit). Those terms join the
+  sum last, as the right operand: `(1 - c) - o`.
+- Implemented, as upstream:
+  - `TreeArena::contains_recursion`, the same bit, set when a node is
+    interned. It is true for `SYMREC`, `SYMREF`, `DEBRUIJNREC` and
+    `DEBRUIJNREF`, `SYMREF` included because faust-rs writes a
+    self-reference as `proj(i, SYMREF(var))`.
+  - `Aterm::normalized_tree` joins those terms last.
+  - `Mterm::complexity` weighs such a factor one more than an audio-rate
+    one, which steers `greatest_divisor` as upstream's uncapped `sigOrder`
+    does.
+  - The grouping of products keeps the audio level (upstream's cap).
+  - A two-term sum `{slow, state}` keeps its operand order.
+- Compatibility impact: generated code differs from the pinned reference in
+  the programs whose sums mix a state term with several other terms:
+  210 of the 632 programs under `tests/` and `examples/` (215 in `-vec`,
+  five of them by renamed temporaries only). On the changed programs,
+  faustprobe in single precision gives:
+  - 191 bit-exact;
+  - 12 that differ by rounding, at most 1e-4 of the peak;
+  - 3 sensitive to rounding (a phase reading a noise table, phase
+    unwrapping, an optimizer that restarts on thresholds), which diverge in
+    single precision; the first two agree in double, and the third already
+    diverges between single and double with the old normal form.
+
+  The slow part of such sums is hoisted to block rate. Values
+  change by rounding: a rate-limited follower now reaches 0 exactly where it
+  stopped at the rounding error of `1 - o`. That rounding error kept
+  faust-coopiano's damped sympathetic strings awake after the first pedal.
+  Golden C++ snapshots taken from the pinned reference differ where these
+  sums occur.
+- Evidence:
+  - `crates/normalize/src/aterm.rs` tests (`a_state_term_joins_the_sum_last`,
+    operand order, mixed sums, complexity weight; the `greatest_divisor`
+    property test now includes a state factor);
+  - `crates/tlib/tests/recursive_trees.rs`
+    (`contains_recursion_marks_recursion_nodes_and_everything_above_them`);
+  - `crates/compiler/tests/late_state_join.rs` (the hoisted `1 - c` in C++,
+    and the follower reaching 0 exactly in the interpreter at optimization
+    levels 0 and max);
+  - [plan](aterm-late-state-join-port-plan-2026-10-16-en.md),
+    faust-coopiano `faust-rs-issues/RAPPORT.md` point 15, and the
+    [journal entry](journal/2026-10-16.md).
 
 ## 6. Additional backends and delivery forms
 

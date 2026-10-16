@@ -25,7 +25,7 @@ use signals::{BinOp, SigBuilder, SigId, SigMatch, match_sig};
 use sigtype::SigType;
 use tlib::TreeArena;
 
-use crate::mterm::{self, Mterm, add_nums, gcd, is_num, is_zero, sig_order, sub_nums};
+use crate::mterm::{self, Mterm, add_nums, gcd, is_num, is_zero, state_order, sub_nums};
 
 // ─── Aterm ────────────────────────────────────────────────────────────────────
 
@@ -178,9 +178,18 @@ impl Aterm {
     /// Reconstruct the canonical additive signal tree.
     ///
     /// Terms are separated into positive (`P`) and negative (`N`) buckets by
-    /// variability order (0=Konst, 1=Block, 2=Samp).  The buckets are then
-    /// folded from highest to lowest order using [`add_terms_with_sign`], with
-    /// the constant bucket at order 0 forming the initial sum via subtraction.
+    /// order ([`state_order`]: 0=Konst, 1=Block, 2=Samp, 3=depends on state).
+    /// The constant bucket at order 0 forms the initial sum; the buckets of
+    /// orders 2 and 1 are folded onto it from highest to lowest, each term
+    /// joining as the left operand, using [`add_terms_with_sign`]; the terms
+    /// that depend on state join last, as the right operand.
+    ///
+    /// That late state join (upstream commit `d4d51e5ed`, posterior to the
+    /// pinned reference; registry DIFF-BEH-023) keeps the state-to-state path
+    /// of a recursion clear of any foreign addition and leaves the slow part
+    /// of the sum one subtree, which can be hoisted: `1 - c - o` is
+    /// `(1 - c) - o`, where the reference builds `(1 - o) - c`. A two-term sum
+    /// `{slow, state}` keeps its historical operand order `slow + state`.
     ///
     /// C++: `Tree aterm::normalizedTree() const`.
     pub(crate) fn normalized_tree(
@@ -188,7 +197,9 @@ impl Aterm {
         arena: &mut TreeArena,
         types: &HashMap<SigId, SigType>,
     ) -> SigId {
-        const ORDERS: usize = 3;
+        // Orders 0..=2 are folded as in the reference; order 3 joins last.
+        const STATE: usize = 3;
+        const ORDERS: usize = STATE + 1;
         let zero = SigBuilder::new(arena).int(0);
         let mut p = [zero; ORDERS]; // positive terms by order
         let mut n = [zero; ORDERS]; // negative terms (made positive) by order
@@ -200,11 +211,11 @@ impl Aterm {
             if m.is_negative(arena) {
                 // negative_mode=true: invert sign for the tree
                 let t = m.normalized_tree(arena, types, false, true);
-                let ord = sig_order(types, t) as usize;
+                let ord = state_order(arena, types, t) as usize;
                 n[ord] = simplifying_add(arena, n[ord], t);
             } else {
                 let t = m.normalized_tree(arena, types, false, false);
-                let ord = sig_order(types, t) as usize;
+                let ord = state_order(arena, types, t) as usize;
                 p[ord] = simplifying_add(arena, p[ord], t);
             }
         }
@@ -222,9 +233,9 @@ impl Aterm {
             add_terms_with_sign(arena, true, p[0], false, n[0])
         };
 
-        // Fold from highest to lowest order.
-        // C++: loop from order=3 down to 1; here from (ORDERS-1) down to 1.
-        for order in (1..ORDERS).rev() {
+        // Fold from highest to lowest order, the state terms excepted.
+        // C++: loop from order=3 down to 1; here from Samp (2) down to 1.
+        for order in (1..STATE).rev() {
             let (s, r) = add_terms_with_sign(arena, false, n[order], sign, sum);
             sign = s;
             sum = r;
@@ -233,6 +244,14 @@ impl Aterm {
             sign = s;
             sum = r;
         }
+
+        // The state terms join last, as the right operand (SUM first).
+        let (s, r) = add_terms_with_sign(arena, sign, sum, false, n[STATE]);
+        sign = s;
+        sum = r;
+        let (s, r) = add_terms_with_sign(arena, sign, sum, true, p[STATE]);
+        sign = s;
+        sum = r;
 
         if !sign {
             // Result is negative: wrap in -1 * SUM.
@@ -366,7 +385,8 @@ pub(crate) fn simplifying_add(arena: &mut TreeArena, t1: SigId, t2: SigId) -> Si
 /// complexity, for [`Aterm::greatest_divisor`].
 ///
 /// `gcd(m1, m2).complexity()` adds 1 when the coefficients have the same
-/// magnitude and that magnitude is not 1, and `(1 + order) · |e|` for each
+/// magnitude and that magnitude is not 1, and `(1 + order) · |e|` (order from
+/// [`state_order`], at least 0, so the term is positive) for each
 /// factor common to both terms with exponents of the same sign (`e` their
 /// common exponent, never 0 then). It is 0 for every other pair, and a pair of
 /// complexity 0 never replaces the current best. So the candidate pairs are
@@ -732,6 +752,96 @@ mod tests {
         )
     }
 
+    /// `proj(0, SYMREF(v))'`: the delayed output of a recursion, as a
+    /// symbolic recursive body reads its own state.
+    fn state_term(a: &mut TreeArena) -> SigId {
+        let var = a.symbol("W");
+        let self_ref = tlib::sym_ref(a, var);
+        let proj = SigBuilder::new(a).proj(0, self_ref);
+        SigBuilder::new(a).delay1(proj)
+    }
+
+    /// `1`, a control `c`, an audio input `x` and a state term `o`, typed.
+    fn late_join_terms(a: &mut TreeArena, t: &mut HashMap<SigId, SigType>) -> [SigId; 4] {
+        let one = SigBuilder::new(a).int(1);
+        let c = SigBuilder::new(a).input(1);
+        let x = SigBuilder::new(a).input(2);
+        let o = state_term(a);
+        t.insert(one, simple(Variability::Konst));
+        t.insert(c, simple(Variability::Block));
+        t.insert(x, simple(Variability::Samp));
+        t.insert(o, simple(Variability::Samp));
+        [one, c, x, o]
+    }
+
+    #[test]
+    fn a_state_term_joins_the_sum_last() {
+        // `1 - c - o`: the reference builds `(1 - o) - c`, so `1 - o` rounds
+        // and the slow `1 - c` cannot be hoisted; upstream d4d51e5ed builds
+        // `(1 - c) - o` (faust-coopiano's damper openness never reached 0).
+        let mut a = arena();
+        let mut t = types();
+        let [one, c, _, o] = late_join_terms(&mut a, &mut t);
+        let one_minus_c = SigBuilder::new(&mut a).sub(one, c);
+        let sum = SigBuilder::new(&mut a).sub(one_minus_c, o);
+        let tree = Aterm::from_sig(&mut a, &t, sum).normalized_tree(&mut a, &t);
+        assert_eq!(tree, sum, "{}", signals::dump_sig_readable(&a, tree));
+    }
+
+    #[test]
+    fn a_slow_and_a_state_term_keep_their_operand_order() {
+        // `{slow, state}` keeps `slow + state`, its historical shape.
+        let mut a = arena();
+        let mut t = types();
+        let [_, c, _, o] = late_join_terms(&mut a, &mut t);
+        for sum in [
+            SigBuilder::new(&mut a).add(c, o),
+            SigBuilder::new(&mut a).add(o, c),
+        ] {
+            let tree = Aterm::from_sig(&mut a, &t, sum).normalized_tree(&mut a, &t);
+            let expected = SigBuilder::new(&mut a).add(c, o);
+            assert_eq!(tree, expected, "{}", signals::dump_sig_readable(&a, tree));
+        }
+    }
+
+    #[test]
+    fn the_state_term_comes_after_the_audio_and_slow_terms() {
+        // `o + x + c`: the off-path terms form `c + x`, then `+ o`.
+        let mut a = arena();
+        let mut t = types();
+        let [_, c, x, o] = late_join_terms(&mut a, &mut t);
+        let ox = SigBuilder::new(&mut a).add(o, x);
+        let sum = SigBuilder::new(&mut a).add(ox, c);
+        let tree = Aterm::from_sig(&mut a, &t, sum).normalized_tree(&mut a, &t);
+        let cx = SigBuilder::new(&mut a).add(c, x);
+        let expected = SigBuilder::new(&mut a).add(cx, o);
+        assert_eq!(tree, expected, "{}", signals::dump_sig_readable(&a, tree));
+        // A negative state term joins as a subtraction on the right.
+        let x_minus_o = SigBuilder::new(&mut a).sub(x, o);
+        let sum = SigBuilder::new(&mut a).add(x_minus_o, c);
+        let tree = Aterm::from_sig(&mut a, &t, sum).normalized_tree(&mut a, &t);
+        let expected = SigBuilder::new(&mut a).sub(cx, o);
+        assert_eq!(tree, expected, "{}", signals::dump_sig_readable(&a, tree));
+    }
+
+    #[test]
+    fn a_state_factor_weighs_one_more_than_an_audio_one() {
+        let mut a = arena();
+        let mut t = types();
+        let [_, c, x, o] = late_join_terms(&mut a, &mut t);
+        let one = SigBuilder::new(&mut a).int(1);
+        let weight = |a: &mut TreeArena, f: SigId| {
+            Mterm {
+                coef: one,
+                factors: BTreeMap::from([(f, 1)]),
+            }
+            .complexity(a, &t)
+        };
+        assert_eq!(weight(&mut a, c), 2);
+        assert_eq!(weight(&mut a, x), 3);
+        assert_eq!(weight(&mut a, o), 4);
+    }
+
     #[test]
     fn greatest_divisor_matches_the_full_pair_scan() {
         // Random aterms over a few factors of different orders, exponents of
@@ -741,7 +851,9 @@ mod tests {
         // return the same gcd (hence the same tie-break) and create no node.
         let mut a = arena();
         let mut t = types();
-        let pool: Vec<SigId> = (0..6).map(|i| SigBuilder::new(&mut a).input(i)).collect();
+        let mut pool: Vec<SigId> = (0..6).map(|i| SigBuilder::new(&mut a).input(i)).collect();
+        // A factor that depends on state, which weighs one more.
+        pool.push(state_term(&mut a));
         t.insert(pool[0], simple(Variability::Konst));
         t.insert(pool[1], simple(Variability::Block));
         let mut coefs: Vec<SigId> = [1, -1, 2, -2, 3, 0]
