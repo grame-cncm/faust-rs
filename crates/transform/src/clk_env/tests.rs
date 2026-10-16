@@ -364,3 +364,216 @@ fn fixpoint_least_solution_keeps_untouched_group_at_audio_rate() {
     assert_eq!(map.group_env(var), Some(None));
     assert_eq!(map.env(out), Some(None));
 }
+
+// ── Shared memo per round ────────────────────────────────────────────────────
+
+/// Deterministic xorshift generator for the property test below.
+struct Rng(u64);
+
+impl Rng {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n as u64) as usize
+    }
+}
+
+/// Random recursion forests over a small domain tree: groups nested in
+/// definitions and reading the variables around them, groups shared between
+/// definitions, clocked annotations and `ondemand` wrappers, so that groups
+/// are pulled into domains over several rounds and some programs fail.
+struct ForestGen {
+    rng: Rng,
+    fresh: i64,
+    scope: Vec<SigId>,
+    built: Vec<SigId>,
+    domains: usize,
+}
+
+impl ForestGen {
+    fn group(&mut self, arena: &mut TreeArena, depth: usize) -> SigId {
+        self.fresh += 1;
+        let var = arena.int(10_000 + self.fresh);
+        self.scope.push(var);
+        let mut defs = vec![self.expr(arena, depth)];
+        if self.rng.below(3) == 0 {
+            defs.push(self.expr(arena, depth));
+        }
+        self.scope.pop();
+        let body = vec_to_list(arena, &defs);
+        let group = sym_rec(arena, var, body);
+        self.built.push(group);
+        group
+    }
+
+    fn expr(&mut self, arena: &mut TreeArena, depth: usize) -> SigId {
+        match self.rng.below(9) {
+            0 => {
+                let k = self.rng.below(3) as i32;
+                SigBuilder::new(arena).input(k)
+            }
+            1 | 2 => {
+                let var = self.scope[self.rng.below(self.scope.len())];
+                let reference = sym_ref(arena, var);
+                let projection = SigBuilder::new(arena).proj(0, reference);
+                SigBuilder::new(arena).delay1(projection)
+            }
+            3 if depth > 0 => {
+                let (x, y) = (self.expr(arena, depth - 1), self.expr(arena, depth - 1));
+                SigBuilder::new(arena).binop(BinOp::Add, x, y)
+            }
+            4 if depth > 0 => {
+                let group = self.group(arena, depth - 1);
+                SigBuilder::new(arena).proj(0, group)
+            }
+            5 if !self.built.is_empty() => {
+                let group = self.built[self.rng.below(self.built.len())];
+                SigBuilder::new(arena).proj(0, group)
+            }
+            6 if depth > 0 => {
+                let env = token(arena, self.rng.below(self.domains));
+                let inner = self.expr(arena, depth - 1);
+                SigBuilder::new(arena).clocked(env, inner)
+            }
+            7 if depth > 0 => {
+                let d = self.rng.below(self.domains);
+                let clock = SigBuilder::new(arena).input(0);
+                let out = self.expr(arena, depth - 1);
+                let wrapper = make_ondemand(arena, d, clock, &[out]);
+                SigBuilder::new(arena).proj(0, wrapper)
+            }
+            _ => SigBuilder::new(arena).int(self.rng.below(3) as i32),
+        }
+    }
+}
+
+#[test]
+fn a_memo_shared_by_the_groups_of_a_round_gives_the_per_group_fixpoint() {
+    // Domain tree: 0 under nil, 1 and 2 under 0, 3 under 1.
+    let (mut converged, mut failed, mut multi_round) = (0, 0, 0);
+    for seed in 1..=400u64 {
+        let mut arena = TreeArena::new();
+        let domains = make_domains(&[None, Some(0), Some(0), Some(1)], &mut arena);
+        let mut generator = ForestGen {
+            rng: Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1),
+            fresh: 0,
+            scope: Vec::new(),
+            built: Vec::new(),
+            domains: 4,
+        };
+        let outputs: Vec<SigId> = (0..2)
+            .map(|_| {
+                let group = generator.group(&mut arena, 4);
+                SigBuilder::new(&mut arena).proj(0, group)
+            })
+            .collect();
+        let groups = super::collect_rec_groups(&arena, &outputs).expect("groups");
+        let shared = super::find_fixpoint(&arena, &domains, &groups);
+        let reference = super::find_fixpoint_per_group(&arena, &domains, &groups);
+        assert_eq!(shared, reference, "seed {seed}");
+        match shared {
+            Ok(hypothesis) => {
+                converged += 1;
+                if hypothesis.values().any(Option::is_some) {
+                    multi_round += 1;
+                }
+            }
+            Err(_) => failed += 1,
+        }
+    }
+    assert!(converged > 100, "too few converging forests: {converged}");
+    assert!(failed > 50, "too few failing forests: {failed}");
+    assert!(
+        multi_round > 50,
+        "too few groups pulled into a domain: {multi_round}"
+    );
+}
+
+#[test]
+fn a_round_infers_each_node_once_whatever_the_groups_reaching_it() {
+    std::thread::Builder::new()
+        .stack_size(256 << 20)
+        .spawn(a_round_infers_each_node_once_whatever_the_groups_reaching_it_body)
+        .expect("spawn")
+        .join()
+        .expect("the test thread panicked");
+}
+
+fn a_round_infers_each_node_once_whatever_the_groups_reaching_it_body() {
+    // N groups whose definitions all read one closed subexpression of M
+    // nodes and the group before: a fresh memo per group inferred the
+    // subexpression and the whole chain below once per group, N·(M + N) per
+    // round; a memo shared by the round infers each node once.
+    let (n, m) = (200, 200);
+    let mut arena = TreeArena::new();
+    let domains = make_domains(&[None], &mut arena);
+    let mut closed = SigBuilder::new(&mut arena).input(1);
+    for i in 0..m {
+        let mut b = SigBuilder::new(&mut arena);
+        let k = b.int(i);
+        closed = b.binop(BinOp::Add, closed, k);
+    }
+    let mut previous = SigBuilder::new(&mut arena).input(0);
+    for k in 0..n {
+        let var = arena.int(20_000 + i64::from(k));
+        let reference = sym_ref(&mut arena, var);
+        let mut b = SigBuilder::new(&mut arena);
+        let back = b.proj(0, reference);
+        let delayed = b.delay1(back);
+        let sum = b.binop(BinOp::Add, delayed, previous);
+        let def = b.binop(BinOp::Add, sum, closed);
+        let body = vec_to_list(&mut arena, &[def]);
+        let group = sym_rec(&mut arena, var, body);
+        previous = SigBuilder::new(&mut arena).proj(0, group);
+    }
+    let groups = super::collect_rec_groups(&arena, &[previous]).expect("groups");
+    super::INFERRED.with(|count| count.set(0));
+    let shared = super::find_fixpoint(&arena, &domains, &groups).expect("fixpoint");
+    let inferred = super::INFERRED.with(std::cell::Cell::get);
+    super::INFERRED.with(|count| count.set(0));
+    let reference = super::find_fixpoint_per_group(&arena, &domains, &groups).expect("fixpoint");
+    let per_group = super::INFERRED.with(std::cell::Cell::get);
+    assert_eq!(shared, reference);
+    // Everything stays at audio rate: one round, which changes nothing.
+    assert!(
+        inferred <= arena.len(),
+        "{inferred} inferences for {} nodes",
+        arena.len()
+    );
+    assert!(
+        per_group >= (n * m) as usize,
+        "the per-group reference inferred only {per_group}"
+    );
+}
+
+#[test]
+fn a_nested_group_reading_its_outer_variable_follows_it_into_the_domain() {
+    // V = symrec(v, [clocked(d0, x) + proj(0, U)]),
+    // U = symrec(u, [delay1(proj(0, ref(v)))]):
+    // V reaches d0 in round 1; U reads v, so it reaches d0 in round 2 only,
+    // which a memo kept from round 1 (where ref(v) read nil) would miss.
+    let mut arena = TreeArena::new();
+    let domains = make_domains(&[None], &mut arena);
+    let v = arena.int(30_000);
+    let u = arena.int(30_001);
+    let env0 = token(&mut arena, 0);
+    let ref_v = sym_ref(&mut arena, v);
+    let mut b = SigBuilder::new(&mut arena);
+    let back = b.proj(0, ref_v);
+    let u_def = b.delay1(back);
+    let u_body = vec_to_list(&mut arena, &[u_def]);
+    let u_group = sym_rec(&mut arena, u, u_body);
+    let mut b = SigBuilder::new(&mut arena);
+    let x = b.input(0);
+    let clocked_x = b.clocked(env0, x);
+    let u_out = b.proj(0, u_group);
+    let v_def = b.binop(BinOp::Add, clocked_x, u_out);
+    let v_body = vec_to_list(&mut arena, &[v_def]);
+    let v_group = sym_rec(&mut arena, v, v_body);
+    let out = SigBuilder::new(&mut arena).proj(0, v_group);
+
+    let map = annotate(&arena, &domains, &[out]).expect("fixpoint must converge");
+    assert_eq!(map.group_env(v), Some(Some(domain(0))));
+    assert_eq!(map.group_env(u), Some(Some(domain(0))));
+}

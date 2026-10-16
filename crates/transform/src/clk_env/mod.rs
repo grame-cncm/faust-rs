@@ -365,6 +365,12 @@ fn collect_rec_groups(arena: &TreeArena, outputs: &[SigId]) -> Result<Vec<RecGro
     Ok(groups)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Nodes inferred (memo misses) on this thread.
+    static INFERRED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// One inference sweep (`inferClkEnvWithHypothesis`) with a per-sweep memo
 /// cache and a fixed group hypothesis `H`.
 struct Inference<'a> {
@@ -515,6 +521,8 @@ impl<'a> Inference<'a> {
     }
 
     fn infer_uncached(&mut self, sig: SigId) -> Result<ClkEnv, ClkEnvError> {
+        #[cfg(test)]
+        INFERRED.with(|count| count.set(count.get() + 1));
         // Symbolic recursion forms first (they are not `SigMatch` shapes).
         if let Some((var, body_list)) = match_sym_rec(self.arena, sig) {
             return self.infer_sym_rec_group(sig, var, body_list);
@@ -722,7 +730,50 @@ impl<'a> Inference<'a> {
 }
 
 /// `findFixpoint`: Jacobi-style Kleene iteration on the group hypothesis.
+///
+/// Every group of a round is inferred against the same previous hypothesis,
+/// and the env a sweep gives a node is a function of the node and of that
+/// hypothesis alone (the graph is acyclic, references read the hypothesis):
+/// one memo serves every group of the round. C++ starts a fresh memo per
+/// group (`inferClkEnvWithHypothesis`), which re-infers the subgraph below a
+/// definition, nested groups' bodies included, once per group that reaches
+/// it; the hypotheses, the round count and the first error met in group
+/// order are the same ([`find_fixpoint_per_group`], kept as the reference,
+/// checks it in tests).
 fn find_fixpoint(
+    arena: &TreeArena,
+    domains: &ClockDomainTable,
+    groups: &[RecGroup],
+) -> Result<AHashMap<SigId, ClkEnv>, ClkEnvError> {
+    let mut hypothesis: AHashMap<SigId, ClkEnv> = groups.iter().map(|g| (g.var, None)).collect();
+
+    for _round in 0..MAX_ITERATIONS {
+        let mut next = hypothesis.clone();
+        // A node memoised for an earlier group was inferred without error,
+        // so its subtree holds no error a later group could meet first.
+        let mut sweep = Inference::new(arena, domains, &hypothesis);
+        for group in groups {
+            let mut acc = hypothesis.get(&group.var).copied().unwrap_or(None);
+            for &def in &group.defs {
+                let def_env = sweep.infer(def)?;
+                acc = max_clk_env(domains, def, acc, def_env)?;
+            }
+            next.insert(group.var, acc);
+        }
+        if next == hypothesis {
+            return Ok(hypothesis);
+        }
+        hypothesis = next;
+    }
+    Err(ClkEnvError::FixpointDiverged {
+        iterations: MAX_ITERATIONS,
+    })
+}
+
+/// The C++ iteration [`find_fixpoint`] shares a memo in: a fresh sweep per
+/// group, the reference its tests compare to.
+#[cfg(test)]
+fn find_fixpoint_per_group(
     arena: &TreeArena,
     domains: &ClockDomainTable,
     groups: &[RecGroup],

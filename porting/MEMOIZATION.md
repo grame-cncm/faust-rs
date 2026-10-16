@@ -78,7 +78,7 @@ updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
 §2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16, §2.4e
 and §2.4b updated the same day when pattern matchers became persistent, and
 §2.4b again for the size of its entries and the pinning of its stores; §2.24
-was added and §2.11 updated on 2026-10-16 too.
+was added and §2.11 and §2.20 updated on 2026-10-16 too.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -1654,6 +1654,32 @@ Validation:
   `fixpoint_least_solution_keeps_untouched_group_at_audio_rate` are the two that
   a cache surviving across rounds would break, by returning a solution that is
   not the least one.
+
+Shared by the groups of a round (updated 2026-10-16):
+
+- a sweep now serves every group of a round, not one group: all of them are
+  inferred against the same previous hypothesis, and the env a sweep gives a
+  node depends on the node and that hypothesis only (the graph is acyclic,
+  references read the hypothesis, the group seed written for a `SYMREC` is
+  overwritten by its result and cannot be reached from its own body). The
+  key is still the node, and the lifetime is still the hypothesis it was
+  computed under (rule 6); a round is that lifetime. A node memoised for an
+  earlier group was inferred without error, so the first error met in group
+  order is unchanged,
+- C++ `findFixpoint` starts a fresh memo per group, and inferring a group's
+  definitions walks the bodies of the groups nested in them: a round cost
+  the number of groups times the subgraph they reach. On faust-coopiano's
+  voice and body compiled as one program (`voice_out_drawn(…) : body`),
+  `fir-clock-analysis` took 70.5 s of 84 s; it takes 1.24 s, total 14.9 s,
+  generated C++ identical,
+- validation: `a_memo_shared_by_the_groups_of_a_round_gives_the_per_group_fixpoint`
+  (400 random forests over a domain tree, against the C++ per-group
+  iteration kept test-only as `find_fixpoint_per_group`: same hypotheses
+  and same errors), `a_round_infers_each_node_once_whatever_the_groups_reaching_it`,
+  and `a_nested_group_reading_its_outer_variable_follows_it_into_the_domain`,
+  which, with the property test, rejects a memo carried across rounds;
+  every annotation of the corpus compared with the per-group iteration,
+  recorded in `porting/journal/2026-10-16.md`.
 
 ### 2.21 `transform`: `Special` scheduling sequence summaries
 
