@@ -640,21 +640,23 @@ of their own width, the effect takes that bus, and what it returns is what the
 render, its statistics, the CSV dump and `--out` have: five voice channels into
 a stereo body make a stereo instrument. `--list-params` says so
 (`2 voice(s), 0 input(s)/voice, 2 output(s), effect: yes (5 -> 2)`). An
-explicit `--effect FILE` must take the voices' width. An inline `effect` is
-taken alone when it has that width, whatever it is, and otherwise through
-`poly-dsp.h`'s adaptor, which reconciles one voice channel with a stereo effect
-and the reverse. `poly-dsp.h` itself has no rule past two channels, so it finds
-no effect behind a five-channel voice: chaining it is this tool's
-(DIFF-CLI-011). An inline `effect` that compiles and that nothing reconciles
-is left out with a warning on stderr, rather than in silence:
+explicit `--effect FILE` must take the voices' width. An inline `effect` goes
+through `poly-dsp.h`'s adaptor, as in `faust2xxx -effect auto`: the voices'
+channels are split into the effect's inputs when it has at least as many, and
+merged into them otherwise, so one count must be a multiple of the other
+(5 -> 5, 1 -> 2, 4 -> 2, not 3 -> 2). An inline `effect` that compiles and that
+the adaptor refuses is left out with a warning on stderr, rather than in
+silence:
 
 ```text
-warning: the program's `effect` takes 2 input(s) but a voice has 3 output(s), which `poly-dsp.h`'s adaptor does not reconcile (it adapts 1 and 2 channels only): the effect is left out; pass a matching --effect FILE
+warning: the program's `effect` takes 2 input(s) but a voice has 3 output(s), which `poly-dsp.h`'s adaptor does not reconcile (one count must be a multiple of the other): the effect is left out; pass a matching --effect FILE
 ```
 
 Until this was fixed an effect that changed the channel count stopped the
 probe (`index out of bounds`), the render being sized on the voices, and one
-that the adaptor did not reconcile was dropped without a word.
+that the adaptor did not reconcile was dropped without a word. The adaptor
+itself had rules for one and two channels only, in Faust C++ too, which found
+no effect behind a five-channel voice.
 
 `--out FILE` writes the render as for a scalar program (§6), the instrument's
 outputs at the width the voices were compiled in; the statistics are then the

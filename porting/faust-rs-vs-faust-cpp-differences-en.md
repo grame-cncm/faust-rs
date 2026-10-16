@@ -231,12 +231,7 @@ must run unchanged with Faust C++ should not pass them.
   (`crates/cranelift-ffi/tests/compiler_options_probe.rs`). It
   has no C++ counterpart; the closest reference tools are the `impulse-tests`
   runners, whose protocol it reproduces byte for byte under `--protocol
-  impulse-test`. Its polyphonic mode (`--nvoices`) chains a program's inline
-  `effect` whose inputs match the voices' outputs at any width, where
-  `poly-dsp.h`'s `getEffectCode` adaptor has rules for 1 and 2 channels only
-  and finds no effect behind, say, a five-channel voice; the adaptor is still
-  used for the 1 <-> 2 cases, and an inline `effect` neither reconciles is left
-  out with a warning (`crates/cranelift-ffi/tests/poly_probe.rs`). Evidence:
+  impulse-test`. Evidence:
   [`docs/faustprobe-user-guide-en.md`](../docs/faustprobe-user-guide-en.md),
   [`faustprobe-generic-test-tool-design-2026-08-14-en.md`](faustprobe-generic-test-tool-design-2026-08-14-en.md).
   Comparisons at zero absolute and relative tolerance require bit identity,

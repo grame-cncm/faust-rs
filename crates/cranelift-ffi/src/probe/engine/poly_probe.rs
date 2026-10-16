@@ -104,7 +104,7 @@ enum InlineEffect {
     Absent,
     /// An effect that takes the voices' mix.
     Found(Probe),
-    /// An effect that compiles but cannot take the voices' mix: why.
+    /// An effect that compiles alone but that the adaptor refuses: why.
     Mismatched(String),
 }
 
@@ -117,14 +117,14 @@ impl PolyProbe {
     /// single-file instrument that declares both `process` and `effect`
     /// (`dsp_poly_factory::getEffectCode`, `poly-dsp.h:1020`): the source is
     /// re-read, wrapped in `environment{}`, and `dsp_code.effect` is
-    /// extracted (`try_extract_inline_effect` says which two wrappers are
-    /// tried). If the effect alone fails to compile — the ordinary
-    /// case for an instrument with no integrated effect — it is treated as
-    /// "no effect" rather than an error, since there is no reliable way to
-    /// distinguish "no `effect` declared" from "the wrapper is broken" from
-    /// the compiler's diagnostic text alone; pass `--effect FILE` explicitly
-    /// if that guess is wrong. An `effect` that compiles but cannot take the
-    /// voices' mix is left out with a [warning](PolyProbe::warnings).
+    /// extracted through the same `adapt`/`adaptor` combinator C++ uses. If
+    /// that wrapped compile fails — the ordinary case for an instrument with
+    /// no integrated effect — it is treated as "no effect" rather than an
+    /// error, since there is no reliable way to distinguish "no `effect`
+    /// declared" from "the wrapper is broken" from the compiler's diagnostic
+    /// text alone; pass `--effect FILE` explicitly if that guess is wrong. An
+    /// `effect` that compiles on its own but that the adaptor refuses is left
+    /// out with a [warning](PolyProbe::warnings).
     ///
     /// The effect's outputs, not the voices', are the instrument's
     /// ([`PolyProbe::outputs`]): an effect may change the channel count.
@@ -300,18 +300,10 @@ impl PolyProbe {
     /// Attempt the `environment{}` effect extraction described on
     /// [`PolyProbe::compile`] for a bus of `bus_outputs` channels.
     ///
-    /// Two wrappers, in this order:
-    ///
-    /// 1. the effect alone, `process = dsp_code.effect`, kept when its inputs
-    ///    are the bus's width. This is what the adaptor below makes of a 1 -> 1
-    ///    or 2 -> 2 chain (`adapt(1,1) = _`, `adapt(2,2) = _,_`: wires that
-    ///    vanish), and it extends that to any width: `poly-dsp.h` has no
-    ///    `adapt(n,n)` rule past two channels, so the C++ wrapper finds no
-    ///    effect behind a 5-channel voice, a faustprobe extension recorded in
-    ///    DIFF-CLI-011;
-    /// 2. otherwise `getEffectCode`'s wrapper verbatim, whose `adapt` rules
-    ///    reconcile one voice channel with a stereo effect and the reverse: a
-    ///    second compile, paid only when the widths differ.
+    /// One compile of `getEffectCode`'s wrapper. When it fails, the effect
+    /// alone (`process = dsp_code.effect`) is compiled too, to tell an
+    /// instrument without `effect` (nothing to say) from an `effect` the
+    /// adaptor refuses (a warning): a second compile, paid on that path only.
     ///
     /// # Errors
     /// An effect that compiles but whose `compute` the JIT could not lower:
@@ -330,6 +322,33 @@ impl PolyProbe {
         let compile = |wrapped: &str| {
             Self::compile_inline_effect(wrapped, import_dirs, sample_rate, double, opt_level)
         };
+        // Verbatim structure of `dsp_poly_factory::getEffectCode`
+        // (`poly-dsp.h`) as generalized in Faust `59b373452` (branch
+        // `effect-adaptor-general`, after the pinned reference): `adaptor`
+        // splits (`<:`) the process outputs into the effect inputs when there
+        // are at least as many inputs, and merges (`:>`) them otherwise, so
+        // one count must be a multiple of the other (5 -> 5, 1 -> 2, 4 -> 2;
+        // not 3 -> 2). `process` is then redefined to be the effect alone
+        // (fed by that adaptor), which is what makes `dsp_code.effect`
+        // reachable as a standalone compiled `process`.
+        let wrapped = format!(
+            "bus(n) = par(i,n,_); adapt(1,n,m) = bus(n) <: bus(m); adapt(0,n,m) = bus(n) :> bus(m);\n\
+             adaptor(F,G) = adapt(outputs(F) <= inputs(G), outputs(F), inputs(G));\n\
+             dsp_code = environment{{ {source} }};\n\
+             process = adaptor(dsp_code.process, dsp_code.effect) : dsp_code.effect;\n"
+        );
+        if let Some(effect) = compile(&wrapped)? {
+            // the adaptor's inputs are the process outputs by construction
+            return Ok(if effect.inputs() == bus_outputs {
+                InlineEffect::Found(effect)
+            } else {
+                InlineEffect::Mismatched(format!(
+                    "the program's adapted `effect` takes {} input(s) but a voice has \
+                     {bus_outputs} output(s): the effect is left out",
+                    effect.inputs()
+                ))
+            });
+        }
         let alone = format!(
             "dsp_code = environment{{ {source} }};\n\
              process = dsp_code.effect;\n"
@@ -337,37 +356,18 @@ impl PolyProbe {
         let Some(effect) = compile(&alone)? else {
             return Ok(InlineEffect::Absent);
         };
-        if effect.inputs() == bus_outputs {
-            return Ok(InlineEffect::Found(effect));
-        }
-        // Verbatim structure of `dsp_poly_factory::getEffectCode`
-        // (`poly-dsp.h:1020`): `adapt`/`adaptor` reconcile the process DSP's
-        // output arity with the effect's input arity so `dsp_code.effect` can
-        // follow `dsp_code.process` in a chain, then `process` is redefined to
-        // be the effect alone (fed by that adaptor), which is what makes
-        // `dsp_code.effect` reachable as a standalone compiled `process`.
-        let adapted = format!(
-            "adapt(1,1) = _; adapt(2,2) = _,_; adapt(1,2) = _ <: _,_; adapt(2,1) = _,_ :> _;\n\
-             adaptor(F,G) = adapt(outputs(F),inputs(G));\n\
-             dsp_code = environment{{ {source} }};\n\
-             process = adaptor(dsp_code.process, dsp_code.effect) : dsp_code.effect;\n"
-        );
-        if let Some(adapted) = compile(&adapted)?
-            && adapted.inputs() == bus_outputs
-        {
-            return Ok(InlineEffect::Found(adapted));
-        }
         // An `effect` was declared and compiles: dropping it in silence would
         // render a dry instrument that looks like the intended one.
         Ok(InlineEffect::Mismatched(format!(
             "the program's `effect` takes {} input(s) but a voice has {bus_outputs} \
-             output(s), which `poly-dsp.h`'s adaptor does not reconcile (it adapts 1 \
-             and 2 channels only): the effect is left out; pass a matching --effect FILE",
+             output(s), which `poly-dsp.h`'s adaptor does not reconcile (one count must \
+             be a multiple of the other): the effect is left out; pass a matching \
+             --effect FILE",
             effect.inputs()
         )))
     }
 
-    /// One wrapper of [`PolyProbe::try_extract_inline_effect`], compiled and
+    /// A wrapper of [`PolyProbe::try_extract_inline_effect`], compiled and
     /// instantiated; `None` when the front end rejects it, including "no
     /// `effect` declared".
     ///
@@ -426,7 +426,7 @@ impl PolyProbe {
     }
 
     /// What the construction left out without failing: an inline `effect`
-    /// that cannot take the voices' mix. Empty when nothing was.
+    /// the adaptor refuses. Empty when nothing was.
     #[must_use]
     pub fn warnings(&self) -> &[String] {
         &self.warnings

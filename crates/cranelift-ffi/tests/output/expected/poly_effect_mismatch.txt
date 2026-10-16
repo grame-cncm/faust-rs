@@ -7,5 +7,5 @@ exit=0
 # out2: peak=0.1968503937007874 rms=0.1391942482650684 dc=0.09842519685039372 finite=yes peak_at=0
 
 --- stderr
-warning: the program's `effect` takes 2 input(s) but a voice has 3 output(s), which `poly-dsp.h`'s adaptor does not reconcile (it adapts 1 and 2 channels only): the effect is left out; pass a matching --effect FILE
+warning: the program's `effect` takes 2 input(s) but a voice has 3 output(s), which `poly-dsp.h`'s adaptor does not reconcile (one count must be a multiple of the other): the effect is left out; pass a matching --effect FILE
 

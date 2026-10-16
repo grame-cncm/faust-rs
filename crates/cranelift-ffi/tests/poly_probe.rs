@@ -359,9 +359,10 @@ fn an_effect_that_changes_the_channel_count_gives_the_instrument_its_outputs() {
 }
 
 #[test]
-fn an_inline_effect_is_chained_at_any_width_and_left_out_with_a_warning_when_none_fits() {
-    // `poly-dsp.h`'s adaptor has no `adapt(3,3)`: the effect of the voices'
-    // width is chained whatever the width (a piano's regions into its body)
+fn an_inline_effect_goes_through_the_adaptor_and_one_it_refuses_is_left_out_with_a_warning() {
+    // `getEffectCode`'s adaptor splits the voices' channels into the effect's
+    // inputs when there are at least as many, and merges them otherwise:
+    // three channels pass through (a piano's regions into its body) ...
     let body = compile_file(
         "body",
         &constant_voice("_, *(0.5), *(0.25)", "_, _, _ :> _ <: _, *(0.5)"),
@@ -369,13 +370,29 @@ fn an_inline_effect_is_chained_at_any_width_and_left_out_with_a_warning_when_non
     assert!(body.has_effect() && body.warnings().is_empty());
     assert_eq!((body.bus_outputs(), body.outputs()), (3, 2));
 
-    // 1 -> 2 is the adaptor's: the voices' channel is split in two
-    let widen = compile_file("widen", &constant_voice("_", "*(0.25), *(0.75)"));
+    // ... one is split in two ...
+    let mut widen = compile_file("widen", &constant_voice("_", "*(0.25), *(0.75)"));
     assert!(widen.has_effect() && widen.warnings().is_empty());
     assert_eq!((widen.bus_outputs(), widen.outputs()), (1, 2));
+    widen.key_on(60, 127);
+    let block = widen.compute(4);
+    assert!((block[0][0] - 0.25).abs() < 1e-12 && (block[1][0] - 0.75).abs() < 1e-12);
 
-    // 3 -> 2 inputs: nothing reconciles them, and the render that follows is
-    // not the declared instrument, which the caller is told
+    // ... and four are merged into two, channel i into input i mod 2
+    let mut merge = compile_file(
+        "merge",
+        &constant_voice("_, *(0.5), *(0.25), *(0.125)", "*(1), *(10)"),
+    );
+    assert!(merge.has_effect() && merge.warnings().is_empty());
+    assert_eq!((merge.bus_outputs(), merge.outputs()), (4, 2));
+    merge.key_on(60, 127);
+    let block = merge.compute(4);
+    assert!((block[0][0] - 1.25).abs() < 1e-12, "{block:?}");
+    assert!((block[1][0] - 6.25).abs() < 1e-12, "{block:?}");
+
+    // 3 -> 2 inputs: neither count is a multiple of the other, the adaptor
+    // refuses them, and the render that follows is not the declared
+    // instrument, which the caller is told
     let mismatch = compile_file(
         "mismatch",
         &constant_voice("_, *(0.5), *(0.25)", "_, _ :> _"),
