@@ -74,7 +74,8 @@ Entries are numbered in the order they were written down, not by crate: a
 letter suffix marks a sibling of an existing entry, a new number an area the
 document had not covered. The inventory was last swept against the code on
 2026-09-11, over every commit since 2026-06-22; §2.11, §2.15 and §2.23 were
-updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11.
+updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
+§2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -207,6 +208,12 @@ Constraint:
 - the key is the evaluated rule-list `TreeId`, not the raw syntax tree,
 - this is important because lexical evaluation can change the effective rules.
 
+Payload (2026-10-16): the cached automaton is an `Rc<Automaton>`, shared with
+every `PatternMatcherValue` built from it. It is immutable once built; before,
+each evaluation of a `case`, each lookup of a name bound to a matcher and each
+read of a `boxPatternMatcher` handle copied its `Vec<State>`, a clone and a
+drop that showed in the profile of the coopiano voice.
+
 ### 2.4 `eval`: symbolic `a2sb` lowering cache
 
 Status: implemented
@@ -327,10 +334,16 @@ Validation:
   in 3.1 s, where the C++ compiler takes 6.9 s; goldens, `expand_corpus` and the
   tutorial's learning programs are unchanged.
 
-Note: this is a workaround for a representation difference, not parity. C++
-hash-conses its environment layers, so its `(tree, env)` cache hits across
-recursion levels; ours allocates a fresh layer per level. `propagate` has since
-canonicalized its own contexts (§2.16); doing the same in `eval` is §3.7.
+Note: this is a workaround for a representation difference, not parity. The
+reason C++ does not pay this cost is **not** hash-consed environments, as this
+note said until 2026-10-16: its layers are unique, `pushNewLayer` builds
+`tree(unique("ENV_LAYER"), lenv)` (`compiler/evaluate/environment.cpp`); only
+the pattern-matching barriers, `tree(BARRIER, lenv)`, are hash-consed. What
+C++ does is evaluate a bound value under the *empty* environment:
+`evalIdDef` ends with `eval(def, visited, nil)`, so the `(tree, env)` key of
+the tail of the list is `(tail, nil)` at every recursion level, and hits. The
+Rust `eval_ident_value` evaluates a bound box under the environment of the
+lookup, a fresh layer per level. See §3.7, reframed accordingly.
 
 ### 2.4d `eval`: closure interning
 
@@ -377,6 +390,125 @@ Validation:
   to 0.63×,
 - gap: no dedicated test was added; the path is exercised indirectly by the
   residual-closure cases of `crates/eval/tests/core_eval.rs`.
+
+### 2.4e `eval`: function-application memo (`gApplyMemo`)
+
+Status: implemented 2026-10-16
+
+Location:
+
+- `crates/eval/src/apply.rs`, `beta_reduce` and the head of
+  `apply_pattern_matcher_value`
+- `crates/eval/src/loop_detector.rs`, `LoopDetector::apply_memo`,
+  `apply_memo_get`, `apply_memo_insert`
+
+Cache:
+
+- `apply_memo: ahash::HashMap<ApplyMemoKey, EvalValue>`, with
+  `ApplyMemoKey { fun, env_key, args }` (`environment.rs`).
+
+C++ counterpart: `gApplyMemo`, the memo of `applyList(fun, larg)` keyed by the
+hash-consed function tree — a `closure(...)` or a `boxPatternMatcher(...)` —
+and the evaluated argument list (`compiler/evaluate/eval.cpp`, upstream
+`6789c5da8`, #1290). The reference branch `8eebea429` does not have it.
+
+Key and payload, mapping status `adapted`:
+
+- an abstraction closure: the `abstr` node, the frame key of the environment
+  the closure captured, and the one evaluated argument; the value is the
+  reduct, the body evaluated with the parameter bound. One beta-reduction
+  rather than the whole list: the rest of the list is applied by the caller,
+  with the caller's environment, which Rust's `apply_list` reads for a raw
+  `abstr` or `case` box. Memoizing the step keeps the key complete (rule 6),
+  and a curried application still hits step by step, since a hit returns the
+  same closure, over the same layer, as the miss that stored it;
+- a fresh pattern matcher: the `case` node, the frame key of the environment
+  it was evaluated in, and the list of its first `arity` arguments; the value
+  is what the selected rule evaluates to. Arguments past the arity are applied
+  to it afterwards. *Fresh* means built by `eval_case_value` and not yet
+  shared: `PatternMatcherValue::fresh_env`, cleared when the matcher is stored
+  as a `boxPatternMatcher` handle (`force_value_to_box`) or read from an
+  environment (`eval_ident_value`). A shared matcher is not keyed because
+  `apply_pattern_matcher` binds pattern variables into the rule environments
+  in place, where C++ pushes a layer per binding: every copy of the matcher
+  sees the bindings of earlier applications, so what it selects is not a
+  function of the key. That defect predates the memo and is
+  `DIFF-GAP-018`; a partially applied matcher is not keyed either;
+- only successful `Box` and `Closure` results are stored. Pattern-matcher
+  results are not, for the reason §2.4b excludes them; errors are not; an
+  application in progress has no entry, so loop and depth detection see the
+  same frames as before;
+- box functions are not keyed. C++ has no such case: an evaluated abstraction
+  is always a closure. In Rust `eval_value` never returns a raw `abstr` or
+  `case` as a box either (they are forced to `boxClosure` / `boxPatternMatcher`
+  handles, which `apply_list` sends back to the two memoized arms); what
+  remains is `(args) : f` for a first-order `f`, cheap and already served by
+  §2.5b.
+
+Why the other caches missed these repeats:
+
+- every application evaluates its body in a layer of its own (`push_scope`;
+  C++ `pushNewLayer` is unique too), so §2.4b's `(expr, env)` key of a call in
+  that body is new. A call inside a lambda,
+  `f_i(m) = f_{i-1}(m) : \(x).(x + 0.5 * f_{i-1}(m))`, was evaluated again when
+  the lambda was lowered, made a new closure over a new layer, which §2.4d
+  interned as a new handle and §2.4 lowered again: `2^D` for a chain of depth
+  `D`;
+- a `case` recursion with overlapping calls, `fib(n) = fib(n-1) + fib(n-2)` or
+  `ma.chebychev(n)`, evaluates each rule in fresh barrier layers: Fibonacci
+  growth, the case the upstream commit was written for.
+
+Lifetime and invalidation:
+
+- one evaluation pass, on the `LoopDetector`, like §2.4b;
+- an `EnvFrameKey` holds raw store and source-context pointers, so
+  `apply_memo_insert` pins the environment of every key
+  (`LoopDetector::pinned_environments`): a store freed during the pass, such
+  as the `Environment::empty()` roots of `a2sb`, cannot hand its address to a
+  new store whose layers would then hit stale entries. §2.4b's table does not
+  pin, and its `Box` entries keyed on a temporary store are open to that reuse;
+  no case has been observed, it is recorded here as an open question.
+
+Measured (release, Apple M5, 2026-10-16):
+
+- `faust-coopiano/faust-rs-issues/r01_eval_call_reuse.sh`, lambda column,
+  evaluation phase: `D = 8` 1.2 ms to 0.10 ms, `D = 14` 67 ms to 0.10 ms;
+  `D = 512` takes 2.3 ms (the same chain without lambda 1.1 ms). The three
+  other columns are unchanged;
+- `fib(22)` 194 ms to 0.19 ms, `chebychev(22)` 158 ms to 0.20 ms,
+  `chebychev(60)` 0.47 ms;
+- the coopiano voice (`faust-coopiano/dsp/coopiano_hammer.dsp`, `-double`),
+  where evaluation was 56 % of the compile time: evaluation 12.8 s to 2.0 s,
+  maximum resident set 11.1 GB to 4.5 GB, peak footprint 15.9 GB to 4.1 GB,
+  whole compilation 22.9 s to 12.1 s, generated C++ byte-identical. Rule 5:
+  107 774 abstraction probes for 52 135 hits (48 %), 70 matcher probes for
+  20 hits, 55 689 entries;
+- the compile-budget basket, release binaries before and after, best of five:
+  no case slower beyond noise (worst 1.03 on an 8 ms case); `dx7_alg5`
+  `--check` 124 ms to 76 ms (0.61), `reverb_designer` 186 ms to 136 ms (0.73),
+  the upstream commit reporting the same kind of gain on dx7;
+- instrument: `FAUST_EVAL_APPLY_PROFILE=1` prints probes and hits per kind,
+  the entries of this memo and of §2.4b, and the environment layers;
+- what remains of the voice's evaluation is §2.4b itself: 10.0 M entries at
+  about 128 bytes, `EvalValue` being 96 bytes because the pattern-matcher
+  variant is stored inline; the rehash of that table is the transient 4.3 GB
+  peak at the end of evaluation.
+
+Validation:
+
+- `crates/eval/src/apply.rs` tests, each under a 60 s budget on a worker:
+  `a_call_in_a_lambda_body_is_reduced_once` (48 levels, `2^48` without the
+  memo), `an_overlapping_case_recursion_is_linear` (`fib(40)`, its value and a
+  bound on the probes), `the_apply_memo_keys_on_the_closed_over_environment`,
+  `a_shared_matcher_does_not_answer_for_a_fresh_one`;
+- mutations rejected: the memo disabled for abstractions or for matchers (both
+  time out), the environment dropped from the abstraction key
+  (`f(2)(10)` gives 11) or from the matcher key (`g(2)(0)` gives 1), and
+  `fresh_env` kept on a stored handle (`f(3)` gives 100);
+- goldens (`xtask golden-check`, 292 cases) and the workspace tests pass;
+  `compile-budget-check` gives no verdict on the machine where this was
+  written (its calibration DSP runs under the 4 ms floor), hence the
+  by-hand basket comparison above.
 
 ### 2.5 `eval`: box simplification cache
 
@@ -1688,32 +1820,44 @@ Constraint:
 - lower expected payoff than the items above,
 - only worth adding if profiling shows repeated route decoding.
 
-### 3.7 `eval`: hash-consed environment layers
+### 3.7 `eval`: bound values evaluated under a canonical environment
 
-Status: planned, and the most structural item on this list
+Status: planned; premise corrected 2026-10-16. Until then this item was
+"hash-consed environment layers", on the premise that C++ hash-conses its
+environments. It does not: `pushNewLayer` builds
+`tree(unique("ENV_LAYER"), lenv)`, so every layer is new, as in Rust; only the
+pattern-matching barriers, `tree(BARRIER, lenv)`, are hash-consed. C++ gets its
+cross-level hits from two other places:
+
+- `evalIdDef` evaluates a bound definition under the empty environment,
+  `eval(def, visited, nil)`. A value bound by `pushValueDef` is an evaluated
+  tree, so its key is `(value, nil)` whichever layer it is found in, and a
+  closure carries its own environment;
+- `gApplyMemo`, upstream since `6789c5da8`, for applications: ported as
+  §2.4e.
 
 Target:
 
-- `crates/eval/src/environment.rs`
+- `crates/eval/src/lib.rs`, `eval_ident_value`, and the binders of
+  `apply.rs`, `iteration.rs` and `pattern_matcher.rs`.
 
 Why:
 
-- C++ hash-conses its environments, so its `(tree, env)` property table hits
-  across different calls that rebuilt the same bindings. Ours allocates a fresh
-  layer per binding, so §2.4b's key is fresh whenever an equal environment is
-  rebuilt — which is what made a list traversal cubic and forced the workaround
-  in §2.4c,
-- `propagate` already did exactly this for its own contexts (§2.16), and it is
-  what turned §2.15 from a pessimization into a win. The same construction
-  applied to `EnvLayer` would let §2.4c's fast path be an optimization rather
-  than a correctness-sensitive exception list.
+- Rust's `eval_ident_value` evaluates a bound box under the environment of the
+  lookup, a fresh layer at each recursion level, so §2.4b's key is new at each
+  level. That is what made a list traversal cubic and forced the workaround in
+  §2.4c; under one canonical environment the walk would hit as in C++, and
+  §2.4c's fast path would become an optimization rather than a
+  correctness-sensitive exception list.
 
 Constraint:
 
-- layers hold `EvalValue`s, not only tree ids, so interning needs a canonical
-  identity for closures (§2.4d supplies one) and for pattern matchers, which are
-  still host-side mutable values and are the reason §2.4b does not cache them,
-- the barrier flag and the parent link are part of the identity.
+- it is only valid if every box bound in a layer is already evaluated, or
+  carries the environment it means something in. The bindings must be
+  inventoried first: lambda parameters (evaluated in the closure's
+  environment), `apply_list` parameters, iteration indices, pattern variables
+  (subtrees of evaluated arguments), and the identifier bound to itself that
+  `eval_ident_value` treats as a shadowing sentinel.
 
 Validation:
 
@@ -1825,7 +1969,10 @@ Current order, revised 2026-09-11:
 
 1. `eval`: hash-consed environment layers (§3.7) — the last place where the
    port still pays a cost C++ does not, and the fix that would retire §2.4c's
-   exception list.
+   exception list. *Reframed 2026-10-16*: C++ does not hash-cons its layers;
+   §3.7 is now bound values evaluated under a canonical environment, as
+   `evalIdDef` does, and the repeated applications it was also expected to
+   absorb are §2.4e.
 2. `normalize`: a signal normal-form cache (§3.2), unchanged from 2026-08-06.
 3. `codegen`: occurrence counting (§3.4), now only the part §2.12b does not
    already cover.

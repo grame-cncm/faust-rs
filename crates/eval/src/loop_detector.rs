@@ -6,8 +6,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use tlib::TreeId;
 
+use crate::Environment;
 use crate::SymId;
-use crate::environment::{ClosureValue, EnvFrameKey, EvalCacheKey, EvalValue, PatternMatcherValue};
+use crate::environment::{
+    ApplyMemoKey, ClosureValue, EnvFrameKey, EvalCacheKey, EvalValue, PatternMatcherValue,
+};
 use crate::error::{DepthContext, DepthGuard, DepthLimit, DepthLimitSource, EvalError};
 
 /// Infinite loop detector for recursive symbol expansion.
@@ -154,6 +157,33 @@ pub struct LoopDetector {
     /// keeps it inside the per-pass [`LoopDetector`] so one evaluation session
     /// preserves sharing without requiring mutable properties on tree nodes.
     pub(crate) eval_cache: ahash::HashMap<EvalCacheKey, EvalValue>,
+    /// Memoized function applications: the beta-reduction of an abstraction
+    /// closure by one argument, and the rule selected by a fresh pattern
+    /// matcher for its full argument list (`apply.rs`).
+    ///
+    /// Source provenance (C++):
+    /// - `compiler/evaluate/eval.cpp`
+    /// - `applyList` / `gApplyMemo` (upstream `6789c5da8`, #1290)
+    ///
+    /// Mapping status: `adapted`. The key is [`ApplyMemoKey`]: C++ keys on the
+    /// hash-consed closure or `boxPatternMatcher` tree and the evaluated
+    /// argument list, Rust on the expression, the identity of the environment
+    /// it closes over and the arguments. [`eval_cache`](Self::eval_cache)
+    /// cannot see these repeats: its key holds the environment of the call
+    /// site, and every application evaluates its body in a layer of its own.
+    /// Only successful `Box`/`Closure` results are stored, and an application
+    /// in progress has no entry, so loop and depth detection are unchanged.
+    pub(crate) apply_memo: ahash::HashMap<ApplyMemoKey, EvalValue>,
+    /// Probes and hits of [`apply_memo`](Self::apply_memo) per
+    /// [`ApplyMemoKind`], printed at the end of the pass when
+    /// `FAUST_EVAL_APPLY_PROFILE` is set.
+    pub(crate) apply_memo_probes: [u64; 2],
+    pub(crate) apply_memo_hits: [u64; 2],
+    /// One handle per environment store named by an [`ApplyMemoKey`]: an
+    /// [`EnvFrameKey`] holds raw store and source-context pointers, and a
+    /// store freed during the pass (the empty roots of `a2sb`) could hand its
+    /// address to a new one whose layers would then hit stale entries.
+    pub(crate) pinned_environments: ahash::HashMap<(usize, usize), Environment>,
     /// Memoized verdicts of `normal_form::is_normal_form`, per tree: a tree in
     /// normal form evaluates to itself in every environment and skips the
     /// walk and the per-layer cache.
@@ -195,6 +225,19 @@ pub struct LoopDetector {
     /// The caches of constant folding, kept for the pass: a fold costs what
     /// is new in the expression, as in C++ (`crate::simplify::FoldCache`).
     pub(crate) fold: crate::simplify::FoldCache,
+}
+
+/// The two applications [`LoopDetector::apply_memo`] holds, for its counters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ApplyMemoKind {
+    /// The beta-reduction of an abstraction closure by one argument.
+    Abstraction = 0,
+    /// A fresh pattern matcher applied to its full argument list.
+    Case = 1,
+}
+
+impl ApplyMemoKind {
+    const ALL: [Self; 2] = [Self::Abstraction, Self::Case];
 }
 
 /// One dispatch of a `case` argument on numeric patterns: see
@@ -443,6 +486,10 @@ impl LoopDetector {
             control_widgets_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             evaluated_boxes: ahash::HashSet::with_hasher(ahash::RandomState::new()),
             eval_cache: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+            apply_memo: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+            apply_memo_probes: [0; 2],
+            apply_memo_hits: [0; 2],
+            pinned_environments: ahash::HashMap::with_hasher(ahash::RandomState::new()),
             structural_depth: 0,
             numeric_dispatches: Vec::new(),
             fold: crate::simplify::FoldCache::default(),
@@ -590,6 +637,70 @@ impl LoopDetector {
         self.closure_store.push(cv);
         self.closure_intern.insert(intern_key, key);
         key
+    }
+
+    /// Looks `key` up in the apply memo, counting the probe under `kind`.
+    pub(crate) fn apply_memo_get(
+        &mut self,
+        key: &ApplyMemoKey,
+        kind: ApplyMemoKind,
+    ) -> Option<EvalValue> {
+        self.apply_memo_probes[kind as usize] += 1;
+        let hit = self.apply_memo.get(key).cloned();
+        if hit.is_some() {
+            self.apply_memo_hits[kind as usize] += 1;
+        }
+        hit
+    }
+
+    /// Records the result of the application `key`, `env` being the
+    /// environment its `env_key` names.
+    ///
+    /// Pattern matchers are not stored: their rule environments are written in
+    /// place, so a stored copy would be replayed from a stale state. `env` is
+    /// pinned for the rest of the pass, so the pointers in `key` cannot be
+    /// reused by another store while the entry exists.
+    pub(crate) fn apply_memo_insert(
+        &mut self,
+        key: ApplyMemoKey,
+        env: &Environment,
+        value: &EvalValue,
+    ) {
+        if matches!(value, EvalValue::PatternMatcher(_)) {
+            return;
+        }
+        let store = (key.env_key.store_ptr, key.env_key.source_context_ptr);
+        self.pinned_environments
+            .entry(store)
+            .or_insert_with(|| env.clone());
+        self.apply_memo.insert(key, value.clone());
+    }
+
+    /// Prints the apply memo counters when `FAUST_EVAL_APPLY_PROFILE` is set.
+    pub(crate) fn report_apply_memo(&self) {
+        if std::env::var_os("FAUST_EVAL_APPLY_PROFILE").is_none() {
+            return;
+        }
+        let [abstr, case] = ApplyMemoKind::ALL.map(|kind| {
+            (
+                self.apply_memo_probes[kind as usize],
+                self.apply_memo_hits[kind as usize],
+            )
+        });
+        eprintln!(
+            "eval apply memo: abstractions {} probes {} hits, cases {} probes {} hits, \
+             {} entries; {} eval-cache entries, {} environment layers",
+            abstr.0,
+            abstr.1,
+            case.0,
+            case.1,
+            self.apply_memo.len(),
+            self.eval_cache.len(),
+            self.pinned_environments
+                .values()
+                .map(|env| env.with_store(|store| store.layers.len()))
+                .sum::<usize>(),
+        );
     }
 
     /// Retrieves a stored `ClosureValue` by cloning it out.

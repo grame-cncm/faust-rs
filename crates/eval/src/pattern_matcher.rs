@@ -56,6 +56,8 @@
 //!
 //! This order mirrors the C++ implementation and ensures deterministic matching.
 
+use std::rc::Rc;
+
 use ahash::AHashMap;
 use boxes::{BoxMatch, match_box};
 use tlib::{NodeKind, TreeArena, TreeId};
@@ -227,8 +229,10 @@ impl Automaton {
 /// Raw parser rule-lists are not sufficient keys because pattern evaluation can
 /// depend on the surrounding lexical environment. `apply_case_rules` therefore
 /// evaluates/simplifies patterns first and only then memoises the compiled
-/// automaton under the resulting hash-consed rule-list `TreeId`.
-pub(crate) type AutomatonCache = AHashMap<TreeId, Automaton>;
+/// automaton under the resulting hash-consed rule-list `TreeId`. The automaton
+/// is immutable once built and shared by `Rc` with every matcher made from it:
+/// a deep copy per `case` evaluation was a `Vec<State>` clone and its drop.
+pub(crate) type AutomatonCache = AHashMap<TreeId, Rc<Automaton>>;
 
 // ── Internal pattern helpers ──────────────────────────────────────────────────
 

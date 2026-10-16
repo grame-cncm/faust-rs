@@ -9,6 +9,7 @@
 //!   inference used during application and route construction.
 
 use super::*;
+use crate::loop_detector::ApplyMemoKind;
 
 /// Evaluates argument list nodes and returns the reversed evaluated list.
 ///
@@ -104,15 +105,10 @@ pub(crate) fn apply_value_list_value(
                 got: list_to_vec(arena, larg)?.len(),
             }),
             BoxMatch::Abstr(id, body) => {
-                let param_name = ident_name(arena, id)?;
                 let arg = arena
                     .hd(larg)
                     .ok_or(EvalError::MalformedListNode { node: larg })?;
-                let arg = eval_value(arena, arg, &closure.env, loop_detector)?;
-                let mut scoped = closure.env.push_scope();
-                let sym = arena.intern_symbol(&param_name);
-                scoped.bind_value(sym, arg);
-                let f = eval_value(arena, body, &scoped, loop_detector)?;
+                let f = beta_reduce(arena, &closure, id, body, arg, loop_detector)?;
                 let tl = arena
                     .tl(larg)
                     .ok_or(EvalError::MalformedListNode { node: larg })?;
@@ -138,11 +134,63 @@ pub(crate) fn apply_value_list_value(
     result
 }
 
+/// Applies an abstraction closure to one argument: the body evaluated with the
+/// parameter bound, memoized in [`LoopDetector::apply_memo`].
+///
+/// Source provenance (C++):
+/// - `compiler/evaluate/eval.cpp`
+/// - `applyList` (memo `gApplyMemo`) / `realApplyList` (closure branch)
+///
+/// Mapping status: `adapted`. C++ memoizes `applyList(fun, larg)` whole; Rust
+/// memoizes each beta-reduction, keyed by the abstraction, the identity of the
+/// environment it closes over and the evaluated argument, which is everything
+/// the reduct depends on. The rest of the argument list is then applied by the
+/// caller, through this memo again when the reduct is itself an abstraction,
+/// so a curried application hits step by step: a hit returns the same closure,
+/// over the same layer, as the miss that stored it. The memo matters because
+/// the body is evaluated in a layer of its own, which [`LoopDetector::eval_cache`]
+/// has never seen: a call inside a lambda body, `f(m) : \(x).(x + f(m))`, was
+/// re-evaluated at every application, `2^D` for a chain of depth `D`.
+fn beta_reduce(
+    arena: &mut TreeArena,
+    closure: &ClosureValue,
+    id: TreeId,
+    body: TreeId,
+    arg: TreeId,
+    loop_detector: &mut LoopDetector,
+) -> Result<EvalValue, EvalError> {
+    let key = ApplyMemoKey {
+        fun: closure.expr,
+        env_key: closure.env.frame_key(),
+        args: arg,
+    };
+    if let Some(hit) = loop_detector.apply_memo_get(&key, ApplyMemoKind::Abstraction) {
+        return Ok(hit);
+    }
+    let param_name = ident_name(arena, id)?;
+    let value = eval_value(arena, arg, &closure.env, loop_detector)?;
+    let mut scoped = closure.env.push_scope();
+    let sym = arena.intern_symbol(&param_name);
+    scoped.bind_value(sym, value);
+    let f = eval_value(arena, body, &scoped, loop_detector)?;
+    loop_detector.apply_memo_insert(key, &closure.env, &f);
+    Ok(f)
+}
+
 /// Advances a partially-applied pattern matcher with one or more arguments.
 ///
 /// The matcher keeps one per-rule environment vector. Every successful step may
 /// refine those environments until a final state is reached, at which point the
 /// selected RHS is evaluated under the captured rule-local environment.
+///
+/// A fresh matcher given at least as many arguments as its rules take goes
+/// through [`LoopDetector::apply_memo`] first, keyed by its `case`, the
+/// environment it was evaluated in and those arguments: the C++ `gApplyMemo`
+/// entry of a `boxPatternMatcher` in its initial state. That is what makes a
+/// recursion with overlapping calls, `fib(n) = fib(n-1) + fib(n-2)` or
+/// `ma.chebychev`, linear instead of exponential: each call evaluates its
+/// rule in fresh layers, where the eval cache never hits. Arguments past the
+/// rule arity are applied to the result afterwards, as in C++.
 pub(crate) fn apply_pattern_matcher_value(
     arena: &mut TreeArena,
     mut pm: PatternMatcherValue,
@@ -153,6 +201,32 @@ pub(crate) fn apply_pattern_matcher_value(
 ) -> Result<EvalValue, EvalError> {
     if arena.is_nil(larg) {
         return Ok(EvalValue::PatternMatcher(pm));
+    }
+    if let Some(origin) = pm.fresh_env.take() {
+        let arity = case_expected_arity(arena, pm.original_rules)?;
+        if let Some((args, rest)) = split_arguments(arena, larg, arity)? {
+            let key = ApplyMemoKey {
+                fun: pm.case_expr,
+                env_key: origin.frame_key(),
+                args,
+            };
+            let selected = match loop_detector.apply_memo_get(&key, ApplyMemoKind::Case) {
+                Some(hit) => hit,
+                None => {
+                    let selected = apply_pattern_matcher_value(
+                        arena,
+                        pm,
+                        args,
+                        env,
+                        loop_detector,
+                        call_site,
+                    )?;
+                    loop_detector.apply_memo_insert(key, &origin, &selected);
+                    selected
+                }
+            };
+            return apply_value_list_value(arena, selected, rest, env, loop_detector, call_site);
+        }
     }
 
     loop_detector.enter_structural()?;
@@ -397,6 +471,37 @@ pub(crate) fn apply_list(
             Ok(b.seq(args_par, fun))
         }
     }
+}
+
+/// Splits an argument list after its first `n` elements, `n > 0`.
+///
+/// Returns `None` when the list is shorter. The prefix is `larg` itself when
+/// it has exactly `n` elements, so the common case allocates nothing;
+/// otherwise it is rebuilt, hash-consed, from the arena.
+fn split_arguments(
+    arena: &mut TreeArena,
+    larg: TreeId,
+    n: usize,
+) -> Result<Option<(TreeId, TreeId)>, EvalError> {
+    let mut prefix = Vec::with_capacity(n);
+    let mut rest = larg;
+    while prefix.len() < n {
+        if arena.is_nil(rest) {
+            return Ok(None);
+        }
+        prefix.push(
+            arena
+                .hd(rest)
+                .ok_or(EvalError::MalformedListNode { node: rest })?,
+        );
+        rest = arena
+            .tl(rest)
+            .ok_or(EvalError::MalformedListNode { node: rest })?;
+    }
+    if arena.is_nil(rest) {
+        return Ok(Some((larg, rest)));
+    }
+    Ok(Some((vec_to_list(arena, &prefix), rest)))
 }
 
 /// Converts parser-style argument list to parallel composition tree.
@@ -764,11 +869,12 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use boxes::BoxBuilder;
+    use boxes::{BoxBuilder, BoxMatch, match_box};
     use tlib::{TreeArena, TreeId};
 
     use super::{infer_box_arity, infer_box_arity_for_apply};
     use crate::LoopDetector;
+    use crate::loop_detector::ApplyMemoKind;
 
     /// `levels` times `(x, x) : +` over an integer: a DAG of `4 * levels`
     /// nodes with `2^levels` root-to-leaf paths.
@@ -813,5 +919,147 @@ mod tests {
             cached_nodes >= 64,
             "the loop detector must keep one verdict per distinct node, got {cached_nodes}"
         );
+    }
+
+    /// What one evaluation of `process` left behind, for the apply memo tests.
+    struct Evaluated {
+        /// The lowered `process`, flattened over `par` into integer leaves;
+        /// `None` for a leaf that is not an integer.
+        outputs: Vec<Option<i32>>,
+        probes: [u64; 2],
+        hits: [u64; 2],
+    }
+
+    /// Evaluates `process` in `source` on a worker, failing the test if it does
+    /// not finish within a minute: the regressions these tests guard against
+    /// are exponential, and would otherwise hang the suite instead of failing.
+    fn evaluate_within_budget(source: &str) -> Evaluated {
+        let source = source.to_owned();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("apply-memo".to_owned())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(move || {
+                let parsed = parser::parse_program(&source, "apply_memo.dsp");
+                assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+                let mut arena = parsed.state.arena;
+                let root = parsed.root.expect("a parsed program");
+                let mut env = crate::Environment::empty();
+                crate::definitions::bind_definitions(&mut arena, root, &mut env)
+                    .expect("definitions bind");
+                let mut detector = LoopDetector::new();
+                let entry = BoxBuilder::new(&mut arena).ident("process");
+                let value = crate::eval_value(&mut arena, entry, &env, &mut detector)
+                    .expect("process evaluates");
+                let lowered =
+                    crate::a2sb_value(&mut arena, value, &mut detector).expect("process lowers");
+                let mut outputs = Vec::new();
+                let mut stack = vec![lowered];
+                while let Some(id) = stack.pop() {
+                    match match_box(&arena, id) {
+                        BoxMatch::Par(left, right) => {
+                            stack.push(right);
+                            stack.push(left);
+                        }
+                        BoxMatch::Int(n) => outputs.push(Some(n)),
+                        _ => outputs.push(None),
+                    }
+                }
+                let _ = sender.send(Evaluated {
+                    outputs,
+                    probes: detector.apply_memo_probes,
+                    hits: detector.apply_memo_hits,
+                });
+            })
+            .expect("spawn evaluation worker");
+        receiver
+            .recv_timeout(Duration::from_secs(60))
+            .expect("the evaluation must finish within the budget")
+    }
+
+    /// `f_i(m) = f_{i-1}(m) : \(x).(x + f_{i-1}(m))`: the second call of each
+    /// level is in the body of a lambda, evaluated in a layer of its own that
+    /// the `(expr, env)` cache has never seen. Without the apply memo the chain
+    /// costs `2^D`, here `2^48`; with it, each level is reduced once and the
+    /// call in the lambda hits.
+    #[test]
+    fn a_call_in_a_lambda_body_is_reduced_once() {
+        const D: u64 = 48;
+        let mut source = String::from("f0(m) = m;\n");
+        for i in 1..=D {
+            source += &format!("f{i}(m) = f{p}(m) : \\(x).(x + f{p}(m));\n", p = i - 1);
+        }
+        source += &format!("process = f{D}(hslider(\"m\", 1, 0, 2, 0.01));\n");
+        let evaluated = evaluate_within_budget(&source);
+        let abstraction = ApplyMemoKind::Abstraction as usize;
+        assert!(
+            evaluated.hits[abstraction] >= D,
+            "each level's call in the lambda hits: {} hits for {D} levels",
+            evaluated.hits[abstraction]
+        );
+        assert!(
+            evaluated.probes[abstraction] <= 8 * D,
+            "the reductions are linear in the depth: {} probes for {D} levels",
+            evaluated.probes[abstraction]
+        );
+    }
+
+    /// The upstream benchmark of `gApplyMemo`: a `case` recursion with
+    /// overlapping calls is linear with the memo and exponential without it.
+    /// Each call evaluates its rule in fresh layers, so only the memo of the
+    /// matcher's application, keyed by the `case` and its environment, sees
+    /// the repeat.
+    #[test]
+    fn an_overlapping_case_recursion_is_linear() {
+        let evaluated = evaluate_within_budget(
+            "fib(0) = 0;\nfib(1) = 1;\nfib(n) = fib(n-1) + fib(n-2);\nprocess = fib(40);\n",
+        );
+        assert_eq!(evaluated.outputs, vec![Some(102_334_155)]);
+        let case = ApplyMemoKind::Case as usize;
+        assert!(
+            evaluated.hits[case] >= 38,
+            "fib(n-2) hits at every level: {} hits",
+            evaluated.hits[case]
+        );
+        assert!(
+            evaluated.probes[case] <= 100,
+            "one miss and one hit per level: {} probes",
+            evaluated.probes[case]
+        );
+    }
+
+    /// The key names the environment the function closes over: one
+    /// abstraction, or one `case`, evaluated in two environments is two
+    /// functions, applied to the same argument.
+    #[test]
+    fn the_apply_memo_keys_on_the_closed_over_environment() {
+        let evaluated = evaluate_within_budget(
+            "f(a) = \\(x).(x + a);\n\
+             g(a) = case { (0) => a; (n) => n; };\n\
+             process = f(1)(10), f(2)(10), g(1)(0), g(2)(0), g(1)(0);\n",
+        );
+        assert_eq!(
+            evaluated.outputs,
+            vec![Some(11), Some(12), Some(1), Some(2), Some(1)]
+        );
+    }
+
+    /// A matcher handed out as a box handle is shared by every use of the
+    /// handle, and binding a pattern variable writes into its rule
+    /// environments in place, so `p(3)` below still sees `x = 2` and falls
+    /// through to the second rule. That defect predates the memo; what this
+    /// test guards is that the memo does not spread it: an application through
+    /// a shared matcher is not a function of `(case, environment, arguments)`
+    /// and must not answer for the fresh matcher of `f(3)`.
+    #[test]
+    fn a_shared_matcher_does_not_answer_for_a_fresh_one() {
+        let evaluated = evaluate_within_budget(
+            "f = case { (x) => x + 1; (3) => 100; };\n\
+             h(p) = p(2), p(3);\n\
+             process = h(f), f(3);\n",
+        );
+        assert_eq!(evaluated.outputs.len(), 3);
+        assert_eq!(evaluated.outputs[0], Some(3));
+        assert_eq!(evaluated.outputs[2], Some(4), "f(3) selects its first rule");
     }
 }

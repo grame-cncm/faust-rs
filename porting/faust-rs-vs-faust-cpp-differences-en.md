@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-11 (integer runtime powers); full review 2026-08-13
+Last reviewed: 2026-10-16 (shared pattern matchers, DIFF-GAP-018); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -1232,6 +1232,7 @@ remain visible until closed or explicitly reclassified.
 | DIFF-GAP-015 | `narrower` | `rep_37_table_rwtable_negative_indices` has different numerical behavior for negative read/write table indices. |
 | DIFF-GAP-016 | `narrower` | `rep_67_variable_delay_shifted_slider` differs for a variable delay whose shifted slider produces a negative intermediate delay expression. |
 | DIFF-GAP-017 | `parity-gap` | A division by a zero that is constant without being a literal when its sequence is evaluated (`z = 0 <: _, !;`), used as a **pattern-matching argument whose value is then unused** (`f(0) = 1; f(n) = 2; process = f(1 / z);`), compiles in Rust and fails in C++ (`ERROR : division by 0 in 1 / 0`): C++ simplifies the argument eagerly and its exception is fatal, Rust folds a pattern argument as an optimization and gives up on this one. With a literal divisor both fail, and wherever the quotient is used (a signal, an iteration count, a route size, a label) Rust reports the division too. Pinned by `a_known_divergence_an_unused_late_zero_division_in_a_pattern_argument` in `crates/compiler/tests/diagnostic_errors.rs`; see `DIFF-BEH-010`. |
+| DIFF-GAP-018 | `parity-gap` | A `case` function passed as an argument and applied there more than once to different arguments keeps the pattern-variable bindings of its first application: `h(p) = p(2), p(3); process = h(case { (x) => x + 1; });` fails with `FRS-EVAL-0099 no case rule matches arguments` in Rust and gives `3, 4` in C++; with a later rule that binds no variable, `(3) => 100`, Rust silently selects it (`3, 100`). Rust's `apply_pattern_matcher` binds pattern variables in place into the matcher's rule environments, which every use of a `boxPatternMatcher` handle shares; C++ pushes a new layer per binding (`pushValueDef`, `compiler/patternmatcher/patternmatcher.cpp`). Found 2026-10-16 while porting `gApplyMemo`, which is kept off such shared matchers (`porting/MEMOIZATION.md` §2.4e; `a_shared_matcher_does_not_answer_for_a_fresh_one` in `crates/eval/src/apply.rs`). Not fixed. |
 
 For a time-stamped quantitative snapshot rather than this durable registry,
 use [`faust-rs-supported-faust-subset-en.md`](faust-rs-supported-faust-subset-en.md),

@@ -155,6 +155,7 @@
 //! (`propagate`, typing, signal transforms). It does not emit signals directly.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -181,7 +182,7 @@ pub(crate) mod source_context;
 pub mod suggestions;
 mod ui_widgets;
 
-use environment::{ClosureValue, EvalCacheKey, EvalValue, PatternMatcherValue};
+use environment::{ApplyMemoKey, ClosureValue, EvalCacheKey, EvalValue, PatternMatcherValue};
 use source_context::CachedLoadedSource;
 
 use apply::*;
@@ -411,6 +412,7 @@ fn eval_entrypoint_full(
     let entry = BoxBuilder::new(arena).ident(entrypoint);
     let result = eval_value(arena, entry, &env, &mut loop_detector)?;
     let result = a2sb_value(arena, result, &mut loop_detector)?;
+    loop_detector.report_apply_memo();
     stats.loop_detector_max_depth = loop_detector.call_stack.len();
     // Remap def_names keys through a2sb's symbolic_box_cache: pre-a2sb IDs that were
     // rebuilt by a2sb (because their subtree contained residual Abstr nodes) get new IDs.
@@ -1221,7 +1223,12 @@ fn eval_ident_value(
             }
             out
         }
-        EvalValue::PatternMatcher(pm) => Ok(EvalValue::PatternMatcher(pm)),
+        EvalValue::PatternMatcher(mut pm) => {
+            // a copy of a bound matcher: every lookup shares its rule
+            // environments, so it is not fresh
+            pm.fresh_env = None;
+            Ok(EvalValue::PatternMatcher(pm))
+        }
     }
 }
 
@@ -1341,12 +1348,14 @@ fn force_value_to_box(
             }
             _ => eval_box(arena, closure.expr, &closure.env, loop_detector),
         },
-        EvalValue::PatternMatcher(pm) => {
+        EvalValue::PatternMatcher(mut pm) => {
             // Always preserve pattern matchers as explicit runtime nodes.
             // Returning the original `case` tree for an unapplied matcher loses
             // the captured lexical environment, which breaks higher-order uses
             // like passing a local `case` function through another function
-            // before eventually applying it.
+            // before eventually applying it. Every use of the handle gets a
+            // copy sharing the rule environments: not fresh any more.
+            pm.fresh_env = None;
             let key = loop_detector.store_pm(pm);
             let mut b = BoxBuilder::new(arena);
             let key_node = b.int(key);
@@ -1569,17 +1578,17 @@ fn eval_case_value(
     loop_detector: &mut LoopDetector,
 ) -> Result<EvalValue, EvalError> {
     let evaluated_rules = eval_rule_list(arena, rules_rev, env, loop_detector)?;
-    if !loop_detector.automaton_cache.contains_key(&evaluated_rules) {
-        let automaton = pattern_matcher::make_pattern_matcher(arena, evaluated_rules);
+    let automaton = Rc::clone(
         loop_detector
             .automaton_cache
-            .insert(evaluated_rules, automaton);
-    }
-    let automaton = loop_detector
-        .automaton_cache
-        .get(&evaluated_rules)
-        .expect("automaton cache populated")
-        .clone();
+            .entry(evaluated_rules)
+            .or_insert_with(|| {
+                Rc::new(pattern_matcher::make_pattern_matcher(
+                    arena,
+                    evaluated_rules,
+                ))
+            }),
+    );
     let envs = (0..automaton.n_rules())
         .map(|_| Some(env.push_barrier_scope()))
         .collect();
@@ -1590,6 +1599,7 @@ fn eval_case_value(
         original_rules: rules_rev,
         rev_param_list: Vec::new(),
         case_expr,
+        fresh_env: Some(env.clone()),
     }))
 }
 

@@ -65,12 +65,24 @@ impl Eq for ClosureValue {}
 #[derive(Clone, Debug)]
 /// Captured pattern-matcher automaton value used by residual `case` handling.
 pub(crate) struct PatternMatcherValue {
-    pub(crate) automaton: crate::pattern_matcher::Automaton,
+    /// Shared with the automaton cache: immutable once built, so every
+    /// matcher of one rule list points to one automaton instead of copying it.
+    pub(crate) automaton: Rc<crate::pattern_matcher::Automaton>,
     pub(crate) state: usize,
     pub(crate) envs: Vec<Option<Environment>>,
     pub(crate) original_rules: TreeId,
     pub(crate) rev_param_list: Vec<TreeId>,
     pub(crate) case_expr: TreeId,
+    /// The environment `case_expr` was evaluated in, while this matcher is
+    /// fresh: built by `eval_case_value`, no argument bound yet, and no copy of
+    /// it stored or bound anywhere. `(case_expr, fresh_env)` then names the
+    /// matcher, and the apply memo may key on it (`apply.rs`).
+    ///
+    /// Cleared as soon as the matcher can be shared: binding a pattern variable
+    /// writes into `envs` in place, so two copies of one matcher see each
+    /// other's bindings, and a result computed through a copy is not a
+    /// function of `(case_expr, fresh_env)` alone.
+    pub(crate) fresh_env: Option<Environment>,
 }
 
 impl PartialEq for PatternMatcherValue {
@@ -108,6 +120,22 @@ pub(crate) struct EnvFrameKey {
 pub(crate) struct EvalCacheKey {
     pub(crate) expr: TreeId,
     pub(crate) env_key: EnvFrameKey,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Memoization key for one function application, parity with C++ `gApplyMemo`.
+///
+/// `fun` is the applied expression and `env_key` the environment it closes
+/// over: the `abstr` of a closure and its captured environment, or the `case`
+/// of a fresh pattern matcher and the environment it was evaluated in.
+/// `args` is what the application consumes, already evaluated: the one
+/// argument of a beta-reduction for an `abstr`, the list of the matcher's
+/// arguments for a `case`. The two kinds cannot collide, `fun` being an
+/// `abstr` node in one and a `case` node in the other.
+pub(crate) struct ApplyMemoKey {
+    pub(crate) fun: TreeId,
+    pub(crate) env_key: EnvFrameKey,
+    pub(crate) args: TreeId,
 }
 
 #[derive(Clone, Debug)]
