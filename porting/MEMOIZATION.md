@@ -78,7 +78,7 @@ updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
 §2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16, §2.4e
 and §2.4b updated the same day when pattern matchers became persistent, and
 §2.4b again for the size of its entries and the pinning of its stores; §2.24
-was added on 2026-10-16 too.
+was added and §2.11 updated on 2026-10-16 too.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -985,6 +985,51 @@ full iteration, kept test-only as `solve_recursive_groups_jacobi`, every
 field and the warnings; `a_chain_of_recursions_infers_each_body_a_bounded_number_of_times`.
 Both solvers were also compared on every annotation of the corpus (4 918) and
 of the 2 227 `faustlibraries` tests (18 547), field for field.
+
+Invalidation by changed seed (updated 2026-10-16):
+
+- `GroupCones` is gone. Its cone of a group was every node reachable from
+  the body (stopping at the seeds), and an iteration removed the cone of
+  every stale group: a node shared by k bodies was listed k times and
+  removed k times per iteration. On the faust-coopiano soundboard (2 574
+  groups, an outer recursion coupling a bank of inner ones) that was
+  31.5 M cone entries built in 1.0 s and 189 M removals in 1.3 s per
+  annotation, for 0.19 s of inference: 2.6 s per `retype`, six per
+  compilation,
+- `SeedWalk` records the walk of the bodies' inference once per
+  annotation, upside down: for every node it reaches, the nodes that visit
+  it as a child (those whose children inference visits), and each group's
+  references. After an iteration that changed seeds, `invalidate` climbs
+  from the changed groups' nodes, variables and references: the nodes
+  reached are exactly those whose type reads a changed seed, they leave
+  `env`, and the bodies among them are the next iteration's stale groups
+  (the readers the cones gave). A type that reads no changed seed stays: it
+  was computed from seeds that have not changed since, so it is what a
+  recomputation would give (rule 6: a memoised type depends on the node and
+  on the seeds it reads, and those did not change). Nodes reading no seed
+  (tables, controls, closed subexpressions) are never removed. The cost of
+  an iteration is the part of the memo that went stale,
+- three variants were measured and rejected on the way: cones restricted
+  to the nodes that reach a seed (31.5 M → 11.6 M entries, `retype`
+  2.6 → 1.45 s: the coupling makes most nodes reach hundreds of groups);
+  per-node seed sets with per-group dependents lists (27 M set entries,
+  136 M removals: worse); and one downward walk from every body after each
+  iteration (`retype` 0.27 s on the soundboard, but every iteration walked
+  the whole forest, so chains of recursions, which change one group per
+  iteration, were N² again: `spectral_level --check` ×1.9 and
+  `parametric_eq` ×1.6 in the compile-budget basket),
+- measured: the test bank of 300 inner groups over a 300-node closed
+  subexpression (3 612 nodes) climbs from 6 014 nodes over its four
+  iterations, where cones visit n·(n + m) = 180 000 nodes per iteration; a
+  chain of 200 recursions climbs from 42 378 nodes for 5 646 body
+  inferences; on the soundboard `fir-prepare-normalize` goes from 15.6 to
+  2.6 s.
+
+Validation: `a_coupled_bank_gives_the_jacobi_types` (the coupled shape,
+every field and the warnings), `invalidation_visits_each_node_once_per_iteration`
+and `invalidation_in_a_chain_climbs_only_from_what_changed`, plus the two
+tests above; every annotation of the corpus compared with the Jacobi reference
+field for field, recorded in `porting/journal/2026-10-16.md`.
 
 ### 2.12 `transform`: signal-to-FIR lowering cache, scoped by region
 

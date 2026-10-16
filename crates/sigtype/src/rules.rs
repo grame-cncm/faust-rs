@@ -1358,30 +1358,28 @@ impl<'a> TypeAnnotator<'a> {
     /// the previous iteration (a Jacobi iteration), then widened.
     ///
     /// A group's next approximation depends only on the approximations its
-    /// body reads ([`GroupCones`]), so a group none of whose read
+    /// body reads ([`SeedWalk`]), so a group none of whose read
     /// approximations changed in any field in the previous iteration would
-    /// compute its current one again: only the others are recomputed, and
-    /// only their cones leave the memo. The approximations, widening ages and iteration
-    /// count are those of the full iteration, which a chain of N recursions
-    /// ran N + 1 times over every group: N² for a cost now proportional to
-    /// the groups that change ([`Self::solve_recursive_groups_jacobi`], kept
-    /// as the reference, checks it in tests).
+    /// compute its current one again: only the others are recomputed. The
+    /// memo survives the iterations: after each, the types reading a seed
+    /// that changed leave it, and every other type, computed from seeds that
+    /// have not changed since, stays. The approximations, widening ages and
+    /// iteration count are those of the full iteration, which a chain of N
+    /// recursions ran N + 1 times over every group: N² for a cost now
+    /// proportional to the groups that change
+    /// ([`Self::solve_recursive_groups_jacobi`], kept as the reference, checks
+    /// it in tests).
     fn solve_recursive_groups(&mut self, state: &mut RecTypingState) -> Result<(), InferenceError> {
         for _ in std::iter::repeat_n((), RECURSIVE_NARROWING_LIMIT) {
             self.update_rec_types(&state.groups, &mut state.upper, true)?;
         }
 
-        let cones = GroupCones::new(self.arena, &state.groups)?;
+        let walk = SeedWalk::new(self.arena, &state.groups)?;
         self.env.clear();
         self.in_progress.clear();
         self.seed_rec_groups(&state.groups, &state.current);
         let mut stale: Vec<usize> = (0..state.groups.len()).collect();
         while !stale.is_empty() {
-            for &g in &stale {
-                for node in &cones.cone[g] {
-                    self.env.remove(node);
-                }
-            }
             // Every recomputed group reads the previous approximations: the
             // seeds change only once the pass is over.
             let mut changed = Vec::new();
@@ -1411,20 +1409,18 @@ impl<'a> TypeAnnotator<'a> {
                     changed.push((g, widened));
                 }
             }
-            let mut next_stale = Vec::new();
+            let mut changed_groups = Vec::with_capacity(changed.len());
             for (g, widened) in changed {
                 let group = &state.groups[g];
                 self.env.insert(group.rec_sig, widened.clone());
                 self.env.insert(group.var, widened.clone());
                 state.current[g] = widened;
-                next_stale.extend_from_slice(&cones.readers[g]);
+                changed_groups.push(g);
             }
             if !progress {
                 break;
             }
-            next_stale.sort_unstable();
-            next_stale.dedup();
-            stale = next_stale;
+            stale = walk.invalidate(&changed_groups, &mut self.env);
         }
         self.env.clear();
         self.in_progress.clear();
@@ -2140,74 +2136,135 @@ fn identical(a: &SigType, b: &SigType) -> bool {
     a == b && format!("{a:?}") == format!("{b:?}")
 }
 
-/// What inferring each recursive group's body reads and memoises.
+#[cfg(test)]
+thread_local! {
+    /// Nodes [`SeedWalk::invalidate`] climbed from on this thread.
+    static SEED_WALK_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// What inferring each recursive group's body reads, for the incremental
+/// fixpoint of [`TypeAnnotator::solve_recursive_groups`].
 ///
 /// Inference stops at a `SYMREC` node, whose type is its group's seeded
 /// approximation, and at a `SYMREF(var)`, which reads it: a body's type is a
 /// function of the approximations of the groups it reaches so, and of
-/// nothing else the fixpoint changes.
-struct GroupCones {
-    /// For each group, the nodes its body's inference may memoise (a
-    /// superset: every node reachable from the body, stopping at those).
-    cone: Vec<Vec<SigId>>,
-    /// For each group, the groups whose body reads its approximation.
-    readers: Vec<Vec<usize>>,
+/// nothing else the fixpoint changes. The same holds for every node below a
+/// body, so the memoised type of a node goes stale exactly when a seed
+/// reachable from it that way changes.
+///
+/// The walk is recorded once, upside down: for every node a body's
+/// inference visits, the nodes that visit it as a child. After an
+/// iteration, climbing from the changed seeds finds the stale types, and the
+/// bodies among them name the groups to recompute, at a cost proportional to
+/// what changed.
+struct SeedWalk {
+    /// For each node a body's inference reaches, the nodes it is a child of
+    /// in that inference (those whose children inference visits: neither a
+    /// group's node or variable, nor a reference, nor `nil`).
+    parents: HashMap<SigId, Vec<SigId>>,
+    /// The references to each group's variable that inference reaches.
+    references: Vec<Vec<SigId>>,
+    /// The groups whose body list each node is.
+    bodies: HashMap<SigId, Vec<usize>>,
+    /// Each group's node and variable, which hold its seed.
+    seeds: Vec<[SigId; 2]>,
 }
 
-impl GroupCones {
+impl SeedWalk {
     fn new(arena: &TreeArena, groups: &[RecGroup]) -> Result<Self, InferenceError> {
         let mut by_rec = HashMap::with_capacity(groups.len());
         let mut by_var = HashMap::with_capacity(groups.len());
+        let mut bodies: HashMap<SigId, Vec<usize>> = HashMap::with_capacity(groups.len());
         for (g, group) in groups.iter().enumerate() {
             by_rec.insert(group.rec_sig, g);
             by_var.insert(group.var, g);
+            bodies.entry(group.body_list).or_default().push(g);
         }
-        let mut cone = Vec::with_capacity(groups.len());
-        let mut readers = vec![Vec::new(); groups.len()];
-        for (g, group) in groups.iter().enumerate() {
-            let mut nodes = Vec::new();
-            let mut reads = Vec::new();
-            let mut visited = HashSet::new();
-            let mut stack = vec![group.body_list];
-            while let Some(sig) = stack.pop() {
-                if !visited.insert(sig) {
-                    continue;
-                }
-                // A group's node or variable holds its seed: read, never
-                // memoised by the body.
-                if let Some(&read) = by_rec.get(&sig).or_else(|| by_var.get(&sig)) {
-                    reads.push(read);
-                    continue;
-                }
-                nodes.push(sig);
-                if let Some(var) = match_sym_ref(arena, sig) {
-                    if let Some(&read) = by_var.get(&var) {
-                        reads.push(read);
-                    }
-                    continue;
-                }
-                if arena.is_nil(sig) {
-                    continue;
-                }
-                let node = arena.node(sig).ok_or_else(|| {
-                    InferenceError::structure(
-                        Some(sig),
-                        format!(
-                            "missing node {} during recursive cone discovery",
-                            sig.as_u32()
-                        ),
-                    )
-                })?;
-                stack.extend(node.children.as_slice().iter().copied());
+        let mut parents: HashMap<SigId, Vec<SigId>> = HashMap::new();
+        let mut references = vec![Vec::new(); groups.len()];
+        let mut visited = HashSet::new();
+        let mut stack: Vec<SigId> = groups.iter().map(|group| group.body_list).collect();
+        while let Some(sig) = stack.pop() {
+            if !visited.insert(sig) {
+                continue;
             }
-            reads.sort_unstable();
-            reads.dedup();
-            for read in reads {
-                readers[read].push(g);
+            if by_rec.contains_key(&sig) || by_var.contains_key(&sig) {
+                continue;
             }
-            cone.push(nodes);
+            if let Some(var) = match_sym_ref(arena, sig) {
+                if let Some(&g) = by_var.get(&var) {
+                    references[g].push(sig);
+                }
+                continue;
+            }
+            if arena.is_nil(sig) {
+                continue;
+            }
+            let node = arena.node(sig).ok_or_else(|| {
+                InferenceError::structure(
+                    Some(sig),
+                    format!(
+                        "missing node {} during recursive cone discovery",
+                        sig.as_u32()
+                    ),
+                )
+            })?;
+            for &child in node.children.as_slice() {
+                parents.entry(child).or_default().push(sig);
+                stack.push(child);
+            }
         }
-        Ok(Self { cone, readers })
+        let seeds = groups
+            .iter()
+            .map(|group| [group.rec_sig, group.var])
+            .collect();
+        Ok(Self {
+            parents,
+            references,
+            bodies,
+            seeds,
+        })
+    }
+
+    /// Removes from `env` every memoised type that reads the seed of a group
+    /// of `changed`, and returns, ascending, the groups whose body reads one.
+    ///
+    /// The nodes reached by climbing from the changed groups' nodes,
+    /// variables and references are exactly those whose type reads a changed
+    /// seed: every other type left in `env` was computed from seeds that
+    /// have not changed since, and is what a recomputation would give. The
+    /// groups' nodes and variables hold the seeds and stay.
+    fn invalidate(&self, changed: &[usize], env: &mut HashMap<SigId, SigType>) -> Vec<usize> {
+        let mut stale_nodes: HashSet<SigId> = HashSet::new();
+        let mut stack = Vec::new();
+        for &g in changed {
+            stack.extend(self.seeds[g]);
+            for &reference in &self.references[g] {
+                if stale_nodes.insert(reference) {
+                    env.remove(&reference);
+                    stack.push(reference);
+                }
+            }
+        }
+        while let Some(sig) = stack.pop() {
+            #[cfg(test)]
+            SEED_WALK_VISITS.with(|count| count.set(count.get() + 1));
+            for &parent in self.parents.get(&sig).into_iter().flatten() {
+                if stale_nodes.insert(parent) {
+                    env.remove(&parent);
+                    stack.push(parent);
+                }
+            }
+        }
+        let mut readers: Vec<usize> = stale_nodes
+            .iter()
+            .filter_map(|sig| self.bodies.get(sig))
+            .flatten()
+            .copied()
+            .collect();
+        readers.sort_unstable();
+        readers.dedup();
+        readers
     }
 }
 
@@ -2958,6 +3015,127 @@ mod tests {
             previous = SigBuilder::new(arena).proj(0, rec);
         }
         previous
+    }
+
+    /// An outer recursion summing `n` inner ones, each reading the outer
+    /// one's output and a closed subexpression of `m` nodes, as a resonator
+    /// bank coupled through its output does: every inner group reads the
+    /// outer seed and the outer body reads every inner seed.
+    fn coupled_bank(arena: &mut TreeArena, n: usize, m: usize, halve: bool) -> SigId {
+        let mut closed = SigBuilder::new(arena).input(1);
+        for i in 0..m {
+            let mut b = SigBuilder::new(arena);
+            let k = b.int(i as i32);
+            closed = b.binop(BinOp::Add, closed, k);
+        }
+        let outer_var = arena.symbol("W");
+        let outer_ref = sym_ref(arena, outer_var);
+        let outer_own = SigBuilder::new(arena).proj(0, outer_ref);
+        let mut sum = SigBuilder::new(arena).input(0);
+        for k in 0..n {
+            let var = arena.symbol(format!("R{k}"));
+            let self_ref = sym_ref(arena, var);
+            let own = SigBuilder::new(arena).proj(0, self_ref);
+            let mut b = SigBuilder::new(arena);
+            let feedback = if halve {
+                let half = b.real(0.5);
+                b.binop(BinOp::Mul, half, own)
+            } else {
+                b.sin(own)
+            };
+            let coupling = b.real(0.01);
+            let coupled = b.binop(BinOp::Mul, coupling, outer_own);
+            let value = b.binop(BinOp::Add, feedback, coupled);
+            let value = b.binop(BinOp::Add, value, closed);
+            let body = arena.cons(value, arena.nil());
+            let inner = sym_rec(arena, var, body);
+            let term = SigBuilder::new(arena).proj(0, inner);
+            sum = SigBuilder::new(arena).binop(BinOp::Add, sum, term);
+        }
+        let outer_value = SigBuilder::new(arena).sin(sum);
+        let outer_body = arena.cons(outer_value, arena.nil());
+        let outer = sym_rec(arena, outer_var, outer_body);
+        SigBuilder::new(arena).proj(0, outer)
+    }
+
+    /// Every inner group reads the outer seed, so each iteration invalidates
+    /// most of the memo; the incremental fixpoint must still give the Jacobi
+    /// types in every field, and the warnings.
+    #[test]
+    fn a_coupled_bank_gives_the_jacobi_types() {
+        on_big_stack(a_coupled_bank_gives_the_jacobi_types_body);
+    }
+
+    fn a_coupled_bank_gives_the_jacobi_types_body() {
+        let ui = empty_ui();
+        for (n, m, halve) in [(1, 0, false), (8, 4, false), (8, 4, true), (40, 30, false)] {
+            let mut arena = TreeArena::new();
+            let out = coupled_bank(&mut arena, n, m, halve);
+            let side = SigBuilder::new(&mut arena).delay1(out);
+            let outputs = [out, side];
+            let mut reference = TypeAnnotator::new(&arena, &ui);
+            let expected = reference
+                .annotate_with(&outputs, TypeAnnotator::solve_recursive_groups_jacobi)
+                .expect("reference");
+            let mut annotator = TypeAnnotator::new(&arena, &ui);
+            let got = annotator.annotate(&outputs).expect("annotation");
+            assert_eq!(exact(&got), exact(&expected), "n={n} m={m} halve={halve}");
+            assert_eq!(annotator.warnings(), reference.warnings());
+        }
+    }
+
+    /// In a chain of recursions an iteration changes one or two groups:
+    /// invalidation must climb from those only, not walk the whole chain
+    /// (N iterations over N groups would be N² again).
+    #[test]
+    fn invalidation_in_a_chain_climbs_only_from_what_changed() {
+        on_big_stack(invalidation_in_a_chain_climbs_only_from_what_changed_body);
+    }
+
+    fn invalidation_in_a_chain_climbs_only_from_what_changed_body() {
+        let ui = empty_ui();
+        let n = 200;
+        let mut arena = TreeArena::new();
+        let out = recursion_chain(&mut arena, n, false, false, false);
+        SEED_WALK_VISITS.with(|count| count.set(0));
+        let mut annotator = TypeAnnotator::new(&arena, &ui);
+        annotator.annotate(&[out]).expect("annotation");
+        let visits = SEED_WALK_VISITS.with(std::cell::Cell::get);
+        // Proportional to the bodies recomputed, a few nodes each.
+        assert!(
+            visits <= 16 * annotator.body_inferences,
+            "{visits} visits for {} body inferences",
+            annotator.body_inferences
+        );
+    }
+
+    /// Invalidating per group the nodes its body reaches visited the shared
+    /// sum and closed subexpression once per inner group: n·(n + m) nodes per
+    /// iteration. Climbing from the changed seeds visits each node once.
+    #[test]
+    fn invalidation_visits_each_node_once_per_iteration() {
+        on_big_stack(invalidation_visits_each_node_once_per_iteration_body);
+    }
+
+    fn invalidation_visits_each_node_once_per_iteration_body() {
+        let ui = empty_ui();
+        let (n, m) = (300, 300);
+        let mut arena = TreeArena::new();
+        let out = coupled_bank(&mut arena, n, m, false);
+        SEED_WALK_VISITS.with(|count| count.set(0));
+        let mut annotator = TypeAnnotator::new(&arena, &ui);
+        annotator.annotate(&[out]).expect("annotation");
+        let visits = SEED_WALK_VISITS.with(std::cell::Cell::get);
+        let iterations = annotator.body_inferences / (n + 1) + 1;
+        assert!(
+            visits <= (iterations + 1) * arena.len(),
+            "{visits} visits for {} nodes and {iterations} iterations",
+            arena.len()
+        );
+        assert!(
+            visits * 10 < iterations * n * (n + m),
+            "{visits} visits is no better than a walk per group"
+        );
     }
 
     /// The types of a map in every field, by node.
