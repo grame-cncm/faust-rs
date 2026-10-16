@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed); full review 2026-08-13
+Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -763,6 +763,42 @@ must run unchanged with Faust C++ should not pass them.
 - Evidence: `crates/compiler/tests/integer_pow.rs`,
   `crates/compiler/tests/integer_pow_rust.rs`, sigtype/normalization unit tests,
   and [the journal entry](journal/2026-10-11.md).
+
+### DIFF-BEH-021 — recursions identical after simplification share one state
+
+- Status: `extension`, implemented 2026-05-01; recorded 2026-10-16.
+- Implemented: `normalize::merge_isomorphic_symrec_groups`
+  (`crates/normalize/src/rec_merge.rs`, step 2.8 of
+  `prepare_signals_for_fir_unverified`) runs between the two simplify passes
+  and replaces every recursion group whose body, with its own references
+  masked, is identical to another group's by that group (the one of
+  smallest node id). The second simplify then folds what the sharing
+  exposes, e.g. `x - x` to `0`. Faust C++ has no such pass: it shares two
+  recursions only when their de Bruijn trees are already identical, which
+  Rust does too through hash-consing, so the difference is limited to
+  bodies that become identical only once simplified. The pass was added for
+  `fad`, whose chain-rule bodies (`1·y + g·Dy`) equal a hand-written
+  derivative (`y + g·Dy`) only after simplification
+  ([plan](normalize-rec-isomorphism-merge-plan-2026-05-01-en.md)).
+- Observed with the pinned `8eebea429` on
+  `process = _ <: (+ ~ *(0.5)), (+ ~ (*(1.0) : *(0.5))) : -;`: C++ keeps
+  two recursion states and emits their difference
+  (`fVec0SE[0] + -(fVec2SE[0])`); Rust keeps one and emits `0`. Without the
+  final `-`, Rust writes both outputs from one state where C++ computes
+  two.
+- Compatibility impact: fewer recursion states and less code than C++ on
+  such programs; the sample values are those of C++, since the merged
+  bodies compute the same expression, except where a difference of two
+  merged recursions is folded: `x - x` is `0` in Rust where C++ gives NaN
+  once the recursion has diverged to an infinity or a NaN. The generated
+  C++ text is not a byte-identity contract (`DIFF-BACK-004`).
+- Evidence: the unit tests of `crates/normalize/src/rec_merge.rs`
+  (`merge_followed_by_simplify_gives_zero`,
+  `pruned_opening_matches_the_full_walk`), the corpus fixtures
+  `tests/corpus/rep_83_isomorphic_filter.dsp`,
+  `rep_84_isomorphic_symrec_mutual.dsp` and
+  `rep_85_isomorphic_symrec_nested.dsp`, and the
+  [journal entry](journal/2026-10-16.md) of the cost fix.
 
 ## 6. Additional backends and delivery forms
 
