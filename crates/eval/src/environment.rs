@@ -13,11 +13,16 @@ use crate::{EnvId, SymId};
 ///
 /// Rust keeps closures and pattern matchers as explicit evaluator values rather
 /// than as tree-encoded host nodes, then lowers residual values back to boxes.
+///
+/// The pattern matcher is boxed: its state is 96 bytes, and stored inline it
+/// made every value that size, including the ten million boxes and closures
+/// of the eval cache on a large program (`porting/MEMOIZATION.md` §2.4b).
+/// Matchers are few, and none is stored in that cache.
 #[derive(Clone, Debug)]
 pub(crate) enum EvalValue {
     Box(TreeId),
     Closure(ClosureValue),
-    PatternMatcher(PatternMatcherValue),
+    PatternMatcher(Box<PatternMatcherValue>),
 }
 
 impl EvalValue {
@@ -209,9 +214,10 @@ pub(crate) struct EnvStore {
 /// - **Push scope**: O(1) one-layer allocation in the shared environment arena.
 /// - **Memory per binding**: one inline `(SymId, EvalValue)` pair in the current layer vector.
 ///   The frequently-hit plain-box case stores only one symbol id plus one small tagged payload and
-///   avoids per-binding heap allocation; closure and pattern-matcher bindings carry larger inline
-///   state. The earlier `8 bytes` rule of thumb applies only to the narrow `SymId + TreeId` box
-///   payload shape and should not be read as the size of every binding variant.
+///   avoids per-binding heap allocation; every binding is sized for the closure variant (an
+///   expression and an `Environment` handle), a pattern matcher's state being boxed. The earlier
+///   `8 bytes` rule of thumb applies only to the narrow `SymId + TreeId` box payload shape and
+///   should not be read as the size of every binding variant.
 #[derive(Clone, Debug)]
 pub struct Environment {
     pub(crate) store: Rc<RefCell<EnvStore>>,
@@ -629,5 +635,29 @@ impl Environment {
 impl Default for Environment {
     fn default() -> Self {
         Self::empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem::size_of;
+
+    /// The value domain is as large as its largest variant, and every entry
+    /// of the eval cache pays for it (`porting/MEMOIZATION.md` §2.4b): a
+    /// closure and a tag word, not a pattern matcher stored inline.
+    #[test]
+    fn an_eval_value_is_a_closure_and_a_tag() {
+        assert!(size_of::<PatternMatcherValue>() > size_of::<ClosureValue>());
+        assert!(
+            size_of::<EvalValue>() <= size_of::<ClosureValue>() + size_of::<usize>(),
+            "EvalValue is {} bytes, ClosureValue {}",
+            size_of::<EvalValue>(),
+            size_of::<ClosureValue>(),
+        );
+        assert!(
+            size_of::<(EvalCacheKey, EvalValue)>()
+                <= size_of::<EvalCacheKey>() + size_of::<ClosureValue>() + size_of::<usize>()
+        );
     }
 }

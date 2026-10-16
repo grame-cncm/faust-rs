@@ -75,8 +75,9 @@ letter suffix marks a sibling of an existing entry, a new number an area the
 document had not covered. The inventory was last swept against the code on
 2026-09-11, over every commit since 2026-06-22; §2.11, §2.15 and §2.23 were
 updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
-§2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16, and §2.4e
-and §2.4b updated the same day when pattern matchers became persistent.
+§2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16, §2.4e
+and §2.4b updated the same day when pattern matchers became persistent, and
+§2.4b again for the size of its entries and the pinning of its stores.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -277,7 +278,51 @@ Constraint:
   left until a measurement asks for it,
 - this is therefore a parity-oriented adapted cache: semantically aligned with
   C++ for first-order boxes and closures, but still narrower than the C++
-  tree-property cache because of the current Rust value representation.
+  tree-property cache because of the current Rust value representation,
+- every store a key names is pinned for the pass
+  (`LoopDetector::eval_cache_insert`, `pinned_environments`, shared with
+  §2.4e), since 2026-10-16: an `EnvFrameKey` holds raw store and
+  source-context pointers, and a store freed during the pass, such as an
+  `Environment::empty()` root of `a2sb`, could otherwise hand its address to
+  a new store whose layers would hit stale entries. No such hit had been
+  observed; the pin closes the question §2.4e had left open.
+
+Entry size (2026-10-16):
+
+- an entry is the 32-byte key and an `EvalValue`, which is as large as its
+  largest variant. `EvalValue::PatternMatcher` held its 96-byte
+  `PatternMatcherValue` inline, so every entry, though only boxes and
+  closures are stored, took 128 bytes. The variant is now
+  `PatternMatcher(Box<PatternMatcherValue>)`: `EvalValue` is 40 bytes (a
+  32-byte `ClosureValue` and a tag), an entry 72. Matchers are few and none
+  is stored here, so the extra allocation is off the hot path; environment
+  bindings, which hold `EvalValue` too, shrink the same way;
+- the pin costs one comparison per insertion: `LoopDetector::last_pinned`
+  remembers the store pinned last, which is the program's own store for
+  nearly every key, and `pinned_environments` is only probed when it changes.
+  On the coopiano voice 9 stores are pinned, holding 76 360 layers, 3 more
+  than the stores the apply memo alone pinned;
+- measured on the coopiano voice (`faust-coopiano/dsp/coopiano_hammer.dsp`,
+  `-double -I .`, release binaries before and after, five interleaved runs,
+  `/usr/bin/time -l`): 10.05 M entries, unchanged; evaluation 2.14 s to
+  1.80 s best of five (medians 2.27 s to 1.84 s); maximum resident set
+  4.51 GB to 2.83 GB; peak memory footprint 4.04 GB to 2.47 GB; whole
+  compilation 12.5 s to 12.2 s best of five; generated C++ byte-identical.
+  The table has 2^24 buckets at that size: 2.2 GB before, 1.2 GB after, and
+  the transient peak was its rehash from 2^23 buckets, both tables live at
+  once. The maximum resident set is no longer set by evaluation: the freed
+  table's pages stay resident (the live footprint after evaluation is 0.5 GB
+  to 0.6 GB in both builds, from `footprint`), and the resident set now
+  peaks at the end of the compilation;
+- the pin alone, against the boxed variant without it: evaluation 1.78 s
+  and 1.80 s best of five, 1.93 s and 1.84 s median, within noise;
+- validation: `environment.rs`
+  `an_eval_value_is_a_closure_and_a_tag` (the size bound; the inline variant
+  gives 96 bytes and fails it), `loop_detector.rs`
+  `a_store_named_by_a_memo_key_outlives_its_environment` (two roots
+  evaluated with one detector, the first dropped: its store stays alive and
+  every key's store is pinned; rejects the pin removed from
+  `eval_cache_insert`).
 
 ### 2.4c `eval`: normal-form fast path
 
@@ -481,9 +526,10 @@ Lifetime and invalidation:
   `apply_memo_insert` pins the environment of every key
   (`LoopDetector::pinned_environments`): a store freed during the pass, such
   as the `Environment::empty()` roots of `a2sb`, cannot hand its address to a
-  new store whose layers would then hit stale entries. §2.4b's table does not
-  pin, and its `Box` entries keyed on a temporary store are open to that reuse;
-  no case has been observed, it is recorded here as an open question.
+  new store whose layers would then hit stale entries. §2.4b's table pins its
+  stores the same way since 2026-10-16; until then its entries keyed on a
+  temporary store were open to that reuse (recorded here as an open
+  question, no case observed).
 
 Measured (release, Apple M5, 2026-10-16):
 
@@ -516,7 +562,8 @@ Measured (release, Apple M5, 2026-10-16):
 - what remains of the voice's evaluation is §2.4b itself: 10.0 M entries at
   about 128 bytes, `EvalValue` being 96 bytes because the pattern-matcher
   variant is stored inline; the rehash of that table is the transient 4.3 GB
-  peak at the end of evaluation.
+  peak at the end of evaluation. (Addressed the same day: the variant is
+  boxed, entries are 72 bytes, the peak footprint 2.47 GB, §2.4b.)
 
 Validation:
 

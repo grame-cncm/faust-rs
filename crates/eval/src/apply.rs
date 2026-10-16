@@ -193,7 +193,7 @@ fn beta_reduce(
 /// rule arity are applied to the result afterwards, as in C++.
 pub(crate) fn apply_pattern_matcher_value(
     arena: &mut TreeArena,
-    mut pm: PatternMatcherValue,
+    mut pm: Box<PatternMatcherValue>,
     larg: TreeId,
     env: &Environment,
     loop_detector: &mut LoopDetector,

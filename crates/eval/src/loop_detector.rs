@@ -179,11 +179,16 @@ pub struct LoopDetector {
     /// `FAUST_EVAL_APPLY_PROFILE` is set.
     pub(crate) apply_memo_probes: [u64; 2],
     pub(crate) apply_memo_hits: [u64; 2],
-    /// One handle per environment store named by an [`ApplyMemoKey`]: an
-    /// [`EnvFrameKey`] holds raw store and source-context pointers, and a
-    /// store freed during the pass (the empty roots of `a2sb`) could hand its
-    /// address to a new one whose layers would then hit stale entries.
+    /// One handle per environment store named by an [`ApplyMemoKey`] or an
+    /// [`EvalCacheKey`]: an [`EnvFrameKey`] holds raw store and
+    /// source-context pointers, and a store freed during the pass (the empty
+    /// roots of `a2sb`) could hand its address to a new one whose layers
+    /// would then hit stale entries.
     pub(crate) pinned_environments: ahash::HashMap<(usize, usize), Environment>,
+    /// The store last pinned by [`pin_environment`](Self::pin_environment):
+    /// nearly every key names the program's own store, so the insertion path
+    /// compares two pointers instead of probing `pinned_environments`.
+    pub(crate) last_pinned: Option<(usize, usize)>,
     /// Memoized verdicts of `normal_form::is_normal_form`, per tree: a tree in
     /// normal form evaluates to itself in every environment and skips the
     /// walk and the per-layer cache.
@@ -490,6 +495,7 @@ impl LoopDetector {
             apply_memo_probes: [0; 2],
             apply_memo_hits: [0; 2],
             pinned_environments: ahash::HashMap::with_hasher(ahash::RandomState::new()),
+            last_pinned: None,
             structural_depth: 0,
             numeric_dispatches: Vec::new(),
             fold: crate::simplify::FoldCache::default(),
@@ -609,11 +615,12 @@ impl LoopDetector {
         key
     }
 
-    /// Retrieves a stored `PatternMatcherValue` by cloning it out.
+    /// Retrieves a stored `PatternMatcherValue` by cloning it out, boxed as
+    /// [`EvalValue::PatternMatcher`] holds it.
     ///
     /// Returns `None` if the key is out of range.
-    pub(crate) fn get_pm(&self, key: i32) -> Option<PatternMatcherValue> {
-        self.pm_store.get(key as usize).cloned()
+    pub(crate) fn get_pm(&self, key: i32) -> Option<Box<PatternMatcherValue>> {
+        self.pm_store.get(key as usize).cloned().map(Box::new)
     }
 
     /// Stores a `ClosureValue` and returns its dense key for `boxClosure` nodes.
@@ -656,10 +663,10 @@ impl LoopDetector {
     /// Records the result of the application `key`, `env` being the
     /// environment its `env_key` names.
     ///
-    /// Pattern matchers are not stored: their rule environments are written in
-    /// place, so a stored copy would be replayed from a stale state. `env` is
-    /// pinned for the rest of the pass, so the pointers in `key` cannot be
-    /// reused by another store while the entry exists.
+    /// Pattern matchers are not stored, as in the eval cache
+    /// (`should_cache_eval_value`). `env` is pinned for the rest of the pass,
+    /// so the pointers in `key` cannot be reused by another store while the
+    /// entry exists.
     pub(crate) fn apply_memo_insert(
         &mut self,
         key: ApplyMemoKey,
@@ -669,11 +676,36 @@ impl LoopDetector {
         if matches!(value, EvalValue::PatternMatcher(_)) {
             return;
         }
-        let store = (key.env_key.store_ptr, key.env_key.source_context_ptr);
+        self.pin_environment(key.env_key, env);
+        self.apply_memo.insert(key, value.clone());
+    }
+
+    /// Records `eval(key.expr, env)` in the eval cache, `env` being the
+    /// environment `key.env_key` names, and pins it like
+    /// [`apply_memo_insert`](Self::apply_memo_insert) does.
+    pub(crate) fn eval_cache_insert(
+        &mut self,
+        key: EvalCacheKey,
+        env: &Environment,
+        value: EvalValue,
+    ) {
+        self.pin_environment(key.env_key, env);
+        self.eval_cache.insert(key, value);
+    }
+
+    /// Keeps the store and source context `env_key` points to alive for the
+    /// rest of the pass, `env` being an environment of that store.
+    fn pin_environment(&mut self, env_key: EnvFrameKey, env: &Environment) {
+        let store = (env_key.store_ptr, env_key.source_context_ptr);
+        // Sound: the last pinned store is held by `pinned_environments`, so
+        // no other store can have its address.
+        if self.last_pinned == Some(store) {
+            return;
+        }
         self.pinned_environments
             .entry(store)
             .or_insert_with(|| env.clone());
-        self.apply_memo.insert(key, value.clone());
+        self.last_pinned = Some(store);
     }
 
     /// Prints the apply memo counters when `FAUST_EVAL_APPLY_PROFILE` is set.
@@ -689,7 +721,7 @@ impl LoopDetector {
         });
         eprintln!(
             "eval apply memo: abstractions {} probes {} hits, cases {} probes {} hits, \
-             {} entries; {} eval-cache entries, {} environment layers",
+             {} entries; {} eval-cache entries, {} environment layers in {} stores",
             abstr.0,
             abstr.1,
             case.0,
@@ -700,6 +732,7 @@ impl LoopDetector {
                 .values()
                 .map(|env| env.with_store(|store| store.layers.len()))
                 .sum::<usize>(),
+            self.pinned_environments.len(),
         );
     }
 
@@ -891,6 +924,47 @@ mod tests {
             "every dispatch is popped"
         );
         Ok(())
+    }
+
+    /// The store every eval-cache and apply-memo key names stays alive for
+    /// the pass: a key holds raw pointers, and a store freed meanwhile could
+    /// hand its address to a new one whose layers would hit the old entries.
+    /// The roots `a2sb` makes with `Environment::empty()` are such stores;
+    /// here two roots are evaluated in turn with one detector, the first
+    /// dropped before the second is made.
+    #[test]
+    fn a_store_named_by_a_memo_key_outlives_its_environment() {
+        let parsed = parser::parse_program("g = 3;\nprocess = g + g : *(2);\n", "pinned.dsp");
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        let mut arena = parsed.state.arena;
+        let root = parsed.root.expect("a parsed program");
+        let mut detector = super::LoopDetector::new();
+        let mut stores = Vec::new();
+        for _ in 0..2 {
+            let mut env = crate::Environment::empty();
+            crate::definitions::bind_definitions(&mut arena, root, &mut env)
+                .expect("definitions bind");
+            let entry = BoxBuilder::new(&mut arena).ident("process");
+            crate::eval_value(&mut arena, entry, &env, &mut detector).expect("process evaluates");
+            stores.push(std::rc::Rc::downgrade(&env.store));
+        }
+        assert!(
+            stores.iter().all(|store| store.upgrade().is_some()),
+            "a dropped root whose layers key cache entries is kept alive"
+        );
+        let named: std::collections::HashSet<_> = detector
+            .eval_cache
+            .keys()
+            .map(|key| key.env_key)
+            .chain(detector.apply_memo.keys().map(|key| key.env_key))
+            .map(|key| (key.store_ptr, key.source_context_ptr))
+            .collect();
+        assert_eq!(named.len(), 2, "each root keys entries of its own");
+        assert!(
+            named
+                .iter()
+                .all(|store| detector.pinned_environments.contains_key(store))
+        );
     }
 
     const CHAIN: &str = "chain(0) = _;\nchain(n) = chain(n-1) : *(0.5);\n";

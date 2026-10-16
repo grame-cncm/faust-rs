@@ -645,7 +645,7 @@ fn lower_abstraction_to_symbolic_value(
 /// box exposes the expected arity.
 fn lower_pattern_matcher_to_symbolic(
     arena: &mut TreeArena,
-    mut pm: PatternMatcherValue,
+    mut pm: Box<PatternMatcherValue>,
     loop_detector: &mut LoopDetector,
 ) -> Result<TreeId, EvalError> {
     if pm.automaton.final_state(pm.state) {
@@ -756,7 +756,7 @@ fn eval_value(
         loop_detector.evaluated_boxes.insert(*result_id);
     }
     if should_cache_eval_value(&result) {
-        loop_detector.eval_cache.insert(cache_key, result.clone());
+        loop_detector.eval_cache_insert(cache_key, env, result.clone());
     }
     // When a box containing embedded closures is re-evaluated in a different
     // environment, the new closure keys produce a structurally different TreeId.
@@ -1357,7 +1357,7 @@ fn force_value_to_box(
             // through a recursion, `fibk(k, n) = k(k, n-1) + k(k, n-2)`, hits
             // the apply memo as C++ `gApplyMemo` does on the hash-consed
             // `boxPatternMatcher`.
-            let key = loop_detector.store_pm(pm);
+            let key = loop_detector.store_pm(*pm);
             let mut b = BoxBuilder::new(arena);
             let key_node = b.int(key);
             Ok(b.pattern_matcher(key_node))
@@ -1594,7 +1594,7 @@ fn eval_case_value(
     // pattern variables are bound in layers pushed above it, never in it.
     let barrier = env.push_barrier_scope();
     let envs = vec![Some(barrier); automaton.n_rules()];
-    Ok(EvalValue::PatternMatcher(PatternMatcherValue {
+    Ok(EvalValue::PatternMatcher(Box::new(PatternMatcherValue {
         automaton,
         state: 0,
         envs,
@@ -1602,7 +1602,7 @@ fn eval_case_value(
         rev_param_list: Vec::new(),
         case_expr,
         fresh_env: Some(env.clone()),
-    }))
+    })))
 }
 
 /// Extracts the textual file reference from `component(...)` / `library(...)`.
