@@ -37,9 +37,10 @@
 //!    transitions and recording variable-to-path associations (`Assoc`) in a per-rule
 //!    `substs` table.
 //! 2. After traversal, variable substitutions are resolved: for each active rule the path
-//!    is used to extract the matched subterm, and the result is bound into the rule's
-//!    `Environment` in `env_out`. **Nonlinearity** (same variable matched against two
-//!    different values) nulls out `env_out[r]`.
+//!    is used to extract the matched subterm, and the result is bound in a new layer
+//!    pushed on the rule's `Environment` in `env_out` (C++ `pushValueDef`).
+//!    **Nonlinearity** (same variable matched against two different values) nulls out
+//!    `env_out[r]`.
 //! 3. Returns `(new_state, Some(rhs))` when the automaton reaches a **final state** (all
 //!    patterns consumed), or `(new_state, None)` for an intermediate state, or `(-1, None)`
 //!    on failure.
@@ -973,15 +974,19 @@ pub(crate) fn unreachable_numeric_patterns(
 ///
 /// This function is called **once per consumed argument** inside a loop in
 /// `apply_case_rules`. The `env_out` vector accumulates per-rule variable bindings
-/// across calls (each call modifies `env_out` in-place; `env_out[r]` is set to `None`
-/// when rule `r` fails a nonlinearity check).
+/// across calls (each call replaces the slots of the rules it binds variables for,
+/// never the layers they pointed to; `env_out[r]` is set to `None` when rule `r`
+/// fails a nonlinearity check).
 ///
 /// Operationally, one call does three things:
 /// 1. traverse the argument tree with [`apply_pattern_matcher_internal`],
 /// 2. replay recorded paths to extract concrete matched subtrees,
 /// 3. bind those subtrees into each surviving rule environment, rejecting
 ///    nonlinear matches where the same variable name would receive two distinct
-///    values.
+///    values. A binding pushes a child layer and replaces `env_out[r]` with it,
+///    so the layer the slot pointed to is never written: matchers are
+///    persistent values, as in C++, and every copy of one keeps its own
+///    bindings.
 ///
 /// # Arguments
 ///
@@ -1033,6 +1038,14 @@ pub(crate) fn apply_pattern_matcher(
         if env_out[rule_r].is_none() {
             continue;
         }
+        // Bindings go into a layer of this application's own, never into the
+        // layer `env_out[r]` points to: that layer is shared by every copy of
+        // the matcher (a `boxPatternMatcher` handle, a matcher bound to a
+        // parameter), which must not see this application's bindings. C++
+        // pushes one layer per binding (`pushValueDef`); one layer per rule
+        // and argument is equivalent, the nonlinearity lookup reading the new
+        // layer first and stopping at the rule's barrier.
+        let mut pushed = false;
         for assoc in &substs[rule_r] {
             // Resolve the pattern variable's identifier node to a name string,
             // then intern it — collecting into String first to release the
@@ -1058,6 +1071,10 @@ pub(crate) fn apply_pattern_matcher(
                         break;
                     }
                 } else {
+                    if !pushed {
+                        *env = env.push_scope();
+                        pushed = true;
+                    }
                     env.bind(sym_id, z1);
                 }
             }

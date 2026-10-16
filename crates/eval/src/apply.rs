@@ -1044,13 +1044,13 @@ mod tests {
         );
     }
 
-    /// A matcher handed out as a box handle is shared by every use of the
-    /// handle, and binding a pattern variable writes into its rule
-    /// environments in place, so `p(3)` below still sees `x = 2` and falls
-    /// through to the second rule. That defect predates the memo; what this
-    /// test guards is that the memo does not spread it: an application through
-    /// a shared matcher is not a function of `(case, environment, arguments)`
-    /// and must not answer for the fresh matcher of `f(3)`.
+    /// A matcher bound to a parameter is shared by every use of `p`, and the
+    /// apply memo keys it like the fresh matcher of `f(3)`: `p(3)` and `f(3)`
+    /// are one entry. Until 2026-10-16 binding a pattern variable wrote into
+    /// the rule environments in place, so `p(3)` still saw `x = 2` and fell
+    /// through to the second rule (`DIFF-GAP-018`); with the memo on shared
+    /// matchers, `f(3)` would then answer `100` too. Values from C++
+    /// (`8eebea429` and 2.90.8): `3, 4, 4`.
     #[test]
     fn a_shared_matcher_does_not_answer_for_a_fresh_one() {
         let evaluated = evaluate_within_budget(
@@ -1060,6 +1060,137 @@ mod tests {
         );
         assert_eq!(evaluated.outputs.len(), 3);
         assert_eq!(evaluated.outputs[0], Some(3));
+        assert_eq!(
+            evaluated.outputs[1],
+            Some(4),
+            "p(3) does not see the x = 2 of p(2)"
+        );
         assert_eq!(evaluated.outputs[2], Some(4), "f(3) selects its first rule");
+    }
+
+    /// A `case` passed to itself through a recursion with overlapping calls:
+    /// `k` is a `boxPatternMatcher` handle, and every application of it goes
+    /// through a copy read from the handle store. The copy is as fresh as the
+    /// matcher it was made from, so the memo keys it and the recursion is
+    /// linear, as with C++ `gApplyMemo` (2.90.8); without that, it is
+    /// exponential, as in the reference `8eebea429` (50 s at `n = 25`).
+    #[test]
+    fn a_case_handle_passed_through_a_recursion_is_memoized() {
+        let evaluated = evaluate_within_budget(
+            "fibk(k, 0) = 0;\nfibk(k, 1) = 1;\nfibk(k, n) = k(k, n-1) + k(k, n-2);\n\
+             process = fibk(fibk, 40);\n",
+        );
+        assert_eq!(evaluated.outputs, vec![Some(102_334_155)]);
+        let case = ApplyMemoKind::Case as usize;
+        assert!(
+            evaluated.hits[case] >= 38,
+            "k(k, n-2) hits at every level: {} hits",
+            evaluated.hits[case]
+        );
+        assert!(
+            evaluated.probes[case] <= 100,
+            "one miss and one hit per level: {} probes",
+            evaluated.probes[case]
+        );
+    }
+
+    /// Every application of a shared matcher starts from the matcher's own
+    /// bindings, not from those of the previous application: a `case` passed
+    /// as an argument, a nonlinear rule, a partially applied matcher and an
+    /// outer definition named like a pattern variable. Values from C++
+    /// (`8eebea429` and 2.90.8); each one failed with `FRS-EVAL-0099` before.
+    #[test]
+    fn a_shared_matcher_keeps_its_applications_apart() {
+        for (source, expected) in [
+            (
+                "h(p) = p(2), p(3);\nprocess = h(case { (x) => x + 1; });\n",
+                vec![3, 4],
+            ),
+            (
+                "f = case { (x, x) => 1; (x, y) => 2; };\n\
+                 h(p) = p(1, 1), p(1, 2), p(2, 2), p(3)(3), p(3)(4);\n\
+                 process = h(f);\n",
+                vec![1, 2, 1, 1, 2],
+            ),
+            (
+                "f = case { (x, x) => 1; (x, y) => 2; };\n\
+                 h(q) = q(1), q(2), q(1);\n\
+                 process = h(f(1));\n",
+                vec![1, 2, 1],
+            ),
+            (
+                "g = case { (x, y) => x * 10 + y; };\n\
+                 h(q) = q(2), q(3);\n\
+                 process = h(g(1)), g(4, 5);\n",
+                vec![12, 13, 45],
+            ),
+            (
+                "x = 5;\nf = case { (x) => x; (y) => 7; };\n\
+                 h(p) = p(3), p(4);\n\
+                 process = h(f), f(9);\n",
+                vec![3, 4, 9],
+            ),
+        ] {
+            let evaluated = evaluate_within_budget(source);
+            let expected: Vec<_> = expected.into_iter().map(Some).collect();
+            assert_eq!(evaluated.outputs, expected, "{source}");
+        }
+    }
+
+    /// The adaptation itself: an application binds its pattern variables in
+    /// layers of its own, above the one barrier all rules share, and leaves the
+    /// rule environments of the matcher it was given untouched, so that a
+    /// copy of the matcher applied afterwards starts from the same state.
+    #[test]
+    fn applying_a_matcher_leaves_its_rule_environments_untouched() {
+        let parsed =
+            parser::parse_program("f = case { (x) => x + 1; (3) => 100; };\n", "persist.dsp");
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        let mut arena = parsed.state.arena;
+        let root = parsed.root.expect("a parsed program");
+        let mut env = crate::Environment::empty();
+        crate::definitions::bind_definitions(&mut arena, root, &mut env).expect("definitions bind");
+        let mut detector = LoopDetector::new();
+        let f = BoxBuilder::new(&mut arena).ident("f");
+        let Ok(crate::EvalValue::PatternMatcher(pm)) =
+            crate::eval_value(&mut arena, f, &env, &mut detector)
+        else {
+            panic!("f evaluates to a pattern matcher");
+        };
+        let barrier = pm.envs[0].clone().expect("a viable rule");
+        assert!(
+            pm.envs
+                .iter()
+                .all(|e| e.as_ref().is_some_and(|e| e.same_identity(&barrier))),
+            "every rule starts from the same barrier"
+        );
+        for (arg, expected) in [(2, 3), (3, 4), (2, 3)] {
+            let arg = BoxBuilder::new(&mut arena).int(arg);
+            let nil = arena.nil();
+            let larg = arena.cons(arg, nil);
+            let applied = super::apply_pattern_matcher_value(
+                &mut arena,
+                pm.clone(),
+                larg,
+                &env,
+                &mut detector,
+                None,
+            )
+            .expect("the matcher applies");
+            let lowered = crate::force_value_to_box(&mut arena, applied, &mut detector)
+                .expect("the result lowers");
+            assert_eq!(match_box(&arena, lowered), BoxMatch::Int(expected));
+            let (_, is_barrier, bindings) = barrier.layer_snapshot();
+            assert!(
+                is_barrier && bindings.is_empty(),
+                "the barrier is never written"
+            );
+            assert!(
+                pm.envs
+                    .iter()
+                    .all(|e| e.as_ref().is_some_and(|e| e.same_identity(&barrier))),
+                "the matcher applied keeps its rule environments"
+            );
+        }
     }
 }

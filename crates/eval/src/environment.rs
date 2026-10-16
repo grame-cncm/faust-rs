@@ -74,14 +74,16 @@ pub(crate) struct PatternMatcherValue {
     pub(crate) rev_param_list: Vec<TreeId>,
     pub(crate) case_expr: TreeId,
     /// The environment `case_expr` was evaluated in, while this matcher is
-    /// fresh: built by `eval_case_value`, no argument bound yet, and no copy of
-    /// it stored or bound anywhere. `(case_expr, fresh_env)` then names the
-    /// matcher, and the apply memo may key on it (`apply.rs`).
+    /// fresh: built by `eval_case_value` and not applied yet, in its initial
+    /// state with every rule on one barrier over that environment.
+    /// `(case_expr, fresh_env)` then names the matcher, and the apply memo
+    /// keys on it (`apply.rs`).
     ///
-    /// Cleared as soon as the matcher can be shared: binding a pattern variable
-    /// writes into `envs` in place, so two copies of one matcher see each
-    /// other's bindings, and a result computed through a copy is not a
-    /// function of `(case_expr, fresh_env)` alone.
+    /// Taken by the first application, partial or not. Copies keep it: a
+    /// binding pushes a layer of the application's own and never writes into
+    /// `envs`, so a stored handle or a matcher bound to a parameter is the
+    /// same function as the fresh one (until 2026-10-16 bindings were written
+    /// in place and copies were not fresh, `DIFF-GAP-018`).
     pub(crate) fresh_env: Option<Environment>,
 }
 

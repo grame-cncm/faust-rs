@@ -75,7 +75,8 @@ letter suffix marks a sibling of an existing entry, a new number an area the
 document had not covered. The inventory was last swept against the code on
 2026-09-11, over every commit since 2026-06-22; §2.11, §2.15 and §2.23 were
 updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
-§2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16.
+§2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16, and §2.4e
+and §2.4b updated the same day when pattern matchers became persistent.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -269,9 +270,11 @@ Constraint:
 - the key is the original `TreeId` plus the full lexical environment identity
   (`store`, `env_id`, `source_context`),
 - this cache is session-local and must not outlive one evaluation pass,
-- because Rust keeps partially applied pattern matchers as host-side values
-  with mutable rule-environment state, `EvalValue::PatternMatcher` is
-  intentionally not cached yet,
+- `EvalValue::PatternMatcher` is not cached. The reason given when this was
+  written, that application mutated the rule environments, no longer holds
+  since 2026-10-16 (matchers are persistent, §2.4e); C++ keeps one matcher
+  per rule list and environment (`getPMProperty`), and caching it here is
+  left until a measurement asks for it,
 - this is therefore a parity-oriented adapted cache: semantically aligned with
   C++ for first-order boxes and closures, but still narrower than the C++
   tree-property cache because of the current Rust value representation.
@@ -425,15 +428,28 @@ Key and payload, mapping status `adapted`:
 - a fresh pattern matcher: the `case` node, the frame key of the environment
   it was evaluated in, and the list of its first `arity` arguments; the value
   is what the selected rule evaluates to. Arguments past the arity are applied
-  to it afterwards. *Fresh* means built by `eval_case_value` and not yet
-  shared: `PatternMatcherValue::fresh_env`, cleared when the matcher is stored
-  as a `boxPatternMatcher` handle (`force_value_to_box`) or read from an
-  environment (`eval_ident_value`). A shared matcher is not keyed because
-  `apply_pattern_matcher` binds pattern variables into the rule environments
-  in place, where C++ pushes a layer per binding: every copy of the matcher
-  sees the bindings of earlier applications, so what it selects is not a
-  function of the key. That defect predates the memo and is
-  `DIFF-GAP-018`; a partially applied matcher is not keyed either;
+  to it afterwards. *Fresh* means built by `eval_case_value` and not applied
+  yet: `PatternMatcherValue::fresh_env`, taken by the first application,
+  partial or not, so a partially applied matcher is not keyed. Copies keep
+  it: a matcher stored as a `boxPatternMatcher` handle (`force_value_to_box`)
+  or bound to a parameter and read back (`eval_ident_value`) is keyed like
+  the fresh one, which is what C++ does, its `boxPatternMatcher` in the
+  initial state being one hash-consed tree per rule list and environment.
+  That is sound because matchers are persistent: `apply_pattern_matcher`
+  binds pattern variables in a layer pushed for the application (C++
+  `pushValueDef`) and never writes into the layers a matcher points to.
+  (2026-10-16 update.) Until then it bound them in place into the rule
+  environments, every copy of a matcher saw the bindings of earlier
+  applications (`DIFF-GAP-018`, now closed), and copies were kept off the
+  memo, `fresh_env` being cleared on a handle or a read. Lifting that
+  restriction was measured: no change in probes, hits or entries on any of
+  the 134 DSPs of `tests/impulse-tests/dsp` and `tests/compile-budget/dsp`,
+  nor on the coopiano voice, but a `case` passed to itself through a
+  recursion with overlapping calls,
+  `fibk(k, n) = k(k, n-1) + k(k, n-2); process = fibk(fibk, n);`, which only
+  evaluates since the fix, is exponential without it (release, `n = 27`
+  2.2 s, the reference `8eebea429` 50.8 s at `n = 25`) and linear with it
+  (under 10 ms, as C++ 2.90.8 with `gApplyMemo`);
 - only successful `Box` and `Closure` results are stored. Pattern-matcher
   results are not, for the reason §2.4b excludes them; errors are not; an
   application in progress has no entry, so loop and depth detection see the
@@ -487,6 +503,14 @@ Measured (release, Apple M5, 2026-10-16):
   no case slower beyond noise (worst 1.03 on an 8 ms case); `dx7_alg5`
   `--check` 124 ms to 76 ms (0.61), `reverb_designer` 186 ms to 136 ms (0.73),
   the upstream commit reporting the same kind of gain on dx7;
+- persistent matchers, 2026-10-16 (release binaries before and after, best of
+  five): the compile-budget basket within noise (worst 1.05 on an 11 ms
+  case); the coopiano voice identical in probes and hits, its time
+  within 12.0 s to 12.3 s and its maximum resident set unchanged, its generated C++
+  byte-identical, with 76 392 environment layers before and 76 357 after
+  (the one barrier now shared by every rule of a `case` outweighs the
+  binding layers); over the 134 corpus DSPs, 30 751 layers before and
+  38 186 after, the same eval-cache entries;
 - instrument: `FAUST_EVAL_APPLY_PROFILE=1` prints probes and hits per kind,
   the entries of this memo and of §2.4b, and the environment layers;
 - what remains of the voice's evaluation is §2.4b itself: 10.0 M entries at
@@ -500,11 +524,17 @@ Validation:
   `a_call_in_a_lambda_body_is_reduced_once` (48 levels, `2^48` without the
   memo), `an_overlapping_case_recursion_is_linear` (`fib(40)`, its value and a
   bound on the probes), `the_apply_memo_keys_on_the_closed_over_environment`,
-  `a_shared_matcher_does_not_answer_for_a_fresh_one`;
+  `a_shared_matcher_does_not_answer_for_a_fresh_one`, and since the
+  2026-10-16 update `a_case_handle_passed_through_a_recursion_is_memoized`
+  (`fibk(fibk, 40)`), `a_shared_matcher_keeps_its_applications_apart` and
+  `applying_a_matcher_leaves_its_rule_environments_untouched`;
 - mutations rejected: the memo disabled for abstractions or for matchers (both
   time out), the environment dropped from the abstraction key
   (`f(2)(10)` gives 11) or from the matcher key (`g(2)(0)` gives 1), and
-  `fresh_env` kept on a stored handle (`f(3)` gives 100);
+  `fresh_env` kept on a stored handle while bindings were still written in
+  place (`f(3)` gives 100); since the update, bindings written in place again
+  (`f(3)` gives 100, four tests fail) and `fresh_env` cleared on a stored
+  handle (`fibk(fibk, 40)` times out);
 - goldens (`xtask golden-check`, 292 cases) and the workspace tests pass;
   `compile-budget-check` gives no verdict on the machine where this was
   written (its calibration DSP runs under the 4 ms floor), hence the

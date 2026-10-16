@@ -772,9 +772,12 @@ fn eval_value(
 
 /// Decides whether an evaluation result may be memoized in the eval cache.
 ///
-/// Boxes and closures are cacheable; pattern matchers are not, because their
-/// automaton state is mutated in place during application and a cached copy
-/// would be replayed from a stale position.
+/// Boxes and closures are cacheable; pattern matchers are not. Until
+/// 2026-10-16 application wrote pattern-variable bindings into the matcher's
+/// rule environments in place, so a cached copy would have been replayed with
+/// stale bindings. Matchers are persistent now and could be cached (C++ keeps
+/// one per rule list and environment, `getPMProperty`); that is not done, no
+/// measurement having asked for it (`porting/MEMOIZATION.md` §2.4b).
 #[inline]
 fn should_cache_eval_value(value: &EvalValue) -> bool {
     match value {
@@ -791,10 +794,9 @@ fn should_cache_eval_value(value: &EvalValue) -> bool {
 ///
 /// Mapping status: `adapted`.
 /// Rust keeps the memoization layer in [`LoopDetector::eval_cache`] instead of
-/// tree properties. Host-side pattern matchers keep mutable environment state
-/// in `pm.envs`, so only box/closure results are memoized for now; this
-/// function corresponds to the uncached evaluation body that C++ exposes as
-/// `realeval(...)`.
+/// tree properties. Only box/closure results are memoized for now (see
+/// [`should_cache_eval_value`]); this function corresponds to the uncached
+/// evaluation body that C++ exposes as `realeval(...)`.
 fn eval_value_uncached(
     arena: &mut TreeArena,
     expr: TreeId,
@@ -1223,12 +1225,9 @@ fn eval_ident_value(
             }
             out
         }
-        EvalValue::PatternMatcher(mut pm) => {
-            // a copy of a bound matcher: every lookup shares its rule
-            // environments, so it is not fresh
-            pm.fresh_env = None;
-            Ok(EvalValue::PatternMatcher(pm))
-        }
+        // a copy of a bound matcher; matchers are persistent, so a copy of
+        // a fresh one is still fresh
+        EvalValue::PatternMatcher(pm) => Ok(EvalValue::PatternMatcher(pm)),
     }
 }
 
@@ -1348,14 +1347,16 @@ fn force_value_to_box(
             }
             _ => eval_box(arena, closure.expr, &closure.env, loop_detector),
         },
-        EvalValue::PatternMatcher(mut pm) => {
+        EvalValue::PatternMatcher(pm) => {
             // Always preserve pattern matchers as explicit runtime nodes.
             // Returning the original `case` tree for an unapplied matcher loses
             // the captured lexical environment, which breaks higher-order uses
             // like passing a local `case` function through another function
             // before eventually applying it. Every use of the handle gets a
-            // copy sharing the rule environments: not fresh any more.
-            pm.fresh_env = None;
+            // copy, still fresh if this one is: a `case` passed to itself
+            // through a recursion, `fibk(k, n) = k(k, n-1) + k(k, n-2)`, hits
+            // the apply memo as C++ `gApplyMemo` does on the hash-consed
+            // `boxPatternMatcher`.
             let key = loop_detector.store_pm(pm);
             let mut b = BoxBuilder::new(arena);
             let key_node = b.int(key);
@@ -1589,9 +1590,10 @@ fn eval_case_value(
                 ))
             }),
     );
-    let envs = (0..automaton.n_rules())
-        .map(|_| Some(env.push_barrier_scope()))
-        .collect();
+    // One barrier for every rule, as C++ `listn(len(rules), pushEnvBarrier(env))`:
+    // pattern variables are bound in layers pushed above it, never in it.
+    let barrier = env.push_barrier_scope();
+    let envs = vec![Some(barrier); automaton.n_rules()];
     Ok(EvalValue::PatternMatcher(PatternMatcherValue {
         automaton,
         state: 0,
