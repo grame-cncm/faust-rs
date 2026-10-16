@@ -1,7 +1,7 @@
 # Normalize — Isomorphic Recursive Group Merging Plan
 
 **Date:** 2026-05-01
-**Status:** Planned
+**Status:** Implemented 2026-05-01 (`crates/normalize/src/rec_merge.rs`); opening cost corrected 2026-10-16 (see Complexity)
 **Scope:** Add a pre-simplification pass in `crates/normalize/` that detects
 structurally isomorphic `SYMREC` groups and unifies them to a single canonical
 representative, enabling downstream algebraic simplification (e.g. `x - x → 0`)
@@ -258,6 +258,19 @@ in `normalize/src/lib.rs`.
 | **Total** | **O(N + R·D)** — linear in graph size for fixed-depth bodies |
 
 For typical Faust DSPs, R ≤ 20 and D ≤ 50.
+
+**Correction (2026-10-16).** The implementation did not keep foreign `SYMREC`
+bodies opaque (Step 2): `open_symrec` re-interned the whole subgraph below each
+body, other groups, tables and controls included, from an empty cache per
+group, so the cost was O(R · N), not O(N + R·D). The faust-coopiano soundboard
+(R = 2 574) spent 20 to 27 s there, 169 882 421 node visits. Keeping foreign
+bodies opaque would also be wrong: a nested group may read the enclosing
+variable, and its references must become holes too. The walk now stops at
+subtrees in which the group's variable is not free (free-variable sets
+computed once per round, `porting/MEMOIZATION.md` §2.24), which is exact when
+one `SYMREC` binds the variable; a variable bound twice keeps the full walk.
+Signatures, merges and created nodes are unchanged; the soundboard's pass
+takes 0.056 s.
 
 ---
 

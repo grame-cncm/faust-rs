@@ -77,7 +77,8 @@ document had not covered. The inventory was last swept against the code on
 updated or added with the W7 cost corrections of 2026-10-10 and 2026-10-11;
 §2.4e was added and §2.3, §2.4c and §3.7 corrected on 2026-10-16, §2.4e
 and §2.4b updated the same day when pattern matchers became persistent, and
-§2.4b again for the size of its entries and the pinning of its stores.
+§2.4b again for the size of its entries and the pinning of its stores; §2.24
+was added on 2026-10-16 too.
 
 ### 2.1 `parser`: imported-source expansion cache
 
@@ -1730,6 +1731,53 @@ at 4096.
 Validation: `outputs_sharing_a_wide_group_classify_each_node_once` counts the
 nodes classified, 3N + 1 against 8 004 000 for N = 2 000 with a search per
 output.
+
+### 2.24 `normalize`: free recursion variables for isomorphic-group merging
+
+Status: implemented 2026-10-16
+
+Location:
+
+- `crates/normalize/src/rec_merge.rs`, `FreeVars`, used by `open_symrec`
+  through `open_signatures`
+
+Cache:
+
+- `sets: HashMap<SigId, Rc<[SigId]>>`: for every node reachable from the
+  outputs, the sorted set of recursion variables free in it (`{v}` for
+  `SYMREF(v)`, minus `v` at `SYMREC(v, _)`, the union of the children
+  otherwise), a set shared with a child holding the same one;
+- `binders: HashMap<SigId, usize>`: how many distinct `SYMREC` nodes bind each
+  variable.
+
+Lifetime: one per round of `merge_isomorphic_symrec_groups` (rebuilt after a
+round that merged, since the reachable forest changed), dropped with it. The
+value is a pure function of the node (rule 6), so a longer scope would be
+valid; a round is where every query comes from, and the table is not kept for
+the rest of the compilation.
+
+Why: to compute the signature of a group, `open_symrec` rebuilds its body with
+its own references replaced by a hole, from an empty cache per group, so it
+re-interned the whole subgraph below each body, other groups, tables and
+controls included. On the faust-coopiano soundboard that was 169 882 421 node
+visits for 2 574 groups, 20 to 27 s of a 34 to 39 s `fir-prepare-normalize`,
+for a pass that merges nothing there. A subtree in which the group's variable
+is not free opens to itself without creating a node, so the walk stops there;
+that is exact when one `SYMREC` alone binds the variable (it cannot be reached
+from its own body), and a variable bound twice keeps the full walk.
+
+Measured on the soundboard (rules 5 and 7): 221 791 nodes in the table,
+52 867 set entries in all, no set larger than 2, 5 157 distinct allocations;
+134 375 lookups and 60 335 visits instead of 169 882 421; the pass takes
+0.056 s instead of 20 to 27 s. The key is one walk of the forest, the same
+size as `collect_symrec_nodes`.
+
+Validation: `pruned_opening_matches_the_full_walk` (300 random forests with
+nested, shared, isomorphic and rebound groups, built twice: same signatures,
+same merge, same arena length as the full walk);
+`opening_cost_is_linear_in_nested_and_sibling_groups` (at most 8 visits per
+group against N·M for the full walk); generated C++ byte-identical over the
+corpus differential recorded in `porting/journal/2026-10-16.md`.
 
 ## 3. Planned Additions
 
