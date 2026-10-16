@@ -2,8 +2,9 @@
 
 Date: 2026-10-16
 
-Status: **analysis only**, nothing implemented. Decisions D1 to D3 (section 6)
-are open.
+Status: **W1 implemented** on 2026-10-16, with D1 decided: `local.get 0` +
+`offset=` (section 4, "Implemented"). W2 to W4 are not started; D2 and D3 are
+open.
 
 Origin: point 14 of faust-coopiano's `faust-rs-issues/RAPPORT.md`. The wasm
 from `faust-rs -lang wasm -double` runs 1.3 to 1.8 times slower than faust-rs's
@@ -233,6 +234,62 @@ low risk).
 - Registry: a line in `faust-rs-vs-faust-cpp-differences-en.md` if D1 picks a
   behavior that differs from C++.
 
+*Implemented (2026-10-16), D1 = `local.get 0` + `offset=`.*
+`ComputeSubsetLowerer::emit_region_address` in
+`crates/codegen/src/backends/wasm/mod.rs` builds every struct, compute-local
+array and static-table address.
+
+- **Constant addresses.** A scalar field, or a constant index, puts
+  `K + i × size` in `offset=` over `local.get 0` (struct) or `i32.const 0`
+  (static tables).
+- **Dynamic indices.** A dynamic index does not use `offset=K`, unlike the
+  bullets above. It keeps the wrapping sum `dsp + (index × size + K)`, the
+  value the former `(dsp + K) + index × size` computed, so an index out of
+  its table (possible with `-ct 0`) reads the same bytes rather than
+  trapping. On both bodies this form costs 0.1 to 0.3 % more instructions
+  than `offset=K`, with cycles within noise.
+- **Soundfile pointer.** The load of the `Soundfile*` field goes through the
+  same helper.
+- **Unchanged.** `getParamValue`/`setParamValue`, I/O pointer aliases and
+  soundfile internals.
+- **Registry.** No observable behavior changes, so no registry entry: `dsp`
+  is still honored with internal memory, and the JSON, layout and exports are
+  the same.
+
+Validation:
+
+- `wasm_constant_addresses_fold_into_memarg_offset` checks the exact operator
+  sequences in both memory modes, and that no `local.get 0; i32.const;
+  i32.add` address remains. It fails on the former emitter.
+- No Rust wasm runtime is in the workspace, so the planned `dsp != 0`
+  execution test is covered by that structural check on the external-memory
+  path instead.
+- The 632 `.dsp` of `tests/` and `examples/` were compiled in `-double` and
+  `-single` with the old and new binaries and run in node with a pseudo-random
+  input and a control change:
+  - success and failure agree on all 1,264 compilations;
+  - 1,024 runs are bit-identical, including the soundfile (imported-memory)
+    and foreign-function modules;
+  - the other 5 trap with the same "remainder by zero" in both builds;
+  - none differs.
+- `make -f Make.wasm` in `tests/impulse-tests`: 132/133. `phaser_flanger`
+  fails at 1e-2, with output byte-identical between the old and new binaries.
+  It fails on `main-dev` before this change.
+- The coopiano voice and bodies are bit-identical between the two binaries.
+
+Measured with the implemented emitter (node 22, `--no-liftoff`, load average
+about 4):
+
+| DSP | instr/sample | cycles/sample | % of a core |
+|---|---|---|---|
+| voice | 33,100–33,900 → 30,000 | 6,760–7,420 → 5,510–5,670 | 7.8 → 5.8 (em++ 5.7) |
+| light body | 152,100 → 120,300 | 53,700–54,200 → 39,200–39,700 | 38.6 → 29.9 (em++ 20.5–21) |
+| imaged body | 296,000 → 196,300 | 126,700–131,400 → 71,600–73,400 | 94.6 → 50.9–56.2 (em++ 49) |
+
+Compile time of `-lang wasm` on the imaged body: 5.92–6.23 s before, 5.81–6.15
+s after, best of three. The modules are smaller: the imaged body goes from
+3.74 to 3.33 MB, the light body from 2.07 to 1.75 MB.
+
 **W2. Sink reads and pure temporaries to their first use, within the
 straight-line region of the sample loop** (expected −18 % on resonator banks,
 0 to −6 % on coopiano; medium risk).
@@ -292,7 +349,8 @@ Order: W1, then the W2 design note, then W2 and W3, then W4.
 
 ## 6. Decisions for the user
 
-- **D1, base for internal memory.**
+- **D1, base for internal memory.** *Decided 2026-10-16: `local.get 0` +
+  `offset=`.*
   - Absolute `i32.const 0` (Faust C++ parity; `dsp` is ignored).
   - `local.get 0` + `offset=` (today's behavior for `dsp != 0`; one code path
     for both memory modes).

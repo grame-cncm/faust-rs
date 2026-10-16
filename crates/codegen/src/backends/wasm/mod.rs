@@ -972,6 +972,15 @@ struct WasmLocal {
     typ: FirType,
 }
 
+/// Base of a region addressed by [`ComputeSubsetLowerer::emit_region_address`].
+#[derive(Clone, Copy, Debug)]
+enum RegionBase {
+    /// The DSP struct, at the `dsp` pointer (local 0 of every lowered body).
+    Dsp,
+    /// An absolute linear-memory address (static tables).
+    Absolute,
+}
+
 #[derive(Clone, Debug)]
 enum WasmLocalStorage {
     Local(u32),
@@ -1495,26 +1504,27 @@ impl ComputeSubsetLowerer<'_> {
         function: &mut Function,
     ) -> Result<(), WasmBackendError> {
         let local = self.local(name)?.clone();
-        let (elem_type, storage_type) = match &local.storage {
+        let (elem_type, storage_type, memarg_offset) = match &local.storage {
             WasmLocalStorage::Local(local_index) => {
                 let elem_type = stack_alias_pointee(&local.typ)?;
                 function.instruction(&Instruction::LocalGet(*local_index));
                 self.lower_index_offset(index, &elem_type, function)?;
                 function.instruction(&Instruction::I32Add);
                 let storage_type = wasm_val_type_for_fir(&elem_type, self.options)?;
-                (elem_type, storage_type)
+                (elem_type, storage_type, 0)
             }
             WasmLocalStorage::Memory {
                 offset,
                 elem_type,
                 storage_type,
             } => {
-                function.instruction(&Instruction::LocalGet(0));
-                function.instruction(&Instruction::I32Const(*offset as i32));
-                function.instruction(&Instruction::I32Add);
-                self.lower_index_offset(index, elem_type, function)?;
-                function.instruction(&Instruction::I32Add);
-                (elem_type.clone(), *storage_type)
+                let memarg_offset = self.emit_region_address(
+                    RegionBase::Dsp,
+                    *offset,
+                    Some((index, elem_type)),
+                    function,
+                )?;
+                (elem_type.clone(), *storage_type, memarg_offset)
             }
         };
         self.lower_expr(value, function)?;
@@ -1528,7 +1538,7 @@ impl ComputeSubsetLowerer<'_> {
         if matches!(local.storage, WasmLocalStorage::Local(_)) {
             function.instruction(&store_instruction_for_type(&elem_type, self.options)?);
         } else {
-            function.instruction(&store_instruction_for_valtype(storage_type)?);
+            function.instruction(&store_instruction_at(storage_type, memarg_offset)?);
         }
         Ok(())
     }
@@ -1542,9 +1552,8 @@ impl ComputeSubsetLowerer<'_> {
     ) -> Result<(), WasmBackendError> {
         let field = self.struct_field(name)?.clone();
         let field_val_type = wasm_val_type_for_field(&field);
-        function.instruction(&Instruction::LocalGet(0));
-        function.instruction(&Instruction::I32Const(field.offset as i32));
-        function.instruction(&Instruction::I32Add);
+        let memarg_offset =
+            self.emit_region_address(RegionBase::Dsp, field.offset, None, function)?;
         self.lower_expr(value, function)?;
         let value_type = self.store.value_type(value).ok_or_else(|| {
             WasmBackendError::new(
@@ -1553,7 +1562,7 @@ impl ComputeSubsetLowerer<'_> {
             )
         })?;
         self.emit_cast_if_needed(&value_type, field_val_type, function)?;
-        function.instruction(&store_instruction_for_valtype(field_val_type)?);
+        function.instruction(&store_instruction_at(field_val_type, memarg_offset)?);
         Ok(())
     }
 
@@ -1586,11 +1595,13 @@ impl ComputeSubsetLowerer<'_> {
     ) -> Result<(), WasmBackendError> {
         let field = self.struct_field(name)?.clone();
         let field_val_type = wasm_val_type_for_field(&field);
-        function.instruction(&Instruction::LocalGet(0));
-        function.instruction(&Instruction::I32Const(field.offset as i32));
-        function.instruction(&Instruction::I32Add);
-        self.lower_index_offset(index, &field_fir_type(&field, self.options), function)?;
-        function.instruction(&Instruction::I32Add);
+        let field_fir = field_fir_type(&field, self.options);
+        let memarg_offset = self.emit_region_address(
+            RegionBase::Dsp,
+            field.offset,
+            Some((index, &field_fir)),
+            function,
+        )?;
         self.lower_expr(value, function)?;
         let value_type = self.store.value_type(value).ok_or_else(|| {
             WasmBackendError::new(
@@ -1599,16 +1610,17 @@ impl ComputeSubsetLowerer<'_> {
             )
         })?;
         self.emit_cast_if_needed(&value_type, field_val_type, function)?;
-        function.instruction(&store_instruction_for_valtype(field_val_type)?);
+        function.instruction(&store_instruction_at(field_val_type, memarg_offset)?);
         Ok(())
     }
 
     /// Stores one element of a static table.
     ///
     /// A static table sits at an absolute address in linear memory rather than
-    /// at an offset from the `dsp` pointer, so — unlike the struct form — no
-    /// base is pushed. This mirrors the `LoadTable(kStatic)` case; it exists so
-    /// a generated table's fill loop can write the table it was built to fill.
+    /// at an offset from the `dsp` pointer, so — unlike the struct form — the
+    /// base is `i32.const 0` (constant index) or the scaled index alone. This
+    /// mirrors the `LoadTable(kStatic)` case; it exists so a generated table's
+    /// fill loop can write the table it was built to fill.
     fn lower_store_table_static(
         &mut self,
         name: &str,
@@ -1618,9 +1630,13 @@ impl ComputeSubsetLowerer<'_> {
     ) -> Result<(), WasmBackendError> {
         let field = self.struct_field(name)?.clone();
         let field_val_type = wasm_val_type_for_field(&field);
-        function.instruction(&Instruction::I32Const(field.offset as i32));
-        self.lower_index_offset(index, &field_fir_type(&field, self.options), function)?;
-        function.instruction(&Instruction::I32Add);
+        let field_fir = field_fir_type(&field, self.options);
+        let memarg_offset = self.emit_region_address(
+            RegionBase::Absolute,
+            field.offset,
+            Some((index, &field_fir)),
+            function,
+        )?;
         self.lower_expr(value, function)?;
         let value_type = self.store.value_type(value).ok_or_else(|| {
             WasmBackendError::new(
@@ -1629,7 +1645,7 @@ impl ComputeSubsetLowerer<'_> {
             )
         })?;
         self.emit_cast_if_needed(&value_type, field_val_type, function)?;
-        function.instruction(&store_instruction_for_valtype(field_val_type)?);
+        function.instruction(&store_instruction_at(field_val_type, memarg_offset)?);
         Ok(())
     }
 
@@ -1747,14 +1763,13 @@ impl ComputeSubsetLowerer<'_> {
                 access: AccessType::Struct,
                 typ,
             } => {
-                let field = self.struct_field(&name)?;
-                function.instruction(&Instruction::LocalGet(0));
-                function.instruction(&Instruction::I32Const(field.offset as i32));
-                function.instruction(&Instruction::I32Add);
-                let storage_ty = wasm_val_type_for_field(field);
-                function.instruction(&load_instruction_for_valtype(storage_ty)?);
+                let field = self.struct_field(&name)?.clone();
+                let memarg_offset =
+                    self.emit_region_address(RegionBase::Dsp, field.offset, None, function)?;
+                let storage_ty = wasm_val_type_for_field(&field);
+                function.instruction(&load_instruction_at(storage_ty, memarg_offset)?);
                 self.emit_cast_if_needed(
-                    &field_fir_type(field, self.options),
+                    &field_fir_type(&field, self.options),
                     wasm_val_type_for_fir(&typ, self.options)?,
                     function,
                 )?;
@@ -1817,10 +1832,13 @@ impl ComputeSubsetLowerer<'_> {
                 let field = self.struct_field(&name)?.clone();
                 let field_fir = field_fir_type(&field, self.options);
                 let storage_ty = wasm_val_type_for_field(&field);
-                function.instruction(&Instruction::I32Const(field.offset as i32));
-                self.lower_index_offset(index, &field_fir, function)?;
-                function.instruction(&Instruction::I32Add);
-                function.instruction(&load_instruction_for_valtype(storage_ty)?);
+                let memarg_offset = self.emit_region_address(
+                    RegionBase::Absolute,
+                    field.offset,
+                    Some((index, &field_fir)),
+                    function,
+                )?;
+                function.instruction(&load_instruction_at(storage_ty, memarg_offset)?);
                 self.emit_cast_if_needed(
                     &field_fir,
                     wasm_val_type_for_fir(&typ, self.options)?,
@@ -1848,12 +1866,13 @@ impl ComputeSubsetLowerer<'_> {
                         elem_type,
                         storage_type,
                     } => {
-                        function.instruction(&Instruction::LocalGet(0));
-                        function.instruction(&Instruction::I32Const(*offset as i32));
-                        function.instruction(&Instruction::I32Add);
-                        self.lower_index_offset(index, elem_type, function)?;
-                        function.instruction(&Instruction::I32Add);
-                        function.instruction(&load_instruction_for_valtype(*storage_type)?);
+                        let memarg_offset = self.emit_region_address(
+                            RegionBase::Dsp,
+                            *offset,
+                            Some((index, elem_type)),
+                            function,
+                        )?;
+                        function.instruction(&load_instruction_at(*storage_type, memarg_offset)?);
                         self.emit_cast_if_needed(
                             elem_type,
                             wasm_val_type_for_fir(&typ, self.options)?,
@@ -1872,12 +1891,13 @@ impl ComputeSubsetLowerer<'_> {
                 let field = self.struct_field(&name)?.clone();
                 let field_fir = field_fir_type(&field, self.options);
                 let storage_ty = wasm_val_type_for_field(&field);
-                function.instruction(&Instruction::LocalGet(0));
-                function.instruction(&Instruction::I32Const(field.offset as i32));
-                function.instruction(&Instruction::I32Add);
-                self.lower_index_offset(index, &field_fir, function)?;
-                function.instruction(&Instruction::I32Add);
-                function.instruction(&load_instruction_for_valtype(storage_ty)?);
+                let memarg_offset = self.emit_region_address(
+                    RegionBase::Dsp,
+                    field.offset,
+                    Some((index, &field_fir)),
+                    function,
+                )?;
+                function.instruction(&load_instruction_at(storage_ty, memarg_offset)?);
                 self.emit_cast_if_needed(
                     &field_fir,
                     wasm_val_type_for_fir(&typ, self.options)?,
@@ -2080,6 +2100,68 @@ impl ComputeSubsetLowerer<'_> {
         Ok(())
     }
 
+    /// Pushes the address operand of one access into a memory region that
+    /// starts `offset` bytes past `base`, element `index` if any, and returns
+    /// the static offset the load or store must carry in its memarg.
+    ///
+    /// A constant address (a scalar field, or a constant index) goes whole
+    /// into the memarg `offset=`, so the operand is just `local.get 0` (or
+    /// `i32.const 0`). Emitting `dsp + K` as an explicit `i32.add` instead lets
+    /// V8's TurboFan value-number every distinct `dsp + K` into a long-lived
+    /// value it spills and reloads around the sample loop: 23 % to 45 % of the
+    /// cycles of the coopiano programs
+    /// (`porting/wasm-compute-speed-analysis-and-plan-2026-10-16-en.md`, W1).
+    /// The effective address is unchanged: `zext(dsp) + K` equals the wrapped
+    /// `dsp + K` for any DSP that fits in memory.
+    ///
+    /// A dynamic index keeps the wrapping i32 sum `dsp + (index * size + K)`
+    /// with a zero memarg offset. That is the value the former
+    /// `(dsp + K) + index * size` computed, so an index out of its table (only
+    /// possible with `-ct 0`) still reads the same bytes rather than trapping.
+    ///
+    /// Faust C++ (`WASMInstVisitor`, `NamedAddress`/`IndexedAddress`) emits an
+    /// absolute `i32.const K` when the memory is internal; faust-rs keeps the
+    /// `dsp` base in both memory modes, so a host passing a non-zero `dsp` is
+    /// served as before.
+    fn emit_region_address(
+        &mut self,
+        base: RegionBase,
+        offset: u32,
+        index: Option<(FirId, &FirType)>,
+        function: &mut Function,
+    ) -> Result<u32, WasmBackendError> {
+        let push_base = |function: &mut Function| {
+            function.instruction(&match base {
+                RegionBase::Dsp => Instruction::LocalGet(0),
+                RegionBase::Absolute => Instruction::I32Const(0),
+            });
+        };
+        let Some((index, elem_type)) = index else {
+            push_base(function);
+            return Ok(offset);
+        };
+        if let FirMatch::Int32 { value, .. } = match_fir(self.store, index) {
+            let size = i64::from(elem_size_bytes(elem_type, self.options)?);
+            let byte = i64::from(offset) + i64::from(value) * size;
+            if let Ok(byte) = u32::try_from(byte) {
+                push_base(function);
+                return Ok(byte);
+            }
+        }
+        if matches!(base, RegionBase::Dsp) {
+            function.instruction(&Instruction::LocalGet(0));
+        }
+        self.lower_index_offset(index, elem_type, function)?;
+        if offset != 0 {
+            function.instruction(&Instruction::I32Const(offset as i32));
+            function.instruction(&Instruction::I32Add);
+        }
+        if matches!(base, RegionBase::Dsp) {
+            function.instruction(&Instruction::I32Add);
+        }
+        Ok(0)
+    }
+
     /// Emits the zero/default literal for one local type.
     fn emit_default_value(
         &self,
@@ -2131,11 +2213,10 @@ impl ComputeSubsetLowerer<'_> {
         soundfile_field_offset: u32,
         function: &mut Function,
     ) -> Result<(), WasmBackendError> {
-        let field = self.struct_field(var)?;
-        function.instruction(&Instruction::LocalGet(0));
-        function.instruction(&Instruction::I32Const(field.offset as i32));
-        function.instruction(&Instruction::I32Add);
-        function.instruction(&Instruction::I32Load(memarg(0)));
+        let field_offset = self.struct_field(var)?.offset;
+        let memarg_offset =
+            self.emit_region_address(RegionBase::Dsp, field_offset, None, function)?;
+        function.instruction(&Instruction::I32Load(memarg(memarg_offset)));
         function.instruction(&Instruction::I32Const(soundfile_field_offset as i32));
         function.instruction(&Instruction::I32Add);
         function.instruction(&Instruction::I32Load(memarg(0)));
@@ -2994,11 +3075,20 @@ fn store_instruction_for_type(
 
 /// Returns the scalar load instruction for one WASM value type.
 fn load_instruction_for_valtype(typ: ValType) -> Result<Instruction<'static>, WasmBackendError> {
+    load_instruction_at(typ, 0)
+}
+
+/// Returns the scalar load instruction for one WASM value type, with a static
+/// memarg `offset`.
+fn load_instruction_at(
+    typ: ValType,
+    offset: u32,
+) -> Result<Instruction<'static>, WasmBackendError> {
     match typ {
-        ValType::I32 => Ok(Instruction::I32Load(memarg(0))),
-        ValType::I64 => Ok(Instruction::I64Load(memarg(0))),
-        ValType::F32 => Ok(Instruction::F32Load(memarg(0))),
-        ValType::F64 => Ok(Instruction::F64Load(memarg(0))),
+        ValType::I32 => Ok(Instruction::I32Load(memarg(offset))),
+        ValType::I64 => Ok(Instruction::I64Load(memarg(offset))),
+        ValType::F32 => Ok(Instruction::F32Load(memarg(offset))),
+        ValType::F64 => Ok(Instruction::F64Load(memarg(offset))),
         other => Err(WasmBackendError::new(
             WasmBackendErrorCode::UnsupportedFirNode,
             format!("unsupported load type in WASM subset: {other:?}"),
@@ -3008,11 +3098,20 @@ fn load_instruction_for_valtype(typ: ValType) -> Result<Instruction<'static>, Wa
 
 /// Returns the scalar store instruction for one WASM value type.
 fn store_instruction_for_valtype(typ: ValType) -> Result<Instruction<'static>, WasmBackendError> {
+    store_instruction_at(typ, 0)
+}
+
+/// Returns the scalar store instruction for one WASM value type, with a static
+/// memarg `offset`.
+fn store_instruction_at(
+    typ: ValType,
+    offset: u32,
+) -> Result<Instruction<'static>, WasmBackendError> {
     match typ {
-        ValType::I32 => Ok(Instruction::I32Store(memarg(0))),
-        ValType::I64 => Ok(Instruction::I64Store(memarg(0))),
-        ValType::F32 => Ok(Instruction::F32Store(memarg(0))),
-        ValType::F64 => Ok(Instruction::F64Store(memarg(0))),
+        ValType::I32 => Ok(Instruction::I32Store(memarg(offset))),
+        ValType::I64 => Ok(Instruction::I64Store(memarg(offset))),
+        ValType::F32 => Ok(Instruction::F32Store(memarg(offset))),
+        ValType::F64 => Ok(Instruction::F64Store(memarg(offset))),
         other => Err(WasmBackendError::new(
             WasmBackendErrorCode::UnsupportedFirNode,
             format!("unsupported store type in WASM subset: {other:?}"),

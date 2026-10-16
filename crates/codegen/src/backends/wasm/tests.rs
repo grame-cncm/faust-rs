@@ -392,6 +392,83 @@ fn wasm_compute_loads_static_tables() {
     assert!(ops.iter().any(|op| matches!(op, Operator::F32Store { .. })));
 }
 
+/// W1 of `porting/wasm-compute-speed-analysis-and-plan-2026-10-16-en.md`: a
+/// constant address goes whole into the memarg `offset=` over a bare base, and
+/// a dynamic index keeps the wrapping sum `base + (index * size + K)`.
+#[test]
+fn wasm_constant_addresses_fold_into_memarg_offset() {
+    for internal_memory in [true, false] {
+        let (store, module) = build_region_address_module();
+        let options = WasmOptions {
+            internal_memory,
+            ..WasmOptions::default()
+        };
+        let out = generate_wasm_module(&store, module, &options)
+            .expect("WASM backend should lower every region address form");
+        Validator::new()
+            .validate_all(&out.wasm_binary)
+            .expect("generated module should validate");
+        let offset = |name: &str| {
+            out.memory_layout
+                .field_offsets
+                .get(name)
+                .unwrap_or_else(|| panic!("`{name}` should be in the layout"))
+                .offset
+        };
+        let (state, rec, idx, wav) = (
+            offset("fState"),
+            offset("fRec"),
+            offset("fIdx"),
+            offset("wav"),
+        );
+        assert!(
+            rec > 0 && wav > 0,
+            "the checks below need non-zero region offsets"
+        );
+
+        let ops = decode_ops(code_body_at(&out.wasm_binary, 1));
+        let tokens = address_tokens(&ops);
+        let has = |window: &[String]| tokens.windows(window.len()).any(|w| w == window);
+        let t = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+
+        // Struct scalar, and struct table at constant indices 1 and 0.
+        assert!(has(&t(&["local.get 0", &format!("f32.load {state}")])));
+        assert!(has(&t(&["local.get 0", &format!("f32.load {}", rec + 4)])));
+        assert!(has(&t(&["local.get 0", &format!("f32.load {rec}")])));
+        assert!(tokens.contains(&format!("f32.store {rec}")));
+        assert!(tokens.contains(&format!("f32.store {state}")));
+        // Struct table at a dynamic index: dsp + (fIdx * 4 + K), offset 0.
+        let dynamic = t(&[
+            "local.get 0",
+            "local.get 0",
+            &format!("i32.load {idx}"),
+            "i32.const 4",
+            "i32.mul",
+            &format!("i32.const {rec}"),
+            "i32.add",
+            "i32.add",
+        ]);
+        assert!(has(&[dynamic.clone(), t(&["f32.load 0"])].concat()));
+        // Static table: absolute, constant index over `i32.const 0`, dynamic
+        // index as the scaled index plus the table's address.
+        assert!(has(&t(&["i32.const 0", &format!("f32.load {}", wav + 4)])));
+        assert!(has(&t(&[
+            "local.get 0",
+            &format!("i32.load {idx}"),
+            "i32.const 4",
+            "i32.mul",
+            &format!("i32.const {wav}"),
+            "i32.add",
+            "f32.load 0",
+        ])));
+        // The former `dsp + K` sequence is gone.
+        assert!(
+            !has(&t(&["local.get 0", "i32.const", "i32.add"])),
+            "no `local.get 0; i32.const K; i32.add` address may remain"
+        );
+    }
+}
+
 #[test]
 fn wasm_module_emits_static_table_data_segments() {
     let (store, module) = build_static_table_layout_module();
@@ -1892,6 +1969,110 @@ fn build_static_table_layout_module() -> (FirStore, FirId) {
     (store, module)
 }
 
+/// `compute` touching every address form of `emit_region_address`: a struct
+/// scalar (`fState`), a struct table at constant and dynamic indices (`fRec`,
+/// indexed by the struct scalar `fIdx`) and a static table at a constant and a
+/// dynamic index (`wav`, after a leading static table `lead`).
+fn build_region_address_module() -> (FirStore, FirId) {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+
+    let z = b.float32(0.0);
+    let zero_i = b.int32(0);
+    let state = b.declare_var("fState", FirType::FaustFloat, AccessType::Struct, Some(z));
+    let rec = b.declare_table("fRec", AccessType::Struct, FirType::FaustFloat, &[z, z]);
+    let idx = b.declare_var("fIdx", FirType::Int32, AccessType::Struct, Some(zero_i));
+    let dsp_struct = b.block(&[state, rec, idx]);
+    let globals = b.block(&[]);
+    let w0 = b.float32(0.0);
+    let w1 = b.float32(1.0);
+    let w2 = b.float32(2.0);
+    // Static tables are laid out first: `lead` puts `wav` at a non-zero address.
+    let lead = b.declare_table("lead", AccessType::Static, FirType::FaustFloat, &[w0]);
+    let wav = b.declare_table(
+        "wav",
+        AccessType::Static,
+        FirType::FaustFloat,
+        &[w0, w1, w2],
+    );
+    let static_decls = b.block(&[lead, wav]);
+
+    let ff = FirType::FaustFloat;
+    let chan0 = b.int32(0);
+    let ptr_ty = FirType::Ptr(Box::new(FirType::FaustFloat));
+    let out_ptr = b.load_table("outputs", AccessType::FunArgs, chan0, ptr_ty.clone());
+    let out_alias = b.declare_var("output0", ptr_ty, AccessType::Stack, Some(out_ptr));
+    let count = b.load_var("count", AccessType::FunArgs, FirType::Int32);
+    let i0 = b.load_var("i0", AccessType::Loop, FirType::Int32);
+
+    let one = b.int32(1);
+    let rec1 = b.load_table("fRec", AccessType::Struct, one, ff.clone());
+    let state_cur = b.load_var("fState", AccessType::Struct, ff.clone());
+    let sum = b.binop(fir::FirBinOp::Add, rec1, state_cur, ff.clone());
+    let write_rec0 = b.store_table("fRec", AccessType::Struct, zero_i, sum);
+    let rec0 = b.load_table("fRec", AccessType::Struct, zero_i, ff.clone());
+    let write_state = b.store_var("fState", AccessType::Struct, rec0);
+    let dyn_idx = b.load_var("fIdx", AccessType::Struct, FirType::Int32);
+    let rec_dyn = b.load_table("fRec", AccessType::Struct, dyn_idx, ff.clone());
+    let wav_const = b.load_table("wav", AccessType::Static, one, ff.clone());
+    let wav_dyn = b.load_table("wav", AccessType::Static, dyn_idx, ff.clone());
+    let mix = b.binop(fir::FirBinOp::Add, rec_dyn, wav_const, ff.clone());
+    let mix = b.binop(fir::FirBinOp::Add, mix, wav_dyn, ff);
+    let tmp = b.declare_var("tmpMix", FirType::FaustFloat, AccessType::Stack, Some(mix));
+    let tmp_cur = b.load_var("tmpMix", AccessType::Stack, FirType::FaustFloat);
+    let write_rec_dyn = b.store_table("fRec", AccessType::Struct, dyn_idx, tmp_cur);
+    let write_out = b.store_table("output0", AccessType::Stack, i0, tmp_cur);
+    let loop_body = b.block(&[write_rec0, write_state, tmp, write_rec_dyn, write_out]);
+    let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
+    let compute_body = b.block(&[out_alias, sample_loop]);
+
+    let args = [
+        NamedType {
+            name: "dsp".to_owned(),
+            typ: FirType::Ptr(Box::new(FirType::Obj)),
+        },
+        NamedType {
+            name: "count".to_owned(),
+            typ: FirType::Int32,
+        },
+        NamedType {
+            name: "inputs".to_owned(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+        NamedType {
+            name: "outputs".to_owned(),
+            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+        },
+    ];
+    let compute = b.declare_fun(
+        "compute",
+        FirType::Fun {
+            args: vec![
+                FirType::Ptr(Box::new(FirType::Obj)),
+                FirType::Int32,
+                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
+            ],
+            ret: Box::new(FirType::Void),
+        },
+        &args,
+        Some(compute_body),
+        false,
+    );
+    let functions = b.block(&[compute]);
+    let module = b.module(
+        0,
+        1,
+        "region_address",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
+    (store, module)
+}
+
 fn build_static_table_compute_module() -> (FirStore, FirId) {
     let mut store = FirStore::new();
     let mut b = FirBuilder::new(&mut store);
@@ -2411,6 +2592,27 @@ fn code_body_at<'a>(wasm: &'a [u8], index: usize) -> wasmparser::FunctionBody<'a
         }
     }
     panic!("code body index {index} not found");
+}
+
+/// Renders the operators that build and use addresses as short tokens
+/// (`local.get 0`, `i32.const 4`, `f32.load 12`, ...); every other operator
+/// becomes `_`, so a window of tokens matches one exact emitted sequence.
+fn address_tokens(ops: &[Operator<'_>]) -> Vec<String> {
+    ops.iter()
+        .map(|op| match op {
+            Operator::LocalGet { local_index } => format!("local.get {local_index}"),
+            Operator::I32Const { value } => format!("i32.const {value}"),
+            Operator::I32Add => "i32.add".to_owned(),
+            Operator::I32Mul => "i32.mul".to_owned(),
+            Operator::I32Load { memarg } => format!("i32.load {}", memarg.offset),
+            Operator::F32Load { memarg } => format!("f32.load {}", memarg.offset),
+            Operator::F64Load { memarg } => format!("f64.load {}", memarg.offset),
+            Operator::I32Store { memarg } => format!("i32.store {}", memarg.offset),
+            Operator::F32Store { memarg } => format!("f32.store {}", memarg.offset),
+            Operator::F64Store { memarg } => format!("f64.store {}", memarg.offset),
+            _ => "_".to_owned(),
+        })
+        .collect()
 }
 
 fn decode_ops(body: wasmparser::FunctionBody<'_>) -> Vec<Operator<'_>> {
