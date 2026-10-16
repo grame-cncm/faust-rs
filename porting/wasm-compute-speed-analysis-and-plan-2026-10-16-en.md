@@ -3,8 +3,17 @@
 Date: 2026-10-16
 
 Status: **W1 implemented** on 2026-10-16, with D1 decided: `local.get 0` +
-`offset=` (section 4, "Implemented"). W2 to W4 are not started; D2 and D3 are
-open.
+`offset=` (section 4, "Implemented"). **W4 studied** the same day: the cold-arm
+cost it targeted was a measurement artifact, so W4 is dropped (section 8).
+W2, W3 and the new W5 are not started; D2 to D4 are open.
+
+**Measurement correction.** The instruction and cycle counts first recorded
+here (sections 2.1, 2.2, C4) subtract a 0-block run from an N-block run. That
+difference includes a fixed cost that is not paid at the first call: probably
+compilation still running when a 0-block run exits. The cost is larger for
+larger functions, which made the cold arms look expensive. Steady-state counts
+use the slope between two run lengths instead (section 8). The wall-clock
+percentages were measured in the third second of a run and are unaffected.
 
 Origin: point 14 of faust-coopiano's `faust-rs-issues/RAPPORT.md`. The wasm
 from `faust-rs -lang wasm -double` runs 1.3 to 1.8 times slower than faust-rs's
@@ -53,13 +62,14 @@ compilers are compared below, it is on a shared DSP, `bank.dsp` (section 2.3).
    then loaded back for the output sum and for the `fRec[1] = fRec[0]` copy.
    V8 does no load elimination on linear memory. Forwarding the stored value
    gains 2 to 3 %.
-5. **Open: rarely-taken `if` arms account for the light body's remaining
-   gap.** After the three fixes the light body still runs about 1.35 times
-   em++. As a code-shape probe, the control-change and gated arms were
-   removed. Without them, faust-rs with W1 runs at em++'s level: 27–30k
-   cycles per sample against 26–29k. The arms cost faust-rs 10k to 13k
-   cycles per sample and em++ at most 2k. Branch hints have no effect in this
-   V8. The cause is not established (W4).
+5. **Not a cause: the rarely-taken `if` arms.** An earlier version of this
+   point blamed them for the light body's remaining gap. That was the
+   measurement artifact described under Status. In steady state, removing,
+   emptying or outlining the arms changes nothing (within 1 %; section 8).
+   After W1 the light body executes 11 % more instructions than em++ but
+   takes about 1.45 times its cycles. The instruction mix is nearly the same:
+   equal FP work, spills and stores, plus 2,300 loads and 4,800 immediate
+   moves. The rest of the gap is not explained yet (W6).
 
 Projected effect on the coopiano web build. These are the percentages that
 `make web-check` reports (share of a core, node 22, eager TurboFan). The
@@ -80,7 +90,8 @@ average of 6 to 28. Wall-clock percentages are the minimum of several
 interleaved runs. Cycle and instruction counts come from `/usr/bin/time -l`
 ("instructions retired", "cycles elapsed"): a run of N blocks minus a run of
 0 blocks, divided by `N × 128`. Instruction counts repeat to 0.1 %. Cycle
-counts vary by about 10 %, depending on the core macOS picks.
+counts vary by about 10 %, depending on the core macOS picks. *This method is
+biased; see the correction under Status. Section 8 gives slope counts.*
 
 ### 2.1 Light body (`dsp/coopiano_light.dsp`, `-pn effect`)
 
@@ -174,7 +185,9 @@ not measured here.
 `fRec[0]` store, the output expression that reads `fRec[0]`, and the
 `fRec[1] = fRec[0]` copy.
 
-**C4, cold arms (open).** The light body has 100 control-change blocks
+**C4, cold arms (refuted).** *Section 8 shows that the cost below is an
+artifact of the N-minus-0 counts. In steady state the arms cost nothing. The
+text is kept as first written.* The light body has 100 control-change blocks
 (`if (iTemp1 != 0)`: coefficients recomputed with `pow`, `exp`, `sin` and
 `cos` imports when a slider moved) and 69 sympathetic-register blocks gated
 by a level threshold. None runs in steady state. Removing them all is a probe
@@ -274,17 +287,23 @@ Validation:
   - none differs.
 - `make -f Make.wasm` in `tests/impulse-tests`: 132/133. `phaser_flanger`
   fails at 1e-2, with output byte-identical between the old and new binaries.
-  It fails on `main-dev` before this change.
+  It fails on `main-dev` before this change. The cause is the Faust libraries
+  reinstalled on Oct 11, not faust-rs; see the impulse-tests entry of
+  2026-10-16 in the journal.
 - The coopiano voice and bodies are bit-identical between the two binaries.
 
-Measured with the implemented emitter (node 22, `--no-liftoff`, load average
-about 4):
+Measured with the implemented emitter (node 22, `--no-liftoff`). Counts are
+the slope between two run lengths, two interleaved rounds (section 8):
 
 | DSP | instr/sample | cycles/sample | % of a core |
 |---|---|---|---|
-| voice | 33,100–33,900 → 30,000 | 6,760–7,420 → 5,510–5,670 | 7.8 → 5.8 (em++ 5.7) |
-| light body | 152,100 → 120,300 | 53,700–54,200 → 39,200–39,700 | 38.6 → 29.9 (em++ 20.5–21) |
-| imaged body | 296,000 → 196,300 | 126,700–131,400 → 71,600–73,400 | 94.6 → 50.9–56.2 (em++ 49) |
+| voice | 33,700 → 29,800 (−12 %) | 7,300–9,700 → 5,400–5,500 | 7.8 → 5.8 (em++ 5.7) |
+| light body | 114,000 → 89,800 (−21 %) | 35,200–37,300 → 28,900–31,600 | 38.6 → 29.9 (em++ 20.5–21) |
+| imaged body | 231,000 → 150,000 (−35 %) | 88,700–100,600 → 49,500–53,100 | 94.6 → 50.9–56.2 (em++ 49) |
+| bank (400 modes) | 21,300 → 13,500 (−37 %) | 3,330 → 2,430–2,510 | 3.6 → 2.6 (em++ 2.5) |
+
+The first version of this table used the biased N-minus-0 counts. Its wall-clock
+column is unchanged.
 
 Compile time of `-lang wasm` on the imaged body: 5.92–6.23 s before, 5.81–6.15
 s after, best of three. The modules are smaller: the imaged body goes from
@@ -320,21 +339,36 @@ straight-line region of the sample loop** (expected −18 % on resonator banks,
 (expected −2 to −3 %). This reuses W2's alias model and checker, so it is done
 together with W2 or right after it.
 
-**W4. Investigate the cold-arm cost** (no code change before a cause is
-established). Directions to test, in order:
+**W4. Investigate the cold-arm cost.** *Done 2026-10-16, dropped: in steady
+state the arms cost nothing (section 8).*
 
-1. TurboFan's code at an arm boundary in both programs. The instance and
-   memory-base reloads after imported-JS calls are a suspect. Integer loads
-   from non-stack memory, mostly those reloads, number 29,100 in faust-rs's
-   whole `compute` against 5,800 in em++'s.
-2. Outlining cold arms into separate wasm functions.
-3. Branch hints in a current Chrome V8.
-4. Hoisting the control-change recomputation out of the sample loop. This is
-   a FIR change that affects every backend, so it needs its own plan.
+**W5. Lay out small struct fields first and static tables last** (measured
+with a throwaway prototype: voice −34 % instructions, bodies −3 %; cycles
+within noise on the bodies; low risk).
 
-Also measure in Chrome and Safari, where the AudioWorklet runs.
+- `WasmMemoryLayout::from_module` today places the static tables first (60
+  tables of 732 doubles in the light body), then the fields in declaration
+  order. The hot fields therefore sit 0.4 to 1.3 MiB in, and V8 builds each
+  of their addresses with `movz`/`movk`.
+- Sorting fields by size and placing the static tables after them brings the
+  voice's hot fields within `ldr`'s immediate range. On the bodies their 7,900
+  hot fields span 146 KiB, mostly beyond that range.
+- The JSON offsets follow the layout, so hosts are unaffected. The layout
+  would differ from Faust C++'s declaration order: decision D4.
 
-Order: W1, then the W2 design note, then W2 and W3, then W4.
+**W6. Explain the remaining IPC gap** (analysis only). After W1 the light body
+runs 89,800 instructions per sample at about 28,300 cycles; em++ runs 80,900
+at about 19,200. Next steps:
+
+- Read hardware counters (Instruments, CPU Counters) for L1I misses, L1D
+  misses and memory-ordering stalls, in both builds.
+- Explain why em++'s own steady-state probe (arms removed) runs at about
+  25,300 cycles, with the instruction count of the full em++ build: a
+  code-layout or instruction-fetch effect would also be one in faust-rs.
+- Measure in Chrome and Safari.
+
+Order: W5 and W6 next; then the W2 design note, W2 and W3. W2 and W3 gain
+little on coopiano.
 
 ## 5. Validation common to W1–W3
 
@@ -368,6 +402,12 @@ Order: W1, then the W2 design note, then W2 and W3, then W4.
   (52 % vs 49 %) and the voice to it. W2+W3 add a few percent on coopiano and
   their checker is real work. W1 now and W2/W3 as a separate phase is the
   smaller step.
+- **D4, struct layout order (W5).**
+  - Declaration order (today; the same order as Faust C++'s wasm backend).
+  - Small fields first and static tables last (fewer address instructions;
+    JSON offsets differ from C++'s for the same program).
+
+  The JSON is the contract, so either choice keeps hosts working.
 
 ## 7. Reproducing
 
@@ -376,8 +416,9 @@ Order: W1, then the W2 design note, then W2 and W3, then W4.
   the steady-state percentages.
 - `node --no-liftoff --no-wasm-lazy-compilation --print-wasm-code` dumps the
   TurboFan code.
-- `/usr/bin/time -l node --no-liftoff …` on N and 0 blocks gives instructions
-  and cycles.
+- `/usr/bin/time -l node --no-liftoff …` gives instructions and cycles. Use the
+  slope between two run lengths (for example 1,000 and 3,000 blocks), not a run
+  minus a 0-block run (see Status).
 - `wasm-opt --instrument-memory` with counting `load_ptr`/`store_ptr` imports
   gives dynamic loads and stores.
 - The em++ bench wraps `-lang cpp -double` output with exported
@@ -393,3 +434,72 @@ Order: W1, then the W2 design note, then W2 and W3, then W4.
 
   The prototype is not part of the repository. It is evidence for the
   expected gains, not a design for the implementation.
+
+## 8. W4 study: the cold arms are free; what remains
+
+Date: 2026-10-16. Builds: faust-rs at `51642a20` (W1), node 22, `--no-liftoff`.
+Every variant below was checked bit-identical against the W1 build with the
+pseudo-random-input runner, which changes every control and so executes the
+arms.
+
+**Method.** `/usr/bin/time -l` counts the whole process. Instructions and
+cycles per sample are taken as the slope between runs of 1,000 and 3,000
+blocks. The N-minus-0 difference used earlier carried an extra 30,000
+instructions per sample on the light body. That extra is not in the first
+block, which costs 6 to 37 million instructions.
+`--single-threaded` gives the same numbers. The slope is stable: 3,000 to
+6,000 blocks gives the same instruction count within 2 %.
+
+**Arm probes (light body, W1).** Slope, instructions / cycles per sample:
+
+| Variant | instr | cycles |
+|---|---|---|
+| W1 as emitted | 89,800 | 28,300 |
+| all `if` arms removed | 89,500 | 27,800 |
+| each arm replaced by `call $nop()` | 89,900 | 28,900 |
+| each arm outlined to a function of `dsp` and its 20 live-ins | 90,000 | 28,600 |
+| outlined, live-ins passed through memory | 90,000 | 29,600 |
+| em++ -O3 | 80,900 | 19,200 |
+
+The arms change nothing.
+
+Other probes were measured with the biased counts only: branch hints (V8 12.4
+honors them, but only behind `--experimental-wasm-branch-hinting`), `dsp`
+replaced by 0 in the arms, and loop invariants moved to memory. They prove
+nothing either way.
+
+**Steady-state code compared.** The straight-line path of one sample (the
+no-arm probes, whose instruction counts match the full builds' slopes):
+
+| per sample | faust-rs W1 | em++ |
+|---|---|---|
+| instructions | 88,800 | 81,900 |
+| FP arithmetic | 12,875 | 12,890 |
+| loads from linear memory | 12,449 | 10,157 |
+| stores to linear memory | 3,171 | 3,171 |
+| spill loads / stores | 9,184 / 9,131 | 9,197 / 9,099 |
+| immediate moves (`movz`/`movk`/`movn`) | 41,558 | 36,723 |
+
+- The extra loads are the store→load round trips of C3, which W3 would
+  remove.
+- Data locality is not a cause. The 7,888 struct fields read per sample fill
+  1,064 cache lines (66 KiB, 93 % of each line used), and both builds use
+  about 5,900 stack slots.
+- Unexplained: 1.11 times the instructions yet about 1.45 times the cycles
+  (IPC 3.2 against 4.2).
+- em++'s no-arm probe has the same instruction count as em++ but runs at
+  25,300 cycles. That suggests a code-layout or instruction-fetch effect: one
+  sample is about 350 KB of straight-line code, more than the L1 instruction
+  cache. This is W6.
+
+**Layout prototype (W5).** A throwaway patch of `layout.rs` sorted the fields
+by size, with the static tables last. Outputs stayed identical. Slope,
+instructions / cycles per sample:
+
+| DSP | W1 | W1 + size-sorted layout |
+|---|---|---|
+| voice | 29,800 / 5,400–5,800 | 19,700 / 4,800–5,400 |
+| light body | 89,800–90,300 / 24,900–29,800 | 87,000–87,300 / 26,800–28,200 |
+| imaged body | 149,800–150,200 / 52,700–59,300 | 144,700–145,400 / 49,800–52,900 |
+
+The patch was reverted; nothing of it is committed.
