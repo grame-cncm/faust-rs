@@ -1,0 +1,9 @@
+$ faustprobe --double --nvoices 2 --quiet -n 16 --note 60:100@0..8 --note 64:127@4 tests/output/dsp/poly_widen.dsp
+exit=0
+--- stdout
+# frames=16 sr=44100 nvoices=2 active_voices=1 window=0..16 (16 frames)
+# out0: peak=0.4468503937007874 rms=0.3014238510182562 dc=0.28592519685039375 finite=yes peak_at=4
+# out1: peak=1.340551181102362 rms=0.9042715530547687 dc=0.857775590551181 finite=yes peak_at=4
+
+--- stderr
+

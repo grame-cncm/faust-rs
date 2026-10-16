@@ -85,8 +85,27 @@ pub struct PolyProbe {
     key_fun: poly::KeyConversion,
     vel_fun: poly::VelConversion,
     inputs: usize,
+    /// Outputs of one voice: the width of the bus the voices are mixed into,
+    /// and so of the effect's inputs. [`poly::mix_check_voice`] sums a voice
+    /// into a bus of exactly its own width.
+    bus_outputs: usize,
+    /// Outputs of the instrument: the effect's when there is one (it may
+    /// change the channel count, 5 voice channels into a stereo body, say),
+    /// else the bus's.
     outputs: usize,
+    /// What the construction declined without failing, for the caller to say.
+    warnings: Vec<String>,
     sample_rate: i32,
+}
+
+/// What the `environment{}` extraction of a program's `effect` found.
+enum InlineEffect {
+    /// No usable `effect`: none declared, or one the front end rejects.
+    Absent,
+    /// An effect that takes the voices' mix.
+    Found(Probe),
+    /// An effect that compiles but cannot take the voices' mix: why.
+    Mismatched(String),
 }
 
 impl PolyProbe {
@@ -98,12 +117,17 @@ impl PolyProbe {
     /// single-file instrument that declares both `process` and `effect`
     /// (`dsp_poly_factory::getEffectCode`, `poly-dsp.h:1020`): the source is
     /// re-read, wrapped in `environment{}`, and `dsp_code.effect` is
-    /// extracted through the same `adapt`/`adaptor` combinator C++ uses. If
-    /// that wrapped compile fails — the ordinary case for an instrument with
-    /// no integrated effect — it is treated as "no effect" rather than an
-    /// error, since there is no reliable way to distinguish "no `effect`
-    /// declared" from "the wrapper is broken" from the compiler's diagnostic
-    /// text alone; pass `--effect FILE` explicitly if that guess is wrong.
+    /// extracted (`try_extract_inline_effect` says which two wrappers are
+    /// tried). If the effect alone fails to compile — the ordinary
+    /// case for an instrument with no integrated effect — it is treated as
+    /// "no effect" rather than an error, since there is no reliable way to
+    /// distinguish "no `effect` declared" from "the wrapper is broken" from
+    /// the compiler's diagnostic text alone; pass `--effect FILE` explicitly
+    /// if that guess is wrong. An `effect` that compiles but cannot take the
+    /// voices' mix is left out with a [warning](PolyProbe::warnings).
+    ///
+    /// The effect's outputs, not the voices', are the instrument's
+    /// ([`PolyProbe::outputs`]): an effect may change the channel count.
     ///
     /// # Errors
     /// Returns the compiler's own diagnostic text when the process DSP or an
@@ -112,8 +136,7 @@ impl PolyProbe {
     /// arity — this port does not implement the C++ `adapt`/`adaptor`
     /// channel-count auto-adaptation for that case (design's stated scope:
     /// "a test wrapper, not an audio engine"), only for the inline-effect
-    /// extraction above, which already produces code adapted to the process
-    /// DSP's own arity by construction.
+    /// extraction above.
     #[allow(clippy::too_many_arguments)]
     pub fn compile(
         path: &str,
@@ -130,13 +153,14 @@ impl PolyProbe {
         }
         let factory = Rc::new(Factory::compile(path, import_dirs, double, opt_level)?);
         let voices = Self::voices_of(&factory, sample_rate, nvoices)?;
-        let outputs = voices[0].probe.outputs();
+        let bus_outputs = voices[0].probe.outputs();
 
+        let mut warnings = Vec::new();
         let effect = if let Some(effect_path) = effect_path {
             let probe = Probe::compile(effect_path, import_dirs, sample_rate, double, opt_level)?;
-            if probe.inputs() != outputs {
+            if probe.inputs() != bus_outputs {
                 return Err(format!(
-                    "--effect expects {} input(s) but the poly bus produces {outputs}; \
+                    "--effect expects {} input(s) but the poly bus produces {bus_outputs}; \
                      channel-arity auto-adaptation is out of scope for this tool, pass a \
                      matching effect",
                     probe.inputs()
@@ -144,19 +168,27 @@ impl PolyProbe {
             }
             Some(probe)
         } else {
-            Self::try_extract_inline_effect(
+            match Self::try_extract_inline_effect(
                 path,
                 import_dirs,
                 sample_rate,
                 double,
                 opt_level,
-                outputs,
-            )?
+                bus_outputs,
+            )? {
+                InlineEffect::Absent => None,
+                InlineEffect::Found(probe) => Some(probe),
+                InlineEffect::Mismatched(why) => {
+                    warnings.push(why);
+                    None
+                }
+            }
         };
 
         Ok(Self::assemble(
             voices,
             effect,
+            warnings,
             voice_stop_level,
             sample_rate,
         ))
@@ -197,14 +229,14 @@ impl PolyProbe {
             opt_level,
         )?);
         let voices = Self::voices_of(&factory, sample_rate, nvoices)?;
-        let outputs = voices[0].probe.outputs();
+        let bus_outputs = voices[0].probe.outputs();
 
         let effect = match effect {
             Some(path) => {
                 let probe = Probe::compile(path, import_dirs, sample_rate, double, opt_level)?;
-                if probe.inputs() != outputs {
+                if probe.inputs() != bus_outputs {
                     return Err(format!(
-                        "effect expects {} input(s) but the poly bus produces {outputs}",
+                        "effect expects {} input(s) but the poly bus produces {bus_outputs}",
                         probe.inputs()
                     ));
                 }
@@ -216,6 +248,7 @@ impl PolyProbe {
         Ok(Self::assemble(
             voices,
             effect,
+            Vec::new(),
             voice_stop_level,
             sample_rate,
         ))
@@ -239,29 +272,46 @@ impl PolyProbe {
 
     /// The bus over `voices` (at least one): its arity and its key and
     /// velocity conversions are those of the first, the voices being instances
-    /// of one DSP.
+    /// of one DSP. The instrument's outputs are the effect's, when there is
+    /// one, whose inputs the callers checked against the bus.
     fn assemble(
         voices: Vec<Voice>,
         effect: Option<Probe>,
+        warnings: Vec<String>,
         stop_level: f64,
         sample_rate: i32,
     ) -> Self {
+        let bus_outputs = voices[0].probe.outputs();
         Self {
             state: poly::PolyState::new(voices.len()),
+            outputs: effect.as_ref().map_or(bus_outputs, Probe::outputs),
             effect,
+            warnings,
             stop_level,
             key_fun: voices[0].paths.key_fun,
             vel_fun: voices[0].paths.vel_fun,
             inputs: voices[0].probe.inputs(),
-            outputs: voices[0].probe.outputs(),
+            bus_outputs,
             sample_rate,
             voices,
         }
     }
 
     /// Attempt the `environment{}` effect extraction described on
-    /// [`PolyProbe::compile`]; `None` on any failure to compile, including
-    /// "no `effect` declared".
+    /// [`PolyProbe::compile`] for a bus of `bus_outputs` channels.
+    ///
+    /// Two wrappers, in this order:
+    ///
+    /// 1. the effect alone, `process = dsp_code.effect`, kept when its inputs
+    ///    are the bus's width. This is what the adaptor below makes of a 1 -> 1
+    ///    or 2 -> 2 chain (`adapt(1,1) = _`, `adapt(2,2) = _,_`: wires that
+    ///    vanish), and it extends that to any width: `poly-dsp.h` has no
+    ///    `adapt(n,n)` rule past two channels, so the C++ wrapper finds no
+    ///    effect behind a 5-channel voice, a faustprobe extension recorded in
+    ///    DIFF-CLI-011;
+    /// 2. otherwise `getEffectCode`'s wrapper verbatim, whose `adapt` rules
+    ///    reconcile one voice channel with a stereo effect and the reverse: a
+    ///    second compile, paid only when the widths differ.
     ///
     /// # Errors
     /// An effect that compiles but whose `compute` the JIT could not lower:
@@ -272,49 +322,79 @@ impl PolyProbe {
         sample_rate: i32,
         double: bool,
         opt_level: i32,
-        expected_inputs: usize,
-    ) -> Result<Option<Probe>, String> {
+        bus_outputs: usize,
+    ) -> Result<InlineEffect, String> {
         let Ok(source) = std::fs::read_to_string(path) else {
-            return Ok(None);
+            return Ok(InlineEffect::Absent);
         };
+        let compile = |wrapped: &str| {
+            Self::compile_inline_effect(wrapped, import_dirs, sample_rate, double, opt_level)
+        };
+        let alone = format!(
+            "dsp_code = environment{{ {source} }};\n\
+             process = dsp_code.effect;\n"
+        );
+        let Some(effect) = compile(&alone)? else {
+            return Ok(InlineEffect::Absent);
+        };
+        if effect.inputs() == bus_outputs {
+            return Ok(InlineEffect::Found(effect));
+        }
         // Verbatim structure of `dsp_poly_factory::getEffectCode`
         // (`poly-dsp.h:1020`): `adapt`/`adaptor` reconcile the process DSP's
         // output arity with the effect's input arity so `dsp_code.effect` can
-        // follow `dsp_code.process` in a chain regardless of channel counts,
-        // then `process` is redefined to be the effect alone (fed by that
-        // adaptor), which is what makes `dsp_code.effect` reachable as a
-        // standalone compiled `process`.
-        let wrapped = format!(
+        // follow `dsp_code.process` in a chain, then `process` is redefined to
+        // be the effect alone (fed by that adaptor), which is what makes
+        // `dsp_code.effect` reachable as a standalone compiled `process`.
+        let adapted = format!(
             "adapt(1,1) = _; adapt(2,2) = _,_; adapt(1,2) = _ <: _,_; adapt(2,1) = _,_ :> _;\n\
              adaptor(F,G) = adapt(outputs(F),inputs(G));\n\
              dsp_code = environment{{ {source} }};\n\
              process = adaptor(dsp_code.process, dsp_code.effect) : dsp_code.effect;\n"
         );
-        // A program without `effect` fails in the front end. An error of the
-        // Cranelift backend (`FRS-CGEN-CLIF-*`) means the front end accepted
-        // the effect, which the JIT cannot run: that is an error, not "no
-        // effect".
-        let factory = match Factory::compile_from_string(
+        if let Some(adapted) = compile(&adapted)?
+            && adapted.inputs() == bus_outputs
+        {
+            return Ok(InlineEffect::Found(adapted));
+        }
+        // An `effect` was declared and compiles: dropping it in silence would
+        // render a dry instrument that looks like the intended one.
+        Ok(InlineEffect::Mismatched(format!(
+            "the program's `effect` takes {} input(s) but a voice has {bus_outputs} \
+             output(s), which `poly-dsp.h`'s adaptor does not reconcile (it adapts 1 \
+             and 2 channels only): the effect is left out; pass a matching --effect FILE",
+            effect.inputs()
+        )))
+    }
+
+    /// One wrapper of [`PolyProbe::try_extract_inline_effect`], compiled and
+    /// instantiated; `None` when the front end rejects it, including "no
+    /// `effect` declared".
+    ///
+    /// # Errors
+    /// An error of the Cranelift backend (`FRS-CGEN-CLIF-*`): the front end
+    /// accepted the effect, which the JIT cannot run. That is an error, not
+    /// "no effect".
+    fn compile_inline_effect(
+        wrapped: &str,
+        import_dirs: &[String],
+        sample_rate: i32,
+        double: bool,
+        opt_level: i32,
+    ) -> Result<Option<Probe>, String> {
+        match Factory::compile_from_string(
             "faustprobe-effect",
-            &wrapped,
+            wrapped,
             import_dirs,
             double,
             opt_level,
         ) {
-            Ok(factory) => factory,
+            Ok(factory) => Ok(Probe::instantiate(&Rc::new(factory), sample_rate).ok()),
             Err(error) if error.contains("[FRS-CGEN-CLIF-") => {
-                return Err(format!("the program's `effect`: {error}"));
+                Err(format!("the program's `effect`: {error}"))
             }
-            Err(_) => return Ok(None),
-        };
-        let Ok(probe) = Probe::instantiate(&Rc::new(factory), sample_rate) else {
-            return Ok(None);
-        };
-        // The adaptor already reconciled arity against the process DSP, so a
-        // mismatch here would mean the extraction produced something
-        // unexpected; be conservative and decline rather than mix buffers of
-        // the wrong width.
-        Ok((probe.inputs() == expected_inputs).then_some(probe))
+            Err(_) => Ok(None),
+        }
     }
 
     /// Number of voices in the bus.
@@ -329,10 +409,27 @@ impl PolyProbe {
         self.inputs
     }
 
-    /// Audio outputs of the mixed bus (after the effect, if any).
+    /// Audio outputs of the instrument: the effect's when there is one,
+    /// else the mixed bus's. What [`PolyProbe::compute`] and
+    /// [`PolyProbe::render`] produce.
     #[must_use]
     pub const fn outputs(&self) -> usize {
         self.outputs
+    }
+
+    /// Audio outputs of one voice: the width of the bus the voices are mixed
+    /// into, and of the effect's inputs. Equal to [`PolyProbe::outputs`]
+    /// unless the effect changes the channel count.
+    #[must_use]
+    pub const fn bus_outputs(&self) -> usize {
+        self.bus_outputs
+    }
+
+    /// What the construction left out without failing: an inline `effect`
+    /// that cannot take the voices' mix. Empty when nothing was.
+    #[must_use]
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
     }
 
     /// Sample rate every voice (and the effect, if any) was initialised with.
@@ -574,7 +671,8 @@ impl PolyProbe {
         self.compute_with_inputs(&silence, frames)
     }
 
-    /// Render one host block across every voice, mix, and run the effect.
+    /// Render one host block across every voice, mix, and run the effect:
+    /// [`PolyProbe::outputs`] channels of `frames` samples.
     ///
     /// Mirrors `mydsp_poly::compute` (`poly-dsp.h:828`) in its
     /// `fVoiceControl` branch, **the host's inputs included**: the reference
@@ -592,7 +690,8 @@ impl PolyProbe {
     #[must_use]
     pub fn compute_with_inputs(&mut self, inputs: &[Vec<f64>], frames: usize) -> Vec<Vec<f64>> {
         debug_assert_eq!(inputs.len(), self.inputs, "input arity mismatch");
-        let mut mixed = vec![vec![0.0_f64; frames]; self.outputs];
+        // the voices' width, not the instrument's: the effect may change it
+        let mut mixed = vec![vec![0.0_f64; frames]; self.bus_outputs];
 
         for i in 0..self.voices.len() {
             let cur_note = self.state.voices[i].cur_note;

@@ -1,0 +1,10 @@
+$ faustprobe --double --nvoices 2 -n 16 --note 60:100@0..8 --out <TMP>/_m.f64 tests/output/dsp/poly_mixdown.dsp
+exit=0
+--- stdout
+# frames=16 sr=44100 nvoices=2 active_voices=0 window=0..16 (16 frames)
+# out0: peak=2.362204724409449 rms=1.6703309791808212 dc=1.1811023622047243 finite=yes peak_at=0
+
+--- stderr
+
+--- file <TMP>/_m.f64
+bytes=128 lines=0 fnv1a64=60224e9066530a55

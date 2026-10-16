@@ -1,0 +1,11 @@
+$ faustprobe --double --nvoices 2 --quiet -n 16 --note 60:100@0..8 tests/output/dsp/poly_mismatch.dsp
+exit=0
+--- stdout
+# frames=16 sr=44100 nvoices=2 active_voices=0 window=0..16 (16 frames)
+# out0: peak=0.7874015748031497 rms=0.5567769930602736 dc=0.3937007874015749 finite=yes peak_at=0
+# out1: peak=0.3937007874015748 rms=0.2783884965301368 dc=0.19685039370078744 finite=yes peak_at=0
+# out2: peak=0.1968503937007874 rms=0.1391942482650684 dc=0.09842519685039372 finite=yes peak_at=0
+
+--- stderr
+warning: the program's `effect` takes 2 input(s) but a voice has 3 output(s), which `poly-dsp.h`'s adaptor does not reconcile (it adapts 1 and 2 channels only): the effect is left out; pass a matching --effect FILE
+

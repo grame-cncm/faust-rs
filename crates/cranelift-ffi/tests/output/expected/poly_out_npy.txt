@@ -1,0 +1,10 @@
+$ faustprobe --double --nvoices 4 -n 2000 --note 60:100@0..1500 --out <TMP>/_p.npy tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+# frames=2000 sr=44100 nvoices=4 active_voices=1 window=0..2000 (2000 frames)
+# out0: peak=0.3082897268270187 rms=0.16220523421881608 dc=-0.00018992384388141585 finite=yes peak_at=336
+
+--- stderr
+
+--- file <TMP>/_p.npy
+bytes=16128 lines=41 fnv1a64=c079e5231d37f3cd

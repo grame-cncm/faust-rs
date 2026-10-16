@@ -290,3 +290,107 @@ fn broadcasting_a_control_reaches_every_voice() {
         "a voice kept sounding after level was broadcast to zero"
     );
 }
+
+/// Compile `source` written to a file, as the command line does: the inline
+/// `effect` is extracted from the file (`PolyProbe::compile`), never from a
+/// string.
+fn compile_file(tag: &str, source: &str) -> PolyProbe {
+    let path =
+        std::env::temp_dir().join(format!("faustprobe_poly_{tag}_{}.dsp", std::process::id()));
+    std::fs::write(&path, source).expect("write the program");
+    let probe = PolyProbe::compile(
+        path.to_str().expect("a UTF-8 path"),
+        &[],
+        44_100,
+        true,
+        0,
+        2,
+        None,
+        cranelift_ffi::probe::poly::DEFAULT_VOICE_STOP_LEVEL,
+    );
+    let _ = std::fs::remove_file(&path);
+    probe.expect("poly compile")
+}
+
+/// A constant voice, its gated gain split into `channels`, and the declared
+/// `effect`.
+fn constant_voice(channels: &str, effect: &str) -> String {
+    format!(
+        "gain = hslider(\"gain\", 0.5, 0, 1, 0.01);\n\
+         gate = button(\"gate\");\n\
+         process = gate * gain <: {channels};\n\
+         effect = {effect};\n"
+    )
+}
+
+#[test]
+fn an_effect_that_changes_the_channel_count_gives_the_instrument_its_outputs() {
+    // The voices are mixed on a bus of their own width and the effect makes
+    // the instrument's: this used to size the render on the voices and index
+    // past the effect's single output.
+    let mut probe = compile_file("mixdown", &constant_voice("_, *(0.5)", "+ : *(2.0)"));
+    assert!(probe.has_effect() && probe.warnings().is_empty());
+    assert_eq!((probe.bus_outputs(), probe.outputs()), (2, 1));
+    probe.key_on(60, 127);
+    let block = probe.compute(16);
+    assert_eq!(block.len(), 1);
+    assert!(
+        block[0].iter().all(|v| (v - 3.0).abs() < 1e-12),
+        "{block:?}"
+    );
+
+    // the render and its statistics have the instrument's width
+    use cranelift_ffi::probe::engine::PolyRenderSpec;
+    let spec = PolyRenderSpec {
+        frames: 64,
+        block: 16,
+        input: cranelift_ffi::probe::render::InputMode::Zero,
+        skip: 0,
+        schedule: cranelift_ffi::probe::schedule::Schedule::new(),
+        limit: None,
+        time: false,
+    };
+    let mut widths = Vec::new();
+    let stats = probe
+        .render(&spec, |_, samples| widths.push(samples.len()))
+        .expect("render");
+    assert_eq!(stats.channels.len(), 1);
+    assert!(widths.len() == 64 && widths.iter().all(|w| *w == 1));
+}
+
+#[test]
+fn an_inline_effect_is_chained_at_any_width_and_left_out_with_a_warning_when_none_fits() {
+    // `poly-dsp.h`'s adaptor has no `adapt(3,3)`: the effect of the voices'
+    // width is chained whatever the width (a piano's regions into its body)
+    let body = compile_file(
+        "body",
+        &constant_voice("_, *(0.5), *(0.25)", "_, _, _ :> _ <: _, *(0.5)"),
+    );
+    assert!(body.has_effect() && body.warnings().is_empty());
+    assert_eq!((body.bus_outputs(), body.outputs()), (3, 2));
+
+    // 1 -> 2 is the adaptor's: the voices' channel is split in two
+    let widen = compile_file("widen", &constant_voice("_", "*(0.25), *(0.75)"));
+    assert!(widen.has_effect() && widen.warnings().is_empty());
+    assert_eq!((widen.bus_outputs(), widen.outputs()), (1, 2));
+
+    // 3 -> 2 inputs: nothing reconciles them, and the render that follows is
+    // not the declared instrument, which the caller is told
+    let mismatch = compile_file(
+        "mismatch",
+        &constant_voice("_, *(0.5), *(0.25)", "_, _ :> _"),
+    );
+    assert!(!mismatch.has_effect());
+    assert_eq!((mismatch.bus_outputs(), mismatch.outputs()), (3, 3));
+    assert_eq!(mismatch.warnings().len(), 1);
+    assert!(
+        mismatch.warnings()[0].contains("takes 2 input(s) but a voice has 3 output(s)"),
+        "{:?}",
+        mismatch.warnings()
+    );
+
+    // no `effect` declared: none, and nothing to say
+    let dry = compile_file("dry", "gate = button(\"gate\");\nprocess = gate <: _, _;\n");
+    assert!(!dry.has_effect() && dry.warnings().is_empty());
+    assert_eq!(dry.outputs(), 2);
+}

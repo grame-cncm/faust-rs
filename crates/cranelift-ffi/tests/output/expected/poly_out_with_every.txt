@@ -1,0 +1,7 @@
+$ faustprobe --double --nvoices 4 --every 2 --out <TMP>/_p.npy tests/output/dsp/synth.dsp
+exit=1
+--- stdout
+
+--- stderr
+faustprobe: --every cannot be combined with --out, which writes every frame of one render
+

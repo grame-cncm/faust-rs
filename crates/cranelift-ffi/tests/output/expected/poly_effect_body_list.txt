@@ -1,0 +1,10 @@
+$ faustprobe --double --nvoices 2 --list-params tests/output/dsp/poly_body.dsp
+exit=0
+--- stdout
+2 voice(s), 0 input(s)/voice, 2 output(s), effect: yes (3 -> 2)
+path (per voice)                             kind            init        min        max       step
+/poly_body/gain                              slider        0.5        0.0        1.0 0.009999999776482582
+/poly_body/gate                              button        0.0        0.0        1.0        1.0
+
+--- stderr
+

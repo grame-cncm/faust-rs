@@ -890,6 +890,7 @@ fn PolyProbe::set_all
 fn PolyProbe::voice_controls
 fn PolyProbe::voice_count
 fn PolyProbe::voice_states
+fn PolyProbe::warnings
 fn PolyState::active_count
 fn PolyState::apply_legato
 fn PolyState::key_off

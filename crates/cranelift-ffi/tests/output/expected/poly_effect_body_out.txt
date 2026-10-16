@@ -1,0 +1,11 @@
+$ faustprobe --nvoices 2 -n 16 --note 60:100@0..8 --note 64:127@4 --set wet=0.5 --out <TMP>/_b.npy tests/output/dsp/poly_body.dsp
+exit=0
+--- stdout
+# frames=16 sr=44100 nvoices=2 active_voices=1 window=0..16 (16 frames)
+# out0: peak=1.0054134 rms=0.6782036744581885 dc=0.6433316990733147 finite=yes peak_at=4
+# out1: peak=0.558563 rms=0.3767798147750859 dc=0.35740649700164795 finite=yes peak_at=4
+
+--- stderr
+
+--- file <TMP>/_b.npy
+bytes=256 lines=1 fnv1a64=3122e779219e00d0

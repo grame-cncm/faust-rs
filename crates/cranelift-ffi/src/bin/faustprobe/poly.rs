@@ -5,6 +5,7 @@
 //! than driving one `Probe`. What they say of a render, and how a render
 //! fails, they share: see [`crate::report`] and [`crate::failure`].
 
+use cranelift_ffi::probe::audio_out::SampleWriter;
 use cranelift_ffi::probe::engine::{PolyProbe, PolyRenderSpec};
 use cranelift_ffi::probe::number::NumberFormat;
 use cranelift_ffi::probe::render::{InputMode, RenderStats};
@@ -43,7 +44,6 @@ fn refuse_scalar_only(args: &Args) -> Result<(), String> {
     }
     refuse(
         &[
-            ("--out", args.out.is_some()),
             ("--eval", !args.evals.is_empty()),
             ("--compare/--ref/--check", verification_requested(args)),
             ("--freqresp", args.freqresp.is_some()),
@@ -56,9 +56,17 @@ fn refuse_scalar_only(args: &Args) -> Result<(), String> {
 ///
 /// `--note` and `--chord` play the voices; `--set` and `--at` are broadcast to
 /// every voice and to the effect, and checked against their ranges before the
-/// render, as a scalar program's are.
+/// render, as a scalar program's are. `--out` writes the instrument's outputs,
+/// the effect's when there is one, as it writes a scalar program's.
 pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
     refuse_scalar_only(args)?;
+    if args.out.is_some() {
+        // the scalar path's refusal, worded the same: `--sweep` and `--format
+        // ir` are already refused above
+        refuse(&[("--every", args.every != 1)], |flag| {
+            format!("{flag} cannot be combined with --out, which writes every frame of one render")
+        })?;
+    }
     let fmt = number_format(args)?;
 
     // the voices and the effect: everything a poly render compiles
@@ -75,14 +83,25 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         )
     });
     let mut poly = compiled?;
+    // an inline `effect` left out: the render that follows is not the
+    // instrument the program declares
+    for warning in poly.warnings() {
+        eprintln!("warning: {warning}");
+    }
 
     if args.list_params {
+        // the instrument's outputs, after the effect, which says what it
+        // makes of the voices' channels
         println!(
             "{} voice(s), {} input(s)/voice, {} output(s), effect: {}",
             poly.voice_count(),
             poly.inputs(),
             poly.outputs(),
-            if poly.has_effect() { "yes" } else { "no" }
+            if poly.has_effect() {
+                format!("yes ({} -> {})", poly.bus_outputs(), poly.outputs())
+            } else {
+                "no".to_owned()
+            }
         );
         print_controls("path (per voice)", poly.voice_controls(), &fmt);
         return Ok(());
@@ -118,8 +137,21 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         limit: args.fail_above,
         time: args.time,
     };
+    // created before anything is printed, as on the scalar path: an
+    // extension it cannot write, or a raw format for several outputs, is an
+    // error of the command line
+    let mut writer = match &args.out {
+        Some(path) => Some(SampleWriter::create(
+            std::path::Path::new(path),
+            poly.outputs(),
+            args.render.saturating_sub(args.skip),
+            args.compile.double,
+            args.sr,
+        )?),
+        None => None,
+    };
     let every = args.every.max(1);
-    let dumping = !args.quiet && args.format == Format::Csv;
+    let dumping = !args.quiet && args.format == Format::Csv && writer.is_none();
     if dumping {
         print!("frame");
         for ch in 0..poly.outputs() {
@@ -128,6 +160,9 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         println!();
     }
     let stats = poly.render(&spec, |frame, samples| {
+        if let Some(writer) = writer.as_mut() {
+            writer.push(samples);
+        }
         if !dumping || !(frame - spec.skip).is_multiple_of(every) {
             return;
         }
@@ -138,6 +173,9 @@ pub(crate) fn run_poly(args: &Args) -> Result<(), String> {
         }
         println!("{line}");
     })?;
+    if let Some(writer) = writer {
+        writer.finish()?;
+    }
 
     // A render that went wrong fails, as a scalar one does, and says where it
     // starts and what had been written and played by then. The statistics of
@@ -235,10 +273,10 @@ impl Said<'_> {
 
     fn lines(&self, fmt: &NumberFormat) {
         let (args, stats) = (self.args, self.stats);
-        // Same rule as the scalar path: under `--quiet` the statistics are the
-        // output and go to stdout; otherwise they annotate a dump that already
-        // owns stdout, and belong on stderr.
-        let sink = Sink::beside(!args.quiet);
+        // Same rule as the scalar path: under `--quiet` or `--out` the
+        // statistics are the output and go to stdout; otherwise they annotate
+        // a dump that already owns stdout, and belong on stderr.
+        let sink = Sink::beside(!args.quiet && args.out.is_none());
         // the fields a reader keyed on come first; the window and what a
         // scalar render says of a channel follow them
         sink.say(format!(

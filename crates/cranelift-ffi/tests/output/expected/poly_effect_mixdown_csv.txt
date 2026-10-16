@@ -1,0 +1,13 @@
+$ faustprobe --double --nvoices 2 -n 4 --note 60:100@0 tests/output/dsp/poly_mixdown.dsp
+exit=0
+--- stdout
+frame,out0
+0,2.362204724409449
+1,2.362204724409449
+2,2.362204724409449
+3,2.362204724409449
+
+--- stderr
+# frames=4 sr=44100 nvoices=2 active_voices=1 window=0..4 (4 frames)
+# out0: peak=2.362204724409449 rms=2.362204724409449 dc=2.362204724409449 finite=yes peak_at=0
+

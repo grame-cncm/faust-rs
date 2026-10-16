@@ -1,0 +1,30 @@
+$ faustprobe --double --nvoices 4 --format json -n 2000 --skip 500 --note 60:100@0..1500 --out <TMP>/_p.npy tests/output/dsp/synth.dsp
+exit=0
+--- stdout
+{
+  "active_voices": 1,
+  "channels": [
+    {
+      "dc": -0.003847309279744965,
+      "peak": 0.307983519683269,
+      "peak_at": 673,
+      "rms": 0.16283698147660433,
+      "subnormal": 0,
+      "subnormal_at": null
+    }
+  ],
+  "dsp": "tests/output/dsp/synth.dsp",
+  "frames": 2000,
+  "nvoices": 4,
+  "schema_version": 1,
+  "sr": 44100,
+  "window": {
+    "frames": 1500,
+    "start": 500
+  }
+}
+
+--- stderr
+
+--- file <TMP>/_p.npy
+bytes=12128 lines=33 fnv1a64=16974075c779b6f3

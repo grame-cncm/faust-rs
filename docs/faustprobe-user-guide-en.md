@@ -418,7 +418,8 @@ script, binary and exact instead of one decimal string per sample.
 | `.f64`, `.f32` | raw little-endian samples of a program with **one** output, the layout `--in file:` reads; `.f32` is refused for a double-precision program |
 
 Every frame of the window is written: `--out` refuses `--every`, and also
-`--sweep`, `--train`, `--format ir` and `--nvoices`.
+`--sweep`, `--train` and `--format ir`. Under `--nvoices` it writes the
+instrument's outputs, the effect's when there is one (§10).
 
 **`ir`** reproduces the reference impulse-test text, header and zero-clamp
 included, for byte comparison against the existing corpus:
@@ -633,6 +634,35 @@ several pitches at once.
 declaring both `process` and `effect` has its effect extracted automatically,
 the way `FaustPolyDspGenerator` does, so the flag is only needed to override
 that guess or to pair files.
+
+**The effect gives the instrument its outputs.** The voices are mixed on a bus
+of their own width, the effect takes that bus, and what it returns is what the
+render, its statistics, the CSV dump and `--out` have: five voice channels into
+a stereo body make a stereo instrument. `--list-params` says so
+(`2 voice(s), 0 input(s)/voice, 2 output(s), effect: yes (5 -> 2)`). An
+explicit `--effect FILE` must take the voices' width. An inline `effect` is
+taken alone when it has that width, whatever it is, and otherwise through
+`poly-dsp.h`'s adaptor, which reconciles one voice channel with a stereo effect
+and the reverse. `poly-dsp.h` itself has no rule past two channels, so it finds
+no effect behind a five-channel voice: chaining it is this tool's
+(DIFF-CLI-011). An inline `effect` that compiles and that nothing reconciles
+is left out with a warning on stderr, rather than in silence:
+
+```text
+warning: the program's `effect` takes 2 input(s) but a voice has 3 output(s), which `poly-dsp.h`'s adaptor does not reconcile (it adapts 1 and 2 channels only): the effect is left out; pass a matching --effect FILE
+```
+
+Until this was fixed an effect that changed the channel count stopped the
+probe (`index out of bounds`), the render being sized on the voices, and one
+that the adaptor did not reconcile was dropped without a word.
+
+`--out FILE` writes the render as for a scalar program (§6), the instrument's
+outputs at the width the voices were compiled in; the statistics are then the
+output and go to stdout. It refuses `--every`:
+
+```bash
+faustprobe --double --nvoices 16 --chord 60,64,67:90@0..44100 -n 88200 --out chord.npy piano.dsp
+```
 
 `--set` and `--at` broadcast: the control a path or fragment names is written
 on **every voice**, and on the **effect** when it resolves there too, each
