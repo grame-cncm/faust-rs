@@ -65,6 +65,9 @@ pub(in crate::signal_fir) fn emit_pow(
     result_ty: FirType,
 ) -> FirId {
     if result_ty != FirType::Int32 {
+        if let Some(exponent) = small_integral_exponent(store, rhs) {
+            return emit_real_power_product(store, lhs, exponent, result_ty);
+        }
         return emit_math_call2(store, protos, FirMathOp::Pow, lhs, rhs, result_ty);
     }
     if let FirMatch::Int32 {
@@ -89,6 +92,55 @@ pub(in crate::signal_fir) fn emit_pow(
     let power = b.math_call(FirMathOp::Pow, &[lhs, rhs], FirType::Float64);
     let rounded = b.math_call(FirMathOp::Rint, &[power], FirType::Float64);
     b.cast(FirType::Int32, rounded)
+}
+
+/// The exponent of a real power that C++ `powprim.hh::isIntPowArg` expands
+/// by multiplication: a literal with an integral value from 0 to 8 (an integer
+/// literal, or a real one without fractional part). C++ also accepts negative
+/// integer literals, for which its expansion returns the base unchanged;
+/// those keep the `pow` call here.
+fn small_integral_exponent(store: &FirStore, rhs: FirId) -> Option<u32> {
+    let value = match match_fir(store, rhs) {
+        FirMatch::Int32 { value, .. } => f64::from(value),
+        FirMatch::Float32 { value, .. } => f64::from(value),
+        FirMatch::Float64 { value, .. } => value,
+        _ => return None,
+    };
+    (value.fract() == 0.0 && (0.0..=8.0).contains(&value)).then_some(value as u32)
+}
+
+/// `x^n` for a small integral `n` as the left-associated product
+/// `((x·x)·x)…`, the body of the C++ `<Klass>_faustpower<n>_f` helper, on
+/// every backend.
+///
+/// C++ emits that helper only where `gNeedManualPow` holds (C, C++, Rust,
+/// Julia, LLVM, …) and keeps `pow` on the others (Interp, WASM, JSFX,
+/// Codebox, Cmajor, JAX), which cannot all call a local function. The product
+/// is written inline instead, so no backend needs one: `x` is the same FIR
+/// value in every factor, and FIR common-subexpression materialization binds
+/// a non-trivial `x` to one temporary, evaluated once as the helper's
+/// argument would be. An integer base is converted first, as it is for `pow`.
+fn emit_real_power_product(
+    store: &mut FirStore,
+    lhs: FirId,
+    exponent: u32,
+    result_ty: FirType,
+) -> FirId {
+    if exponent == 0 {
+        return emit_real_const(store, &result_ty, 1.0);
+    }
+    let converted = store.value_type(lhs).as_ref() != Some(&result_ty);
+    let mut b = FirBuilder::new(store);
+    let base = if converted {
+        b.cast(result_ty.clone(), lhs)
+    } else {
+        lhs
+    };
+    let mut value = base;
+    for _ in 1..exponent {
+        value = b.binop(FirBinOp::Mul, value, base, result_ty.clone());
+    }
+    value
 }
 
 /// Double prototypes are separate from single powf/rintf declarations, so

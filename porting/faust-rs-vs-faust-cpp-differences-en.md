@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded); full review 2026-08-13
+Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -799,6 +799,43 @@ must run unchanged with Faust C++ should not pass them.
   `rep_84_isomorphic_symrec_mutual.dsp` and
   `rep_85_isomorphic_symrec_nested.dsp`, and the
   [journal entry](journal/2026-10-16.md) of the cost fix.
+
+### DIFF-BEH-022 — small integral real powers are inline products on every backend
+
+- Status: `adapted`, 2026-10-16.
+- C++ `powprim.hh::generateCode` expands `pow(x, n)` for a literal `n`
+  whose value is an integer from 0 to 8 (an integer literal, or a real one
+  without fractional part, constant and computable) into a call to a
+  generated `<Klass>_faustpower<n>_{i|f}` helper whose body is the
+  left-associated product `((x·x)·x)…`, but only where `gNeedManualPow`
+  holds: C, C++, Rust, Java, Julia, C#, LLVM. Interp, WASM/WAST, JSFX,
+  Codebox, Cmajor and JAX keep `pow`.
+- Implemented: `leaf_emit::emit_pow` writes the same left-associated product
+  inline, for a real result, on every backend and in scalar and vector code.
+  The base is the same FIR value in every factor, so FIR
+  common-subexpression materialization evaluates a non-trivial base once,
+  as the helper's argument is: `pow(x + 0.5, 3)` becomes
+  `fTemp0 = x + 0.5; … (fTemp0 * fTemp0) * fTemp0`. An integer base is
+  converted to the real type before multiplying, as it is for `pow` (the C++
+  helper takes an `int` argument and multiplies in `int`). Integer results
+  keep the inline wrapping product of DIFF-BEH-020. A negative integer
+  literal keeps `pow`: C++ accepts it, and its expansion returns the base
+  unchanged.
+- Compatibility impact: no helper function in the generated text, and no
+  `pow`/`powf` call for these powers on any backend, the Cranelift JIT and
+  the interpreter included (`pow(x, 2)`, which normalization makes of `x*x`,
+  was a libm call there: 256 squares ran at 29× real time under faustprobe,
+  133× now). Values are those of the C++ helper bit for bit; on the
+  backends where C++ keeps `pow`, a power of 3 or more can differ from it in
+  the last unit of precision (one rounding per product against one for
+  `pow`). An integer base whose product overflows `int` gives the real
+  product here, where the C++ helper overflows.
+- Evidence: `crates/compiler/tests/real_pow_expansion.rs` (products in
+  scalar and vector code with a certified vector plan, a foreign base
+  evaluated once, exponents that keep `pow`, interpreter results equal to
+  the left-associated products bit for bit at optimization levels 0 and
+  max), faust-coopiano `faust-rs-issues/RAPPORT.md` point 4, and the
+  [journal entry](journal/2026-10-16.md).
 
 ## 6. Additional backends and delivery forms
 
