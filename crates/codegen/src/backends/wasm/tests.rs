@@ -476,6 +476,10 @@ fn wasm_module_emits_static_table_data_segments() {
         .expect("WASM scaffold should emit static table data segment");
 
     assert!(out.dsp_json.contains("\"size\": 16"));
+    // The emitter places the static tables after the mutable fields (W5).
+    let wav_offset = out.memory_layout.field_offsets["wav"].offset;
+    assert_eq!(wav_offset, out.memory_layout.tables_offset);
+    assert!(wav_offset > out.memory_layout.field_offsets["fGain"].offset);
 
     let mut saw_json = false;
     let mut saw_table = false;
@@ -504,7 +508,7 @@ fn wasm_module_emits_static_table_data_segments() {
                     saw_json = true;
                     json_offset = Some(offset);
                 }
-                if offset == 0 && data == [0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 64] {
+                if offset == wav_offset as i32 && data == [0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 0, 64] {
                     saw_table = true;
                     table_offset = Some(offset);
                 }
@@ -513,7 +517,7 @@ fn wasm_module_emits_static_table_data_segments() {
     }
     assert!(saw_json);
     assert!(saw_table);
-    assert_eq!(table_offset, Some(0));
+    assert_eq!(table_offset, Some(wav_offset as i32));
     assert!(
         json_offset.expect("json data segment offset should be recorded")
             >= out.memory_layout.io_zone_offset as i32
@@ -838,7 +842,7 @@ fn wasm_layout_places_static_tables_after_struct_region() {
 }
 
 #[test]
-fn wasm_json_indices_follow_runtime_offsets_after_static_tables() {
+fn wasm_json_indices_follow_the_emitted_layout() {
     let (store, module) = build_static_table_ui_module();
     let out = generate_wasm_module(&store, module, &WasmOptions::default())
         .expect("WASM backend should expose UI indices as runtime byte offsets");
@@ -847,7 +851,41 @@ fn wasm_json_indices_follow_runtime_offsets_after_static_tables() {
         out.dsp_json
             .contains("\"address\": \"/StaticTableUI/gain\"")
     );
-    assert!(out.dsp_json.contains("\"index\": 12"));
+    // The control is a 4-byte field: it precedes the static table, which the
+    // emitter places last, and its JSON index is its emitted offset.
+    let gain = out.memory_layout.field_offsets["fGain"].offset;
+    assert_eq!(gain, 0);
+    assert!(out.memory_layout.tables_offset > gain);
+    assert!(out.dsp_json.contains(&format!("\"index\": {gain}")));
+}
+
+/// W5 of `porting/wasm-compute-speed-analysis-and-plan-2026-10-16-en.md`: the
+/// emitter lays the mutable fields out by increasing size, then the static
+/// tables, while `WasmMemoryLayout::from_module` keeps the declaration order
+/// (static tables first) that the C++-style JSON of the other backends uses.
+#[test]
+fn wasm_emitter_lays_out_small_fields_first_and_static_tables_last() {
+    let (store, module) = build_mixed_size_fields_module();
+    let out = generate_wasm_module(&store, module, &WasmOptions::default())
+        .expect("WASM backend should lay out the mixed-size fixture");
+    Validator::new()
+        .validate_all(&out.wasm_binary)
+        .expect("generated module should validate");
+    let emitted = |name: &str| out.memory_layout.field_offsets[name].offset;
+    assert_eq!(emitted("fState"), 0);
+    assert_eq!(emitted("fRec"), 4);
+    assert_eq!(emitted("fDelay"), 12);
+    assert_eq!(out.memory_layout.tables_offset, 12 + 64 * 4);
+    assert_eq!(emitted("wav"), out.memory_layout.tables_offset);
+    assert_eq!(out.memory_layout.struct_size, 12 + 64 * 4 + 12);
+
+    let declared = WasmMemoryLayout::from_module(&store, module, &WasmOptions::default(), 0)
+        .expect("declaration-order layout should compute");
+    let declared = |name: &str| declared.field_offsets[name].offset;
+    assert_eq!(declared("wav"), 0);
+    assert_eq!(declared("fDelay"), 12);
+    assert_eq!(declared("fState"), 12 + 64 * 4);
+    assert_eq!(declared("fRec"), 12 + 64 * 4 + 4);
 }
 
 #[test]
@@ -2064,6 +2102,54 @@ fn build_region_address_module() -> (FirStore, FirId) {
         0,
         1,
         "region_address",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
+    (store, module)
+}
+
+/// A delay line (64 floats), a scalar and a two-slot state, declared in that
+/// order, plus one static table: the fields `from_module` and the emitter
+/// order differently.
+fn build_mixed_size_fields_module() -> (FirStore, FirId) {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+
+    let z = b.float32(0.0);
+    let delay = b.declare_var(
+        "fDelay",
+        FirType::Array(Box::new(FirType::FaustFloat), 64),
+        AccessType::Struct,
+        None,
+    );
+    let state = b.declare_var("fState", FirType::FaustFloat, AccessType::Struct, Some(z));
+    let rec = b.declare_var(
+        "fRec",
+        FirType::Array(Box::new(FirType::FaustFloat), 2),
+        AccessType::Struct,
+        None,
+    );
+    let dsp_struct = b.block(&[delay, state, rec]);
+    let globals = b.block(&[]);
+    let w0 = b.float32(0.0);
+    let w1 = b.float32(1.0);
+    let w2 = b.float32(2.0);
+    let wav = b.declare_table(
+        "wav",
+        AccessType::Static,
+        FirType::FaustFloat,
+        &[w0, w1, w2],
+    );
+    let static_decls = b.block(&[wav]);
+    let compute = declare_trivial_compute(&mut b);
+    let functions = b.block(&[compute]);
+    let module = b.module(
+        0,
+        1,
+        "mixed_size_fields",
         dsp_struct,
         globals,
         functions,

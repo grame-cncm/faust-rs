@@ -405,7 +405,15 @@ fn generate_wasm_module_with_context_step(
         ValType::F32
     };
 
-    let mut memory_layout = WasmMemoryLayout::from_module(store, module, options, 0)?;
+    // The emitter lays out small fields first (W5); `from_module` keeps the
+    // declaration order for the C++-style JSON of the other backends.
+    let mut memory_layout = WasmMemoryLayout::from_module_with_order(
+        store,
+        module,
+        options,
+        0,
+        layout::FieldOrder::SmallFirst,
+    )?;
     let dsp_json = build_wasm_json_description(
         store,
         name,
@@ -416,7 +424,13 @@ fn generate_wasm_module_with_context_step(
         json_context,
     )?
     .render();
-    memory_layout = WasmMemoryLayout::from_module(store, module, options, dsp_json.len())?;
+    memory_layout = WasmMemoryLayout::from_module_with_order(
+        store,
+        module,
+        options,
+        dsp_json.len(),
+        layout::FieldOrder::SmallFirst,
+    )?;
     let pages = if options.memory_pages == 0 {
         memory_layout.pages.max(DEFAULT_MEMORY_PAGES)
     } else {

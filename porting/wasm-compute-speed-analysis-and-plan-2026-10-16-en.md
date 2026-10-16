@@ -5,7 +5,9 @@ Date: 2026-10-16
 Status: **W1 implemented** on 2026-10-16, with D1 decided: `local.get 0` +
 `offset=` (section 4, "Implemented"). **W4 studied** the same day: the cold-arm
 cost it targeted was a measurement artifact, so W4 is dropped (section 8).
-W2, W3 and the new W5 are not started; D2 to D4 are open.
+**W5 implemented** the same day, with D4 decided: small fields first, static
+tables last (section 4, W5). W2, W3 and W6 are not started; D2 and D3 are
+open.
 
 **Measurement correction.** The instruction and cycle counts first recorded
 here (sections 2.1, 2.2, C4) subtract a 0-block run from an N-block run. That
@@ -356,6 +358,44 @@ within noise on the bodies; low risk).
 - The JSON offsets follow the layout, so hosts are unaffected. The layout
   would differ from Faust C++'s declaration order: decision D4.
 
+*Implemented (2026-10-16), D4 = small fields first.*
+
+- **Layout.** `WasmMemoryLayout::from_module_with_order` (crate-private) with
+  `FieldOrder::SmallFirst` places `Soundfile*` fields first, then the mutable
+  fields by increasing byte size (stable), then the static tables, then the
+  compute-local arrays. The two placement loops became `place_runtime_fields`
+  and `place_static_tables`, with bodies unchanged.
+- **Who uses which order.** The WASM emitter uses the new order, and its JSON
+  is built from the same layout. The public `from_module` keeps the
+  declaration order: the C++-style `-json` of the other backends (`compiler`
+  `json_naming`, `cli/runner`, the textual backends' `getJSON`) does not
+  change.
+- **Registry.** `DIFF-BACK-008`.
+
+Validation:
+
+- `wasm_emitter_lays_out_small_fields_first_and_static_tables_last` pins both
+  orders on a mixed fixture, and fails if the emitter goes back to
+  `from_module`. Two tests that pinned the old emitter offsets now read them
+  from the emitted layout.
+- Base (W1) against W5 on the 632 `.dsp` of `tests/` and `examples/`, in
+  `-double` and `-single`: compilation status identical on all 1,264, 1,024
+  runs bit-identical, 5 trapping identically.
+- `make -f Make.wasm`: 133/133, against the `phaser_flanger` reference
+  regenerated on 2026-10-16.
+- The coopiano voice and bodies are bit-identical to W1.
+- fmt, clippy, 3,256 workspace tests and the five structure gates pass. No
+  public API changes.
+
+Measured against W1 (slope, two interleaved rounds; wall clock in the third
+second; load average about 3.5):
+
+| DSP | instr/sample | cycles/sample | % of a core |
+|---|---|---|---|
+| voice | 29,800 → 19,600 (−34 %) | 5,540–5,560 → 5,210–5,240 | 5.8–5.9 → 5.4 (em++ 5.7) |
+| light body | 89,900 → 87,200 (−3 %) | 28,000–29,100 → 27,700–28,200 | 29.9–32.0 → 28.9–29.1 |
+| imaged body | 150,000 → 145,000 (−3 %) | 49,000–54,800 → 48,600–51,300 | 49.8–52.0 → 49.8–50.4 (em++ 49) |
+
 **W6. Explain the remaining IPC gap** (analysis only). After W1 the light body
 runs 89,800 instructions per sample at about 28,300 cycles; em++ runs 80,900
 at about 19,200. Next steps:
@@ -402,7 +442,8 @@ little on coopiano.
   (52 % vs 49 %) and the voice to it. W2+W3 add a few percent on coopiano and
   their checker is real work. W1 now and W2/W3 as a separate phase is the
   smaller step.
-- **D4, struct layout order (W5).**
+- **D4, struct layout order (W5).** *Decided 2026-10-16: small fields
+  first.*
   - Declaration order (today; the same order as Faust C++'s wasm backend).
   - Small fields first and static tables last (fewer address instructions;
     JSON offsets differ from C++'s for the same program).

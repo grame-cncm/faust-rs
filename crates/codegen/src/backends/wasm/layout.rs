@@ -6,13 +6,19 @@
 //! - host runtimes calling `getParamValue` / `setParamValue`.
 //!
 //! The key invariant is that exported JSON offsets are not abstract widget IDs:
-//! they are raw byte offsets into one contiguous runtime prefix. That prefix can
-//! contain, in order:
+//! they are raw byte offsets into one contiguous runtime prefix. In declaration
+//! order ([`WasmMemoryLayout::from_module`], the layout of the C++-style JSON of
+//! the other backends) that prefix contains, in order:
 //! - static tables,
 //! - `Soundfile*` struct fields first among mutable DSP fields,
 //! - mutable DSP/global fields,
+//! - compute-local arrays,
 //! - the I/O zone / audio heap start,
 //! - the embedded JSON data segment after the runtime area.
+//!
+//! The WASM emitter uses `FieldOrder::SmallFirst` instead: `Soundfile*` fields,
+//! then the mutable fields by increasing size, then the static tables, then
+//! the compute-local arrays. Its JSON is built from that same layout.
 //!
 //! This matches the observable C++ WASM contract closely enough for web-facing
 //! runtimes such as `faustwasm`, which read widget `index` values from JSON and
@@ -85,6 +91,26 @@ pub struct WasmMemoryLayout {
     pub pages: u32,
 }
 
+/// Order of the runtime prefix of a [`WasmMemoryLayout`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FieldOrder {
+    /// Static tables first, then the mutable fields in declaration order
+    /// (`Soundfile*` fields first among them), as the Faust C++ field table
+    /// is built.
+    Declaration,
+    /// `Soundfile*` fields first, then the mutable fields by increasing byte
+    /// size (declaration order among equal sizes), then the static tables.
+    ///
+    /// The hot per-sample state (scalars, two-slot recursion states,
+    /// coefficients) then sits at low offsets. V8 encodes an offset up to
+    /// 32,760 bytes in the load itself and builds larger ones with one or two
+    /// extra instructions, so the declaration order, which puts every table
+    /// and delay line first, cost the coopiano voice a third of its
+    /// instructions (`porting/wasm-compute-speed-analysis-and-plan-2026-10-16-en.md`,
+    /// W5). The JSON `index` values follow the layout.
+    SmallFirst,
+}
+
 impl WasmMemoryLayout {
     /// Creates the placeholder layout used by the earliest scaffold path.
     #[must_use]
@@ -101,7 +127,10 @@ impl WasmMemoryLayout {
         }
     }
 
-    /// Derives the current WASM linear-memory layout from a FIR module.
+    /// Derives the WASM linear-memory layout of a FIR module in declaration
+    /// order ([`FieldOrder::Declaration`]): the layout the C++-style `-json`
+    /// description of the other backends follows. The WASM emitter itself lays
+    /// out with [`FieldOrder::SmallFirst`] (see [`Self::from_module_with_order`]).
     ///
     /// Layout policy:
     /// - static tables are allocated first,
@@ -117,6 +146,20 @@ impl WasmMemoryLayout {
         module: FirId,
         options: &WasmOptions,
         json_len: usize,
+    ) -> Result<Self, WasmBackendError> {
+        Self::from_module_with_order(store, module, options, json_len, FieldOrder::Declaration)
+    }
+
+    /// Derives the WASM linear-memory layout of a FIR module with the given
+    /// field order. Everything but the order of the runtime prefix is as in
+    /// [`Self::from_module`]: compute-local arrays follow, then the I/O zone,
+    /// then the JSON segment.
+    pub(crate) fn from_module_with_order(
+        store: &FirStore,
+        module: FirId,
+        options: &WasmOptions,
+        json_len: usize,
+        order: FieldOrder,
     ) -> Result<Self, WasmBackendError> {
         let audio_slot = if options.double_precision { 8 } else { 4 };
         let FirMatch::Module {
@@ -140,225 +183,55 @@ impl WasmMemoryLayout {
         let static_items = expect_block(store, static_decls, "module static_decls")?;
 
         let mut field_offsets = BTreeMap::new();
-        let tables_offset = 0u32;
-        let mut runtime_offset = tables_offset;
+        let mut runtime_offset = 0u32;
+        let tables_offset;
 
-        for item in global_items
-            .iter()
-            .copied()
-            .chain(static_items.iter().copied())
-        {
-            match match_fir(store, item) {
-                FirMatch::DeclareTable {
-                    name,
-                    access: AccessType::Static,
-                    elem_type,
-                    values,
-                } => {
-                    let (val_type, elem_size) = fir_type_storage(elem_type, audio_slot)?;
-                    let len = u32::try_from(values.len()).map_err(|_| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM static table length does not fit in u32",
-                        )
-                    })?;
-                    let size = elem_size.checked_mul(len).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM static table byte size overflow",
-                        )
-                    })?;
-                    let offset = align_up(runtime_offset, elem_size);
-                    field_offsets.insert(
-                        name,
-                        FieldLayout {
-                            offset,
-                            typ: val_type,
-                            size,
-                        },
-                    );
-                    runtime_offset = offset.checked_add(size).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM runtime layout size overflow while placing static table",
-                        )
-                    })?;
-                }
-                // A runtime-filled generated table reaches the layout as a
-                // `Static` array declaration: same placement as a constant
-                // static table, but with no data segment behind it — the
-                // generator's fill loop writes the bytes during `classInit`.
-                FirMatch::DeclareVar {
-                    name,
-                    typ: FirType::Array(elem_type, len),
-                    access: AccessType::Static,
-                    ..
-                } => {
-                    let (val_type, elem_size) = fir_type_storage(*elem_type, audio_slot)?;
-                    let len = u32::try_from(len).map_err(|_| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM generated table length does not fit in u32",
-                        )
-                    })?;
-                    let size = elem_size.checked_mul(len).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM generated table byte size overflow",
-                        )
-                    })?;
-                    let offset = align_up(runtime_offset, elem_size);
-                    field_offsets.insert(
-                        name,
-                        FieldLayout {
-                            offset,
-                            typ: val_type,
-                            size,
-                        },
-                    );
-                    runtime_offset = offset.checked_add(size).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM runtime layout size overflow while placing generated table",
-                        )
-                    })?;
-                }
-                FirMatch::DeclareVar { access, .. }
-                    if access != AccessType::Struct && access != AccessType::Global =>
-                {
-                    return Err(WasmBackendError::new(
-                        WasmBackendErrorCode::UnsupportedModuleShape,
-                        format!("unsupported variable access class in WASM layout: {access:?}"),
-                    ));
-                }
-                FirMatch::DeclareTable { access, .. }
-                    if access != AccessType::Struct && access != AccessType::Static =>
-                {
-                    return Err(WasmBackendError::new(
-                        WasmBackendErrorCode::UnsupportedModuleShape,
-                        format!("unsupported table access class in WASM layout: {access:?}"),
-                    ));
-                }
-                // A header or library of a foreign function: no storage.
-                FirMatch::DeclareFun { body: None, .. } | FirMatch::DeclareDependency { .. } => {}
-                FirMatch::DeclareVar { .. } | FirMatch::DeclareTable { .. } => {}
-                other => {
-                    return Err(WasmBackendError::new(
-                        WasmBackendErrorCode::UnsupportedModuleShape,
-                        format!("unsupported globals entry in WASM layout: {other:?}"),
-                    ));
-                }
-            }
-        }
-
+        let mut table_items = global_items.clone();
+        table_items.extend(static_items.iter().copied());
         let mut runtime_fields = dsp_struct_items.to_vec();
         runtime_fields.extend(global_items.iter().copied());
-        runtime_fields.sort_by_key(|item| !is_sound_struct_field(store, *item));
-
-        for item in runtime_fields.iter().copied() {
-            match match_fir(store, item) {
-                FirMatch::DeclareVar {
-                    name,
-                    typ: FirType::Array(inner, len),
-                    access: AccessType::Struct,
-                    ..
-                } => {
-                    let (val_type, elem_size) = fir_type_storage(*inner, audio_slot)?;
-                    let len = u32::try_from(len).map_err(|_| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM struct array length does not fit in u32",
-                        )
-                    })?;
-                    let size = elem_size.checked_mul(len).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM struct array byte size overflow",
-                        )
-                    })?;
-                    let offset = align_up(runtime_offset, elem_size);
-                    field_offsets.insert(
-                        name,
-                        FieldLayout {
-                            offset,
-                            typ: val_type,
-                            size,
-                        },
-                    );
-                    runtime_offset = offset.checked_add(size).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM runtime layout size overflow while placing array field",
-                        )
-                    })?;
-                }
-                FirMatch::DeclareVar {
-                    name,
-                    typ,
-                    access: AccessType::Struct,
-                    ..
-                } => {
-                    let (val_type, slot_size) = fir_type_storage(typ, audio_slot)?;
-                    let offset = align_up(runtime_offset, slot_size);
-                    field_offsets.insert(
-                        name,
-                        FieldLayout {
-                            offset,
-                            typ: val_type,
-                            size: slot_size,
-                        },
-                    );
-                    runtime_offset = offset.checked_add(slot_size).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM runtime layout size overflow while placing scalar field",
-                        )
-                    })?;
-                }
-                FirMatch::DeclareTable {
-                    name,
-                    access: AccessType::Struct,
-                    elem_type,
-                    values,
-                } => {
-                    let (val_type, elem_size) = fir_type_storage(elem_type, audio_slot)?;
-                    let len = u32::try_from(values.len()).map_err(|_| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM struct table length does not fit in u32",
-                        )
-                    })?;
-                    let size = elem_size.checked_mul(len).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM struct table byte size overflow",
-                        )
-                    })?;
-                    let offset = align_up(runtime_offset, elem_size);
-                    field_offsets.insert(
-                        name,
-                        FieldLayout {
-                            offset,
-                            typ: val_type,
-                            size,
-                        },
-                    );
-                    runtime_offset = offset.checked_add(size).ok_or_else(|| {
-                        WasmBackendError::new(
-                            WasmBackendErrorCode::MemoryLayoutOverflow,
-                            "WASM runtime layout size overflow while placing struct table",
-                        )
-                    })?;
-                }
-                // A header or library of a foreign function: no storage.
-                FirMatch::DeclareFun { body: None, .. } | FirMatch::DeclareDependency { .. } => {}
-                FirMatch::DeclareVar { .. } | FirMatch::DeclareTable { .. } => {}
-                other => {
-                    return Err(WasmBackendError::new(
-                        WasmBackendErrorCode::UnsupportedModuleShape,
-                        format!("unsupported static declarations entry in WASM layout: {other:?}"),
-                    ));
-                }
+        match order {
+            FieldOrder::Declaration => {
+                tables_offset = runtime_offset;
+                place_static_tables(
+                    store,
+                    &table_items,
+                    &mut field_offsets,
+                    &mut runtime_offset,
+                    audio_slot,
+                )?;
+                runtime_fields.sort_by_key(|item| !is_sound_struct_field(store, *item));
+                place_runtime_fields(
+                    store,
+                    &runtime_fields,
+                    &mut field_offsets,
+                    &mut runtime_offset,
+                    audio_slot,
+                )?;
+            }
+            FieldOrder::SmallFirst => {
+                // Stable: equal sizes keep their declaration order.
+                runtime_fields.sort_by_key(|item| {
+                    (
+                        !is_sound_struct_field(store, *item),
+                        runtime_field_bytes(store, *item, audio_slot),
+                    )
+                });
+                place_runtime_fields(
+                    store,
+                    &runtime_fields,
+                    &mut field_offsets,
+                    &mut runtime_offset,
+                    audio_slot,
+                )?;
+                tables_offset = runtime_offset;
+                place_static_tables(
+                    store,
+                    &table_items,
+                    &mut field_offsets,
+                    &mut runtime_offset,
+                    audio_slot,
+                )?;
             }
         }
 
@@ -437,6 +310,267 @@ impl WasmMemoryLayout {
             pages,
         })
     }
+}
+
+/// Places the static tables (constant and runtime-filled generated tables) at
+/// `*runtime_offset` onwards, in declaration order. `items` are the module's
+/// globals followed by its static declarations; entries without storage are
+/// skipped, unsupported ones rejected.
+fn place_static_tables(
+    store: &FirStore,
+    items: &[FirId],
+    field_offsets: &mut BTreeMap<String, FieldLayout>,
+    runtime_offset: &mut u32,
+    audio_slot: u32,
+) -> Result<(), WasmBackendError> {
+    for item in items.iter().copied() {
+        match match_fir(store, item) {
+            FirMatch::DeclareTable {
+                name,
+                access: AccessType::Static,
+                elem_type,
+                values,
+            } => {
+                let (val_type, elem_size) = fir_type_storage(elem_type, audio_slot)?;
+                let len = u32::try_from(values.len()).map_err(|_| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM static table length does not fit in u32",
+                    )
+                })?;
+                let size = elem_size.checked_mul(len).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM static table byte size overflow",
+                    )
+                })?;
+                let offset = align_up(*runtime_offset, elem_size);
+                field_offsets.insert(
+                    name,
+                    FieldLayout {
+                        offset,
+                        typ: val_type,
+                        size,
+                    },
+                );
+                *runtime_offset = offset.checked_add(size).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM runtime layout size overflow while placing static table",
+                    )
+                })?;
+            }
+            // A runtime-filled generated table reaches the layout as a
+            // `Static` array declaration: same placement as a constant
+            // static table, but with no data segment behind it — the
+            // generator's fill loop writes the bytes during `classInit`.
+            FirMatch::DeclareVar {
+                name,
+                typ: FirType::Array(elem_type, len),
+                access: AccessType::Static,
+                ..
+            } => {
+                let (val_type, elem_size) = fir_type_storage(*elem_type, audio_slot)?;
+                let len = u32::try_from(len).map_err(|_| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM generated table length does not fit in u32",
+                    )
+                })?;
+                let size = elem_size.checked_mul(len).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM generated table byte size overflow",
+                    )
+                })?;
+                let offset = align_up(*runtime_offset, elem_size);
+                field_offsets.insert(
+                    name,
+                    FieldLayout {
+                        offset,
+                        typ: val_type,
+                        size,
+                    },
+                );
+                *runtime_offset = offset.checked_add(size).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM runtime layout size overflow while placing generated table",
+                    )
+                })?;
+            }
+            FirMatch::DeclareVar { access, .. }
+                if access != AccessType::Struct && access != AccessType::Global =>
+            {
+                return Err(WasmBackendError::new(
+                    WasmBackendErrorCode::UnsupportedModuleShape,
+                    format!("unsupported variable access class in WASM layout: {access:?}"),
+                ));
+            }
+            FirMatch::DeclareTable { access, .. }
+                if access != AccessType::Struct && access != AccessType::Static =>
+            {
+                return Err(WasmBackendError::new(
+                    WasmBackendErrorCode::UnsupportedModuleShape,
+                    format!("unsupported table access class in WASM layout: {access:?}"),
+                ));
+            }
+            // A header or library of a foreign function: no storage.
+            FirMatch::DeclareFun { body: None, .. } | FirMatch::DeclareDependency { .. } => {}
+            FirMatch::DeclareVar { .. } | FirMatch::DeclareTable { .. } => {}
+            other => {
+                return Err(WasmBackendError::new(
+                    WasmBackendErrorCode::UnsupportedModuleShape,
+                    format!("unsupported globals entry in WASM layout: {other:?}"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Places the mutable DSP and global fields of `items` at `*runtime_offset`
+/// onwards, in the given order.
+fn place_runtime_fields(
+    store: &FirStore,
+    items: &[FirId],
+    field_offsets: &mut BTreeMap<String, FieldLayout>,
+    runtime_offset: &mut u32,
+    audio_slot: u32,
+) -> Result<(), WasmBackendError> {
+    for item in items.iter().copied() {
+        match match_fir(store, item) {
+            FirMatch::DeclareVar {
+                name,
+                typ: FirType::Array(inner, len),
+                access: AccessType::Struct,
+                ..
+            } => {
+                let (val_type, elem_size) = fir_type_storage(*inner, audio_slot)?;
+                let len = u32::try_from(len).map_err(|_| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM struct array length does not fit in u32",
+                    )
+                })?;
+                let size = elem_size.checked_mul(len).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM struct array byte size overflow",
+                    )
+                })?;
+                let offset = align_up(*runtime_offset, elem_size);
+                field_offsets.insert(
+                    name,
+                    FieldLayout {
+                        offset,
+                        typ: val_type,
+                        size,
+                    },
+                );
+                *runtime_offset = offset.checked_add(size).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM runtime layout size overflow while placing array field",
+                    )
+                })?;
+            }
+            FirMatch::DeclareVar {
+                name,
+                typ,
+                access: AccessType::Struct,
+                ..
+            } => {
+                let (val_type, slot_size) = fir_type_storage(typ, audio_slot)?;
+                let offset = align_up(*runtime_offset, slot_size);
+                field_offsets.insert(
+                    name,
+                    FieldLayout {
+                        offset,
+                        typ: val_type,
+                        size: slot_size,
+                    },
+                );
+                *runtime_offset = offset.checked_add(slot_size).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM runtime layout size overflow while placing scalar field",
+                    )
+                })?;
+            }
+            FirMatch::DeclareTable {
+                name,
+                access: AccessType::Struct,
+                elem_type,
+                values,
+            } => {
+                let (val_type, elem_size) = fir_type_storage(elem_type, audio_slot)?;
+                let len = u32::try_from(values.len()).map_err(|_| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM struct table length does not fit in u32",
+                    )
+                })?;
+                let size = elem_size.checked_mul(len).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM struct table byte size overflow",
+                    )
+                })?;
+                let offset = align_up(*runtime_offset, elem_size);
+                field_offsets.insert(
+                    name,
+                    FieldLayout {
+                        offset,
+                        typ: val_type,
+                        size,
+                    },
+                );
+                *runtime_offset = offset.checked_add(size).ok_or_else(|| {
+                    WasmBackendError::new(
+                        WasmBackendErrorCode::MemoryLayoutOverflow,
+                        "WASM runtime layout size overflow while placing struct table",
+                    )
+                })?;
+            }
+            // A header or library of a foreign function: no storage.
+            FirMatch::DeclareFun { body: None, .. } | FirMatch::DeclareDependency { .. } => {}
+            FirMatch::DeclareVar { .. } | FirMatch::DeclareTable { .. } => {}
+            other => {
+                return Err(WasmBackendError::new(
+                    WasmBackendErrorCode::UnsupportedModuleShape,
+                    format!("unsupported static declarations entry in WASM layout: {other:?}"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Byte size of one mutable field as [`place_runtime_fields`] stores it; 0 for
+/// an entry without storage. Only orders fields: an unsupported type sorts
+/// last and is rejected by the placement itself.
+fn runtime_field_bytes(store: &FirStore, id: FirId, audio_slot: u32) -> u64 {
+    let (typ, len) = match match_fir(store, id) {
+        FirMatch::DeclareVar {
+            typ: FirType::Array(inner, len),
+            access: AccessType::Struct,
+            ..
+        } => (*inner, len as u64),
+        FirMatch::DeclareVar {
+            typ,
+            access: AccessType::Struct,
+            ..
+        } => (typ, 1),
+        FirMatch::DeclareTable {
+            access: AccessType::Struct,
+            elem_type,
+            values,
+            ..
+        } => (elem_type, values.len() as u64),
+        _ => return 0,
+    };
+    fir_type_storage(typ, audio_slot).map_or(u64::MAX, |(_, size)| u64::from(size) * len)
 }
 
 /// C++ parity: WASM moves `Soundfile*` fields first in the DSP struct so the

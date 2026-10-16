@@ -1096,6 +1096,38 @@ must run unchanged with Faust C++ should not pass them.
   `test_typed_foreign_call_is_refused_after_its_signature_changes`
   (`crates/codegen/src/backends/interp/compiler/tests.rs`).
 
+### DIFF-BACK-008 — WASM struct layout: small fields first, static tables last
+
+- Status: `adapted`.
+- The C++ WASM backend builds its field table in declaration order
+  (`WASMInstVisitor`, `compiler/generator/wasm/wasm_instructions.hh`).
+  faust-rs's WASM emitter lays the runtime prefix out as:
+  - `Soundfile*` fields;
+  - the mutable fields by increasing byte size, declaration order among equal
+    sizes;
+  - the static tables;
+  - the compute-local arrays.
+
+  `WasmMemoryLayout::from_module`, which the C++-style JSON of the other
+  backends uses, keeps the declaration order.
+- Why: V8 encodes a memory offset up to 32,760 bytes in the load itself and
+  builds a larger one with one or two extra instructions. The declaration
+  order puts every table and delay line before the per-sample state. On the
+  faust-coopiano voice the new order removes 34 % of the instructions per
+  sample; outputs are bit-identical.
+- Compatibility impact:
+  - The JSON `index` values of a `-lang wasm` module (and its `size`-relative
+    layout) differ from those Faust C++ emits for the same program.
+  - Hosts that read `ui[*].index` from the module's own JSON are unaffected,
+    as are `getParamValue`/`setParamValue` and the I/O zone at `size`.
+  - A host that hard-codes C++ offsets, or pairs a faust-rs `.wasm` with a C++
+    JSON, breaks. Mixing is already unsupported (`wasm/mod.rs` header).
+- Evidence: W5 of
+  [`wasm-compute-speed-analysis-and-plan-2026-10-16-en.md`](wasm-compute-speed-analysis-and-plan-2026-10-16-en.md);
+  tests `wasm_emitter_lays_out_small_fields_first_and_static_tables_last` and
+  `wasm_json_indices_follow_the_emitted_layout` in
+  `crates/codegen/src/backends/wasm/tests.rs`.
+
 ## 7. Public API and representation adaptations
 
 ### DIFF-API-001 — owned Rust compiler facade
