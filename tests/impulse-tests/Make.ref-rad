@@ -45,8 +45,14 @@ reffiles := $(patsubst $(dspdir)/%.dsp,$(refdir)/%.ir,$(dspfiles))
 
 reference: $(COMPARE) $(refdir)/.dir $(reffiles)
 
+# As in Make.ref: a new, empty reference directory records the Faust libraries
+# its references are produced with (see "Faust-library provenance" in
+# common.mk); `make reference-libs-accept refdir=$(refdir)` updates it later.
 $(refdir)/.dir:
 	mkdir -p $(refdir)
+	@if ! ls $(refdir)/*.ir >/dev/null 2>&1 && test ! -e '$(FAUSTLIBS_STAMP)'; then \
+		$(FAUSTLIBS_MANIFEST_CMD) > '$(FAUSTLIBS_STAMP)' 2>/dev/null || rm -f '$(FAUSTLIBS_STAMP)'; \
+	fi
 	touch $@
 
 $(COMPARE): tools/filesCompare.cpp

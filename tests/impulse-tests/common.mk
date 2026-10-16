@@ -110,3 +110,54 @@ vector_certified_dspfiles := $(patsubst tests/impulse-tests/%,%,$(vector_certifi
 
 # Per-DSP tolerance overrides and known-failure lists.
 include known.mk
+
+# --- Faust-library provenance of the references ----------------------------
+# A reference response depends on the Faust libraries as much as on its DSP,
+# but Make only tracks the DSP: after `$(FAUSTLIBS)` is reinstalled every
+# reference still looks up to date, and a DSP whose library code changed fails
+# on every backend as if faust-rs had regressed (`phaser_flanger`, 2026-10-16,
+# after faustlibraries 1235d855 and 649a5ecd).
+#
+# `$(FAUSTLIBS_STAMP)` records the `cksum` of every `$(FAUSTLIBS)/*.lib` a
+# reference set was produced with. `Make.ref` and `Make.ref-rad` write it when
+# they create an empty reference directory; afterwards only
+# `make reference-libs-accept` rewrites it. A library change never regenerates
+# a reference by itself (`sound.ir` needs a specific C++ fixture, see
+# README.md). When the record is missing or differs from the installed
+# libraries, make warns once per reference set and process tree, naming the
+# changed files.
+FAUSTLIBS_STAMP ?= $(refdir)/.faustlibs
+FAUSTLIBS_MANIFEST_CMD = (cd '$(FAUSTLIBS)' && LC_ALL=C cksum *.lib)
+# The library files whose record line differs from the installed one (changed,
+# added or removed).
+faustlibs_changed = $(shell { cat '$(FAUSTLIBS_STAMP)'; $(FAUSTLIBS_MANIFEST_CMD); } 2>/dev/null | LC_ALL=C sort | uniq -u | awk '{ print $$3 }' | LC_ALL=C sort -u)
+# `$(warning)` strips leading blanks; this keeps the continuation lines indented.
+faustlibs_indent := $(empty)  $(empty)
+faustlibs_accept_cmd = make reference-libs-accept$(if $(filter-out reference,$(refdir)), refdir=$(refdir))
+
+# Goals that never compare against a reference stay quiet.
+faustlibs_quiet_goals := clean distclean help build tools reference-libs-accept \
+	bench bench-self-test vec-bench compile-bench
+faustlibs_goals := $(if $(MAKECMDGOALS),$(filter-out $(faustlibs_quiet_goals),$(MAKECMDGOALS)),default)
+ifneq ($(faustlibs_goals),)
+ifeq ($(filter $(refdir),$(FAUSTLIBS_CHECKED_REFDIRS)),)
+ifneq ($(wildcard $(refdir)/*.ir),)
+ifeq ($(wildcard $(FAUSTLIBS_STAMP)),)
+$(warning WARNING: $(refdir)/ has no record of the Faust libraries it was produced with ($(FAUSTLIBS_STAMP)).)
+$(warning $(faustlibs_indent)A mismatch against $(refdir)/ may come from a library change, not from faust-rs.)
+$(warning $(faustlibs_indent)Once its references are known to match $(FAUSTLIBS): $(faustlibs_accept_cmd))
+else
+faustlibs_changes := $(faustlibs_changed)
+ifneq ($(faustlibs_changes),)
+$(warning WARNING: $(refdir)/ was produced with other Faust libraries than $(FAUSTLIBS) holds now.)
+$(warning $(faustlibs_indent)Changed: $(faustlibs_changes))
+$(warning $(faustlibs_indent)A mismatch against $(refdir)/ may come from these libraries, not from faust-rs.)
+$(warning $(faustlibs_indent)Regenerate the references they affect, then: $(faustlibs_accept_cmd))
+endif
+endif
+endif
+endif
+endif
+# Exported, so the sub-makes of one invocation do not repeat the warning.
+FAUSTLIBS_CHECKED_REFDIRS := $(FAUSTLIBS_CHECKED_REFDIRS) $(refdir)
+export FAUSTLIBS_CHECKED_REFDIRS

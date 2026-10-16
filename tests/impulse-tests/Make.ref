@@ -15,7 +15,7 @@ include common.mk
 # make process so this list is computed from that manifest.
 reffiles := $(patsubst $(dspdir)/%.dsp,$(refdir)/%.ir,$(call cpp_oracle_dspfiles))
 
-.PHONY: reference reference-checked reference-report reference-report-checked FORCE
+.PHONY: reference reference-checked reference-report reference-report-checked reference-libs-accept FORCE
 .DELETE_ON_ERROR:
 
 # The recursive invocation is intentional: included makefiles are read during
@@ -37,11 +37,33 @@ reference-report-checked:
 		printf '%s\n' "  $(CPP_ORACLE_UNSUPPORTED)"; \
 		echo "  diagnostics: $(CPP_ORACLE_LOG_DIR)/<dsp>.log"; \
 	fi
+	@if test ! -r '$(FAUSTLIBS_STAMP)'; then \
+		echo "Faust libraries: $(refdir)/ has no record ($(FAUSTLIBS_STAMP))"; \
+	elif test -n '$(faustlibs_changed)'; then \
+		echo "Faust libraries: changed since $(refdir)/ was produced: $(faustlibs_changed)"; \
+	else \
+		echo "Faust libraries: $(FAUSTLIBS) matches the record of $(refdir)/"; \
+	fi
 
-# Recheck the C++ compiler identity and the selected corpus on every invocation
-# without perturbing the stamp when they are unchanged. This makes switching
-# `FAUST_CPP`, its version, include paths, architecture, or `dspfiles` refresh
-# the manifest instead of reusing an oracle classification from another setup.
+# Record the installed Faust libraries as the ones `$(refdir)/` was produced
+# with (see "Faust-library provenance" in common.mk). Run it only once the
+# references a library change affects have been regenerated, or checked
+# unaffected: this is the step that clears the warning, not a fix.
+reference-libs-accept:
+	@test -d '$(refdir)' || { echo "no reference directory: $(refdir)" >&2; exit 2; }
+	@$(FAUSTLIBS_MANIFEST_CMD) > '$(FAUSTLIBS_STAMP).tmp' 2>/dev/null && test -s '$(FAUSTLIBS_STAMP).tmp' || { \
+		rm -f '$(FAUSTLIBS_STAMP).tmp'; \
+		echo "no Faust library (*.lib) in FAUSTLIBS=$(FAUSTLIBS)" >&2; exit 2; \
+	}
+	@echo "$(if $(wildcard $(FAUSTLIBS_STAMP)),accepting library changes: $(or $(faustlibs_changed),none),first library record)"
+	@mv '$(FAUSTLIBS_STAMP).tmp' '$(FAUSTLIBS_STAMP)'
+	@echo "$(FAUSTLIBS_STAMP): $$(wc -l < '$(FAUSTLIBS_STAMP)' | tr -d ' ') libraries of $(FAUSTLIBS) recorded"
+
+# Recheck the C++ compiler identity, the selected corpus and the contents of
+# the Faust libraries on every invocation without perturbing the stamp when
+# they are unchanged. This makes switching `FAUST_CPP`, its version, include
+# paths, architecture, `dspfiles`, or reinstalling the libraries refresh the
+# manifest instead of reusing an oracle classification from another setup.
 FORCE:
 
 $(CPP_ORACLE_CONFIG): FORCE
@@ -52,6 +74,7 @@ $(CPP_ORACLE_CONFIG): FORCE
 		$(FAUST_CPP) --version 2>&1; \
 		printf 'IMPULSE_ARCH=%s\nFAUSTLIBS=%s\ndspdir=%s\ndspfiles=%s\n' \
 			'$(IMPULSE_ARCH)' '$(FAUSTLIBS)' '$(dspdir)' '$(dspfiles)'; \
+		$(FAUSTLIBS_MANIFEST_CMD) 2>/dev/null || true; \
 	} > "$$tmp"; \
 	if test -r "$@" && cmp -s "$$tmp" "$@"; then rm -f "$$tmp"; else mv "$$tmp" "$@"; fi
 
@@ -85,8 +108,14 @@ $(CPP_ORACLE_MANIFEST): $(CPP_ORACLE_CONFIG) $(dspfiles) Make.ref common.mk know
 	mv "$$tmp" "$@"; \
 	echo "C++ oracle preflight: $$(printf '%s\n' "$$supported" | wc -w | tr -d ' ') supported, $$(printf '%s\n' "$$unsupported" | wc -w | tr -d ' ') unsupported"
 
+# A new, empty reference directory records the libraries its references are
+# produced with. An existing one keeps its record, or its lack of one: only
+# `reference-libs-accept` vouches for references built earlier.
 $(refdir)/.dir:
 	mkdir -p $(refdir)
+	@if ! ls $(refdir)/*.ir >/dev/null 2>&1 && test ! -e '$(FAUSTLIBS_STAMP)'; then \
+		$(FAUSTLIBS_MANIFEST_CMD) > '$(FAUSTLIBS_STAMP)' 2>/dev/null || rm -f '$(FAUSTLIBS_STAMP)'; \
+	fi
 	touch $@
 
 build/ref/.dir:

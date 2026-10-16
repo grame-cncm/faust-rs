@@ -109,6 +109,7 @@ See the design write-up in
   the wrong oracle; see the Status section's methodology note for what that
   looks like when it happens.
 - `c++` and the Faust standard libraries (default `/usr/local/share/faust`).
+  References depend on them; see [Faust-library provenance](#faust-library-provenance).
 - The soundfile fixtures of every faust-rs lane (interpreter, Cranelift,
   WASM, AssemblyScript, Rust, Julia, `faust_minimal.h`) follow the C++
   `TestMemoryReader` of the `rework-soundfile` branch: each channel has its own
@@ -141,7 +142,8 @@ See the design write-up in
 cd tests/impulse-tests
 make build         # build the faust-rs binaries the harness drives
 make reference     # generate the reference .ir oracle  (run once)
-make reference-report # show C++-oracle-supported and rejected DSPs
+make reference-report # show C++-oracle-supported and rejected DSPs, library status
+make reference-libs-accept # record the installed Faust libraries for reference/
 make interp        # check the interpreter backend
 make cpp           # check the C++ backend
 make c             # check the C backend
@@ -178,6 +180,47 @@ preflight is cached and only reruns when the selected corpus or oracle
 configuration changes; ordinary reference responses still follow normal Make
 timestamp rules. Delete `reference/` (or `make distclean`) to regenerate all
 supported responses.
+
+### Faust-library provenance
+
+A reference depends on the Faust libraries (`FAUSTLIBS`) as much as on its
+DSP, but Make only tracks the DSP. When the libraries are reinstalled, every
+reference still looks up to date. A DSP whose library code changed then fails
+on every faust-rs backend, and it looks like a compiler regression. On
+2026-10-16 `phaser_flanger` failed this way after faustlibraries `1235d855` and
+`649a5ecd`: the C++ oracle on the new libraries gave the same "failing" output.
+
+So each reference directory keeps a record of its libraries,
+`<refdir>/.faustlibs`: the `cksum` line of every `$(FAUSTLIBS)/*.lib`.
+
+- `make reference` (and `make rad-reference`) writes it when it creates an
+  empty reference directory. Nothing else rewrites it.
+- Every make invocation that can compare against references checks it against
+  the installed libraries (`clean`, `help`, `build`, `tools` and the bench
+  targets do not). If they differ, it prints a `WARNING` naming the changed,
+  added or removed `.lib` files, once per reference directory, whatever the
+  number of sub-makes. A reference directory with no record gets the same
+  warning. `make reference-report` prints the same status.
+- A library change never regenerates a reference by itself. The C++ oracle
+  preflight is rerun, because the library contents are part of its
+  configuration, but the responses are not rebuilt.
+
+When the warning appears:
+
+1. Find the references the change affects. Regenerate them into a scratch
+   directory (`make -f Make.ref reference refdir=/tmp/ref-check`) and `cmp`
+   each file with `reference/`.
+2. Replace only those files: delete each one, then run `make reference`, which
+   rebuilds what is missing. Do not regenerate the whole directory: `sound.ir`
+   needs the `TestMemoryReader` fixture described in Requirements, and the
+   clock-domain references need the pinned C++ build.
+3. Record the libraries: `make reference-libs-accept` (add
+   `refdir=reference-rad` for the RAD lane). This step only clears the
+   warning; it does not check anything.
+
+A failing comparison is a library change only if the C++ oracle on the new
+libraries reproduces the faust-rs output. Never widen `known.mk` tolerances to
+absorb one.
 
 ## Layout
 
