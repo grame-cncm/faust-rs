@@ -22,10 +22,15 @@ CPP_TESTS  ?= /Users/letz/Developpements/RUST/faust/tests/impulse-tests
 FAUST_ARCH ?= /Users/letz/Developpements/RUST/faust/architecture
 FAUST_INCLUDE_DIR ?= $(shell $(FAUST_CPP) -includedir 2>/dev/null || printf /usr/local/include)
 FAUST_LIB_DIR ?= $(shell $(FAUST_CPP) -libdir 2>/dev/null || printf /usr/local/lib)
-IMPULSE_ARCH ?= $(CPP_TESTS)/archs/impulsearch.cpp
+# The C/C++ impulse architectures are faust-rs copies of the C++ harness's
+# impulsearch.cpp / impulsearch2.cpp that add the per-channel soundfile fixture
+# (archs/faustrs_soundfile_fixture.h): the `sound` reference needs it and the
+# pinned C++ branch does not have it. They still include controlTools.h and
+# the Faust architecture headers from CPP_TESTS and FAUST_ARCH.
+IMPULSE_ARCH ?= archs/impulsearch.cpp
 # The C backend emits C functions wrapped by a C++ `Cdsp` adaptor, so it uses a
 # dedicated impulse architecture.
-IMPULSE_ARCH_C ?= $(CPP_TESTS)/archs/impulsearch2.cpp
+IMPULSE_ARCH_C ?= archs/impulsearch2.cpp
 
 # Faust standard libraries (auto-resolved by the C++ compiler, must be passed
 # explicitly to faust-rs which does not add system paths when -I is given).
@@ -41,7 +46,7 @@ CXX      ?= c++
 # and only the optimized no-wrapv build diverges). Applies to reference
 # builds too: rebuilding the reference without it produces the same wrong
 # values.
-CXXFLAGS ?= -O3 -fwrapv -I$(FAUST_ARCH) -I$(CPP_TESTS)/archs -pthread -std=c++11
+CXXFLAGS ?= -O3 -fwrapv -I$(FAUST_ARCH) -I$(CPP_TESTS)/archs -Iarchs -pthread -std=c++11
 COMPARE  ?= ./tools/filesCompare
 
 # Total reference frames (4 passes of 15000) and the scalar-only prefix the

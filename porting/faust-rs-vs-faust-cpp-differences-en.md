@@ -671,9 +671,11 @@ must run unchanged with Faust C++ should not pass them.
   longer duplicates channels, reads out of bounds.
 - The impulse fixtures follow the C++ branch's `TestMemoryReader`: each
   channel has its own phase (`sin(part + chan + ...)`) and only the real
-  channels are provided. The `sound` reference therefore has to be produced by
-  a C++ compiler and `tests/impulse-tests/archs` from that branch; against the
-  pinned checkout, `sound` differs on its odd channels.
+  channels are provided. The C/C++ impulse paths, reference generation
+  included, take that fixture from faust-rs's
+  `tests/impulse-tests/archs/faustrs_soundfile_fixture.h` rather than from the
+  C++ checkout. With the pinned checkout, the regenerated `sound` reference is
+  byte-identical, and the `cpp` and `c` lanes pass `sound`.
 - Evidence: `crates/compiler/tests/soundfile_channel_wrap.rs` (a 1-, 2- and
   3-channel soundfile read as 70 outputs by the interpreter, scalar and
   vector; C++ text wraps every channel but 0); the `sound` impulse test on all

@@ -100,7 +100,9 @@ See the design write-up in
   `impulse-runner`, `impulse-cranelift`, and the mem0 JSON checker in release
   mode).
 - A C++ Faust checkout for the reference oracle and the native C/C++ paths
-  (architecture headers + `impulsearch.cpp`). Paths are configured in
+  (architecture headers + `controlTools.h`; the `impulsearch.cpp` /
+  `impulsearch2.cpp` entry points are faust-rs copies in [`archs/`](archs/)).
+  Paths are configured in
   [`common.mk`](common.mk) and overridable:
   `CPP_TESTS`, `FAUST_ARCH`, `FAUST_CPP`, `FAUSTLIBS`. `FAUST_CPP` defaults to
   `faust` resolved through `$PATH` — set it explicitly to the pinned dev
@@ -116,10 +118,12 @@ See the design write-up in
   phase, and only the real channels are provided, the generated code wrapping
   channel `chan % fChannels` (DIFF-BEH-016 in
   [`../../porting/faust-rs-vs-faust-cpp-differences-en.md`](../../porting/faust-rs-vs-faust-cpp-differences-en.md)).
-  The `sound` reference must come from a C++ checkout with that fixture
-  (`CPP_TESTS`, `FAUST_ARCH` and `FAUST_CPP` from the same tree); built with
-  an older one, it gives both channels the same signal and `sound` fails on its
-  odd channels.
+  The C and C++ paths, reference generation included, get the same fixture
+  from `archs/faustrs_soundfile_fixture.h`, which faust-rs's copies of the
+  impulse architectures include after `controlTools.h`. The pinned C++ branch's
+  `TestMemoryReader` gives every channel the same phase; with it, `sound`
+  failed on its odd channels on the `cpp` and `c` lanes. Now any C++ checkout
+  works: the pinned one regenerates `reference/sound.ir` byte for byte.
 - The full `*-mem0` and `all-mem0` targets use the standard `dsp/` reference
   corpus and therefore have the same C++ oracle and Faust-library requirements
   as the ordinary impulse lanes. `mem0-smoke`, the three `*-mem0-smoke`
@@ -211,8 +215,7 @@ When the warning appears:
    directory (`make -f Make.ref reference refdir=/tmp/ref-check`) and `cmp`
    each file with `reference/`.
 2. Replace only those files: delete each one, then run `make reference`, which
-   rebuilds what is missing. Do not regenerate the whole directory: `sound.ir`
-   needs the `TestMemoryReader` fixture described in Requirements, and the
+   rebuilds what is missing. Do not regenerate the whole directory: the
    clock-domain references need the pinned C++ build.
 3. Record the libraries: `make reference-libs-accept` (add
    `refdir=reference-rad` for the RAD lane). This step only clears the
@@ -240,6 +243,7 @@ absorb one.
 | `dsp-mem0/` | focused import-free memory-manager audit corpus (state/UI, delays, tables) |
 | `Make.mem0` | full-corpus and focused C/C++/Cranelift `-mem0` runtime/JSON gates |
 | `archs/faust_mem0*.h`, `archs/impulsemem0*.cpp` | audited custom-manager contracts and native drivers |
+| `archs/impulsearch*.cpp`, `archs/faustrs_soundfile_fixture.h` | C/C++ impulse entry points (copies of the C++ harness's) and the per-channel soundfile fixture they add |
 | `Make.bench` | generated-code performance comparison with `faustbench -single` |
 | `tools/filesCompare.cpp` | the comparator |
 | `tools/impulsewasm.js` | Node WebAssembly scalar impulse runner |

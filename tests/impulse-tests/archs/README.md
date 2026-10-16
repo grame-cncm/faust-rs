@@ -1,16 +1,26 @@
 # archs
 
-This directory is intentionally (almost) empty.
-
 The reference impulse responses and the native C/C++ backend tests are wrapped
-in the **original C++ Faust 4-pass impulse architecture** (`impulsearch.cpp` +
-`controlTools.h`). That architecture `#include`s headers from a C++ Faust source
+in the **C++ Faust 4-pass impulse architecture** (`impulsearch.cpp` +
+`controlTools.h`). `controlTools.h` `#include`s headers from a C++ Faust source
 tree (polyphonic wrapper, MIDI, soundfile, `libfaust.h`, ...), so it cannot be
-vendored standalone here.
+vendored standalone here; the makefiles take it, and the Faust architecture
+headers, from `CPP_TESTS` / `FAUST_ARCH` in [`../common.mk`](../common.mk).
 
-The makefiles therefore reference it in place via the `IMPULSE_ARCH` /
-`CPP_TESTS` / `FAUST_ARCH` variables in [`../common.mk`](../common.mk), which
-default to a local Faust checkout. Override them for your environment, e.g.:
+The two entry points are faust-rs copies, selected by `IMPULSE_ARCH` /
+`IMPULSE_ARCH_C`:
+
+- `impulsearch.cpp` (C++ lane and `Make.ref`) and `impulsearch2.cpp` (C lane):
+  the C++ harness's files, identical at `8eebea429` and on `master-dev`, plus
+  one `#include "faustrs_soundfile_fixture.h"` after `controlTools.h`.
+- `faustrs_soundfile_fixture.h`: replaces the harness's `TestMemoryReader` and
+  `SoundUI`, before `main` runs, with a reader that gives each soundfile
+  channel its own phase, `sin(part + chan + ...)`, as the C++ rework-soundfile
+  change does. The `sound` reference needs it, and the pinned C++ branch does
+  not have it.
+
+`CPP_TESTS` and friends default to a local Faust checkout. Override them for
+your environment, e.g.:
 
 ```bash
 make reference CPP_TESTS=/path/to/faust/tests/impulse-tests \
