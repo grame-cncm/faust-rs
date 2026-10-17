@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -842,7 +842,12 @@ must run unchanged with Faust C++ should not pass them.
   helper takes an `int` argument and multiplies in `int`). Integer results
   keep the inline wrapping product of DIFF-BEH-020. A negative integer
   literal keeps `pow`: C++ accepts it, and its expansion returns the base
-  unchanged.
+  unchanged. `pow(x, 1)` is `x` itself, so a `Konst` power read by
+  `compute` whose base is an init-local `fConst*` is still copied into a
+  struct field (`fConst1 = fConst0;`), where C++ stores the helper's result:
+  the placement gate lifts its trivial-load exemption for that case
+  (2026-10-17; before, the local leaked into `compute`, FRS-FIR-0001 on
+  faustlibraries `an.spectral_centroid`/`an.spectral_spread`).
 - Compatibility impact: no helper function in the generated text, and no
   `pow`/`powf` call for these powers on any backend, the Cranelift JIT and
   the interpreter included (`pow(x, 2)`, which normalization makes of `x*x`,
@@ -856,8 +861,11 @@ must run unchanged with Faust C++ should not pass them.
   scalar and vector code with a certified vector plan, a foreign base
   evaluated once, exponents that keep `pow`, interpreter results equal to
   the left-associated products bit for bit at optimization levels 0 and
-  max), faust-coopiano `faust-rs-issues/RAPPORT.md` point 4, and the
-  [journal entry](journal/2026-10-16.md).
+  max, an identity power of an init-local constant stored for `compute`),
+  `signal_fir::tests::placement::escaping_konst_lowered_to_an_init_local_load_gets_a_struct_field`,
+  faust-coopiano `faust-rs-issues/RAPPORT.md` point 4, and the journal
+  entries of [2026-10-16](journal/2026-10-16.md) and
+  [2026-10-17](journal/2026-10-17.md).
 
 ### DIFF-BEH-023 — normalized sums join the terms that depend on state last
 

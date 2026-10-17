@@ -35,7 +35,7 @@ use crate::signal_fir::module::region;
 use crate::signal_fir::module::tree_to_int;
 use crate::signal_fir::module::tree_to_str;
 use crate::signal_fir::placement::Bucket;
-use crate::signal_fir::placement::is_trivial_fir;
+use crate::signal_fir::placement::{is_stack_load, is_trivial_fir};
 use crate::signal_fir::recursion::RecursionStorageStrategy;
 
 impl<'a> SignalToFirLower<'a> {
@@ -147,6 +147,9 @@ impl<'a> SignalToFirLower<'a> {
     /// Guards:
     /// - Trivial nodes (literals, loads) are never hoisted — they are
     ///   free to duplicate and hoisting them wastes a variable name.
+    ///   Exception: a load of a stack local for an escaping `Konst` signal,
+    ///   whose init-local variable does not exist outside
+    ///   `instanceConstants` (see `placement::is_stack_load`).
     /// - Recursive projections must stay in the sample loop; the type
     ///   system ensures they are always Samp, but the guard is kept as
     ///   a defensive check.
@@ -165,7 +168,11 @@ impl<'a> SignalToFirLower<'a> {
             .unwrap_or(0)
             >= 2;
         let at_boundary = self.placement.sig_at_boundary.contains(&sig);
-        if !is_trivial_fir(&self.store, lowered)
+        // A trivial load of an init-local `fConst*` is not free to duplicate
+        // outside `instanceConstants`: an escaping `Konst` signal lowered to
+        // one (`pow(x, 1)` → `x`) still gets its struct field.
+        let escaping_stack_load = self.konst_escapes(sig) && is_stack_load(&self.store, lowered);
+        if (!is_trivial_fir(&self.store, lowered) || escaping_stack_load)
             && !self.is_recursive_projection(sig)
             && !matches!(match_sig(self.arena, sig), SigMatch::WrTbl(..))
             && (sig_shared || at_boundary)

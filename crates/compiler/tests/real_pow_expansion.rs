@@ -73,6 +73,36 @@ fn small_integral_real_powers_are_products_in_scalar_and_vector_code() {
     }
 }
 
+/// `pow(c, 1)` is the base itself. When `c` is an init-local `fConst*` (shared
+/// by constants only) and the power is read by the sample loop, the power still
+/// gets a struct field; the local must not leak into `compute` (faustlibraries
+/// `an.spectral_centroid`, `moment(…, K)` with `K = 1` and `0`).
+#[test]
+fn an_identity_power_of_an_init_local_constant_is_stored_for_compute() {
+    let source = "SR = fconstant(int fSamplingFreq, <math.h>);\n\
+                  c = sqrt(SR * 4000.0);\n\
+                  process = _ <: *(pow(c, 1)), (@(1) * (1.0 / (c + 1.0))), (@(2) * pow(c, 0)) :> _;";
+    for double in [false, true] {
+        for vector in [false, true] {
+            let output = compiler(double, vector)
+                .compile_source_to_fir_with_lane(
+                    "real-pow",
+                    source,
+                    SignalFirLane::TransformFastLane,
+                )
+                .expect("FIR");
+            let report = fir::checker::verify_fir_module(&output.store, output.module);
+            assert!(
+                !report.has_errors(),
+                "double={double} vector={vector}: {report:?}"
+            );
+            compiler(double, vector)
+                .compile_source_to_cpp("real-pow", source, &CppOptions::default())
+                .unwrap_or_else(|e| panic!("double={double} vector={vector}: {e:?}"));
+        }
+    }
+}
+
 #[test]
 fn a_real_power_evaluates_a_foreign_base_once() {
     let source = "f = ffunction(float real_pow_side_effect(float), \"pow-test.h\", \"\"); process = pow(f(_), 3.0);";

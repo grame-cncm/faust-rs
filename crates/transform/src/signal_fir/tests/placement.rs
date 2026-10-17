@@ -237,6 +237,60 @@ fn shared_konst_subexpr_stays_stack_local_inside_instance_constants() {
         "the escaping outer Konst result should still materialize as a persistent fConst*"
     );
 }
+
+#[test]
+fn escaping_konst_lowered_to_an_init_local_load_gets_a_struct_field() {
+    // Faust-like shape: s = 2.0 * float(SR); process = _ * pow(s, 1.0) + sin(s);
+    // `s` is shared by Konst parents only, so it is a stack local of
+    // `instanceConstants()`. `pow(s, 1.0)` lowers to `s` itself, a trivial
+    // load of that local, yet it is read by the sample loop: it must be
+    // re-stored in a struct field rather than leak the init-local into
+    // `compute()` (faustlibraries `an.spectral_centroid`, FRS-FIR-0001).
+    let mut arena = TreeArena::new();
+    let sig0 = {
+        let ty = arena.int(0);
+        let name = arena.symbol("fSamplingFreq");
+        let file = arena.symbol("<math.h>");
+        let mut b = SigBuilder::new(&mut arena);
+        let sr = b.fconst(ty, name, file);
+        let s = {
+            let sr_float = b.float_cast(sr);
+            let two = b.real(2.0);
+            b.binop(BinOp::Mul, two, sr_float)
+        };
+        let one = b.real(1.0);
+        let pow_s = b.pow(s, one);
+        let in0 = b.input(0);
+        let scaled = b.binop(BinOp::Mul, in0, pow_s);
+        let sin_s = b.sin(s);
+        b.binop(BinOp::Add, scaled, sin_s)
+    };
+    let out = compile_fastlane_without_ui(&arena, &[sig0], 1, 1, &SignalFirOptions::default())
+        .expect("escaping identity power should compile");
+
+    let report = fir::checker::verify_fir_module(&out.store, out.module);
+    assert!(!report.has_errors(), "{report:?}");
+
+    let FirMatch::Module { functions, .. } = match_fir(&out.store, out.module) else {
+        panic!("module root expected");
+    };
+    let ic_stmts = find_instance_constants_stmts(&out.store, functions);
+    assert!(
+        ic_stmts.iter().any(|id| matches!(
+            match_fir(&out.store, *id),
+            FirMatch::StoreVar {
+                ref name,
+                access: AccessType::Struct,
+                value,
+            } if name.starts_with("fConst")
+                && matches!(
+                    match_fir(&out.store, value),
+                    FirMatch::LoadVar { access: AccessType::Stack, .. }
+                )
+        )),
+        "the init-local `s` should be copied into a persistent fConst* for compute()"
+    );
+}
 #[test]
 fn integer_konst_uses_iconst_prefix() {
     // Faust-like shape: process = SR + 1;
