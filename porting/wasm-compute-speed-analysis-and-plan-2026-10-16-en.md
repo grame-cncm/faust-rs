@@ -8,7 +8,9 @@ cost it targeted was a measurement artifact, so W4 is dropped (section 8).
 **W5 implemented** the same day, with D4 decided: small fields first, static
 tables last (section 4, W5). **W2 and W3 implemented** on 2026-10-17, with D2
 and D3 decided: a FIR-to-FIR pass (`fir::schedule`) applied by the interp,
-Cranelift and wasm backends, done now (section 9). W6 is not started.
+Cranelift and wasm backends, done now (section 9). **W7** (locals reused in
+`compute`, for Safari's stack) implemented the same day (section 10). W6 is not
+started.
 
 **Measurement correction.** The instruction and cycle counts first recorded
 here (sections 2.1, 2.2, C4) subtract a 0-block run from an N-block run. That
@@ -593,3 +595,30 @@ Compile cost: the pass takes 0.32 s on the imaged body (module copy 86 ms; W3
 and its check 61 + 64 ms; W2 and its check 67 + 61 ms). The imaged body's wasm
 compile goes from 5.4–5.5 s to 5.9–6.0 s, faustprobe's from 7.7–7.8 s to
 8.6–9.1 s. C and C++ output and compile time are unchanged.
+
+## 10. W7: reusing locals in `compute` (2026-10-17)
+
+Design: [`fir-local-reuse-w7-design-2026-10-17-en.md`](fir-local-reuse-w7-design-2026-10-17-en.md).
+Found with faust-coopiano's web page, silent in Safari: the AudioWorklet's
+`process()` threw. Under `jsc` (Safari's engine) the voice's `compute` needs
+512 to 768 KB of stack, more than the 512 KB of a secondary thread on macOS,
+because JavaScriptCore's baseline tier gives each of its 37,720 wasm locals a
+stack slot. W7, a third stage of `fir::schedule`, lets stack scalars whose
+lifetimes do not overlap share one variable; an independent checker proves
+that every read sees its own variable's last write.
+
+Locals of `compute`: voice 37,720 → 2,177; imaged body 22,326 → 4,410; light
+body 19,391 → 2,946; 400-mode bank 1,604 → 806. Stack: the voice and the bodies
+now run with 256 KB under `jsc`, and so does the whole processor (8 voices and
+both bodies).
+
+Speed, steady state, ms per second of audio: JavaScriptCore voice 97 → 80,
+light body 452 → 398; V8 unchanged (bank, voice and bodies within noise, same
+instruction counts); Cranelift compute unchanged (bank 320 ms, imaged body
+1.68 s, same binary with and without W7); interpreter unchanged (bank 3.9 s).
+Compile time of the imaged body: +0.25 s in faustprobe (+3 %).
+
+Correctness: outputs bit-identical (impulse tests of the three backends, every
+`.ir` byte-identical; faust-coopiano's wasm modules and the bank, every sample;
+faustprobe `--ref` at zero tolerance); debug corpus 516 programs scheduled,
+385 changed, no checker rejection, every module verified.

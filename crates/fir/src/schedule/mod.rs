@@ -1,5 +1,5 @@
 //! Statement scheduling of `compute` for the JIT backends (interp, Cranelift,
-//! wasm): W3 store forwarding, then W2 read sinking.
+//! wasm): W3 store forwarding, then W2 read sinking, then W7 local reuse.
 //!
 //! Design: `porting/wasm-w2-w3-sinking-forwarding-design-2026-10-17-en.md`.
 //! Plan and measurements: `porting/wasm-compute-speed-analysis-and-plan-2026-10-16-en.md`
@@ -10,6 +10,10 @@
 //! - **W2** (`sink`): a pure declaration such as `double fTemp36 = fRec2[1];` is
 //!   emitted just before its first reader, or before the first statement that
 //!   may write what it reads.
+//! - **W7** (`coalesce`): stack scalars whose lifetimes do not overlap share
+//!   one variable declared at the top of `compute`, so that a wasm engine that
+//!   gives each local a stack slot (JavaScriptCore) keeps a small frame
+//!   (`porting/fir-local-reuse-w7-design-2026-10-17-en.md`).
 //!
 //! Both keep the arithmetic and the values: outputs are bit-identical. Each
 //! rewrite is accepted only when the independent checker (`check`) re-derives
@@ -23,11 +27,15 @@
 //!   program order).
 
 mod check;
+mod check_reuse;
+mod coalesce;
 mod effects;
 mod forward;
 mod sink;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_reuse;
 
 use std::collections::HashMap;
 
@@ -54,8 +62,9 @@ fn find_compute(store: &FirStore, functions: FirId) -> Option<(usize, FirId)> {
         })
 }
 
-/// Forwards then sinks the body `body` of `compute` in `store`; returns the new
-/// body (`body` itself when nothing changes or a check fails).
+/// Forwards, sinks, then reuses the locals of the body `body` of `compute` in
+/// `store`; returns the new body (`body` itself when nothing changes; a stage
+/// its checker rejects is dropped).
 fn schedule_body(store: &mut FirStore, body: FirId) -> FirId {
     let mut writes = HashMap::new();
     forward::local_write_counts(store, body, &mut writes);
@@ -75,11 +84,21 @@ fn schedule_body(store: &mut FirStore, body: FirId) -> FirId {
         let sunk = sinker.block(forwarded);
         (sunk, sinker.orders)
     };
-    match check::check_sink(store, forwarded, sunk, &orders) {
+    let sunk = match check::check_sink(store, forwarded, sunk, &orders) {
         Ok(()) => sunk,
         Err(reason) => {
             debug_assert!(false, "W2 sinking rejected by its checker: {reason}");
             forwarded
+        }
+    };
+    let Some(reused) = coalesce::reuse_locals(store, sunk) else {
+        return sunk;
+    };
+    match check_reuse::check_reuse(store, sunk, reused) {
+        Ok(()) => reused,
+        Err(reason) => {
+            debug_assert!(false, "W7 local reuse rejected by its checker: {reason}");
+            sunk
         }
     }
 }
