@@ -92,6 +92,10 @@ pub struct CraneliftOptions {
     /// precision the FIR was produced with (`RealType::Float64`) so the internal
     /// real type (`Float64`) and the I/O type agree.
     pub double_precision: bool,
+    /// Emit `compute` in FIR order, without the W2/W3 scheduling of
+    /// `fir::schedule` (sinking reads, forwarding stores). `false` by default:
+    /// this is for differential tests, which compare both orders.
+    pub keep_fir_order: bool,
 }
 
 /// Stable error codes for the Cranelift backend scaffold and future lowering.

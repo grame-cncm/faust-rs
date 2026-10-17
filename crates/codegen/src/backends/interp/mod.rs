@@ -89,6 +89,10 @@ pub struct InterpOptions {
     /// `None` falls back to a minimal `-lang interp` line, for callers
     /// (mostly tests) that do not thread the real CLI flags through.
     pub compile_options: Option<String>,
+    /// Emit `compute` in FIR order, without the W2/W3 scheduling of
+    /// `fir::schedule` (sinking reads, forwarding stores). `false` by default:
+    /// this is for differential tests, which compare both orders.
+    pub keep_fir_order: bool,
 }
 
 // ─── Error types ────────────────────────────────────────────────────────────
@@ -224,6 +228,14 @@ fn generate_interp_module_step<R: real::FbcReal>(
         None
     };
     let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    // W2/W3: `compute` scheduled for a JIT that keeps loads in program order
+    // (`fir::schedule`; the text backends keep FIR order).
+    let scheduled = if options.keep_fir_order {
+        None
+    } else {
+        fir::schedule::schedule_compute(store, module)
+    };
+    let (store, module) = scheduled.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     // 1. Decode module root.
     let (

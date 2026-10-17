@@ -36,6 +36,7 @@ pub mod checker;
 #[path = "../helpers.rs"]
 pub mod helpers;
 pub mod inliner;
+pub mod schedule;
 
 use std::collections::HashSet;
 use std::fmt::Write as _;

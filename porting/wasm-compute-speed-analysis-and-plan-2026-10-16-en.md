@@ -6,8 +6,9 @@ Status: **W1 implemented** on 2026-10-16, with D1 decided: `local.get 0` +
 `offset=` (section 4, "Implemented"). **W4 studied** the same day: the cold-arm
 cost it targeted was a measurement artifact, so W4 is dropped (section 8).
 **W5 implemented** the same day, with D4 decided: small fields first, static
-tables last (section 4, W5). W2, W3 and W6 are not started; D2 and D3 are
-open.
+tables last (section 4, W5). **W2 and W3 implemented** on 2026-10-17, with D2
+and D3 decided: a FIR-to-FIR pass (`fir::schedule`) applied by the interp,
+Cranelift and wasm backends, done now (section 9). W6 is not started.
 
 **Measurement correction.** The instruction and cycle counts first recorded
 here (sections 2.1, 2.2, C4) subtract a 0-block run from an N-block run. That
@@ -544,3 +545,51 @@ instructions / cycles per sample:
 | imaged body | 149,800–150,200 / 52,700–59,300 | 144,700–145,400 / 49,800–52,900 |
 
 The patch was reverted; nothing of it is committed.
+
+## 9. W2 and W3 implemented (2026-10-17)
+
+Design: [`wasm-w2-w3-sinking-forwarding-design-2026-10-17-en.md`](wasm-w2-w3-sinking-forwarding-design-2026-10-17-en.md).
+Decisions by the user: D2 = a FIR-to-FIR pass, applied by the **interp,
+Cranelift and wasm** backends only (C, C++ and the other text backends keep
+FIR order); D3 = now.
+
+What the pass does, on `compute` only: W3 forwards a stored single-assigned
+local or constant to later loads of the same constant struct address; W2 then
+sinks each pure declaration to eight solid statements before its first reader
+(or before the first statement that may write what it reads). An independent
+checker must accept each rewrite, or `compute` keeps FIR order.
+
+**The slack.** Sinking right next to the use (no slack) cost the voice 25 %
+more cycles while it executed 9 % fewer instructions: the hammer's Newton solve
+is serial, and each load's latency landed on its critical path. Measured with
+W3 alone, the voice was unchanged; with W2 alone, slower. A slack of 4, 8 or 16
+solid statements removed the loss and kept the bodies' gains, within noise; 8
+is used.
+
+Results, slope method (section 8), node 22 `--no-liftoff`, against `ccca27eb`
+(three runs each):
+
+| wasm, per sample | before (instr / cycles) | after (instr / cycles) |
+|---|---|---|
+| 400-mode bank | 12,400 / 2,510–2,610 | 11,600 / 2,060–2,200 |
+| voice (held C4) | 22,050 / 5,200–5,460 | 20,300 / 4,850–5,030 |
+| light body | 87,100 / 27,000–27,400 | 64,800 / 16,800–18,300 |
+| imaged body | 137,700 / 46,500–52,700 | 122,500 / 42,300–43,800 |
+
+The light body now runs at em++'s level (about 19,200 cycles, section 8).
+
+Cranelift (faustprobe `--time`, `-double`): bank compute 398 → 331 ms for 10 s
+of audio; imaged body 2.27 → 1.88 s for 2 s; light body 1.22 → 0.84 s for 2 s.
+The interpreter was not timed.
+
+Correctness: outputs bit-identical before/after — the impulse tests of the three
+backends (93 `.ir` files each, byte-identical), faust-coopiano's three wasm
+modules and the bank (checksums of every sample), faustprobe `--ref` at zero
+tolerance (bank, imaged body); in debug, all 516 programs of `tests/` and
+`examples/` that compile to FIR are scheduled (97 change) with no checker
+rejection, and every scheduled module passes the FIR verifier.
+
+Compile cost: the pass takes 0.32 s on the imaged body (module copy 86 ms; W3
+and its check 61 + 64 ms; W2 and its check 67 + 61 ms). The imaged body's wasm
+compile goes from 5.4–5.5 s to 5.9–6.0 s, faustprobe's from 7.7–7.8 s to
+8.6–9.1 s. C and C++ output and compile time are unchanged.

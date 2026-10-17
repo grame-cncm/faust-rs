@@ -1130,6 +1130,40 @@ must run unchanged with Faust C++ should not pass them.
   `wasm_json_indices_follow_the_emitted_layout` in
   `crates/codegen/src/backends/wasm/tests.rs`.
 
+### DIFF-BACK-009 — `compute` scheduled for the JIT backends (W2/W3)
+
+- Status: `adapted`.
+- The interp, Cranelift and wasm backends emit `compute` after a FIR-to-FIR
+  pass, `fir::schedule::schedule_compute`; C, C++ and the other text backends
+  keep FIR order, as Faust C++ does for every backend.
+  - W3: after a store of a single-assigned local or a constant to a constant
+    struct address, a later load of that address in the same straight-line
+    region reads the stored value instead of memory.
+  - W2: a pure declaration (`double fTemp36 = fRec2[1];`) is emitted shortly
+    before its first reader — eight solid statements before it — or before
+    the first statement that may write what it reads.
+  - Each rewrite is accepted only if an independent checker re-derives it;
+    otherwise `compute` keeps FIR order. `keep_fir_order` in `InterpOptions`,
+    `CraneliftOptions` and `WasmOptions` turns the pass off (for differential
+    tests).
+- Why: V8 (TurboFan) keeps wasm loads in program order and does no load
+  elimination on linear memory, so a state read at the top of the sample stays
+  live across the loop body and is spilled; LLVM, which compiles Faust C++'s
+  output, sinks and forwards on its own. Measured on 2026-10-17 (wasm, cycles
+  per sample in V8): faust-coopiano's light body −35 %, imaged body −10 %,
+  voice −7 %, a 400-mode resonator bank −16 %; Cranelift (faustprobe) compute
+  −17 % to −31 % on the same programs.
+- Compatibility impact: none on outputs, which are bit-identical (impulse
+  tests of the three backends, faust-coopiano's modules, faustprobe `--ref`).
+  The generated wasm, interpreter bytecode and Cranelift code differ from Faust
+  C++'s in statement order and in some loads. Compile time of the imaged body
+  rises by about 10 % (wasm) and 12 % (Cranelift).
+- Evidence:
+  [`wasm-w2-w3-sinking-forwarding-design-2026-10-17-en.md`](wasm-w2-w3-sinking-forwarding-design-2026-10-17-en.md);
+  tests in `crates/fir/src/schedule/tests.rs` (producers and the checker's
+  mutations) and `crates/compiler/tests/fir_schedule.rs` (interpreter outputs
+  with and without the pass, FIR verification).
+
 ## 7. Public API and representation adaptations
 
 ### DIFF-API-001 — owned Rust compiler facade

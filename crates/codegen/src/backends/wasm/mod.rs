@@ -92,6 +92,10 @@ pub struct WasmOptions {
     pub memory_pages: u32,
     /// Enable internal memory (`true`) or import memory from the host (`false`).
     pub internal_memory: bool,
+    /// Emit `compute` in FIR order, without the W2/W3 scheduling of
+    /// `fir::schedule` (sinking reads, forwarding stores). `false` by default:
+    /// this is for differential tests, which compare both orders.
+    pub keep_fir_order: bool,
 }
 
 impl Default for WasmOptions {
@@ -101,6 +105,7 @@ impl Default for WasmOptions {
             emit_wat: false,
             memory_pages: 0,
             internal_memory: true,
+            keep_fir_order: false,
         }
     }
 }
@@ -338,6 +343,14 @@ fn generate_wasm_module_with_context_step(
         None
     };
     let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    // W2/W3: `compute` scheduled for a JIT that keeps loads in program order
+    // (`fir::schedule`; the text backends keep FIR order).
+    let scheduled = if options.keep_fir_order {
+        None
+    } else {
+        fir::schedule::schedule_compute(store, module)
+    };
+    let (store, module) = scheduled.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     let FirMatch::Module {
         num_inputs,

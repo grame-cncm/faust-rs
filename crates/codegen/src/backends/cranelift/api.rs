@@ -76,6 +76,14 @@ fn generate_cranelift_module_step(
         None
     };
     let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    // W2/W3: `compute` scheduled for a JIT that keeps loads in program order
+    // (`fir::schedule`; the text backends keep FIR order).
+    let scheduled = if options.keep_fir_order {
+        None
+    } else {
+        fir::schedule::schedule_compute(store, module)
+    };
+    let (store, module) = scheduled.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     // Flattening removed them; a survivor is an internal error, and must not
     // reach the JIT — a table declared and never filled reads as zeros.

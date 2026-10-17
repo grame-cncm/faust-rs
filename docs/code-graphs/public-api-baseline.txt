@@ -1594,6 +1594,7 @@ fn prepare_callee_body_for_inlining
 fn promote_static_tables_to_struct
 fn qualify_struct_access
 fn qualify_sub_module_bodies
+fn schedule_compute
 fn struct_field_names
 fn sweep_scaffolding_drop_roots
 fn sweep_scaffolding_drop_roots_with_mapping
@@ -1604,6 +1605,7 @@ fn verify_module_structure
 mod checker
 mod helpers
 mod inliner
+mod schedule
 mod subcontainer
 struct DiagContext
 struct FirBuilder
