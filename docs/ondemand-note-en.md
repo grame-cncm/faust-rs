@@ -366,6 +366,16 @@ seed, the loss, and the update in the **same** domain.
   arbitrarily expensive; bound it if it comes from user input.
 - Clock domains compose with vector mode (`-vec`); stateful shapes inside a
   domain run in fire time in every backend.
+- Control-rate work inside a 0/1 `ondemand` runs only if the clock fires:
+  work computed from sliders and constants alone, such as coefficients
+  recomputed when a control changes. It runs at most once per audio block,
+  at the first fire, and its result serves the later fires of that block.
+  Work also needed outside the `ondemand` is still computed once, before the
+  sample loop. The Faust C++ compiler computes all of it before the sample
+  loop at every block, whether or not the clock fires; the outputs are the
+  same. Integer `ondemand`, `upsampling` and `downsampling` keep that
+  once-per-block computation before the loop. So does external control
+  (`-ec`).
 - The C++ Faust compiler is the reference for the clocked machinery itself, but
   **there is no C++ reference for the combination of FAD/RAD with clock
   domains** — faust-rs defines those semantics, and the oracle is numerical

@@ -79,6 +79,11 @@ pub(super) struct NameGen {
     /// Allocation-ordered counter behind sub-module names (`{module}SIG{k}`,
     /// C++ `getFreshID(getClassName() + "SIG")`).
     pub(super) sub_module_counter: u32,
+    /// Monotonic counter behind the lazy block-rate values of boolean
+    /// `ondemand` guards (`{f|i}SlowOD{n}`) and their per-guard flags
+    /// (`iSlowODDone{n}`); see `clocked.rs`, "Block-rate work in a boolean
+    /// `ondemand` guard".
+    pub(super) slow_od_counter: u32,
 }
 
 /// Read-only placement analysis results, computed once before lowering begins.
@@ -98,6 +103,11 @@ pub(super) struct PlacementInfo {
     /// These hoists need persistent `Struct` storage; init-only `Konst` hoists
     /// can stay stack-local inside `instanceConstants()`.
     pub(super) konst_escapes: HashSet<SigId>,
+    /// `Block` signal nodes that only the payload of one clocked block reaches
+    /// (`placement::guard_exclusive_block_signals`): the candidates for the
+    /// lazy prologue of a boolean `ondemand` guard. Empty for programs without
+    /// clocked blocks and under external control.
+    pub(super) guard_exclusive: HashSet<SigId>,
 }
 
 impl PlacementInfo {
@@ -105,11 +115,13 @@ impl PlacementInfo {
         sig_ref_counts: HashMap<SigId, usize>,
         sig_at_boundary: HashSet<SigId>,
         konst_escapes: HashSet<SigId>,
+        guard_exclusive: HashSet<SigId>,
     ) -> Self {
         Self {
             sig_ref_counts,
             sig_at_boundary,
             konst_escapes,
+            guard_exclusive,
         }
     }
 }

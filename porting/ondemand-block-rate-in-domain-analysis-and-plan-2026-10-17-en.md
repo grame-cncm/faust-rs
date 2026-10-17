@@ -2,8 +2,10 @@
 
 Date: 2026-10-17
 
-Status: **analysis only**, nothing implemented. Decisions D1 to D4 (section 6)
-are open.
+Status: **implemented** on 2026-10-17 (section 8). The user's decisions:
+option c, grouped per guard (D1); `downsampling` keeps the hoisting (D2); so
+does external control, `-ec` (D3); coopiano's `on_change` is simplified later,
+in a separate change in its own repository (D4).
 
 Origin: point 6 of faust-coopiano's `faust-rs-issues/RAPPORT.md`. A boolean
 `ondemand` whose payload reads only control-rate values computes that payload
@@ -207,3 +209,113 @@ The per-value prototype exposed a scaling limit in W7
 each `if`, so its cost grows with the number of `if`s times the number of
 locals. Grouping avoids it here. A program with thousands of guarded blocks
 would hit it anyway; it is worth a follow-up in the W7 design note.
+
+## 8. Implementation
+
+Decided as proposed (status line). The code:
+
+- `crates/transform/src/signal_fir/module/clocked.rs`: `LazyPrologue` (one per
+  open block, parallel to `open_domains`), `lazy_block_slot`,
+  `materialize_lazy_block`, `emit_lazy_prologue`, and the prologue insertion in
+  `lower_guarded_body`. The module documentation gives the contract and the
+  departure from C++ `generateOD`.
+- `crates/transform/src/signal_fir/module/core_lowering.rs`:
+  `place_by_variability` sends a `Block` value to the lazy prologue when
+  `lazy_block_slot` names a block, and to the `Control` bucket otherwise.
+- `crates/transform/src/signal_fir/placement.rs`:
+  `guard_exclusive_block_signals`, a pre-pass run for clocked programs under
+  internal control only.
+
+### 8.1 Two refinements over the prototype
+
+Both were found by measuring the coopiano voice without its workaround.
+
+1. **Values only the prologue reads are its locals.** The prototype declared
+   every lazy value, zeroed, before the loop. The voice has 36,049 of them in
+   48 guards, and only 2,513 are read after their prologue. Live across the
+   sample loop, the others defeat W7's local reuse:
+   - wasm `compute` had 38,616 locals instead of 5,013;
+   - compilation took 14.5–15.5 s instead of 10.1 s. The wasm backend's local
+     collection (`collect_compute_locals`) is quadratic in the number of
+     locals.
+
+   A value that the rest of the guard reads is still declared before the loop,
+   since a later fire of the block reads what the first one stored. Any other
+   value is now declared in the prologue. Result: 5,210 locals, 10.3–10.7 s.
+2. **A value also needed outside the guard stays hoisted.** Plan step 2 asked
+   for this test, and the prototype failed it. A `Block` value read by the
+   payload and by code outside the guard was computed twice in a block where
+   the clock fires: once in the prologue, and once hoisted for the outside
+   reader. main-dev computes it once, because the hoisted copies merge.
+   `guard_exclusive_block_signals` marks the `Block` signals that only the
+   payload of one clocked block reaches (owner analysis over the DAG, at most
+   two owner changes per signal), and only those are lazy. As a result,
+   `ondemand_10_adsr_layers` is back to main-dev's code, and 15 programs change
+   instead of 16.
+
+### 8.2 Tests
+
+`crates/compiler/tests/ondemand_lazy_block.rs`: eight tests with test-local
+DSPs. They cover:
+
+- `r13a`'s shape;
+- several values sharing one flag, with the split between values kept before
+  the loop and prologue locals;
+- nested guards;
+- a value also needed outside the guard;
+- integer `ondemand`, `downsampling`, `upsampling` and `-ec` keeping the
+  hoisting;
+- `-vec -lv 0` and `-lv 1`;
+- the interpreter's output equal to the hoisted program's.
+
+A FIR walker checks the structural contract (plan step 3) in each FIR test:
+
+- every read of a lazy value comes after its computation, on a path through
+  its own guard's prologue;
+- a prologue local is read only inside its prologue;
+- a prologue is the first statement of its guard, and each guard has at most
+  one.
+
+Mutations, each caught by the tests:
+
+| Mutation | Caught by |
+|---|---|
+| no lazy arm in `place_by_variability` | four tests |
+| prologue appended at the end of the guard | the walker: read before the prologue |
+| every value made a prologue local | the walker: read before the prologue, four tests |
+| every value declared before the loop | the kept/local split |
+| no exclusivity check | the outside-reader test: `(3, 3)` `exp` instead of `(3, 0)` |
+
+### 8.3 Validation
+
+- Local gates: `cargo fmt`, `clippy -D warnings`, `cargo test --workspace
+  --all-targets`, the five structure gates and `golden-check` (results in the
+  journal entry).
+- Vector gates (plan step 4): `vector-coverage-check` keeps its 1,568
+  certified mode/DSP pairs (16 modes, 133 corpus DSPs), and
+  `vector-interp-opt-check` passes. Both were run with the local
+  faustlibraries checkout, not the revision CI pins.
+- Differential, base `main-dev` against new, over the 632 `.dsp` files of
+  `tests/` and `examples/`:
+  - C++ text: 15 programs changed, all `ondemand_*` impulse tests; 501
+    unchanged; 116 fail identically before and after;
+  - wasm, `-double` and `-single`: 1,024 bit-identical, 5 trapping
+    identically.
+- Impulse lanes on the 21 `ondemand_*` programs, against the C++ references:
+  21/21 on `cpp`, `c`, `wasm`, `interp`, `cranelift`, `cpp-vec0` and
+  `cpp-vec1`.
+- Compile cost, by hand (`compile-budget-check` refuses to run on this machine):
+  - the budget basket and three `ondemand_*` programs, best of five, new over
+    base: ratios 0.99–1.02;
+  - APF first read 1.16 on an 8 ms compile; it has no clocked block, so the
+    new pass does not run there. Its medians of 30 runs give 0.97 and 1.01.
+- coopiano voice without its workaround, held C4, wasm `-double`:
+
+| Build | instr/sample | cycles/sample | compile | locals |
+|---|---|---|---|---|
+| main-dev, with `on_change` (`sAndH`) | 20,150 | 4,880–4,910 | 10.8 s | 2,956 |
+| main-dev, without | 44,900 | 11,400–11,700 | 10.4–10.6 s | 5,013 |
+| this change, without | 22,270 | 4,990–5,080 | 10.6–10.7 s | 5,210 |
+
+The outputs of the last two rows are bit-identical.
+

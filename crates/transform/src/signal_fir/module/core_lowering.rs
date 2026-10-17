@@ -174,9 +174,10 @@ impl<'a> SignalToFirLower<'a> {
                 Some(Variability::Konst) => {
                     self.materialize_in_bucket(sig, lowered, Bucket::Constants)
                 }
-                Some(Variability::Block) => {
-                    self.materialize_in_bucket(sig, lowered, Bucket::Control)
-                }
+                Some(Variability::Block) => match self.lazy_block_slot(sig) {
+                    Some(slot) => self.materialize_lazy_block(sig, lowered, slot),
+                    None => self.materialize_in_bucket(sig, lowered, Bucket::Control),
+                },
                 Some(Variability::Samp) if self.scalar_schedule.is_some() => {
                     self.materialize_scheduled_sample(lowered)
                 }

@@ -39,7 +39,7 @@ use crate::signal_fir::module::classify_reverse_time_outputs;
 use crate::signal_fir::module::clocked;
 use crate::signal_fir::module::fixed_ad_internal_signals;
 use crate::signal_fir::module::match_sig;
-use crate::signal_fir::placement::analyze_signal_sharing;
+use crate::signal_fir::placement::{analyze_signal_sharing, guard_exclusive_block_signals};
 use crate::signal_fir::planner::SignalFirPlan;
 use crate::signal_fir::{ControlRateMode, ProcessingApi};
 use crate::signal_prepare::SimpleSigType;
@@ -1176,7 +1176,19 @@ pub(crate) fn build_module<'a>(
     };
     let (sig_ref_counts, sig_at_boundary, konst_escapes) =
         analyze_signal_sharing(arena, signals, sig_types);
-    let placement = setup::PlacementInfo::new(sig_ref_counts, sig_at_boundary, konst_escapes);
+    // Lazy block-rate values exist in clocked programs under internal control
+    // only (`clocked.rs`, "Block-rate work in a boolean `ondemand` guard").
+    let guard_exclusive = if clocked.is_some() && !control_rate_mode.is_external() {
+        guard_exclusive_block_signals(arena, signals, sig_types)
+    } else {
+        std::collections::HashSet::new()
+    };
+    let placement = setup::PlacementInfo::new(
+        sig_ref_counts,
+        sig_at_boundary,
+        konst_escapes,
+        guard_exclusive,
+    );
     let mut lower = SignalToFirLower::new(
         arena,
         module_name,

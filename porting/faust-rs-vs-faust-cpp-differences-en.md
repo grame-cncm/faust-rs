@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -913,6 +913,37 @@ must run unchanged with Faust C++ should not pass them.
   - [plan](aterm-late-state-join-port-plan-2026-10-16-en.md),
     faust-coopiano `faust-rs-issues/RAPPORT.md` point 15, and the
     [journal entry](journal/2026-10-16.md).
+
+### DIFF-BEH-024 — block-rate work in a boolean `ondemand` runs at its first fire
+
+- Status: `adapted` (generated code; outputs unchanged).
+- C++ `generateOD` (branch `8eebea429`) hoists every control-rate (`Block`)
+  value a domain's payload needs before the sample loop, like any `fSlow`. A
+  boolean `ondemand` whose payload depends only on controls therefore computes
+  it at every block, even when the clock never fires.
+- faust-rs computes such values at the first fire of each block, in one prologue
+  at the top of the guard:
+  `if (iSlowODDone<n> == 0) { {f|i}SlowOD<k> = …; iSlowODDone<n> = 1; }`. The
+  flag, and the values the rest of the guard reads, are declared, zeroed,
+  before the loop; the values only the prologue reads are its locals. A value
+  also needed outside the guard's payload stays hoisted, as in C++.
+- The scope is the boolean `ondemand` (`if (clock)` guard) only. Integer
+  `ondemand`, `upsampling` and `downsampling` keep the C++ hoisting, and so
+  does external control (`-ec`), whose control section lives in `control()`.
+- Compatibility impact:
+  - The outputs are bit-identical: a control-rate value is constant within a
+    block.
+  - The generated text differs from C++'s for such programs (15 corpus
+    programs, all `ondemand_*` impulse tests).
+  - The work runs at most once per block, and not at all in a block where the
+    clock does not fire. This is what `docs/ondemand-note-en.md` promises:
+    "the body genuinely does not execute".
+- Evidence:
+  - `porting/ondemand-block-rate-in-domain-analysis-and-plan-2026-10-17-en.md`
+    (point 6 of faust-coopiano's RAPPORT.md);
+  - `crates/compiler/tests/ondemand_lazy_block.rs`;
+  - the `cpp`, `c`, `wasm`, `interp`, `cranelift`, `cpp-vec0` and `cpp-vec1`
+    impulse lanes on the `ondemand_*` corpus.
 
 ## 6. Additional backends and delivery forms
 

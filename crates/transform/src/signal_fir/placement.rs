@@ -88,11 +88,17 @@
 //! {
 //!     match variability_of(sig) {            // impl on SignalToFirLower
 //!         Konst => materialize_in_bucket(Constants, konst_escapes.contains(sig))
-//!         Block => materialize_in_bucket(Control)
+//!         Block => lazy prologue of the open boolean `ondemand` guard when
+//!                  guard_exclusive.contains(sig), else
+//!                  materialize_in_bucket(Control)
 //!         Samp  => materialize in the selected scalar schedule
 //!     }
 //! }
 //! ```
+//!
+//! [`guard_exclusive_block_signals`] is a separate pre-pass, run for clocked
+//! programs only: the `Block` signals that the payload of a single clocked
+//! block reaches, and nothing else does.
 //!
 //! See also: `porting/fir-cse-runtime-optimizations-plan-2026-04-03-en.md`,
 //! section "Phase 1 — variability-driven statement placement".
@@ -194,6 +200,63 @@ pub(super) fn analyze_signal_sharing(
         analysis.has_higher_parent,
         analysis.konst_escapes,
     )
+}
+
+/// `Block` signals that only the payload of one clocked block reaches.
+///
+/// A boolean `ondemand` block computes such a value at its first fire in each
+/// audio block instead of before the sample loop (`module/clocked.rs`,
+/// "Block-rate work in a boolean `ondemand` guard"). A value that is also
+/// reached from outside that payload — the top level, or another block's
+/// payload — stays hoisted before the loop: computing it in the guard as well
+/// would compute it twice.
+///
+/// The owner of a signal is the `Clocked(clock, y)` annotation whose payload
+/// `y` reaches it, identified by `clock`, the same for every held value of one
+/// block. A signal reached from two owners, or from outside every payload (the
+/// roots, a block's clock), has none. Worklist: a signal's owner changes at
+/// most twice (unset, one owner, none), so each edge is walked at most twice.
+pub(super) fn guard_exclusive_block_signals(
+    arena: &TreeArena,
+    roots: &[SigId],
+    sig_types: &HashMap<SigId, SigType>,
+) -> HashSet<SigId> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Owner {
+        Payload(SigId),
+        Shared,
+    }
+    let mut owners: HashMap<SigId, Owner> = HashMap::new();
+    let mut pending: Vec<(SigId, Owner)> = roots.iter().map(|&r| (r, Owner::Shared)).collect();
+    while let Some((sig, reached)) = pending.pop() {
+        let owner = match owners.get(&sig) {
+            None => reached,
+            Some(&known) if known == reached || known == Owner::Shared => continue,
+            Some(_) => Owner::Shared,
+        };
+        owners.insert(sig, owner);
+        let payload = match match_sig(arena, sig) {
+            SigMatch::Clocked(clock, y) => Some((clock, y)),
+            _ => None,
+        };
+        if let Some(node) = arena.node(sig) {
+            for &child in node.children.as_slice() {
+                let child_owner = match payload {
+                    Some((clock, y)) if child == y => Owner::Payload(clock),
+                    _ => owner,
+                };
+                pending.push((child, child_owner));
+            }
+        }
+    }
+    owners
+        .into_iter()
+        .filter(|&(sig, owner)| {
+            matches!(owner, Owner::Payload(_))
+                && sig_types.get(&sig).map(SigType::variability) == Some(Variability::Block)
+        })
+        .map(|(sig, _)| sig)
+        .collect()
 }
 
 /// Recursive DFS helper for [`analyze_signal_sharing`].
