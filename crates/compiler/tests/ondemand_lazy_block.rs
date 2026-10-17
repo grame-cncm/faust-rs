@@ -56,6 +56,9 @@ struct Prologues {
     kept: usize,
     /// Lazy values only later prologue entries read: locals of the prologue.
     locals: usize,
+    /// Hold stores (`fPerm<i> = …`) made in a prologue rather than at each
+    /// fire.
+    held: usize,
 }
 
 /// Checks the prologue contract on the FIR of `compute`: each read of a lazy
@@ -72,6 +75,7 @@ fn check_prologues(store: &FirStore, module: FirId) -> Prologues {
             prologues: 0,
             kept: 0,
             locals: 0,
+            held: 0,
         },
     };
     checker.statement(compute);
@@ -141,6 +145,18 @@ impl PrologueChecker<'_> {
                 self.expression(value);
                 if is_lazy(&name) {
                     self.available.insert(name);
+                }
+            }
+            FirMatch::StoreVar {
+                access: AccessType::Struct,
+                value,
+                ..
+            } => {
+                // In a prologue, a struct store is a moved hold store: its
+                // value must already be computed there.
+                self.expression(value);
+                if self.prologue_locals.is_some() {
+                    self.counts.held += 1;
                 }
             }
             FirMatch::DeclareVar { name, init, .. } => {
@@ -243,12 +259,14 @@ fn boolean_ondemand_block_rate_payload_runs_in_one_guard_prologue() {
             SignalFirLane::TransformFastLane,
         )
         .expect("FIR");
+    // The held value is stored by the prologue, so it is a prologue local.
     assert_eq!(
         check_prologues(&fir.store, fir.module),
         Prologues {
             prologues: 1,
-            kept: 1,
-            locals: 0
+            kept: 0,
+            locals: 1,
+            held: 1
         }
     );
 }
@@ -256,21 +274,26 @@ fn boolean_ondemand_block_rate_payload_runs_in_one_guard_prologue() {
 #[test]
 fn several_lazy_values_of_one_guard_share_its_flag() {
     // `heavy(x)` is shared, so it is a lazy value of its own, as is the held
-    // sum. A value the rest of the guard reads stays live across the sample
-    // loop; one only the prologue reads is a local of the prologue.
-    for (process, kept, locals) in [
-        // The guard reads only the sum.
+    // sum. A held value's store moves into the prologue; a value the rest of
+    // the guard reads stays live across the sample loop; any other is a local
+    // of the prologue.
+    for (process, kept, locals, held) in [
+        // The guard holds the sum.
         (
             "(m != m', m) : ondemand(\\(x).(heavy(x) + sin(heavy(x))))",
-            1,
+            0,
+            2,
             1,
         ),
         // The guard also holds `heavy(x)` itself.
         (
             "(m != m', m) : ondemand(\\(x).(heavy(x), heavy(x) + sin(heavy(x))))",
-            2,
             0,
+            2,
+            2,
         ),
+        // A recursion in the guard reads `heavy(x)` at each fire.
+        ("(m != m', m) : ondemand(\\(x).(+(heavy(x)) ~ _))", 1, 0, 0),
     ] {
         let out = cpp(&Compiler::new(), process);
         assert_eq!(
@@ -295,7 +318,8 @@ fn several_lazy_values_of_one_guard_share_its_flag() {
             Prologues {
                 prologues: 1,
                 kept,
-                locals
+                locals,
+                held
             },
             "`{process}`"
         );
@@ -345,8 +369,9 @@ fn a_value_also_needed_outside_the_guard_stays_hoisted() {
         check_prologues(&fir.store, fir.module),
         Prologues {
             prologues: 1,
-            kept: 1,
-            locals: 0
+            kept: 0,
+            locals: 1,
+            held: 1
         }
     );
 }
@@ -433,8 +458,12 @@ fn the_lazy_value_is_the_hoisted_value() {
     // The guard fires at the first sample (m != m' against the zero initial
     // state) and holds heavy(m); the hoisted program computes heavy(m) before
     // the loop. A block-rate value is constant within a block: same bits.
-    let lazy = render("(m != m', m) : ondemand(heavy)", 256);
     let hoisted = render("heavy(m)", 256);
-    assert!(lazy[0] != 0.0, "the guard fires at the first sample");
-    assert_eq!(lazy, hoisted);
+    // Once per block, then every fourth sample (0, 4, 8, ...): the later
+    // fires of a block skip the prologue and its hold store.
+    for clock in ["m != m'", "((+(1) ~ _) % 4) == 1"] {
+        let lazy = render(&format!("({clock}, m) : ondemand(heavy)"), 256);
+        assert!(lazy[0] != 0.0, "`{clock}` fires at the first sample");
+        assert_eq!(lazy, hoisted, "`{clock}`");
+    }
 }

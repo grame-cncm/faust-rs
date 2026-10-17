@@ -60,14 +60,18 @@
 //! guard would otherwise compute it a second time. One flag per guard
 //! (`iSlowODDone<n>`) is declared, zeroed, before the sample loop, and the
 //! guard body starts with one prologue:
-//! `if (iSlowODDone<n> == 0) { v1 = …; v2 = …; iSlowODDone<n> = 1; }`.
-//! A value the rest of the guard reads (`{f|i}SlowOD<n>`) is declared, zeroed,
-//! before the loop as well, since a later fire of the block reads what the first
-//! one stored; a value only later prologue entries read is a local of the
-//! prologue, so it does not stay live across the loop (the coopiano voice has
-//! 33,414 such intermediates against 2,513 values its 48 guards read; declared
-//! before the loop, they made its wasm `compute` 38,616 locals instead of
-//! 5,210, and its compilation 40 % slower).
+//! `if (iSlowODDone<n> == 0) { v1 = …; v2 = …; fPerm<i> = v2; iSlowODDone<n> = 1; }`.
+//! A hold store whose value is lazy (`fPerm<i> = v2`) moves into the prologue
+//! when nothing else in the guard reads or writes its field: the field already
+//! holds the value at the later fires of the block. A value the rest of the
+//! guard still reads (`{f|i}SlowOD<n>`) is declared, zeroed, before the loop,
+//! since a later fire of the block reads what the first one stored; any other
+//! value is a local of the prologue, so it does not stay live across the loop.
+//! On faust-coopiano's light body, its 5,010 values read only by their hold
+//! store, live across the loop, put it at 26–28 % of a core in wasm (node,
+//! pedal up) against 21–22 % with the stores in the prologue; the voice's
+//! 33,414 intermediates, declared before the loop, made its wasm `compute`
+//! 38,616 locals instead of 5,210 and its compilation 40 % slower.
 //! A `Block` value is constant within a block, so the bits are those of the
 //! hoisted form; the prologue's operands are `Konst`/`Block` values hoisted
 //! before the loop or earlier entries of the same prologue, so its order (the
@@ -816,7 +820,7 @@ impl<'a> SignalToFirLower<'a> {
             .pop()
             .expect("lazy prologue pushed with its block");
         let mut body_phases = self.regions.close_child();
-        if let Some(prologue) = self.emit_lazy_prologue(lazy, &body_phases) {
+        if let Some(prologue) = self.emit_lazy_prologue(lazy, &mut body_phases) {
             body_phases.immediate.insert(0, prologue);
         }
         self.cache.close_child();
@@ -931,30 +935,97 @@ impl<'a> SignalToFirLower<'a> {
         read
     }
 
-    /// `if (flag == 0) { values…; flag = 1; }`, or `None` for an empty
-    /// prologue. A value `body` (the rest of the guard) reads is declared,
-    /// zeroed, before the loop and stored here; any other value is a local of
-    /// the prologue.
+    /// `if (flag == 0) { values…; holds…; flag = 1; }`, or `None` for an
+    /// empty prologue.
+    ///
+    /// A hold store of the guard (`fPerm<i> = {f|i}SlowOD<k>;`, at the top of
+    /// its `immediate` phase) moves into the prologue when nothing else in the
+    /// guard reads or writes the field: the value is constant within the block,
+    /// so the field already holds it at the later fires of that block. A value
+    /// the rest of the guard (`body`) still reads is then declared, zeroed,
+    /// before the loop and stored here; any other value is a local of the
+    /// prologue, which keeps it from being live across the sample loop.
     fn emit_lazy_prologue(
         &mut self,
         lazy: LazyPrologue,
-        body: &super::region::RegionPhases,
+        body: &mut super::region::RegionPhases,
     ) -> Option<FirId> {
         let flag = lazy.flag?;
-        // The FIR store shares nodes: walk each one once.
-        let mut read_in_body = HashSet::new();
+        let lazy_names: HashSet<&str> = lazy.values.iter().map(|v| v.name.as_str()).collect();
+        // Hold stores of a lazy value: (position in `immediate`, field, value).
+        let holds: Vec<(usize, String, String)> = body
+            .immediate
+            .iter()
+            .enumerate()
+            .filter_map(|(at, &id)| {
+                let fir::FirMatch::StoreVar {
+                    name: field,
+                    access: AccessType::Struct,
+                    value,
+                } = fir::match_fir(&self.store, id)
+                else {
+                    return None;
+                };
+                match fir::match_fir(&self.store, value) {
+                    fir::FirMatch::LoadVar {
+                        name,
+                        access: AccessType::Stack,
+                        ..
+                    } if lazy_names.contains(name.as_str()) => Some((at, field, name)),
+                    _ => None,
+                }
+            })
+            .collect();
+        // Names read and written by the rest of the guard. The FIR store
+        // shares nodes: walk each one once.
+        let hold_at: HashSet<usize> = holds.iter().map(|(at, ..)| *at).collect();
+        let mut read = HashSet::new();
+        let mut written = HashSet::new();
         let mut seen = HashSet::new();
-        let mut pending = body.flattened();
+        let mut pending: Vec<FirId> = body
+            .immediate
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| !hold_at.contains(at))
+            .map(|(_, &id)| id)
+            .chain(body.post_output.iter().copied())
+            .chain(body.sample_end.iter().copied())
+            .collect();
         while let Some(id) = pending.pop() {
             if !seen.insert(id) {
                 continue;
             }
-            if let fir::FirMatch::LoadVar { name, .. } = fir::match_fir(&self.store, id) {
-                read_in_body.insert(name);
+            match fir::match_fir(&self.store, id) {
+                fir::FirMatch::LoadVar { name, .. }
+                | fir::FirMatch::LoadVarAddress { name, .. } => {
+                    read.insert(name);
+                }
+                fir::FirMatch::StoreVar { name, .. } => {
+                    written.insert(name);
+                }
+                _ => {}
             }
             pending.extend(fir::fir_match_children(&self.store, id));
         }
-        let mut stmts = Vec::with_capacity(lazy.values.len() + 1);
+        let mut held_fields: HashMap<&str, usize> = HashMap::new();
+        for (_, field, _) in &holds {
+            *held_fields.entry(field.as_str()).or_default() += 1;
+        }
+        let (moved, kept): (Vec<_>, Vec<_>) = holds.iter().partition(|(_, field, _)| {
+            !read.contains(field) && !written.contains(field) && held_fields[field.as_str()] == 1
+        });
+        // A hold store that stays reads its value after the prologue.
+        let mut read_after: HashSet<String> = read;
+        read_after.extend(kept.iter().map(|(_, _, value)| value.clone()));
+        let moved_at: HashSet<usize> = moved.iter().map(|(at, ..)| *at).collect();
+        let moved_stores: Vec<FirId> = moved.iter().map(|(at, ..)| body.immediate[*at]).collect();
+        let mut at = 0;
+        body.immediate.retain(|_| {
+            at += 1;
+            !moved_at.contains(&(at - 1))
+        });
+
+        let mut stmts = Vec::with_capacity(lazy.values.len() + moved_stores.len() + 1);
         for LazyValue {
             name,
             typ,
@@ -963,7 +1034,7 @@ impl<'a> SignalToFirLower<'a> {
         } in lazy.values
         {
             let mut b = FirBuilder::new(&mut self.store);
-            if read_in_body.contains(&name) {
+            if read_after.contains(&name) {
                 let decl = b.declare_var(&name, typ, AccessType::Stack, Some(zero));
                 stmts.push(b.store_var(&name, AccessType::Stack, value));
                 self.sections.push_externalizable_control(decl);
@@ -971,6 +1042,7 @@ impl<'a> SignalToFirLower<'a> {
                 stmts.push(b.declare_var(&name, typ, AccessType::Stack, Some(value)));
             }
         }
+        stmts.extend(moved_stores);
         let mut b = FirBuilder::new(&mut self.store);
         let now = b.load_var(&flag, AccessType::Stack, FirType::Int32);
         let zero = b.int32(0);

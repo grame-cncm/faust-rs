@@ -319,3 +319,69 @@ Mutations, each caught by the tests:
 
 The outputs of the last two rows are bit-identical.
 
+### 8.4 Hold stores in the prologue (after D4)
+
+Applying D4 to faust-coopiano (`on_change` without `sAndH`, `coopiano.lib`
+0.2.4) showed a case that the corpus does not contain: a guard whose held
+values are purely block-rate. Each such value was read only by its hold store
+`fPerm<i> = v;` after the prologue. It was therefore declared before the loop
+and stayed live across it. The light body had 5,010 such values, and its wasm
+locals went from 6,537 to 14,045.
+
+**Change.** A hold store of a lazy value moves into the prologue when nothing
+else in the guard reads or writes its field. The field already holds the
+value at the later fires of the block, so the result is exact. The value then
+becomes a prologue local.
+
+**coopiano, wasm in node (`scripts/web_check.mjs`), percent of a core, two to
+four runs:**
+
+| Module | 0.2.3 (`sAndH`) | 0.2.4, stores after the prologue | 0.2.4, stores in it |
+|---|---|---|---|
+| voice | 5.1–5.2 | 5.1–5.3 | 5.1–5.2 |
+| body, pedal up | 41.5–44.1 | 45.2–47.4 | 43.6–44.8 |
+| body, pedal down | 61.3–71.4 | 65.1–69.8 | 62.5–64.8 |
+| light body, pedal up | 17.9–18.5 | 25.8–27.8 | 21.2–24.6 |
+| light body, pedal down | 38.7–40.4 | 43.3–46.2 | 37.7–39.9 |
+
+wasm locals:
+
+| Module | 0.2.3 | 0.2.4 before | 0.2.4 after |
+|---|---|---|---|
+| voice | 2,956 | 5,210 | 2,709 |
+| body | 9,609 | 17,117 | 12,107 |
+| light body | 6,537 | 14,045 | 9,035 |
+
+**What remains: constant inputs.** The light body with the pedal up still
+costs about 3 points more than with 0.2.3. Two call sites pass a constant `x`:
+`_res_key` passes `21.0 + g` and `_board_chunks` passes `0.0`.
+- Without `sAndH`, what the payload computes from that constant is computed at
+  init and stored in the DSP struct. In the light body, `fConst` fields go from
+  1,017 to 6,025 and `iConst` from 22 to 941, and the struct grows by 46.7 kB.
+- The per-sample code outside the guards keeps its size (6,450 statements,
+  against 6,490 with 0.2.3).
+- Keeping `sAndH` at those two sites only gives 18.8–18.9 %, the cost of
+  0.2.3.
+- Probable cause, not proven: the cold fields spread the struct's hot state
+  over more cache lines.
+
+**Validation.**
+- The unit tests:
+  - their expectations are updated: values held by the guard are now prologue
+    locals;
+  - a recursion that reads its lazy value at each fire keeps that value
+    declared before the loop;
+  - a numeric case with a clock firing every fourth sample gives the same bits
+    as the hoisted program.
+- Three mutations are each caught: no store moved, moved stores dropped, and
+  moved stores placed before their values.
+- Gates: 3,313 tests, the five structure gates, `golden-check`.
+- Corpus, against `75bca56b`:
+  - the C++ of all 632 programs is identical, since none holds a purely
+    block-rate value;
+  - the `-vec -lv 0` and `-lv 1` C++ of the 133 impulse DSPs is identical, so
+    the impulse lanes and the vector gates see unchanged code;
+  - the wasm outputs are bit-identical to those of main-dev before point 6.
+- Compile cost: the basket A/B gives 0.93–1.03, and the light body compiles in
+  3.48 s instead of 3.75 s.
+

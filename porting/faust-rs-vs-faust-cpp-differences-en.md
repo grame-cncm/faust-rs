@@ -923,10 +923,12 @@ must run unchanged with Faust C++ should not pass them.
   it at every block, even when the clock never fires.
 - faust-rs computes such values at the first fire of each block, in one prologue
   at the top of the guard:
-  `if (iSlowODDone<n> == 0) { {f|i}SlowOD<k> = …; iSlowODDone<n> = 1; }`. The
-  flag, and the values the rest of the guard reads, are declared, zeroed,
-  before the loop; the values only the prologue reads are its locals. A value
-  also needed outside the guard's payload stays hoisted, as in C++.
+  `if (iSlowODDone<n> == 0) { {f|i}SlowOD<k> = …; fPerm<i> = …; iSlowODDone<n> = 1; }`.
+  The hold store of such a value is made there, once per block, when nothing
+  else in the guard uses its field. The flag, and the values the rest of the
+  guard reads, are declared, zeroed, before the loop; the other values are
+  locals of the prologue. A value also needed outside the guard's payload stays
+  hoisted, as in C++.
 - The scope is the boolean `ondemand` (`if (clock)` guard) only. Integer
   `ondemand`, `upsampling` and `downsampling` keep the C++ hoisting, and so
   does external control (`-ec`), whose control section lives in `control()`.
