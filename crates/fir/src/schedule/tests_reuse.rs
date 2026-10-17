@@ -175,6 +175,45 @@ fn types_names_and_idempotence() {
     assert_eq!(reuse_locals(&mut f.s, out), None, "W7 is idempotent");
 }
 
+/// Slots are numbered per type, in creation order, however the types
+/// interleave: three `Float64` and two `Int32` values, all live at once,
+/// declared in alternation.
+#[test]
+fn slots_are_numbered_per_type() {
+    let mut f = Fir::new();
+    let mut items = Vec::new();
+    for k in 0..3 {
+        items.push(f.decl(&format!("fTemp{k}"), f64::from(k)));
+        if k < 2 {
+            let v = f.b().int32(k);
+            let d = f.b().declare_var(
+                format!("iTemp{k}"),
+                FirType::Int32,
+                AccessType::Stack,
+                Some(v),
+            );
+            items.push(d);
+        }
+    }
+    for k in 0..3 {
+        let r = f.local(&format!("fTemp{k}"));
+        items.push(f.out(k, r));
+    }
+    for k in 0..2 {
+        let i = f
+            .b()
+            .load_var(format!("iTemp{k}"), AccessType::Stack, FirType::Int32);
+        let r = f.b().cast(FirType::Float64, i);
+        items.push(f.out(3 + k, r));
+    }
+    let body = f.block(&items);
+    let out = f.reuse(body);
+    assert_eq!(
+        f.slots_used(out),
+        ["fReuse0", "iReuse0", "fReuse1", "iReuse1", "fReuse2"]
+    );
+}
+
 // ─── Mutations the checker must reject ───────────────────────────────────────
 
 /// The checker rejects `after`, for the reason containing `why`.

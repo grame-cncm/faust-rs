@@ -337,12 +337,17 @@ impl Analysis {
 /// Slot of each renamed variable, and the slots (name, type) in creation order.
 type Assignment = (HashMap<String, String>, Vec<(String, FirType)>);
 
-/// Per type: the slots in use, by the end of their current interval, and the
-/// free ones.
+/// Per type: the slots in use, by the end of their current interval, the free
+/// ones, and how many it created.
 #[derive(Default)]
 struct Pool {
     active: BinaryHeap<Reverse<(usize, usize)>>,
     free: Vec<usize>,
+    /// The number of this pool's slots, and the index of the next one in its
+    /// name (`fReuse<k>`). A pool holds one type, so this is the count of slots
+    /// of that type. Counting them in `slots` instead made the assignment
+    /// quadratic in the number of slots.
+    created: usize,
 }
 
 /// Assigns slots by linear scan, per type: a slot is reused once the interval
@@ -369,8 +374,8 @@ fn assign(
         let slot = match pool.free.pop() {
             Some(slot) => slot,
             None => {
-                let k = slots.iter().filter(|(_, t)| *t == typ).count();
-                let slot_name = format!("{prefix}{k}");
+                let slot_name = format!("{prefix}{}", pool.created);
+                pool.created += 1;
                 if names.contains(&slot_name) {
                     return None;
                 }

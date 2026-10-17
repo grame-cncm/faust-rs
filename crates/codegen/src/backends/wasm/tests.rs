@@ -1,4 +1,7 @@
-use super::{WasmJsonDescription, WasmMemoryLayout, WasmOptions, generate_wasm_module};
+use super::{
+    LocalSpecs, WasmJsonDescription, WasmMemoryLayout, WasmOptions, collect_compute_locals,
+    generate_wasm_module,
+};
 use crate::fixtures::{
     build_control_flow_test_module, build_gain_bias_ui_meta_test_module,
     build_math_intrinsics_test_module, build_passthrough_test_module,
@@ -2707,4 +2710,37 @@ fn decode_ops(body: wasmparser::FunctionBody<'_>) -> Vec<Operator<'_>> {
         .into_iter()
         .map(|op| op.expect("operator should decode"))
         .collect()
+}
+
+/// Locals are collected once each, in first-declaration order, with the type
+/// of their first declaration: the WASM local indices follow that order.
+#[test]
+fn compute_locals_are_collected_once_in_first_declaration_order() {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let one = b.float32(1.0);
+    let fa = b.declare_var("fA", FirType::Float32, AccessType::Stack, Some(one));
+    let two = b.int32(2);
+    let ib = b.declare_var("iB", FirType::Int32, AccessType::Stack, Some(two));
+    let three = b.float64(3.0);
+    let fa_again = b.declare_var("fA", FirType::Float64, AccessType::Stack, Some(three));
+    let four = b.float64(4.0);
+    let fc = b.declare_var("fC", FirType::Float64, AccessType::Stack, Some(four));
+    let count = b.int32(8);
+    let first_body = b.block(&[fa_again, fc]);
+    let first = b.simple_for_loop("i0", count, first_body, false);
+    let second_body = b.block(&[ib]);
+    let second = b.simple_for_loop("i0", count, second_body, false);
+    let body = b.block(&[fa, ib, first, second]);
+
+    let mut locals = LocalSpecs::default();
+    collect_compute_locals(&store, body, &mut locals).expect("supported FIR");
+    let expected = [
+        ("fA", FirType::Float32),
+        ("iB", FirType::Int32),
+        ("i0", FirType::Int32),
+        ("fC", FirType::Float64),
+    ]
+    .map(|(name, typ)| (name.to_owned(), typ));
+    assert_eq!(locals.specs, expected);
 }
