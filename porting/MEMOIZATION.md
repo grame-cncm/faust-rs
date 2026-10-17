@@ -1033,7 +1033,8 @@ field for field, recorded in `porting/journal/2026-10-16.md`.
 
 ### 2.12 `transform`: signal-to-FIR lowering cache, scoped by region
 
-Status: implemented; scope stack since 2026-07-15 (`b6d589a6`)
+Status: implemented; scope stack since 2026-07-15 (`b6d589a6`); parent links
+since 2026-10-17
 
 Location:
 
@@ -1043,10 +1044,13 @@ Location:
 
 Cache:
 
-- `RegionCache { scopes: Vec<HashMap<SigId, FirId>> }`, owned by
-  `SignalToFirLower`, so one compiled module long; scope 0 is the current
-  top-level sample loop and each open guarded region pushes one scope,
-- `get_at(depth, sig)` walks from the effective depth towards the root;
+- `RegionCache { scopes: Vec<HashMap<SigId, FirId>>, parents: Vec<Option<usize>> }`,
+  owned by `SignalToFirLower`, so one compiled module long; scope 0 is the
+  current top-level sample loop and each open guarded region pushes one scope,
+  whose parent is the scope of its clock domain's parent region
+  (`open_child_under`, depth from `parent_block_depth`), not necessarily the
+  scope below it,
+- `get_at(depth, sig)` walks from the effective depth through the parent links;
   `insert_at` writes at the depth the region tracker reports, so an insertion
   redirected to an ancestor clock domain lands in the ancestor's scope and
   legitimately survives the child's close.
@@ -1066,6 +1070,13 @@ The failure mode the isolation prevents:
   share a temporary that only the first block declares, and verification rejects
   the second block's load of an out-of-scope variable. A guarded child may only
   narrow reuse, never widen it.
+- (2026-10-17) the same failure through the stack order: a block reached from
+  an unrelated domain's payload (the payload reads its hold fields) is lowered
+  while that domain's block is still open, but emitted in its own parent
+  region, before it. Walking contiguous scopes let it reuse a temporary
+  declared in the open sibling (`FRS-FIR-0001 use of undeclared variable`,
+  faust-coopiano's hammer program). Parent links skip the open sibling; the
+  block's clock and guard are emitted at the same parent depth.
 
 Note on what stayed global:
 
@@ -1079,8 +1090,13 @@ Validation:
 - `region.rs` unit tests `parent_entries_are_visible_in_children`,
   `child_entries_do_not_escape_to_siblings`,
   `redirected_parent_entries_survive_child_close`,
+  `child_opened_under_an_outer_parent_skips_the_open_sibling`,
 - `crates/compiler/tests/clocked_emission_structure.rs::sibling_ondemand_regions_do_not_reuse_local_scheduled_temporaries`,
-  over all four scheduling strategies.
+  over all four scheduling strategies, and
+  `block_reached_from_a_sibling_payload_sees_only_its_parent_region` (fails
+  before the parent links),
+- the parent links changed no generated code: the 595 programs of `tests/` and
+  `examples/` that compile give byte-identical C++ before and after.
 
 ### 2.12b `transform`: FIR common-subexpression materialization, per scope
 

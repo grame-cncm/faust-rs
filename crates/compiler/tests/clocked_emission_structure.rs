@@ -247,3 +247,35 @@ process = (_, 1.0) : ondemand(\(a, b).(a / SR, b / SR))(button("c"));"#,
         "the held constant is read from a persistent fConst field:\n{body}"
     );
 }
+
+/// A guarded block reached from an unrelated domain's payload belongs to its
+/// own parent region. `b`'s payload reads `ga`'s held value, so `ga`'s block
+/// is lowered while `b`'s block is open, but it is emitted before it, in the
+/// sample loop. `s` is shared by both payloads and first lowered inside `b`:
+/// `ga`'s body reused that temporary through the cache, which made `ga`'s
+/// block read a variable declared only in `b`'s block — `FRS-FIR-0001 use
+/// of undeclared variable` on every backend. The hammer program of
+/// faust-coopiano hit it through its phantom-bound domain (2026-10-17); the
+/// recursion here keeps both domains in a member the output does not read.
+#[test]
+fn block_reached_from_a_sibling_payload_sees_only_its_parent_region() {
+    // `compile_cpp` runs the FIR verifier: an undeclared variable fails it.
+    let cpp = compile_cpp(
+        "od_sibling_payload",
+        r#"s(x) = x * 0.5;
+ga(x) = (button("a"), s(x)) : ondemand(\(v).(v + 1.0));
+b(x) = (button("b"), s(x), ga(x)) : ondemand(\(v, g).(v * v * g));
+core(u, x) = u * 0.5 + x, b(x) + u;
+process = core ~ _ : _, !;"#,
+    );
+    let body = compute_body(&cpp);
+    let ga_store = body
+        .find("1.0f);")
+        .unwrap_or_else(|| panic!("`ga`'s hold store is missing:\n{body}"));
+    let guards: Vec<usize> = body.match_indices("if (").map(|(i, _)| i).collect();
+    assert_eq!(guards.len(), 2, "one guard per domain:\n{body}");
+    assert!(
+        ga_store < guards[1],
+        "`ga`'s block is emitted before `b`'s, not inside it:\n{body}"
+    );
+}

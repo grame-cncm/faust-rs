@@ -45,27 +45,41 @@ use signals::SigId;
 ///
 /// Scope zero belongs to the current top-level sample loop. Each open guarded
 /// child owns one additional scope. Lookup walks from the effective append
-/// scope towards its ancestors, which implements the region visibility rule:
-/// parent values are reusable by descendants, but child values never escape
-/// into siblings. An insertion redirected to an ancestor is stored directly
-/// in that ancestor scope and therefore survives closing the child.
+/// scope through its *parent links*, which implements the region visibility
+/// rule: parent values are reusable by descendants, but child values never
+/// escape into siblings. An insertion redirected to an ancestor is stored
+/// directly in that ancestor scope and therefore survives closing the child.
+///
+/// Scopes are stacked in opening order, but a scope's parent is not always
+/// the one below it: a guarded block can be lowered while a block of an
+/// unrelated (sibling) domain is open, when that block reads the first one's
+/// hold fields. Its guard is emitted in its own parent region, outside the
+/// open sibling, so the sibling's values must stay invisible to it
+/// ([`Self::open_child_under`]).
 pub(super) struct RegionCache {
     scopes: Vec<HashMap<SigId, FirId>>,
+    /// Parent scope of each scope; `None` for scope zero.
+    parents: Vec<Option<usize>>,
 }
 
 impl RegionCache {
     pub(super) fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
+            parents: vec![None],
         }
     }
 
     pub(super) fn get_at(&self, depth: usize, sig: SigId) -> Option<FirId> {
         debug_assert!(depth < self.scopes.len(), "cache depth must be open");
-        self.scopes[..=depth]
-            .iter()
-            .rev()
-            .find_map(|scope| scope.get(&sig).copied())
+        let mut scope = Some(depth);
+        while let Some(index) = scope {
+            if let Some(&value) = self.scopes[index].get(&sig) {
+                return Some(value);
+            }
+            scope = self.parents[index];
+        }
+        None
     }
 
     pub(super) fn insert_at(&mut self, depth: usize, sig: SigId, value: FirId) -> Option<FirId> {
@@ -75,8 +89,13 @@ impl RegionCache {
             .insert(sig, value)
     }
 
-    pub(super) fn open_child(&mut self) {
+    /// Opens a child scope whose parent is the open scope `parent`, which
+    /// need not be the innermost one: lookups from the new scope skip the
+    /// open scopes between `parent` and it.
+    pub(super) fn open_child_under(&mut self, parent: usize) {
+        debug_assert!(parent < self.scopes.len(), "parent scope must be open");
         self.scopes.push(HashMap::new());
+        self.parents.push(Some(parent));
     }
 
     pub(super) fn close_child(&mut self) {
@@ -85,6 +104,7 @@ impl RegionCache {
             "close_child requires an open cache scope"
         );
         self.scopes.pop();
+        self.parents.pop();
     }
 
     pub(super) fn clear(&mut self) {
@@ -273,7 +293,7 @@ mod tests {
         let signal = arena.int(1);
         let value = arena.int(10);
         cache.insert_at(0, signal, value);
-        cache.open_child();
+        cache.open_child_under(0);
 
         assert_eq!(cache.get_at(1, signal), Some(value));
     }
@@ -284,12 +304,33 @@ mod tests {
         let mut arena = TreeArena::new();
         let signal = arena.int(1);
         let value = arena.int(10);
-        cache.open_child();
+        cache.open_child_under(0);
         cache.insert_at(1, signal, value);
         cache.close_child();
-        cache.open_child();
+        cache.open_child_under(0);
 
         assert_eq!(cache.get_at(1, signal), None);
+    }
+
+    /// A block lowered while an unrelated block is open sees its real
+    /// parent's values, not the open sibling's.
+    #[test]
+    fn child_opened_under_an_outer_parent_skips_the_open_sibling() {
+        let mut cache = RegionCache::new();
+        let mut arena = TreeArena::new();
+        let in_root = arena.int(1);
+        let in_sibling = arena.int(2);
+        let root_value = arena.int(10);
+        let sibling_value = arena.int(20);
+        cache.insert_at(0, in_root, root_value);
+        cache.open_child_under(0); // the sibling block, scope 1
+        cache.insert_at(1, in_sibling, sibling_value);
+        cache.open_child_under(0); // a block whose parent is the root, scope 2
+
+        assert_eq!(cache.get_at(2, in_root), Some(root_value));
+        assert_eq!(cache.get_at(2, in_sibling), None);
+        cache.close_child();
+        assert_eq!(cache.get_at(1, in_sibling), Some(sibling_value));
     }
 
     #[test]
@@ -298,7 +339,7 @@ mod tests {
         let mut arena = TreeArena::new();
         let signal = arena.int(1);
         let value = arena.int(10);
-        cache.open_child();
+        cache.open_child_under(0);
         cache.insert_at(0, signal, value);
         cache.close_child();
 

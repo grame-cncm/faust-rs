@@ -310,6 +310,24 @@ impl<'a> SignalToFirLower<'a> {
         }
     }
 
+    /// Depth of the open region that holds `domain`'s guarded block: the
+    /// open block of its parent domain, `0` (the sample loop) for a top-level
+    /// domain. Falls back to the innermost open block when the parent is not
+    /// open (the block is then reached from within its parent's payload).
+    fn parent_block_depth(&self, domain: propagate::ClockDomainId) -> usize {
+        let Some(clocked) = self.clocked.as_ref() else {
+            return self.regions.child_depth();
+        };
+        match clocked.domains.get(domain).and_then(|d| d.parent) {
+            None => 0,
+            Some(parent) => clocked
+                .open_domains
+                .iter()
+                .rposition(|&open| open == parent)
+                .map_or_else(|| self.regions.child_depth(), |index| index + 1),
+        }
+    }
+
     /// Name of the circular cursor to use for a circular structure lowered in
     /// the current append-target region: the shared
     /// `fIOTA` at the top rate, or the effective domain's `fIOTA_d<i>` inside
@@ -690,12 +708,16 @@ impl<'a> SignalToFirLower<'a> {
         &mut self,
         wrapper: SigId,
         domain: propagate::ClockDomainId,
+        parent_depth: usize,
         loop_ctx: Option<LoopCtx>,
         hold_stores: &[(SigId, String)],
     ) -> Result<super::region::RegionPhases, SignalFirError> {
         // ── Body: lower the held values inside the child region ──────────
+        // Its cache scope hangs under the region of its parent domain, which
+        // is not the innermost open block when this block is reached from an
+        // unrelated domain's payload (see `RegionCache`).
         self.regions.open_child();
-        self.cache.open_child();
+        self.cache.open_child_under(parent_depth);
         {
             let clocked_state = self.clocked.as_mut().expect("clocked state present");
             clocked_state.open_domains.push(domain);
@@ -786,13 +808,47 @@ impl<'a> SignalToFirLower<'a> {
         }
 
         let (holds, clock, domain, kind) = self.decode_clocked_wrapper(wrapper)?;
+        // The block belongs to its parent domain's region, which is not the
+        // innermost open block when the block is reached from an unrelated
+        // domain's payload: its clock is computed there, its body sees only
+        // that region's values, and its guard is emitted there.
+        let parent_depth = self.parent_block_depth(domain);
+        let previous_redirect = self.regions.set_redirect(Some(parent_depth));
+        let built = self.build_guarded_block(wrapper, holds, clock, domain, kind, parent_depth);
+        self.regions.set_redirect(previous_redirect);
+        built?;
+
+        self.clocked
+            .as_mut()
+            .expect("clocked state present")
+            .emitted_blocks
+            .insert(wrapper);
+        Ok(dummy)
+    }
+
+    /// Precondition, hold fields, body and guard of one wrapper's block, with
+    /// the append surface set to its parent region by `ensure_guarded_block`.
+    fn build_guarded_block(
+        &mut self,
+        wrapper: SigId,
+        holds: Vec<SigId>,
+        clock: SigId,
+        domain: propagate::ClockDomainId,
+        kind: propagate::ClockDomainKind,
+        parent_depth: usize,
+    ) -> Result<(), SignalFirError> {
         let clock_is_int = matches!(self.types.get(&clock), Some(SimpleSigType::Int));
         let shape = self.select_guard_shape(kind, clock, clock_is_int)?;
         let (clock_fir, guard_cond, loop_ctx) =
             self.emit_guard_precondition(&shape, clock, clock_is_int, domain)?;
         let hold_stores = self.declare_hold_fields(&holds)?;
-        let body_phases =
-            self.lower_guarded_body(wrapper, domain, loop_ctx.clone(), &hold_stores)?;
+        let body_phases = self.lower_guarded_body(
+            wrapper,
+            domain,
+            parent_depth,
+            loop_ctx.clone(),
+            &hold_stores,
+        )?;
 
         // ── Wrap the body in the guard and append to the outer region ────
         let body_stmts = body_phases.flattened();
@@ -821,12 +877,6 @@ impl<'a> SignalToFirLower<'a> {
                 DomainCounters::emit_wrapping_increment(&mut self.store, &counter, clock_fir);
             self.regions.current_phases_mut().immediate.push(bump);
         }
-
-        self.clocked
-            .as_mut()
-            .expect("clocked state present")
-            .emitted_blocks
-            .insert(wrapper);
-        Ok(dummy)
+        Ok(())
     }
 }
