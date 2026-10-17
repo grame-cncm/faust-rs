@@ -845,9 +845,10 @@ must run unchanged with Faust C++ should not pass them.
   unchanged. `pow(x, 1)` is `x` itself, so a `Konst` power read by
   `compute` whose base is an init-local `fConst*` is still copied into a
   struct field (`fConst1 = fConst0;`), where C++ stores the helper's result:
-  the placement gate lifts its trivial-load exemption for that case
-  (2026-10-17; before, the local leaked into `compute`, FRS-FIR-0001 on
-  faustlibraries `an.spectral_centroid`/`an.spectral_spread`).
+  the placement gate lifts its trivial-load exemption only for a load of an
+  init-local constant (`reads_init_local_constant`) (2026-10-17; before,
+  the local leaked into `compute`, FRS-FIR-0001 on faustlibraries
+  `an.spectral_centroid`/`an.spectral_spread`).
 - Compatibility impact: no helper function in the generated text, and no
   `pow`/`powf` call for these powers on any backend, the Cranelift JIT and
   the interpreter included (`pow(x, 2)`, which normalization makes of `x*x`,
@@ -861,7 +862,8 @@ must run unchanged with Faust C++ should not pass them.
   scalar and vector code with a certified vector plan, a foreign base
   evaluated once, exponents that keep `pow`, interpreter results equal to
   the left-associated products bit for bit at optimization levels 0 and
-  max, an identity power of an init-local constant stored for `compute`),
+  max, an identity power of an init-local constant stored for `compute`
+  and computing its value at both levels),
   `signal_fir::tests::placement::escaping_konst_lowered_to_an_init_local_load_gets_a_struct_field`,
   faust-coopiano `faust-rs-issues/RAPPORT.md` point 4, and the journal
   entries of [2026-10-16](journal/2026-10-16.md) and

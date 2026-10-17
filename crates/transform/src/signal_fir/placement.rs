@@ -72,9 +72,9 @@
 //! [`is_trivial_fir`] is a predicate consulted by the placement gate inside
 //! `lower_sig`: literals, variable loads, and null values are free to duplicate,
 //! so they are never materialized into temporary variables. The one exception
-//! is [`is_stack_load`] on an escaping `Konst` signal: the init-local it reads
-//! does not exist outside `instanceConstants`, so it is re-stored in a struct
-//! field.
+//! is an escaping `Konst` signal lowered to a load of an init-local constant
+//! (`reads_init_local_constant`): that local does not exist outside
+//! `instanceConstants`, so the value is re-stored in a struct field.
 //!
 //! # Placement gate (inside `lower_sig`)
 //!
@@ -85,7 +85,7 @@
 //!
 //! ```text
 //! if (!is_trivial_fir(lowered)
-//!     || konst_escapes.contains(sig) && is_stack_load(lowered))
+//!     || (konst_escapes.contains(sig) && reads_init_local_constant(lowered)))
 //!    && !is_recursive_projection(sig)       // impl on SignalToFirLower
 //!    && !matches!(sig, WrTbl(..))
 //!    && (sig_shared || at_boundary)          // ref_counts / has_higher_parent
@@ -109,7 +109,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use fir::{AccessType, FirId, FirMatch, FirStore, match_fir};
+use fir::{FirId, FirMatch, FirStore, match_fir};
 use signals::{SigId, SigMatch, match_sig};
 use sigtype::{SigType, Variability};
 use tlib::TreeArena;
@@ -157,24 +157,6 @@ pub(super) fn is_trivial_fir(store: &FirStore, node: FirId) -> bool {
             | FirMatch::LoadVar { .. }
             | FirMatch::LoadVarAddress { .. }
             | FirMatch::NullValue { .. }
-    )
-}
-
-/// Returns `true` when a FIR value node reads a stack-local variable.
-///
-/// A trivial node is free to duplicate only inside the function that declares
-/// it. A stack local of `instanceConstants` (an init-only `fConst*`) does not
-/// exist in `compute`, so an escaping `Konst` signal whose lowering is such a
-/// load (an operation lowered to its own operand, e.g. `pow(x, 1)` → `x`)
-/// must still be stored in persistent storage. The placement gate uses this
-/// predicate to lift the trivial-node exemption in exactly that case.
-pub(super) fn is_stack_load(store: &FirStore, node: FirId) -> bool {
-    matches!(
-        match_fir(store, node),
-        FirMatch::LoadVar {
-            access: AccessType::Stack,
-            ..
-        }
     )
 }
 

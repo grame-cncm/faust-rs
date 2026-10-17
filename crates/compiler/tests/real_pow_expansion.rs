@@ -103,6 +103,48 @@ fn an_identity_power_of_an_init_local_constant_is_stored_for_compute() {
     }
 }
 
+/// The struct copy of the init-local carries its value into `compute`: the
+/// interpreter output is `x[n]·c + x[n-1]/(c + 1) + x[n-2]` with
+/// `c = sqrt(SR·4000)`, scalar and vector, at optimization levels 0 and max.
+#[test]
+fn an_identity_power_of_an_init_local_constant_computes_its_value() {
+    let source = "SR = fconstant(int fSamplingFreq, <math.h>);\n\
+                  c = sqrt(SR * 4000.0);\n\
+                  process = _ <: *(pow(c, 1)), (@(1) * (1.0 / (c + 1.0))), (@(2) * pow(c, 0)) :> _;";
+    let sample_rate = 44100;
+    let input = [0.1f32, -0.7, 0.3333, 0.9, -0.05, 0.61, -0.99, 0.0];
+    let c = (sample_rate as f32 * 4000.0).sqrt();
+    for vector in [false, true] {
+        for opt_level in [0, i32::from(MAX_OPT_LEVEL)] {
+            let fbc = compiler(false, vector)
+                .compile_source_to_interp(
+                    "real-pow",
+                    source,
+                    &InterpOptions {
+                        opt_level,
+                        ..Default::default()
+                    },
+                )
+                .expect("interpreter codegen");
+            let mut factory = read_fbc::<f32>(&mut Cursor::new(fbc)).expect("read FBC");
+            let mut instance = FbcDspInstance::new(&mut factory);
+            instance.init(sample_rate);
+            let mut output = vec![f32::NAN; input.len()];
+            instance
+                .try_compute(input.len() as i32, &[&input], &mut [output.as_mut_slice()])
+                .expect("compute");
+            for (n, &got) in output.iter().enumerate() {
+                let at = |k: usize| if n >= k { input[n - k] } else { 0.0 };
+                let want = at(0) * c + at(1) / (c + 1.0) + at(2);
+                assert!(
+                    (got - want).abs() <= 1e-6 * want.abs().max(1.0),
+                    "vec={vector} opt={opt_level} n={n}: {got} != {want}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn a_real_power_evaluates_a_foreign_base_once() {
     let source = "f = ffunction(float real_pow_side_effect(float), \"pow-test.h\", \"\"); process = pow(f(_), 3.0);";

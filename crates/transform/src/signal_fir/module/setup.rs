@@ -390,6 +390,42 @@ impl<'a> SignalToFirLower<'a> {
         self.placement.konst_escapes.contains(&sig)
     }
 
+    /// Returns `true` when `node` reads a stack local declared at the top
+    /// level of `instanceConstants()`, i.e. an init-only `fConst*`/`iConst*`
+    /// of [`Self::materialize_in_bucket`].
+    ///
+    /// Such a load is trivial only inside `instanceConstants()`. An escaping
+    /// `Konst` signal lowered to one (an operation lowered to its own operand,
+    /// e.g. `pow(x, 1)` → `x`) must still be stored in a struct field, or the
+    /// local leaks into `compute()`. A stack local of any other function is
+    /// not one: copying it in `instanceConstants()` would read an undeclared
+    /// variable there. `Block` values need no counterpart: they are read in
+    /// the function that computes them, and under external control every
+    /// hoisted one is already a struct field.
+    ///
+    /// Scans the constants section; the placement gate calls it only for an
+    /// escaping `Konst` signal lowered to a stack load, which is rare.
+    pub(super) fn reads_init_local_constant(&self, node: FirId) -> bool {
+        let fir::FirMatch::LoadVar {
+            name,
+            access: AccessType::Stack,
+            ..
+        } = fir::match_fir(&self.store, node)
+        else {
+            return false;
+        };
+        self.sections.constants_statements.iter().any(|&statement| {
+            matches!(
+                fir::match_fir(&self.store, statement),
+                fir::FirMatch::DeclareVar {
+                    name: ref declared,
+                    access: AccessType::Stack,
+                    ..
+                } if *declared == name
+            )
+        })
+    }
+
     /// Returns the typed prefix used for one materialized scalar value.
     pub(super) fn typed_prefix_for(bucket: Bucket, typ: &FirType) -> &'static str {
         let is_int_like = matches!(typ, FirType::Int32 | FirType::Int64 | FirType::Bool);
