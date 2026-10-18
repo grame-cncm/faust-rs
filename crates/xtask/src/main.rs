@@ -32,7 +32,8 @@
 //! # Design invariants
 //! - Deterministic corpus file ordering.
 //! - Normalized output text before snapshot comparison.
-//! - Fail-fast behavior when one case diverges to preserve CI signal quality.
+//! - Golden checks report every diverging case before failing; runtime trace
+//!   checks stop at the first mismatch.
 //! - Generated documentation uses repository-relative paths where practical.
 //! - Command dispatch and validation are declared once in the typed Clap tree;
 //!   workflow modules receive validated option values.

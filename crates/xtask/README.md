@@ -251,7 +251,8 @@ cargo run --release -p xtask -- compile-budget-check --update
 
 - Deterministic corpus ordering: files are sorted before processing.
 - Normalized snapshot text: CRLF is normalized to LF before comparison.
-- Fail-fast golden checks: the first diverging case aborts the run.
+- Golden checks report every diverging case with its first differing line,
+  then fail; runtime trace checks stop at the first mismatch.
 - Repository-relative paths are preferred in generated documentation.
 - Runtime trace comparison uses exact metadata/shape checks and tolerant float
   sample comparison.

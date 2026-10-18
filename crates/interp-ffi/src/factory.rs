@@ -9,7 +9,7 @@
 //! - `writeCInterpreterDSPFactoryToBitcode[File]` — dispatches on the factory variant.
 //! - `createCInterpreterDSPFactoryFromFile/String` — compiled through the
 //!   top-level `compiler` crate; recognizes `-double` in `argv`.
-//! - `createCInterpreterDSPFactoryFromSignals/Boxes` — return `null`.
+//! - `createCInterpreterDSPFactoryFromSignals/Boxes` — not exported (deferred).
 //! - Cache management functions — fully implemented.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};

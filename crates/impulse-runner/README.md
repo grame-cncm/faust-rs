@@ -46,7 +46,7 @@ The runner currently emits only the scalar reference pass, not the C++
 polyphonic/MIDI passes. The default 15000 frames therefore match the prefix
 used by the impulse-test comparison workflow.
 
-Compiler work runs on a dedicated thread with a 64 MiB stack. This matches the
+Compiler work runs on a dedicated thread with a 512 MiB stack. This matches the
 main `faust-rs` CLI contract and prevents deeply nested standard-library
 expansion from depending on the platform main-thread stack size.
 
