@@ -601,30 +601,6 @@ fn emit_sub_modules(
     Ok(())
 }
 
-/// Returns the `(variable, sub-module)` pairs allocated inside one block.
-///
-/// The FIR carries the allocation but not the release, which is bound to how
-/// each language allocates; C pairs `calloc` with `free` once the fill has run.
-fn allocated_sub_containers(store: &FirStore, block: FirId) -> Vec<(String, String)> {
-    let FirMatch::Block(items) = match_fir(store, block) else {
-        return Vec::new();
-    };
-    items
-        .into_iter()
-        .filter_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareVar {
-                name,
-                init: Some(init),
-                ..
-            } => match match_fir(store, init) {
-                FirMatch::NewDsp { name: sub, .. } => Some((name, sub)),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect()
-}
-
 /// Emits one FIR block worth of struct fields.
 ///
 /// Only `DeclareVar` and `DeclareTable` entries contribute concrete state
@@ -749,7 +725,6 @@ fn emit_c_api(
         table_inits,
         mem0,
     } = spec;
-    let names: Vec<&str> = declared_functions.iter().map(|f| f.name.as_str()).collect();
 
     if let Some(analysis) = mem0 {
         emit_mem0_instance_api(out, class_name, analysis);
@@ -808,7 +783,7 @@ fn emit_c_api(
         && let Some(body) = static_init.body
     {
         emit_block(store, out, options, body, 1)?;
-        for (var, sub) in allocated_sub_containers(store, body) {
+        for (var, sub) in c_family::allocated_sub_containers(store, body) {
             let _ = writeln!(out, "    delete{sub}({var});");
         }
     } else {
@@ -954,9 +929,7 @@ fn emit_c_api(
         if crate::backends::is_lifecycle_function(&f.name) {
             continue;
         }
-        if names.contains(&f.name.as_str()) {
-            emit_helper_function(store, out, options, f)?;
-        }
+        emit_helper_function(store, out, options, f)?;
     }
 
     Ok(())
@@ -1335,7 +1308,7 @@ fn emit_named_fun(
         };
         emit_block_with_mode(store, out, options, body, 1, &mut mode)?;
         if decl.name == "instanceConstants" {
-            for (var, sub) in allocated_sub_containers(store, body) {
+            for (var, sub) in c_family::allocated_sub_containers(store, body) {
                 let _ = writeln!(out, "    delete{sub}({var});");
             }
         }
@@ -1679,30 +1652,15 @@ fn emit_type(typ: &FirType, options: &COptions) -> String {
     )
 }
 
-/// Renders a C declarator: `<base type> <name><array suffix>`.
-///
-/// C array bounds are part of the declarator, not the type prefix (`float
-/// buf[8];`, not `float[8] buf;`), so this cannot reuse [`emit_type`]
-/// directly for array-typed declarations; it defers to
-/// [`emit_type_base_and_suffix`] to peel the bracketed suffix off first.
+/// Renders a declarator through the shared [`c_family::emit_named_type`].
 fn emit_named_type(typ: &FirType, name: &str, options: &COptions) -> String {
-    let mut suffix = String::new();
-    let base = emit_type_base_and_suffix(typ, options, &mut suffix);
-    format!("{base} {name}{suffix}")
-}
-
-/// Recursively splits an array type into its element base type and the
-/// accumulated `[size]...` declarator suffix, appending to `suffix` for each
-/// nested array dimension. Non-array types are rendered directly via
-/// [`emit_type`] with an untouched (typically empty) `suffix`.
-fn emit_type_base_and_suffix(typ: &FirType, options: &COptions, suffix: &mut String) -> String {
-    match typ {
-        FirType::Array(inner, size) => {
-            suffix.push_str(&format!("[{size}]"));
-            emit_type_base_and_suffix(inner, options, suffix)
-        }
-        _ => emit_type(typ, options),
-    }
+    c_family::emit_named_type(
+        typ,
+        name,
+        &SYNTAX,
+        &options.quad_type_name,
+        &options.fixed_type_name,
+    )
 }
 
 /// Emits `DeclareTable(AccessType::Static)` nodes as `static const` arrays
@@ -1718,49 +1676,17 @@ fn emit_static_tables(
     block: FirId,
 ) -> Result<(), CodegenError> {
     if options.memory_manager_mode.is_mem0() {
-        let FirMatch::Block(items) = match_fir(store, block) else {
-            return Ok(());
-        };
-        for item in items {
-            if let FirMatch::DeclareVar {
-                name,
-                typ: FirType::Array(elem, _),
-                access: AccessType::Static,
-                init: None,
-            } = match_fir(store, item)
-            {
-                let _ = writeln!(out, "static {}* {name} = NULL;", emit_type(&elem, options));
-                continue;
-            }
-            match match_fir(store, item) {
-                FirMatch::DeclareTable {
-                    name,
-                    elem_type,
-                    values,
-                    ..
-                } => {
-                    let rendered = values
-                        .iter()
-                        .map(|value| emit_value(store, options, *value))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let _ = writeln!(
-                        out,
-                        "static const {} {name}[{}] = {{{}}};",
-                        emit_type(&elem_type, options),
-                        values.len(),
-                        rendered.join(", ")
-                    );
-                }
-                FirMatch::NullStatement => {}
-                other => {
-                    return Err(CodegenError::new(
-                        CodegenErrorCode::InvalidModuleSection,
-                        format!("unsupported static declaration in mem0: {other:?}"),
-                    ));
-                }
-            }
-        }
-        return Ok(());
+        return c_family::emit_static_tables_mem0(
+            store,
+            out,
+            &SYNTAX,
+            block,
+            |typ| emit_type(typ, options),
+            |value| emit_value(store, options, value),
+            |node, message| {
+                CodegenError::new(CodegenErrorCode::InvalidModuleSection, message).at_node(node)
+            },
+        );
     }
     c_family::emit_static_tables(
         store,

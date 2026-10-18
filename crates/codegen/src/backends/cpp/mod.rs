@@ -501,7 +501,7 @@ fn emit_dsp_contract_methods(
                 static_init_body,
                 indent + 2,
             )?;
-            for (var, sub) in allocated_sub_containers(store, static_init_body) {
+            for (var, sub) in c_family::allocated_sub_containers(store, static_init_body) {
                 let _ = writeln!(out, "{tab}        delete{sub}({var});");
             }
         } else {
@@ -533,7 +533,7 @@ fn emit_dsp_contract_methods(
                 static_init_body,
                 indent + 1,
             )?;
-            for (var, sub) in allocated_sub_containers(store, static_init_body) {
+            for (var, sub) in c_family::allocated_sub_containers(store, static_init_body) {
                 let _ = writeln!(out, "{tab}    delete{sub}({var});");
             }
         } else {
@@ -1446,31 +1446,6 @@ fn is_sub_module_method(name: &str) -> bool {
         || name.starts_with("fill") && name != "fill"
 }
 
-/// Returns the `(variable, sub-module)` pairs allocated inside one block.
-///
-/// The FIR carries the allocation but not the release: freeing is bound to how
-/// each language allocates, and upstream itself skips it for Rust, Julia and
-/// AssemblyScript. C++ emits `delete<Sub>(sigN)` once the fill has run.
-fn allocated_sub_containers(store: &FirStore, block: FirId) -> Vec<(String, String)> {
-    let FirMatch::Block(items) = match_fir(store, block) else {
-        return Vec::new();
-    };
-    items
-        .into_iter()
-        .filter_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareVar {
-                name,
-                init: Some(init),
-                ..
-            } => match match_fir(store, init) {
-                FirMatch::NewDsp { name: sub, .. } => Some((name, sub)),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect()
-}
-
 /// Returns the body of the named function declared by a module, if any.
 fn find_function_body(store: &FirStore, functions: FirId, wanted: &str) -> Option<FirId> {
     let FirMatch::Block(items) = match_fir(store, functions) else {
@@ -1707,7 +1682,7 @@ fn emit_declare_fun(
             let _ = writeln!(out, "{tab}    fSampleRate = sample_rate;");
         }
         emit_block(store, out, options, module_name, body, indent + 1)?;
-        for (var, sub) in allocated_sub_containers(store, body) {
+        for (var, sub) in c_family::allocated_sub_containers(store, body) {
             let _ = writeln!(out, "{tab}    delete{sub}({var});");
         }
     } else if decl.name == "compute" {
@@ -1874,30 +1849,15 @@ fn emit_value(
     }
 }
 
-/// Renders a C++ declarator: `<base type> <name><array suffix>`.
-///
-/// C array bounds are part of the declarator, not the type prefix (`float
-/// buf[8];`, not `float[8] buf;`), so this cannot reuse [`emit_type`]
-/// directly for array-typed declarations; it defers to
-/// [`emit_type_base_and_suffix`] to peel the bracketed suffix off first.
+/// Renders a declarator through the shared [`c_family::emit_named_type`].
 fn emit_named_type(typ: &FirType, name: &str, options: &CppOptions) -> String {
-    let mut suffix = String::new();
-    let base = emit_type_base_and_suffix(typ, options, &mut suffix);
-    format!("{base} {name}{suffix}")
-}
-
-/// Recursively splits an array type into its element base type and the
-/// accumulated `[size]...` declarator suffix, appending to `suffix` for each
-/// nested array dimension. Non-array types are rendered directly via
-/// [`emit_type`] with an untouched (typically empty) `suffix`.
-fn emit_type_base_and_suffix(typ: &FirType, options: &CppOptions, suffix: &mut String) -> String {
-    match typ {
-        FirType::Array(inner, size) => {
-            suffix.push_str(&format!("[{size}]"));
-            emit_type_base_and_suffix(inner, options, suffix)
-        }
-        _ => emit_type(typ, options),
-    }
+    c_family::emit_named_type(
+        typ,
+        name,
+        &SYNTAX,
+        &options.quad_type_name,
+        &options.fixed_type_name,
+    )
 }
 
 /// Maps bare FIR math names to the appropriate C++ symbol spelling.
@@ -1991,54 +1951,17 @@ fn emit_static_tables(
     block: FirId,
 ) -> Result<(), CodegenError> {
     if options.memory_manager_mode.is_mem0() {
-        let FirMatch::Block(items) = match_fir(store, block) else {
-            return Ok(());
-        };
-        for item in items {
-            if let FirMatch::DeclareVar {
-                name,
-                typ: FirType::Array(elem, _),
-                access: fir::AccessType::Static,
-                init: None,
-            } = match_fir(store, item)
-            {
-                let _ = writeln!(
-                    out,
-                    "static {}* {name} = nullptr;",
-                    emit_type(&elem, options)
-                );
-                continue;
-            }
-            match match_fir(store, item) {
-                FirMatch::DeclareTable {
-                    name,
-                    elem_type,
-                    values,
-                    ..
-                } => {
-                    let rendered = values
-                        .iter()
-                        .map(|value| emit_value(store, options, *value))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let _ = writeln!(
-                        out,
-                        "const static {} {name}[{}] = {{{}}};",
-                        emit_type(&elem_type, options),
-                        values.len(),
-                        rendered.join(", ")
-                    );
-                }
-                FirMatch::NullStatement => {}
-                other => {
-                    return Err(CodegenError::new(
-                        CodegenErrorCode::InvalidModuleSection,
-                        format!("unsupported static declaration in mem0: {other:?}"),
-                    )
-                    .at_node(item));
-                }
-            }
-        }
-        return Ok(());
+        return c_family::emit_static_tables_mem0(
+            store,
+            out,
+            &SYNTAX,
+            block,
+            |typ| emit_type(typ, options),
+            |value| emit_value(store, options, value),
+            |node, message| {
+                CodegenError::new(CodegenErrorCode::InvalidModuleSection, message).at_node(node)
+            },
+        );
     }
     c_family::emit_static_tables(
         store,

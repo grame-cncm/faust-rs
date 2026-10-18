@@ -618,6 +618,120 @@ pub(crate) fn emit_static_tables<E>(
     Ok(())
 }
 
+/// Emits the static declarations of a `-mem0` module.
+///
+/// Under `-mem0` a generated table is not a static array but a pointer the
+/// host allocator fills (`static float* ftbl0 = NULL;`), and anything other
+/// than a table, a pointer slot or a `NullStatement` is refused: the
+/// allocation plan only knows those. `unsupported` builds the caller's error
+/// for the refused node.
+pub(crate) fn emit_static_tables_mem0<E>(
+    store: &FirStore,
+    out: &mut String,
+    syntax: &CFamilySyntax,
+    block: FirId,
+    render_type: impl Fn(&FirType) -> String,
+    mut render_value: impl FnMut(FirId) -> Result<String, E>,
+    unsupported: impl FnOnce(FirId, String) -> E,
+) -> Result<(), E> {
+    let FirMatch::Block(items) = match_fir(store, block) else {
+        return Ok(());
+    };
+    for item in items {
+        if let FirMatch::DeclareVar {
+            name,
+            typ: FirType::Array(elem, _),
+            access: AccessType::Static,
+            init: None,
+        } = match_fir(store, item)
+        {
+            let _ = writeln!(
+                out,
+                "static {}* {name} = {};",
+                render_type(&elem),
+                syntax.null_value
+            );
+            continue;
+        }
+        match match_fir(store, item) {
+            FirMatch::DeclareTable {
+                name,
+                elem_type,
+                values,
+                ..
+            } => {
+                let rendered = values
+                    .iter()
+                    .map(|value| render_value(*value))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let _ = writeln!(
+                    out,
+                    "{} {} {name}[{}] = {{{}}};",
+                    syntax.static_table_keywords,
+                    render_type(&elem_type),
+                    values.len(),
+                    rendered.join(", ")
+                );
+            }
+            FirMatch::NullStatement => {}
+            other => {
+                return Err(unsupported(
+                    item,
+                    format!("unsupported static declaration in mem0: {other:?}"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Renders a C/C++ declarator: `<base type> <name><array suffix>`.
+///
+/// C array bounds are part of the declarator, not the type prefix (`float
+/// buf[8];`, not `float[8] buf;`), so an array-typed declaration peels the
+/// bracketed suffixes off before rendering the element type.
+pub(crate) fn emit_named_type(
+    typ: &FirType,
+    name: &str,
+    syntax: &CFamilySyntax,
+    quad: &str,
+    fixed: &str,
+) -> String {
+    let mut suffix = String::new();
+    let mut base = typ;
+    while let FirType::Array(inner, size) = base {
+        let _ = write!(suffix, "[{size}]");
+        base = inner;
+    }
+    format!("{} {name}{suffix}", emit_type(base, syntax, quad, fixed))
+}
+
+/// Returns the `(variable, sub-module)` pairs allocated inside one block.
+///
+/// The FIR carries the allocation but not the release: freeing is bound to how
+/// each language allocates, and upstream itself skips it for Rust, Julia and
+/// AssemblyScript. C pairs `calloc` with `free`, C++ emits `delete<Sub>(sigN)`,
+/// once the fill has run.
+pub(crate) fn allocated_sub_containers(store: &FirStore, block: FirId) -> Vec<(String, String)> {
+    let FirMatch::Block(items) = match_fir(store, block) else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|item| match match_fir(store, item) {
+            FirMatch::DeclareVar {
+                name,
+                init: Some(init),
+                ..
+            } => match match_fir(store, init) {
+                FirMatch::NewDsp { name: sub, .. } => Some((name, sub)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
 /// Emits the FIR value arms shared verbatim (modulo [`CFamilyValueCtx`]
 /// seams) by `c` and `cpp`.
 ///
