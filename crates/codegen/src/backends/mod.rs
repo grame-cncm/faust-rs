@@ -8,6 +8,9 @@
 //!   - [`codegen_error`] (the carrier of the textual backends' typed errors)
 //!   - [`host_function`] (C signatures of host functions called by address)
 //!   - internal `faust_api` module (DSP API signature validation)
+//!   - internal `module_view` module (the decoded FIR module, function and
+//!     variable lookups, and the stable errors for a malformed module, shared
+//!     by every backend)
 //!   - internal `c_family` module (syntax-parameterless emission shared by
 //!     `c`/`cpp`; see `porting/c-family-emitter-core-plan-2026-07-04-en.md`)
 //!   - internal `textual` module (precedence-aware expression layout reusable
@@ -28,6 +31,7 @@
 
 pub(crate) mod c_family;
 pub(crate) mod faust_api;
+pub(crate) mod module_view;
 pub(crate) mod textual;
 
 use fir::{FirId, FirMatch, FirStore, match_fir};

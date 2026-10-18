@@ -54,6 +54,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
+use crate::backends::module_view::{
+    ModuleView, SkeletonCodes, block_items, decode_module, find_function_body, non_sub_module,
+};
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
 use super::textual::{OperandSide, c_like_fir_operator, infix_operand_needs_parentheses};
@@ -114,6 +117,8 @@ pub enum CodegenErrorCode {
     InvalidStructure,
     /// A concrete table signature cannot be derived safely.
     TableSpecialization,
+    /// A module section, or a `sub_modules` entry, has the wrong FIR shape.
+    InvalidModuleSection,
 }
 
 impl CodegenErrorCode {
@@ -126,6 +131,7 @@ impl CodegenErrorCode {
             Self::InvalidIdentifier => "FRS-CGEN-CMAJ-0003",
             Self::InvalidStructure => "FRS-CGEN-CMAJ-0004",
             Self::TableSpecialization => "FRS-CGEN-CMAJ-0005",
+            Self::InvalidModuleSection => "FRS-CGEN-CMAJ-0006",
         }
     }
 }
@@ -136,22 +142,17 @@ impl BackendErrorCode for CodegenErrorCode {
     }
 }
 
+impl SkeletonCodes for CodegenErrorCode {
+    const ROOT_NOT_MODULE: Self = Self::RootNotModule;
+    const INVALID_MODULE_SECTION: Self = Self::InvalidModuleSection;
+    const UNSUPPORTED_NODE: Self = Self::Unsupported;
+}
+
 /// One emission failure of this backend.
 ///
 /// Alias of the shared [`crate::backends::codegen_error::BackendError`]
 /// carrier; only the code enum above is specific to this backend.
 pub type CodegenError = BackendError<CodegenErrorCode>;
-
-/// Decoded FIR module sections needed by the Cmajor container.
-struct ModuleView {
-    dsp_struct: FirId,
-    globals: FirId,
-    functions: FirId,
-    static_decls: FirId,
-    sub_modules: FirId,
-    num_inputs: usize,
-    num_outputs: usize,
-}
 
 /// Borrowed helper-function declaration passed through the emitter as one
 /// semantic unit.
@@ -362,10 +363,7 @@ fn emit_sub_modules(
             sub_modules: nested,
         } = match_fir(store, item)
         else {
-            return Err(CodegenError::new(
-                CodegenErrorCode::InvalidStructure,
-                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
-            ));
+            return Err(non_sub_module(item));
         };
 
         emit_sub_modules(store, out, options, nested, table_sizes)?;
@@ -1782,28 +1780,6 @@ fn is_bargraph_zone(name: &str) -> bool {
     name.starts_with("fHbargraph") || name.starts_with("fVbargraph")
 }
 
-/// Returns all items held by a FIR block.
-fn block_items(store: &FirStore, block: FirId) -> Vec<FirId> {
-    match match_fir(store, block) {
-        FirMatch::Block(items) => items,
-        _ => Vec::new(),
-    }
-}
-
-/// Finds the body of a canonical DSP method.
-fn find_function_body(store: &FirStore, functions: FirId, wanted: &str) -> Option<FirId> {
-    block_items(store, functions)
-        .into_iter()
-        .find_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareFun {
-                name,
-                body: Some(body),
-                ..
-            } if name == wanted => Some(body),
-            _ => None,
-        })
-}
-
 /// Whether a function is reshaped into the Cmajor processor contract.
 fn is_dsp_api_method(name: &str) -> bool {
     const METHODS: [&str; 14] = [
@@ -1823,34 +1799,6 @@ fn is_dsp_api_method(name: &str) -> bool {
         "compute",
     ];
     METHODS.contains(&name)
-}
-
-/// Decodes the root module without reaching into raw tree tags.
-fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenError> {
-    match match_fir(store, module) {
-        FirMatch::Module {
-            num_inputs,
-            num_outputs,
-            dsp_struct,
-            globals,
-            functions,
-            static_decls,
-            sub_modules,
-            ..
-        } => Ok(ModuleView {
-            dsp_struct,
-            globals,
-            functions,
-            static_decls,
-            sub_modules,
-            num_inputs,
-            num_outputs,
-        }),
-        other => Err(CodegenError::new(
-            CodegenErrorCode::RootNotModule,
-            format!("expected FIR module root, found {other:?}"),
-        )),
-    }
 }
 
 #[cfg(test)]

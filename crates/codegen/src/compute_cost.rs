@@ -142,17 +142,8 @@ pub fn analyze_compute_cost(
     let FirMatch::Block(items) = match_fir(store, functions) else {
         return Err(ComputeCostError::InvalidFunctionSection);
     };
-    let body = items
-        .into_iter()
-        .find_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareFun {
-                name,
-                body: Some(body),
-                ..
-            } if name == "compute" => Some(body),
-            _ => None,
-        });
-    let body = body.ok_or(ComputeCostError::MissingCompute)?;
+    let body = crate::backends::module_view::function_body(store, &items, "compute")
+        .ok_or(ComputeCostError::MissingCompute)?;
     analyze_compute_body(store, effective_scalar_compute_root(store, body))
 }
 

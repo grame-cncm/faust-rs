@@ -587,7 +587,7 @@ let source = generate_codebox_module(&store, root_id, &CodeboxOptions::default()
 |---|---|
 | `CodeboxOptions` | `double_precision`, `test_labels` |
 | `generate_codebox_module` | `(&FirStore, FirId, &CodeboxOptions) -> Result<String, CodegenError>` |
-| `CodegenError` | Codes `FRS-CGEN-CBOX-0001..0002` |
+| `CodegenError` | Codes `FRS-CGEN-CBOX-0001..0003` (`0003`: malformed module section) |
 | `eval::Program` | Parser/evaluator for the emitted subset, used by numeric backend tests |
 
 CLI entry points live in `compiler`:
@@ -633,7 +633,7 @@ CMAJ_BIN=/path/to/cmaj CMAJ_CXX=/path/to/c++ \
 |---|---|
 | `CmajorOptions` | public processor name and `CmajorRealType` |
 | `generate_cmajor_module` | `(&FirStore, FirId, &CmajorOptions) -> Result<String, CodegenError>` |
-| `CodegenError` | Codes `FRS-CGEN-CMAJ-0001..0005` |
+| `CodegenError` | Codes `FRS-CGEN-CMAJ-0001..0006` (`0006`: malformed module section) |
 
 Port and test contract:
 `porting/cmajor-backend-port-and-test-plan-2026-08-04-en.md`.

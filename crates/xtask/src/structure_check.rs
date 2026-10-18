@@ -91,7 +91,7 @@ const MAX_PRODUCTION_LINES: usize = 2_000;
 /// exception — leaving it here would let the list silently accumulate dead
 /// entries, so a shrunk file is flagged as a stale exception to remove
 /// rather than passing silently.
-const KNOWN_OVERSIZED_FILES: [(&str, &str); 11] = [
+const KNOWN_OVERSIZED_FILES: [(&str, &str); 8] = [
     (
         "crates/transform/src/signal_fir/vector/lower/signal.rs",
         "numerically sensitive lowering path, kept structurally intact by          design (readability plan §7); this is the file that drove the old          threshold up twice before P6 named it as an exception instead",
@@ -118,18 +118,6 @@ const KNOWN_OVERSIZED_FILES: [(&str, &str); 11] = [
     ),
     (
         "crates/codegen/src/backends/c/mod.rs",
-        "textual backend emitter, see the `rust/mod.rs` entry above",
-    ),
-    (
-        "crates/codegen/src/backends/julia/mod.rs",
-        "textual backend emitter, see the `rust/mod.rs` entry above",
-    ),
-    (
-        "crates/codegen/src/backends/asc/mod.rs",
-        "textual backend emitter, see the `rust/mod.rs` entry above",
-    ),
-    (
-        "crates/codegen/src/backends/cmajor/mod.rs",
         "textual backend emitter, see the `rust/mod.rs` entry above",
     ),
     (

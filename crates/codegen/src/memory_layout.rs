@@ -515,19 +515,9 @@ struct AccessCount {
 
 fn find_compute_body(store: &FirStore, functions: FirId) -> Result<FirId, MemoryLayoutError> {
     let items = block_items(store, functions, "functions")?;
-    items
-        .into_iter()
-        .find_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareFun {
-                name,
-                body: Some(body),
-                ..
-            } if name == "compute" => Some(body),
-            _ => None,
-        })
-        .ok_or(MemoryLayoutError::ComputeCost(
-            ComputeCostError::MissingCompute,
-        ))
+    crate::backends::module_view::function_body(store, &items, "compute").ok_or(
+        MemoryLayoutError::ComputeCost(ComputeCostError::MissingCompute),
+    )
 }
 
 fn analyze_field_accesses(

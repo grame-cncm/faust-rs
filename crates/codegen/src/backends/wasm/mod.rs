@@ -378,12 +378,19 @@ fn generate_wasm_module_with_context_step(
         ));
     }
 
-    let compute_body = find_function_body(store, &function_items, "compute");
-    let instance_constants_body = find_function_body(store, &function_items, "instanceConstants");
-    let instance_clear_body = find_function_body(store, &function_items, "instanceClear");
-    let static_init_body = find_function_body(store, &function_items, "staticInit");
-    let instance_reset_ui_body =
-        find_function_body(store, &function_items, "instanceResetUserInterface");
+    let compute_body =
+        crate::backends::module_view::function_body(store, &function_items, "compute");
+    let instance_constants_body =
+        crate::backends::module_view::function_body(store, &function_items, "instanceConstants");
+    let instance_clear_body =
+        crate::backends::module_view::function_body(store, &function_items, "instanceClear");
+    let static_init_body =
+        crate::backends::module_view::function_body(store, &function_items, "staticInit");
+    let instance_reset_ui_body = crate::backends::module_view::function_body(
+        store,
+        &function_items,
+        "instanceResetUserInterface",
+    );
     let foreign_fun_imports = collect_foreign_fun_imports(store, globals, options)?;
 
     let has_soundfiles = module_has_soundfiles(store, module, &function_items);
@@ -2510,21 +2517,6 @@ fn collect_wasm_imports(
         collect_wasm_imports_in_node(store, *body, foreign_fun_imports, options, &mut imports)?;
     }
     Ok(imports.into_iter().collect())
-}
-
-/// Finds the FIR body id for one named function declaration inside a module.
-fn find_function_body(store: &FirStore, function_items: &[FirId], name: &str) -> Option<FirId> {
-    function_items
-        .iter()
-        .copied()
-        .find_map(|id| match match_fir(store, id) {
-            FirMatch::DeclareFun {
-                name: ref fun_name,
-                body: Some(body),
-                ..
-            } if fun_name == name => Some(body),
-            _ => None,
-        })
 }
 
 /// Serializes FIR static tables into WASM data segments.

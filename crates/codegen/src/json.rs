@@ -302,7 +302,10 @@ pub fn build_json_description_from_fir<F>(
 where
     F: FnMut(&str) -> Option<u32>,
 {
-    let metadata = parse_metadata(store, find_function_body(store, function_items, "metadata"))?;
+    let metadata = parse_metadata(
+        store,
+        crate::backends::module_view::function_body(store, function_items, "metadata"),
+    )?;
     let merged_meta = merge_top_level_and_fir_meta(options.top_level_meta, metadata.entries);
     let declared_name = merged_meta
         .iter()
@@ -333,7 +336,11 @@ where
         ui: {
             let mut ui = parse_ui(
                 store,
-                find_function_body(store, function_items, "buildUserInterface"),
+                crate::backends::module_view::function_body(
+                    store,
+                    function_items,
+                    "buildUserInterface",
+                ),
                 &mut resolve_index,
             )?;
             assign_short_names(&mut ui);
@@ -1274,25 +1281,6 @@ where
         range,
         soundfile_url,
     })
-}
-
-/// Find the body of one named helper function in the lowered FIR item list.
-///
-/// The JSON builder only depends on the canonical `metadata` and
-/// `buildUserInterface` functions; missing helpers are treated as “no metadata”
-/// or “no UI” rather than as hard errors.
-fn find_function_body(store: &FirStore, function_items: &[FirId], name: &str) -> Option<FirId> {
-    function_items
-        .iter()
-        .copied()
-        .find_map(|id| match match_fir(store, id) {
-            FirMatch::DeclareFun {
-                name: ref fun_name,
-                body: Some(body),
-                ..
-            } if fun_name == name => Some(body),
-            _ => None,
-        })
 }
 
 /// Map FIR UI group kinds to the JSON schema names used by Faust runtimes.

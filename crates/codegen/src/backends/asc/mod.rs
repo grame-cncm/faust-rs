@@ -27,6 +27,10 @@
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
+use crate::backends::module_view::{
+    ModuleView, SkeletonCodes, block_declares_var, block_stores_var, decode_module,
+    find_function_body, invalid_section, non_sub_module, section_items, unsupported_node,
+};
 use fir::{
     AccessType, FirBinOp, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir,
 };
@@ -101,24 +105,17 @@ impl BackendErrorCode for CodegenErrorCode {
     }
 }
 
+impl SkeletonCodes for CodegenErrorCode {
+    const ROOT_NOT_MODULE: Self = Self::RootNotModule;
+    const INVALID_MODULE_SECTION: Self = Self::InvalidModuleSection;
+    const UNSUPPORTED_NODE: Self = Self::UnsupportedNode;
+}
+
 /// One emission failure of this backend.
 ///
 /// Alias of the shared [`crate::backends::codegen_error::BackendError`]
 /// carrier; only the code enum above is specific to this backend.
 pub type CodegenError = BackendError<CodegenErrorCode>;
-
-/// Decoded FIR module header used by the text emitter.
-#[derive(Debug, Clone)]
-struct ModuleView {
-    name: String,
-    dsp_struct: FirId,
-    globals: FirId,
-    functions: FirId,
-    num_inputs: usize,
-    num_outputs: usize,
-    static_decls: FirId,
-    sub_modules: FirId,
-}
 
 /// Borrowed function declaration view used while stitching the class body.
 struct DeclareFunView<'a> {
@@ -405,7 +402,7 @@ fn emit_methods_canonical_order(
     }
 
     let _ = writeln!(out, "    static classInit(sample_rate: i32): void {{");
-    if let Some(body) = declared_function_body(store, module.functions, "staticInit") {
+    if let Some(body) = find_function_body(store, module.functions, "staticInit") {
         emit_block(store, out, options, class_name, body, 2)?;
     }
     let _ = writeln!(out, "    }}");
@@ -508,9 +505,7 @@ fn emit_declared_method(
     functions: FirId,
     method: &str,
 ) -> Result<(), CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, functions) else {
-        return Err(invalid_section("functions", functions, store));
-    };
+    let items = section_items("functions", functions, store)?;
     for item in items {
         if let FirMatch::DeclareFun {
             name,
@@ -545,9 +540,7 @@ fn collect_module_function_names(
     store: &FirStore,
     functions: FirId,
 ) -> Result<Vec<String>, CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, functions) else {
-        return Err(invalid_section("functions", functions, store));
-    };
+    let items = section_items("functions", functions, store)?;
     let mut names = Vec::new();
     for item in items {
         if let FirMatch::DeclareFun { name, .. } = match_fir(store, item) {
@@ -566,9 +559,7 @@ fn emit_section_fields(
     section_id: FirId,
     indent: usize,
 ) -> Result<(), CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, section_id) else {
-        return Err(invalid_section("fields", section_id, store));
-    };
+    let items = section_items("fields", section_id, store)?;
     for item in items {
         match match_fir(store, item) {
             FirMatch::DeclareVar { .. } | FirMatch::DeclareTable { .. } => {
@@ -1360,10 +1351,7 @@ fn emit_sub_modules(
             sub_modules: nested,
         } = match_fir(store, item)
         else {
-            return Err(CodegenError::new(
-                CodegenErrorCode::InvalidModuleSection,
-                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
-            ));
+            return Err(non_sub_module(item));
         };
 
         emit_sub_modules(store, out, options, class_name, nested)?;
@@ -1478,19 +1466,6 @@ fn emit_sub_modules(
     Ok(())
 }
 
-/// Returns the body of the named function declared by a module, if any.
-fn declared_function_body(store: &FirStore, functions: FirId, wanted: &str) -> Option<FirId> {
-    let FirMatch::Block(items) = match_fir(store, functions) else {
-        return None;
-    };
-    items
-        .into_iter()
-        .find_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareFun { name, body, .. } if name == wanted => body,
-            _ => None,
-        })
-}
-
 fn emit_static_tables(
     store: &FirStore,
     out: &mut String,
@@ -1552,41 +1527,6 @@ fn emit_static_tables(
     Ok(())
 }
 
-/// Decodes the FIR root into the [`ModuleView`] used by the rest of the emitter.
-///
-/// Returns `RootNotModule` when `module` does not decode to `FirMatch::Module`.
-fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenError> {
-    match match_fir(store, module) {
-        FirMatch::Module {
-            num_inputs,
-            num_outputs,
-            name,
-            dsp_struct,
-            globals,
-            functions,
-            static_decls,
-            sub_modules,
-        } => Ok(ModuleView {
-            name,
-            dsp_struct,
-            globals,
-            functions,
-            num_inputs,
-            num_outputs,
-            static_decls,
-            sub_modules,
-        }),
-        _ => Err(CodegenError::new(
-            CodegenErrorCode::RootNotModule,
-            format!(
-                "expected FIR module root, got {:?} at node {}",
-                match_fir(store, module),
-                module.as_u32()
-            ),
-        )),
-    }
-}
-
 /// Returns `true` for canonical Faust lifecycle/DSP-API function names.
 ///
 /// Used by [`emit_declare_fun`] to decide whether to strip the leading `dsp`
@@ -1607,24 +1547,6 @@ fn is_dsp_api_method(name: &str) -> bool {
             | "control"
             | "frame"
     )
-}
-
-fn block_declares_var(store: &FirStore, block: FirId, name: &str) -> bool {
-    let FirMatch::Block(items) = match_fir(store, block) else {
-        return false;
-    };
-    items.iter().any(
-        |id| matches!(match_fir(store, *id), FirMatch::DeclareVar { name: v, .. } if v == name),
-    )
-}
-
-fn block_stores_var(store: &FirStore, block: FirId, name: &str) -> bool {
-    let FirMatch::Block(items) = match_fir(store, block) else {
-        return false;
-    };
-    items
-        .iter()
-        .any(|id| matches!(match_fir(store, *id), FirMatch::StoreVar { name: v, .. } if v == name))
 }
 
 /// Escapes arbitrary text for embedding inside an AssemblyScript double-quoted
@@ -1680,31 +1602,6 @@ fn trim_float(value: f64) -> String {
 /// Renders a comma-joined `[...]` AssemblyScript array literal.
 fn format_array(values: impl Iterator<Item = String>) -> String {
     format!("[{}]", values.collect::<Vec<_>>().join(", "))
-}
-
-/// Builds an `InvalidModuleSection` error for a module section that did not
-/// decode as a FIR block.
-fn invalid_section(section: &str, id: FirId, store: &FirStore) -> CodegenError {
-    CodegenError::new(
-        CodegenErrorCode::InvalidModuleSection,
-        format!(
-            "section '{section}' must be a FIR block, got {:?} at node {}",
-            match_fir(store, id),
-            id.as_u32()
-        ),
-    )
-}
-
-/// Builds an `UnsupportedNode` error for one FIR node the asc emitter cannot render.
-fn unsupported_node(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
-    CodegenError::new(
-        CodegenErrorCode::UnsupportedNode,
-        format!(
-            "unsupported FIR {kind} node {:?} at {}",
-            match_fir(store, node),
-            node.as_u32()
-        ),
-    )
 }
 
 /// Returns the stable AssemblyScript backend identifier (`"asc"`).

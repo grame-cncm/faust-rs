@@ -38,6 +38,9 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
+use crate::backends::module_view::{
+    ModuleView, SkeletonCodes, block_items, decode_module, find_function_body,
+};
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
 /// Suffix appended to every emitted identifier, because codebox rejects
@@ -76,6 +79,8 @@ pub enum CodegenErrorCode {
     RootNotModule,
     /// A construct codebox cannot express.
     Unsupported,
+    /// A module section has the wrong FIR shape.
+    InvalidModuleSection,
 }
 
 impl CodegenErrorCode {
@@ -85,6 +90,7 @@ impl CodegenErrorCode {
         match self {
             Self::RootNotModule => "FRS-CGEN-CBOX-0001",
             Self::Unsupported => "FRS-CGEN-CBOX-0002",
+            Self::InvalidModuleSection => "FRS-CGEN-CBOX-0003",
         }
     }
 }
@@ -95,22 +101,17 @@ impl BackendErrorCode for CodegenErrorCode {
     }
 }
 
+impl SkeletonCodes for CodegenErrorCode {
+    const ROOT_NOT_MODULE: Self = Self::RootNotModule;
+    const INVALID_MODULE_SECTION: Self = Self::InvalidModuleSection;
+    const UNSUPPORTED_NODE: Self = Self::Unsupported;
+}
+
 /// One emission failure of this backend.
 ///
 /// Alias of the shared [`crate::backends::codegen_error::BackendError`]
 /// carrier; only the code enum above is specific to this backend.
 pub type CodegenError = BackendError<CodegenErrorCode>;
-
-/// Decoded FIR module root.
-struct ModuleView {
-    dsp_struct: FirId,
-    globals: FirId,
-    functions: FirId,
-    num_inputs: usize,
-    num_outputs: usize,
-    /// File-scope table declarations; emitted as per-processor `@state`.
-    static_decls: FirId,
-}
 
 /// Where a declaration is being emitted, which decides `@state` versus `let`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1196,54 +1197,6 @@ fn format_finite(value: f64) -> String {
         format!("{value:.1}")
     } else {
         format!("{value}")
-    }
-}
-
-/// Returns the items of a FIR block, or an empty list for anything else.
-fn block_items(store: &FirStore, block: FirId) -> Vec<FirId> {
-    match match_fir(store, block) {
-        FirMatch::Block(items) => items,
-        _ => Vec::new(),
-    }
-}
-
-/// Finds the body of a named function declaration.
-fn find_function_body(store: &FirStore, functions: FirId, wanted: &str) -> Option<FirId> {
-    block_items(store, functions)
-        .into_iter()
-        .find_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareFun {
-                name,
-                body: Some(body),
-                ..
-            } if name == wanted => Some(body),
-            _ => None,
-        })
-}
-
-/// Decodes the FIR module root.
-fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenError> {
-    match match_fir(store, module) {
-        FirMatch::Module {
-            num_inputs,
-            num_outputs,
-            dsp_struct,
-            globals,
-            functions,
-            static_decls,
-            ..
-        } => Ok(ModuleView {
-            dsp_struct,
-            globals,
-            functions,
-            static_decls,
-            num_inputs,
-            num_outputs,
-        }),
-        other => Err(CodegenError::new(
-            CodegenErrorCode::RootNotModule,
-            format!("expected FIR module root, got {other:?}"),
-        )),
     }
 }
 

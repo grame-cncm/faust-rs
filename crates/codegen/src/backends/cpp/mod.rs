@@ -26,6 +26,11 @@
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
+use crate::backends::module_view::{
+    SkeletonCodes, block_declares_var, block_stores_var, decode_module, find_function_body,
+    invalid_section, is_empty_block, is_sub_module_method, non_sub_module, section_items,
+    unsupported_node,
+};
 use fir::{FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
 
 use crate::backends::c_family::{self, CFamilySyntax, EmitMode};
@@ -154,27 +159,17 @@ impl BackendErrorCode for CodegenErrorCode {
     }
 }
 
+impl SkeletonCodes for CodegenErrorCode {
+    const ROOT_NOT_MODULE: Self = Self::RootNotModule;
+    const INVALID_MODULE_SECTION: Self = Self::InvalidModuleSection;
+    const UNSUPPORTED_NODE: Self = Self::UnsupportedNode;
+}
+
 /// One emission failure of this backend.
 ///
 /// Alias of the shared [`crate::backends::codegen_error::BackendError`]
 /// carrier; only the code enum above is specific to this backend.
 pub type CodegenError = BackendError<CodegenErrorCode>;
-
-/// Decoded FIR module header used by the text emitter.
-///
-/// Like the C backend equivalent, this is a short-lived view whose ids still
-/// point back into the FIR store for actual section emission.
-#[derive(Debug, Clone)]
-struct ModuleView {
-    name: String,
-    dsp_struct: FirId,
-    globals: FirId,
-    functions: FirId,
-    num_inputs: usize,
-    num_outputs: usize,
-    static_decls: FirId,
-    sub_modules: FirId,
-}
 
 /// Borrowed function declaration view used while stitching the C++ class body.
 ///
@@ -320,13 +315,13 @@ fn generate_cpp_module_step(
         store,
         module.dsp_struct,
         module.globals,
-        |section| invalid_struct_section(store, section),
+        |section| invalid_section("struct", section, store),
     )?;
     let table_inits = c_family::collect_table_initializers(
         store,
         module.dsp_struct,
         module.globals,
-        |section| invalid_struct_section(store, section),
+        |section| invalid_section("struct", section, store),
     )?;
     emit_dsp_contract_methods(
         store,
@@ -374,19 +369,6 @@ fn generate_cpp_module_step(
     let _ = writeln!(out);
     let _ = writeln!(out, "#endif");
     Ok(out)
-}
-
-/// Builds this backend's stable error for a malformed state section, used by
-/// the shared initializer collectors.
-fn invalid_struct_section(store: &FirStore, section: FirId) -> CodegenError {
-    CodegenError::new(
-        CodegenErrorCode::InvalidModuleSection,
-        format!(
-            "struct section must be a FIR block, got {:?} at node {}",
-            match_fir(store, section),
-            section.as_u32()
-        ),
-    )
 }
 
 /// Inputs for [`emit_dsp_contract_methods`], grouped like the C backend's
@@ -1020,16 +1002,7 @@ fn collect_module_function_names(
     store: &FirStore,
     functions: FirId,
 ) -> Result<Vec<String>, CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, functions) else {
-        return Err(CodegenError::new(
-            CodegenErrorCode::InvalidModuleSection,
-            format!(
-                "section 'functions' must be a FIR block, got {:?} at node {}",
-                match_fir(store, functions),
-                functions.as_u32()
-            ),
-        ));
-    };
+    let items = section_items("functions", functions, store)?;
 
     let mut names = Vec::new();
     for item in items {
@@ -1141,16 +1114,7 @@ fn emit_section(
     section_id: FirId,
     externalize_mem0_arrays: bool,
 ) -> Result<(), CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, section_id) else {
-        return Err(CodegenError::new(
-            CodegenErrorCode::InvalidModuleSection,
-            format!(
-                "section '{section_name}' must be a FIR block, got {:?} at node {}",
-                match_fir(store, section_id),
-                section_id.as_u32()
-            ),
-        ));
-    };
+    let items = section_items(section_name, section_id, store)?;
 
     for item in items {
         // Prototypes, dependencies and foreign variables are not members: the
@@ -1411,54 +1375,6 @@ fn emit_block_with_mode(
     Ok(())
 }
 
-/// Returns `true` when `block` declares a variable named `name`.
-fn block_declares_var(store: &FirStore, block: FirId, name: &str) -> bool {
-    let FirMatch::Block(items) = match_fir(store, block) else {
-        return false;
-    };
-    items.iter().any(|id| {
-        matches!(
-            match_fir(store, *id),
-            FirMatch::DeclareVar { name: var_name, .. } if var_name == name
-        )
-    })
-}
-
-/// Returns `true` when `block` stores to a variable named `name`.
-fn block_stores_var(store: &FirStore, block: FirId, name: &str) -> bool {
-    let FirMatch::Block(items) = match_fir(store, block) else {
-        return false;
-    };
-    items.iter().any(|id| {
-        matches!(
-            match_fir(store, *id),
-            FirMatch::StoreVar { name: var_name, .. } if var_name == name
-        )
-    })
-}
-
-/// Returns `true` for a generated sub-container entry point.
-///
-/// These are emitted as methods of the sub-container class, so their explicit
-/// `dsp` receiver argument is stripped exactly as for the DSP API methods.
-fn is_sub_module_method(name: &str) -> bool {
-    name.starts_with("instanceInit") && name != "instanceInit"
-        || name.starts_with("fill") && name != "fill"
-}
-
-/// Returns the body of the named function declared by a module, if any.
-fn find_function_body(store: &FirStore, functions: FirId, wanted: &str) -> Option<FirId> {
-    let FirMatch::Block(items) = match_fir(store, functions) else {
-        return None;
-    };
-    items
-        .into_iter()
-        .find_map(|item| match match_fir(store, item) {
-            FirMatch::DeclareFun { name, body, .. } if name == wanted => body,
-            _ => None,
-        })
-}
-
 /// Emits every generated-table sub-container as a nested class.
 ///
 /// C++ parity: `generateSigGen` / `generateStaticSigGen` produce a
@@ -1491,10 +1407,7 @@ fn emit_sub_modules(
             ..
         } = match_fir(store, item)
         else {
-            return Err(CodegenError::new(
-                CodegenErrorCode::InvalidModuleSection,
-                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
-            ));
+            return Err(non_sub_module(item));
         };
 
         emit_sub_modules(store, out, options, module_name, nested)?;
@@ -1774,14 +1687,6 @@ fn is_dsp_api_method(name: &str) -> bool {
     )
 }
 
-/// Returns `true` when `body` is an empty FIR block.
-fn is_empty_block(store: &FirStore, body: FirId) -> bool {
-    match match_fir(store, body) {
-        FirMatch::Block(items) => items.is_empty(),
-        _ => false,
-    }
-}
-
 /// Emits one FIR value expression into a C++ expression string.
 /// Renders a variable reference in C++ method context: bare `name`, because
 /// struct state is reachable through the implicit `this`.
@@ -1896,19 +1801,6 @@ fn emit_type(typ: &FirType, options: &CppOptions) -> String {
     )
 }
 
-/// Builds a stable unsupported-node diagnostic for the C++ emitter.
-fn unsupported_node(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
-    CodegenError::new(
-        CodegenErrorCode::UnsupportedNode,
-        format!(
-            "unsupported FIR {kind} node {:?} at {}",
-            match_fir(store, node),
-            node.as_u32()
-        ),
-    )
-    .at_node(node)
-}
-
 /// Formats a floating-point literal with stable C++ syntax.
 ///
 /// Shared with the `c` backend via [`c_family::trim_float`]. Phase 2 of the
@@ -1972,39 +1864,6 @@ fn emit_static_tables(
         block,
         |value| emit_value(store, options, value),
     )
-}
-
-/// Decodes the FIR module header expected by the C++ emitter.
-fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenError> {
-    match match_fir(store, module) {
-        FirMatch::Module {
-            num_inputs,
-            num_outputs,
-            name,
-            dsp_struct,
-            globals,
-            functions,
-            static_decls,
-            sub_modules,
-        } => Ok(ModuleView {
-            name,
-            dsp_struct,
-            globals,
-            functions,
-            num_inputs,
-            num_outputs,
-            static_decls,
-            sub_modules,
-        }),
-        _ => Err(CodegenError::new(
-            CodegenErrorCode::RootNotModule,
-            format!(
-                "expected FIR module root, got {:?} at node {}",
-                match_fir(store, module),
-                module.as_u32()
-            ),
-        )),
-    }
 }
 
 #[must_use]

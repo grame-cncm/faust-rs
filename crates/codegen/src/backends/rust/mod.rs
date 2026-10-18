@@ -48,6 +48,10 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
+use crate::backends::module_view::{
+    SkeletonCodes, block_declares_var, block_stores_var, decode_module, is_sub_module_method,
+    non_sub_module, section_items, unsupported_node,
+};
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
 use crate::backends::faust_api;
@@ -115,28 +119,17 @@ impl BackendErrorCode for CodegenErrorCode {
     }
 }
 
+impl SkeletonCodes for CodegenErrorCode {
+    const ROOT_NOT_MODULE: Self = Self::RootNotModule;
+    const INVALID_MODULE_SECTION: Self = Self::InvalidModuleSection;
+    const UNSUPPORTED_NODE: Self = Self::UnsupportedNode;
+}
+
 /// One emission failure of this backend.
 ///
 /// Alias of the shared [`crate::backends::codegen_error::BackendError`]
 /// carrier; only the code enum above is specific to this backend.
 pub type CodegenError = BackendError<CodegenErrorCode>;
-
-/// Decoded `FirMatch::Module` header used by the Rust emitter.
-///
-/// This is not a second IR. It is just a borrowed/id-based view that prevents
-/// each emission phase from re-matching the module root. All ids still point
-/// back into the original [`FirStore`] and are decoded at the point where their
-/// section is emitted.
-#[derive(Debug, Clone)]
-struct ModuleView {
-    dsp_struct: FirId,
-    globals: FirId,
-    functions: FirId,
-    num_inputs: usize,
-    num_outputs: usize,
-    static_decls: FirId,
-    sub_modules: FirId,
-}
 
 /// One scalar state initializer extracted from `dsp_struct` or `globals`.
 ///
@@ -508,9 +501,7 @@ fn emit_struct_fields(
     out: &mut String,
     block_id: FirId,
 ) -> Result<(), CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, block_id) else {
-        return Err(invalid_section("struct section", block_id, store));
-    };
+    let items = section_items("struct", block_id, store)?;
     for item in items {
         match match_fir(store, item) {
             FirMatch::DeclareVar { name, typ, .. } => {
@@ -2338,17 +2329,6 @@ fn resolve_float(typ: &FirType, options: &RustOptions) -> RustRealType {
     }
 }
 
-/// Renders a variable reference according to FIR storage class.
-///
-/// Struct state is addressed through `self.name`; stack, loop, global, static,
-/// and function-argument values keep their local textual name in this backend
-/// slice.
-/// Returns `true` for a generated sub-container entry point.
-fn is_sub_module_method(name: &str) -> bool {
-    name.starts_with("instanceInit") && name != "instanceInit"
-        || name.starts_with("fill") && name != "fill"
-}
-
 /// Emits every generated-table sub-container as a struct with its two methods.
 ///
 /// C++ parity: the `CodeContainer` a `SIGGEN` produces. Rust has no destructor
@@ -2375,10 +2355,7 @@ fn emit_sub_modules(
             ..
         } = match_fir(store, item)
         else {
-            return Err(CodegenError::new(
-                CodegenErrorCode::InvalidModuleSection,
-                format!("sub_modules holds a non-SubModule node {}", item.as_u32()),
-            ));
+            return Err(non_sub_module(item));
         };
 
         emit_sub_modules(store, out, options, locked, nested)?;
@@ -2699,9 +2676,7 @@ fn collect_struct_initializers(
 ) -> Result<Vec<StructInit>, CodegenError> {
     let mut out = Vec::new();
     for section in [dsp_struct, globals] {
-        let FirMatch::Block(items) = match_fir(store, section) else {
-            return Err(invalid_section("struct section", section, store));
-        };
+        let items = section_items("struct", section, store)?;
         for item in items {
             if let FirMatch::DeclareVar {
                 name,
@@ -2725,9 +2700,7 @@ fn collect_table_initializers(
 ) -> Result<Vec<TableInit>, CodegenError> {
     let mut out = Vec::new();
     for section in [dsp_struct, globals] {
-        let FirMatch::Block(items) = match_fir(store, section) else {
-            return Err(invalid_section("struct section", section, store));
-        };
+        let items = section_items("struct", section, store)?;
         for item in items {
             if let FirMatch::DeclareTable {
                 name,
@@ -2779,9 +2752,7 @@ fn collect_module_functions(
     store: &FirStore,
     functions: FirId,
 ) -> Result<Vec<DeclareFunView>, CodegenError> {
-    let FirMatch::Block(items) = match_fir(store, functions) else {
-        return Err(invalid_section("functions section", functions, store));
-    };
+    let items = section_items("functions", functions, store)?;
     let mut out = Vec::new();
     for item in items {
         if let FirMatch::DeclareFun {
@@ -2801,101 +2772,6 @@ fn collect_module_functions(
         }
     }
     Ok(out)
-}
-
-/// Decodes and validates the FIR module root expected by this backend.
-///
-/// Returning a [`ModuleView`] keeps the public entry point small and gives all
-/// downstream helpers the exact ids for the seven module sections they need.
-/// Non-module roots are rejected with `FRS-CGEN-RUST-0001`.
-fn decode_module(store: &FirStore, module: FirId) -> Result<ModuleView, CodegenError> {
-    if let FirMatch::Module {
-        num_inputs,
-        num_outputs,
-        name: _,
-        dsp_struct,
-        globals,
-        functions,
-        static_decls,
-        sub_modules,
-    } = match_fir(store, module)
-    {
-        Ok(ModuleView {
-            dsp_struct,
-            globals,
-            functions,
-            num_inputs,
-            num_outputs,
-            static_decls,
-            sub_modules,
-        })
-    } else {
-        Err(CodegenError::new(
-            CodegenErrorCode::RootNotModule,
-            format!(
-                "expected FIR module root, got {:?} at node {}",
-                match_fir(store, module),
-                module.as_u32()
-            ),
-        ))
-    }
-}
-
-/// Returns whether a FIR block declares a variable with `name`.
-fn block_declares_var(store: &FirStore, block_id: FirId, name: &str) -> bool {
-    let FirMatch::Block(items) = match_fir(store, block_id) else {
-        return false;
-    };
-    items.iter().any(|id| {
-        matches!(
-            match_fir(store, *id),
-            FirMatch::DeclareVar { name: var_name, .. } if var_name == name
-        )
-    })
-}
-
-/// Returns whether a FIR block contains a direct store to `name`.
-///
-/// Used by `instance_constants` emission to avoid writing `fSampleRate` twice
-/// when FIR already has an explicit store in the canonical function body.
-fn block_stores_var(store: &FirStore, block_id: FirId, name: &str) -> bool {
-    let FirMatch::Block(items) = match_fir(store, block_id) else {
-        return false;
-    };
-    items.iter().any(|id| {
-        matches!(
-            match_fir(store, *id),
-            FirMatch::StoreVar { name: var_name, .. } if var_name == name
-        )
-    })
-}
-
-/// Builds a stable diagnostic for malformed module sections.
-fn invalid_section(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
-    CodegenError::new(
-        CodegenErrorCode::InvalidModuleSection,
-        format!(
-            "{kind} must be a FIR block, got {:?} at node {}",
-            match_fir(store, node),
-            node.as_u32()
-        ),
-    )
-}
-
-/// Builds a stable diagnostic for FIR nodes outside the current Rust slice.
-///
-/// Unsupported-node diagnostics are preferred over best-effort partial output:
-/// the generated Rust source should either represent the complete FIR body or
-/// fail before writing misleading code.
-fn unsupported_node(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
-    CodegenError::new(
-        CodegenErrorCode::UnsupportedNode,
-        format!(
-            "unsupported FIR {kind} node {:?} at {}",
-            match_fir(store, node),
-            node.as_u32()
-        ),
-    )
 }
 
 /// Formats a typed floating literal: `0.5f32`, or `f32::INFINITY` for a
