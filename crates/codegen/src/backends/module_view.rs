@@ -206,6 +206,59 @@ pub(crate) fn is_sub_module_method(name: &str) -> bool {
         || name.starts_with("fill") && name != "fill"
 }
 
+/// The error message for sub-modules left in `module` after flattening, if
+/// any.
+///
+/// Flattening removes them; a survivor is an internal error and must not
+/// reach the output, because a table declared and never filled reads as zeros.
+pub(crate) fn surviving_sub_modules(store: &FirStore, module: FirId) -> Option<String> {
+    let FirMatch::Module { sub_modules, .. } = match_fir(store, module) else {
+        return None;
+    };
+    let names = super::sub_module_names(store, sub_modules);
+    (!names.is_empty()).then(|| {
+        format!(
+            "sub-modules survived flattening ({}); this is an internal error",
+            names.join(", ")
+        )
+    })
+}
+
+/// Prepares a module for a backend with no nested containers: inlines its
+/// generated-table sub-modules under `policy`, optionally schedules `compute`
+/// for a JIT (`fir::schedule`), and checks that no sub-module survived.
+///
+/// Returns the rewritten store and root, or `None` when nothing changed and
+/// the caller keeps its own. The error is the message; each backend wraps it
+/// in its own code.
+pub(crate) fn prepare_flat_module(
+    store: &FirStore,
+    module: FirId,
+    policy: fir::subcontainer::SubModuleStatePolicy,
+    schedule_compute: bool,
+) -> Result<Option<(FirStore, FirId)>, String> {
+    let flattened = if fir::subcontainer::has_sub_modules(store, module) {
+        Some(
+            fir::subcontainer::flatten_sub_modules_owned(store, module, policy)
+                .map_err(|err| format!("flattening generated tables failed: {err}"))?,
+        )
+    } else {
+        None
+    };
+    let (current, root) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    let scheduled = if schedule_compute {
+        fir::schedule::schedule_compute(current, root)
+    } else {
+        None
+    };
+    let prepared = scheduled.or(flattened);
+    let (current, root) = prepared.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    match surviving_sub_modules(current, root) {
+        Some(message) => Err(message),
+        None => Ok(prepared),
+    }
+}
+
 /// One function definition of the `functions` section.
 #[derive(Debug, Clone)]
 pub(crate) struct FunctionDecl {
@@ -363,6 +416,20 @@ mod tests {
         assert!(!is_receiver_lifecycle_method("init"));
         assert!(is_dsp_api_method("init"));
         assert!(!is_dsp_api_method("staticInit"));
+    }
+
+    #[test]
+    fn a_flat_module_is_left_alone_unless_scheduled() {
+        let (store, module) = crate::fixtures::build_passthrough_test_module();
+        let prepared = prepare_flat_module(
+            &store,
+            module,
+            fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
+            false,
+        )
+        .expect("a module without sub-modules prepares");
+        assert!(prepared.is_none());
+        assert_eq!(surviving_sub_modules(&store, module), None);
     }
 
     #[test]

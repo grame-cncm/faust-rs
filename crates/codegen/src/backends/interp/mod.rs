@@ -210,31 +210,16 @@ fn generate_interp_module_step<R: real::FbcReal>(
     // file-scope `static`, interpreter static storage is already per instance —
     // `class_init_instance` runs `static_init_block` on the instance's own
     // executor — so leaving it there gives per-instance tables for free.
-    let flattened = if fir::subcontainer::has_sub_modules(store, module) {
-        let (owned, root) = fir::subcontainer::flatten_sub_modules_owned(
-            store,
-            module,
-            fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
-        )
-        .map_err(|err| {
-            CodegenError::new(
-                CodegenErrorCode::CompilationFailed,
-                format!("flattening generated tables failed: {err}"),
-            )
-        })?;
-        Some((owned, root))
-    } else {
-        None
-    };
-    let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
     // W3/W2/W7: `compute` scheduled for a JIT that keeps loads in program order
     // (`fir::schedule`; the text backends keep FIR order).
-    let scheduled = if options.keep_fir_order {
-        None
-    } else {
-        fir::schedule::schedule_compute(store, module)
-    };
-    let (store, module) = scheduled.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    let prepared = crate::backends::module_view::prepare_flat_module(
+        store,
+        module,
+        fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
+        !options.keep_fir_order,
+    )
+    .map_err(|message| CodegenError::new(CodegenErrorCode::CompilationFailed, message))?;
+    let (store, module) = prepared.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     // 1. Decode module root.
     let (
@@ -245,7 +230,6 @@ fn generate_interp_module_step<R: real::FbcReal>(
         globals,
         functions,
         static_decls,
-        sub_modules,
     ) = match match_fir(store, module) {
         fir::FirMatch::Module {
             num_inputs,
@@ -255,7 +239,7 @@ fn generate_interp_module_step<R: real::FbcReal>(
             globals,
             functions,
             static_decls,
-            sub_modules,
+            ..
         } => (
             num_inputs,
             num_outputs,
@@ -264,7 +248,6 @@ fn generate_interp_module_step<R: real::FbcReal>(
             globals,
             functions,
             static_decls,
-            sub_modules,
         ),
         _ => {
             return Err(CodegenError::new(
@@ -273,20 +256,6 @@ fn generate_interp_module_step<R: real::FbcReal>(
             ));
         }
     };
-
-    // Step 0 flattened them away; anything left is a flattening bug, not an
-    // unsupported feature, and must not reach the factory — a table declared
-    // and never filled reads as zeros.
-    let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-    if !sub_module_names.is_empty() {
-        return Err(CodegenError::new(
-            CodegenErrorCode::CompilationFailed,
-            format!(
-                "sub-modules survived flattening ({}); this is an internal error",
-                sub_module_names.join(", ")
-            ),
-        ));
-    }
 
     let module_name = options.module_name.clone().unwrap_or(module_name_fir);
 

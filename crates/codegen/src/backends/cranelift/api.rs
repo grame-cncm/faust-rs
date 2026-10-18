@@ -60,42 +60,18 @@ fn generate_cranelift_module_step(
     // (`porting/siggen-subcontainer-table-init-port-plan-2026-08-05-en.md`
     // §5.9). The table stays in `static_decls` and becomes a writable JIT data
     // object that `staticInit` fills.
-    let flattened = if fir::subcontainer::has_sub_modules(store, module) {
-        let (owned, root) = fir::subcontainer::flatten_sub_modules_owned(
-            store,
-            module,
-            fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
-        )
-        .map_err(|err| {
-            CraneliftBackendError::unsupported_module_shape(format!(
-                "flattening generated tables failed: {err}"
-            ))
-        })?;
-        Some((owned, root))
-    } else {
-        None
-    };
-    let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
     // W3/W2/W7: `compute` scheduled for a JIT that keeps loads in program order
-    // (`fir::schedule`; the text backends keep FIR order).
-    let scheduled = if options.keep_fir_order {
-        None
-    } else {
-        fir::schedule::schedule_compute(store, module)
-    };
-    let (store, module) = scheduled.as_ref().map_or((store, module), |(s, m)| (s, *m));
-
-    // Flattening removed them; a survivor is an internal error, and must not
-    // reach the JIT — a table declared and never filled reads as zeros.
-    if let FirMatch::Module { sub_modules, .. } = match_fir(store, module) {
-        let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-        if !sub_module_names.is_empty() {
-            return Err(CraneliftBackendError::unsupported_module_shape(format!(
-                "sub-modules survived flattening ({}); this is an internal error",
-                sub_module_names.join(", ")
-            )));
-        }
-    }
+    // (`fir::schedule`; the text backends keep FIR order). A sub-module that
+    // survives flattening is an internal error and must not reach the JIT — a
+    // table declared and never filled reads as zeros.
+    let prepared = crate::backends::module_view::prepare_flat_module(
+        store,
+        module,
+        fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
+        !options.keep_fir_order,
+    )
+    .map_err(CraneliftBackendError::unsupported_module_shape)?;
+    let (store, module) = prepared.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     let (module_name, compute_decl) = find_module_and_compute(store, module)?;
 

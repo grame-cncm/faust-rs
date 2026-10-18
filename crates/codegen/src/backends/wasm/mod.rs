@@ -303,31 +303,16 @@ fn generate_wasm_module_with_context_step(
     // §5.9). The table stays in `static_decls`: static memory is shared by
     // every instance here exactly as C++'s file-scope array is, so `classInit`
     // fills it once.
-    let flattened = if fir::subcontainer::has_sub_modules(store, module) {
-        let (owned, root) = fir::subcontainer::flatten_sub_modules_owned(
-            store,
-            module,
-            fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
-        )
-        .map_err(|err| {
-            WasmBackendError::new(
-                WasmBackendErrorCode::UnsupportedFirNode,
-                format!("flattening generated tables failed: {err}"),
-            )
-        })?;
-        Some((owned, root))
-    } else {
-        None
-    };
-    let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
     // W3/W2/W7: `compute` scheduled for a JIT that keeps loads in program order
     // (`fir::schedule`; the text backends keep FIR order).
-    let scheduled = if options.keep_fir_order {
-        None
-    } else {
-        fir::schedule::schedule_compute(store, module)
-    };
-    let (store, module) = scheduled.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    let prepared = crate::backends::module_view::prepare_flat_module(
+        store,
+        module,
+        fir::subcontainer::SubModuleStatePolicy::MergedStructFields,
+        !options.keep_fir_order,
+    )
+    .map_err(|message| WasmBackendError::new(WasmBackendErrorCode::UnsupportedFirNode, message))?;
+    let (store, module) = prepared.as_ref().map_or((store, module), |(s, m)| (s, *m));
 
     let FirMatch::Module {
         num_inputs,
@@ -336,7 +321,6 @@ fn generate_wasm_module_with_context_step(
         globals,
         functions,
         static_decls,
-        sub_modules,
         ..
     } = match_fir(store, module)
     else {
@@ -345,19 +329,6 @@ fn generate_wasm_module_with_context_step(
             "WASM backend expects a FIR Module root",
         ));
     };
-
-    // Flattening removed them; a survivor is an internal error, and must not
-    // reach the output — a table declared and never filled reads as zeros.
-    let sub_module_names = crate::backends::sub_module_names(store, sub_modules);
-    if !sub_module_names.is_empty() {
-        return Err(WasmBackendError::new(
-            WasmBackendErrorCode::UnsupportedFirNode,
-            format!(
-                "sub-modules survived flattening ({}); this is an internal error",
-                sub_module_names.join(", ")
-            ),
-        ));
-    }
 
     let FirMatch::Block(function_items) = match_fir(store, functions) else {
         return Err(WasmBackendError::new(
