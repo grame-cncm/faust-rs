@@ -1161,7 +1161,8 @@ fn identical_widgets_under_distinct_groups_stay_distinct() {
             "process = par(i, 3, vgroup(\"Op %i\", hslider(\"g\", 0, 0, 1, 0.1))) :> _;",
         )
         .expect("compiles");
-    for address in ["/lbl/Op 0/g", "/lbl/Op 1/g", "/lbl/Op 2/g"] {
+    // Addresses are C++ `PathBuilder` paths: the space becomes `_`.
+    for address in ["/lbl/Op_0/g", "/lbl/Op_1/g", "/lbl/Op_2/g"] {
         assert!(
             json.contains(&format!("\"address\": \"{address}\"")),
             "missing widget address {address} in JSON:\n{json}"

@@ -1232,8 +1232,8 @@ where
 
 /// Build one JSON widget payload from a FIR UI leaf.
 ///
-/// The runtime `address` is derived from the current group stack plus the
-/// widget label, matching the public Faust JSON UI convention. `varname` keeps
+/// The runtime `address` is the C++ `PathBuilder` path of the current group
+/// stack plus the widget label, matching the public Faust JSON UI convention. `varname` keeps
 /// the lowered FIR symbol used for backend-specific index resolution.
 #[allow(clippy::too_many_arguments)]
 fn build_widget<F>(
@@ -1250,13 +1250,11 @@ where
     F: FnMut(&str) -> Option<u32>,
 {
     let index = resolve_index(&var);
-    let mut address = String::new();
-    for segment in path_stack {
-        address.push('/');
-        address.push_str(segment);
-    }
-    address.push('/');
-    address.push_str(&label);
+    // C++ `PathBuilder::buildPath`, as `JSONUI` builds it: the label keeps
+    // its spelling, the address has the OSC-awkward characters replaced
+    // (`/my_group/my_gain__dB_`). The facade and faustprobe address controls
+    // by the same function, so the JSON and `set_param_value` agree.
+    let address = crate::shortname::build_path(path_stack, &label);
     Ok(JsonWidget {
         typ,
         // Filled by `assign_short_names` once every address is known.
