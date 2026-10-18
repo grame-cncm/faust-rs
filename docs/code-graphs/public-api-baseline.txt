@@ -2199,6 +2199,9 @@ fn BinOp::name
 fn BinOp::symbol
 fn BlockRevPolicy::from_raw
 fn BlockRevPolicy::to_raw
+fn DerivativeZeroFolder::fold
+fn DerivativeZeroFolder::keep
+fn DerivativeZeroFolder::new
 fn SigBuilder::abs
 fn SigBuilder::acos
 fn SigBuilder::add
@@ -2311,6 +2314,7 @@ fn embedded_iir
 fn extract_fir_filter
 fn extract_iir_filter
 fn iir_filter_to_state_space
+fn is_literal_zero
 fn make_sig_fir
 fn match_sig
 fn mul_sig_iir
@@ -2326,6 +2330,7 @@ fn simplify_fir
 fn sub_sig_fir
 fn sub_sig_iir
 mod ad_rules
+struct DerivativeZeroFolder
 struct FirFilter
 struct IirFilter
 struct LinearTerm

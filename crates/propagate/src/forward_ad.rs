@@ -417,6 +417,7 @@
 //! the emitted code.
 
 use ahash::{AHashMap, AHashSet};
+use signals::ad_rules::{DerivativeZeroFolder, is_literal_zero};
 use signals::{BinOp, SigBuilder, SigId, SigMatch, match_sig};
 use smallvec::SmallVec;
 use tlib::{
@@ -510,6 +511,10 @@ struct ForwardADTransform<'a> {
     /// augmented, so that the twin does not share the original's inputs and
     /// state.
     env_tokens_memo: AHashMap<SigId, SmallVec<[SigId; 2]>>,
+    /// Folds the literal zeros of each tangent the rules build. Its memo is
+    /// structural, valid at every de Bruijn depth, so it is not scoped with
+    /// the cache by the recursion arm.
+    zero_folder: DerivativeZeroFolder,
 }
 
 impl<'a> ForwardADTransform<'a> {
@@ -524,6 +529,7 @@ impl<'a> ForwardADTransform<'a> {
             env_rename: AHashMap::new(),
             domain_rename: AHashMap::new(),
             env_tokens_memo: AHashMap::new(),
+            zero_folder: DerivativeZeroFolder::new(),
             diff_seed_index: Self::build_seed_index(diff_seeds),
             diff_seeds: diff_seeds.to_vec(),
             aperture_memo: AHashMap::new(),
@@ -717,7 +723,17 @@ impl<'a> ForwardADTransform<'a> {
             return dual;
         }
         let depth_on_entry = self.debruijn_depth;
-        let dual = self.transform_uncached(sig);
+        let mut dual = self.transform_uncached(sig);
+        // The rules build each tangent over the operands' tangents without
+        // looking at them: fold its literal zeros here, so that a zero stays
+        // a literal through the clock-domain wrappers and `augment_block`
+        // does not hold it (porting/fad-zero-tangent-folding-plan-2026-10-18-en.md).
+        // The primal is kept opaque, so only the nodes the rule built are
+        // walked.
+        self.zero_folder.keep(dual.primal);
+        for tangent in &mut dual.tangents {
+            *tangent = self.zero_folder.fold(self.arena, *tangent);
+        }
         debug_assert_eq!(
             self.debruijn_depth, depth_on_entry,
             "debruijn_depth not balanced across transform_uncached"
@@ -1983,13 +1999,6 @@ pub(super) fn generate_fad_signals_multi(
     Ok(result)
 }
 
-/// Whether `sig` is the literal zero a constant's tangent is spelled as
-/// (`real(0.0)` or `int(0)`).
-fn is_literal_zero(arena: &TreeArena, sig: SigId) -> bool {
-    matches!(match_sig(arena, sig), SigMatch::Real(v) if v == 0.0)
-        || matches!(match_sig(arena, sig), SigMatch::Int(0))
-}
-
 #[cfg(test)]
 mod tests {
     //! Randomized structural invariants on the FAD rewriter.
@@ -2406,20 +2415,16 @@ mod tests {
                 .expect("FAD must succeed on expr = seed + inner_out");
         assert_eq!(result.len(), 2, "one primal + one tangent lane");
 
-        // tangent = 1.0 + proj(1, fad_rec)
-        let SigMatch::BinOp(op, lhs, rhs) = match_sig(&arena, result[1]) else {
-            panic!("tangent of (seed + inner_out) must be a BinOp");
-        };
-        assert_eq!(op, signals::BinOp::Add);
+        // tangent = 1.0 + 0.0, folded to 1.0: tangent(seed) is 1.0 and
+        // tangent(inner_out) the zero constant (the inner recursion does not
+        // depend on the seed and is not rebuilt). A leak of the seed into the
+        // inner body would leave a projection of a rebuilt recursion here.
         let one = SigBuilder::new(&mut arena).real(1.0);
-        assert_eq!(lhs, one, "tangent(seed) must be 1.0");
-        let zero = SigBuilder::new(&mut arena).real(0.0);
         assert_eq!(
-            rhs,
-            zero,
-            "tangent(inner_out) must be the zero constant: the inner recursion does \
-             not depend on the seed and is not rebuilt, got {:?}",
-            tree_to_str(&arena, rhs)
+            result[1],
+            one,
+            "tangent of (seed + inner_out) must fold to 1.0, got {:?}",
+            tree_to_str(&arena, result[1])
         );
         assert_eq!(
             result[0], expr,
@@ -2446,7 +2451,7 @@ mod tests {
 
         // expr = inner_out + seed
         // d(expr)/d(seed) = tangent(inner_out) + tangent(seed)
-        //   tangent(inner_out) = proj(1, expanded_inner_rec) [zero at runtime]
+        //   tangent(inner_out) = 0.0                          [not rebuilt]
         //   tangent(seed)      = 1.0                          [seed check]
         let expr = SigBuilder::new(&mut arena).add(inner_out, seed);
 
@@ -2457,21 +2462,16 @@ mod tests {
 
         let tangent = result[1];
 
-        // tangent must be Add(proj(1, fad_rec), real(1.0)).
-        // Decompose the Add and check the second operand is real(1.0).
-        let SigMatch::BinOp(op, _lhs, rhs) = match_sig(&arena, tangent) else {
-            panic!(
-                "tangent of (inner_out + seed) must be a BinOp; \
-                 got a different node — seed check was poisoned by inner rec body cache"
-            );
-        };
-        assert_eq!(op, signals::BinOp::Add, "tangent must be an Add");
-
+        // tangent(inner_out) is the zero constant (the inner recursion does
+        // not depend on the seed), so the tangent folds to tangent(seed),
+        // which must be real(1.0), not the body-scope tangent
+        // delay1(proj(1, ref(1))) a poisoned seed check would give.
         let one = SigBuilder::new(&mut arena).real(1.0);
         assert_eq!(
-            rhs, one,
-            "rhs of tangent Add must be real(1.0) — tangent(seed) must be 1.0, \
-             not the body-scope tangent delay1(proj(1,ref(1)))"
+            tangent,
+            one,
+            "tangent of (inner_out + seed) must fold to real(1.0), got {:?}",
+            tree_to_str(&arena, tangent)
         );
     }
 }

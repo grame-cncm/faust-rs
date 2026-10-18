@@ -1503,7 +1503,7 @@ Validation:
 
 Status: implemented 2026-07-10 (`e4181cc6`), extended 2026-09-05 (`adaca773`),
 rescoped 2026-09-05 (`93f00111`), extended 2026-09-19 (`9e5d9320`, recorded
-2026-10-18)
+2026-10-18), extended 2026-10-18 (`zero_folder`)
 
 Location:
 
@@ -1539,6 +1539,22 @@ Caches, all one `fad(expr, seeds)` lowering long:
   lowering, without invalidation. Its repeat rate was not measured; it keeps the
   walk linear on shared subgraphs, where an unmemoized walk revisits every
   shared node once per path,
+- `zero_folder: DerivativeZeroFolder` (`signals::ad_rules`, a
+  `HashMap<SigId, SigId>`): each tangent with its literal zeros folded
+  (`0 · x`, `x + 0`, `Clocked(τ, 0)`, `PermVar(0)`, …), so that a zero
+  stays a literal through the clock-domain wrappers and the twin does not hold
+  it. Key: the node alone, since a fold replaces a node by an equal-valued node
+  of the same scope; like `env_tokens_memo` it is kept across recursion bodies
+  and lives for the lowering, without invalidation. Each primal is entered as
+  a fixed point (`keep`), so a fold walks only the nodes the rule just built
+  and never descends a primal chain. It saves no repeated work of its own: it
+  keeps the fold linear (each tangent is folded over already-folded operands)
+  and bounds its depth. Effect on the faust-coopiano voice with one seed: the
+  twin holds 577 tangents instead of 3,097, compile 26.1 s → 15.3 s, compute
+  993 → 617 ms (porting/fad-zero-tangent-folding-plan-2026-10-18-en.md).
+  Validation: `derivative_zero_folder_*` in `signals`, the two `ondemand_pipeline`
+  tests `fad_around_ondemand_folds_the_zero_tangent_of_an_unreached_input` and
+  `fad_around_ondemand_constant_tangent_is_held_from_the_first_fire`,
 - `seed_sets: Vec<AHashSet<SigId>>`: the seed set lifted `k` times, built on
   demand by `depends_on_seed` for the depths it reaches; derived from
   `original_seeds` alone and never invalidated.
@@ -1566,7 +1582,8 @@ Validation:
 
 - `outer_seed_does_not_leak_into_an_inner_rec_body` and
   `fad_seed_not_poisoned_by_inner_rec_back_edge` pin the two directions at the
-  arena level; `recursive_projection_seed_stays_a_leaf_inside_an_unrelated_recursion`
+  arena level (since 2026-10-18 they read the folded tangent `1.0`, which a
+  leak would turn into a projection of a rebuilt recursion); `recursive_projection_seed_stays_a_leaf_inside_an_unrelated_recursion`
   compares the `fad` gradient with the hand-written one frame by frame and
   failed at frame 0 before the fix,
 - `adaca773` is the payoff of `dependency_memo`: a recursion no seed reaches is

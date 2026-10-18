@@ -810,6 +810,100 @@ fn fad_around_ondemand_leaves_out_the_lane_the_seed_does_not_reach() {
     assert_eq!(out[3][n], 0.0, "the unreached lane's tangent is zero");
 }
 
+/// The block input `m` (a control that is not a seed) enters the twin as
+/// `Clocked(τ, …)`; its zero tangent, rebuilt by the `Clocked` rule, used to
+/// come out as `Clocked(τ, 0)`, which no rule and no later simplification
+/// recognised as zero. The `log(m)` lane then had a computed tangent
+/// `(1 / m) · Clocked(τ, 0)`, held by the twin and read at the audio rate,
+/// and every tangent above `m` carried full product-rule terms that are 0 at
+/// run time: on the faust-coopiano voice, 82 % of the held tangents
+/// (porting/fad-zero-tangent-folding-plan-2026-10-18-en.md). Folded at FAD
+/// time, the lane's tangent is the literal, the twin holds three lanes
+/// (two primals, one tangent), and the other tangent is exact.
+#[test]
+fn fad_around_ondemand_folds_the_zero_tangent_of_an_unreached_input() {
+    let g = 0.5_f32;
+    let m = 40.0_f32;
+    let source = format!(
+        r#"g = hslider("g", {g}, -10, 10, 0.001);
+           m = hslider("m", {m}, 21, 108, 1);
+           f(mm, x) = pow(0.9, (mm - 21) / 48) * g * x, log(mm);
+           process = fad(((_ != 0), m, _) : ondemand(f), g);"#
+    );
+
+    let out = compile_inline("fad_around_od_unreached_input", &source);
+    let arena = &out.parse.state.arena;
+    assert_eq!(
+        out.signals.len(),
+        4,
+        "fad bundle = [primal, tangent] per output"
+    );
+    assert!(
+        matches!(match_sig(arena, out.signals[3]), SigMatch::Real(v) if v == 0.0),
+        "the tangent of log(m) must be the literal zero"
+    );
+    let SigMatch::Seq(block, _) = match_sig(arena, out.signals[1]) else {
+        panic!("the reached lane's tangent must be read through its block");
+    };
+    let SigMatch::OnDemand(lanes) = match_sig(arena, block) else {
+        panic!("the block must be an ondemand");
+    };
+    assert_eq!(
+        lanes.len(),
+        4,
+        "the twin holds its clock, the two primals and one tangent"
+    );
+
+    let clk = vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+    let data = vec![1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let rendered = run_od_fad_source(
+        "fad_around_od_unreached_input",
+        source,
+        &[clk, data.clone()],
+    );
+    let n = 5;
+    let held = data[2];
+    let slope = 0.9_f32.powf((m - 21.0) / 48.0);
+    assert!(
+        (rendered[0][n] - slope * g * held).abs() < 1.0e-5,
+        "primal {} vs {}",
+        rendered[0][n],
+        slope * g * held
+    );
+    assert!(
+        (rendered[1][n] - slope * held).abs() < 1.0e-5,
+        "tangent {} vs {}",
+        rendered[1][n],
+        slope * held
+    );
+    assert!((rendered[2][n] - m.ln()).abs() < 1.0e-5);
+    assert_eq!(rendered[3][n], 0.0, "the unreached lane's tangent is zero");
+}
+
+/// A held tangent that is a non-zero constant is still a hold: `g` in the
+/// block has the literal tangent `1`, which the block's output reads as 0
+/// until the first firing. Only a zero is the same with or without its hold, so
+/// only a zero tangent is folded out of the block (the folding of
+/// `fad_around_ondemand_folds_the_zero_tangent_of_an_unreached_input`).
+#[test]
+fn fad_around_ondemand_constant_tangent_is_held_from_the_first_fire() {
+    let clk = vec![0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+    let data = vec![1.0_f32; 6];
+    let out = run_od_fad_source(
+        "fad_around_od_constant_tangent",
+        r#"g = hslider("g", 0.5, -10, 10, 0.001);
+           process = fad(((_ != 0), _) : ondemand(\(x).(g)), g);"#
+            .to_string(),
+        &[clk, data],
+    );
+    assert_eq!(
+        out[1],
+        vec![0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        "tangent of the held g"
+    );
+    assert_eq!(out[0], vec![0.0, 0.0, 0.5, 0.5, 0.5, 0.5], "the held g");
+}
+
 /// A held lane the seed does not reach, read back through `Seq` and fed into a
 /// recursion: here the flag of a nested block, held, fed back as that block's
 /// clock (the shape of a bounded loop with an exit written with the existing
