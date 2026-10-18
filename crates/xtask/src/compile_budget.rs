@@ -7,9 +7,21 @@
 //! The gate has two independent dimensions.
 //!
 //! **Codegen basket** (`codegen_cases`) measures the complete file-to-C++ path
-//! in scalar and checked vector modes. Absolute per-case ceilings catch large
-//! regressions while a vector/scalar ratio plus a fixed noise allowance catches
-//! vector-only cost growth without treating normal runner jitter as a failure.
+//! in scalar and checked vector modes, each normalized against the same
+//! calibration as the front-end basket. Absolute per-case ceilings remain as a
+//! backstop for a catastrophic blow-up.
+//!
+//! There is deliberately no vector/scalar ratio check. Both modes contain the
+//! whole front end, so every front-end speedup raises the ratio: the allowance
+//! had to go from 4x to 9x on 2026-08-06 and would have needed 12x on
+//! 2026-10-18, each time for an improvement. A vector-only regression already
+//! raises `vector_units_milli`, which is checked per case.
+//!
+//! **Stale baselines.** A measurement below [`STALE_BASELINE_PERCENT`] of its
+//! baseline prints a warning (a GitHub annotation on CI). It does not fail: a
+//! speedup is not a defect. But an unlowered baseline is silent slack -- the
+//! 2026-10-18 audit found `ja_smoothed_parameter` at 3.3 units under a 510-unit
+//! baseline, so a 150x regression would have passed.
 //!
 //! **Front-end basket** (`frontend_cases`) measures the `--check` path only
 //! (`parse -> eval -> propagate -> type -> FIR verify`, no codegen). Absolute
@@ -30,7 +42,13 @@ use std::hint::black_box;
 use std::time::Instant;
 
 const COMPILE_BUDGET_BASELINE: &str = "tests/compile-budget/release-baseline.json";
-const COMPILE_BUDGET_SCHEMA: u32 = 2;
+// Schema 3 drops the vector/scalar ratio fields from the profile. Bumped so a
+// schema-2 file, whose ratio settings would otherwise be ignored silently, is
+// refused instead.
+const COMPILE_BUDGET_SCHEMA: u32 = 3;
+/// A measurement below this percentage of its baseline marks the baseline as
+/// stale. Measured run-to-run spread is about 10%, so 70% is far outside noise.
+const STALE_BASELINE_PERCENT: u64 = 70;
 // A few codegen cases complete in 5 ms. On CI, a repeated measurement of
 // karplus moved from 5 to 10 ms between adjacent documentation-only commits,
 // while the 6 ms front-end calibration and larger cases remained steady.
@@ -77,8 +95,6 @@ struct CompileBudgetProfile {
     vec_size: u32,
     loop_variant: u8,
     scheduling_strategy: u32,
-    max_vector_to_scalar_ratio_milli: u64,
-    fixed_noise_margin_ms: u64,
     /// DSP whose front-end cost defines one *unit*, cancelling machine speed.
     ///
     /// It must be cheap enough to keep the gate fast and structurally unrelated
@@ -215,14 +231,20 @@ pub(crate) fn compile_budget_check(
     if args.update {
         return write_updated_baseline(&baseline_path, &mut baseline, &measured, &codegen);
     }
-    check_frontend_basket(&baseline, &measured)?;
-    check_codegen_basket(&baseline, &codegen, calibration_ms)?;
+    let stale = check_frontend_basket(&baseline, &measured)?
+        + check_codegen_basket(&baseline, &codegen, calibration_ms)?;
 
     println!(
         "compile-budget-check: OK ({} codegen cases scalar + vector, {} front-end cases normalized)",
         baseline.codegen_cases.len(),
         measured.len()
     );
+    if stale > 0 {
+        println!(
+            "compile-budget-check: {stale} stale baseline(s) below {STALE_BASELINE_PERCENT}% \
+             of their recorded units; lower them from this run's figures"
+        );
+    }
     Ok(())
 }
 
@@ -236,7 +258,6 @@ fn validate_baseline(baseline: &CompileBudgetBaseline) -> Result<(), Box<dyn std
     }
     if baseline.profile.vec_size == 0
         || baseline.profile.loop_variant > 1
-        || baseline.profile.max_vector_to_scalar_ratio_milli == 0
         || baseline.profile.repeats == 0
         || baseline.profile.frontend_tolerance_percent == 0
         || baseline.profile.min_calibration_ms == 0
@@ -372,7 +393,7 @@ fn measure_codegen_basket(
             baseline.profile.scheduling_strategy,
             baseline.profile.codegen_repeats,
         )?;
-        check_case_budget(case, &baseline.profile, scalar_ms, vector_ms)?;
+        check_case_budget(case, scalar_ms, vector_ms)?;
         println!(
             "codegen budget {:>26}: scalar={scalar_ms:>6} ms vector={vector_ms:>6} ms",
             case.name
@@ -391,12 +412,14 @@ fn measure_codegen_basket(
 /// The absolute ceilings in [`check_case_budget`] have to survive the slowest
 /// runner, which currently leaves 4.7x to 638x of headroom -- the same width
 /// that let the 2026-07-30 front-end regression through a green CI. These
-/// normalized ceilings are the real gate on the codegen path.
+/// normalized ceilings are the real gate on the codegen path. Returns the
+/// number of stale baselines.
 fn check_codegen_basket(
     baseline: &CompileBudgetBaseline,
     measured: &[CodegenMeasurement],
     calibration_ms: u64,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut stale = 0;
     let noise_units = CODEGEN_TIMER_NOISE_MS
         .saturating_mul(1000)
         .div_ceil(calibration_ms);
@@ -443,15 +466,25 @@ fn check_codegen_basket(
                 )
                 .into());
             }
+            if is_stale(measured_units, baseline_units) {
+                warn_stale(
+                    &format!("codegen {name} {mode}"),
+                    measured_units,
+                    baseline_units,
+                );
+                stale += 1;
+            }
         }
     }
-    Ok(())
+    Ok(stale)
 }
 
+/// Enforces the front-end basket; returns the number of stale baselines.
 fn check_frontend_basket(
     baseline: &CompileBudgetBaseline,
     measured: &[FrontendMeasurement],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let mut stale = 0;
     for FrontendMeasurement { name, units_milli } in measured {
         let case = baseline
             .frontend_cases
@@ -479,8 +512,34 @@ fn check_frontend_basket(
             )
             .into());
         }
+        if is_stale(*units_milli, case.units_milli) {
+            warn_stale(&format!("front-end {name}"), *units_milli, case.units_milli);
+            stale += 1;
+        }
     }
-    Ok(())
+    Ok(stale)
+}
+
+/// Whether `measured` lies below [`STALE_BASELINE_PERCENT`] of `baseline`.
+fn is_stale(measured_units_milli: u64, baseline_units_milli: u64) -> bool {
+    measured_units_milli.saturating_mul(100)
+        < baseline_units_milli.saturating_mul(STALE_BASELINE_PERCENT)
+}
+
+/// Reports a stale baseline, as a GitHub annotation when running on Actions so
+/// that it is visible on the run summary rather than buried in the log.
+fn warn_stale(what: &str, measured_units_milli: u64, baseline_units_milli: u64) {
+    let message = format!(
+        "{what} measures {:.3} units, below {STALE_BASELINE_PERCENT}% of its {:.3}-unit \
+         baseline; lower the baseline so the gate keeps its tolerance",
+        measured_units_milli as f64 / 1000.0,
+        baseline_units_milli as f64 / 1000.0,
+    );
+    if std::env::var_os("GITHUB_ACTIONS").is_some() {
+        println!("::warning title=Stale compile budget baseline::{message}");
+    } else {
+        println!("warning: stale compile budget baseline: {message}");
+    }
 }
 
 fn frontend_ceiling_milli(baseline_units_milli: u64, profile: &CompileBudgetProfile) -> u64 {
@@ -626,9 +685,9 @@ fn compile_frontend(path: &Path) -> Result<usize, Box<dyn std::error::Error>> {
     Ok(output.store.len())
 }
 
+/// Enforces the absolute millisecond ceilings, the coarse backstop.
 fn check_case_budget(
     case: &CompileBudgetCase,
-    profile: &CompileBudgetProfile,
     scalar_ms: u64,
     vector_ms: u64,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -643,17 +702,6 @@ fn check_case_budget(
         return Err(format!(
             "{} vector compile took {vector_ms} ms, ceiling is {} ms",
             case.name, case.vector_max_ms
-        )
-        .into());
-    }
-    let ratio_budget = scalar_ms
-        .saturating_mul(profile.max_vector_to_scalar_ratio_milli)
-        .saturating_div(1000)
-        .saturating_add(profile.fixed_noise_margin_ms);
-    if vector_ms > ratio_budget {
-        return Err(format!(
-            "{} vector compile took {vector_ms} ms; scalar {scalar_ms} ms permits {ratio_budget} ms including noise margin",
-            case.name
         )
         .into());
     }
@@ -684,8 +732,6 @@ mod tests {
             vec_size: 32,
             loop_variant: 0,
             scheduling_strategy: 0,
-            max_vector_to_scalar_ratio_milli: 2000,
-            fixed_noise_margin_ms: 100,
             calibration_path: "tests/impulse-tests/dsp/karplus.dsp".to_owned(),
             repeats: 2,
             codegen_repeats: 2,
@@ -722,15 +768,64 @@ mod tests {
     }
 
     #[test]
-    fn budget_accepts_fixed_noise_margin() {
-        check_case_budget(&case(), &profile(), 10, 120).unwrap();
+    fn budget_rejects_absolute_ceiling_overruns() {
+        assert!(check_case_budget(&case(), 1001, 100).is_err());
+        assert!(check_case_budget(&case(), 100, 2001).is_err());
     }
 
     #[test]
-    fn budget_rejects_absolute_and_relative_regressions() {
-        assert!(check_case_budget(&case(), &profile(), 1001, 100).is_err());
-        assert!(check_case_budget(&case(), &profile(), 100, 2001).is_err());
-        assert!(check_case_budget(&case(), &profile(), 100, 301).is_err());
+    fn budget_accepts_a_front_end_speedup_that_raises_the_vector_scalar_ratio() {
+        // CI run 39115097366: reverb_designer at scalar 304 ms, vector 4990 ms
+        // (16.4x). Front-end speedups had cut the scalar time; vector stood
+        // within its own normalized budget. The removed ratio check failed it.
+        let mut reverb = case();
+        reverb.scalar_max_ms = 45_000;
+        reverb.vector_max_ms = 90_000;
+        check_case_budget(&reverb, 304, 4990).unwrap();
+        let baseline = CompileBudgetBaseline {
+            schema_version: COMPILE_BUDGET_SCHEMA,
+            profile: profile(),
+            codegen_cases: vec![CompileBudgetCase {
+                scalar_units_milli: 72_000,
+                vector_units_milli: 884_000,
+                ..reverb
+            }],
+            frontend_cases: Vec::new(),
+        };
+        check_codegen_basket(&baseline, &[cg("fixture", 50_666, 831_666)], 6).unwrap();
+    }
+
+    #[test]
+    fn stale_baseline_is_flagged_below_seventy_percent_only() {
+        assert!(!is_stale(7_000, 10_000));
+        assert!(is_stale(6_999, 10_000));
+        assert!(!is_stale(12_000, 10_000));
+        // The 2026-10-18 audit: 3.333 units under a 510-unit baseline.
+        assert!(is_stale(3_333, 510_000));
+    }
+
+    #[test]
+    fn stale_baselines_warn_without_failing_and_are_counted() {
+        let baseline = frontend_baseline(10_000);
+        assert_eq!(
+            check_frontend_basket(&baseline, &[fe("fixture", 6_000)]).unwrap(),
+            1
+        );
+        assert_eq!(
+            check_frontend_basket(&baseline, &[fe("fixture", 9_000)]).unwrap(),
+            0
+        );
+        let codegen = CompileBudgetBaseline {
+            schema_version: COMPILE_BUDGET_SCHEMA,
+            profile: profile(),
+            codegen_cases: vec![case()],
+            frontend_cases: Vec::new(),
+        };
+        // Both modes stale: 5 and 10 units under 10 and 20.
+        assert_eq!(
+            check_codegen_basket(&codegen, &[cg("fixture", 5_000, 10_000)], 5).unwrap(),
+            2
+        );
     }
 
     #[test]

@@ -227,8 +227,13 @@ found by a user, not by a gate. Treat cost like behavior.
   normalization, the same width that let the 2026-07-30 front-end regression
   through. Each measurement is divided by the cost of a calibration DSP measured
   in the same process, so machine speed cancels out and the tolerance is 25%.
-  The absolute ceilings and the vector/scalar ratio are retained as a coarse
-  backstop only.
+  The absolute ceilings are retained as a coarse backstop only. There is no
+  vector/scalar ratio check: both modes contain the whole front end, so every
+  front-end speedup raised the ratio and failed the gate on an improvement.
+- A case measuring below 70% of its baseline prints a stale-baseline warning
+  (a GitHub annotation on CI). It does not fail, but a stale baseline is silent
+  slack: lower it from the CI figures in the next commit. Lowering a baseline
+  needs no justification; raising one does.
 - The gate detects a per-case regression of 25% or more. Smaller ones pass, by
   design: measured run-to-run spread is ±8%, and a tighter bound would be flaky.
   Do not read a green gate as "no slowdown"; read it as "no slowdown this gate
