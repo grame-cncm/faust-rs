@@ -1437,10 +1437,12 @@ fn emit_stmt(
                         c_string_literal(&value)
                     );
                 }
+                // `MetaGlue::declare(metaInterface, key, value)` has no zone:
+                // a zone is a UI notion.
                 EmitMode::Default | EmitMode::Metadata | EmitMode::Compute => {
                     let _ = writeln!(
                         out,
-                        "{tab}m->declare(m->metaInterface, {zone}, {}, {});",
+                        "{tab}m->declare(m->metaInterface, {}, {});",
                         c_string_literal(&key),
                         c_string_literal(&value)
                     );
@@ -2004,7 +2006,8 @@ int main(void) {
             "ui_interface->addHorizontalSlider(ui_interface->uiInterface, \"gain\", &dsp->fGain, (FAUSTFLOAT)0.5, (FAUSTFLOAT)0.0, (FAUSTFLOAT)1.0, (FAUSTFLOAT)0.01);"
         ));
         assert!(out.contains("void metadatamydsp(MetaGlue* m)"));
-        assert!(out.contains("m->declare(m->metaInterface, 0, \"author\", \"faust-rs\");"));
+        // `MetaGlue::declare` takes no zone.
+        assert!(out.contains("m->declare(m->metaInterface, \"author\", \"faust-rs\");"));
     }
 
     #[test]

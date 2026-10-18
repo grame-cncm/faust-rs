@@ -1295,22 +1295,15 @@ fn emit_stmt_with_mode(
                         cpp_string_literal(&value)
                     );
                 }
+                // `Meta::declare(key, value)` has no zone: a zone is a UI
+                // notion.
                 EmitMode::Default | EmitMode::Metadata | EmitMode::Compute => {
-                    if var == "0" {
-                        let _ = writeln!(
-                            out,
-                            "{tab}m->declare({}, {});",
-                            cpp_string_literal(&key),
-                            cpp_string_literal(&value)
-                        );
-                    } else {
-                        let _ = writeln!(
-                            out,
-                            "{tab}m->declare(&{var}, {}, {});",
-                            cpp_string_literal(&key),
-                            cpp_string_literal(&value)
-                        );
-                    }
+                    let _ = writeln!(
+                        out,
+                        "{tab}m->declare({}, {});",
+                        cpp_string_literal(&key),
+                        cpp_string_literal(&value)
+                    );
                 }
             }
             Ok(())

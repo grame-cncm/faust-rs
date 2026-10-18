@@ -428,3 +428,73 @@ fn c_replays_the_compilation_metadata_when_metadata_is_absent() {
     );
     assert!(!text.contains("module-first c backend prototype"), "{text}");
 }
+
+/// A metadata `declare` has no zone: `Meta::declare(key, value)` (C:
+/// `MetaGlue::declare(metaInterface, key, value)`). c always passed one and
+/// cpp passed one for a named zone, which does not compile.
+#[test]
+fn a_metadata_declare_never_passes_a_zone() {
+    for (backend, expected) in [
+        ("c", "m->declare(m->metaInterface, \"author\", \"me\");"),
+        ("cpp", "m->declare(\"author\", \"me\");"),
+    ] {
+        let (_, entry, generate) = backends()
+            .into_iter()
+            .find(|(name, _, _)| *name == backend)
+            .expect("listed");
+        let (mut store, module) = module_with(entry, |_| Vec::new());
+        let fir::FirMatch::Module {
+            num_inputs,
+            num_outputs,
+            name,
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            ..
+        } = fir::match_fir(&store, module)
+        else {
+            unreachable!()
+        };
+        let fir::FirMatch::Block(mut items) = fir::match_fir(&store, functions) else {
+            unreachable!()
+        };
+        let mut b = FirBuilder::new(&mut store);
+        let declare = b.add_meta_declare("fState", "author", "me");
+        let body = b.block(&[declare]);
+        let meta = FirType::Meta;
+        let metadata = b.declare_fun(
+            "metadata",
+            FirType::Fun {
+                args: vec![FirType::Ptr(Box::new(FirType::Obj)), meta.clone()],
+                ret: Box::new(FirType::Void),
+            },
+            &[
+                fir::NamedType {
+                    name: "dsp".to_owned(),
+                    typ: FirType::Ptr(Box::new(FirType::Obj)),
+                },
+                fir::NamedType {
+                    name: "m".to_owned(),
+                    typ: meta,
+                },
+            ],
+            Some(body),
+            false,
+        );
+        items.push(metadata);
+        let functions = b.block(&items);
+        let module = b.module(
+            num_inputs,
+            num_outputs,
+            name,
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
+        let text = generate(&store, module).unwrap_or_else(|e| panic!("{backend}: {e}"));
+        assert!(text.contains(expected), "{backend}:\n{text}");
+    }
+}
