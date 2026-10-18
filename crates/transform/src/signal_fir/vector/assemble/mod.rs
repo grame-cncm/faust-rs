@@ -10,11 +10,11 @@
 //! stack temporaries before any projection storage is updated, preserving the
 //! simultaneous `sigRec`/`sigProj` step.
 //!
-//! Clock guards follow the scalar `SignalFIRLowerer` implementation of OD, US,
-//! and DS. Unlike the C++ compiler's mutable `CodeLoop` tree, Rust assembles an
-//! immutable, checked artifact from the accepted plan/route/state/clock
-//! artifacts, keeps recursion-step declarations in the enclosing sample
-//! scope, and
+//! Clock guards follow the scalar `SignalToFirLower` implementation of OD, US,
+//! and DS (`signal_fir/module/clocked.rs`). Unlike the C++ compiler's mutable
+//! `CodeLoop` tree, Rust assembles an immutable, checked artifact from the
+//! accepted plan/route/state/clock artifacts, keeps recursion-step
+//! declarations in the enclosing sample scope, and
 //! places held clock outputs after the island guard, so a non-firing sample
 //! observes the previous held value. Final lifecycle placement is checked by
 //! `vector_module`. Clocked composition adds one checked shared state cursor

@@ -10,7 +10,8 @@
 //! inferred here: fixed or bounded-variable delays, symbolic recursion, and
 //! clock wrappers are lowered only through their accepted state/clock
 //! artifacts, and table/soundfile reads through their admitted decorations.
-//! UI programs, foreign calls, and reverse AD remain fail-closed.
+//! UI controls are lowered against the zones of `vector::ui`; foreign function
+//! calls and reverse AD remain fail-closed.
 //!
 //! Development history: P5.2/P6.5 and the E-phase table/soundfile admissions
 //! (see the 2026-07 journal).

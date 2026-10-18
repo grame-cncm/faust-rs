@@ -52,8 +52,10 @@
 //! # Known unsupported behavior
 //! Delays with unbounded runtime intervals, complex table-generator forms
 //! depending on runtime context, and foreign functions inside `SIGGEN`
-//! interpretation are rejected with typed `FRS-SFIR-*` errors. UI-program and
-//! reverse-AD graphs under `-vec` fall back to scalar with stable reasons.
+//! interpretation are rejected with typed `FRS-SFIR-*` errors. Reverse-AD
+//! graphs under `-vec` fall back to scalar (`FRS-VEC-RAD-SCALAR`); a UI
+//! program falls back only when its vector UI lifecycle FIR cannot be built
+//! (`FRS-VEC-FALLBACK-UI`).
 //!
 //! # Crate boundary contract
 //! - `transform` owns signal->FIR lowering entrypoints.

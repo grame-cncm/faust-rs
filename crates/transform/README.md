@@ -88,7 +88,7 @@ same sub-module, through `module::subcontainer_compile`. See
 
 | Tier | Items |
 |---|---|
-| Stable compiler contract | `signal_fir::{compile_signals_to_fir_fastlane_with_ui, compile_signals_to_fir_fastlane_clocked, compile_signals_to_fir_fastlane_clocked_with_timing}`, `SignalFirOptions`, `SignalFirOutput`, `SignalFirError`/`SignalFirErrorCode`, `RealType`, `ComputeMode`, `TableInitMode`, `VectorPipelineStatus`, `VectorFallbackReason`, `VectorEffectiveMode`, `schedule::SchedulingStrategy`, `signal_prepare::{prepare_signals_for_fir, prepare_signals_for_fir_verified, PreparedSignals, VerifiedPreparedSignals}` |
+| Stable compiler contract | `signal_fir::{compile_signals_to_fir_fastlane, SignalFirRequest}`, `SignalFirOptions`, `SignalFirOutput`, `SignalFirError`/`SignalFirErrorCode`, `RealType`, `ComputeMode`, `ControlRateMode`, `ProcessingApi`, `TableInitMode`, `VectorPipelineStatus`, `VectorFallbackReason`, `VectorEffectiveMode`, `DEFAULT_BRA_TAPE_BLOCK_SIZE`, `schedule::SchedulingStrategy`, `signal_prepare::{prepare_signals_for_fir, prepare_signals_for_fir_verified, PreparedSignals, VerifiedPreparedSignals, PrepareOptions}` and their `*_with_options` / `prepare_signals_for_fir_verified_with_origins` variants |
 | Diagnostic / testing surface | `clk_env::annotate`, `hgraph::{build_hgraph, audit_hgraph, audit_control_variability, schedule}`, `signal_fir::decoration_verify`, `signal_fir::shadow`, `signal_fir::pv_slice`, the vector artifact producers/checkers under `signal_fir::vector::*` |
 | Compatibility facade | `signal_fir::vector_*` aliases of the grouped `signal_fir::vector::{...}` modules (retained during the 2026-07 cleanup; do not remove without an explicit API decision) |
 
@@ -96,8 +96,8 @@ same sub-module, through `module::subcontainer_compile`. See
 
 | Item | Description |
 |---|---|
-| `compile_signals_to_fir_fastlane_with_ui(arena, sigs, n_in, n_out, ui, opts)` | Canonical grouped-UI-aware entry point |
-| `compile_signals_to_fir_fastlane_clocked(..., clock_domains, opts)` | Clock-domain-aware variant (`ondemand`/`upsampling`/`downsampling`) |
+| `compile_signals_to_fir_fastlane(&SignalFirRequest)` | Single entry point |
+| `SignalFirRequest::new(arena, sigs, n_in, n_out, ui, opts)` | Required inputs; optional ones attach with `.with_clock_domains(..)` (`ondemand`/`upsampling`/`downsampling`), `.with_timing_sink(..)`, `.with_signal_origins(..)`, `.with_forced_shadow_report()` |
 | `SignalFirOptions` | `module_name`, `real_type`, delay thresholds (`-mcd`/`-dlt`), `compute_mode` (`-vec -vs -lv`), `scheduling_strategy` (`-ss`) |
 | `SignalFirOutput` | `FirStore` + module root + vector status/effective mode + diagnostics |
 | `SignalFirError` / `SignalFirErrorCode` | Typed errors with stable `FRS-SFIR-*` codes |

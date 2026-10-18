@@ -71,8 +71,9 @@ pub(super) enum RecursionStorageStrategy {
 /// - [`RecursionStorageStrategy::Circular`] when accumulated delay analysis
 ///   upsizes the carrier beyond the copy-delay threshold
 ///
-/// Source provenance (C++): `signalFIRCompiler.cpp` (`generateRecProj`,
-/// `generateRec`), emitted as `fRecN[2]` / `iRecN[2]`.
+/// Source provenance (C++): `compiler/generator/instructions_compiler.cpp`
+/// (`InstructionsCompiler::generateRecProj`, `generateRec`), emitted as
+/// `fRecN[2]` / `iRecN[2]`.
 #[derive(Clone, Debug)]
 pub(super) struct RecArrayInfo {
     /// Generated DSP-struct array variable name (e.g. `fRec7`).

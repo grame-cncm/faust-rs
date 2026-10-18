@@ -2,8 +2,8 @@
 //!
 //! Faust C++ has no corresponding instance-SIMD pass. The signal constructor
 //! semantics and recursive-group decoding come from
-//! `compiler/signals/signals.cpp` and `recursivness.cpp`; the adapted Rust
-//! contract is section 8 of
+//! `compiler/signals/signals.cpp` and `compiler/signals/recursiveness.cpp`;
+//! the adapted Rust contract is section 8 of
 //! `porting/vector-mode-signal-level-analysis-cpp-port-plan-2026-07-10-en.md`.
 //! A shape hash is only a candidate key: [`verify_lockstep_isomorphism`]
 //! confirms every match by a second parallel traversal and checks the explicit

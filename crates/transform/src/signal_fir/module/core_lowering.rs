@@ -880,12 +880,12 @@ impl<'a> SignalToFirLower<'a> {
     ///
     /// **Recursion feedback optimization**: if the carried `value` is
     /// `Proj(i, SYMREC/SYMREF)` pointing into the currently active recursion
-    /// context (detected by `recursion_feedback_info`), the group's existing
-    /// recursion array is reused directly — no separate state variable is
+    /// context (detected by `resolve_recursion_delay_ref`), the group's existing
+    /// recursion carrier is reused directly — no separate state variable is
     /// allocated and no extra write is emitted.  The previous-sample value is
-    /// read as `rec_array[(fIOTA - 1) & 1]`, which is always valid because the
-    /// recursion body writes `rec_array[0]` earlier in the same sample and a
-    /// deferred copy updates `rec_array[1]` after outputs are stored.
+    /// read from the carrier according to its `RecursionStorageStrategy`: the
+    /// scalar field (`SingleScalar`), the slot one past the implicit delay
+    /// (`ExactShift`), or a circular index (`Circular`).
     ///
     /// For all other `value` signals the normal path applies:
     ///

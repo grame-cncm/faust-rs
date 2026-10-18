@@ -346,9 +346,9 @@ fn collect_descendants(arena: &TreeArena, roots: &[SigId], output: &mut HashSet<
 ///
 /// The forest must satisfy the **promotion invariant** documented on
 /// [`build_module`]: all type coercions are represented as explicit
-/// `IntCast`/`FloatCast` signal-tree nodes inserted by
-/// `promote_signals_for_fir`.  The lowering methods therefore never insert
-/// implicit casts themselves.
+/// `IntCast`/`FloatCast` signal-tree nodes inserted by the `signal_prepare`
+/// promotion pass.  The lowering methods therefore never insert implicit
+/// casts themselves.
 ///
 /// # Sub-struct organisation
 ///

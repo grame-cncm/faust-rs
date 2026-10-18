@@ -22,7 +22,7 @@
 //! | [`assemble`] | lowered program + state/clock plans | `VerifiedVectorFirAssembly`: loops, state words, islands | independent exact-coverage FIR inspection |
 //! | `module` | assembly | final FIR module: outputs, lifecycle, `-lv 0/1` chunk drivers | FIR checker + vector-specific final checks; maps rejections to fallback reasons |
 //! | [`lockstep`] | prepared groups | instance-vectorization isomorphism candidates | witness-based independent gate |
-//! | `ui` | `UiProgram` | UI zone/effect facts for planning | (vocabulary; UI programs currently fall back) |
+//! | `ui` | `UiProgram` | `VectorUiFir`: zone declarations, `instanceResetUserInterface` and grouped `buildUserInterface` statements (builder shared with the scalar lowerer) | final-module check of exact declaration/reset/UI-statement coverage and UI-write attribution |
 //!
 //! Semantic contracts frozen across refactors: deterministic ordering of
 //! every schedule and serialized certificate; exact schema versions and

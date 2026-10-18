@@ -6,8 +6,9 @@
 //! - `SIGWRTBL` / `SIGGEN` — write-driven tables (e.g. delay lines with an
 //!   external write index).
 //!
-//! Also owns table sizing helpers (`table_size_for_signal`) and the index
-//! expression normalisation that enforces integer-domain access.
+//! Also owns table sizing (`table_size_from_sig`) and the `-ct` debug
+//! assertion on table indexes (`debug_assert_index_checked`); index clamping
+//! itself happens at signal level in `signal_prepare` (steps 2.10a/2.10b).
 use crate::signal_fir::FirId;
 use crate::signal_fir::FirType;
 use crate::signal_fir::SigId;

@@ -15,8 +15,8 @@
 //!
 //! # C++ provenance and adaptation
 //! Facts come from `compiler/generator/occurrences.cpp::OccMarkup`,
-//! `compiler/signals/conditionAnnotation.cpp`, and
-//! `compiler/Dependencies/DependenciesUtils.cpp::getSignalDependencies`.
+//! `compiler/generator/instructions_compiler.cpp::InstructionsCompiler::conditionAnnotation`,
+//! and `compiler/Dependencies/DependenciesUtils.cpp::getSignalDependencies`.
 //! Rust keeps the certificate as an internal value; canonical JSON and
 //! hashing are deferred to the canonical-JSON boundary. [`CanonicalSigType`] uses exact
 //! field snapshots because `SigType::PartialEq` intentionally ignores fixed

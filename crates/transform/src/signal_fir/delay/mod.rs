@@ -42,7 +42,7 @@
 //!
 //! # Strategy descriptions
 //!
-//! ## Shift/copy (`DelayKind::Shift`, delays ≤ `-mcd`, default 16)
+//! ## Shift/copy (`DelayKind::Shift`, delays < `-mcd`, default 16)
 //!
 //! Each sample, all buffer elements are shifted one slot toward the high end,
 //! and the new value is placed at index 0.  Read is a direct load at index
@@ -67,7 +67,7 @@
 //! end-of-sample: fIOTA = fIOTA + 1;
 //! ```
 //!
-//! ## If-based wrapping (`DelayKind::IfWrapping`, delays > `-dlt`)
+//! ## If-based wrapping (`DelayKind::IfWrapping`, delays ≥ `-dlt`)
 //!
 //! Uses an exact-size buffer (size = `max_delay + 1`) with a dedicated
 //! per-line integer counter.  The counter wraps to zero via an `if` comparison
@@ -123,8 +123,8 @@
 //!
 //! Source provenance (C++):
 //! - `compiler/transform/signalFIRCompiler.hh` — `DelayLine`, `allocateDelayLineAux`
-//! - `compiler/transform/signalFIRCompiler.cpp` — `compileSigDelay`, `writeReadDelay`,
-//!   `checkDelayInterval`
+//! - `compiler/transform/signalFIRCompiler.cpp` — `compileSigDelay`, `writeReadDelay`
+//! - `compiler/signals/sigtype.cpp` — `checkDelayInterval`
 
 use fir::{FirId, FirType};
 

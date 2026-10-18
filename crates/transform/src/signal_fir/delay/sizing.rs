@@ -87,7 +87,8 @@ pub(crate) fn constant_delay_amount(
 ///
 /// # C++ correspondence
 ///
-/// Mirrors `signalFIRCompiler.cpp::checkDelayInterval`, which rejects any
+/// Mirrors `compiler/signals/sigtype.cpp::checkDelayInterval` (Rust:
+/// `sigtype::check_delay_interval`), which rejects any
 /// delay with an interval whose upper bound cannot be determined or is
 /// negative.
 pub(crate) fn variable_delay_max_bound(

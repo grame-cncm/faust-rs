@@ -89,9 +89,11 @@
 //! (seven corpus goldens as of 2026-09-23); the question is open, on
 //! purpose. The orientation of the barriers is incremental (two reachability
 //! sets per barrier, extended by the edges added) after it was found cubic
-//! in the number of calls on a sum of `ma.tanh` (2026-09-23); the test
-//! `barrier_orientation_equals_the_pairwise_reference` keeps the pairwise
-//! definition as the reference it must equal edge for edge.
+//! in the number of calls on a sum of `ma.tanh` (2026-09-23); the tests
+//! `barrier_orientation_keeps_the_pairwise_orders_with_linear_edges` and
+//! `a_chain_of_foreign_recursions_is_ordered_with_linear_edges` keep the
+//! pairwise definition as the reference whose orders it must reproduce,
+//! with linearly many edges.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;

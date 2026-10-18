@@ -1067,9 +1067,10 @@ fn assemble_module_output(
 ///
 /// # Promotion invariant
 ///
-/// The `signals` forest **must** have been processed by
-/// `signal_prepare::promote_signals_for_fir` (and optionally
-/// `normalize::simplify`) before being passed here.  That pass guarantees:
+/// The `signals` forest **must** come from the `signal_prepare` staging
+/// (`prepare_signals_for_fir*`), whose promotion pass
+/// (`normalize::promote_signals_fastlane`) runs before it reaches here.  That
+/// pass guarantees:
 ///
 /// - Every `BinOp(op, lhs, rhs)` node has operands whose signal domain
 ///   types are already consistent with `op`: mixed Int/Real operands are
@@ -1081,7 +1082,7 @@ fn assemble_module_output(
 /// - `Delay1(x)` and `Prefix(init, x)` have `type(init) == type(x)`.
 ///
 /// **Consequence for the lowerer**: no implicit coercion is needed inside
-/// `lower_binop`, `lower_delay_state`, or `normalized_table_index`.  All
+/// `lower_binop` or `lower_delay_state`.  All
 /// necessary casts appear as explicit signal-tree nodes and are handled by
 /// `lower_cast` when the lowerer dispatches on `SigMatch::IntCast /
 /// FloatCast`.

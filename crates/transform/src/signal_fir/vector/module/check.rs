@@ -305,9 +305,9 @@ pub(super) fn verify_ui_write_attribution(
 /// predicate, so their agreement cannot catch a misclassification of one. This
 /// reads the emitted body instead: a table whose content is declared once with
 /// initializers must carry no `StoreTable` anywhere in `compute`, whatever the
-/// signal-level model believed. Every table reaching a checked vector module is
-/// read-only today because `lower_readonly_table_definition` rejects live write
-/// ports; admitting mutable tables must extend this check rather than drop it.
+/// signal-level model believed. Only the read-only tables (`static_declarations`)
+/// are covered here; mutable tables, which `lower_table_definition` lowers for
+/// live write ports, are checked by `verify_mutable_table_attribution`.
 pub(super) fn verify_readonly_table_stores(
     store: &FirStore,
     compute: FirId,
