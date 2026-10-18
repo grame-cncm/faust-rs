@@ -776,3 +776,25 @@ fn test_parse_io_channel() {
     assert_eq!(parse_io_channel("output1", "output"), Some(1));
     assert_eq!(parse_io_channel("fGain", "input"), None);
 }
+
+/// A lifecycle body ends with `Return(None)`; a returned value has no
+/// consumer in the interpreter and is refused, as wasm and cranelift refuse
+/// it, instead of being silently discarded.
+#[test]
+fn a_returned_value_is_refused_not_discarded() {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let end = b.ret(None);
+    let value = b.int32(1);
+    let valued = b.ret(Some(value));
+
+    let mut compiler = FirToFbcCompiler::<f32>::new();
+    compiler
+        .compile_node(&store, end)
+        .expect("a bare return ends a body");
+    let mut compiler = FirToFbcCompiler::<f32>::new();
+    assert!(matches!(
+        compiler.compile_node(&store, valued),
+        Err(CompileError::UnsupportedNode { .. })
+    ));
+}

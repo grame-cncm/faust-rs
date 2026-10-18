@@ -199,9 +199,12 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
             } => self.compile_add_meta_declare(var, key, value),
 
             // --- No-ops ---
+            // A lifecycle body returns nothing: `Return(None)` is its end. A
+            // returned value has no consumer here and is refused below, as
+            // wasm and cranelift refuse it, rather than silently discarded.
             FirMatch::NullStatement
             | FirMatch::Label(_)
-            | FirMatch::Return(_)
+            | FirMatch::Return(None)
             | FirMatch::Int32Array { .. }
             | FirMatch::Float32Array { .. }
             | FirMatch::Float64Array { .. } => Ok(()),
