@@ -542,7 +542,7 @@ No discrepancy. C++ module mapping, sampled line numbers, options `-svg`, `--sca
 - `codegen/README.md:635-636` — "All backends" would use the 8 fixtures; asc, codebox and cmajor do not.
 - `interp/fbc_to_cpp.rs:1-52` — missing C++ provenance: `FBCCPPCompiler`, in `compiler/generator/interpreter/fbc_cpp_compiler.hh:107`.
 - `codegen/README.md:316-322` — the `If(b1,b2) → if/else` rule omits the two special cases documented in the module (branches reduced to `Return` omitted, inverted condition).
-- `c/mod.rs:967` — `CodeContainer::generateMemoryMethods` does not exist in the reference: the C surface is a Rust extension (see `cpp_code_container.cpp:754-830`).
+- `c/mod.rs:967` — `CodeContainer::generateMemoryMethods` does not exist in the reference; the C `-mem` code is `CCodeContainer::produceClass` with `generateAllocateFun`/`generateDestroyFun` (`c/c_code_container.cpp:290-292`). (Corrected during the fix pass: an earlier version of this item called the C surface a Rust extension.)
 
 **minor**
 - `wasm/layout.rs:131-133` — `cargo doc` errors (see §1).
