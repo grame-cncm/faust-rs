@@ -100,16 +100,9 @@ impl Default for JuliaOptions {
 }
 
 /// Scalar precision selected for the Julia backend.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum JuliaRealType {
-    /// Single precision, matching Faust default code generation.
-    #[default]
-    Float32,
-    /// Double precision, matching Faust `-double`.
-    Float64,
-}
+pub type JuliaRealType = super::RealPrecision;
 
-impl JuliaRealType {
+impl super::RealPrecision {
     fn julia_name(self) -> &'static str {
         match self {
             Self::Float32 => "Float32",

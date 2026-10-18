@@ -110,6 +110,21 @@ pub fn unsupported_sub_modules_message(backend: &str, names: &[String]) -> Strin
     )
 }
 
+/// Scalar precision of a backend's generated real values: Faust's default
+/// `-single`, or `-double`.
+///
+/// One enum instead of three identical ones: the cmajor, julia and rust
+/// options keep their own names (`CmajorRealType`, `JuliaRealType`,
+/// `RustRealType`) as aliases of this type, so callers are unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RealPrecision {
+    /// Single precision, Faust's default code generation.
+    #[default]
+    Float32,
+    /// Double precision, Faust `-double`.
+    Float64,
+}
+
 pub mod codegen_error;
 pub mod host_function;
 
@@ -131,3 +146,20 @@ pub mod rust;
 pub mod sdf3;
 pub mod vhdl;
 pub mod wasm;
+
+#[cfg(test)]
+mod tests {
+    use super::RealPrecision;
+
+    /// The three backend precision names are one type: a value chosen for one
+    /// backend's options is accepted by the others, and the default is
+    /// Faust's single precision everywhere.
+    #[test]
+    fn backend_precision_aliases_are_one_type() {
+        let rust: super::rust::RustRealType = super::julia::JuliaRealType::Float64;
+        let cmajor: super::cmajor::CmajorRealType = rust;
+        assert_eq!(cmajor, RealPrecision::Float64);
+        assert_eq!(cmajor.cmajor_name(), "float64");
+        assert_eq!(super::rust::RustRealType::default(), RealPrecision::Float32);
+    }
+}

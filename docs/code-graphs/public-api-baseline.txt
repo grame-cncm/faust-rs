@@ -178,7 +178,6 @@ enum AccessMetric
 enum AllocationPhase
 enum BackendFailureKind
 enum BlockStoreData
-enum CmajorRealType
 enum CodegenErrorCode
 enum CompileError
 enum ComputeCostError
@@ -194,7 +193,6 @@ enum HeapType
 enum HostScalarType
 enum JsonBuildError
 enum JsonUiItem
-enum JuliaRealType
 enum LayoutValueSource
 enum MemoryLayoutError
 enum MemoryLayoutFlavor
@@ -202,7 +200,7 @@ enum MemoryManagerMode
 enum MemoryRole
 enum MemoryScope
 enum MemoryType
-enum RustRealType
+enum RealPrecision
 enum SampleType
 enum StructFieldKind
 enum WasmBackendErrorCode
@@ -491,9 +489,12 @@ struct WasmOptions
 trait BackendCodegenError
 trait CodegenErrorCode
 trait FbcReal
+type CmajorRealType
 type CodegenError
 type CompilerParts
 type FirFixtureBuilder
+type JuliaRealType
+type RustRealType
 type WasmBackendError
 use api
 use bytecode

@@ -84,14 +84,7 @@ impl Default for RustOptions {
 }
 
 /// Scalar precision selected for the generated `FaustFloat` alias.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RustRealType {
-    /// Single precision, matching Faust default code generation.
-    #[default]
-    Float32,
-    /// Double precision, matching Faust `-double`.
-    Float64,
-}
+pub type RustRealType = super::RealPrecision;
 
 /// Stable machine-readable error codes for the Rust backend emitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -61,17 +61,11 @@ use super::textual::{OperandSide, c_like_fir_operator, infix_operand_needs_paren
 /// Stable backend identifier used by CLI, diagnostics, and capability tables.
 pub const BACKEND_NAME: &str = "cmajor";
 
-/// Cmajor scalar precision.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CmajorRealType {
-    /// Cmajor `float32`, matching Faust `-single`.
-    #[default]
-    Float32,
-    /// Cmajor `float64`, matching Faust `-double`.
-    Float64,
-}
+/// Cmajor scalar precision: `float32` for Faust `-single`, `float64` for
+/// `-double`.
+pub type CmajorRealType = super::RealPrecision;
 
-impl CmajorRealType {
+impl super::RealPrecision {
     /// Returns the Cmajor scalar type spelling.
     #[must_use]
     pub const fn cmajor_name(self) -> &'static str {
