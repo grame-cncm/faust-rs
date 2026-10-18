@@ -125,61 +125,26 @@ pub(crate) fn define_static_tables_in_jit(
             continue;
         }
 
-        // Serialise element values to little-endian bytes.
-        //
-        // Note: each arm only appends bytes for the `FirMatch` variant matching
-        // `elem_type`; other value shapes are silently skipped rather than
-        // rejected, which relies on FIR table construction already guaranteeing
-        // element/type homogeneity.
-        let bytes: Box<[u8]> = match &elem_type {
-            FirType::Int32 => {
-                let mut buf = Vec::with_capacity(values.len() * 4);
-                for &v in &values {
-                    if let FirMatch::Int32 { value, .. } = match_fir(store, v) {
-                        buf.extend_from_slice(&value.to_le_bytes());
-                    }
-                }
-                buf.into_boxed_slice()
-            }
-            FirType::Float32 | FirType::FaustFloat
-                if !(matches!(elem_type, FirType::FaustFloat) && double) =>
-            {
-                let mut buf = Vec::with_capacity(values.len() * 4);
-                for &v in &values {
-                    match match_fir(store, v) {
-                        FirMatch::Float32 { value, .. } => {
-                            buf.extend_from_slice(&value.to_le_bytes());
-                        }
-                        FirMatch::Float64 { value, .. } => {
-                            buf.extend_from_slice(&(value as f32).to_le_bytes());
-                        }
-                        _ => {}
-                    }
-                }
-                buf.into_boxed_slice()
-            }
-            // `FaustFloat` static table under `-double`: emit 64-bit elements.
-            FirType::Float64 | FirType::FaustFloat => {
-                let mut buf = Vec::with_capacity(values.len() * 8);
-                for &v in &values {
-                    match match_fir(store, v) {
-                        FirMatch::Float64 { value, .. } => {
-                            buf.extend_from_slice(&value.to_le_bytes());
-                        }
-                        FirMatch::Float32 { value, .. } => {
-                            buf.extend_from_slice(&(value as f64).to_le_bytes());
-                        }
-                        _ => {}
-                    }
-                }
-                buf.into_boxed_slice()
-            }
-            other => {
-                return Err(CraneliftBackendError::unsupported_module_shape(format!(
-                    "static table `{name}` has unsupported element type for JIT data: {other:?}"
-                )));
-            }
-        };
+        // Serialise element values to little-endian bytes. The JIT lays out
+        // integer and real tables only.
+        if !matches!(
+            elem_type,
+            FirType::Int32 | FirType::Float32 | FirType::Float64 | FirType::FaustFloat
+        ) {
+            return Err(CraneliftBackendError::unsupported_module_shape(format!(
+                "static table `{name}` has unsupported element type for JIT data: {elem_type:?}"
+            )));
+        }
+        let mut buf = Vec::with_capacity(values.len() * 8);
+        for &v in &values {
+            crate::backends::table_bytes::append_element(store, v, &elem_type, double, &mut buf)
+                .map_err(|m| {
+                    CraneliftBackendError::unsupported_module_shape(format!(
+                        "static table `{name}` has an unsupported initializer: {m}"
+                    ))
+                })?;
+        }
+        let bytes: Box<[u8]> = buf.into_boxed_slice();
 
         let align: u64 = match &elem_type {
             FirType::Float64 | FirType::Int64 => 8,

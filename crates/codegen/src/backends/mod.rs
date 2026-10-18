@@ -33,6 +33,7 @@ pub(crate) mod c_family;
 pub(crate) mod faust_api;
 pub(crate) mod literals;
 pub(crate) mod module_view;
+pub(crate) mod table_bytes;
 pub(crate) mod textual;
 
 use fir::{FirId, FirMatch, FirStore, match_fir};

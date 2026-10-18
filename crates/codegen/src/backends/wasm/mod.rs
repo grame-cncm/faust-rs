@@ -2582,36 +2582,19 @@ fn append_static_scalar_bytes(
     options: &WasmOptions,
     out: &mut Vec<u8>,
 ) -> Result<(), WasmBackendError> {
-    match (elem_type, match_fir(store, value)) {
-        (FirType::Bool, FirMatch::Bool { value, .. }) => {
-            out.extend_from_slice(&u32::from(value).to_le_bytes());
-        }
-        (FirType::Int32, FirMatch::Int32 { value, .. }) => {
-            out.extend_from_slice(&value.to_le_bytes());
-        }
-        (FirType::Float32 | FirType::FaustFloat, FirMatch::Float32 { value, .. }) => {
-            out.extend_from_slice(&value.to_le_bytes());
-        }
-        (FirType::Float64, FirMatch::Float64 { value, .. }) => {
-            out.extend_from_slice(&value.to_le_bytes());
-        }
-        (FirType::FaustFloat, FirMatch::Float64 { value, .. }) if !options.double_precision => {
-            out.extend_from_slice(&(value as f32).to_le_bytes());
-        }
-        (FirType::FaustFloat, FirMatch::Float64 { value, .. }) if options.double_precision => {
-            out.extend_from_slice(&value.to_le_bytes());
-        }
-        _ => {
-            return Err(WasmBackendError::new(
-                WasmBackendErrorCode::UnsupportedModuleShape,
-                format!(
-                    "unsupported static table initializer for WASM data segment: elem_type={elem_type:?}, value={:?}",
-                    match_fir(store, value)
-                ),
-            ));
-        }
-    }
-    Ok(())
+    crate::backends::table_bytes::append_element(
+        store,
+        value,
+        elem_type,
+        options.double_precision,
+        out,
+    )
+    .map_err(|m| {
+        WasmBackendError::new(
+            WasmBackendErrorCode::UnsupportedModuleShape,
+            format!("unsupported static table initializer for WASM data segment: {m}"),
+        )
+    })
 }
 
 /// Recursive helper used by [`collect_wasm_imports`] to discover imported
