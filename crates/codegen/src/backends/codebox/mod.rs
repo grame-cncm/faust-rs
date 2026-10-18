@@ -42,6 +42,7 @@ use std::fmt::Write as _;
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
     ModuleView, SkeletonCodes, block_items, decode_module, find_function_body, is_dsp_api_method,
+    surviving_sub_modules,
 };
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, NamedType, match_fir};
 
@@ -171,6 +172,14 @@ fn generate_codebox_module_step(
         })
         .transpose()?;
     let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    // Flattening removes every sub-module; a survivor would be a table this
+    // backend declares and nothing fills, which reads as zeros. wasm,
+    // interp and cranelift already refuse it.
+    if let Some(message) = surviving_sub_modules(store, module) {
+        return Err(
+            CodegenError::new(CodegenErrorCode::InvalidModuleSection, message).at_node(module),
+        );
+    }
 
     let view = decode_module(store, module)?;
     let mut out = String::new();

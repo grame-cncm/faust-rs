@@ -42,7 +42,8 @@ use std::fmt::Write as _;
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
 use crate::backends::module_view::{
     FunctionDecl as DeclareFunView, SkeletonCodes, block_declares_var, block_stores_var,
-    collect_defined_functions, decode_module, section_items, unsupported_node,
+    collect_defined_functions, decode_module, section_items, surviving_sub_modules,
+    unsupported_node,
 };
 use fir::{AccessType, FirBinOp, FirId, FirMatch, FirStore, FirType, match_fir};
 
@@ -265,6 +266,14 @@ fn generate_julia_module_step(
         None
     };
     let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
+    // Flattening removes every sub-module; a survivor would be a table this
+    // backend declares and nothing fills, which reads as zeros. wasm,
+    // interp and cranelift already refuse it.
+    if let Some(message) = surviving_sub_modules(store, module) {
+        return Err(
+            CodegenError::new(CodegenErrorCode::InvalidModuleSection, message).at_node(module),
+        );
+    }
 
     let module = decode_module(store, module)?;
     let class_name = options
