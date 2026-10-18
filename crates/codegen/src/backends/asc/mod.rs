@@ -773,15 +773,6 @@ fn emit_stmt(
             let _ = writeln!(out, "{tab}}}");
             Ok(())
         }
-        FirMatch::IteratorForLoop {
-            iterators, body, ..
-        } => {
-            // The scalar asc path doesn't lower vectorized iterator loops; emit
-            // the body inline (parity with the C++ backend's comment + body).
-            let _ = writeln!(out, "{tab}// iterator-for over [{}]", iterators.join(", "));
-            emit_block(store, out, options, class_name, body, indent)?;
-            Ok(())
-        }
         FirMatch::WhileLoop { cond, body } => {
             let cond = emit_value(store, options, class_name, cond)?;
             let _ = writeln!(out, "{tab}while ({cond}) {{");
@@ -842,23 +833,11 @@ fn emit_stmt(
             let _ = writeln!(out, "{tab}// metadata {}", one_line(&key));
             Ok(())
         }
-        FirMatch::Label(_)
-        | FirMatch::ShiftArrayVar { .. }
-        | FirMatch::DeclareStructType { .. } => Ok(()),
-        FirMatch::DeclareBufferIterators {
-            name1,
-            name2,
-            channels,
-            ..
-        } => {
-            // Buffer-iterator hints are a vectorization aid; the scalar asc path
-            // does not use them. Emit a comment for parity with the C++ backend.
-            let _ = writeln!(
-                out,
-                "{tab}// buffer iterators: {name1}, {name2}, channels={channels}"
-            );
-            Ok(())
-        }
+        FirMatch::Label(_) => Ok(()),
+        // `IteratorForLoop`, `ShiftArrayVar`, `DeclareStructType` and
+        // `DeclareBufferIterators` are refused, as cpp does: they were accepted
+        // here and emitted nothing (a delay line that never shifts) or the
+        // loop body once — code that compiles and computes the wrong thing.
         _ => Err(unsupported_node("statement", stmt, store)),
     }
 }

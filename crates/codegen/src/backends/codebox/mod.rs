@@ -846,8 +846,16 @@ fn emit_stmt(
             Ok(())
         }
 
-        // A dropped value has no effect codebox can express.
-        FirMatch::Drop(_) => Ok(()),
+        // A dropped value is evaluated for its effect: a foreign call must
+        // still run. Only a null value has nothing to evaluate.
+        FirMatch::Drop(value) => {
+            if matches!(match_fir(store, value), FirMatch::NullValue { .. }) {
+                return Ok(());
+            }
+            let value = emit_value(store, options, value)?;
+            let _ = writeln!(out, "{tab}{value};");
+            Ok(())
+        }
 
         FirMatch::AddSoundfile { label, .. } => Err(CodegenError::new(
             CodegenErrorCode::Unsupported,
