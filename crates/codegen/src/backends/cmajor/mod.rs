@@ -1667,13 +1667,13 @@ fn float_literal(value: f64, real_type: CmajorRealType) -> String {
 }
 
 /// Cmajor spelling of a real literal: `nan`/`inf`, exact integral digits,
-/// negative zero kept.
+/// a folded negative zero written `0.0` as every C-like backend writes it.
 pub(crate) const CMAJOR_REAL: RealSpelling = RealSpelling {
     nan: "nan",
     pos_inf: "inf",
     neg_inf: "-inf",
     digits: Digits::ExactIntegral,
-    negative_zero: NegativeZero::Keep,
+    negative_zero: NegativeZero::Normalize,
 };
 
 /// Checks the conservative identifier grammar shared by generated names.

@@ -1139,15 +1139,15 @@ fn float_literal(value: f64, options: &CodeboxOptions) -> String {
     }
 }
 
-/// Codebox spelling of a real literal: exact integral digits, negative zero
-/// kept, and no special case for NaN or the infinities (Rust's own `NaN` and
-/// `inf`).
+/// Codebox spelling of a real literal: exact integral digits, a folded
+/// negative zero written `0.0`, and no special case for NaN or the infinities
+/// (Rust's own `NaN` and `inf`; codebox has no oracle for them).
 pub(crate) const CODEBOX_REAL: RealSpelling = RealSpelling {
     nan: "NaN",
     pos_inf: "inf",
     neg_inf: "-inf",
     digits: Digits::ExactIntegral,
-    negative_zero: NegativeZero::Keep,
+    negative_zero: NegativeZero::Normalize,
 };
 
 /// Stable backend identifier, kept for tooling and report wiring.
