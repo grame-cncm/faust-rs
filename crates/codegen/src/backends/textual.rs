@@ -116,6 +116,17 @@ pub(crate) const fn c_like_token(op: FirBinOp) -> &'static str {
     }
 }
 
+/// [`c_like_token`] for a target with a logical-shift operator: `LRsh` is
+/// `>>>`, the name upstream's operator table gives it (AssemblyScript,
+/// Cmajor, codebox). A target without one casts to unsigned and uses `>>`.
+#[must_use]
+pub(crate) const fn c_like_token_with_logical_shift(op: FirBinOp) -> &'static str {
+    match op {
+        FirBinOp::LRsh => ">>>",
+        other => c_like_token(other),
+    }
+}
+
 #[must_use]
 pub(crate) const fn c_like_fir_operator(op: FirBinOp) -> InfixOperator {
     match op {
@@ -145,6 +156,17 @@ mod tests {
             side,
             parent == child,
         )
+    }
+
+    /// A logical shift is `>>>` where the target has the operator (upstream's
+    /// table name) and `>>` on an unsigned cast where it does not; spelling it
+    /// `>>` without the cast made it arithmetic in cmajor and codebox.
+    #[test]
+    fn logical_shift_keeps_its_own_token_where_the_target_has_one() {
+        assert_eq!(c_like_token(FirBinOp::LRsh), ">>");
+        assert_eq!(c_like_token_with_logical_shift(FirBinOp::LRsh), ">>>");
+        assert_eq!(c_like_token_with_logical_shift(FirBinOp::ARsh), ">>");
+        assert_eq!(c_like_token_with_logical_shift(FirBinOp::Add), "+");
     }
 
     #[test]

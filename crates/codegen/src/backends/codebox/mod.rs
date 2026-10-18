@@ -35,7 +35,7 @@
 pub mod eval;
 
 use crate::backends::literals::{Digits, NegativeZero, RealSpelling};
-use crate::backends::textual::c_like_token as emit_binop;
+use crate::backends::textual::c_like_token_with_logical_shift as emit_binop;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 

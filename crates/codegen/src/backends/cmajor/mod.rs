@@ -51,7 +51,7 @@
 //! sizes, plus repeated generation to guard request-local determinism.
 
 use crate::backends::literals::{Digits, NegativeZero, RealSpelling, StringDialect, quoted_string};
-use crate::backends::textual::c_like_token as emit_binop;
+use crate::backends::textual::c_like_token_with_logical_shift as emit_binop;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 

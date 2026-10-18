@@ -25,6 +25,7 @@
 //! `FRS-CGEN-ASC-0003`.
 
 use crate::backends::literals::{Digits, NegativeZero, RealSpelling, StringDialect, escape_string};
+use crate::backends::textual::c_like_token_with_logical_shift as emit_binop;
 use std::fmt::Write as _;
 
 use crate::backends::codegen_error::{BackendError, CodegenErrorCode as BackendErrorCode};
@@ -33,9 +34,7 @@ use crate::backends::module_view::{
     collect_declared_function_names, decode_module, find_function_body, invalid_section,
     is_receiver_lifecycle_method, section_items, sub_module_views, unsupported_node,
 };
-use fir::{
-    AccessType, FirBinOp, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir,
-};
+use fir::{AccessType, FirId, FirMatch, FirMathOp, FirStore, FirType, NamedType, match_fir};
 
 use crate::backends::faust_api;
 
@@ -1234,14 +1233,6 @@ fn math_namespace(options: &AscOptions) -> &'static str {
         "Math"
     } else {
         "Mathf"
-    }
-}
-
-/// Maps one FIR binary operator to its AssemblyScript token spelling.
-fn emit_binop(op: FirBinOp) -> &'static str {
-    match op {
-        FirBinOp::LRsh => ">>>",
-        other => crate::backends::textual::c_like_token(other),
     }
 }
 
