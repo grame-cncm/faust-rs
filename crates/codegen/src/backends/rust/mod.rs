@@ -353,6 +353,7 @@ fn emit_rust_header(out: &mut String, options: &RustOptions) {
     crate::backends::literals::faust_banner(
         out,
         Some(name),
+        &options.metadata_entries,
         options
             .compile_options
             .as_deref()

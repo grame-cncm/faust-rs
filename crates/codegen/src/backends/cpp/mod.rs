@@ -256,6 +256,7 @@ fn generate_cpp_module_step(
         &mut out,
         class_name,
         metadata_name,
+        &options.metadata_entries,
         options.compile_options.as_deref(),
         &crate::backends::c_family::ForeignDependencies::of(store, module_id),
     );
@@ -1019,12 +1020,14 @@ fn emit_cpp_header(
     out: &mut String,
     class_name: &str,
     module_name: &str,
+    metadata_entries: &[(String, String)],
     compile_options: Option<&str>,
     dependencies: &crate::backends::c_family::ForeignDependencies,
 ) {
     crate::backends::literals::faust_banner(
         out,
         Some(module_name),
+        metadata_entries,
         compile_options.unwrap_or("-lang cpp"),
     );
     let _ = writeln!(out);

@@ -286,14 +286,23 @@ fn compile_fixture_to_cpp(path: &Path) -> String {
 ///
 /// `m->declare(...)` carries `filename`, `compile_options`, the per-library
 /// keys, `library_path*` and `version` — all of which the expansion
-/// legitimately changes. Everything else is the algorithm, compared verbatim:
-/// generated variable names describe the program, so an expansion and its
-/// original must produce the same ones.
+/// legitimately changes — and the banner copies `author`, `copyright`,
+/// `license`, `name` and `version` from the same metadata. Everything else is
+/// the algorithm, compared verbatim: generated variable names describe the
+/// program, so an expansion and its original must produce the same ones.
 fn algorithm_only(generated: &str) -> Vec<&str> {
+    const BANNER_KEYS: [&str; 5] = [
+        "author: ",
+        "copyright: ",
+        "license: ",
+        "name: ",
+        "version: ",
+    ];
     generated
         .lines()
         .map(str::trim_end)
         .filter(|line| !line.trim_start().starts_with("m->declare("))
+        .filter(|line| !BANNER_KEYS.iter().any(|key| line.starts_with(key)))
         .filter(|line| !line.trim_start().starts_with("//"))
         .filter(|line| !line.is_empty())
         .collect()

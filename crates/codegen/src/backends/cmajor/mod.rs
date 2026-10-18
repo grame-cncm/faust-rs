@@ -310,6 +310,7 @@ fn generate_cmajor_module_step(
                 .as_deref()
                 .unwrap_or(&options.class_name),
         ),
+        &options.metadata_entries,
         options
             .compile_options
             .as_deref()

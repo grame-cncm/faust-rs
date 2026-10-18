@@ -158,16 +158,40 @@ pub(crate) fn quoted_string(input: &str, dialect: StringDialect) -> String {
     format!("\"{}\"", escape_string(input, dialect))
 }
 
+/// The metadata keys upstream's `printHeader` copies into the banner
+/// (`code_container.hh`), in the order it prints them.
+const BANNER_KEYS: [&str; 5] = ["author", "copyright", "license", "name", "version"];
+
 /// The generated-file banner of the C-comment backends, as upstream writes
-/// it for c, cpp, rust and cmajor: the DSP name (when known), the generator
-/// line and the compilation options, between rule lines.
-pub(crate) fn faust_banner(out: &mut String, name: Option<&str>, compile_options: &str) {
+/// it for c, cpp, rust and cmajor: the `author`, `copyright`, `license`,
+/// `name` and `version` metadata (`key: "v1", "v2"`), the generator line and
+/// the compilation options, between rule lines. `name` is the DSP name;
+/// `entries` are the compilation metadata, which hold the other keys.
+pub(crate) fn faust_banner(
+    out: &mut String,
+    name: Option<&str>,
+    entries: &[(String, String)],
+    compile_options: &str,
+) {
     out.push_str("/* ------------------------------------------------------------\n");
-    if let Some(name) = name {
-        out.push_str(&format!(
-            "name: {}\n",
-            quoted_string(name, StringDialect::C)
-        ));
+    for key in BANNER_KEYS {
+        let values: Vec<&str> = if key == "name" {
+            name.into_iter().collect()
+        } else {
+            entries
+                .iter()
+                .filter(|(entry_key, _)| entry_key == key)
+                .map(|(_, value)| value.as_str())
+                .collect()
+        };
+        if values.is_empty() {
+            continue;
+        }
+        let quoted: Vec<String> = values
+            .iter()
+            .map(|value| quoted_string(value, StringDialect::C))
+            .collect();
+        out.push_str(&format!("{key}: {}\n", quoted.join(", ")));
     }
     out.push_str(&format!(
         "Code generated with Faust {} (https://faust.grame.fr)\n",
@@ -280,6 +304,36 @@ mod tests {
                 "cmajor: nan | inf | -inf | 0.0 | 0.0000000001 | 99999999999999991611392.0",
                 "codebox: NaN | inf | -inf | 0.0 | 0.0000000001 | 99999999999999991611392.0",
             ]
+        );
+    }
+
+    /// The banner copies upstream's five metadata keys, in its order, and
+    /// nothing else.
+    #[test]
+    fn the_banner_copies_upstreams_five_metadata_keys() {
+        let entries = [
+            ("version", "1.0"),
+            ("author", "A"),
+            ("foo", "bar"),
+            ("license", "MIT"),
+            ("author", "B"),
+        ]
+        .map(|(k, v)| (k.to_owned(), v.to_owned()));
+        let mut out = String::new();
+        faust_banner(&mut out, Some("N"), &entries, "-lang cpp");
+        assert_eq!(
+            out,
+            format!(
+                "/* ------------------------------------------------------------\n\
+                 author: \"A\", \"B\"\n\
+                 license: \"MIT\"\n\
+                 name: \"N\"\n\
+                 version: \"1.0\"\n\
+                 Code generated with Faust {} (https://faust.grame.fr)\n\
+                 Compilation options: -lang cpp\n\
+                 ------------------------------------------------------------ */\n",
+                crate::VERSION
+            )
         );
     }
 

@@ -245,6 +245,7 @@ fn generate_c_module_step(
             .metadata_name
             .as_deref()
             .unwrap_or(&module.name),
+        &effective_options.metadata_entries,
         effective_options.compile_options.as_deref(),
         mem0.is_some(),
         &crate::backends::c_family::ForeignDependencies::of(store, module_id),
@@ -289,6 +290,7 @@ fn emit_c_header(
     out: &mut String,
     class_name: &str,
     module_name: &str,
+    metadata_entries: &[(String, String)],
     compile_options: Option<&str>,
     mem0: bool,
     dependencies: &crate::backends::c_family::ForeignDependencies,
@@ -296,6 +298,7 @@ fn emit_c_header(
     crate::backends::literals::faust_banner(
         out,
         Some(module_name),
+        metadata_entries,
         compile_options.unwrap_or("-lang c"),
     );
     let _ = writeln!(out);
