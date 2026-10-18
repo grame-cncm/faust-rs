@@ -1,118 +1,128 @@
 # Session Handoff
 
-Date: 2026-10-11
+Date: 2026-10-18
 
 ## Repo State
 
-- Branch: `main-dev`
-- HEAD: the commit containing this handoff, parent
-  `63f0ee248a4bc7692f0c99a62e2a379315395dac` (integer pow port).
-- Current follow-up: correct the pasted expansion-corpus failure. The user
-  requested committing the correction with the validation limits below.
-  No push was requested.
+- Branch: `codegen-factorization` (from `main-dev` at `d4f3f6a5`), checked
+  out in the main checkout. Not pushed. The user asked for the work to be
+  done on this branch and to stay visible to them.
+- HEAD: the commit containing this handoff. Its parent is `6c481627` (D17,
+  JSON addresses).
+
+Commits since `main-dev` (oldest first):
+
+- `2c91ac52` — the analysis.
+- 33 code commits, `43b650f1` … `6c481627`; the list and the outcome are in
+  `porting/codegen-factorization-analysis-2026-10-18-en.md` §9.
 
 ## Working Tree
 
-- The integer pow changes listed below are included in the parent commit.
-- This commit includes `crates/compiler/tests/expand_corpus.rs`,
-  `tests/expand/{README.md,dsp/020_library_import.dsp,oracle/020_library_import.dsp}`,
-  `porting/journal/2026-10-11.md`, and this handoff.
-- New file: `tests/expand/dsp/expand_test_library.lib`. No other tracked or
-  non-ignored untracked changes remain after committing.
-- Committed implementation changes: `crates/sigtype/src/rules.rs`,
-  `crates/normalize/src/{normalform,simplify}.rs`, `crates/fir/src/types.rs`,
-  the shared/scalar/vector power emission and prototype assembly under
-  `crates/transform/src/signal_fir/`, its table-generator interpreter and tests,
-  `crates/codegen/src/backends/{cpp/mod,rust/mod,cranelift/math}.rs`.
-- Documentation: compatibility registry DIFF-BEH-020,
-  `porting/journal/2026-10-11.md`, the generated public API index (positions
-  only; no public-item inventory change), and this handoff.
-- New tests: `crates/compiler/tests/integer_pow.rs` and
-  `crates/compiler/tests/integer_pow_rust.rs`.
-- Ignored local scripts `build_all`, `dummy_fdn`, `push_main.sh` are untouched.
+- Tracked changes: none after this commit.
+- Untracked: `tests/impulse-tests/reference-spectral/`. It belongs to the
+  user, was present before the session, and was not touched.
 
-## What Changed / Decisions
+## Current Goal(s)
 
-Expansion follow-up: replace `stdfaust.lib` in `020_library_import` with a
-compact corpus-local library authored for the test. It preserves table
-generation, two recursion carriers, and both `import` and scoped `library`
-calls without using an installed library. The corpus helper supplies
-canonical paths for consistent import identity.
-Check the expansion's single imported path as a canonical `PathBuf`, and
-assert scoped library metadata. Re-capture through `xtask expand-oracle`,
-using the pinned C++ checkout `8eebea4294a44a5260484c750d332781ed9f8ffd`,
-Faust 2.84.3, flags `-e <fixture> -o <capture>` (default single/scalar).
-Only the import fixture's oracle changes. Production compiler code, public
-APIs, compatibility differences and memoization are unchanged.
+- Factor `crates/codegen` per the analysis (R1–R4, Q1–Q4) and fix the drifts
+  it found. Done; see §9 for what was built, what was rejected on reading the
+  code, and what was left.
 
-Previous session:
+## What Changed This Session
 
-Port C++ `eb21fcccff1ead7fe286f35614a464bea70a5fe2` (#1340): runtime integer
-pow uses double pow/rint before int32 conversion in scalar and checked vector
-FIR. Typing/promotion had unconditionally forced pow to Real; that earlier
-parity gap is closed too. Positive integer constant folding and small constant
-powers retain wrapping int32 arithmetic. Compile-time table generators follow
-the same integer semantics. CSE keeps a foreign base evaluated only once.
+- **New shared modules:**
+  - `backends/module_view.rs`: decode, lookups, module-shape diagnostics,
+    function collectors, the flatten/schedule/survivor preamble, sub-module
+    views.
+  - `backends/literals.rs`: `RealSpelling`, string dialects, the C-comment
+    banner.
+  - `backends/table_bytes.rs`: the static-table encoder.
+  - `textual::c_like_token*`.
+  - `fir`: `FirBinOp::is_comparison` and `FirMathOp::arity`.
+- **Drift fixes.** D1–D20 (minus §9.5), each with a failing-before test. The
+  ones that change output on the corpus:
+  - D13: foreign variables in rust, julia and asc;
+  - D7: codebox `min`/`max`;
+  - D18: banners;
+  - D17: JSON addresses equal upstream's.
+- **New contract test:** `crates/codegen/tests/textual_backend_contract.rs`
+  (9 tests over the seven textual backends).
+- **Public API:**
+  - `WasmBackendError` is an alias of `BackendError<…>`.
+  - `RealPrecision` replaces three identical enums, which remain as aliases.
+  - code-graphs regenerated.
+- **Documentation:**
+  - Registry: DIFF-BACK-006, DIFF-BEH-005 and the "Last reviewed" line.
+  - Journal: `porting/journal/2026-10-18.md`.
+  - `crates/codegen/README.md`: the error-code ranges.
+  - `structure_check.rs`: asc, cmajor and julia exceptions removed.
 
-Single pow/rint calls have distinct FIR names (`powf`/`rintf`) from double
-calls, without changing the public math-op inventory or the host DSP APIs.
-Cranelift and C++ keep explicit suffixed C symbols at their fixed host precision.
-Rust single-precision output now supplies the double rint bridge.
+## Decisions / Constraints (important for resume)
 
-FBC is still uniformly f32 or f64 per factory, as in C++: no mixed-precision
-opcode/ABI extension. Double FBC passes at optimizer levels 0/max. Single FBC
-still loses a unit for 25^6; the current C++ build has no interpreter backend,
-so its matching precision limitation was established from the source.
+- The user's choices for the six decision points are in analysis §9.1.
+- Rejected after trying or reading:
+  - the error-code macro, because the text-based API baseline cannot see
+    macro-generated items;
+  - a `TextTarget` walker trait;
+  - merging cranelift's layout into `memory_layout`;
+  - a shared scalar-math module.
+- wasm keeps `_acosh` for both precisions, because that is the JS host
+  contract; a module needing both precisions is refused.
+- **Compile budget:** the local gate cannot conclude on this machine, so a
+  manual A/B was run instead (below).
 
 ## Validation Run
 
-- Expansion follow-up: all eight `expand_corpus` tests pass; C++ oracle
-  check accepts 33 references with the same two unsupported fixtures.
-- Follow-up formatting, workspace clippy, all five static gates, and
-  golden-check pass.
-- `cargo test --workspace --all-targets --no-fail-fast`, rerun with permission
-  to bind the HTTP fixture server, passes every target except
-  `cranelift-ffi::output_snapshots` (the same 53 pre-existing mismatches).
-  The final scoped-library/canonical-path adjustment also passes a fresh
-  eight-test expansion run and workspace clippy.
-
-Previous session:
-
-- Native generated C++: single/double, scalar/vector, `-O2` and
-  `-O3 -ffast-math`: exact zero residuals for 250^1, 25^6, (-3)^3; small-power
-  wrap and negative runtime exponents covered too.
-- Generated Rust: built/run with the repository's FaustDsp host surface,
-  single/double, `rustc -C opt-level=0/3`: exact residuals.
-- Type/promotion/constant-fold/table-generator tests: pass.
-- Formatting, clippy, all five static gates, and golden-check: pass.
-- Manual Cranelift/faustprobe at both precisions: exact zero residuals.
-- Full workspace: two reference tests fail before this port as well; the
-  rerun skipping only those tests passes (3,201 tests). All codegen unit tests
-  and both native regression suites pass after the final C++ safeguard too.
-- Isolated release cost gate: cannot calibrate (3 ms, required floor 4 ms).
-  Supplementary alternating release CLI before/after medians are stable:
-  karplus 8.625/8.628 ms, spectral_level 325.153/321.422 ms. These include
-  process startup and are not a substitute for the gate.
+- **Codegen-identity differential, per commit:** 632 `.dsp` × 23
+  configurations against the base binary. 0 diffs for every move; the
+  intentional diffs were reviewed and re-baselined. The harness is in the
+  session scratchpad (`identity/run.py`, `check.sh`). It is not in the repo.
+- **Literal equivalence:** old and new real formatters agree on 600,035
+  values (0 mismatches).
+- **Workspace and gates:**
+  - `cargo test --workspace --all-targets --no-fail-fast`: 0 failures.
+  - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+  - `cargo fmt --all --check`: clean.
+  - The five structure gates: OK.
+  - `cargo run -p xtask -- golden-check`: 292 OK.
+- **Compile-budget A/B** (best of 5, base vs new, both baskets): every case
+  at ratio 1.00. APF scalar showed 1.10 at 8.7 ms; re-timed over 30 runs it
+  is 7.81 vs 7.86 ms, i.e. noise.
+- **Impulse harness**, after `make clean` (the `ir/` outputs are cached and
+  give false greens otherwise), with `make -k -j8 <lane>`: all nine lanes
+  pass. interp, cranelift, wasm, cpp, c, rust, julia and assemblyscript run
+  93 comparisons each; cmajor runs 87.
 
 ## Open Issues / Blockers
 
-- The expansion oracle drift is resolved by the corpus-local fixture above.
-  Previously the local oscillator phasor change failed even with pre-change
-  release binary `19efd550`.
-- `cranelift-ffi::output_snapshots` reports 53 stale recordings. All 53
-  match the pre-change release faustprobe too (46 exactly; seven after
-  removing timing fields). No snapshot refresh is part of this correction.
-- The sandbox prevented the fixture HTTP server in `remote_source_baseline`;
-  it passed in the authorized rerun with permission to bind that local server.
-- A release cost measurement during concurrent test/build load exceeded
-  spectral_level's front-end ceiling (255 vs 233.1 units). Three isolated runs
-  stop at the calibration floor instead. The versioned baseline is untouched;
-  a successful gate on a suitable runner and green CI remain unconfirmed.
+- Nothing blocks the branch.
+- Left as is, recorded in §9.5:
+  - codebox NaN/infinity spelling;
+  - rust/cmajor have no metadata transport, so their banners carry no
+    `name:` line;
+  - cpp alone synthesizes the empty UI box;
+  - the interpreter's name heuristics;
+  - the six UI tree walkers are not merged.
+- `tests/cli-transcripts` were stale before the branch (recorded
+  2026-10-10). Re-recording them is the user's call.
 
-## Next Steps
+## Next Steps (ordered)
 
-1. Review the committed expansion-fixture correction and its captured
-   reference (`cargo run -p xtask -- expand-oracle --check`).
-2. Resolve the separate faustprobe recording drift; obtain a successful
-   release cost gate on a suitable runner and green CI before publication.
-3. Single FBC precision extension is outside this C++ commit's port scope.
+1. Review the branch and push it (the user pushes).
+2. Optionally re-record the CLI transcripts:
+   `cargo run -p xtask -- cli-transcript-gen`.
+3. Optional follow-ups from §9.5: a `metadata_*` transport for
+   `RustOptions`/`CmajorOptions` (public API); one UI tree iterator.
+
+## Useful Commands to Resume
+
+- `cargo test -p codegen`
+- `cargo test -p codegen --test textual_backend_contract`
+- `cargo run -p xtask -- code-graphs --check`
+- `cd tests/impulse-tests && make clean && make -k -j8 interp cranelift wasm cpp c rust`
+
+## Notes
+
+- A `make <lane>` right after a rebuild prints "Nothing to be done" when
+  `ir/` already holds outputs: run `make clean` first. It removes `ir` and
+  `build`, never `reference`.

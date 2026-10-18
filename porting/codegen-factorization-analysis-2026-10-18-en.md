@@ -6,10 +6,13 @@ The seven textual backends hold about 14.9 k source lines (c 1,831, cpp 2,092,
 `c_family` 1,182, rust 2,948, julia 1,889, cmajor 1,861, asc 1,715, codebox
 1,257, `textual` 146). The three machine backends hold about 23 k non-test lines
 (interp 13.7 k, cranelift 5.2 k, wasm 4.0 k).
-**Status:** analysis only; no code was changed. It proposes four restructurings
-(R1–R4) and four quick wins (Q1–Q4). Each can land on its own, and each keeps
-the emitted output byte-identical. The drifts listed in §3 get their own
-commits, after the move, with a test each. They are never fixed inside a move.
+**Status:** **implemented 2026-10-18** on branch `codegen-factorization`;
+the outcome, with what was built, what was rejected on reading the code and
+why, is [§9](#9-outcome-2026-10-18). §0–§8 are the analysis as written
+before the work, kept as the record of what was proposed. It proposed four
+restructurings (R1–R4) and four quick wins (Q1–Q4), each landing on its own
+with byte-identical output, and drift fixes in their own commits after the
+moves, each with a test.
 **Method:** four read-only surveys ran in parallel: module skeleton, leaves,
 statement walkers and UI, machine backends. Every finding used here was then
 checked in the source. The most serious ones were reproduced with the release
@@ -489,3 +492,155 @@ Every step of R1–R4 and Q1, Q3 and Q4 must show **no change in emitted output*
 5. **R4**: independent of the textual work; can run in parallel.
 6. **R3** last, backend by backend (asc → julia → codebox → cmajor → rust),
    stopping wherever a backend's LANG weight outweighs the gain.
+
+---
+
+## 9. Outcome (2026-10-18)
+
+Implemented on branch `codegen-factorization`: 33 code commits on top of
+the analysis (`2c91ac52`, itself on `d4f3f6a5`), each compiling and tested
+on its own. Net effect on
+`crates/codegen/src`: −1,049 lines (2,310 added, 3,359 removed, test code
+included); the seven textual backends' `mod.rs` shrink from 16,428 to 15,250 lines.
+Another 500 lines are a new shared contract test,
+`crates/codegen/tests/textual_backend_contract.rs`. That is well under the
+2,500–3,000 lines §0 estimated, because R3 and the R4 layout merge were not
+built (§9.3).
+
+### 9.1 Decisions taken (§7)
+
+| # | Decision | Taken |
+|---|---|---|
+| 1 | Diagnostic wording | Unified. The root error reads "expected FIR module root, got … at node N" and a section error reads "section 'X' must be a FIR block, got … at node N", in every backend, with the FIR node attached. cmajor and codebox gain an `InvalidModuleSection` code (FRS-CGEN-CMAJ-0006, FRS-CGEN-CBOX-0003). |
+| 2 | Public option types | Enum only, aliased. One `backends::RealPrecision`; `CmajorRealType`, `JuliaRealType` and `RustRealType` are aliases of it. No `TextualOptions`. |
+| 3 | Float `min`/`max` on NaN | Per-backend upstream semantics kept. Only the interpreter's fold-vs-execute mismatch is fixed. |
+| 4 | Prototype-only lifecycle declarations | The prototype is ignored and the stub synthesized (cpp and asc aligned on c, rust and julia). |
+| 5 | Integer negation in generated Rust | `wrapping_neg()`. |
+| 6 | `Switch` evaluation | Once, into a local, everywhere. |
+
+### 9.2 What landed
+
+| Item | Commit | Effect |
+|---|---|---|
+| D1 | `43b650f1` | rust: `f32::INFINITY`, not `f64::INFINITYf32` |
+| Q1 | `2009e406` | one `BackendCodegenError` impl over `BackendError<C>`; `fir_node` reaches the diagnostic for every backend; `WasmBackendError` is the shared carrier |
+| Q3 | `9545d7b3` | the compute signature and `trivial_block` shared in tests (−986 test lines) |
+| Q4 | `6dd091c5` | c/cpp `-mem0` static tables, declarator split and sub-container pairs moved into `c_family` |
+| Q2 | `0004d17a` | `RealPrecision` |
+| R1a | `528a3f53` | `backends/module_view.rs`: `ModuleView`, `decode_module`, `section_items`, `invalid_section`, `unsupported_node`, `non_sub_module`, the function and variable lookups; unified diagnostics |
+| R1b | `2e5ee0b8` | `FunctionDecl`/`collect_defined_functions`, `is_dsp_api_method`, and `is_receiver_lifecycle_method` derived from `LIFECYCLE_FUNCTIONS` |
+| R1d | `c1de62d6` | `prepare_flat_module`: flatten, schedule, survivor check for wasm, interp and cranelift |
+| R1e | `8cdc4714` | `sub_module_views` for the five nesting backends |
+| R1 | `00e36300` | `literals::faust_banner` for c and cpp |
+| R2a | `80dca40e` | `backends/literals.rs`: `RealSpelling` and the string dialects replace seven formatters and seven escapers |
+| R2b | `60e6655e` | `textual::c_like_token`, `FirBinOp::is_comparison`, `FirMathOp::arity` |
+| R4a | `56ffec04` | wasm import walk on `fir::fir_match_children` (D9) |
+| R4b | `dbb9f186` | `HostScalarType::of_abi`/`abi`, `HostFunctionSignature::of_typed` |
+| R4 | `527ba7c7` | `backends/table_bytes.rs`, one static-table encoder for cranelift and wasm (D20) |
+| R3 (policy) | `00c9449c` | the contract test; asc refuses the four nodes it swallowed, and codebox evaluates a dropped call (D8) |
+| D8 | `2d04f242` | interp refuses `Return(Some)` |
+| D2 | `92f11ab7` | interp fold uses `cpp_max`/`cpp_min`, as execution does |
+| D3 | `b28c8c16` | cmajor and codebox normalize `-0.0` |
+| D4 | `c03c70c3` | cmajor and codebox write `>>>` (upstream's table name) |
+| D5 | `bcb98812` | rust: an unknown UI zone is an error |
+| D13 | `b2993ecb` | rust, julia and asc: a foreign variable is not a struct field (`rep_77_foreign_variable` changes) |
+| D12 | `7edb871d` | cpp and asc: a prototype does not suppress its stub |
+| D11 | `8e17ba33` | julia, cmajor, wasm and interp evaluate a `Switch` condition once |
+| D7 | `ef74c34b` | codebox writes `min`/`max` for `fmin`/`fmax` (53 corpus outputs); rust writes `exp2` like `log2` |
+| D14 | `46f51725` | c: an absent `metadata` replays the compilation metadata |
+| D19 | `b0ae9772` | rust: `wrapping_neg` |
+| D10 | `e38e84f9` | wasm: one import name at two precisions is refused |
+| — | `c3e050a7` | julia and codebox refuse a sub-module that survives flattening |
+| D18 | `1d2751ec` | the upstream generator line in the rust, julia, cmajor, codebox and asc banners |
+| D16 | `609e65cc` | c and cpp: a metadata `declare` passes no zone |
+| D17 | `6c481627` | JSON widget addresses built by `shortname::build_path` (C++ `PathBuilder`); short names now equal upstream's |
+
+### 9.3 Proposed, then rejected on reading the code
+
+- **R1c, an error-code macro.** It was built and reverted. The public API
+  baseline (`docs/code-graphs/public-api-baseline.txt`) is extracted from
+  the source text, so a `pub enum` declared through `macro_rules!` showed up
+  as `enum _` and its `as_str` disappeared. The gate exists to make a
+  boundary change visible, so the boilerplate stays written out.
+- **R3, a `TextTarget` trait with default structural arms.** Per backend,
+  each construct's shape belongs to the target. julia lowers a `ForLoop` to
+  a `while` with a trailing increment and a `Switch` to an `if`/`elseif`
+  chain; asc and codebox use typed C-like headers; rust binds locked tables.
+  A hook per construct would be the arm itself. The part of R3 that pays is
+  its policy: every FIR statement is emitted or refused, and `Switch` is
+  evaluated once. That part is checked by
+  `tests/textual_backend_contract.rs` and enforced by D8/D11.
+- **R4, cranelift's struct layout computed through
+  `memory_layout::object_layout`.** They compute different things. cranelift
+  needs per-field offsets in every mode, with arrays inline outside `-mem0`.
+  `memory_layout` produces the `-mem0` size summary, in which the main DSP's
+  arrays are pointers. Only the alignment arithmetic is common.
+- **R4, a shared scalar-math module.** The interpreter and cranelift overlap
+  in one-line delegations to `std`. The only meaningful difference was the
+  `min`/`max` NaN semantics (D2), and that one is per backend upstream.
+
+### 9.4 Survey findings corrected
+
+- **D2** is not one bug. The upstream backends themselves differ (cpp
+  `fmin`/`fmax`, interpreter `std::min`/`max`, wasm native). The only
+  internal inconsistency was the interpreter's fold.
+- **D6** (rust never emits sub-module `globals`) is not a drift. Those
+  `globals` hold only foreign prototypes, dependencies and foreign
+  variables, and rust emits none of these for the main module either.
+- **D10.** The single hyperbolic import name is the host contract. Upstream's
+  compiler emits `_acoshf`, but its own JS wrappers, like
+  `tests/impulse-tests/tools/impulsewasm.js`, provide only `_acosh`. The name
+  stays, and only the silent shadowing is fixed.
+- **D16** was a compile error, not a cosmetic difference: `Meta::declare`
+  takes no zone.
+- **D17** is live, and the survey under-rated it. Upstream builds a JSON
+  `address` with `PathBuilder::buildPath`
+  (`/my_group/my_gain__dB_`), while faust-rs kept the raw labels
+  (`/my group/my gain (dB)`). Web hosts address parameters by that path.
+  The corrected `shortname`s now match upstream's as well.
+- **D7** was live too. Through `ma.SR`'s clamp, nearly every codebox program
+  called `fmin`/`fmax`.
+- **A third digit style.** cmajor and codebox write integral reals with all
+  their exact digits. It is kept as `Digits::ExactIntegral` and pinned by
+  `backend_spellings_of_special_values`.
+
+### 9.5 Left as is, recorded
+
+- **codebox NaN/infinity spellings**: there is no oracle.
+- **`fbc_to_cpp`**: its literal spelling and raw integer `+ - *` are kept,
+  since it is a debugging rendering compared only with itself.
+- **The rust backend has no metadata transport.** Adding one is a public
+  options addition, so the rust and cmajor banners carry no `name:` line.
+- **cpp alone synthesizes `openVerticalBox`/`closeBox`** for an absent
+  `buildUserInterface`.
+- **The interpreter's name heuristics** (the `input`/`output` prefix, the
+  `fSamplingFreq` fallback) and its rejection of `std::`-prefixed math names
+  are unchanged.
+- **The UI tree walkers** (json, cmajor, codebox, rust, interp,
+  cranelift-ffi) are not merged. The live part of D17 was the address, and
+  that is fixed. The nested-`Block` policy differences are latent.
+- **The local CLI transcripts** (`tests/cli-transcripts`, not a CI gate) were
+  already stale before this branch (recorded 2026-10-10) and are not
+  re-recorded.
+
+### 9.6 Validation
+
+- **Identity differential.** Every commit ran the codegen-identity
+  differential: the 632 `.dsp` files under `tests/` and `examples/`, in 23
+  backend configurations (c, cpp and rust in several modes, julia, cmajor,
+  asc, codebox, interp, cranelift, wast, wasm by binary hash, json), against
+  the base binary. The cranelift JIT addresses were normalized after a
+  self-check showed them to be the only nondeterminism. Moves showed 0
+  differing outputs. The drift fixes that change output (D13, D7, D18, D17)
+  were reviewed diff by diff and then re-baselined.
+- **Literal equivalence.** The R2a move was also checked outside the corpus:
+  the old and new real formatters agree on 600,035 values (0 mismatches).
+- **Regression tests.** Each drift fix carries a test that fails before it.
+- **Final tree.**
+  - `cargo test --workspace --all-targets --no-fail-fast`: 0 failures.
+  - clippy `-D warnings` and fmt: clean.
+  - The five structure gates: OK.
+  - `golden-check`: 292 OK.
+  - Impulse harness after `make clean`: all nine lanes pass (cmajor at 87
+    comparisons, the others at 93).
+  - Compile-budget A/B against the base binary: no case moved.

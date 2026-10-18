@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-18 (codegen factorization, [analysis §9](codegen-factorization-analysis-2026-10-18-en.md#9-outcome-2026-10-18): JSON widget `address` built as C++ `PathBuilder::buildPath` builds it, an unrecorded difference closed; codebox `min`/`max` and cmajor/codebox `>>>` now as upstream; DIFF-BACK-006 extended to rust, julia and asc; DIFF-BEH-005 backend module-shape diagnostics unified); 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded, then closed (the header now declares it); `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -318,7 +318,12 @@ must run unchanged with Faust C++ should not pass them.
   C++ stderr. Exit success/failure and the underlying semantic rejection remain
   the parity objective for portable cases.
 - Duplicate UI paths, FIR verification, backend limitations, and const-table SR
-  freezing have dedicated Rust diagnostics.
+  freezing have dedicated Rust diagnostics. A malformed FIR module (root not
+  a module, a section not a block, a `sub_modules` entry not a sub-module)
+  reads the same in every textual backend and carries its FIR node, each
+  backend keeping its own code; cmajor and codebox gained
+  `FRS-CGEN-CMAJ-0006`/`FRS-CGEN-CBOX-0003` for it (2026-10-18,
+  `backends/module_view.rs`).
 - Evaluator limits are logical resource budgets rather than the reference's
   stack-address check: default identity depth is 1,024 in debug and 32,768 in
   release; structural lowering also applies a 4,096/32,768 cap; syntactic nesting
@@ -980,7 +985,10 @@ must run unchanged with Faust C++ should not pass them.
   <math.h>`, the prelude having `<cmath>` (C++) or `<math.h>` (C).
 - A foreign variable is not declared by the generated code: its header
   declares it, as in C++. Until 2026-10-10 the C++ backend declared it as a
-  member, which shadowed the header's global.
+  member, which shadowed the header's global. Until 2026-10-18 the rust,
+  julia and asc backends declared it as a struct field initialized to zero;
+  they now read it by name like c and cpp (test
+  `a_foreign_variable_is_read_never_declared_as_state`).
 - It replaces `DIFF-GAP-018` (until 2026-10-10 the headers were dropped and
   the generated code calling a custom `ffunction` did not build).
 - Evidence: `crates/compiler/tests/foreign_dependencies.rs` builds and runs
