@@ -796,10 +796,11 @@ pub extern "C" fn CboxPar3(x: *mut c_void, y: *mut c_void, z: *mut c_void) -> *m
         let (Some(x), Some(y), Some(z)) = (ctx.decode(x), ctx.decode(y), ctx.decode(z)) else {
             return std::ptr::null_mut();
         };
+        // Right-nested, as C++ `boxPar3`: `x, (y, z)`.
         let id = {
             let mut b = BoxBuilder::new(&mut ctx.arena);
-            let p = b.par(x, y);
-            b.par(p, z)
+            let p = b.par(y, z);
+            b.par(x, p)
         };
         ctx.encode(id)
     })
@@ -822,11 +823,12 @@ pub extern "C" fn CboxPar4(
         else {
             return std::ptr::null_mut();
         };
+        // Right-nested, as C++ `boxPar4`: `a, (b, (c, d))`.
         let id = {
             let mut b = BoxBuilder::new(&mut ctx.arena);
-            let p = b.par(a, b0);
-            let p = b.par(p, c);
-            b.par(p, d)
+            let p = b.par(c, d);
+            let p = b.par(b0, p);
+            b.par(a, p)
         };
         ctx.encode(id)
     })
@@ -854,12 +856,13 @@ pub extern "C" fn CboxPar5(
         ) else {
             return std::ptr::null_mut();
         };
+        // Right-nested, as C++ `boxPar5`: `a, (b, (c, (d, e)))`.
         let id = {
             let mut b = BoxBuilder::new(&mut ctx.arena);
-            let p = b.par(a, b0);
-            let p = b.par(p, c);
-            let p = b.par(p, d);
-            b.par(p, e)
+            let p = b.par(d, e);
+            let p = b.par(c, p);
+            let p = b.par(b0, p);
+            b.par(a, p)
         };
         ctx.encode(id)
     })
@@ -2740,6 +2743,20 @@ mod tests {
             .expect("test context lock poisoned");
         createLibContext();
         guard
+    }
+
+    /// `CboxPar3`..`CboxPar5` nest to the right, as C++ `boxPar3`..`boxPar5`
+    /// (`box_signal_api.cpp`): the same parallel diagram, and the same tree,
+    /// so the same printed box and factory SHA key as the reference builds.
+    #[test]
+    fn par3_to_par5_nest_to_the_right_as_the_reference() {
+        let _guard = fresh_test_context();
+        let (a, b, c, d) = (CboxInt(1), CboxInt(2), CboxInt(3), CboxInt(4));
+        let e = CboxInt(5);
+        assert_eq!(CboxPar3(a, b, c), CboxPar(a, CboxPar(b, c)));
+        assert_eq!(CboxPar4(a, b, c, d), CboxPar(a, CboxPar3(b, c, d)));
+        assert_eq!(CboxPar5(a, b, c, d, e), CboxPar(a, CboxPar4(b, c, d, e)));
+        assert_ne!(CboxPar3(a, b, c), CboxPar(CboxPar(a, b), c));
     }
 
     /// An unclosed parenthesis on line 2, column 21.
