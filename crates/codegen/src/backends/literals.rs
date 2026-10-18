@@ -158,6 +158,25 @@ pub(crate) fn quoted_string(input: &str, dialect: StringDialect) -> String {
     format!("\"{}\"", escape_string(input, dialect))
 }
 
+/// The generated-file banner of the C-comment backends, as upstream writes
+/// it for c, cpp, rust and cmajor: the DSP name (when known), the generator
+/// line and the compilation options, between rule lines.
+pub(crate) fn faust_banner(out: &mut String, name: Option<&str>, compile_options: &str) {
+    out.push_str("/* ------------------------------------------------------------\n");
+    if let Some(name) = name {
+        out.push_str(&format!(
+            "name: {}\n",
+            quoted_string(name, StringDialect::C)
+        ));
+    }
+    out.push_str(&format!(
+        "Code generated with Faust {} (https://faust.grame.fr)\n",
+        crate::VERSION
+    ));
+    out.push_str(&format!("Compilation options: {compile_options}\n"));
+    out.push_str("------------------------------------------------------------ */\n");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

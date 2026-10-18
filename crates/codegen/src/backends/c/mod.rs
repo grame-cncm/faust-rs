@@ -293,24 +293,10 @@ fn emit_c_header(
     mem0: bool,
     dependencies: &crate::backends::c_family::ForeignDependencies,
 ) {
-    let _ = writeln!(
+    crate::backends::literals::faust_banner(
         out,
-        "/* ------------------------------------------------------------"
-    );
-    let _ = writeln!(out, "name: \"{module_name}\"");
-    let _ = writeln!(
-        out,
-        "Code generated with Faust {} (https://faust.grame.fr)",
-        crate::VERSION
-    );
-    let _ = writeln!(
-        out,
-        "Compilation options: {}",
-        compile_options.unwrap_or("-lang c")
-    );
-    let _ = writeln!(
-        out,
-        "------------------------------------------------------------ */"
+        Some(module_name),
+        compile_options.unwrap_or("-lang c"),
     );
     let _ = writeln!(out);
     let guard = format!("__{}_H__", class_name);

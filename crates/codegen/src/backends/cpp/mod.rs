@@ -1022,24 +1022,10 @@ fn emit_cpp_header(
     compile_options: Option<&str>,
     dependencies: &crate::backends::c_family::ForeignDependencies,
 ) {
-    let _ = writeln!(
+    crate::backends::literals::faust_banner(
         out,
-        "/* ------------------------------------------------------------"
-    );
-    let _ = writeln!(out, "name: {}", cpp_string_literal(module_name));
-    let _ = writeln!(
-        out,
-        "Code generated with Faust {} (https://faust.grame.fr)",
-        crate::VERSION
-    );
-    let _ = writeln!(
-        out,
-        "Compilation options: {}",
-        compile_options.unwrap_or("-lang cpp")
-    );
-    let _ = writeln!(
-        out,
-        "------------------------------------------------------------ */"
+        Some(module_name),
+        compile_options.unwrap_or("-lang cpp"),
     );
     let _ = writeln!(out);
     let _ = writeln!(out, "#ifndef  __{class_name}_H__");
