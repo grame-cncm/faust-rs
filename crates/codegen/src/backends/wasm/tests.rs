@@ -682,6 +682,47 @@ fn wasm_switch_evaluates_its_condition_once() {
     assert_eq!(calls, 1);
 }
 
+/// The hyperbolic imports have one name for both precisions (`_acosh`),
+/// the name the JS hosts provide. A module calling both precisions is
+/// refused instead of binding both calls to one signature.
+#[test]
+fn wasm_refuses_one_import_name_at_two_precisions() {
+    let mut store = FirStore::new();
+    let mut b = FirBuilder::new(&mut store);
+    let x32 = b.float32(2.0);
+    let single = b.fun_call("acoshf", &[x32], FirType::Float32);
+    let x64 = b.float64(2.0);
+    let double = b.fun_call("acosh", &[x64], FirType::Float64);
+    let drop_single = b.drop_(single);
+    let drop_double = b.drop_(double);
+    let body = b.block(&[drop_single, drop_double]);
+    let compute = b.declare_fun(
+        "compute",
+        crate::fixtures::compute_fun_type(),
+        &crate::fixtures::compute_fun_args(),
+        Some(body),
+        false,
+    );
+    let dsp_struct = b.block(&[]);
+    let globals = b.block(&[]);
+    let functions = b.block(&[compute]);
+    let static_decls = b.block(&[]);
+    let module = b.module(
+        0,
+        1,
+        "mixed",
+        dsp_struct,
+        globals,
+        functions,
+        static_decls,
+        &[],
+    );
+
+    let err = generate_wasm_module(&store, module, &WasmOptions::default())
+        .expect_err("one import name at two signatures");
+    assert!(err.message().contains("`_acosh`"), "{}", err.message());
+}
+
 #[test]
 fn wasm_compute_calls_imported_math_functions() {
     let (store, module) = build_math_intrinsics_test_module();

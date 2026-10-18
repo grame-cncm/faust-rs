@@ -2508,6 +2508,29 @@ fn collect_wasm_imports(
     for body in bodies.iter().flatten() {
         collect_wasm_imports_in_node(store, *body, foreign_fun_imports, options, &mut imports)?;
     }
+    // Calls are bound to imports by field name. The hyperbolic functions
+    // import one name for both precisions (`_acosh` for `acoshf` and
+    // `acosh`), which is what the JS hosts provide, upstream's included; a
+    // module calling both would bind every call to whichever came last.
+    let mut signatures: HashMap<&str, &WasmImport> = HashMap::new();
+    for import in &imports {
+        if let Some(previous) = signatures.insert(&import.field_name, import)
+            && previous != import
+        {
+            return Err(WasmBackendError::new(
+                WasmBackendErrorCode::UnsupportedFirNode,
+                format!(
+                    "the WASM import `{}` is needed with two signatures ({:?} -> {:?} and {:?} -> {:?}); \
+                     a module cannot call it at both precisions",
+                    import.field_name,
+                    previous.params,
+                    previous.results,
+                    import.params,
+                    import.results
+                ),
+            ));
+        }
+    }
     Ok(imports.into_iter().collect())
 }
 
