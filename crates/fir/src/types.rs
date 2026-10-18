@@ -19,7 +19,7 @@ pub enum AccessType {
     Global,
 }
 
-/// What a [`FirMatch::DeclareDependency`] names.
+/// What a [`FirMatch::DeclareDependency`](crate::FirMatch::DeclareDependency) names.
 ///
 /// API mapping status: `adapted`. C++ keeps the two sets on its code
 /// container (`CodeContainer::fIncludeFileSet`, `fLibrarySet`); FIR carries

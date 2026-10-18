@@ -91,7 +91,7 @@ pub const EVAL_CASE_ARGUMENT_NOT_CONSTANT: DiagnosticCode = DiagnosticCode("FRS-
 /// definitions of the cycle.
 ///
 /// C++ equivalent: `loopDetector::detect` in
-/// `compiler/evaluate/loopDetector.cpp`, "endless evaluation cycle of <k>
+/// `compiler/evaluate/loopDetector.cpp`, "endless evaluation cycle of `<k>`
 /// steps".
 pub const EVAL_EVALUATION_CYCLE: DiagnosticCode = DiagnosticCode("FRS-EVAL-0013");
 /// Generic eval failure fallback code.

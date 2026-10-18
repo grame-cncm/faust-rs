@@ -128,9 +128,9 @@ impl WasmMemoryLayout {
     }
 
     /// Derives the WASM linear-memory layout of a FIR module in declaration
-    /// order ([`FieldOrder::Declaration`]): the layout the C++-style `-json`
+    /// order (`FieldOrder::Declaration`): the layout the C++-style `-json`
     /// description of the other backends follows. The WASM emitter itself lays
-    /// out with [`FieldOrder::SmallFirst`] (see [`Self::from_module_with_order`]).
+    /// out with `FieldOrder::SmallFirst` (see `Self::from_module_with_order`).
     ///
     /// Layout policy:
     /// - static tables are allocated first,
