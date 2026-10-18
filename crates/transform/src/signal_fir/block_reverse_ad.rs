@@ -266,6 +266,10 @@ pub(super) fn collect_bra_postorder(
         SigMatch::Attach(value, _effect) => {
             collect_bra_postorder(arena, value, stops, visited, order);
         }
+        // A bargraph is the identity on its signal; the meter is not replayed.
+        SigMatch::VBargraph(_, value) | SigMatch::HBargraph(_, value) => {
+            collect_bra_postorder(arena, value, stops, visited, order);
+        }
         // Proj(slot, Rec(bodies)): recurse into the corresponding body expression.
         //
         // The body expression contains `Delay1(Proj(slot, group))` which

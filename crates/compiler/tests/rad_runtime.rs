@@ -2852,3 +2852,72 @@ fn tan_derivative_emits_no_cos_in_generated_cpp() {
         assert!(!cpp.contains("std::cos("), "{label}: no cos call\n{cpp}");
     }
 }
+
+// ── Bargraphs: the identity on their signal ──────────────────────────────────
+
+/// A bargraph is the identity on its signal, the meter being a side effect, so
+/// the adjoint passes through it, as the tangent does under `fad`
+/// (`fad_tangent_passes_through_a_bargraph`). This body is feed-forward and
+/// takes the symbolic reverse sweep.
+#[test]
+fn rad_adjoint_passes_through_a_bargraph() {
+    fn rad_source(seeds: &[f32]) -> String {
+        format!(
+            r#"
+a = hslider("a", {}, -2.0, 2.0, 0.001);
+b = hslider("b", {}, -2.0, 2.0, 0.001);
+process = rad(a*a : hbargraph("m", -10, 10) : *(b) : vbargraph("n", -10, 10), (a, b));
+"#,
+            seeds[0], seeds[1]
+        )
+    }
+    fn primal_source(seeds: &[f32]) -> String {
+        format!(
+            r#"
+a = hslider("a", {}, -2.0, 2.0, 0.001);
+b = hslider("b", {}, -2.0, 2.0, 0.001);
+process = a*a : hbargraph("m", -10, 10) : *(b) : vbargraph("n", -10, 10);
+"#,
+            seeds[0], seeds[1]
+        )
+    }
+    assert_rad_matches_central_difference(
+        "bargraph-symbolic",
+        1,
+        4,
+        &[1.5, -0.7],
+        &[1.0e-3, 1.0e-3],
+        5.0e-3,
+        rad_source,
+        primal_source,
+    );
+}
+
+/// The same identity inside a recursive body, which reaches the block
+/// reverse-AD lowering (`BlockReverseAD`): the bargraph sits on the feedback
+/// path, and the block-total gradient must match the finite difference.
+#[test]
+fn rad_adjoint_passes_through_a_bargraph_in_a_recursive_body() {
+    assert_bra_block_total_grad_matches_fd(
+        "rad-bargraph-recursive",
+        1,
+        8,
+        &[0.1],
+        &[5e-4],
+        5e-2,
+        |s| {
+            format!(
+                r#"c = hslider("c", {}, -0.9, 0.9, 0.001);
+                   process = rad(c : (+ : hbargraph("m", -10, 10)) ~ sin, c);"#,
+                s[0]
+            )
+        },
+        |s| {
+            format!(
+                r#"c = hslider("c", {}, -0.9, 0.9, 0.001);
+                   process = c : (+ : hbargraph("m", -10, 10)) ~ sin;"#,
+                s[0]
+            )
+        },
+    );
+}

@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-18 (partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded; `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-18 (RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded; `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -96,9 +96,15 @@ verified Rust extension must not be presented as a proof of C++ parity.
   seed, using an implicit all-ones cotangent for a multi-output body. Temporal
   and recursive bodies use the finite-horizon `BlockReverseAD` fallback; the
   specialized reverse-time recursion route remains disabled.
-- Known gap at `f18a50c8`: the symbolic bargraph path still returns zero
-  contribution despite the bargraph's signal identity. The FAD correction
-  does not fix this RAD path; a numerical witness is recorded in the
+- Implemented correction (2026-10-18): a bargraph is the identity on its
+  signal under `rad` too. The symbolic sweep gave it a zero adjoint, and the
+  `BlockReverseAD` lowering of temporal and recursive bodies rejected it
+  (`FRS-SFIR-0004`); both now pass the adjoint to the metered signal and do
+  not replay the meter, as FAD has done since `f18a50c8`. Pinned by
+  `rad_adjoint_passes_through_a_bargraph` (finite difference, symbolic) and
+  `rad_adjoint_passes_through_a_bargraph_in_a_recursive_body` (block-total
+  finite difference, `BlockReverseAD`) in `crates/compiler/tests/rad_runtime.rs`.
+  The gap was first recorded in the
   [2026-09-19 review, §10](fad-clock-domains-explanation-and-review-2026-09-19-en.md#10-what-these-results-do-not-establish).
 - Compatibility impact: the source form and `BlockReverseAD` semantics have no
   pinned C++ source/backend oracle. Validation uses symbolic identities,

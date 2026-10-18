@@ -45,9 +45,9 @@
 //! - `Min`/`Max` via primal comparison,
 //! - `Select2` routes adjoint to the chosen branch,
 //! - `IntCast` (zero) and `FloatCast` (forward),
-//! - bargraphs: no adjoint passes through them (zero contribution). This
-//!   differs from FAD, where a bargraph is the identity on its signal and
-//!   passes the tangent through.
+//! - bargraphs: the identity on their signal, the meter being a side effect,
+//!   so the adjoint passes through, as the tangent does under FAD (and in the
+//!   block reverse-AD lowering of temporal bodies).
 //!
 //! It also handles:
 //!
@@ -239,10 +239,10 @@ impl<'a> ReverseADTransform<'a> {
                 out.push(y);
             }
             SigMatch::VBargraph(_, inner) | SigMatch::HBargraph(_, inner) => {
-                // Metering sinks: no adjoint contribution but still walked
-                // so a seed reachable only through a bargraph is correctly
-                // recorded as unreachable (gradient zero).
-                let _ = inner;
+                // The identity on its signal, the meter being a side effect:
+                // the adjoint flows to the metered signal, as the tangent does
+                // under FAD.
+                out.push(inner);
             }
             SigMatch::RdTbl(table, ridx) => {
                 // Phase C: read-only tables are differentiable through the
@@ -475,8 +475,9 @@ impl<'a> ReverseADTransform<'a> {
                 self.add_adjoint(x, x_contrib);
                 self.add_adjoint(z, z_contrib);
             }
-            SigMatch::VBargraph(_, _) | SigMatch::HBargraph(_, _) => {
-                // Sinks: no adjoint passes through.
+            SigMatch::VBargraph(_, inner) | SigMatch::HBargraph(_, inner) => {
+                // y = bargraph(x) = x: the full adjoint passes through.
+                self.add_adjoint(inner, y_bar);
             }
             SigMatch::RdTbl(table, ridx) => {
                 // Phase C: read-only table read.

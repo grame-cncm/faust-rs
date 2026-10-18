@@ -1147,6 +1147,15 @@ impl<'a> SignalToFirLower<'a> {
                 Self::add_to_adjoint(&mut self.store, adj, value, y_bar, real_ty);
             }
 
+            // ── V/HBargraph(control, value): the identity on `value` ────────
+            //
+            // The forward lowering writes the meter zone and returns `value`;
+            // as for `Attach`, the adjoint goes to `value` and the meter write
+            // is not replayed.
+            SigMatch::VBargraph(_, value) | SigMatch::HBargraph(_, value) => {
+                Self::add_to_adjoint(&mut self.store, adj, value, y_bar, real_ty);
+            }
+
             // ── Delay(c, x): anti-causal carry with circular buffer ──────────
             SigMatch::Delay(sig_inner, amount) => {
                 self.propagate_bra_delay_adj(sig, sig_inner, amount, y_bar, adj)?;
