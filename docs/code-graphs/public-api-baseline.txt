@@ -1441,6 +1441,8 @@ fn FactoryHandle::from_raw
 fn FaustMemoryManager::is_compatible_v1
 fn alloc_c_string
 fn alloc_opaque
+fn alloc_ptr_array
+fn free_if_owned_ptr_array
 fn null_c_string_array
 fn parse_ffi_compile_args
 fn sha1

@@ -28,8 +28,8 @@ use compiler::{
     compile_options_json_string, merge_import_search_paths,
 };
 use ffi_common::{
-    CompleteError, FfiCompileArgs, decode_c_argv as decode_c_argv_shared,
-    free_c_memory_c_string_only, null_c_string_array, optional_c_string_arg,
+    CompleteError, FfiCompileArgs, alloc_ptr_array, decode_c_argv as decode_c_argv_shared,
+    free_c_memory, null_c_string_array, optional_c_string_arg,
     parse_ffi_compile_args as parse_ffi_compile_args_shared, required_c_string_arg,
     write_error_4096,
 };
@@ -429,11 +429,7 @@ pub extern "C" fn getAllCInterpreterDSPFactories() -> *mut *mut c_char {
     if keys.is_empty() {
         return std::ptr::null_mut();
     }
-    let mut ptrs: Vec<*mut c_char> = keys.into_iter().map(|k| alloc_c_string(&k)).collect();
-    ptrs.push(std::ptr::null_mut());
-    let boxed: Box<[*mut c_char]> = ptrs.into_boxed_slice();
-    let raw = Box::into_raw(boxed);
-    raw.cast::<*mut c_char>()
+    alloc_ptr_array(keys.into_iter().map(|k| alloc_c_string(&k)).collect())
 }
 
 /// Return the JSON description of a factory's UI and metadata.
@@ -480,14 +476,20 @@ pub extern "C" fn stopMTDSPFactories() {
 
 // ── Memory management ─────────────────────────────────────────────────────────
 
-/// Free a C string (or array of C strings) allocated by this library.
+/// Free a C string or a pointer array (`char**`, `Box*`, `Signal*`) returned by
+/// any API of the library.
+///
+/// This is the `freeCMemory` that `libfaust-rs` exports; `box-ffi` and
+/// `cranelift-ffi` export theirs only under `standalone-capi-globals`. All
+/// three are [`free_c_memory`], so a `Signal*` array from the Signal API is
+/// released here as the array it is.
 ///
 /// # Safety
-/// `ptr` must be a valid pointer previously returned by one of the `write*`,
-/// `getAll*`, or `get*JSON` functions — or null.
+/// `ptr` must be null or a pointer previously returned by a library function
+/// documented as freed with `freeCMemory`, not yet freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn freeCMemory(ptr: *mut c_void) {
-    unsafe { free_c_memory_c_string_only(ptr) }
+    unsafe { free_c_memory(ptr) }
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

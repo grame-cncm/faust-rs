@@ -41,7 +41,10 @@ depend on it.
 | `alloc_opaque(value)` | Box a value and return an owning raw pointer |
 | `free_c_string(ptr)` | Free a pointer returned by `alloc_c_string` |
 | `free_opaque<T>(ptr)` | Free a pointer returned by `alloc_opaque` |
-| `free_c_memory_c_string_only(ptr)` | Common `freeCMemory` behavior for C-string pointers |
+| `alloc_ptr_array(values)` | Allocate a null-terminated pointer array (`Signal*`, `char**`) for a C return value, registered process-wide |
+| `free_c_memory(ptr)` | The `freeCMemory` of every adapter: a registered pointer array, otherwise a C string |
+| `free_if_owned_ptr_array(ptr)` | Release `ptr` if it is a live registered array; `false` otherwise |
+| `free_c_memory_c_string_only(ptr)` | Free a pointer known to be a C string (not for the exported `freeCMemory`) |
 | `null_c_string_array()` | Static null-terminated empty `char**` array pointer |
 
 ### FFI utilities

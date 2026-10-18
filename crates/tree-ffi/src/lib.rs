@@ -116,7 +116,6 @@ pub struct FfiTreeContext {
     by_handle: HashMap<usize, TreeId>,
     by_tree: HashMap<u32, usize>,
     string_pool: Vec<CString>,
-    handle_array_allocs: HashMap<usize, usize>,
     signal_controls: Vec<FfiSignalControl>,
     signal_control_by_key: HashMap<FfiSignalControlKey, u32>,
     next_handle: usize,
@@ -154,7 +153,6 @@ impl FfiTreeContext {
             by_handle: HashMap::new(),
             by_tree: HashMap::new(),
             string_pool: Vec::new(),
-            handle_array_allocs: HashMap::new(),
             signal_controls: Vec::new(),
             signal_control_by_key: HashMap::new(),
             next_handle: 1,
@@ -211,27 +209,20 @@ impl FfiTreeContext {
         }
     }
 
-    /// Allocates a null-terminated array of opaque handles owned by the context.
-    pub fn alloc_handle_ptr_array(&mut self, mut values: Vec<*mut c_void>) -> *mut *mut c_void {
-        values.push(std::ptr::null_mut());
-        let len = values.len();
-        let mut vec = values;
-        let raw = vec.as_mut_ptr();
-        std::mem::forget(vec);
-        self.handle_array_allocs.insert(raw as usize, len);
-        raw
+    /// Allocates a null-terminated array of opaque handles for a C return
+    /// value.
+    ///
+    /// The array is registered with `ffi_common`, not with this context, so the
+    /// exported `freeCMemory` of any adapter releases it, and it stays valid to
+    /// free after the context is reset (`destroyLibContext`).
+    pub fn alloc_handle_ptr_array(&mut self, values: Vec<*mut c_void>) -> *mut *mut c_void {
+        ffi_common::alloc_ptr_array(values)
     }
 
-    /// Frees a pointer previously returned by [`Self::alloc_handle_ptr_array`].
+    /// Frees a pointer previously returned by [`Self::alloc_handle_ptr_array`];
+    /// returns `false` for any other pointer.
     pub fn free_if_handle_ptr_array(&mut self, ptr: *mut c_void) -> bool {
-        let key = ptr as usize;
-        let Some(len) = self.handle_array_allocs.remove(&key) else {
-            return false;
-        };
-        unsafe {
-            drop(Vec::from_raw_parts(ptr as *mut *mut c_void, len, len));
-        }
-        true
+        ffi_common::free_if_owned_ptr_array(ptr)
     }
 
     /// Registers or reuses one Signal FFI UI/control descriptor.
@@ -329,20 +320,6 @@ pub unsafe fn write_out_real(out: *mut f64, value: f64) {
     }
 }
 
-/// Frees context-owned handle arrays before falling back to C-string frees.
-///
-/// # Safety
-/// `ptr` must be null or a pointer previously returned by this library for a
-/// handle array or C string result.
-pub unsafe fn free_context_or_c_string(ctx: &mut FfiTreeContext, ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
-    }
-    if !ctx.free_if_handle_ptr_array(ptr) {
-        unsafe { ffi_common::free_c_memory_c_string_only(ptr) }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,8 +341,21 @@ mod tests {
         let raw = ctx.alloc_handle_ptr_array(vec![std::ptr::dangling_mut::<c_void>()]);
 
         assert!(!raw.is_null());
+        assert!(unsafe { (*raw.add(1)).is_null() });
         assert!(ctx.free_if_handle_ptr_array(raw.cast()));
         assert!(!ctx.free_if_handle_ptr_array(raw.cast()));
+    }
+
+    /// A host may destroy the library context before releasing the arrays it
+    /// received, as C++ `free` allows; the array must outlive the context.
+    #[test]
+    fn handle_arrays_outlive_a_context_reset() {
+        let mut ctx = FfiTreeContext::new();
+        let raw = ctx.alloc_handle_ptr_array(vec![std::ptr::dangling_mut::<c_void>()]);
+        drop(ctx);
+
+        let mut fresh = FfiTreeContext::new();
+        assert!(fresh.free_if_handle_ptr_array(raw.cast()));
     }
 
     #[test]

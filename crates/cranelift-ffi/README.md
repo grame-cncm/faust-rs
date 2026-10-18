@@ -109,7 +109,7 @@ This crate uses shared backend-agnostic FFI helpers from `crates/ffi-common`:
 
 - `UIGlue` / `MetaGlue`
 - C string allocation/free helpers
-- `freeCMemory` string helper
+- `freeCMemory` (`free_c_memory`: strings and registered pointer arrays)
 - `argv` decoding
 - error buffer writing (`4096` bytes)
 - C-string argument decoding helpers

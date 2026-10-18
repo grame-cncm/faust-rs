@@ -80,6 +80,7 @@ pub(crate) fn libfaust_export_check(
 
     syntax_check_headers(&workspace)?;
     run_libfaust_cpp_client(&workspace, &dynamic_library)?;
+    run_free_c_memory_c_client(&workspace, &dynamic_library)?;
     run_wrapper_cpp_clients(&workspace, &dynamic_library)?;
 
     println!(
@@ -724,6 +725,137 @@ int main() {
     }
     println!(
         "libfaust C++ client: expandDSPFromString, its complete compile errors, their diagnostics report and generateSHA1 verified"
+    );
+    Ok(())
+}
+
+/// Builds, links and runs a C client of the `freeCMemory` contract against the
+/// real library.
+///
+/// The C headers say that every pointer array they return (`Signal*` from the
+/// Box and Signal APIs, `char**` from `getAll*DSPFactories`) is released with
+/// `freeCMemory`, the same entry point as for strings, and that a host may do
+/// so after `destroyLibContext`. Several adapters define a `freeCMemory` and
+/// one is exported, so only a client of the distributed library shows which
+/// one a host gets, and that the whole sequence runs. It is not the regression
+/// test: under the library's allocator (mimalloc) an array released as a C
+/// string goes unnoticed from C. `crates/cranelift-ffi/tests/free_c_memory.rs`
+/// is, and fails on that mistake.
+fn run_free_c_memory_c_client(
+    workspace: &Path,
+    dynamic_library: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = workspace.join("target/libfaust-export-check");
+    fs::create_dir_all(&out_dir)?;
+    let source = out_dir.join("free-c-memory.c");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+#include <string.h>
+#include "libfaust-box-c.h"
+#include "libfaust-signal-c.h"
+#include "interpreter-dsp-c.h"
+
+static int count(void** array) {
+    int n = 0;
+    while (array[n]) ++n;
+    return n;
+}
+
+int main(void) {
+    char error[4096] = {0};
+
+    createLibContext();
+    Box wires = CboxPar(CboxWire(), CboxWire());
+    Signal* signals = CboxesToSignals(wires, error);
+    if (!signals || count((void**)signals) != 2) {
+        fprintf(stderr, "CboxesToSignals: %s\n", error);
+        return 1;
+    }
+    Signal* normal = CsimplifyToNormalForm2(signals);
+    if (!normal || count((void**)normal) != 2) {
+        fprintf(stderr, "CsimplifyToNormalForm2 failed\n");
+        return 1;
+    }
+    char* printed = CprintBox(wires, false, 256);
+    if (!printed || strlen(printed) == 0) {
+        fprintf(stderr, "CprintBox failed\n");
+        return 1;
+    }
+    freeCMemory(printed);
+    freeCMemory(normal);
+    destroyLibContext();
+    /* Still the host's to free after the context is gone. */
+    freeCMemory(signals);
+
+    interpreter_dsp_factory* factory = createCInterpreterDSPFactoryFromString(
+        "free-c-memory", "process = _;", 0, NULL, error);
+    if (!factory) {
+        fprintf(stderr, "createCInterpreterDSPFactoryFromString: %s\n", error);
+        return 1;
+    }
+    char** keys = getAllCInterpreterDSPFactories();
+    if (!keys || count((void**)keys) < 1 || strlen(keys[0]) != 40) {
+        fprintf(stderr, "getAllCInterpreterDSPFactories failed\n");
+        return 1;
+    }
+    for (int i = 0; keys[i]; ++i) freeCMemory(keys[i]);
+    freeCMemory(keys);
+    deleteCInterpreterDSPFactory(factory);
+
+    printf("ok\n");
+    return 0;
+}
+"#,
+    )?;
+
+    if cfg!(target_os = "windows") {
+        println!("freeCMemory C client: skipped on Windows (no import library published)");
+        return Ok(());
+    }
+
+    let binary = out_dir.join("free-c-memory");
+    let compiler = std::env::var("CC").unwrap_or_else(|_| "cc".to_owned());
+    let library_dir = dynamic_library
+        .parent()
+        .ok_or("the dynamic library has no parent directory")?;
+    let mut compile = Command::new(&compiler);
+    compile.arg("-std=c11");
+    for include_dir in ["box-ffi", "signal-ffi", "interp-ffi"] {
+        compile
+            .arg("-I")
+            .arg(workspace.join("crates").join(include_dir).join("include"));
+    }
+    let output = compile
+        .arg(&source)
+        .arg("-o")
+        .arg(&binary)
+        .arg("-L")
+        .arg(library_dir)
+        .arg("-lfaust-rs")
+        .arg("-Wl,-rpath")
+        .arg(library_dir)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "linking the freeCMemory C client failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+
+    let run = Command::new(&binary).output()?;
+    if !run.status.success() {
+        return Err(format!(
+            "the freeCMemory C client failed at run time:\n{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        )
+        .into());
+    }
+    println!(
+        "freeCMemory C client: Signal* arrays (also after destroyLibContext), a printed box, and a getAllCInterpreterDSPFactories char** released"
     );
     Ok(())
 }

@@ -648,6 +648,13 @@ layouts and initialize every callback-table field.
 cargo run -p xtask -- libfaust-export-check
 ```
 
+It also builds and runs a C client of the `freeCMemory` contract against the
+dynamic library: `Signal*` arrays from `CboxesToSignals` and
+`CsimplifyToNormalForm2` (one freed after `destroyLibContext`), a printed box,
+and the `char**` of `getAllCInterpreterDSPFactories`. Under the library's
+allocator a wrong release is not observable from C, so the regression test of
+that contract is `crates/cranelift-ffi/tests/free_c_memory.rs`.
+
 The check also builds and runs a C++ host of each wrapper header
 (`cranelift-dsp.h`, `interpreter-dsp.h`) against the dynamic library:
 `crates/cranelift-ffi/tests/header-smoke/complete_error_cpp_client.cpp` fails

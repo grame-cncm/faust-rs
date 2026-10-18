@@ -72,7 +72,7 @@ This crate relies on `crates/ffi-common` for backend-agnostic FFI mechanics:
 
 - `UIGlue` / `MetaGlue`
 - C string allocation/free helpers
-- `freeCMemory` string helper
+- `freeCMemory` (`free_c_memory`: strings and registered pointer arrays)
 - `argv` decoding
 - error buffer writing (`4096` bytes)
 - FFI host-option parsing (`-I`, `-cn`, the four `mem0` aliases, `--warn`);

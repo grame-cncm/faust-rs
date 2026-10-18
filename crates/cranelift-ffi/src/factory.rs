@@ -32,9 +32,9 @@ use compiler::{
     merge_import_search_paths,
 };
 use ffi_common::{
-    CompleteError, FaustMemoryManager, decode_c_argv as decode_c_argv_shared,
-    free_c_memory_c_string_only, null_c_string_array, optional_c_string_arg,
-    parse_ffi_compile_args, required_c_string_arg, write_error_4096,
+    CompleteError, FaustMemoryManager, alloc_ptr_array, decode_c_argv as decode_c_argv_shared,
+    free_c_memory, null_c_string_array, optional_c_string_arg, parse_ffi_compile_args,
+    required_c_string_arg, write_error_4096,
 };
 use fir::{FirMatch, match_fir};
 
@@ -532,23 +532,16 @@ pub extern "C" fn deleteAllCCraneliftDSPFactories() {
 
 /// Return all cached Cranelift factory SHA keys as a null-terminated array.
 ///
-/// The returned strings must be freed individually with `freeCMemory`. As in
-/// the current `interp-ffi` implementation, the outer array deallocation path is
-/// not yet modeled separately in the scaffold.
-///
 /// # Safety
-/// The caller owns the returned allocations and must free each returned string;
-/// the outer array ownership follows the crate's current scaffold contract.
+/// The caller owns the returned allocations: it frees each string, then the
+/// array itself, with `freeCMemory`.
 #[unsafe(no_mangle)]
 pub extern "C" fn getAllCCraneliftDSPFactories() -> *mut *mut c_char {
     let keys = cache_all_sha_keys();
     if keys.is_empty() {
         return std::ptr::null_mut();
     }
-    let mut ptrs: Vec<*mut c_char> = keys.into_iter().map(|k| alloc_c_string(&k)).collect();
-    ptrs.push(std::ptr::null_mut());
-    let boxed: Box<[*mut c_char]> = ptrs.into_boxed_slice();
-    Box::into_raw(boxed).cast::<*mut c_char>()
+    alloc_ptr_array(keys.into_iter().map(|k| alloc_c_string(&k)).collect())
 }
 
 /// Return a factory JSON description string.
@@ -806,14 +799,17 @@ pub extern "C" fn stopMTDSPFactories() {
     stop_mt();
 }
 
-/// Free memory allocated by this library for C strings.
+/// Free a C string or a pointer array returned by this library.
+///
+/// Same implementation as the `freeCMemory` that `libfaust-rs` exports
+/// (`interp-ffi`'s): [`free_c_memory`].
 ///
 /// # Safety
-/// `ptr` must be null or a pointer previously returned by a Cranelift FFI
-/// function that documents `freeCMemory` ownership.
+/// `ptr` must be null or a pointer previously returned by a library function
+/// documented as freed with `freeCMemory`, not yet freed.
 #[cfg_attr(feature = "standalone-capi-globals", unsafe(no_mangle))]
 pub unsafe extern "C" fn freeCMemory(ptr: *mut c_void) {
-    unsafe { free_c_memory_c_string_only(ptr) }
+    unsafe { free_c_memory(ptr) }
 }
 
 /// Factory runtime status string kept for module-presence tests.

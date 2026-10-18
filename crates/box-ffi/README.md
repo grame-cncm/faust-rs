@@ -40,8 +40,9 @@ common helpers.
 ## Notes
 
 - `Box` handles are opaque and stable within one active context.
-- `Ctree2str` and `CprintBox` return heap C strings allocated by Rust;
-  release them with `freeCMemory`.
+- `Ctree2str` and `CprintBox` return heap C strings allocated by Rust, and
+  `CboxesToSignals*` null-terminated `Signal*` arrays; release both with
+  `freeCMemory`, also after `destroyLibContext`.
 - Matcher out-parameters and error buffers are written only on success;
   invalid pointers produce `null` / `false` / `0` results.
 - This is an incremental parity layer; rows marked as exact candidates in the

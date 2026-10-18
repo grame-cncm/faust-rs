@@ -1,6 +1,8 @@
 //! C string, argument-vector, and error-buffer marshalling.
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Allocates a heap C string for FFI return values.
 ///
@@ -26,12 +28,12 @@ pub unsafe fn free_c_string(ptr: *mut c_char) {
     }
 }
 
-/// Implements the common `freeCMemory` behavior used by Faust-style FFI crates
-/// for heap strings returned through the C ABI.
+/// Frees a pointer as a C string, without consulting the pointer-array
+/// registry.
 ///
-/// This helper only handles the "pointer was allocated as a C string" case.
-/// For `char**` arrays, callers must free elements first, then free the outer
-/// array pointer according to backend-specific allocation strategy.
+/// Only correct for a pointer known to come from [`alloc_c_string`]. The
+/// exported `freeCMemory` must use [`free_c_memory`] instead: a host hands it
+/// pointer arrays too.
 ///
 /// # Safety
 /// `ptr` must be null or a pointer previously returned by an API documented as
@@ -42,6 +44,74 @@ pub unsafe fn free_c_memory_c_string_only(ptr: *mut c_void) {
             free_c_string(ptr.cast::<c_char>());
         }
     }
+}
+
+/// Pointer arrays handed to a host (`Signal*`, `char**`), keyed by address,
+/// with the element count their release needs.
+///
+/// Process-global rather than owned by a tree context, for two reasons:
+/// `freeCMemory` receives a bare pointer, so whichever adapter exports it must
+/// recognize an array allocated by any other adapter; and an array stays the
+/// host's to free after `destroyLibContext`, as with C++ `malloc`/`free`.
+static OWNED_PTR_ARRAYS: OnceLock<Mutex<HashMap<usize, usize>>> = OnceLock::new();
+
+fn owned_ptr_arrays() -> MutexGuard<'static, HashMap<usize, usize>> {
+    // Every operation leaves the map consistent, so a panic elsewhere while it
+    // was held does not invalidate it: recover instead of unwinding into C.
+    OWNED_PTR_ARRAYS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Allocates a null-terminated pointer array for a C return value.
+///
+/// The terminator is appended here. The array is released by [`free_c_memory`]
+/// (the exported `freeCMemory`); the pointers it holds are not.
+#[must_use]
+pub fn alloc_ptr_array<T>(mut values: Vec<*mut T>) -> *mut *mut T {
+    values.push(std::ptr::null_mut());
+    let len = values.len();
+    let raw = Box::into_raw(values.into_boxed_slice()).cast::<*mut T>();
+    owned_ptr_arrays().insert(raw as usize, len);
+    raw
+}
+
+/// Releases `ptr` if it is a live array returned by [`alloc_ptr_array`].
+///
+/// Returns `false`, and does nothing, for any other pointer, including an
+/// array already released.
+pub fn free_if_owned_ptr_array(ptr: *mut c_void) -> bool {
+    let Some(len) = owned_ptr_arrays().remove(&(ptr as usize)) else {
+        return false;
+    };
+    // SAFETY: the registry holds exactly the arrays `alloc_ptr_array` leaked
+    // from a boxed slice of `len` thin pointers, and removing the entry above
+    // makes this the only release. `*mut c_void` has the layout of every
+    // `*mut T` the array was allocated with.
+    drop(unsafe {
+        Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+            ptr.cast::<*mut c_void>(),
+            len,
+        ))
+    });
+    true
+}
+
+/// The `freeCMemory` of every adapter: releases a pointer array returned by
+/// [`alloc_ptr_array`], otherwise a C string returned by [`alloc_c_string`].
+///
+/// C++ Faust allocates both with `malloc` and frees them with `free`; here the
+/// two allocations differ, so the array registry decides which release applies.
+///
+/// # Safety
+/// `ptr` must be null, a live pointer array returned by [`alloc_ptr_array`], or
+/// a C string returned by [`alloc_c_string`] and not yet freed.
+pub unsafe fn free_c_memory(ptr: *mut c_void) {
+    if ptr.is_null() || free_if_owned_ptr_array(ptr) {
+        return;
+    }
+    unsafe { free_c_string(ptr.cast::<c_char>()) }
 }
 
 /// Writes an error message into a conventional Faust 4096-byte error buffer.
@@ -144,9 +214,48 @@ mod tests {
     use std::ffi::{CStr, CString};
 
     use super::{
-        alloc_c_string, decode_c_argv, free_c_memory_c_string_only, free_c_string,
-        null_c_string_array, optional_c_string_arg, required_c_string_arg, write_error_4096,
+        alloc_c_string, alloc_ptr_array, decode_c_argv, free_c_memory, free_c_memory_c_string_only,
+        free_c_string, free_if_owned_ptr_array, null_c_string_array, optional_c_string_arg,
+        required_c_string_arg, write_error_4096,
     };
+    use std::ffi::{c_char, c_void};
+
+    #[test]
+    fn pointer_arrays_are_null_terminated_and_released_once() {
+        let elements = [alloc_c_string("a"), alloc_c_string("b")];
+        let array = alloc_ptr_array(elements.to_vec());
+        unsafe {
+            assert_eq!(*array, elements[0]);
+            assert_eq!(*array.add(1), elements[1]);
+            assert!((*array.add(2)).is_null());
+        }
+        assert!(free_if_owned_ptr_array(array.cast()));
+        assert!(!free_if_owned_ptr_array(array.cast()), "released twice");
+        for element in elements {
+            assert!(
+                !free_if_owned_ptr_array(element.cast()),
+                "a string is no array"
+            );
+            unsafe { free_c_string(element) };
+        }
+    }
+
+    /// The exported `freeCMemory` contract: one entry point for strings and
+    /// for the arrays the C headers return (`Signal*`, `char**`).
+    #[test]
+    fn free_c_memory_releases_arrays_and_strings() {
+        let element = alloc_c_string("sha");
+        let array: *mut *mut c_char = alloc_ptr_array(vec![element]);
+        let empty: *mut *mut c_void = alloc_ptr_array(Vec::new());
+        unsafe {
+            free_c_memory(element.cast());
+            free_c_memory(array.cast());
+            free_c_memory(empty.cast());
+            free_c_memory(std::ptr::null_mut());
+        }
+        assert!(!free_if_owned_ptr_array(array.cast()));
+        assert!(!free_if_owned_ptr_array(empty.cast()));
+    }
 
     #[test]
     fn c_string_helpers_roundtrip() {

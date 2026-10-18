@@ -36,6 +36,7 @@ pub use factory_cache::{FactoryCache, FactoryHandle, FactoryRelease};
 pub use memory::{alloc_opaque, free_opaque};
 pub use sha1::{sha1, sha1_hex};
 pub use strings::{
-    alloc_c_string, decode_c_argv, free_c_memory_c_string_only, free_c_string, null_c_string_array,
-    optional_c_string_arg, required_c_string_arg, write_error_4096,
+    alloc_c_string, alloc_ptr_array, decode_c_argv, free_c_memory, free_c_memory_c_string_only,
+    free_c_string, free_if_owned_ptr_array, null_c_string_array, optional_c_string_arg,
+    required_c_string_arg, write_error_4096,
 };

@@ -11,7 +11,8 @@ Shared support layer for Faust-style C ABI crates.
 - Holds the registry of Signal FFI UI/control descriptors
   (`FfiSignalControl`, `register_signal_control`).
 - Provides stable opaque handle encoding/decoding for C callers.
-- Tracks context-owned null-terminated handle arrays.
+- Allocates null-terminated handle arrays, registered with `ffi-common` so any
+  adapter's `freeCMemory` releases them, also after a context reset.
 - Owns context-pinned C strings used by matcher out-parameters.
 - Provides shared `SType` and `SOperator` enum definitions.
 - Provides null-safe helper functions for C out-pointers.

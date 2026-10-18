@@ -23,7 +23,9 @@ wrappers over the C ABI, the same shape `libfaust-box.h` uses for the Box API,
 each wrapper releasing its returned `const char*` through `freeCMemory`.
 
 `freeCMemory` itself is exported once for the whole distribution by
-`interp-ffi`; defining it here would collide at link time.
+`interp-ffi`; defining it here would collide at link time. Every adapter's
+`freeCMemory` is `ffi_common::free_c_memory`, which releases the strings and
+the pointer arrays (`Signal*`, `char**`) of every API.
 
 ## Compile errors
 

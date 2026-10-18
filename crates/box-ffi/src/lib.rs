@@ -539,19 +539,16 @@ pub extern "C" fn destroyLibContext() {
 }
 
 #[cfg_attr(feature = "standalone-capi-globals", unsafe(no_mangle))]
-/// Free a heap-allocated C string returned by this library.
+/// Free a C string or a `Box*`/`Signal*` array returned by this library.
+///
+/// Same implementation as the `freeCMemory` that `libfaust-rs` exports
+/// (`interp-ffi`'s): [`ffi_common::free_c_memory`].
 ///
 /// # Safety
 /// `ptr` must be null or a pointer previously returned by this library for a
-/// string result.
+/// string or array result, not yet freed.
 pub unsafe extern "C" fn freeCMemory(ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
-    }
-    let freed_array = with_ctx(|ctx| ctx.free_if_handle_ptr_array(ptr));
-    if !freed_array {
-        unsafe { ffi_common::free_c_memory_c_string_only(ptr) }
-    }
+    unsafe { ffi_common::free_c_memory(ptr) }
 }
 
 #[unsafe(no_mangle)]

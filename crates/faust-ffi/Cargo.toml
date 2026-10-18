@@ -22,8 +22,9 @@ libfaust_ffi = { package = "libfaust-ffi", path = "../libfaust-ffi" }
 # `faust-ffi` is a cdylib/staticlib — the final artifact for its Rust code, not
 # an rlib whose consumer picks the allocator — so selecting one here is the
 # library's own choice rather than an imposition. Sound because the FFI memory
-# contract never crosses allocators: every pointer handed to a host is
-# allocated by `CString::into_raw` and freed by `CString::from_raw` through the
-# exported `freeCMemory`, and nothing in the crate frees host memory.
+# contract never crosses allocators: every pointer handed to a host is a
+# `CString` or a boxed pointer array allocated here and freed here through the
+# exported `freeCMemory` (`ffi_common::free_c_memory`), and nothing in the
+# crate frees host memory.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mimalloc = "0.1.52"
