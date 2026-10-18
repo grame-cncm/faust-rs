@@ -1078,8 +1078,10 @@ fn integer_helper(op: FirBinOp) -> Option<&'static str> {
 fn map_math_name(name: &str) -> &str {
     match name {
         "fabsf" | "fabs" | "fabsl" | "abs" => "abs",
-        "max_i" | "max_f" | "max_" | "max_l" => "max",
-        "min_i" | "min_f" | "min_" | "min_l" => "min",
+        // `fmin`/`fmax` are the canonical FIR names of a real `min`/`max`
+        // (`FirMathOp::{Min, Max}`); codebox has only the untyped pair.
+        "fmaxf" | "fmax" | "max_i" | "max_f" | "max_" | "max_l" => "max",
+        "fminf" | "fmin" | "min_i" | "min_f" | "min_" | "min_l" => "min",
         "fmodf" | "fmod" | "fmodl" => "safemod",
         "acosf" | "acos" => "acos",
         "asinf" | "asin" => "asin",

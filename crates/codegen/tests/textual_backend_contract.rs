@@ -1,4 +1,6 @@
-//! Every FIR statement a textual backend meets is either emitted or refused.
+//! The contract every textual backend keeps, checked on all seven at once.
+//!
+//! # Every FIR statement is either emitted or refused
 //!
 //! The module contract (`backends/mod.rs`) says an unsupported FIR node must
 //! fail with a stable backend error. Some backends instead accepted a few
@@ -367,4 +369,44 @@ fn a_switch_condition_is_evaluated_once() {
             assert_eq!(text.matches("my_cond").count(), 1, "{backend}:\n{text}");
         }
     }
+}
+
+/// The canonical FIR names of a real `min`/`max` are `fmin`/`fmax`
+/// (`FirMathOp::{Min, Max}`); codebox has only `min`/`max`, which upstream
+/// emits, and passed `fmin`/`fmax` through unchanged.
+#[test]
+fn codebox_spells_a_real_min_and_max_as_its_own_builtins() {
+    let (_, entry, generate) = backends()
+        .into_iter()
+        .find(|(name, _, _)| *name == "codebox")
+        .expect("codebox is listed");
+    let (store, module) = module_with(entry, |b| {
+        let x = b.load_var("fState", AccessType::Struct, FirType::Float32);
+        let half = b.float32(0.5);
+        let low = b.fun_call("fmin", &[x, half], FirType::Float32);
+        let high = b.fun_call("fmax", &[low, half], FirType::Float32);
+        vec![b.store_var("fState", AccessType::Struct, high)]
+    });
+    let text = generate(&store, module).expect("min/max compile");
+    assert!(text.contains("max(min(fState"), "{text}");
+    assert!(!text.contains("fmin") && !text.contains("fmax"), "{text}");
+}
+
+/// `exp2` is a method of the float type like `log2`; the rust backend
+/// mapped `log2f` to `f32::log2` but left `exp2f` a bare call to a function
+/// nothing defines.
+#[test]
+fn rust_maps_exp2_like_log2() {
+    let (_, entry, generate) = backends()
+        .into_iter()
+        .find(|(name, _, _)| *name == "rust")
+        .expect("rust is listed");
+    let (store, module) = module_with(entry, |b| {
+        let x = b.load_var("fState", AccessType::Struct, FirType::Float32);
+        let up = b.fun_call("exp2f", &[x], FirType::Float32);
+        let down = b.fun_call("log2f", &[up], FirType::Float32);
+        vec![b.store_var("fState", AccessType::Struct, down)]
+    });
+    let text = generate(&store, module).expect("exp2/log2 compile");
+    assert!(text.contains("f32::log2(f32::exp2("), "{text}");
 }
