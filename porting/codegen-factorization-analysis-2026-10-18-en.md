@@ -554,6 +554,8 @@ built (§9.3).
 | D18 | `1d2751ec` | the upstream generator line in the rust, julia, cmajor, codebox and asc banners |
 | D16 | `609e65cc` | c and cpp: a metadata `declare` passes no zone |
 | D17 | `6c481627` | JSON widget addresses built by `shortname::build_path` (C++ `PathBuilder`); short names now equal upstream's |
+| §9.5 follow-up | `550ea14b` | `RustOptions`/`CmajorOptions` carry `metadata_name`/`metadata_filename`/`metadata_entries`; the compiler fills them (one `fill_compilation_metadata` for the five backends); rust `metadata()` replays them; the CLI `-lang rust` goes through the signal lowering, naming the FIR module after the class as everywhere else |
+| §9.5 follow-up | `e5bd488d` | the c, cpp, rust and cmajor banners copy upstream's five metadata keys (`author`, `copyright`, `license`, `name`, `version`), identical to the reference over the impulse corpus |
 
 ### 9.3 Proposed, then rejected on reading the code
 
@@ -609,8 +611,10 @@ built (§9.3).
 - **codebox NaN/infinity spellings**: there is no oracle.
 - **`fbc_to_cpp`**: its literal spelling and raw integer `+ - *` are kept,
   since it is a debugging rendering compared only with itself.
-- **The rust backend has no metadata transport.** Adding one is a public
-  options addition, so the rust and cmajor banners carry no `name:` line.
+- ~~**The rust backend has no metadata transport.**~~ Done in the follow-up
+  (`550ea14b`, `e5bd488d`, §9.2): the rust and cmajor options carry the
+  compilation metadata, and the c, cpp, rust and cmajor banners copy
+  upstream's five metadata keys.
 - **cpp alone synthesizes `openVerticalBox`/`closeBox`** for an absent
   `buildUserInterface`.
 - **The interpreter's name heuristics** (the `input`/`output` prefix, the

@@ -7,14 +7,18 @@ Date: 2026-10-18
 - Branch: `codegen-factorization` (from `main-dev` at `d4f3f6a5`), checked
   out in the main checkout. Not pushed. The user asked for the work to be
   done on this branch and to stay visible to them.
-- HEAD: the commit containing this handoff. Its parent is `6c481627` (D17,
-  JSON addresses).
+- HEAD: the commit containing this handoff update. Its parent is
+  `e5bd488d` (five-key banner).
 
 Commits since `main-dev` (oldest first):
 
 - `2c91ac52` — the analysis.
 - 33 code commits, `43b650f1` … `6c481627`; the list and the outcome are in
   `porting/codegen-factorization-analysis-2026-10-18-en.md` §9.
+- `f459ec95` — the outcome, registry, journal and handoff.
+- The §9.5 follow-up, done at the user's request:
+  - `550ea14b`: the metadata transport for `RustOptions`/`CmajorOptions`;
+  - `e5bd488d`: the five-key banner.
 
 ## Working Tree
 
@@ -98,8 +102,6 @@ Commits since `main-dev` (oldest first):
 - Nothing blocks the branch.
 - Left as is, recorded in §9.5:
   - codebox NaN/infinity spelling;
-  - rust/cmajor have no metadata transport, so their banners carry no
-    `name:` line;
   - cpp alone synthesizes the empty UI box;
   - the interpreter's name heuristics;
   - the six UI tree walkers are not merged.
@@ -111,8 +113,7 @@ Commits since `main-dev` (oldest first):
 1. Review the branch and push it (the user pushes).
 2. Optionally re-record the CLI transcripts:
    `cargo run -p xtask -- cli-transcript-gen`.
-3. Optional follow-ups from §9.5: a `metadata_*` transport for
-   `RustOptions`/`CmajorOptions` (public API); one UI tree iterator.
+3. Optional follow-up from §9.5: one UI tree iterator.
 
 ## Useful Commands to Resume
 
