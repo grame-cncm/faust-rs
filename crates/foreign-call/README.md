@@ -31,8 +31,9 @@ the supported ones are enumerated, by macros: up to `MAX_ARGS` arguments, each
 
 ## Safety boundary
 
-`foreign-call` is the workspace exception to the global `unsafe_code = "forbid"`
-lint. It must transmute raw addresses into function pointers, so the caller is
+`foreign-call` is one of the crates exempt from the global
+`unsafe_code = "forbid"` lint, and the only one outside the FFI and `faust`
+crates. It must transmute raw addresses into function pointers, so the caller is
 responsible for ensuring that:
 
 - `addr` points to a valid `extern "C"` function,

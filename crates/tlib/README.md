@@ -52,4 +52,7 @@ instead of process-global assertions.
 
 ## Position in the pipeline
 
-`tlib` is a dependency of every other crate in the workspace.
+`tlib` is the foundation of the tree-encoded IR crates (`boxes`, `signals`,
+`ui`, `fir`) and of the passes that walk them; crates that do not handle trees
+(for example `diagnostics`, `interval`, `codegen`, `foreign-call`) do not
+depend on it.

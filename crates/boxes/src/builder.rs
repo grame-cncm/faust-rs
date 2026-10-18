@@ -674,9 +674,7 @@ impl<'a> BoxBuilder<'a> {
     #[must_use]
     /// Builds one box node for `fad(expr, seed)` and returns its `BoxId`.
     ///
-    /// Source provenance (C++):
-    /// - `compiler/boxes/boxes.cpp`
-    /// - `boxForwardAD(Tree exp, Tree seed)`
+    /// faust-rs extension, no C++ equivalent.
     pub fn forward_ad(&mut self, expr: BoxId, seed: BoxId) -> BoxId {
         self.debug_assert_node_exists("boxForwardAD expr", expr);
         self.debug_assert_node_exists("boxForwardAD seed", seed);

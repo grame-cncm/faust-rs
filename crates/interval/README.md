@@ -36,10 +36,10 @@ implementation remain explicit zero-interval placeholders in `ops::missing`.
 
 | Item | Description |
 |---|---|
-| `ops::arithmetic` | `+`, `-`, `*`, `/`, `%`, `abs`, `floor`, `ceil`, … |
+| `ops::arithmetic` | `+`, `-`, `*`, `/`, `%`, `abs`, `neg`, `inv` |
 | `bitwise` | Signed/unsigned `&`, `\|`, `^`, `~`, and shift interval operations |
 | `ops::logic` | Boolean algebra on intervals |
-| `ops::math` | `pow`, `sqrt`, `exp`, `log`, … |
+| `ops::math` | `floor`, `ceil`, `round`, `rint`, `pow`, `sqrt`, `exp`, `log`, … |
 | `ops::trig` | `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2` |
 | `ops::delay_table` | Delay and memory interval propagation |
 | `ops::missing` | C++-compatible zero placeholders for unimplemented operator families |

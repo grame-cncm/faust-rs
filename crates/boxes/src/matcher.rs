@@ -152,11 +152,8 @@ pub enum BoxMatch<'a> {
     /// `(bargraph, min, max)`. faust-rs extension.
     COutput(BoxId, BoxId),
     /// Automatic differentiation wrapper preserving the wrapped block diagram
-    /// until the post-eval propagation boundary.
-    ///
-    /// Source provenance (C++):
-    /// - `compiler/boxes/boxes.cpp`
-    /// - `boxForwardAD(Tree exp, Tree seed)` — `isBoxForwardAD(Tree t, Tree& exp, Tree& seed)`
+    /// until the post-eval propagation boundary. faust-rs extension, no C++
+    /// equivalent.
     ForwardAD(BoxId, BoxId),
     /// Reverse-mode automatic differentiation wrapper.
     ///

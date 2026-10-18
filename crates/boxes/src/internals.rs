@@ -881,13 +881,13 @@ pub(crate) fn node_downsampling(arena: &mut TreeArena, expr: BoxId) -> BoxId {
     intern_tag(arena, BOX_DOWNSAMPLING_TAG, &[expr])
 }
 
-/// Equivalent to C++ `boxForwardAD` (`fad(expr, seed)`).
+/// `fad(expr, seed)` node. faust-rs extension, no C++ equivalent.
 #[must_use]
 pub(crate) fn node_forward_ad(arena: &mut TreeArena, expr: BoxId, seed: BoxId) -> BoxId {
     intern_tag(arena, BOX_FORWARD_AD_TAG, &[expr, seed])
 }
 
-/// Equivalent to C++ `boxReverseAD` (`rad(expr, seeds)`).
+/// `rad(expr, seeds)` node. faust-rs extension, no C++ equivalent.
 #[must_use]
 pub(crate) fn node_reverse_ad(arena: &mut TreeArena, expr: BoxId, seeds: BoxId) -> BoxId {
     intern_tag(arena, BOX_REVERSE_AD_TAG, &[expr, seeds])

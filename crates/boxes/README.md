@@ -17,7 +17,7 @@ widgets, foreign calls, …) is lowered into a box tree before the evaluator run
 
 | Item | Description |
 |---|---|
-| `BoxBuilder` | Construction API — 1:1 mapping with C++ `box*` constructors |
+| `BoxBuilder` | Construction API — 1:1 mapping with C++ `box*` constructors, plus faust-rs extensions (`fad`/`rad`, `cinputs`/`coutputs`) |
 | `BoxMatch` / `match_box` | Pattern-matching API — structural inspection of a box node |
 | `BoxId` | `TreeId` alias for box nodes |
 | `dump_box` | Debug pretty-printer for a box subtree |

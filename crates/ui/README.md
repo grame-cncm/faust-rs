@@ -38,11 +38,11 @@ duplicating labels and ranges in DSP signal nodes.
 
 | Item | Description |
 |---|---|
-| `UiGroupKind` | `HGroup` / `VGroup` / `TGroup` |
+| `UiGroupKind` | `Vertical` / `Horizontal` / `Tab` |
 | `UiGroupPathSegment` | One segment of a hierarchical group path |
 | `UiGroupSpec` | Full group specification (kind + path) |
 | `UiRootOrigin` | Origin tag for the synthesized root group |
-| `ControlKind` | Widget family: `Button`, `CheckBox`, `Slider`, `Bargraph`, `Soundfile`, … |
+| `ControlKind` | Widget family: `Button`, `Checkbox`, `VSlider`, `HSlider`, `NumEntry`, `VBargraph`, `HBargraph`, `Soundfile` |
 | `ControlRange` | Min/max/step/init numeric range for sliders and bargraphs |
 | `ControlSpec` | Full control specification (kind, label, range) |
 | `UiMetadata` | Key→value metadata map for a control (`declare` statements) |

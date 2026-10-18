@@ -196,7 +196,8 @@ pub fn prepare_signals_multi(
 /// the Faust process output is expected to be real (variability = Konst with
 /// Int nature).  This matches the minimal promotion the fast-lane needed.
 ///
-/// C++: `signalPromotion(sig)` in `normalform.cpp`.
+/// C++: `signalPromote(sig)` (`SignalPromotion`,
+/// `compiler/transform/sigPromotion.cpp`), called from `normalform.cpp`.
 pub fn promote_signals(
     arena: &mut TreeArena,
     types: &HashMap<SigId, SigType>,
