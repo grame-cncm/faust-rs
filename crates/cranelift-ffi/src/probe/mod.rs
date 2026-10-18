@@ -49,6 +49,10 @@
 //! - [`timing`] — what the `compute` calls cost, against real time (`--time`).
 //! - [`freqresp`] — the frequency response of a linear program, and the checks
 //!   that it is one (`--freqresp`); FFI-free.
+//! - [`audio_file`] — an excitation read from a `.wav`, `.npy` or raw file
+//!   (`--in file:PATH`).
+//! - [`train`] — the gradient-descent host loop and finite-difference gradient
+//!   check (`--train`, `--fd-check`).
 
 pub mod audio_file;
 pub mod audio_out;

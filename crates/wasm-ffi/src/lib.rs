@@ -32,7 +32,7 @@
 //!
 //! That workflow produces and validates the standalone
 //! `target/wasm32-unknown-unknown/release/libfaust-rs.wasm` module consumed
-//! by the future `faustwasm` embedded-compiler loader.
+//! by the `faustwasm` embedded-compiler loader.
 //!
 //! # Embedded Faust libraries
 //! The compiler-module can embed a read-only bundle of Faust library sources

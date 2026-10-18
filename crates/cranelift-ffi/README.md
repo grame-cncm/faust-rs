@@ -24,7 +24,8 @@ What is already implemented:
 - factory/instance opaque types
 - owned, reference-counted factory and DSP-instance cache
 - source factory creation through `compiler -> FIR -> codegen::cranelift`
-- source-backed bitcode-family payload with deterministic factory rebuild
+- textual `.clif` (`FAUST_CLIF_V1`) bitcode-family payload with deterministic
+  factory rebuild from its source fallback
 - FIR-derived native runtime descriptor for state/UI/meta handling
 - native JIT-backed `compute` path for file/string factory constructors
 - mode-zero custom memory ownership for object, instance-buffer, and generated
@@ -44,6 +45,9 @@ What is not final yet:
 `Cargo.toml` currently builds:
 
 - `rlib` (needed for Rust examples/tests)
+- three binaries: `faustprobe` (offline probe: set controls, render, measure),
+  `impulse-cranelift` (scalar impulse-test runner, `.ir` output) and
+  `mem0-json-check` (semantic checker for mem0 impulse-lane JSON)
 
 Library name:
 
@@ -60,6 +64,8 @@ Headers are in `include/`:
 
 - `include/cranelift-dsp-c.h`
 - `include/cranelift-dsp.h`
+- `include/faust-memory-manager.h` (the `faust_memory_manager` ABI-v1 table,
+  included by `cranelift-dsp-c.h`)
 
 Related files:
 
@@ -79,13 +85,23 @@ list V1-deferred families where relevant.
 - `src/factory.rs`
   - Cranelift factory `extern "C"` API
   - compiler/FIR/JIT factory construction
-  - temporary bitcode family
+  - bitcode family (`.clif` container write, rebuild on read)
 - `src/instance.rs`
   - instance lifecycle / UI / metadata / compute exports
 - `src/runtime.rs`
   - FIR-derived native runtime descriptor builder shared by factories/instances
 - `src/clif.rs`
   - textual `.clif` container helpers used by factory persistence
+- `src/probe/`
+  - the `faustprobe` engine: control discovery, rendering, schedules, sweeps,
+    comparisons, frequency responses, training (`engine/` owns the JIT
+    factory and instances); design in
+    `porting/faustprobe-generic-test-tool-design-2026-08-14-en.md`
+- `src/bin/`
+  - `faustprobe/` (one module per concern), `impulse_cranelift.rs`,
+    `mem0_json_check.rs`
+- `src/diff.rs` (test-only)
+  - differential runtime tests, interpreter vs Cranelift
 
 ## Shared FFI helpers (factorized)
 
@@ -98,8 +114,9 @@ This crate uses shared backend-agnostic FFI helpers from `crates/ffi-common`:
 - error buffer writing (`4096` bytes)
 - C-string argument decoding helpers
 - empty `char**` helper
-- FFI option parsing (`-I`, `-cn`, `-double`, `-vec`, `-vs`, `-lv`, and
-  `-ss`, and the four `mem0` aliases)
+- FFI host-option parsing (`-I`, `-cn`, the four `mem0` aliases, `--warn`);
+  program options (`-double`, `-vec`, `-vs`, `-lv`, `-ss`, ...) are read by
+  `compiler::CompileOptionArgs::from_argv`
 
 Cranelift-specific factory/runtime state and backend semantics remain local to
 this crate.
@@ -242,8 +259,10 @@ report's fix and compiles the result.
   (target getters and LLVM IR/machine/object serialization). Cranelift
   foreign-function registration and `mem0` manager hooks are implemented
   separately.
-- The bitcode API family uses a source-backed `CRANELIFT_FFI_V2_SOURCE`
-  payload, not a portable native-code snapshot.
+- The bitcode API family writes a textual `FAUST_CLIF_V1` container (CLIF
+  function bodies plus a source fallback, from which the factory is rebuilt on
+  read; legacy `CRANELIFT_FFI_V2_SOURCE` payloads are still read), not a
+  portable native-code snapshot.
 - Runtime behavior is still progressing toward full Interpreter/C++ backend
   parity across the complete Faust language and runtime surface.
 

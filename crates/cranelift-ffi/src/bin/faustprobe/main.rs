@@ -1,8 +1,9 @@
 //! `faustprobe` command-line entry point.
 //!
-//! See the crate documentation for why this exists alongside the two impulse
-//! runners, and `porting/faustprobe-generic-test-tool-design-2026-08-14-en.md`
-//! for the full design.
+//! See the `cranelift_ffi::probe` module documentation for why this exists
+//! alongside the two impulse runners, and
+//! `porting/faustprobe-generic-test-tool-design-2026-08-14-en.md` for the full
+//! design.
 //!
 //! The binary is one module per concern:
 //!

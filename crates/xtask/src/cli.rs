@@ -347,8 +347,9 @@ pub(crate) struct VectorCoverageCheckArgs {
 pub(crate) struct CompileBudgetArgs {
     #[arg(long, value_name = "PATH")]
     pub(crate) baseline: Option<PathBuf>,
-    /// Rewrite the front-end baseline units from this run instead of enforcing
-    /// them. Every increase must be justified in the commit message.
+    /// Rewrite the baseline units of both baskets (front-end, codegen
+    /// scalar/vector) from this run instead of enforcing them. Every increase
+    /// must be justified in the commit message.
     #[arg(long)]
     pub(crate) update: bool,
 }
@@ -359,7 +360,8 @@ pub(crate) struct ExamplesCompareArgs {
     /// DSP tree to walk (default: the reference `examples/` directory).
     #[arg(long, value_name = "DIR")]
     pub(crate) root: Option<PathBuf>,
-    /// Runs per compiler per DSP; the minimum is kept (default 3).
+    /// Runs per compiler per DSP; the minimum is kept (default 3, or 1 with
+    /// `--per-symbol`).
     #[arg(long, value_name = "N")]
     pub(crate) repeats: Option<u32>,
     /// C++ Faust binary. Defaults to `FAUST_CPP_BIN`, then the local build,

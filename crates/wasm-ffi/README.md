@@ -83,6 +83,12 @@ The raw compiler-module ABI is explicitly handle-based:
 9. release the compile result with `faust_wasm_result_free`
 10. release the temporary request buffers with `faust_wasm_dealloc`
 
+Two further exports sit outside this sequence: `faust_wasm_version_ptr/len`
+expose the static binding version string, and `faust_wasm_generate_aux_files`
+keeps the historical coarse shape of `generateAuxFiles` (returns `1` on
+success, `0` otherwise, no payload); `faust_wasm_generate_aux_files_json`
+returns the artifacts as a JSON text result.
+
 Helper text results (`faust_wasm_get_info`, `faust_wasm_expand_dsp`,
 `faust_wasm_generate_aux_files_json`) carry structured diagnostics too: when
 `faust_wasm_text_result_is_ok` returns `0`,
@@ -200,7 +206,7 @@ Import precedence:
 | `getInfos("version")` | implemented |
 | `getInfos("help")` | implemented |
 | `getInfos("libdir"\\|"includedir"\\|"archdir"\\|"dspdir"\\|"pathslist")` | supported; mirrors C++ Faust directory-info queries |
-| `expandDSP(...)` | Implemented as Rust frontend validation plus source passthrough; invalid/unsupported requests return an explicit error |
+| `expandDSP(...)` | Implemented: the evaluated program is serialized back to Faust source with imports and abstractions inlined (`compiler::expand`); a source already starting with a `compile_options` declaration is returned as C++ `expandDSPFromString` does; failures return an explicit error |
 | `generateAuxFiles(...)` | Implemented for `-cpp`, `-c`, `-wasm`, `-json`, `-svg`, and `-lang asc`; SVG artifacts are generated in memory through `draw::draw_schema_to_memory` |
 
 That `.wasm` file is the compiler-module artifact that the `faustwasm`

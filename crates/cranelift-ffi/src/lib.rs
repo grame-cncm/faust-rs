@@ -15,15 +15,17 @@
 //! - Remaining deferred families are tracked in the Cranelift backend plan
 //!   and parity matrix.
 //!
-//! # Planned modules
+//! # Modules
 //! - [`types`] — opaque FFI wrapper types and callback glue structs.
 //! - [`cache`] — global factory cache.
 //! - [`factory`] — factory lifecycle and source compilation entry points.
 //! - [`instance`] — instance lifecycle and `compute`/UI/meta dispatch entry points.
+//! - [`probe`] — the `faustprobe` engine: control discovery, offline
+//!   rendering, measurements.
 //! - `clif` — textual `.clif` container helpers used by V1 bitcode APIs.
 //! - `runtime` — native runtime descriptor builder shared by factories/instances.
 
-#![allow(unsafe_code)] // Future FFI implementation will require raw pointers.
+#![allow(unsafe_code)] // The FFI exports operate on raw pointers.
 #![allow(non_snake_case)] // FFI parity requires preserving C API symbol names.
 
 pub mod cache;

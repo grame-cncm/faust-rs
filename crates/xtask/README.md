@@ -78,17 +78,20 @@ dot -V
 | `examples-compare` | Compare faust-rs and C++ Faust over a DSP tree: what each compiles, and how long it takes |
 | `compile-profile` | Per-stage compile-time profile over the DSP corpus; `--baseline` gates stage-share drift |
 | `vector-coverage-check` | Recompile every baseline-certified mode/DSP pair and require checked vector chunk-driver structure |
-| `compile-budget-check` | Measure the versioned release compile-time baskets — scalar/vector codegen plus normalized front-end cost — and reject unexplained regressions |
+| `compile-budget-check` | Measure the versioned release compile-time baskets — scalar/vector codegen and front-end cost, both normalized against one calibration DSP — and reject unexplained regressions (alias: `vector-compile-budget-check`) |
 | `vector-interp-opt-check` | Compare interpreter `opt_level=0` and max optimization on representative checked-vector cases |
 | `lockstep-simd-check` | Require Clang to emit four-wide LLVM floating-point operations for complex lockstep corpus cases |
 | `ffi-boundary-check` | Enforce one-way FFI dependency layers and the explicit unsafe-code allowlist |
 | `cli-parser-check` | Reject unclassified process parsers and handwritten CLI diagnostics |
 | `error-model-check` | Enforce typed operational-error and structured-diagnostic ownership |
+| `diagnostics-quality-check` | Require every serialized diagnostics enum variant in the published schema and reject new machine protocols hidden in note text |
 | `diagnostics-provenance-probe` | Compare origin-set and located-occurrence storage before diagnostics-v2 IR changes |
 | `structure-check` | Validate repository layout, checker isolation, and source-size contracts |
 | `cli-transcript-gen` | Record the local compiler CLI differential transcript |
 | `cli-transcript-check` | Compare the compiler CLI against the recorded local transcript |
 | `emission-determinism` | Repeat selected compilations and report nondeterministic output |
+| `lexer-differential` | Compare the token streams of the two lexer implementations, failures included |
+| `expand-oracle` | Capture (or, with `--check`, verify) the C++ `-e` expansions backing `tests/expand` |
 
 ## Comparing against C++ Faust
 
@@ -229,8 +232,9 @@ It must run with release optimizations:
 cargo run --release -p xtask -- compile-budget-check
 ```
 
-`--update` re-records the front-end units from the current run instead of
-enforcing them. It is deliberately manual: every increase must be justified in
+`--update` re-records the calibration units of both baskets (front-end units
+and codegen scalar/vector units) from the current run instead of enforcing
+them. It is deliberately manual: every increase must be justified in
 the commit message, otherwise the gate degrades into a recorder that ratifies
 whatever the last commit did.
 
@@ -242,10 +246,12 @@ cargo run --release -p xtask -- compile-budget-check --update
 
 | Variable | Used by | Description |
 |---|---|---|
-| `FAUST_CPP_BIN` | `golden-gen-cpp`, `interp-trace-dump-cppfbc`, `interp-trace-gen-cppfbc`, `corpus-runtime-diff` | Path to the reference C++ `faust` binary |
+| `FAUST_CPP_BIN` | `golden-gen-cpp`, `interp-trace-dump-cppfbc`, `interp-trace-gen-cppfbc`, `corpus-runtime-diff`, `corpus-status-query`, `examples-compare`, `expand-oracle`, and the C++ differential report commands | Path to the reference C++ `faust` binary |
 | `GOLDEN_REF` | `golden-check` | `rust` (default) or `cpp` |
 | `CLANGXX` | `lockstep-simd-check` | Clang C++ executable used to emit optimized LLVM IR (default: `clang++`) |
 | `CC` / `CXX` | `libfaust-export-check` | C11/C++17 compilers used for maintained-header smoke checks |
+| `FAUST_ARCH_DIR` | `libfaust-export-check` | Faust architecture headers for the C++ wrapper clients (searched first) |
+| `GITHUB_ACTIONS` | `compile-budget-check` | When set, stale-baseline warnings are emitted as GitHub annotations |
 
 ## Design Invariants
 
@@ -256,9 +262,9 @@ cargo run --release -p xtask -- compile-budget-check --update
 - Repository-relative paths are preferred in generated documentation.
 - Runtime trace comparison uses exact metadata/shape checks and tolerant float
   sample comparison.
-- Cargo binary/example command lines use Clap. The compiler and two impulse
-  runners keep narrow legacy-token normalizers that immediately hand off to
-  Clap.
+- Cargo binary/example command lines use Clap. The compiler, the two impulse
+  runners and `faustprobe` keep narrow legacy-token normalizers that
+  immediately hand off to Clap.
 - `ffi-common` argument parsing is an embedded C `argc`/`argv` protocol, not a
   process CLI. The dependency-free generated impulse architecture at
   `tests/impulse-tests/archs/impulserust.rs` is the sole standalone exception.
@@ -570,6 +576,18 @@ Optional output directory:
 cargo run -p xtask -- code-graphs --out-dir /tmp/faust-rs-code-graphs
 ```
 
+Verify the checked-in artifacts instead of rewriting them (the CI "Structure
+check" step):
+
+```bash
+cargo run -p xtask -- code-graphs --check
+```
+
+`--check` compares every artifact except `public-api-index.md` (it carries
+source line numbers) and the `.svg` files (rendered by Graphviz, which CI does
+not install), so it does not need `dot`. Regenerating without `--check` is the
+bless path: review the diff and commit it.
+
 Generated files:
 
 | File | Description |
@@ -583,6 +601,7 @@ Generated files:
 | `ir-overview.mmd` | Mermaid curated IR overview |
 | `ir-overview.dot` | DOT curated IR overview |
 | `ir-overview.svg` | Rendered SVG curated IR overview |
+| `public-api-baseline.txt` | Line-number-free inventory of public items, gated by `--check` |
 | `public-api-index.md` | Lightweight source-scan index of public items |
 | `README.md` | Generated entry point with embedded SVG references |
 

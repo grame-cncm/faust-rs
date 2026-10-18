@@ -23,7 +23,7 @@
 //!    producer files so a renamed or newly added entry point cannot
 //!    silently rot the list;
 //! 4. no `check.rs` importing *anything* from a sibling producer file
-//!    (`build`/`produce`/`materialize`/`session`): since the clock_ad
+//!    (`build`/`produce`/`materialize`/`session`/`signal`): since the clock_ad
 //!    checker-independence follow-up (2026-07-20), every vector checker
 //!    re-derives with its own code, and the allowlist
 //!    [`CHECKER_PRODUCER_IMPORT_ALLOWLIST`] is empty by design — a new

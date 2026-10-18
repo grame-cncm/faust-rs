@@ -1,9 +1,9 @@
 //! Cranelift JIT lifecycle: factory, instance, control discovery, rendering.
 //!
-//! This is the only module in the crate that touches FFI. It owns the
-//! factory ([`Factory`]) and every instance created from it ([`Probe`]) for
-//! their lifetimes and frees them on drop, so a caller cannot leak a JIT
-//! module by returning early on an error.
+//! This is the only probe module that owns FFI factory and instance handles.
+//! It owns the factory ([`Factory`]) and every instance created from it
+//! ([`Probe`]) for their lifetimes and frees them on drop, so a caller cannot
+//! leak a JIT module by returning early on an error.
 //!
 //! # Sample width
 //! The JIT reads and writes I/O buffers at the width it was compiled for —

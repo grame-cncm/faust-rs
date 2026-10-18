@@ -32,6 +32,9 @@ Supported options:
 | `-ss <n>` / `--scheduling-strategy <n>` | Select scheduling strategy |
 | `--table-init <const\|runtime>` | How `rdtable`/`rwtable` content is produced (default: `runtime`) |
 
+The runner takes the rest of the `faust-rs` compile options as well (it
+flattens `compiler::CompileOptionArgs`: `-pn`, `-mcd`, `-dlt`, `-bra-tape`,
+...), except `-mem0`, which is rejected because this runner executes the FIR.
 Unknown options are rejected instead of being silently ignored.
 
 ## Reference protocol

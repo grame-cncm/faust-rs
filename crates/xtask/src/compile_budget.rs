@@ -548,7 +548,8 @@ fn frontend_ceiling_milli(baseline_units_milli: u64, profile: &CompileBudgetProf
         .saturating_div(100)
 }
 
-/// Rewrites the versioned baseline with freshly measured front-end units.
+/// Rewrites the versioned baseline with freshly measured units of both
+/// baskets: front-end units and codegen scalar/vector units.
 ///
 /// Deliberately a separate, explicit invocation: an automatic refresh would
 /// turn the gate into a recorder that ratifies whatever the last commit did.
