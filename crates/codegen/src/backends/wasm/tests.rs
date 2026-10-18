@@ -1065,24 +1065,7 @@ fn build_soundfile_access_module() -> (FirStore, FirId) {
     );
 
     let ptr_ty = FirType::Ptr(Box::new(FirType::FaustFloat));
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let zero_output = b.int32(0);
     let output0_ptr = b.load_table("outputs", AccessType::FunArgs, zero_output, ptr_ty.clone());
     let output0 = b.declare_var(
@@ -1114,15 +1097,7 @@ fn build_soundfile_access_module() -> (FirStore, FirId) {
     let compute_body = b.block(&[output0, loop_stmt]);
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -1392,35 +1367,10 @@ fn build_labeled_passthrough_module() -> (FirStore, FirId) {
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let label = b.label("signal_fir_fastlane_step2a: executable base slice");
     let compute_body = b.block(&[label, in_alias, out_alias, sample_loop]);
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -1468,24 +1418,7 @@ fn build_local_array_buffer_module() -> (FirStore, FirId) {
     let loop_body = b.block(&[store_vbuf, write_out]);
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[out_alias, vbuf, sample_loop]);
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
         FirType::Fun {
@@ -1606,35 +1539,10 @@ fn build_struct_state_cast_module() -> (FirStore, FirId) {
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[in_alias, out_alias, sample_loop]);
 
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -1684,35 +1592,10 @@ fn build_native_math_module() -> (FirStore, FirId) {
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[in_alias, out_alias, sample_loop]);
 
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -1752,35 +1635,10 @@ fn build_internal_max_i_module() -> (FirStore, FirId) {
     let loop_body = b.block(&[write]);
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[out_alias, sample_loop]);
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -1820,35 +1678,10 @@ fn build_int_abs_module() -> (FirStore, FirId) {
     let loop_body = b.block(&[write]);
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[out_alias, sample_loop]);
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -1900,35 +1733,10 @@ fn build_loop_statement_module() -> (FirStore, FirId) {
     let for_loop = b.for_loop("i", init, end, step, for_body, false);
 
     let compute_body = b.block(&[out_alias, acc_decl, while_loop, for_loop]);
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -2067,35 +1875,10 @@ fn build_region_address_module() -> (FirStore, FirId) {
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[out_alias, sample_loop]);
 
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -2192,35 +1975,10 @@ fn build_static_table_compute_module() -> (FirStore, FirId) {
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[out_alias, sample_loop]);
 
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -2302,33 +2060,8 @@ fn build_struct_table_instance_constants_module() -> (FirStore, FirId) {
 
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
-        &[
-            NamedType {
-                name: "dsp".to_owned(),
-                typ: FirType::Ptr(Box::new(FirType::Obj)),
-            },
-            NamedType {
-                name: "count".to_owned(),
-                typ: FirType::Int32,
-            },
-            NamedType {
-                name: "inputs".to_owned(),
-                typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            },
-            NamedType {
-                name: "outputs".to_owned(),
-                typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            },
-        ],
+        crate::fixtures::compute_fun_type(),
+        &crate::fixtures::compute_fun_args(),
         Some(compute_body),
         false,
     );
@@ -2409,35 +2142,10 @@ fn build_foreign_float_helper_module() -> (FirStore, FirId) {
         sample_loop,
     ]);
 
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -2499,35 +2207,10 @@ fn build_generic_foreign_function_module() -> (FirStore, FirId) {
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[in0_alias, out0_alias, sample_loop]);
 
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(compute_body),
         false,
@@ -2548,36 +2231,11 @@ fn build_generic_foreign_function_module() -> (FirStore, FirId) {
 }
 
 fn declare_trivial_compute(b: &mut FirBuilder<'_>) -> FirId {
-    let args = [
-        NamedType {
-            name: "dsp".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_owned(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_owned(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let args = crate::fixtures::compute_fun_args();
     let body = b.block(&[]);
     b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &args,
         Some(body),
         false,
@@ -2604,35 +2262,10 @@ fn build_foreign_global_var_module() -> (FirStore, FirId) {
     let loop_body = b.block(&[store_out]);
     let sample_loop = b.simple_for_loop("i0", count, loop_body, false);
     let compute_body = b.block(&[out_alias, sample_loop]);
-    let compute_args = [
-        NamedType {
-            name: "dsp".to_string(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".to_string(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".to_string(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".to_string(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let compute_args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun(
         "compute",
-        FirType::Fun {
-            args: vec![
-                FirType::Ptr(Box::new(FirType::Obj)),
-                FirType::Int32,
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-                FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-            ],
-            ret: Box::new(FirType::Void),
-        },
+        crate::fixtures::compute_fun_type(),
         &compute_args,
         Some(compute_body),
         false,

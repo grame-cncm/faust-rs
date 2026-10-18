@@ -558,6 +558,8 @@ fn detect_compute_control_dsp_split(
 }
 
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests;
 
 /// Collects the `AddMetaDeclare` statements of a FIR body, nested blocks

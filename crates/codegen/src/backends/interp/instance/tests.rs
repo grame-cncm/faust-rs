@@ -3,12 +3,7 @@ use crate::backends::interp::bytecode::{BlockId, FbcBlock, FbcBlockArena};
 use crate::backends::interp::opcode::FbcOpcode;
 use crate::backends::interp::{FbcInstruction, INTERP_FILE_VERSION};
 
-/// Helper: creates a trivial block containing only a `Return` instruction.
-fn trivial_block(arena: &mut FbcBlockArena<f32>) -> BlockId {
-    let mut block = FbcBlock::new();
-    block.push(FbcInstruction::new(FbcOpcode::Return));
-    arena.alloc(block)
-}
+use crate::backends::interp::test_support::trivial_block;
 
 /// Helper: creates a minimal factory with custom compute DSP block.
 fn make_factory_with_dsp_block(

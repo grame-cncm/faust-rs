@@ -1,5 +1,5 @@
 use super::*;
-use fir::{FirBuilder, FirType, NamedType};
+use fir::{FirBuilder, FirType};
 
 fn make_minimal_legacy_like_module() -> (fir::FirStore, fir::FirId) {
     let mut store = fir::FirStore::new();
@@ -16,24 +16,7 @@ fn make_minimal_legacy_like_module() -> (fir::FirStore, fir::FirId) {
         ],
         ret: Box::new(FirType::Void),
     };
-    let compute_args = [
-        NamedType {
-            name: "dsp".into(),
-            typ: FirType::Ptr(Box::new(FirType::Obj)),
-        },
-        NamedType {
-            name: "count".into(),
-            typ: FirType::Int32,
-        },
-        NamedType {
-            name: "inputs".into(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-        NamedType {
-            name: "outputs".into(),
-            typ: FirType::Ptr(Box::new(FirType::Ptr(Box::new(FirType::FaustFloat)))),
-        },
-    ];
+    let compute_args = crate::fixtures::compute_fun_args();
     let compute = b.declare_fun("compute", compute_type, &compute_args, Some(body), false);
     let dsp_struct = b.block(&[]);
     let globals = b.block(&[]);
