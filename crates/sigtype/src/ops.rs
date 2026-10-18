@@ -4,7 +4,7 @@
 //! - `operator|`, `operator*`, `table()` — `sigtype.hh`
 //! - `intCast`, `bitCast`, `floatCast`, `sampCast`, `boolCast`, `numCast`,
 //!   `castInterval` — inline helpers in `sigtype.hh`
-//! - `mergenature`, `mergevariability`, … — `sigtype.cpp`
+//! - `mergenature`, `mergevariability`, … — inline helpers in `sigtype.hh`
 //! - `checkInt`, `checkKonst`, `checkInit`, `checkIntParam`,
 //!   `checkDelayInterval` — `sigtype.cpp`
 

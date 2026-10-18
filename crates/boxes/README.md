@@ -32,7 +32,7 @@ widgets, foreign calls, …) is lowered into a box tree before the evaluator run
 
 - Box nodes are represented as tagged trees with **deterministic child order**.
 - Labels and identifiers are carried as `NodeKind::Symbol`.
-- UI slider/button parameter payload keeps Faust list encoding: `list4(cur, min, max, step)`.
+- UI slider/numentry parameter payload keeps Faust list encoding: `list4(cur, min, max, step)`.
 - Public integer surface is `i32`-based (`boxInt` parity); storage remains `NodeKind::Int(i64)`.
 - `BoxBuilder` now keeps lightweight debug-only child-existence assertions on
   key composite constructors so structural mistakes fail close to the builder boundary.

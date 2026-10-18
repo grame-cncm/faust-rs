@@ -15,8 +15,8 @@
 //! - [`vec_to_list`] / [`list_to_vec`] provide the shared `cons`/`nil` list
 //!   adapters reused by later compiler stages.
 //!
-//! # Recursive trees (Phase 5)
-//! The crate now exposes explicit recursive-tree helpers for de Bruijn and symbolic forms:
+//! # Recursive trees
+//! The crate exposes explicit recursive-tree helpers for de Bruijn and symbolic forms:
 //! - De Bruijn builders/matchers: [`de_bruijn_rec`], [`de_bruijn_ref`],
 //!   [`match_de_bruijn_rec`], [`match_de_bruijn_ref`]
 //! - Symbolic builders/matchers: [`sym_rec`], [`sym_ref`], [`match_sym_rec`], [`match_sym_ref`]

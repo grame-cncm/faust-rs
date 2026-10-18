@@ -1367,8 +1367,8 @@ impl<'a> TypeAnnotator<'a> {
     /// iteration count are those of the full iteration, which a chain of N
     /// recursions ran N + 1 times over every group: N² for a cost now
     /// proportional to the groups that change
-    /// ([`Self::solve_recursive_groups_jacobi`], kept as the reference, checks
-    /// it in tests).
+    /// (`solve_recursive_groups_jacobi`, test-only, kept as the reference,
+    /// checks it in tests).
     fn solve_recursive_groups(&mut self, state: &mut RecTypingState) -> Result<(), InferenceError> {
         for _ in std::iter::repeat_n((), RECURSIVE_NARROWING_LIMIT) {
             self.update_rec_types(&state.groups, &mut state.upper, true)?;

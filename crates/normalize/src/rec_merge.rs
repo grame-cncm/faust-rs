@@ -2,8 +2,8 @@
 //! and unifies them to a single canonical representative.
 //!
 //! This pass enables downstream algebraic simplification (e.g., `x - x → 0`)
-//! across signal trees produced by independent constructions like manual versus
-//! macroeconomic recursive forms.
+//! across signal trees produced by independent constructions of the same
+//! recursion (for example a hand-written one and a library-expanded one).
 //!
 //! Exposes `merge_isomorphic_symrec_groups` which must run after `de_bruijn_to_sym`
 //! and prior to algebraic simplification passes.

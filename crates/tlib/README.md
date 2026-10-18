@@ -42,7 +42,7 @@ deduplication.
 - `nil` / `cons` list behavior follows Faust C++ conventions.
 - Properties are node-keyed with fast interned-key lookup paths.
 
-## Recursive trees (Phase 5)
+## Recursive trees
 
 Two recursive-tree encodings are supported:
 

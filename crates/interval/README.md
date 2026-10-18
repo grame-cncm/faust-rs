@@ -40,7 +40,7 @@ implementation remain explicit zero-interval placeholders in `ops::missing`.
 | `bitwise` | Signed/unsigned `&`, `\|`, `^`, `~`, and shift interval operations |
 | `ops::logic` | Boolean algebra on intervals |
 | `ops::math` | `floor`, `ceil`, `round`, `rint`, `pow`, `sqrt`, `exp`, `log`, … |
-| `ops::trig` | `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2` |
+| `ops::trig` | `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, and the hyperbolic `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh` |
 | `ops::delay_table` | Delay and memory interval propagation |
 | `ops::missing` | C++-compatible zero placeholders for unimplemented operator families |
 | `ops::ui` | UI-widget interval constraints |
