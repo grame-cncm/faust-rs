@@ -14,7 +14,16 @@ use codegen::memory_layout::{MemoryLayoutFlavor, MemoryManagerMode};
 use compiler::{Compiler, SignalFirLane};
 use serde_json::Value;
 
-const PINNED_FAUST: &str = "/Users/letz/Developpements/RUST/faust/build/bin/faust";
+/// The pinned C++ Faust binary, used when `FAUST_CPP_BIN` is unset: the
+/// build of the reference checkout next to this repository (`../faust`).
+fn pinned_faust() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .map_or_else(PathBuf::new, |dir| {
+            dir.join("faust").join("build").join("bin").join("faust")
+        })
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct LegacyZone {
@@ -36,7 +45,7 @@ fn fixture(name: &str) -> PathBuf {
 fn reference_binary() -> Option<PathBuf> {
     let path = std::env::var_os("FAUST_CPP_BIN")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(PINNED_FAUST));
+        .unwrap_or_else(pinned_faust);
     path.is_file().then_some(path)
 }
 

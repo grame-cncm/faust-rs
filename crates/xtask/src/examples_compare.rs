@@ -57,8 +57,6 @@
 use super::*;
 use std::time::Instant;
 
-const DEFAULT_EXAMPLES_ROOT: &str = "/Users/letz/faust/examples";
-
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct CaseRow {
     dsp: String,
@@ -192,7 +190,7 @@ pub(crate) fn examples_compare(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let root = args
         .root
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_EXAMPLES_ROOT));
+        .unwrap_or_else(|| cpp_source_root().join("examples"));
     if !root.is_dir() {
         return Err(format!("examples root {} does not exist", root.display()).into());
     }

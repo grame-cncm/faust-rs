@@ -58,7 +58,7 @@ fn ci_command_names_are_accepted() {
 #[test]
 fn generated_reports_replace_checkout_local_paths() {
     let workspace_case = workspace_root().join("tests/corpus/example.dsp");
-    let cpp_binary = Path::new(CPP_SOURCE_ROOT).join("build/bin/faust");
+    let cpp_binary = cpp_source_root().join("build/bin/faust");
     let text = format!(
         "case={} cpp={} expr=clocked(0x12Ab90, IN[0])",
         workspace_case.display(),

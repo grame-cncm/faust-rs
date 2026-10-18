@@ -832,15 +832,23 @@ fn what_has_no_impulse_response_to_transform_is_refused() {
 
 // ------------------------------------------------------------ the libraries
 
-const DEFAULT_FAUSTLIBRARIES_ROOT: &str = "/Users/letz/Developpements/faustlibraries";
+/// The faustlibraries checkout used when `FAUST_RS_FAUSTLIBRARIES_ROOT` is
+/// unset: `faustlibraries` next to the directory that holds this repository.
+fn default_faustlibraries_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(4)
+        .map_or_else(std::path::PathBuf::new, |dir| dir.join("faustlibraries"))
+}
 
 fn faustlibraries() -> Option<String> {
     std::env::var("FAUST_RS_FAUSTLIBRARIES_ROOT")
         .ok()
         .or_else(|| {
-            std::path::Path::new(DEFAULT_FAUSTLIBRARIES_ROOT)
+            let default = default_faustlibraries_root();
+            default
                 .exists()
-                .then(|| DEFAULT_FAUSTLIBRARIES_ROOT.to_owned())
+                .then(|| default.to_string_lossy().into_owned())
         })
 }
 

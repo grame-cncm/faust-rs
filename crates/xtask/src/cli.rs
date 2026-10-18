@@ -357,7 +357,7 @@ pub(crate) struct CompileBudgetArgs {
 /// Options for the faust-rs vs C++ Faust comparison.
 #[derive(Clone, Debug, Args)]
 pub(crate) struct ExamplesCompareArgs {
-    /// DSP tree to walk (default: the reference `examples/` directory).
+    /// DSP tree to walk (default: `../faust/examples`, the reference checkout's).
     #[arg(long, value_name = "DIR")]
     pub(crate) root: Option<PathBuf>,
     /// Runs per compiler per DSP; the minimum is kept (default 3, or 1 with

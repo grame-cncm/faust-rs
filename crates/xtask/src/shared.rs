@@ -22,6 +22,20 @@ pub(crate) fn workspace_root() -> PathBuf {
         })
 }
 
+/// The reference C++ Faust checkout used by the static report and comparison
+/// workflows: `faust`, next to this repository (`../faust`, the layout
+/// AGENTS.md describes for the pinned reference).
+///
+/// Runtime workflows that need a C++ Faust executable use `FAUST_CPP_BIN` or an
+/// explicit `--faust-bin` instead.
+pub(crate) fn cpp_source_root() -> PathBuf {
+    let root = workspace_root();
+    root.parent().map_or_else(
+        || root.join("..").join("faust"),
+        |parent| parent.join("faust"),
+    )
+}
+
 /// Formats a path relative to the workspace root when possible.
 pub(crate) fn workspace_relative_path(path: &Path) -> String {
     let root = workspace_root();

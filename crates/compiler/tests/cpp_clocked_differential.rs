@@ -25,8 +25,14 @@ use std::process::Command;
 use codegen::backends::interp::{FbcDspInstance, InterpOptions, read_fbc};
 use compiler::{Compiler, SignalFirLane};
 
-/// The C++ clock-domain reference branch checkout (contains the FIR19 OD work).
-const DEFAULT_FAUST_ROOT: &str = "/Users/letz/Developpements/RUST/faust";
+/// The C++ clock-domain reference branch checkout (contains the FIR19 OD work),
+/// used when `FAUST_OD_ROOT` is unset: `faust` next to this repository.
+fn default_faust_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .map_or_else(PathBuf::new, |dir| dir.join("faust"))
+}
 
 /// Minimal deterministic architecture: fixed integer input, all outputs
 /// printed one frame per line. `<<includeIntrinsic>>` / `<<includeclass>>` are
@@ -91,7 +97,7 @@ fn deterministic_inputs(num_inputs: usize, nframes: usize) -> Vec<Vec<f32>> {
 fn faust_root() -> Option<PathBuf> {
     let root = std::env::var_os("FAUST_OD_ROOT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_FAUST_ROOT));
+        .unwrap_or_else(default_faust_root);
     root.exists().then_some(root)
 }
 

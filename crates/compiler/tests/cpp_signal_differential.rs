@@ -11,7 +11,14 @@ use std::process::Command;
 use compiler::Compiler;
 use compiler::SignalFirLane;
 
-const CPP_SOURCE_ROOT: &str = "/Users/letz/Developpements/RUST/faust";
+/// The reference C++ Faust checkout: `faust` next to this repository
+/// (`../faust`, the layout AGENTS.md describes).
+fn cpp_source_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .map_or_else(PathBuf::new, |dir| dir.join("faust"))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StatusClass {
@@ -54,7 +61,7 @@ fn cpp_bin() -> Option<PathBuf> {
     }
 }
 
-fn git_head_short(path: &str) -> Option<String> {
+fn git_head_short(path: &Path) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(path)
@@ -312,7 +319,7 @@ fn differential_signal_pipeline_status_against_cpp_reference() {
         return;
     }
 
-    let cpp_commit = git_head_short(CPP_SOURCE_ROOT).unwrap_or_else(|| "unknown".to_owned());
+    let cpp_commit = git_head_short(&cpp_source_root()).unwrap_or_else(|| "unknown".to_owned());
     let compiler = Compiler::new();
 
     let cases = [
@@ -398,7 +405,7 @@ fn differential_signal_pipeline_status_against_cpp_reference() {
     let mut mismatches = Vec::new();
     eprintln!(
         "Signal differential run with C++ source root {} @ {} and binary {}",
-        CPP_SOURCE_ROOT,
+        cpp_source_root().display(),
         cpp_commit,
         cpp_bin.display()
     );

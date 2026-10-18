@@ -57,7 +57,7 @@ pub(crate) fn portable_report_text(text: &str) -> String {
     }
 
     let out = replace_prefixes(text.to_owned(), &workspace_root(), "");
-    let out = replace_prefixes(out, Path::new(CPP_SOURCE_ROOT), "../faust/");
+    let out = replace_prefixes(out, &cpp_source_root(), "../faust/");
     normalize_clocked_addresses(normalize_path_separators(out))
 }
 
@@ -68,7 +68,7 @@ pub(crate) fn portable_report_text(text: &str) -> String {
 /// Regenerates the parser/lexer parity coverage report under `porting/`.
 pub(crate) fn parser_parity_report() -> Result<(), Box<dyn std::error::Error>> {
     let root = workspace_root();
-    let cpp_root = PathBuf::from(CPP_SOURCE_ROOT);
+    let cpp_root = cpp_source_root();
 
     let cpp_parser = cpp_root.join("compiler/parser/faustparser.y");
     let cpp_lexer = cpp_root.join("compiler/parser/faustlexer.l");
@@ -366,7 +366,7 @@ pub(crate) fn corpus_status_report() -> Result<(), Box<dyn std::error::Error>> {
         writeln!(
             &mut out,
             "- Note: fallback to `faust` from PATH because `{}/build/bin/faust` was not found.",
-            CPP_SOURCE_ROOT
+            cpp_source_root().display()
         )?;
         writeln!(
             &mut out,
@@ -625,7 +625,7 @@ pub(crate) fn cpp_backend_diff_report() -> Result<(), Box<dyn std::error::Error>
         writeln!(
             &mut out,
             "- Note: fallback to `faust` from PATH because `{}/build/bin/faust` was not found.",
-            CPP_SOURCE_ROOT
+            cpp_source_root().display()
         )?;
     }
     writeln!(
@@ -807,7 +807,7 @@ pub(crate) fn table_fastlane_diff_report() -> Result<(), Box<dyn std::error::Err
         writeln!(
             &mut out,
             "- Note: fallback to `faust` from PATH because `{}/build/bin/faust` was not found.",
-            CPP_SOURCE_ROOT
+            cpp_source_root().display()
         )?;
     }
     writeln!(
@@ -999,7 +999,7 @@ pub(crate) fn c_fastlane_diff_report() -> Result<(), Box<dyn std::error::Error>>
         writeln!(
             &mut out,
             "- Note: fallback to `faust` from PATH because `{}/build/bin/faust` was not found.",
-            CPP_SOURCE_ROOT
+            cpp_source_root().display()
         )?;
     }
     writeln!(
@@ -1277,7 +1277,7 @@ pub(crate) fn backend_full_corpus_diff_report() -> Result<(), Box<dyn std::error
         writeln!(
             &mut out,
             "- Note: fallback to `faust` from PATH because `{}/build/bin/faust` was not found.",
-            CPP_SOURCE_ROOT
+            cpp_source_root().display()
         )?;
     }
     writeln!(&mut out, "- Corpus: `tests/corpus/*.dsp`")?;
@@ -1441,7 +1441,7 @@ pub(crate) fn resolve_cpp_faust_bin() -> (PathBuf, bool) {
     if let Some(path) = std::env::var_os("FAUST_CPP_BIN") {
         return (PathBuf::from(path), false);
     }
-    let built = Path::new(CPP_SOURCE_ROOT).join("build/bin/faust");
+    let built = cpp_source_root().join("build/bin/faust");
     if built.exists() {
         return (built, false);
     }

@@ -94,7 +94,7 @@ impl CppBinSource {
     fn as_str(self) -> &'static str {
         match self {
             CppBinSource::EnvVar => "FAUST_CPP_BIN environment variable",
-            CppBinSource::DefaultBuildPath => "default build path under CPP_SOURCE_ROOT",
+            CppBinSource::DefaultBuildPath => "default build path under the ../faust checkout",
             CppBinSource::PathFallback => "PATH fallback (`faust`)",
         }
     }

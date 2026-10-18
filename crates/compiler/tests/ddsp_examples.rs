@@ -19,7 +19,14 @@ use codegen::backends::interp::opcode::FbcOpcode;
 use codegen::backends::interp::{FbcDspFactory, FbcDspInstance, InterpOptions, read_fbc};
 use compiler::{Compiler, SignalFirLane};
 
-const DEFAULT_FAUSTLIBRARIES_ROOT: &str = "/Users/letz/Developpements/faustlibraries";
+/// The faustlibraries checkout used when `FAUST_RS_FAUSTLIBRARIES_ROOT` is
+/// unset: `faustlibraries` next to the directory that holds this repository.
+fn default_faustlibraries_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(4)
+        .map_or_else(std::path::PathBuf::new, |dir| dir.join("faustlibraries"))
+}
 const SAMPLE_RATE: i32 = 44_100;
 
 fn workspace_dir(rel: &str) -> PathBuf {
@@ -33,7 +40,7 @@ fn faustlibraries_root() -> Option<PathBuf> {
     std::env::var_os("FAUST_RS_FAUSTLIBRARIES_ROOT")
         .map(PathBuf::from)
         .or_else(|| {
-            let default = PathBuf::from(DEFAULT_FAUSTLIBRARIES_ROOT);
+            let default = default_faustlibraries_root();
             default.exists().then_some(default)
         })
 }

@@ -610,7 +610,14 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const DEFAULT_FAUSTLIBRARIES_ROOT: &str = "/Users/letz/Developpements/faustlibraries";
+    /// The faustlibraries checkout used when `FAUST_RS_FAUSTLIBRARIES_ROOT` is
+    /// unset: `faustlibraries` next to the directory that holds this repository.
+    fn default_faustlibraries_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(4)
+            .map_or_else(std::path::PathBuf::new, |dir| dir.join("faustlibraries"))
+    }
 
     fn workspace_dir(rel: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -625,7 +632,7 @@ mod tests {
         let root = std::env::var_os("FAUST_RS_FAUSTLIBRARIES_ROOT")
             .map(PathBuf::from)
             .or_else(|| {
-                let default = PathBuf::from(DEFAULT_FAUSTLIBRARIES_ROOT);
+                let default = default_faustlibraries_root();
                 default.exists().then_some(default)
             });
         let Some(root) = root else {

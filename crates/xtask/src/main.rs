@@ -59,13 +59,6 @@ use std::process::Command;
 use std::process::Stdio;
 use wasmparser::{ExternalKind, Parser as WasmParser, Payload};
 
-/// Local checkout of the reference C++ Faust source tree used by static parser
-/// report generation.
-///
-/// Runtime workflows that need a C++ Faust executable use `FAUST_CPP_BIN` or an
-/// explicit `--faust-bin` instead.
-const CPP_SOURCE_ROOT: &str = "/Users/letz/Developpements/RUST/faust";
-
 /// Parser parity report output path, relative to the workspace root.
 const PARITY_REPORT_REL_PATH: &str = "porting/phases/phase-3-parser-parity-report-en.md";
 

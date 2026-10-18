@@ -20,9 +20,7 @@ struct CApiSymbol {
 pub(crate) fn libfaust_api_matrix(
     args: LibfaustApiMatrixArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let cpp_root = args
-        .cpp_root
-        .unwrap_or_else(|| PathBuf::from(CPP_SOURCE_ROOT));
+    let cpp_root = args.cpp_root.unwrap_or_else(cpp_source_root);
     let out_dir = args
         .out_dir
         .map(|path| workspace_root().join(path))

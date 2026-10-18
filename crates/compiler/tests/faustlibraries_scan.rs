@@ -9,14 +9,25 @@ use std::path::{Path, PathBuf};
 
 use compiler::Compiler;
 
-const DEFAULT_FAUSTLIBRARIES_ROOT: &str = "/Users/letz/Developpements/faustlibraries";
-const DEFAULT_FAUSTLIBRARIES_TESTS_DIR: &str = "/Users/letz/Developpements/faustlibraries/tests";
+/// The faustlibraries checkout used when `FAUST_RS_FAUSTLIBRARIES_ROOT` is
+/// unset: `faustlibraries` next to the directory that holds this repository.
+fn default_faustlibraries_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(4)
+        .map_or_else(std::path::PathBuf::new, |dir| dir.join("faustlibraries"))
+}
+
+/// Its `tests` directory, used when `FAUST_RS_FAUSTLIBRARIES_TESTS_DIR` is unset.
+fn default_faustlibraries_tests_dir() -> PathBuf {
+    default_faustlibraries_root().join("tests")
+}
 
 fn faustlibraries_root() -> Option<PathBuf> {
     env::var_os("FAUST_RS_FAUSTLIBRARIES_ROOT")
         .map(PathBuf::from)
         .or_else(|| {
-            let path = PathBuf::from(DEFAULT_FAUSTLIBRARIES_ROOT);
+            let path = default_faustlibraries_root();
             path.exists().then_some(path)
         })
 }
@@ -25,7 +36,7 @@ fn faustlibraries_tests_dir() -> Option<PathBuf> {
     env::var_os("FAUST_RS_FAUSTLIBRARIES_TESTS_DIR")
         .map(PathBuf::from)
         .or_else(|| {
-            let path = PathBuf::from(DEFAULT_FAUSTLIBRARIES_TESTS_DIR);
+            let path = default_faustlibraries_tests_dir();
             path.exists().then_some(path)
         })
 }
@@ -34,7 +45,7 @@ fn faustlibraries_dsp_paths() -> Vec<PathBuf> {
     let Some(dir) = faustlibraries_tests_dir() else {
         eprintln!(
             "Skipping faustlibraries scan: set FAUST_RS_FAUSTLIBRARIES_TESTS_DIR or install {}",
-            DEFAULT_FAUSTLIBRARIES_TESTS_DIR
+            default_faustlibraries_tests_dir().display()
         );
         return Vec::new();
     };
@@ -100,7 +111,7 @@ fn faustlibraries_tests_parse_all_dsp_files() {
     let Some(root) = faustlibraries_root() else {
         panic!(
             "faustlibraries root missing: set FAUST_RS_FAUSTLIBRARIES_ROOT or install {}",
-            DEFAULT_FAUSTLIBRARIES_ROOT
+            default_faustlibraries_root().display()
         );
     };
     let search_paths = vec![root];
@@ -132,7 +143,7 @@ fn faustlibraries_tests_eval_first_test_entrypoint_per_file() {
     let Some(root) = faustlibraries_root() else {
         panic!(
             "faustlibraries root missing: set FAUST_RS_FAUSTLIBRARIES_ROOT or install {}",
-            DEFAULT_FAUSTLIBRARIES_ROOT
+            default_faustlibraries_root().display()
         );
     };
     let search_paths = vec![root];
