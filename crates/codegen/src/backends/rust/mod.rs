@@ -1136,6 +1136,21 @@ fn collect_ui_params(store: &FirStore, root: FirId) -> HashMap<String, usize> {
     collect_ui_stats(store, root).params
 }
 
+/// The parameter index of the UI zone `var`.
+///
+/// Every widget of the body is numbered before it is emitted, so a zone with
+/// no index is an internal inconsistency. It used to fall back to index 0,
+/// which silently bound the widget to the first parameter.
+fn ui_param(ctx: &EmitCtx, var: &str, stmt: FirId) -> Result<usize, CodegenError> {
+    ctx.ui_params.get(var).copied().ok_or_else(|| {
+        CodegenError::new(
+            CodegenErrorCode::InvalidModuleSection,
+            format!("UI zone `{var}` is not a parameter of buildUserInterface"),
+        )
+        .at_node(stmt)
+    })
+}
+
 /// Finds stack/local variables that are assigned after declaration.
 ///
 /// Faust C++ emits mutable locals indiscriminately.  Rust only needs `mut`
@@ -1507,7 +1522,7 @@ fn emit_stmt(
                 fir::ButtonType::Button => "add_button",
                 fir::ButtonType::Checkbox => "add_check_button",
             };
-            let param = ctx.ui_params.get(&var).copied().unwrap_or_default();
+            let param = ui_param(ctx, &var, stmt)?;
             let _ = writeln!(
                 out,
                 "{tab}ui_interface.{api}({}, ParamIndex({param}));",
@@ -1529,7 +1544,7 @@ fn emit_stmt(
                 fir::SliderType::Vertical => "add_vertical_slider",
                 fir::SliderType::NumEntry => "add_num_entry",
             };
-            let param = ctx.ui_params.get(&var).copied().unwrap_or_default();
+            let param = ui_param(ctx, &var, stmt)?;
             let _ = writeln!(
                 out,
                 "{tab}ui_interface.{api}({}, ParamIndex({param}), {} as FaustFloat, {} as FaustFloat, {} as FaustFloat, {} as FaustFloat);",
@@ -1552,7 +1567,7 @@ fn emit_stmt(
                 fir::BargraphType::Horizontal => "add_horizontal_bargraph",
                 fir::BargraphType::Vertical => "add_vertical_bargraph",
             };
-            let param = ctx.ui_params.get(&var).copied().unwrap_or_default();
+            let param = ui_param(ctx, &var, stmt)?;
             let _ = writeln!(
                 out,
                 "{tab}ui_interface.{api}({}, ParamIndex({param}), {} as FaustFloat, {} as FaustFloat);",
@@ -1568,7 +1583,7 @@ fn emit_stmt(
                     let zone = if var == "0" {
                         "None".to_owned()
                     } else {
-                        let param = ctx.ui_params.get(&var).copied().unwrap_or_default();
+                        let param = ui_param(ctx, &var, stmt)?;
                         format!("Some(ParamIndex({param}))")
                     };
                     let _ = writeln!(
@@ -1590,7 +1605,7 @@ fn emit_stmt(
             Ok(())
         }
         FirMatch::AddSoundfile { label, url, var } => {
-            let param = ctx.ui_params.get(&var).copied().unwrap_or_default();
+            let param = ui_param(ctx, &var, stmt)?;
             let _ = writeln!(
                 out,
                 "{tab}ui_interface.add_soundfile({}, {}, ParamIndex({param}));",
@@ -2779,6 +2794,55 @@ mod tests {
         build_sine_phasor_test_module, build_table_state_delay_test_module,
     };
     use fir::{AccessType, FirBuilder, FirStore, FirType};
+
+    /// A UI zone with no parameter index is an error: it used to fall back to
+    /// `ParamIndex(0)`, binding the widget to the first parameter. The
+    /// numbering pass does not look inside loops, so a widget in one is the
+    /// way to reach it.
+    #[test]
+    fn an_unknown_ui_zone_is_refused_not_bound_to_parameter_zero() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let button = b.add_button(fir::ButtonType::Button, "go", "fGhost");
+        let loop_body = b.block(&[button]);
+        let one = b.int32(1);
+        let looped = b.simple_for_loop("i0", one, loop_body, false);
+        let ui_body = b.block(&[looped]);
+        let build_ui = b.declare_fun(
+            "buildUserInterface",
+            crate::fixtures::build_ui_fun_type(),
+            &crate::fixtures::build_ui_fun_args(),
+            Some(ui_body),
+            false,
+        );
+        let compute_body = b.block(&[]);
+        let compute = b.declare_fun(
+            "compute",
+            crate::fixtures::compute_fun_type(),
+            &crate::fixtures::compute_fun_args(),
+            Some(compute_body),
+            false,
+        );
+        let dsp_struct = b.block(&[]);
+        let globals = b.block(&[]);
+        let functions = b.block(&[build_ui, compute]);
+        let static_decls = b.block(&[]);
+        let module = b.module(
+            0,
+            1,
+            "ghost",
+            dsp_struct,
+            globals,
+            functions,
+            static_decls,
+            &[],
+        );
+
+        let err = generate_rust_module(&store, module, &RustOptions::default())
+            .expect_err("a zone with no parameter must be refused");
+        assert_eq!(err.code(), CodegenErrorCode::InvalidModuleSection);
+        assert!(err.message().contains("fGhost"));
+    }
 
     #[test]
     fn special_real_literals_are_typed_paths_not_suffixed() {

@@ -84,7 +84,7 @@ pub(crate) fn compute_fun_type() -> FirType {
 }
 
 /// Canonical named-argument list for `buildUserInterface`.
-fn build_ui_fun_args() -> [NamedType; 2] {
+pub(crate) fn build_ui_fun_args() -> [NamedType; 2] {
     [
         NamedType {
             name: "dsp".to_string(),
@@ -98,7 +98,7 @@ fn build_ui_fun_args() -> [NamedType; 2] {
 }
 
 /// Canonical FIR type for `buildUserInterface`.
-fn build_ui_fun_type() -> FirType {
+pub(crate) fn build_ui_fun_type() -> FirType {
     FirType::Fun {
         args: vec![obj_ptr_type(), FirType::UI],
         ret: Box::new(FirType::Void),
