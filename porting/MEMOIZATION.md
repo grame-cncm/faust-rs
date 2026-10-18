@@ -1502,7 +1502,8 @@ Validation:
 ### 2.17 `propagate`: forward-AD memos
 
 Status: implemented 2026-07-10 (`e4181cc6`), extended 2026-09-05 (`adaca773`),
-rescoped 2026-09-05 (`93f00111`)
+rescoped 2026-09-05 (`93f00111`), extended 2026-09-19 (`9e5d9320`, recorded
+2026-10-18)
 
 Location:
 
@@ -1527,7 +1528,20 @@ Caches, all one `fad(expr, seeds)` lowering long:
 - `od_aug_cache: AHashMap<SigId, SigId>`: the augmented twin of a clocked
   wrapper. This one is a sharing invariant rather than a speed memo: every
   consumer must route through the *same* augmented block, or a stateful body
-  executes twice per fire.
+  executes twice per fire,
+- `env_tokens_memo: AHashMap<SigId, SmallVec<[SigId; 2]>>` (`env_tokens_in`):
+  the clock-env tokens of the `Clocked` wrappers a subtree contains, so that a
+  subtree no seed reaches is still rebuilt when it carries a token of a block
+  whose twin is being built (the twin must not share the original's inputs and
+  state). The value is structural: the token set of a subtree does not depend
+  on binder depth or on the transform's position, so the node alone is the key,
+  and, unlike `cache`, it is kept across recursion bodies. It lives for the
+  lowering, without invalidation. Its repeat rate was not measured; it keeps the
+  walk linear on shared subgraphs, where an unmemoized walk revisits every
+  shared node once per path,
+- `seed_sets: Vec<AHashSet<SigId>>`: the seed set lifted `k` times, built on
+  demand by `depends_on_seed` for the depths it reaches; derived from
+  `original_seeds` alone and never invalidated.
 
 The lifetime lesson (`93f00111`) — worth reading next to §2.5's:
 
@@ -1742,7 +1756,7 @@ Status: implemented 2026-09-21
 
 Location:
 
-- `crates/propagate/src/flat.rs` (`free_slots`, `has_free_slot`),
+- `crates/propagate/src/flat.rs` (`free_slots`),
   `crates/propagate/src/context_id.rs` (`SlotEnv::restricted_id`),
   `crates/propagate/src/engine.rs` (`propagate`, the key)
 
