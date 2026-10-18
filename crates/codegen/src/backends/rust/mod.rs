@@ -1716,10 +1716,10 @@ fn emit_value(
     match match_fir(store, value) {
         FirMatch::Int32 { value, .. } => Ok(format!("{value}i32")),
         FirMatch::Int64 { value, .. } => Ok(format!("{value}i64")),
-        FirMatch::Float32 { value, .. } => Ok(format!("{}f32", trim_float(f64::from(value)))),
+        FirMatch::Float32 { value, .. } => Ok(real_literal(f64::from(value), "f32")),
         FirMatch::Float64 { value, .. }
         | FirMatch::Quad { value, .. }
-        | FirMatch::FixedPoint { value, .. } => Ok(format!("{}f64", trim_float(value))),
+        | FirMatch::FixedPoint { value, .. } => Ok(real_literal(value, "f64")),
         FirMatch::Bool { value, .. } => Ok(if value { "true" } else { "false" }.to_owned()),
         FirMatch::NewDsp { name, .. } => Ok(format!("new{name}()")),
         FirMatch::LoadVar { name, access, .. } => {
@@ -2905,6 +2905,26 @@ fn unsupported_node(kind: &str, node: FirId, store: &FirStore) -> CodegenError {
     )
 }
 
+/// Formats a typed floating literal: `0.5f32`, or `f32::INFINITY` for a
+/// special value.
+///
+/// The suffix of a special value is its type path, not a trailing suffix:
+/// appending `f32` to [`trim_float`]'s `f64::INFINITY` gave
+/// `f64::INFINITYf32`, which is not Rust.
+fn real_literal(value: f64, ty: &str) -> String {
+    if value.is_nan() {
+        format!("{ty}::NAN")
+    } else if value.is_infinite() {
+        if value.is_sign_negative() {
+            format!("{ty}::NEG_INFINITY")
+        } else {
+            format!("{ty}::INFINITY")
+        }
+    } else {
+        format!("{}{ty}", trim_float(value))
+    }
+}
+
 /// Formats a floating literal without a Rust type suffix.
 ///
 /// Rust's `Debug` formatting emits the shortest round-trippable decimal for
@@ -2950,7 +2970,7 @@ fn rust_string_literal(input: &str) -> String {
 mod tests {
     use super::{
         CodegenErrorCode, EmitCtx, EmitMode, RustOptions, RustRealType, StateTypes,
-        collect_mutable_local_vars, emit_block, emit_fun_call, emit_rust_header,
+        collect_mutable_local_vars, emit_block, emit_fun_call, emit_rust_header, emit_value,
         generate_rust_module,
     };
     use crate::fixtures::{
@@ -2958,6 +2978,27 @@ mod tests {
         build_sine_phasor_test_module, build_table_state_delay_test_module,
     };
     use fir::{AccessType, FirBuilder, FirStore, FirType};
+
+    #[test]
+    fn special_real_literals_are_typed_paths_not_suffixed() {
+        let mut store = FirStore::new();
+        let mut b = FirBuilder::new(&mut store);
+        let cases = [
+            (b.float32(f32::INFINITY), "f32::INFINITY"),
+            (b.float32(f32::NEG_INFINITY), "f32::NEG_INFINITY"),
+            (b.float32(f32::NAN), "f32::NAN"),
+            (b.float64(f64::INFINITY), "f64::INFINITY"),
+            (b.float64(f64::NAN), "f64::NAN"),
+            (b.float32(0.5), "0.5f32"),
+            (b.float64(-0.0), "0.0f64"),
+        ];
+        let options = RustOptions::default();
+        let locked = std::collections::BTreeSet::new();
+        for (value, expected) in cases {
+            let rendered = emit_value(&store, &options, &locked, value).expect("literal");
+            assert_eq!(rendered, expected);
+        }
+    }
 
     #[test]
     fn mutable_local_analysis_marks_stack_arrays_written_by_store_table() {
