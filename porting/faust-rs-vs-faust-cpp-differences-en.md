@@ -2,7 +2,7 @@
 
 Status: living compatibility registry
 
-Last reviewed: 2026-10-18 (RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded; `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
+Last reviewed: 2026-10-18 (reference spelling of the applied Box constructors: DIFF-API-009 narrowed; RAD through bargraphs: DIFF-SRC-002 gap closed; partial C++ Box/Signal headers: DIFF-API-009 recorded; `freeCMemory` missing from `libfaust-c.h`: DIFF-API-010 recorded; `-mdoc` not ported: DIFF-GAP-020 recorded); 2026-10-17 (block-rate work in a boolean `ondemand`: DIFF-BEH-024 recorded; `pow(x, 1)` of an init-local constant: DIFF-BEH-022 updated); 2026-10-16 (shared pattern matchers: DIFF-GAP-018 recorded, then closed; isomorphic recursion merging: DIFF-BEH-021 recorded; small real powers: DIFF-BEH-022 recorded; late state join in sums: DIFF-BEH-023 recorded; reserved-word, unary-minus and arity-location diagnostics added to DIFF-SRC-001/002 and DIFF-BEH-005); full review 2026-08-13
 
 C++ reference: `master-dev-ocpp-od-fir-2-FIR19` at `8eebea429`
 
@@ -1447,27 +1447,40 @@ must run unchanged with Faust C++ should not pass them.
   the constructors. Compared after preprocessing with the pinned reference's
   `architecture/faust/dsp/libfaust-box.h` and `libfaust-signal.h`, they do not
   declare:
-  - Box: the `isBox*` matchers, `DSPToBoxes`, `boxesToSignals`/`2`,
-    `createSourceFromBoxes`, `getBoxType`, `boxPar3`–`boxPar5`, `boxPrim2`,
-    `extractName`, `ffname`/`ffarity`, `prim0name`–`prim5name`,
-    `getDefNameProperty`;
+  - Box: most of the 78 `isBox*` overloads — 13 are wrapped (`isBoxAbstr`,
+    `isBoxAccess`, `isBoxAppl`, `isBoxButton`, `isBoxInt`, `isBoxReal`, ...),
+    none of the one-argument predicate forms (`isBoxAbstr(Box t)`) —,
+    `DSPToBoxes`, `boxesToSignals`/`2`, `createSourceFromBoxes`,
+    `getBoxType`, `boxPrim2`, `extractName`, `ffname`/`ffarity`,
+    `prim0name`–`prim5name`, `getDefNameProperty`;
   - Signal: most `isSig*` matchers (`isSigHSlider`, `isSigRDTbl`,
     `isSigWRTbl`, `isSigSoundfile*`, `isSigControl`, `isSigEnable`, ...),
     `getSigInterval`/`setSigInterval`, `getSigNature`, `sigBranches`,
     `xtendedName`/`xtendedArity`, `printBox`/`printSignal`.
-- Spelling: the two-operand Box operator overloads are named after their C
-  counterparts, `boxAddAux(Box, Box)` etc., where the reference declares
-  `boxAdd(Box, Box)` next to `boxAdd()`. A reference C++ client that composes
-  boxes this way does not compile against these headers; the zero-argument
-  form `boxAdd()` matches.
+- Box labels are `const char*` where the reference takes
+  `const std::string&` (`boxVSlider`, `boxHBargraph`, `boxVGroup`, ...): a
+  call with a string literal compiles against both, one with a `std::string`
+  needs `.c_str()` here.
+- Closed 2026-10-18: the applied constructors (`boxAdd(Box, Box)`,
+  `boxSin(Box)`, `boxDelay(Box, Box)`, `boxSelect2(Box, Box, Box)`,
+  `boxHBargraph(label, min, max, x)`, `boxAttach(Box, Box)`, ... — 50
+  overloads) existed only under the C spelling `boxAddAux(Box, Box)`, so a
+  reference client composing boxes that way did not compile. The reference
+  spelling is now declared, the `...Aux` forms are kept as aliases, and
+  `boxPar3`–`boxPar5` are wrapped. A C++ client of the built library
+  (`box-overloads.cpp` in `libfaust-export-check`) checks each applied
+  overload against the tree the reference builds, `(x, y) : prim`. It found
+  that `CboxPar3`–`CboxPar5` nested to the left where the reference nests to
+  the right, fixed in `2f0d598b`.
 - The headers also declare the Rust-only `CboxFad`/`CboxRad` constructors of
   `DIFF-SRC-001`/`002` in the C API.
 - Compatibility impact: C clients are unaffected. A C++ client of the
-  reference headers that uses only the wrapped constructors compiles; one that
-  uses a missing function or the two-operand `boxAdd` form must call the C name
-  (`CisBoxHSlider`, `CboxesToSignals`, `CboxAddAux`, ...) instead.
+  reference headers that uses the constructors compiles; one that uses a
+  missing function must call its C name (`CisBoxHSlider`, `CboxesToSignals`,
+  ...) instead.
 - Evidence: the comparison above (reference `8eebea429`); the headers'
-  syntax check in `cargo run -p xtask -- libfaust-export-check`.
+  syntax check and the `box-overloads.cpp` client in
+  `cargo run -p xtask -- libfaust-export-check`.
 
 ### DIFF-API-010 — `libfaust-c.h` does not declare `freeCMemory`
 

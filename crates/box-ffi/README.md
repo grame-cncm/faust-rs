@@ -19,10 +19,10 @@ signals/source, backed by Rust `boxes::BoxBuilder` and `boxes::match_box`.
   - `CboxesToSignals` / `CboxesToSignals2` — propagate a box graph to signals,
   - `CcreateSourceFromBoxes` — generate backend source from a box graph.
 - Exposes a thin C++ convenience wrapper (`libfaust-box.h`) over a subset of
-  the C API: the constructor family, with the binary-operator overloads
-  spelled `boxAddAux(Box, Box)` etc. where the reference header has
-  `boxAdd(Box, Box)`. Matchers and the pipeline-conversion helpers are used
-  through their C names.
+  the C API: the constructor family, each applied constructor under the
+  reference spelling (`boxAdd(Box, Box)`) and, as an alias, the C spelling
+  (`boxAddAux(Box, Box)`), and 13 of the matchers. The other matchers and the
+  pipeline-conversion helpers are used through their C names (DIFF-API-009).
 - Adds two Rust-port constructors, `CboxFad` and `CboxRad`, absent from the
   reference header.
 - Uses `tree-ffi` for shared tree handles, context-owned C strings,

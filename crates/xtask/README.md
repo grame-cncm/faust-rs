@@ -653,7 +653,10 @@ dynamic library: `Signal*` arrays from `CboxesToSignals` and
 `CsimplifyToNormalForm2` (one freed after `destroyLibContext`), a printed box,
 and the `char**` of `getAllCInterpreterDSPFactories`. Under the library's
 allocator a wrong release is not observable from C, so the regression test of
-that contract is `crates/cranelift-ffi/tests/free_c_memory.rs`.
+that contract is `crates/cranelift-ffi/tests/free_c_memory.rs`. A C++ client
+of `libfaust-box.h` written with the reference spelling (`box-overloads.cpp`)
+checks that each applied constructor, `boxAdd(x, y)`, `boxSin(x)`,
+`boxPar3(x, y, z)`, ..., builds the tree the reference builds.
 
 The check also builds and runs a C++ host of each wrapper header
 (`cranelift-dsp.h`, `interpreter-dsp.h`) against the dynamic library:

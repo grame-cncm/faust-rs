@@ -81,6 +81,7 @@ pub(crate) fn libfaust_export_check(
     syntax_check_headers(&workspace)?;
     run_libfaust_cpp_client(&workspace, &dynamic_library)?;
     run_free_c_memory_c_client(&workspace, &dynamic_library)?;
+    run_box_overloads_cpp_client(&workspace, &dynamic_library)?;
     run_wrapper_cpp_clients(&workspace, &dynamic_library)?;
 
     println!(
@@ -859,6 +860,111 @@ int main(void) {
     );
     Ok(())
 }
+
+/// Builds, links and runs a C++ client of `libfaust-box.h` written with the
+/// reference spelling of the applied constructors.
+///
+/// The reference header overloads each primitive: `boxAdd()` is the
+/// primitive, `boxAdd(x, y)` the primitive applied to two boxes. This header
+/// long offered only the C spelling `boxAddAux(x, y)` for the second form, so
+/// a reference client did not compile (DIFF-API-009). The client checks that
+/// every applied overload exists and builds `(x, y) : prim` (or `x : prim`),
+/// the tree the reference builds.
+fn run_box_overloads_cpp_client(
+    workspace: &Path,
+    dynamic_library: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = workspace.join("target/libfaust-export-check");
+    fs::create_dir_all(&out_dir)?;
+    let source = out_dir.join("box-overloads.cpp");
+    fs::write(
+        &source,
+        r#"#include <cstdio>
+#include "libfaust-box.h"
+
+#define SAME(applied, expected)                                    \
+    if ((applied) != (expected)) {                                 \
+        std::fprintf(stderr, "%s is not %s\n", #applied, #expected); \
+        return 1;                                                  \
+    }
+
+int main() {
+    createLibContext();
+    Box x = boxWire();
+    Box y = boxReal(0.5);
+    Box z = boxInt(3);
+CHECKS
+    SAME(boxDelay(x, z), boxSeq(boxPar(x, z), boxDelay()));
+    SAME(boxIntCast(y), boxSeq(y, boxIntCast()));
+    SAME(boxFloatCast(z), boxSeq(z, boxFloatCast()));
+    SAME(boxBinOp(kAdd, x, y), boxAdd(x, y));
+    SAME(boxSelect2(z, x, y), boxSelect2Aux(z, x, y));
+    SAME(boxSelect3(z, x, y, x), boxSelect3Aux(z, x, y, x));
+    SAME(boxReadOnlyTable(z, y, x), boxReadOnlyTableAux(z, y, x));
+    SAME(boxWriteReadTable(z, y, x, x, x), boxWriteReadTableAux(z, y, x, x, x));
+    SAME(boxVBargraph("v", y, z, x), boxVBargraphAux("v", y, z, x));
+    SAME(boxHBargraph("h", y, z, x), boxHBargraphAux("h", y, z, x));
+    SAME(boxAttach(x, y), boxAttachAux(x, y));
+    SAME(boxPar3(x, y, z), boxPar(x, boxPar(y, z)));
+    destroyLibContext();
+    std::printf("ok\n");
+    return 0;
+}
+"#
+        .replace("CHECKS", BOX_OVERLOAD_CHECKS),
+    )?;
+
+    if cfg!(target_os = "windows") {
+        println!(
+            "libfaust-box.h overload client: skipped on Windows (no import library published)"
+        );
+        return Ok(());
+    }
+
+    let binary = out_dir.join("box-overloads");
+    let compiler = std::env::var("CXX").unwrap_or_else(|_| "c++".to_owned());
+    let library_dir = dynamic_library
+        .parent()
+        .ok_or("the dynamic library has no parent directory")?;
+    let output = Command::new(&compiler)
+        .arg("-std=c++17")
+        .arg("-I")
+        .arg(workspace.join("crates/box-ffi/include"))
+        .arg(&source)
+        .arg("-o")
+        .arg(&binary)
+        .arg("-L")
+        .arg(library_dir)
+        .arg("-lfaust-rs")
+        .arg("-Wl,-rpath")
+        .arg(library_dir)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "linking the libfaust-box.h overload client failed:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    let run = Command::new(&binary).output()?;
+    if !run.status.success() {
+        return Err(format!(
+            "the libfaust-box.h overload client failed at run time:\n{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        )
+        .into());
+    }
+    println!(
+        "libfaust-box.h overload client: the reference-spelled applied constructors build the reference trees"
+    );
+    Ok(())
+}
+
+/// The math primitives' checks of [`run_box_overloads_cpp_client`]: the
+/// applied overload against `(x, y) : prim` or `x : prim`.
+const BOX_OVERLOAD_CHECKS: &str = "    SAME(boxAdd(x, y), boxSeq(boxPar(x, y), boxAdd()));\n    SAME(boxSub(x, y), boxSeq(boxPar(x, y), boxSub()));\n    SAME(boxMul(x, y), boxSeq(boxPar(x, y), boxMul()));\n    SAME(boxDiv(x, y), boxSeq(boxPar(x, y), boxDiv()));\n    SAME(boxRem(x, y), boxSeq(boxPar(x, y), boxRem()));\n    SAME(boxLeftShift(x, y), boxSeq(boxPar(x, y), boxLeftShift()));\n    SAME(boxLRightShift(x, y), boxSeq(boxPar(x, y), boxLRightShift()));\n    SAME(boxARightShift(x, y), boxSeq(boxPar(x, y), boxARightShift()));\n    SAME(boxGT(x, y), boxSeq(boxPar(x, y), boxGT()));\n    SAME(boxLT(x, y), boxSeq(boxPar(x, y), boxLT()));\n    SAME(boxGE(x, y), boxSeq(boxPar(x, y), boxGE()));\n    SAME(boxLE(x, y), boxSeq(boxPar(x, y), boxLE()));\n    SAME(boxEQ(x, y), boxSeq(boxPar(x, y), boxEQ()));\n    SAME(boxNE(x, y), boxSeq(boxPar(x, y), boxNE()));\n    SAME(boxAND(x, y), boxSeq(boxPar(x, y), boxAND()));\n    SAME(boxOR(x, y), boxSeq(boxPar(x, y), boxOR()));\n    SAME(boxXOR(x, y), boxSeq(boxPar(x, y), boxXOR()));\n    SAME(boxRemainder(x, y), boxSeq(boxPar(x, y), boxRemainder()));\n    SAME(boxPow(x, y), boxSeq(boxPar(x, y), boxPow()));\n    SAME(boxMin(x, y), boxSeq(boxPar(x, y), boxMin()));\n    SAME(boxMax(x, y), boxSeq(boxPar(x, y), boxMax()));\n    SAME(boxFmod(x, y), boxSeq(boxPar(x, y), boxFmod()));\n    SAME(boxAtan2(x, y), boxSeq(boxPar(x, y), boxAtan2()));\n    SAME(boxAbs(x), boxSeq(x, boxAbs()));\n    SAME(boxAcos(x), boxSeq(x, boxAcos()));\n    SAME(boxTan(x), boxSeq(x, boxTan()));\n    SAME(boxSqrt(x), boxSeq(x, boxSqrt()));\n    SAME(boxSin(x), boxSeq(x, boxSin()));\n    SAME(boxRint(x), boxSeq(x, boxRint()));\n    SAME(boxRound(x), boxSeq(x, boxRound()));\n    SAME(boxLog(x), boxSeq(x, boxLog()));\n    SAME(boxLog10(x), boxSeq(x, boxLog10()));\n    SAME(boxFloor(x), boxSeq(x, boxFloor()));\n    SAME(boxExp(x), boxSeq(x, boxExp()));\n    SAME(boxExp10(x), boxSeq(x, boxExp10()));\n    SAME(boxCos(x), boxSeq(x, boxCos()));\n    SAME(boxCeil(x), boxSeq(x, boxCeil()));\n    SAME(boxAtan(x), boxSeq(x, boxAtan()));\n    SAME(boxAsin(x), boxSeq(x, boxAsin()));";
 
 /// Where the Faust architecture headers (`faust/gui/CGlue.h`, `faust/dsp/dsp.h`)
 /// are, if anywhere: the C++ wrappers `cranelift-dsp.h` and `interpreter-dsp.h`
