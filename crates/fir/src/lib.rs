@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
-//! FIR construction and matching helpers.
+//! FIR construction, matching, verification ([`checker`]), and FIR-to-FIR
+//! passes ([`inliner`], [`subcontainer`], [`schedule`]); [`helpers`] holds
+//! loop-construction helpers whose source lives in `crates/fir/helpers.rs`.
 //!
 //! # Source provenance (C++)
 //! - `compiler/generator/instructions.hh`

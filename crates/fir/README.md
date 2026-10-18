@@ -1,7 +1,28 @@
 # fir crate
 
-FIR (Faust Intermediate Representation) construction and matching helpers used by
-the compiler/codegen pipeline.
+FIR (Faust Intermediate Representation): the hash-consed instruction tree that
+`transform::signal_fir` produces and every `codegen` backend consumes, with its
+construction, matching, verification and FIR-to-FIR passes.
+
+## Modules
+
+- `FirBuilder` / `match_fir` + `FirMatch` / `FirStore` — canonical construction,
+  structural matching, and hash-consed storage.
+- `dump_fir` / `canonical_fir_fingerprint` — deterministic structural dumps.
+- `fir::checker` — diagnostic-first module verifier (see below).
+- `fir::inliner` — hygienic cloning, the `sweep_scaffolding_drop_roots`
+  canonicalization applied to every FIR module before any backend, and a
+  function inliner not used by the production pipeline.
+- `fir::subcontainer` — generated-table sub-module flattening (see below).
+- `fir::schedule` — `compute` scheduling for the interp, Cranelift and wasm
+  backends: W3 store forwarding, W2 read sinking, W7 local reuse, each accepted
+  only when an independent checker re-derives it. Design:
+  `porting/wasm-w2-w3-sinking-forwarding-design-2026-10-17-en.md` and
+  `porting/fir-local-reuse-w7-design-2026-10-17-en.md`.
+- `fir::helpers` — loop-construction helpers (`fresh_loop_var`,
+  `emit_reverse_array_shift_loop`) used by `transform::signal_fir`. The source
+  file is `crates/fir/helpers.rs`, outside `src/`, included from `lib.rs` with
+  `#[path = "../helpers.rs"]`.
 
 ## Type conventions
 

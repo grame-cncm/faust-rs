@@ -964,11 +964,12 @@ fn emit_c_api(
 
 /// Emits manager-backed object and instance-buffer allocation for C `-mem0`.
 ///
-/// Source provenance: Faust C++ `CodeContainer::generateMemoryMethods`. The C
-/// adaptation is transactional, preserves explicit alignment, captures the
-/// creator table, and releases completed allocations in reverse order via the
-/// shared `releaseInstance{class_name}` helper — safe to call from a failure
-/// midway through `create{class_name}` because `memset` zero-initializes every
+/// Source provenance: Faust C++ `CCodeContainer::produceClass` and its
+/// `generateAllocateFun`/`generateDestroyFun` helpers (`c/c_code_container.*`)
+/// under `-mem`. The C adaptation is transactional, preserves explicit
+/// alignment, captures the creator table, and releases completed allocations
+/// in reverse order via the shared `releaseInstance{class_name}` helper — safe
+/// to call from a failure midway through `create{class_name}` because `memset` zero-initializes every
 /// not-yet-allocated field to `NULL`, so the helper's null guard only ever
 /// destroys what actually got allocated.
 fn emit_mem0_instance_api(out: &mut String, class_name: &str, analysis: &Mem0Analysis) {

@@ -1,8 +1,8 @@
 //! Native Cranelift JIT backend.
 //!
 //! # Role
-//! - Planned native-code backend lowering Faust FIR to machine code via
-//!   Cranelift, with a companion `cranelift_dsp` C/C++ export layer.
+//! - Native-code backend lowering Faust FIR to machine code via Cranelift;
+//!   the `cranelift-ffi` crate exports it as the `cranelift_dsp` C/C++ API.
 //!
 //! # C++ provenance note
 //! - There is no direct C++ `cranelift` backend in upstream Faust.

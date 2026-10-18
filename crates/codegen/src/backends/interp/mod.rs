@@ -4,17 +4,13 @@
 //! # Source provenance (C++)
 //! - `compiler/generator/interpreter/` — full C++ interpreter subsystem.
 //!
-//! # Intended role
+//! # Role
 //! - Define the Faust Byte Code (FBC) instruction set, instruction/block types,
 //!   and the `FbcReal` trait for generic f32/f64 dispatch.
 //! - Host the FIR → FBC compiler, bytecode optimizer, execution engine,
 //!   DSP factory/instance, and `.fbc` serialization.
-//!
-//! # Current status
-//! **Step 5 complete**: Factory, serialization, DSP interface — the final
-//! integration step. Complete pipeline: FIR → compile → optimize → serialize
-//! → deserialize → instantiate → compute.
-//! Built on Steps 1–4 (types, executor, compiler, optimizer).
+//! - Pipeline: FIR → compile → optimize → serialize → deserialize →
+//!   instantiate → compute.
 //!
 //! # Module layout
 //! - [`opcode`]: `FbcOpcode` enum, `FBC_INSTRUCTION_NAMES`, `INTERP_FILE_VERSION`.
@@ -28,6 +24,8 @@
 //! - [`instance`]: `FbcDspInstance` — runtime DSP state with `compute()` loop.
 //! - [`serial`]: `write_fbc` / `read_fbc` — `.fbc` text format serialization.
 //! - [`fbc_to_cpp`]: `generate_cpp_from_fbc` — AOT FBC → native C++ code generator.
+//! - [`foreign`]: host-function registry for `ffunction` calls.
+//! - [`soundfile`]: `Soundfile` — runtime soundfile data.
 
 pub mod bytecode;
 pub mod compiler;
@@ -89,9 +87,10 @@ pub struct InterpOptions {
     /// `None` falls back to a minimal `-lang interp` line, for callers
     /// (mostly tests) that do not thread the real CLI flags through.
     pub compile_options: Option<String>,
-    /// Emit `compute` in FIR order, without the W2/W3 scheduling of
-    /// `fir::schedule` (sinking reads, forwarding stores). `false` by default:
-    /// this is for differential tests, which compare both orders.
+    /// Emit `compute` in FIR order, without the W3/W2/W7 scheduling of
+    /// `fir::schedule` (forwarding stores, sinking reads, reusing locals).
+    /// `false` by default: this is for differential tests, which compare both
+    /// orders.
     pub keep_fir_order: bool,
 }
 
@@ -228,7 +227,7 @@ fn generate_interp_module_step<R: real::FbcReal>(
         None
     };
     let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
-    // W2/W3: `compute` scheduled for a JIT that keeps loads in program order
+    // W3/W2/W7: `compute` scheduled for a JIT that keeps loads in program order
     // (`fir::schedule`; the text backends keep FIR order).
     let scheduled = if options.keep_fir_order {
         None

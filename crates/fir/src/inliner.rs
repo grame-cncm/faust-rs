@@ -1,7 +1,18 @@
-//! FIR function inliner scaffolding (Milestones 1–4 + Phase E iteration).
+//! FIR function inliner, hygienic cloning, and drop-root sweep.
 //!
 //! # Scope
-//! This module currently implements:
+//! Three surfaces live here:
+//! - [`sweep_scaffolding_drop_roots`] (and its `_with_mapping` variant), the
+//!   canonicalization boundary that removes pure `Drop` roots for every
+//!   backend; the compiler facade applies it to each FIR module.
+//! - Hygienic cloning with `kFunArgs`/`kStruct` substitution, on which
+//!   `subcontainer` flattening of generated-table sub-modules rests, and
+//!   [`is_obviously_side_effect_free_value`], used by the checker and by
+//!   `transform`'s vector lowering.
+//! - Function inlining ([`inline_fir_module`]). It is exercised by this
+//!   module's tests but is not called by the production pipeline.
+//!
+//! The inliner implements:
 //! - function indexing from a FIR `Module`,
 //! - call graph extraction,
 //! - SCC detection,
@@ -22,8 +33,9 @@
 //!
 //! # Public API mapping status
 //! - `adapted`: the C++ code exposes inlining as visitor-side rewriting helpers.
-//!   Rust starts with a module-level analysis API to make legality/profitability
-//!   decisions explicit and testable before implementing rewriting.
+//!   Rust adds a module-level analysis API ([`analyze_fir_inliner`]) so that
+//!   legality/profitability decisions are explicit and testable separately
+//!   from the rewrite.
 //!
 //! # Current policy
 //! The pass intentionally prefers deterministic, conservative rewrites over

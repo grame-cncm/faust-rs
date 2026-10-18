@@ -9,21 +9,13 @@ live here.
 
 ## Position in the pipeline
 
-```text
-parser → boxes → eval → propagate → signals → transform → fir → [codegen]
-                                                                → AssemblyScript source
-                                                                → C source
-                                                                → C++ source
-                                                                → Cmajor source
-                                                                → Codebox (RNBO) source
-                                                                → Rust source
-                                                                → .fbc bytecode
-                                                                → native C++ (AOT from .fbc)
-                                                                → Cranelift JIT
-                                                                → WASM binary/WAT + JSON
-                                                                → Julia source
-                                                                → … (scaffolded)
-```
+Canonical pipeline (AGENTS.md): parse → boxes → eval → propagate → normalize → type/interval → transform → fir → backend.
+
+`codegen` is the backend stage: every backend receives a FIR module that
+`transform::signal_fir` lowered from signals and `fir` represents, and emits
+AssemblyScript, C, C++, Cmajor, Codebox (RNBO), Julia or Rust source, `.fbc`
+bytecode (plus native C++ generated from it), a WASM binary with its companion
+JSON, or Cranelift JIT code.
 
 ## C++ provenance
 
@@ -36,6 +28,7 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 | `backends::codebox` | `compiler/generator/codebox/` |
 | `backends::cranelift` | *(new — no C++ equivalent)* |
 | `backends::interp` | `compiler/generator/interpreter/` |
+| `backends::interp::fbc_to_cpp` | `compiler/generator/interpreter/fbc_cpp_compiler.hh` (`FBCCPPCompiler`) |
 | `backends::julia` | `compiler/generator/julia/` |
 | `backends::rust` | `compiler/generator/rust/` |
 | `backends::wasm` | `compiler/generator/wasm/` + `code_container.hh` JSON path |
@@ -65,6 +58,10 @@ parser → boxes → eval → propagate → signals → transform → fir → [c
 | `llvm` | 🗂 Scaffolded | — |
 | `sdf3` | 🗂 Scaffolded | — |
 | `vhdl` | 🗂 Scaffolded | — |
+
+`interp`, `cranelift` and `wasm` reorder `compute` with `fir::schedule` (W3
+store forwarding, W2 read sinking, W7 local reuse) before emission; their
+`keep_fir_order` option disables it. The textual backends keep FIR order.
 
 ---
 
@@ -222,7 +219,7 @@ let jit = generate_cranelift_module(&store, root_id, &opts)?;
 
 | Item | Description |
 |---|---|
-| `CraneliftOptions` | Optimization, target/debug, strict-subset, external symbol, precision, and `memory_manager_mode` settings |
+| `CraneliftOptions` | Optimization, target/debug, strict-subset, external symbol, precision, `memory_manager_mode`, and `keep_fir_order` settings |
 | `CraneliftOptLevel` | `None`, `Speed` (default), `SpeedAndSize` |
 | `generate_cranelift_module` | Main entry point; returns compiled JIT module |
 | `diagnose_cranelift_compute_subset_gap` | Reports unsupported FIR nodes |
@@ -288,7 +285,7 @@ write_fbc(&factory, &mut buf)?;
 | Item | Description |
 |---|---|
 | `InterpOptions` | `opt_level: i32`, `module_name: Option<String>`, `compile_options`, `keep_fir_order` |
-| `generate_interp_module` | `(&FirStore, FirId, &InterpOptions) → Result<FbcDspFactory<f32>, CodegenError>` |
+| `generate_interp_module::<R: FbcReal>` | `(&FirStore, FirId, &InterpOptions) → Result<FbcDspFactory<R>, CodegenError>` (`R` = `f32` or `f64`) |
 | `FbcDspFactory<R>` | Compiled bytecode program with lifecycle/data blocks |
 | `FbcDspInstance` | Runtime DSP state; provides `init` and `compute` |
 | `FbcBlockArena` | Arena of `FbcBlock`s indexed by `BlockId` |
@@ -322,7 +319,7 @@ emitted as a comment.
 |---|---|
 | `Loop(init, body)` | `{ <init>; while (true) { <body> } }` |
 | `CondBranch` | `if (!<cond>) { break; }` |
-| `If(b1, b2)` | `if (<cond>) { <b1> } else { <b2> }` |
+| `If(b1, b2)` | `if (<cond>) { <b1> } else { <b2> }`; a `Return`-only branch is omitted, and the condition is inverted when only the false branch has statements |
 | `SelectReal/Int(b1, b2)` | pre-declared merge variable + `if/else` |
 | `Return` | end of block (no explicit `return` emitted) |
 
@@ -543,7 +540,7 @@ access.
 
 | Item | Description |
 |---|---|
-| `WasmOptions` | `double_precision`, `emit_wat`, `memory_pages`, `internal_memory` |
+| `WasmOptions` | `double_precision`, `emit_wat`, `memory_pages`, `internal_memory`, `keep_fir_order` |
 | `WasmJsonContext` | JSON-only provenance: `filename`, `version`, `compile_options`, include/library lists, top-level metadata |
 | `WasmModule` | `wasm_binary`, `wat_text`, `dsp_json`, `memory_layout` |
 | `generate_wasm_module` | `(&FirStore, FirId, &WasmOptions) -> Result<WasmModule, WasmBackendError>` |
@@ -645,8 +642,9 @@ Port and test contract:
 
 ### Fixtures — `fixtures`
 
-Shared FIR modules for backend-agnostic parity testing. All backends are
-exercised against the same 8 canonical fixtures, preventing test drift.
+Shared FIR modules for backend-agnostic parity testing. The C, C++, Rust,
+Julia, WASM and Cranelift backend tests share the same 8 canonical fixtures,
+preventing test drift.
 
 ```rust
 use codegen::fixtures::backend_test_fixtures;

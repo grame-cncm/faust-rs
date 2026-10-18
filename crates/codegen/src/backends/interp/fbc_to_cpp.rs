@@ -4,6 +4,11 @@
 //! containing a class that faithfully reproduces the interpreter's semantics
 //! using native C++ code — **no** interpreter runtime dependency.
 //!
+//! # Source provenance (C++)
+//! - `compiler/generator/interpreter/fbc_cpp_compiler.hh` (`FBCCPPCompiler`),
+//!   which also translates FBC blocks through a stack of C++ expressions.
+//!   Mapping status: `adapted`; failures are reported as [`FbcCppError`].
+//!
 //! # Overview
 //!
 //! The generator performs a single pass over each of the 6 code blocks,

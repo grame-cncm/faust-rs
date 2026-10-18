@@ -8,8 +8,9 @@
 //! # Role
 //! - Reconstruct backend-agnostic Faust JSON payloads from canonical FIR
 //!   `metadata` and `buildUserInterface` bodies.
-//! - Keep the JSON description separate from any single backend so it can be
-//!   reused by a future global `-json` CLI path and by backends such as WASM.
+//! - Keep the JSON description separate from any single backend: it is shared
+//!   by the `-json` CLI path, the WASM backend, and the `cranelift-ffi` /
+//!   `interp-ffi` factories.
 
 use std::fmt::Write as _;
 

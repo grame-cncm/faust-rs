@@ -16,8 +16,9 @@
 //! - Numeric literals are wrapped (`<i32>(n)`, `<f32>(n)`, `<f64>(n)`).
 //! - Arrays are `StaticArray<T>`.
 //! - Standard math maps to `Math.*` / `Mathf.*`.
-//! - UI / soundfile nodes are emitted as comments (parity with the C++ asc
-//!   backend, which lowers them to `// ui ...`).
+//! - UI nodes and soundfile declarations are emitted as comments (parity with
+//!   the C++ asc backend, which lowers them to `// ui ...`); soundfile reads
+//!   call the `env._soundfile*` host imports.
 //!
 //! # Limitations
 //! Scalar code path only. Unsupported FIR nodes fail fast with

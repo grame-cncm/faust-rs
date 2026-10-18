@@ -15,9 +15,9 @@
 //!   gives each local a stack slot (JavaScriptCore) keeps a small frame
 //!   (`porting/fir-local-reuse-w7-design-2026-10-17-en.md`).
 //!
-//! Both keep the arithmetic and the values: outputs are bit-identical. Each
-//! rewrite is accepted only when the independent checker (`check`) re-derives
-//! it; otherwise `compute` keeps its previous form (fail closed, and an
+//! All three keep the arithmetic and the values: outputs are bit-identical.
+//! Each rewrite is accepted only when its independent checker (`check` for
+//! W3/W2, `check_reuse` for W7) re-derives it; otherwise `compute` keeps its previous form (fail closed, and an
 //! assertion in debug builds).
 //!
 //! # Public API mapping status
@@ -103,7 +103,8 @@ fn schedule_body(store: &mut FirStore, body: FirId) -> FirId {
     }
 }
 
-/// Schedules `compute` (W3 forwarding, then W2 sinking) in a copy of `module`.
+/// Schedules `compute` (W3 forwarding, W2 sinking, then W7 local reuse) in a
+/// copy of `module`.
 ///
 /// Returns the new store and module root, or `None` when `module` has no
 /// `compute` body or nothing changes. Used by the interp, Cranelift and wasm

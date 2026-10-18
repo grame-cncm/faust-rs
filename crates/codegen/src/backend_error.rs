@@ -1,7 +1,7 @@
 //! The one thing every backend error has in common.
 //!
 //! Each backend defines its own error type, and they were not reachable
-//! uniformly: five of them expose `code()` / `message()` as methods, while the
+//! uniformly: eight of them expose `code()` / `message()` as methods, while the
 //! interpreter and Cranelift errors expose `code` / `message` as public fields.
 //! Every consumer that wanted "the stable code and the message" therefore had
 //! to know which backend it was holding — which is why the compiler facade

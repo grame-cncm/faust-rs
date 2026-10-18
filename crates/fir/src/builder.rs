@@ -809,7 +809,7 @@ impl<'a> FirBuilder<'a> {
         )
     }
 
-    /// C++ parity: `LoadSoundfileInst` / `fSoundN->fLength[part]`.
+    /// C++ parity: `InstructionsCompiler::generateSoundfileLength` / `fSoundN->fLength[part]`.
     /// Always returns `Int32` (length is stored as `int` in the Soundfile struct).
     #[must_use]
     pub fn load_soundfile_length(&mut self, var: impl Into<String>, part: FirId) -> FirId {
@@ -822,7 +822,7 @@ impl<'a> FirBuilder<'a> {
         )
     }
 
-    /// C++ parity: `LoadSoundfileInst` / `fSoundN->fSR[part]`.
+    /// C++ parity: `InstructionsCompiler::generateSoundfileRate` / `fSoundN->fSR[part]`.
     /// Always returns `Int32` (sample-rate is stored as `int` in the Soundfile struct).
     #[must_use]
     pub fn load_soundfile_rate(&mut self, var: impl Into<String>, part: FirId) -> FirId {
@@ -849,7 +849,7 @@ impl<'a> FirBuilder<'a> {
         )
     }
 
-    /// C++ parity: `LoadSoundfileInst` / `((FAUSTFLOAT**)fSoundN->fBuffers)[chan][fSoundN->fOffset[part] + idx]`.
+    /// C++ parity: `InstructionsCompiler::generateSoundfileBuffer` / `((FAUSTFLOAT**)fSoundN->fBuffers)[chan][fSoundN->fOffset[part] + idx]`.
     ///
     /// `chan` indexes `fBuffers` as is: the wrap of a channel beyond the real
     /// channel count (`chan % fChannels`) is built by the lowerer into `chan`

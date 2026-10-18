@@ -76,7 +76,7 @@ fn generate_cranelift_module_step(
         None
     };
     let (store, module) = flattened.as_ref().map_or((store, module), |(s, m)| (s, *m));
-    // W2/W3: `compute` scheduled for a JIT that keeps loads in program order
+    // W3/W2/W7: `compute` scheduled for a JIT that keeps loads in program order
     // (`fir::schedule`; the text backends keep FIR order).
     let scheduled = if options.keep_fir_order {
         None

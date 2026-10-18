@@ -246,12 +246,12 @@ pub enum FirMatch {
         url: String,
         var: String,
     },
-    /// C++ parity: `LoadSoundfileInst` / `fSoundN->fLength[part]`.
+    /// C++ parity: `InstructionsCompiler::generateSoundfileLength` / `fSoundN->fLength[part]`.
     LoadSoundfileLength {
         var: String,
         part: FirId,
     },
-    /// C++ parity: `LoadSoundfileInst` / `fSoundN->fSR[part]`.
+    /// C++ parity: `InstructionsCompiler::generateSoundfileRate` / `fSoundN->fSR[part]`.
     LoadSoundfileRate {
         var: String,
         part: FirId,
@@ -261,7 +261,7 @@ pub enum FirMatch {
     LoadSoundfileChannels {
         var: String,
     },
-    /// C++ parity: `LoadSoundfileInst` / `((FAUSTFLOAT**)fSoundN->fBuffers)[chan][fSoundN->fOffset[part] + idx]`.
+    /// C++ parity: `InstructionsCompiler::generateSoundfileBuffer` / `((FAUSTFLOAT**)fSoundN->fBuffers)[chan][fSoundN->fOffset[part] + idx]`.
     LoadSoundfileBuffer {
         var: String,
         chan: FirId,

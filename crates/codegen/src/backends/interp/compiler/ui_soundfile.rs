@@ -158,7 +158,7 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
     /// Compiles `LoadSoundfileLength { var, part }` → `kLoadSoundFieldInt` (fLength).
     ///
     /// # Source provenance (C++)
-    /// - `visit(LoadSoundfileInst*)` — `kInt32` / fLength case.
+    /// - `InterpreterInstVisitor::visit(LoadVarInst*)` — `Soundfile::kLength` field case.
     pub(super) fn compile_load_soundfile_length(
         &mut self,
         store: &FirStore,
@@ -186,7 +186,7 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
     /// Compiles `LoadSoundfileRate { var, part }` → `kLoadSoundFieldInt` (fSR).
     ///
     /// # Source provenance (C++)
-    /// - `visit(LoadSoundfileInst*)` — `kInt32` / fSR case.
+    /// - `InterpreterInstVisitor::visit(LoadVarInst*)` — `Soundfile::kSR` field case.
     pub(super) fn compile_load_soundfile_rate(
         &mut self,
         store: &FirStore,
@@ -241,7 +241,7 @@ impl<R: FbcReal> FirToFbcCompiler<R> {
     /// Compiles `LoadSoundfileBuffer { var, chan, part, idx }` → `kLoadSoundFieldReal`.
     ///
     /// # Source provenance (C++)
-    /// - `visit(LoadSoundfileInst*)` — FAUSTFLOAT buffer case.
+    /// - `InterpreterInstVisitor::visit(LoadVarInst*)` — `Soundfile::kBuffers` field case.
     ///
     /// Pushes `chan`, `part`, `idx` onto the int stack; the executor pops them
     /// in reverse order and computes `buffers[chan][offsets[part] + idx]`.
